@@ -211,12 +211,26 @@ const zhCN: Resources = {
   quick_actions: {
     tools: "工具",
     toggles: "开关",
+    edit: "编辑",
     range: "入出点",
+    markers: "标记",
+    zoom: "缩放",
+    resolution: "播放分辨率",
     // 显示在禁用的"清除"按钮上——说明为什么点不了，而不是重复一个用不了的标签。
     clear_range_empty: "未设置入出点",
     // 标记开关的两态提示：先说当前状态，再说点击后会发生什么。
     markers_shown_hint: "当前显示时间线标记。点击隐藏。",
     markers_hidden_hint: "已隐藏时间线标记。点击显示。",
+    // 新加入本区的三个开关沿用同样的两态写法：按下态说明是哪一种状态，提示说明点击会做什么。
+    snap_on_hint: "片段吸附已开启。点击关闭。",
+    snap_off_hint: "片段吸附已关闭。点击开启。",
+    follow_on_hint: "视图跟随播放头。点击让视图保持静止。",
+    follow_off_hint: "视图保持静止。点击跟随播放头。",
+    safe_area_on_hint: "当前显示安全框参考线。点击隐藏。",
+    safe_area_off_hint: "已隐藏安全框参考线。点击显示。",
+    // 禁用原因，与 clear_range_empty 同一条规则：说明前置条件，而不是重复点不了的标签。
+    group_needs_two: "选中两个或更多片段才能编组",
+    dissolve_no_group: "所选内容不在任何编组中",
     transitions: "转场",
   },
   dock_workspace: {
@@ -303,12 +317,19 @@ const zhCN: Resources = {
     delete_selected: "删除选中的图层",
     copy_selected: "复制选中的片段",
     paste_at_playhead: "在播放头粘贴片段",
+    split_at_playhead: "在播放头切割",
     toggle_log: "切换活动日志",
     focus_log_search: "聚焦活动日志搜索",
     toggle_display_mode: "切换 A/B 轨 / 显示全部",
     toggle_follow_playhead: "切换跟随播放头",
     toggle_markers_visible: "切换时间线标记",
     toggle_safe_area_guides: "切换安全框参考线",
+    toggle_tail_snap: "切换片段吸附",
+    // 带前缀，不像设置里的单选那样只写"完整"/"1/2"：这些标签同时出现在搜索面板里，
+    // 只写"1/2"根本说不清改的是什么。
+    playback_resolution_full: "播放分辨率：完整",
+    playback_resolution_half: "播放分辨率：1/2",
+    playback_resolution_quarter: "播放分辨率：1/4",
     center_horizontally: "水平居中",
     center_vertically: "垂直居中",
     apply_default_transition: "应用默认转场（交叉溶解）",

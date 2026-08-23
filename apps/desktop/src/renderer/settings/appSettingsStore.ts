@@ -153,6 +153,37 @@ export async function toggleSafeAreaGuides(): Promise<AppSettings> {
   return setAppSettings({ safe_area_guides_visible: !current });
 }
 
+/// Clip snapping, the timeline's magnet. A preference by storage and a
+/// per-edit switch by use — which is why it has a one-shot toggle and a Quick
+/// Actions button, not just the Settings row it shipped with. Every NLE puts
+/// this on the toolbar.
+export async function toggleTailSnap(): Promise<AppSettings> {
+  const current = useAppSettingsStore.getState().settings.tail_snap_enabled;
+  return setAppSettings({ tail_snap_enabled: !current });
+}
+
+/// Same imperative-read reason as `followPlayheadEnabled`: the magnet's
+/// palette checkmark is evaluated inside `listCommands()`, not during a render.
+export function tailSnapEnabled(): boolean {
+  return useAppSettingsStore.getState().settings.tail_snap_enabled;
+}
+
+/// Preview playback resolution, set ABSOLUTELY rather than cycled. Three
+/// values, so a cycle would have no defined direction from the middle one —
+/// the same reason `toolStore.setTool` is idempotent instead of a toggle. Each
+/// value gets its own command and its own radio button.
+export async function setPlaybackResolution(
+  next: AppSettings["playback_resolution"],
+): Promise<AppSettings> {
+  return setAppSettings({ playback_resolution: next });
+}
+
+/// Same imperative-read reason again: the three resolution commands report
+/// their check state from inside `listCommands()`.
+export function playbackResolution(): AppSettings["playback_resolution"] {
+  return useAppSettingsStore.getState().settings.playback_resolution;
+}
+
 /// Imperative read for the command palette's checkmark, which is evaluated
 /// inside `listCommands()` rather than during a render — same reason
 /// `appCommands.ts` reads `toolStore` directly.

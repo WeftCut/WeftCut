@@ -4,10 +4,21 @@ import { useTranslation } from "react-i18next";
 import { getCommand, type CommandDef } from "../commands/registry";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { resolveAccelerator } from "../shortcuts/match";
-import { useDisplayMode, useMarkersVisible } from "../settings/appSettingsStore";
+import {
+  useDisplayMode,
+  useFollowPlayheadEnabled,
+  useMarkersVisible,
+  usePlaybackResolution,
+  useSafeAreaGuidesVisible,
+  useTailSnapEnabled,
+} from "../settings/appSettingsStore";
 import { useActiveTool } from "../state/toolStore";
 import { useHasMarkedRange } from "../state/rangeStore";
 import { useHasTransitionCut } from "../timeline/applyTransition";
+import {
+  useCanDissolveSelection,
+  useCanGroupSelection,
+} from "../timeline/groupEligibility";
 import {
   QUICK_ACTION_SECTIONS,
   resolveIcon,
@@ -236,6 +247,21 @@ export function QuickActionsPanel({
   // Same subscribed-not-imperative reasoning as `hasRange` directly above,
   // for `applyDefaultTransition`'s enabled state.
   const hasTransitionCut = useHasTransitionCut();
+  // The app-settings values the strip renders as pressed or armed: three
+  // toggles and the modal playback resolution. Atomic selectors, one field
+  // each — never a composite one
+  // (`feedback_zustand_composite_selector`).
+  const snapEnabled = useTailSnapEnabled();
+  const followPlayhead = useFollowPlayheadEnabled();
+  const safeAreaGuides = useSafeAreaGuidesVisible();
+  const playbackResolution = usePlaybackResolution();
+  // The group pair's enabled state. Same subscribed-not-imperative rule again:
+  // `CommandDef.enabled` for these two is evaluated during THIS render, so
+  // without a subscription both buttons would stay greyed out until some
+  // unrelated state happened to re-render the strip. Boolean selectors, so a
+  // click-select re-renders the strip only when the ANSWER flips.
+  const canGroup = useCanGroupSelection();
+  const canDissolve = useCanDissolveSelection();
   const orientation = useStripOrientation(geometry, docked);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useHorizontalWheel(scrollRef, orientation === "horizontal");
@@ -250,6 +276,12 @@ export function QuickActionsPanel({
     hasRange,
     markersVisible,
     hasTransitionCut,
+    snapEnabled,
+    followPlayhead,
+    safeAreaGuides,
+    playbackResolution,
+    canGroup,
+    canDissolve,
   };
 
   // Buttons resolve against the command registry, so a command whose provider

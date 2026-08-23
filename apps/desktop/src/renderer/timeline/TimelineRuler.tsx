@@ -7,6 +7,7 @@ import { removeMarker } from "../ipc";
 import { useMarkersVisible } from "../settings/appSettingsStore";
 import { useProjectMarkers } from "../state/projectStore";
 import { MarkerContextMenu } from "./MarkerContextMenu";
+import { RulerContextMenu } from "./RulerContextMenu";
 import { openMarkerRenamePrompt } from "./markerRenamePrompt";
 import { useRangeInUs, useRangeOutUs } from "../state/rangeStore";
 import {
@@ -257,16 +258,26 @@ export function TimelineRuler({
     y: number;
     markerId: string;
   } | null>(null);
-  // Close the menu when anything scrolls under it — the popup is anchored to
-  // fixed cursor coordinates, so it would float detached over moving content.
-  // Outside-click and Escape closing belong to Base UI. Same effect every
-  // context-menu call site carries (Timeline, TrackHeader).
+  // The ruler's own menu — the in/out and marker COMMANDS, as opposed to the
+  // marker menu above, which acts on one marker glyph. Held separately because
+  // a right-click either lands on a glyph or it doesn't: the glyph stops
+  // propagation, so exactly one of the two ever opens.
+  const [rulerMenu, setRulerMenu] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  // Close the menus when anything scrolls under them — the popups are anchored
+  // to fixed cursor coordinates, so they would float detached over moving
+  // content. Outside-click and Escape closing belong to Base UI. Same effect
+  // every context-menu call site carries (Timeline, TrackHeader).
   useEffect(() => {
-    if (!markerMenu) return;
-    const onScroll = () => setMarkerMenu(null);
+    if (!markerMenu && !rulerMenu) return;
+    const onScroll = () => {
+      setMarkerMenu(null);
+      setRulerMenu(null);
+    };
     window.addEventListener("scroll", onScroll, true);
     return () => window.removeEventListener("scroll", onScroll, true);
-  }, [markerMenu]);
+  }, [markerMenu, rulerMenu]);
   // Plain subscriptions, not the playhead's transient-DOM-mutation pattern:
   // in/out change when the user marks them, not once per composition frame, so
   // a React commit per change costs nothing worth optimising away. Atomic
@@ -349,6 +360,14 @@ export function TimelineRuler({
         if (e.button === 0) onScrub(e.clientX);
       }}
       onClick={(e) => e.stopPropagation()}
+      // Empty-ruler right-click. A press on a marker glyph never reaches here
+      // — `MarkerGlyph` stops propagation — so the glyph menu and this one are
+      // mutually exclusive without either knowing about the other.
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setRulerMenu({ x: e.clientX, y: e.clientY });
+      }}
     >
       {ticks.map((tk) => (
         <div
@@ -411,6 +430,13 @@ export function TimelineRuler({
     {/* Outside the strip div (the Timeline.tsx placement), not inside it:
         whatever Base UI renders inline must never count as a strip child — see
         the wrapper landmine above. The popup itself portals to the body. */}
+    {rulerMenu !== null && (
+      <RulerContextMenu
+        x={rulerMenu.x}
+        y={rulerMenu.y}
+        onClose={() => setRulerMenu(null)}
+      />
+    )}
     {markerMenu !== null && (
       <MarkerContextMenu
         x={markerMenu.x}

@@ -64,6 +64,11 @@ export const EDIT_MENU: MenuSection = {
     // available; the Blade needs a layer to cut.
     "selectTool",
     "toggleBladeMode",
+    // The Blade without the pointer: same cut, resolved from the playhead. It
+    // sits with the tools rather than in a section of its own because that is
+    // the relationship a user needs to see — reach for the tool to cut where
+    // you point, reach for this to cut where you are.
+    "splitAtPlayhead",
     "---",
     // Z-order rearrangement, and the only route to a new lane that needs no
     // pointer. Its home is Edit rather than a clip-scoped or top-level section:

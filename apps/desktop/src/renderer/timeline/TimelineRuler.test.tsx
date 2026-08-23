@@ -34,7 +34,8 @@ import {
   setTimelineScrollLeftPx,
   timelineScrollLeftPx,
 } from "../state/timelineScrollStore";
-import { useRangeStore } from "../state/rangeStore";
+import { hasMarkedRange, useRangeStore } from "../state/rangeStore";
+import { registerCommandProvider } from "../commands/registry";
 import { RULER_SCROLL_QUANTUM_PX } from "./rulerModel";
 import { TimelineRuler } from "./TimelineRuler";
 
@@ -551,6 +552,126 @@ describe("markers", () => {
         ),
       );
       expect(useMarkerRenamePromptStore.getState().markerId).toBeNull();
+    });
+  });
+
+  // The ruler's OWN menu: the in/out and marker commands, which lived only on
+  // the keyboard, the strip and the palette. Two menus on one strip, told apart
+  // by nothing more than the glyph's `stopPropagation` — which is exactly what
+  // the second case here pins down.
+  describe("empty-ruler context menu", () => {
+    let unregister: (() => void) | null = null;
+
+    beforeEach(() => {
+      // Every row resolves through the registry, so the menu is empty without a
+      // provider — the same "omit, never render dead" policy the strip applies.
+      unregister = registerCommandProvider(() => [
+        { id: "markIn", actionId: "markIn", labelKey: "actions.mark_in", run: () => {} },
+        { id: "markOut", actionId: "markOut", labelKey: "actions.mark_out", run: () => {} },
+        {
+          id: "clearRange",
+          actionId: "clearRange",
+          labelKey: "actions.clear_range",
+          // Mirrors `appCommands.ts`: the point of the disabled case below is
+          // that the live store read reaches the rendered row.
+          enabled: () => hasMarkedRange(),
+          run: () => {},
+        },
+        {
+          id: "addMarkerAtPlayhead",
+          actionId: "addMarkerAtPlayhead",
+          labelKey: "actions.add_marker_at_playhead",
+          run: () => {},
+        },
+        {
+          id: "toggleMarkersVisible",
+          labelKey: "actions.toggle_markers_visible",
+          checked: () => true,
+          run: () => {},
+        },
+      ]);
+    });
+
+    afterEach(() => {
+      unregister?.();
+      unregister = null;
+    });
+
+    const openStripMenu = async (container: HTMLElement) => {
+      fireEvent.contextMenu(
+        container.querySelector('[data-testid="timeline-ruler"]')!,
+        { clientX: 300, clientY: 12 },
+      );
+      return await waitFor(() => {
+        const items = Array.from(
+          document.querySelectorAll<HTMLElement>(".app-menu-item"),
+        );
+        expect(items.length).toBeGreaterThan(0);
+        return items;
+      });
+    };
+
+    it("offers the in/out and marker commands, adding no strip children", async () => {
+      const { container } = renderRuler();
+      const childrenBefore = ticks(container).length;
+      const items = await openStripMenu(container);
+      expect(
+        items.map(
+          (i) => i.querySelector(".app-menu-item-label")?.textContent,
+        ),
+      ).toEqual([
+        "Mark in point",
+        "Mark out point",
+        "Clear in/out points",
+        "Add marker at playhead",
+        "Toggle timeline markers",
+      ]);
+      // The popup portals to the body, so the strip's child budget — what the
+      // node-count gate and the tick enumeration measure — is untouched.
+      expect(ticks(container)).toHaveLength(childrenBefore);
+    });
+
+    // The whole reason these rows come from the registry rather than being
+    // hand-written: each carries the key that does the same thing, so a menu
+    // the user discovered teaches the keystroke they will use next time. The
+    // marker toggle has no binding by design, and correspondingly no cell.
+    it("prints each row's accelerator beside it", async () => {
+      const { container } = renderRuler();
+      const items = await openStripMenu(container);
+      const accelerator = (i: HTMLElement) =>
+        i.querySelector(".app-menu-item-accelerator")?.textContent ?? null;
+      expect(items.map(accelerator)).toEqual(["I", "O", "Alt+X", "M", null]);
+    });
+
+    // Clear spends most of its life unavailable, and the row has to say so
+    // rather than sit there looking live. The gate is the command's own live
+    // store read, reaching the rendered row.
+    it("disables Clear until a range is marked", async () => {
+      const { container } = renderRuler();
+      const items = await openStripMenu(container);
+      expect(items[2]!.getAttribute("aria-disabled")).toBe("true");
+    });
+
+    // A press on a glyph must reach the MARKER menu and nothing else. Both
+    // menus render `.app-menu-item`, so the row set is the discriminator.
+    it("yields to the marker menu when the press lands on a glyph", async () => {
+      seed([point()]);
+      const { container } = renderRuler();
+      fireEvent.contextMenu(
+        container.querySelector('[data-marker-id="point-1"]')!,
+        { clientX: 80, clientY: 12 },
+      );
+      const items = await waitFor(() => {
+        const found = Array.from(
+          document.querySelectorAll<HTMLElement>(".app-menu-item"),
+        );
+        expect(found.length).toBeGreaterThan(0);
+        return found;
+      });
+      expect(items.map((i) => i.textContent)).toEqual([
+        "Rename",
+        "Delete marker",
+      ]);
     });
   });
 });

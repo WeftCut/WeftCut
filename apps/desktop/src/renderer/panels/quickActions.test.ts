@@ -49,6 +49,12 @@ function state(over: Partial<QuickActionState> = {}): QuickActionState {
     hasRange: false,
     markersVisible: true,
     hasTransitionCut: false,
+    snapEnabled: true,
+    followPlayhead: true,
+    safeAreaGuides: false,
+    playbackResolution: "full",
+    canGroup: false,
+    canDissolve: false,
     ...over,
   };
 }
@@ -88,11 +94,17 @@ describe("quickActions catalogue", () => {
   // armed for any reachable state — otherwise the strip shows either no
   // current tool or two at once.
   it("radio sections arm exactly one item per state", () => {
+    // Every modal axis crossed with itself: the tool, and the playback
+    // resolution. A resolution the section forgot would leave the whole
+    // radiogroup unarmed for that value — the failure this case exists for.
     const states: QuickActionState[] = [
       state({ tool: "select", displayMode: "AbRoll" }),
       state({ tool: "select", displayMode: "ShowAll" }),
       state({ tool: "blade", displayMode: "AbRoll" }),
       state({ tool: "blade", displayMode: "ShowAll" }),
+      state({ playbackResolution: "full" }),
+      state({ playbackResolution: "half" }),
+      state({ playbackResolution: "quarter" }),
     ];
     for (const section of QUICK_ACTION_SECTIONS) {
       if (section.mode !== "radio") continue;
@@ -205,6 +217,90 @@ describe("quickActions catalogue", () => {
       "quick_actions.clear_range_empty",
     );
     expect(item?.hint?.(state({ hasRange: true }))).toBe("actions.clear_range");
+  });
+
+  // The three settings toggles that joined the strip. Each has to say which
+  // state it is IN and what a click would do — one key could not carry both,
+  // which is why the assertion is that the two differ.
+  describe("settings toggles", () => {
+    const item = (id: string): QuickActionItem => {
+      const found = QUICK_ACTION_SECTIONS.flatMap((s) => s.items).find(
+        (i) => i.id === id,
+      );
+      if (!found) throw new Error(`no strip item for ${id}`);
+      return found;
+    };
+
+    it.each([
+      ["toggleTailSnap", "snapEnabled"],
+      ["toggleFollowPlayhead", "followPlayhead"],
+      ["toggleSafeAreaGuides", "safeAreaGuides"],
+    ] as const)("tracks %s with its setting", (id, field) => {
+      expect(item(id).active?.(state({ [field]: true }))).toBe(true);
+      expect(item(id).active?.(state({ [field]: false }))).toBe(false);
+      const on = item(id).hint?.(state({ [field]: true }));
+      const off = item(id).hint?.(state({ [field]: false }));
+      expect(on).toBeTypeOf("string");
+      expect(on).not.toBe(off);
+    });
+
+    // All three sit with the independent toggles, not the momentary commands:
+    // each answers only for itself, so `aria-pressed` is the honest attribute.
+    it.each([
+      "toggleTailSnap",
+      "toggleFollowPlayhead",
+      "toggleSafeAreaGuides",
+    ])("puts %s in the independent-toggles section", (id) => {
+      const section = QUICK_ACTION_SECTIONS.find((s) =>
+        s.items.some((i) => i.id === id),
+      );
+      expect(section?.id).toBe("toggles");
+      expect(section?.mode).toBe("independent");
+    });
+  });
+
+  // Same disabled-button rule as Clear and Apply transition, for the pair whose
+  // precondition is a SELECTION rather than project content.
+  it("explains why the group buttons are unavailable", () => {
+    const item = (id: string) =>
+      QUICK_ACTION_SECTIONS.flatMap((s) => s.items).find((i) => i.id === id);
+    expect(item("groupSelected")?.hint?.(state({ canGroup: false }))).toBe(
+      "quick_actions.group_needs_two",
+    );
+    expect(item("groupSelected")?.hint?.(state({ canGroup: true }))).toBe(
+      "actions.group_selected",
+    );
+    expect(
+      item("dissolveSelectedGroup")?.hint?.(state({ canDissolve: false })),
+    ).toBe("quick_actions.dissolve_no_group");
+    expect(
+      item("dissolveSelectedGroup")?.hint?.(state({ canDissolve: true })),
+    ).toBe("actions.dissolve_selected_group");
+  });
+
+  // The strip could hide markers it had no way to create until this row
+  // existed. Add and show are the same feature but not the same kind of
+  // control, and the ARIA mode is what keeps them in different sections.
+  it("separates marker authoring from marker visibility", () => {
+    const sectionOf = (id: string) =>
+      QUICK_ACTION_SECTIONS.find((s) => s.items.some((i) => i.id === id));
+    expect(sectionOf("addMarkerAtPlayhead")?.mode).toBe("command");
+    expect(sectionOf("toggleMarkersVisible")?.mode).toBe("independent");
+    expect(sectionOf("addMarkerAtPlayhead")?.id).not.toBe(
+      sectionOf("toggleMarkersVisible")?.id,
+    );
+  });
+
+  // Gating this one would mean subscribing the strip to the PLAYHEAD — a
+  // re-render per frame, which the playhead gate forbids. The command no-ops
+  // over a gap instead, so the button must not claim a hint that promises a
+  // disabled state it will never render.
+  it("leaves the playhead split ungated and unhinted", () => {
+    const item = QUICK_ACTION_SECTIONS.flatMap((s) => s.items).find(
+      (i) => i.id === "splitAtPlayhead",
+    );
+    expect(item).toBeDefined();
+    expect(item?.hint).toBeUndefined();
   });
 
   // Same disabled-button rule for the apply-transition button: with no

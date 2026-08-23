@@ -18,15 +18,27 @@ import {
   ArrowRightToLine,
   Blend,
   Bookmark,
+  BookmarkPlus,
   FoldVertical,
+  Group,
+  LocateFixed,
+  Magnet,
   MousePointer2,
   Scissors,
+  SignalHigh,
+  SignalLow,
+  SignalMedium,
+  SquareDashed,
+  SquareSplitHorizontal,
+  Ungroup,
   UnfoldVertical,
   X,
+  ZoomIn,
+  ZoomOut,
   type LucideIcon,
 } from "lucide-react";
 
-import type { DisplayMode } from "../ipc";
+import type { AppSettings, DisplayMode } from "../ipc";
 import type { Tool } from "../state/toolStore";
 
 /// The store-derived inputs every `active`/`hint` predicate reads. Snapshotted
@@ -49,6 +61,21 @@ export interface QuickActionState {
   /// re-render the strip only when cut-existence flips). Existence only; WHICH
   /// cut wins is resolved at dispatch time by the command itself.
   hasTransitionCut: boolean;
+  /// Clip snapping — the magnet (`tail_snap_enabled`).
+  snapEnabled: boolean;
+  /// Whether the timeline pages itself to keep the playhead on screen.
+  followPlayhead: boolean;
+  /// Whether the preview draws the title-safe / action-safe rectangles.
+  safeAreaGuides: boolean;
+  /// Preview decode resolution. The strip's `resolution` radio section reads
+  /// it; the preview itself subscribes to the store directly.
+  playbackResolution: AppSettings["playback_resolution"];
+  /// Whether ≥2 layers are selected (`useCanGroupSelection`). A boolean
+  /// selector for the `hasRange` reason: the strip re-renders when the answer
+  /// flips, not on every click-select.
+  canGroup: boolean;
+  /// Whether the selection touches a group (`useCanDissolveSelection`).
+  canDissolve: boolean;
 }
 
 export interface QuickActionItem {
@@ -143,6 +170,77 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
             ? "quick_actions.markers_shown_hint"
             : "quick_actions.markers_hidden_hint",
       },
+      {
+        // The magnet. Its home in every NLE is a toolbar button, and until this
+        // row it lived only in Settings — a per-edit switch behind a
+        // preferences panel. One fixed glyph for the marker-toggle reason: a
+        // plain on/off whose state the pressed styling already carries.
+        id: "toggleTailSnap",
+        icon: Magnet,
+        active: (s) => s.snapEnabled,
+        hint: (s) =>
+          s.snapEnabled
+            ? "quick_actions.snap_on_hint"
+            : "quick_actions.snap_off_hint",
+      },
+      {
+        // Auto-scroll. `LocateFixed` rather than an arrow: the button is about
+        // keeping a target centred, not about a direction of travel.
+        id: "toggleFollowPlayhead",
+        icon: LocateFixed,
+        active: (s) => s.followPlayhead,
+        hint: (s) =>
+          s.followPlayhead
+            ? "quick_actions.follow_on_hint"
+            : "quick_actions.follow_off_hint",
+      },
+      {
+        // Title-safe / action-safe rectangles. It has NO keyboard binding at
+        // all, so before this row the only way to reach it was the search
+        // palette — the strip is its one-click home.
+        id: "toggleSafeAreaGuides",
+        icon: SquareDashed,
+        active: (s) => s.safeAreaGuides,
+        hint: (s) =>
+          s.safeAreaGuides
+            ? "quick_actions.safe_area_on_hint"
+            : "quick_actions.safe_area_off_hint",
+      },
+    ],
+  },
+  {
+    // Edits that need no pointer. The Blade above can only cut where the mouse
+    // is; `splitAtPlayhead` cuts on the line, which is how the same operation
+    // is reached from the keyboard and from here.
+    id: "edit",
+    mode: "command",
+    items: [
+      {
+        // No `hint`, and deliberately no disabled state: whether a clip
+        // straddles the playhead changes as the playhead MOVES, and gating on
+        // it would mean subscribing the strip to the playhead — one re-render
+        // per frame, which the playhead gate forbids. The command no-ops over
+        // a gap, exactly as `Ctrl+K` does in Premiere.
+        id: "splitAtPlayhead",
+        icon: SquareSplitHorizontal,
+      },
+      {
+        id: "groupSelected",
+        icon: Group,
+        // Same disabled-button rule as `clearRange`: with too small a
+        // selection the hint names the precondition instead of restating a
+        // label that cannot be used.
+        hint: (s) =>
+          s.canGroup ? "actions.group_selected" : "quick_actions.group_needs_two",
+      },
+      {
+        id: "dissolveSelectedGroup",
+        icon: Ungroup,
+        hint: (s) =>
+          s.canDissolve
+            ? "actions.dissolve_selected_group"
+            : "quick_actions.dissolve_no_group",
+      },
     ],
   },
   {
@@ -170,6 +268,16 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
     ],
   },
   {
+    // Marker AUTHORING, separate from the marker toggle up in `toggles` — the
+    // two are the same feature but not the same kind of control, and the ARIA
+    // mode is what splits them: adding a marker is momentary, showing them is
+    // a switch. Before this row the strip could hide markers it had no way to
+    // create.
+    id: "markers",
+    mode: "command",
+    items: [{ id: "addMarkerAtPlayhead", icon: BookmarkPlus }],
+  },
+  {
     // The one-click half of transition discoverability (#16): the button is
     // findable without knowing the right-click-on-a-cut gesture exists. Its
     // own section, not `range`'s — that one is the in/out family.
@@ -185,6 +293,45 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
           s.hasTransitionCut
             ? "actions.apply_default_transition"
             : "transitions.no_target",
+      },
+    ],
+  },
+  {
+    // Timeline scale. The `=` / `-` keys have always existed; a trackpad user
+    // with no numeric row had no non-keyboard route to them.
+    id: "zoom",
+    mode: "command",
+    items: [
+      { id: "zoomTimelineIn", icon: ZoomIn },
+      { id: "zoomTimelineOut", icon: ZoomOut },
+    ],
+  },
+  {
+    // Preview decode resolution — three absolute choices, NOT one cycling
+    // button. From "half" a cycle has no defined direction, the same defect
+    // `toolStore.setTool`'s landmine describes for tools; and three
+    // idempotent commands are what let this be an honest `radiogroup` rather
+    // than a switch claiming a pressed state it hasn't got.
+    //
+    // A quality ladder, so the glyphs are a ladder: the bars say "more" and
+    // "less" at 16 px in a way "1/2" and "1/4" cannot.
+    id: "resolution",
+    mode: "radio",
+    items: [
+      {
+        id: "setPlaybackResolutionFull",
+        icon: SignalHigh,
+        active: (s) => s.playbackResolution === "full",
+      },
+      {
+        id: "setPlaybackResolutionHalf",
+        icon: SignalMedium,
+        active: (s) => s.playbackResolution === "half",
+      },
+      {
+        id: "setPlaybackResolutionQuarter",
+        icon: SignalLow,
+        active: (s) => s.playbackResolution === "quarter",
       },
     ],
   },

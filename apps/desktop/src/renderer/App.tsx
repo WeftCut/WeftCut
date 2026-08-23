@@ -79,6 +79,7 @@ import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { useLogStore } from "./logs/store";
 import { useCommandProvider } from "./commands/registry";
 import { buildAppCommands } from "./commands/appCommands";
+import { splitAtPlayhead } from "./commands/splitAtPlayhead";
 import { applyTransitionAtPlayhead } from "./timeline/applyTransition";
 import {
   displayMode,
@@ -579,6 +580,11 @@ export function App({ onCloseProject }: AppProps) {
     deleteSelected,
     copySelected,
     pasteAtPlayhead,
+    // Self-contained (it reads the project, playhead and selection stores and
+    // commits through IPC), so App only lends it a HandlerMap slot — the
+    // `project:changed` subscription refreshes the view, as it does for every
+    // other command that doesn't hold App's `refresh`.
+    splitAtPlayhead,
     importMedia: importMediaFiles,
     export: () => setExportDialogOpen(true),
     // One key per tool, both idempotent (`toolStore.ts`). `Esc` → Selection

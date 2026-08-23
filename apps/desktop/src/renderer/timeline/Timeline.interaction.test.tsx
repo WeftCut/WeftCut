@@ -6,6 +6,7 @@ import {
   createEvent,
   fireEvent,
   render,
+  screen,
   waitFor,
 } from "@testing-library/react";
 import "../i18n"; // initialize i18next so t(key) resolves in chrome
@@ -35,6 +36,7 @@ import {
   timelineScrollLeftPx,
 } from "../state/timelineScrollStore";
 import { setActiveRegion } from "../focus/focusRegionStore";
+import { registerCommandProvider } from "../commands/registry";
 import { registerTransport, releaseTransport } from "../state/playbackStore";
 import { HEADER_COL_PX } from "./geometry";
 
@@ -705,6 +707,95 @@ describe("Timeline seek/selection coupling", () => {
     expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
       new Set([layer.id, groupedLayer.id]),
     );
+  });
+
+  // The clip menu's registry rows act on the SELECTION, so a right-click that
+  // left the selection alone could delete or copy a clip other than the one
+  // under the cursor. `onLayerPointerDown` deliberately ignores button 2 (a
+  // right-press must not arm a drag), which is why the menu handler does the
+  // selecting.
+  describe("right-click selection", () => {
+    it("selects the clicked clip, group-aware, like a left click", () => {
+      const { getByText } = renderTimeline({
+        tracks: [groupedTrack],
+        groups: [group],
+      });
+      const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+      fireEvent.contextMenu(first, { clientX: 40, clientY: 30 });
+      expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
+      expect(
+        Array.from(useSelectionStore.getState().selectedLayerIds),
+      ).toEqual([layer.id, groupedLayer.id]);
+    });
+
+    it("honours Alt to escape the group, the same as a left click", () => {
+      const { getByText } = renderTimeline({
+        tracks: [groupedTrack],
+        groups: [group],
+      });
+      const second = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
+
+      fireEvent.contextMenu(second, { clientX: 200, clientY: 30, altKey: true });
+      expect(
+        Array.from(useSelectionStore.getState().selectedLayerIds),
+      ).toEqual([groupedLayer.id]);
+    });
+
+    // The clip menu's first section comes from the command registry, so the
+    // rows carry the keys that do the same thing — the point of routing them
+    // through `CommandContextItem` rather than hand-writing five labels.
+    it("offers the registry rows with their accelerators", async () => {
+      const unregister = registerCommandProvider(() => [
+        { id: "copySelected", actionId: "copySelected", labelKey: "actions.copy_selected", run: () => {} },
+        { id: "deleteSelected", actionId: "deleteSelected", labelKey: "actions.delete_selected", run: () => {} },
+        { id: "splitAtPlayhead", actionId: "splitAtPlayhead", labelKey: "actions.split_at_playhead", run: () => {} },
+      ]);
+      try {
+        const { getByText } = renderTimeline({ tracks: [groupedTrack] });
+        const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+        fireEvent.contextMenu(first, { clientX: 40, clientY: 30 });
+
+        const row = await screen.findByText("Split at playhead");
+        expect(
+          row.parentElement?.querySelector(".app-menu-item-accelerator")
+            ?.textContent,
+        ).toBe("Ctrl+B");
+        // A row whose provider never mounted is omitted, never rendered dead:
+        // `pasteAtPlayhead` and `moveToNewTrack` are absent here on purpose.
+        expect(screen.queryByText("Paste layer at playhead")).toBeNull();
+      } finally {
+        unregister();
+      }
+    });
+
+    // "Select four clips, right-click one, Delete" has to mean what it reads.
+    // Collapsing to the clicked clip would silently shrink the target.
+    it("keeps a multi-selection when the click lands inside it", () => {
+      const { getByText } = renderTimeline({
+        tracks: [groupedTrack],
+        groups: [group],
+      });
+      const second = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
+
+      // Alt-select just Clip B, then Shift-extend back over Clip A's group so
+      // the selection holds both and its primary is NOT the clip about to be
+      // right-clicked.
+      fireEvent.pointerDown(second, { button: 0, clientX: 200, altKey: true });
+      fireEvent.pointerUp(window, { clientX: 200, altKey: true });
+      const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+      fireEvent.pointerDown(first, { button: 0, clientX: 40, shiftKey: true });
+      fireEvent.pointerUp(window, { clientX: 40, shiftKey: true });
+      const before = useSelectionStore.getState();
+
+      fireEvent.contextMenu(second, { clientX: 200, clientY: 30 });
+      expect(useSelectionStore.getState().primaryLayerId).toBe(
+        before.primaryLayerId,
+      );
+      expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
+        new Set(before.selectedLayerIds),
+      );
+    });
   });
 
   it("groups the complete global selection through the existing shortcut", async () => {

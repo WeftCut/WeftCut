@@ -213,7 +213,11 @@ const enUS = {
   quick_actions: {
     tools: "Tools",
     toggles: "Toggles",
+    edit: "Edit",
     range: "In/Out",
+    markers: "Markers",
+    zoom: "Zoom",
+    resolution: "Playback resolution",
     // Shown on the disabled Clear button — says why it's disabled rather than
     // repeating the label the user can't act on.
     clear_range_empty: "No in/out points marked",
@@ -222,6 +226,18 @@ const enUS = {
     // pressing again would get you.
     markers_shown_hint: "Showing timeline markers. Click to hide.",
     markers_hidden_hint: "Timeline markers hidden. Click to show.",
+    // Same two-state shape for the three toggles that joined the section: the
+    // pressed border says which state, the hint says what a click does.
+    snap_on_hint: "Clip snapping on. Click to disable.",
+    snap_off_hint: "Clip snapping off. Click to enable.",
+    follow_on_hint: "Following the playhead. Click to hold the view still.",
+    follow_off_hint: "View holds still. Click to follow the playhead.",
+    safe_area_on_hint: "Showing safe-area guides. Click to hide.",
+    safe_area_off_hint: "Safe-area guides hidden. Click to show.",
+    // Disabled-button reasons, the `clear_range_empty` rule: name the
+    // precondition rather than restate a label that can't be acted on.
+    group_needs_two: "Select two or more clips to group them",
+    dissolve_no_group: "No group in the selection",
     transitions: "Transitions",
   },
   dock_workspace: {
@@ -314,12 +330,20 @@ const enUS = {
     delete_selected: "Delete selected layer",
     copy_selected: "Copy selected layer",
     paste_at_playhead: "Paste layer at playhead",
+    split_at_playhead: "Split at playhead",
     toggle_log: "Toggle activity log",
     focus_log_search: "Focus activity-log search",
     toggle_display_mode: "Toggle A/B Roll / Show All",
     toggle_follow_playhead: "Toggle follow playhead",
     toggle_markers_visible: "Toggle timeline markers",
     toggle_safe_area_guides: "Toggle safe-area guides",
+    toggle_tail_snap: "Toggle clip snapping",
+    // Prefixed, unlike the bare "Full" / "1/2" the Settings radio uses: these
+    // labels also appear in the search palette, where a row reading just
+    // "1/2" says nothing about what it would change.
+    playback_resolution_full: "Playback resolution: Full",
+    playback_resolution_half: "Playback resolution: 1/2",
+    playback_resolution_quarter: "Playback resolution: 1/4",
     center_horizontally: "Center horizontally",
     center_vertically: "Center vertically",
     apply_default_transition: "Apply default transition (crossfade)",

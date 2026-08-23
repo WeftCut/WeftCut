@@ -14,8 +14,12 @@ import { ACTION_DEFS, type ActionId } from "../shortcuts/defs";
 import {
   followPlayheadEnabled,
   markersVisible,
+  playbackResolution,
   safeAreaGuidesVisible,
+  setPlaybackResolution,
+  tailSnapEnabled,
   toggleSafeAreaGuides,
+  toggleTailSnap,
 } from "../settings/appSettingsStore";
 import { playheadTimeUs } from "../state/playheadStore";
 import { hasMarkedRange } from "../state/rangeStore";
@@ -119,6 +123,18 @@ const SELF_CONTAINED_COMMAND_IDS = [
   "toggleSafeAreaGuides",
   "centerHorizontally",
   "centerVertically",
+  // Clip snapping. No binding for the key-budget reason above — and because
+  // the magnet's home in every NLE is a toolbar button, which is exactly what
+  // being a no-binding command makes resolvable (`quickActions.ts`).
+  "toggleTailSnap",
+  // Preview playback resolution: three ABSOLUTE setters, not one cycling
+  // command. A cycle has no defined direction from the middle value — the
+  // `toolStore.setTool` landmine, one value further along — and three
+  // idempotent commands are also what lets the strip render them as a
+  // radiogroup instead of claiming a pressed state a 3-way switch can't have.
+  "setPlaybackResolutionFull",
+  "setPlaybackResolutionHalf",
+  "setPlaybackResolutionQuarter",
 ] as const;
 
 type SelfContainedCommandId = (typeof SELF_CONTAINED_COMMAND_IDS)[number];
@@ -127,6 +143,10 @@ const SELF_CONTAINED_LABEL_KEYS: Record<SelfContainedCommandId, string> = {
   toggleSafeAreaGuides: "actions.toggle_safe_area_guides",
   centerHorizontally: "actions.center_horizontally",
   centerVertically: "actions.center_vertically",
+  toggleTailSnap: "actions.toggle_tail_snap",
+  setPlaybackResolutionFull: "actions.playback_resolution_full",
+  setPlaybackResolutionHalf: "actions.playback_resolution_half",
+  setPlaybackResolutionQuarter: "actions.playback_resolution_quarter",
 };
 
 /// A centring command's whole input: the layer, and the frame it is being
@@ -372,6 +392,25 @@ export function buildAppCommands(
     centerVertically: {
       run: () => centerPrimaryLayer("y"),
       enabled: () => centerTarget() !== null,
+    },
+    toggleTailSnap: {
+      run: () => void toggleTailSnap(),
+      checked: () => tailSnapEnabled(),
+    },
+    // `checked`, not `enabled`: the current value is always re-selectable, and
+    // a greyed-out "Full" would say the mode is unavailable rather than
+    // already chosen. Same read-live rule as every predicate above.
+    setPlaybackResolutionFull: {
+      run: () => void setPlaybackResolution("full"),
+      checked: () => playbackResolution() === "full",
+    },
+    setPlaybackResolutionHalf: {
+      run: () => void setPlaybackResolution("half"),
+      checked: () => playbackResolution() === "half",
+    },
+    setPlaybackResolutionQuarter: {
+      run: () => void setPlaybackResolution("quarter"),
+      checked: () => playbackResolution() === "quarter",
     },
   };
   for (const id of SELF_CONTAINED_COMMAND_IDS) {

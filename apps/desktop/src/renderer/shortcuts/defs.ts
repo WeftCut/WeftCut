@@ -18,6 +18,7 @@ export type ActionId =
   | "deleteSelected"
   | "copySelected"
   | "pasteAtPlayhead"
+  | "splitAtPlayhead"
   | "importMedia"
   | "export"
   | "selectTool"
@@ -124,6 +125,16 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // media pool focused, Ctrl+C is not "copy my timeline selection".
   copySelected:    { defaultKeys: ["Mod+C"],               labelKey: "actions.copy_selected", fireWhenEditing: false, scope: TIMELINE_SELECTION },
   pasteAtPlayhead: { defaultKeys: ["Mod+V"],               labelKey: "actions.paste_at_playhead", fireWhenEditing: false, scope: TIMELINE_SELECTION },
+  // Cut at the playhead — the one edit that earns a chord outright, and the
+  // Blade's keyboard half (the tool can only cut where the pointer is). `Mod+B`
+  // rather than Premiere's `Mod+K` because `Mod+K` is the search palette here;
+  // `Mod+B` is FCP's and CapCut's key for the same operation, so it is not an
+  // invention. `fireWhenEditing: false` for the copy/paste reason above and one
+  // more: inside a text field the platform reads Ctrl+B as "bold", and a clip
+  // silently splitting while a layer is being renamed is the worst version of
+  // this key. `scope` matches `deleteSelected` — with the media pool focused,
+  // Ctrl+B is not an edit to the timeline.
+  splitAtPlayhead: { defaultKeys: ["Mod+B"],               labelKey: "actions.split_at_playhead", fireWhenEditing: false, scope: TIMELINE_SELECTION },
   importMedia:     { defaultKeys: ["Mod+I"],               labelKey: "actions.import_media" },
   export:          { defaultKeys: ["Mod+E"],               labelKey: "actions.export" },
   // Modal timeline tools, one key per tool (`toolStore.ts`): `V` arms

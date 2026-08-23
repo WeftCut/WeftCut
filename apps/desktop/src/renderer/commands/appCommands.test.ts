@@ -16,6 +16,7 @@ const noop = () => {};
 const handlers: HandlerMap = {
   save: noop, saveAs: noop, closeProject: noop, undo: noop, redo: noop,
   togglePlay: noop, deleteSelected: noop, copySelected: noop, pasteAtPlayhead: noop,
+  splitAtPlayhead: noop,
   importMedia: noop, export: noop,
   selectTool: noop, toggleBladeMode: noop, toggleLog: noop, focusLogSearch: noop,
   toggleDisplayMode: noop,
@@ -91,6 +92,56 @@ describe("buildAppCommands", () => {
     }
     // A no-binding command that is not checkable stays that way.
     expect(defs.find((d) => d.id === "createCheckpoint")!.checked).toBeUndefined();
+  });
+
+  // The self-contained third of the namespace: no binding, no App closure. All
+  // four report check state, and all four must read it LIVE — they are built
+  // before every flip below, which a build-time snapshot would freeze.
+  describe("self-contained toggles", () => {
+    it("reports clip snapping live", () => {
+      const snap = buildAppCommands(handlers, menu, flags).find(
+        (d) => d.id === "toggleTailSnap",
+      )!;
+      expect(snap.actionId).toBeUndefined();
+      expect(snap.checked!()).toBe(true);
+      try {
+        useAppSettingsStore.setState((s) => ({
+          settings: { ...s.settings, tail_snap_enabled: false },
+        }));
+        expect(snap.checked!()).toBe(false);
+      } finally {
+        useAppSettingsStore.setState((s) => ({
+          settings: { ...s.settings, tail_snap_enabled: true },
+        }));
+      }
+    });
+
+    // Three absolute setters, not a cycle: exactly one is checked at a time,
+    // and none of them is ever DISABLED — the current value stays selectable,
+    // because greying it out would say the mode is unavailable rather than
+    // already chosen.
+    it("checks exactly one playback resolution and disables none", () => {
+      const defs = buildAppCommands(handlers, menu, flags);
+      const ids = [
+        "setPlaybackResolutionFull",
+        "setPlaybackResolutionHalf",
+        "setPlaybackResolutionQuarter",
+      ] as const;
+      const rows = ids.map((id) => defs.find((d) => d.id === id)!);
+      for (const row of rows) expect(row.enabled).toBeUndefined();
+      try {
+        for (const value of ["full", "half", "quarter"] as const) {
+          useAppSettingsStore.setState((s) => ({
+            settings: { ...s.settings, playback_resolution: value },
+          }));
+          expect(rows.filter((r) => r.checked!()).length).toBe(1);
+        }
+      } finally {
+        useAppSettingsStore.setState((s) => ({
+          settings: { ...s.settings, playback_resolution: "full" },
+        }));
+      }
+    });
   });
 
   it("lists Settings once, from the catalogue rather than as a menu-only entry", () => {

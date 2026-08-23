@@ -156,7 +156,9 @@ that one trim (body `Alt+drag` instead duplicates the single layer at the
 drop position). Grouped layers show a 2 px left accent in a hue derived
 deterministically from `group_id` plus a small chain-link icon. `Ctrl+G`
 creates from the selection, `Ctrl+Shift+G` dissolves — rebindable via the
-TS keybindings store.
+TS keybindings store, and both also sit in the Quick Actions strip's `edit`
+section, where each greys out with its own precondition named in the tooltip
+(fewer than two layers selected; no group in the selection).
 
 **A/V sync offset.** An audio member can be slipped off its video partner
 (audio lives on the 48 kHz sample lattice — see [audio.md](audio.md)), and the
@@ -189,6 +191,49 @@ fan-out enforcement in `move.ts` / `trim.ts` / `split.ts`. MCP tools
 ops) and the read surface (`groups` on `project://current`; there is no
 `groups_list` tool): [mcp.md](mcp.md). Wire shape: [data-model.md](data-model.md).
 
+## Split at the playhead
+
+`Mod+B` cuts every clip the playhead is inside. It is the Blade tool's
+keyboard half — the tool can only ever cut where the pointer is — and reaches
+the same `split_layer_grouped` channel a blade click does, `escape_group: false`
+included, so a grouped A/V pair cuts in lockstep. Also on the Edit menu, in the
+Quick Actions strip, in a clip's context menu and in the search palette.
+Resolution lives in `apps/desktop/src/renderer/commands/splitAtPlayhead.ts`.
+
+**Targets resolve selection-first.** A non-empty selection with anything
+straddling the playhead narrows the cut to those clips; otherwise every
+straddling clip is cut. That is Premiere's contract, and it is also what keeps
+the common case — one clip, or one auto-paired couple — to a single history
+entry, because each clip is its own commit.
+
+**One target per group, not one per member.** A grouped split already fans out
+to every spanning sibling inside one commit, so sending the partner as well
+would ask for a cut in an interval that commit had just closed.
+
+**The sweep respects the A/B view filter; the selection does not.** In A/B-roll
+mode the timeline hides every role-less track, which is exactly where
+auto-spawned overlays and titles land, so cutting one there would be an edit the
+user cannot see. A *selected* layer is one they reached on purpose — the inline
+reveal is already showing it — so the selection path ignores the filter.
+
+**Locks are prevented, not refused.** Locked layers and locked tracks are
+filtered out before dispatch: a lock is the user's own standing instruction, not
+an error to report back at them. The one refusal that survives is a group
+straddling a locked track, where the actor's `TrackLocked` is the useful answer
+— half the pair is pinned, and a partial split of a group is not a thing
+`escape_group: false` can express.
+
+**No disabled state, on purpose.** Whether a clip straddles the playhead
+changes as the playhead moves, so gating the command would mean subscribing the
+Quick Actions strip to the playhead — a re-render per frame, which the playhead
+budget forbids. Over a gap the command no-ops, exactly as `Ctrl+K` does in
+Premiere.
+
+**Undo granularity is the known limit.** N straddling clips are N commits and
+therefore N undo steps. Collapsing them would need a new actor op;
+`split_layer_multi` is the other axis (one layer, many times — the shot-split
+path).
+
 ## Track placement
 
 **There is no add, remove or reorder surface for a track**, and that is the whole
@@ -216,9 +261,9 @@ what it does. Z-order is therefore rearranged by **raising to the top, repeatedl
 lane, which cleanup then removes, so restacking leaves no residue. Ordering n
 overlapping overlays costs n−1 operations rather than one drag; it is a
 low-frequency operation. **Move to a new track** is the same operation without a
-pointer (search palette and Edit menu, no default binding, disabled when the
-selection would overlap itself on one lane). A drag gesture is unreachable from
-the keyboard, so the command is not a convenience.
+pointer (search palette, Edit menu, and a clip's own context menu; no default
+binding, disabled when the selection would overlap itself on one lane). A drag
+gesture is unreachable from the keyboard, so the command is not a convenience.
 
 **Cleanup is one sentence: a track disappears when its last layer leaves it.** A
 track that was *born* empty was never emptied, so one an agent creates on purpose
@@ -281,9 +326,11 @@ A chorded binding would look right in Settings → Keyboard and never fire. Bare
 keys also stay dead inside text fields, so a minus still types into a numeric
 inspector field.
 
-Both are real commands (search palette, Settings → Keyboard, agent-callable) and
-are **unscoped** — the timeline is the only zoomable surface in the app, so `=`
-means the same thing whichever panel holds focus.
+Both are real commands (search palette, Settings → Keyboard, the Quick Actions
+strip, agent-callable) and are **unscoped** — the timeline is the only zoomable
+surface in the app, so `=` means the same thing whichever panel holds focus. The
+strip buttons exist for the machine with no numeric row within reach of the
+editing hand, not as a second way to say the same thing.
 
 ## Follow playhead
 
@@ -317,8 +364,9 @@ re-anchor on the playhead, and why the keyboard zoom's playhead anchor is the
 zoom's decision rather than the follow reaching in.
 
 App-level pref `timeline_follow_playhead` (default on), so it is one answer per
-machine rather than per project: View → Follow playhead, `Shift+F`, or the
-search palette. Absent from an older `app_settings.json` reads as **on**.
+machine rather than per project: View → Follow playhead, `Shift+F`, the Quick
+Actions strip, or the search palette. Absent from an older `app_settings.json`
+reads as **on**.
 
 ## Global search palette
 

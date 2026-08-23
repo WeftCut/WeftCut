@@ -1,6 +1,13 @@
+import { useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import type { TransitionDirection } from "../ipc";
+import {
+  commandRegistryVersion,
+  subscribeCommandRegistry,
+} from "../commands/registry";
+import { CommandContextItem } from "../menu/CommandContextItem";
+import { MenuSeparator } from "../menu/Menu";
 import { useCursorAnchor } from "./contextMenuAnchor";
 import {
   TRANSITION_DIRECTIONS,
@@ -8,14 +15,46 @@ import {
   type TransitionKindName,
 } from "./transitions";
 
+/// The clip menu's registry-driven rows, in order, with `"---"` for the
+/// separators. Exported for the test that sweeps them against the command
+/// catalogue — the safety net `CommandContextItem`'s untyped `id` trades away.
+///
+/// Two families. The clipboard trio first, because that is where every editor's
+/// eye goes on a right-click and where these operations sit in Premiere and
+/// Resolve alike. Then the two structural edits: cut this clip in half, or lift
+/// it onto a lane of its own.
+///
+/// All five act on the SELECTION, which is exactly why right-clicking a clip
+/// now selects it (`Timeline.tsx`'s `onContextMenu`) — the rows would otherwise
+/// be able to act on a clip other than the one under the cursor.
+///
+/// `splitAtPlayhead` and not a cursor-anchored "split here": splitting where
+/// you pointed is the Blade tool's whole job, and it is one key (`C`) and one
+/// strip button away. Resolve makes the same split — its clip menu's "Split
+/// Clip" cuts at the playhead too.
+export const LAYER_MENU_COMMAND_IDS = [
+  "copySelected",
+  "pasteAtPlayhead",
+  "deleteSelected",
+  "---",
+  "splitAtPlayhead",
+  "moveToNewTrack",
+] as const;
+
 /// Floating context menu (Base UI Menu) anchored to a zero-size virtual
 /// element at the right-click coordinates. The popup machinery (portal,
 /// outside-press + Escape close, arrow-key nav) comes from the library.
-/// Action items are scoped to the right-clicked layer's kind.
 ///
-/// When the right-click landed within the click-tolerance band of a cut
-/// between same-track adjacent visual layers (`transitionCut` non-null), an
-/// "Add transition" section appends — flat, like every menu here (no submenus).
+/// Three tiers of row, in this order:
+///   1. `LAYER_MENU_COMMAND_IDS` — registry commands on the selection, which
+///      carry their own labels, enabled state and accelerators.
+///   2. Layer-scoped actions taking an explicit `layerId`, some of them gated
+///      on the right-clicked layer's KIND.
+///   3. The transition section, appended only when the right-click landed
+///      within the click-tolerance band of a cut between same-track adjacent
+///      visual layers (`transitionCut` non-null).
+///
+/// Flat, like every menu here except the transition chip's — no submenus.
 export function LayerContextMenu({
   x,
   y,
@@ -49,6 +88,10 @@ export function LayerContextMenu({
 }) {
   const { t } = useTranslation();
   const anchor = useCursorAnchor(x, y);
+  // Providers register in post-paint effects, long before any right-click. The
+  // subscription is here so the rows survive a provider remounting under an
+  // already-open menu, and costs one line.
+  useSyncExternalStore(subscribeCommandRegistry, commandRegistryVersion);
   const directionLabel = (d: TransitionDirection) =>
     t(`transitions.direction_${d}`, { defaultValue: d });
   return (
@@ -70,6 +113,16 @@ export function LayerContextMenu({
           className="app-popup-positioner"
         >
           <MenuPrimitive.Popup className="app-menu-list">
+            {LAYER_MENU_COMMAND_IDS.map((id, i) =>
+              id === "---" ? (
+                // Position-keyed: separators have no identity, and the list is
+                // static.
+                <MenuSeparator key={`sep-${i}`} />
+              ) : (
+                <CommandContextItem key={id} id={id} onRun={onClose} />
+              ),
+            )}
+            <MenuSeparator />
             <MenuPrimitive.Item
               className="app-menu-item"
               onClick={() => onRename(layerId)}

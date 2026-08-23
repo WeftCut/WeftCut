@@ -6,11 +6,22 @@ import "../i18n";
 const settings = vi.hoisted(() => ({
   displayMode: "AbRoll" as "AbRoll" | "ShowAll",
   markersVisible: true,
+  tailSnapEnabled: true,
+  followPlayhead: true,
+  safeAreaGuides: false,
+  playbackResolution: "full" as "full" | "half" | "quarter",
 }));
 
+// Every settings hook the strip reads has to be listed: the factory REPLACES
+// the module, so an unmocked hook resolves to `undefined` and the panel calls
+// it. One line per subscription the strip takes.
 vi.mock("../settings/appSettingsStore", () => ({
   useDisplayMode: () => settings.displayMode,
   useMarkersVisible: () => settings.markersVisible,
+  useTailSnapEnabled: () => settings.tailSnapEnabled,
+  useFollowPlayheadEnabled: () => settings.followPlayhead,
+  useSafeAreaGuidesVisible: () => settings.safeAreaGuides,
+  usePlaybackResolution: () => settings.playbackResolution,
 }));
 
 vi.mock("../ipc", async (importActual) => ({
@@ -96,6 +107,10 @@ beforeEach(() => {
   bladeEnabled = true;
   settings.displayMode = "AbRoll";
   settings.markersVisible = true;
+  settings.tailSnapEnabled = true;
+  settings.followPlayhead = true;
+  settings.safeAreaGuides = false;
+  settings.playbackResolution = "full";
   useToolStore.setState({ tool: "select" });
   unregister = provideCommands();
 });

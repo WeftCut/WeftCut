@@ -55,6 +55,7 @@ import {
   type SlipLayer,
 } from "./audioSlip";
 import { deriveAudioSyncOffsets, setAudioSyncOffsets } from "./audioSyncOffsetStore";
+import { canDissolveSelection, canGroupSelection } from "./groupEligibility";
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import {
   DEFAULT_TRACK_HEIGHT,
@@ -536,12 +537,19 @@ export function Timeline({
       id: "groupSelected",
       actionId: "groupSelected",
       labelKey: ACTION_DEFS.groupSelected.labelKey,
+      // Live store reads, not this render's `selectedLayerIds`: the predicate
+      // is evaluated inside `listCommands()` by whichever surface is drawing
+      // the row (the Quick Actions strip, the palette, a context menu), and a
+      // value captured when Timeline last rendered would freeze. Same rule
+      // `appCommands.ts` states for `clearRange`.
+      enabled: canGroupSelection,
       run: handleGroupSelected,
     },
     {
       id: "dissolveSelectedGroup",
       actionId: "dissolveSelectedGroup",
       labelKey: ACTION_DEFS.dissolveSelectedGroup.labelKey,
+      enabled: canDissolveSelection,
       run: handleDissolveSelectedGroup,
     },
     {
@@ -726,6 +734,18 @@ export function Timeline({
       layerKind: string,
       layerEnabled: boolean,
     ) => {
+      // Right-click SELECTS, the way it does in Premiere, Resolve and FCP —
+      // and the way `onLayerPointerDown` deliberately does not (it takes
+      // `e.button === 0` only, because a right-press must not arm a drag).
+      // The menu's registry rows act on the selection, so without this a
+      // "Delete" chosen from one clip's menu could delete a different one.
+      //
+      // Only when the clip is OUTSIDE the current selection: right-clicking
+      // inside a multi-selection keeps it, so "select four clips, right-click
+      // one, Delete" behaves the way it reads. Modifier semantics are the
+      // click path's (`selectFromClick`): plain takes the whole group,
+      // `Alt` escapes it, `Shift` extends.
+      if (!selectedLayerIds.has(layerId)) selectFromClick(layerId, e);
       let cut: TransitionCut | null = null;
       const canvas = canvasRef.current;
       const track = tracks.find((candidate) =>
@@ -751,7 +771,7 @@ export function Timeline({
         cut,
       });
     },
-    [tracks, pxPerSec, fpsNum, fpsDen],
+    [tracks, pxPerSec, fpsNum, fpsDen, selectedLayerIds, selectFromClick],
   );
 
   // Create a transition at a cut (context-menu action). Default duration is
