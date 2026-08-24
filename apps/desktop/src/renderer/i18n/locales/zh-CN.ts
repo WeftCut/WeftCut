@@ -503,8 +503,25 @@ const zhCN: Resources = {
   },
   peek: {
     section_label: "播放头附近的隐藏轨内容",
-    live: "当前",
-    offset: "{{value}}",
+    // 行首的时间值：用单位字而非 timecode（见 `formatPeekDelta`）。包住数值的
+    // 那个词就是每行省下字段名的原因，翻译必须保留它表达的关系——任何一条退化
+    // 成裸数字，歧义就回来了。
+    // 不加数字与单位之间的空格（`window_seconds` 那种独立数值仍然保留）：
+    // 这里的值是「数字+单位+数字+单位+方位词」的五段复合，逐段加空格会把它
+    // 撑到近 90px，而这一列正是最没有余量的地方。
+    delta_frames: "{{f}}帧",
+    delta_sec_frames: "{{s}}秒{{f}}帧",
+    delta_min_sec: "{{m}}分{{s}}秒",
+    delta_hour_min: "{{h}}时{{m}}分",
+    delta_future: "{{value}}后",
+    delta_past: "{{value}}前",
+    delta_remaining: "还剩{{value}}",
+    // 字段名本身放在不占宽度的地方：无障碍名与悬停提示。可见的值保持精简，由
+    // 这几条把"它在量什么"说全。
+    delta_future_aria: "在播放头之后 {{value}} 开始",
+    delta_past_aria: "在播放头之前 {{value}} 结束",
+    delta_remaining_aria: "还有 {{value}} 播完",
+    duration_aria: "时长 {{value}}",
     // ±Δ 窗口选择器。`value` 已在 peek.ts 里格式化好，不是 count，
     // 因此这两个键不带 i18next 的复数后缀。
     window_label: "附近范围",

@@ -4,6 +4,7 @@
 // under the AB-mode filter (`splitPeekSections`).
 // Kept separate from presentation so it is unit-testable without a DOM.
 
+import { frameIndexRound } from "../frames";
 import type { LayerSummary, TrackSummary } from "../ipc";
 import { trackDisplayName } from "../lib/trackName";
 
@@ -24,7 +25,13 @@ export interface PeekItem {
   /// negative when the layer ended in the past, positive when it
   /// starts in the future, zero when it spans the playhead.
   offsetUs: number;
-  /// True when `playhead ∈ [t_start, t_end]` — gets the LIVE badge.
+  /// Microseconds from the playhead to the layer's END — how much of it is
+  /// still to come. This is the At-playhead rows' time value: a spanning
+  /// layer's distance to its nearest edge is zero by definition, so what
+  /// remains is the only relation to the playhead still worth a number there.
+  /// Zero for a row that does not span — nothing of it is playing to run out.
+  remainingUs: number;
+  /// True when `playhead ∈ [t_start, t_end]`.
   spansPlayhead: boolean;
 }
 
@@ -58,12 +65,14 @@ export function buildPeekItems(
         trackKind: track.kind,
         trackIndex,
         offsetUs: offset,
+        remainingUs: spans ? layer.t_end_us - currentTimeUs : 0,
         spansPlayhead: spans,
       });
     }
   }
-  // Order: spanning items first (LIVE bubble), then chronologically by
-  // t_start. Equal t_start ties break by track label (stable enough).
+  // Order: spanning items first (the playing stack bubbles up), then
+  // chronologically by t_start. Equal t_start ties break by track label
+  // (stable enough).
   items.sort((a, b) => {
     if (a.spansPlayhead !== b.spansPlayhead) {
       return a.spansPlayhead ? -1 : 1;
@@ -107,6 +116,103 @@ export function formatPeekWindow(
     return t("peek.window_minutes", { value: seconds / 60 });
   }
   return t("peek.window_seconds", { value: seconds });
+}
+
+/// A distance in time the Panel measures against the playhead: how far off a
+/// Nearby row's nearest edge is, or how much of an At-playhead row is left.
+///
+/// Unit letters, never a timecode — the same refusal `formatPeekWindow` makes
+/// above, for the same reason: a timecode answers "where in the composition",
+/// and every value here answers "how far". It is also what lets a row's two
+/// numbers be told apart with no field name printed on either. The distance
+/// wears units, the duration wears `formatMediaDuration`'s `MM:SS`, and neither
+/// shape can be mistaken for the other at a glance — which is the whole reason
+/// a first-time reader does not need a legend.
+///
+/// Frames survive below a minute because six frames between a cut and a
+/// B-roll's start IS an edit decision. Past a minute they are noise, and the
+/// value coarsens rather than printing digits nobody reads. The frame field is
+/// kept even at zero (`1s 0f`): a bare `1s` would read as a rounded value in a
+/// column whose whole point is that it is not.
+export function formatPeekDelta(
+  us: number,
+  fpsNum: number,
+  fpsDen: number,
+  t: (key: string, values: Record<string, unknown>) => string,
+): string {
+  const rate =
+    fpsNum > 0 && fpsDen > 0 ? { num: fpsNum, den: fpsDen } : { num: 30, den: 1 };
+  const framesPerSec = Math.max(1, Math.round(rate.num / rate.den));
+  // Frames off the grid, not `us / approxFrameDurUs` — the same reason
+  // formatTimecode does it: the nominal duration accumulates error.
+  const totalFrames = Math.max(
+    0,
+    frameIndexRound(Math.abs(us), rate.num, rate.den),
+  );
+  const totalSec = Math.floor(totalFrames / framesPerSec);
+  if (totalSec < 1) return t("peek.delta_frames", { f: totalFrames });
+  if (totalSec < 60) {
+    return t("peek.delta_sec_frames", {
+      s: totalSec,
+      f: totalFrames % framesPerSec,
+    });
+  }
+  if (totalSec < 3600) {
+    return t("peek.delta_min_sec", {
+      m: Math.floor(totalSec / 60),
+      s: totalSec % 60,
+    });
+  }
+  return t("peek.delta_hour_min", {
+    h: Math.floor(totalSec / 3600),
+    m: Math.floor(totalSec / 60) % 60,
+  });
+}
+
+/// A row's leading time value: the text it prints, and the sentence it
+/// announces. One function because the two must agree — the printed value is
+/// deliberately terse, which makes the accessible name the only place the field
+/// name exists at all, and a screen reader must never be handed "3s 12f" with
+/// no clue which of the row's two numbers it just heard.
+export interface PeekDeltaLabels {
+  text: string;
+  aria: string;
+}
+
+/// Three states, one per question the value can answer: an At-playhead row
+/// reports what is left of it, a future row when it starts, a past row when it
+/// ended.
+///
+/// The At-playhead case is why no LIVE badge exists. Every row in that section
+/// spans the playhead by construction (`splitPeekSections` routes only spanning
+/// items there), so a badge saying so repeats the section header verbatim while
+/// spending the one slot that could carry a number.
+export function peekDeltaLabels(
+  item: PeekItem,
+  fpsNum: number,
+  fpsDen: number,
+  t: (key: string, values: Record<string, unknown>) => string,
+): PeekDeltaLabels {
+  if (item.spansPlayhead) {
+    const value = formatPeekDelta(item.remainingUs, fpsNum, fpsDen, t);
+    return {
+      text: t("peek.delta_remaining", { value }),
+      aria: t("peek.delta_remaining_aria", { value }),
+    };
+  }
+  const value = formatPeekDelta(item.offsetUs, fpsNum, fpsDen, t);
+  // The sign lives in the phrase, never in the value: `formatPeekDelta` takes
+  // the magnitude precisely so no row prints a lone minus for a reader to
+  // interpret.
+  return item.offsetUs >= 0
+    ? {
+        text: t("peek.delta_future", { value }),
+        aria: t("peek.delta_future_aria", { value }),
+      }
+    : {
+        text: t("peek.delta_past", { value }),
+        aria: t("peek.delta_past_aria", { value }),
+      };
 }
 
 /// Peek filter buckets. Coarser than `layerOverlapClass` (which is

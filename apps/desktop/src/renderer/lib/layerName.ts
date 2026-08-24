@@ -22,8 +22,8 @@ import type { LayerSummary } from "../ipc";
 /// `layer.label ?? layer.id`.
 ///
 /// `t` is structurally typed rather than `TFunction` so callers can pass
-/// `useTranslation().t` straight through (same pattern as NearbyPanel's
-/// `formatOffset`).
+/// `useTranslation().t` straight through (same pattern as peek.ts's
+/// `formatPeekDelta`).
 export function layerDisplayName(
   layer: LayerSummary,
   t: (key: string, values: Record<string, unknown>) => string,

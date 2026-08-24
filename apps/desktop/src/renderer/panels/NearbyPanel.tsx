@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 
 import { AppSelect } from "../components/AppSelect";
-import { formatTimecode } from "../frames";
+import { formatMediaDuration } from "../frames";
 import { usePointerReorder } from "../hooks/usePointerReorder";
 import { useReorderSettle } from "../hooks/useReorderSettle";
 import { type TrackSummary } from "../ipc";
@@ -46,6 +46,7 @@ import {
   buildPeekItems,
   formatPeekWindow,
   peekCategory,
+  peekDeltaLabels,
   PEEK_CATEGORY_ORDER,
   PEEK_WINDOW_PRESETS_US,
   restackMenuTargets,
@@ -231,8 +232,9 @@ export function NearbyPanel({
   };
 
   // Rows render identically in both sections — a row's information set
-  // (thumbnail / icon, name, track name, offset / LIVE badge, duration) does
-  // not depend on which side of the playhead boundary it landed on. An
+  // (thumbnail / icon, name, track name, playhead relation, duration) does not
+  // depend on which side of the playhead boundary it landed on; only WHICH
+  // question the relation answers does (`peekDeltaLabels`). An
   // At-playhead index adds the reorder chrome (grip, rect registration,
   // drag / insertion-indicator classes) to the section's visual prefix; the
   // audio tail and the Nearby section stay grip-less.
@@ -540,10 +542,13 @@ function PeekRow({
 }) {
   const { t } = useTranslation();
   const durationUs = item.layer.t_end_us - item.layer.t_start_us;
-  const offsetLabel = item.spansPlayhead
-    ? t("peek.live")
-    : formatOffset(item.offsetUs, fpsNum, fpsDen, t);
-  const durationLabel = formatTimecode(durationUs, fpsNum, fpsDen);
+  // The row's two times, deliberately in two vocabularies (`formatPeekDelta`):
+  // the playhead relation as a phrase carrying unit letters, the length as the
+  // media pool's MM:SS. Neither prints a field name, and the shapes are
+  // different enough that neither needs one.
+  const delta = peekDeltaLabels(item, fpsNum, fpsDen, t);
+  const durationLabel = formatMediaDuration(durationUs);
+  const durationAria = t("peek.duration_aria", { value: durationLabel });
   const thumbMediaId =
     item.layer.params.kind === "VideoClip" ||
     item.layer.params.kind === "ImageOverlay"
@@ -686,11 +691,20 @@ function PeekRow({
             <span className="peek-label">{primaryLabel}</span>
             <span className="peek-sublabel">{item.trackLabel}</span>
           </span>
-          <span className="peek-times">
-            <span className={`peek-offset ${item.spansPlayhead ? "is-live" : ""}`}>
-              {offsetLabel}
+          {/* The field names go where they cost no width: each value's
+              accessible name, and one title covering both. A nested title wins
+              over the button's inside this subtree, so hovering the numbers
+              explains the numbers rather than repeating the clip's name. */}
+          <span className="peek-times" title={`${delta.aria} · ${durationAria}`}>
+            <span
+              className={`peek-delta ${item.spansPlayhead ? "is-live" : ""}`}
+              aria-label={delta.aria}
+            >
+              {delta.text}
             </span>
-            <span className="peek-duration">{durationLabel}</span>
+            <span className="peek-duration" aria-label={durationAria}>
+              {durationLabel}
+            </span>
           </span>
         </button>
         {onGoTo && (
@@ -707,17 +721,6 @@ function PeekRow({
       </div>
     </li>
   );
-}
-
-function formatOffset(
-  offsetUs: number,
-  fpsNum: number,
-  fpsDen: number,
-  t: (key: string, values: Record<string, unknown>) => string,
-): string {
-  const timecode = formatTimecode(Math.abs(offsetUs), fpsNum, fpsDen);
-  const value = `${offsetUs >= 0 ? "+" : "−"}${timecode}`;
-  return t("peek.offset", { defaultValue: value, value });
 }
 
 function iconForCategory(category: PeekCategory): ReactNode {

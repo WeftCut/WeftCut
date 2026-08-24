@@ -4,6 +4,7 @@ import {
   approxFrameDurUs,
   boundaryDisplayFrameUs,
   displayedFrameStartUs,
+  formatMediaDuration,
   formatTimecode,
   formatWallClock,
   frameCount,
@@ -360,6 +361,21 @@ describe("formatTimecode", () => {
 
   it("handles 29.97 NDF: rolls past frame :29 the same as integer 30fps", () => {
     expect(formatTimecode(30 * 33_367, 30_000, 1001)).toBe("00:00:01:00");
+  });
+});
+
+describe("formatMediaDuration", () => {
+  // Minutes counting the WHOLE duration is the property that keeps a length
+  // from being read as a timecode: no clock shows 125 minutes.
+  it("does not wrap total minutes at 60", () => {
+    expect(formatMediaDuration((125 * 60 + 9) * 1_000_000)).toBe("125:09");
+    expect(formatMediaDuration((61 * 60 + 5) * 1_000_000)).toBe("61:05");
+  });
+
+  it("pads to two fields and floors a negative to zero", () => {
+    expect(formatMediaDuration(0)).toBe("00:00");
+    expect(formatMediaDuration(8_000_000)).toBe("00:08");
+    expect(formatMediaDuration(-5)).toBe("00:00");
   });
 });
 

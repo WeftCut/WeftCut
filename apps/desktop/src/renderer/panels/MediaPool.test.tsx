@@ -39,7 +39,7 @@ import {
   type TrackSummary,
 } from "../ipc";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
-import { formatMediaDuration, MediaDropZone, MediaPool } from "./MediaPool";
+import { MediaDropZone, MediaPool } from "./MediaPool";
 import { type OptimizeInfo } from "./importOptimize";
 import { MEDIA_DRAG_TYPE, useMediaDragStore } from "../timeline/mediaDrag";
 
@@ -273,10 +273,6 @@ describe("MediaPool card metadata", () => {
     expect(container.querySelector(".media-item-name")?.textContent).toBe(
       "long-media",
     );
-  });
-
-  it("does not wrap total minutes at 60", () => {
-    expect(formatMediaDuration((125 * 60 + 9) * 1_000_000)).toBe("125:09");
   });
 });
 

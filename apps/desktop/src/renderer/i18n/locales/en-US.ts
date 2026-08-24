@@ -533,8 +533,24 @@ const enUS = {
   },
   peek: {
     section_label: "Hidden-track layers near playhead",
-    live: "LIVE",
-    offset: "{{value}}",
+    // A row's leading time value: unit letters, not a timecode (see
+    // `formatPeekDelta`). The phrase around the value is what saves every row a
+    // printed field name, so a translation has to keep the relation it states —
+    // reducing any of these to the bare number puts the ambiguity back.
+    delta_frames: "{{f}}f",
+    delta_sec_frames: "{{s}}s {{f}}f",
+    delta_min_sec: "{{m}}m {{s}}s",
+    delta_hour_min: "{{h}}h {{m}}m",
+    delta_future: "in {{value}}",
+    delta_past: "{{value}} ago",
+    delta_remaining: "{{value}} left",
+    // The field names themselves, spent where they cost no width: the
+    // accessible name and the hover title. The printed value stays terse; these
+    // say in full what it measures.
+    delta_future_aria: "Starts {{value}} after the playhead",
+    delta_past_aria: "Ended {{value}} before the playhead",
+    delta_remaining_aria: "{{value}} left to play",
+    duration_aria: "Duration {{value}}",
     // The ±Δ window dial. `value` is pre-formatted (peek.ts) and never a
     // count, so these keys take no i18next plural suffixes.
     window_label: "Nearby window",

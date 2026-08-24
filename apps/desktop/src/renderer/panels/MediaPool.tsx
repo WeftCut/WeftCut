@@ -31,7 +31,7 @@ import {
   analyzeShots,
   removeMedia,
 } from "../ipc";
-import { formatTimecode } from "../frames";
+import { formatMediaDuration, formatTimecode } from "../frames";
 import { trackDisplayName } from "../lib/trackName";
 import { parseCommandError } from "../errors/parseCommandError";
 import { registerRevealMedia } from "../state/navigation";
@@ -898,15 +898,4 @@ function RemoveMediaDialog({
       </div>
     </AppDialog>
   );
-}
-
-/// Compact duration used by media-pool cards. Minutes deliberately represent
-/// the complete duration instead of wrapping at an hour: 1:01:05 is 61:05.
-export function formatMediaDuration(durationUs: number): string {
-  const totalSeconds = Math.max(0, Math.round(durationUs / 1_000_000));
-  const totalMinutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${totalMinutes.toString().padStart(2, "0")}:${seconds
-    .toString()
-    .padStart(2, "0")}`;
 }

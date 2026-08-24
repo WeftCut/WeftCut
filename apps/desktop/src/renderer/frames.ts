@@ -188,6 +188,23 @@ export function formatWallClock(us: number): string {
   return `${pad(h, 2)}:${pad(m, 2)}:${pad(s, 2)}.${pad(ms, 3)}`;
 }
 
+/// Compact duration for a LENGTH readout — media-pool cards, and the Playhead
+/// Panel's rows. Minutes deliberately represent the complete duration instead of
+/// wrapping at an hour: 1:01:05 is 61:05.
+///
+/// That non-wrapping is also what keeps a length from being read as a position:
+/// `61:05` is not a timecode's shape, and `formatTimecode` above answers a
+/// question no duration is asking. Anywhere the two sit side by side, giving them
+/// one vocabulary is what makes them indistinguishable.
+export function formatMediaDuration(durationUs: number): string {
+  const totalSeconds = Math.max(0, Math.round(durationUs / US_PER_SEC));
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${totalMinutes.toString().padStart(2, "0")}:${seconds
+    .toString()
+    .padStart(2, "0")}`;
+}
+
 /// True when the rate is not a whole number of frames per second — i.e. the NTSC
 /// family (24000/1001, 30000/1001, 60000/1001). Only here do an NDF timecode's
 /// digits disagree with wall clock, because `formatTimecode` divides by the

@@ -497,19 +497,30 @@ describe("NearbyPanel two sections", () => {
     }
   });
 
-  it("keeps LIVE badge, track name, offset and duration on every row", () => {
+  // Nothing on a row names its two times, so what this pins is what makes
+  // them tellable apart: the playhead relation is a phrase carrying unit
+  // letters, the length is MM:SS, and the field names live in the accessible
+  // names — the one place they cost no width.
+  it("prints a row's two times in two vocabularies and names both for a reader", () => {
     renderPanel(stackedTracks());
 
     const logo = screen.getByTitle("Logo");
-    expect(within(logo).getByText("LIVE")).toBeTruthy();
     expect(within(logo).getByText("Logo lane")).toBeTruthy();
-    // Logo runs 0.5s → 1.5s: one second at 30 fps.
-    expect(within(logo).getByText("00:00:01:00")).toBeTruthy();
+    // Logo runs 0.5s → 1.5s and the playhead sits at 1s: half a second left,
+    // 15 frames at 30 fps. No LIVE badge — the section header said it already.
+    expect(within(logo).getByText("15f left")).toBeTruthy();
+    expect(within(logo).queryByText("LIVE")).toBeNull();
+    // One second long, in the media pool's length vocabulary.
+    expect(within(logo).getByText("00:01")).toBeTruthy();
+    expect(within(logo).getByLabelText("15f left to play")).toBeTruthy();
+    expect(within(logo).getByLabelText("Duration 00:01")).toBeTruthy();
 
     const later = screen.getByTitle("Later");
     // Later starts one second ahead of the playhead.
-    expect(within(later).getByText("+00:00:01:00")).toBeTruthy();
-    expect(within(later).getByText("00:00:01:00")).toBeTruthy();
+    expect(within(later).getByText("in 1s 0f")).toBeTruthy();
+    expect(
+      within(later).getByLabelText("Starts 1s 0f after the playhead"),
+    ).toBeTruthy();
   });
 });
 

@@ -158,21 +158,36 @@
   text-overflow: ellipsis;
 }
 
+/* Two right-aligned numbers, stacked. Tabular figures because a stacked pair
+   whose digits do not line up reads as one smear instead of two values — the
+   same opt-in every other readout in the app makes (editor, media, log). */
 .peek-times {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   font-size: var(--font-size-caption);
   color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
 }
 
-.peek-offset.is-live {
+/* The playhead relation is what this Panel is FOR; the duration is the row's
+   own metadata. Deliberately not the same weight — the hierarchy is a second,
+   wordless answer to "which of these two am I looking at". */
+.peek-delta {
+  color: var(--foreground);
+}
+
+/* An At-playhead row's remaining time. The accent carries the "this is on
+   screen right now" that a LIVE badge used to spell out — the badge said only
+   what the section header above it already said, and it spent the one slot a
+   number could occupy. */
+.peek-delta.is-live {
   color: var(--destructive);
   font-weight: 700;
-  letter-spacing: 0.04em;
 }
 
 .peek-duration {
+  font-size: var(--font-size-micro);
   color: var(--muted-foreground);
 }
 

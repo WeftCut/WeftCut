@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPeekItems,
+  formatPeekDelta,
   peekCategory,
+  peekDeltaLabels,
   restackMenuTargets,
   restackTargetForGap,
   splitPeekSections,
@@ -33,6 +35,8 @@ function item(
     trackKind: kind,
     trackIndex: opts.trackIndex ?? 0,
     offsetUs: spans ? 0 : 100_000,
+    // The fixture layer runs 0 → 1s, so a spanning row has all of itself left.
+    remainingUs: spans ? 1_000_000 : 0,
     spansPlayhead: spans,
   };
 }
@@ -46,6 +50,105 @@ describe("peekCategory", () => {
     for (const k of ["VideoClip", "ImageOverlay", "Color", "Motif"]) {
       expect(peekCategory(k)).toBe("video");
     }
+  });
+});
+
+/// Interpolating stub. These assertions are about WHICH key fires and what
+/// values reach it, never about the English copy — the copy is the locale's
+/// business, and pinning it here would turn every wording change into a
+/// failure in a file that has no opinion on wording.
+const FMT = (key: string, values: Record<string, unknown>): string =>
+  `${key}(${Object.entries(values)
+    .map(([k, v]) => `${k}=${String(v)}`)
+    .join(",")})`;
+
+describe("formatPeekDelta", () => {
+  // Below a second there is nothing but frames to report, so no `0s` is
+  // printed — `15f` is the whole value.
+  it("reports frames alone below one second", () => {
+    expect(formatPeekDelta(500_000, 30, 1, FMT)).toBe("peek.delta_frames(f=15)");
+  });
+
+  // The frame field survives at zero on purpose: a bare `1s` would read as a
+  // rounded value in a column whose point is that it is not one.
+  it("pairs seconds with frames below a minute, zero frames included", () => {
+    expect(formatPeekDelta(3_400_000, 30, 1, FMT)).toBe(
+      "peek.delta_sec_frames(s=3,f=12)",
+    );
+    expect(formatPeekDelta(1_000_000, 30, 1, FMT)).toBe(
+      "peek.delta_sec_frames(s=1,f=0)",
+    );
+  });
+
+  // Frames stop being an edit decision at this distance, so they stop being
+  // printed rather than filling the column with digits nobody reads.
+  it("coarsens past a minute, and again past an hour", () => {
+    expect(formatPeekDelta(90_000_000, 30, 1, FMT)).toBe(
+      "peek.delta_min_sec(m=1,s=30)",
+    );
+    expect(formatPeekDelta(7_384_000_000, 30, 1, FMT)).toBe(
+      "peek.delta_hour_min(h=2,m=3)",
+    );
+  });
+
+  // Direction is the caller's phrase (`peekDeltaLabels`), so the value is
+  // always a magnitude — no row prints a lone minus for a reader to decode.
+  it("formats a negative distance exactly like its positive twin", () => {
+    expect(formatPeekDelta(-3_400_000, 30, 1, FMT)).toBe(
+      formatPeekDelta(3_400_000, 30, 1, FMT),
+    );
+  });
+
+  it("falls back to 30 fps rather than dividing by a bad rate", () => {
+    expect(formatPeekDelta(500_000, 0, 0, FMT)).toBe("peek.delta_frames(f=15)");
+  });
+});
+
+describe("peekDeltaLabels", () => {
+  // An At-playhead row's distance to its nearest edge is zero by definition,
+  // so the number worth showing there is what remains. That it is playing at
+  // all is the section header's job — a LIVE badge would only repeat it, and
+  // would spend this slot to do so.
+  it("asks what is left of an At-playhead row, not whether it is playing", () => {
+    const labels = peekDeltaLabels(
+      item("live", "VideoClip", { spansPlayhead: true }),
+      30,
+      1,
+      FMT,
+    );
+    expect(labels.text).toBe(
+      "peek.delta_remaining(value=peek.delta_sec_frames(s=1,f=0))",
+    );
+    expect(labels.aria).toBe(
+      "peek.delta_remaining_aria(value=peek.delta_sec_frames(s=1,f=0))",
+    );
+  });
+
+  // Text and aria come back together because they must agree: the printed
+  // value is terse, which makes the accessible name the only place the field
+  // name exists at all.
+  it("phrases a future row as a wait and a past row as a memory", () => {
+    const soon: PeekItem = {
+      ...item("soon", "VideoClip", { spansPlayhead: false }),
+      offsetUs: 500_000,
+    };
+    const gone: PeekItem = {
+      ...item("gone", "VideoClip", { spansPlayhead: false }),
+      offsetUs: -500_000,
+    };
+
+    expect(peekDeltaLabels(soon, 30, 1, FMT).text).toBe(
+      "peek.delta_future(value=peek.delta_frames(f=15))",
+    );
+    expect(peekDeltaLabels(soon, 30, 1, FMT).aria).toBe(
+      "peek.delta_future_aria(value=peek.delta_frames(f=15))",
+    );
+    expect(peekDeltaLabels(gone, 30, 1, FMT).text).toBe(
+      "peek.delta_past(value=peek.delta_frames(f=15))",
+    );
+    expect(peekDeltaLabels(gone, 30, 1, FMT).aria).toBe(
+      "peek.delta_past_aria(value=peek.delta_frames(f=15))",
+    );
   });
 });
 
@@ -406,7 +509,7 @@ describe("buildPeekItems windowing", () => {
     expect(items.map((i) => i.layer.id)).toEqual(["early", "late"]);
   });
 
-  it("signs the offset by side and flags the spanning layer as LIVE", () => {
+  it("signs the offset by side and measures what is left of the spanner", () => {
     const items = buildPeekItems(
       [
         track("t", null, [
@@ -427,6 +530,11 @@ describe("buildPeekItems windowing", () => {
     expect(byId.get("span")!.offsetUs).toBe(0);
     expect(byId.get("past")!.offsetUs).toBe(-100_000);
     expect(byId.get("future")!.offsetUs).toBe(200_000);
+    // The spanner's row shows what is left of it instead of a zero distance;
+    // a row that is not playing has nothing to run out.
+    expect(byId.get("span")!.remainingUs).toBe(200_000);
+    expect(byId.get("past")!.remainingUs).toBe(0);
+    expect(byId.get("future")!.remainingUs).toBe(0);
   });
 
   // z is exactly the track's position in the project array, so the item must
