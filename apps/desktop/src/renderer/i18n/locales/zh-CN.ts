@@ -867,6 +867,11 @@ const zhCN: Resources = {
     duration_wall_clock: "该帧率为非丢帧时间码：{{tc}} 实际为 {{wall}}。",
     content_end_wall_clock: "内容末尾 {{tc}} 实际为 {{wall}}。",
     timeline_heading: "时间线",
+    timeline_wheel_axis: "滚轮滚动方向",
+    timeline_wheel_axis_horizontal: "沿时间（横向）",
+    timeline_wheel_axis_vertical: "跨轨道（纵向）",
+    timeline_wheel_axis_hint:
+      "Shift+滚轮始终滚动另一个方向；Ctrl+滚轮与 Alt+滚轮为缩放。",
     tail_snap_enabled: "启用片段吸附",
     tail_snap_enabled_hint:
       "拖拽或修剪片段时，自动对齐到附近的片段边界或播放头。",

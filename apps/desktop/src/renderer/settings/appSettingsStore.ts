@@ -50,6 +50,7 @@ const FALLBACK: AppSettings = {
   decode_engine: "auto",
   playback_resolution: "full",
   media_pool_layout: "large",
+  timeline_wheel_axis: "horizontal",
   timeline_follow_playhead: true,
   markers_visible: true,
   safe_area_guides_visible: false,
@@ -97,6 +98,11 @@ export const usePlaybackResolution = (): AppSettings["playback_resolution"] =>
 /// (fixed-size cards, adaptive columns), `list` (compact rows).
 export const useMediaPoolLayout = (): AppSettings["media_pool_layout"] =>
   useAppSettingsStore((s) => s.settings.media_pool_layout);
+/// Which axis the bare wheel scrolls the timeline along. The wheel handler does
+/// NOT use this hook — see `timelineWheelAxis()` below. This is for the
+/// settings UI.
+export const useTimelineWheelAxis = (): AppSettings["timeline_wheel_axis"] =>
+  useAppSettingsStore((s) => s.settings.timeline_wheel_axis);
 /// Whether the timeline pages its view to keep the playhead visible.
 export const useFollowPlayheadEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.timeline_follow_playhead);
@@ -201,6 +207,15 @@ export function markersVisible(): boolean {
 /// is evaluated inside `listCommands()`.
 export function safeAreaGuidesVisible(): boolean {
   return useAppSettingsStore.getState().settings.safe_area_guides_visible;
+}
+
+/// Read imperatively, per wheel event, by `timeline/hooks/useWheelScroll.ts`.
+/// A selector hook there would subscribe the whole timeline tree to a settings
+/// field and re-register the listener on every unrelated settings write — the
+/// same reason `TransformGizmo` reads its snap preferences at pointerdown
+/// instead of through `usePreviewSnapEnabled`.
+export function timelineWheelAxis(): AppSettings["timeline_wheel_axis"] {
+  return useAppSettingsStore.getState().settings.timeline_wheel_axis;
 }
 
 /// Imperative read for command handlers that have to decide whether a freshly

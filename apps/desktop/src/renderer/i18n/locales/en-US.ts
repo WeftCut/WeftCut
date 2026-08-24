@@ -927,6 +927,11 @@ const enUS = {
       "This rate is non-drop-frame: {{tc}} is {{wall}} of real time.",
     content_end_wall_clock: "Content end {{tc}} is {{wall}}.",
     timeline_heading: "Timeline",
+    timeline_wheel_axis: "Mouse wheel scrolls",
+    timeline_wheel_axis_horizontal: "Along time (horizontal)",
+    timeline_wheel_axis_vertical: "Across tracks (vertical)",
+    timeline_wheel_axis_hint:
+      "Shift+wheel always scrolls the other axis. Ctrl+wheel and Alt+wheel zoom.",
     tail_snap_enabled: "Clip snapping",
     tail_snap_enabled_hint:
       "Snap clips to nearby clip edges or the playhead while dragging or trimming.",

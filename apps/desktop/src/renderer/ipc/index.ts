@@ -818,10 +818,17 @@ export async function workspaceDir(): Promise<string | null> {
 import type {
   DisplayMode,
   MediaPoolLayout,
+  TimelineWheelAxis,
   AppSettings,
   AppSettingsPatch,
 } from "../../shared/app-settings";
-export type { DisplayMode, MediaPoolLayout, AppSettings, AppSettingsPatch };
+export type {
+  DisplayMode,
+  MediaPoolLayout,
+  TimelineWheelAxis,
+  AppSettings,
+  AppSettingsPatch,
+};
 
 export async function appSettingsGet(): Promise<AppSettings> {
   return invoke<AppSettings>("app_settings_get");

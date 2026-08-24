@@ -14,6 +14,7 @@ import {
   zoomAnchorX,
   zoomedScrollLeft,
 } from "../zoom";
+import { wheelPixels } from "../wheelScroll";
 
 /// The lane's visible width — `clientWidth` minus the sticky header column,
 /// which overlays the left edge and hides content under it. Read off the node
@@ -26,7 +27,7 @@ function laneWidthPx(root: HTMLDivElement): number {
 
 /// Timeline view state: zoom (px/sec) + per-track heights, persisted to
 /// `view.json` via `view_state_get`/`view_state_set`, plus both zoom gestures —
-/// Ctrl+wheel anchored on the cursor, keys anchored on the playhead.
+/// Ctrl/Alt+wheel anchored on the cursor, keys anchored on the playhead.
 export function useTimelineView(opts: {
   rootRef: React.RefObject<HTMLDivElement | null>;
   tracks: TrackSummary[];
@@ -149,7 +150,7 @@ export function useTimelineView(opts: {
     // prunes the stale id even if neither zoom nor height changed.
   }, [pxPerSec, trackHeights, expandedTracks, tracks]);
 
-  // -------- Zoom: Ctrl+wheel (cursor-anchored), keys (playhead-anchored) --------
+  // -------- Zoom: Ctrl/Alt+wheel (cursor-anchored), keys (playhead-anchored) --------
 
   // Re-anchoring happens in a layout effect, after React has re-rendered with
   // the new px/sec. Doing it inline in the gesture handler reads stale state and
@@ -169,7 +170,11 @@ export function useTimelineView(opts: {
     // with `{ passive: false }` so we can swallow the default
     // page-scroll behaviour when Ctrl is held.
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return;
+      // Ctrl is the web's zoom modifier and Resolve's; Alt is Premiere's. Both,
+      // because the muscle memory a user arrives with is whichever NLE their
+      // hands came from — and neither collides with the scroll gesture, which
+      // owns the bare wheel and Shift (`hooks/useWheelScroll.ts`).
+      if (!e.ctrlKey && !e.altKey) return;
       e.preventDefault();
       const rect = root.getBoundingClientRect();
       // The root's left edge starts under the sticky track-header
@@ -182,13 +187,10 @@ export function useTimelineView(opts: {
       // reads negative, which anchors a time just left of the lane — and that
       // is the honest answer for a gesture the user aimed there.
       const cursorXInViewport = e.clientX - rect.left - HEADER_COL_PX;
-      // deltaMode varies by device — normalise lines/pages to pixels
-      // before computing the zoom factor.
-      const lineHeight = 16;
-      const pageHeight = 100;
-      const px =
-        e.deltaY *
-        (e.deltaMode === 1 ? lineHeight : e.deltaMode === 2 ? pageHeight : 1);
+      // deltaMode varies by device — normalise lines/pages to pixels before
+      // computing the zoom factor. Shared with the scroll gesture's mapping
+      // (`timeline/wheelScroll.ts`) so a notch means the same travel in both.
+      const px = wheelPixels(e.deltaY, e.deltaMode);
       // Exponential zoom: small wheel ticks scale by ~ε near 1.0, big
       // ones don't snap-jump. Negative px (scrolling up) zooms in.
       const factor = Math.exp(-px * 0.001);

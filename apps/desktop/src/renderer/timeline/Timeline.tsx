@@ -78,6 +78,7 @@ import { LayerContextMenu } from "./LayerContextMenu";
 import { beginLayerRename } from "./renameStore";
 import { useTimelineView } from "./hooks/useTimelineView";
 import { useFollowPlayhead } from "./hooks/useFollowPlayhead";
+import { useWheelScroll } from "./hooks/useWheelScroll";
 import { useHeightDrag } from "./hooks/useHeightDrag";
 import { useLayerDrag } from "./hooks/useLayerDrag";
 import { snapTimeToTimelineBoundary } from "./snapping";
@@ -230,6 +231,12 @@ export function Timeline({
     viewportWidthPx,
     zoomBySteps,
   } = useTimelineView({ rootRef, tracks, durationUs });
+
+  // The unmodified wheel's axis. Separate from `useTimelineView`'s listener on
+  // the same node because the two gestures are separate concerns and neither
+  // reads the other's state; they stay disjoint by keying on modifiers
+  // (Ctrl/Alt zoom, bare/Shift scroll), not on listener order.
+  useWheelScroll(rootRef);
 
   // Horizontal scroll-to-time for palette jumps.
   // pxPerSec is React state; the registered closure reads it through a ref

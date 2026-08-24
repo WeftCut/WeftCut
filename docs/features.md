@@ -294,12 +294,40 @@ Mutations: `main/state/mutations/move.ts` (`applyMoveLayersToNewTrack`),
 `tracks.ts` (`applyRenameTrack`) and the single prune in `mutations/helpers.ts`.
 Wire shape and the cleanup predicate: [data-model.md](data-model.md).
 
+## Timeline scrolling
+
+The **bare wheel walks time** and **Shift+wheel walks the track stack** — the
+mapping Premiere carries as its `Timeline Mouse Scrolling` default and Resolve's
+Edit page uses. On a clip-along-time timeline the horizontal axis is the one that
+always overflows, so it gets the unmodified gesture; the browser's own convention
+(bare wheel vertical, Shift horizontal) is the opposite, and it is invisible — a
+lane that only moves under a modifier reads as jammed.
+
+`Settings → Timeline → Mouse wheel scrolls` flips the pair for the
+track-count-first habit After Effects and Media Composer teach. `Across tracks`
+is not a reimplementation: it hands every unmodified gesture back to Chromium, so
+that mode keeps the platform's scroll smoothing.
+
+Two gestures are never remapped. A **trackpad's sideways swipe** already carries
+a horizontal delta, so it passes straight through with its momentum intact — the
+handler would otherwise double its travel. And a wheel with **Ctrl or Alt** held
+belongs to zoom below; the two listeners on the timeline's scroll root divide the
+wheel by modifier, never by which one registered first.
+
+Pressing into an end stop does nothing rather than spilling onto the other axis —
+the same rule zoom follows. The mapping table is
+`apps/desktop/src/renderer/timeline/wheelScroll.ts` (pure, so the axis rules are
+testable without a layout); the listener is `hooks/useWheelScroll.ts`. Nothing
+here writes `timelineScrollStore` — moving `scrollLeft` fires a `scroll` event,
+and `Timeline`'s rAF-coalesced publisher stays the store's one writer.
+
 ## Timeline zoom
 
 Two gestures scale the timeline, differing in one thing — what they hold still.
-**Ctrl+wheel** is continuous and holds the time under the **cursor**. **`=` /
-`-`** step one doubling per press and hold the **playhead**, because a key press
-has no pointer to hold. Geometry in
+**Ctrl+wheel** (and **Alt+wheel**, Premiere's modifier for the same gesture) is
+continuous and holds the time under the **cursor**. **`=` / `-`** step one
+doubling per press and hold the **playhead**, because a key press has no pointer
+to hold. Geometry in
 `apps/desktop/src/renderer/timeline/zoom.ts`; the state, the bounds and the one
 `scrollLeft` write in `hooks/useTimelineView.ts`.
 

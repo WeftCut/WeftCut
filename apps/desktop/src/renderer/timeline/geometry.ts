@@ -10,7 +10,7 @@ import {
 // Zoom + height bounds. DEFAULT_PX_PER_SEC is the fallback for projects with
 // no `view.json`.
 // The lower bound is computed dynamically as `viewport / totalSec` so
-// Ctrl+wheel can always zoom out far enough to fit the entire timeline
+// the zoom wheel can always zoom out far enough to fit the entire timeline
 // in view, regardless of how long it is. `MIN_PX_PER_SEC_FLOOR` is a
 // tiny absolute floor that keeps the math sane in pathological cases
 // (zero-width viewport, zero-duration project).

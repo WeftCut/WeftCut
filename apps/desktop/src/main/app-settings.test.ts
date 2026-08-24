@@ -136,6 +136,18 @@ describe('app-settings store', () => {
     expect(store({ [PATH]: '{ "media_pool_layout": 3 }' }).get().media_pool_layout).toBe('large')
   })
 
+  it('timeline_wheel_axis defaults to horizontal on a file written before the field existed', () => {
+    // Same additive-field trap once more, with a sharper failure: the renderer's
+    // wheel handler switches on this value, so `undefined` would take neither
+    // branch and the timeline would stop scrolling entirely.
+    expect(store({ [PATH]: '{ "display_mode": "ShowAll" }' }).get().timeline_wheel_axis).toBe('horizontal')
+    expect(store().get().timeline_wheel_axis).toBe('horizontal')
+    expect(store().apply({ timeline_wheel_axis: 'vertical' }).timeline_wheel_axis).toBe('vertical')
+    // Hand-edited / wrong-typed values degrade the same way.
+    expect(store({ [PATH]: '{ "timeline_wheel_axis": "diagonal" }' }).get().timeline_wheel_axis).toBe('horizontal')
+    expect(store({ [PATH]: '{ "timeline_wheel_axis": 1 }' }).get().timeline_wheel_axis).toBe('horizontal')
+  })
+
   it('timeline_follow_playhead defaults to ON on a file written before the field existed', () => {
     // The additive-boolean trap: an absent key must NOT read as false, or every
     // existing install silently loses the feature it never turned off.

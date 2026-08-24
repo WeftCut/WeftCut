@@ -17,6 +17,13 @@ export type PlaybackResolution = "full" | "half" | "quarter";
 /// the panel width fits; `list` renders compact file-manager-style rows.
 export type MediaPoolLayout = "large" | "grid" | "list";
 
+/// Which axis the BARE mouse wheel moves the timeline along. `horizontal` walks
+/// time (Premiere's `Timeline Mouse Scrolling` default, and Resolve's);
+/// `vertical` walks the track stack (After Effects', Media Composer's). Shift
+/// always means "the other axis", so this one value flips both gestures at once
+/// rather than introducing a third mapping to learn.
+export type TimelineWheelAxis = "horizontal" | "vertical";
+
 export interface AppSettings {
   display_mode: DisplayMode;
   /// Half-width of the symmetric peek window in microseconds (default
@@ -58,6 +65,11 @@ export interface AppSettings {
   /// Media-pool card arrangement (see MediaPoolLayout). App-level: it's a
   /// browsing preference of this user, not a property of any project.
   media_pool_layout: MediaPoolLayout;
+  /// Which axis the bare wheel scrolls the timeline along (see
+  /// TimelineWheelAxis). App-level like `media_pool_layout`: it describes this
+  /// user's pointing device and the NLE their hands came from, not anything
+  /// about a project.
+  timeline_wheel_axis: TimelineWheelAxis;
   /// Keep the playhead inside the timeline's visible span by paging the view
   /// when it reaches an edge (`renderer/timeline/followPlayhead.ts`). Off means
   /// the view only ever moves because the user moved it.
@@ -109,6 +121,7 @@ export interface AppSettingsPatch {
   decode_engine?: "auto" | "ffmpeg" | "webcodecs";
   playback_resolution?: PlaybackResolution;
   media_pool_layout?: MediaPoolLayout;
+  timeline_wheel_axis?: TimelineWheelAxis;
   timeline_follow_playhead?: boolean;
   markers_visible?: boolean;
   safe_area_guides_visible?: boolean;
@@ -134,6 +147,14 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   decode_engine: "auto",
   playback_resolution: "full",
   media_pool_layout: "large",
+  // Horizontal, matching Premiere's `Timeline Mouse Scrolling` default and
+  // Resolve's Edit page. On a clip-along-time timeline the horizontal axis is
+  // the one that always overflows, and the OS convention this overrides — Shift
+  // for the horizontal axis — is invisible: a lane that only moves under a
+  // modifier reads as jammed (the same discovery problem `useHorizontalWheel`
+  // solves for the Quick Actions strip). `vertical` is here for the
+  // track-count-first habit After Effects and Media Composer teach.
+  timeline_wheel_axis: "horizontal",
   // On, like every mainstream NLE ships it: a playhead that walks off-screen
   // mid-playback is the surprising state, not the followed one.
   timeline_follow_playhead: true,

@@ -5,6 +5,7 @@ import {
   type DataRootCurrent,
   type DataRootProgress,
   type KeybindingsMap,
+  type TimelineWheelAxis,
   DATA_ROOT_EVENTS,
   dataRootCurrent,
   dataRootDeleteOld,
@@ -51,6 +52,7 @@ import {
   usePreviewSnapStrengthPx,
   useTailSnapEnabled,
   useTailSnapStrengthPx,
+  useTimelineWheelAxis,
 } from "./appSettingsStore";
 import { setPreferProxies, useProxyPrefStore } from "../state/proxyPreferenceStore";
 import { CANVAS_PRESETS } from "../startup/canvasPresets";
@@ -269,6 +271,7 @@ export function SettingsPanel({
 
             <section className="settings-section">
               <h3>{t("settings.timeline_heading")}</h3>
+              <TimelineWheelSection onError={setError} />
               <TimelineSnapSection onError={setError} />
             </section>
 
@@ -359,6 +362,57 @@ export function SettingsPanel({
         </div>
       </div>
     </AppDialog>
+  );
+}
+
+/// Which axis the bare wheel moves the timeline along, the preference Premiere
+/// carries as `Timeline Mouse Scrolling`. A select rather than a switch:
+/// neither value is "off", and the label has to name the axis to be readable.
+/// Set absolutely, so there is no defined direction to cycle in.
+function TimelineWheelSection({
+  onError,
+}: {
+  onError: (msg: string) => void;
+}) {
+  const { t } = useTranslation();
+  const axis = useTimelineWheelAxis();
+
+  return (
+    <>
+      <div className="settings-control-row">
+        <span className="settings-toggle-label">
+          {t("settings.timeline_wheel_axis")}
+        </span>
+        <AppSelect
+          className="settings-select"
+          value={axis}
+          ariaLabel={t("settings.timeline_wheel_axis")}
+          onValueChange={async (next) => {
+            onError("");
+            try {
+              await setAppSettings({
+                timeline_wheel_axis: next as TimelineWheelAxis,
+              });
+            } catch (err) {
+              onError(String(err));
+            }
+          }}
+          options={[
+            {
+              value: "horizontal",
+              label: t("settings.timeline_wheel_axis_horizontal"),
+            },
+            {
+              value: "vertical",
+              label: t("settings.timeline_wheel_axis_vertical"),
+            },
+          ]}
+        />
+      </div>
+      <p className="settings-toggle-hint">
+        {t("settings.timeline_wheel_axis_hint")}
+      </p>
+    </>
   );
 }
 

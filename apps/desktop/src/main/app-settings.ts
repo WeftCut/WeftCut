@@ -83,6 +83,14 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
         parsed.media_pool_layout === 'large' || parsed.media_pool_layout === 'grid' || parsed.media_pool_layout === 'list'
           ? parsed.media_pool_layout
           : d.media_pool_layout,
+      // Additive field, same trap again: absent/unrecognized MUST land on the
+      // default ('horizontal'). The renderer feeds it to a <select> AND to the
+      // wheel handler's axis switch, where `undefined` would take neither
+      // branch and leave the wheel dead.
+      timeline_wheel_axis:
+        parsed.timeline_wheel_axis === 'horizontal' || parsed.timeline_wheel_axis === 'vertical'
+          ? parsed.timeline_wheel_axis
+          : d.timeline_wheel_axis,
       // Additive booleans defaulting TRUE — the one shape where "absent" and
       // "off" must not collapse: every app_settings.json written before the
       // field existed has no key, and reading that as false would ship the
@@ -142,6 +150,7 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       if (patch.decode_engine !== undefined) current.decode_engine = patch.decode_engine
       if (patch.playback_resolution !== undefined) current.playback_resolution = patch.playback_resolution
       if (patch.media_pool_layout !== undefined) current.media_pool_layout = patch.media_pool_layout
+      if (patch.timeline_wheel_axis !== undefined) current.timeline_wheel_axis = patch.timeline_wheel_axis
       if (patch.timeline_follow_playhead !== undefined) current.timeline_follow_playhead = patch.timeline_follow_playhead
       if (patch.markers_visible !== undefined) current.markers_visible = patch.markers_visible
       if (patch.safe_area_guides_visible !== undefined) current.safe_area_guides_visible = patch.safe_area_guides_visible

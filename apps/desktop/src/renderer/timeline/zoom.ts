@@ -4,7 +4,7 @@
 // write live in `hooks/useTimelineView.ts`.
 //
 // Two gestures share this module and differ in exactly one input, the anchor:
-// Ctrl+wheel holds the time under the CURSOR, the keyboard holds the PLAYHEAD
+// The zoom wheel holds the time under the CURSOR, the keyboard holds the PLAYHEAD
 // (a key press has no pointer to hold). Everything else — the bounds, the
 // re-anchor arithmetic — is the same on both paths, which is why it lives here
 // once instead of twice.
