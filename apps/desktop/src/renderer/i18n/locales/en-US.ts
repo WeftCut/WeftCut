@@ -258,7 +258,7 @@ const enUS = {
       caption: "Caption",
       "role-mixer": "Role Mixer",
       effect: "Effect",
-      nearby: "Nearby",
+      nearby: "Playhead",
       agent: "Agent",
       history: "History",
     },
@@ -529,7 +529,7 @@ const enUS = {
     // Failure copy moved to `errors.*` (errors/formatCommandError.ts).
   },
   peek: {
-    heading: "Near playhead ({{count}})",
+    heading: "{{count}} in window",
     section_label: "Hidden-track layers near playhead",
     live: "LIVE",
     offset: "{{value}}",
@@ -539,9 +539,9 @@ const enUS = {
     cat_audio: "Audio",
     cat_text: "Text",
     filter_empty: "Nothing of that kind near the playhead",
-    section_at_playhead: "At playhead",
+    section_at_playhead: "Now playing",
     section_nearby: "Nearby",
-    at_playhead_empty: "Nothing spans the playhead right now",
+    at_playhead_empty: "Nothing is playing right now",
     goto: "Go to {{label}}",
     rename_label: "Rename {{label}}",
     restack_grip: "Drag to restack {{label}}",
@@ -550,9 +550,10 @@ const enUS = {
     restack_backward: "Send backward",
     restack_front: "Bring to front",
     restack_back: "Send to back",
-    show_all_title: "All tracks visible",
+    show_all_title: "Showing all tracks",
     show_all_msg:
-      "Nearby surfaces hidden A/B-roll layers. In Show All mode every track is already visible, so there is nothing to reveal here.",
+      "Every track is already on the timeline — nothing is hidden for this Panel to surface.",
+    show_all_hint: "Press <key>{{key}}</key> to switch back to A/B Roll.",
     empty_title: "Nothing near the playhead",
     empty_msg:
       "No hidden-track layers fall within ±{{window}} of the playhead. Move the playhead or widen the window.",

@@ -184,7 +184,26 @@ describe("NearbyPanel", () => {
     );
 
     expect(container.firstChild).not.toBeNull();
-    expect(screen.getByText("All tracks visible")).toBeTruthy();
+    expect(screen.getByText("Showing all tracks")).toBeTruthy();
+    // The explainer hands back the way out, and names the key from the
+    // effective bindings rather than a literal — no provider here, so this is
+    // the default chord.
+    expect(container.querySelector(".peek-empty-kbd")?.textContent).toBe("T");
+  });
+
+  // The other idle state has no single key that fixes it, so it offers none.
+  it("offers no key hint on the empty-window explainer", () => {
+    const { container } = render(
+      <NearbyPanel
+        tracks={[]}
+        selectedLayerId={null}
+        fpsNum={30}
+        fpsDen={1}
+        onPick={() => {}}
+      />,
+    );
+
+    expect(container.querySelector(".peek-empty-kbd")).toBeNull();
   });
 
   it("explains an empty nearby window instead of a blank Panel", () => {
@@ -204,7 +223,7 @@ describe("NearbyPanel", () => {
   it("renders nearby items and reveals the picked layer without seeking", () => {
     const { onPick } = renderPanel([nearbyTrack()]);
 
-    expect(screen.getByText("Near playhead (1)")).toBeTruthy();
+    expect(screen.getByText("1 in window")).toBeTruthy();
     fireEvent.click(screen.getByTitle("Clip one"));
     expect(onPick).toHaveBeenCalledWith("layer-1", "track-1");
   });
@@ -262,11 +281,11 @@ describe("NearbyPanel two sections", () => {
     const headers = Array.from(
       container.querySelectorAll(".peek-section-header"),
     ).map((el) => el.textContent);
-    expect(headers).toEqual(["At playhead", "Nearby"]);
+    expect(headers).toEqual(["Now playing", "Nearby"]);
 
     // Visuals order top-of-stack first (Logo's track is above Wash's);
     // the spanning audio row sinks to the tail despite its track position.
-    const stack = screen.getByRole("region", { name: "At playhead" });
+    const stack = screen.getByRole("region", { name: "Now playing" });
     expect(rowTitles(stack)).toEqual(["Logo", "Wash", "Song"]);
 
     const near = screen.getByRole("region", { name: "Nearby" });
@@ -280,9 +299,9 @@ describe("NearbyPanel two sections", () => {
       ]),
     ]);
 
-    const stack = screen.getByRole("region", { name: "At playhead" });
+    const stack = screen.getByRole("region", { name: "Now playing" });
     expect(
-      within(stack).getByText("Nothing spans the playhead right now"),
+      within(stack).getByText("Nothing is playing right now"),
     ).toBeTruthy();
     expect(rowTitles(screen.getByRole("region", { name: "Nearby" }))).toEqual([
       "Later",
@@ -295,7 +314,7 @@ describe("NearbyPanel two sections", () => {
     fireEvent.click(screen.getByRole("button", { name: "Audio" }));
 
     expect(
-      rowTitles(screen.getByRole("region", { name: "At playhead" })),
+      rowTitles(screen.getByRole("region", { name: "Now playing" })),
     ).toEqual(["Song"]);
     expect(screen.queryByTitle("Logo")).toBeNull();
     expect(screen.queryByTitle("Later")).toBeNull();
@@ -309,7 +328,7 @@ describe("NearbyPanel two sections", () => {
     fireEvent.click(screen.getByRole("button", { name: "Text" }));
 
     expect(
-      screen.getByText("Nothing spans the playhead right now"),
+      screen.getByText("Nothing is playing right now"),
     ).toBeTruthy();
     expect(rowTitles(screen.getByRole("region", { name: "Nearby" }))).toEqual([
       "Later",
@@ -347,7 +366,7 @@ describe("NearbyPanel drag restack", () => {
   /// The At-playhead section's <li> rows in DOM order (visual stack first,
   /// audio tail after) — the elements the gesture hit-tests against.
   function stackRows(): HTMLElement[] {
-    const stack = screen.getByRole("region", { name: "At playhead" });
+    const stack = screen.getByRole("region", { name: "Now playing" });
     return Array.from(stack.querySelectorAll("li"));
   }
 
@@ -428,7 +447,7 @@ describe("NearbyPanel drag restack", () => {
       clientX: 8,
       clientY: 50,
     });
-    const section = screen.getByRole("region", { name: "At playhead" });
+    const section = screen.getByRole("region", { name: "Now playing" });
     // The follow offset resets at grab, before any move.
     expect(section.style.getPropertyValue("--peek-drag-y")).toBe("0px");
 
@@ -452,7 +471,7 @@ describe("NearbyPanel drag restack", () => {
     });
     // y=30 is the gap right below the dragged row — a no-op drop.
     fireEvent.pointerMove(window, { clientX: 8, clientY: 30 });
-    const section = screen.getByRole("region", { name: "At playhead" });
+    const section = screen.getByRole("region", { name: "Now playing" });
     expect(section.className).toContain("peek-stack--reordering");
     expect(section.className).not.toContain("peek-stack--parting");
     expect(container.querySelector(".peek-row--parted")).toBeNull();
@@ -531,7 +550,7 @@ describe("NearbyPanel drag restack", () => {
     playhead.timeUs = 2_600_000;
     rerenderPanel();
     expect(
-      rowTitles(screen.getByRole("region", { name: "At playhead" })),
+      rowTitles(screen.getByRole("region", { name: "Now playing" })),
     ).toEqual(["Logo", "Wash", "Song"]);
 
     fireEvent.pointerUp(window, { clientX: 8, clientY: 70 });
@@ -540,7 +559,7 @@ describe("NearbyPanel drag restack", () => {
 
     // The gesture is over: the list snaps back to live data.
     expect(
-      rowTitles(screen.getByRole("region", { name: "At playhead" })),
+      rowTitles(screen.getByRole("region", { name: "Now playing" })),
     ).toEqual(["Later"]);
   });
 

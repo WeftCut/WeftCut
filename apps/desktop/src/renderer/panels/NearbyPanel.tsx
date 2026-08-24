@@ -17,7 +17,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import {
   CrosshairIcon,
   FilmIcon,
@@ -32,6 +32,8 @@ import { useReorderSettle } from "../hooks/useReorderSettle";
 import { type TrackSummary } from "../ipc";
 import { layerDisplayName } from "../lib/layerName";
 import { useDeltaWindowUs, useDisplayMode } from "../settings/appSettingsStore";
+import { useEffectiveBindings } from "../shortcuts/bindings-context";
+import { resolveAccelerator } from "../shortcuts/match";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
 import { MediaThumbnail } from "./MediaThumbnail";
 import { NearbyRowContextMenu } from "./NearbyRowContextMenu";
@@ -94,6 +96,10 @@ export function NearbyPanel({
   const deltaWindowUs = useDeltaWindowUs();
   const currentTimeUs = usePlayheadTimeUsThrottled(100, visible);
   const [filter, setFilter] = useState<"all" | PeekCategory>("all");
+  // The Show All explainer names the key that ends that state. Read from the
+  // effective bindings — never hard-coded — so a rebound (or cleared)
+  // display-mode chord can't leave the hint lying.
+  const displayModeBinding = useEffectiveBindings("toggleDisplayMode");
 
   const items = useMemo(() => {
     if (displayMode !== "AbRoll") return [];
@@ -274,6 +280,7 @@ export function NearbyPanel({
       <Explainer
         title={t("peek.show_all_title")}
         message={t("peek.show_all_msg")}
+        hintKey={displayModeBinding ?? undefined}
       />
     );
   }
@@ -385,7 +392,19 @@ export function NearbyPanel({
   );
 }
 
-function Explainer({ title, message }: { title: string; message: string }) {
+/// Both idle states wear the same chrome: the Panel keeps its header so it
+/// never reads as a broken Panel, and the body states what is going on. An
+/// explainer that has a way out of the state passes `hintKey` — the binding
+/// to render as the closing call to action.
+function Explainer({
+  title,
+  message,
+  hintKey,
+}: {
+  title: string;
+  message: string;
+  hintKey?: string | undefined;
+}) {
   const { t } = useTranslation();
   return (
     <section className="right-panel-peek" aria-label={t("peek.section_label")}>
@@ -393,6 +412,17 @@ function Explainer({ title, message }: { title: string; message: string }) {
         <span>{title}</span>
       </header>
       <p className="peek-empty">{message}</p>
+      {hintKey && (
+        <p className="peek-empty-hint">
+          {/* The accelerator rides a <kbd> pill, the search palette's
+              vocabulary for "this is a key you can press". */}
+          <Trans
+            i18nKey="peek.show_all_hint"
+            values={{ key: resolveAccelerator(hintKey) }}
+            components={{ key: <kbd className="peek-empty-kbd" /> }}
+          />
+        </p>
+      )}
     </section>
   );
 }

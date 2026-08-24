@@ -132,7 +132,7 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
       "Timeline",
       "Attribute",
       "Effect",
-      "Nearby",
+      "Playhead",
     ]) {
       await expect(
         page.locator(".weft-dock-tab-label", { hasText: label }),
@@ -151,7 +151,7 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
     // grip is the only tab with a `title`, and even there it sits on the inner
     // div, so it does NOT become the `role="tab"`'s accessible name — the grip
     // tab is unnamed. Locate tabs with `dockTab()`, not by title.
-    for (const label of ["Media Pool", "Transitions", "Timeline", "Attribute", "Effect", "Nearby"]) {
+    for (const label of ["Media Pool", "Transitions", "Timeline", "Attribute", "Effect", "Playhead"]) {
       await expect(page.getByRole("tab", { name: label })).toHaveCount(1);
     }
 
@@ -656,7 +656,7 @@ test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tab
       "Transitions",
       "Attribute",
       "Effect",
-      "Nearby",
+      "Playhead",
       "Timeline",
     ]);
 
@@ -670,7 +670,7 @@ test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tab
       "Attribute",
       "Effect",
       "Media Pool",
-      "Nearby",
+      "Playhead",
       "Preview",
       "Timeline",
       "Transitions",
@@ -724,7 +724,9 @@ test("View menu creates a custom Workspace from the current arrangement and swit
 
     // Close a Panel so the two Workspaces diverge, then confirm it persisted.
     await viewMenu.click();
-    await menuItem(/^Nearby$/).click(); // focus Nearby
+    // Anchored so it cannot reach "Follow playhead" in the same menu, and
+    // bilingual like its neighbours — the suite runs under either locale.
+    await menuItem(/^(Playhead|播放头)$/).click();
     await viewMenu.click();
     await menuItem(/Close Active Panel|关闭活动面板/).click();
     await expect(dockPanel(page, "nearby")).toHaveCount(0);

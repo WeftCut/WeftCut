@@ -263,6 +263,24 @@
   color: var(--muted-foreground);
 }
 
+/* The way out of the state, set apart from the explanation above it: the
+   explanation is prose, this line is an instruction. */
+.peek-empty-hint {
+  margin: 0;
+  padding: 0 12px 12px;
+  font-size: var(--font-size-caption);
+  line-height: 1.6;
+  color: var(--muted-foreground);
+}
+
+/* Same key pill as the search palette's rows. */
+.peek-empty-kbd {
+  padding: 1px 5px;
+  font-size: var(--font-size-micro);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
 .peek-rename-input {
   box-sizing: border-box;
   width: 100%;

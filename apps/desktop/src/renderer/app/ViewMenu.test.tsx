@@ -16,7 +16,7 @@ vi.mock("react-i18next", async (importOriginal) => ({
         "dock_workspace.panels.caption": "Caption",
         "dock_workspace.panels.role-mixer": "Role Mixer",
         "dock_workspace.panels.effect": "Effect",
-        "dock_workspace.panels.nearby": "Nearby",
+        "dock_workspace.panels.nearby": "Playhead",
       } as Record<string, string>)[key] ??
       key,
   }),

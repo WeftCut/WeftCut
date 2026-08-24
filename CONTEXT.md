@@ -227,12 +227,24 @@ _Avoid_: add track and move, promote, bring to front, reorder tracks, restack
 
 **Restack**:
 Anchored z-reorder of one visual layer — `restack_layer(layer, above|below
-anchor)`, the verb behind the Nearby panel's stack ordering and the MCP command
+anchor)`, the verb behind the Playhead Panel's stack ordering and the MCP command
 of the same name. Operates on the layer, not its container: a sole occupant
 carries its whole track, a layer sharing its track splits onto a fresh one, and
 a role-stamped source never moves. Anchors are layers, never indices; audio
 neither moves nor anchors. The op's exact contract lives in data-model.md.
 _Avoid_: raise (that is spawn-at-top), reorder tracks, move above/below
+
+**Playhead Panel**:
+The A/B-Roll context Panel, which takes its name from the origin everything in
+it is measured against. Its two sections name the distance from that origin:
+*Now playing* is the stack composited under the playhead — the only section
+that restacks — and *Nearby* is the rest of the ±Δ window, each row carrying
+its signed offset. The code calls the Panel `nearby` throughout (`nearby` kind
+id, `NearbyPanel.tsx`, `peek.ts`, the `.peek-*` classes, ADR 0044): the kind id
+is persisted inside saved workspaces, so the label is the only half of the name
+that can ever move.
+_Avoid_: peek Panel, near-playhead Panel, playhead (bare — that is the
+transport position, not the Panel)
 
 **Spawn**:
 The placement verdict meaning *no track can take this, so make one* — the fourth

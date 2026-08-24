@@ -67,7 +67,7 @@ async function threeOverlappingOverlays(
 
 /// The At-playhead section (a named <section> → ARIA region) and its rows,
 /// top-of-stack first — the panel's own presentation order.
-const atPlayheadStack = (page: Page) => page.getByRole('region', { name: 'At playhead' })
+const atPlayheadStack = (page: Page) => page.getByRole('region', { name: 'Now playing' })
 const stackRows = (page: Page) => atPlayheadStack(page).locator('.right-panel-peek-list > li')
 const rowLabels = (page: Page) => stackRows(page).locator('.peek-label').allTextContents()
 

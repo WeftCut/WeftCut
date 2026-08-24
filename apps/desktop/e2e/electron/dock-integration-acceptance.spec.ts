@@ -292,10 +292,10 @@ test("dragging a tab past another reorders it within the multi-Panel group", asy
   try {
     await setupEditor(page, "dock-tabreorder");
 
-    // The contextual group tabs Attribute, Effect, Nearby in that DOM order.
+    // The contextual group tabs Attribute, Effect, Playhead in that DOM order.
     // Single-Panel groups show their tabs too, so scope reorder checks to the
     // contextual strip.
-    const CONTEXT_TABS = ["Attribute", "Effect", "Nearby"];
+    const CONTEXT_TABS = ["Attribute", "Effect", "Playhead"];
     const contextual = (labels: string[]) =>
       labels.filter((l) => CONTEXT_TABS.includes(l));
     const before = await visibleTabLabels(page);
@@ -330,7 +330,7 @@ test("an edge drop splits a Panel into its own group beside the target", async (
       "Attribute",
       "Effect",
       "Media Pool",
-      "Nearby",
+      "Playhead",
       "Timeline",
       "Transitions",
     ]);
@@ -359,7 +359,7 @@ test("an edge drop splits a Panel into its own group beside the target", async (
         "Attribute",
         "Effect",
         "Media Pool",
-        "Nearby",
+        "Playhead",
         "Timeline",
         "Transitions",
       ]);
