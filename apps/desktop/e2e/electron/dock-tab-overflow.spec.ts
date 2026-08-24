@@ -128,8 +128,10 @@ test("a squeezed tab strip keeps every title whole and announces both ends", asy
       .filter({ has: page.locator('.weft-dock-tab[data-panel-kind="attribute"]') });
 
     // ① A strip with room to spare is visually untouched: no gradient, no arrow.
+    // The contextual Group ships two tabs — Attribute and Effect; the Playhead
+    // Panel has a group of its own above them in the baseline.
     await expect(page.locator(".weft-tabstrip-edge")).toHaveCount(0);
-    expect((await probeStrip(group)).tabs).toHaveLength(3);
+    expect((await probeStrip(group)).tabs).toHaveLength(2);
 
     // More tabs, from the View menu — which is where reaching a Panel by name
     // lives now. All three land in the contextual Group, so no drag is needed and
@@ -138,7 +140,7 @@ test("a squeezed tab strip keeps every title whole and announces both ends", asy
       await page.locator(".menu-trigger").nth(2).click();
       await page.locator(".app-menu-item").filter({ hasText: new RegExp(`^${name}$`) }).click();
     }
-    await expect(group.locator(".dv-tabs-container > .dv-tab")).toHaveCount(6);
+    await expect(group.locator(".dv-tabs-container > .dv-tab")).toHaveCount(5);
     await setWindowWidth(app, SQUEEZED_PX);
 
     // Home the strip: opening a Panel activates it, which scrolls to reach its

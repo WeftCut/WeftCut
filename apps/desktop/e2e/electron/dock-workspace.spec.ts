@@ -87,6 +87,7 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
           strip: rect('.weft-dock-panel[data-panel-kind="quick-actions"]'),
           media: rect('.weft-dock-panel[data-panel-kind="media"]'),
           preview: rect('.weft-dock-panel[data-panel-kind="preview"]'),
+          nearby: rect('.weft-dock-panel[data-panel-kind="nearby"]'),
           attribute: rect('.weft-dock-panel[data-panel-kind="attribute"]'),
           timeline: rect('.weft-dock-panel[data-panel-kind="timeline"]'),
         };
@@ -110,6 +111,18 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
     expect(ratio(geometry.media.width, geometry.workspace.width)).toBeCloseTo(0.22, 1);
     expect(ratio(geometry.preview.width, geometry.workspace.width)).toBeCloseTo(0.53, 1);
     expect(ratio(geometry.attribute.width, geometry.workspace.width)).toBeCloseTo(0.25, 1);
+    /* The right column is split, not tabbed: the Playhead Panel sits ON TOP of
+     * the inspector, both filling the same 25% column. Asserted as relations
+     * between the two boxes rather than as height ratios — a Panel box excludes
+     * its 28px tab strip, so a share-of-workspace number here would be a
+     * threshold tuned around chrome instead of a claim about the split. */
+    expect(geometry.nearby.x).toBeCloseTo(geometry.attribute.x, 0);
+    expect(geometry.nearby.width).toBeCloseTo(geometry.attribute.width, 0);
+    expect(geometry.nearby.y + geometry.nearby.height).toBeLessThanOrEqual(
+      geometry.attribute.y,
+    );
+    // The inspector keeps the larger share of the column.
+    expect(geometry.nearby.height).toBeLessThan(geometry.attribute.height);
     // The Quick Actions strip is a fixed-width full-height edge bar: it sits
     // beside the body branch, so it spans the Timeline row as well as the
     // editor row.
@@ -651,12 +664,15 @@ test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tab
     // including Transitions, tabbed behind the Media Pool in the library group.
     const defaultPanelSet = ["attribute", "effect", "media", "nearby", "preview", "quick-actions", "timeline", "transitions"];
     expect(await panelKinds()).toEqual(defaultPanelSet);
+    // Document order, which is the Dock Tree read left-to-right then
+    // top-to-bottom: Playhead precedes the inspector because it owns the top of
+    // the right column.
     expect(await visibleTabLabels()).toEqual([
       "Media Pool",
       "Transitions",
+      "Playhead",
       "Attribute",
       "Effect",
-      "Playhead",
       "Timeline",
     ]);
 

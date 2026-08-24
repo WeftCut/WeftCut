@@ -428,9 +428,9 @@ describe("DockWorkspaceAdapter", () => {
       "media",
       "transitions",
       "preview",
+      "nearby",
       "attribute",
       "effect",
-      "nearby",
       "timeline",
       "quick-actions",
     ]);
@@ -448,9 +448,14 @@ describe("DockWorkspaceAdapter", () => {
       minimumHeight: 180,
       position: { referencePanel: "media", direction: "right" },
     });
-    expect(byId.get("attribute")).toMatchObject({
+    // Playhead anchors the right column — it is the one inserted beside
+    // Preview and the one carrying the column's width.
+    expect(byId.get("nearby")).toMatchObject({
       initialWidth: 239,
       position: { referencePanel: "preview", direction: "right" },
+    });
+    expect(byId.get("attribute")).toMatchObject({
+      position: { referencePanel: "nearby", direction: "below" },
     });
     expect(byId.get("quick-actions")).toMatchObject({
       initialWidth: 44,
@@ -459,10 +464,6 @@ describe("DockWorkspaceAdapter", () => {
       position: { direction: "left" },
     });
     expect(byId.get("effect")).toMatchObject({
-      inactive: true,
-      position: { referencePanel: "attribute", direction: "within" },
-    });
-    expect(byId.get("nearby")).toMatchObject({
       inactive: true,
       position: { referencePanel: "attribute", direction: "within" },
     });
@@ -478,11 +479,14 @@ describe("DockWorkspaceAdapter", () => {
     expect(dock.panels.get("media")?.api.setSize).toHaveBeenCalledWith({
       width: 210,
     });
-    expect(dock.panels.get("attribute")?.api.setSize).toHaveBeenCalledWith({
-      width: 239,
-    });
     expect(dock.panels.get("timeline")?.api.setSize).toHaveBeenCalledWith({
       height: 224,
+    });
+    // One call, both axes: width sizes the right column (orthogonal, bubbles
+    // up a level), height splits Playhead against the inspector inside it.
+    expect(dock.panels.get("nearby")?.api.setSize).toHaveBeenCalledWith({
+      width: 239,
+      height: 230,
     });
 
     for (const panel of dock.added) {
@@ -1050,7 +1054,7 @@ describe("DockWorkspaceAdapter", () => {
     const adapter = new DockWorkspaceAdapter(dock.api);
     adapter.initializeEditingLayout();
 
-    // attribute/effect/nearby share one group; preview sits alone in its own.
+    // attribute/effect share one group; preview sits alone in its own.
     const toolGroup = dock.groups.find((group) =>
       group.panels.some((panel) => panel.id === "attribute"),
     );

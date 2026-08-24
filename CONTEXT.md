@@ -241,7 +241,10 @@ it is measured against. Its two sections name the distance from that origin:
 that restacks — and *Nearby* is the rest of the ±Δ window, each row carrying
 its signed offset. Δ is the user's to set, from the dial in the Panel's own
 toolbar (`delta_window_us`, app-level); the Panel prints no title, because the
-dock tab is the title. The code calls the Panel `nearby` throughout (`nearby` kind
+dock tab is the title. The default layout gives it an area of its own above the
+inspector rather than a tab behind it: A/B-Roll is the editing model the app
+defaults to, and *Now playing* is where that model is read from, so a user who
+never finds the tab never learns the model. The code calls the Panel `nearby` throughout (`nearby` kind
 id, `NearbyPanel.tsx`, `peek.ts`, the `.peek-*` classes, ADR 0044): the kind id
 is persisted inside saved workspaces, so the label is the only half of the name
 that can ever move.

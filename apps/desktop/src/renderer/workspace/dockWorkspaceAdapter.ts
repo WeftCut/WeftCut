@@ -298,6 +298,9 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     // the imperative first-boot tree and the declarative reset baseline agree.
     const stripWidth = STRIP_THICKNESS;
     const bodyWidth = Math.max(1, width - stripWidth);
+    const editorHeight = Math.round(height * 0.72);
+    const columnWidth = Math.round(bodyWidth * 0.25);
+    const playheadHeight = Math.round(editorHeight * 0.4);
 
     const media = this.addPanel("media", {
       initialWidth: Math.round(bodyWidth * 0.22),
@@ -310,15 +313,19 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
       position: { referencePanel: "media", direction: "right" },
       initialWidth: Math.round(bodyWidth * 0.53),
     });
-    const attribute = this.addPanel("attribute", {
+    // The right column is a vertical split, not a tab stack: the Playhead
+    // Panel takes the top on its own so the stack under the playhead — how
+    // A/B-Roll is read — is on screen from the first launch, and the
+    // inspector's tabs sit below it. `nearby` therefore anchors the column,
+    // and Attribute splits off it downward.
+    const nearby = this.addPanel("nearby", {
       position: { referencePanel: "preview", direction: "right" },
-      initialWidth: Math.round(bodyWidth * 0.25),
+      initialWidth: columnWidth,
+    });
+    this.addPanel("attribute", {
+      position: { referencePanel: "nearby", direction: "below" },
     });
     this.addPanel("effect", {
-      position: { referencePanel: "attribute", direction: "within" },
-      inactive: true,
-    });
-    this.addPanel("nearby", {
       position: { referencePanel: "attribute", direction: "within" },
       inactive: true,
     });
@@ -340,8 +347,14 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     // complete tree exists; Preview naturally receives the 53% remainder.
     strip?.api.setSize({ width: stripWidth });
     media?.api.setSize({ width: Math.round(bodyWidth * 0.22) });
-    attribute?.api.setSize({ width: Math.round(bodyWidth * 0.25) });
     timeline?.api.setSize({ height: Math.round(height * 0.28) });
+    // Last, and both axes in one call: the Playhead group sits one level deeper
+    // than the other columns, so `width` is its ORTHOGONAL size and bubbles up
+    // to size the whole right column, while `height` splits that column against
+    // the inspector. The Timeline clamp has to land first — `playheadHeight` is
+    // a share of the editor row, which only reaches its final height once the
+    // Timeline row has taken its own.
+    nearby?.api.setSize({ width: columnWidth, height: playheadHeight });
     this.captureOpenPlacements();
     this.emitChange();
     return true;

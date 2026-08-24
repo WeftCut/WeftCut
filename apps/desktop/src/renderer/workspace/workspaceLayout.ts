@@ -223,7 +223,7 @@ export function createEditingLayout(
 ): WeftCutLayout {
   const width = sizeOf(viewport.width) ?? 1_000;
   const height = sizeOf(viewport.height) ?? 720;
-  const contextual: PanelKind[] = ["attribute", "effect", "nearby"];
+  const contextual: PanelKind[] = ["attribute", "effect"];
   const library: PanelKind[] = ["media", "transitions"];
   const placements: PanelPlacements = {
     "quick-actions": { siblings: ["quick-actions"], index: 0 },
@@ -231,14 +231,24 @@ export function createEditingLayout(
     transitions: { siblings: library, index: 1 },
     preview: { siblings: ["preview"], index: 0 },
     timeline: { siblings: ["timeline"], index: 0 },
+    nearby: { siblings: ["nearby"], index: 0 },
     attribute: { siblings: contextual, index: 0 },
     effect: { siblings: contextual, index: 1 },
-    nearby: { siblings: contextual, index: 2 },
   };
   // The Quick Actions strip is a full-height edge bar, so it claims a fixed
   // slice of the remaining editor width rather than a proportion.
   const stripWidth = STRIP_THICKNESS;
   const bodyWidth = Math.max(1, width - stripWidth);
+  const editorHeight = Math.round(height * 0.72);
+  const timelineHeight = Math.round(height * 0.28);
+  const columnWidth = Math.round(bodyWidth * 0.25);
+  /* The Playhead Panel owns the top of the right column outright instead of
+   * sleeping behind an Attribute tab: A/B-Roll is the editing model this app
+   * defaults to, and the stack under the playhead is what that model is read
+   * from — a user who never finds the tab never learns the model. The
+   * inspector keeps the larger share below it because it holds far more rows
+   * than the stack ever does. */
+  const playheadHeight = Math.round(editorHeight * 0.4);
   const layout = normalizeLayout({
     version: WEFTCUT_LAYOUT_VERSION,
     empty: false,
@@ -248,8 +258,10 @@ export function createEditingLayout(
         // its PARENT's axis. A horizontal root gives the full-height Quick
         // Actions strip beside everything else (sizes = widths); the body
         // branch then alternates to vertical for the 72/28 editor/timeline
-        // rows (sizes = heights), and the editor row alternates back to
-        // horizontal for its three columns (sizes = widths).
+        // rows (sizes = heights); the editor row alternates back to horizontal
+        // for its three columns (sizes = widths); and the right column
+        // alternates once more to vertical for Playhead over the inspector
+        // (sizes = heights again).
         orientation: "HORIZONTAL",
         width,
         height,
@@ -272,7 +284,7 @@ export function createEditingLayout(
               data: [
                 {
                   type: "branch",
-                  size: Math.round(height * 0.72),
+                  size: editorHeight,
                   data: [
                     {
                       type: "leaf",
@@ -293,19 +305,34 @@ export function createEditingLayout(
                       },
                     },
                     {
-                      type: "leaf",
-                      size: Math.round(bodyWidth * 0.25),
-                      data: {
-                        id: "editing-context",
-                        views: contextual,
-                        activeView: "attribute",
-                      },
+                      type: "branch",
+                      size: columnWidth,
+                      data: [
+                        {
+                          type: "leaf",
+                          size: playheadHeight,
+                          data: {
+                            id: "editing-playhead",
+                            views: ["nearby"],
+                            activeView: "nearby",
+                          },
+                        },
+                        {
+                          type: "leaf",
+                          size: editorHeight - playheadHeight,
+                          data: {
+                            id: "editing-context",
+                            views: contextual,
+                            activeView: "attribute",
+                          },
+                        },
+                      ],
                     },
                   ],
                 },
                 {
                   type: "leaf",
-                  size: Math.round(height * 0.28),
+                  size: timelineHeight,
                   data: {
                     id: "editing-timeline",
                     views: ["timeline"],

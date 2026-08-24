@@ -292,20 +292,26 @@ test("dragging a tab past another reorders it within the multi-Panel group", asy
   try {
     await setupEditor(page, "dock-tabreorder");
 
-    // The contextual group tabs Attribute, Effect, Playhead in that DOM order.
-    // Single-Panel groups show their tabs too, so scope reorder checks to the
-    // contextual strip.
-    const CONTEXT_TABS = ["Attribute", "Effect", "Playhead"];
+    // The contextual group tabs Attribute then Effect in that DOM order — the
+    // Playhead Panel is a group of its own above them. Single-Panel groups show
+    // their tabs too, so scope reorder checks to the contextual strip.
+    const CONTEXT_TABS = ["Attribute", "Effect"];
     const contextual = (labels: string[]) =>
       labels.filter((l) => CONTEXT_TABS.includes(l));
     const before = await visibleTabLabels(page);
     expect(contextual(before)).toEqual(CONTEXT_TABS);
 
-    // Drag the Attribute tab onto the Nearby tab. Dropping on a tab (not a
-    // content region) reorders within the group rather than restacking: Attribute
-    // is no longer first, the group still holds the same three tabs, and nothing
-    // opened or closed.
-    await dragDockTab(page, dockTab(page, "attribute"), dockTab(page, "nearby"));
+    /* Drag the Attribute tab PAST the Effect tab — dropped on its trailing half,
+     * not its centre. Dropping on a tab (not a content region) reorders within
+     * the group rather than restacking: Attribute is no longer first, the group
+     * still holds the same tabs, and nothing opened or closed.
+     *
+     * The trailing half is load-bearing now that the group is down to two tabs.
+     * Dockview resolves the insertion slot by tab midpoint, and a dead-centre
+     * drop sits exactly ON that boundary, which resolves to "insert before the
+     * target" — i.e. back to where Attribute already was, and the gesture reads
+     * as a silent no-op rather than a failure. */
+    await dragDockTab(page, dockTab(page, "attribute"), dockTab(page, "effect"), "right");
     await expect
       .poll(async () => contextual(await visibleTabLabels(page))[0])
       .not.toBe("Attribute");
@@ -321,11 +327,13 @@ test("an edge drop splits a Panel into its own group beside the target", async (
   try {
     await setupEditor(page, "dock-split");
 
-    // Nearby starts tabbed with Attribute and Effect in the contextual group, so
-    // only the active contextual tab's content is visible; Nearby's content is
-    // hidden. Every group's tab shows its label except the two `visibleTabLabels`
+    // Effect starts tabbed behind Attribute in the contextual group, so only the
+    // active contextual tab's content is visible; Effect's content is hidden.
+    // (The Playhead Panel cannot play this part any more — the baseline gives it
+    // its own group above the inspector, so it is visible from the first frame.)
+    // Every group's tab shows its label except the two `visibleTabLabels`
     // documents (solo Preview, and Quick Actions' grip).
-    expect(await panelVisible(page, "nearby")).toBe(false);
+    expect(await panelVisible(page, "effect")).toBe(false);
     expect((await visibleTabLabels(page)).sort()).toEqual([
       "Attribute",
       "Effect",
@@ -335,22 +343,22 @@ test("an edge drop splits a Panel into its own group beside the target", async (
       "Transitions",
     ]);
 
-    // Drag Nearby's tab to the LEFT edge of Timeline. An edge drop must create a
-    // new split, not a tab stack: after it, Nearby is its own group beside
+    // Drag Effect's tab to the LEFT edge of Timeline. An edge drop must create a
+    // new split, not a tab stack: after it, Effect is its own group beside
     // Timeline and BOTH are visible simultaneously (a center/tab drop would keep
     // only one of a shared group visible at a time).
     await dragDockTab(
       page,
-      dockTab(page, "nearby"),
+      dockTab(page, "effect"),
       dockPanel(page, "timeline"),
       "left",
     );
 
-    await expect.poll(() => panelVisible(page, "nearby")).toBe(true);
+    await expect.poll(() => panelVisible(page, "effect")).toBe(true);
     expect(await panelVisible(page, "timeline")).toBe(true);
     // Still the same built-in Panels open, just re-split into a new group.
     expect(await panelKinds(page)).toEqual(DEFAULT_PANELS);
-    // Nearby left the contextual strip for its own group; its tab stays visible
+    // Effect left the contextual strip for its own group; its tab stays visible
     // there (single-Panel groups show their header), so every tab but solo
     // Preview's remains visible.
     await expect
@@ -363,10 +371,10 @@ test("an edge drop splits a Panel into its own group beside the target", async (
         "Timeline",
         "Transitions",
       ]);
-    // Nearby now sits to the left of Timeline.
-    const nearby = await rect(page, panelSel("nearby"));
+    // Effect now sits to the left of Timeline.
+    const effect = await rect(page, panelSel("effect"));
     const timelineAfter = await rect(page, panelSel("timeline"));
-    expect(nearby.x).toBeLessThan(timelineAfter.x);
+    expect(effect.x).toBeLessThan(timelineAfter.x);
   } finally {
     await app.close();
   }
