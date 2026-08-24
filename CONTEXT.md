@@ -239,7 +239,9 @@ The A/B-Roll context Panel, which takes its name from the origin everything in
 it is measured against. Its two sections name the distance from that origin:
 *Now playing* is the stack composited under the playhead — the only section
 that restacks — and *Nearby* is the rest of the ±Δ window, each row carrying
-its signed offset. The code calls the Panel `nearby` throughout (`nearby` kind
+its signed offset. Δ is the user's to set, from the dial in the Panel's own
+toolbar (`delta_window_us`, app-level); the Panel prints no title, because the
+dock tab is the title. The code calls the Panel `nearby` throughout (`nearby` kind
 id, `NearbyPanel.tsx`, `peek.ts`, the `.peek-*` classes, ADR 0044): the kind id
 is persisted inside saved workspaces, so the label is the only half of the name
 that can ever move.

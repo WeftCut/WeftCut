@@ -499,16 +499,21 @@ const zhCN: Resources = {
     // 失败文案已迁移至 `errors.*`（errors/formatCommandError.ts）。
   },
   peek: {
-    heading: "窗口内 {{count}} 项",
     section_label: "播放头附近的隐藏轨内容",
     live: "当前",
     offset: "{{value}}",
+    // ±Δ 窗口选择器。`value` 已在 peek.ts 里格式化好，不是 count，
+    // 因此这两个键不带 i18next 的复数后缀。
+    window_label: "附近范围",
+    window_seconds: "{{value}} 秒",
+    window_minutes: "{{value}} 分",
+    // 标签是可任意组合的多选框，一个都不勾即不筛选——所以 `filter_empty`
+    // 描述的是一组类别，不是单个类别。
     filter_label: "按类别筛选播放头附近的内容",
-    filter_all: "全部",
     cat_video: "视频",
     cat_audio: "音频",
     cat_text: "文本",
-    filter_empty: "播放头附近没有该类别的内容",
+    filter_empty: "播放头附近没有所勾选类别的内容",
     section_at_playhead: "正在播放",
     section_nearby: "附近",
     at_playhead_empty: "此刻没有内容在播放",
@@ -525,7 +530,7 @@ const zhCN: Resources = {
     show_all_hint: "按 <key>{{key}}</key> 切回「仅 A/B 轨」。",
     empty_title: "播放头附近没有内容",
     empty_msg:
-      "播放头 ±{{window}} 范围内没有隐藏轨道的图层。请移动播放头或扩大窗口。",
+      "播放头 ±{{window}} 范围内没有隐藏轨道的图层。可移动播放头，或在上方扩大范围。",
   },
   agent_mode: {
     client_label: "代理：{{client}}",

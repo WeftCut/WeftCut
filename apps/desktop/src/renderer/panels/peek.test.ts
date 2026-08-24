@@ -56,7 +56,7 @@ describe("splitPeekSections", () => {
         item("live", "VideoClip", { spansPlayhead: true }),
         item("soon", "VideoClip", { spansPlayhead: false }),
       ],
-      "all",
+      new Set(),
     );
     expect(sections.atPlayhead.map((i) => i.layer.id)).toEqual(["live"]);
     expect(sections.nearby.map((i) => i.layer.id)).toEqual(["soon"]);
@@ -72,7 +72,7 @@ describe("splitPeekSections", () => {
         item("top-text", "Text", { trackIndex: 5 }),
         item("mid-motif", "Motif", { trackIndex: 3 }),
       ],
-      "all",
+      new Set(),
     );
     expect(sections.atPlayhead.map((i) => i.layer.id)).toEqual([
       "top-text",
@@ -92,7 +92,7 @@ describe("splitPeekSections", () => {
         item("v", "VideoClip", { trackIndex: 1 }),
         item("a2", "Audio", { trackIndex: 4 }),
       ],
-      "all",
+      new Set(),
     );
     expect(sections.atPlayhead.map((i) => i.layer.id)).toEqual([
       "v",
@@ -116,7 +116,7 @@ describe("splitPeekSections", () => {
         item("n2", "Text", { spansPlayhead: false, trackIndex: 2 }),
         item("n3", "Audio", { spansPlayhead: false, trackIndex: 5 }),
       ],
-      "all",
+      new Set(),
     );
     expect(sections.nearby.map((i) => i.layer.id)).toEqual(["n1", "n2", "n3"]);
   });
@@ -129,7 +129,7 @@ describe("splitPeekSections", () => {
         item("near-v", "VideoClip", { spansPlayhead: false }),
         item("near-a", "Audio", { spansPlayhead: false }),
       ],
-      "audio",
+      new Set(["audio"]),
     );
     expect(sections.atPlayhead.map((i) => i.layer.id)).toEqual(["live-a"]);
     // An audio-only stack has an empty visual prefix: nothing is draggable.
@@ -137,8 +137,40 @@ describe("splitPeekSections", () => {
     expect(sections.nearby.map((i) => i.layer.id)).toEqual(["near-a"]);
   });
 
+  // Two kinds in, the third out — the filter is a union, not a single choice.
+  it("keeps every checked category and drops the rest", () => {
+    const sections = splitPeekSections(
+      [
+        item("live-v", "VideoClip"),
+        item("live-t", "Text"),
+        item("live-a", "Audio"),
+        item("near-a", "Audio", { spansPlayhead: false }),
+        item("near-t", "Text", { spansPlayhead: false }),
+      ],
+      new Set(["video", "text"]),
+    );
+    expect(sections.atPlayhead.map((i) => i.layer.id)).toEqual([
+      "live-v",
+      "live-t",
+    ]);
+    expect(sections.nearby.map((i) => i.layer.id)).toEqual(["near-t"]);
+  });
+
+  // No category checked is NOT "keep nothing", it is "no filter" — read the
+  // other way, the unfiltered view becomes unreachable once every chip is off.
+  it("treats an empty filter as no filter at all", () => {
+    const sections = splitPeekSections(
+      [item("v", "VideoClip"), item("a", "Audio"), item("t", "Text")],
+      new Set(),
+    );
+    expect(sections.atPlayhead.map((i) => i.layer.id)).toEqual(["v", "t", "a"]);
+  });
+
   it("a filter matching nothing leaves both sections empty", () => {
-    const sections = splitPeekSections([item("v", "VideoClip")], "text");
+    const sections = splitPeekSections(
+      [item("v", "VideoClip")],
+      new Set(["text"]),
+    );
     expect(sections.atPlayhead).toEqual([]);
     expect(sections.atPlayheadVisual).toEqual([]);
     expect(sections.nearby).toEqual([]);
@@ -447,7 +479,7 @@ describe("section membership at the window edges", () => {
       T,
     );
 
-    const sections = splitPeekSections(items, "all");
+    const sections = splitPeekSections(items, new Set());
     // Both spanning rows are visual, so they z-order top-of-stack first:
     // t-starts-now sits above t-ends-now in the track array.
     expect(sections.atPlayhead.map((i) => i.layer.id)).toEqual([

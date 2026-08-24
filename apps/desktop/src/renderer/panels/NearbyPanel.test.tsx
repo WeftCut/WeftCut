@@ -12,11 +12,18 @@ import userEvent from "@testing-library/user-event";
 import "../i18n";
 import type { LayerSummary, TrackSummary } from "../ipc";
 
-const settings = vi.hoisted(() => ({ displayMode: "AbRoll" }));
+// `deltaWindowUs` is mutable so the ±Δ dial's tests can assert what a
+// non-preset value does without reaching for the real store.
+const settings = vi.hoisted(() => ({
+  displayMode: "AbRoll",
+  deltaWindowUs: 5_000_000,
+  setAppSettings: vi.fn(),
+}));
 
 vi.mock("../settings/appSettingsStore", () => ({
-  useDeltaWindowUs: () => 5_000_000,
+  useDeltaWindowUs: () => settings.deltaWindowUs,
   useDisplayMode: () => settings.displayMode,
+  setAppSettings: settings.setAppSettings,
 }));
 
 // Mutable so the drag-restack tests can tick the playhead mid-gesture (the
@@ -39,6 +46,8 @@ import { NearbyPanel } from "./NearbyPanel";
 
 beforeEach(() => {
   settings.displayMode = "AbRoll";
+  settings.deltaWindowUs = 5_000_000;
+  settings.setAppSettings.mockClear();
   playhead.timeUs = 1_000_000;
 });
 
@@ -220,10 +229,102 @@ describe("NearbyPanel", () => {
     expect(screen.getByText("Nothing near the playhead")).toBeTruthy();
   });
 
+  // The dock tab is the Panel's title; a Panel that prints its own name spends
+  // its first line saying nothing. Asserted structurally rather than by copy,
+  // so no wording of a heading can slip past it.
+  it("prints no title bar of its own in any state", () => {
+    const { container, rerender } = render(
+      <NearbyPanel
+        tracks={[nearbyTrack()]}
+        selectedLayerId={null}
+        fpsNum={30}
+        fpsDen={1}
+        onPick={() => {}}
+      />,
+    );
+    expect(container.querySelector("header")).toBeNull();
+
+    settings.displayMode = "ShowAll";
+    rerender(
+      <NearbyPanel
+        tracks={[nearbyTrack()]}
+        selectedLayerId={null}
+        fpsNum={30}
+        fpsDen={1}
+        onPick={() => {}}
+      />,
+    );
+    expect(container.querySelector("header")).toBeNull();
+  });
+
+  describe("the ±Δ window dial", () => {
+    it("shows the current window as a compact duration", () => {
+      renderPanel([nearbyTrack()]);
+
+      expect(
+        screen.getByLabelText("Nearby window").textContent,
+      ).toContain("±5s");
+    });
+
+    it("writes the picked preset to app settings", async () => {
+      renderPanel([nearbyTrack()]);
+
+      await userEvent.click(screen.getByLabelText("Nearby window"));
+      await userEvent.click(await screen.findByRole("option", { name: "±30s" }));
+
+      expect(settings.setAppSettings).toHaveBeenCalledWith({
+        delta_window_us: 30_000_000,
+      });
+    });
+
+    // Whole minutes read in minutes — the presets run to 5 min, and
+    // "±300s" is the same number said badly.
+    it("reads whole minutes in minutes", () => {
+      settings.deltaWindowUs = 120_000_000;
+      renderPanel([nearbyTrack()]);
+
+      expect(
+        screen.getByLabelText("Nearby window").textContent,
+      ).toContain("±2min");
+    });
+
+    // A value written straight into app_settings.json (or by MCP) is still the
+    // live setting; a select whose value is absent from its options renders a
+    // blank trigger, which would read as "unset".
+    it("keeps an out-of-band window visible by joining it to the presets", () => {
+      settings.deltaWindowUs = 7_000_000;
+      renderPanel([nearbyTrack()]);
+
+      expect(
+        screen.getByLabelText("Nearby window").textContent,
+      ).toContain("±7s");
+    });
+
+    // An empty window is exactly when the user wants to widen it, so the dial
+    // outlives the rows — only the chips, which have nothing to filter, grey out.
+    it("stays reachable on an empty window while the chips grey out", () => {
+      render(
+        <NearbyPanel
+          tracks={[]}
+          selectedLayerId={null}
+          fpsNum={30}
+          fpsDen={1}
+          onPick={() => {}}
+        />,
+      );
+
+      expect(screen.getByLabelText("Nearby window")).toBeTruthy();
+      expect(
+        screen.getByRole("checkbox", { name: "Video" }).hasAttribute("disabled"),
+      ).toBe(true);
+    });
+  });
+
   it("renders nearby items and reveals the picked layer without seeking", () => {
     const { onPick } = renderPanel([nearbyTrack()]);
 
-    expect(screen.getByText("1 in window")).toBeTruthy();
+    const stack = screen.getByRole("region", { name: "Now playing" });
+    expect(within(stack).getByText("1")).toBeTruthy();
     fireEvent.click(screen.getByTitle("Clip one"));
     expect(onPick).toHaveBeenCalledWith("layer-1", "track-1");
   });
@@ -276,12 +377,12 @@ describe("NearbyPanel two sections", () => {
   it("splits rows at the playhead into an At-playhead stack and a Nearby list", () => {
     const { container } = renderPanel(stackedTracks());
 
-    // The category section headers are retired: the only headers are the
-    // playhead-boundary pair.
+    // The playhead boundary is the ONLY thing that opens a section — category
+    // never does. Each header is trailed by the count of the rows beneath it.
     const headers = Array.from(
       container.querySelectorAll(".peek-section-header"),
     ).map((el) => el.textContent);
-    expect(headers).toEqual(["Now playing", "Nearby"]);
+    expect(headers).toEqual(["Now playing3", "Nearby1"]);
 
     // Visuals order top-of-stack first (Logo's track is above Wash's);
     // the spanning audio row sinks to the tail despite its track position.
@@ -311,7 +412,7 @@ describe("NearbyPanel two sections", () => {
   it("filters both sections through the chips", () => {
     renderPanel(stackedTracks());
 
-    fireEvent.click(screen.getByRole("button", { name: "Audio" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Audio" }));
 
     expect(
       rowTitles(screen.getByRole("region", { name: "Now playing" })),
@@ -325,7 +426,7 @@ describe("NearbyPanel two sections", () => {
   it("a filter can empty the stack: the hint shows while Nearby keeps its rows", () => {
     renderPanel(stackedTracks());
 
-    fireEvent.click(screen.getByRole("button", { name: "Text" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Text" }));
 
     expect(
       screen.getByText("Nothing is playing right now"),
@@ -338,12 +439,62 @@ describe("NearbyPanel two sections", () => {
   it("keeps the filtered-empty message when nothing of the kind is in the window", () => {
     const { container } = renderPanel([nearbyTrack()]);
 
-    fireEvent.click(screen.getByRole("button", { name: "Text" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Text" }));
 
     expect(
-      screen.getByText("Nothing of that kind near the playhead"),
+      screen.getByText("Nothing of the checked kinds near the playhead"),
     ).toBeTruthy();
     expect(container.querySelectorAll(".peek-section-header")).toHaveLength(0);
+  });
+
+  // Checking a second chip must WIDEN the result, never replace the first.
+  it("unions the checked chips instead of switching between them", () => {
+    renderPanel(stackedTracks());
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Audio" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Text" }));
+
+    expect(
+      screen.getByRole("checkbox", { name: "Audio" }).getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(
+      rowTitles(screen.getByRole("region", { name: "Now playing" })),
+    ).toEqual(["Song"]);
+    expect(rowTitles(screen.getByRole("region", { name: "Nearby" }))).toEqual([
+      "Later",
+    ]);
+    // Video stayed unchecked throughout, so its rows never came back.
+    expect(screen.queryByTitle("Logo")).toBeNull();
+  });
+
+  // Unchecking the last category returns the unfiltered view, so no state is
+  // stranded — the chips need no separate escape hatch.
+  it("returns to the unfiltered view when the last chip is unchecked", () => {
+    renderPanel(stackedTracks());
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Audio" }));
+    expect(screen.queryByTitle("Logo")).toBeNull();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Audio" }));
+
+    expect(
+      screen.getByRole("checkbox", { name: "Audio" }).getAttribute("aria-checked"),
+    ).toBe("false");
+    expect(
+      rowTitles(screen.getByRole("region", { name: "Now playing" })),
+    ).toEqual(["Logo", "Wash", "Song"]);
+  });
+
+  // No chip starts checked — the Panel opens showing everything, which is what
+  // makes "check nothing" the honest default rather than a state to escape.
+  it("checks no chip on mount", () => {
+    renderPanel(stackedTracks());
+
+    for (const name of ["Video", "Audio", "Text"]) {
+      expect(
+        screen.getByRole("checkbox", { name }).getAttribute("aria-checked"),
+      ).toBe("false");
+    }
   });
 
   it("keeps LIVE badge, track name, offset and duration on every row", () => {
@@ -579,7 +730,7 @@ describe("NearbyPanel drag restack", () => {
     ];
     const onRestack = vi.fn();
     renderPanel(tracks, { onRestack });
-    fireEvent.click(screen.getByRole("button", { name: "Video" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Video" }));
     mockRowRects(stackRows(), [0, 40]);
 
     fireEvent.pointerDown(screen.getByLabelText("Drag to restack Logo"), {
@@ -806,7 +957,7 @@ describe("NearbyPanel row context menu", () => {
     renderPanel(threeStackTracks(), { onRestack });
 
     // The Video chip hides Caption (text): the visible stack is [Logo, Wash].
-    fireEvent.click(screen.getByRole("button", { name: "Video" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Video" }));
     openRowMenu("Logo");
     await user.click(menuItem("Send backward"));
 

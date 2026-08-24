@@ -529,16 +529,21 @@ const enUS = {
     // Failure copy moved to `errors.*` (errors/formatCommandError.ts).
   },
   peek: {
-    heading: "{{count}} in window",
     section_label: "Hidden-track layers near playhead",
     live: "LIVE",
     offset: "{{value}}",
+    // The ±Δ window dial. `value` is pre-formatted (peek.ts) and never a
+    // count, so these keys take no i18next plural suffixes.
+    window_label: "Nearby window",
+    window_seconds: "{{value}}s",
+    window_minutes: "{{value}}min",
+    // The chips are checkboxes in any combination, and checking none is the
+    // unfiltered state — so `filter_empty` must describe a set, not one kind.
     filter_label: "Filter near-playhead items by kind",
-    filter_all: "All",
     cat_video: "Video",
     cat_audio: "Audio",
     cat_text: "Text",
-    filter_empty: "Nothing of that kind near the playhead",
+    filter_empty: "Nothing of the checked kinds near the playhead",
     section_at_playhead: "Now playing",
     section_nearby: "Nearby",
     at_playhead_empty: "Nothing is playing right now",
@@ -556,7 +561,7 @@ const enUS = {
     show_all_hint: "Press <key>{{key}}</key> to switch back to A/B Roll.",
     empty_title: "Nothing near the playhead",
     empty_msg:
-      "No hidden-track layers fall within ±{{window}} of the playhead. Move the playhead or widen the window.",
+      "No hidden-track layers fall within ±{{window}} of the playhead. Move the playhead, or widen the window above.",
   },
   agent_mode: {
     client_label: "Agent: {{client}}",

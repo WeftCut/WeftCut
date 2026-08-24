@@ -4,8 +4,8 @@
 // menu (the drag's non-drag equivalent); double-click renames via the
 // recorded Layer label command. Windowing, filtering, the At-playhead /
 // Nearby split and the drop's / menu's anchor mappings live in `peek.ts`
-// (ADR 0044). Outside A/B Roll (or with an empty window) the panel renders
-// an explainer instead of rows.
+// (ADR 0044). The top row is a toolbar — category chips plus the ±Δ window
+// dial — and outside A/B Roll the panel renders an explainer instead of rows.
 
 import {
   useEffect,
@@ -26,12 +26,17 @@ import {
   TypeIcon,
 } from "lucide-react";
 
+import { AppSelect } from "../components/AppSelect";
 import { formatTimecode } from "../frames";
 import { usePointerReorder } from "../hooks/usePointerReorder";
 import { useReorderSettle } from "../hooks/useReorderSettle";
 import { type TrackSummary } from "../ipc";
 import { layerDisplayName } from "../lib/layerName";
-import { useDeltaWindowUs, useDisplayMode } from "../settings/appSettingsStore";
+import {
+  setAppSettings,
+  useDeltaWindowUs,
+  useDisplayMode,
+} from "../settings/appSettingsStore";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { resolveAccelerator } from "../shortcuts/match";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
@@ -39,8 +44,10 @@ import { MediaThumbnail } from "./MediaThumbnail";
 import { NearbyRowContextMenu } from "./NearbyRowContextMenu";
 import {
   buildPeekItems,
+  formatPeekWindow,
   peekCategory,
   PEEK_CATEGORY_ORDER,
+  PEEK_WINDOW_PRESETS_US,
   restackMenuTargets,
   restackTargetForGap,
   splitPeekSections,
@@ -50,7 +57,10 @@ import {
   type RestackMenuTargets,
 } from "./peek";
 
-const PEEK_FILTERS: ("all" | PeekCategory)[] = ["all", ...PEEK_CATEGORY_ORDER];
+/// No category checked — the unfiltered state, and the Panel's initial one.
+/// A module constant so the `useMemo` that splits the sections sees a stable
+/// reference until the user actually touches a chip.
+const NO_CATEGORY_FILTER: ReadonlySet<PeekCategory> = new Set();
 
 export interface NearbyPanelProps {
   tracks: TrackSummary[];
@@ -95,7 +105,11 @@ export function NearbyPanel({
   const displayMode = useDisplayMode();
   const deltaWindowUs = useDeltaWindowUs();
   const currentTimeUs = usePlayheadTimeUsThrottled(100, visible);
-  const [filter, setFilter] = useState<"all" | PeekCategory>("all");
+  // Checked categories, empty = unfiltered (see `splitPeekSections`). Session
+  // state, not a persisted preference: it answers "what am I looking for right
+  // now", which is not a fact about the user that should outlive the question.
+  const [filter, setFilter] =
+    useState<ReadonlySet<PeekCategory>>(NO_CATEGORY_FILTER);
   // The Show All explainer names the key that ends that state. Read from the
   // effective bindings — never hard-coded — so a rebound (or cleared)
   // display-mode chord can't leave the hint lying.
@@ -110,6 +124,17 @@ export function NearbyPanel({
     () => splitPeekSections(items, filter),
     [items, filter],
   );
+
+  // Each chip is independent: toggling one never clears the others.
+  // `Set.delete` reports whether the category was there, so one call decides
+  // both directions.
+  const toggleCategory = (category: PeekCategory) => {
+    setFilter((current) => {
+      const next = new Set(current);
+      if (!next.delete(category)) next.add(category);
+      return next;
+    });
+  };
 
   // ── At-playhead restack gesture (ADR 0044 decision 6) ──────────────────
   // Mechanics — and why pointer events, never HTML5 DnD — live in usePointerReorder.
@@ -272,9 +297,9 @@ export function NearbyPanel({
     );
   };
 
-  // Never an unexplained blank Panel: Show All mode has no hidden tracks to
-  // surface, and an empty ±Δ window means nothing intersects right now — both
-  // states say so explicitly instead of collapsing to nothing.
+  // Show All mode has no hidden tracks to surface, so nothing in the Panel
+  // applies — not the sections, not the chips, not the window. It is the one
+  // state that replaces the Panel body outright.
   if (displayMode !== "AbRoll") {
     return (
       <Explainer
@@ -284,46 +309,57 @@ export function NearbyPanel({
       />
     );
   }
-  if (items.length === 0) {
-    return (
-      <Explainer
-        title={t("peek.empty_title")}
-        message={t("peek.empty_msg", {
-          window: formatTimecode(deltaWindowUs, fpsNum, fpsDen),
-        })}
-      />
-    );
-  }
 
   return (
     <section className="right-panel-peek" aria-label={t("peek.section_label")}>
-      <header className="right-panel-peek-header">
-        <span>{t("peek.heading", { count: items.length })}</span>
-        <span className="right-panel-peek-window">
-          ±{formatTimecode(deltaWindowUs, fpsNum, fpsDen)}
-        </span>
-      </header>
-      <div
-        className="peek-filter"
-        role="group"
-        aria-label={t("peek.filter_label")}
-      >
-        {PEEK_FILTERS.map((candidate) => (
-          <button
-            key={candidate}
-            type="button"
-            className={`peek-filter-chip ${filter === candidate ? "is-active" : ""}`}
-            aria-pressed={filter === candidate}
-            onClick={() => setFilter(candidate)}
-          >
-            {candidate === "all"
-              ? t("peek.filter_all")
-              : t(`peek.cat_${candidate}`, { defaultValue: candidate })}
-          </button>
-        ))}
+      {/* Controls where a title bar would be, and deliberately not a title:
+          the dock tab names the Panel, so a Panel that names itself spends
+          its first line saying nothing. The chips grey out on an empty window
+          (there is nothing to filter) but the dial never does — an empty
+          window is precisely the moment the user wants to widen it. */}
+      <div className="peek-toolbar">
+        <div
+          className="peek-filter"
+          role="group"
+          aria-label={t("peek.filter_label")}
+        >
+          {/* Checkboxes, not a radio set — `role="checkbox"` says so for
+              screen readers, and the filled accent says so visually. No tick
+              glyph: the fill IS the checked state, and a reserved gutter on
+              every chip would spend width the toolbar does not have. */}
+          {PEEK_CATEGORY_ORDER.map((category) => {
+            const checked = filter.has(category);
+            return (
+              <button
+                key={category}
+                type="button"
+                role="checkbox"
+                aria-checked={checked}
+                className={`peek-filter-chip ${checked ? "is-active" : ""}`}
+                disabled={items.length === 0}
+                onClick={() => toggleCategory(category)}
+              >
+                {t(`peek.cat_${category}`, { defaultValue: category })}
+              </button>
+            );
+          })}
+        </div>
+        <PeekWindowControl valueUs={deltaWindowUs} />
       </div>
       <div className="right-panel-peek-results">
-        {atPlayhead.length === 0 && nearby.length === 0 ? (
+        {items.length === 0 ? (
+          // An empty ±Δ window is a fact about where the playhead is, not a
+          // broken Panel — and the sentence names both ways out, one of which
+          // is the dial sitting directly above it.
+          <>
+            <p className="peek-empty-title">{t("peek.empty_title")}</p>
+            <p className="peek-empty">
+              {t("peek.empty_msg", {
+                window: formatPeekWindow(deltaWindowUs, t),
+              })}
+            </p>
+          </>
+        ) : atPlayhead.length === 0 && nearby.length === 0 ? (
           <p className="peek-filter-empty">{t("peek.filter_empty")}</p>
         ) : (
           <>
@@ -347,8 +383,14 @@ export function NearbyPanel({
                 .join(" ")}
               aria-label={t("peek.section_at_playhead")}
             >
+              {/* POST-filter, labelling exactly the rows underneath it — a
+                  count that can never disagree with what is on screen. Hidden
+                  at zero: the empty line below already says it. */}
               <div className="peek-section-header">
                 {t("peek.section_at_playhead")}
+                {atPlayhead.length > 0 && (
+                  <span className="peek-section-count">{atPlayhead.length}</span>
+                )}
               </div>
               {atPlayhead.length === 0 ? (
                 <p className="peek-stack-empty">{t("peek.at_playhead_empty")}</p>
@@ -365,6 +407,7 @@ export function NearbyPanel({
               >
                 <div className="peek-section-header">
                   {t("peek.section_nearby")}
+                  <span className="peek-section-count">{nearby.length}</span>
                 </div>
                 <ul className="right-panel-peek-list">
                   {nearby.map((item) => renderRow(item))}
@@ -392,10 +435,47 @@ export function NearbyPanel({
   );
 }
 
-/// Both idle states wear the same chrome: the Panel keeps its header so it
-/// never reads as a broken Panel, and the body states what is going on. An
-/// explainer that has a way out of the state passes `hintKey` — the binding
-/// to render as the closing call to action.
+/// The ±Δ window dial. `delta_window_us` is app-level and THIS Panel is its
+/// only reader, so the dial belongs where its effect is visible rather than
+/// in the settings dialog — the arrangement `media_pool_layout` already uses,
+/// and one surface per value is one that cannot drift from a twin.
+///
+/// Presets only (see `PEEK_WINDOW_PRESETS_US`), except that a value written
+/// out of band — MCP, a hand-edited app_settings.json, a future clamp change —
+/// joins the list for as long as it is current. A select whose value is
+/// absent from its options renders a blank trigger, and a blank dial reading
+/// as "unset" would be a lie about a setting that always has a value.
+function PeekWindowControl({ valueUs }: { valueUs: number }) {
+  const { t } = useTranslation();
+  const options = useMemo(() => {
+    const values = PEEK_WINDOW_PRESETS_US.includes(valueUs)
+      ? [...PEEK_WINDOW_PRESETS_US]
+      : [...PEEK_WINDOW_PRESETS_US, valueUs].sort((a, b) => a - b);
+    return values.map((us) => ({
+      value: String(us),
+      label: `±${formatPeekWindow(us, t)}`,
+    }));
+  }, [valueUs, t]);
+
+  return (
+    <AppSelect
+      className="peek-window-select"
+      value={String(valueUs)}
+      options={options}
+      ariaLabel={t("peek.window_label")}
+      // Fire-and-forget like the media pool's layout chips: main clamps and
+      // persists, then broadcasts `app_settings:changed`, and the store's
+      // write is what re-renders this Panel. Nothing local to roll back.
+      onValueChange={(next) =>
+        void setAppSettings({ delta_window_us: Number(next) })
+      }
+    />
+  );
+}
+
+/// The Show All state, which replaces the Panel body outright. An explainer
+/// with a way out of the state passes `hintKey` — the binding to render as the
+/// closing call to action.
 function Explainer({
   title,
   message,
@@ -408,9 +488,7 @@ function Explainer({
   const { t } = useTranslation();
   return (
     <section className="right-panel-peek" aria-label={t("peek.section_label")}>
-      <header className="right-panel-peek-header">
-        <span>{title}</span>
-      </header>
+      <p className="peek-empty-title">{title}</p>
       <p className="peek-empty">{message}</p>
       {hintKey && (
         <p className="peek-empty-hint">

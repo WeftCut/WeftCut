@@ -13,20 +13,32 @@
   background: var(--card);
 }
 
-.right-panel-peek-header {
+/* The Panel's top row: chips leading, ±Δ dial trailing. The chips take the
+   width they need and wrap; the dial holds the trailing edge and never
+   shrinks below its label. Modelled on the media pool's
+   `.media-pool-search` — see NearbyPanel.tsx for why the row is controls
+   rather than a title. */
+.peek-toolbar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 8px;
   padding: 6px 12px;
-  font-size: var(--font-size-body);
-  font-weight: 600;
-  color: var(--muted-foreground);
   border-bottom: 1px solid var(--border-soft);
 }
 
-.right-panel-peek-window {
-  color: var(--muted-foreground);
-  font-weight: 500;
+/* Chip-scale, to sit level with the filter row rather than tower over it:
+   `.app-select`'s form-field padding and 8px gap are sized for the settings
+   dialog. `nearby.css` imports after `controls.css`, so equal specificity is
+   enough to win. */
+.peek-window-select {
+  flex: 0 0 auto;
+  height: 22px;
+  gap: 4px;
+  padding-block: 0;
+  font-size: var(--font-size-caption);
+  /* Tabular digits so changing the window doesn't jiggle the trigger width. */
+  font-variant-numeric: tabular-nums;
 }
 
 .right-panel-peek-results {
@@ -202,13 +214,19 @@
   outline-offset: -2px;
 }
 
+/* Padding and the seam below belong to `.peek-toolbar`; the chip group owns
+   only its own row. It wraps rather than overflows — at the Panel's 240px
+   floor the three chips and the dial do not fit on one line. */
 .peek-filter {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
-  padding: 2px 12px 6px;
-  border-bottom: 1px solid var(--border-soft);
+  min-width: 0;
 }
 
+/* Unchecked: an outline, carrying no weight of its own. Geometry is identical
+   checked or not — only colour moves — so toggling one chip can never reflow
+   a wrapped row under the pointer that clicked it. */
 .peek-filter-chip {
   font-size: var(--font-size-caption);
   font-weight: 600;
@@ -218,10 +236,13 @@
   background: transparent;
   color: var(--muted-foreground);
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
 }
 
-.peek-filter-chip:hover {
+/* Hover excludes both the disabled chips and the checked ones: the neutral
+   lift would read as a weaker version of the checked fill and undo it. */
+.peek-filter-chip:not(:disabled):not(.is-active):hover {
   background: var(--hover-neutral);
   color: var(--foreground);
 }
@@ -231,19 +252,51 @@
   box-shadow: var(--focus-ring);
 }
 
+/* Checked: the selection accent, as `.peek-item-row.is-selected` and every
+   other selected surface wears it. Three layers of ONE blue — fill, edge,
+   label — is what makes it read at chip scale without a solid fill; reaching
+   for a stronger blue outside the `--selection-*` family is the drift those
+   tokens exist to prevent (`docs/ui-tokens.md`: `--ring` is the one accent).
+   Keep in step with `.log-chip.active` (log.css), the same widget one Panel
+   over. */
 .peek-filter-chip.is-active {
   background: var(--selection-bg);
-  color: var(--foreground);
-  border-color: transparent;
+  border-color: var(--selection-border);
+  color: var(--color-blue-300);
+}
+
+.peek-filter-chip.is-active:not(:disabled):hover {
+  background: color-mix(in srgb, var(--selection) 26%, transparent);
+}
+
+/* Empty window: nothing to filter, and a chip that changes nothing when
+   clicked would read as broken rather than as inapplicable. A chip that is
+   checked keeps its fill through this, just faded — the selection outlives an
+   empty window and the chips must not lie about it. */
+.peek-filter-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .peek-section-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   padding: 5px 12px 1px;
   font-size: var(--font-size-caption);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted-foreground);
+}
+
+/* Subordinate to the section's name: same line, lighter weight, no uppercase
+   tracking — a number, not a second heading. */
+.peek-section-count {
+  font-weight: 500;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
 }
 
 .peek-filter-empty,
@@ -261,6 +314,20 @@
   font-size: var(--font-size-body);
   line-height: 1.5;
   color: var(--muted-foreground);
+}
+
+/* The state's own headline, which is why it sits in the body flow rather than
+   in a bar of its own: it names the situation, not the Panel. */
+.peek-empty-title {
+  margin: 0;
+  padding: 12px 12px 0;
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.peek-empty-title + .peek-empty {
+  padding-top: 4px;
 }
 
 /* The way out of the state, set apart from the explanation above it: the

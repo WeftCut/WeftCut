@@ -76,6 +76,39 @@ export function buildPeekItems(
   return items;
 }
 
+/// The ±Δ window values the Panel offers, roughly doubling across the clamp
+/// the settings store enforces (`DELTA_WINDOW_MIN_US`…`DELTA_WINDOW_MAX_US`,
+/// [1 s, 5 min]). A preset list rather than a free field on purpose: the
+/// window is an observation radius, and no edit decision distinguishes ±11 s
+/// from ±10 s — the choice worth offering is the order of magnitude.
+export const PEEK_WINDOW_PRESETS_US: readonly number[] = [
+  1_000_000,
+  2_000_000,
+  5_000_000,
+  10_000_000,
+  30_000_000,
+  60_000_000,
+  120_000_000,
+  300_000_000,
+];
+
+/// The window as a compact duration ("10s", "2min"), never a timecode. A
+/// timecode answers "where in the composition", and this value is a radius
+/// the user picks — `00:00:10:00` spends eight characters saying what three
+/// do, in a column that has none to spare. Whole minutes read in minutes;
+/// everything else in seconds, so an out-of-band value (MCP, a hand-edited
+/// app_settings.json) still prints something honest.
+export function formatPeekWindow(
+  us: number,
+  t: (key: string, values: Record<string, unknown>) => string,
+): string {
+  const seconds = Math.round(us / 1_000_000);
+  if (seconds >= 60 && seconds % 60 === 0) {
+    return t("peek.window_minutes", { value: seconds / 60 });
+  }
+  return t("peek.window_seconds", { value: seconds });
+}
+
 /// Peek filter buckets. Coarser than `layerOverlapClass` (which is
 /// visual-vs-audio) because the user wants Text layers split out from
 /// picture for fast scanning.
@@ -110,20 +143,29 @@ export interface PeekSections {
 }
 
 /// Split already-sorted peek items into the At-playhead / Nearby sections,
-/// honoring the active filter — a category chip filters both sections.
+/// honoring the active filter — the checked categories filter both sections.
+///
+/// **An empty set means no filter at all**, not "keep nothing". That is what
+/// lets the chips be plain checkboxes with no mutually-exclusive All among
+/// them: clearing the selection IS the unfiltered view, so every subset of the
+/// categories — the empty one included — is reachable and none is stranded.
+///
 /// Each at-playhead visual row necessarily sits on a distinct track
 /// (same-class layers on one track cannot overlap in time), so the
 /// descending-index sort is total for the rows it orders. Spanning audio
 /// keeps its input order at the tail.
 export function splitPeekSections(
   items: PeekItem[],
-  filter: "all" | PeekCategory,
+  filter: ReadonlySet<PeekCategory>,
 ): PeekSections {
   const visual: PeekItem[] = [];
   const audio: PeekItem[] = [];
   const nearby: PeekItem[] = [];
   for (const item of items) {
-    if (filter !== "all" && peekCategory(item.layer.params.kind) !== filter) {
+    if (
+      filter.size > 0 &&
+      !filter.has(peekCategory(item.layer.params.kind))
+    ) {
       continue;
     }
     if (!item.spansPlayhead) {
