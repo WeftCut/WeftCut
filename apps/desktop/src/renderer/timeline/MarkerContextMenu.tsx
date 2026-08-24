@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
+import { MenuItem } from "../menu/Menu";
 import { useCursorAnchor } from "./contextMenuAnchor";
 
 /// Right-click menu on a marker glyph in the ruler. Its own component rather
@@ -44,12 +45,16 @@ export function MarkerContextMenu({
           className="app-popup-positioner"
         >
           <MenuPrimitive.Popup className="app-menu-list">
-            <MenuPrimitive.Item className="app-menu-item" onClick={onRename}>
-              {t("timeline.rename", { defaultValue: "Rename" })}
-            </MenuPrimitive.Item>
-            <MenuPrimitive.Item className="app-menu-item" onClick={onDelete}>
-              {t("timeline.delete_marker", { defaultValue: "Delete marker" })}
-            </MenuPrimitive.Item>
+            <MenuItem
+              label={t("timeline.rename", { defaultValue: "Rename" })}
+              onSelect={onRename}
+            />
+            <MenuItem
+              label={t("timeline.delete_marker", {
+                defaultValue: "Delete marker",
+              })}
+              onSelect={onDelete}
+            />
           </MenuPrimitive.Popup>
         </MenuPrimitive.Positioner>
       </MenuPrimitive.Portal>

@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 
+import { MenuItem } from "../menu/Menu";
 import { useCursorAnchor } from "../timeline/contextMenuAnchor";
 import type { RestackMenuTargets, RestackTarget } from "./peek";
 
@@ -35,15 +36,13 @@ export function NearbyRowContextMenu({
   const { t } = useTranslation();
   const anchor = useCursorAnchor(x, y);
   const item = (target: RestackTarget | null, text: string) => (
-    <MenuPrimitive.Item
-      className="app-menu-item"
+    <MenuItem
+      label={text}
       disabled={target === null}
-      onClick={() => {
+      onSelect={() => {
         if (target) onAction(target);
       }}
-    >
-      {text}
-    </MenuPrimitive.Item>
+    />
   );
   return (
     <MenuPrimitive.Root

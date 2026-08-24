@@ -7,7 +7,7 @@ import {
   subscribeCommandRegistry,
 } from "../commands/registry";
 import { CommandContextItem } from "../menu/CommandContextItem";
-import { MenuSeparator } from "../menu/Menu";
+import { MenuItem, MenuSeparator } from "../menu/Menu";
 import { useCursorAnchor } from "./contextMenuAnchor";
 import {
   TRANSITION_DIRECTIONS,
@@ -53,6 +53,12 @@ export const LAYER_MENU_COMMAND_IDS = [
 ///   3. The transition section, appended only when the right-click landed
 ///      within the click-tolerance band of a cut between same-track adjacent
 ///      visual layers (`transitionCut` non-null).
+///
+/// Every row goes through `Menu.tsx`'s `MenuItem`, tiers 2 and 3 included.
+/// A bare `MenuPrimitive.Item` with a text child renders without the 16px
+/// check-glyph gutter `MenuItem` puts before its label, so tier 1 (which
+/// reaches `MenuItem` via `CommandContextItem`) and the tiers under it used
+/// to sit on two different left edges inside the one popup.
 ///
 /// Flat, like every menu here except the transition chip's — no submenus.
 export function LayerContextMenu({
@@ -123,78 +129,70 @@ export function LayerContextMenu({
               ),
             )}
             <MenuSeparator />
-            <MenuPrimitive.Item
-              className="app-menu-item"
-              onClick={() => onRename(layerId)}
-            >
-              {t("timeline.rename", { defaultValue: "Rename" })}
-            </MenuPrimitive.Item>
-            <MenuPrimitive.Item
-              className="app-menu-item"
-              onClick={() => onToggleEnabled(layerId, !layerEnabled)}
-            >
-              {layerEnabled
-                ? t("timeline.disable_layer", { defaultValue: "Disable layer" })
-                : t("timeline.enable_layer", { defaultValue: "Enable layer" })}
-            </MenuPrimitive.Item>
+            <MenuItem
+              label={t("timeline.rename", { defaultValue: "Rename" })}
+              onSelect={() => onRename(layerId)}
+            />
+            <MenuItem
+              label={
+                layerEnabled
+                  ? t("timeline.disable_layer", {
+                      defaultValue: "Disable layer",
+                    })
+                  : t("timeline.enable_layer", { defaultValue: "Enable layer" })
+              }
+              onSelect={() => onToggleEnabled(layerId, !layerEnabled)}
+            />
             {layerKind === "Audio" && (
               <>
-                <MenuPrimitive.Separator className="menu-separator" />
-                <MenuPrimitive.Item
-                  className="app-menu-item"
-                  onClick={() => onSeparateAudio(layerId)}
-                >
-                  {t("timeline.separate_audio", {
+                <MenuSeparator />
+                <MenuItem
+                  label={t("timeline.separate_audio", {
                     defaultValue: "Separate audio to new track",
                   })}
-                </MenuPrimitive.Item>
+                  onSelect={() => onSeparateAudio(layerId)}
+                />
               </>
             )}
             {layerKind === "Motif" && (
               <>
-                <MenuPrimitive.Separator className="menu-separator" />
-                <MenuPrimitive.Item
-                  className="app-menu-item"
-                  onClick={() => onPrebakeNow(layerId)}
-                >
-                  {t("timeline.prebake_now", { defaultValue: "Pre-bake now" })}
-                </MenuPrimitive.Item>
+                <MenuSeparator />
+                <MenuItem
+                  label={t("timeline.prebake_now", {
+                    defaultValue: "Pre-bake now",
+                  })}
+                  onSelect={() => onPrebakeNow(layerId)}
+                />
               </>
             )}
             {transitionCut && (
               <>
-                <MenuPrimitive.Separator className="menu-separator" />
-                <MenuPrimitive.Item
-                  className="app-menu-item"
-                  onClick={() => onAddTransition(transitionCut, "Crossfade")}
-                >
-                  {t("timeline.add_transition_crossfade", {
+                <MenuSeparator />
+                <MenuItem
+                  label={t("timeline.add_transition_crossfade", {
                     defaultValue: "Add crossfade",
                   })}
-                </MenuPrimitive.Item>
+                  onSelect={() => onAddTransition(transitionCut, "Crossfade")}
+                />
                 {TRANSITION_DIRECTIONS.map((d) => (
-                  <MenuPrimitive.Item
+                  <MenuItem
                     key={`wipe-${d}`}
-                    className="app-menu-item"
-                    onClick={() => onAddTransition(transitionCut, "Wipe", d)}
-                  >
-                    {t("timeline.add_transition_wipe", {
+                    label={t("timeline.add_transition_wipe", {
                       direction: directionLabel(d),
                       defaultValue: "Add wipe · {{direction}}",
                     })}
-                  </MenuPrimitive.Item>
+                    onSelect={() => onAddTransition(transitionCut, "Wipe", d)}
+                  />
                 ))}
                 {TRANSITION_DIRECTIONS.map((d) => (
-                  <MenuPrimitive.Item
+                  <MenuItem
                     key={`slide-${d}`}
-                    className="app-menu-item"
-                    onClick={() => onAddTransition(transitionCut, "Slide", d)}
-                  >
-                    {t("timeline.add_transition_slide", {
+                    label={t("timeline.add_transition_slide", {
                       direction: directionLabel(d),
                       defaultValue: "Add slide · {{direction}}",
                     })}
-                  </MenuPrimitive.Item>
+                    onSelect={() => onAddTransition(transitionCut, "Slide", d)}
+                  />
                 ))}
               </>
             )}

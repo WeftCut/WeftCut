@@ -76,6 +76,21 @@
   cursor: pointer;
 }
 
+/* Base UI moves DOM focus into the popup when it opens (it carries
+ * tabindex="-1") and onto each item as that item highlights (tabindex="0").
+ * Chromium's :focus-visible heuristic matches on BOTH — a right-click opens
+ * the menu with the mouse, yet the popup still takes the ring, because focus
+ * lands programmatically on an element the pointer never pressed. The result
+ * was a stray UA outline drawn around the whole menu on every right-click.
+ *
+ * Dropping it loses no affordance: [data-highlighted] below is set by
+ * arrow-key navigation as well as hover, so keyboard users still see which
+ * row is armed. Highlight, not outline, is this menu's focus indicator. */
+.app-menu-list,
+.app-menu-item {
+  outline: none;
+}
+
 /* data-highlighted covers BOTH hover and keyboard navigation (Base UI
  * moves the highlight with ArrowUp/Down); data-disabled replaces
  * :disabled now that items render as divs, not buttons. */
