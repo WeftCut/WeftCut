@@ -193,8 +193,8 @@ const zhCN: Resources = {
   view: {
     display_mode_heading: "轨道显示",
     panels_heading: "面板",
-    display_ab: "显示：仅 A/B 轨",
-    display_all: "显示：全部轨道",
+    display_ab_roll: "A/B Roll",
+    display_all_tracks: "全轨显示",
     follow_playhead: "跟随播放头",
     show_markers: "显示标记",
     show_safe_areas: "显示安全框",
@@ -324,7 +324,7 @@ const zhCN: Resources = {
     split_at_playhead: "在播放头切割",
     toggle_log: "切换活动日志",
     focus_log_search: "聚焦活动日志搜索",
-    toggle_display_mode: "切换 A/B 轨 / 显示全部",
+    toggle_display_mode: "切换 A/B Roll / 全轨显示",
     toggle_follow_playhead: "切换跟随播放头",
     toggle_markers_visible: "切换时间线标记",
     toggle_safe_area_guides: "切换安全框参考线",
@@ -431,10 +431,10 @@ const zhCN: Resources = {
   },
   timeline: {
     empty_placeholder: "时间线（导入片段或选择 Motif 开始）",
-    empty_ab_mode:
-      "此处没有 A/B 内容。将片段拖到 $t(tracks.roles.a-roll) 或 $t(tracks.roles.b-roll)，或按 {{key}} 显示全部轨道。",
-    mode_ab_hint: "当前仅显示 A/B 轨。点击切换为显示全部。",
-    mode_all_hint: "当前显示全部轨道。点击切换为仅显示 A/B 轨。",
+    empty_ab_roll:
+      "此处没有 A/B 轨内容。将片段拖到 $t(tracks.roles.a-roll) 或 $t(tracks.roles.b-roll)，或按 {{key}} 切换到全轨显示。",
+    mode_ab_roll_hint: "A/B Roll——其余轨道已隐藏。点击切换为全轨显示。",
+    mode_all_tracks_hint: "全轨显示——没有隐藏任何轨道。点击切换为 A/B Roll。",
     separate_audio: "将音频分离到新轨道",
     resize_track_hint: "拖动以调整该轨道高度",
     track_eye_hint: "隐藏此轨道的输出（影响导出）",
@@ -528,9 +528,9 @@ const zhCN: Resources = {
     restack_backward: "下移一层",
     restack_front: "置于顶层",
     restack_back: "置于底层",
-    show_all_title: "已显示全部轨道",
-    show_all_msg: "每条轨道都已在时间线上，没有被隐藏的内容需要在此呈现。",
-    show_all_hint: "按 <key>{{key}}</key> 切回「仅 A/B 轨」。",
+    all_tracks_title: "全轨显示",
+    all_tracks_msg: "每条轨道都已在时间线上，没有被隐藏的内容需要在此呈现。",
+    all_tracks_hint: "按 <key>{{key}}</key> 切回 A/B Roll。",
     empty_title: "播放头附近没有内容",
     empty_msg:
       "播放头 ±{{window}} 范围内没有隐藏轨道的图层。可移动播放头，或在上方扩大范围。",

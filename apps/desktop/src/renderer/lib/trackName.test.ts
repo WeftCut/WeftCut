@@ -148,7 +148,7 @@ describe("locale strings that name a lane", () => {
         resources: { [lng]: { translation: locale } },
         interpolation: { escapeValue: false },
       });
-      const hint = i18n.t("timeline.empty_ab_mode", { key: "Shift+A" });
+      const hint = i18n.t("timeline.empty_ab_roll", { key: "Shift+A" });
       expect(hint, lng).toContain(at(locale, "tracks.roles.a-roll"));
       expect(hint, lng).toContain(at(locale, "tracks.roles.b-roll"));
       expect(hint, lng).not.toContain("$t(");

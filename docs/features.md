@@ -210,8 +210,8 @@ entry, because each clip is its own commit.
 to every spanning sibling inside one commit, so sending the partner as well
 would ask for a cut in an interval that commit had just closed.
 
-**The sweep respects the A/B view filter; the selection does not.** In A/B-roll
-mode the timeline hides every role-less track, which is exactly where
+**The sweep respects the A/B Roll filter; the selection does not.** In A/B Roll
+the timeline hides every role-less track, which is exactly where
 auto-spawned overlays and titles land, so cutting one there would be an edit the
 user cannot see. A *selected* layer is one they reached on purpose — the inline
 reveal is already showing it — so the selection path ignores the filter.

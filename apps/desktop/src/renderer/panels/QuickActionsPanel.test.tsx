@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import "../i18n";
 
 const settings = vi.hoisted(() => ({
-  displayMode: "AbRoll" as "AbRoll" | "ShowAll",
+  displayMode: "AbRoll" as "AbRoll" | "AllTracks",
   markersVisible: true,
   tailSnapEnabled: true,
   followPlayhead: true,
@@ -178,7 +178,7 @@ describe("QuickActionsPanel", () => {
   });
 
   it("follows the display mode", () => {
-    settings.displayMode = "ShowAll";
+    settings.displayMode = "AllTracks";
     render(<QuickActionsPanel geometry={geometry(400, 44)} />);
     expect(button("toggleDisplayMode").dataset.active).toBe("false");
     expect(button("toggleDisplayMode").getAttribute("aria-pressed")).toBe("false");
@@ -193,7 +193,7 @@ describe("QuickActionsPanel", () => {
     render(<QuickActionsPanel geometry={geometry(400, 44)} />);
     expect(glyphClasses()?.contains("lucide-fold-vertical")).toBe(true);
     cleanup();
-    settings.displayMode = "ShowAll";
+    settings.displayMode = "AllTracks";
     render(<QuickActionsPanel geometry={geometry(400, 44)} />);
     expect(glyphClasses()?.contains("lucide-unfold-vertical")).toBe(true);
   });
@@ -211,13 +211,13 @@ describe("QuickActionsPanel", () => {
   it("carries the state-bearing hint for the display toggle", () => {
     render(<QuickActionsPanel geometry={geometry(400, 44)} />);
     expect(button("toggleDisplayMode").getAttribute("aria-label")).toBe(
-      "Showing A/B-roll tracks only. Click to show all.",
+      "A/B Roll — other tracks are hidden. Click for All Tracks.",
     );
     cleanup();
-    settings.displayMode = "ShowAll";
+    settings.displayMode = "AllTracks";
     render(<QuickActionsPanel geometry={geometry(400, 44)} />);
     expect(button("toggleDisplayMode").getAttribute("aria-label")).toBe(
-      "Showing all tracks. Click to filter to A/B-roll only.",
+      "All Tracks — nothing is hidden. Click for A/B Roll.",
     );
   });
 

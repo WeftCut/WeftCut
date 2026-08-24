@@ -110,7 +110,7 @@ export function NearbyPanel({
   // now", which is not a fact about the user that should outlive the question.
   const [filter, setFilter] =
     useState<ReadonlySet<PeekCategory>>(NO_CATEGORY_FILTER);
-  // The Show All explainer names the key that ends that state. Read from the
+  // The All Tracks explainer names the key that ends that state. Read from the
   // effective bindings — never hard-coded — so a rebound (or cleared)
   // display-mode chord can't leave the hint lying.
   const displayModeBinding = useEffectiveBindings("toggleDisplayMode");
@@ -297,14 +297,14 @@ export function NearbyPanel({
     );
   };
 
-  // Show All mode has no hidden tracks to surface, so nothing in the Panel
+  // All Tracks has no hidden tracks to surface, so nothing in the Panel
   // applies — not the sections, not the chips, not the window. It is the one
   // state that replaces the Panel body outright.
   if (displayMode !== "AbRoll") {
     return (
       <Explainer
-        title={t("peek.show_all_title")}
-        message={t("peek.show_all_msg")}
+        title={t("peek.all_tracks_title")}
+        message={t("peek.all_tracks_msg")}
         hintKey={displayModeBinding ?? undefined}
       />
     );
@@ -473,7 +473,7 @@ function PeekWindowControl({ valueUs }: { valueUs: number }) {
   );
 }
 
-/// The Show All state, which replaces the Panel body outright. An explainer
+/// The All Tracks state, which replaces the Panel body outright. An explainer
 /// with a way out of the state passes `hintKey` — the binding to render as the
 /// closing call to action.
 function Explainer({
@@ -495,7 +495,7 @@ function Explainer({
           {/* The accelerator rides a <kbd> pill, the search palette's
               vocabulary for "this is a key you can press". */}
           <Trans
-            i18nKey="peek.show_all_hint"
+            i18nKey="peek.all_tracks_hint"
             values={{ key: resolveAccelerator(hintKey) }}
             components={{ key: <kbd className="peek-empty-kbd" /> }}
           />

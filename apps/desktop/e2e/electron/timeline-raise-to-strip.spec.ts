@@ -49,7 +49,7 @@ test.describe('timeline drop strip — an existing clip', () => {
       // left" observable: the raise empties that lane, and an emptied role-less
       // lane is exactly what the cleanup rule removes.
       const { layerId } = await importAndPlaceMedia(page, { mediaAbsPath: FIXTURE })
-      // That lane carries no role, so A/B-roll mode — the default — filters it out
+      // That lane carries no role, so A/B Roll — the default — filters it out
       // and its clip never mounts. The reveal also selects the clip, which is why
       // the drag below needs no separate arming click.
       await waitForHook(page, 'revealLayer')

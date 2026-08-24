@@ -45,7 +45,7 @@ function track(
     locked: false,
     muted: false,
     solo: false,
-    // A role by default, so the A/B filter keeps the row visible unless a case
+    // A role by default, so the A/B Roll filter keeps the row visible unless a case
     // deliberately drops it (`role: null` is what AbRoll hides).
     role: "a-roll",
     transient: false,
@@ -179,7 +179,7 @@ describe("resolveSplitTargets", () => {
     ).toEqual(["a"]);
   });
 
-  describe("the A/B view filter", () => {
+  describe("the A/B Roll filter", () => {
     const project = () =>
       summary([
         track("aroll", [layer("clip", 0, 2_000_000)]),
@@ -194,7 +194,7 @@ describe("resolveSplitTargets", () => {
       ).toEqual(["clip"]);
     });
 
-    it("sweeps every row in Show All", () => {
+    it("sweeps every row in All Tracks", () => {
       expect(
         ids(resolveSplitTargets(project(), 1_000_000, NOTHING_SELECTED, false)),
       ).toEqual(["clip", "title"]);

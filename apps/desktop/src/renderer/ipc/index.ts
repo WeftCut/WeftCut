@@ -382,7 +382,7 @@ export interface TrackSummary {
   solo: boolean;
   /// `null` for tracks created after the reserved 4 (additional video, music,
   /// SFX, captions, voiceover, etc.) and for legacy projects. AB display mode
-  /// hides any track where `role === null`; Show-All ignores the field.
+  /// hides any track where `role === null`; All Tracks ignores the field.
   role: TrackRole | null;
   /// True for every track outside the reserved skeleton, which is exactly
   /// the set cleanup may remove: an unlocked one disappears the moment its

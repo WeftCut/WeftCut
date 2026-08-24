@@ -38,7 +38,7 @@ export interface ViewMenuWorkspaces {
 
 /// The View menu — Panels (open/focus/close) flat at the top, Workspace
 /// profiles + management under the Workspaces submenu (low-frequency ops stay
-/// one level down), then the A/B-roll vs Show-All track-display radio, the
+/// one level down), then the A/B Roll vs All Tracks track-display radio, the
 /// follow-playhead, marker-display and safe-area toggles, and the Agent-mode
 /// entry. Every
 /// checkmark here reads the app-pref store, so it stays in sync however the
@@ -154,8 +154,8 @@ export function ViewMenu({
       />
       <MenuItem
         actionId="toggleDisplayMode"
-        label={t("view.display_ab", {
-          defaultValue: "Display: A/B Roll only",
+        label={t("view.display_ab_roll", {
+          defaultValue: "A/B Roll",
         })}
         checked={mode === "AbRoll"}
         onSelect={() => {
@@ -163,12 +163,12 @@ export function ViewMenu({
         }}
       />
       <MenuItem
-        label={t("view.display_all", {
-          defaultValue: "Display: Show all tracks",
+        label={t("view.display_all_tracks", {
+          defaultValue: "All Tracks",
         })}
-        checked={mode === "ShowAll"}
+        checked={mode === "AllTracks"}
         onSelect={() => {
-          if (mode !== "ShowAll") void getCommand("toggleDisplayMode")?.run();
+          if (mode !== "AllTracks") void getCommand("toggleDisplayMode")?.run();
         }}
       />
       <MenuSeparator />

@@ -152,7 +152,7 @@ test.describe('timeline drop strip', () => {
       expect(placed.params.media_id).toBe(mediaId)
       // Nothing landed anywhere else: spawning is the drop, not a side effect.
       expect(after.tracks.flatMap((t) => t.layers)).toHaveLength(1)
-      // The spawned lane carries no role, so A/B mode — the default — would
+      // The spawned lane carries no role, so A/B Roll — the default — would
       // filter it out and hide the clip the user just dropped. The inline reveal
       // is what keeps the result on screen.
       await expect(lanes).toHaveCount(3)

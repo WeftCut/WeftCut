@@ -195,8 +195,8 @@ const enUS = {
   view: {
     display_mode_heading: "Track display",
     panels_heading: "Panels",
-    display_ab: "Display: A/B Roll only",
-    display_all: "Display: Show all tracks",
+    display_ab_roll: "A/B Roll",
+    display_all_tracks: "All Tracks",
     follow_playhead: "Follow playhead",
     show_markers: "Show markers",
     show_safe_areas: "Show safe areas",
@@ -337,7 +337,7 @@ const enUS = {
     split_at_playhead: "Split at playhead",
     toggle_log: "Toggle activity log",
     focus_log_search: "Focus activity-log search",
-    toggle_display_mode: "Toggle A/B Roll / Show All",
+    toggle_display_mode: "Toggle A/B Roll / All Tracks",
     toggle_follow_playhead: "Toggle follow playhead",
     toggle_markers_visible: "Toggle timeline markers",
     toggle_safe_area_guides: "Toggle safe-area guides",
@@ -448,8 +448,8 @@ const enUS = {
   },
   timeline: {
     empty_placeholder: "timeline (import a clip or pick a motif to populate)",
-    empty_ab_mode:
-      "No A/B-roll content here. Drop a clip on $t(tracks.roles.a-roll) or $t(tracks.roles.b-roll), or press {{key}} to show all tracks.",
+    empty_ab_roll:
+      "No A/B-roll content here. Drop a clip on $t(tracks.roles.a-roll) or $t(tracks.roles.b-roll), or press {{key}} to switch to All Tracks.",
     resize_track_hint: "Drag to resize this track",
     track_eye_hint: "Hide this track's output (affects export)",
     track_lock_hint: "Lock this track against edits",
@@ -457,8 +457,8 @@ const enUS = {
     drop_locked: "Track is locked",
     drop_spawn_hint: "Release to create a track",
     toggle_keyframe_lanes: "Expand keyframe lanes",
-    mode_ab_hint: "Showing A/B-roll tracks only. Click to show all.",
-    mode_all_hint: "Showing all tracks. Click to filter to A/B-roll only.",
+    mode_ab_roll_hint: "A/B Roll — other tracks are hidden. Click for All Tracks.",
+    mode_all_tracks_hint: "All Tracks — nothing is hidden. Click for A/B Roll.",
     // Context-menu entries for the right-click menu on layers.
     separate_audio: "Separate audio to new track",
     prebake_now: "Pre-bake now",
@@ -500,7 +500,7 @@ const enUS = {
   },
   // Derived track names (`lib/trackName.ts`): what a lane is called when the
   // user has not named it. Kebab role keys so the lookup is the wire value
-  // itself. Nested into `timeline.empty_ab_mode` with `$t(…)` so the hint names
+  // itself. Nested into `timeline.empty_ab_roll` with `$t(…)` so the hint names
   // lanes the way their headers do instead of quoting one language.
   tracks: {
     roles: {
@@ -558,10 +558,10 @@ const enUS = {
     restack_backward: "Send backward",
     restack_front: "Bring to front",
     restack_back: "Send to back",
-    show_all_title: "Showing all tracks",
-    show_all_msg:
+    all_tracks_title: "All Tracks",
+    all_tracks_msg:
       "Every track is already on the timeline — nothing is hidden for this Panel to surface.",
-    show_all_hint: "Press <key>{{key}}</key> to switch back to A/B Roll.",
+    all_tracks_hint: "Press <key>{{key}}</key> to switch back to A/B Roll.",
     empty_title: "Nothing near the playhead",
     empty_msg:
       "No hidden-track layers fall within ±{{window}} of the playhead. Move the playhead, or widen the window above.",

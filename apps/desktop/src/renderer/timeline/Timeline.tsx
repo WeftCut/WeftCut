@@ -340,8 +340,8 @@ export function Timeline({
 
   const orderedTracks = useMemo(() => {
     const all = visualOrderedTracks(tracks);
-    if (displayMode === "ShowAll") return all;
-    // AB filter: keep role-stamped tracks. Inline-reveal lets one
+    if (displayMode === "AllTracks") return all;
+    // A/B Roll filter: keep role-stamped tracks. Inline-reveal lets one
     // additional hidden track survive the filter at its natural
     // accretion slot — the visualOrderedTracks output already has the
     // slot computed, so we just need to keep that row alongside the
@@ -622,7 +622,7 @@ export function Timeline({
     setTrackHeights,
   });
 
-  // A spawned lane carries no role, so the A/B filter above would hide the clip
+  // A spawned lane carries no role, so the A/B Roll filter above would hide the clip
   // that just landed on it. Route it through the existing inline-reveal (R.7)
   // rather than a second visibility rule. Held as state because the reveal
   // registry validates against `projectStore`, which refreshes on its own
@@ -645,7 +645,7 @@ export function Timeline({
   // so the visibility rule has one home.
   const revealSpawnedTrack = useCallback(
     (trackId: string) => {
-      if (displayMode !== "ShowAll") setSpawnRevealTrackId(trackId);
+      if (displayMode !== "AllTracks") setSpawnRevealTrackId(trackId);
     },
     [displayMode],
   );
@@ -1457,10 +1457,10 @@ function BladeCutPreview({
 
 
 
-function EmptyHint({ mode }: { mode?: "AbRoll" | "ShowAll" }) {
+function EmptyHint({ mode }: { mode?: "AbRoll" | "AllTracks" }) {
   const { t } = useTranslation();
-  // Rendered when the user is in AB mode but no track carries a role
-  // stamp; the user switches to Show-All manually.
+  // Rendered when the user is in A/B Roll but no track carries a role
+  // stamp; the user switches to All Tracks manually.
   //
   // The hint names the KEY, not the Quick Actions button: the strip is a Panel
   // the user can close or drag away, whereas the binding is always live. Read
@@ -1469,10 +1469,10 @@ function EmptyHint({ mode }: { mode?: "AbRoll" | "ShowAll" }) {
   const accelerator = binding ? resolveAccelerator(binding) : "";
   const message =
     mode === "AbRoll"
-      ? t("timeline.empty_ab_mode", {
+      ? t("timeline.empty_ab_roll", {
           key: accelerator,
           defaultValue:
-            "No A/B-roll content here. Drop a clip on Video A or Video B, or press {{key}} to show all tracks.",
+            "No A/B-roll content here. Drop a clip on A roll or B roll, or press {{key}} to switch to All Tracks.",
         })
       : t("timeline.empty_placeholder");
   return <div className="p-6 text-center text-xs text-muted-foreground">{message}</div>;

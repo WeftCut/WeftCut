@@ -4,7 +4,7 @@
 // snake_case to match the file written historically by the Rust addon, so
 // existing users' app_settings.json keeps working after the move to TS.
 
-export type DisplayMode = "AbRoll" | "ShowAll";
+export type DisplayMode = "AbRoll" | "AllTracks";
 
 /// Preview playback resolution — the user-owned quality/throughput dial every
 /// mainstream NLE carries (Premiere's Full / ½ / ¼). Names the FRACTION, not
@@ -107,7 +107,7 @@ export interface AppSettings {
 
 /// Patch shape — every field optional. The store merges into the current
 /// settings, persists atomically, and returns the post-patch snapshot. Use
-/// this for one-field flips (e.g., `{ display_mode: "ShowAll" }`) instead of
+/// this for one-field flips (e.g., `{ display_mode: "AllTracks" }`) instead of
 /// round-tripping the whole struct.
 export interface AppSettingsPatch {
   display_mode?: DisplayMode;

@@ -275,9 +275,9 @@ describe('createTsActorHost — persistence-route integration', () => {
     const { deps, sent } = makeInMemoryDeps()
     const host = createTsActorHost(deps)
     host.start()
-    const after = await host.handleInvoke('app_settings_set', { patch: { display_mode: 'ShowAll' } }) as { display_mode: string }
-    expect(after.display_mode).toBe('ShowAll')
-    expect(sent.some((s) => s.event === 'app_settings:changed' && (s.payload as { display_mode?: string }).display_mode === 'ShowAll')).toBe(true)
+    const after = await host.handleInvoke('app_settings_set', { patch: { display_mode: 'AllTracks' } }) as { display_mode: string }
+    expect(after.display_mode).toBe('AllTracks')
+    expect(sent.some((s) => s.event === 'app_settings:changed' && (s.payload as { display_mode?: string }).display_mode === 'AllTracks')).toBe(true)
     host.stop()
   })
 

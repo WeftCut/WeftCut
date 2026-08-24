@@ -26,8 +26,8 @@ describe('app-settings store', () => {
   it('apply persists then reads back (independent reader)', () => {
     const { fs, files } = memFs()
     const s = createAppSettingsStore({ fs, path: PATH, dir: DIR })
-    const after = s.apply({ display_mode: 'ShowAll', delta_window_us: 5_000_000, tail_snap_enabled: false, tail_snap_strength_px: 24 })
-    expect(after.display_mode).toBe('ShowAll')
+    const after = s.apply({ display_mode: 'AllTracks', delta_window_us: 5_000_000, tail_snap_enabled: false, tail_snap_strength_px: 24 })
+    expect(after.display_mode).toBe('AllTracks')
     expect(after.delta_window_us).toBe(5_000_000)
     expect(after.tail_snap_strength_px).toBe(24)
     const reader = createAppSettingsStore({ fs, path: PATH, dir: DIR })
@@ -36,9 +36,9 @@ describe('app-settings store', () => {
   })
 
   it('missing fields inherit defaults', () => {
-    const s = store({ [PATH]: '{ "display_mode": "ShowAll" }' })
+    const s = store({ [PATH]: '{ "display_mode": "AllTracks" }' })
     const got = s.get()
-    expect(got.display_mode).toBe('ShowAll')
+    expect(got.display_mode).toBe('AllTracks')
     expect(got.delta_window_us).toBe(10_000_000)
     expect(got.tail_snap_enabled).toBe(true)
     expect(got.tail_snap_strength_px).toBe(12)
@@ -49,11 +49,11 @@ describe('app-settings store', () => {
 
   it('ignores the retired media drawer key without migrating or persisting it', () => {
     const { fs, files } = memFs({
-      [PATH]: '{ "display_mode": "ShowAll", "media_pool_drawer_open": true }',
+      [PATH]: '{ "display_mode": "AllTracks", "media_pool_drawer_open": true }',
     })
     const s = createAppSettingsStore({ fs, path: PATH, dir: DIR })
 
-    expect(s.get()).toEqual({ ...APP_SETTINGS_DEFAULTS, display_mode: 'ShowAll' })
+    expect(s.get()).toEqual({ ...APP_SETTINGS_DEFAULTS, display_mode: 'AllTracks' })
     s.apply({ tail_snap_enabled: false })
 
     const persisted = JSON.parse(files.get(PATH)!) as Record<string, unknown>
@@ -114,7 +114,7 @@ describe('app-settings store', () => {
   })
 
   it('playback_resolution defaults to full on a file written before the field existed', () => {
-    expect(store({ [PATH]: '{ "display_mode": "ShowAll" }' }).get().playback_resolution).toBe('full')
+    expect(store({ [PATH]: '{ "display_mode": "AllTracks" }' }).get().playback_resolution).toBe('full')
     expect(store().get().playback_resolution).toBe('full')
     expect(store().apply({ playback_resolution: 'half' }).playback_resolution).toBe('half')
     expect(store().apply({ playback_resolution: 'quarter' }).playback_resolution).toBe('quarter')
@@ -127,7 +127,7 @@ describe('app-settings store', () => {
     // Same additive-field trap as playback_resolution: an existing
     // app_settings.json has no key, and the renderer switches on the value —
     // undefined there would silently drop every layout class.
-    expect(store({ [PATH]: '{ "display_mode": "ShowAll" }' }).get().media_pool_layout).toBe('large')
+    expect(store({ [PATH]: '{ "display_mode": "AllTracks" }' }).get().media_pool_layout).toBe('large')
     expect(store().get().media_pool_layout).toBe('large')
     expect(store().apply({ media_pool_layout: 'grid' }).media_pool_layout).toBe('grid')
     expect(store().apply({ media_pool_layout: 'list' }).media_pool_layout).toBe('list')
@@ -140,7 +140,7 @@ describe('app-settings store', () => {
     // Same additive-field trap once more, with a sharper failure: the renderer's
     // wheel handler switches on this value, so `undefined` would take neither
     // branch and the timeline would stop scrolling entirely.
-    expect(store({ [PATH]: '{ "display_mode": "ShowAll" }' }).get().timeline_wheel_axis).toBe('horizontal')
+    expect(store({ [PATH]: '{ "display_mode": "AllTracks" }' }).get().timeline_wheel_axis).toBe('horizontal')
     expect(store().get().timeline_wheel_axis).toBe('horizontal')
     expect(store().apply({ timeline_wheel_axis: 'vertical' }).timeline_wheel_axis).toBe('vertical')
     // Hand-edited / wrong-typed values degrade the same way.
@@ -151,7 +151,7 @@ describe('app-settings store', () => {
   it('timeline_follow_playhead defaults to ON on a file written before the field existed', () => {
     // The additive-boolean trap: an absent key must NOT read as false, or every
     // existing install silently loses the feature it never turned off.
-    expect(store({ [PATH]: '{ "display_mode": "ShowAll" }' }).get().timeline_follow_playhead).toBe(true)
+    expect(store({ [PATH]: '{ "display_mode": "AllTracks" }' }).get().timeline_follow_playhead).toBe(true)
     expect(store().get().timeline_follow_playhead).toBe(true)
     expect(store().apply({ timeline_follow_playhead: false }).timeline_follow_playhead).toBe(false)
     expect(store({ [PATH]: '{ "timeline_follow_playhead": false }' }).get().timeline_follow_playhead).toBe(false)
@@ -164,7 +164,7 @@ describe('app-settings store', () => {
     // cross-restart persistence is asserted HERE rather than by relaunching the
     // app in e2e: an absent key must NOT read as false, or every existing
     // install opens with the marker layer silenced it never chose to silence.
-    expect(store({ [PATH]: '{ "display_mode": "ShowAll" }' }).get().markers_visible).toBe(true)
+    expect(store({ [PATH]: '{ "display_mode": "AllTracks" }' }).get().markers_visible).toBe(true)
     expect(store().get().markers_visible).toBe(true)
     expect(store().apply({ markers_visible: false }).markers_visible).toBe(false)
     expect(store({ [PATH]: '{ "markers_visible": false }' }).get().markers_visible).toBe(false)
@@ -190,7 +190,7 @@ describe('app-settings store', () => {
   // flag, and it never enters project history to be restored from.
   it('safe_area_guides_visible defaults to OFF and survives a restart', () => {
     expect(store().get().safe_area_guides_visible).toBe(false)
-    expect(store({ [PATH]: '{ "display_mode": "ShowAll" }' }).get().safe_area_guides_visible).toBe(false)
+    expect(store({ [PATH]: '{ "display_mode": "AllTracks" }' }).get().safe_area_guides_visible).toBe(false)
     // Hand-edited / wrong-typed values degrade to the default.
     expect(store({ [PATH]: '{ "safe_area_guides_visible": "on" }' }).get().safe_area_guides_visible).toBe(false)
 

@@ -47,7 +47,7 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
     // or wrong-typed field falls back to its default; unknown keys are ignored.
     const d = APP_SETTINGS_DEFAULTS
     return {
-      display_mode: parsed.display_mode === 'ShowAll' || parsed.display_mode === 'AbRoll' ? parsed.display_mode : d.display_mode,
+      display_mode: parsed.display_mode === 'AllTracks' || parsed.display_mode === 'AbRoll' ? parsed.display_mode : d.display_mode,
       delta_window_us: typeof parsed.delta_window_us === 'number' ? parsed.delta_window_us : d.delta_window_us,
       tail_snap_enabled: typeof parsed.tail_snap_enabled === 'boolean' ? parsed.tail_snap_enabled : d.tail_snap_enabled,
       tail_snap_strength_px: typeof parsed.tail_snap_strength_px === 'number' ? parsed.tail_snap_strength_px : d.tail_snap_strength_px,

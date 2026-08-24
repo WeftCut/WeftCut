@@ -150,8 +150,8 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
         // The hint separates state from action: "showing X, click for Y".
         hint: (s) =>
           s.displayMode === "AbRoll"
-            ? "timeline.mode_ab_hint"
-            : "timeline.mode_all_hint",
+            ? "timeline.mode_ab_roll_hint"
+            : "timeline.mode_all_tracks_hint",
       },
       {
         id: "toggleMarkersVisible",

@@ -236,12 +236,12 @@ describe("Timeline seek/selection coupling", () => {
     ipcMocks.getWaveformPeaks.mockClear();
     ipcMocks.groupsCreate.mockClear();
     ipcMocks.logEmit.mockClear();
-    // Show-All so the role-stamped track always renders regardless of the
+    // All Tracks so the role-stamped track always renders regardless of the
     // default AB-roll filter.
     useAppSettingsStore.setState((s) => ({
       settings: {
         ...s.settings,
-        display_mode: "ShowAll",
+        display_mode: "AllTracks",
         tail_snap_enabled: true,
         tail_snap_strength_px: 12,
       },
@@ -1315,7 +1315,7 @@ describe("Timeline seek/selection coupling", () => {
     expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
   });
 
-  it.each(["AbRoll", "ShowAll"] as const)(
+  it.each(["AbRoll", "AllTracks"] as const)(
     "renders the same duration-sized media ghost in %s mode",
     (displayMode) => {
       useAppSettingsStore.setState((s) => ({
@@ -1846,7 +1846,7 @@ describe("Timeline clip label fallback", () => {
     useAppSettingsStore.setState((s) => ({
       settings: {
         ...s.settings,
-        display_mode: "ShowAll",
+        display_mode: "AllTracks",
         tail_snap_enabled: true,
         tail_snap_strength_px: 12,
       },
@@ -2002,7 +2002,7 @@ describe("Timeline follow-playhead", () => {
       .spyOn(HTMLElement.prototype, "clientWidth", "get")
       .mockReturnValue(LANE_VIEWPORT_PX + HEADER_COL_PX);
     useAppSettingsStore.setState((s) => ({
-      settings: { ...s.settings, display_mode: "ShowAll", timeline_follow_playhead: true },
+      settings: { ...s.settings, display_mode: "AllTracks", timeline_follow_playhead: true },
     }));
   });
   afterEach(() => {

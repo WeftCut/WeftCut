@@ -56,7 +56,7 @@ export function TrackHeader({ track, height, isRevealed, isGroupStart, isExpande
   const { t } = useTranslation();
   // The name a lane's positional number counts against is its slot in the
   // PROJECT's track vector, read from the mirror rather than from the rows this
-  // header renders beside: the timeline's row list is filtered in A/B mode, so
+  // header renders beside: the timeline's row list is filtered in A/B Roll, so
   // numbering off it would renumber every lane when the user toggles the filter.
   // Atomic selector — `tracks` is one field of one snapshot.
   const tracks = useProjectStore((s) => s.summary?.tracks);

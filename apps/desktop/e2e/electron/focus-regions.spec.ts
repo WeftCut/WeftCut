@@ -14,7 +14,7 @@ const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
 /// media, and nothing anywhere mounts an `<input>` — which makes it a fine
 /// region-wiring fixture but proves nothing about release.
 ///
-/// `revealLayer` is not optional: in A/B-roll mode a role-null Overlay track
+/// `revealLayer` is not optional: in A/B Roll a role-null Overlay track
 /// stays COLLAPSED and its LayerBlock never mounts until revealed (see the hook's
 /// own docstring). Without it `.timeline-layer` simply never appears.
 async function projectWithClip(page: Awaited<ReturnType<typeof launchApp>>['page']) {

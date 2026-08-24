@@ -80,7 +80,7 @@ describe("quickActions catalogue", () => {
     for (const section of QUICK_ACTION_SECTIONS) {
       for (const item of section.items) {
         expect(item.icon, `"${item.id}" has no icon`).toBeTruthy();
-        for (const displayMode of ["AbRoll", "ShowAll"] as const) {
+        for (const displayMode of ["AbRoll", "AllTracks"] as const) {
           expect(
             resolveIcon(item, state({ displayMode })),
             `"${item.id}" resolves no icon @ ${displayMode}`,
@@ -99,9 +99,9 @@ describe("quickActions catalogue", () => {
     // radiogroup unarmed for that value — the failure this case exists for.
     const states: QuickActionState[] = [
       state({ tool: "select", displayMode: "AbRoll" }),
-      state({ tool: "select", displayMode: "ShowAll" }),
+      state({ tool: "select", displayMode: "AllTracks" }),
       state({ tool: "blade", displayMode: "AbRoll" }),
-      state({ tool: "blade", displayMode: "ShowAll" }),
+      state({ tool: "blade", displayMode: "AllTracks" }),
       state({ playbackResolution: "full" }),
       state({ playbackResolution: "half" }),
       state({ playbackResolution: "quarter" }),
@@ -143,7 +143,7 @@ describe("quickActions catalogue", () => {
     ).find((i) => i.id === "toggleDisplayMode");
     if (!item) throw new Error("no strip item for toggleDisplayMode");
     expect(resolveIcon(item, state({ displayMode: "AbRoll" }))).toBe(FoldVertical);
-    expect(resolveIcon(item, state({ displayMode: "ShowAll" }))).toBe(
+    expect(resolveIcon(item, state({ displayMode: "AllTracks" }))).toBe(
       UnfoldVertical,
     );
   });
@@ -153,13 +153,13 @@ describe("quickActions catalogue", () => {
       (i) => i.id === "toggleDisplayMode",
     );
     expect(item?.hint?.(state({ displayMode: "AbRoll" }))).toBe(
-      "timeline.mode_ab_hint",
+      "timeline.mode_ab_roll_hint",
     );
-    expect(item?.hint?.(state({ displayMode: "ShowAll" }))).toBe(
-      "timeline.mode_all_hint",
+    expect(item?.hint?.(state({ displayMode: "AllTracks" }))).toBe(
+      "timeline.mode_all_tracks_hint",
     );
     expect(item?.active?.(state({ displayMode: "AbRoll" }))).toBe(true);
-    expect(item?.active?.(state({ displayMode: "ShowAll" }))).toBe(false);
+    expect(item?.active?.(state({ displayMode: "AllTracks" }))).toBe(false);
   });
 
   // An independent toggle whose state is carried by the pressed attributes and

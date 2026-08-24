@@ -180,8 +180,8 @@ function rowTitles(root: HTMLElement): (string | null)[] {
 }
 
 describe("NearbyPanel", () => {
-  it("explains Show All mode instead of collapsing to a blank Panel", () => {
-    settings.displayMode = "ShowAll";
+  it("explains All Tracks instead of collapsing to a blank Panel", () => {
+    settings.displayMode = "AllTracks";
     const { container } = render(
       <NearbyPanel
         tracks={[nearbyTrack()]}
@@ -193,7 +193,7 @@ describe("NearbyPanel", () => {
     );
 
     expect(container.firstChild).not.toBeNull();
-    expect(screen.getByText("Showing all tracks")).toBeTruthy();
+    expect(screen.getByText("All Tracks")).toBeTruthy();
     // The explainer hands back the way out, and names the key from the
     // effective bindings rather than a literal — no provider here, so this is
     // the default chord.
@@ -244,7 +244,7 @@ describe("NearbyPanel", () => {
     );
     expect(container.querySelector("header")).toBeNull();
 
-    settings.displayMode = "ShowAll";
+    settings.displayMode = "AllTracks";
     rerender(
       <NearbyPanel
         tracks={[nearbyTrack()]}

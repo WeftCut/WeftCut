@@ -145,7 +145,7 @@ beforeEach(() => {
   ipcMocks.trimLayer.mockClear();
   ipcMocks.logEmit.mockClear();
   useAppSettingsStore.setState((s) => ({
-    settings: { ...s.settings, display_mode: "ShowAll" },
+    settings: { ...s.settings, display_mode: "AllTracks" },
   }));
 });
 afterEach(cleanup);

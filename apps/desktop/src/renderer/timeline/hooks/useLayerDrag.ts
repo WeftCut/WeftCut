@@ -96,7 +96,7 @@ export function useLayerDrag(opts: {
   tailSnapEnabled: boolean;
   tailSnapStrengthPx: number;
   /// A raise minted a lane. The Timeline reveals it: a spawned lane carries no
-  /// role, so the A/B filter would hide the clip the user just raised.
+  /// role, so the A/B Roll filter would hide the clip the user just raised.
   onLaneSpawned: (trackId: string) => void;
   onMutated: () => Promise<void>;
 }): {

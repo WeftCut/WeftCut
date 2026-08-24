@@ -12,7 +12,7 @@ import type { TrackSummary } from "../ipc";
 /// `tracks` is the project's track vector in DATA order (index 0 = bottom of the
 /// z-stack), never the timeline's reversed-and-filtered row order: the number is
 /// the track's 1-based position from the bottom, so a rendered row list would
-/// renumber every lane the moment the A/B filter hides one. It renumbers when
+/// renumber every lane the moment the A/B Roll filter hides one. It renumbers when
 /// lanes are added or pruned, which is what Premiere and Resolve do too.
 ///
 /// `t` is structurally typed rather than `TFunction` so callers can pass

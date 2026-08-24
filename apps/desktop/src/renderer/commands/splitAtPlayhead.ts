@@ -46,7 +46,7 @@ export interface SplitTarget {
  *   partner too would ask the actor to cut an interval it had just closed —
  *   `SplitOutsideLayer` on a clip that *did* get split. Deduping here is what
  *   keeps an auto-paired A/V couple one commit and one undo.
- * - **The A/B view filter, for the no-selection path only.** In `AbRoll` the
+ * - **The A/B Roll filter, for the no-selection path only.** In `AbRoll` the
  *   timeline hides every role-less track (`TrackSummary.role`), which is
  *   exactly where auto-spawned overlays and titles land. Cutting a clip the
  *   user cannot see would be a silent edit, so the sweep stays inside the

@@ -140,7 +140,7 @@ export async function setAppSettings(
 /// call-sites read like intent.
 export async function toggleDisplayMode(): Promise<AppSettings> {
   const current = useAppSettingsStore.getState().settings.display_mode;
-  const next: DisplayMode = current === "AbRoll" ? "ShowAll" : "AbRoll";
+  const next: DisplayMode = current === "AbRoll" ? "AllTracks" : "AbRoll";
   return setAppSettings({ display_mode: next });
 }
 
@@ -219,7 +219,7 @@ export function timelineWheelAxis(): AppSettings["timeline_wheel_axis"] {
 }
 
 /// Imperative read for command handlers that have to decide whether a freshly
-/// spawned, role-less lane would be hidden by the A/B filter.
+/// spawned, role-less lane would be hidden by the A/B Roll filter.
 export function displayMode(): DisplayMode {
   return useAppSettingsStore.getState().settings.display_mode;
 }

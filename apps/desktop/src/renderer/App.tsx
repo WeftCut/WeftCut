@@ -282,7 +282,7 @@ export function App({ onCloseProject }: AppProps) {
   // "New Motif" auto-places the fresh draft (MotifPicker.onDraftPlaced) and
   // should land the user on its property panel with the layer visible. The
   // owner track is only knowable from the refreshed summary (the layer sits
-  // on a just-created, role-null Overlay track the AB view hides), so the
+  // on a just-created, role-null Overlay track the A/B Roll filter hides), so the
   // select + reveal is deferred here until the summary contains the layer.
   const [pendingRevealLayerId, setPendingRevealLayerId] = useState<string | null>(null);
   useEffect(() => {
@@ -593,7 +593,7 @@ export function App({ onCloseProject }: AppProps) {
     toggleBladeMode: () => setTool("blade"),
     toggleLog: toggleLogConsole,
     focusLogSearch,
-    // R.8: T flips the AB / Show-All display_mode at the app level.
+    // R.8: T flips the A/B Roll / All Tracks display_mode at the app level.
     // Mutates the same app-pref store the inline pill writes to;
     // every subscriber re-renders via `app_settings:changed`.
     toggleDisplayMode: () => {
@@ -759,7 +759,7 @@ export function App({ onCloseProject }: AppProps) {
   // not re-render on a multi-select change, which is the same reason the
   // command's `enabled` predicate reads it live.
   //
-  // The new lane carries no role, so the A/B filter would hide the clip the user
+  // The new lane carries no role, so the A/B Roll filter would hide the clip the user
   // just raised — routed through the existing inline reveal rather than a second
   // visibility rule. `revealTrack(id, null)` disturbs no selection, and naming a
   // lane the summary has not delivered yet simply matches nothing until it does.
@@ -768,7 +768,7 @@ export function App({ onCloseProject }: AppProps) {
     if (layerIds.length === 0) return;
     try {
       const trackId = await moveLayersToNewTrack(layerIds);
-      if (displayMode() !== "ShowAll") revealTrack(trackId, null);
+      if (displayMode() !== "AllTracks") revealTrack(trackId, null);
     } catch (err) {
       logMutationFailure(err, "move_layers_to_new_track");
     }

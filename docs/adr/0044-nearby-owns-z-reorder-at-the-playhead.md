@@ -13,7 +13,7 @@ the track header, it assigned ordering to the Nearby panel — "operate on the
 media" — and noted the one thing it did not provide: *Nearby currently sorts by
 playhead span and start time, not by z-order.*
 
-The gap bites hardest in A/B Roll mode. There the timeline shows only the
+The gap bites hardest in A/B Roll. There the timeline shows only the
 reserved skeleton plus at most one inline-revealed hidden track at a time
 (single-track exclusive reveal), so two stacked overlays are never on screen
 together and a stacking decision has nowhere to live on the timeline at all.
@@ -86,8 +86,8 @@ mode.
    duration of a gesture: the playhead ticks on a throttle and must not
    reshuffle the rows under the pointer.
 
-7. **A/B Roll only.** Nearby in Show All keeps its explainer. The panel's
-   reason to exist is the layers the timeline is hiding; Show All hides
+7. **A/B Roll only.** Nearby in All Tracks keeps its explainer. The panel's
+   reason to exist is the layers the timeline is hiding; All Tracks hides
    nothing, and its ordering story (raises, at 0042's accepted n−1 cost)
    is unchanged by this decision.
 
@@ -133,13 +133,13 @@ and the rule honours every intent the filtered view can express.
   being true. Raise remains the spawn-at-top gesture; *Restack* is the new
   verb for anchored reordering, and CONTEXT.md changes with this ADR.
 - In A/B Roll, ordering n overlays now costs one drag instead of n−1 blind
-  raises. In Show All nothing changes.
+  raises. In All Tracks nothing changes.
 - The common restack (sole-occupant overlay) preserves the lane name the user
   set, which repeated raises destroyed — 0042's accepted name-loss consequence
   now applies only to the split path, where the source lane survives anyway
   unless the moved layer was its last.
 - An anchored placement can land between tracks the user cannot currently see
-  (filter, window, or the timeline's A/B filter). The rule is deterministic
+  (filter, window, or the timeline's A/B Roll filter). The rule is deterministic
   and stated; the alternative — normalising the whole stack per drop — would
   move things the user never touched.
 - The op accepts any visual layer as anchor, including one on a reserved

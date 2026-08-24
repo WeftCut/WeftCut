@@ -264,7 +264,7 @@ export interface E2EHook {
   /// Reveal a layer's track AND select it — the same action as clicking a peek
   /// item in the right panel (App's `revealTrack`, driven here via the deferred
   /// `pendingRevealLayerId` so it fires once the summary contains the layer). In
-  /// A/B-roll mode a role-null Overlay track stays COLLAPSED — its timeline
+  /// A/B Roll a role-null Overlay track stays COLLAPSED — its timeline
   /// LayerBlock, and the per-layer bake-status dot inside it, never mount — until
   /// revealed. Plain selection does NOT reveal (revealedTrackId is separate
   /// state), so the bake-status e2e must reveal before asserting `.motif-bake-dot`.

@@ -186,6 +186,17 @@ the reason "no tracks exist" is never a case the UI handles. Carrying a `role`
 is exactly what makes a track part of it.
 _Avoid_: default tracks, system tracks, fixed tracks
 
+**Track display**:
+The app-level filter over which lanes the timeline shows (`display_mode`,
+persisted). **A/B Roll** — the default — keeps only role-stamped tracks, plus at
+most one inline-revealed hidden lane; **All Tracks** keeps every one. Those two
+names are the term at every surface: the View menu radio, the Quick Actions
+toggle, the `T` binding's label, and the `AbRoll` / `AllTracks` enum. Chinese
+leaves A/B Roll untranslated — it is the term the industry says — and calls the
+other 全轨显示. Capitalisation carries the mode/lane distinction: A/B Roll is the
+mode, *A/B-roll tracks* the lanes it keeps.
+_Avoid_: Show All, AB mode, A/B view filter, "Display: A/B Roll only"
+
 **Transient**:
 The `Track.transient` flag, read as *not part of the reserved skeleton* —
 stamped on every track whose `role` is `None`, including one an agent creates
@@ -235,14 +246,14 @@ neither moves nor anchors. The op's exact contract lives in data-model.md.
 _Avoid_: raise (that is spawn-at-top), reorder tracks, move above/below
 
 **Playhead Panel**:
-The A/B-Roll context Panel, which takes its name from the origin everything in
+The A/B Roll context Panel, which takes its name from the origin everything in
 it is measured against. Its two sections name the distance from that origin:
 *Now playing* is the stack composited under the playhead — the only section
 that restacks — and *Nearby* is the rest of the ±Δ window, each row carrying
 its signed offset. Δ is the user's to set, from the dial in the Panel's own
 toolbar (`delta_window_us`, app-level); the Panel prints no title, because the
 dock tab is the title. The default layout gives it an area of its own above the
-inspector rather than a tab behind it: A/B-Roll is the editing model the app
+inspector rather than a tab behind it: A/B Roll is the editing model the app
 defaults to, and *Now playing* is where that model is read from, so a user who
 never finds the tab never learns the model. The code calls the Panel `nearby` throughout (`nearby` kind
 id, `NearbyPanel.tsx`, `peek.ts`, the `.peek-*` classes, ADR 0044): the kind id
