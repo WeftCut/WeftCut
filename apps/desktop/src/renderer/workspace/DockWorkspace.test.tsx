@@ -11,7 +11,6 @@ const dockHarness = vi.hoisted(() => ({
   readyCalls: 0,
   renderWatermark: false,
   headerApi: null as unknown,
-  headerTabLocation: "header" as "header" | "headerOverflow",
   contentApi: null as unknown,
   contentKind: null as string | null,
 }));
@@ -70,7 +69,7 @@ vi.mock("dockview-react", async () => {
             <Tab
               api={dockHarness.headerApi}
               containerApi={dockHarness.api}
-              tabLocation={dockHarness.headerTabLocation}
+              tabLocation="header"
             />
           ) : null}
           {dockHarness.contentApi && dockHarness.contentKind && Content ? (
@@ -371,7 +370,6 @@ beforeEach(() => {
   dockHarness.readyCalls = 0;
   dockHarness.renderWatermark = false;
   dockHarness.headerApi = null;
-  dockHarness.headerTabLocation = "header";
   dockHarness.contentApi = null;
   dockHarness.contentKind = null;
   previewHarness.sequence = 0;
@@ -475,73 +473,6 @@ describe("DockWorkspace React integration", () => {
     view.unmount();
     expect(visibility.listenerCount()).toBe(0);
     expect(previewHarness.unmounts).toBe(previewHarness.mounts);
-  });
-
-  it("renders overflow rows as menu items", () => {
-    const dock = strictModeApi();
-    dockHarness.api = dock.api;
-    dockHarness.headerApi = {
-      id: "effect",
-      title: "Effect",
-      group: { panels: [{ id: "attribute" }, { id: "effect" }] },
-    };
-    dockHarness.headerTabLocation = "headerOverflow";
-
-    render(<DockWorkspace contracts={contracts} />);
-
-    // Menu-row variant: labeled with the plain title, no hover tooltip.
-    const row = document.querySelector(".weft-dock-tab--overflow");
-    expect(row).toBeTruthy();
-    expect(row?.textContent).toBe("Effect");
-    expect(row?.getAttribute("title")).toBeNull();
-  });
-
-  it("closes an overflow row's Panel on middle-click", () => {
-    const dock = strictModeApi();
-    dockHarness.api = dock.api;
-    dockHarness.headerApi = {
-      id: "effect",
-      title: "Effect",
-      group: { panels: [{ id: "attribute" }, { id: "effect" }] },
-    };
-    dockHarness.headerTabLocation = "headerOverflow";
-
-    render(<DockWorkspace contracts={contracts} />);
-
-    const effect = dock.panels.get("effect");
-    fireEvent(
-      document.querySelector(".weft-dock-tab--overflow")!,
-      new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }),
-    );
-    expect(effect?.api.close).toHaveBeenCalledOnce();
-  });
-
-  it("walks an open overflow dropdown with arrow keys and activates on Enter", () => {
-    const dock = strictModeApi();
-    dockHarness.api = dock.api;
-
-    render(<DockWorkspace contracts={contracts} />);
-
-    const section = document.querySelector(".dock-workspace");
-    expect(section).toBeTruthy();
-    const popover = document.createElement("div");
-    popover.className = "dv-tabs-overflow-container";
-    const rowA = document.createElement("div");
-    const rowB = document.createElement("div");
-    rowA.className = "dv-tab";
-    rowB.className = "dv-tab";
-    const onRowBClick = vi.fn();
-    rowB.addEventListener("click", onRowBClick);
-    popover.append(rowA, rowB);
-    section!.appendChild(popover);
-
-    fireEvent.keyDown(window, { key: "ArrowDown" });
-    expect(rowA.classList.contains("weft-overflow-row--kb-focus")).toBe(true);
-    fireEvent.keyDown(window, { key: "ArrowDown" });
-    expect(rowA.classList.contains("weft-overflow-row--kb-focus")).toBe(false);
-    expect(rowB.classList.contains("weft-overflow-row--kb-focus")).toBe(true);
-    fireEvent.keyDown(window, { key: "Enter" });
-    expect(onRowBClick).toHaveBeenCalledOnce();
   });
 
   it("maximizes from the tab chrome", () => {

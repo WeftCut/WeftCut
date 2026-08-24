@@ -363,8 +363,8 @@ test("the Quick Actions bar's thickness resists the splitter beside it", async (
  * right-click menu: the workspace passes no `getTabContextMenuItems`, so
  * Dockview's own Close / Close All / Close Others menu never renders
  * (`DockWorkspace.test.tsx` asserts the prop stays undefined). Closing goes
- * through View > Close Active Panel, a middle-click on an overflow row, or —
- * for the tabless Quick Actions strip — the grip's own menu.
+ * through View > Close Active Panel, or — for the tabless Quick Actions strip —
+ * the grip's own menu.
  *
  * Both halves are here because both are upgrade-fragile: a dockview release that
  * starts rendering its default tab actions would silently put close buttons back

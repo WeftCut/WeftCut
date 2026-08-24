@@ -69,7 +69,6 @@ function controller(): DockWorkspaceController {
     closeActivePanel: vi.fn(),
     focusNextPanel: vi.fn(),
     focusPreviousPanel: vi.fn(),
-    openTabsOverflowMenu: vi.fn(),
     setHoveredPanel: vi.fn(),
     toggleMaximize: vi.fn(),
     restoreMaximizedPanel: vi.fn(),

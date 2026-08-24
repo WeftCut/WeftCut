@@ -152,8 +152,7 @@ export const dockPanel = (page: Page, kind?: string): Locator =>
  * does NOT become the `role="tab"` wrapper's accessible name (measured: that
  * name is ""). Its string is `dock_workspace.move_panel` — today "Drag to move
  * <Panel>" — so even a substring match on the old "Move <Panel>" reaches the
- * grip and nothing else. Overflow-dropdown rows are excluded for free: they get
- * no `data-panel-kind`.
+ * grip and nothing else.
  */
 export const dockTab = (page: Page, kind: string): Locator =>
   page

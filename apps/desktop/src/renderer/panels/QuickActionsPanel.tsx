@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 
 import { getCommand, type CommandDef } from "../commands/registry";
+import { useEdgeOverflow } from "../hooks/useEdgeOverflow";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { resolveAccelerator } from "../shortcuts/match";
 import {
@@ -265,6 +266,17 @@ export function QuickActionsPanel({
   const orientation = useStripOrientation(geometry, docked);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useHorizontalWheel(scrollRef, orientation === "horizontal");
+  // Which ends still hide a button. Same predicate the dock tab strip reads, so
+  // the two strips cannot disagree about what "there is more this way" means;
+  // this one draws only the gradient, no arrows (ADR 0050).
+  const edge = useEdgeOverflow(scrollRef, orientation);
+  const fade = !edge.overflowing
+    ? "none"
+    : edge.atStart
+      ? "end"
+      : edge.atEnd
+        ? "start"
+        : "both";
   const { focusIndex, setFocusIndex, onKeyDown } = useRovingFocus(
     scrollRef,
     orientation,
@@ -302,6 +314,7 @@ export function QuickActionsPanel({
       ref={scrollRef}
       className="weft-quick-actions"
       data-orientation={orientation}
+      data-fade={fade}
       role="toolbar"
       aria-orientation={orientation}
       aria-label={t("dock_workspace.panels.quick-actions")}

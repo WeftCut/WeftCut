@@ -266,9 +266,9 @@
 }
 
 /* The strip body — one single-axis scroller that NEVER wraps: overflow scrolls,
-   and the trailing end fades to advertise that there is more. It occupies only
-   the Dockview content region, so the in-flow grip sits beside it rather than
-   under it. */
+   and whichever end still hides a button fades to say so. It occupies only the
+   Dockview content region, so the in-flow grip sits beside it rather than under
+   it. */
 .weft-quick-actions {
   width: 100%;
   height: 100%;
@@ -286,19 +286,53 @@
   flex-direction: row;
   overflow-x: auto;
   overflow-y: hidden;
-  mask-image: linear-gradient(
-    to right,
-    #000 calc(100% - 10px),
-    transparent 100%
-  );
 }
 
 .weft-quick-actions[data-orientation="vertical"] {
   flex-direction: column;
   overflow-x: hidden;
   overflow-y: auto;
+}
+
+/* Which ends still hide a button, from the same predicate the dock tab strip
+   reads (ADR 0050). Driven by state rather than declared once per axis: a fixed
+   trailing fade keeps dimming the last button after the strip has reached its
+   end — announcing content that is not there — and says nothing about what is
+   behind the reader once they have scrolled.
+   No arrows here, unlike the tab strip: these buttons are anonymous icons, so an
+   overlay covering one costs more than it does over a named tab, and every one of
+   them already shows its keyboard shortcut. */
+.weft-quick-actions[data-orientation="horizontal"][data-fade="end"] {
+  mask-image: linear-gradient(to right, #000 calc(100% - 10px), transparent 100%);
+}
+
+.weft-quick-actions[data-orientation="horizontal"][data-fade="start"] {
+  mask-image: linear-gradient(to left, #000 calc(100% - 10px), transparent 100%);
+}
+
+.weft-quick-actions[data-orientation="horizontal"][data-fade="both"] {
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 10px,
+    #000 calc(100% - 10px),
+    transparent 100%
+  );
+}
+
+.weft-quick-actions[data-orientation="vertical"][data-fade="end"] {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), transparent 100%);
+}
+
+.weft-quick-actions[data-orientation="vertical"][data-fade="start"] {
+  mask-image: linear-gradient(to top, #000 calc(100% - 10px), transparent 100%);
+}
+
+.weft-quick-actions[data-orientation="vertical"][data-fade="both"] {
   mask-image: linear-gradient(
     to bottom,
+    transparent 0,
+    #000 10px,
     #000 calc(100% - 10px),
     transparent 100%
   );
@@ -439,6 +473,20 @@
   /* Top corners only: the bottom edge must stay flat so the selected tab
      keeps its connected silhouette with the Panel below. */
   border-radius: var(--radius-control) var(--radius-control) 0 0;
+  /* A tab never truncates its title (ADR 0050). The floor is the title's own
+     width, so the label's `text-overflow` rule can never fire and no Panel is
+     ever named by a prefix — a tab is the ONLY place a Panel is named, so a
+     title the reader has to guess at costs more than a strip they have to
+     scroll. A group too narrow for its tabs clips them out of the strip
+     instead, and the two-ended overlay is what says so.
+
+     `max-content` rather than a measured px floor because the requirement is
+     the text, not a number: it tracks the label through both shipped locales
+     and any Panel renamed later. It binds only while something could shrink the
+     tab — Dockview ships `.dv-tab { flex-shrink: 0 }`, so today nothing does —
+     and that is the point of stating it here: the guarantee holds whichever way
+     a Dockview upgrade moves that value. */
+  min-width: max-content;
 }
 
 /* Label layer of selection: the active tab's title carries the weight,
@@ -505,66 +553,92 @@
   cursor: pointer;
 }
 
-/* ---- Tabs-overflow dropdown ----------------------------------------------
-   Dockview's built-in overflow popover, themed to match the app's own menus
-   (`.app-menu-list`). */
-.weft-dockview .dv-tabs-overflow-container {
-  min-width: 220px;
-  max-width: 320px;
-  padding: 4px;
-  gap: 1px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  box-shadow: var(--shadow-menu);
-  /* A long list still wheels; the scrollbar is chrome noise. */
-  scrollbar-width: none;
+/* ---- Tab-strip edge overlays ---------------------------------------------
+   Overflow is announced at BOTH ends by a floating layer: a gradient saying
+   content continues that way, and an arrow that reveals it (ADR 0050).
+
+   Floating is load-bearing, not cosmetic. These claim no layout width, which is
+   what lets an end vanish at its stop: an affordance that took width would hand
+   that width back on disappearing, the strip could fall out of overflow, and the
+   affordance would come straight back.
+
+   The mount points are Dockview's two header slots either side of the tab strip,
+   so the arrow lives outside `role="tablist"` and the tablist's roving tabindex
+   is untouched. Both slots ship with no rules of their own; positioned and left
+   at their natural zero width, each becomes an anchor pinned to one edge of the
+   scroller — pre-actions to its leading edge, left-actions to its trailing one.
+   The overlays are absolutely positioned, so neither slot ever gains width. */
+.weft-dockview .dv-pre-actions-container,
+.weft-dockview .dv-left-actions-container {
+  position: relative;
+  flex: 0 0 auto;
 }
 
-.weft-dockview .dv-tabs-overflow-container::-webkit-scrollbar {
-  display: none;
+.weft-tabstrip-edge {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Load-bearing: `.dv-pre-actions-container` precedes `.dv-tabs-container` in
+     the header's DOM, so without this the leading overlay would paint UNDER the
+     tabs it is meant to fade. The scroller is `position: relative` at z-index
+     auto, so 2 clears it. Its own extent is set inline from EDGE_OVERLAY_PX —
+     one home for that number, shared with the geometry. */
+  z-index: 2;
+  /* The soft tail must not eat clicks on the tab it is only dimming; the button
+     takes them back. */
+  pointer-events: none;
 }
 
-.weft-dockview .dv-tabs-overflow-container .dv-tab {
-  height: 28px;
-  margin: 0;
-  padding: 0 8px 0 12px;
+.weft-tabstrip-edge[data-axis="horizontal"] {
+  top: 0;
+  bottom: 0;
+}
+
+.weft-tabstrip-edge[data-axis="vertical"] {
+  left: 0;
+  right: 0;
+}
+
+.weft-tabstrip-edge[data-axis="horizontal"][data-toward="start"] {
+  left: 0;
+  background: linear-gradient(to right, var(--weft-dock-strip) 70%, transparent);
+}
+
+.weft-tabstrip-edge[data-axis="horizontal"][data-toward="end"] {
+  right: 0;
+  background: linear-gradient(to left, var(--weft-dock-strip) 70%, transparent);
+}
+
+.weft-tabstrip-edge[data-axis="vertical"][data-toward="start"] {
+  top: 0;
+  background: linear-gradient(to bottom, var(--weft-dock-strip) 70%, transparent);
+}
+
+.weft-tabstrip-edge[data-axis="vertical"][data-toward="end"] {
+  bottom: 0;
+  background: linear-gradient(to top, var(--weft-dock-strip) 70%, transparent);
+}
+
+.weft-tabstrip-edge > button {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  cursor: default;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition:
+    color var(--transition-base),
+    background-color var(--transition-base);
 }
 
-.weft-dockview .dv-tabs-overflow-container .dv-tab:hover,
-.weft-dockview .dv-tabs-overflow-container .dv-tab.weft-overflow-row--kb-focus {
-  background: var(--hover-neutral-strong);
-}
-
-.weft-dockview .dv-tabs-overflow-container .weft-dock-tab-label {
-  font-size: var(--font-size-body);
-}
-
-/* The active Panel's row keeps an explicit accent spine — menu rows have no
-   connected silhouette to lean on. */
-.weft-dockview .dv-tabs-overflow-container .dv-tab.dv-active-tab {
-  box-shadow: inset 2px 0 0 var(--ring);
+.weft-tabstrip-edge > button:hover {
   color: var(--foreground);
-}
-
-/* Menu-row variant of the Panel tab (WeftCutDockTab with
-   tabLocation="headerOverflow"): no drag affordances. */
-.weft-dock-tab--overflow {
-  width: 100%;
-  cursor: default;
-}
-
-/* No hidden-count badge on the chevron: the tooltip already lists the
-   hidden Panels by name. */
-.weft-dockview .dv-tabs-overflow-dropdown-default {
-  gap: 2px;
-  padding: 0 6px;
-  font-size: var(--font-size-caption);
-}
-
-.weft-dockview .dv-tabs-overflow-dropdown-default > span {
-  display: none;
+  background: var(--hover-neutral-strong);
 }

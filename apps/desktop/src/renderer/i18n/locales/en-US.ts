@@ -248,6 +248,10 @@ const enUS = {
     reset: "Reset Workspace",
     close_panel: "Close Panel",
     move_panel: "Drag to move {{title}}",
+    scroll_tabs: {
+      start: "Show earlier Panel tabs",
+      end: "Show later Panel tabs",
+    },
     panels: {
       media: "Media Pool",
       transitions: "Transitions",
@@ -353,7 +357,6 @@ const enUS = {
     focus_previous_panel: "Focus previous Panel",
     toggle_maximize_panel: "Maximize / restore Panel",
     restore_maximized_panel: "Restore maximized Panel",
-    open_tabs_overflow_menu: "Show hidden Panel tabs",
     group_selected: "Group selected layers",
     dissolve_selected_group: "Dissolve group of selected layer",
     nudge_audio_sample_back: "Nudge audio 1 sample earlier",

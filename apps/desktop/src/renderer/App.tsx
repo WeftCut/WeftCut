@@ -604,7 +604,6 @@ export function App({ onCloseProject }: AppProps) {
     },
     focusNextPanel: () => workspaceController?.focusNextPanel(),
     focusPreviousPanel: () => workspaceController?.focusPreviousPanel(),
-    openTabsOverflowMenu: () => workspaceController?.openTabsOverflowMenu(),
     toggleMaximizePanel: () => workspaceController?.toggleMaximize(),
     ...(workspaceSnapshot.maximizedPanel
       ? {

@@ -241,6 +241,10 @@ const zhCN: Resources = {
     reset: "重置工作区",
     close_panel: "关闭面板",
     move_panel: "拖动以移动{{title}}",
+    scroll_tabs: {
+      start: "显示前面的面板标签",
+      end: "显示后面的面板标签",
+    },
     panels: {
       media: "素材库",
       transitions: "转场",
@@ -339,7 +343,6 @@ const zhCN: Resources = {
     focus_previous_panel: "聚焦上一个面板",
     toggle_maximize_panel: "最大化 / 还原面板",
     restore_maximized_panel: "还原最大化面板",
-    open_tabs_overflow_menu: "显示隐藏的面板标签",
     group_selected: "将所选图层编组",
     dissolve_selected_group: "解散所选图层所在的编组",
     nudge_audio_sample_back: "音频前移 1 个采样",

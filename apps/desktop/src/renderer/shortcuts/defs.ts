@@ -33,7 +33,6 @@ export type ActionId =
   | "focusPreviousPanel"
   | "toggleMaximizePanel"
   | "restoreMaximizedPanel"
-  | "openTabsOverflowMenu"
   | "groupSelected"
   | "dissolveSelectedGroup"
   | "nudgeAudioSampleBack"
@@ -203,15 +202,6 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   restoreMaximizedPanel: {
     defaultKeys: ["Escape"],
     labelKey: "actions.restore_maximized_panel",
-    fireWhenEditing: false,
-    suppressInTransientWidget: true,
-  },
-  // Opens the active dock group's hidden-tabs dropdown (the chevron at the
-  // tab strip's right end) for keyboard navigation — arrows move, Enter
-  // activates. No-op when nothing overflows.
-  openTabsOverflowMenu: {
-    defaultKeys: ["Ctrl+Alt+O"],
-    labelKey: "actions.open_tabs_overflow_menu",
     fireWhenEditing: false,
     suppressInTransientWidget: true,
   },

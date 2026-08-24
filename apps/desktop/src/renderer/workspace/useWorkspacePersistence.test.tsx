@@ -104,7 +104,6 @@ function fakeController() {
     closeActivePanel: () => {},
     focusNextPanel: () => {},
     focusPreviousPanel: () => {},
-    openTabsOverflowMenu: () => {},
     setHoveredPanel: () => {},
     toggleMaximize: () => {},
     restoreMaximizedPanel: () => {},

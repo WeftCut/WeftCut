@@ -18,11 +18,16 @@ import {
   type DockviewTheme,
   type DroptargetOverlayModel,
   type DropOverlayModelParams,
+  type IDockviewHeaderActionsProps,
   type IDockviewPanelHeaderProps,
   type IDockviewPanelProps,
 } from "dockview-react";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import {
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ChevronUpIcon,
   GripHorizontalIcon,
   GripVerticalIcon,
   TextAlignStartIcon,
@@ -31,6 +36,12 @@ import { useTranslation } from "react-i18next";
 import "dockview-react/dist/styles/dockview.css";
 
 import { tryMutate } from "../errors/tryMutate";
+import { blurAfterMouseActivation } from "../components/blurAfterMouseActivation";
+import {
+  EDGE_OVERLAY_PX,
+  useEdgeOverflow,
+  type EdgeAxis,
+} from "../hooks/useEdgeOverflow";
 import { Timeline } from "../timeline/Timeline";
 import { PreviewSection } from "../app/PreviewSection";
 import { MediaDropZone, MediaPool } from "../panels/MediaPool";
@@ -485,149 +496,6 @@ export function WeftCutPanelRenderer({
   );
 }
 
-/** Remove the popover row of a just-closed Panel: the dropdown isn't rebuilt
- *  while it's open, and a stale row would point at a dead Panel. */
-function removeOverflowRow(target: EventTarget | null): void {
-  if (target instanceof HTMLElement) target.closest(".dv-tab")?.remove();
-}
-
-/** Behavior layer over Dockview's built-in overflow popover: clicks open the
- *  list anchored under the chevron (not at the mouse point), and once open
- *  Arrow/Home/End move a highlight and Enter activates it (Esc already
- *  closes via Dockview). */
-function useTabsOverflowA11y(
-  containerRef: RefObject<HTMLElement | null>,
-): void {
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const KB_FOCUS_CLASS = "weft-overflow-row--kb-focus";
-
-    /* Dockview opens the popover at the mouse point, so its position drifts
-     * with the click. Swallow trusted chevron clicks in the capture phase and
-     * re-dispatch a synthetic click carrying the chevron's own geometry —
-     * the popover then always opens anchored directly under the button.
-     * Synthetic events report isTrusted=false and pass straight through, but
-     * still record the chevron so the right-alignment below knows which
-     * button opened the list (the keyboard shortcut path is synthetic too). */
-    let lastChevronRoot: HTMLElement | null = null;
-    const onClickCapture = (event: MouseEvent) => {
-      const target = event.target;
-      // Element, not HTMLElement: the chevron icon is an SVG, so clicks that
-      // land on it have an SVGElement target — intercept at the parent root
-      // regardless of which child the click actually hit.
-      if (!(target instanceof Element)) return;
-      const root = target.closest<HTMLElement>(
-        ".dv-tabs-overflow-dropdown-root",
-      );
-      if (!root || !container.contains(root)) return;
-      lastChevronRoot = root;
-      if (!event.isTrusted) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const rect = root.getBoundingClientRect();
-      root.dispatchEvent(
-        new MouseEvent("click", {
-          bubbles: true,
-          cancelable: true,
-          clientX: rect.left + rect.width / 2,
-          clientY: rect.bottom + 2,
-        }),
-      );
-    };
-
-    /* Right-align the popover under its chevron (the VS Code overflow-menu
-     * geometry): panel's right edge flush with the button's right edge.
-     * Dockview positions the wrapper from click coordinates and then nudges
-     * it into view on a rAF, so alignment runs both synchronously and on the
-     * following frame to have the final say. */
-    const alignPopover = () => {
-      const root = lastChevronRoot;
-      const popover = container.querySelector<HTMLElement>(
-        ".dv-tabs-overflow-container",
-      );
-      const wrapper = popover?.parentElement ?? null;
-      const anchor = wrapper?.parentElement ?? null;
-      if (!root || !popover || !wrapper || !anchor) return;
-      const anchorRect = anchor.getBoundingClientRect();
-      const width = popover.getBoundingClientRect().width;
-      const clientLeft = root.getBoundingClientRect().right - width;
-      wrapper.style.left = `${Math.max(0, clientLeft - anchorRect.left)}px`;
-    };
-    const popoverObserver = new MutationObserver((records) => {
-      for (const record of records) {
-        for (const node of record.addedNodes) {
-          if (
-            node instanceof HTMLElement &&
-            node.firstElementChild?.classList.contains(
-              "dv-tabs-overflow-container",
-            )
-          ) {
-            alignPopover();
-            requestAnimationFrame(alignPopover);
-            return;
-          }
-        }
-      }
-    });
-    popoverObserver.observe(container, { childList: true, subtree: true });
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      const popover = container.querySelector(".dv-tabs-overflow-container");
-      if (!popover) return;
-      const rows = Array.from(popover.querySelectorAll<HTMLElement>(".dv-tab"));
-      if (rows.length === 0) return;
-      const current = rows.findIndex((row) =>
-        row.classList.contains(KB_FOCUS_CLASS),
-      );
-      const highlight = (index: number) => {
-        rows.forEach((row, i) =>
-          row.classList.toggle(KB_FOCUS_CLASS, i === index),
-        );
-        // Optional call: jsdom (tests) doesn't implement scrollIntoView.
-        rows[index]?.scrollIntoView?.({ block: "nearest" });
-      };
-      switch (event.key) {
-        case "ArrowDown":
-          highlight(current < 0 ? 0 : (current + 1) % rows.length);
-          break;
-        case "ArrowUp":
-          highlight(
-            current < 0
-              ? rows.length - 1
-              : (current - 1 + rows.length) % rows.length,
-          );
-          break;
-        case "Home":
-          highlight(0);
-          break;
-        case "End":
-          highlight(rows.length - 1);
-          break;
-        case "Enter":
-          // No highlight yet: leave Enter to Dockview (it closes the popover).
-          if (current < 0) return;
-          rows[current]?.click();
-          break;
-        default:
-          return;
-      }
-      // Capture-phase listener: swallow the key before both Dockview's
-      // popover (which dismisses on Enter) and the tab strip's roving focus.
-      event.preventDefault();
-      event.stopPropagation();
-    };
-
-    container.addEventListener("click", onClickCapture, { capture: true });
-    window.addEventListener("keydown", onKeyDown, { capture: true });
-    return () => {
-      popoverObserver.disconnect();
-      container.removeEventListener("click", onClickCapture, { capture: true });
-      window.removeEventListener("keydown", onKeyDown, { capture: true });
-    };
-  }, [containerRef]);
-}
-
 /** The axis a Dock Group's own splitter runs along: `width` where its branch
  *  lays children side by side, `height` where it stacks them. */
 type DockGroupAxis = "width" | "height";
@@ -1061,7 +929,6 @@ export function WeftCutDockTab({
   const { t } = useTranslation();
   const kind = isPanelKind(api.id) ? api.id : null;
   const title = kind ? t(PANEL_REGISTRY[kind].titleKey) : (api.title ?? api.id);
-  const chrome = useWorkspaceChrome();
 
   if (kind === "quick-actions" && tabLocation === "header") {
     return (
@@ -1071,27 +938,6 @@ export function WeftCutDockTab({
         api={api}
         containerApi={containerApi}
       />
-    );
-  }
-
-  /* Overflow-dropdown rows are menu items, not drag sources: no grab cursor,
-   * no maximize-on-double-click. Click activation stays with Dockview's row
-   * wrapper. Closing a Panel from the list (middle-click) also removes the
-   * row (`removeOverflowRow`). */
-  if (tabLocation === "headerOverflow") {
-    return (
-      <div
-        className="weft-dock-tab weft-dock-tab--overflow"
-        onAuxClick={(event) => {
-          if (!kind || event.button !== 1) return;
-          event.preventDefault();
-          event.stopPropagation();
-          removeOverflowRow(event.currentTarget);
-          chrome.closePanel(kind);
-        }}
-      >
-        <span className="weft-dock-tab-label">{title}</span>
-      </div>
     );
   }
 
@@ -1124,6 +970,116 @@ export function EmptyWorkspaceRecovery() {
       </div>
     </div>
   );
+}
+
+const EDGE_GLYPH = {
+  horizontal: { start: ChevronLeftIcon, end: ChevronRightIcon },
+  vertical: { start: ChevronUpIcon, end: ChevronDownIcon },
+} as const;
+
+/**
+ * One end of a Group's tab strip: the gradient that says content is hidden that
+ * way, and the arrow that reveals it. Both float above the tabs and claim no
+ * layout width, which is what lets an end disappear at its stop without
+ * changing the strip's width — reserving the band instead would couple the two
+ * and oscillate. ADR 0050.
+ *
+ * Mounted through Dockview's header slots on either side of the tab strip, so
+ * the arrow lives outside `role="tablist"` and the tablist's own roving
+ * tabindex is untouched. Each slot is a zero-width box hugging one edge of the
+ * scroller, so the overlay only has to pin itself to that slot.
+ */
+function TabStripEdge({
+  group,
+  headerPosition,
+  activePanel,
+  toward,
+}: IDockviewHeaderActionsProps & { toward: "start" | "end" }) {
+  const { t } = useTranslation();
+  const axis: EdgeAxis =
+    headerPosition === "left" || headerPosition === "right"
+      ? "vertical"
+      : "horizontal";
+  // Dockview's scroller, which exists before this slot mounts. Assigned during
+  // render because the hook only ever reads `.current`, from its own effect.
+  const scroller = useRef<HTMLElement | null>(null);
+  scroller.current = group.model.tabsListElement;
+  const { overflowing, atStart, atEnd, step, clearOverlay } = useEdgeOverflow(
+    scroller,
+    axis,
+    ":scope > .dv-tab",
+  );
+
+  /* Keep a tab reached by keyboard clear of the overlay. Chromium's own
+   * focus-scroll honours `scroll-padding`, so this one line covers the entire
+   * arrow-key path through the tablist. Written from the constant rather than
+   * declared in CSS so the overlay's extent keeps a single home; idempotent, and
+   * both ends write the same value. */
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    el.style.scrollPaddingInline = `${EDGE_OVERLAY_PX}px`;
+    el.style.scrollPaddingBlock = `${EDGE_OVERLAY_PX}px`;
+  }, []);
+
+  /* Lift a freshly activated tab out from under the overlay. Dockview parks one
+   * flush against the scrollport's LEADING edge (`scrollLeft = offsetLeft`), so
+   * the leading overlay is the only one that can come to cover it — hence this
+   * end and not both. The keyboard's own focus-scroll takes a different route
+   * and is handled in CSS by `scroll-padding-inline`.
+   *
+   * Keyed on the active Panel alone, deliberately: re-running it on scroll would
+   * yank the strip back whenever the user scrolled the active tab out of the
+   * readable band, and the user's scroll has to win. */
+  const activePanelId = activePanel?.id;
+  useEffect(() => {
+    if (toward !== "start") return;
+    const tab = scroller.current?.querySelector<HTMLElement>(".dv-active-tab");
+    if (tab) clearOverlay(tab);
+  }, [toward, activePanelId, clearOverlay]);
+
+  if (!overflowing || (toward === "start" ? atStart : atEnd)) return null;
+  const Glyph = EDGE_GLYPH[axis][toward];
+  return (
+    <div
+      className="weft-tabstrip-edge"
+      data-toward={toward}
+      data-axis={axis}
+      /* The overlay's extent has one home — the constant the geometry also reads
+         — so the paint and the maths cannot drift apart. */
+      style={
+        axis === "horizontal"
+          ? { width: EDGE_OVERLAY_PX }
+          : { height: EDGE_OVERLAY_PX }
+      }
+    >
+      <button
+        type="button"
+        /* A pointer-only device: the tablist's own arrow keys already reach —
+           and activate — any tab, which beats scrolling to it. Out of the Tab
+           order, but still named for a screen reader browsing the header. */
+        tabIndex={-1}
+        aria-label={t(`dock_workspace.scroll_tabs.${toward}`)}
+        onClick={(event) => {
+          step(toward);
+          blurAfterMouseActivation(event);
+        }}
+      >
+        <Glyph size={16} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+/* Dockview keys header slots by component identity, so each end needs its own
+ * stable function. `prefix` renders before the tab strip, `left` immediately
+ * after it — the two edges of the scroller. */
+function TabStripLeadingEdge(props: IDockviewHeaderActionsProps) {
+  return <TabStripEdge {...props} toward="start" />;
+}
+
+function TabStripTrailingEdge(props: IDockviewHeaderActionsProps) {
+  return <TabStripEdge {...props} toward="end" />;
 }
 
 const DOCK_COMPONENTS = { [DOCK_COMPONENT_ID]: WeftCutPanelRenderer };
@@ -1185,7 +1141,6 @@ export function DockWorkspace({
   const { t, i18n } = useTranslation();
   const adapterRef = useRef<DockWorkspaceAdapter | null>(null);
   const sectionRef = useRef<HTMLElement | null>(null);
-  useTabsOverflowA11y(sectionRef);
   const messages = useMemo<Partial<DockviewMessages>>(
     () => ({
       panelOpened: (title) => t("dock_workspace.announce.opened", { title }),
@@ -1264,6 +1219,12 @@ export function DockWorkspace({
             components={DOCK_COMPONENTS}
             tabComponents={DOCK_TAB_COMPONENTS}
             watermarkComponent={EmptyWorkspaceRecovery}
+            /* Overflow is announced by the two floating edges below, not by a
+               named list of what is hidden — reaching a Panel by name belongs to
+               the View menu and the search palette (ADR 0050). */
+            disableTabsOverflowList
+            prefixHeaderActionsComponent={TabStripLeadingEdge}
+            leftHeaderActionsComponent={TabStripTrailingEdge}
             onReady={onReady}
             disableFloatingGroups
             dndStrategy="html5"
