@@ -320,6 +320,8 @@ const zhCN: Resources = {
     create_checkpoint_hint:
       "为当前状态命名，方便随时回到这里。仅限本次会话——检查点不会随项目一起保存。",
     toggle_play: "播放 / 暂停",
+    select_all: "全选片段",
+    deselect_all: "取消全部选择",
     delete_selected: "删除选中的图层",
     copy_selected: "复制选中的片段",
     paste_at_playhead: "在播放头粘贴片段",

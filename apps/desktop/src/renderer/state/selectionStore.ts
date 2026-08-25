@@ -74,16 +74,44 @@ export function setLayerSelection(
   commitSelection(primaryLayerId, selectedLayerIds, null);
 }
 
-/// Add Layers to the current selection and make `primaryLayerId` primary in
-/// the same store update. Timeline uses this for its existing Shift+click
-/// additive selection gesture.
-export function extendLayerSelection(
-  primaryLayerId: string,
+/// Additive click: add `layerIds` and make `clickedLayerId` primary — or, when
+/// the clicked Layer is ALREADY selected, remove them again. Returns whether
+/// the clicked Layer is selected afterwards, which is what tells `LayerBlock`
+/// that a deselecting click must not also arm a drag.
+///
+/// A TOGGLE rather than a union because that is what the additive modifier does
+/// in Resolve, FCP and Premiere alike, and because a union-only gesture leaves
+/// no way back from an over-wide selection except starting over with a plain
+/// click.
+///
+/// The direction is decided by the CLICKED Layer, not by "are all `layerIds`
+/// already selected": with a group the members arrive together, and the clip the
+/// user pointed at is the one whose highlight they can see.
+export function toggleLayerSelection(
+  clickedLayerId: string,
   layerIds: Iterable<string>,
-): void {
-  const nextIds = new Set(useSelectionStore.getState().selectedLayerIds);
+): boolean {
+  const current = useSelectionStore.getState();
+  const nextIds = new Set(current.selectedLayerIds);
+  if (nextIds.has(clickedLayerId)) {
+    for (const id of layerIds) nextIds.delete(id);
+    // Belt and braces, mirroring `commitSelection`'s forced ADD of the primary:
+    // a caller whose `layerIds` omitted the clicked Layer would otherwise leave
+    // it selected while this returns `false`.
+    nextIds.delete(clickedLayerId);
+    // A removed primary cannot stay primary. `null` lets `commitSelection`
+    // promote the first survivor — the same rule `retainLayerSelection` applies
+    // when an edit deletes the primary out from under the selection.
+    const survivingPrimary =
+      current.primaryLayerId !== null && nextIds.has(current.primaryLayerId)
+        ? current.primaryLayerId
+        : null;
+    commitSelection(survivingPrimary, nextIds, null);
+    return false;
+  }
   for (const id of layerIds) nextIds.add(id);
-  commitSelection(primaryLayerId, nextIds, null);
+  commitSelection(clickedLayerId, nextIds, null);
+  return true;
 }
 
 /// Deselect everything — layers AND the transition chip (background-click /

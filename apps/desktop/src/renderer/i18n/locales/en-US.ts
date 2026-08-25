@@ -336,6 +336,10 @@ const enUS = {
     // panel for shortcuts that don't have a menu home (transport,
     // timeline edits).
     toggle_play: "Play / pause",
+    // "clips" rather than "layers": the command is reached from the timeline,
+    // where what the user sees selected is clips on tracks.
+    select_all: "Select all clips",
+    deselect_all: "Deselect all",
     delete_selected: "Delete selected layer",
     copy_selected: "Copy selected layer",
     paste_at_playhead: "Paste layer at playhead",

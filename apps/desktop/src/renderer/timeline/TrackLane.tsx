@@ -92,10 +92,13 @@ export function TrackLane({
   bladeMode: boolean;
   onBladeSplit: (layer: LayerSummary, clientX: number) => void;
   onBladePreview: (layer: LayerSummary | null, clientX?: number) => void;
+  /// Pass-through to `LayerBlock`, whose prop docstring owns the contract:
+  /// applies the click's selection semantics, returns whether the clicked layer
+  /// is selected afterwards.
   onSelectFromClick: (
     layerId: string,
     e: { altKey: boolean; shiftKey: boolean; metaKey: boolean },
-  ) => void;
+  ) => boolean;
   onDragStart: (state: DragSeed) => void;
   onMediaDrop: (
     track: TrackSummary,

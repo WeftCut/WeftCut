@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearLayerSelection,
   clearTransitionSelection,
-  extendLayerSelection,
   retainLayerSelection,
   retainTransitionSelection,
   setLayerSelection,
   setTransitionSelection,
+  toggleLayerSelection,
   useSelectionStore,
 } from "./selectionStore";
 
@@ -40,7 +40,7 @@ describe("selectionStore", () => {
 
   it("extends the set while making the additive target primary", () => {
     setLayerSelection("layer-1", ["layer-1"]);
-    extendLayerSelection("layer-3", ["layer-2", "layer-3"]);
+    expect(toggleLayerSelection("layer-3", ["layer-2", "layer-3"])).toBe(true);
 
     expect(useSelectionStore.getState().primaryLayerId).toBe("layer-3");
     expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([
@@ -48,6 +48,50 @@ describe("selectionStore", () => {
       "layer-2",
       "layer-3",
     ]);
+  });
+
+  it("removes the clicked Layer and its companions on a second additive click", () => {
+    setLayerSelection("layer-1", ["layer-1"]);
+    toggleLayerSelection("layer-3", ["layer-2", "layer-3"]);
+
+    expect(toggleLayerSelection("layer-3", ["layer-2", "layer-3"])).toBe(false);
+
+    // The primary went with them, so the surviving Layer inherits it.
+    expect(useSelectionStore.getState().primaryLayerId).toBe("layer-1");
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([
+      "layer-1",
+    ]);
+  });
+
+  it("keeps a primary the removal did not touch", () => {
+    setLayerSelection("layer-1", ["layer-1", "layer-2"]);
+
+    toggleLayerSelection("layer-2", ["layer-2"]);
+
+    expect(useSelectionStore.getState().primaryLayerId).toBe("layer-1");
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([
+      "layer-1",
+    ]);
+  });
+
+  it("removes the clicked Layer even when the companion list omits it", () => {
+    setLayerSelection("layer-1", ["layer-1", "layer-2"]);
+
+    expect(toggleLayerSelection("layer-1", ["layer-2"])).toBe(false);
+
+    // Both are gone: an id excluded from the companion list must not survive a
+    // click that reports the clicked Layer as deselected.
+    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+  });
+
+  it("empties the selection when the last member is toggled off", () => {
+    setLayerSelection("layer-1", ["layer-1"]);
+
+    expect(toggleLayerSelection("layer-1", ["layer-1"])).toBe(false);
+
+    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
   });
 
   it("normalizes every write to the primary/set invariants", () => {
@@ -105,9 +149,9 @@ describe("transition selection (mutually exclusive with layer selection)", () =>
     expect(useSelectionStore.getState().primaryLayerId).toBe("layer-1");
   });
 
-  it("extendLayerSelection also evicts the transition", () => {
+  it("toggleLayerSelection also evicts the transition", () => {
     setTransitionSelection("tr-1");
-    extendLayerSelection("layer-1", ["layer-1"]);
+    toggleLayerSelection("layer-1", ["layer-1"]);
     expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
   });
 

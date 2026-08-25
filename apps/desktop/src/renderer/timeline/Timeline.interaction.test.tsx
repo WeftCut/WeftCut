@@ -683,7 +683,7 @@ describe("Timeline seek/selection coupling", () => {
     expect(onSeek).not.toHaveBeenCalled();
   });
 
-  it("writes plain, Alt escape, and Shift additive group selection globally", () => {
+  it("writes plain, Alt escape, and Shift toggle group selection globally", () => {
     const { getByText } = renderTimeline({
       tracks: [groupedTrack],
       groups: [group],
@@ -707,6 +707,137 @@ describe("Timeline seek/selection coupling", () => {
     expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
       new Set([layer.id, groupedLayer.id]),
     );
+
+    // The same Shift+click again TAKES THE GROUP BACK OUT — the additive
+    // modifier toggles, so there is a way back from an over-wide selection
+    // without starting over.
+    fireEvent.pointerDown(first, { button: 0, clientX: 40, shiftKey: true });
+    fireEvent.pointerUp(window, { clientX: 40, shiftKey: true });
+    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+  });
+
+  // A selected clip has a ZERO drag-arm delay, so without the deselect check in
+  // `onLayerPointerDown` the smallest wobble would move the clip the Shift+click
+  // just dropped from the selection.
+  it("does not drag a clip the Shift+click removed from the selection", () => {
+    vi.useFakeTimers();
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, tail_snap_enabled: false },
+    }));
+    const { getByText } = renderTimeline({ selectedLayerId: layer.id });
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(block, {
+      button: 0,
+      clientX: 80,
+      clientY: 30,
+      shiftKey: true,
+    });
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 30, shiftKey: true });
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+
+    expect(block.style.left).toBe("0px");
+
+    fireEvent.pointerUp(window, { clientX: 200, clientY: 30, shiftKey: true });
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+  });
+
+  describe("select all / deselect all", () => {
+    // Both are timeline-scoped (ADR 0041) and this harness renders Timeline
+    // bare, outside the dock Panel that would BE the region — so the region is
+    // declared directly, as the group test below does.
+    beforeEach(() => {
+      setActiveRegion("timeline");
+    });
+
+    const pressSelectAll = () =>
+      fireEvent.keyDown(window, { key: "a", code: "KeyA", ctrlKey: true });
+
+    it("selects every clip on the rendered tracks", () => {
+      renderTimeline({ tracks: [groupedTrack] });
+
+      pressSelectAll();
+
+      expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
+        new Set([layer.id, groupedLayer.id]),
+      );
+      expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
+    });
+
+    // The A/B Roll filter hides role-less tracks from the view entirely. A
+    // Select All that reached them would arm the next Delete for clips that are
+    // not on screen.
+    it("leaves clips the A/B Roll filter hides out of the selection", () => {
+      useAppSettingsStore.setState((s) => ({
+        settings: { ...s.settings, display_mode: "AbRoll" },
+      }));
+      const hidden: TrackSummary = {
+        ...track,
+        id: "track-hidden",
+        role: null,
+        layers: [{ ...groupedLayer, id: "layer-hidden", label: "Hidden" }],
+      };
+      renderTimeline({ tracks: [track, hidden] });
+
+      pressSelectAll();
+
+      expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([
+        layer.id,
+      ]);
+    });
+
+    // A locked clip cannot be clicked (`LayerBlock`'s pointerdown returns
+    // early), so Select All must not put one in the selection either — the next
+    // Delete would refuse `TrackLocked` for a clip the user never chose.
+    it("skips a locked track's clips", () => {
+      const locked: TrackSummary = {
+        ...track,
+        id: "track-locked",
+        locked: true,
+        layers: [{ ...groupedLayer, id: "layer-locked", label: "Locked" }],
+      };
+      renderTimeline({ tracks: [track, locked] });
+
+      pressSelectAll();
+
+      expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([
+        layer.id,
+      ]);
+    });
+
+    // Select All follows the primary the user was inspecting, so the Attribute
+    // panel does not jump to another clip.
+    it("keeps a primary that survives the new selection", () => {
+      renderTimeline({
+        tracks: [groupedTrack],
+        selectedLayerId: groupedLayer.id,
+      });
+
+      pressSelectAll();
+
+      expect(useSelectionStore.getState().primaryLayerId).toBe(groupedLayer.id);
+      expect(useSelectionStore.getState().selectedLayerIds.size).toBe(2);
+    });
+
+    it("drops the whole selection on Ctrl+Shift+A", () => {
+      renderTimeline({ tracks: [groupedTrack] });
+      pressSelectAll();
+      expect(useSelectionStore.getState().selectedLayerIds.size).toBe(2);
+
+      fireEvent.keyDown(window, {
+        key: "A",
+        code: "KeyA",
+        ctrlKey: true,
+        shiftKey: true,
+      });
+
+      expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+      expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    });
   });
 
   // The clip menu's registry rows act on the SELECTION, so a right-click that

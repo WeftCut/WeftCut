@@ -223,10 +223,12 @@ export function LayerBlock({
   bladeMode: boolean;
   onBladeSplit: (layer: LayerSummary, clientX: number) => void;
   onBladePreview: (layer: LayerSummary | null, clientX?: number) => void;
+  /// Applies the click's selection semantics and answers whether THIS layer is
+  /// selected afterwards — `false` only for an additive click that removed it.
   onSelectFromClick: (
     layerId: string,
     e: { altKey: boolean; shiftKey: boolean; metaKey: boolean },
-  ) => void;
+  ) => boolean;
   onDragStart: (state: DragSeed) => void;
   onContextMenu: (
     e: React.MouseEvent,
@@ -448,11 +450,17 @@ export function LayerBlock({
       zone === "left" ? "trim-start" : zone === "right" ? "trim-end" : "move";
     // `docs/features.md#groups` — match click-selection semantics on
     // pointerdown so drag and click share the same group-aware path.
-    onSelectFromClick(layer.id, {
+    const stillSelected = onSelectFromClick(layer.id, {
       altKey: e.altKey,
       shiftKey: e.shiftKey,
       metaKey: e.metaKey,
     });
+    // A Shift+click that REMOVED this clip from the selection was a deselect,
+    // full stop — no drag. Not merely cosmetic: `wasSelectedAtPointerDown` was
+    // true a moment ago, which buys a ZERO arm delay in `useLayerDrag`, so
+    // without this the smallest pointer wobble would move the clip the user just
+    // dropped from the selection.
+    if (!stillSelected) return;
     onDragStart({
       kind,
       layerId: layer.id,

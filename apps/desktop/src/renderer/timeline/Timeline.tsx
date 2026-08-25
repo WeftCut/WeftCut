@@ -56,6 +56,12 @@ import {
 } from "./audioSlip";
 import { deriveAudioSyncOffsets, setAudioSyncOffsets } from "./audioSyncOffsetStore";
 import { canDissolveSelection, canGroupSelection } from "./groupEligibility";
+import {
+  canDeselectAll,
+  canSelectAll,
+  deselectAll,
+  selectAllLayers,
+} from "./selectionCommands";
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import {
   DEFAULT_TRACK_HEIGHT,
@@ -97,8 +103,8 @@ import { useProjectStore } from "../state/projectStore";
 import {
   clearLayerSelection,
   clearTransitionSelection,
-  extendLayerSelection,
   setLayerSelection,
+  toggleLayerSelection,
   usePrimaryLayerId,
   useSelectedLayerIds,
   useSelectedTransitionId,
@@ -376,10 +382,18 @@ export function Timeline({
   /// Map a click event on a layer chip to the resulting selection set.
   /// `docs/features.md#groups`: plain click on a grouped layer selects the
   /// whole group; `Alt+click` selects only the clicked layer (escape
-  /// path); `Shift+click` extends the current selection (with the
-  /// clicked layer's whole group if any).
+  /// path); `Shift+click` TOGGLES the clicked layer (with its whole group
+  /// if any) in and out of the current selection.
+  ///
+  /// Returns whether the clicked layer is selected afterwards — `false` only
+  /// for a Shift+click that removed it. `LayerBlock` needs that answer because
+  /// it seeds a drag from the same pointerdown, and a clip the user just
+  /// deselected must not be the one that moves.
   const selectFromClick = useCallback(
-    (layerId: string, e: { altKey: boolean; shiftKey: boolean; metaKey: boolean }) => {
+    (
+      layerId: string,
+      e: { altKey: boolean; shiftKey: boolean; metaKey: boolean },
+    ): boolean => {
       const gid = groupByLayerId.get(layerId);
       const memberSet = (): Set<string> => {
         if (!gid || e.altKey) return new Set([layerId]);
@@ -387,8 +401,9 @@ export function Timeline({
         return new Set(g?.layer_ids ?? [layerId]);
       };
       const members = memberSet();
-      if (e.shiftKey) extendLayerSelection(layerId, members);
-      else setLayerSelection(layerId, members);
+      if (e.shiftKey) return toggleLayerSelection(layerId, members);
+      setLayerSelection(layerId, members);
+      return true;
     },
     [groupByLayerId, groups],
   );
@@ -409,8 +424,22 @@ export function Timeline({
     () => keybindings as OverrideMap,
     [keybindings],
   );
-  // Named so the search-palette command provider below can reference the
-  // exact same function objects the shortcut dispatcher uses.
+  // Every handler below is named so the search-palette command provider can
+  // reference the exact same function objects the shortcut dispatcher uses.
+
+  /// Select All over the RENDERED tracks, not the project's (`selectAllLayers`
+  /// carries the why). `visibleSnapTracks` is already the display-filtered,
+  /// reveal-aware list the lanes are drawn from, so the selection this builds is
+  /// exactly what the user can see. Closes over the latest render rather than a
+  /// ref: `useShortcuts` re-reads its handler map every render, and the rendered
+  /// track list is a prop-derived memo, so there is no chord-dispatch staleness
+  /// to dodge here. Deselect All takes no input at all, so the module function
+  /// IS the handler.
+  const handleSelectAll = useCallback(
+    () => selectAllLayers(visibleSnapTracks),
+    [visibleSnapTracks],
+  );
+
   const handleGroupSelected = useCallback(async () => {
     const sel = selectedLayerIdsRef.current;
     if (sel.size < 2) return;
@@ -527,6 +556,8 @@ export function Timeline({
   useShortcuts({
     overrides: shortcutOverrides,
     handlers: {
+      selectAll: handleSelectAll,
+      deselectAll,
       groupSelected: handleGroupSelected,
       dissolveSelectedGroup: handleDissolveSelectedGroup,
       nudgeAudioSampleBack: handleNudgeAudioSampleBack,
@@ -540,6 +571,26 @@ export function Timeline({
   });
 
   useCommandProvider(() => [
+    // Timeline's provider rather than App's catalogue, which is also why neither
+    // appears in the Edit menu: a menu-bar row backed by this provider would
+    // vanish whenever the Timeline Panel is closed
+    // (`menu/contextMenuCommands.test.ts` states the rule). The keyboard is the
+    // primary surface for both — and it is timeline-scoped anyway — with the
+    // palette carrying discoverability.
+    {
+      id: "selectAll",
+      actionId: "selectAll",
+      labelKey: ACTION_DEFS.selectAll.labelKey,
+      enabled: canSelectAll,
+      run: handleSelectAll,
+    },
+    {
+      id: "deselectAll",
+      actionId: "deselectAll",
+      labelKey: ACTION_DEFS.deselectAll.labelKey,
+      enabled: canDeselectAll,
+      run: deselectAll,
+    },
     {
       id: "groupSelected",
       actionId: "groupSelected",
@@ -751,7 +802,11 @@ export function Timeline({
       // inside a multi-selection keeps it, so "select four clips, right-click
       // one, Delete" behaves the way it reads. Modifier semantics are the
       // click path's (`selectFromClick`): plain takes the whole group,
-      // `Alt` escapes it, `Shift` extends.
+      // `Alt` escapes it, `Shift` toggles — and the guard below is what keeps
+      // the toggle one-directional here, since a right-click on an
+      // already-selected clip never reaches it. A right-click that DESELECTED
+      // its own target and then opened a menu acting on the selection would be
+      // the worst reading of this gesture.
       if (!selectedLayerIds.has(layerId)) selectFromClick(layerId, e);
       let cut: TransitionCut | null = null;
       const canvas = canvasRef.current;

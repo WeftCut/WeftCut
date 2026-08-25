@@ -15,6 +15,8 @@ export type ActionId =
   | "undo"
   | "redo"
   | "togglePlay"
+  | "selectAll"
+  | "deselectAll"
   | "deleteSelected"
   | "copySelected"
   | "pasteAtPlayhead"
@@ -117,6 +119,22 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // menubar trigger / toolbar button after a click — a Base UI trigger would
   // otherwise treat Space as "open the menu".
   togglePlay:      { defaultKeys: ["Space"],               labelKey: "actions.toggle_play", captureGlobal: true },
+  // Whole-selection commands, at the keys Premiere, Resolve and FCP all agree
+  // on. Nothing else in this app claims `Mod+A`.
+  //
+  // `fireWhenEditing: false` for the copy/paste reason, and here it is what
+  // makes text selection work at all: inside a rename field or a numeric input
+  // `Mod+A` has to stay the platform's "select all text". Standing down WITHOUT
+  // `preventDefault` is also what lets the chord fall through to the macOS
+  // `role: 'editMenu'` Select All (`main/appMenu.ts`).
+  //
+  // `scope` matches `deleteSelected` — with the media pool focused, `Mod+A` is
+  // not "select every clip in the timeline". The handlers live in Timeline
+  // rather than App's catalogue because Timeline is the only place that knows
+  // which tracks are RENDERED: A/B Roll display mode hides role-less tracks, and
+  // a Select All reaching them would arm a Delete for clips that are off screen.
+  selectAll:       { defaultKeys: ["Mod+A"],               labelKey: "actions.select_all",   fireWhenEditing: false, scope: TIMELINE_SELECTION },
+  deselectAll:     { defaultKeys: ["Mod+Shift+A"],         labelKey: "actions.deselect_all", fireWhenEditing: false, scope: TIMELINE_SELECTION },
   deleteSelected:  { defaultKeys: ["Delete", "Backspace"], labelKey: "actions.delete_selected", scope: TIMELINE_SELECTION },
   // Clipboard actions belong to the timeline, not an active text editor. The
   // explicit false preserves native copy/paste inside inputs and text fields;

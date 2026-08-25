@@ -100,6 +100,54 @@ affects what records. Deferred: `begin_transaction`/`commit_transaction`
 bracketing to collapse an agent batch into one undoable entry — revisit
 when stack-flooding actually hurts.
 
+## Timeline selection
+
+The timeline's clip selection is a set plus a **primary** — the one the
+Attribute panel and the on-canvas gizmo follow. The set is renderer-global
+(`state/selectionStore.ts`) and always satisfies `primary === null ⇔ set is
+empty` and `set.has(primary)`, so no surface has to handle a primary that is not
+selected. A layer selection and a selected transition chip are mutually
+exclusive: choosing either drops the other, which is what lets Delete and the
+Attribute panel always have exactly one kind of target.
+
+**Click semantics.** Plain click replaces the selection; a click on the empty
+timeline background clears it. `Shift+click` **toggles** — the clicked clip (and
+its group) goes in if it was out and out if it was in. Toggle rather than union
+because that is the additive modifier in Resolve, FCP and Premiere alike, and a
+union-only gesture leaves no way back from an over-wide selection except starting
+over. `Alt+click` selects one member out of a group. Right-click also selects,
+but only when the clip is *outside* the current selection, so right-clicking
+inside a multi-selection keeps it.
+
+**A deselecting click never becomes a drag.** Selection and drag arming share one
+pointerdown, and a selected clip has no drag-arm delay — so a `Shift+click` that
+removes a clip returns early instead of seeding the gesture. Otherwise the
+smallest pointer wobble would move the clip the user had just dropped from the
+selection.
+
+**Select All / Deselect All.** `Mod+A` and `Mod+Shift+A`, timeline-scoped
+(ADR 0041) like Delete: with the media pool focused, `Mod+A` is not "select every
+clip in the timeline". Inside a text field both stand down so the platform's
+select-all-text survives (on macOS the chord then falls through to the native
+Edit menu's own item). Neither sits on the Edit menu, because the handlers live
+in the Timeline Panel — the only place that knows which tracks are *rendered* —
+and a menu-bar row backed by a panel provider would vanish when that panel
+closes. The search palette carries discoverability instead.
+
+Select All follows the same two rules the playhead split does, for the same
+reasons: it **respects the A/B Roll filter**, so it cannot arm a Delete for clips
+that are off screen, and it **excludes locks rather than refusing them** — a
+locked clip cannot be clicked at all, so including one would build a selection
+the pointer could not and turn the next Delete into N `TrackLocked` refusals for
+clips the user never chose. A surviving primary is kept, so Select All does not
+move the Attribute panel off the clip being inspected. Deselect All clears all
+three selections that arm Delete: clips, the transition chip, and the keyframe
+diamond.
+
+**Still missing** (the conventions a traditional NLE also has): marquee/lasso box
+selection, contiguous range selection between an anchor and a click, and the
+directional "select every clip forward on this track" tools.
+
 ## Groups
 
 A `Group` is a project-level entity owning a flat set of member `LayerId`s —
@@ -150,8 +198,9 @@ plus an `Audio` layer (same media, same span) and groups them atomically.
 `VideoClip` lowering does not emit audio — the paired `Audio` layer is the
 audible one.
 
-**UI.** Click a member → select the whole group; `Shift+click` extends by
-group; `Alt+click` selects only the clicked layer, and `Alt+trim` escapes
+**UI.** Click a member → select the whole group; `Shift+click` toggles by
+group (a second one takes it back out — a deselecting click never starts a
+drag); `Alt+click` selects only the clicked layer, and `Alt+trim` escapes
 that one trim (body `Alt+drag` instead duplicates the single layer at the
 drop position). Grouped layers show a 2 px left accent in a hue derived
 deterministically from `group_id` plus a small chain-link icon. `Ctrl+G`
