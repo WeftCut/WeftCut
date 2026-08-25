@@ -110,14 +110,14 @@ selected. A layer selection and a selected transition chip are mutually
 exclusive: choosing either drops the other, which is what lets Delete and the
 Attribute panel always have exactly one kind of target.
 
-**Click semantics.** Plain click replaces the selection; a click on the empty
-timeline background clears it. `Shift+click` **toggles** — the clicked clip (and
-its group) goes in if it was out and out if it was in. Toggle rather than union
-because that is the additive modifier in Resolve, FCP and Premiere alike, and a
-union-only gesture leaves no way back from an over-wide selection except starting
-over. `Alt+click` selects one member out of a group. Right-click also selects,
-but only when the clip is *outside* the current selection, so right-clicking
-inside a multi-selection keeps it.
+**Click semantics.** Plain click replaces the selection; a click on blank lane
+space clears it, per *Background clicks* below. `Shift+click` **toggles** — the
+clicked clip (and its group) goes in if it was out and out if it was in. Toggle
+rather than union because that is the additive modifier in Resolve, FCP and
+Premiere alike, and a union-only gesture leaves no way back from an over-wide
+selection except starting over. `Alt+click` selects one member out of a group.
+Right-click also selects, but only when the clip is *outside* the current
+selection, so right-clicking inside a multi-selection keeps it.
 
 **A deselecting click never becomes a drag.** Selection and drag arming share one
 pointerdown, and a selected clip has no drag-arm delay — so a `Shift+click` that
@@ -142,11 +142,65 @@ the pointer could not and turn the next Delete into N `TrackLocked` refusals for
 clips the user never chose. A surviving primary is kept, so Select All does not
 move the Attribute panel off the clip being inspected. Deselect All clears all
 three selections that arm Delete: clips, the transition chip, and the keyframe
-diamond.
+selection.
 
-**Still missing** (the conventions a traditional NLE also has): marquee/lasso box
-selection, contiguous range selection between an anchor and a click, and the
-directional "select every clip forward on this track" tools.
+**Marquee.** Dragging from blank timeline space draws a box, and **the surface
+the drag started on decides what the box selects** (ADR 0051) — a track lane, the
+drop strip and the scroll body select clips; a keyframe sub-lane row selects
+keyframes. The kind is fixed when the pointer goes down and never reconsidered,
+so the box's extent decides only which members it takes. A press on the ruler is
+a scrub and nothing else. The selection updates live during the drag and is
+recomputed from scratch on every move, so shrinking the box back releases a clip
+that was over-reached; Escape restores what the press found, a release keeps what
+the last move computed. The box auto-scrolls horizontally at the edges and not
+vertically — the vertical extent is a handful of lanes while the horizontal one
+is unbounded.
+
+A clip box **intersects** rather than encloses, since a clip longer than the
+viewport can never be enclosed, and it is slice-aware, so grazing the top half of
+a combined A/V row takes the visual layer and not the audio one. It shares Select
+All's two rules for Select All's reasons: it **respects the A/B Roll filter**
+(only rendered lanes can be swept) and it **excludes locks rather than refusing
+them**. Touching one member of a group takes the whole group, exactly as a click
+does — locked members included, so a box can never build a selection a click
+could not. A surviving primary is kept, so a sweep does not move the Attribute
+panel off the clip being inspected.
+
+**The additive gestures are deliberately asymmetric.** `Shift+click` **toggles**,
+per the click semantics above; a marquee **replaces**, with no modifier of its
+own; and a `Shift`-marquee, if one is ever added, must **union**. This is not an
+oversight in either direction — those three are different operations. Toggle is
+the additive *click* in Resolve, FCP and Premiere, while their marquees add, and
+a toggling box is worse than either: two overlapping XOR boxes cancel each other
+out, and accumulating across boxes is the only thing a Shift-marquee is for. Until
+one exists, "sweep a block, then `Shift+click` to trim it" is the accumulation
+path.
+
+**Background clicks clear per kind.** A press that never travels far enough to
+become a box *is* the background click, and what it drops depends on the same
+surface the box's kind comes from: blank lane space drops the clips and the
+transition chip, blank sub-lane space drops only the keyframes — so clicking
+beside a diamond leaves the Attribute panel on the clip being keyframed. The band
+below the last track is part of the timeline's clip surface: clicking it clears,
+and a box can start there and drag up over the tracks.
+
+**Keyframe selection is a set**, spanning layers and properties, because one
+sub-lane row draws the curves of every layer on its track. A box tests each
+diamond's drawn centre — both axes in an expanded row, where the value axis is
+tall enough to aim in, and x alone in a collapsed one, where one glyph already
+covers some 40% of the axis (ADR 0051). Sweeping clips drops the keyframe
+selection, since a keyframe selection claims Delete ahead of the clips. Two
+operations act on the whole keyframe selection: Delete, and any easing choice
+from a diamond's context menu. Each is **one undo entry per gesture**, however
+many layers and properties the selection spans. The easing menu reports no
+current interpolation while several keys are selected — claiming the
+right-clicked key's easing for the rest would be unverifiable from the screen. Right-clicking a diamond already in the selection leaves the
+selection and the playhead alone and acts on all of it; right-clicking one
+outside selects it first, the way the clip menu behaves.
+
+**Still missing** (the conventions a traditional NLE also has): contiguous range
+selection between an anchor and a click, and the directional "select every clip
+forward on this track" tools.
 
 ## Groups
 

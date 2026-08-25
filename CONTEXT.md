@@ -227,6 +227,14 @@ it shows itself only while a drag is live so it never reads as an empty lane to
 manage.
 _Avoid_: add-track row, new-track button, ghost lane, phantom track
 
+**Marquee**:
+A rectangle dragged from a blank surface in the timeline. The surface the drag
+STARTED on decides what the box selects — a lane, the drop strip or the scroll
+body selects clips, a keyframe sub-lane row selects keyframes — never the box's
+extent and never a modifier key (ADR 0051). A press too short to become a box is
+the background click, and it clears the same population the box would have taken.
+_Avoid_: lasso (it is not a freeform lasso), box select, rubber band, drag-select
+
 **Raise**:
 Moving a clip onto a fresh track at the top of the z-stack —
 `move_layers_to_new_track`, reachable by dragging into the drop strip or by the

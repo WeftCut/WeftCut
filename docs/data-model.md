@@ -955,6 +955,7 @@ the UI uses the same actor via backend commands.
 | `update_layer(layer_id, patch)` | envelope-only patch (label, time range, enabled, locked) |
 | `update_layer_params(layer_id, patch)` | kind-specific params |
 | `update_layer_param_track(layer_id, param_key, track)` / `update_layer_param_tracks(layer_id, entries)` | replace one / several `Animated<f64>` tracks; normalized (frame-snap / sort / dedupe-last-wins), recorded, rejects empty-keyframed / unknown-param / locked-track |
+| `update_param_tracks_multi(entries)` | the cross-**layer** form of the batch above: every `(layer_id, param_key, track)` entry names its own layer, and the whole set is **one** recorded entry however many layers it spans — so one undo reverts the lot. Same normalization and rejections per entry; the scale-link invariant is checked once per distinct layer after every entry has landed, never mid-batch |
 | `move_layer(layer_id, new_track_id, new_t_start_us, escape_group?)` | rejects on overlap; group-aware (see `features.md#groups`) |
 | `restack_layer(layer_id, anchor_layer_id, position)` | anchored z-reorder: `position` ∈ `"above" \| "below"` the anchor layer's track, resolved at apply time. Sole-occupant mover moves its whole track (identity survives); a shared-track mover splits onto a new track at the target position (emptied source pruned by the usual rule); a role-stamped source never moves. Already-in-place calls are no-ops that record nothing; Audio movers/anchors and self-anchors reject |
 | `split_layer(layer_id, at_t_us, escape_group?)` → `(LayerId, LayerId)` | |
