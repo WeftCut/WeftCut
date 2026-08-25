@@ -9,75 +9,47 @@ import { useMarqueeBox, useMarqueeKind } from "./marqueeStore";
 /// before it has taken anything. Yellow is the keyframe domain accent
 /// (`--keyframe`), matching the diamonds the box is sweeping.
 const TINT = {
-  clip: { fill: "bg-blue-400/15", edge: "bg-blue-300/85" },
-  keyframe: { fill: "bg-yellow-400/15", edge: "bg-yellow-300/85" },
+  clip: "border-blue-300/85 bg-blue-400/15",
+  keyframe: "border-yellow-300/85 bg-yellow-400/15",
 } as const;
 
+/**
+ * One element, sized by `width`/`height`.
+ *
+ * LANDMINE: `transform: scale(w, h)` on a 1×1 px div is the tempting way to draw
+ * this — compositor-only, no layout — and it is wrong by an amount that GROWS
+ * with the box. `scale` multiplies the element's used size, and a CSS `1px` does
+ * not survive a fractional device pixel ratio: at DPR 1.1 it computes to
+ * 0.994318 px, being 1.1 device px quantized to Chrome's 1/64 px layout grid and
+ * reported back in CSS px. Transform OFFSETS stay exact, so the fill of a 300 px
+ * box fell 1.7 px short of the border its own translate had placed, and the gap
+ * widened with every pixel of the drag. Scale nothing and the error is gone
+ * rather than merely small.
+ *
+ * Layout-affecting writes cost nothing special here anyway: every chip in this
+ * same container positions itself with `left`/`top`/`width`/`height` and moves on
+ * the same pointermoves this box does.
+ *
+ * `border` under Tailwind's global `border-box` is what keeps the hairline INSIDE
+ * the element, so the ring encloses exactly the half-open range `marquee.ts`
+ * takes instead of painting the first row and column the box excludes.
+ */
 export function MarqueeOverlay() {
   const box = useMarqueeBox();
   const kind = useMarqueeKind();
   if (box === null || kind === null) return null;
-  const x = Math.min(box.x0, box.x1);
-  const y = Math.min(box.y0, box.y1);
-  const w = Math.abs(box.x1 - box.x0);
-  const h = Math.abs(box.y1 - box.y0);
-  // The far hairlines are INSET, so the ring encloses exactly the half-open
-  // range the hit-test takes — `[x, x+w)`, per `marquee.ts`. Drawing them at
-  // `x + w` / `y + h` instead lands them on the first column and row the box
-  // does NOT take: a ring one pixel wider than its own fill, which reads on
-  // screen as the fill coming loose from two of its four sides while the near
-  // two stay welded to it.
-  //
-  // `Math.max` keeps a far edge from crossing its near one. The arm gate is
-  // total displacement, so a straight-down drag arms with `w === 0`.
-  const xFar = Math.max(x, x + w - 1);
-  const yFar = Math.max(y, y + h - 1);
-  const tint = TINT[kind];
   return (
     <div
       data-testid="timeline-marquee"
       data-kind={kind}
-      className="pointer-events-none absolute inset-0 z-[4]"
       aria-hidden="true"
-    >
-      <Piece x={x} y={y} sx={w} sy={h} className={tint.fill} />
-      <Piece x={x} y={y} sx={w} sy={1} className={tint.edge} />
-      <Piece x={x} y={yFar} sx={w} sy={1} className={tint.edge} />
-      <Piece x={x} y={y} sx={1} sy={h} className={tint.edge} />
-      <Piece x={xFar} y={y} sx={1} sy={h} className={tint.edge} />
-    </div>
-  );
-}
-
-/**
- * One 1×1 px unit box, placed and stretched by `transform` alone.
- *
- * Never `left`/`top`/`width`/`height`: the gesture READS lane rects and writes
- * this overlay in the same frame, and a layout-affecting write between reads
- * would force a reflow per frame. A compositor-only transform removes that
- * read/write ordering discipline instead of requiring it.
- *
- * It is also why the border is four of these rather than a `border` on the
- * fill — a scaled border scales its own width, so a 200 px-wide box would carry
- * a 200 px-thick hairline.
- */
-function Piece({
-  x,
-  y,
-  sx,
-  sy,
-  className,
-}: {
-  x: number;
-  y: number;
-  sx: number;
-  sy: number;
-  className: string;
-}) {
-  return (
-    <div
-      className={`absolute left-0 top-0 h-px w-px origin-top-left ${className}`}
-      style={{ transform: `translate(${x}px, ${y}px) scale(${sx}, ${sy})` }}
+      className={`pointer-events-none absolute z-[4] border ${TINT[kind]}`}
+      style={{
+        left: Math.min(box.x0, box.x1),
+        top: Math.min(box.y0, box.y1),
+        width: Math.abs(box.x1 - box.x0),
+        height: Math.abs(box.y1 - box.y0),
+      }}
     />
   );
 }

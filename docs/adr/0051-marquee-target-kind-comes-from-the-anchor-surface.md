@@ -273,8 +273,12 @@ derive. That is what the end-to-end spec exists for.
   `KeyframeLane.tsx`'s per-property row, and `Timeline.tsx`'s scroll body, which
   provides the context and so calls `beginMarquee` directly.
 - The rectangle — `renderer/timeline/marqueeStore.ts` (a module store, not React
-  state above a leaf) with `MarqueeOverlay.tsx` as its only subscriber, drawn by
-  `transform` alone so a frame that reads lane rects never also forces a reflow.
+  state above a leaf) with `MarqueeOverlay.tsx` as its only subscriber, one
+  element sized by `left`/`top`/`width`/`height` with a `border` hairline. Its
+  LANDMINE says why it is not the compositor-only scaled unit box it looks like
+  it should be: `scale` multiplies the element's used size, and a CSS `1px` is
+  not 1 px at a fractional device pixel ratio, so the fill drifts off its own
+  border by a fraction of the box's width.
 - The wiring — `renderer/timeline/Timeline.tsx`: the row measurement in the box's
   coordinate space, the per-kind resolvers, the per-kind background clear, the
   batch commit, and the single keyframe Delete preemptor.

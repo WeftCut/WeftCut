@@ -2539,10 +2539,14 @@ describe("Timeline marquee", () => {
     const box = marquee(container)!;
     expect(box.getAttribute("data-kind")).toBe("clip");
     // Canvas origin (200, 100), so the press is at (200, 100) in its space and
-    // the 4 × 60 px of travel is the box's extent.
-    expect((box.firstElementChild as HTMLElement).style.transform).toBe(
-      "translate(200px, 100px) scale(4, 60)",
-    );
+    // the 4 × 60 px of travel is the box's extent. What the overlay does with
+    // those four numbers is `MarqueeOverlay.test.tsx`'s subject; this asserts
+    // the coordinate SPACE, which is the part only a mounted Timeline can get
+    // wrong.
+    expect((box as HTMLElement).style.left).toBe("200px");
+    expect((box as HTMLElement).style.top).toBe("100px");
+    expect((box as HTMLElement).style.width).toBe("4px");
+    expect((box as HTMLElement).style.height).toBe("60px");
     release([404, 260]);
   });
 
