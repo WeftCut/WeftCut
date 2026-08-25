@@ -35,7 +35,6 @@ interface Keyframe {
 interface MarqueeSummary {
   history: { len: number };
   media: Array<{ id: string }>;
-  groups: Array<{ id: string; layer_ids: string[] }>;
   tracks: Array<{
     id: string;
     role: string | null;
@@ -349,28 +348,24 @@ test.describe("timeline marquee — the rectangles are the ones we think they ar
       const before = await snapshot(page);
       await dragBox(page, from, to, "clip");
 
-      // `Mod+G` and not Delete, and the difference is a product gap rather than
-      // a choice: `deleteSelected` (App.tsx) deletes `primaryLayerId` ALONE, so
-      // a Delete after any multi-selection — a sweep, a Shift+click, Select All
-      // — removes exactly one clip. `groupSelected` is the multi-target clip
-      // operation that does fan out over the whole set, in one commit, and the
-      // group it writes is the only way the swept SET is observable from outside
-      // the renderer (LayerBlock carries no layer id, which is why
-      // `getSelectedLayerId` exists and only answers for the primary).
-      await page.keyboard.press("ControlOrMeta+g");
+      await page.keyboard.press("Delete");
+      // What the delete LEFT is the observable: a LayerBlock carries no layer
+      // id, so the swept SET is only ever visible from outside the renderer
+      // through what the op did with it. Asserting the whole surviving set at
+      // once is what makes both directions fail — a box that over-reached into
+      // the lane above would take `keyed`, and one that under-reached would
+      // leave `first` or `second` standing.
+      const survivors = (s: MarqueeSummary): string[] =>
+        s.tracks.flatMap((t) => t.layers).map((l) => l.id).sort();
       await expect
-        .poll(async () => (await snapshot(page)).groups.length, { timeout: 20_000 })
-        .toBe(1);
+        .poll(async () => survivors(await snapshot(page)).join(","), { timeout: 20_000 })
+        .toBe(keyed);
 
       const after = await snapshot(page);
-      // Exactly the two swept clips, and the third untouched.
-      expect([...after.groups[0]!.layer_ids].sort()).toEqual([first, second].sort());
-      // The cheap guard against the gesture decomposing into per-clip ops.
+      expect([first, second].filter((id) => survivors(after).includes(id))).toEqual([]);
+      // The whole point of `delete_layers`: one gesture is one undo entry, and
+      // the cheap guard against it decomposing into a `delete_layer` per clip.
       expect(after.history.len).toBe(before.history.len + 1);
-      // A selection gesture plus one op: nothing moved and nothing vanished.
-      expect(after.tracks.flatMap((t) => t.layers).map((l) => l.id).sort()).toEqual(
-        [keyed, first, second].sort(),
-      );
     } finally {
       await app.close();
     }

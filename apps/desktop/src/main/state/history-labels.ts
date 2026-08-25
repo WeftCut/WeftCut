@@ -38,6 +38,7 @@ export const HISTORY_SUMMARY = {
   layerSplit: { key: 'history.layer.split', text: 'Split layer' },
   layerSplitByShots: { key: 'history.layer.split_by_shots', text: 'Split layer by shots' },
   layerDelete: { key: 'history.layer.delete', text: 'Deleted layer' },
+  layerDeleteMulti: { key: 'history.layer.delete_multi', text: 'Deleted layers' },
   layerUpdate: { key: 'history.layer.update', text: 'Updated layer' },
   layerUpdateParams: { key: 'history.layer.update_params', text: 'Updated layer params' },
   layerKeyframeParam: { key: 'history.layer.keyframe_param', text: 'Keyframed layer param' },

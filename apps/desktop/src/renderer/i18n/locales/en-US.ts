@@ -1428,6 +1428,7 @@ const enUS = {
       split: "Split layer",
       split_by_shots: "Split layer by shots",
       delete: "Deleted layer",
+      delete_multi: "Deleted layers",
       update: "Updated layer",
       update_params: "Updated layer params",
       keyframe_param: "Keyframed layer param",

@@ -692,6 +692,39 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
         case 'trim_layer': commit(HISTORY_SUMMARY.layerTrim, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyTrimLayer(d, a.layer as Uuid, ((a.edge as string) === 'out' ? 'Out' : 'In'), parseNum(a.new_t_us, 'new_t_us'), (a.escape_group as boolean) ?? false)); return { ok: true, value: null }
         case 'delete_layer': commit(HISTORY_SUMMARY.layerDelete, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyDeleteLayer(d, a.layer as Uuid)); return { ok: true, value: null }
+        // The SELECTION's delete, and the marquee's headline gesture: N swept
+        // clips must cost ONE undo entry, which the singular form above cannot
+        // give because it has no batch to record. `Coarse` for the same reason
+        // update_param_tracks_multi is — the `Layer` hint carries a single id and
+        // cannot name a change spanning several.
+        //
+        // The recipe is the loop and nothing else. applyDeleteLayer already drops
+        // the layer from its group (auto-dissolving below 2 members), prunes the
+        // track it emptied and re-runs the duration autofit on EVERY call, so a
+        // batch that empties three lanes prunes three lanes with no extra
+        // bookkeeping here.
+        //
+        // Ids are DE-DUPLICATED first: the second applyDeleteLayer for one id
+        // finds nothing and throws LayerNotFound, which would turn a harmless
+        // duplicate in the caller's set into a failed gesture.
+        //
+        // A throw aborts the WHOLE batch — produce discards the draft, so nothing
+        // is deleted and nothing records. That atomicity is the right behaviour
+        // rather than a partial delete: checkTrackLock is the realistic thrower,
+        // and no selection a user can build holds a locked layer (a locked clip
+        // cannot be clicked, the marquee skips it, and Select All excludes rather
+        // than refuses it — docs/features.md § Select All). A TrackLocked here
+        // therefore means the caller sent a set the UI cannot produce.
+        //
+        // Empty `layers` leaves the draft untouched, so commit's no-op guard
+        // records nothing.
+        case 'delete_layers': {
+          const layers = [...new Set((a.layers as Uuid[]) ?? [])]
+          commit(HISTORY_SUMMARY.layerDeleteMulti, layerRefs(layers), { kind: 'Coarse' }, (d) => {
+            for (const layer of layers) applyDeleteLayer(d, layer)
+          })
+          return { ok: true, value: null }
+        }
         case 'duplicate_layer': return { ok: true, value: commit(HISTORY_SUMMARY.layerDuplicate, layerRef, { kind: 'Coarse' }, (d) => applyDuplicateLayer(d, idGen, a.layer as Uuid, parseNum(a.t_offset_us, 't_offset_us'))) }
         case 'set_composition': setComposition(a); return { ok: true, value: null }
         case 'undo': undo(); return { ok: true, value: null }

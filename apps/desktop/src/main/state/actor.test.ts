@@ -1389,6 +1389,97 @@ describe('dispatch: emptied-track cleanup', () => {
   })
 })
 
+// delete_layers — the SELECTION's delete, and the marquee's headline gesture.
+// The singular form's own behaviour (the lane prune, the group drop) is covered
+// above, so what is tested here is only what the BATCH adds: N clips cost one
+// entry, a duplicate id is harmless, a refusal takes the whole gesture with it,
+// and every lane the batch emptied still goes.
+describe('dispatch: delete_layers', () => {
+  function setup() {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'del-multi')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    return { actor, aRoll: initial.tracks[0].id, bRoll: initial.tracks[1].id }
+  }
+  type Actor = ReturnType<typeof createActor>
+  function value(r: DispatchResult): string {
+    if (!r.ok) throw new Error(`dispatch refused: ${JSON.stringify(r.error)}`)
+    return r.value as string
+  }
+  const lanes = (actor: Actor): string[] => actor.snapshot().tracks.map((t) => t.id)
+  const addLane = (actor: Actor): string => value(actor.dispatch('add_track', { label: null }))
+  const addClip = (actor: Actor, track: string, t0 = 0, t1 = 1_000_000): string =>
+    value(actor.dispatch('add_layer', { track, kind: 'color', t_start_us: t0, t_end_us: t1 }))
+  const layerIds = (actor: Actor): string[] => actor.snapshot().tracks.flatMap((t) => t.layers).map((l) => l.id)
+
+  it('deletes a batch spanning two lanes that ONE undo restores', () => {
+    const { actor, aRoll, bRoll } = setup()
+    const onA = addClip(actor, aRoll)
+    const onB = addClip(actor, bRoll)
+    const survivor = addClip(actor, aRoll, 2_000_000, 3_000_000)
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    expect(actor.dispatch('delete_layers', { layers: [onA, onB] }).ok).toBe(true)
+    expect(layerIds(actor)).toEqual([survivor]) // the unswept clip is untouched
+    expect(actor.historyStatus().len - lenBefore).toBe(1) // two layers, two lanes, ONE entry
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
+  it('records nothing for an empty batch', () => {
+    const { actor, aRoll } = setup()
+    addClip(actor, aRoll)
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    expect(actor.dispatch('delete_layers', { layers: [] }).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+    expect(actor.historyStatus().len).toBe(lenBefore) // commit's no-op guard: no id, no entry
+  })
+
+  // A group brings its members into the selection, so a set that names one layer
+  // twice is a caller bug rather than a user one — and the second applyDeleteLayer
+  // for that id throws LayerNotFound, which would spend the whole gesture on it.
+  it('deletes a duplicated id once instead of failing the gesture', () => {
+    const { actor, aRoll } = setup()
+    const clip = addClip(actor, aRoll)
+    const lenBefore = actor.historyStatus().len
+    expect(actor.dispatch('delete_layers', { layers: [clip, clip] }).ok).toBe(true)
+    expect(layerIds(actor)).toEqual([])
+    expect(actor.historyStatus().len - lenBefore).toBe(1)
+  })
+
+  // Atomicity. The free clip is spliced out of the draft BEFORE the locked one
+  // throws, so a recipe that survived the refusal would leave it deleted.
+  it('refuses the WHOLE batch when one member sits on a locked lane', () => {
+    const { actor, aRoll } = setup()
+    const lockedLane = addLane(actor)
+    const free = addClip(actor, aRoll)
+    const locked = addClip(actor, lockedLane)
+    expect(actor.dispatch('update_track_flags', { track: lockedLane, patch: { locked: true } }).ok).toBe(true)
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    const r = actor.dispatch('delete_layers', { layers: [free, locked] })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.error).toBe('TrackLocked')
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+    expect(actor.historyStatus().len).toBe(lenBefore)
+  })
+
+  it('prunes EVERY lane the batch emptied, inside the one entry', () => {
+    const { actor, aRoll } = setup()
+    const first = addLane(actor)
+    const second = addLane(actor)
+    const onFirst = addClip(actor, first)
+    const onSecond = addClip(actor, second)
+    const kept = addClip(actor, aRoll)
+    const lenBefore = actor.historyStatus().len
+    expect(actor.dispatch('delete_layers', { layers: [onFirst, onSecond] }).ok).toBe(true)
+    expect(lanes(actor)).not.toContain(first)
+    expect(lanes(actor)).not.toContain(second)
+    expect(layerIds(actor)).toEqual([kept])
+    expect(actor.historyStatus().len - lenBefore).toBe(1)
+  })
+})
+
 // Raise-to-top — the whole of z-order rearrangement (ADR 0042 decision 2). Read
 // off the snapshot for the same reason the block above is: what matters is that
 // the lane appeared, that the lanes it emptied are gone, and that ONE undo puts

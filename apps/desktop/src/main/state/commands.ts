@@ -111,6 +111,9 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   restack_layer: (a) => ({ op: 'restack_layer', args: { layer: a.layerId, anchor: a.anchorLayerId, position: a.position } }),
   trim_layer: (a) => ({ op: 'trim_layer', args: { layer: a.layerId, edge: a.edge, new_t_us: a.newTUs, escape_group: a.escapeGroup ?? false } }),
   delete_layer: (a) => ({ op: 'delete_layer', args: { layer: a.layerId } }),
+  // The selection's delete — a set in, one undo entry out. Same rename as
+  // move_layers_to_new_track's, which takes the selection the same way.
+  delete_layers: (a) => ({ op: 'delete_layers', args: { layers: a.layerIds } }),
   remove_media: (a) => ({ op: 'remove_media', args: { media: a.mediaId, force: a.force ?? false } }),
   duplicate_layer: (a) => ({ op: 'duplicate_layer', args: { layer: a.layerId, t_offset_us: a.tOffsetUs } }),
   split_layer_grouped: (a) => ({ op: 'split_layer', args: { layer: a.layerId, at_t_us: a.atTUs, escape_group: a.escapeGroup ?? false } }),
@@ -174,7 +177,7 @@ export const PRODUCTION_OPS = new Set<string>([
   'add_color_layer', 'add_text_layer', 'add_media_layer', 'paste_layer',
   'add_demo_color_layer', 'add_demo_text_layer',
   // Remaining mechanical + meta channels
-  'move_layer', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layer', 'remove_media', 'duplicate_layer', 'split_layer_grouped',
+  'move_layer', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layer', 'delete_layers', 'remove_media', 'duplicate_layer', 'split_layer_grouped',
   'groups_create', 'groups_dissolve',
   'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks', 'update_param_tracks_multi', 'set_scale_linked',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',

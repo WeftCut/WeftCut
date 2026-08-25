@@ -6,7 +6,7 @@ import {
   addColorLayer,
   addMarkerAt,
   addTextLayer,
-  deleteLayer,
+  deleteLayers,
   moveLayersToNewTrack,
   pasteLayer,
   projectRedo,
@@ -510,18 +510,32 @@ export function App({ onCloseProject }: AppProps) {
     );
   }, [workspaceController]);
 
-  // Delete the selected layer; no-ops when nothing is selected (the
+  // Delete the WHOLE layer selection — one op, one undo entry, however many
+  // clips and lanes it spans. Never the primary alone: every gesture that builds
+  // a multi-selection (a marquee sweep, Shift+click, Select All) would then leave
+  // all but one of its clips alive.
+  //
+  // The selection is read from the store, not from a captured value, for the
+  // reason `handleMoveToNewTrack` below states: App does not re-render on a
+  // multi-select change, so a captured set would be whichever one existed when
+  // this callback was last built. No-ops on an empty selection (the
   // `useShortcuts` dispatcher fires the handler regardless).
+  //
+  // The op takes the selection VERBATIM — delete never fans out over a group
+  // (docs/features.md § Groups), and it does not need to: selection is what
+  // carries the group, so a swept or clicked member already brought its
+  // siblings along.
   const deleteSelected = useCallback(async () => {
-    if (!primaryLayerId) return;
+    const layerIds = [...useSelectionStore.getState().selectedLayerIds];
+    if (layerIds.length === 0) return;
     try {
-      await deleteLayer(primaryLayerId);
+      await deleteLayers(layerIds);
       clearLayerSelection();
       await refresh();
     } catch (err) {
-      logMutationFailure(err, "Delete layer");
+      logMutationFailure(err, "Delete layers");
     }
-  }, [primaryLayerId, refresh]);
+  }, [refresh]);
 
   const copySelected = useCallback(() => {
     if (primaryLayerId) copiedLayerIdRef.current = primaryLayerId;
