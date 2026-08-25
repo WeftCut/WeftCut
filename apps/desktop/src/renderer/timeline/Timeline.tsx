@@ -72,7 +72,10 @@ import {
   playheadFrameShadowPx,
   trackKeyframeProperties,
   visualOrderedTracks,
+  type MeasuredTrackRow,
 } from "./geometry";
+import { marqueeHitClips, resolveMarqueeSelection } from "./marquee";
+import type { MarqueeBox, MarqueeKind } from "./marqueeStore";
 import { DropStrip } from "./DropStrip";
 import { SPAWN_TRACK_ID } from "./placement";
 import { TimelineRuler } from "./TimelineRuler";
@@ -110,11 +113,18 @@ import {
   clearLayerSelection,
   clearTransitionSelection,
   setLayerSelection,
+  setTransitionSelection,
   toggleLayerSelection,
   usePrimaryLayerId,
   useSelectedLayerIds,
   useSelectedTransitionId,
+  useSelectionStore,
 } from "../state/selectionStore";
+import {
+  clearKeyframeSelection,
+  getSelectedKeyframes,
+  setKeyframeSelection,
+} from "../keyframe/selectionStore";
 import { resolveAccelerator } from "../shortcuts/match";
 import { subSelectionDeleteYields } from "./subSelectionDelete";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
@@ -1162,14 +1172,116 @@ export function Timeline({
     [seekFromClientX, setFollowScrubbing],
   );
 
-  // What the marquee's box selects is not wired yet — the box's own lifecycle
-  // is provable without it, and the hit-test arrives behind this seam.
-  const onMarqueeBox = useCallback(() => {}, []);
+  // The primary at pointerdown, which `resolveMarqueeSelection` needs on every
+  // move to keep a surviving primary. It lives on this side of the gesture's
+  // seam together with the rest of the snapshot: the SHAPE of a selection is
+  // what `useMarqueeAnchor` deliberately does not know, so it holds only the
+  // opaque restore thunk `takeMarqueeSnapshot` hands back.
+  const marqueeSnapshotPrimaryRef = useRef<string | null>(null);
+  const takeMarqueeSnapshot = useCallback((): (() => void) => {
+    const {
+      primaryLayerId: primary,
+      selectedLayerIds: ids,
+      selectedTransitionId,
+    } = useSelectionStore.getState();
+    const keyframes = getSelectedKeyframes();
+    marqueeSnapshotPrimaryRef.current = primary;
+    return () => {
+      // Layer selection and the transition chip are mutually exclusive in
+      // `commitSelection`, so at most one of these two branches carries
+      // anything.
+      if (selectedTransitionId !== null) {
+        setTransitionSelection(selectedTransitionId);
+      } else {
+        setLayerSelection(primary, ids);
+      }
+      // A non-empty clip box clears the keyframe selection below, so a cancel
+      // that left it cleared would not be a cancel.
+      setKeyframeSelection(keyframes);
+    };
+  }, []);
+
+  /// The rendered lanes' vertical bands, in the BOX's coordinate space.
+  /// `getBoundingClientRect` answers in client coordinates while the box is
+  /// canvas-relative (`marqueeStore.ts`), hence the subtraction. x needs no
+  /// such conversion: `marqueeHitClips` derives a chip's x from `t_start_us ×
+  /// pxPerSec`, which is canvas-relative already — x = 0 IS the canvas's left
+  /// edge, at t = 0.
+  ///
+  /// Walks `orderedTracks` rather than the registry, so only rendered lanes
+  /// count and the A/B Roll display filter is honoured structurally. Measured
+  /// per pointer event and cached nowhere, which is also what absorbs a
+  /// mid-gesture project mutation (an MCP agent commit, an undo) on the next
+  /// move — there is no cache, so do not add a generation guard.
+  const measureMarqueeRows = useCallback((): MeasuredTrackRow[] => {
+    const canvas = canvasRef.current;
+    if (canvas === null) return [];
+    const canvasTop = canvas.getBoundingClientRect().top;
+    const rows: MeasuredTrackRow[] = [];
+    for (const { track } of orderedTracks) {
+      const el = laneElsRef.current.get(track.id);
+      if (el === undefined) continue;
+      const rect = el.getBoundingClientRect();
+      rows.push({
+        trackId: track.id,
+        top: rect.top - canvasTop,
+        bottom: rect.bottom - canvasTop,
+      });
+    }
+    return rows;
+  }, [orderedTracks]);
+
+  const onMarqueeBox = useCallback(
+    (box: MarqueeBox, kind: MarqueeKind) => {
+      if (kind !== "clip") return;
+      const { ids, primary } = resolveMarqueeSelection({
+        snapshotPrimary: marqueeSnapshotPrimaryRef.current,
+        hit: marqueeHitClips({
+          box,
+          rows: measureMarqueeRows(),
+          tracks,
+          pxPerSec,
+        }),
+        groupByLayerId,
+        groups,
+        mode: "replace",
+      });
+      setLayerSelection(primary, ids);
+      // So the Delete that follows reaches the clips just swept: whenever a
+      // keyframe is selected, `KeyframeLane`'s capture-phase handler answers
+      // Delete first and stops it dead, and a stale selection there would eat
+      // this one's. The chip's own pointerdown clears it for the same reason.
+      if (ids.length > 0) clearKeyframeSelection();
+    },
+    [groupByLayerId, groups, measureMarqueeRows, pxPerSec, tracks],
+  );
+
+  /// A press that never became a box — the timeline's background click, and the
+  /// only path that clears a selection from the background. Per kind, because
+  /// the two populations' blank space is not the same blank space: blank
+  /// sub-lane space drops keyframes and leaves the clip selection, so the
+  /// Attribute panel stays on the clip being inspected. That is a strict
+  /// narrowing — the state it leaves was already reachable by selecting a
+  /// keyframe and then clicking a lane.
+  const onMarqueeBackgroundClick = useCallback((kind: MarqueeKind) => {
+    if (kind === "keyframe") {
+      clearKeyframeSelection();
+      return;
+    }
+    clearLayerSelection();
+  }, []);
+
   // Memoized: the provider hands this to every anchor surface, so a fresh
   // object would re-render all four on every Timeline render.
   const marqueeAnchor = useMemo<MarqueeAnchor>(
-    () => ({ canvasRef, scrollRootRef: rootRef, onBox: onMarqueeBox }),
-    [onMarqueeBox],
+    () => ({
+      canvasRef,
+      scrollRootRef: rootRef,
+      onBox: onMarqueeBox,
+      takeSnapshot: takeMarqueeSnapshot,
+      onBackgroundClick: onMarqueeBackgroundClick,
+    }),
+    [onMarqueeBackgroundClick, onMarqueeBox, takeMarqueeSnapshot],
   );
 
   return (
@@ -1179,7 +1291,6 @@ export function Timeline({
       className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto bg-card ${
         drag ? "cursor-grabbing select-none" : ""
       } ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "timeline-root-blade" : ""}`}
-      onClick={clearLayerSelection}
     >
       <div className="flex min-w-max">
         {/* sticky header column */}

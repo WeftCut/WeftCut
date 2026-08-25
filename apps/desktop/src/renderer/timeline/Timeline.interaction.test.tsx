@@ -28,8 +28,14 @@ import { SPAWN_TRACK_ID } from "./placement";
 import {
   clearLayerSelection,
   setLayerSelection,
+  setTransitionSelection,
   useSelectionStore,
 } from "../state/selectionStore";
+import {
+  clearKeyframeSelection,
+  getSelectedKeyframes,
+  selectKeyframe,
+} from "../keyframe/selectionStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "../state/playheadStore";
 import {
   setTimelineScrollLeftPx,
@@ -39,7 +45,7 @@ import { setActiveRegion } from "../focus/focusRegionStore";
 import { setTool } from "../state/toolStore";
 import { registerCommandProvider } from "../commands/registry";
 import { registerTransport, releaseTransport } from "../state/playbackStore";
-import { HEADER_COL_PX } from "./geometry";
+import { DEFAULT_TRACK_HEIGHT, HEADER_COL_PX } from "./geometry";
 
 const ipcMocks = vi.hoisted(() => ({
   addMediaLayer: vi.fn().mockResolvedValue(undefined),
@@ -50,6 +56,7 @@ const ipcMocks = vi.hoisted(() => ({
   trimLayer: vi.fn().mockResolvedValue(undefined),
   getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
   groupsCreate: vi.fn().mockResolvedValue("group-created"),
+  updateLayerParamTrack: vi.fn().mockResolvedValue(undefined),
   logEmit: vi.fn().mockResolvedValue(undefined),
   viewStateGet: vi
     .fn()
@@ -80,6 +87,7 @@ vi.mock("../ipc", async (importOriginal) => {
     trimLayer: ipcMocks.trimLayer,
     getWaveformPeaks: ipcMocks.getWaveformPeaks,
     groupsCreate: ipcMocks.groupsCreate,
+    updateLayerParamTrack: ipcMocks.updateLayerParamTrack,
     logEmit: ipcMocks.logEmit,
     viewStateGet: ipcMocks.viewStateGet,
     viewStateSet: ipcMocks.viewStateSet,
@@ -2242,9 +2250,11 @@ describe("Timeline keyboard zoom", () => {
   });
 });
 
-/// The marquee's gesture wiring: which surfaces arm it, what arms it, and what
-/// disarms it. The box only — this slice selects nothing, so every assertion
-/// here is about the rectangle's existence, kind and coordinates.
+/// The marquee's wiring: which surfaces arm it, what arms and disarms it, and
+/// what the box does to the selection once it exists. The rules the box obeys
+/// are proved from hand-fed rows in `marquee.test.ts`; what is proved here is
+/// that the rows handed to them are the rendered lanes, in the box's own
+/// coordinate space.
 describe("Timeline marquee", () => {
   const keyedTrack: TrackSummary = {
     ...track,
@@ -2253,12 +2263,15 @@ describe("Timeline marquee", () => {
         ...tinyVideoLayer,
         id: "keyed-1",
         label: "Keyed",
+        // Two seconds — 160 px at the default zoom — so a box drawn inside the
+        // chip's own span still lands clear of the left auto-scroll band.
+        t_end_us: 2_000_000,
         params: {
           kind: "VideoClip",
           media_id: "media-1",
           media_label: "media.mov",
           src_in_us: 0,
-          src_out_us: 100_000,
+          src_out_us: 2_000_000,
           x: staticNum(0),
           y: staticNum(0),
           scale_x: staticNum(1),
@@ -2282,8 +2295,35 @@ describe("Timeline marquee", () => {
     ],
   };
 
+  // Two lanes a single box can cross, plus one clip parked beyond every box
+  // below — the primary that does NOT survive a sweep.
+  const clipA: LayerSummary = { ...layer, id: "clip-a", label: "A" };
+  const clipFar: LayerSummary = {
+    ...layer,
+    id: "clip-far",
+    label: "Far",
+    t_start_us: 3_000_000,
+    t_end_us: 4_000_000,
+  };
+  const clipB: LayerSummary = { ...layer, id: "clip-b", label: "B" };
+  const laneATrack: TrackSummary = {
+    ...track,
+    id: "track-a",
+    label: "A",
+    layers: [clipA, clipFar],
+  };
+  const laneBTrack: TrackSummary = {
+    ...track,
+    id: "track-b",
+    label: "B",
+    role: "b-roll",
+    layers: [clipB],
+  };
+  const twoLanes = [laneATrack, laneBTrack];
+
   beforeEach(() => {
     clearLayerSelection();
+    clearKeyframeSelection();
     setActiveRegion(null);
     setPlayheadTimeUs(0);
     setTool("select");
@@ -2329,8 +2369,33 @@ describe("Timeline marquee", () => {
     return canvas;
   }
 
+  /// Lay the rendered lanes out as `DEFAULT_TRACK_HEIGHT` bands starting at the
+  /// canvas's own top, in VISUAL order — the reverse of the data-model order,
+  /// so the first band belongs to the LAST track passed in. The bands therefore
+  /// begin at canvas y 0 while their client rects begin at 100, which is the
+  /// point: a hit-test that forgot to convert reads every row a whole canvas
+  /// origin too low.
+  function stubLaneRows(container: HTMLElement) {
+    const lanes = Array.from(
+      container.querySelectorAll('[data-testid="track-lane"]'),
+    );
+    lanes.forEach((lane, i) => {
+      stubRect(lane, {
+        left: 200,
+        right: 1240,
+        top: 100 + i * DEFAULT_TRACK_HEIGHT,
+        bottom: 100 + (i + 1) * DEFAULT_TRACK_HEIGHT,
+      });
+    });
+  }
+
   const marquee = (container: HTMLElement) =>
     container.querySelector('[data-testid="timeline-marquee"]');
+
+  const selection = () => {
+    const { primaryLayerId, selectedLayerIds } = useSelectionStore.getState();
+    return { primary: primaryLayerId, ids: [...selectedLayerIds].sort() };
+  };
 
   /// Press `el`, then travel. One move is enough: the arm gate is displacement
   /// from the press, not a count of events.
@@ -2346,6 +2411,12 @@ describe("Timeline marquee", () => {
 
   const release = (to: [number, number]) =>
     fireEvent.pointerUp(window, { clientX: to[0], clientY: to[1] });
+
+  /// Press and release without travel: the background click.
+  function pressAndRelease(el: Element, at: [number, number]) {
+    fireEvent.pointerDown(el, { button: 0, clientX: at[0], clientY: at[1] });
+    release(at);
+  }
 
   it("draws no box below the arm threshold", () => {
     const { container } = renderTimeline({});
@@ -2463,7 +2534,7 @@ describe("Timeline marquee", () => {
 
   it("keeps a press on the ruler a scrub and only a scrub", () => {
     const onSeek = vi.fn();
-    const { container } = renderTimeline({ onSeek });
+    const { container } = renderTimeline({ onSeek, selectedLayerId: layer.id });
     stubMarqueeLayout(container);
     const ruler = container.querySelector('[data-testid="timeline-ruler"]')!;
 
@@ -2471,6 +2542,168 @@ describe("Timeline marquee", () => {
 
     expect(onSeek).toHaveBeenCalled();
     expect(marquee(container)).toBeNull();
+    // The ruler is not a background click either: seeking never deselects.
+    expect(selection()).toEqual({ primary: layer.id, ids: [layer.id] });
     release([440, 240]);
+    expect(selection()).toEqual({ primary: layer.id, ids: [layer.id] });
+  });
+
+  it("selects every clip the box touches, across lanes", () => {
+    const { container } = renderTimeline({ tracks: twoLanes });
+    stubMarqueeLayout(container);
+    stubLaneRows(container);
+    const lane = container.querySelector('[data-testid="track-lane"]')!;
+
+    sweep(lane, [250, 130], [300, 200]);
+    release([300, 200]);
+
+    // `clip-far` starts at 3s — inside a swept lane, outside the swept x range.
+    expect(selection()).toEqual({
+      primary: "clip-a",
+      ids: ["clip-a", "clip-b"],
+    });
+  });
+
+  it("keeps a surviving primary, and promotes the first hit otherwise", () => {
+    const { container } = renderTimeline({
+      tracks: twoLanes,
+      selectedLayerId: "clip-b",
+    });
+    stubMarqueeLayout(container);
+    stubLaneRows(container);
+    const lane = container.querySelector('[data-testid="track-lane"]')!;
+
+    sweep(lane, [250, 130], [300, 200]);
+    release([300, 200]);
+    expect(selection()).toEqual({
+      primary: "clip-b",
+      ids: ["clip-a", "clip-b"],
+    });
+
+    setLayerSelection("clip-far", ["clip-far"]);
+    sweep(lane, [250, 130], [300, 200]);
+    release([300, 200]);
+    expect(selection()).toEqual({
+      primary: "clip-a",
+      ids: ["clip-a", "clip-b"],
+    });
+  });
+
+  it("clears the selection when the box takes nothing", () => {
+    const { container } = renderTimeline({
+      tracks: twoLanes,
+      selectedLayerId: "clip-a",
+    });
+    stubMarqueeLayout(container);
+    stubLaneRows(container);
+    const lane = container.querySelector('[data-testid="track-lane"]')!;
+
+    // Canvas x 500 → 560: past every chip, still clear of the right edge band.
+    sweep(lane, [700, 130], [760, 200]);
+    release([760, 200]);
+
+    expect(selection()).toEqual({ primary: null, ids: [] });
+  });
+
+  it("clears the layer selection on a sub-threshold press in a lane", () => {
+    const { container } = renderTimeline({
+      tracks: twoLanes,
+      selectedLayerId: "clip-a",
+    });
+    stubMarqueeLayout(container);
+    const lane = container.querySelector('[data-testid="track-lane"]')!;
+
+    pressAndRelease(lane, [700, 130]);
+
+    expect(selection()).toEqual({ primary: null, ids: [] });
+  });
+
+  it("clears only the keyframe selection on a sub-threshold press in a sub-lane", () => {
+    const { container } = renderTimeline({
+      tracks: [keyedTrack],
+      selectedLayerId: "keyed-1",
+    });
+    fireEvent.click(container.querySelector('[data-testid="kf-lane-twirl"]')!);
+    stubMarqueeLayout(container);
+    selectKeyframe({ layerId: "keyed-1", paramKey: "opacity", kfId: "kf-1" });
+    const row = container.querySelector('[data-testid="kf-sublane"]')!;
+
+    pressAndRelease(row, [400, 200]);
+
+    expect(getSelectedKeyframes()).toEqual([]);
+    // The clip stays selected, so the Attribute panel stays on what it was
+    // inspecting.
+    expect(selection()).toEqual({ primary: "keyed-1", ids: ["keyed-1"] });
+  });
+
+  it("hands the Delete after a clip marquee to the clips, not a stale keyframe", () => {
+    const { container } = renderTimeline({
+      tracks: [keyedTrack],
+      selectedLayerId: "keyed-1",
+    });
+    fireEvent.click(container.querySelector('[data-testid="kf-lane-twirl"]')!);
+    stubMarqueeLayout(container);
+    stubLaneRows(container);
+    // Every sub-selection Delete stands down outside the timeline region
+    // (ADR 0041), so the region has to be armed for the race to exist at all.
+    setActiveRegion("timeline");
+    const lane = container.querySelector('[data-testid="track-lane"]')!;
+    const kf = { layerId: "keyed-1", paramKey: "opacity", kfId: "kf-1" };
+
+    // Control: with the keyframe selection standing, Delete commits a param
+    // track — the keyframe path won the race and the layer's Delete was eaten.
+    // Inside `act` both times, because the capture-phase handler is registered
+    // by an effect: without the flush the race would not be armed and the
+    // assertion below it would pass against anything.
+    act(() => selectKeyframe(kf));
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(ipcMocks.updateLayerParamTrack).toHaveBeenCalledTimes(1);
+
+    act(() => selectKeyframe(kf));
+    ipcMocks.updateLayerParamTrack.mockClear();
+    sweep(lane, [250, 130], [300, 200]);
+    release([300, 200]);
+
+    expect(selection()).toEqual({ primary: "keyed-1", ids: ["keyed-1"] });
+    expect(getSelectedKeyframes()).toEqual([]);
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(ipcMocks.updateLayerParamTrack).not.toHaveBeenCalled();
+  });
+
+  it("restores the selection that stood at pointerdown on Escape", () => {
+    const { container } = renderTimeline({
+      tracks: twoLanes,
+      selectedLayerId: "clip-far",
+    });
+    stubMarqueeLayout(container);
+    stubLaneRows(container);
+    const lane = container.querySelector('[data-testid="track-lane"]')!;
+
+    sweep(lane, [250, 130], [300, 200]);
+    expect(selection()).toEqual({
+      primary: "clip-a",
+      ids: ["clip-a", "clip-b"],
+    });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(selection()).toEqual({ primary: "clip-far", ids: ["clip-far"] });
+  });
+
+  it("restores a transition chip selection on Escape", () => {
+    const { container } = renderTimeline({ tracks: twoLanes });
+    stubMarqueeLayout(container);
+    stubLaneRows(container);
+    setTransitionSelection("transition-1");
+    const lane = container.querySelector('[data-testid="track-lane"]')!;
+
+    // The box evicts the chip on its way in: layer and transition selection are
+    // mutually exclusive.
+    sweep(lane, [250, 130], [300, 200]);
+    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(useSelectionStore.getState().selectedTransitionId).toBe(
+      "transition-1",
+    );
   });
 });

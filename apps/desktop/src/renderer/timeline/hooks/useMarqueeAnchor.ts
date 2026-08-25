@@ -2,10 +2,10 @@
 // into explicitly. A whitelist rather than a root-level funnel, so a future
 // clickable child does not have to remember to `stopPropagation` out of it.
 //
-// Owns the box's whole lifecycle — arm, track, edge auto-scroll, cancel — and
-// knows nothing about what the box selects: that leaves through `onBox`. The
-// rectangle itself lives in `../marqueeStore.ts`, which also defines what a
-// `MarqueeKind` means.
+// Owns the box's whole lifecycle — arm, track, edge auto-scroll, release,
+// cancel — and knows neither what the box selects nor what a selection is:
+// those leave through the `MarqueeAnchor` callbacks. The rectangle itself lives
+// in `../marqueeStore.ts`, which also defines what a `MarqueeKind` means.
 
 import {
   createContext,
@@ -37,7 +37,7 @@ const ARM_TRAVEL_PX = 3;
 const EDGE_BAND_PX = 28;
 const EDGE_SPEED_PX = 12;
 
-/// The three things the gesture needs and no anchor surface has.
+/// What the gesture needs and no anchor surface has.
 export interface MarqueeAnchor {
   /// `timeline-canvas` — the element the box's coordinates are relative to.
   canvasRef: RefObject<HTMLElement | null>;
@@ -46,6 +46,16 @@ export interface MarqueeAnchor {
   /// Every box the gesture publishes. The hit-test lives on the far side of
   /// this seam, so the gesture's lifecycle is provable without it.
   onBox: (box: MarqueeBox, kind: MarqueeKind) => void;
+  /// Taken at pointerdown, before anything is drawn or selected; returns the
+  /// undo the cancel path replays. What a selection IS stays on the far side of
+  /// this seam — the gesture holds an opaque thunk, never a selection shape.
+  takeSnapshot: () => () => void;
+  /// A press released below `ARM_TRAVEL_PX`: the timeline's background click,
+  /// which means whatever the anchored surface's population says it means —
+  /// hence `kind`. Deliberately not a degenerate `onBox`: a zero-area box
+  /// already means "took nothing", and what clearing means must not ride on
+  /// that coincidence.
+  onBackgroundClick: (kind: MarqueeKind) => void;
 }
 
 /// A context rather than props: the anchor surfaces are up to three components
@@ -76,6 +86,8 @@ export function beginMarquee(
   // `focus/useFocusRegions.ts` runs its pointerdown listener in the capture
   // phase at `window` precisely because gestures cancel the default action.
   e.preventDefault();
+
+  const restoreSnapshot = anchor.takeSnapshot();
 
   const startRect = canvas.getBoundingClientRect();
   const x0 = e.clientX - startRect.left;
@@ -148,23 +160,35 @@ export function beginMarquee(
     updateAutoScroll();
   };
   const onKey = (ev: KeyboardEvent) => {
-    if (ev.key === "Escape") end();
+    if (ev.key === "Escape") cancel();
   };
-  const end = () => {
+  const teardown = () => {
     speed = 0;
     if (raf !== 0) cancelAnimationFrame(raf);
     window.removeEventListener("pointermove", onMove);
-    window.removeEventListener("pointerup", end);
-    window.removeEventListener("pointercancel", end);
+    window.removeEventListener("pointerup", release);
+    window.removeEventListener("pointercancel", cancel);
     window.removeEventListener("keydown", onKey);
     clearMarquee();
   };
+  /// Escape — and an abort, which is not a release either — puts the selection
+  /// back where the press found it.
+  const cancel = () => {
+    teardown();
+    restoreSnapshot();
+  };
+  /// A release KEEPS whatever the last move computed; there is no separate
+  /// commit step. One that never armed is the background click.
+  const release = () => {
+    teardown();
+    if (!armed) anchor.onBackgroundClick(kind);
+  };
 
   window.addEventListener("pointermove", onMove);
-  window.addEventListener("pointerup", end);
+  window.addEventListener("pointerup", release);
   // A browser-aborted gesture must not stay armed, or the next unrelated
   // pointerup reads as this one's release.
-  window.addEventListener("pointercancel", end);
+  window.addEventListener("pointercancel", cancel);
   window.addEventListener("keydown", onKey);
 }
 
