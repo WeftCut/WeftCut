@@ -216,6 +216,11 @@ const zhCN: Resources = {
     markers: "标记",
     zoom: "缩放",
     resolution: "播放分辨率",
+    // 循环按钮的三条提示：先说当前档位，再说点击后切到哪一档。三档不像开关那样
+    // 只有两种可能，下一档猜不出来，所以后半句必须写出来。
+    resolution_full_hint: "播放分辨率：完整。点击切到 1/2。",
+    resolution_half_hint: "播放分辨率：1/2。点击切到 1/4。",
+    resolution_quarter_hint: "播放分辨率：1/4。点击切回完整。",
     // 显示在禁用的"清除"按钮上——说明为什么点不了，而不是重复一个用不了的标签。
     clear_range_empty: "未设置入出点",
     // 标记开关的两态提示：先说当前状态，再说点击后会发生什么。
@@ -334,6 +339,7 @@ const zhCN: Resources = {
     playback_resolution_full: "播放分辨率：完整",
     playback_resolution_half: "播放分辨率：1/2",
     playback_resolution_quarter: "播放分辨率：1/4",
+    playback_resolution_cycle: "循环切换播放分辨率",
     center_horizontally: "水平居中",
     center_vertically: "垂直居中",
     apply_default_transition: "应用默认转场（交叉溶解）",

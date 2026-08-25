@@ -218,6 +218,14 @@ const enUS = {
     markers: "Markers",
     zoom: "Zoom",
     resolution: "Playback resolution",
+    // The cycling button's three tooltips: current rung, then the rung a click
+    // moves to. Both halves are load-bearing here in a way they are not for the
+    // two-state toggles below — that button's glyph and pressed border already
+    // say which of two states it is in, whereas three rungs mean the successor
+    // is genuinely unguessable without being told.
+    resolution_full_hint: "Playback resolution: Full. Click for 1/2.",
+    resolution_half_hint: "Playback resolution: 1/2. Click for 1/4.",
+    resolution_quarter_hint: "Playback resolution: 1/4. Click for Full.",
     // Shown on the disabled Clear button — says why it's disabled rather than
     // repeating the label the user can't act on.
     clear_range_empty: "No in/out points marked",
@@ -348,6 +356,11 @@ const enUS = {
     playback_resolution_full: "Playback resolution: Full",
     playback_resolution_half: "Playback resolution: 1/2",
     playback_resolution_quarter: "Playback resolution: 1/4",
+    // The strip's one-button form. Named for what it does rather than for a
+    // value, because unlike the three above it lands somewhere different every
+    // time it runs — a palette row promising "1/2" that sometimes gives 1/4
+    // would be worse than no row.
+    playback_resolution_cycle: "Cycle playback resolution",
     center_horizontally: "Center horizontally",
     center_vertically: "Center vertically",
     apply_default_transition: "Apply default transition (crossfade)",

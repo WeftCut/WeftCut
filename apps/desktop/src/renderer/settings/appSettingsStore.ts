@@ -174,10 +174,12 @@ export function tailSnapEnabled(): boolean {
   return useAppSettingsStore.getState().settings.tail_snap_enabled;
 }
 
-/// Preview playback resolution, set ABSOLUTELY rather than cycled. Three
-/// values, so a cycle would have no defined direction from the middle one —
-/// the same reason `toolStore.setTool` is idempotent instead of a toggle. Each
-/// value gets its own command and its own radio button.
+/// Preview playback resolution. The SETTER stays absolute — it takes the value
+/// to land on, never a direction — which is what lets three idempotent palette
+/// commands, the Settings slider and the Quick Actions strip's cycling button
+/// all write this one field without having to agree on what "next" means.
+/// Walking the ladder is a caller's job: `cyclePlaybackResolution` in
+/// `appCommands.ts` resolves its successor first and then calls this.
 export async function setPlaybackResolution(
   next: AppSettings["playback_resolution"],
 ): Promise<AppSettings> {

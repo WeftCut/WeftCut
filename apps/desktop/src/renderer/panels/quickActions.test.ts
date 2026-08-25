@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { FoldVertical, UnfoldVertical } from "lucide-react";
 
-import { buildAppCommands } from "../commands/appCommands";
+import {
+  buildAppCommands,
+  nextPlaybackResolution,
+  PLAYBACK_RESOLUTION_CYCLE,
+} from "../commands/appCommands";
+import type { AppSettings } from "../ipc";
 import { ACTION_DEFS, type ActionId } from "../shortcuts/defs";
 import type { HandlerMap } from "../shortcuts/useShortcuts";
 import {
@@ -85,6 +90,12 @@ describe("quickActions catalogue", () => {
             `"${item.id}" resolves no icon @ ${displayMode}`,
           ).toBeTruthy();
         }
+        for (const playbackResolution of PLAYBACK_RESOLUTION_CYCLE) {
+          expect(
+            resolveIcon(item, state({ playbackResolution })),
+            `"${item.id}" resolves no icon @ ${playbackResolution}`,
+          ).toBeTruthy();
+        }
       }
     }
   });
@@ -93,17 +104,17 @@ describe("quickActions catalogue", () => {
   // armed for any reachable state — otherwise the strip shows either no
   // current tool or two at once.
   it("radio sections arm exactly one item per state", () => {
-    // Every modal axis crossed with itself: the tool, and the playback
-    // resolution. A resolution the section forgot would leave the whole
-    // radiogroup unarmed for that value — the failure this case exists for.
+    // Every modal axis crossed with itself. The tool is the only one left:
+    // the playback resolution dropped out of this case when its three
+    // buttons became one cycling button, which is `command` and arms
+    // nothing (see the cycler's own cases below). A tool the section forgot
+    // would leave the whole radiogroup unarmed for that value — the failure
+    // this case exists for.
     const states: QuickActionState[] = [
       state({ tool: "select", displayMode: "AbRoll" }),
       state({ tool: "select", displayMode: "AllTracks" }),
       state({ tool: "blade", displayMode: "AbRoll" }),
       state({ tool: "blade", displayMode: "AllTracks" }),
-      state({ playbackResolution: "full" }),
-      state({ playbackResolution: "half" }),
-      state({ playbackResolution: "quarter" }),
     ];
     for (const section of QUICK_ACTION_SECTIONS) {
       if (section.mode !== "radio") continue;
@@ -288,6 +299,85 @@ describe("quickActions catalogue", () => {
     expect(sectionOf("addMarkerAtPlayhead")?.id).not.toBe(
       sectionOf("toggleMarkersVisible")?.id,
     );
+  });
+
+  // The section that used to spend three slots stating one value. Everything
+  // below is what makes ONE button honest in their place: a glyph per rung, a
+  // hint per rung, and a walk that reaches every rung and comes back.
+  describe("playback resolution cycler", () => {
+    const item = (): QuickActionItem => {
+      const found = QUICK_ACTION_SECTIONS.flatMap((s) => s.items).find(
+        (i) => i.id === "cyclePlaybackResolution",
+      );
+      if (!found) throw new Error("no strip item for cyclePlaybackResolution");
+      return found;
+    };
+
+    // `radio` would need siblings to be exclusive WITH, and `independent`
+    // would hang `aria-pressed` on a control that has no off state. A
+    // one-button three-state control is momentary or it is lying.
+    it("is a momentary command, alone in its section", () => {
+      const section = QUICK_ACTION_SECTIONS.find((s) =>
+        s.items.some((i) => i.id === "cyclePlaybackResolution"),
+      );
+      expect(section?.id).toBe("resolution");
+      expect(section?.mode).toBe("command");
+      expect(section?.items).toHaveLength(1);
+      expect(item().active).toBeUndefined();
+    });
+
+    // With no pressed border and no radio state, the glyph is the ONLY thing
+    // reporting the current value — so two rungs sharing a glyph would be
+    // indistinguishable on screen, not merely repetitive.
+    it("draws a distinct glyph for every rung", () => {
+      const glyphs = PLAYBACK_RESOLUTION_CYCLE.map((playbackResolution) =>
+        resolveIcon(item(), state({ playbackResolution })),
+      );
+      for (const glyph of glyphs) expect(glyph).toBeTruthy();
+      expect(new Set(glyphs).size).toBe(PLAYBACK_RESOLUTION_CYCLE.length);
+    });
+
+    // Same argument for the hint, which is also the `aria-label`: with no ARIA
+    // state attribute on the button, it is the whole of what a screen reader
+    // gets.
+    it("carries a distinct hint for every rung", () => {
+      const hints = PLAYBACK_RESOLUTION_CYCLE.map((playbackResolution) =>
+        item().hint?.(state({ playbackResolution })),
+      );
+      for (const hint of hints) expect(hint).toBeTypeOf("string");
+      expect(new Set(hints).size).toBe(PLAYBACK_RESOLUTION_CYCLE.length);
+    });
+
+    // A walk that skipped a rung would strand a resolution nothing on the
+    // strip could reach; one that failed to wrap would be a one-way trip to
+    // quarter, with Settings the only way back.
+    it("reaches every rung and returns to the start", () => {
+      const walked: AppSettings["playback_resolution"][] = [];
+      let at = PLAYBACK_RESOLUTION_CYCLE[0]!;
+      for (let step = 0; step < PLAYBACK_RESOLUTION_CYCLE.length; step += 1) {
+        walked.push(at);
+        at = nextPlaybackResolution(at);
+      }
+      expect(walked).toEqual([...PLAYBACK_RESOLUTION_CYCLE]);
+      expect(new Set(walked).size).toBe(PLAYBACK_RESOLUTION_CYCLE.length);
+      expect(at).toBe(PLAYBACK_RESOLUTION_CYCLE[0]);
+    });
+
+    // Descending, because the button is reached FOR shedding resolution when
+    // playback stutters. That is the reverse of the Settings slider's
+    // `RESOLUTION_STOPS`, whose right-hand end has to be the better picture.
+    it("walks down the quality ladder", () => {
+      expect([...PLAYBACK_RESOLUTION_CYCLE]).toEqual(["full", "half", "quarter"]);
+    });
+
+    // A settings file predating the field, or a hand edit, is not on the
+    // ladder and so has no successor. The walk resumes at the top — the same
+    // direction `playbackScaleDiv` defaults an unknown value.
+    it("resumes at the top from a value that is not on the ladder", () => {
+      expect(
+        nextPlaybackResolution("eighth" as AppSettings["playback_resolution"]),
+      ).toBe("full");
+    });
   });
 
   // Gating this one would mean subscribing the strip to the PLAYHEAD — a

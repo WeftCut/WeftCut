@@ -395,6 +395,64 @@ describe("QuickActionsPanel", () => {
     });
   });
 
+  // The strip's only three-state button, and its only hand-drawn glyph.
+  // Registered separately, like the in/out section above, so the
+  // authored-order and roving-focus cases keep describing the buttons they
+  // already cover.
+  describe("playback resolution cycler", () => {
+    let unregisterResolution: (() => void) | null = null;
+
+    beforeEach(() => {
+      unregisterResolution = registerCommandProvider(() => [
+        {
+          id: "cyclePlaybackResolution",
+          labelKey: "actions.playback_resolution_cycle",
+          run: () => {
+            runs.push("cyclePlaybackResolution");
+          },
+        },
+      ]);
+    });
+
+    afterEach(() => {
+      unregisterResolution?.();
+      unregisterResolution = null;
+    });
+
+    // No ARIA state attribute at all: `role="radio"` needs siblings to be
+    // exclusive with, and `aria-pressed` over three states announces a switch
+    // that has no off. Everything this button reports it reports through the
+    // label and the glyph — which is why both are asserted HERE and not only
+    // in the catalogue: a panel that kept rendering the static `icon` would
+    // still pass a catalogue-only test.
+    it("reports the current rung through label and glyph alone", () => {
+      render(<QuickActionsPanel geometry={geometry(400, 44)} />);
+      const cycler = () => button("cyclePlaybackResolution");
+      expect(cycler().getAttribute("role")).not.toBe("radio");
+      expect(cycler().hasAttribute("aria-pressed")).toBe(false);
+      expect(cycler().hasAttribute("aria-checked")).toBe(false);
+      expect(cycler().getAttribute("aria-label")).toBe(
+        "Playback resolution: Full. Click for 1/2.",
+      );
+      const atFull = cycler().querySelector("svg")?.innerHTML;
+      cleanup();
+      settings.playbackResolution = "quarter";
+      render(<QuickActionsPanel geometry={geometry(400, 44)} />);
+      expect(cycler().getAttribute("aria-label")).toBe(
+        "Playback resolution: 1/4. Click for Full.",
+      );
+      // The block that fills the fraction moves and shrinks between rungs.
+      // Identical markup would mean the rung never reached the DOM.
+      expect(cycler().querySelector("svg")?.innerHTML).not.toBe(atFull);
+    });
+
+    it("runs the cycle command from one click", () => {
+      render(<QuickActionsPanel geometry={geometry(400, 44)} />);
+      fireEvent.click(button("cyclePlaybackResolution"));
+      expect(runs).toEqual(["cyclePlaybackResolution"]);
+    });
+  });
+
   // A button whose command carries no binding, so its tooltip has no
   // accelerator half. Registered separately so the authored-order case above
   // keeps describing the buttons it already covers.

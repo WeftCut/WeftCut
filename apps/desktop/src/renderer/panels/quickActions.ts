@@ -24,9 +24,6 @@ import {
   Magnet,
   MousePointer2,
   Scissors,
-  SignalHigh,
-  SignalLow,
-  SignalMedium,
   SquareDashed,
   SquareSplitHorizontal,
   Ungroup,
@@ -34,11 +31,24 @@ import {
   X,
   ZoomIn,
   ZoomOut,
-  type LucideIcon,
+  type LucideProps,
 } from "lucide-react";
+import type { ComponentType } from "react";
 
 import type { AppSettings, DisplayMode } from "../ipc";
 import type { Tool } from "../state/toolStore";
+import {
+  PlaybackResolutionFullIcon,
+  PlaybackResolutionHalfIcon,
+  PlaybackResolutionQuarterIcon,
+} from "./PlaybackResolutionIcon";
+
+/// What a strip button may draw: anything shaped like a lucide glyph. Widened
+/// from `LucideIcon` itself so a hand-drawn one can sit on the same row — see
+/// `PlaybackResolutionIcon.tsx`, which draws a value lucide has no glyph for.
+/// Lucide's own props are the shared shape rather than a narrower invention,
+/// so every stock icon stays assignable without a cast.
+export type QuickActionIcon = ComponentType<LucideProps>;
 
 /// The store-derived inputs every `active`/`hint` predicate reads. Snapshotted
 /// once at the top of the panel component so the per-item predicates stay pure
@@ -61,8 +71,10 @@ export interface QuickActionState {
   followPlayhead: boolean;
   /// Whether the preview draws the title-safe / action-safe rectangles.
   safeAreaGuides: boolean;
-  /// Preview decode resolution. The strip's `resolution` radio section reads
-  /// it; the preview itself subscribes to the store directly.
+  /// Preview decode resolution. The `resolution` section's one button draws
+  /// it and names it in the tooltip — with no pressed state to fall back on,
+  /// this field IS what the button reports. The preview itself subscribes to
+  /// the store directly.
   playbackResolution: AppSettings["playback_resolution"];
   /// Whether ≥2 layers are selected (`useCanGroupSelection`). A boolean
   /// selector for the `hasRange` reason: the strip re-renders when the answer
@@ -77,11 +89,11 @@ export interface QuickActionItem {
   /// `run` / `enabled` / `labelKey`.
   id: string;
   /// The button's glyph. Static for everything whose meaning doesn't move.
-  icon: LucideIcon;
+  icon: QuickActionIcon;
   /// State-bearing glyph, for buttons where the icon itself depicts the
   /// current state rather than a fixed concept. Overrides `icon` when present,
   /// the same way `hint` overrides the command's `labelKey`.
-  iconFor?: (state: QuickActionState) => LucideIcon;
+  iconFor?: (state: QuickActionState) => QuickActionIcon;
   /// Whether the button renders pressed. For a radio section exactly one item
   /// should be true; for an independent section each item answers for itself.
   /// Omitted by `command` items, which have no pressed state at all.
@@ -282,42 +294,68 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
     ],
   },
   {
-    // Preview decode resolution — three absolute choices, NOT one cycling
-    // button. From "half" a cycle has no defined direction, the same defect
-    // `toolStore.setTool`'s landmine describes for tools; and three
-    // idempotent commands are what let this be an honest `radiogroup` rather
-    // than a switch claiming a pressed state it hasn't got.
+    // Preview decode resolution — ONE button walking three rungs, where the
+    // section used to spend three slots stating one value.
     //
-    // A quality ladder, so the glyphs are a ladder: the bars say "more" and
-    // "less" at 16 px in a way "1/2" and "1/4" cannot.
+    // `command`, not `radio`, and the mode is the substance of the change: a
+    // radiogroup of one button cannot say anything ("exactly one of one is
+    // chosen" is not information), and `aria-pressed` on a three-state control
+    // would announce a switch that has no off. Momentary is what a cycling
+    // button honestly is, so the whole current value rides on the glyph and
+    // the hint — which is also why `active` is absent and the button never
+    // renders pressed.
+    //
+    // That is only honest because the glyph SAYS the value. This section was
+    // three buttons for as long as its icons were a signal ladder that could
+    // draw "less" but not "half"; `PlaybackResolutionIcon` fills that
+    // fraction of a frame, so a single button can be read at rest and the
+    // cycle has a direction from every rung.
     id: "resolution",
-    mode: "radio",
+    mode: "command",
     items: [
       {
-        id: "setPlaybackResolutionFull",
-        icon: SignalHigh,
-        active: (s) => s.playbackResolution === "full",
-      },
-      {
-        id: "setPlaybackResolutionHalf",
-        icon: SignalMedium,
-        active: (s) => s.playbackResolution === "half",
-      },
-      {
-        id: "setPlaybackResolutionQuarter",
-        icon: SignalLow,
-        active: (s) => s.playbackResolution === "quarter",
+        id: "cyclePlaybackResolution",
+        // Fallback only; `iconFor` answers on every real render. Matches the
+        // `full` default in `appSettingsStore.ts`'s FALLBACK settings.
+        icon: PlaybackResolutionFullIcon,
+        iconFor: (s) => RESOLUTION_ICONS[s.playbackResolution],
+        hint: (s) => RESOLUTION_HINTS[s.playbackResolution],
       },
     ],
   },
 ];
+
+/// Glyph per rung. Total `Record`s rather than lookups with a fallback: a
+/// fourth playback resolution must not compile until someone has decided what
+/// it looks like and what its tooltip promises, because the only fallback
+/// available here — draw the previous rung — would be a lie about the value
+/// the preview is actually shipping.
+const RESOLUTION_ICONS: Record<
+  AppSettings["playback_resolution"],
+  QuickActionIcon
+> = {
+  full: PlaybackResolutionFullIcon,
+  half: PlaybackResolutionHalfIcon,
+  quarter: PlaybackResolutionQuarterIcon,
+};
+
+/// Tooltip per rung, keyed on the CURRENT value. Each string names the value
+/// the button is on and the one a click moves to, so the successor order in
+/// `PLAYBACK_RESOLUTION_CYCLE` is restated in prose here — the pair that can
+/// drift, and the reason `quickActions.test.ts` asserts one key per rung and
+/// no two rungs sharing one.
+const RESOLUTION_HINTS: Record<AppSettings["playback_resolution"], string> = {
+  full: "quick_actions.resolution_full_hint",
+  half: "quick_actions.resolution_half_hint",
+  quarter: "quick_actions.resolution_quarter_hint",
+};
 
 /// The glyph to draw for `item` right now. Called per render, so a
 /// state-bearing icon can never be cached into a stale component.
 export function resolveIcon(
   item: QuickActionItem,
   state: QuickActionState,
-): LucideIcon {
+): QuickActionIcon {
   return item.iconFor?.(state) ?? item.icon;
 }
 

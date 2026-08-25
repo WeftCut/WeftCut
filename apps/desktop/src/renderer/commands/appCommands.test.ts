@@ -1,5 +1,17 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+// `cyclePlaybackResolution` is the one command in this file that COMMITS,
+// and committing means IPC, which a node-env unit test has no bridge for.
+// Only the setter is replaced: `playbackResolution` and
+// `useAppSettingsStore` stay real, so every check predicate below still
+// reads the live store.
+vi.mock("../settings/appSettingsStore", async (importActual) => ({
+  ...(await importActual<typeof import("../settings/appSettingsStore")>()),
+  setPlaybackResolution: vi.fn(() => Promise.resolve({} as never)),
+}));
+
 import { buildAppCommands } from "./appCommands";
+import { setPlaybackResolution } from "../settings/appSettingsStore";
 import { ACTION_DEFS } from "../shortcuts/defs";
 import type { HandlerMap } from "../shortcuts";
 import type { LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
@@ -116,10 +128,11 @@ describe("buildAppCommands", () => {
       }
     });
 
-    // Three absolute setters, not a cycle: exactly one is checked at a time,
-    // and none of them is ever DISABLED — the current value stays selectable,
-    // because greying it out would say the mode is unavailable rather than
-    // already chosen.
+    // The three absolute setters: exactly one checked at a time, and none
+    // of them ever DISABLED — the current value stays selectable, because
+    // greying it out would say the mode is unavailable rather than already
+    // chosen. They outlived the strip's collapse to one cycling button
+    // because a palette cannot cycle: you type "1/4" and you expect 1/4.
     it("checks exactly one playback resolution and disables none", () => {
       const defs = buildAppCommands(handlers, menu, flags);
       const ids = [
@@ -135,6 +148,39 @@ describe("buildAppCommands", () => {
             settings: { ...s.settings, playback_resolution: value },
           }));
           expect(rows.filter((r) => r.checked!()).length).toBe(1);
+        }
+      } finally {
+        useAppSettingsStore.setState((s) => ({
+          settings: { ...s.settings, playback_resolution: "full" },
+        }));
+      }
+    });
+
+    // The strip's one-button form of those three. Every rung is reachable from
+    // every other, so there is nothing to gate; and "is the cycle on?" has no
+    // answer, so there is nothing to check.
+    it("advances one rung per run, off the live value", async () => {
+      const cycle = buildAppCommands(handlers, menu, flags).find(
+        (d) => d.id === "cyclePlaybackResolution",
+      )!;
+      expect(cycle.checked).toBeUndefined();
+      expect(cycle.enabled).toBeUndefined();
+      const commit = vi.mocked(setPlaybackResolution);
+      try {
+        for (const [from, to] of [
+          ["full", "half"],
+          // Reading live is the point of this row: a value captured when the
+          // command was BUILT would step from `full` again here.
+          ["half", "quarter"],
+          // The wrap. Without it the button is a one-way trip to quarter.
+          ["quarter", "full"],
+        ] as const) {
+          useAppSettingsStore.setState((s) => ({
+            settings: { ...s.settings, playback_resolution: from },
+          }));
+          commit.mockClear();
+          await cycle.run();
+          expect(commit, `from ${from}`).toHaveBeenCalledWith(to);
         }
       } finally {
         useAppSettingsStore.setState((s) => ({

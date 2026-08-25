@@ -1,5 +1,10 @@
 import { snapFrameRound } from "../frames";
-import { logEmit, updateLayerParamTracks, type LayerSummary } from "../ipc";
+import {
+  logEmit,
+  updateLayerParamTracks,
+  type AppSettings,
+  type LayerSummary,
+} from "../ipc";
 import { autoKeyTrack } from "../keyframe/autoKey";
 import { readParamTrack } from "../keyframe/descriptors";
 import {
@@ -127,14 +132,22 @@ const SELF_CONTAINED_COMMAND_IDS = [
   // the magnet's home in every NLE is a toolbar button, which is exactly what
   // being a no-binding command makes resolvable (`quickActions.ts`).
   "toggleTailSnap",
-  // Preview playback resolution: three ABSOLUTE setters, not one cycling
-  // command. A cycle has no defined direction from the middle value — the
-  // `toolStore.setTool` landmine, one value further along — and three
-  // idempotent commands are also what lets the strip render them as a
-  // radiogroup instead of claiming a pressed state a 3-way switch can't have.
+  // Preview playback resolution, in two shapes because two surfaces want
+  // different things. The three ABSOLUTE setters are what the search palette
+  // needs: idempotent, individually nameable, and one step from any current
+  // value. `cyclePlaybackResolution` is what a 16 px strip button needs, where
+  // three buttons spend three slots to express one value.
+  //
+  // The cycle was rejected once, while the strip's glyph was a bare signal-bar
+  // ladder: a cycle has no defined direction from the middle value — the
+  // `toolStore.setTool` landmine, one value further along. What answers that is
+  // `PlaybackResolutionIcon`, which draws the value the button is ON. From any
+  // rung you can see which rung you are on, and the tooltip names the next one.
+  // The setters stay: the palette still cannot cycle its way anywhere.
   "setPlaybackResolutionFull",
   "setPlaybackResolutionHalf",
   "setPlaybackResolutionQuarter",
+  "cyclePlaybackResolution",
 ] as const;
 
 type SelfContainedCommandId = (typeof SELF_CONTAINED_COMMAND_IDS)[number];
@@ -147,7 +160,29 @@ const SELF_CONTAINED_LABEL_KEYS: Record<SelfContainedCommandId, string> = {
   setPlaybackResolutionFull: "actions.playback_resolution_full",
   setPlaybackResolutionHalf: "actions.playback_resolution_half",
   setPlaybackResolutionQuarter: "actions.playback_resolution_quarter",
+  cyclePlaybackResolution: "actions.playback_resolution_cycle",
 };
+
+/// The rungs `cyclePlaybackResolution` walks, in order, wrapping at the end.
+///
+/// Descending quality is the direction the button is reached FOR: playback
+/// stutters, so you shed resolution. That is the REVERSE of the Settings
+/// slider's `RESOLUTION_STOPS`, which runs quarter→full because a slider's
+/// right-hand end has to be the better picture — two orders, each dictated by
+/// its own control, which is why neither can be derived from the other.
+export const PLAYBACK_RESOLUTION_CYCLE: readonly AppSettings["playback_resolution"][] =
+  ["full", "half", "quarter"];
+
+/// The rung after `current`. A value outside the ladder — an older settings
+/// file, a hand edit — has no successor, so `indexOf` returns -1 and the walk
+/// resumes at the top, the same direction every other defaulting in this
+/// feature takes.
+export function nextPlaybackResolution(
+  current: AppSettings["playback_resolution"],
+): AppSettings["playback_resolution"] {
+  const at = PLAYBACK_RESOLUTION_CYCLE.indexOf(current);
+  return PLAYBACK_RESOLUTION_CYCLE[(at + 1) % PLAYBACK_RESOLUTION_CYCLE.length]!;
+}
 
 /// A centring command's whole input: the layer, and the frame it is being
 /// centred in.
@@ -411,6 +446,16 @@ export function buildAppCommands(
     setPlaybackResolutionQuarter: {
       run: () => void setPlaybackResolution("quarter"),
       checked: () => playbackResolution() === "quarter",
+    },
+    // The strip's one-button form of the three setters above. No `checked`:
+    // "is the cycle on?" has no answer, and the three states it walks are
+    // reported by the glyph, not by a checkmark. The current value is read at
+    // CLICK time, not captured — Settings, the palette and this button all
+    // write the same field, so a captured value would be stale after any of
+    // the other two.
+    cyclePlaybackResolution: {
+      run: () =>
+        void setPlaybackResolution(nextPlaybackResolution(playbackResolution())),
     },
   };
   for (const id of SELF_CONTAINED_COMMAND_IDS) {
