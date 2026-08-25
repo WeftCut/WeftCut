@@ -20,7 +20,6 @@ import {
   BookmarkPlus,
   FoldVertical,
   Group,
-  LocateFixed,
   Magnet,
   MousePointer2,
   Scissors,
@@ -35,6 +34,7 @@ import type { ComponentType } from "react";
 
 import type { AppSettings, DisplayMode } from "../ipc";
 import type { Tool } from "../state/toolStore";
+import { FollowPlayheadIcon } from "./FollowPlayheadIcon";
 import {
   PlaybackResolutionFullIcon,
   PlaybackResolutionHalfIcon,
@@ -188,10 +188,12 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
             : "quick_actions.snap_off_hint",
       },
       {
-        // Auto-scroll. `LocateFixed` rather than an arrow: the button is about
-        // keeping a target centred, not about a direction of travel.
+        // Auto-scroll. A lane with the playhead standing in it, drawn in
+        // `FollowPlayheadIcon.tsx`: every reticle lucide offers says "centre on
+        // a target", and centring is the one thing `followPlayhead.ts` does not
+        // do — it pages, and parks the playhead off to the leading side.
         id: "toggleFollowPlayhead",
-        icon: LocateFixed,
+        icon: FollowPlayheadIcon,
         active: (s) => s.followPlayhead,
         hint: (s) =>
           s.followPlayhead
