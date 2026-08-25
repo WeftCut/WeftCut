@@ -177,8 +177,10 @@ describe("CanvasSection lock", () => {
 
     await unlock(user);
     await enterCustom(user);
-    // Seeded from the project again, not from the abandoned 4096.
-    expect((screen.getByLabelText("Width") as HTMLInputElement).value).toContain("1,920");
+    // Seeded from the project again, not from the abandoned 4096. Ungrouped: a
+    // composition width is a pixel count, not a quantity anyone reads in
+    // thousands, so AppNumberField turns Intl's grouping off for every call site.
+    expect((screen.getByLabelText("Width") as HTMLInputElement).value).toBe("1920");
     expect(screen.getByRole("button", { name: "Apply" }).hasAttribute("disabled")).toBe(true);
   });
 
@@ -215,8 +217,8 @@ describe("CanvasSection custom size", () => {
   /// otherwise the panel would display no readout of the real size at all.
   it("reveals the fields unprompted for an off-ladder size", () => {
     renderSection({ width: 1080, height: 1920 });
-    expect((screen.getByLabelText("Width") as HTMLInputElement).value).toContain("1,080");
-    expect((screen.getByLabelText("Height") as HTMLInputElement).value).toContain("1,920");
+    expect((screen.getByLabelText("Width") as HTMLInputElement).value).toBe("1080");
+    expect((screen.getByLabelText("Height") as HTMLInputElement).value).toBe("1920");
   });
 
   it("picking a preset leaves custom mode", async () => {

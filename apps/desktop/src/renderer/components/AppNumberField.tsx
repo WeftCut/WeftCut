@@ -29,6 +29,10 @@ export interface AppNumberFieldProps {
   min?: number;
   max?: number;
   step?: number;
+  /// `Intl.NumberFormat` options for the displayed text. Param-bound call sites
+  /// pass `paramNumberFormat(paramKey)`, which is what makes the field's text and
+  /// the stored value agree — see the note on the default below.
+  format?: Intl.NumberFormatOptions;
   disabled?: boolean;
   /// Left is the default (no class); pass "center" to center the value.
   align?: "center";
@@ -57,6 +61,7 @@ export function AppNumberField({
   min,
   max,
   step,
+  format,
   disabled,
   align,
   onFocus,
@@ -112,6 +117,19 @@ export function AppNumberField({
       min={min}
       max={max}
       step={step}
+      // Left to itself, Base UI formats through a bare `Intl.NumberFormat`, which
+      // caps at 3 fraction digits AND groups thousands. Both hurt: the field
+      // commits what it parses back, so Enter on an untouched field turned a
+      // gesture's stored 10.373737373737374 into 10.374 and logged an undo entry
+      // for an edit nobody made.
+      //
+      // Grouping is off for EVERY call site, not just the param-bound ones: not
+      // one number this widget edits is a quantity a reader groups — pixels,
+      // multipliers, dB, Mbps — and `1,920` for a composition width is simply
+      // wrong. Param-bound sites additionally pass a fraction-digit cap derived
+      // from the same precision table the mutation layer quantizes with, which is
+      // what makes their round trip exact.
+      format={{ useGrouping: false, ...format }}
       disabled={disabled ?? false}
       onValueChange={(next) => {
         if (next === null) {

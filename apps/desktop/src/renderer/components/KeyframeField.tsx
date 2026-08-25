@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AnimTrack } from "../ipc";
-import type { KfWidget } from "../keyframe/descriptors";
+import { formatParam, paramNumberFormat, type KfWidget } from "../keyframe/descriptors";
 import { autoKeyTrack } from "../keyframe/autoKey";
 import { AppNumberField } from "./AppNumberField";
 import { AppSlider } from "./AppSlider";
@@ -105,6 +105,7 @@ export function KeyframeField({
             key={`number-${i}`}
             value={value}
             {...numBounds}
+            format={paramNumberFormat(paramKey)}
             disabled={inputsDisabled}
             ariaLabel={label}
             // No-op live change: let Base UI self-buffer the typed text and
@@ -130,7 +131,7 @@ export function KeyframeField({
       case "readout":
         return (
           <span key={`readout-${i}`} className="prop-range-value">
-            {value.toFixed(2)}
+            {formatParam(paramKey, value)}
           </span>
         );
     }

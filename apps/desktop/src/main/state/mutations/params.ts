@@ -1,6 +1,7 @@
 import type { Animated, AudioParams, AudioRole, ColorParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextParams, Uuid, VAlign, VideoClipParams } from '../model'
 import { CommandFailure } from '../errors'
 import { snapFrameFloor, snapFrameCeil, gridForLayerKind, snapOnGrid } from '../snap'
+import { authoredValue, quantizeBoxPx, quantizeTrack } from '../quantize'
 import { checkTrackLock, locateLayer, applyDurationAutofit } from './helpers'
 import { normalizeKeyframes } from './animated'
 import type { MotifCatalog } from '../../../shared/motifs/catalog'
@@ -22,6 +23,51 @@ export type LayerParamsPatch =
   | { kind: 'Audio'; src_in_us?: number; src_out_us?: number; gain_db?: number; pan?: number; fade_in_us?: number; fade_out_us?: number; mute?: boolean; role?: AudioRole }
 
 const stat = <T>(value: T): Animated<T> => ({ mode: 'Static', value })
+
+/** `authoredValue` lifted over the patch convention that absent = "don't touch".
+ *
+ *  Every arm below resolves ALL of its numerics through this before its first
+ *  assignment, never inline at the assignment. `authoredValue` can refuse (a
+ *  ranged field, out of range), and a refused patch must leave the project
+ *  byte-identical — the same ordering rule the text-box mode check states in
+ *  full. Inline, an out-of-range `opacity` would land after `content` and
+ *  `color` had already been written. */
+const authored = (key: string, v: number | undefined): number | undefined =>
+  v === undefined ? undefined : authoredValue(key, v)
+
+/** The transform numerics VideoClip / ImageOverlay / Motif all carry, resolved
+ *  together so that ALL of them can refuse before ANY of them is written. */
+interface AuthoredTransform {
+  x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number
+}
+
+function authoredTransform(patch: {
+  x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number
+}): AuthoredTransform {
+  /** A shape predicate on scale, not a range — which is why it is not in
+   *  PARAM_PRECISION. A NEGATIVE factor is a mirror and deliberately
+   *  first-class (`gizmoGeometry` is written to be flip-aware), so the only
+   *  illegal value is ZERO: at zero the box collapses, `localDelta` answers
+   *  null, and there is no lever left to scale back by.
+   *
+   *  Tested AFTER rounding, because rounding is what reaches the degenerate
+   *  value: 0.0004 passes any raw `!== 0` test and then records as 0. */
+  const scale = (key: 'scale_x' | 'scale_y'): number | undefined => {
+    const q = authored(key, patch[key])
+    if (q === 0) {
+      throw new CommandFailure({ error: 'InvalidArgument', field: key,
+        detail: `${key} cannot be 0 — a zero axis collapses the layer with no way to scale it back. Got ${patch[key]}, which records as 0; send a small non-zero factor, or a negative one to mirror.` })
+    }
+    return q
+  }
+  return {
+    x: authored('x', patch.x),
+    y: authored('y', patch.y),
+    scale_x: scale('scale_x'),
+    scale_y: scale('scale_y'),
+    opacity: authored('opacity', patch.opacity),
+  }
+}
 
 /** The Text enums, as values — the patch arrives from MCP as untyped JSON, so the
  *  types alone guard nothing at runtime. Listed here and not in `model.ts` because
@@ -53,16 +99,34 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (patch.valign !== undefined && !VALIGNS.includes(patch.valign)) {
         throw new CommandFailure({ error: 'InvalidArgument', field: 'valign', detail: `valign must be one of ${VALIGNS.join(' | ')}` })
       }
+      // The box pair is authored in WHOLE composition pixels (BOX_PRECISION): the
+      // box lays glyphs out (ADR 0049), and half a pixel of line-breaking width is
+      // not something an author means. Rounded here, once, so the checks below and
+      // the assignments further down all see the value that will actually be
+      // stored.
+      const boxPx = (v: number | null | undefined): number | null | undefined =>
+        v === undefined || v === null ? v : quantizeBoxPx(v)
+      const boxWPatch = boxPx(patch.box_w)
+      const boxHPatch = boxPx(patch.box_h)
+      const xP = authored('x', patch.x)
+      const yP = authored('y', patch.y)
+      const opacityP = authored('opacity', patch.opacity)
       // A box axis is either null (auto) or a real positive extent. Zero and
       // negative are refused because they are not a narrow box, they are a broken
       // mode: the renderer reads a non-positive width as "no box" and would render
       // Auto width while state claimed Fixed. Deliberately NOT the gesture's 8 px
       // floor — that one is a drag ergonomic, and a 4 px box an agent asks for on
       // purpose is legal, just silly.
-      for (const field of ['box_w', 'box_h'] as const) {
-        const v = patch[field]
+      //
+      // Checked AFTER rounding, because rounding is what can create the illegal
+      // value: `0.4` passes a raw `> 0` test and then stores as the zero box this
+      // check exists to refuse. The message names the rounding for the same reason
+      // the mode explainer below is spelled out — an agent's only route to fixing
+      // its own call is the text it gets back.
+      for (const [field, v] of [['box_w', boxWPatch], ['box_h', boxHPatch]] as const) {
         if (v !== undefined && v !== null && !(Number.isFinite(v) && v > 0)) {
-          throw new CommandFailure({ error: 'InvalidArgument', field, detail: `${field} must be a positive number of composition pixels, or null for auto` })
+          throw new CommandFailure({ error: 'InvalidArgument', field,
+            detail: `${field} is a whole number of composition pixels (values round to the nearest), or null for auto — got ${patch[field]}, which rounds to ${v}` })
         }
       }
       for (const field of ['line_height', 'letter_spacing'] as const) {
@@ -70,6 +134,15 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
         if (v !== undefined && !Number.isFinite(v)) {
           throw new CommandFailure({ error: 'InvalidArgument', field, detail: `${field} must be a finite number` })
         }
+      }
+      // A shape predicate, not a range: there is no sensible upper bound on type
+      // size, but zero and negative are not small type, they are no glyphs at all.
+      // Hand-written rather than table-driven for the reason every refusal here is
+      // — the detail line is the only channel an agent can correct itself from, and
+      // a generated `must be in (0, Inf)` would not name what to send instead.
+      if (patch.font_size_px !== undefined && !(Number.isFinite(patch.font_size_px) && patch.font_size_px > 0)) {
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'font_size_px',
+          detail: `font_size_px must be a positive number of composition pixels — got ${patch.font_size_px}` })
       }
       // The resize mode IS the box nullability — (null, null) auto width,
       // (set, null) auto height, (set, set) fixed — so (null, set) is no mode at
@@ -81,8 +154,8 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       // through an already-illegal (hand-edited) layer, which the renderer
       // coalesces to auto width — refusing there would make the file unfixable.
       if (patch.box_w !== undefined || patch.box_h !== undefined) {
-        const w = patch.box_w !== undefined ? patch.box_w : t.box_w
-        const h = patch.box_h !== undefined ? patch.box_h : t.box_h
+        const w = boxWPatch !== undefined ? boxWPatch : t.box_w
+        const h = boxHPatch !== undefined ? boxHPatch : t.box_h
         if (w === null && h !== null) {
           throw new CommandFailure({ error: 'InvalidArgument', field: 'box_h',
             detail: 'a text box height with no width is not a resize mode: send box_w in the same patch for fixed, or leave box_h null — the modes are (null, null) auto width, (set, null) auto height, (set, set) fixed' })
@@ -92,29 +165,37 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (patch.font_family !== undefined) t.font.family = patch.font_family
       if (patch.font_size_px !== undefined) t.font.size_px = patch.font_size_px
       if (patch.color !== undefined) t.color = stat(patch.color)
-      if (patch.x !== undefined) t.transform.x = stat(patch.x)
-      if (patch.y !== undefined) t.transform.y = stat(patch.y)
-      if (patch.opacity !== undefined) t.opacity = stat(patch.opacity)
+      if (xP !== undefined) t.transform.x = stat(xP)
+      if (yP !== undefined) t.transform.y = stat(yP)
+      if (opacityP !== undefined) t.opacity = stat(opacityP)
       if (patch.align !== undefined) t.align = patch.align
       if (patch.valign !== undefined) t.valign = patch.valign
       // On the box pair the absent/null split is LOAD-BEARING, not the incidental
       // "don't touch" it is everywhere else: null is the only way to say "back to
       // auto", so an `=== undefined` guard here is the whole wire contract.
-      if (patch.box_w !== undefined) t.box_w = patch.box_w
-      if (patch.box_h !== undefined) t.box_h = patch.box_h
+      if (patch.box_w !== undefined) t.box_w = boxWPatch as number | null
+      if (patch.box_h !== undefined) t.box_h = boxHPatch as number | null
       if (patch.line_height !== undefined) t.line_height = patch.line_height
       if (patch.letter_spacing !== undefined) t.letter_spacing = patch.letter_spacing
       return
     }
     case 'VideoClip': {
       const v = p as VideoClipParams
+      const a = authoredTransform(patch)
+      // Another shape predicate: speed scales a duration, so zero is a division
+      // by zero downstream and negative is not "backwards", it is a negative
+      // span. No upper bound — a 50× ramp is a legitimate effect.
+      if (patch.speed !== undefined && !(Number.isFinite(patch.speed) && patch.speed > 0)) {
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'speed',
+          detail: `speed must be a positive multiplier (1 = unchanged) — got ${patch.speed}` })
+      }
       if (patch.src_in_us !== undefined) v.src_in_us = patch.src_in_us
       if (patch.src_out_us !== undefined) v.src_out_us = patch.src_out_us
-      if (patch.x !== undefined) v.transform.x = stat(patch.x)
-      if (patch.y !== undefined) v.transform.y = stat(patch.y)
-      if (patch.scale_x !== undefined) v.transform.scale_x = stat(patch.scale_x)
-      if (patch.scale_y !== undefined) v.transform.scale_y = stat(patch.scale_y)
-      if (patch.opacity !== undefined) v.opacity = stat(patch.opacity)
+      if (a.x !== undefined) v.transform.x = stat(a.x)
+      if (a.y !== undefined) v.transform.y = stat(a.y)
+      if (a.scale_x !== undefined) v.transform.scale_x = stat(a.scale_x)
+      if (a.scale_y !== undefined) v.transform.scale_y = stat(a.scale_y)
+      if (a.opacity !== undefined) v.opacity = stat(a.opacity)
       if (patch.speed !== undefined) v.speed = patch.speed
       if (patch.flip_h !== undefined) v.flip_h = patch.flip_h
       if (patch.flip_v !== undefined) v.flip_v = patch.flip_v
@@ -124,22 +205,24 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
     }
     case 'ImageOverlay': {
       const i = p as ImageOverlayParams
-      if (patch.x !== undefined) i.transform.x = stat(patch.x)
-      if (patch.y !== undefined) i.transform.y = stat(patch.y)
-      if (patch.scale_x !== undefined) i.transform.scale_x = stat(patch.scale_x)
-      if (patch.scale_y !== undefined) i.transform.scale_y = stat(patch.scale_y)
-      if (patch.opacity !== undefined) i.opacity = stat(patch.opacity)
+      const a = authoredTransform(patch)
+      if (a.x !== undefined) i.transform.x = stat(a.x)
+      if (a.y !== undefined) i.transform.y = stat(a.y)
+      if (a.scale_x !== undefined) i.transform.scale_x = stat(a.scale_x)
+      if (a.scale_y !== undefined) i.transform.scale_y = stat(a.scale_y)
+      if (a.opacity !== undefined) i.opacity = stat(a.opacity)
       if (patch.fade_in_us !== undefined) i.fade_in_us = patch.fade_in_us
       if (patch.fade_out_us !== undefined) i.fade_out_us = patch.fade_out_us
       return
     }
     case 'Motif': {
       const m = p as MotifParams
-      if (patch.x !== undefined) m.transform.x = stat(patch.x)
-      if (patch.y !== undefined) m.transform.y = stat(patch.y)
-      if (patch.scale_x !== undefined) m.transform.scale_x = stat(patch.scale_x)
-      if (patch.scale_y !== undefined) m.transform.scale_y = stat(patch.scale_y)
-      if (patch.opacity !== undefined) m.opacity = stat(patch.opacity)
+      const a = authoredTransform(patch)
+      if (a.x !== undefined) m.transform.x = stat(a.x)
+      if (a.y !== undefined) m.transform.y = stat(a.y)
+      if (a.scale_x !== undefined) m.transform.scale_x = stat(a.scale_x)
+      if (a.scale_y !== undefined) m.transform.scale_y = stat(a.scale_y)
+      if (a.opacity !== undefined) m.opacity = stat(a.opacity)
       if (patch.src_in_us !== undefined) m.src_in_us = patch.src_in_us
       if (patch.motif_id !== undefined) m.motif_id = patch.motif_id
       if (patch.motif_version !== undefined) m.motif_version = patch.motif_version
@@ -155,10 +238,17 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
     }
     case 'Audio': {
       const au = p as AudioParams
+      const gainP = authored('gain_db', patch.gain_db)
+      // `pan` is the one param whose stored value could previously disagree with
+      // what was rendered: the mixer clamps to [-1, 1] on the way out
+      // (`audio/envelope.rs` sample_pan), so a stored 2.0 played as 1.0 forever.
+      // Refusing here makes the store the truth; that clamp stays as a guard for
+      // projects written before this check existed.
+      const panP = authored('pan', patch.pan)
       if (patch.src_in_us !== undefined) au.src_in_us = patch.src_in_us
       if (patch.src_out_us !== undefined) au.src_out_us = patch.src_out_us
-      if (patch.gain_db !== undefined) au.gain_db = stat(patch.gain_db)
-      if (patch.pan !== undefined) au.pan = stat(patch.pan)
+      if (gainP !== undefined) au.gain_db = stat(gainP)
+      if (panP !== undefined) au.pan = stat(panP)
       if (patch.fade_in_us !== undefined) au.fade_in_us = patch.fade_in_us
       if (patch.fade_out_us !== undefined) au.fade_out_us = patch.fade_out_us
       if (patch.mute !== undefined) au.mute = patch.mute
@@ -316,10 +406,26 @@ export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: strin
   if (!normalizeKeyframes(track, (t) => snapOnGrid(t, gridForLayerKind(layer.params.kind, p.composition.fps)))) {
     throw new CommandFailure({ error: 'EmptyKeyframeTrack', layer: id, param_key: paramKey })
   }
+  // Values, after the times. Here rather than beside `lens.set` because the lazy
+  // insert below WRITES to the project, and a refusal has to leave the project
+  // byte-identical — the same ordering rule applyParamsPatch's text-box mode
+  // check spells out.
+  //
+  // Running before the key is known valid is safe: an unrecognised key falls to
+  // the effect-param fallback, which carries no range and so cannot refuse, and
+  // `f64Lens` still answers UnknownKeyframeParam for it two lines down. Only keys
+  // that ARE in the table carry a range, and those are exactly the valid ones.
+  quantizeTrack(paramKey, track)
   if (f64Lens(layer, paramKey) === null) {
     const eff = parseEffectParamKey(paramKey)
     if (eff) {
       const e = layer.effects.find((x) => x.id === eff[0])
+      // A placeholder that lives for two statements: it exists only so the
+      // re-resolve below finds the key present, and `lens.set(track)` overwrites
+      // it unconditionally. NOT a default — the effect registry's `default` is
+      // the default, applied at render (`EffectChain`) and in the inspector
+      // (`EffectParamField`), and absent-means-default is the contract because
+      // main cannot read that pixi-dependent registry at all.
       if (e && !(eff[1] in e.params)) e.params[eff[1]] = { mode: 'Static', value: 0 }
     }
   }

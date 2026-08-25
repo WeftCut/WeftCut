@@ -28,7 +28,31 @@ pub fn cue_to_text_params(cue: &Cue, comp_w: u32, comp_h: u32) -> TextParams {
 
     let an = s.align.unwrap_or(2);
     let ((anchor_x, anchor_y), base_x, base_y) = anchor_for(an, comp_w as f64, comp_h as f64);
-    let (x, y) = s.pos.unwrap_or((base_x, base_y));
+    let (raw_x, raw_y) = s.pos.unwrap_or((base_x, base_y));
+    // Authored precision, matching the TS twin's `quantizeParam('x', ..)`. The
+    // margin lands on a clean tenth at the standard heights (1080 -> 993.6) but on
+    // a hundredth at most others (1081 -> 993.52), and an ASS `\pos` carries
+    // whatever the file wrote — none of it authored at this precision by anyone.
+    // `PARAM_PRECISION` in renderer/keyframe/descriptors.ts is the source of truth
+    // for the place count; one decimal is the value that keeps a half-pixel
+    // expressible.
+    //
+    // `f64::round` breaks ties away from zero, which is exactly what the TS
+    // `quantize` was written to do (it takes the absolute value first for that
+    // reason), so the two agree on every input these two can produce. Rounded in
+    // place rather than behind a shared helper: a general cross-language quantizer
+    // would be a twin in its own right, owing a golden fixture the way
+    // `snap_frame_round` does, and two literals owe nothing.
+    //
+    // Guarded by MIRRORED unit tests on both sides — the same way this function's
+    // other computed values are, since the differential corpus supplies explicit
+    // style values and never reaches the paths that compute rather than copy.
+    //
+    // The one place the two rounding rules still part is negative zero, which TS
+    // normalizes and Rust does not. Unreachable here: both values are insets of a
+    // composition extent, so both are positive.
+    let x = (raw_x * 10.0).round() / 10.0;
+    let y = (raw_y * 10.0).round() / 10.0;
 
     TextParams {
         content: cue.text.clone(),
@@ -68,7 +92,12 @@ pub fn cue_to_text_params(cue: &Cue, comp_w: u32, comp_h: u32) -> TextParams {
         // Fixed would compress the long ones and make two cues of one file
         // render at different sizes. `box_w` is f32, the margin math f64 — cast
         // at the boundary, explicitly. See ADR 0049.
-        box_w: Some((comp_w as f64 * (1.0 - 2.0 * SAFE_AREA_MARGIN)) as f32),
+        //
+        // ROUNDED BEFORE THE CAST, to whole pixels (BOX_PRECISION), and the order
+        // matters: the box is authored in integers, so rounding first makes the f32
+        // exact and the cast lossless. Casting first would leave the two sides
+        // rounding different values on a tie.
+        box_w: Some((comp_w as f64 * (1.0 - 2.0 * SAFE_AREA_MARGIN)).round() as f32),
         box_h: None,
         // Never observable in Auto height — the box's height tracks the content.
         valign: VAlign::default(),
@@ -135,9 +164,46 @@ mod tests {
         }
         // Auto height: a wrap width so an unbroken transcript line stays inside
         // the safe area, and no height so it wraps without ever shrinking.
-        let box_w = p.box_w.expect("a cue is born with a wrap width");
-        assert!((box_w - 1612.8).abs() < 0.05); // 1920 less the margin per side
+        // 1920 less the margin per side is 1612.8, rounded to a whole pixel
+        // because the box lays glyphs out. Exact, not toleranced: rounding before
+        // the f32 cast is what makes the cast lossless, so a tolerance here would
+        // hide the two coming apart.
+        assert_eq!(p.box_w.expect("a cue is born with a wrap width"), 1613.0);
         assert!(p.box_h.is_none());
+    }
+
+    /// The layout arithmetic is the only place a POSITION is computed rather than
+    /// authored, so it is the only place that can put digits nobody chose into the
+    /// store — at scale, since one import writes a layer per cue. Twin of
+    /// `layout positions land on the authored precision` in
+    /// state/mutations/captions.test.ts. This pair IS the cross-language guard:
+    /// the differential corpus supplies explicit style values and never reaches
+    /// the paths that compute rather than copy.
+    #[test]
+    fn layout_positions_land_on_the_authored_precision() {
+        // 1081 - 1081 * 0.08 = 994.52, a hundredth of a pixel. The standard
+        // heights happen to come out clean (1080 -> 993.6), which is exactly why an
+        // unrounded path could ship unnoticed.
+        let p = cue_to_text_params(&cue(CueStyle::default()), 1920, 1081);
+        match &p.transform.y {
+            Animated::Static(y) => assert_eq!(*y, 994.5),
+            _ => panic!("static y expected"),
+        }
+    }
+
+    /// An explicit `\pos` is an authored position and is rounded like one.
+    #[test]
+    fn explicit_pos_is_rounded_like_any_authored_position() {
+        let s = CueStyle {
+            align: Some(1),
+            pos: Some((100.373737, 200.06)),
+            ..CueStyle::default()
+        };
+        let p = cue_to_text_params(&cue(s), 1920, 1080);
+        match (&p.transform.x, &p.transform.y) {
+            (Animated::Static(x), Animated::Static(y)) => assert_eq!((*x, *y), (100.4, 200.1)),
+            _ => panic!("static xy expected"),
+        }
     }
 
     #[test]
@@ -165,7 +231,7 @@ mod tests {
             _ => panic!("static xy expected"),
         }
         assert_eq!(p.align, TextAlign::Left);
-        assert!((p.box_w.expect("wrap width") - 1612.8).abs() < 0.05);
+        assert_eq!(p.box_w.expect("wrap width"), 1613.0);
         assert!(p.box_h.is_none());
     }
 
@@ -173,7 +239,7 @@ mod tests {
     #[test]
     fn wrap_width_scales_with_the_composition() {
         let p = cue_to_text_params(&cue(CueStyle::default()), 640, 360);
-        assert!((p.box_w.expect("wrap width") - 537.6).abs() < 0.05); // 640 * 0.84
+        assert_eq!(p.box_w.expect("wrap width"), 538.0); // round(640 * 0.84)
     }
 
     /// The anchor pair as plain numbers. `\an` import always writes Static, so a

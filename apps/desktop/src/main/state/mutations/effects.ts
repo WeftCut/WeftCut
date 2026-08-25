@@ -1,6 +1,7 @@
 import type { Animated, Effect, Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
+import { quantizeEffectTrack } from '../quantize'
 
 /** Mirrors native/src/state/effect.rs:29-33 EffectPatch. Absent/null = "don't
  *  touch"; `params` MERGES key-by-key (insert/overwrite, no deletion). */
@@ -36,7 +37,13 @@ export function applyUpdateEffect(p: Project, layerId: Uuid, effectId: Uuid, pat
   if (!e) throw new CommandFailure({ error: 'EffectNotFound', effect: effectId })
   if (typeof patch.enabled === 'boolean') e.enabled = patch.enabled
   if (patch.params && typeof patch.params === 'object') {
-    for (const [k, v] of Object.entries(patch.params)) e.params[k] = v
+    // The SECOND effect-param write entry, alongside applyUpdateLayerParamTrack's
+    // `effects[..].params[..]` path — so quantization has to happen at both or the
+    // stored precision would depend on which command an agent happened to use.
+    for (const [k, v] of Object.entries(patch.params)) {
+      quantizeEffectTrack(v)
+      e.params[k] = v
+    }
   }
 }
 

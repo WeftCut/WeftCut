@@ -30,14 +30,14 @@ describe('cueToTextParams (mirror subtitles/layout.rs)', () => {
     // Nullability IS the resize mode, so (set, null) is Auto height: the cue
     // wraps inside the safe area — the defect a machine transcript's single
     // unbroken line hits — and never shrinks, so two cues of one file cannot end
-    // up at different sizes. 1920 less SAFE_AREA_MARGIN per side; the derived
-    // fraction is the same f64 as a literal 0.84, so this is an exact compare.
-    expect(p.box_w).toBe(1612.8)
+    // up at different sizes. 1920 less SAFE_AREA_MARGIN per side is 1612.8, which
+    // rounds to a whole pixel because the box lays glyphs out — see BOX_PRECISION.
+    expect(p.box_w).toBe(1613)
     expect(p.box_h).toBeNull()
     expect([p.valign, p.line_height, p.letter_spacing]).toEqual(['Middle', 0, 0])
   })
   it('wrap width tracks the composition, not a hardcoded 1920', () => {
-    expect(cueToTextParams(cue(), 640, 360).box_w).toBe(537.6) // 640 * 0.84
+    expect(cueToTextParams(cue(), 640, 360).box_w).toBe(538) // round(640 * 0.84)
   })
   it('an8 → top-center anchors top', () => {
     expect(staticAnchor(cueToTextParams(cue({ align: 8 }), 1920, 1080))).toEqual([0.5, 0.0])
@@ -59,7 +59,29 @@ describe('cueToTextParams (mirror subtitles/layout.rs)', () => {
     expect(staticAnchor(p)).toEqual([0.0, 1.0])
     expect([p.transform.x, p.transform.y]).toEqual([{ mode: 'Static', value: 100 }, { mode: 'Static', value: 200 }])
     expect(p.align).toBe('Left')
-    expect([p.box_w, p.box_h]).toEqual([1612.8, null])
+    expect([p.box_w, p.box_h]).toEqual([1613, null])
+  })
+
+  // The layout arithmetic is the only place in the app where a POSITION is
+  // computed rather than authored, so it is the only place that can put digits
+  // nobody chose into the store — at scale, since one import writes a layer per
+  // cue. Twin: `subtitles/layout.rs` rounds at the same point; these two tests and
+  // their Rust namesakes ARE the guard, since the differential corpus supplies
+  // explicit style values and never reaches this arithmetic.
+  it('layout positions land on the authored precision, not the margin arithmetic', () => {
+    // 1081 - 1081 * 0.08 = 994.52, a hundredth of a pixel. The standard heights
+    // happen to come out clean (1080 → 993.6), which is exactly why an unrounded
+    // path could ship unnoticed.
+    const p = cueToTextParams(cue(), 1920, 1081)
+    expect((p.transform.y as { value: number }).value).toBe(994.5)
+  })
+
+  it('an explicit \\pos is rounded like any other authored position', () => {
+    const p = cueToTextParams(cue({ align: 1, pos: [100.373737, 200.06] }), 1920, 1080)
+    expect([p.transform.x, p.transform.y]).toEqual([
+      { mode: 'Static', value: 100.4 },
+      { mode: 'Static', value: 200.1 },
+    ])
   })
   it('explicit clean style: bold/italic + size/outline', () => {
     const p = cueToTextParams(cue({ size_px: 54, bold: true, italic: true, outline_px: 3, shadow_px: 2 }), 1920, 1080)

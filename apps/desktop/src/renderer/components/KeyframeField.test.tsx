@@ -74,7 +74,11 @@ describe("KeyframeField widget composition", () => {
       />,
     );
     expect(screen.getByRole("slider")).toBeTruthy();
-    expect(screen.getByText("0.50")).toBeTruthy();
+    // `0.5`, not the old hard-coded `toFixed(2)`'s `0.50`: the readout formats
+    // through the param's declared precision now, so it renders the same string
+    // the editable number field would for the same value — and, more to the
+    // point, one that parses back to exactly what is stored.
+    expect(screen.getByText("0.5")).toBeTruthy();
   });
 
   it("renders a slider AND a number field bound to the same value", () => {

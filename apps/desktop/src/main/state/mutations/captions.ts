@@ -1,6 +1,7 @@
 import type { Project, Rgba, TextAlign, TextParams, Track, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { snapFrameRound } from '../snap'
+import { quantizeBoxPx, quantizeParam } from '../quantize'
 import { applyAddLayer, defaultTransform } from './add'
 import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
 
@@ -47,7 +48,23 @@ export function cueToTextParams(cue: Cue, compW: number, compH: number): TextPar
   const shadowOff = Math.max(s.shadow_px ?? 2.0, 1.0)
   const an = s.align ?? 2
   const [[anchorX, anchorY], baseX, baseY] = anchorFor(an, compW, compH)
-  const [x, y] = s.pos ?? [baseX, baseY]
+  // Quantized to the same authored precision an inspector edit would get. This is
+  // the one place a LAYOUT calculation lands in the store rather than a value some
+  // person typed, and it needs the rounding more, not less — nobody authored these
+  // digits, `compH * 0.08` did. The margin lands on a clean tenth at the standard
+  // heights (1080 → 993.6) but on a hundredth at most others (1081 → 993.52), and
+  // an ASS `\pos` carries whatever the subtitle file wrote. A caption import
+  // writes hundreds of layers in one command, so whatever this produces, it
+  // produces at scale.
+  //
+  // TWIN: `subtitles/layout.rs` cue_to_text_params rounds at the same point, in
+  // the same order. Guarded the way this function's other computed values are —
+  // by MIRRORED unit tests on both sides, not by the differential corpus, which
+  // supplies explicit style values and so never exercises the paths that compute
+  // rather than copy (see the note on this function).
+  const [rawX, rawY] = s.pos ?? [baseX, baseY]
+  const x = quantizeParam('x', rawX)
+  const y = quantizeParam('y', rawY)
   return {
     kind: 'Text', content: cue.text,
     font: { family: s.font_family ?? DEFAULT_CAPTION_FONT_FAMILY, size_px: size, weight: s.bold ? 700 : 400, italic: s.italic ?? false },
@@ -63,7 +80,7 @@ export function cueToTextParams(cue: Cue, compW: number, compH: number): TextPar
     // compress the long ones and make two cues of one file render at different
     // sizes. valign is never observable here — the height tracks the content.
     // See ADR 0049.
-    box_w: compW * (1 - 2 * SAFE_AREA_MARGIN), box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0,
+    box_w: quantizeBoxPx(compW * (1 - 2 * SAFE_AREA_MARGIN)), box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0,
   }
 }
 

@@ -373,3 +373,117 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
     expect([m.props, m.opacity]).toEqual([{ a: 1, b: 9, c: 3 }, { mode: 'Static', value: 0.3 }])
   })
 })
+
+// The mutation layer is THE seam where authored precision is enforced: it sits
+// downstream of every gesture commit, every inspector field and every MCP call,
+// so the gizmo needs no rounding of its own and a new entry point gets this for
+// free. The unit behaviour of the operators themselves lives in
+// state/quantize.test.ts; what follows is that they are actually wired in, per
+// arm, and that a refusal leaves the project untouched.
+describe('authored precision at the write seam', () => {
+  function visualLayer(): { p: Project; id: string } {
+    const g = seededGen(); const p = blankProject(g, 'q')
+    const id = applyAddLayer(p, g, p.tracks[0].id, videoClipParams(MID, 0, 4_000_000), 0, 4_000_000)
+    return { p, id }
+  }
+  const staticOf = (a: unknown): number => (a as { value: number }).value
+
+  it('quantizes the transform quartet on a VideoClip patch', () => {
+    const { p, id } = visualLayer()
+    // What a drag actually produces: a client delta divided by the preview's fit
+    // scale, which is never 1 because there is no 1:1 zoom.
+    applyUpdateLayerParams(p, id, { kind: 'VideoClip',
+      x: 10.373737373737374, y: -20.9499, scale_x: 1.0416666, scale_y: 0.98765 }, new MotifCatalog())
+    const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
+    expect([staticOf(v.transform.x), staticOf(v.transform.y)]).toEqual([10.4, -20.9])
+    expect([staticOf(v.transform.scale_x), staticOf(v.transform.scale_y)]).toEqual([1.042, 0.988])
+  })
+
+  it('keeps a half-pixel — an odd-width composition centres on one', () => {
+    const { p, id } = visualLayer()
+    applyUpdateLayerParams(p, id, { kind: 'VideoClip', x: 1921 / 2 }, new MotifCatalog())
+    const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
+    expect(staticOf(v.transform.x)).toBe(960.5)
+  })
+
+  it('refuses an out-of-range opacity and writes NOTHING', () => {
+    const { p, id } = visualLayer()
+    expectCmd(() => applyUpdateLayerParams(p, id,
+      { kind: 'VideoClip', x: 500, opacity: 1.5 }, new MotifCatalog()), 'InvalidArgument')
+    // The whole point of resolving every numeric before the first assignment: a
+    // refused patch leaves the project byte-identical, so `x` never landed.
+    const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
+    expect(staticOf(v.transform.x)).toBe(0)
+  })
+
+  it('accepts an opacity that rounds INTO range', () => {
+    const { p, id } = visualLayer()
+    applyUpdateLayerParams(p, id, { kind: 'VideoClip', opacity: 1.0004 }, new MotifCatalog())
+    const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
+    expect(staticOf(v.opacity)).toBe(1)
+  })
+
+  it('refuses a scale axis that records as zero, but not a mirror', () => {
+    const { p, id } = visualLayer()
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', scale_x: 0 }, new MotifCatalog()), 'InvalidArgument')
+    // 0.0004 at d=3 rounds to 0 — the reason the check runs after rounding.
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', scale_x: 0.0004 }, new MotifCatalog()), 'InvalidArgument')
+    applyUpdateLayerParams(p, id, { kind: 'VideoClip', scale_x: -2 }, new MotifCatalog())
+    const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
+    expect(staticOf(v.transform.scale_x)).toBe(-2)
+  })
+
+  it('refuses a non-positive speed', () => {
+    const { p, id } = visualLayer()
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', speed: 0 }, new MotifCatalog()), 'InvalidArgument')
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'VideoClip', speed: -1 }, new MotifCatalog()), 'InvalidArgument')
+  })
+
+  it('rounds the text box to whole pixels and refuses one that rounds away', () => {
+    const g = seededGen(); const p = blankProject(g, 'q')
+    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('t', p.composition), 0, 1_000_000)
+    applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 640.4 }, new MotifCatalog())
+    expect((layerOf(p, id).params as TextParams).box_w).toBe(640)
+    // Passes a raw `> 0` test, then records as the zero box that test exists to
+    // refuse — which is why the check moved after the rounding.
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 0.4 }, new MotifCatalog()), 'InvalidArgument')
+  })
+
+  it('refuses a non-positive font size', () => {
+    const g = seededGen(); const p = blankProject(g, 'q')
+    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('t', p.composition), 0, 1_000_000)
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', font_size_px: 0 }, new MotifCatalog()), 'InvalidArgument')
+  })
+
+  it('quantizes gain_db and refuses an out-of-range pan', () => {
+    const g = seededGen(); const p = blankProject(g, 'q')
+    const id = applyAddLayer(p, g, p.tracks[0].id, audioParams(MID, 0, 3_000_000), 0, 3_000_000)
+    applyUpdateLayerParams(p, id, { kind: 'Audio', gain_db: -6.0333, pan: 0.333333 }, new MotifCatalog())
+    const au = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Audio' }>
+    expect([staticOf(au.gain_db), staticOf(au.pan)]).toEqual([-6, 0.333])
+    // Previously storable, and then silently clamped by the mixer on the way out
+    // (audio/envelope.rs sample_pan) — so the store disagreed with what played.
+    expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Audio', pan: 2 }, new MotifCatalog()), 'InvalidArgument')
+  })
+
+  it('quantizes every keyframe of a track write, not just the first', () => {
+    const g = seededGen(); const p = blankProject(g, 'q')
+    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('t', p.composition), 0, 2_000_000)
+    applyUpdateLayerParamTrack(p, id, 'x', { mode: 'Keyframed', value: [
+      { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 10.373737, interp: { kind: 'Linear' } },
+      { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: 20.982, interp: { kind: 'Linear' } },
+    ] })
+    const t = layerOf(p, id).params as TextParams
+    expect((t.transform.x.value as { value: number }[]).map((k) => k.value)).toEqual([10.4, 21])
+  })
+
+  it('refuses an out-of-range keyframe BEFORE the lazy effect-slot insert', () => {
+    const g = seededGen(); const p = blankProject(g, 'q')
+    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('t', p.composition), 0, 2_000_000)
+    layerOf(p, id).effects.push({ id: '00000000-0000-0000-0000-0000000000e1', kind: 'blur', enabled: true, params: {} })
+    expectCmd(() => applyUpdateLayerParamTrack(p, id, 'opacity', { mode: 'Static', value: 3 }), 'InvalidArgument')
+    // Ordering, made observable: the insert writes to the project, so quantizing
+    // after it would leave a rejected command having created a param slot.
+    expect(layerOf(p, id).effects[0].params).toEqual({})
+  })
+})

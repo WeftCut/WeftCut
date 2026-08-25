@@ -69,6 +69,30 @@ describe('applyUpdateEffect', () => {
     applyUpdateEffect(p, layerId, eid, { enabled: null, params: null })
     expect(effectsOf(p, layerId)[0]).toEqual({ id: eid, kind: 'blur', enabled: true, params: {} })
   })
+  // This is the SECOND effect-param write entry — applyUpdateLayerParamTrack's
+  // `effects[..].params[..]` path is the other — so quantizing only there would
+  // make the stored precision depend on which command an agent reached for.
+  it('quantizes merged param values, static and keyframed alike', () => {
+    const { p, gen, layerId } = withLayer()
+    const eid = applyAddEffect(p, gen, layerId, 'blur')
+    applyUpdateEffect(p, layerId, eid, { params: {
+      strength: sp(8.123456789),
+      feather: { mode: 'Keyframed', value: [
+        { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 0.98765, interp: { kind: 'Linear' } },
+      ] },
+    } })
+    const params = effectsOf(p, layerId)[0].params
+    expect(params.strength).toEqual(sp(8.123))
+    expect((params.feather.value as { value: number }[])[0].value).toBe(0.988)
+  })
+  it('never lets an effect param name borrow a layer param range', () => {
+    // Effect params live in their own namespace, so a `[0, 100]` param called
+    // `opacity` must not be refused against the layer param's `[0, 1]`.
+    const { p, gen, layerId } = withLayer()
+    const eid = applyAddEffect(p, gen, layerId, 'blur')
+    applyUpdateEffect(p, layerId, eid, { params: { opacity: sp(55.5555) } })
+    expect(effectsOf(p, layerId)[0].params.opacity).toEqual(sp(55.556))
+  })
   it('throws LayerNotFound / EffectNotFound', () => {
     const { p, gen, layerId } = withLayer()
     const eid = applyAddEffect(p, gen, layerId, 'blur')
