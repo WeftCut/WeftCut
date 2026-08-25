@@ -1292,7 +1292,14 @@ export function Timeline({
         drag ? "cursor-grabbing select-none" : ""
       } ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "timeline-root-blade" : ""}`}
     >
-      <div className="flex min-w-max">
+      {/* `min-h-full` so the lanes' container fills the panel even on a short
+          project: the leftover band below the last track then belongs to the
+          scrolling body, which makes it a `clip` anchor — click it to clear,
+          or start a box there and drag up over the tracks. Owned by the root
+          instead, that band reached no anchor at all and was dead space. The
+          playhead and the header column's divider run the panel's full height
+          as a result, which is what they do in every other NLE. */}
+      <div className="flex min-h-full min-w-max">
         {/* sticky header column */}
         <div className="sticky left-0 z-10 flex-none border-r border-border bg-card" style={{ width: HEADER_COL_PX }}>
           <div
