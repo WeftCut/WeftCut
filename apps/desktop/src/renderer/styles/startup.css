@@ -779,23 +779,36 @@
   margin-right: 4px;
 }
 
-/* --- New project modal --- */
+/* --- Compact form dialog (new project, workspace name, rename, checkpoint) --- */
 
 .new-project-panel {
-  width: min(440px, 100%);
+  width: min(440px, calc(100vw - 32px));
   padding: 20px;
   background: var(--card);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-modal);
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
 
+/* AppDialog's header holds the title plus an optional ✕, and `.settings-close`
+ * steers itself right with `margin-left: auto` — which needs a flex parent.
+ * Under block layout the ✕ stacks below the title in the left gutter. */
+.new-project-panel header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The panel-title slot of the type scale (docs/ui-tokens.md); 16px+ is
+ * splash/HUD display type, one step above a dialog heading. */
 .new-project-panel h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--font-size-title);
   font-weight: 600;
+  color: var(--foreground);
 }
 
 .new-project-row {

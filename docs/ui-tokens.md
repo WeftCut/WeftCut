@@ -91,7 +91,7 @@ separation work; the shadow only lifts, so blurs stay tight.
 |---|---|---|
 | `--shadow-menu` | `0 4px 16px`, black @ 35% | Dropdowns, context menus, small popups, editor tooltips. |
 | `--shadow-popover` | `0 8px 28px`, black @ 45% | Floating panels: command palette, export/status panels, drag previews. |
-| `--shadow-modal` | `0 16px 48px`, black @ 55% | Dialogs: settings, motif picker, connect agent. |
+| `--shadow-modal` | `0 16px 48px`, black @ 55% | Every modal dialog: settings, motif picker, connect agent, the compact form prompts (new project, rename, checkpoint). |
 
 Directional exception: the log drawer opens from the bottom edge and casts
 upward — it keeps a literal `0 -8px 28px` matched to `--shadow-popover`.
