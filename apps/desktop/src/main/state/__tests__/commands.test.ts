@@ -14,7 +14,7 @@ import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
 // If this fails, a channel was added or removed unintentionally — do NOT
 // silently update the expected list; investigate first.
 describe('PRODUCTION_OPS', () => {
-  it('contains exactly the 48 in-scope renderer channels', () => {
+  it('contains exactly the 49 in-scope renderer channels', () => {
     const expected = [
       'add_color_layer', 'add_demo_color_layer', 'add_demo_text_layer', 'add_effect',
       // Markers (marker-authoring ticket 01) — the renderer's first marker channels.
@@ -30,7 +30,7 @@ describe('PRODUCTION_OPS', () => {
       'restack_layer', 'restyle_captions',
       'separate_audio_to_new_track', 'set_composition', 'set_role_gain', 'set_scale_linked', 'split_layer_grouped',
       'trim_layer', 'update_effect', 'update_layer', 'update_layer_param_track', 'update_marker',
-      'update_layer_param_tracks', 'update_layer_params', 'update_project_settings',
+      'update_layer_param_tracks', 'update_layer_params', 'update_param_tracks_multi', 'update_project_settings',
       'update_role_flags', 'update_track_flags', 'update_transition',
     ].sort()
     expect([...PRODUCTION_OPS].sort()).toEqual(expected)

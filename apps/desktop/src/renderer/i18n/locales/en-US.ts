@@ -1432,6 +1432,7 @@ const enUS = {
       update_params: "Updated layer params",
       keyframe_param: "Keyframed layer param",
       keyframe_params: "Keyframed layer params",
+      keyframe_params_multi: "Keyframed params across layers",
       scale_link: "Linked scale",
       scale_unlink: "Unlinked scale",
       separate_audio: "Separated audio",

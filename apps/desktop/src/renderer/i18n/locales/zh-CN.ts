@@ -1344,6 +1344,7 @@ const zhCN: Resources = {
       update_params: "修改图层参数",
       keyframe_param: "设置关键帧",
       keyframe_params: "批量设置关键帧",
+      keyframe_params_multi: "跨图层批量设置关键帧",
       scale_link: "锁定缩放比例",
       scale_unlink: "解除缩放锁定",
       separate_audio: "分离音频",

@@ -1201,6 +1201,15 @@ export async function updateLayerParamTracks(
   return invoke<void>("update_layer_param_tracks", { layerId, entries });
 }
 
+/// Cross-layer batch form — every entry names its own layer, and the whole set
+/// lands as ONE undo step no matter how many layers it spans. A batch confined
+/// to a single layer belongs in `updateLayerParamTracks` above.
+export async function updateParamTracksMulti(
+  entries: [layerId: string, paramKey: string, track: AnimTrack<number>][],
+): Promise<void> {
+  return invoke<void>("update_param_tracks_multi", { entries });
+}
+
 /// Toggle a layer's uniform-scale link. `true` is the destructive direction:
 /// the actor snaps scale_y to a whole-track copy of scale_x (keyframes
 /// included) in the same commit — undo restores both the track and the flag.

@@ -910,6 +910,64 @@ describe('dispatch: params', () => {
     expect(actor.dispatch('undo', {}).ok).toBe(true) // single commit → one undo
     expect(JSON.stringify(actor.snapshot())).toBe(before)
   })
+
+  // ── update_param_tracks_multi — the cross-layer batch ──────────────────────
+  // The keyframe marquee's op: a swept selection spans layers, and the whole
+  // contract is that N layers still cost ONE history entry.
+  const kfTrack = (v: number) => ({ mode: 'Keyframed', value: [
+    { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: v, interp: { kind: 'Linear' } },
+    { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: v, interp: { kind: 'Linear' } }] })
+  /** A second text layer on the same lane, clear of the first one's span. */
+  function secondTextLayer(actor: ReturnType<typeof textActor>['actor']): string {
+    return (actor.dispatch('add_layer', { track: actor.snapshot().tracks[1].id, kind: 'text', t_start_us: 3_000_000, t_end_us: 5_000_000 }) as { ok: true; value: string }).value
+  }
+  const transformOfLayer = (actor: ReturnType<typeof textActor>['actor'], layerId: string) =>
+    actor.snapshot().tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)!.params as {
+      transform: { x: { mode: string }; y: { mode: string }; scale_x: unknown; scale_y: unknown; scale_linked: boolean }
+      opacity: { mode: string }
+    }
+
+  it('update_param_tracks_multi applies a two-layer, three-param batch that one undo reverts', () => {
+    const { actor, id } = textActor()
+    const other = secondTextLayer(actor)
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    expect(actor.dispatch('update_param_tracks_multi', { entries: [
+      [id, 'x', kfTrack(10)], [id, 'opacity', kfTrack(1)], [other, 'y', kfTrack(20)],
+    ] }).ok).toBe(true)
+    const first = transformOfLayer(actor, id)
+    expect([first.transform.x.mode, first.opacity.mode]).toEqual(['Keyframed', 'Keyframed'])
+    expect(transformOfLayer(actor, other).transform.y.mode).toBe('Keyframed')
+    expect(actor.historyStatus().len - lenBefore).toBe(1) // three writes, two layers, ONE entry
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
+  it('update_param_tracks_multi runs the scale-link invariant once per layer, after the whole batch', () => {
+    const { actor, id } = textActor()
+    const other = secondTextLayer(actor)
+    expect(actor.dispatch('update_param_tracks_multi', { entries: [
+      [id, 'scale_x', kfTrack(2)], [id, 'scale_y', kfTrack(2)], [other, 'scale_x', kfTrack(2)],
+    ] }).ok).toBe(true)
+    const linked = transformOfLayer(actor, id).transform
+    // The fan-out's twin followed AND the pair still reads as linked — a check
+    // inside the entry loop would have cleared the flag on the scale_x entry,
+    // before scale_y arrived to restore the twinning.
+    expect(linked.scale_y).toEqual(linked.scale_x)
+    expect(linked.scale_linked).toBe(true)
+    // The sweep reaches every distinct layer, not just the first: this one's
+    // lone axis genuinely diverged, so its flag is cleared in the same commit.
+    expect(transformOfLayer(actor, other).transform.scale_linked).toBe(false)
+  })
+
+  it('update_param_tracks_multi with no entries records nothing', () => {
+    const { actor } = textActor()
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    expect(actor.dispatch('update_param_tracks_multi', { entries: [] }).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+    expect(actor.historyStatus().len).toBe(lenBefore) // commit's no-op guard: no entry, no op_id
+  })
 })
 
 describe('dispatch: role gain + flags + project settings', () => {

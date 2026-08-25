@@ -42,6 +42,7 @@ export const HISTORY_SUMMARY = {
   layerUpdateParams: { key: 'history.layer.update_params', text: 'Updated layer params' },
   layerKeyframeParam: { key: 'history.layer.keyframe_param', text: 'Keyframed layer param' },
   layerKeyframeParams: { key: 'history.layer.keyframe_params', text: 'Keyframed layer params' },
+  layerKeyframeParamsMulti: { key: 'history.layer.keyframe_params_multi', text: 'Keyframed params across layers' },
   layerScaleLink: { key: 'history.layer.scale_link', text: 'Linked scale' },
   layerScaleUnlink: { key: 'history.layer.scale_unlink', text: 'Unlinked scale' },
   layerSeparateAudio: { key: 'history.layer.separate_audio', text: 'Separated audio' },

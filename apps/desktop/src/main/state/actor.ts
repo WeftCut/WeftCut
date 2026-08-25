@@ -775,7 +775,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'groups_remove_members': commit(HISTORY_SUMMARY.groupRemoveMembers, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyGroupsRemoveMembers(d, a.group as Uuid, a.layers as Uuid[])); return { ok: true, value: null }
         case 'groups_rename': commit(HISTORY_SUMMARY.groupRename, groupMemberRefs(a.group as Uuid), { kind: 'Coarse' }, (d) => applyGroupsRename(d, a.group as Uuid, (a.label as string) ?? null)); return { ok: true, value: null }
         case 'update_layer': commit(HISTORY_SUMMARY.layerUpdate, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayer(d, a.layer as Uuid, a.patch as LayerPatch)); return { ok: true, value: null }
-        // The three commands below end with the scale-link invariant check
+        // The four commands below end with the scale-link invariant check
         // (mutations/scaleLink.ts): result-based, so it runs once per COMMIT —
         // the plural batch is legitimately mid-divergence between its scale_x
         // and scale_y entries, and a per-entry check would unlink every linked
@@ -783,6 +783,25 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'update_layer_params': commit(HISTORY_SUMMARY.layerUpdateParams, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { applyUpdateLayerParams(d, a.layer as Uuid, a.patch as LayerParamsPatch, motifCatalog); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
         case 'update_layer_param_track': commit(HISTORY_SUMMARY.layerKeyframeParam, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { applyUpdateLayerParamTrack(d, a.layer as Uuid, a.param_key as string, a.track as Animated<number>); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
         case 'update_layer_param_tracks': commit(HISTORY_SUMMARY.layerKeyframeParams, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { for (const [k, t] of a.entries as [string, Animated<number>][]) applyUpdateLayerParamTrack(d, a.layer as Uuid, k, t); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
+        // The cross-LAYER form of the batch above, and the keyframe marquee's op:
+        // one sub-lane row draws the diamonds of every layer on its track, so a
+        // swept selection spans layers and the per-layer form would spend an undo
+        // entry each. `Coarse` because the `Layer` hint carries a single id and
+        // cannot name a multi-layer change. Empty `entries` leaves the draft
+        // untouched, so commit's no-op guard records nothing.
+        case 'update_param_tracks_multi': {
+          const entries = (a.entries as [Uuid, string, Animated<number>][]) ?? []
+          const layers = [...new Set(entries.map(([layer]) => layer))]
+          commit(HISTORY_SUMMARY.layerKeyframeParamsMulti, layerRefs(layers), { kind: 'Coarse' }, (d) => {
+            for (const [layer, key, track] of entries) applyUpdateLayerParamTrack(d, layer, key, track)
+            // Once per DISTINCT layer, after every entry has landed. The check is
+            // per layer, so hoisting it into the loop above would re-run it for
+            // each of that layer's entries and would read exactly the half-applied
+            // twin pair the note above forbids — now reachable across layers.
+            for (const layer of layers) enforceScaleLinkInvariant(d, layer)
+          })
+          return { ok: true, value: null }
+        }
         case 'set_scale_linked': commit((a.linked as boolean) ? HISTORY_SUMMARY.layerScaleLink : HISTORY_SUMMARY.layerScaleUnlink, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applySetScaleLinked(d, idGen, a.layer as Uuid, a.linked as boolean)); return { ok: true, value: null }
         // Clearing the pin is the inverse of set_composition{duration_us} and rides
         // the same unrecorded fan-out. Per snapshot it means "unpin, then refit to
