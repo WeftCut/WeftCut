@@ -211,13 +211,13 @@ describe("QuickActionsPanel", () => {
   it("carries the state-bearing hint for the display toggle", () => {
     render(<QuickActionsPanel geometry={geometry(400, 44)} />);
     expect(button("toggleDisplayMode").getAttribute("aria-label")).toBe(
-      "A/B Roll — other tracks are hidden. Click for All Tracks.",
+      "A/B Roll, other tracks hidden. Click to show all.",
     );
     cleanup();
     settings.displayMode = "AllTracks";
     render(<QuickActionsPanel geometry={geometry(400, 44)} />);
     expect(button("toggleDisplayMode").getAttribute("aria-label")).toBe(
-      "All Tracks — nothing is hidden. Click for A/B Roll.",
+      "All Tracks, nothing hidden. Click for A/B Roll.",
     );
   });
 

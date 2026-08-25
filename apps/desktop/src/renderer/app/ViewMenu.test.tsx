@@ -218,18 +218,20 @@ describe("ViewMenu marker display", () => {
     prefs.markersVisible = true;
   });
 
-  it("sits immediately below Follow playhead", async () => {
+  it("sits immediately below Timeline auto-scroll", async () => {
     renderMenu();
     openView();
     await screen.findByText("Show markers");
     // Read off the label spans, not the rows: a row's textContent also carries
-    // its accelerator, and Follow playhead has one (`Shift+F`) where this
+    // its accelerator, and Timeline auto-scroll has one (`Shift+F`) where this
     // deliberately does not.
     const labels = screen
       .getAllByRole("menuitem")
       .map((item) => item.querySelector(".app-menu-item-label")?.textContent ?? "");
-    expect(labels.indexOf("Show markers")).toBe(labels.indexOf("Follow playhead") + 1);
-    expect(labels).toContain("Follow playhead");
+    expect(labels.indexOf("Show markers")).toBe(
+      labels.indexOf("Timeline auto-scroll") + 1,
+    );
+    expect(labels).toContain("Timeline auto-scroll");
   });
 
   it("flips the setting through the registry command and reflects it, both ways", async () => {
@@ -338,7 +340,7 @@ describe("ViewMenu registry dispatch", () => {
     renderMenu();
     openView();
 
-    fireEvent.click(await screen.findByText("Follow playhead"));
+    fireEvent.click(await screen.findByText("Timeline auto-scroll"));
     expect(run).toHaveBeenCalledTimes(1);
     expect(logEmit).toHaveBeenCalledTimes(1);
     expect(logEmit).toHaveBeenCalledWith(

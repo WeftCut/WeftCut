@@ -392,9 +392,9 @@ re-anchor on the playhead, and why the keyboard zoom's playhead anchor is the
 zoom's decision rather than the follow reaching in.
 
 App-level pref `timeline_follow_playhead` (default on), so it is one answer per
-machine rather than per project: View → Follow playhead, `Shift+F`, the Quick
-Actions strip, or the search palette. Absent from an older `app_settings.json`
-reads as **on**.
+machine rather than per project: View → Timeline auto-scroll, `Shift+F`, the
+Quick Actions strip, or the search palette. Absent from an older
+`app_settings.json` reads as **on**.
 
 ## Global search palette
 

@@ -740,7 +740,7 @@ test("View menu creates a custom Workspace from the current arrangement and swit
 
     // Close a Panel so the two Workspaces diverge, then confirm it persisted.
     await viewMenu.click();
-    // Anchored so it cannot reach "Follow playhead" in the same menu, and
+    // Anchored so it cannot reach "Timeline auto-scroll" in the same menu, and
     // bilingual like its neighbours — the suite runs under either locale.
     await menuItem(/^(Playhead|播放头)$/).click();
     await viewMenu.click();

@@ -175,12 +175,12 @@ export function ViewMenu({
       <MenuItem
         actionId="toggleFollowPlayhead"
         label={t("view.follow_playhead", {
-          defaultValue: "Follow playhead",
+          defaultValue: "Timeline auto-scroll",
         })}
         checked={followPlayhead}
         onSelect={() => void getCommand("toggleFollowPlayhead")?.run()}
       />
-      {/* Directly below Follow playhead: both are "how my timeline is
+      {/* Directly below Timeline auto-scroll: both are "how my timeline is
           displayed". No `actionId`, so no accelerator to right-align — see
           `MENU_ONLY_COMMAND_IDS` in `commands/appCommands.ts` for why this
           toggle has no binding. */}
