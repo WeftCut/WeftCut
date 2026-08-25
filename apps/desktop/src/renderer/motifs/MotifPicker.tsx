@@ -175,7 +175,6 @@ export function MotifPicker({
     <AppDialog
       title={t("motif_picker.heading")}
       onClose={onClose}
-      closeLabel={t("motif_picker.close")}
       panelClassName="motif-picker"
     >
         {error && <p className="settings-error">{error}</p>}

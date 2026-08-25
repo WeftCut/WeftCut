@@ -66,7 +66,6 @@ export function CheckpointPromptDialog() {
     <AppDialog
       title={t("history_panel.checkpoint_create_title")}
       onClose={saving ? undefined : closeCheckpointPrompt}
-      closeLabel={saving ? undefined : t("history_panel.checkpoint_cancel")}
       panelClassName="new-project-panel"
     >
       <label className="new-project-row">

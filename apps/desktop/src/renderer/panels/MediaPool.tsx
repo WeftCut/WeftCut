@@ -806,7 +806,7 @@ function RemoveMediaDialog({
       onClose={() => {
         if (!removing) onClose();
       }}
-      closeLabel={removing ? undefined : t("media_pool.remove_cancel")}
+      showClose={!removing}
       panelClassName="settings-panel media-remove-dialog"
     >
       <div className="settings-body">

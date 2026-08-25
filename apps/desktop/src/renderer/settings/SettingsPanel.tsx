@@ -185,7 +185,6 @@ export function SettingsPanel({
     <AppDialog
       title={t("settings.heading")}
       onClose={onClose}
-      closeLabel={t("settings.close")}
       panelClassName="settings-panel settings-panel--nav"
     >
       <div className="settings-layout">
@@ -855,7 +854,6 @@ export function DataLocationSection({
         <AppDialog
           title={t("settings.data_location_cleanup_title")}
           onClose={keepOld}
-          closeLabel={t("settings.data_location_cleanup_keep")}
           panelClassName="settings-panel"
         >
           <div className="settings-body">

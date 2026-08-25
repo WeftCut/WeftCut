@@ -397,7 +397,6 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
     <AppDialog
       title={t("export_dialog.title")}
       onClose={onCancel}
-      closeLabel={t("export_dialog.cancel")}
       panelClassName="settings-panel settings-panel--nav"
     >
       <div className="settings-layout">
@@ -1303,7 +1302,6 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
       <AppDialog
         title={t("export_dialog.experimental_title")}
         onClose={() => setConfirmExperimental(false)}
-        closeLabel={t("export_dialog.cancel")}
         panelClassName="settings-panel export-experimental-confirm"
       >
         <div className="settings-body">

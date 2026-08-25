@@ -220,7 +220,6 @@ function DeleteCheckpointDialog({
     <AppDialog
       title={t("history_panel.checkpoint_delete_title")}
       onClose={deleting ? undefined : onCancel}
-      closeLabel={deleting ? undefined : t("history_panel.checkpoint_cancel")}
       panelClassName="settings-panel checkpoint-delete-dialog"
     >
       <div className="settings-body">

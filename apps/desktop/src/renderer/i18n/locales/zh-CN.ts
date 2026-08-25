@@ -188,7 +188,6 @@ const zhCN: Resources = {
     copy_version: "复制版本信息",
     copied: "已复制",
     project_link: "项目地址",
-    close: "关闭",
   },
   view: {
     display_mode_heading: "轨道显示",
@@ -368,6 +367,9 @@ const zhCN: Resources = {
     clear_range: "清除入出点",
     open_search: "全局搜索…",
     search: "搜索",
+  },
+  modal: {
+    close: "关闭",
   },
   dialogs: {
     save_title: "保存 WeftCut 项目",
@@ -857,7 +859,6 @@ const zhCN: Resources = {
   },
   settings: {
     heading: "设置",
-    close: "关闭",
     cat_general: "通用",
     cat_project: "项目",
     cat_keyboard: "键盘",
@@ -1236,7 +1237,6 @@ const zhCN: Resources = {
   },
   motif_picker: {
     heading: "Motifs",
-    close: "关闭",
     loading: "正在加载 Motifs…",
     empty: "无可用 Motif。",
     preview_heading: "预览",

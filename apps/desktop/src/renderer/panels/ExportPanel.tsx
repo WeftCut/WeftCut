@@ -98,7 +98,6 @@ export function ExportPanel({
     <AppDialog
       title={t("export.title")}
       onClose={dismissable ? onClose : undefined}
-      closeLabel={t("export.dismiss")}
       panelClassName="settings-panel export-progress-panel"
     >
         <div className="settings-body">

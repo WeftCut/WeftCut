@@ -520,6 +520,7 @@ function NewProjectForm({
     <AppDialog
       title={t("new_project.title")}
       onClose={busy ? undefined : onCancel}
+      showClose={false}
       panelClassName="new-project-panel"
     >
         <label className="new-project-row">

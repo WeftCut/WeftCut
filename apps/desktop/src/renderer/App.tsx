@@ -963,7 +963,6 @@ export function App({ onCloseProject }: AppProps) {
         <AppDialog
           title={t("close_guard.title")}
           onClose={() => setCloseConfirmOpen(false)}
-          closeLabel={t("close_guard.stay")}
           panelClassName="settings-panel"
         >
           <div className="settings-body">

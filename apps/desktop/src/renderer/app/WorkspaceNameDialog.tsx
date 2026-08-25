@@ -38,7 +38,6 @@ export function WorkspaceNameDialog({
     <AppDialog
       title={title}
       onClose={onCancel}
-      closeLabel={t("workspace_name.cancel", { defaultValue: "Cancel" })}
       panelClassName="new-project-panel"
     >
       <label className="new-project-row">

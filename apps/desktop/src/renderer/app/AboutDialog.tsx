@@ -63,7 +63,6 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
     <AppDialog
       title={t("help.about")}
       onClose={onClose}
-      closeLabel={t("help.close")}
       panelClassName="settings-panel"
     >
       <div className="settings-body">

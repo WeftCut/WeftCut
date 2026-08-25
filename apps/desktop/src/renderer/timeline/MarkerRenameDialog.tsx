@@ -68,7 +68,6 @@ export function MarkerRenameDialog() {
     <AppDialog
       title={t("marker_rename.title")}
       onClose={saving ? undefined : closeMarkerRenamePrompt}
-      closeLabel={saving ? undefined : t("marker_rename.cancel")}
       panelClassName="new-project-panel"
     >
       <label className="new-project-row">

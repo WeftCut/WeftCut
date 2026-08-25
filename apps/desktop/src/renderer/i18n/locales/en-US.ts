@@ -190,7 +190,6 @@ const enUS = {
     copy_version: "Copy Version Info",
     copied: "Copied",
     project_link: "Project Page",
-    close: "Close",
   },
   view: {
     display_mode_heading: "Track display",
@@ -389,6 +388,13 @@ const enUS = {
     clear_range: "Clear in/out points",
     open_search: "Search everything…",
     search: "Search",
+  },
+  // The ✕ every AppDialog draws in its own header. One key, not one per
+  // feature area: the glyph dismisses the DIALOG, so the wording is the same
+  // everywhere and the footer button keeps the contextual verb (Cancel /
+  // Stay / Keep). Distinct from `window_controls.close`, which quits the app.
+  modal: {
+    close: "Close",
   },
   dialogs: {
     save_title: "Save WeftCut project",
@@ -920,7 +926,6 @@ const enUS = {
   },
   settings: {
     heading: "Settings",
-    close: "Close",
     cat_general: "General",
     cat_project: "Project",
     cat_keyboard: "Keyboard",
@@ -1311,7 +1316,6 @@ const enUS = {
   },
   motif_picker: {
     heading: "Motifs",
-    close: "Close",
     loading: "Loading motifs…",
     empty: "No motifs available.",
     preview_heading: "Preview",

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { Dialog, DialogOverlay, DialogPortal } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
@@ -13,9 +14,12 @@ interface AppDialogProps {
   /// dialog undismissable (export-in-progress): every close request is
   /// ignored until the caller re-renders with `onClose` set or unmounts.
   onClose?: (() => void) | undefined;
-  /// aria-label for the ✕ button. Omit to render no ✕ — the new-project
-  /// dialog closes via its footer buttons and backdrop only.
-  closeLabel?: string | undefined;
+  /// Set false to draw no ✕ at all — for a dialog that stays dismissable by
+  /// Escape and backdrop while an in-flight operation must not be abandoned
+  /// mid-click, and for the new-project dialog, which closes via its footer
+  /// buttons and backdrop only. A dialog with no `onClose` has no ✕ either
+  /// way, so `saving ? undefined : handler` needs nothing here.
+  showClose?: boolean | undefined;
   /// Legacy panel skin: "settings-panel", "motif-picker", ...
   /// The popup carries only centering; the
   /// panel class owns size/background/border/shadow.
@@ -33,11 +37,12 @@ interface AppDialogProps {
 export function AppDialog({
   title,
   onClose,
-  closeLabel,
+  showClose = true,
   panelClassName,
   headerExtra,
   children,
 }: AppDialogProps) {
+  const { t } = useTranslation();
   return (
     <Dialog
       open
@@ -60,12 +65,15 @@ export function AppDialog({
           <header>
             <DialogPrimitive.Title>{title}</DialogPrimitive.Title>
             {headerExtra}
-            {onClose !== undefined && closeLabel !== undefined && (
+            {onClose !== undefined && showClose && (
               <button
                 type="button"
                 className="settings-close"
                 onClick={onClose}
-                aria-label={closeLabel}
+                // Named for what it does to the dialog, not for the footer
+                // button it duplicates: two controls sharing one accessible
+                // name is what a screen reader reads twice.
+                aria-label={t("modal.close")}
               >
                 <XIcon size={16} aria-hidden />
               </button>
