@@ -1,8 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 import type { AnimTrack, TrackSummary } from "../ipc";
 import { trackKeyframeProperties } from "./geometry";
-import { readParamTrack, isHiddenTwinAxis, animatableParams } from "../keyframe/descriptors";
+import {
+  readParamTrack,
+  isHiddenTwinAxis,
+  animatableParams,
+  type ParamDescriptor,
+} from "../keyframe/descriptors";
 import {
   selectKeyframe,
   clearKeyframeSelection,
@@ -27,6 +38,17 @@ import { subSelectionDeleteYields } from "./subSelectionDelete";
 
 export const KF_SUBLANE_H = 24;
 export const KF_SUBLANE_EXPANDED_H = 72;
+
+/// Hands one rendered sub-lane row to the registry the Timeline measures the
+/// marquee against — the keyframe twin of `registerLaneEl`, keyed by
+/// `(trackId, paramKey)`. `expanded` rides along because the ROW is where that
+/// answer lives; `null` deregisters.
+export type RegisterSubLaneEl = (
+  trackId: string,
+  paramKey: string,
+  expanded: boolean,
+  el: HTMLElement | null,
+) => void;
 
 type OpenInterpMenu = (
   clientX: number,
@@ -102,10 +124,12 @@ export function KeyframeLaneHeaders({
 export function KeyframeLane({
   track,
   pxPerSec,
+  registerSubLaneEl,
   onCommitParamTrack,
 }: {
   track: TrackSummary;
   pxPerSec: number;
+  registerSubLaneEl: RegisterSubLaneEl;
   onCommitParamTrack: (layerId: string, paramKey: string, t: AnimTrack<number>) => void;
 }) {
   const props = trackKeyframeProperties(track);
@@ -180,40 +204,20 @@ export function KeyframeLane({
 
   return (
     <>
-      {props.map((d) => {
-        const expanded = d.paramKey === focusedParamKey;
-        return (
-          <div
-            key={d.paramKey}
-            data-testid="kf-sublane"
-            className="relative border-b border-border-soft"
-            style={{ height: expanded ? KF_SUBLANE_EXPANDED_H : KF_SUBLANE_H }}
-            onPointerDown={onMarqueeDown}
-          >
-            {track.layers.map((layer) => {
-              if (isHiddenTwinAxis(d.paramKey, layer.params)) return null;
-              const trk = readParamTrack(layer.params, d.paramKey);
-              if (!trk || trk.mode !== "Keyframed") return null;
-              const durUs = layer.t_end_us - layer.t_start_us;
-              return (
-                <LayerCurveLane
-                  key={layer.id}
-                  layerId={layer.id}
-                  paramKey={d.paramKey}
-                  track={trk}
-                  layerTStartUs={layer.t_start_us}
-                  clipDurationUs={durUs}
-                  pxPerSec={pxPerSec}
-                  height={expanded ? KF_SUBLANE_EXPANDED_H : KF_SUBLANE_H}
-                  editable={expanded && focusedLayerId === layer.id}
-                  onCommitParamTrack={onCommitParamTrack}
-                  onOpenInterpMenu={openInterpMenu}
-                />
-              );
-            })}
-          </div>
-        );
-      })}
+      {props.map((d) => (
+        <KeyframeSubLaneRow
+          key={d.paramKey}
+          track={track}
+          desc={d}
+          expanded={d.paramKey === focusedParamKey}
+          pxPerSec={pxPerSec}
+          focusedLayerId={focusedLayerId}
+          registerSubLaneEl={registerSubLaneEl}
+          onPointerDown={onMarqueeDown}
+          onCommitParamTrack={onCommitParamTrack}
+          onOpenInterpMenu={openInterpMenu}
+        />
+      ))}
       {interpMenu && (() => {
         const layer = track.layers.find((l) => l.id === interpMenu.layerId);
         if (!layer) return null;
@@ -231,6 +235,71 @@ export function KeyframeLane({
         );
       })()}
     </>
+  );
+}
+
+/// One property's row, drawing that property's curve for every layer on the
+/// track. A component rather than inline JSX so the registry ref can be a
+/// `useCallback` stable per (property, expanded), the way `TrackLane`'s
+/// `laneRef` is: an inline ref would churn the registry through null on every
+/// render of the timeline above it.
+function KeyframeSubLaneRow({
+  track,
+  desc,
+  expanded,
+  pxPerSec,
+  focusedLayerId,
+  registerSubLaneEl,
+  onPointerDown,
+  onCommitParamTrack,
+  onOpenInterpMenu,
+}: {
+  track: TrackSummary;
+  desc: ParamDescriptor;
+  expanded: boolean;
+  pxPerSec: number;
+  focusedLayerId: string | null;
+  registerSubLaneEl: RegisterSubLaneEl;
+  onPointerDown: (e: ReactPointerEvent) => void;
+  onCommitParamTrack: (layerId: string, paramKey: string, t: AnimTrack<number>) => void;
+  onOpenInterpMenu: OpenInterpMenu;
+}) {
+  const paramKey = desc.paramKey;
+  const height = expanded ? KF_SUBLANE_EXPANDED_H : KF_SUBLANE_H;
+  const rowRef = useCallback(
+    (el: HTMLDivElement | null) =>
+      registerSubLaneEl(track.id, paramKey, expanded, el),
+    [registerSubLaneEl, track.id, paramKey, expanded],
+  );
+  return (
+    <div
+      ref={rowRef}
+      data-testid="kf-sublane"
+      className="relative border-b border-border-soft"
+      style={{ height }}
+      onPointerDown={onPointerDown}
+    >
+      {track.layers.map((layer) => {
+        if (isHiddenTwinAxis(paramKey, layer.params)) return null;
+        const trk = readParamTrack(layer.params, paramKey);
+        if (!trk || trk.mode !== "Keyframed") return null;
+        return (
+          <LayerCurveLane
+            key={layer.id}
+            layerId={layer.id}
+            paramKey={paramKey}
+            track={trk}
+            layerTStartUs={layer.t_start_us}
+            clipDurationUs={layer.t_end_us - layer.t_start_us}
+            pxPerSec={pxPerSec}
+            height={height}
+            editable={expanded && focusedLayerId === layer.id}
+            onCommitParamTrack={onCommitParamTrack}
+            onOpenInterpMenu={onOpenInterpMenu}
+          />
+        );
+      })}
+    </div>
   );
 }
 

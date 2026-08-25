@@ -74,7 +74,12 @@ import {
   visualOrderedTracks,
   type MeasuredTrackRow,
 } from "./geometry";
-import { marqueeHitClips, resolveMarqueeSelection } from "./marquee";
+import {
+  marqueeHitClips,
+  marqueeHitKeyframes,
+  resolveMarqueeSelection,
+  type MeasuredSubLaneRow,
+} from "./marquee";
 import type { MarqueeBox, MarqueeKind } from "./marqueeStore";
 import { DropStrip } from "./DropStrip";
 import { SPAWN_TRACK_ID } from "./placement";
@@ -82,7 +87,11 @@ import { TimelineRuler } from "./TimelineRuler";
 import { TrackHeader } from "./TrackHeader";
 import { TrackLane } from "./TrackLane";
 import type { MediaDragPayload, MediaDropPlan } from "./mediaDrag";
-import { KeyframeLane, KeyframeLaneHeaders } from "./KeyframeLane";
+import {
+  KeyframeLane,
+  KeyframeLaneHeaders,
+  type RegisterSubLaneEl,
+} from "./KeyframeLane";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { MarqueeOverlay } from "./MarqueeOverlay";
 import { beginLayerRename } from "./renameStore";
@@ -678,6 +687,24 @@ export function Timeline({
     if (el) laneElsRef.current.set(trackId, el);
     else laneElsRef.current.delete(trackId);
   }, []);
+  // The keyframe half of the registry above, one entry per rendered sub-lane
+  // row. Held apart because these rows are not lanes and nothing but the
+  // marquee reads them; the key is `(trackId, paramKey)` because one row draws
+  // one property across every layer on its track.
+  const subLaneElsRef = useRef(
+    new Map<
+      string,
+      { trackId: string; paramKey: string; expanded: boolean; el: HTMLElement }
+    >(),
+  );
+  const registerSubLaneEl = useCallback<RegisterSubLaneEl>(
+    (trackId, paramKey, expanded, el) => {
+      const key = `${trackId}|${paramKey}`;
+      if (el) subLaneElsRef.current.set(key, { trackId, paramKey, expanded, el });
+      else subLaneElsRef.current.delete(key);
+    },
+    [],
+  );
   // The drop strip's row, measured by the same hit-test. Held apart from the
   // registry above because that registry maps TRACK ids to lanes and the strip is
   // not a track — no consumer of it should have to know about a row that is not
@@ -1231,9 +1258,48 @@ export function Timeline({
     return rows;
   }, [orderedTracks]);
 
+  /// The rendered sub-lane rows, in the box's coordinate space — the keyframe
+  /// twin of `measureMarqueeRows`, converted and re-measured per event for the
+  /// same reasons. Sorted top-to-bottom so the hit order reads down the screen
+  /// instead of following the registry's mount order.
+  const measureMarqueeSubLaneRows = useCallback((): MeasuredSubLaneRow[] => {
+    const canvas = canvasRef.current;
+    if (canvas === null) return [];
+    const canvasTop = canvas.getBoundingClientRect().top;
+    const rows: MeasuredSubLaneRow[] = [];
+    for (const entry of subLaneElsRef.current.values()) {
+      const rect = entry.el.getBoundingClientRect();
+      rows.push({
+        trackId: entry.trackId,
+        paramKey: entry.paramKey,
+        expanded: entry.expanded,
+        top: rect.top - canvasTop,
+        bottom: rect.bottom - canvasTop,
+      });
+    }
+    rows.sort((a, b) => a.top - b.top);
+    return rows;
+  }, []);
+
   const onMarqueeBox = useCallback(
     (box: MarqueeBox, kind: MarqueeKind) => {
-      if (kind !== "clip") return;
+      if (kind === "keyframe") {
+        // Selection and nothing else: no seek, no focus move. Those stay on the
+        // single-click path (`KeyframeLane`'s `selectKeyframe` +
+        // `setKeyframeFocus` + `transportSeek` triple). The layer selection is
+        // left standing too — the sub-selection model already gives keyframes
+        // Delete priority, so a clip selection is not a conflict in this
+        // direction the way it is in the other.
+        setKeyframeSelection(
+          marqueeHitKeyframes({
+            box,
+            rows: measureMarqueeSubLaneRows(),
+            tracks,
+            pxPerSec,
+          }),
+        );
+        return;
+      }
       const { ids, primary } = resolveMarqueeSelection({
         snapshotPrimary: marqueeSnapshotPrimaryRef.current,
         hit: marqueeHitClips({
@@ -1253,7 +1319,14 @@ export function Timeline({
       // this one's. The chip's own pointerdown clears it for the same reason.
       if (ids.length > 0) clearKeyframeSelection();
     },
-    [groupByLayerId, groups, measureMarqueeRows, pxPerSec, tracks],
+    [
+      groupByLayerId,
+      groups,
+      measureMarqueeRows,
+      measureMarqueeSubLaneRows,
+      pxPerSec,
+      tracks,
+    ],
   );
 
   /// A press that never became a box — the timeline's background click, and the
@@ -1438,6 +1511,7 @@ export function Timeline({
                 <KeyframeLane
                   track={track}
                   pxPerSec={pxPerSec}
+                  registerSubLaneEl={registerSubLaneEl}
                   onCommitParamTrack={onCommitParamTrack}
                 />
               )}

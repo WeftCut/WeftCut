@@ -36,6 +36,11 @@ import {
   getSelectedKeyframes,
   selectKeyframe,
 } from "../keyframe/selectionStore";
+import {
+  clearKeyframeFocus,
+  setKeyframeFocus,
+  useKeyframeFocusStore,
+} from "../keyframe/focusStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "../state/playheadStore";
 import {
   setTimelineScrollLeftPx,
@@ -2295,6 +2300,35 @@ describe("Timeline marquee", () => {
     ],
   };
 
+  // Three keys at three values on one property, so an expanded sub-lane draws
+  // three vertically distinguishable dots for a box to take a subset of. Parked
+  // at 1 s so their x sits clear of the left auto-scroll band.
+  const multiKeyTrack: TrackSummary = {
+    ...track,
+    id: "multi-key-track",
+    layers: [
+      {
+        ...keyedTrack.layers[0]!,
+        t_start_us: 1_000_000,
+        t_end_us: 3_000_000,
+        params: {
+          ...(keyedTrack.layers[0]!.params as Extract<
+            LayerSummary["params"],
+            { kind: "VideoClip" }
+          >),
+          opacity: {
+            mode: "Keyframed",
+            value: [
+              { id: "kf-hi", t_us: 0, value: 1, interp: { kind: "Linear" } },
+              { id: "kf-mid", t_us: 500_000, value: 0.5, interp: { kind: "Linear" } },
+              { id: "kf-lo", t_us: 1_000_000, value: 0, interp: { kind: "Linear" } },
+            ],
+          },
+        },
+      },
+    ],
+  };
+
   // Two lanes a single box can cross, plus one clip parked beyond every box
   // below — the primary that does NOT survive a sweep.
   const clipA: LayerSummary = { ...layer, id: "clip-a", label: "A" };
@@ -2324,6 +2358,7 @@ describe("Timeline marquee", () => {
   beforeEach(() => {
     clearLayerSelection();
     clearKeyframeSelection();
+    clearKeyframeFocus();
     setActiveRegion(null);
     setPlayheadTimeUs(0);
     setTool("select");
@@ -2705,5 +2740,48 @@ describe("Timeline marquee", () => {
     expect(useSelectionStore.getState().selectedTransitionId).toBe(
       "transition-1",
     );
+  });
+
+  it("selects the diamonds a sub-lane box covers, and moves nothing else", () => {
+    const seek = vi.fn();
+    const transport = { play() {}, pause() {}, seek, isPlaying: () => false };
+    registerTransport(transport);
+    const { container } = renderTimeline({
+      tracks: [multiKeyTrack],
+      selectedLayerId: "keyed-1",
+    });
+    fireEvent.click(container.querySelector('[data-testid="kf-lane-twirl"]')!);
+    // Focus is what expands the row to `KF_SUBLANE_EXPANDED_H`, and the height
+    // is what spreads the three dots apart.
+    act(() => setKeyframeFocus("keyed-1", "opacity"));
+    stubMarqueeLayout(container);
+    const row = container.querySelector('[data-testid="kf-sublane"]')!;
+    // Client [300, 372) → canvas [200, 272). The dots then draw at canvas y
+    // 206 / 236 / 266 and x 80 / 120 / 160, so a box that forgot to convert the
+    // row into canvas space takes nothing at all.
+    stubRect(row, { left: 200, right: 1240, top: 300, bottom: 372 });
+
+    // Canvas y 202 → 220: the top dot alone, which is the whole point of the
+    // expanded row's second axis.
+    sweep(row, [270, 302], [370, 320]);
+    expect(getSelectedKeyframes().map((k) => k.kfId)).toEqual(["kf-hi"]);
+
+    fireEvent.pointerMove(window, { clientX: 370, clientY: 370 });
+    release([370, 370]);
+    expect(getSelectedKeyframes()).toEqual([
+      { layerId: "keyed-1", paramKey: "opacity", kfId: "kf-hi" },
+      { layerId: "keyed-1", paramKey: "opacity", kfId: "kf-mid" },
+      { layerId: "keyed-1", paramKey: "opacity", kfId: "kf-lo" },
+    ]);
+    // A selection gesture and nothing more: no seek, no focus move, and the
+    // clip the Attribute panel is on stays selected.
+    expect(seek).not.toHaveBeenCalled();
+    expect(playheadTimeUs()).toBe(0);
+    expect(useKeyframeFocusStore.getState()).toEqual({
+      layerId: "keyed-1",
+      paramKey: "opacity",
+    });
+    expect(selection()).toEqual({ primary: "keyed-1", ids: ["keyed-1"] });
+    releaseTransport(transport);
   });
 });
