@@ -961,6 +961,7 @@ the UI uses the same actor via backend commands.
 | `split_layer(layer_id, at_t_us, escape_group?)` → `(LayerId, LayerId)` | |
 | `trim_layer(layer_id, edge, new_t_us, escape_group?)` | `edge` ∈ `"in" | "out"` |
 | `delete_layer(layer_id)` | |
+| `delete_layers(layer_ids)` | the cross-**layer** form: one recorded entry however many layers it spans, so one undo restores the lot. Ids are de-duplicated; a locked member rejects the WHOLE batch rather than half-deleting. Takes the id set verbatim — no group fan-out, since selection is what carries a group |
 | `groups_create(layer_ids, label?, reassign?)` → `GroupId` | |
 | `groups_dissolve(group_id)` / `groups_add_members(group_id, layer_ids, reassign?)` / `groups_remove_members(group_id, layer_ids)` / `groups_rename(group_id, label?)` | |
 | `add_marker(t_us, label, color, end_t_us?)` → `MarkerId` | |

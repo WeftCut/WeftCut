@@ -144,6 +144,11 @@ move the Attribute panel off the clip being inspected. Deselect All clears all
 three selections that arm Delete: clips, the transition chip, and the keyframe
 selection.
 
+**Delete takes the whole clip selection, as one undo entry** however many clips
+and lanes it spans — so one undo brings a swept block back in one step. It takes
+the selection verbatim and never fans out over a group: selection is what carries
+a group, so a clicked or swept member has already brought its siblings along.
+
 **Marquee.** Dragging from blank timeline space draws a box, and **the surface
 the drag started on decides what the box selects** (ADR 0051) — a track lane, the
 drop strip and the scroll body select clips; a keyframe sub-lane row selects
