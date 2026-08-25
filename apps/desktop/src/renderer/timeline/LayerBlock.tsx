@@ -19,6 +19,7 @@ import {
   groupHue,
   keyframeHitTest,
   keyframeXWithinClip,
+  layerSliceRect,
   type LayerSlice,
 } from "./geometry";
 import { TimelineVisualPreview } from "./TimelineVisualPreview";
@@ -484,25 +485,10 @@ export function LayerBlock({
   const visibleLabel = showFullAffordances ? label : shortLayerLabel(label);
   const layerTheme = timelineLayerTheme(layer.params.kind, layer.color_hint);
 
-  // The outer padding keeps the chip off the row edges; the 1px gap at the
-  // midline visually separates V from A in the combined-row case so the user
-  // sees they're hit-test independent.
-  const ROW_PADDING = 4;
-  const interiorTop = ROW_PADDING;
-  const interiorHeight = Math.max(8, laneHeight - 2 * ROW_PADDING);
-  const halfHeight = Math.max(8, Math.floor((interiorHeight - 1) / 2));
-  let sliceTop: number;
-  let sliceHeight: number;
-  if (slice === "full") {
-    sliceTop = interiorTop;
-    sliceHeight = interiorHeight;
-  } else if (slice === "top") {
-    sliceTop = interiorTop;
-    sliceHeight = halfHeight;
-  } else {
-    sliceTop = interiorTop + halfHeight + 1;
-    sliceHeight = interiorHeight - halfHeight - 1;
-  }
+  const { top: sliceTop, height: sliceHeight } = layerSliceRect(
+    laneHeight,
+    slice,
+  );
 
   // `docs/features.md#groups` — tinted left border + chain-link icon hue
   // derived from group_id so all members share an accent color.

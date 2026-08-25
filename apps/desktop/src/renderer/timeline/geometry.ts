@@ -144,6 +144,32 @@ export function computeLayerSlices(
   return slices;
 }
 
+/// A chip's vertical band inside its lane, in lane-local px. The chip renderer,
+/// the media-drop ghost, and the marquee's vertical hit-test all read this, so
+/// the padding and the midline gap have exactly one definition and what is drawn
+/// cannot drift from what is selectable.
+///
+/// The outer padding keeps the chip off the row edges. The 1 px the bottom slice
+/// cedes at the midline is load-bearing rather than decoration: it visually
+/// separates V from A in the combined-row case so the user sees the two are
+/// hit-test independent. The 8 px floors keep a chip off zero height on a lane
+/// squeezed to `MIN_TRACK_HEIGHT` or a height that never went through that clamp.
+export function layerSliceRect(
+  laneHeight: number,
+  slice: LayerSlice,
+): { top: number; height: number } {
+  const ROW_PADDING = 4;
+  const interiorTop = ROW_PADDING;
+  const interiorHeight = Math.max(8, laneHeight - 2 * ROW_PADDING);
+  const halfHeight = Math.max(8, Math.floor((interiorHeight - 1) / 2));
+  if (slice === "full") return { top: interiorTop, height: interiorHeight };
+  if (slice === "top") return { top: interiorTop, height: halfHeight };
+  return {
+    top: interiorTop + halfHeight + 1,
+    height: interiorHeight - halfHeight - 1,
+  };
+}
+
 // Track rendering order is a simple reverse of the data-model. Convention
 // (idx 0 = bottom of z-stack, last = top) maps directly to "last index renders
 // at the top of the screen", matching the editor convention that the

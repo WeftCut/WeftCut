@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_TRACK_HEIGHT,
+  MIN_TRACK_HEIGHT,
   clamp,
   computeTimelineExtent,
   computeLayerSlices,
@@ -10,6 +12,7 @@ import {
   keyframeHitTest,
   keyframeXWithinClip,
   layerOverlapClass,
+  layerSliceRect,
   playheadFrameShadowPx,
   trackHeaderControls,
   trackIdAtClientY,
@@ -138,6 +141,51 @@ describe("computeLayerSlices", () => {
     const slices = computeLayerSlices([v, a]);
     expect(slices.get("v")).toBe("full");
     expect(slices.get("a")).toBe("full");
+  });
+});
+
+describe("layerSliceRect", () => {
+  it("a full slice takes the whole lane interior inside the row padding", () => {
+    expect(layerSliceRect(DEFAULT_TRACK_HEIGHT, "full")).toEqual({
+      top: 4,
+      height: 48,
+    });
+  });
+
+  it("a combined row splits the interior into halves that together fill it", () => {
+    const top = layerSliceRect(DEFAULT_TRACK_HEIGHT, "top");
+    const bottom = layerSliceRect(DEFAULT_TRACK_HEIGHT, "bottom");
+    expect(top).toEqual({ top: 4, height: 23 });
+    expect(bottom).toEqual({ top: 28, height: 24 });
+    expect(bottom.top + bottom.height).toBe(
+      layerSliceRect(DEFAULT_TRACK_HEIGHT, "full").height + 4,
+    );
+  });
+
+  it("the top half holds its 8px floor at the minimum lane height, the bottom takes the remainder", () => {
+    expect(layerSliceRect(MIN_TRACK_HEIGHT, "full")).toEqual({ top: 4, height: 16 });
+    expect(layerSliceRect(MIN_TRACK_HEIGHT, "top")).toEqual({ top: 4, height: 8 });
+    expect(layerSliceRect(MIN_TRACK_HEIGHT, "bottom")).toEqual({ top: 13, height: 7 });
+  });
+
+  it("floors the interior at 8px for a lane height below the minimum", () => {
+    // Unreachable through the resize handle, which clamps to MIN_TRACK_HEIGHT;
+    // the floor is what keeps a stored or unmeasured height off zero.
+    expect(layerSliceRect(10, "full")).toEqual({ top: 4, height: 8 });
+    expect(layerSliceRect(0, "full")).toEqual({ top: 4, height: 8 });
+    expect(layerSliceRect(0, "top")).toEqual({ top: 4, height: 8 });
+  });
+
+  it("leaves exactly 1px between the two halves at every lane height", () => {
+    // That gap IS the midline separator: it is what makes the V and A chips of
+    // a combined row read as hit-test independent, so the marquee's slice-aware
+    // vertical test can promise that grazing the top half takes only the visual
+    // layer. Any lane height that closed it would break both.
+    for (const laneHeight of [0, 10, MIN_TRACK_HEIGHT, 33, DEFAULT_TRACK_HEIGHT, 200]) {
+      const top = layerSliceRect(laneHeight, "top");
+      const bottom = layerSliceRect(laneHeight, "bottom");
+      expect(bottom.top - (top.top + top.height)).toBe(1);
+    }
   });
 });
 

@@ -6,9 +6,8 @@ import { setTransitionSelection } from "../state/selectionStore";
 import { transportPause, transportSeek } from "../state/playbackStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "../state/playheadStore";
 import { useMediaById } from "../state/projectStore";
-import type { LayerSlice } from "./geometry";
+import { layerSliceRect, type LayerSlice } from "./geometry";
 import {
-  chipSliceSlot,
   transitionLeftEdgeClampUs,
   transitionLeftEdgeDragArgs,
   transitionRightEdgeClampUs,
@@ -88,7 +87,9 @@ export function TransitionChip({
   const left = (startUs / 1_000_000) * pxPerSec;
   const width = Math.max(6, ((endUs - startUs) / 1_000_000) * pxPerSec);
   const edgeZonePx = Math.min(EDGE_ZONE_PX, Math.floor(width / 3));
-  const slot = chipSliceSlot(laneHeight, slice);
+  // The same band the incoming layer's chip gets, so the transition chip hugs
+  // it exactly in both full-row and combined V+A rows.
+  const slot = layerSliceRect(laneHeight, slice);
   const kind = chip.transition.kind.kind;
   const kindLabel = t(`transitions.kind_${kind.toLowerCase()}`, {
     defaultValue: kind,

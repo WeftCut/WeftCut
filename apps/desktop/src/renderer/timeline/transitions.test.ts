@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { LayerSummary, TrackSummary, TransitionSummary } from "../ipc";
 import {
   buildTransitionKindArgs,
-  chipSliceSlot,
   defaultTransitionDurationUs,
   findCutNear,
   findNearestCut,
@@ -389,19 +388,6 @@ describe("transitionChipsForTrack", () => {
 
   it("treats an absent transitions field as empty", () => {
     expect(transitionChipsForTrack(track([a, b]), undefined)).toEqual([]);
-  });
-});
-
-describe("chipSliceSlot", () => {
-  it("full slice mirrors LayerBlock's interior box", () => {
-    // laneHeight 56: interior = 48, top = 4.
-    expect(chipSliceSlot(56, "full")).toEqual({ top: 4, height: 48 });
-  });
-
-  it("top/bottom slices split at the midline with a 1px gap", () => {
-    // interior 48 → half = floor(47/2) = 23; bottom = 48 - 23 - 1 = 24.
-    expect(chipSliceSlot(56, "top")).toEqual({ top: 4, height: 23 });
-    expect(chipSliceSlot(56, "bottom")).toEqual({ top: 28, height: 24 });
   });
 });
 

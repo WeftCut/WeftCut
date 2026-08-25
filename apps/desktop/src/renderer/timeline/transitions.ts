@@ -13,7 +13,6 @@ import type {
 } from "../ipc";
 import { frameIndexFloor, frameIndexRound, timeUsAtFrame } from "../frames";
 import { VISUAL_LAYER_KINDS } from "../render/transitions/activeTransitions";
-import type { LayerSlice } from "./geometry";
 
 const US_PER_SEC = 1_000_000;
 
@@ -237,26 +236,6 @@ export function transitionChipsForTrack(
     });
   }
   return out;
-}
-
-/// Vertical slot for a chip inside a lane row — mirrors LayerBlock's slice
-/// math (ROW_PADDING 4, 1px midline gap) so the chip hugs the incoming
-/// layer's block exactly in both full-row and combined V+A rows.
-export function chipSliceSlot(
-  laneHeight: number,
-  slice: LayerSlice,
-): { top: number; height: number } {
-  const ROW_PADDING = 4;
-  const interiorTop = ROW_PADDING;
-  const interiorHeight = Math.max(8, laneHeight - 2 * ROW_PADDING);
-  const halfHeight = Math.max(8, Math.floor((interiorHeight - 1) / 2));
-  if (slice === "top") return { top: interiorTop, height: halfHeight };
-  if (slice === "bottom")
-    return {
-      top: interiorTop + halfHeight + 1,
-      height: interiorHeight - halfHeight - 1,
-    };
-  return { top: interiorTop, height: interiorHeight };
 }
 
 // ── chip edge-drag kernels (spec D6) ─────────────────────────────────────────

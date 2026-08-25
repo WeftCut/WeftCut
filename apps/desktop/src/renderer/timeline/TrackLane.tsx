@@ -7,7 +7,7 @@ import {
   type DragSubject,
   type PendingLayerPlacement,
 } from "./LayerBlock";
-import { computeLayerSlices } from "./geometry";
+import { computeLayerSlices, layerSliceRect, type LayerSlice } from "./geometry";
 import { formatTimecode } from "../frames";
 import { TransitionChip } from "./TransitionChip";
 import {
@@ -583,17 +583,14 @@ export function TrackLane({
   );
 }
 
+/// The ghost occupies the band the dropped layer's chip will get. Translating
+/// the drop plan's overlap vocabulary into a `LayerSlice` is the only part of
+/// this that was ever local.
 function mediaDropGhostSlot(height: number, plan: MediaDropPlan) {
-  let top = 4;
-  let slotHeight = Math.max(8, height - 8);
-  if (!plan.sharesLane) return { top, height: slotHeight };
-
-  const interiorHeight = Math.max(8, height - 8);
-  const halfHeight = Math.max(8, Math.floor((interiorHeight - 1) / 2));
-  slotHeight =
-    plan.overlapClass === "visual"
-      ? halfHeight
-      : interiorHeight - halfHeight - 1;
-  if (plan.overlapClass === "audio") top = 4 + halfHeight + 1;
-  return { top, height: slotHeight };
+  const slice: LayerSlice = !plan.sharesLane
+    ? "full"
+    : plan.overlapClass === "visual"
+      ? "top"
+      : "bottom";
+  return layerSliceRect(height, slice);
 }
