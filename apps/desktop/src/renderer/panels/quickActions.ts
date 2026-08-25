@@ -29,8 +29,6 @@ import {
   Ungroup,
   UnfoldVertical,
   X,
-  ZoomIn,
-  ZoomOut,
   type LucideProps,
 } from "lucide-react";
 import type { ComponentType } from "react";
@@ -282,16 +280,6 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
     id: "markers",
     mode: "command",
     items: [{ id: "addMarkerAtPlayhead", icon: BookmarkPlus }],
-  },
-  {
-    // Timeline scale. The `=` / `-` keys have always existed; a trackpad user
-    // with no numeric row had no non-keyboard route to them.
-    id: "zoom",
-    mode: "command",
-    items: [
-      { id: "zoomTimelineIn", icon: ZoomIn },
-      { id: "zoomTimelineOut", icon: ZoomOut },
-    ],
   },
   {
     // Preview decode resolution — ONE button walking three rungs, where the

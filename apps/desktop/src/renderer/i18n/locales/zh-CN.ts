@@ -214,7 +214,6 @@ const zhCN: Resources = {
     edit: "编辑",
     range: "入出点",
     markers: "标记",
-    zoom: "缩放",
     resolution: "播放分辨率",
     // 循环按钮的三条提示：先说当前档位，再说点击后切到哪一档。三档不像开关那样
     // 只有两种可能，下一档猜不出来，所以后半句必须写出来。
@@ -236,7 +235,6 @@ const zhCN: Resources = {
     // 禁用原因，与 clear_range_empty 同一条规则：说明前置条件，而不是重复点不了的标签。
     group_needs_two: "选中两个或更多片段才能编组",
     dissolve_no_group: "所选内容不在任何编组中",
-    transitions: "转场",
   },
   dock_workspace: {
     editing_label: "编辑工作区",

@@ -216,7 +216,6 @@ const enUS = {
     edit: "Edit",
     range: "In/Out",
     markers: "Markers",
-    zoom: "Zoom",
     resolution: "Playback resolution",
     // The cycling button's three tooltips: current rung, then the rung a click
     // moves to. Both halves are load-bearing here in a way they are not for the
@@ -246,7 +245,6 @@ const enUS = {
     // precondition rather than restate a label that can't be acted on.
     group_needs_two: "Select two or more clips to group them",
     dissolve_no_group: "No group in the selection",
-    transitions: "Transitions",
   },
   dock_workspace: {
     editing_label: "Editing workspace",

@@ -218,8 +218,10 @@ function QuickActionButton({
 
 /**
  * The Quick Actions strip — a single row or single column of icon buttons for
- * the commands worth one click, split into three sections: modal tools,
- * independent toggles, and momentary in/out commands.
+ * the commands worth one click, grouped into the topical sections
+ * `quickActions.ts` authors. Each section declares how its buttons report
+ * state — `radio`, `independent` or `command` — and that declaration is what
+ * this panel turns into `aria-checked`, `aria-pressed`, or neither.
  *
  * Layout invariant: NEVER wraps. Whatever doesn't fit scrolls, with the ends
  * fading to advertise that there is more.

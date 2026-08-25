@@ -354,11 +354,9 @@ A chorded binding would look right in Settings → Keyboard and never fire. Bare
 keys also stay dead inside text fields, so a minus still types into a numeric
 inspector field.
 
-Both are real commands (search palette, Settings → Keyboard, the Quick Actions
-strip, agent-callable) and are **unscoped** — the timeline is the only zoomable
-surface in the app, so `=` means the same thing whichever panel holds focus. The
-strip buttons exist for the machine with no numeric row within reach of the
-editing hand, not as a second way to say the same thing.
+Both are real commands (search palette, Settings → Keyboard, agent-callable) and
+are **unscoped** — the timeline is the only zoomable surface in the app, so `=`
+means the same thing whichever panel holds focus.
 
 ## Follow playhead
 
