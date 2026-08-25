@@ -357,6 +357,9 @@ export function TimelineRuler({
       className="sticky top-0 z-[3] h-5 flex-none cursor-ew-resize select-none overflow-hidden border-b border-border-soft bg-card text-[10px] text-muted-foreground"
       style={{ width: widthPx }}
       onPointerDown={(e) => {
+        // The scroll body above this strip starts a selection marquee on
+        // pointerdown; a press here is a scrub and only a scrub.
+        e.stopPropagation();
         if (e.button === 0) onScrub(e.clientX);
       }}
       onClick={(e) => e.stopPropagation()}

@@ -17,6 +17,7 @@ import {
   useFocusedParamKeyForTrackLayers,
   useKeyframeFocusStore,
 } from "../keyframe/focusStore";
+import { useMarqueeAnchor } from "./hooks/useMarqueeAnchor";
 import { KeyframeCurveGraph } from "./KeyframeCurveGraph";
 import { EasingMenu } from "./EasingMenu";
 import { KeyframeNavigator } from "./KeyframeNavigator";
@@ -162,6 +163,13 @@ export function KeyframeLane({
     s.layerId && layerIds.has(s.layerId) ? s.layerId : null,
   );
 
+  // A box started on a sub-lane row sweeps KEYFRAMES, not the clips it is drawn
+  // over — the surface decides, so one handler serves every row. Diamonds and
+  // segment hits stop their own pointerdown, leaving the row's background.
+  const { onPointerDown: onMarqueeDown } = useMarqueeAnchor({
+    kind: "keyframe",
+  });
+
   return (
     <>
       {props.map((d) => {
@@ -169,8 +177,10 @@ export function KeyframeLane({
         return (
           <div
             key={d.paramKey}
+            data-testid="kf-sublane"
             className="relative border-b border-border-soft"
             style={{ height: expanded ? KF_SUBLANE_EXPANDED_H : KF_SUBLANE_H }}
+            onPointerDown={onMarqueeDown}
           >
             {track.layers.map((layer) => {
               if (isHiddenTwinAxis(d.paramKey, layer.params)) return null;

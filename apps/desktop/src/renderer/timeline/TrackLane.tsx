@@ -22,6 +22,7 @@ import type {
   TransitionSummary,
 } from "../ipc";
 import { playheadTimeUs } from "../state/playheadStore";
+import { useMarqueeAnchor } from "./hooks/useMarqueeAnchor";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
   MEDIA_DRAG_TYPE,
@@ -394,6 +395,12 @@ export function TrackLane({
     [registerLaneEl, track.id],
   );
 
+  // A box started on lane background sweeps CLIPS. Chips and the height
+  // splitter stop their own pointerdown, so only the background reaches here —
+  // and a locked chip, which does not stop it and is background as far as
+  // selection is concerned.
+  const { onPointerDown: onMarqueeDown } = useMarqueeAnchor({ kind: "clip" });
+
   return (
     <div
       ref={laneRef}
@@ -416,6 +423,7 @@ export function TrackLane({
         isGroupStart ? "border-t border-t-border" : "",
       ].join(" ")}
       style={{ height }}
+      onPointerDown={onMarqueeDown}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}

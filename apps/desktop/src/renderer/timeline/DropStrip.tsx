@@ -5,6 +5,7 @@ import { formatTimecode } from "../frames";
 import { DROP_STRIP_HEIGHT_PX } from "./geometry";
 import { SPAWN_TRACK_ID } from "./placement";
 import { playheadTimeUs } from "../state/playheadStore";
+import { useMarqueeAnchor } from "./hooks/useMarqueeAnchor";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
   MEDIA_DRAG_TYPE,
@@ -187,6 +188,9 @@ export function DropStrip({
     visibleDropPreview !== null
       ? ghostLeftPx + MEDIA_DRAG_CURSOR_OFFSET_PX + 24
       : (layerDrag?.anchorLeftPx ?? 0);
+  // The strip is a clip surface for selection too: a sweep may start on the
+  // reserved row and reach down into the lanes.
+  const { onPointerDown: onMarqueeDown } = useMarqueeAnchor({ kind: "clip" });
   return (
     <div
       ref={elRef}
@@ -201,6 +205,7 @@ export function DropStrip({
             : ""
       }`}
       style={{ height: DROP_STRIP_HEIGHT_PX }}
+      onPointerDown={onMarqueeDown}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}

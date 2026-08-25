@@ -36,6 +36,7 @@ import {
   timelineScrollLeftPx,
 } from "../state/timelineScrollStore";
 import { setActiveRegion } from "../focus/focusRegionStore";
+import { setTool } from "../state/toolStore";
 import { registerCommandProvider } from "../commands/registry";
 import { registerTransport, releaseTransport } from "../state/playbackStore";
 import { HEADER_COL_PX } from "./geometry";
@@ -2238,5 +2239,238 @@ describe("Timeline keyboard zoom", () => {
     expect(canvasWidth(container)).toBe("5150px");
 
     input.remove();
+  });
+});
+
+/// The marquee's gesture wiring: which surfaces arm it, what arms it, and what
+/// disarms it. The box only — this slice selects nothing, so every assertion
+/// here is about the rectangle's existence, kind and coordinates.
+describe("Timeline marquee", () => {
+  const keyedTrack: TrackSummary = {
+    ...track,
+    layers: [
+      {
+        ...tinyVideoLayer,
+        id: "keyed-1",
+        label: "Keyed",
+        params: {
+          kind: "VideoClip",
+          media_id: "media-1",
+          media_label: "media.mov",
+          src_in_us: 0,
+          src_out_us: 100_000,
+          x: staticNum(0),
+          y: staticNum(0),
+          scale_x: staticNum(1),
+          scale_y: staticNum(1),
+          scale_linked: true,
+          rotation_deg: staticNum(0),
+          anchor_x: { mode: "Static", value: 0.5 },
+          anchor_y: { mode: "Static", value: 0.5 },
+          // The one keyed param, so the track offers exactly one sub-lane row.
+          opacity: {
+            mode: "Keyframed",
+            value: [{ id: "kf-1", t_us: 0, value: 1, interp: { kind: "Linear" } }],
+          },
+          speed: 1,
+          flip_h: false,
+          flip_v: false,
+          fade_in_us: 0,
+          fade_out_us: 0,
+        },
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    clearLayerSelection();
+    setActiveRegion(null);
+    setPlayheadTimeUs(0);
+    setTool("select");
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, display_mode: "AllTracks" },
+    }));
+  });
+  afterEach(() => {
+    setTool("select");
+    cleanup();
+  });
+
+  function stubRect(
+    el: Element,
+    r: { left: number; top: number; right: number; bottom: number },
+  ) {
+    vi.spyOn(el, "getBoundingClientRect").mockReturnValue({
+      ...r,
+      width: r.right - r.left,
+      height: r.bottom - r.top,
+      x: r.left,
+      y: r.top,
+      toJSON: () => ({}),
+    } as DOMRect);
+  }
+
+  // jsdom lays nothing out, and the box IS a rect subtraction — so the canvas
+  // gets an origin deliberately away from (0, 0): a dropped `- rect.left` then
+  // shows up as a wrong x instead of passing by coincidence. The scroll host's
+  // rect matters too, because every pointer position below has to sit clear of
+  // both edge bands or the auto-scroll pump would run.
+  function stubMarqueeLayout(container: HTMLElement): HTMLElement {
+    const canvas = container.querySelector(
+      '[data-testid="timeline-canvas"]',
+    ) as HTMLElement;
+    stubRect(canvas, { left: 200, top: 100, right: 1240, bottom: 500 });
+    stubRect(canvas.closest(".overflow-auto")!, {
+      left: 0,
+      top: 80,
+      right: 1240,
+      bottom: 520,
+    });
+    return canvas;
+  }
+
+  const marquee = (container: HTMLElement) =>
+    container.querySelector('[data-testid="timeline-marquee"]');
+
+  /// Press `el`, then travel. One move is enough: the arm gate is displacement
+  /// from the press, not a count of events.
+  function sweep(
+    el: Element,
+    from: [number, number],
+    to: [number, number],
+    button = 0,
+  ) {
+    fireEvent.pointerDown(el, { button, clientX: from[0], clientY: from[1] });
+    fireEvent.pointerMove(window, { clientX: to[0], clientY: to[1] });
+  }
+
+  const release = (to: [number, number]) =>
+    fireEvent.pointerUp(window, { clientX: to[0], clientY: to[1] });
+
+  it("draws no box below the arm threshold", () => {
+    const { container } = renderTimeline({});
+    stubMarqueeLayout(container);
+    const lane = container.querySelector('[data-testid="track-lane"]')!;
+
+    sweep(lane, [400, 200], [402, 200]);
+
+    expect(marquee(container)).toBeNull();
+    release([402, 200]);
+  });
+
+  it("draws a lane-background box in canvas coordinates", () => {
+    const { container } = renderTimeline({});
+    stubMarqueeLayout(container);
+    const lane = container.querySelector('[data-testid="track-lane"]')!;
+
+    sweep(lane, [400, 200], [404, 260]);
+
+    const box = marquee(container)!;
+    expect(box.getAttribute("data-kind")).toBe("clip");
+    // Canvas origin (200, 100), so the press is at (200, 100) in its space and
+    // the 4 × 60 px of travel is the box's extent.
+    expect((box.firstElementChild as HTMLElement).style.transform).toBe(
+      "translate(200px, 100px) scale(4, 60)",
+    );
+    release([404, 260]);
+  });
+
+  it("draws a clip box from the drop strip", () => {
+    const { container } = renderTimeline({});
+    stubMarqueeLayout(container);
+    const strip = container.querySelector(
+      '[data-testid="timeline-drop-strip"]',
+    )!;
+
+    sweep(strip, [400, 120], [420, 300]);
+
+    expect(marquee(container)?.getAttribute("data-kind")).toBe("clip");
+    release([420, 300]);
+  });
+
+  it("draws a clip box from the scroll body", () => {
+    const { container } = renderTimeline({});
+    const canvas = stubMarqueeLayout(container);
+
+    sweep(canvas.parentElement!, [400, 400], [500, 300]);
+
+    expect(marquee(container)?.getAttribute("data-kind")).toBe("clip");
+    release([500, 300]);
+  });
+
+  it("draws a keyframe box from a sub-lane row", () => {
+    const { container } = renderTimeline({ tracks: [keyedTrack] });
+    fireEvent.click(container.querySelector('[data-testid="kf-lane-twirl"]')!);
+    stubMarqueeLayout(container);
+    const row = container.querySelector('[data-testid="kf-sublane"]')!;
+
+    sweep(row, [400, 200], [460, 210]);
+
+    // "keyframe" and not "clip" is also the proof that the row's handler stops
+    // the pointerdown: the scroll body's anchor would otherwise overwrite it.
+    expect(marquee(container)?.getAttribute("data-kind")).toBe("keyframe");
+    release([460, 210]);
+  });
+
+  it("drops the box on Escape", () => {
+    const { container } = renderTimeline({});
+    stubMarqueeLayout(container);
+    const lane = container.querySelector('[data-testid="track-lane"]')!;
+
+    sweep(lane, [400, 200], [440, 240]);
+    expect(marquee(container)).not.toBeNull();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(marquee(container)).toBeNull();
+  });
+
+  it("drops the box on release", () => {
+    const { container } = renderTimeline({});
+    stubMarqueeLayout(container);
+    const lane = container.querySelector('[data-testid="track-lane"]')!;
+
+    sweep(lane, [400, 200], [440, 240]);
+    expect(marquee(container)).not.toBeNull();
+
+    release([440, 240]);
+    expect(marquee(container)).toBeNull();
+  });
+
+  it("ignores a non-primary button", () => {
+    const { container } = renderTimeline({});
+    stubMarqueeLayout(container);
+    const lane = container.querySelector('[data-testid="track-lane"]')!;
+
+    sweep(lane, [400, 200], [440, 240], 2);
+
+    expect(marquee(container)).toBeNull();
+    release([440, 240]);
+  });
+
+  it("stands down in blade mode", () => {
+    setTool("blade");
+    // The prop is a separate thread from `DockWorkspace`; the anchor gates on
+    // the store, which is why the hook takes no `bladeMode`.
+    const { container } = renderTimeline({ bladeMode: true });
+    stubMarqueeLayout(container);
+    const lane = container.querySelector('[data-testid="track-lane"]')!;
+
+    sweep(lane, [400, 200], [440, 240]);
+
+    expect(marquee(container)).toBeNull();
+    release([440, 240]);
+  });
+
+  it("keeps a press on the ruler a scrub and only a scrub", () => {
+    const onSeek = vi.fn();
+    const { container } = renderTimeline({ onSeek });
+    stubMarqueeLayout(container);
+    const ruler = container.querySelector('[data-testid="timeline-ruler"]')!;
+
+    sweep(ruler, [400, 90], [440, 240]);
+
+    expect(onSeek).toHaveBeenCalled();
+    expect(marquee(container)).toBeNull();
+    release([440, 240]);
   });
 });

@@ -81,7 +81,13 @@ import { TrackLane } from "./TrackLane";
 import type { MediaDragPayload, MediaDropPlan } from "./mediaDrag";
 import { KeyframeLane, KeyframeLaneHeaders } from "./KeyframeLane";
 import { LayerContextMenu } from "./LayerContextMenu";
+import { MarqueeOverlay } from "./MarqueeOverlay";
 import { beginLayerRename } from "./renameStore";
+import {
+  MarqueeAnchorContext,
+  beginMarquee,
+  type MarqueeAnchor,
+} from "./hooks/useMarqueeAnchor";
 import { useTimelineView } from "./hooks/useTimelineView";
 import { useFollowPlayhead } from "./hooks/useFollowPlayhead";
 import { useWheelScroll } from "./hooks/useWheelScroll";
@@ -1156,8 +1162,18 @@ export function Timeline({
     [seekFromClientX, setFollowScrubbing],
   );
 
+  // What the marquee's box selects is not wired yet — the box's own lifecycle
+  // is provable without it, and the hit-test arrives behind this seam.
+  const onMarqueeBox = useCallback(() => {}, []);
+  // Memoized: the provider hands this to every anchor surface, so a fresh
+  // object would re-render all four on every Timeline render.
+  const marqueeAnchor = useMemo<MarqueeAnchor>(
+    () => ({ canvasRef, scrollRootRef: rootRef, onBox: onMarqueeBox }),
+    [onMarqueeBox],
+  );
+
   return (
-    <>
+    <MarqueeAnchorContext.Provider value={marqueeAnchor}>
     <div
       ref={rootRef}
       className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto bg-card ${
@@ -1208,8 +1224,15 @@ export function Timeline({
             </Fragment>
           ))}
         </div>
-        {/* scrolling body */}
-        <div className="relative grow">
+        {/* scrolling body. The marquee anchors HERE and not on the root: the
+            root spans the sticky header column, so a box could start from the
+            header's blank space. This column excludes it structurally, with no
+            HEADER_COL_PX coordinate test. Timeline provides the anchor context,
+            so it cannot consume its own provider — hence `beginMarquee`. */}
+        <div
+          className="relative grow"
+          onPointerDown={(e) => beginMarquee(marqueeAnchor, "clip", e)}
+        >
           <TimelineRuler
             pxPerSec={pxPerSec}
             totalSec={totalSec}
@@ -1310,6 +1333,7 @@ export function Timeline({
               />
             )}
             <OutOfRangeDim pxPerSec={pxPerSec} />
+            <MarqueeOverlay />
           </div>
           <TimelinePlayhead
             pxPerSec={pxPerSec}
@@ -1350,7 +1374,7 @@ export function Timeline({
         onDelete={(id) => void onChipMenuDelete(id)}
       />
     )}
-    </>
+    </MarqueeAnchorContext.Provider>
   );
 }
 
