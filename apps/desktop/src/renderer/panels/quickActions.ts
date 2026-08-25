@@ -14,8 +14,6 @@
 // component mount, so its order is a by-product of mount sequence.
 
 import {
-  ArrowRightFromLine,
-  ArrowRightToLine,
   Bookmark,
   BookmarkPlus,
   FoldVertical,
@@ -27,7 +25,6 @@ import {
   SquareSplitHorizontal,
   Ungroup,
   UnfoldVertical,
-  X,
   type LucideProps,
 } from "lucide-react";
 import type { ComponentType } from "react";
@@ -35,6 +32,7 @@ import type { ComponentType } from "react";
 import type { AppSettings, DisplayMode } from "../ipc";
 import type { Tool } from "../state/toolStore";
 import { FollowPlayheadIcon } from "./FollowPlayheadIcon";
+import { ClearRangeIcon, MarkInIcon, MarkOutIcon } from "./MarkRangeIcon";
 import {
   PlaybackResolutionFullIcon,
   PlaybackResolutionHalfIcon,
@@ -258,13 +256,17 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
     id: "range",
     mode: "command",
     items: [
-      // Direction carries the meaning: content STARTS at this line (arrow
-      // leaving it) vs. content ENDS at it (arrow arriving).
-      { id: "markIn", icon: ArrowRightFromLine },
-      { id: "markOut", icon: ArrowRightToLine },
+      // Square brackets, drawn in `MarkRangeIcon.tsx`: the in/out glyph every
+      // other NLE uses, and the only pair whose two halves stay apart at 16 px
+      // — the stock arrows mirror into the same silhouette.
+      { id: "markIn", icon: MarkInIcon },
+      { id: "markOut", icon: MarkOutIcon },
       {
         id: "clearRange",
-        icon: X,
+        // The same cross it always wore, now with a subject: brackets struck
+        // through. A cross rather than lucide's `*Off` slash because this
+        // command DELETES the marks rather than switching them off.
+        icon: ClearRangeIcon,
         // The command is disabled with no range marked, and a disabled button
         // with an unchanged tooltip reads as broken — so the hint explains the
         // reason instead of restating the label.
