@@ -582,21 +582,20 @@ describe("DockWorkspace React integration", () => {
     expect(strip?.api.close).toHaveBeenCalledOnce();
   });
 
-  /** Mount the strip as the sole Panel content with a given Group geometry.
-   *  The Group's size doubles as the Panel's: the header takes its slice out of
-   *  the strip's LONG axis, so the short axis the pin cares about is the same
-   *  number on both. */
-  function renderStrip(options: {
+  interface StripGroupOptions {
     width: number;
     height: number;
     groupPanels: { id: string }[];
     /** The axis the Dock Tree reports for the strip's Group. Omitted for a
      *  Group outside the grid, where the strip falls back to its own shape. */
     axis?: "width" | "height";
-  }) {
-    const dock = strictModeApi();
-    dockHarness.api = dock.api;
-    const group = {
+  }
+
+  /** One Dock Group, shaped as Dockview builds them. A factory rather than an
+   *  inline literal because a layout restore REPLACES the Group object under a
+   *  reused Panel, and the pin has to follow it there. */
+  function stripGroup(options: StripGroupOptions) {
+    return {
       element: groupElement(options.axis),
       panels: options.groupPanels,
       model: { header: { hidden: false }, headerPosition: "top" },
@@ -607,6 +606,26 @@ describe("DockWorkspace React integration", () => {
         setSize: vi.fn(),
       },
     };
+  }
+
+  type StripGroup = ReturnType<typeof stripGroup>;
+
+  /** Swap the Group out from under the mounted Panel, the way a layout restore
+   *  does: `fromJSON` rebuilds every Group object but REUSES the Panel, so
+   *  `api.group` points somewhere new while the Panel's React tree — and every
+   *  effect in it — carries on untouched. */
+  function restoreIntoGroup(replacement: StripGroup): void {
+    (dockHarness.contentApi as { group: StripGroup }).group = replacement;
+  }
+
+  /** Mount the strip as the sole Panel content with a given Group geometry.
+   *  The Group's size doubles as the Panel's: the header takes its slice out of
+   *  the strip's LONG axis, so the short axis the pin cares about is the same
+   *  number on both. */
+  function renderStrip(options: StripGroupOptions) {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+    const group = stripGroup(options);
     dockHarness.contentApi = {
       id: "quick-actions",
       width: options.width,
@@ -664,6 +683,31 @@ describe("DockWorkspace React integration", () => {
       cleanup();
       expect(group.model.headerPosition).toBe("top");
     });
+
+    // `headerPosition` is not carried in a persisted snapshot (normalizeNode
+    // keeps only views/activeView/id), so a restored Group always comes back
+    // with Dockview's default `top`. Aiming it once at mount left a restored
+    // row of buttons with the grip stranded above them instead of beside them.
+    it("re-aims the header at the Group a restore rebuilt", () => {
+      const { group, dock } = renderStrip({
+        width: 400,
+        height: 44,
+        axis: "height",
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      expect(group.model.headerPosition).toBe("left");
+
+      const restored = stripGroup({
+        width: 400,
+        height: 44,
+        axis: "height",
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      restoreIntoGroup(restored);
+      act(() => dock.onDidLayoutChange.emit());
+
+      expect(restored.model.headerPosition).toBe("left");
+    });
   });
 
   // Which axis may be capped, and when it must not be, is the whole story:
@@ -671,7 +715,7 @@ describe("DockWorkspace React integration", () => {
   describe("Quick Actions fixed thickness", () => {
     const UNBOUNDED = Number.MAX_SAFE_INTEGER;
 
-    function constraints(group: ReturnType<typeof renderStrip>["group"]) {
+    function constraints(group: StripGroup) {
       const calls = group.api.setConstraints.mock.calls;
       return calls[calls.length - 1]?.[0] as Record<string, number> | undefined;
     }
@@ -797,6 +841,68 @@ describe("DockWorkspace React integration", () => {
       act(() => dock.onDidLayoutChange.emit());
       act(() => dock.onDidLayoutChange.emit());
       expect(group.api.setSize).toHaveBeenCalledTimes(1);
+    });
+
+    // A layout restore (`fromJSON`) rebuilds every Group object while REUSING
+    // the Panel, so the strip wakes up in a Group this effect has never
+    // written to — and none of its deps changed, so it never re-runs. Reading
+    // the Group once at setup left the pin talking to the discarded object
+    // while the live one kept whatever width the restore's proportional
+    // relayout produced (measured at 67px against a 44px bar), and the
+    // autosave wrote that width straight back to disk.
+    it("follows the Panel into the Group a restore rebuilt", () => {
+      const { group, dock } = renderStrip({
+        width: 200,
+        height: 400,
+        axis: "width",
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      const capped = constraints(group);
+
+      const restored = stripGroup({
+        width: 200,
+        height: 400,
+        axis: "width",
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      restoreIntoGroup(restored);
+      act(() => dock.onDidLayoutChange.emit());
+
+      expect(constraints(restored)).toEqual({
+        minimumWidth: 44,
+        maximumWidth: 44,
+        maximumHeight: UNBOUNDED,
+      });
+      expect(restored.api.setSize).toHaveBeenCalledWith({ width: 44 });
+      // The discarded Group is left exactly as it was — no write follows the
+      // Panel out of it.
+      expect(constraints(group)).toEqual(capped);
+    });
+
+    // The refusals are a per-Group ledger. Carrying one across a rebuild would
+    // make the new Group inherit a "we already tried that" verdict it never
+    // gave, and the bar would never be resized to thickness there.
+    it("does not carry one Group's refusals into the next", () => {
+      const { group, dock } = renderStrip({
+        width: 200,
+        height: 400,
+        axis: "width",
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      // 200 is now a refused size on the original Group.
+      act(() => dock.onDidLayoutChange.emit());
+      expect(group.api.setSize).toHaveBeenCalledTimes(1);
+
+      const restored = stripGroup({
+        width: 200,
+        height: 400,
+        axis: "width",
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      restoreIntoGroup(restored);
+      act(() => dock.onDidLayoutChange.emit());
+
+      expect(restored.api.setSize).toHaveBeenCalledWith({ width: 44 });
     });
 
     // The bug this rule exists for: a bar docked beside the Timeline gets a

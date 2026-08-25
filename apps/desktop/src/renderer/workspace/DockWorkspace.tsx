@@ -274,15 +274,32 @@ function QuickActionsDockPanel() {
    *
    * Only while the strip is ALONE in its Group. Tabbed in with other Panels it
    * shows a normal tab, and a sideways header would tip their tabs over too —
-   * hence the restore in the cleanup as well as the `sole` guard. */
+   * hence the restore in the cleanup as well as the `sole` guard.
+   *
+   * Re-applied on every layout change against a freshly read `api.group`, for
+   * the same reason `useFixedStripThickness` re-pins: a restore rebuilds the
+   * Group object without changing any dep here, and `headerPosition` is not
+   * carried in a persisted snapshot (see `normalizeNode`) — so a restored bar
+   * comes back with Dockview's default `top` header and nothing re-aims it,
+   * leaving a row of buttons with the grip above them instead of beside them.
+   *
+   * The `!==` guard is load-bearing: Dockview's setter is not idempotent —
+   * it invalidates the header size and re-lays-out the active Panel on every
+   * write, which on a per-layout-change caller is a relayout loop. */
   useEffect(() => {
-    const group = runtime.api.group;
-    group.model.headerPosition =
-      sole && orientation === "horizontal" ? "left" : "top";
-    return () => {
-      group.model.headerPosition = "top";
+    const wanted = sole && orientation === "horizontal" ? "left" : "top";
+    const aim = () => {
+      const model = runtime.api.group.model;
+      if (model.headerPosition !== wanted) model.headerPosition = wanted;
     };
-  }, [orientation, runtime.api, sole]);
+    aim();
+    const disposable = runtime.containerApi.onDidLayoutChange(aim);
+    return () => {
+      disposable.dispose();
+      const model = runtime.api.group.model;
+      if (model.headerPosition !== "top") model.headerPosition = "top";
+    };
+  }, [orientation, runtime.api, runtime.containerApi, sole]);
 
   // No `weft-dock-panel-scroll` wrapper: the strip owns its own single-axis
   // scroller (with end fades and wheel forwarding), which a generic
@@ -683,15 +700,30 @@ function useFixedStripThickness(
   // ALTERNATES between two refusals would defeat a single-value guard and
   // re-enter the resize trade on every pass.
   const refused = useRef<Set<number>>(new Set());
+  // Which Group the refusals above were collected from, so a different one
+  // starts with a clean slate rather than inheriting sizes it never refused.
+  const pinned = useRef<StripGroup | null>(null);
 
   useEffect(() => {
-    const group = api.group;
     if (!sole || dragging || axis === null) {
-      applyGroupConstraints(group, UNCAPPED_GROUP);
+      applyGroupConstraints(api.group, UNCAPPED_GROUP);
       return;
     }
     refused.current.clear();
     const pin = () => {
+      // Read the Group at pin time, never once at effect setup: `api.group` is
+      // reassigned whenever the Panel changes Group, and a layout restore
+      // (`fromJSON`) rebuilds every Group object while reusing this Panel — so
+      // none of this effect's deps change and it never re-runs. A captured
+      // Group would leave the pin writing into the discarded object while the
+      // live one kept whatever size the restore's proportional relayout gave
+      // it: the bar silently widens with the window and, since the wrong width
+      // is autosaved, comes back wider on the next launch.
+      const group = api.group;
+      if (pinned.current !== group) {
+        pinned.current = group;
+        refused.current.clear();
+      }
       applyGroupConstraints(
         group,
         axis === "width"
@@ -725,7 +757,10 @@ function useFixedStripThickness(
     const disposable = containerApi.onDidLayoutChange(pin);
     return () => {
       disposable.dispose();
-      applyGroupConstraints(group, UNCAPPED_GROUP);
+      // The Group that actually carries the cap, which after a restore is not
+      // the one this effect started on.
+      applyGroupConstraints(pinned.current ?? api.group, UNCAPPED_GROUP);
+      pinned.current = null;
     };
   }, [api, axis, containerApi, dragging, sole]);
 }

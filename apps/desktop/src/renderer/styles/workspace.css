@@ -279,7 +279,13 @@
   gap: 2px;
   padding: 4px;
   overflow: auto;
-  scrollbar-width: thin;
+  /* No scrollbar, on a bar whose whole short axis is 44px. A classic (non-
+     overlay) scrollbar is IN FLOW, so `thin` took 10 of those 44 px the moment
+     the strip overflowed, squeezing 28px buttons into a 31px channel — the bar
+     visibly changed thickness with its own content. The end fades below say
+     "there is more" without costing layout, which is why they can carry the
+     whole affordance here. */
+  scrollbar-width: none;
 }
 
 .weft-quick-actions[data-orientation="horizontal"] {
@@ -301,39 +307,75 @@
    behind the reader once they have scrolled.
    No arrows here, unlike the tab strip: these buttons are anonymous icons, so an
    overlay covering one costs more than it does over a named tab, and every one of
-   them already shows its keyboard shortcut. */
+   them already shows its keyboard shortcut.
+
+   These fades ARE the scroll affordance — the scrollbar is gone (see above) —
+   so they run deep enough to read as one: `--weft-qa-fade` covers most of a
+   28px button, and the `--weft-qa-fade-knee` stop drops the alpha early so the
+   ramp reaches near-nothing well before the edge instead of dimming evenly. A
+   shallow, even 10px nick was ignorable next to a scrollbar; alone it is not
+   enough to say "there is another button past this one". */
+.weft-quick-actions {
+  --weft-qa-fade: 22px;
+  --weft-qa-fade-knee: 8px;
+}
+
 .weft-quick-actions[data-orientation="horizontal"][data-fade="end"] {
-  mask-image: linear-gradient(to right, #000 calc(100% - 10px), transparent 100%);
+  mask-image: linear-gradient(
+    to right,
+    #000 calc(100% - var(--weft-qa-fade)),
+    rgb(0 0 0 / 30%) calc(100% - var(--weft-qa-fade-knee)),
+    transparent 100%
+  );
 }
 
 .weft-quick-actions[data-orientation="horizontal"][data-fade="start"] {
-  mask-image: linear-gradient(to left, #000 calc(100% - 10px), transparent 100%);
+  mask-image: linear-gradient(
+    to left,
+    #000 calc(100% - var(--weft-qa-fade)),
+    rgb(0 0 0 / 30%) calc(100% - var(--weft-qa-fade-knee)),
+    transparent 100%
+  );
 }
 
 .weft-quick-actions[data-orientation="horizontal"][data-fade="both"] {
   mask-image: linear-gradient(
     to right,
     transparent 0,
-    #000 10px,
-    #000 calc(100% - 10px),
+    rgb(0 0 0 / 30%) var(--weft-qa-fade-knee),
+    #000 var(--weft-qa-fade),
+    #000 calc(100% - var(--weft-qa-fade)),
+    rgb(0 0 0 / 30%) calc(100% - var(--weft-qa-fade-knee)),
     transparent 100%
   );
 }
 
 .weft-quick-actions[data-orientation="vertical"][data-fade="end"] {
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), transparent 100%);
+  mask-image: linear-gradient(
+    to bottom,
+    #000 calc(100% - var(--weft-qa-fade)),
+    rgb(0 0 0 / 30%) calc(100% - var(--weft-qa-fade-knee)),
+    transparent 100%
+  );
 }
 
 .weft-quick-actions[data-orientation="vertical"][data-fade="start"] {
-  mask-image: linear-gradient(to top, #000 calc(100% - 10px), transparent 100%);
+  mask-image: linear-gradient(
+    to top,
+    #000 calc(100% - var(--weft-qa-fade)),
+    rgb(0 0 0 / 30%) calc(100% - var(--weft-qa-fade-knee)),
+    transparent 100%
+  );
 }
 
 .weft-quick-actions[data-orientation="vertical"][data-fade="both"] {
   mask-image: linear-gradient(
     to bottom,
     transparent 0,
-    #000 10px,
-    #000 calc(100% - 10px),
+    rgb(0 0 0 / 30%) var(--weft-qa-fade-knee),
+    #000 var(--weft-qa-fade),
+    #000 calc(100% - var(--weft-qa-fade)),
+    rgb(0 0 0 / 30%) calc(100% - var(--weft-qa-fade-knee)),
     transparent 100%
   );
 }
