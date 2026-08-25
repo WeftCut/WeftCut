@@ -6,7 +6,8 @@ import { readParamTrack, isHiddenTwinAxis, animatableParams } from "../keyframe/
 import {
   selectKeyframe,
   clearKeyframeSelection,
-  getSelectedKeyframe,
+  getSelectedKeyframes,
+  useIsKeyframeSelected,
   useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
 import { retimeKeyframe, removeKeyframe, setKeyframeInterp } from "../keyframe/edits";
@@ -119,9 +120,9 @@ export function KeyframeLane({
   const openInterpMenu: OpenInterpMenu = (clientX, clientY, layerId, paramKey, kfId) =>
     setInterpMenu({ x: clientX, y: clientY, layerId, paramKey, kfId });
 
-  // Capture-phase Delete for the selected keyframe, gated on the selection
-  // belonging to a layer in THIS track (any property — the sub-lanes can
-  // select a key on a property other than the layer's focused param, which the
+  // Capture-phase Delete for the selected keyframes, gated on the selection
+  // reaching a layer in THIS track (any property — the sub-lanes can select a
+  // key on a property other than the layer's focused param, which the
   // LayerBlock effect, keyed on focusedParam, doesn't cover). Capture phase +
   // stopImmediatePropagation so this preempts the app-level
   // delete-selected-layer shortcut. Subscribe to a primitive so the
@@ -130,14 +131,21 @@ export function KeyframeLane({
     () => new Set(track.layers.map((l) => l.id)),
     [track.layers],
   );
-  const armedKfId = useKeyframeSelectionStore((s) =>
-    s.selected && layerIds.has(s.selected.layerId) ? s.selected.kfId : null,
-  );
+  const armedKfId = useKeyframeSelectionStore((s) => {
+    for (const key of s.selected.values()) {
+      if (layerIds.has(key.layerId)) return key.kfId;
+    }
+    return null;
+  });
   useEffect(() => {
     if (!armedKfId) return;
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key !== "Delete" && ev.key !== "Backspace") return;
-      const sel = getSelectedKeyframe();
+      // Removes the FIRST selected key, not all of them. Batching it belongs
+      // with the other multi-key operations, which share one
+      // group-by-(layerId, paramKey) funnel; half a funnel here would be the
+      // copy that drifts from it.
+      const sel = getSelectedKeyframes()[0];
       if (!sel || !layerIds.has(sel.layerId)) return;
       if (subSelectionDeleteYields(ev.target)) return;
       ev.preventDefault();
@@ -241,11 +249,7 @@ function LayerCurveLane({
   onCommitParamTrack: (layerId: string, paramKey: string, t: AnimTrack<number>) => void;
   onOpenInterpMenu: OpenInterpMenu;
 }) {
-  const selectedKfId = useKeyframeSelectionStore((s) =>
-    s.selected && s.selected.layerId === layerId && s.selected.paramKey === paramKey
-      ? s.selected.kfId
-      : null,
-  );
+  const isSelected = useIsKeyframeSelected(layerId, paramKey);
   return (
     <KeyframeCurveGraph
       track={track}
@@ -254,7 +258,7 @@ function LayerCurveLane({
       pxPerSec={pxPerSec}
       height={height}
       editable={editable}
-      selectedKfId={selectedKfId}
+      isSelected={isSelected}
       onSelectSeek={(kfId) => {
         const kf = track.value.find((k) => k.id === kfId);
         if (!kf) return;

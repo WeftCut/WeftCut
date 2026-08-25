@@ -38,7 +38,8 @@ import { transportSeek } from "../state/playbackStore";
 import {
   selectKeyframe,
   clearKeyframeSelection,
-  useKeyframeSelectionStore,
+  useIsKeyframeSelected,
+  useSelectedKfIdFor,
 } from "../keyframe/selectionStore";
 import { timelineLayerTheme } from "./layerTheme";
 import {
@@ -270,13 +271,12 @@ export function LayerBlock({
   const isEditing = editingLayerId === layer.id;
   const focusedParam = useFocusedParamFor(layer.id);
   const [draft, setDraft] = useState("");
-  // Which keyframe on THIS layer+param is selected (null = none). Reads the
-  // shared selection store so collapsed + expanded diamonds agree.
-  const selectedKfId = useKeyframeSelectionStore((s) =>
-    s.selected?.layerId === layer.id && s.selected?.paramKey === focusedParam
-      ? s.selected.kfId
-      : null,
-  );
+  // Which of THIS layer+param's keyframes are selected. Reads the shared
+  // selection store so the chip diamonds and the sub-lane ones agree.
+  const isKfSelected = useIsKeyframeSelected(layer.id, focusedParam);
+  // Delete's target below, as a primitive so the effect re-arms whenever the
+  // selection changes (atomic selector).
+  const armedKfId = useSelectedKfIdFor(layer.id, focusedParam);
   const [interpMenu, setInterpMenu] = useState<{ x: number; y: number; kfId: string } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const dragTUsRef = useRef<number | null>(null);
@@ -291,7 +291,7 @@ export function LayerBlock({
   }, [isEditing, layer.id, layer.label]);
 
   useEffect(() => {
-    if (!selectedKfId || !focusedParam) return;
+    if (!armedKfId || !focusedParam) return;
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key !== "Delete" && ev.key !== "Backspace") return;
       // A diamond is selected → Delete removes the KEYFRAME, not the layer.
@@ -305,12 +305,12 @@ export function LayerBlock({
       const track = readParamTrack(layer.params, focusedParam);
       if (!track) return;
       const desc = animatableParams(layer.kind).find((d) => d.paramKey === focusedParam);
-      onCommitParamTrack(layer.id, focusedParam, removeKeyframe(track, selectedKfId, desc?.fallback ?? 0));
+      onCommitParamTrack(layer.id, focusedParam, removeKeyframe(track, armedKfId, desc?.fallback ?? 0));
       clearKeyframeSelection();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [selectedKfId, focusedParam, layer.id, layer.kind, layer.params, onCommitParamTrack]);
+  }, [armedKfId, focusedParam, layer.id, layer.kind, layer.params, onCommitParamTrack]);
 
   // Drop the diamond selection when this layer is no longer the primary
   // selection, so the capture-phase Delete handler above can't stay armed
@@ -769,7 +769,7 @@ export function LayerBlock({
           {diamonds.map((d) => (
             <span
               key={d.id}
-              className={`kf-diamond${d.glyph ? ` ${d.glyph}` : ""}${selectedKfId === d.id ? " is-selected" : ""}`}
+              className={`kf-diamond${d.glyph ? ` ${d.glyph}` : ""}${isKfSelected(d.id) ? " is-selected" : ""}`}
               style={{ left: d.x }}
               data-kf-id={d.id}
             />

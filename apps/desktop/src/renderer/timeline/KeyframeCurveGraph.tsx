@@ -24,7 +24,7 @@ export function KeyframeCurveGraph({
   pxPerSec,
   height,
   editable,
-  selectedKfId,
+  isSelected,
   onSelectSeek,
   onRetime,
   onSetInterp,
@@ -36,7 +36,9 @@ export function KeyframeCurveGraph({
   pxPerSec: number;
   height: number;
   editable: boolean;
-  selectedKfId: string | null;
+  /// Is this curve's key `kfId` selected? A predicate rather than an id
+  /// because the selection is a set; asking per key keeps the render path O(1).
+  isSelected: (kfId: string) => boolean;
   /// click a dot (no drag): select it + seek the transport to its time.
   onSelectSeek: (kfId: string) => void;
   /// drag a dot horizontally: retime to a new layer-local µs (caller commits).
@@ -251,7 +253,7 @@ export function KeyframeCurveGraph({
         return (
           <span
             key={k.id}
-            className={`kf-diamond kf-sublane-diamond${glyph ? ` ${glyph}` : ""}${selectedKfId === k.id ? " is-selected" : ""}`}
+            className={`kf-diamond kf-sublane-diamond${glyph ? ` ${glyph}` : ""}${isSelected(k.id) ? " is-selected" : ""}`}
             style={{ left: timeToXPx(k.t_us, geom), top: valueToY(k.value, geom) }}
             data-kf-id={k.id}
             onPointerDown={(e) => dragDot(k.id, k.t_us, e)}

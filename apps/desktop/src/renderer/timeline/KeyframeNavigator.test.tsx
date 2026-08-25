@@ -5,7 +5,7 @@ import "../i18n"; // initialize i18next so t(key) resolves (mirrors EasingMenu.t
 import type { AnimTrack, TrackSummary } from "../ipc";
 import { KeyframeNavigator } from "./KeyframeNavigator";
 import { setKeyframeFocus, clearKeyframeFocus, useKeyframeFocusStore } from "../keyframe/focusStore";
-import { getSelectedKeyframe, clearKeyframeSelection } from "../keyframe/selectionStore";
+import { getSelectedKeyframes, clearKeyframeSelection } from "../keyframe/selectionStore";
 
 vi.mock("../state/playbackStore", () => ({ transportSeek: vi.fn() }));
 import { transportSeek } from "../state/playbackStore";
@@ -115,7 +115,7 @@ describe("KeyframeNavigator ◄ ► arrows", () => {
     renderNav(1_000_000); // playhead on key b → prev is key a at local 0
     fireEvent.click(prevBtn());
     expect(transportSeek).toHaveBeenCalledWith(0); // t_start 0 + key a at 0
-    expect(getSelectedKeyframe()).toEqual({ layerId: "L1", paramKey: "opacity", kfId: "a" });
+    expect(getSelectedKeyframes()).toEqual([{ layerId: "L1", paramKey: "opacity", kfId: "a" }]);
   });
 });
 
@@ -149,7 +149,7 @@ describe("KeyframeNavigator focused-clip targeting (rule 1) + arrow side effects
     // ► lands on L2's key "z" → absolute seek (L2 t_start 0 + 1_800_000),
     // plus the select + focus side effects, verified via real store state.
     expect(transportSeek).toHaveBeenCalledWith(1_800_000);
-    expect(getSelectedKeyframe()).toEqual({ layerId: "L2", paramKey: "opacity", kfId: "z" });
+    expect(getSelectedKeyframes()).toEqual([{ layerId: "L2", paramKey: "opacity", kfId: "z" }]);
     expect(useKeyframeFocusStore.getState().layerId).toBe("L2");
   });
 });

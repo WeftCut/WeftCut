@@ -10,7 +10,7 @@
 import type { TrackSummary } from "../ipc";
 import {
   clearKeyframeSelection,
-  getSelectedKeyframe,
+  hasKeyframeSelection,
 } from "../keyframe/selectionStore";
 import { useProjectStore } from "../state/projectStore";
 import {
@@ -88,6 +88,6 @@ export function canDeselectAll(): boolean {
   return (
     selection.selectedLayerIds.size > 0 ||
     selection.selectedTransitionId !== null ||
-    getSelectedKeyframe() !== null
+    hasKeyframeSelection()
   );
 }

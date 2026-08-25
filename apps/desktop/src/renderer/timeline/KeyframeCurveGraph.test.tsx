@@ -34,7 +34,7 @@ function renderGraph(over: Partial<React.ComponentProps<typeof KeyframeCurveGrap
       pxPerSec={100}
       height={72}
       editable={true}
-      selectedKfId={null}
+      isSelected={() => false}
       onSelectSeek={vi.fn()}
       onRetime={vi.fn()}
       onSetInterp={vi.fn()}
@@ -74,10 +74,15 @@ describe("KeyframeCurveGraph", () => {
     fireEvent.pointerDown(container.querySelector('.kf-sublane-diamond[data-kf-id="k0"]')!, { button: 0 });
     expect(onSelectSeek).toHaveBeenCalledWith("k0");
   });
-  it("marks the selected keyframe", () => {
-    const { container } = renderGraph({ selectedKfId: "k1" });
+  it("marks every selected keyframe", () => {
+    const { container } = renderGraph({ isSelected: (id) => id === "k1" });
     expect(container.querySelector('.kf-sublane-diamond[data-kf-id="k1"]')!.className)
       .toContain("is-selected");
+    expect(container.querySelector('.kf-sublane-diamond[data-kf-id="k0"]')!.className)
+      .not.toContain("is-selected");
+    cleanup();
+    const both = renderGraph({ isSelected: () => true }).container;
+    expect(both.querySelectorAll(".kf-sublane-diamond.is-selected").length).toBe(2);
   });
   it("right-click on a segment opens the menu for that segment's owner keyframe", () => {
     const onOpenMenu = vi.fn();
