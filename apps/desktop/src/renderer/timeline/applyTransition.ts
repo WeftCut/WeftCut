@@ -1,7 +1,7 @@
 // The store-reading half of the argumentless "apply transition" surfaces:
 // `findNearestCut` (transitions.ts) is the pure kernel, this module binds it
-// to live state. Palette command, Quick Actions button, and Transitions-panel
-// cards all dispatch through `applyTransitionAtPlayhead`, so target semantics
+// to live state. The palette/menu command and the Transitions-panel cards
+// both dispatch through `applyTransitionAtPlayhead`, so target semantics
 // can never drift between outlets.
 //
 // Everything reads stores imperatively at call time, for the reason
@@ -62,7 +62,7 @@ export function hasTransitionCut(): boolean {
 }
 
 /// Subscription form of `hasTransitionCut` for surfaces that render the gate
-/// (the strip button, the panel cards). Boolean selector on purpose: an edit
+/// (the Transitions-panel cards). Boolean selector on purpose: an edit
 /// re-renders the subscriber only when cut-existence flips, not on every
 /// summary refresh.
 export const useHasTransitionCut = (): boolean =>

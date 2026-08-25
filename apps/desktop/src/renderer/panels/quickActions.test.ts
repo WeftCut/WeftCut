@@ -48,7 +48,6 @@ function state(over: Partial<QuickActionState> = {}): QuickActionState {
     displayMode: "AbRoll",
     hasRange: false,
     markersVisible: true,
-    hasTransitionCut: false,
     snapEnabled: true,
     followPlayhead: true,
     safeAreaGuides: false,
@@ -259,8 +258,8 @@ describe("quickActions catalogue", () => {
     });
   });
 
-  // Same disabled-button rule as Clear and Apply transition, for the pair whose
-  // precondition is a SELECTION rather than project content.
+  // Same disabled-button rule as Clear range, for the pair whose precondition
+  // is a SELECTION rather than project content.
   it("explains why the group buttons are unavailable", () => {
     const item = (id: string) =>
       QUICK_ACTION_SECTIONS.flatMap((s) => s.items).find((i) => i.id === id);
@@ -301,19 +300,5 @@ describe("quickActions catalogue", () => {
     );
     expect(item).toBeDefined();
     expect(item?.hint).toBeUndefined();
-  });
-
-  // Same disabled-button rule for the apply-transition button: with no
-  // eligible cut anywhere the hint names the precondition, not the label.
-  it("explains why Apply transition is unavailable with no eligible cut", () => {
-    const item = QUICK_ACTION_SECTIONS.flatMap((s) => s.items).find(
-      (i) => i.id === "applyDefaultTransition",
-    );
-    expect(item?.hint?.(state({ hasTransitionCut: false }))).toBe(
-      "transitions.no_target",
-    );
-    expect(item?.hint?.(state({ hasTransitionCut: true }))).toBe(
-      "actions.apply_default_transition",
-    );
   });
 });

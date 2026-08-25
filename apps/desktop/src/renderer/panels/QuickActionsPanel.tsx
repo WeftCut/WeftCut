@@ -15,7 +15,6 @@ import {
 } from "../settings/appSettingsStore";
 import { useActiveTool } from "../state/toolStore";
 import { useHasMarkedRange } from "../state/rangeStore";
-import { useHasTransitionCut } from "../timeline/applyTransition";
 import {
   useCanDissolveSelection,
   useCanGroupSelection,
@@ -245,9 +244,6 @@ export function QuickActionsPanel({
   // only when the range appears or disappears, not on every position change.
   const hasRange = useHasMarkedRange();
   const markersVisible = useMarkersVisible();
-  // Same subscribed-not-imperative reasoning as `hasRange` directly above,
-  // for `applyDefaultTransition`'s enabled state.
-  const hasTransitionCut = useHasTransitionCut();
   // The app-settings values the strip renders as pressed or armed: three
   // toggles and the modal playback resolution. Atomic selectors, one field
   // each — never a composite one
@@ -287,7 +283,6 @@ export function QuickActionsPanel({
     displayMode,
     hasRange,
     markersVisible,
-    hasTransitionCut,
     snapEnabled,
     followPlayhead,
     safeAreaGuides,

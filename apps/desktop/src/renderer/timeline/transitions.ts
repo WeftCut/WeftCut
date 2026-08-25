@@ -92,9 +92,9 @@ function participantSpanUs(from: LayerSummary, to: LayerSummary): number {
 
 /// Find the cut nearest to `tUs` across ALL tracks, with no distance limit —
 /// the target-resolution kernel behind every argumentless "apply transition"
-/// surface (palette command, Quick Actions button, Transitions panel card).
-/// The registry has no parameterized-command shape, so the target must come
-/// from state; this is where.
+/// surface (palette command, menus, Transitions panel card). The registry has
+/// no parameterized-command shape, so the target must come from state; this is
+/// where.
 ///
 /// Selection preference: when any selected layer participates in a cut, only
 /// those cuts compete — the user's selection names the join they mean, even

@@ -152,8 +152,8 @@ a truth table in `src/main/state/reconcile.test.ts`:
   mixed `extended_us` covers center), Policy C dissolves at the gesture
   layer under the chip's pointer capture, and chip drag-resize ships as the
   chip's two placement-independent edges. Authoring surfaces (palette
-  command, Quick Actions, Transitions panel, cut context menu) add
-  argumentlessly against the nearest eligible cut.
+  command, Transitions panel, cut context menu) add argumentlessly against
+  the nearest eligible cut.
 
 ## References
 
