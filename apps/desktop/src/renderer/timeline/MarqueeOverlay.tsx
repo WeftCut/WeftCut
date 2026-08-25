@@ -21,6 +21,17 @@ export function MarqueeOverlay() {
   const y = Math.min(box.y0, box.y1);
   const w = Math.abs(box.x1 - box.x0);
   const h = Math.abs(box.y1 - box.y0);
+  // The far hairlines are INSET, so the ring encloses exactly the half-open
+  // range the hit-test takes — `[x, x+w)`, per `marquee.ts`. Drawing them at
+  // `x + w` / `y + h` instead lands them on the first column and row the box
+  // does NOT take: a ring one pixel wider than its own fill, which reads on
+  // screen as the fill coming loose from two of its four sides while the near
+  // two stay welded to it.
+  //
+  // `Math.max` keeps a far edge from crossing its near one. The arm gate is
+  // total displacement, so a straight-down drag arms with `w === 0`.
+  const xFar = Math.max(x, x + w - 1);
+  const yFar = Math.max(y, y + h - 1);
   const tint = TINT[kind];
   return (
     <div
@@ -31,9 +42,9 @@ export function MarqueeOverlay() {
     >
       <Piece x={x} y={y} sx={w} sy={h} className={tint.fill} />
       <Piece x={x} y={y} sx={w} sy={1} className={tint.edge} />
-      <Piece x={x} y={y + h} sx={w} sy={1} className={tint.edge} />
+      <Piece x={x} y={yFar} sx={w} sy={1} className={tint.edge} />
       <Piece x={x} y={y} sx={1} sy={h} className={tint.edge} />
-      <Piece x={x + w} y={y} sx={1} sy={h} className={tint.edge} />
+      <Piece x={xFar} y={y} sx={1} sy={h} className={tint.edge} />
     </div>
   );
 }
