@@ -449,6 +449,28 @@ describe('authored precision at the write seam', () => {
     expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 0.4 }, new MotifCatalog()), 'InvalidArgument')
   })
 
+  it('rounds a Color layer to whole pixels, at BOTH the patch and the constructor', () => {
+    const g = seededGen(); const p = blankProject(g, 'q')
+    // The constructor is the one MCP reaches with an agent's raw JSON size
+    // (actor.ts add_layer), so a layer must not be able to be BORN fractional.
+    const id = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 255, g: 0, b: 0, a: 255 }, 1920.7, 1080.2), 0, 1_000_000)
+    const born = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Color' }>
+    expect([born.width, born.height]).toEqual([1921, 1080])
+    applyUpdateLayerParams(p, id, { kind: 'Color', width: 640.4, height: 360.5 }, new MotifCatalog())
+    const c = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Color' }>
+    expect([c.width, c.height]).toEqual([640, 361])
+  })
+
+  it('refuses a Color extent that rounds away, leaving the colour unwritten', () => {
+    const g = seededGen(); const p = blankProject(g, 'q')
+    const id = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 255, g: 0, b: 0, a: 255 }, 1920, 1080), 0, 1_000_000)
+    expectCmd(() => applyUpdateLayerParams(p, id,
+      { kind: 'Color', color: { r: 0, g: 255, b: 0, a: 255 }, width: 0.4 }, new MotifCatalog()), 'InvalidArgument')
+    const c = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Color' }>
+    expect([(c.color as { value: { g: number } }).value.g, c.width]).toEqual([0, 1920])
+    expectCmd(() => colorParams({ r: 0, g: 0, b: 0, a: 255 }, 0, 1080), 'InvalidArgument')
+  })
+
   it('refuses a non-positive font size', () => {
     const g = seededGen(); const p = blankProject(g, 'q')
     const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('t', p.composition), 0, 1_000_000)

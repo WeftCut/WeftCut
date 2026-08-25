@@ -1,7 +1,7 @@
 import type { Project, Rgba, TextAlign, TextParams, Track, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { snapFrameRound } from '../snap'
-import { quantizeBoxPx, quantizeParam } from '../quantize'
+import { quantizeExtentPx, quantizeParam } from '../quantize'
 import { applyAddLayer, defaultTransform } from './add'
 import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
 
@@ -80,7 +80,7 @@ export function cueToTextParams(cue: Cue, compW: number, compH: number): TextPar
     // compress the long ones and make two cues of one file render at different
     // sizes. valign is never observable here — the height tracks the content.
     // See ADR 0049.
-    box_w: quantizeBoxPx(compW * (1 - 2 * SAFE_AREA_MARGIN)), box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0,
+    box_w: quantizeExtentPx(compW * (1 - 2 * SAFE_AREA_MARGIN)), box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0,
   }
 }
 

@@ -9,7 +9,7 @@
 // because it is keyed by the same param keys and read by the same inspector; see
 // that file for why `d` is a decimal place count and not `step`.
 export {
-  BOX_PRECISION,
+  PIXEL_EXTENT_PRECISION,
   EFFECT_PARAM_DECIMALS,
   PARAM_PRECISION,
   paramDecimals,
@@ -19,7 +19,7 @@ export {
   type ParamPrecision,
 } from '../../renderer/keyframe/descriptors'
 
-import { BOX_PRECISION, EFFECT_PARAM_DECIMALS, paramRange, quantize, quantizeParam } from '../../renderer/keyframe/descriptors'
+import { PIXEL_EXTENT_PRECISION, EFFECT_PARAM_DECIMALS, paramRange, quantize, quantizeParam } from '../../renderer/keyframe/descriptors'
 import { CommandFailure } from './errors'
 import type { Animated, Keyframe } from './model'
 
@@ -95,8 +95,33 @@ export function quantizeEffectTrack(track: Animated<number>): void {
   for (const k of track.value as Keyframe<number>[]) k.value = q(k.value)
 }
 
-/** A plain authored pixel extent at `d` places — the text box pair, which is a
- *  scalar rather than a track (ADR 0049) and so has no param key to look up. */
-export function quantizeBoxPx(v: number): number {
-  return quantize(v, BOX_PRECISION.d)
+/** A plain authored pixel extent, rounded to whole pixels — a text box axis, a
+ *  Color layer's size. A scalar rather than a track, so there is no param key to
+ *  look up. Does NOT refuse; `authoredExtentPx` is the checked form. */
+export function quantizeExtentPx(v: number): number {
+  return quantize(v, PIXEL_EXTENT_PRECISION.d)
+}
+
+/** An authored pixel extent, ready to store: rounded to whole pixels, then
+ *  refused if that leaves it non-positive.
+ *
+ *  The order is the point. A raw `> 0` test passes 0.4, which then records as the
+ *  zero extent the test exists to refuse — a zero-width text box renders as Auto
+ *  while state claims Fixed, and a zero-width Color layer is a layer with no
+ *  surface. Rounding is what can create the illegal value, so the check has to
+ *  follow it, and the message has to name the rounding or the caller cannot tell
+ *  why a positive number was rejected.
+ *
+ *  `hint` appends a field-specific escape (the text box's `null` = auto), because
+ *  a refusal an agent cannot act on is a refusal that costs it a whole turn. */
+export function authoredExtentPx(field: string, v: number, hint = ''): number {
+  const q = quantizeExtentPx(v)
+  if (!Number.isFinite(q) || q <= 0) {
+    throw new CommandFailure({
+      error: 'InvalidArgument',
+      field,
+      detail: `${field} is a whole number of composition pixels${hint} — got ${v}, which records as ${q}`,
+    })
+  }
+  return q
 }

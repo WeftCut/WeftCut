@@ -1,13 +1,24 @@
 import type { Layer, LayerParams, Marker, Project, Rgba, TextParams, TrackRole, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { gridForLayerKind, snapOnGrid } from '../snap'
+import { authoredExtentPx } from '../quantize'
 import { applyDurationAutofit } from './helpers'
 import { snapMarkerTimes } from './markers'
 import { CommandFailure } from '../errors'
 import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
 
+/** THE Color constructor — every creation path funnels here, including the two
+ *  MCP ones that take the size straight off an agent's JSON (`actor.ts`
+ *  add_layer / the layer-spec builder). So the extent policy has to hold here and
+ *  not only in `applyParamsPatch`: a layer BORN 1920.7 px wide would otherwise
+ *  never meet the check that an edit to the same field must pass. */
 export function colorParams(color: Rgba, width: number, height: number): LayerParams {
-  return { kind: 'Color', color: { mode: 'Static', value: color }, width, height }
+  return {
+    kind: 'Color',
+    color: { mode: 'Static', value: color },
+    width: authoredExtentPx('width', width),
+    height: authoredExtentPx('height', height),
+  }
 }
 /** THE default Text params — `prodTextParams` and `add_demo_text_layer` both
  *  delegate here. Three factories each naming their own family is how the

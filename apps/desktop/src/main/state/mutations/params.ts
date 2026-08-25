@@ -1,7 +1,7 @@
 import type { Animated, AudioParams, AudioRole, ColorParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextParams, Uuid, VAlign, VideoClipParams } from '../model'
 import { CommandFailure } from '../errors'
 import { snapFrameFloor, snapFrameCeil, gridForLayerKind, snapOnGrid } from '../snap'
-import { authoredValue, quantizeBoxPx, quantizeTrack } from '../quantize'
+import { authoredExtentPx, authoredValue, quantizeTrack } from '../quantize'
 import { checkTrackLock, locateLayer, applyDurationAutofit } from './helpers'
 import { normalizeKeyframes } from './animated'
 import type { MotifCatalog } from '../../../shared/motifs/catalog'
@@ -99,36 +99,29 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (patch.valign !== undefined && !VALIGNS.includes(patch.valign)) {
         throw new CommandFailure({ error: 'InvalidArgument', field: 'valign', detail: `valign must be one of ${VALIGNS.join(' | ')}` })
       }
-      // The box pair is authored in WHOLE composition pixels (BOX_PRECISION): the
-      // box lays glyphs out (ADR 0049), and half a pixel of line-breaking width is
-      // not something an author means. Rounded here, once, so the checks below and
-      // the assignments further down all see the value that will actually be
-      // stored.
-      const boxPx = (v: number | null | undefined): number | null | undefined =>
-        v === undefined || v === null ? v : quantizeBoxPx(v)
-      const boxWPatch = boxPx(patch.box_w)
-      const boxHPatch = boxPx(patch.box_h)
+      // A box axis is either null (auto) or a real positive extent, authored in
+      // WHOLE composition pixels: the box lays glyphs out (ADR 0049), so half a
+      // pixel of line-breaking width is not something an author means. Zero and
+      // negative are refused because they are not a narrow box, they are a broken
+      // mode — the renderer reads a non-positive width as "no box" and would render
+      // Auto width while state claimed Fixed. Deliberately NOT the gesture's 8 px
+      // floor: that one is a drag ergonomic, and a 4 px box an agent asks for on
+      // purpose is legal, just silly.
+      //
+      // `authoredExtentPx` rounds first and checks after, which is the only order
+      // that catches `0.4` — a value that passes a raw `> 0` test and then records
+      // as exactly the zero box the check exists to refuse. Resolved here, once, so
+      // the mode check below and the assignments further down all see what will
+      // actually be stored.
+      const boxPx = (field: 'box_w' | 'box_h'): number | null | undefined => {
+        const v = patch[field]
+        return v === undefined || v === null ? v : authoredExtentPx(field, v, ', or null for auto')
+      }
+      const boxWPatch = boxPx('box_w')
+      const boxHPatch = boxPx('box_h')
       const xP = authored('x', patch.x)
       const yP = authored('y', patch.y)
       const opacityP = authored('opacity', patch.opacity)
-      // A box axis is either null (auto) or a real positive extent. Zero and
-      // negative are refused because they are not a narrow box, they are a broken
-      // mode: the renderer reads a non-positive width as "no box" and would render
-      // Auto width while state claimed Fixed. Deliberately NOT the gesture's 8 px
-      // floor — that one is a drag ergonomic, and a 4 px box an agent asks for on
-      // purpose is legal, just silly.
-      //
-      // Checked AFTER rounding, because rounding is what can create the illegal
-      // value: `0.4` passes a raw `> 0` test and then stores as the zero box this
-      // check exists to refuse. The message names the rounding for the same reason
-      // the mode explainer below is spelled out — an agent's only route to fixing
-      // its own call is the text it gets back.
-      for (const [field, v] of [['box_w', boxWPatch], ['box_h', boxHPatch]] as const) {
-        if (v !== undefined && v !== null && !(Number.isFinite(v) && v > 0)) {
-          throw new CommandFailure({ error: 'InvalidArgument', field,
-            detail: `${field} is a whole number of composition pixels (values round to the nearest), or null for auto — got ${patch[field]}, which rounds to ${v}` })
-        }
-      }
       for (const field of ['line_height', 'letter_spacing'] as const) {
         const v = patch[field]
         if (v !== undefined && !Number.isFinite(v)) {
@@ -231,9 +224,15 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
     }
     case 'Color': {
       const c = p as ColorParams
+      // The same whole-pixel extent the text box is: a Color layer is rasterized
+      // at this size, and a fractional one buys nothing a whole pixel does not.
+      // Resolved before the colour is written so a refusal leaves the layer
+      // untouched.
+      const wP = patch.width === undefined ? undefined : authoredExtentPx('width', patch.width)
+      const hP = patch.height === undefined ? undefined : authoredExtentPx('height', patch.height)
       if (patch.color !== undefined) c.color = stat(patch.color)
-      if (patch.width !== undefined) c.width = patch.width
-      if (patch.height !== undefined) c.height = patch.height
+      if (wP !== undefined) c.width = wP
+      if (hP !== undefined) c.height = hP
       return
     }
     case 'Audio': {

@@ -171,11 +171,17 @@ export const PARAM_PRECISION: Readonly<Record<string, ParamPrecision>> = {
   pan: { d: 3, range: [-1, 1] },
 };
 
-/** Text box extents. In pixels like `x`/`y` but INTEGER: the box lays glyphs out
- *  (ADR 0049), and half a pixel of line-breaking width is not a thing an author
- *  means. Kept apart from `PARAM_PRECISION` because the box is a plain scalar,
- *  not an `Animated` track, so it never reaches a param-key resolver. */
-export const BOX_PRECISION: ParamPrecision = { d: 0 };
+/** An authored pixel EXTENT — a text box axis, a Color layer's size. In pixels
+ *  like `x`/`y` but INTEGER, and the difference is what the number is for: a
+ *  position says where something sits, so half a pixel is a real place to sit,
+ *  while an extent says how big a surface is. A text box lays glyphs out
+ *  (ADR 0049) and a Color layer is rasterized; neither has any use for half of
+ *  one.
+ *
+ *  Kept apart from `PARAM_PRECISION` because extents are plain scalars, not
+ *  `Animated` tracks — they never reach a param-key resolver, so the table keyed
+ *  by param keys is the wrong home and its coverage gate would reject them. */
+export const PIXEL_EXTENT_PRECISION: ParamPrecision = { d: 0 };
 
 /** Every effect param, at one precision.
  *

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { isCommandFailure } from './errors'
 import type { Animated } from './model'
-import { authoredValue, quantizeEffectTrack, quantizeTrack } from './quantize'
+import { authoredExtentPx, authoredValue, quantizeEffectTrack, quantizeTrack } from './quantize'
 import { TRANSFORM_F64_KEYS } from './mutations/params'
 // Reaching across into the renderer is the POINT of the two gates below: the
 // precision table and the readout formatter have to agree, and only a test that
@@ -217,6 +217,46 @@ describe('quantizeTrack', () => {
     const t: Animated<number> = { mode: 'Static', value: 0.12345678 }
     quantizeTrack('effects[e1].params[feather]', t)
     expect(t).toEqual({ mode: 'Static', value: 0.123 })
+  })
+})
+
+describe('authoredExtentPx', () => {
+  it('rounds an extent to whole pixels', () => {
+    expect(authoredExtentPx('width', 1612.8)).toBe(1613)
+    expect(authoredExtentPx('box_w', 640.4)).toBe(640)
+  })
+
+  it('refuses a positive value that ROUNDS AWAY to zero', () => {
+    // The whole reason the check follows the rounding: 0.4 passes any raw `> 0`
+    // test and then records as the zero extent that test exists to refuse.
+    expectCmd(() => authoredExtentPx('width', 0.4), 'InvalidArgument')
+    expectCmd(() => authoredExtentPx('box_w', 0), 'InvalidArgument')
+    expectCmd(() => authoredExtentPx('height', -5), 'InvalidArgument')
+    expectCmd(() => authoredExtentPx('width', NaN), 'InvalidArgument')
+  })
+
+  it('names both the sent and the recorded value, and carries the field hint', () => {
+    try {
+      authoredExtentPx('box_w', 0.4, ', or null for auto')
+      throw new Error('expected a refusal')
+    } catch (e) {
+      if (!isCommandFailure(e) || e.err.error !== 'InvalidArgument') throw e
+      expect(e.err.detail).toContain('0.4')
+      expect(e.err.detail).toContain('records as 0')
+      // Without the escape hatch spelled out, an agent cannot tell that dropping
+      // the fixed width is even an option.
+      expect(e.err.detail).toContain('null for auto')
+    }
+  })
+
+  it('omits the hint where there is no escape — a Color layer has no auto size', () => {
+    try {
+      authoredExtentPx('width', 0)
+      throw new Error('expected a refusal')
+    } catch (e) {
+      if (!isCommandFailure(e) || e.err.error !== 'InvalidArgument') throw e
+      expect(e.err.detail).not.toContain('null')
+    }
   })
 })
 
