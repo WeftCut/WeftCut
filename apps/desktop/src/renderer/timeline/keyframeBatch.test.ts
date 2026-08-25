@@ -1,0 +1,248 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  applyInterp,
+  batchParamTrackEntries,
+  removeKeys,
+  smoothKeys,
+  type KeyframeGroupEdit,
+  type ParamTrackEntry,
+} from "./keyframeBatch";
+import type { AnimTrack, Keyframe, LayerSummary, TrackSummary } from "../ipc";
+import type { SelectedKeyframe } from "../keyframe/selectionStore";
+
+type KeyframedTrack = Extract<AnimTrack<number>, { mode: "Keyframed" }>;
+
+const kf = (id: string, tUs: number, value: number): Keyframe<number> => ({
+  id,
+  t_us: tUs,
+  value,
+  interp: { kind: "Linear" },
+});
+
+const keyed = (keys: Keyframe<number>[]): KeyframedTrack => ({
+  mode: "Keyframed",
+  value: keys,
+});
+
+function layer(
+  id: string,
+  params: Record<string, unknown>,
+  kind = "VideoClip",
+): LayerSummary {
+  return {
+    id,
+    kind,
+    label: null,
+    t_start_us: 0,
+    t_end_us: 1_000_000,
+    enabled: true,
+    locked: false,
+    color_hint: "#888",
+    params: { kind, ...params } as unknown as LayerSummary["params"],
+    effects: [],
+  };
+}
+
+function track(id: string, layers: LayerSummary[]): TrackSummary {
+  return {
+    id,
+    kind: "Video",
+    label: null,
+    enabled: true,
+    locked: false,
+    muted: false,
+    solo: false,
+    role: null,
+    transient: false,
+    layers,
+  };
+}
+
+const sel = (layerId: string, paramKey: string, kfId: string): SelectedKeyframe => ({
+  layerId,
+  paramKey,
+  kfId,
+});
+
+/// `[layerId, paramKey]` per entry — what the grouping produced, without the
+/// tracks.
+const addressed = (entries: ParamTrackEntry[]): [string, string][] =>
+  entries.map(([layerId, paramKey]) => [layerId, paramKey]);
+
+const keysOf = (t: AnimTrack<number>): string[] =>
+  t.mode === "Keyframed" ? t.value.map((k) => k.id) : [];
+
+/// Records what each group's edit was handed, and returns the track untouched.
+function spyEdit() {
+  const seen: { kfIds: readonly string[]; fallback: number }[] = [];
+  const edit = vi.fn<KeyframeGroupEdit>((t, kfIds, fallback) => {
+    seen.push({ kfIds, fallback });
+    return t;
+  });
+  return { edit, seen };
+}
+
+describe("batchParamTrackEntries — grouping", () => {
+  const tracks = [
+    track("t1", [
+      layer("l1", {
+        opacity: keyed([kf("a", 0, 1), kf("b", 500_000, 0.5)]),
+        x: keyed([kf("c", 0, 10)]),
+      }),
+    ]),
+    track("t2", [layer("l2", { opacity: keyed([kf("d", 0, 1)]) })]),
+  ];
+
+  it("folds each (layerId, paramKey) into ONE entry, in first-appearance order", () => {
+    const { edit, seen } = spyEdit();
+    const entries = batchParamTrackEntries({
+      selected: [
+        sel("l1", "opacity", "a"),
+        sel("l2", "opacity", "d"),
+        sel("l1", "x", "c"),
+        sel("l1", "opacity", "b"),
+      ],
+      tracks,
+      edit,
+    });
+    expect(addressed(entries)).toEqual([
+      ["l1", "opacity"],
+      ["l2", "opacity"],
+      ["l1", "x"],
+    ]);
+    // Three groups, three calls — NOT one per selected key. One entry per key
+    // would make the last of a group's entries the only one that survives the
+    // op, silently dropping every earlier key's edit.
+    expect(edit).toHaveBeenCalledTimes(3);
+    expect(seen[0]!.kfIds).toEqual(["a", "b"]);
+  });
+
+  it("drops a group with no keyframed track to fold into", () => {
+    const withStatic = [
+      track("t1", [
+        layer("l1", { opacity: { mode: "Static", value: 1 }, x: keyed([kf("c", 0, 10)]) }),
+      ]),
+    ];
+    const entries = batchParamTrackEntries({
+      selected: [sel("l1", "opacity", "a"), sel("l1", "x", "c"), sel("gone", "x", "z")],
+      tracks: withStatic,
+      edit: removeKeys,
+    });
+    expect(addressed(entries)).toEqual([["l1", "x"]]);
+  });
+});
+
+describe("batchParamTrackEntries — per-param fallbacks", () => {
+  // Three params with three DIFFERENT descriptor fallbacks, so one shared value
+  // cannot pass for all of them: x = 0, scale_x = 1, anchor_x = 0.5.
+  const tracks = [
+    track("t1", [
+      layer("l1", {
+        x: keyed([kf("x1", 0, 5)]),
+        scale_x: keyed([kf("s1", 0, 2)]),
+        anchor_x: keyed([kf("a1", 0, 0.25)]),
+      }),
+    ]),
+  ];
+
+  it("hands every group its OWN param's fallback", () => {
+    const { edit, seen } = spyEdit();
+    batchParamTrackEntries({
+      selected: [sel("l1", "x", "x1"), sel("l1", "scale_x", "s1"), sel("l1", "anchor_x", "a1")],
+      tracks,
+      edit,
+    });
+    expect(seen.map((s) => s.fallback)).toEqual([0, 1, 0.5]);
+  });
+
+  it("collapses each emptied track to its own fallback when it carried no keys", () => {
+    // A Keyframed track with an empty `value` is the one state where the
+    // fallback is the answer rather than a surviving key's value.
+    const empty = [
+      track("t1", [
+        layer("l1", { x: keyed([]), scale_x: keyed([]), anchor_x: keyed([]) }),
+      ]),
+    ];
+    const entries = batchParamTrackEntries({
+      selected: [sel("l1", "x", "x1"), sel("l1", "scale_x", "s1"), sel("l1", "anchor_x", "a1")],
+      tracks: empty,
+      edit: removeKeys,
+    });
+    expect(entries.map(([, , t]) => t)).toEqual([
+      { mode: "Static", value: 0 },
+      { mode: "Static", value: 1 },
+      { mode: "Static", value: 0.5 },
+    ]);
+  });
+
+  it("falls back to 0 for a param the layer kind does not animate", () => {
+    // `gain_db` is an Audio param; on a VideoClip no descriptor names it, so the
+    // fold gets 0 rather than some other param's number.
+    const { edit, seen } = spyEdit();
+    batchParamTrackEntries({
+      selected: [sel("l1", "gain_db", "g1")],
+      tracks: [track("t1", [layer("l1", { gain_db: keyed([kf("g1", 0, -3)]) })])],
+      edit,
+    });
+    expect(seen).toEqual([{ kfIds: ["g1"], fallback: 0 }]);
+  });
+});
+
+describe("removeKeys", () => {
+  it("takes every selected key out in one pass over the track", () => {
+    const t = keyed([kf("a", 0, 1), kf("b", 500_000, 0.5), kf("c", 1_000_000, 0)]);
+    // Applied per key against this same original track, only the LAST removal
+    // would survive and `a` would come back.
+    expect(keysOf(removeKeys(t, ["a", "b"], 0))).toEqual(["c"]);
+  });
+
+  it("is order-independent — a sweep's direction cannot change the result", () => {
+    const t = keyed([kf("a", 0, 1), kf("b", 500_000, 0.5), kf("c", 1_000_000, 0)]);
+    expect(removeKeys(t, ["c", "a"], 0)).toEqual(removeKeys(t, ["a", "c"], 0));
+  });
+
+  it("collapses a fully emptied track to a Static holding the last key's value", () => {
+    const t = keyed([kf("a", 0, 1), kf("b", 500_000, 0.25)]);
+    expect(removeKeys(t, ["b", "a"], 9)).toEqual({ mode: "Static", value: 0.25 });
+  });
+
+  it("leaves the keys it was not given", () => {
+    const t = keyed([kf("a", 0, 1), kf("b", 500_000, 0.5)]);
+    expect(keysOf(removeKeys(t, ["missing"], 0))).toEqual(["a", "b"]);
+  });
+});
+
+describe("applyInterp / smoothKeys", () => {
+  const tracks = [
+    track("t1", [layer("l1", { opacity: keyed([kf("a", 0, 0), kf("b", 1_000_000, 1)]) })]),
+    track("t2", [layer("l2", { opacity: keyed([kf("c", 0, 0), kf("d", 1_000_000, 1)]) })]),
+  ];
+
+  it("sets one interpolation on the selected keys of every layer in the batch", () => {
+    const entries = batchParamTrackEntries({
+      selected: [sel("l1", "opacity", "a"), sel("l2", "opacity", "c"), sel("l2", "opacity", "d")],
+      tracks,
+      edit: applyInterp({ kind: "Hold" }),
+    });
+    expect(addressed(entries)).toEqual([
+      ["l1", "opacity"],
+      ["l2", "opacity"],
+    ]);
+    const interps = (t: AnimTrack<number>) =>
+      t.mode === "Keyframed" ? t.value.map((k) => k.interp.kind) : [];
+    // l1: only the selected `a` changed; l2: both selected keys did.
+    expect(interps(entries[0]![2])).toEqual(["Hold", "Linear"]);
+    expect(interps(entries[1]![2])).toEqual(["Hold", "Hold"]);
+  });
+
+  it("smooths a group's keys sequentially, so a key sees its neighbour's result", () => {
+    const t = keyed([kf("a", 0, 0), kf("b", 500_000, 1), kf("c", 1_000_000, 2)]);
+    const next = smoothKeys(t, ["a", "b", "c"], 0);
+    expect(next.mode).toBe("Keyframed");
+    const keys = (next as KeyframedTrack).value;
+    // A fold that re-read the ORIGINAL track for each key would leave `a`
+    // Linear: only the last pass would survive, and `c` (an endpoint) rewrites
+    // `b` alone.
+    expect(keys.map((k) => k.interp.kind)).toEqual(["Bezier", "Bezier", "Linear"]);
+  });
+});

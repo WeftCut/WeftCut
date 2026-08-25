@@ -1,8 +1,8 @@
 import {
   useCallback,
-  useEffect,
   useMemo,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -11,17 +11,17 @@ import { trackKeyframeProperties } from "./geometry";
 import {
   readParamTrack,
   isHiddenTwinAxis,
-  animatableParams,
   type ParamDescriptor,
 } from "../keyframe/descriptors";
 import {
   selectKeyframe,
-  clearKeyframeSelection,
   getSelectedKeyframes,
+  keyframeKey,
   useIsKeyframeSelected,
   useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
-import { retimeKeyframe, removeKeyframe, setKeyframeInterp } from "../keyframe/edits";
+import { retimeKeyframe, setKeyframeInterp } from "../keyframe/edits";
+import { useKeyframeBatchCommit } from "./keyframeBatch";
 import { transportSeek } from "../state/playbackStore";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
 import {
@@ -34,7 +34,6 @@ import { KeyframeCurveGraph } from "./KeyframeCurveGraph";
 import { EasingMenu } from "./EasingMenu";
 import { KeyframeNavigator } from "./KeyframeNavigator";
 import { KeyframeValueField } from "./KeyframeValueField";
-import { subSelectionDeleteYields } from "./subSelectionDelete";
 
 export const KF_SUBLANE_H = 24;
 export const KF_SUBLANE_EXPANDED_H = 72;
@@ -141,55 +140,41 @@ export function KeyframeLane({
     kfId: string;
   } | null>(null);
 
-  const openInterpMenu: OpenInterpMenu = (clientX, clientY, layerId, paramKey, kfId) =>
+  // A right-click that lands OUTSIDE the selection replaces it with that one
+  // key first, so the menu acts on what the user aimed at — the rule
+  // `Timeline`'s clip `onContextMenu` states in full. The diamond path arrives
+  // already selected (`KeyframeCurveGraph` selects before it opens the menu);
+  // this is what covers the segment path, which selects nothing.
+  const openInterpMenu: OpenInterpMenu = (clientX, clientY, layerId, paramKey, kfId) => {
+    const key = { layerId, paramKey, kfId };
+    if (!useKeyframeSelectionStore.getState().selected.has(keyframeKey(key))) {
+      selectKeyframe(key);
+    }
     setInterpMenu({ x: clientX, y: clientY, layerId, paramKey, kfId });
+  };
 
-  // Capture-phase Delete for the selected keyframes, gated on the selection
-  // reaching a layer in THIS track (any property — the sub-lanes can select a
-  // key on a property other than the layer's focused param, which the
-  // LayerBlock effect, keyed on focusedParam, doesn't cover). Capture phase +
-  // stopImmediatePropagation so this preempts the app-level
-  // delete-selected-layer shortcut. Subscribe to a primitive so the
-  // effect re-arms on selection change (atomic selector).
+  // Right-clicking a diamond INSIDE a multi-key selection keeps the selection,
+  // so the menu reaches all of it. The diamond's own handler would narrow it to
+  // one key on the way to opening the menu, and React's capture phase is the
+  // only place to answer ahead of that — hence the menu opens from here, off
+  // `data-kf-id` and the selection entry that carries the key's owners. A
+  // single-key selection falls through, keeping the ordinary path's seek.
+  const openMenuForSelectedDiamond = (e: ReactMouseEvent) => {
+    const kfId = (e.target as HTMLElement).closest?.("[data-kf-id]")?.getAttribute("data-kf-id");
+    if (!kfId) return;
+    const selected = getSelectedKeyframes();
+    if (selected.length < 2) return;
+    const hit = selected.find((k) => k.kfId === kfId);
+    if (hit === undefined) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setInterpMenu({ x: e.clientX, y: e.clientY, ...hit });
+  };
+
   const layerIds = useMemo(
     () => new Set(track.layers.map((l) => l.id)),
     [track.layers],
   );
-  const armedKfId = useKeyframeSelectionStore((s) => {
-    for (const key of s.selected.values()) {
-      if (layerIds.has(key.layerId)) return key.kfId;
-    }
-    return null;
-  });
-  useEffect(() => {
-    if (!armedKfId) return;
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key !== "Delete" && ev.key !== "Backspace") return;
-      // Removes the FIRST selected key, not all of them. Batching it belongs
-      // with the other multi-key operations, which share one
-      // group-by-(layerId, paramKey) funnel; half a funnel here would be the
-      // copy that drifts from it.
-      const sel = getSelectedKeyframes()[0];
-      if (!sel || !layerIds.has(sel.layerId)) return;
-      if (subSelectionDeleteYields(ev.target)) return;
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      const layer = track.layers.find((l) => l.id === sel.layerId);
-      if (!layer) return;
-      const trk = readParamTrack(layer.params, sel.paramKey);
-      if (!trk || trk.mode !== "Keyframed") return;
-      const desc = animatableParams(layer.kind).find((d) => d.paramKey === sel.paramKey);
-      onCommitParamTrack(
-        sel.layerId,
-        sel.paramKey,
-        removeKeyframe(trk, sel.kfId, desc?.fallback ?? 0),
-      );
-      clearKeyframeSelection();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [armedKfId, layerIds, track.layers, onCommitParamTrack]);
-
   const focusedParamKey = useFocusedParamKeyForTrackLayers(layerIds);
   const focusedLayerId = useKeyframeFocusStore((s) =>
     s.layerId && layerIds.has(s.layerId) ? s.layerId : null,
@@ -201,6 +186,7 @@ export function KeyframeLane({
   const { onPointerDown: onMarqueeDown } = useMarqueeAnchor({
     kind: "keyframe",
   });
+  const commitKeyframeBatch = useKeyframeBatchCommit();
 
   return (
     <>
@@ -214,6 +200,7 @@ export function KeyframeLane({
           focusedLayerId={focusedLayerId}
           registerSubLaneEl={registerSubLaneEl}
           onPointerDown={onMarqueeDown}
+          onContextMenuCapture={openMenuForSelectedDiamond}
           onCommitParamTrack={onCommitParamTrack}
           onOpenInterpMenu={openInterpMenu}
         />
@@ -230,7 +217,7 @@ export function KeyframeLane({
             track={trk}
             kfId={interpMenu.kfId}
             onClose={() => setInterpMenu(null)}
-            onCommit={(next) => onCommitParamTrack(interpMenu.layerId, interpMenu.paramKey, next)}
+            onApply={commitKeyframeBatch}
           />
         );
       })()}
@@ -251,6 +238,7 @@ function KeyframeSubLaneRow({
   focusedLayerId,
   registerSubLaneEl,
   onPointerDown,
+  onContextMenuCapture,
   onCommitParamTrack,
   onOpenInterpMenu,
 }: {
@@ -261,6 +249,7 @@ function KeyframeSubLaneRow({
   focusedLayerId: string | null;
   registerSubLaneEl: RegisterSubLaneEl;
   onPointerDown: (e: ReactPointerEvent) => void;
+  onContextMenuCapture: (e: ReactMouseEvent) => void;
   onCommitParamTrack: (layerId: string, paramKey: string, t: AnimTrack<number>) => void;
   onOpenInterpMenu: OpenInterpMenu;
 }) {
@@ -278,6 +267,7 @@ function KeyframeSubLaneRow({
       className="relative border-b border-border-soft"
       style={{ height }}
       onPointerDown={onPointerDown}
+      onContextMenuCapture={onContextMenuCapture}
     >
       {track.layers.map((layer) => {
         if (isHiddenTwinAxis(paramKey, layer.params)) return null;

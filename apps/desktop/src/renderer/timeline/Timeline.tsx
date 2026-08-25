@@ -22,6 +22,7 @@ import {
   updateLayer,
   updateLayerParamTrack,
   updateLayerParamTracks,
+  updateParamTracksMulti,
   updateTransition,
   type AnimTrack,
   type GroupSummary,
@@ -133,7 +134,15 @@ import {
   clearKeyframeSelection,
   getSelectedKeyframes,
   setKeyframeSelection,
+  useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
+import {
+  KeyframeBatchContext,
+  batchParamTrackEntries,
+  removeKeys,
+  type KeyframeBatchCommit,
+  type ParamTrackEntry,
+} from "./keyframeBatch";
 import { resolveAccelerator } from "../shortcuts/match";
 import { subSelectionDeleteYields } from "./subSelectionDelete";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
@@ -965,9 +974,9 @@ export function Timeline({
 
   // Delete/Backspace removes the selected transition chip. Capture phase +
   // stopImmediatePropagation preempts the app-level delete-selected-layer
-  // shortcut (same pattern as the keyframe-diamond Delete in LayerBlock);
-  // armed only while a chip is selected, and never while typing in a field or
-  // while another panel owns the keyboard (`subSelectionDeleteYields`).
+  // shortcut (same pattern as the keyframe Delete below); armed only while a
+  // chip is selected, and never while typing in a field or while another panel
+  // owns the keyboard (`subSelectionDeleteYields`).
   useEffect(() => {
     if (selectedTransitionId === null) return;
     const onKey = (ev: KeyboardEvent) => {
@@ -1023,6 +1032,69 @@ export function Timeline({
     },
     [onMutated, tracks],
   );
+
+  // Every MULTI-key keyframe operation's commit: `keyframeBatch.ts` folds the
+  // selection into one entry per (layerId, paramKey), and the whole set goes as
+  // `updateParamTracksMulti` rather than the per-layer batch — a swept selection
+  // spans layers and N layers must still cost ONE undo entry.
+  //
+  // The scale fan-out is `onCommitParamTrack`'s, repeated here for its reason:
+  // the main-side twin invariant reads a lone `scale_x` write as divergence and
+  // silently unlinks the layer.
+  const commitKeyframeBatch = useCallback<KeyframeBatchCommit>(
+    (edit) => {
+      const entries = batchParamTrackEntries({
+        selected: getSelectedKeyframes(),
+        tracks,
+        edit,
+      }).flatMap<ParamTrackEntry>(([layerId, paramKey, next]) => {
+        const layer = findPanelLayer(tracks, layerId);
+        const fanOut = scaleFanOutFor(paramKey, layer?.params ?? null);
+        if (fanOut === null) return [[layerId, paramKey, next]];
+        return fanOutEntries(fanOut, next).map(([key, track]) => [layerId, key, track]);
+      });
+      if (entries.length === 0) return;
+      void (async () => {
+        try {
+          await updateParamTracksMulti(entries);
+          await onMutated();
+        } catch (e) {
+          logMutationFailure(e, "Edit keyframes");
+        }
+      })();
+    },
+    [onMutated, tracks],
+  );
+
+  // Delete/Backspace removes the selected KEYFRAMES. Capture phase +
+  // stopImmediatePropagation preempts the app-level delete-selected-layer
+  // shortcut (same shape as the transition chip's handler above); winning that
+  // race is the sub-selection model, and bypassing the dispatcher is why the
+  // stand-down rules come back in through `subSelectionDeleteYields`.
+  //
+  // LANDMINE: this handler belongs to the Timeline and must not move back down
+  // to `KeyframeLane` or `LayerBlock`. A per-track or per-layer handler was
+  // correct only while a selection could not span layers; a marquee arms
+  // several at once, and whichever registered first would stop the event dead
+  // having deleted its own subset — several ops, several undo entries, and
+  // which subset survives decided by mount order.
+  const keyframeSelectionSize = useKeyframeSelectionStore((s) => s.selected.size);
+  const deleteSelectedKeyframes = useEffectEvent(() => {
+    commitKeyframeBatch(removeKeys);
+    clearKeyframeSelection();
+  });
+  useEffect(() => {
+    if (keyframeSelectionSize === 0) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== "Delete" && ev.key !== "Backspace") return;
+      if (subSelectionDeleteYields(ev.target)) return;
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      deleteSelectedKeyframes();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [keyframeSelectionSize]);
 
   const onRename = useCallback((layerId: string) => {
     setContextMenu(null);
@@ -1314,9 +1386,9 @@ export function Timeline({
       });
       setLayerSelection(primary, ids);
       // So the Delete that follows reaches the clips just swept: whenever a
-      // keyframe is selected, `KeyframeLane`'s capture-phase handler answers
-      // Delete first and stops it dead, and a stale selection there would eat
-      // this one's. The chip's own pointerdown clears it for the same reason.
+      // keyframe is selected, the keyframe Delete handler above answers first
+      // and stops the event dead, and a stale selection there would eat this
+      // one's. The chip's own pointerdown clears it for the same reason.
       if (ids.length > 0) clearKeyframeSelection();
     },
     [
@@ -1359,6 +1431,7 @@ export function Timeline({
 
   return (
     <MarqueeAnchorContext.Provider value={marqueeAnchor}>
+    <KeyframeBatchContext.Provider value={commitKeyframeBatch}>
     <div
       ref={rootRef}
       className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto bg-card ${
@@ -1566,6 +1639,7 @@ export function Timeline({
         onDelete={(id) => void onChipMenuDelete(id)}
       />
     )}
+    </KeyframeBatchContext.Provider>
     </MarqueeAnchorContext.Provider>
   );
 }

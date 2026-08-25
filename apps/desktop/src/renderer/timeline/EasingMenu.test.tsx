@@ -5,6 +5,11 @@ import "../i18n"; // initialize i18next with en-US translations so t(key) resolv
 import type { AnimTrack, Interpolation } from "../ipc";
 import { EASING_PRESETS } from "../../shared/easing";
 import { clearEasingPreview, getEasingPreview } from "../keyframe/easingPreviewStore";
+import {
+  clearKeyframeSelection,
+  setKeyframeSelection,
+} from "../keyframe/selectionStore";
+import type { KeyframeGroupEdit } from "./keyframeBatch";
 import en from "../i18n/locales/en-US";
 import zh from "../i18n/locales/zh-CN";
 
@@ -49,6 +54,10 @@ import { EasingMenu } from "./EasingMenu";
 afterEach(() => {
   cleanup();
   clearEasingPreview();
+  // The menu reads the shared keyframe selection to decide whether it has one
+  // current interpolation to report; a leaked selection would silence the
+  // checkmark assertions in every test after it.
+  clearKeyframeSelection();
 });
 
 const track: AnimTrack<number> = {
@@ -75,6 +84,30 @@ function presetInterp(id: string): Interpolation {
   return EASING_PRESETS.find((p) => p.id === id)!.interp;
 }
 
+/// The next track one group gets. The menu no longer builds a track — it hands
+/// up the group edit that EVERY selected group runs — so folding that edit over
+/// `base` is the same statement these assertions always made.
+function editedTrack(
+  onApply: ReturnType<typeof vi.fn>,
+  base: AnimTrack<number>,
+  kfIds: string[] = ["k0"],
+  call = 0,
+): Extract<AnimTrack<number>, { mode: "Keyframed" }> {
+  const edit = onApply.mock.calls[call]![0] as KeyframeGroupEdit;
+  const next = edit(base as Extract<AnimTrack<number>, { mode: "Keyframed" }>, kfIds, 0);
+  expect(next.mode).toBe("Keyframed");
+  return next as Extract<AnimTrack<number>, { mode: "Keyframed" }>;
+}
+
+/// Two keys selected, so the menu is in its multi-key form. Layer/param are
+/// arbitrary here: the menu reads only the SIZE of the selection.
+function selectTwoKeys() {
+  setKeyframeSelection([
+    { layerId: "L1", paramKey: "opacity", kfId: "k0" },
+    { layerId: "L2", paramKey: "x", kfId: "k1" },
+  ]);
+}
+
 /// Tier 2 opens only through the Tier-1 "Easing library…" row — same as a user.
 function openGallery() {
   fireEvent.click(screen.getByTestId("easing-open-gallery"));
@@ -86,7 +119,7 @@ function resolveKey(obj: unknown, dotted: string): unknown {
 
 describe("EasingMenu — tier 1 command menu", () => {
   it("right-click opens the compact command menu, not the preset wall", () => {
-    render(<EasingMenu x={0} y={0} track={track} kfId="k0" onCommit={() => {}} onClose={() => {}} />);
+    render(<EasingMenu x={0} y={0} track={track} kfId="k0" onApply={() => {}} onClose={() => {}} />);
     expect(screen.getByTestId("easing-command-menu")).toBeTruthy();
     // The five NLE commands + Smooth + the library row — and zero gallery chips.
     for (const id of ["linear", "hold", "ease_in", "ease_out", "ease_in_out"]) {
@@ -98,18 +131,18 @@ describe("EasingMenu — tier 1 command menu", () => {
   });
 
   it("a command commits the table's baked interp verbatim and closes", () => {
-    const onCommit = vi.fn();
+    const onApply = vi.fn();
     const onClose = vi.fn();
-    render(<EasingMenu x={10} y={10} track={track} kfId="k0" onCommit={onCommit} onClose={onClose} />);
+    render(<EasingMenu x={10} y={10} track={track} kfId="k0" onApply={onApply} onClose={onClose} />);
     fireEvent.click(screen.getByTestId("easing-cmd-ease_in_out"));
-    const next = onCommit.mock.calls[0]![0] as Extract<AnimTrack<number>, { mode: "Keyframed" }>;
+    const next = editedTrack(onApply, track);
     expect(next.value.find((k) => k.id === "k0")!.interp).toEqual(presetInterp("ease_in_out"));
     expect(onClose).toHaveBeenCalled();
   });
 
   it("checkmarks exactly the command the reverse lookup names", () => {
     render(
-      <EasingMenu x={0} y={0} track={trackWith(presetInterp("ease_in"))} kfId="k0" onCommit={() => {}} onClose={() => {}} />,
+      <EasingMenu x={0} y={0} track={trackWith(presetInterp("ease_in"))} kfId="k0" onApply={() => {}} onClose={() => {}} />,
     );
     expect(screen.getByTestId("easing-cmd-ease_in").textContent).toContain("✓");
     expect(screen.getByTestId("easing-cmd-ease_out").textContent).not.toContain("✓");
@@ -118,7 +151,7 @@ describe("EasingMenu — tier 1 command menu", () => {
 
   it("a gallery-only preset checkmarks the library row instead of a command", () => {
     render(
-      <EasingMenu x={0} y={0} track={trackWith(presetInterp("ease_in_out_quint"))} kfId="k0" onCommit={() => {}} onClose={() => {}} />,
+      <EasingMenu x={0} y={0} track={trackWith(presetInterp("ease_in_out_quint"))} kfId="k0" onApply={() => {}} onClose={() => {}} />,
     );
     expect(screen.getByTestId("easing-open-gallery").textContent).toContain("✓");
     for (const id of ["linear", "hold", "ease_in", "ease_out", "ease_in_out"]) {
@@ -127,30 +160,54 @@ describe("EasingMenu — tier 1 command menu", () => {
   });
 
   it("Smooth commits the smoothed track and closes", () => {
-    const onCommit = vi.fn();
+    const onApply = vi.fn();
     const onClose = vi.fn();
-    render(<EasingMenu x={0} y={0} track={track} kfId="k0" onCommit={onCommit} onClose={onClose} />);
+    render(<EasingMenu x={0} y={0} track={track} kfId="k0" onApply={onApply} onClose={onClose} />);
     fireEvent.click(screen.getByTestId("easing-smooth"));
-    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(onApply).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalled();
   });
 
   it("Smooth is disabled on a Hold keyframe — no commit possible", () => {
-    const onCommit = vi.fn();
+    const onApply = vi.fn();
     render(
-      <EasingMenu x={0} y={0} track={trackWith({ kind: "Hold" })} kfId="k0" onCommit={onCommit} onClose={() => {}} />,
+      <EasingMenu x={0} y={0} track={trackWith({ kind: "Hold" })} kfId="k0" onApply={onApply} onClose={() => {}} />,
     );
     const smooth = screen.getByTestId("easing-smooth") as HTMLButtonElement;
     expect(smooth.disabled).toBe(true);
     fireEvent.click(smooth);
-    expect(onCommit).not.toHaveBeenCalled();
+    expect(onApply).not.toHaveBeenCalled();
+  });
+
+  it("reports no current interpolation while several keys are selected", () => {
+    selectTwoKeys();
+    render(
+      <EasingMenu x={0} y={0} track={trackWith(presetInterp("ease_in"))} kfId="k0" onApply={() => {}} onClose={() => {}} />,
+    );
+    // The right-clicked key IS Ease In, and a checkmark here would claim the
+    // rest of the selection is too.
+    for (const id of ["linear", "hold", "ease_in", "ease_out", "ease_in_out"]) {
+      expect(screen.getByTestId(`easing-cmd-${id}`).textContent).not.toContain("✓");
+    }
+    expect(screen.getByTestId("easing-open-gallery").textContent).not.toContain("✓");
+  });
+
+  it("a command reaches every selected key of a group, not just the clicked one", () => {
+    selectTwoKeys();
+    const onApply = vi.fn();
+    render(<EasingMenu x={0} y={0} track={track} kfId="k0" onApply={onApply} onClose={() => {}} />);
+    fireEvent.click(screen.getByTestId("easing-cmd-hold"));
+    const next = editedTrack(onApply, track, ["k0", "k1"]);
+    for (const id of ["k0", "k1"]) {
+      expect(next.value.find((k) => k.id === id)!.interp).toEqual(presetInterp("hold"));
+    }
   });
 });
 
 describe("EasingMenu — tier 2 gallery", () => {
   it("the library row swaps to the gallery without closing the popover", () => {
     const onClose = vi.fn();
-    render(<EasingMenu x={0} y={0} track={track} kfId="k0" onCommit={() => {}} onClose={onClose} />);
+    render(<EasingMenu x={0} y={0} track={track} kfId="k0" onApply={() => {}} onClose={onClose} />);
     openGallery();
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByTestId("easing-gallery")).toBeTruthy();
@@ -158,7 +215,7 @@ describe("EasingMenu — tier 2 gallery", () => {
   });
 
   it("renders the whole canonical table as thumbnails, one per preset", () => {
-    render(<EasingMenu x={0} y={0} track={track} kfId="k0" onCommit={() => {}} onClose={() => {}} />);
+    render(<EasingMenu x={0} y={0} track={track} kfId="k0" onApply={() => {}} onClose={() => {}} />);
     openGallery();
     const chips = screen.getAllByTestId("easing-preset-chip");
     expect(chips).toHaveLength(EASING_PRESETS.length);
@@ -170,17 +227,17 @@ describe("EasingMenu — tier 2 gallery", () => {
   });
 
   it("applying a gallery preset writes the table's interp verbatim (no re-derivation)", () => {
-    const onCommit = vi.fn();
-    render(<EasingMenu x={0} y={0} track={track} kfId="k0" onCommit={onCommit} onClose={() => {}} />);
+    const onApply = vi.fn();
+    render(<EasingMenu x={0} y={0} track={track} kfId="k0" onApply={onApply} onClose={() => {}} />);
     openGallery();
     fireEvent.click(screen.getByRole("button", { name: "Expo In" }));
-    const next = onCommit.mock.calls[0]![0] as Extract<AnimTrack<number>, { mode: "Keyframed" }>;
+    const next = editedTrack(onApply, track);
     expect(next.value.find((k) => k.id === "k0")!.interp).toEqual(presetInterp("ease_in_expo"));
   });
 
   it("marks exactly the thumbnail the reverse lookup names for the current params", () => {
     render(
-      <EasingMenu x={0} y={0} track={trackWith(presetInterp("ease_in_sine"))} kfId="k0" onCommit={() => {}} onClose={() => {}} />,
+      <EasingMenu x={0} y={0} track={trackWith(presetInterp("ease_in_sine"))} kfId="k0" onApply={() => {}} onClose={() => {}} />,
     );
     openGallery();
     const pressed = screen.getAllByTestId("easing-preset-chip")
@@ -191,7 +248,7 @@ describe("EasingMenu — tier 2 gallery", () => {
 
   it("a hand-tuned bezier selects no thumbnail (reverse lookup misses)", () => {
     const custom: Interpolation = { kind: "Bezier", p1: [0.1, 0.2], p2: [0.3, 0.4] };
-    render(<EasingMenu x={0} y={0} track={trackWith(custom)} kfId="k0" onCommit={() => {}} onClose={() => {}} />);
+    render(<EasingMenu x={0} y={0} track={trackWith(custom)} kfId="k0" onApply={() => {}} onClose={() => {}} />);
     openGallery();
     const pressed = screen.getAllByTestId("easing-preset-chip")
       .filter((c) => c.getAttribute("aria-pressed") === "true");
@@ -199,7 +256,7 @@ describe("EasingMenu — tier 2 gallery", () => {
   });
 
   it("hovering a thumbnail previews it live on the curve; leaving clears", () => {
-    render(<EasingMenu x={0} y={0} track={track} kfId="k0" onCommit={() => {}} onClose={() => {}} />);
+    render(<EasingMenu x={0} y={0} track={track} kfId="k0" onApply={() => {}} onClose={() => {}} />);
     openGallery();
     const thumb = screen.getByRole("button", { name: "Bounce Out" });
     fireEvent.mouseOver(thumb);
@@ -210,7 +267,7 @@ describe("EasingMenu — tier 2 gallery", () => {
 
   it("closing the menu clears an active hover preview", () => {
     const { unmount } = render(
-      <EasingMenu x={0} y={0} track={track} kfId="k0" onCommit={() => {}} onClose={() => {}} />,
+      <EasingMenu x={0} y={0} track={track} kfId="k0" onApply={() => {}} onClose={() => {}} />,
     );
     openGallery();
     fireEvent.mouseOver(screen.getByRole("button", { name: "Back In" }));
@@ -224,7 +281,7 @@ describe("EasingMenu — elastic parameters (gallery view)", () => {
   const elastic: Interpolation = { kind: "Elastic", dir: "Out", amplitude: 1, period: 0.3 };
 
   it("shows the amplitude/period sliders only on an Elastic keyframe", () => {
-    render(<EasingMenu x={0} y={0} track={trackWith(elastic)} kfId="k0" onCommit={() => {}} onClose={() => {}} />);
+    render(<EasingMenu x={0} y={0} track={trackWith(elastic)} kfId="k0" onApply={() => {}} onClose={() => {}} />);
     openGallery();
     expect(screen.getByTestId("easing-elastic-params")).toBeTruthy();
     expect(screen.getByRole("slider", { name: "Amplitude" })).toBeTruthy();
@@ -232,24 +289,33 @@ describe("EasingMenu — elastic parameters (gallery view)", () => {
   });
 
   it("shows no parameter sliders for Bounce (pure preset) or spline kinds", () => {
-    render(<EasingMenu x={0} y={0} track={trackWith({ kind: "Bounce", dir: "In" })} kfId="k0" onCommit={() => {}} onClose={() => {}} />);
+    render(<EasingMenu x={0} y={0} track={trackWith({ kind: "Bounce", dir: "In" })} kfId="k0" onApply={() => {}} onClose={() => {}} />);
     openGallery();
     expect(screen.queryByTestId("easing-elastic-params")).toBeNull();
     cleanup();
-    render(<EasingMenu x={0} y={0} track={track} kfId="k0" onCommit={() => {}} onClose={() => {}} />);
+    render(<EasingMenu x={0} y={0} track={track} kfId="k0" onApply={() => {}} onClose={() => {}} />);
     openGallery();
     expect(screen.queryByTestId("easing-elastic-params")).toBeNull();
   });
 
+  it("hides the sliders while several keys are selected — they tune ONE key", () => {
+    selectTwoKeys();
+    render(<EasingMenu x={0} y={0} track={trackWith(elastic)} kfId="k0" onApply={() => {}} onClose={() => {}} />);
+    openGallery();
+    expect(screen.queryByTestId("easing-elastic-params")).toBeNull();
+    // The wall of curves is still there: a preset applies to the whole selection.
+    expect(screen.getAllByTestId("easing-preset-chip")).toHaveLength(EASING_PRESETS.length);
+  });
+
   it("a slider gesture previews live and commits ONE complete Elastic interp on release", () => {
-    const onCommit = vi.fn();
-    render(<EasingMenu x={0} y={0} track={trackWith(elastic)} kfId="k0" onCommit={onCommit} onClose={() => {}} />);
+    const onApply = vi.fn();
+    render(<EasingMenu x={0} y={0} track={trackWith(elastic)} kfId="k0" onApply={onApply} onClose={() => {}} />);
     openGallery();
     const amp = screen.getByRole("slider", { name: "Amplitude" });
     // Mid-drag: live preview through the store, no commit yet (one undo step
     // per gesture, same convention as a tangent-handle drag).
     fireEvent.change(amp, { target: { value: "2" } });
-    expect(onCommit).not.toHaveBeenCalled();
+    expect(onApply).not.toHaveBeenCalled();
     expect(getEasingPreview()).toEqual({
       kfId: "k0",
       interp: { kind: "Elastic", dir: "Out", amplitude: 2, period: 0.3 },
@@ -257,18 +323,18 @@ describe("EasingMenu — elastic parameters (gallery view)", () => {
     // Release: exactly one commit carrying the COMPLETE interp from the
     // drag-local state — dir and the untouched period included.
     fireEvent.pointerUp(amp);
-    expect(onCommit).toHaveBeenCalledTimes(1);
-    const next = onCommit.mock.calls[0]![0] as Extract<AnimTrack<number>, { mode: "Keyframed" }>;
+    expect(onApply).toHaveBeenCalledTimes(1);
+    const next = editedTrack(onApply, trackWith(elastic));
     expect(next.value.find((k) => k.id === "k0")!.interp)
       .toEqual({ kind: "Elastic", dir: "Out", amplitude: 2, period: 0.3 });
   });
 
   it("a period commit keeps the amplitude a previous gesture set (drag-local, not mirror)", () => {
-    const onCommit = vi.fn();
+    const onApply = vi.fn();
     const elasticIn: Interpolation = { kind: "Elastic", dir: "In", amplitude: 1, period: 0.3 };
     // The track prop is NEVER refreshed between the two gestures — exactly the
     // stale-mirror window — yet the second commit must carry both new params.
-    render(<EasingMenu x={0} y={0} track={trackWith(elasticIn)} kfId="k0" onCommit={onCommit} onClose={() => {}} />);
+    render(<EasingMenu x={0} y={0} track={trackWith(elasticIn)} kfId="k0" onApply={onApply} onClose={() => {}} />);
     openGallery();
     const amp = screen.getByRole("slider", { name: "Amplitude" });
     fireEvent.change(amp, { target: { value: "1.5" } });
@@ -276,15 +342,15 @@ describe("EasingMenu — elastic parameters (gallery view)", () => {
     const per = screen.getByRole("slider", { name: "Period" });
     fireEvent.change(per, { target: { value: "0.45" } });
     fireEvent.pointerUp(per);
-    expect(onCommit).toHaveBeenCalledTimes(2);
-    const next = onCommit.mock.calls[1]![0] as Extract<AnimTrack<number>, { mode: "Keyframed" }>;
+    expect(onApply).toHaveBeenCalledTimes(2);
+    const next = editedTrack(onApply, trackWith(elasticIn), ["k0"], 1);
     expect(next.value.find((k) => k.id === "k0")!.interp)
       .toEqual({ kind: "Elastic", dir: "In", amplitude: 1.5, period: 0.45 });
   });
 
   it("closing the menu clears any leftover slider preview", () => {
     const { unmount } = render(
-      <EasingMenu x={0} y={0} track={trackWith(elastic)} kfId="k0" onCommit={() => {}} onClose={() => {}} />,
+      <EasingMenu x={0} y={0} track={trackWith(elastic)} kfId="k0" onApply={() => {}} onClose={() => {}} />,
     );
     openGallery();
     fireEvent.change(screen.getByRole("slider", { name: "Amplitude" }), { target: { value: "3" } });

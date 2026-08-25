@@ -1,5 +1,5 @@
-// Two-tier easing UI for one keyframe's outgoing segment, anchored at the
-// right-click point. Tier 1 mirrors the mainstream-NLE keyframe menu (Premiere
+// Two-tier easing UI for the selected keyframes' outgoing segments, anchored at
+// the right-click point. Tier 1 mirrors the mainstream-NLE keyframe menu (Premiere
 // ships seven items, Resolve four): the five everyday interpolations plus
 // Smooth, checkmarked via the exact reverse lookup. The full canonical table —
 // the differentiation feature — lives behind "Easing library…" as Tier 2: a
@@ -17,7 +17,8 @@ import {
   type EasingPreset,
   type EasingPresetId,
 } from "../../shared/easing";
-import { setKeyframeInterp, smoothKeyframe } from "../keyframe/edits";
+import { useKeyframeSelectionStore } from "../keyframe/selectionStore";
+import { applyInterp, smoothKeys, type KeyframeGroupEdit } from "./keyframeBatch";
 import { clearEasingPreview, setEasingPreview } from "../keyframe/easingPreviewStore";
 import { isSplineInterp } from "../keyframe/curve";
 import { computeValueRange, segmentPolyline, type CurveGeom } from "../keyframe/curveGraph";
@@ -262,25 +263,42 @@ function ElasticParamRows({
 }
 
 export function EasingMenu({
-  x, y, track, kfId, onCommit, onClose,
+  x, y, track, kfId, onApply, onClose,
 }: {
   x: number;
   y: number;
+  /// The right-clicked key and its own track — what the menu READS: the
+  /// checkmark's reverse lookup, the Elastic sliders' pinned params, and the
+  /// hover preview's scope. Writes never go through it. `easingPreviewStore`
+  /// holds ONE key, so a hover previews on this key alone however many are
+  /// selected; the commit still reaches all of them.
   track: AnimTrack<number>;
   kfId: string;
-  onCommit: (next: AnimTrack<number>) => void;
+  /// Applies the chosen edit to EVERY selected key, folded per
+  /// (layerId, paramKey) into one commit (`keyframeBatch.ts`).
+  onApply: (edit: KeyframeGroupEdit) => void;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
   const [view, setView] = useState<"commands" | "gallery">("commands");
-  const current: Interpolation =
-    track.mode === "Keyframed"
+  // A selection of more than one key has no single current interpolation, so the
+  // menu reports none: no checkmark and no Elastic sliders (those tune ONE key's
+  // params). Showing the right-clicked key's would claim the rest match it, and
+  // nothing on screen would let the user see through that. The cost is that a
+  // uniform multi-key selection is under-reported — the safe direction, and the
+  // only one available to a menu that holds a single key's track. Smooth stays
+  // offered: it is a per-key operation, and a Hold among the selection is
+  // converted the way a gallery preset would convert it.
+  const mixed = useKeyframeSelectionStore((s) => s.selected.size) > 1;
+  const current: Interpolation | null = mixed
+    ? null
+    : track.mode === "Keyframed"
       ? (track.value.find((k) => k.id === kfId)?.interp ?? { kind: "Linear" as const })
       : { kind: "Linear" as const };
-  const isHold = current.kind === "Hold";
+  const isHold = current?.kind === "Hold";
   // Which entry the current params ARE (display-layer identity): exact reverse
   // lookup, so a hand-dragged bezier or tuned Elastic selects nothing.
-  const selectedId = presetIdForInterp(current);
+  const selectedId = current === null ? undefined : presetIdForInterp(current);
   // A gallery-only preset checkmarks the library row itself — the menu still
   // answers "what is this keyframe" without opening Tier 2.
   const selectionInGallery = selectedId !== undefined && !COMMAND_ID_SET.has(selectedId);
@@ -297,8 +315,8 @@ export function EasingMenu({
     [x, y],
   );
 
-  const applyInterp = (interp: Interpolation) => {
-    onCommit(setKeyframeInterp(track, kfId, interp));
+  const applyToSelection = (interp: Interpolation) => {
+    onApply(applyInterp(interp));
     onClose();
   };
 
@@ -325,7 +343,7 @@ export function EasingMenu({
                     type="button"
                     className="app-menu-item"
                     data-testid={`easing-cmd-${id}`}
-                    onClick={() => applyInterp(p.interp)}
+                    onClick={() => applyToSelection(p.interp)}
                   >
                     <span className="app-menu-item-check" aria-hidden>
                       {selectedId === id ? "✓" : ""}
@@ -340,7 +358,7 @@ export function EasingMenu({
                 data-testid="easing-smooth"
                 disabled={isHold}
                 {...(isHold ? { "data-disabled": "" } : {})}
-                onClick={() => { onCommit(smoothKeyframe(track, kfId)); onClose(); }}
+                onClick={() => { onApply(smoothKeys); onClose(); }}
               >
                 <span className="app-menu-item-check" aria-hidden />
                 <span className="app-menu-item-label">{t("keyframe.smooth")}</span>
@@ -372,13 +390,13 @@ export function EasingMenu({
                 overflowY: "auto",
               }}
             >
-              {current.kind === "Elastic" && (
+              {current !== null && current.kind === "Elastic" && (
                 <ElasticParamRows
                   kfId={kfId}
                   interp={current}
                   // Full interp from the sliders' drag-local state; the popover
                   // stays open so a gesture on the other slider can follow.
-                  onCommitInterp={(interp) => onCommit(setKeyframeInterp(track, kfId, interp))}
+                  onCommitInterp={(interp) => onApply(applyInterp(interp))}
                 />
               )}
               <div
@@ -401,7 +419,7 @@ export function EasingMenu({
                         preset={p}
                         selected={p.id === selectedId}
                         kfId={kfId}
-                        onApply={applyInterp}
+                        onApply={applyToSelection}
                       />
                     ))}
                   </div>

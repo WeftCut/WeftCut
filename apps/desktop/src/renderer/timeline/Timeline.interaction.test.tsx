@@ -11,6 +11,7 @@ import {
 } from "@testing-library/react";
 import "../i18n"; // initialize i18next so t(key) resolves in chrome
 import type {
+  AnimTrack,
   GroupSummary,
   LayerSummary,
   MediaSummary,
@@ -62,6 +63,7 @@ const ipcMocks = vi.hoisted(() => ({
   getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
   groupsCreate: vi.fn().mockResolvedValue("group-created"),
   updateLayerParamTrack: vi.fn().mockResolvedValue(undefined),
+  updateParamTracksMulti: vi.fn().mockResolvedValue(undefined),
   logEmit: vi.fn().mockResolvedValue(undefined),
   viewStateGet: vi
     .fn()
@@ -93,6 +95,7 @@ vi.mock("../ipc", async (importOriginal) => {
     getWaveformPeaks: ipcMocks.getWaveformPeaks,
     groupsCreate: ipcMocks.groupsCreate,
     updateLayerParamTrack: ipcMocks.updateLayerParamTrack,
+    updateParamTracksMulti: ipcMocks.updateParamTracksMulti,
     logEmit: ipcMocks.logEmit,
     viewStateGet: ipcMocks.viewStateGet,
     viewStateSet: ipcMocks.viewStateSet,
@@ -2329,6 +2332,67 @@ describe("Timeline marquee", () => {
     ],
   };
 
+  /// A VideoClip layer whose only keyed param is `opacity`, so its track offers
+  /// exactly one sub-lane row however many of these it holds.
+  function opacityKeyedLayer(
+    id: string,
+    tStartUs: number,
+    keys: { id: string; t_us: number; value: number }[],
+  ): LayerSummary {
+    return {
+      ...keyedTrack.layers[0]!,
+      id,
+      t_start_us: tStartUs,
+      t_end_us: tStartUs + 2_000_000,
+      params: {
+        ...(keyedTrack.layers[0]!.params as Extract<
+          LayerSummary["params"],
+          { kind: "VideoClip" }
+        >),
+        opacity: {
+          mode: "Keyframed",
+          value: keys.map((k) => ({ ...k, interp: { kind: "Linear" as const } })),
+        },
+      },
+    };
+  }
+
+  // Two layers drawing into ONE sub-lane row, sequential in time so nothing
+  // overlaps. At the default 80 px/s their four keys sit at canvas x 80/160
+  // (kl-a, starting at 1 s) and 240/320 (kl-b, at 3 s). The values are all
+  // distinct, so an emptied track collapsing to the WRONG one shows up.
+  const twoLayerKeyTrack: TrackSummary = {
+    ...track,
+    id: "two-layer-track",
+    layers: [
+      opacityKeyedLayer("kl-a", 1_000_000, [
+        { id: "a1", t_us: 0, value: 1 },
+        { id: "a2", t_us: 1_000_000, value: 0.25 },
+      ]),
+      opacityKeyedLayer("kl-b", 3_000_000, [
+        { id: "b1", t_us: 0, value: 0.8 },
+        { id: "b2", t_us: 1_000_000, value: 0.5 },
+      ]),
+    ],
+  };
+
+  // One keyed layer each, so expanding both gives two sub-lane rows a single
+  // box can cross — the case a per-track Delete handler answered twice.
+  const twoKeyedTracks: TrackSummary[] = [
+    {
+      ...track,
+      id: "kt-1",
+      label: "K1",
+      layers: [opacityKeyedLayer("kl-1", 1_000_000, [{ id: "one", t_us: 0, value: 1 }])],
+    },
+    {
+      ...track,
+      id: "kt-2",
+      label: "K2",
+      layers: [opacityKeyedLayer("kl-2", 1_000_000, [{ id: "two", t_us: 0, value: 0.5 }])],
+    },
+  ];
+
   // Two lanes a single box can cross, plus one clip parked beyond every box
   // below — the primary that does NOT survive a sweep.
   const clipA: LayerSummary = { ...layer, id: "clip-a", label: "A" };
@@ -2362,6 +2426,7 @@ describe("Timeline marquee", () => {
     setActiveRegion(null);
     setPlayheadTimeUs(0);
     setTool("select");
+    ipcMocks.updateParamTracksMulti.mockClear();
     useAppSettingsStore.setState((s) => ({
       settings: { ...s.settings, display_mode: "AllTracks" },
     }));
@@ -2685,24 +2750,24 @@ describe("Timeline marquee", () => {
     const lane = container.querySelector('[data-testid="track-lane"]')!;
     const kf = { layerId: "keyed-1", paramKey: "opacity", kfId: "kf-1" };
 
-    // Control: with the keyframe selection standing, Delete commits a param
-    // track — the keyframe path won the race and the layer's Delete was eaten.
+    // Control: with the keyframe selection standing, Delete commits param
+    // tracks — the keyframe path won the race and the layer's Delete was eaten.
     // Inside `act` both times, because the capture-phase handler is registered
     // by an effect: without the flush the race would not be armed and the
     // assertion below it would pass against anything.
     act(() => selectKeyframe(kf));
     fireEvent.keyDown(window, { key: "Delete" });
-    expect(ipcMocks.updateLayerParamTrack).toHaveBeenCalledTimes(1);
+    expect(ipcMocks.updateParamTracksMulti).toHaveBeenCalledTimes(1);
 
     act(() => selectKeyframe(kf));
-    ipcMocks.updateLayerParamTrack.mockClear();
+    ipcMocks.updateParamTracksMulti.mockClear();
     sweep(lane, [250, 130], [300, 200]);
     release([300, 200]);
 
     expect(selection()).toEqual({ primary: "keyed-1", ids: ["keyed-1"] });
     expect(getSelectedKeyframes()).toEqual([]);
     fireEvent.keyDown(window, { key: "Delete" });
-    expect(ipcMocks.updateLayerParamTrack).not.toHaveBeenCalled();
+    expect(ipcMocks.updateParamTracksMulti).not.toHaveBeenCalled();
   });
 
   it("restores the selection that stood at pointerdown on Escape", () => {
@@ -2783,5 +2848,163 @@ describe("Timeline marquee", () => {
     });
     expect(selection()).toEqual({ primary: "keyed-1", ids: ["keyed-1"] });
     releaseTransport(transport);
+  });
+
+  /// Expands every rendered track's sub-lanes and lays the resulting rows out as
+  /// 24 px collapsed bands from client y 300 down. A collapsed row hit-tests on
+  /// x alone, so these tests state the x arithmetic and nothing else.
+  function expandAndStubSubLaneRows(container: HTMLElement): HTMLElement[] {
+    for (const twirl of container.querySelectorAll('[data-testid="kf-lane-twirl"]')) {
+      fireEvent.click(twirl);
+    }
+    stubMarqueeLayout(container);
+    const rows = Array.from(
+      container.querySelectorAll('[data-testid="kf-sublane"]'),
+    ) as HTMLElement[];
+    rows.forEach((row, i) => {
+      stubRect(row, { left: 200, right: 1240, top: 300 + i * 30, bottom: 324 + i * 30 });
+    });
+    return rows;
+  }
+
+  /// The app-level delete-selected-layer shortcut's stand-in: a BUBBLE-phase
+  /// window listener, which is the phase `useShortcuts` dispatches bare keys in.
+  /// The timeline's keyframe Delete is a capture-phase listener that calls
+  /// `stopImmediatePropagation`, so preemption means this never runs.
+  function armAppDeleteSpy() {
+    const spy = vi.fn();
+    window.addEventListener("keydown", spy);
+    return { spy, release: () => window.removeEventListener("keydown", spy) };
+  }
+
+  it("deletes every key a box swept across two layers in ONE op", () => {
+    const { container } = renderTimeline({
+      tracks: [twoLayerKeyTrack],
+      selectedLayerId: "kl-a",
+    });
+    const [row] = expandAndStubSubLaneRows(container);
+    setActiveRegion("timeline");
+    const { spy: appDelete, release: releaseSpy } = armAppDeleteSpy();
+
+    // Positive control: with no keyframe selection standing, the keystroke
+    // reaches the app-level listener — so the assertion below is about the
+    // preemption and not about a listener that was never wired.
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(appDelete).toHaveBeenCalledTimes(1);
+    appDelete.mockClear();
+
+    // Canvas x [50, 350) takes all four keys; the row's band is crossed at
+    // canvas y 202.
+    sweep(row!, [250, 302], [550, 320]);
+    release([550, 320]);
+    expect(getSelectedKeyframes().map((k) => `${k.layerId}/${k.kfId}`)).toEqual([
+      "kl-a/a1",
+      "kl-a/a2",
+      "kl-b/b1",
+      "kl-b/b2",
+    ]);
+
+    fireEvent.keyDown(window, { key: "Delete" });
+    releaseSpy();
+
+    // One op for two layers — one undo entry — carrying an entry per
+    // (layer, param), each emptied track collapsing to its OWN last value.
+    expect(ipcMocks.updateParamTracksMulti).toHaveBeenCalledTimes(1);
+    expect(ipcMocks.updateParamTracksMulti.mock.calls[0]![0]).toEqual([
+      ["kl-a", "opacity", { mode: "Static", value: 0.25 }],
+      ["kl-b", "opacity", { mode: "Static", value: 0.5 }],
+    ]);
+    expect(appDelete).not.toHaveBeenCalled();
+    expect(getSelectedKeyframes()).toEqual([]);
+  });
+
+  it("still issues ONE op for a selection spanning two expanded tracks", () => {
+    const { container } = renderTimeline({
+      tracks: twoKeyedTracks,
+      selectedLayerId: "kl-1",
+    });
+    const rows = expandAndStubSubLaneRows(container);
+    expect(rows).toHaveLength(2);
+    setActiveRegion("timeline");
+
+    // Canvas y [202, 250) crosses both rows ([200, 224) and [230, 254)); canvas
+    // x [50, 200) takes the one key each layer carries, at 80.
+    sweep(rows[0]!, [250, 302], [400, 350]);
+    release([400, 350]);
+    expect(getSelectedKeyframes().map((k) => k.kfId).sort()).toEqual(["one", "two"]);
+
+    fireEvent.keyDown(window, { key: "Delete" });
+
+    // The hazard this replaced: one armed handler per track, each stopping the
+    // event dead after committing its own subset. Entry order reads DOWN the
+    // screen — visual order is the reverse of the data-model order, so the
+    // second track's row is the upper one.
+    expect(ipcMocks.updateParamTracksMulti).toHaveBeenCalledTimes(1);
+    expect(ipcMocks.updateParamTracksMulti.mock.calls[0]![0]).toEqual([
+      ["kl-2", "opacity", { mode: "Static", value: 0.5 }],
+      ["kl-1", "opacity", { mode: "Static", value: 1 }],
+    ]);
+  });
+
+  /// The interps the batch committed, per entry.
+  function committedInterps(): [string, string[]][] {
+    const entries = ipcMocks.updateParamTracksMulti.mock.calls[0]![0] as [
+      string,
+      string,
+      AnimTrack<number>,
+    ][];
+    return entries.map(([layerId, , t]) => [
+      layerId,
+      t.mode === "Keyframed" ? t.value.map((k) => k.interp.kind) : [],
+    ]);
+  }
+
+  const diamond = (container: HTMLElement, kfId: string) =>
+    container.querySelector(`.kf-sublane-diamond[data-kf-id="${kfId}"]`)!;
+
+  it("right-clicking a diamond inside the selection eases the whole selection", () => {
+    const { container } = renderTimeline({
+      tracks: [twoLayerKeyTrack],
+      selectedLayerId: "kl-a",
+    });
+    const [row] = expandAndStubSubLaneRows(container);
+
+    sweep(row!, [250, 302], [550, 320]);
+    release([550, 320]);
+    expect(getSelectedKeyframes()).toHaveLength(4);
+
+    fireEvent.contextMenu(diamond(container, "a1"));
+    // The diamond's own handler would have narrowed the selection to `a1` on its
+    // way to the menu; the row answers first precisely so it cannot.
+    expect(getSelectedKeyframes()).toHaveLength(4);
+    fireEvent.click(screen.getByTestId("easing-cmd-hold"));
+
+    expect(ipcMocks.updateParamTracksMulti).toHaveBeenCalledTimes(1);
+    expect(committedInterps()).toEqual([
+      ["kl-a", ["Hold", "Hold"]],
+      ["kl-b", ["Hold", "Hold"]],
+    ]);
+  });
+
+  it("right-clicking a diamond outside the selection eases that key alone", () => {
+    const { container } = renderTimeline({
+      tracks: [twoLayerKeyTrack],
+      selectedLayerId: "kl-a",
+    });
+    const [row] = expandAndStubSubLaneRows(container);
+
+    // Canvas x [50, 200) reaches kl-a's pair (80, 160) and neither of kl-b's.
+    sweep(row!, [250, 302], [400, 320]);
+    release([400, 320]);
+    expect(getSelectedKeyframes().map((k) => k.kfId)).toEqual(["a1", "a2"]);
+
+    fireEvent.contextMenu(diamond(container, "b1"));
+    expect(getSelectedKeyframes()).toEqual([
+      { layerId: "kl-b", paramKey: "opacity", kfId: "b1" },
+    ]);
+    fireEvent.click(screen.getByTestId("easing-cmd-hold"));
+
+    expect(ipcMocks.updateParamTracksMulti).toHaveBeenCalledTimes(1);
+    expect(committedInterps()).toEqual([["kl-b", ["Hold", "Linear"]]]);
   });
 });

@@ -28,18 +28,19 @@ import { formatSyncOffset } from "./audioSlip";
 import { useAudioSyncOffset } from "./audioSyncOffsetStore";
 import type { AnimTrack, LayerSummary } from "../ipc";
 import { useEditingLayerId, beginLayerRename, endRename } from "./renameStore";
-import { subSelectionDeleteYields } from "./subSelectionDelete";
 import { useFocusedParamFor } from "../keyframe/focusStore";
-import { readParamTrack, animatableParams } from "../keyframe/descriptors";
+import { readParamTrack } from "../keyframe/descriptors";
 import { interpGlyphClass } from "../keyframe/curve";
-import { retimeKeyframe, removeKeyframe } from "../keyframe/edits";
+import { retimeKeyframe } from "../keyframe/edits";
 import { EasingMenu } from "./EasingMenu";
+import { useKeyframeBatchCommit } from "./keyframeBatch";
 import { transportSeek } from "../state/playbackStore";
 import {
   selectKeyframe,
   clearKeyframeSelection,
+  keyframeKey,
   useIsKeyframeSelected,
-  useSelectedKfIdFor,
+  useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
 import { timelineLayerTheme } from "./layerTheme";
 import {
@@ -242,8 +243,9 @@ export function LayerBlock({
   /// label → block falls back to the kind name). Wired by Timeline to
   /// `updateLayer({label}) + onMutated`, matching the drag-commit pattern.
   onCommitLabel: (layerId: string, label: string) => void;
-  /// Persist a keyframe track edit (retime or remove). Wired by Timeline to
-  /// `updateLayerParamTrack + onMutated`.
+  /// Persist a keyframe track edit — a diamond retime. Wired by Timeline to
+  /// `updateLayerParamTrack + onMutated`. The multi-key operations do NOT come
+  /// through here: they commit the whole selection at once (`keyframeBatch.ts`).
   onCommitParamTrack: (layerId: string, paramKey: string, track: AnimTrack<number>) => void;
   fpsNum: number;
   fpsDen: number;
@@ -274,9 +276,7 @@ export function LayerBlock({
   // Which of THIS layer+param's keyframes are selected. Reads the shared
   // selection store so the chip diamonds and the sub-lane ones agree.
   const isKfSelected = useIsKeyframeSelected(layer.id, focusedParam);
-  // Delete's target below, as a primitive so the effect re-arms whenever the
-  // selection changes (atomic selector).
-  const armedKfId = useSelectedKfIdFor(layer.id, focusedParam);
+  const commitKeyframeBatch = useKeyframeBatchCommit();
   const [interpMenu, setInterpMenu] = useState<{ x: number; y: number; kfId: string } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const dragTUsRef = useRef<number | null>(null);
@@ -290,30 +290,8 @@ export function LayerBlock({
     }
   }, [isEditing, layer.id, layer.label]);
 
-  useEffect(() => {
-    if (!armedKfId || !focusedParam) return;
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key !== "Delete" && ev.key !== "Backspace") return;
-      // A diamond is selected → Delete removes the KEYFRAME, not the layer.
-      // Capture phase + stopImmediatePropagation run this before, and preempt,
-      // the app-level delete-selected-layer shortcut (also a bare-Delete window
-      // listener) so the two can't both fire on one keypress. Preempting means
-      // bypassing the dispatcher, so its stand-down rules are re-applied here.
-      if (subSelectionDeleteYields(ev.target)) return;
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      const track = readParamTrack(layer.params, focusedParam);
-      if (!track) return;
-      const desc = animatableParams(layer.kind).find((d) => d.paramKey === focusedParam);
-      onCommitParamTrack(layer.id, focusedParam, removeKeyframe(track, armedKfId, desc?.fallback ?? 0));
-      clearKeyframeSelection();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [armedKfId, focusedParam, layer.id, layer.kind, layer.params, onCommitParamTrack]);
-
   // Drop the diamond selection when this layer is no longer the primary
-  // selection, so the capture-phase Delete handler above can't stay armed
+  // selection, so the Timeline's capture-phase keyframe Delete can't stay armed
   // after the user moves on (Delete then reverts to deleting the layer).
   useEffect(() => {
     if (!isPrimary) clearKeyframeSelection();
@@ -731,6 +709,14 @@ export function LayerBlock({
             if (!hitId) return;
             e.preventDefault();
             e.stopPropagation();
+            // Right-clicking a diamond INSIDE the selection keeps it, so the
+            // menu reaches every key the user swept; outside it, the selection
+            // becomes this one key first. The rule `Timeline`'s clip
+            // `onContextMenu` states in full.
+            const key = { layerId: layer.id, paramKey: focusedParam, kfId: hitId };
+            if (!useKeyframeSelectionStore.getState().selected.has(keyframeKey(key))) {
+              selectKeyframe(key);
+            }
             setInterpMenu({ x: e.clientX, y: e.clientY, kfId: hitId });
           }}
           onPointerDown={(e) => {
@@ -786,7 +772,7 @@ export function LayerBlock({
             track={track}
             kfId={interpMenu.kfId}
             onClose={() => setInterpMenu(null)}
-            onCommit={(next) => onCommitParamTrack(layer.id, focusedParam, next)}
+            onApply={commitKeyframeBatch}
           />
         );
       })()}
