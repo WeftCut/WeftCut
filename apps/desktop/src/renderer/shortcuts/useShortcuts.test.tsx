@@ -227,7 +227,7 @@ describe("useShortcuts — NLE-style global accelerators", () => {
     setActiveRegion("timeline");
     render(<Harness handlers={{ deleteSelected }} />);
 
-    // Mirrors KeyframeLane/LayerBlock: a capture-phase Delete listener that
+    // Mirrors the Timeline's sub-selection Delete: a capture-phase listener that
     // claims the key for the selected keyframe before the app-level handler.
     const preempt = vi.fn((e: KeyboardEvent) => {
       if (e.key === "Delete") e.stopImmediatePropagation();

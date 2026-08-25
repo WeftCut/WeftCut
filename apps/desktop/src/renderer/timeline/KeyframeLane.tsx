@@ -2,7 +2,6 @@ import {
   useCallback,
   useMemo,
   useState,
-  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -15,7 +14,6 @@ import {
 } from "../keyframe/descriptors";
 import {
   selectKeyframe,
-  getSelectedKeyframes,
   keyframeKey,
   useIsKeyframeSelected,
   useKeyframeSelectionStore,
@@ -153,24 +151,6 @@ export function KeyframeLane({
     setInterpMenu({ x: clientX, y: clientY, layerId, paramKey, kfId });
   };
 
-  // Right-clicking a diamond INSIDE a multi-key selection keeps the selection,
-  // so the menu reaches all of it. The diamond's own handler would narrow it to
-  // one key on the way to opening the menu, and React's capture phase is the
-  // only place to answer ahead of that — hence the menu opens from here, off
-  // `data-kf-id` and the selection entry that carries the key's owners. A
-  // single-key selection falls through, keeping the ordinary path's seek.
-  const openMenuForSelectedDiamond = (e: ReactMouseEvent) => {
-    const kfId = (e.target as HTMLElement).closest?.("[data-kf-id]")?.getAttribute("data-kf-id");
-    if (!kfId) return;
-    const selected = getSelectedKeyframes();
-    if (selected.length < 2) return;
-    const hit = selected.find((k) => k.kfId === kfId);
-    if (hit === undefined) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setInterpMenu({ x: e.clientX, y: e.clientY, ...hit });
-  };
-
   const layerIds = useMemo(
     () => new Set(track.layers.map((l) => l.id)),
     [track.layers],
@@ -200,7 +180,6 @@ export function KeyframeLane({
           focusedLayerId={focusedLayerId}
           registerSubLaneEl={registerSubLaneEl}
           onPointerDown={onMarqueeDown}
-          onContextMenuCapture={openMenuForSelectedDiamond}
           onCommitParamTrack={onCommitParamTrack}
           onOpenInterpMenu={openInterpMenu}
         />
@@ -238,7 +217,6 @@ function KeyframeSubLaneRow({
   focusedLayerId,
   registerSubLaneEl,
   onPointerDown,
-  onContextMenuCapture,
   onCommitParamTrack,
   onOpenInterpMenu,
 }: {
@@ -249,7 +227,6 @@ function KeyframeSubLaneRow({
   focusedLayerId: string | null;
   registerSubLaneEl: RegisterSubLaneEl;
   onPointerDown: (e: ReactPointerEvent) => void;
-  onContextMenuCapture: (e: ReactMouseEvent) => void;
   onCommitParamTrack: (layerId: string, paramKey: string, t: AnimTrack<number>) => void;
   onOpenInterpMenu: OpenInterpMenu;
 }) {
@@ -267,7 +244,6 @@ function KeyframeSubLaneRow({
       className="relative border-b border-border-soft"
       style={{ height }}
       onPointerDown={onPointerDown}
-      onContextMenuCapture={onContextMenuCapture}
     >
       {track.layers.map((layer) => {
         if (isHiddenTwinAxis(paramKey, layer.params)) return null;

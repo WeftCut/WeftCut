@@ -68,6 +68,16 @@ describe("KeyframeCurveGraph", () => {
     fireEvent.contextMenu(container.querySelector('.kf-sublane-diamond[data-kf-id="k0"]')!, { clientX: 42, clientY: 17 });
     expect(onOpenMenu).toHaveBeenCalledWith(42, 17, "k0");
   });
+  it("leaves a dot that is already selected alone, so the menu keeps the whole selection", () => {
+    const onSelectSeek = vi.fn();
+    const onOpenMenu = vi.fn();
+    const { container } = renderGraph({ onSelectSeek, onOpenMenu, isSelected: () => true });
+    fireEvent.contextMenu(container.querySelector('.kf-sublane-diamond[data-kf-id="k0"]')!, { clientX: 42, clientY: 17 });
+    expect(onOpenMenu).toHaveBeenCalledWith(42, 17, "k0");
+    // Re-running the click path would narrow the selection to this one key and
+    // seek away from what the menu is about to edit.
+    expect(onSelectSeek).not.toHaveBeenCalled();
+  });
   it("left-click on a dot selects+seeks it", () => {
     const onSelectSeek = vi.fn();
     const { container } = renderGraph({ onSelectSeek });

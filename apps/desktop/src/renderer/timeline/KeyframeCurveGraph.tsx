@@ -260,7 +260,11 @@ export function KeyframeCurveGraph({
             onContextMenu={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              onSelectSeek(k.id);
+              // Right-click operates on the selection, so a diamond already in
+              // it is left alone — the menu reaches every selected key, and
+              // re-running the click path would seek away from what the user is
+              // about to edit. The same rule the clip context menu applies.
+              if (!isSelected(k.id)) onSelectSeek(k.id);
               onOpenMenu(e.clientX, e.clientY, k.id);
             }}
           />

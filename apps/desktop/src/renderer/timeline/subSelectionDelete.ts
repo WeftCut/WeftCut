@@ -1,16 +1,19 @@
 // Shared stand-down rule for the timeline's capture-phase Delete preemptors.
 //
-// Three listeners claim Delete/Backspace for a timeline SUB-selection before
-// the app-level delete-selected-layer shortcut can see it: the keyframe diamond
-// (`LayerBlock`), the keyframe lane (`KeyframeLane`), and the transition chip
-// (`Timeline`). Winning that race is why they exist, and why they are raw
-// capture-phase `window` listeners with `stopImmediatePropagation()` instead of
-// entries in `ACTION_DEFS`.
+// Two listeners claim Delete/Backspace for a timeline SUB-selection before the
+// app-level delete-selected-layer shortcut can see it, both on the `Timeline`:
+// the keyframe selection and the transition chip. Winning that race is why they
+// exist, and why they are raw capture-phase `window` listeners with
+// `stopImmediatePropagation()` instead of entries in `ACTION_DEFS`.
+//
+// Both live on the Timeline because a keyframe selection can span layers and
+// tracks: per-component listeners would arm several at once, and the one that
+// registered first would delete its own subset and stop the rest.
 //
 // The cost of bypassing the dispatcher is that they must reproduce its
 // stand-down rules by hand — and every rule any one of them forgets becomes
 // "Delete does something different depending on which selection happens to be
-// armed". Hence one predicate, three call sites.
+// armed". Hence one predicate, two call sites.
 
 import { isEditableTarget } from "../shortcuts/match";
 import { activeRegion } from "../focus/focusRegionStore";

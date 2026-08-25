@@ -111,7 +111,7 @@ export function appActionsSuspended(): boolean {
 ///   focus is inside an open transient widget
 ///   (`TRANSIENT_WIDGET_SELECTOR`).
 /// - Every other action dispatches in the **bubble** phase, which keeps
-///   deeper capture-phase listeners (e.g. KeyframeLane's selected-keyframe
+///   deeper capture-phase listeners (e.g. the Timeline's selected-keyframe
 ///   Delete) ahead of the app-level handler.
 export function useShortcuts({
   handlers,
