@@ -353,24 +353,75 @@ output (dispatch CI runs set this automatically).
 
 ## Per-test timeout budgets
 
-`test.setTimeout(...)` in an export gate is not an estimate of the test's cost.
-It has to clear `driveExport`'s **170 s export poll**, because that poll is the
-only thing that reports *where* an export wedged
-(`last state=<kind>/<detail> perf=<...>`). Set the budget below
-*time-to-reach-the-export + 170 s* and this timeout wins the race instead, so
-the failure arrives as a bare `Test timeout of Nms exceeded` with no state —
-the one thing these gates exist to tell you. On the GPU-less legs `launchApp` +
-`newProject` reach the export around 60 s, and hosted runners drift about 1.9x
-run to run, which puts the floor for a single-export gate near 360 s.
+Two different quantities bound an export gate, and conflating them is what used
+to make these budgets so large.
+
+**`driveExport`'s stall probe is the failure detector.** It polls the export's
+phase cursor from Node — `pending → starting → preparing → progress →
+finalizing` — and fails as soon as *that phase stops ticking*, not when the
+whole export runs out of time. A stall budget is sized by the longest legitimate
+gap between two ticks (one frame, one proxy transcode), so it stays in the
+60-180 s range however long the export legitimately runs, and it names what it
+caught:
+
+```
+export STALLED in preparing for 124s (budget 120s) with its cursor frozen at
+"proxy: bbb-1080p.mp4", 190s into the export. diag={"state":…,"perf":…}
+```
+
+Three distinct failures come out of it, because they want three different fixes:
+*stalled* (a phase quit ticking), *renderer wedged* (no liveness sample answered
+for 30 s — the main thread is blocked, not the pipeline slow), and *slow but
+still ticking* (the hard deadline expired while the cursor was moving — raise
+that call's `timeout`, there is no hang to hunt).
+
+**`test.setTimeout(...)` is only a cost bound.** It must clear the export's real
+worst-case duration plus one stall budget — not plus the whole 170-580 s
+deadline, which is what the old wait forced. On the GPU-less legs `launchApp` +
+`newProject` reach the export around 60 s and hosted runners drift about 1.9x
+run to run, so a single-export gate still wants a few minutes; what changed is
+that the headroom is no longer *spent* on every failure. A broken export now
+reports within a stall budget of the wedge instead of consuming its entire
+allowance in silence.
+
+None of these numbers is a cost estimate. `conformance` measures ~117 s against
+360 s, `export_eos_tail` ~150 s against 420 s, and the 2s-offset
+`export_overlap_same_source` case 208-366 s against 600 s.
 
 A spec whose `launchApp()` sits in `beforeAll` (`audio.spec.ts`) is charged that
 launch against Playwright's separate hook timeout, so its budgets start from the
 first guard inside the body and are correspondingly smaller.
 
-None of these numbers is a cost estimate. `conformance` measures ~117 s against
-360 s, `export_eos_tail` ~150 s against 420 s, and the 2s-offset
-`export_overlap_same_source` case 208-366 s against 600 s. The headroom is spent
-only when something is actually broken.
+### Tuning and escape hatches
+
+- `WEFTCUT_E2E_STALL_SCALE=<float>` scales every stall budget, for a machine
+  slower than the CI legs the table was measured against.
+- `WEFTCUT_E2E_NO_STALL_PROBE=1` restores the old deadline-only wait, so a
+  suspected probe misfire can be ruled out in one run rather than by reverting
+  the helper.
+
+The budgets themselves live in `STALL_MS` in `electron/helpers/driver.ts`, each
+annotated with the gap it has to cover. Widen the one phase that is genuinely
+slower rather than the whole table.
+
+### Waiting inside a spec
+
+Condition-polling, never a fixed settle, with two exceptions that are not
+condition waits at all:
+
+- **Poll intervals.** `await page.waitForTimeout(400)` at the bottom of a
+  hand-rolled `while (Date.now() < deadline)` loop is pacing, not a sleep. Fine.
+- **Quiet windows.** `perfhud.spec.ts` sleeps 1.25 s and then asserts the poll
+  counters did *not* move. You cannot poll for absence; the sleep is the test.
+
+Everything else is a flake in waiting — most dangerously a fixed settle in front
+of a positive assertion, which fails on a loaded runner for the one reason the
+assertion cannot mean. And a fixed settle in front of a *negative* assertion is
+worse still: it can pass because nothing happened yet. Give those a **witness** —
+something observable that proves the action was processed — and assert the
+negative after it. `colorpick.spec.ts` waits for the magnifier's
+`colorpick-hex` readout (written in the same rAF pass as the live-apply) before
+asserting that hovering recorded nothing in the project.
 
 ### Sizing the analyzer, not capping it
 

@@ -431,9 +431,151 @@ export interface DriveResult {
   lastDetail: string | null
 }
 
-/// Fire-and-forget an export hook, then poll window.__e2eExportDone to
-/// settlement. `hook` defaults to "exportClip"; pass "exportTimeline" for the
-/// timeline path.
+/// What the export is doing, seen from outside the app.
+///
+/// `pending` is the window before the pipeline announces itself: the export
+/// HOOK's own setup (importMedia, addTrack, waitForMediaExportReady — see
+/// e2eHook.ts), during which `__weftcutExportState` is either null or STILL
+/// HOLDING THE PREVIOUS export's terminal state. That last part is why the
+/// probe's terminal test reads `__e2eExportDone` and never the state kind: a
+/// repeat-export spec would otherwise see run #1's `complete` and call run #2
+/// finished before it started.
+type ExportPhase = 'pending' | 'starting' | 'preparing' | 'progress' | 'finalizing'
+
+/// The longest LEGITIMATE gap between two ticks of a phase's cursor — NOT a
+/// share of the export's cost.
+///
+/// That distinction is the whole point of the stall probe. A deadline has to be
+/// sized by total work times the slowest runner, which is how `opts.timeout`
+/// below reached 170-580 s, and a quantity that large cannot double as a
+/// failure detector: a wedged export is indistinguishable from a slow one until
+/// it expires. A stall budget is sized by ONE tick, so it stays small however
+/// long the export legitimately runs, and it fires within a tick of the wedge.
+///
+/// Both are kept — the stall probe is the detector, `opts.timeout` the backstop
+/// for a wedge that somehow keeps ticking. Scale the whole table with
+/// WEFTCUT_E2E_STALL_SCALE (a float) on a machine slower than the CI legs these
+/// were measured against; WEFTCUT_E2E_NO_STALL_PROBE=1 disables the probe and
+/// restores the old deadline-only wait.
+const STALL_MS: Record<ExportPhase, number> = {
+  /// Bounded by the hooks' own waits — importMedia plus
+  /// waitForMediaExportReady's internal 60 s cap. Nothing in here reports
+  /// sub-progress, so this budget covers a genuinely blind window.
+  pending: 120_000,
+  /// Worker boot through the first encoded frame: no tick until frame 1.
+  starting: 90_000,
+  /// The readiness gate. `labels` re-ticks as each source resolves, so the gap
+  /// to cover is one proxy transcode, not the whole gate.
+  preparing: 120_000,
+  /// One frame. 4K on a GPU-less leg is seconds, so this is 10x+ margin.
+  progress: 60_000,
+  /// Sink flush, audio render, mux — none report sub-progress, only the step
+  /// name ticks (ExportPanel's FinalizeStep).
+  finalizing: 180_000,
+}
+
+/// How long one liveness sample may take before the renderer counts as
+/// unresponsive, and how long it may stay that way before that IS the failure.
+///
+/// Sampling from Node with its own answer deadline — rather than handing the
+/// predicate to `page.waitForFunction` — is what separates "renderer alive,
+/// counter frozen" from "renderer main thread wedged". It also closes a real
+/// hole in the old diagnostic: that `page.evaluate` had no timeout, so a wedged
+/// main thread hung the very call meant to report where the export stopped, and
+/// the failure degraded into a bare `Test timeout` carrying no state — the one
+/// thing these gates exist to tell you (e2e/README.md, per-test timeout budgets).
+const SAMPLE_ANSWER_MS = 10_000
+const UNRESPONSIVE_MS = 30_000
+const SAMPLE_INTERVAL_MS = 500
+
+const stallScale = (): number => {
+  const v = Number(process.env.WEFTCUT_E2E_STALL_SCALE)
+  return Number.isFinite(v) && v > 0 ? v : 1
+}
+
+interface ExportCursor {
+  phase: ExportPhase
+  /// Anything that CHANGES while the phase is alive. Compared, never parsed.
+  cursor: string
+  done: { ok: boolean; error?: string } | null
+}
+
+/// One liveness sample, with its own answer deadline. Resolves 'no-answer'
+/// rather than throwing when the renderer is too busy to reply; a closed page
+/// is terminal and rethrows at once, since waiting out UNRESPONSIVE_MS on a
+/// dead target would report the wrong cause.
+async function sampleExport(page: Page): Promise<ExportCursor | 'no-answer'> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      page.evaluate((): ExportCursor => {
+        const w = window as unknown as {
+          __e2eExportDone?: { ok: boolean; error?: string } | null
+          __weftcutExportState?:
+            | { kind: 'starting' }
+            | { kind: 'preparing'; labels?: string[] }
+            | { kind: 'progress'; progress?: { frame?: number } }
+            | { kind: 'finalizing'; step?: string }
+            | { kind: 'complete' | 'error' }
+            | null
+        }
+        const done = w.__e2eExportDone ?? null
+        if (done) return { phase: 'pending', cursor: 'done', done }
+        const s = w.__weftcutExportState ?? null
+        switch (s?.kind) {
+          case 'starting':
+            return { phase: 'starting', cursor: 'starting', done: null }
+          case 'preparing':
+            return { phase: 'preparing', cursor: (s.labels ?? []).join('|'), done: null }
+          case 'progress':
+            return { phase: 'progress', cursor: 'f' + String(s.progress?.frame ?? -1), done: null }
+          case 'finalizing':
+            return { phase: 'finalizing', cursor: s.step ?? '?', done: null }
+          default:
+            // null, or a PREVIOUS run's complete/error still on the mirror.
+            return { phase: 'pending', cursor: 'pending', done: null }
+        }
+      }),
+      new Promise<'no-answer'>((resolve) => {
+        timer = setTimeout(() => resolve('no-answer'), SAMPLE_ANSWER_MS)
+      }),
+    ])
+  } catch (e) {
+    if (page.isClosed()) throw e
+    return 'no-answer'
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/// Best-effort "where did it stop" blob for a failure message. Races its own
+/// evaluate so a wedged renderer degrades the diagnostic instead of hanging it.
+async function exportDiagnostic(page: Page): Promise<string> {
+  const blob = await Promise.race([
+    page
+      .evaluate(() => {
+        const w = window as unknown as {
+          __weftcutExportState?: { kind?: string; detail?: string }
+          __weftcutExportPerf?: unknown
+        }
+        return JSON.stringify({
+          state: w.__weftcutExportState ?? null,
+          perf: w.__weftcutExportPerf ?? null,
+        })
+      })
+      .catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+  ])
+  return blob ?? '(renderer did not answer the diagnostic within 5s)'
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const secs = (ms: number) => Math.round(ms / 1000)
+
+/// Fire-and-forget an export hook, then watch it to settlement with a per-phase
+/// STALL probe (see STALL_MS) backed by `opts.timeout` as a hard deadline.
+/// `hook` defaults to "exportClip"; pass "exportTimeline" for the timeline path.
 export async function driveExport(
   page: Page,
   args: Record<string, unknown>,
@@ -455,28 +597,10 @@ export async function driveExport(
     },
     { h: hook, a: args },
   )
-  let done: { ok: boolean; error?: string }
-  try {
-    const handle = await page.waitForFunction(() => (window as any).__e2eExportDone, undefined, {
-      timeout,
-      polling: 1000,
-    })
-    done = (await handle.jsonValue()) as { ok: boolean; error?: string }
-  } catch (e) {
-    // Timed out mid-export: surface WHERE it wedged, not just that it did.
-    const st = await page
-      .evaluate(() => {
-        const s = (window as any).__weftcutExportState
-        const p = (window as any).__weftcutExportPerf
-        return { kind: s?.kind ?? null, detail: s?.detail ?? null, perf: p ?? null }
-      })
-      .catch(() => null)
-    throw new Error(
-      `export did not complete within ${timeout}ms; ` +
-        `last state=${st?.kind}/${JSON.stringify(st?.detail)} perf=${JSON.stringify(st?.perf)}`,
-      { cause: e },
-    )
-  }
+  const done =
+    process.env.WEFTCUT_E2E_NO_STALL_PROBE === '1'
+      ? await awaitExportByDeadline(page, timeout)
+      : await awaitExportByLiveness(page, timeout)
   const st = (await page.evaluate(() => {
     const s = (window as any).__weftcutExportState
     return { kind: s?.kind ?? null, detail: s?.detail ?? null }
@@ -488,4 +612,90 @@ export async function driveExport(
   )) as Array<{ mediaId: string; url: string }> | null
   if (sources) console.log(`[e2e] export sources: ${JSON.stringify(sources)}`)
   return { done, lastKind: st.kind, lastDetail: st.detail }
+}
+
+/// Poll the export's phase cursor from Node, failing the moment a phase stops
+/// ticking rather than when the total budget expires. The three ways out are
+/// deliberately distinct failures — stalled, renderer-wedged, and slow-but-
+/// alive each want a different fix, and the old single message named none.
+async function awaitExportByLiveness(
+  page: Page,
+  timeout: number,
+): Promise<{ ok: boolean; error?: string }> {
+  const scale = stallScale()
+  const startedAt = Date.now()
+  const hardDeadline = startedAt + timeout
+  let phase: ExportPhase = 'pending'
+  let cursor = 'pending'
+  let tickAt = startedAt
+  let unresponsiveSince: number | null = null
+
+  for (;;) {
+    const sample = await sampleExport(page)
+    const now = Date.now()
+
+    if (sample === 'no-answer') {
+      unresponsiveSince ??= now
+      if (now - unresponsiveSince >= UNRESPONSIVE_MS) {
+        throw new Error(
+          `export wedged the RENDERER: no liveness sample answered for ` +
+            `${secs(now - unresponsiveSince)}s — the main thread is blocked, not ` +
+            `the pipeline slow. Last seen in ${phase} at cursor="${cursor}", ` +
+            `${secs(now - startedAt)}s into the export.`,
+        )
+      }
+    } else {
+      unresponsiveSince = null
+      if (sample.done) return sample.done
+      if (sample.phase !== phase || sample.cursor !== cursor) {
+        // Trace PHASE changes only — the cursor ticks once per encoded frame,
+        // which would bury the timeline in its own noise.
+        if (sample.phase !== phase && process.env.WEFTCUT_E2E_EXPORT_TRACE === '1') {
+          console.log(`[e2e] export phase ${phase} -> ${sample.phase} at +${secs(now - startedAt)}s`)
+        }
+        phase = sample.phase
+        cursor = sample.cursor
+        tickAt = now
+      }
+      const budget = Math.round(STALL_MS[phase] * scale)
+      if (now - tickAt >= budget) {
+        throw new Error(
+          `export STALLED in ${phase} for ${secs(now - tickAt)}s (budget ` +
+            `${secs(budget)}s) with its cursor frozen at "${cursor}", ` +
+            `${secs(now - startedAt)}s into the export. ` +
+            `diag=${await exportDiagnostic(page)}`,
+        )
+      }
+    }
+
+    if (now >= hardDeadline) {
+      throw new Error(
+        `export did not complete within ${timeout}ms while STILL TICKING ` +
+          `(${phase} at cursor="${cursor}") — slow, not wedged, so raise this ` +
+          `call's timeout rather than hunting a hang. ` +
+          `diag=${await exportDiagnostic(page)}`,
+      )
+    }
+    await sleep(SAMPLE_INTERVAL_MS)
+  }
+}
+
+/// The pre-probe wait, kept behind WEFTCUT_E2E_NO_STALL_PROBE=1: one deadline,
+/// no liveness. Here so a suspected probe misfire can be ruled out in one run
+/// instead of by reverting the helper.
+async function awaitExportByDeadline(
+  page: Page,
+  timeout: number,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const handle = await page.waitForFunction(() => (window as any).__e2eExportDone, undefined, {
+      timeout,
+      polling: 1000,
+    })
+    return (await handle.jsonValue()) as { ok: boolean; error?: string }
+  } catch (e) {
+    throw new Error(`export did not complete within ${timeout}ms; diag=${await exportDiagnostic(page)}`, {
+      cause: e,
+    })
+  }
 }
