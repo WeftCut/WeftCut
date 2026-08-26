@@ -197,7 +197,19 @@ test("a squeezed tab strip keeps every title whole and announces both ends", asy
     for (let step = 0; step < squeezed.tabs.length; step += 1) {
       if ((await trailing.count()) === 0) break;
       const before = (await probeStrip(group)).scrollStart;
-      await edgeButton(page, "end").click();
+      // The arrow retires on its OWN measurement, which lands after the scroll
+      // it measures — so the last step's arrow is still mounted when the count
+      // above reads it and gone by the time this line runs, and a default-timeout
+      // click then waits 30 s for an element that is never coming back. Bounded
+      // so that costs a second, and re-checked so only a RETIRED arrow ends the
+      // walk: an arrow that is still there and would not take a click is a real
+      // failure and has to keep its own error.
+      try {
+        await edgeButton(page, "end").click({ timeout: 2_000 });
+      } catch (err) {
+        if ((await trailing.count()) !== 0) throw err;
+        break;
+      }
       // Settling here is also what keeps the next iteration's click off an
       // element that is unmounting under it.
       await expect
