@@ -24,8 +24,26 @@ export type ExportState =
   | { kind: "starting" }
   | { kind: "preparing"; labels: string[]; onCancel?: () => void }
   | { kind: "progress"; progress: ExportProgress }
+  // The tail after the last frame is encoded: flush the native sink, render
+  // audio, stream-copy mux. It used to be invisible — the panel sat frozen at
+  // 100% with the Worker's stale fps for its whole duration, and an e2e
+  // liveness probe watching the frame counter could not tell that tail apart
+  // from a wedge (which is what `export_eos_tail` exists to catch). Naming the
+  // step makes both the user's wait and the probe's stall budget honest.
+  | { kind: "finalizing"; step: FinalizeStep }
   | { kind: "complete"; payload: ExportComplete }
   | { kind: "error"; detail: string };
+
+/// Ordered as they run. `sink` only occurs on the native-encode path.
+export type FinalizeStep = "sink" | "audio" | "mux";
+
+/// Spelled out rather than built as `export.finalize_${step}` so adding a step
+/// to the union is a compile error here, not a missing-key string at runtime.
+const FINALIZE_STEP_KEY: Record<FinalizeStep, string> = {
+  sink: "export.finalize_sink",
+  audio: "export.finalize_audio",
+  mux: "export.finalize_mux",
+};
 
 export function ExportPanel({
   state,
@@ -40,10 +58,11 @@ export function ExportPanel({
   onPlay?: (path: string) => void;
 }) {
   const { t } = useTranslation();
-  const inProgress = state.kind === "starting" || state.kind === "progress";
   // Modal during work: no dismiss/close affordance until complete/error (the
   // "preparing" wait has its own Cancel). This also blocks UI interaction.
-  const dismissable = !inProgress && state.kind !== "preparing";
+  // Stated as the terminal set, not as "not running": a new running phase then
+  // stays modal by default instead of silently becoming dismissable.
+  const dismissable = state.kind === "complete" || state.kind === "error";
 
   let body: React.ReactNode;
   let percent = 0;
@@ -77,6 +96,20 @@ export function ExportPanel({
       );
       break;
     }
+    case "finalizing":
+      // The encode is done, so the bar is honestly full — what changes is the
+      // label under it, which names the step instead of leaving the Worker's
+      // last fps reading on screen as if frames were still moving.
+      percent = 100;
+      body = (
+        <p className="export-progress-status">
+          <strong>{t("export.phase_finalize")}</strong>
+          <span className="export-progress-detail">
+            {t(FINALIZE_STEP_KEY[state.step])}
+          </span>
+        </p>
+      );
+      break;
     case "complete":
       percent = 100;
       body = (

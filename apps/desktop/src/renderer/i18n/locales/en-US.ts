@@ -693,6 +693,10 @@ const enUS = {
       "No audio to export: the selected range has no audio.",
     progress_label:
       "{{percent}}% · frame {{frame}} · {{fps}}fps · {{speed}}x",
+    phase_finalize: "Finalizing",
+    finalize_sink: "Flushing the encoder…",
+    finalize_audio: "Rendering audio…",
+    finalize_mux: "Writing the output file…",
     complete: "Exported to {{path}}",
     failed: "Export failed: {{detail}}",
     dismiss: "Dismiss",

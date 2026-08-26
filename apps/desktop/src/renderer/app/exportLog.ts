@@ -105,7 +105,10 @@ export function createExportLogMirror(): {
       last = state;
       const kind = state === null ? null : state.kind;
       const running =
-        kind === "starting" || kind === "preparing" || kind === "progress";
+        kind === "starting" ||
+        kind === "preparing" ||
+        kind === "progress" ||
+        kind === "finalizing";
 
       if (running && !op) {
         op = {

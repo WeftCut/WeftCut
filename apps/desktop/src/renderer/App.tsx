@@ -827,8 +827,18 @@ export function App({ onCloseProject }: AppProps) {
         canUndo: !!summary?.history.can_undo,
         canRedo: !!summary?.history.can_redo,
         canBlade: !!summary && summary.layer_count > 0,
+        // Locked for every non-terminal phase, stated as the TERMINAL set
+        // rather than by listing the running ones. Listing them had already
+        // gone stale: `preparing` was missing, so the export command stayed
+        // enabled through the readiness wait — unreachable by pointer (the
+        // panel is modal) but not by the keyboard/palette path, which is
+        // exactly what this flag gates. Naming the terminal set instead means
+        // a phase added later is locked by default.
         exportLocked:
-          busy || exportState?.kind === "starting" || exportState?.kind === "progress",
+          busy ||
+          (!!exportState &&
+            exportState.kind !== "complete" &&
+            exportState.kind !== "error"),
       },
     ),
   );

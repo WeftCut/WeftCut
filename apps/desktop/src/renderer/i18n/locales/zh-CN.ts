@@ -636,6 +636,10 @@ const zhCN: Resources = {
     no_audio_material: "无可导出的音频：所选范围内没有音频。",
     progress_label:
       "{{percent}}% · 第 {{frame}} 帧 · {{fps}}fps · {{speed}}x",
+    phase_finalize: "收尾",
+    finalize_sink: "正在冲洗编码器…",
+    finalize_audio: "正在渲染音频…",
+    finalize_mux: "正在写出文件…",
     complete: "已导出到 {{path}}",
     failed: "导出失败：{{detail}}",
     dismiss: "关闭",

@@ -143,6 +143,12 @@ export function useExportFlow(deps: {
           progress: Math.round(exportState.progress.progress * 100),
         });
         break;
+      case "finalizing":
+        // Full but not done. Indeterminate would be more literally true (the
+        // tail has no sub-progress) but reads as a regression on the taskbar —
+        // a bar that just filled must not start pulsing again.
+        set({ status: ProgressBarStatus.Normal, progress: 100 });
+        break;
       case "error":
         set({ status: ProgressBarStatus.Error, progress: 100 });
         break;
@@ -213,10 +219,10 @@ export function useExportFlow(deps: {
   //   3. Rust stream-copy mux writes the user-chosen path.
   //
   // The Worker emits progress on every encoded frame; that maps to
-  // the encode phase of ExportPanel. Audio + mux run silently in
-  // the "finalizing" tail (panel stays at progress=1.0 with the
-  // last Worker fps numbers) — they should be sub-2-second for any
-  // typical project.
+  // the encode phase of ExportPanel. Sink-flush, audio and mux each name
+  // themselves as a `finalizing` step — they should be sub-2-second for a
+  // typical project, but they are the phases with no sub-progress of their
+  // own, so the step is the only liveness signal anything downstream has.
   //
   // Temp files live under the OS temp dir with UUIDs; cleaned in
   // a finally block. If cleanup itself fails the user's output is
@@ -761,6 +767,7 @@ export function useExportFlow(deps: {
     // sent. The sink flushes its encoder + muxer and writes the final
     // tempVideoPath. Must run BEFORE the audio export + mux.
     if (nativeSink) {
+      setExportState({ kind: "finalizing", step: "sink" });
       try {
         await exportVideoSinkFinish();
       } catch (e) {
@@ -777,6 +784,7 @@ export function useExportFlow(deps: {
       // (1) Video is already written to tempVideoPath (streamed above).
       // Audio-only Rust export -> temp audio file (.m4a/.mka).
       if (settings.audio.include) {
+        setExportState({ kind: "finalizing", step: "audio" });
         await exportProjectAudioOnly(
           tempAudioPath,
           {
@@ -792,6 +800,7 @@ export function useExportFlow(deps: {
       // (3) Mux → user-chosen path. Every path already wrote the final codec
       // to tempVideoPath (WebCodecs direct-encode, or the native-encode video
       // sink) — the mux step is always a stream-copy into the chosen container.
+      setExportState({ kind: "finalizing", step: "mux" });
       await muxExport(tempVideoPath, tempAudioPath, path);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -822,7 +831,9 @@ export function useExportFlow(deps: {
 
   // E2E-only: mirror the export phase onto window so a WebDriver diagnostic can
   // see where a hung export is stuck (null → starting → preparing → progress →
-  // complete/error). Stripped from prod (static VITE_WEFTCUT_E2E check).
+  // finalizing → complete/error), and to feed driveExport's stall probe: every
+  // phase here carries something that CHANGES while the pipeline is alive.
+  // Stripped from prod (static VITE_WEFTCUT_E2E check).
   useEffect(() => {
     if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return;
     (window as unknown as { __weftcutExportState?: unknown }).__weftcutExportState =
