@@ -50,6 +50,20 @@ fn audio_encode_args(codec: &str, bitrate_bps: u64) -> Vec<std::ffi::OsString> {
     ]
 }
 
+/// Resolve the output channel count. `None` means *follow the composition* —
+/// the contract the export dialog's "Follow composition" option and
+/// `docs/export.md` both state — so the fallback reads the project, never a
+/// literal: a mono composition that fell back to stereo was silent, since
+/// ffmpeg upmixes without complaint. A fn so that contract is testable without
+/// an ffmpeg roundtrip.
+///
+/// The clamp is the encode-side invariant, not a preference: the mixer emits
+/// stereo and ffmpeg downmixes from it, so nothing outside mono/stereo has a
+/// meaning here.
+fn target_channels(spec: &AudioEncodeSpec, composition_channels: u8) -> u8 {
+    spec.channels.unwrap_or(composition_channels).clamp(1, 2)
+}
+
 /// Audio-only export. Produces an audio-only file at `output` (AAC `.m4a` or
 /// Opus `.mka`) containing the project's mixed audio. The mix itself happens
 /// in Rust (`audio::mix`, sample-accurate over conform PCM); ffmpeg's role is
@@ -93,7 +107,7 @@ async fn mix_and_encode(
     }
 
     let target_sr = audio.sample_rate.unwrap_or(project.composition.sample_rate);
-    let target_ch = audio.channels.unwrap_or(2).clamp(1, 2);
+    let target_ch = target_channels(audio, project.composition.channels);
 
     // Create the output's parent dir if missing. Audio-only export sends this
     // straight to the dialog's location (defaults to `<workspace>/output`,
@@ -308,6 +322,31 @@ mod tests {
             .collect();
         assert_eq!(o, vec!["-c:a", "libopus", "-b:a", "128000"]);
     }
+
+    #[test]
+    fn target_channels_follows_the_composition_when_unset() {
+        let spec = |channels| super::AudioEncodeSpec {
+            codec: "aac".into(),
+            bitrate: 192_000,
+            sample_rate: None,
+            channels,
+        };
+
+        // `None` follows the composition — mono included. This is the case a
+        // hardcoded stereo fallback overrode silently, and it is the whole
+        // reason this fn exists.
+        assert_eq!(super::target_channels(&spec(None), 1), 1);
+        assert_eq!(super::target_channels(&spec(None), 2), 2);
+
+        // An explicit choice outranks the composition, in both directions.
+        assert_eq!(super::target_channels(&spec(Some(1)), 2), 1);
+        assert_eq!(super::target_channels(&spec(Some(2)), 1), 2);
+
+        // Neither source can widen the encode past what the mixer feeds it.
+        assert_eq!(super::target_channels(&spec(Some(6)), 2), 2);
+        assert_eq!(super::target_channels(&spec(None), 0), 1);
+    }
+
     use tempfile::TempDir;
 
     /// End-to-end over the Rust mixer + ffmpeg encode tail: two overlapping
