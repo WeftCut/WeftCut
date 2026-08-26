@@ -14,13 +14,14 @@ const BIN = path.join(
   process.platform === "win32" ? "media_conformance.exe" : "media_conformance",
 );
 
-// A hung analyzer and a wedged export are the same symptom once the spec's own
-// timeout fires — a bare "test timeout" with nothing attached. Capping the child
-// separates them. 180s is ~2x the heaviest real call (four 1080p SSIM samples,
-// sequential decode to index 270 in two files, debug profile: ~85s on a GPU-less
-// leg, ~121s on a slow one), so only a true hang trips it. Per-leg override:
-// WEFTCUT_ANALYZE_TIMEOUT_MS.
-const TIMEOUT_MS = Number(process.env.WEFTCUT_ANALYZE_TIMEOUT_MS) || 180_000;
+// Backstop for a genuinely wedged child, NOT a cost budget. A cap set anywhere
+// near real cost turns a slow runner into a red build: the heaviest legitimate
+// call is a `--window` scan (62 candidate SSIMs — 3x the cost of the deepest
+// plain scan) and it measures 180-240s on the GPU-less Windows leg, so 180s
+// there failed a test that was working. 600s is unreachable without an actual
+// wedge. What tells you where a spec's time went is the per-call log below, not
+// this. Per-leg override: WEFTCUT_ANALYZE_TIMEOUT_MS.
+const TIMEOUT_MS = Number(process.env.WEFTCUT_ANALYZE_TIMEOUT_MS) || 600_000;
 
 let warnedNoBin = false;
 
@@ -67,8 +68,21 @@ function spawnAnalyzer(args) {
 // stderr. So we parse stdout first and only throw when there's no parseable
 // report. `mode` names the invocation in that error and nowhere else.
 function runAnalyzer(mode, args) {
-  const r = spawnAnalyzer(args);
   const name = `media_conformance${mode ? ` ${mode}` : ""}`;
+  // Cost drivers only: how deep the scan goes and how many candidates each
+  // sample is matched against. Everything else in `args` is a path.
+  const at = (flag) => (args.indexOf(flag) < 0 ? null : args[args.indexOf(flag) + 1]);
+  const label = [mode || "ssim", `samples=${at("--samples") ?? at("--sample") ?? "-"}`]
+    .concat(at("--window") ? [`window=${at("--window")}`] : [])
+    .join(" ");
+  // spawnSync blocks, so the opening line is the only thing a spec that dies
+  // MID-analysis leaves behind: a start with no matching "took" is the analyzer,
+  // and nothing else in the suite could say that. The pair also makes a slow
+  // scan legible without profiling, which is how the cap above got calibrated.
+  console.log(`[analyze] ${label} …`);
+  const started = Date.now();
+  const r = spawnAnalyzer(args);
+  console.log(`[analyze] ${label} took ${((Date.now() - started) / 1000).toFixed(1)}s`);
   // A child that never ran, or that TIMEOUT_MS killed, reports in `error` while
   // `status` stays null — so this has to come before the parse, which would
   // otherwise blame an empty stdout for a process that was killed.

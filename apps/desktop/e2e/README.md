@@ -354,32 +354,40 @@ output (dispatch CI runs set this automatically).
 ## Per-test timeout budgets
 
 `test.setTimeout(...)` in an export gate is not an estimate of the test's cost.
-It has to clear the **worst single wedge point** in the body, because every
-heavy helper carries its own guard with a diagnostic attached: `driveExport`
-polls for 170 s and then reports `last state=<kind>/<detail> perf=<...>`, and
-`analyze()` kills the analyzer child after `WEFTCUT_ANALYZE_TIMEOUT_MS`
-(180 s default) and names it. Set the budget below
-*cost-to-reach-a-guard + that guard's cap* and the spec timeout always wins the
-race, so the failure arrives as a bare `Test timeout of Nms exceeded` with no
-state — the one thing these gates exist to tell you.
-
-The wedge points in a 1:1 export gate, measured on the GPU-less Windows leg:
-
-| wedge point | reached after | guard | budget must clear |
-| --- | --- | --- | --- |
-| the export | `launchApp` + `newProject`, ~60 s | `driveExport`, 170 s | ~230 s |
-| the analyzer | + the export itself, ~120 s | `analyze()`, 180 s | ~300 s |
-
-Hosted runners drift about 1.9x run to run, so a single-export gate's floor
-lands near 360 s. `export_eos_tail` takes 420 s because its analyzer scan is the
-suite's heaviest (four 1080p samples decoded out to index 270 in two files), and
-the two-scan `export_overlap_same_source` case 600 s. None of these is a cost
-estimate — those tests measure 117-170 s and 366 s. The headroom is spent only
-when something is actually broken.
+It has to clear `driveExport`'s **170 s export poll**, because that poll is the
+only thing that reports *where* an export wedged
+(`last state=<kind>/<detail> perf=<...>`). Set the budget below
+*time-to-reach-the-export + 170 s* and this timeout wins the race instead, so
+the failure arrives as a bare `Test timeout of Nms exceeded` with no state —
+the one thing these gates exist to tell you. On the GPU-less legs `launchApp` +
+`newProject` reach the export around 60 s, and hosted runners drift about 1.9x
+run to run, which puts the floor for a single-export gate near 360 s.
 
 A spec whose `launchApp()` sits in `beforeAll` (`audio.spec.ts`) is charged that
 launch against Playwright's separate hook timeout, so its budgets start from the
 first guard inside the body and are correspondingly smaller.
+
+None of these numbers is a cost estimate. `conformance` measures ~117 s against
+360 s, `export_eos_tail` ~150 s against 420 s, and the 2s-offset
+`export_overlap_same_source` case 208-366 s against 600 s. The headroom is spent
+only when something is actually broken.
+
+### Sizing the analyzer, not capping it
+
+`analyze()` costs are dominated by how deep the scan goes and how many
+candidates each sample is matched against, and they vary far more than the
+budgets do: a plain sample is ~1 s locally, the four-sample scan out to index
+270 is ~5 s, and a 62-candidate `--window` scan is ~15 s — roughly 85 s and
+180-240 s respectively on the GPU-less Windows leg.
+
+So the analyzer is **not** on a cost budget. `WEFTCUT_ANALYZE_TIMEOUT_MS`
+(600 s) is a backstop for a genuinely wedged child, deliberately set where it
+cannot fire on a slow runner: a cap tuned near real cost fails working tests,
+which is strictly worse than the diagnostic it buys. What locates a slow or
+stuck analysis is the log line every call emits — `[analyze] <mode> samples=…
+window=… …` on entry and `… took Ns` on return. Since `spawnSync` blocks, a
+start line with no matching `took` is the analyzer, and that is the only trace
+a spec killed mid-analysis leaves behind.
 
 ## The dev control surface
 

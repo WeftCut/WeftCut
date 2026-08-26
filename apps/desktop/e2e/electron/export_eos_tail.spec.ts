@@ -14,11 +14,11 @@ const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps_eostail.mp4')
 // plan 330 frames, and keep the drained tail frame-aligned.
 test('EOS-tail export completes and keeps the drained tail frame-aligned (Electron)', async () => {
   test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
-  // Clears both inner guards, not the measured ~150s: driveExport's 170s poll
-  // (reached ~60s in) and analyze()'s 180s cap (reached ~120s in — four 1080p
-  // samples decoded out to index 270 is the suite's heaviest scan). Below that,
-  // this timeout preempts them and a deadlock regression — the whole point of
-  // this spec — returns as a bare "test timeout" with no state attached.
+  // Clears driveExport's 170s poll, which is reached ~60s in and is the only
+  // thing that can report WHERE an export wedged — the whole point of this
+  // spec. At 220s this timeout preempted it and a deadlock regression came back
+  // as a bare "test timeout" with no state attached. Measured cost is ~150s,
+  // and the four-sample scan out to index 270 adds ~85s of that.
   // See e2e/README.md §Per-test timeout budgets.
   test.setTimeout(420000)
   const PROJECT_PARENT = tmpDir('weftcut-e2e-eostail-proj-')
