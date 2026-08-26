@@ -8,7 +8,7 @@
 // dial — and outside A/B Roll the panel renders an explainer instead of rows.
 
 import {
-  useEffect,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -40,6 +40,7 @@ import {
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { resolveAccelerator } from "../shortcuts/match";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
+import { useCloseOnAnchorMove } from "../timeline/contextMenuAnchor";
 import { MediaThumbnail } from "./MediaThumbnail";
 import { NearbyRowContextMenu } from "./NearbyRowContextMenu";
 import {
@@ -209,15 +210,15 @@ export function NearbyPanel({
     targets: RestackMenuTargets;
   } | null>(null);
 
-  // Coordinates are viewport-fixed. Close when any ancestor scrolls so the
-  // menu never floats detached from the row it belongs to (the media pool's
-  // convention).
-  useEffect(() => {
-    if (!rowMenu) return;
-    const close = () => setRowMenu(null);
-    window.addEventListener("scroll", close, true);
-    return () => window.removeEventListener("scroll", close, true);
-  }, [rowMenu]);
+  // Coordinates are viewport-fixed, so the menu closes once the row it belongs
+  // to scrolls out from under it (the media pool's convention) — measured on the
+  // row, not inferred from a `scroll` event, which the popup's own opening fires
+  // with nothing having moved. See `useCloseOnAnchorMove`.
+  const closeRowMenu = useCallback(() => setRowMenu(null), []);
+  useCloseOnAnchorMove(
+    rowMenu ? (rowEls.current.get(rowMenu.layerId) ?? null) : null,
+    closeRowMenu,
+  );
 
   const openRowMenu = (index: number, x: number, y: number) => {
     const row = visualRows[index];

@@ -157,6 +157,16 @@ test('the row context menu Bring-to-front restacks and one undo restores it', as
   test.setTimeout(90_000)
   const { app, page } = await launchApp()
   try {
+    // A window SHORT enough that the stack has to scroll, pinned before the
+    // layout is built. The menu's own opening fires a `scroll` on the row's
+    // scroll container, so a list with nothing to scroll cannot reach the defect
+    // that dismissed the menu ~6 ms after it mounted — which is why this test
+    // passed on a developer's tall window and failed on every CI runner.
+    await app.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0]!
+      if (win.isMaximized()) win.unmaximize()
+      win.setBounds({ x: 0, y: 0, width: 1024, height: 768 })
+    })
     await newProject(page, {
       parentFolder: tmpDir('weftcut-e2e-nearby-menu-'),
       name: 'e2e-nearby-menu-' + Date.now(),
@@ -164,6 +174,15 @@ test('the row context menu Bring-to-front restacks and one undo restores it', as
     })
     const { under, mid, over } = await threeOverlappingOverlays(page)
     await openNearbyOverStack(page)
+    // Asserted, not assumed: a layout change that gives the list room again
+    // would leave every line below green while covering nothing.
+    await expect
+      .poll(() =>
+        page
+          .locator('.right-panel-peek-results')
+          .evaluate((el) => el.scrollHeight - el.clientHeight),
+      )
+      .toBeGreaterThan(1)
 
     const before = await stackSummary(page)
 

@@ -1007,6 +1007,53 @@ describe("NearbyPanel row context menu", () => {
     expect(onRestack).not.toHaveBeenCalled();
   });
 
+  /// Pin a row's viewport position; jsdom reports every rect as zeros, so a
+  /// scroll can only be made observable by moving one of these by hand.
+  function stubRowTop(row: HTMLElement, top: number) {
+    row.getBoundingClientRect = () =>
+      ({
+        top,
+        bottom: top + 40,
+        height: 40,
+        left: 0,
+        right: 120,
+        width: 120,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      }) as DOMRect;
+  }
+
+  it("survives the scroll event its own opening fires", () => {
+    renderPanel(threeStackTracks(), { onRestack: vi.fn() });
+    const row = screen.getByTitle("Caption").closest("li")!;
+    stubRowTop(row, 40);
+
+    openRowMenu("Caption");
+    // Base UI takes focus into the popup and Chromium answers with a `scroll`
+    // on the row's scroll container a few ms later, offset UNCHANGED. Closing
+    // on that event dismissed the menu before the user could read it — red on
+    // every Windows CI run, flaky on macOS, green on Linux, purely on which
+    // handler won.
+    fireEvent.scroll(row.parentElement!);
+
+    expect(screen.queryByRole("menu")).not.toBeNull();
+  });
+
+  it("closes when a scroll actually moves the row out from under it", () => {
+    renderPanel(threeStackTracks(), { onRestack: vi.fn() });
+    const row = screen.getByTitle("Caption").closest("li")!;
+    stubRowTop(row, 40);
+
+    openRowMenu("Caption");
+    // The list really scrolls: the popup is pinned to viewport coordinates the
+    // row has now left, so it would float over a different row's content.
+    stubRowTop(row, -60);
+    fireEvent.scroll(row.parentElement!);
+
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
   it("opening the menu leaves click-to-select and the grip drag untouched", () => {
     const onRestack = vi.fn();
     const { onPick } = renderPanel(threeStackTracks(), { onRestack });
