@@ -102,7 +102,7 @@ test.describe('same-source overlapping clips export (Electron)', () => {
 
   test('a 2s-offset overlap exports complete with both clips on their own frames', async () => {
     // The most expensive gate in the suite: a 240-frame export plus the
-    // 62-candidate `--window` scan below, which alone runs 180-240s on the
+    // 62-candidate `--window` scan below, which alone runs ~250s on the
     // GPU-less Windows leg. Measured 208-366s end to end depending on the
     // runner, so the budget is sized for the slow end, not the median.
     // See e2e/README.md §Per-test timeout budgets.

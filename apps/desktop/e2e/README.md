@@ -377,8 +377,8 @@ only when something is actually broken.
 `analyze()` costs are dominated by how deep the scan goes and how many
 candidates each sample is matched against, and they vary far more than the
 budgets do: a plain sample is ~1 s locally, the four-sample scan out to index
-270 is ~5 s, and a 62-candidate `--window` scan is ~15 s — roughly 85 s and
-180-240 s respectively on the GPU-less Windows leg.
+270 is ~5 s, and a 62-candidate `--window` scan is ~15 s — measured at 79 s
+and 247 s respectively on the GPU-less Windows leg.
 
 So the analyzer is **not** on a cost budget. `WEFTCUT_ANALYZE_TIMEOUT_MS`
 (600 s) is a backstop for a genuinely wedged child, deliberately set where it

@@ -17,8 +17,8 @@ const BIN = path.join(
 // Backstop for a genuinely wedged child, NOT a cost budget. A cap set anywhere
 // near real cost turns a slow runner into a red build: the heaviest legitimate
 // call is a `--window` scan (62 candidate SSIMs — 3x the cost of the deepest
-// plain scan) and it measures 180-240s on the GPU-less Windows leg, so 180s
-// there failed a test that was working. 600s is unreachable without an actual
+// plain scan) and it measures ~250s on the GPU-less Windows leg, so 180s there
+// failed a test that was working. 600s is unreachable without an actual
 // wedge. What tells you where a spec's time went is the per-call log below, not
 // this. Per-leg override: WEFTCUT_ANALYZE_TIMEOUT_MS.
 const TIMEOUT_MS = Number(process.env.WEFTCUT_ANALYZE_TIMEOUT_MS) || 600_000;
