@@ -13,7 +13,7 @@
 //   2. Smooth per-frame visuals (timeline playhead line, timecode readout):
 //      TRANSIENT subscription — `usePlayheadStore.subscribe` in an effect,
 //      mutate the DOM node via ref. Zero React commits.
-//   3. Panels showing "value at playhead" (inspector, peek list):
+//   3. Panels showing "value at playhead" (inspector, Playhead Panel):
 //      `usePlayheadTimeUsThrottled()` — trailing-edge throttle, converges on
 //      the final value after the last change (pause/seek lands exactly).
 //   4. Tiny leaf components where per-frame React commits are acceptable

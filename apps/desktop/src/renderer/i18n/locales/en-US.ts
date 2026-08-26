@@ -267,7 +267,7 @@ const enUS = {
       caption: "Caption",
       "role-mixer": "Role Mixer",
       effect: "Effect",
-      nearby: "Playhead",
+      playhead: "Playhead",
       agent: "Agent",
       history: "History",
     },
@@ -552,10 +552,10 @@ const enUS = {
       "Place two visual clips back-to-back on a track, then pick a style below.",
     // Failure copy moved to `errors.*` (errors/formatCommandError.ts).
   },
-  peek: {
+  playhead_panel: {
     section_label: "Hidden-track layers near playhead",
     // A row's leading time value: unit letters, not a timecode (see
-    // `formatPeekDelta`). The phrase around the value is what saves every row a
+    // `formatPlayheadDelta`). The phrase around the value is what saves every row a
     // printed field name, so a translation has to keep the relation it states —
     // reducing any of these to the bare number puts the ambiguity back.
     delta_frames: "{{f}}f",
@@ -572,9 +572,9 @@ const enUS = {
     delta_past_aria: "Ended {{value}} before the playhead",
     delta_remaining_aria: "{{value}} left to play",
     duration_aria: "Duration {{value}}",
-    // The ±Δ window dial. `value` is pre-formatted (peek.ts) and never a
+    // The ±Δ window dial. `value` is pre-formatted (playheadItems.ts) and never a
     // count, so these keys take no i18next plural suffixes.
-    window_label: "Nearby window",
+    window_label: "Playhead window",
     window_seconds: "{{value}}s",
     window_minutes: "{{value}}min",
     // The chips are checkboxes in any combination, and checking none is the

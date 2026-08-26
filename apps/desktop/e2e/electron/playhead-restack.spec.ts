@@ -3,7 +3,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { dockPanel, dockTab, invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver'
 
 /**
- * Nearby z-order restack in the real app (ADR 0044, nearby-z-order ticket 06).
+ * Playhead Panel z-order restack in the real app (ADR 0044).
  *
  * Both tests below exist for what the colocated Vitest suites cannot see: the
  * grip drag is pure pointer events fired inside a live Dockview panel, so only
@@ -16,7 +16,7 @@ import { dockPanel, dockTab, invokeCmd, launchApp, newProject, tmpDir } from './
  * No media fixtures: three overlapping Color layers build the At-playhead
  * stack. Each `add_color_layer` over an occupied interval spawns its own
  * role-less Overlay track, which is exactly the hidden-in-A/B-Roll population
- * the Nearby panel surfaces.
+ * the Playhead Panel surfaces.
  */
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
@@ -68,31 +68,31 @@ async function threeOverlappingOverlays(
 /// The At-playhead section (a named <section> → ARIA region) and its rows,
 /// top-of-stack first — the panel's own presentation order.
 const atPlayheadStack = (page: Page) => page.getByRole('region', { name: 'Now playing' })
-const stackRows = (page: Page) => atPlayheadStack(page).locator('.right-panel-peek-list > li')
-const rowLabels = (page: Page) => stackRows(page).locator('.peek-label').allTextContents()
+const stackRows = (page: Page) => atPlayheadStack(page).locator('.right-panel-playhead-list > li')
+const rowLabels = (page: Page) => stackRows(page).locator('.playhead-label').allTextContents()
 
-/// Boot into a project with the Nearby panel ACTIVE. It ships inactive in the
+/// Boot into a project with the Playhead Panel ACTIVE. It ships inactive in the
 /// default layout (tabbed behind Attribute), so the spec clicks its tab — the
 /// splash overlay must be gone first or the click lands on it.
-async function openNearbyOverStack(page: Page): Promise<void> {
+async function openPlayheadPanelOverStack(page: Page): Promise<void> {
   await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
-  await dockTab(page, 'nearby').click()
-  await expect(dockPanel(page, 'nearby')).toHaveAttribute('data-panel-visible', 'true')
+  await dockTab(page, 'playhead').click()
+  await expect(dockPanel(page, 'playhead')).toHaveAttribute('data-panel-visible', 'true')
   // Rows arrive with the next summary render; top-of-stack first.
   await expect.poll(() => rowLabels(page), { timeout: 15_000 }).toEqual(['Over', 'Mid', 'Under'])
 }
 
-test('a Nearby grip drag restacks the real project and one undo restores it', async () => {
+test('a Playhead Panel grip drag restacks the real project and one undo restores it', async () => {
   test.setTimeout(90_000)
   const { app, page } = await launchApp()
   try {
     await newProject(page, {
-      parentFolder: tmpDir('weftcut-e2e-nearby-restack-'),
-      name: 'e2e-nearby-restack-' + Date.now(),
+      parentFolder: tmpDir('weftcut-e2e-playhead-restack-'),
+      name: 'e2e-playhead-restack-' + Date.now(),
       canvas: CANVAS,
     })
     const { under, mid, over } = await threeOverlappingOverlays(page)
-    await openNearbyOverStack(page)
+    await openPlayheadPanelOverStack(page)
 
     const before = await stackSummary(page)
 
@@ -114,8 +114,8 @@ test('a Nearby grip drag restacks the real project and one undo restores it', as
     // Mid-gesture, button still down: the PANEL owns the pointer — reorder
     // styling armed and the insertion indicator on the section-bottom gap. If
     // Dockview had captured the gesture as a panel drag, neither appears.
-    await expect(atPlayheadStack(page)).toHaveClass(/peek-stack--reordering/)
-    await expect(stackRows(page).nth(2)).toHaveClass(/peek-row--drop-after/)
+    await expect(atPlayheadStack(page)).toHaveClass(/playhead-stack--reordering/)
+    await expect(stackRows(page).nth(2)).toHaveClass(/playhead-row--drop-after/)
 
     await page.mouse.up()
 
@@ -168,18 +168,18 @@ test('the row context menu Bring-to-front restacks and one undo restores it', as
       win.setBounds({ x: 0, y: 0, width: 1024, height: 768 })
     })
     await newProject(page, {
-      parentFolder: tmpDir('weftcut-e2e-nearby-menu-'),
-      name: 'e2e-nearby-menu-' + Date.now(),
+      parentFolder: tmpDir('weftcut-e2e-playhead-menu-'),
+      name: 'e2e-playhead-menu-' + Date.now(),
       canvas: CANVAS,
     })
     const { under, mid, over } = await threeOverlappingOverlays(page)
-    await openNearbyOverStack(page)
+    await openPlayheadPanelOverStack(page)
     // Asserted, not assumed: a layout change that gives the list room again
     // would leave every line below green while covering nothing.
     await expect
       .poll(() =>
         page
-          .locator('.right-panel-peek-results')
+          .locator('.right-panel-playhead-results')
           .evaluate((el) => el.scrollHeight - el.clientHeight),
       )
       .toBeGreaterThan(1)

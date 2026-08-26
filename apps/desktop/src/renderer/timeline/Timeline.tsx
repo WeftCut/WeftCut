@@ -171,7 +171,7 @@ interface TimelineProps {
   /// (`docs/data-model.md`): when set, this hidden track is
   /// included in the AB-mode ordered list at its natural accretion
   /// slot. Cleared by the App when the user selects a layer on a
-  /// different track, presses Esc, or the peek list dispatches a new
+  /// different track, presses Esc, or the Playhead Panel dispatches a new
   /// reveal.
   revealedTrackId?: string | null;
   /// User-overridden keybindings, threaded through from App for the

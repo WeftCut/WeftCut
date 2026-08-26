@@ -1,21 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildPeekItems,
-  formatPeekDelta,
-  peekCategory,
-  peekDeltaLabels,
+  buildPlayheadItems,
+  formatPlayheadDelta,
+  playheadCategory,
+  playheadDeltaLabels,
   restackMenuTargets,
   restackTargetForGap,
-  splitPeekSections,
-  type PeekItem,
-} from "./peek";
+  splitPlayheadSections,
+  type PlayheadItem,
+} from "./playheadItems";
 import type { LayerSummary, TrackSummary } from "../ipc";
 
 function item(
   id: string,
   kind: string,
   opts: { trackIndex?: number; spansPlayhead?: boolean } = {},
-): PeekItem {
+): PlayheadItem {
   const spans = opts.spansPlayhead ?? true;
   return {
     layer: {
@@ -41,14 +41,14 @@ function item(
   };
 }
 
-describe("peekCategory", () => {
-  it("maps Audio to audio", () => expect(peekCategory("Audio")).toBe("audio"));
+describe("playheadCategory", () => {
+  it("maps Audio to audio", () => expect(playheadCategory("Audio")).toBe("audio"));
   it("maps Text to text", () => {
-    expect(peekCategory("Text")).toBe("text");
+    expect(playheadCategory("Text")).toBe("text");
   });
   it("maps every visual kind to video", () => {
     for (const k of ["VideoClip", "ImageOverlay", "Color", "Motif"]) {
-      expect(peekCategory(k)).toBe("video");
+      expect(playheadCategory(k)).toBe("video");
     }
   });
 });
@@ -62,65 +62,65 @@ const FMT = (key: string, values: Record<string, unknown>): string =>
     .map(([k, v]) => `${k}=${String(v)}`)
     .join(",")})`;
 
-describe("formatPeekDelta", () => {
+describe("formatPlayheadDelta", () => {
   // Below a second there is nothing but frames to report, so no `0s` is
   // printed — `15f` is the whole value.
   it("reports frames alone below one second", () => {
-    expect(formatPeekDelta(500_000, 30, 1, FMT)).toBe("peek.delta_frames(f=15)");
+    expect(formatPlayheadDelta(500_000, 30, 1, FMT)).toBe("playhead_panel.delta_frames(f=15)");
   });
 
   // The frame field survives at zero on purpose: a bare `1s` would read as a
   // rounded value in a column whose point is that it is not one.
   it("pairs seconds with frames below a minute, zero frames included", () => {
-    expect(formatPeekDelta(3_400_000, 30, 1, FMT)).toBe(
-      "peek.delta_sec_frames(s=3,f=12)",
+    expect(formatPlayheadDelta(3_400_000, 30, 1, FMT)).toBe(
+      "playhead_panel.delta_sec_frames(s=3,f=12)",
     );
-    expect(formatPeekDelta(1_000_000, 30, 1, FMT)).toBe(
-      "peek.delta_sec_frames(s=1,f=0)",
+    expect(formatPlayheadDelta(1_000_000, 30, 1, FMT)).toBe(
+      "playhead_panel.delta_sec_frames(s=1,f=0)",
     );
   });
 
   // Frames stop being an edit decision at this distance, so they stop being
   // printed rather than filling the column with digits nobody reads.
   it("coarsens past a minute, and again past an hour", () => {
-    expect(formatPeekDelta(90_000_000, 30, 1, FMT)).toBe(
-      "peek.delta_min_sec(m=1,s=30)",
+    expect(formatPlayheadDelta(90_000_000, 30, 1, FMT)).toBe(
+      "playhead_panel.delta_min_sec(m=1,s=30)",
     );
-    expect(formatPeekDelta(7_384_000_000, 30, 1, FMT)).toBe(
-      "peek.delta_hour_min(h=2,m=3)",
+    expect(formatPlayheadDelta(7_384_000_000, 30, 1, FMT)).toBe(
+      "playhead_panel.delta_hour_min(h=2,m=3)",
     );
   });
 
-  // Direction is the caller's phrase (`peekDeltaLabels`), so the value is
+  // Direction is the caller's phrase (`playheadDeltaLabels`), so the value is
   // always a magnitude — no row prints a lone minus for a reader to decode.
   it("formats a negative distance exactly like its positive twin", () => {
-    expect(formatPeekDelta(-3_400_000, 30, 1, FMT)).toBe(
-      formatPeekDelta(3_400_000, 30, 1, FMT),
+    expect(formatPlayheadDelta(-3_400_000, 30, 1, FMT)).toBe(
+      formatPlayheadDelta(3_400_000, 30, 1, FMT),
     );
   });
 
   it("falls back to 30 fps rather than dividing by a bad rate", () => {
-    expect(formatPeekDelta(500_000, 0, 0, FMT)).toBe("peek.delta_frames(f=15)");
+    expect(formatPlayheadDelta(500_000, 0, 0, FMT)).toBe("playhead_panel.delta_frames(f=15)");
   });
 });
 
-describe("peekDeltaLabels", () => {
+describe("playheadDeltaLabels", () => {
   // An At-playhead row's distance to its nearest edge is zero by definition,
   // so the number worth showing there is what remains. That it is playing at
   // all is the section header's job — a LIVE badge would only repeat it, and
   // would spend this slot to do so.
   it("asks what is left of an At-playhead row, not whether it is playing", () => {
-    const labels = peekDeltaLabels(
+    const labels = playheadDeltaLabels(
       item("live", "VideoClip", { spansPlayhead: true }),
       30,
       1,
       FMT,
     );
     expect(labels.text).toBe(
-      "peek.delta_remaining(value=peek.delta_sec_frames(s=1,f=0))",
+      "playhead_panel.delta_remaining(value=playhead_panel.delta_sec_frames(s=1,f=0))",
     );
     expect(labels.aria).toBe(
-      "peek.delta_remaining_aria(value=peek.delta_sec_frames(s=1,f=0))",
+      "playhead_panel.delta_remaining_aria(value=playhead_panel.delta_sec_frames(s=1,f=0))",
     );
   });
 
@@ -128,33 +128,33 @@ describe("peekDeltaLabels", () => {
   // value is terse, which makes the accessible name the only place the field
   // name exists at all.
   it("phrases a future row as a wait and a past row as a memory", () => {
-    const soon: PeekItem = {
+    const soon: PlayheadItem = {
       ...item("soon", "VideoClip", { spansPlayhead: false }),
       offsetUs: 500_000,
     };
-    const gone: PeekItem = {
+    const gone: PlayheadItem = {
       ...item("gone", "VideoClip", { spansPlayhead: false }),
       offsetUs: -500_000,
     };
 
-    expect(peekDeltaLabels(soon, 30, 1, FMT).text).toBe(
-      "peek.delta_future(value=peek.delta_frames(f=15))",
+    expect(playheadDeltaLabels(soon, 30, 1, FMT).text).toBe(
+      "playhead_panel.delta_future(value=playhead_panel.delta_frames(f=15))",
     );
-    expect(peekDeltaLabels(soon, 30, 1, FMT).aria).toBe(
-      "peek.delta_future_aria(value=peek.delta_frames(f=15))",
+    expect(playheadDeltaLabels(soon, 30, 1, FMT).aria).toBe(
+      "playhead_panel.delta_future_aria(value=playhead_panel.delta_frames(f=15))",
     );
-    expect(peekDeltaLabels(gone, 30, 1, FMT).text).toBe(
-      "peek.delta_past(value=peek.delta_frames(f=15))",
+    expect(playheadDeltaLabels(gone, 30, 1, FMT).text).toBe(
+      "playhead_panel.delta_past(value=playhead_panel.delta_frames(f=15))",
     );
-    expect(peekDeltaLabels(gone, 30, 1, FMT).aria).toBe(
-      "peek.delta_past_aria(value=peek.delta_frames(f=15))",
+    expect(playheadDeltaLabels(gone, 30, 1, FMT).aria).toBe(
+      "playhead_panel.delta_past_aria(value=playhead_panel.delta_frames(f=15))",
     );
   });
 });
 
-describe("splitPeekSections", () => {
+describe("splitPlayheadSections", () => {
   it("splits on the playhead: spanning items go At-playhead, the rest Nearby", () => {
-    const sections = splitPeekSections(
+    const sections = splitPlayheadSections(
       [
         item("live", "VideoClip", { spansPlayhead: true }),
         item("soon", "VideoClip", { spansPlayhead: false }),
@@ -169,7 +169,7 @@ describe("splitPeekSections", () => {
     // `Project.tracks` is ordered bottom-of-z-stack first, so the highest
     // track index composites on top and must render first. Visual kinds
     // (video / image / color / motif / text) interleave in one list.
-    const sections = splitPeekSections(
+    const sections = splitPlayheadSections(
       [
         item("bottom-video", "VideoClip", { trackIndex: 1 }),
         item("top-text", "Text", { trackIndex: 5 }),
@@ -189,7 +189,7 @@ describe("splitPeekSections", () => {
   it("sinks spanning audio rows to the section tail in their input order", () => {
     // Audio never sorts by z (it mixes by role, ADR 0023): even from the
     // topmost track it trails every visual, in the order it arrived.
-    const sections = splitPeekSections(
+    const sections = splitPlayheadSections(
       [
         item("a1", "Audio", { trackIndex: 9 }),
         item("v", "VideoClip", { trackIndex: 1 }),
@@ -211,9 +211,9 @@ describe("splitPeekSections", () => {
   });
 
   it("keeps the Nearby section in the existing proximity order", () => {
-    // Nearby's sort is buildPeekItems' business; the split must not
+    // Nearby's sort is buildPlayheadItems' business; the split must not
     // rearrange it, whatever the track indices say.
-    const sections = splitPeekSections(
+    const sections = splitPlayheadSections(
       [
         item("n1", "VideoClip", { spansPlayhead: false, trackIndex: 7 }),
         item("n2", "Text", { spansPlayhead: false, trackIndex: 2 }),
@@ -225,7 +225,7 @@ describe("splitPeekSections", () => {
   });
 
   it("applies a category filter to both sections", () => {
-    const sections = splitPeekSections(
+    const sections = splitPlayheadSections(
       [
         item("live-v", "VideoClip"),
         item("live-a", "Audio"),
@@ -242,7 +242,7 @@ describe("splitPeekSections", () => {
 
   // Two kinds in, the third out — the filter is a union, not a single choice.
   it("keeps every checked category and drops the rest", () => {
-    const sections = splitPeekSections(
+    const sections = splitPlayheadSections(
       [
         item("live-v", "VideoClip"),
         item("live-t", "Text"),
@@ -262,7 +262,7 @@ describe("splitPeekSections", () => {
   // No category checked is NOT "keep nothing", it is "no filter" — read the
   // other way, the unfiltered view becomes unreachable once every chip is off.
   it("treats an empty filter as no filter at all", () => {
-    const sections = splitPeekSections(
+    const sections = splitPlayheadSections(
       [item("v", "VideoClip"), item("a", "Audio"), item("t", "Text")],
       new Set(),
     );
@@ -270,7 +270,7 @@ describe("splitPeekSections", () => {
   });
 
   it("a filter matching nothing leaves both sections empty", () => {
-    const sections = splitPeekSections(
+    const sections = splitPlayheadSections(
       [item("v", "VideoClip")],
       new Set(["text"]),
     );
@@ -474,12 +474,12 @@ const NOW = 1_000_000;
 const T = (key: string, values: Record<string, unknown>): string =>
   values.n === undefined ? key : `${key}#${String(values.n)}`;
 
-describe("buildPeekItems windowing", () => {
+describe("buildPlayheadItems windowing", () => {
   it("keeps only role-null layers that intersect the ±window", () => {
-    const items = buildPeekItems(
+    const items = buildPlayheadItems(
       [
         track("t-in", null, [layer("in", 800_000, 1_200_000)]),
-        // Assigned-role track: never surfaced by Nearby.
+        // Assigned-role track: never surfaced by the Playhead Panel.
         track("t-role", "a-roll", [layer("role", 800_000, 1_200_000)]),
         // Ends exactly at the low edge (t_end <= lo) → excluded.
         track("t-before", null, [layer("before", 0, 500_000)]),
@@ -495,7 +495,7 @@ describe("buildPeekItems windowing", () => {
   });
 
   it("flattens overlapping role-null tracks in time order", () => {
-    const items = buildPeekItems(
+    const items = buildPlayheadItems(
       [
         track("t-late", null, [layer("late", 1_200_000, 1_400_000)]),
         track("t-early", null, [layer("early", 700_000, 900_000)]),
@@ -510,7 +510,7 @@ describe("buildPeekItems windowing", () => {
   });
 
   it("signs the offset by side and measures what is left of the spanner", () => {
-    const items = buildPeekItems(
+    const items = buildPlayheadItems(
       [
         track("t", null, [
           layer("span", 800_000, 1_200_000),
@@ -541,7 +541,7 @@ describe("buildPeekItems windowing", () => {
   // carry the index of its track in the *full* array — role tracks included —
   // for the At-playhead stack to order against.
   it("indexes each item's track by its position in the full track array", () => {
-    const items = buildPeekItems(
+    const items = buildPlayheadItems(
       [
         track("t-role", "a-roll", [layer("skip", 800_000, 1_200_000)]),
         track("t-b", null, [layer("b", 800_000, 1_200_000)]),
@@ -562,7 +562,7 @@ describe("buildPeekItems windowing", () => {
   it("names each row's track the way the track header does", () => {
     const named = track("t-named", null, [layer("a", 800_000, 1_200_000)]);
     const unnamed = { ...track("t-plain", null, [layer("b", 800_000, 1_200_000)]), label: null };
-    const items = buildPeekItems([named, unnamed], NOW, 5_000_000, T);
+    const items = buildPlayheadItems([named, unnamed], NOW, 5_000_000, T);
     const byId = new Map(items.map((i) => [i.layer.id, i]));
     expect(byId.get("a")!.trackLabel).toBe("t-named");
     expect(byId.get("b")!.trackLabel).toBe("tracks.positional#2");
@@ -571,7 +571,7 @@ describe("buildPeekItems windowing", () => {
 
 describe("section membership at the window edges", () => {
   it("layers touching the playhead are At-playhead; the rest of the window is Nearby", () => {
-    const items = buildPeekItems(
+    const items = buildPlayheadItems(
       [
         // Ends exactly at the playhead (t_end == now) → still spanning.
         track("t-ends-now", null, [layer("ends-now", 600_000, NOW)]),
@@ -587,7 +587,7 @@ describe("section membership at the window edges", () => {
       T,
     );
 
-    const sections = splitPeekSections(items, new Set());
+    const sections = splitPlayheadSections(items, new Set());
     // Both spanning rows are visual, so they z-order top-of-stack first:
     // t-starts-now sits above t-ends-now in the track array.
     expect(sections.atPlayhead.map((i) => i.layer.id)).toEqual([

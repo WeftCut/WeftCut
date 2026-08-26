@@ -331,7 +331,7 @@ store's header):
    `usePlayheadStore.subscribe` in an effect and mutate the DOM node
    through a ref. Zero React commits during playback.
 3. **Throttled hook** — `usePlayheadTimeUsThrottled()` for panels that
-   show "value at playhead" (inspector, peek list, keyframe headers).
+   show "value at playhead" (inspector, Playhead Panel, keyframe headers).
    Trailing-edge, so a pause or single seek converges on the exact
    final frame.
 4. **Frame-rate hook** — `usePlayheadTimeUs()` only for tiny leaf

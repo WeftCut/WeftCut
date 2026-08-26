@@ -117,7 +117,7 @@ test('a real DOM file-drop on the media pool imports via wireFileDrop', async ()
       'attribute',
       'effect',
       'media',
-      'nearby',
+      'playhead',
       'preview',
       'quick-actions',
       'timeline',

@@ -126,7 +126,7 @@ export function TrackLane({
   isGroupStart: boolean;
   /// Inline-reveal flag. The lane renders with extra chrome
   /// (dashed border / "hidden" badge) so the user knows this row is
-  /// only here because they clicked a peek item.
+  /// only here because they clicked a Playhead Panel row.
   isRevealed: boolean;
   /// True while any track-height drag is in flight — keeps the resize
   /// handle highlighted even when the pointer wanders off it mid-drag.

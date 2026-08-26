@@ -133,10 +133,10 @@ export function App({ onCloseProject }: AppProps) {
   // setError call sites), not rendered here, so we keep only the setter.
   const [, setError] = useState<string | null>(null);
   const primaryLayerId = usePrimaryLayerId();
-  // R.7 inline-reveal: track id the user surfaced from the right-panel peek
-  // list. Single-track exclusive; persists across scrubs. Cleared by Esc, by
-  // selecting a layer on a different track, or by clicking another peek
-  // item (which replaces the value).
+  // R.7 inline-reveal: track id the user surfaced from the Playhead Panel.
+  // Single-track exclusive; persists across scrubs. Cleared by Esc, by
+  // selecting a layer on a different track, or by clicking another row
+  // (which replaces the value).
   const [revealedTrackId, setRevealedTrackId] = useState<string | null>(null);
   // Playhead time deliberately does NOT live in React state here: the engine
   // emits once per composition frame during playback, and routing that through
@@ -245,9 +245,9 @@ export function App({ onCloseProject }: AppProps) {
     previewRef.current?.seekTo(clamped);
   }, []);
 
-  // R.7: click on a peek item → reveal that hidden track inline at its
+  // R.7: click on a Playhead Panel row → reveal that hidden track inline at its
   // natural accretion slot AND select the clicked layer. Single-track
-  // exclusive (later peek-click replaces).
+  // exclusive (later row click replaces).
   const selectLayerWithGroup = useCallback(
     (layerId: string | null) => {
       if (layerId === null) {

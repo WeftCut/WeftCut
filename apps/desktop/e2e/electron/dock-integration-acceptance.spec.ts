@@ -43,7 +43,7 @@ const DEFAULT_PANELS = [
   "attribute",
   "effect",
   "media",
-  "nearby",
+  "playhead",
   "preview",
   "quick-actions",
   "timeline",

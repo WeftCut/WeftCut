@@ -26,7 +26,7 @@ export type TimelineWheelAxis = "horizontal" | "vertical";
 
 export interface AppSettings {
   display_mode: DisplayMode;
-  /// Half-width of the symmetric peek window in microseconds (default
+  /// Half-width of the symmetric playhead window in microseconds (default
   /// 10_000_000 = 10 s). Clamped on write to [1 s, 5 min].
   delta_window_us: number;
   /// Snap moved timeline layers to nearby layer boundaries and playhead.

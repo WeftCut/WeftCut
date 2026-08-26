@@ -1,16 +1,16 @@
-// Pure peek-list logic: which hidden-track layers sit near the playhead
-// (`buildPeekItems`), what category a layer falls into (`peekCategory`),
+// Pure Playhead Panel list logic: which hidden-track layers sit near the playhead
+// (`buildPlayheadItems`), what category a layer falls into (`playheadCategory`),
 // and how the items split into the At-playhead stack vs the Nearby list
-// under the AB-mode filter (`splitPeekSections`).
+// under the AB-mode filter (`splitPlayheadSections`).
 // Kept separate from presentation so it is unit-testable without a DOM.
 
 import { frameIndexRound } from "../frames";
 import type { LayerSummary, TrackSummary } from "../ipc";
 import { trackDisplayName } from "../lib/trackName";
 
-/// One row in the peek list. Carries enough state to render the row +
+/// One row in the Playhead Panel. Carries enough state to render the row +
 /// drive selection / reveal on click.
-export interface PeekItem {
+export interface PlayheadItem {
   layer: LayerSummary;
   trackId: string;
   /// The name the track's own header shows (`lib/trackName.ts`), already
@@ -38,15 +38,15 @@ export interface PeekItem {
 /// `t` is injected rather than imported so this module stays DOM- and
 /// i18n-instance-free; the label it resolves has to be built here because the
 /// item order breaks its ties on the track name.
-export function buildPeekItems(
+export function buildPlayheadItems(
   tracks: TrackSummary[],
   currentTimeUs: number,
   deltaUs: number,
   t: (key: string, values: Record<string, unknown>) => string,
-): PeekItem[] {
+): PlayheadItem[] {
   const lo = currentTimeUs - deltaUs;
   const hi = currentTimeUs + deltaUs;
-  const items: PeekItem[] = [];
+  const items: PlayheadItem[] = [];
   for (const [trackIndex, track] of tracks.entries()) {
     if (track.role !== null) continue;
     for (const layer of track.layers) {
@@ -90,7 +90,7 @@ export function buildPeekItems(
 /// [1 s, 5 min]). A preset list rather than a free field on purpose: the
 /// window is an observation radius, and no edit decision distinguishes ±11 s
 /// from ±10 s — the choice worth offering is the order of magnitude.
-export const PEEK_WINDOW_PRESETS_US: readonly number[] = [
+export const PLAYHEAD_WINDOW_PRESETS_US: readonly number[] = [
   1_000_000,
   2_000_000,
   5_000_000,
@@ -107,21 +107,21 @@ export const PEEK_WINDOW_PRESETS_US: readonly number[] = [
 /// do, in a column that has none to spare. Whole minutes read in minutes;
 /// everything else in seconds, so an out-of-band value (MCP, a hand-edited
 /// app_settings.json) still prints something honest.
-export function formatPeekWindow(
+export function formatPlayheadWindow(
   us: number,
   t: (key: string, values: Record<string, unknown>) => string,
 ): string {
   const seconds = Math.round(us / 1_000_000);
   if (seconds >= 60 && seconds % 60 === 0) {
-    return t("peek.window_minutes", { value: seconds / 60 });
+    return t("playhead_panel.window_minutes", { value: seconds / 60 });
   }
-  return t("peek.window_seconds", { value: seconds });
+  return t("playhead_panel.window_seconds", { value: seconds });
 }
 
 /// A distance in time the Panel measures against the playhead: how far off a
 /// Nearby row's nearest edge is, or how much of an At-playhead row is left.
 ///
-/// Unit letters, never a timecode — the same refusal `formatPeekWindow` makes
+/// Unit letters, never a timecode — the same refusal `formatPlayheadWindow` makes
 /// above, for the same reason: a timecode answers "where in the composition",
 /// and every value here answers "how far". It is also what lets a row's two
 /// numbers be told apart with no field name printed on either. The distance
@@ -134,7 +134,7 @@ export function formatPeekWindow(
 /// value coarsens rather than printing digits nobody reads. The frame field is
 /// kept even at zero (`1s 0f`): a bare `1s` would read as a rounded value in a
 /// column whose whole point is that it is not.
-export function formatPeekDelta(
+export function formatPlayheadDelta(
   us: number,
   fpsNum: number,
   fpsDen: number,
@@ -150,20 +150,20 @@ export function formatPeekDelta(
     frameIndexRound(Math.abs(us), rate.num, rate.den),
   );
   const totalSec = Math.floor(totalFrames / framesPerSec);
-  if (totalSec < 1) return t("peek.delta_frames", { f: totalFrames });
+  if (totalSec < 1) return t("playhead_panel.delta_frames", { f: totalFrames });
   if (totalSec < 60) {
-    return t("peek.delta_sec_frames", {
+    return t("playhead_panel.delta_sec_frames", {
       s: totalSec,
       f: totalFrames % framesPerSec,
     });
   }
   if (totalSec < 3600) {
-    return t("peek.delta_min_sec", {
+    return t("playhead_panel.delta_min_sec", {
       m: Math.floor(totalSec / 60),
       s: totalSec % 60,
     });
   }
-  return t("peek.delta_hour_min", {
+  return t("playhead_panel.delta_hour_min", {
     h: Math.floor(totalSec / 3600),
     m: Math.floor(totalSec / 60) % 60,
   });
@@ -174,7 +174,7 @@ export function formatPeekDelta(
 /// deliberately terse, which makes the accessible name the only place the field
 /// name exists at all, and a screen reader must never be handed "3s 12f" with
 /// no clue which of the row's two numbers it just heard.
-export interface PeekDeltaLabels {
+export interface PlayheadDeltaLabels {
   text: string;
   aria: string;
 }
@@ -184,46 +184,46 @@ export interface PeekDeltaLabels {
 /// ended.
 ///
 /// The At-playhead case is why no LIVE badge exists. Every row in that section
-/// spans the playhead by construction (`splitPeekSections` routes only spanning
+/// spans the playhead by construction (`splitPlayheadSections` routes only spanning
 /// items there), so a badge saying so repeats the section header verbatim while
 /// spending the one slot that could carry a number.
-export function peekDeltaLabels(
-  item: PeekItem,
+export function playheadDeltaLabels(
+  item: PlayheadItem,
   fpsNum: number,
   fpsDen: number,
   t: (key: string, values: Record<string, unknown>) => string,
-): PeekDeltaLabels {
+): PlayheadDeltaLabels {
   if (item.spansPlayhead) {
-    const value = formatPeekDelta(item.remainingUs, fpsNum, fpsDen, t);
+    const value = formatPlayheadDelta(item.remainingUs, fpsNum, fpsDen, t);
     return {
-      text: t("peek.delta_remaining", { value }),
-      aria: t("peek.delta_remaining_aria", { value }),
+      text: t("playhead_panel.delta_remaining", { value }),
+      aria: t("playhead_panel.delta_remaining_aria", { value }),
     };
   }
-  const value = formatPeekDelta(item.offsetUs, fpsNum, fpsDen, t);
-  // The sign lives in the phrase, never in the value: `formatPeekDelta` takes
+  const value = formatPlayheadDelta(item.offsetUs, fpsNum, fpsDen, t);
+  // The sign lives in the phrase, never in the value: `formatPlayheadDelta` takes
   // the magnitude precisely so no row prints a lone minus for a reader to
   // interpret.
   return item.offsetUs >= 0
     ? {
-        text: t("peek.delta_future", { value }),
-        aria: t("peek.delta_future_aria", { value }),
+        text: t("playhead_panel.delta_future", { value }),
+        aria: t("playhead_panel.delta_future_aria", { value }),
       }
     : {
-        text: t("peek.delta_past", { value }),
-        aria: t("peek.delta_past_aria", { value }),
+        text: t("playhead_panel.delta_past", { value }),
+        aria: t("playhead_panel.delta_past_aria", { value }),
       };
 }
 
-/// Peek filter buckets. Coarser than `layerOverlapClass` (which is
+/// Playhead filter buckets. Coarser than `layerOverlapClass` (which is
 /// visual-vs-audio) because the user wants Text layers split out from
 /// picture for fast scanning.
-export type PeekCategory = "video" | "audio" | "text";
+export type PlayheadCategory = "video" | "audio" | "text";
 
 /// Order of the filter chips.
-export const PEEK_CATEGORY_ORDER: PeekCategory[] = ["video", "audio", "text"];
+export const PLAYHEAD_CATEGORY_ORDER: PlayheadCategory[] = ["video", "audio", "text"];
 
-export function peekCategory(layerKind: string): PeekCategory {
+export function playheadCategory(layerKind: string): PlayheadCategory {
   if (layerKind === "Audio") return "audio";
   if (layerKind === "Text") return "text";
   // VideoClip | ImageOverlay | Color | Motif
@@ -232,23 +232,23 @@ export function peekCategory(layerKind: string): PeekCategory {
 
 /// The panel's two sections (ADR 0044): the boundary is the playhead,
 /// not the category.
-export interface PeekSections {
+export interface PlayheadSections {
   /// Exactly the window items spanning the playhead — the stack being
   /// composited right now. Visual kinds merged into one list ordered
   /// top-of-stack first (descending track index, the layer-panel
   /// convention); audio rows sink to the tail because audio mixes by
   /// role and z is meaningless for it.
-  atPlayhead: PeekItem[];
+  atPlayhead: PlayheadItem[];
   /// The visual prefix of `atPlayhead` — the same items, ending where the
   /// audio tail begins. This is the reorderable z-stack: consumers take it
   /// as-is instead of re-deriving kinds.
-  atPlayheadVisual: PeekItem[];
-  /// Everything else in the window, in `buildPeekItems`' proximity
+  atPlayheadVisual: PlayheadItem[];
+  /// Everything else in the window, in `buildPlayheadItems`' proximity
   /// order, untouched.
-  nearby: PeekItem[];
+  nearby: PlayheadItem[];
 }
 
-/// Split already-sorted peek items into the At-playhead / Nearby sections,
+/// Split already-sorted items into the At-playhead / Nearby sections,
 /// honoring the active filter — the checked categories filter both sections.
 ///
 /// **An empty set means no filter at all**, not "keep nothing". That is what
@@ -260,23 +260,23 @@ export interface PeekSections {
 /// (same-class layers on one track cannot overlap in time), so the
 /// descending-index sort is total for the rows it orders. Spanning audio
 /// keeps its input order at the tail.
-export function splitPeekSections(
-  items: PeekItem[],
-  filter: ReadonlySet<PeekCategory>,
-): PeekSections {
-  const visual: PeekItem[] = [];
-  const audio: PeekItem[] = [];
-  const nearby: PeekItem[] = [];
+export function splitPlayheadSections(
+  items: PlayheadItem[],
+  filter: ReadonlySet<PlayheadCategory>,
+): PlayheadSections {
+  const visual: PlayheadItem[] = [];
+  const audio: PlayheadItem[] = [];
+  const nearby: PlayheadItem[] = [];
   for (const item of items) {
     if (
       filter.size > 0 &&
-      !filter.has(peekCategory(item.layer.params.kind))
+      !filter.has(playheadCategory(item.layer.params.kind))
     ) {
       continue;
     }
     if (!item.spansPlayhead) {
       nearby.push(item);
-    } else if (peekCategory(item.layer.params.kind) === "audio") {
+    } else if (playheadCategory(item.layer.params.kind) === "audio") {
       audio.push(item);
     } else {
       visual.push(item);
@@ -314,7 +314,7 @@ export interface RestackTarget {
 ///    pair usePointerReorder's isNoopGap suppresses — restated here so the
 ///    mapping is total on its own).
 export function restackTargetForGap(
-  visibleRows: readonly PeekItem[],
+  visibleRows: readonly PlayheadItem[],
   fromIndex: number,
   gap: number,
 ): RestackTarget | null {
@@ -353,7 +353,7 @@ export interface RestackMenuTargets {
 /// bottom row's backward/back are the extremes' no-ops; a single-row stack
 /// disables all four.
 export function restackMenuTargets(
-  visibleRows: readonly PeekItem[],
+  visibleRows: readonly PlayheadItem[],
   index: number,
 ): RestackMenuTargets {
   const row = visibleRows[index];

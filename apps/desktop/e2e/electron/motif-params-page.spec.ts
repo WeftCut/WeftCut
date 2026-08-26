@@ -43,7 +43,7 @@ async function motifProps(page: Page, layerId: string): Promise<Record<string, u
 }
 
 /// Place a Motif layer at t=0 and select it, which is what binds the Attribute
-/// Panel to it. `revealLayer` is the peek-item action — plain selection leaves a
+/// Panel to it. `revealLayer` is the Playhead Panel row action — plain selection leaves a
 /// role-less Overlay track collapsed in A/B Roll.
 async function placeAndSelect(page: Page, motifId: string): Promise<string> {
   await waitForHook(page, 'addMotifLayer')

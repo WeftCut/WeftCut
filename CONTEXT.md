@@ -263,12 +263,13 @@ toolbar (`delta_window_us`, app-level); the Panel prints no title, because the
 dock tab is the title. The default layout gives it an area of its own above the
 inspector rather than a tab behind it: A/B Roll is the editing model the app
 defaults to, and *Now playing* is where that model is read from, so a user who
-never finds the tab never learns the model. The code calls the Panel `nearby` throughout (`nearby` kind
-id, `NearbyPanel.tsx`, `peek.ts`, the `.peek-*` classes, ADR 0044): the kind id
-is persisted inside saved workspaces, so the label is the only half of the name
-that can ever move.
-_Avoid_: peek Panel, near-playhead Panel, playhead (bare — that is the
-transport position, not the Panel)
+never finds the tab never learns the model. The code calls the Panel `playhead`
+throughout — the `playhead` kind id, `PlayheadPanel.tsx`, `playheadItems.ts`,
+the `.playhead-*` classes and the `playhead_panel` i18n namespace — so *Nearby*
+now names one section and nothing else. ADR 0044 predates that rename and still
+calls the Panel Nearby, because a decision record records what was decided.
+_Avoid_: Nearby Panel, peek Panel, near-playhead Panel, playhead (bare — that is
+the transport position, not the Panel)
 
 **Spawn**:
 The placement verdict meaning *no track can take this, so make one* — the fourth

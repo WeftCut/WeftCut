@@ -222,8 +222,8 @@ describe("createEditingLayout", () => {
     const [playhead, inspector] = kids(right!);
     expect(playhead).toMatchObject({ type: "leaf", size: 230 });
     expect(leaf(playhead!)).toMatchObject({
-      views: ["nearby"],
-      activeView: "nearby",
+      views: ["playhead"],
+      activeView: "playhead",
       id: "editing-playhead",
     });
     expect(inspector).toMatchObject({ type: "leaf", size: 346 });
@@ -237,7 +237,7 @@ describe("createEditingLayout", () => {
       "attribute",
       "effect",
       "media",
-      "nearby",
+      "playhead",
       "preview",
       "quick-actions",
       "timeline",
@@ -245,7 +245,7 @@ describe("createEditingLayout", () => {
     ]);
     // Placements are the reopen map: Playhead now remembers a group of its
     // own, so closing and reopening it must not fold it back into Attribute.
-    expect(result.placements.nearby).toEqual({ siblings: ["nearby"], index: 0 });
+    expect(result.placements.playhead).toEqual({ siblings: ["playhead"], index: 0 });
     expect(result.placements.effect).toEqual({
       siblings: ["attribute", "effect"],
       index: 1,

@@ -1242,7 +1242,7 @@ export async function moveLayersToNewTrack(
 }
 
 /// Restack a visual layer directly above/below an anchor layer in the z-stack
-/// (ADR 0044) — Nearby's drop gesture. One undoable step; degradation and no-op
+/// (ADR 0044) — the Playhead Panel's drop gesture. One undoable step; degradation and no-op
 /// semantics live on the mutation (main/state/mutations/restack.ts).
 export async function restackLayer(
   layerId: string,

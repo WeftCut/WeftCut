@@ -58,7 +58,7 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
       "quick-actions",
       "attribute",
       "effect",
-      "nearby",
+      "playhead",
     ]) {
       await expect(
         page.locator(`.weft-dock-panel[data-panel-kind="${kind}"]`),
@@ -87,7 +87,7 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
           strip: rect('.weft-dock-panel[data-panel-kind="quick-actions"]'),
           media: rect('.weft-dock-panel[data-panel-kind="media"]'),
           preview: rect('.weft-dock-panel[data-panel-kind="preview"]'),
-          nearby: rect('.weft-dock-panel[data-panel-kind="nearby"]'),
+          playhead: rect('.weft-dock-panel[data-panel-kind="playhead"]'),
           attribute: rect('.weft-dock-panel[data-panel-kind="attribute"]'),
           timeline: rect('.weft-dock-panel[data-panel-kind="timeline"]'),
         };
@@ -116,13 +116,13 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
      * between the two boxes rather than as height ratios — a Panel box excludes
      * its 28px tab strip, so a share-of-workspace number here would be a
      * threshold tuned around chrome instead of a claim about the split. */
-    expect(geometry.nearby.x).toBeCloseTo(geometry.attribute.x, 0);
-    expect(geometry.nearby.width).toBeCloseTo(geometry.attribute.width, 0);
-    expect(geometry.nearby.y + geometry.nearby.height).toBeLessThanOrEqual(
+    expect(geometry.playhead.x).toBeCloseTo(geometry.attribute.x, 0);
+    expect(geometry.playhead.width).toBeCloseTo(geometry.attribute.width, 0);
+    expect(geometry.playhead.y + geometry.playhead.height).toBeLessThanOrEqual(
       geometry.attribute.y,
     );
     // The inspector keeps the larger share of the column.
-    expect(geometry.nearby.height).toBeLessThan(geometry.attribute.height);
+    expect(geometry.playhead.height).toBeLessThan(geometry.attribute.height);
     // The Quick Actions strip is a fixed-width full-height edge bar: it sits
     // beside the body branch, so it spans the Timeline row as well as the
     // editor row.
@@ -662,7 +662,7 @@ test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tab
     // The card gesture never touched the Dock Tree. Preview sits solo, so its
     // tab strip (and label) is hidden; every other group's tab shows —
     // including Transitions, tabbed behind the Media Pool in the library group.
-    const defaultPanelSet = ["attribute", "effect", "media", "nearby", "preview", "quick-actions", "timeline", "transitions"];
+    const defaultPanelSet = ["attribute", "effect", "media", "playhead", "preview", "quick-actions", "timeline", "transitions"];
     expect(await panelKinds()).toEqual(defaultPanelSet);
     // Document order, which is the Dock Tree read left-to-right then
     // top-to-bottom: Playhead precedes the inspector because it owns the top of
@@ -745,7 +745,7 @@ test("View menu creates a custom Workspace from the current arrangement and swit
     await menuItem(/^(Playhead|播放头)$/).click();
     await viewMenu.click();
     await menuItem(/Close Active Panel|关闭活动面板/).click();
-    await expect(dockPanel(page, "nearby")).toHaveCount(0);
+    await expect(dockPanel(page, "playhead")).toHaveCount(0);
 
     // The Workspaces submenu now lists both Workspaces.
     await openWorkspaces();
@@ -755,12 +755,12 @@ test("View menu creates a custom Workspace from the current arrangement and swit
     // Switch to the built-in layout — no save prompt — and the full default set
     // returns.
     await menuItem(builtinItem).click();
-    await expect(dockPanel(page, "nearby")).toHaveCount(1);
+    await expect(dockPanel(page, "playhead")).toHaveCount(1);
 
-    // Switch back to Cutting: its diverged arrangement (Nearby closed) is restored.
+    // Switch back to Cutting: its diverged arrangement (the Playhead Panel closed) is restored.
     await openWorkspaces();
     await menuItem(cuttingItem).click();
-    await expect(dockPanel(page, "nearby")).toHaveCount(0);
+    await expect(dockPanel(page, "playhead")).toHaveCount(0);
   } finally {
     await app.close();
   }

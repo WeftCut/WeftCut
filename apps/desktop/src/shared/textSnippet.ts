@@ -20,10 +20,11 @@ export function textSnippet(content: string, max: number): string {
   return `${clean.slice(0, max - 3)}...`;
 }
 
-/// The cap for a Text layer used AS A NAME — timeline chip, history row, Nearby
-/// row, error message. Generous enough that a normal subtitle line survives
-/// whole, tight enough that a paragraph pasted into one layer cannot stretch a
-/// history row; the surfaces that are narrower than this truncate again in CSS.
+/// The cap for a Text layer used AS A NAME — timeline chip, history row,
+/// Playhead Panel row, error message. Generous enough that a normal subtitle
+/// line survives whole, tight enough that a paragraph pasted into one layer
+/// cannot stretch a history row; the surfaces that are narrower than this
+/// truncate again in CSS.
 ///
 /// Distinct from search/buildEntries.ts's `CAPTION_SNIPPET_MAX`, which caps a
 /// HAYSTACK rather than a display string — trading recall for row width there

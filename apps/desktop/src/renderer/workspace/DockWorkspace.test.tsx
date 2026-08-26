@@ -123,7 +123,7 @@ vi.mock("../panels/TransitionsPanel", () => ({ TransitionsPanel: () => null }));
 vi.mock("../panels/AttributePanel", () => ({ AttributePanel: () => null }));
 vi.mock("../panels/CaptionPanel", () => ({ CaptionPanel: () => null }));
 vi.mock("../panels/EffectPanel", () => ({ EffectPanel: () => null }));
-vi.mock("../panels/NearbyPanel", () => ({ NearbyPanel: () => null }));
+vi.mock("../panels/PlayheadPanel", () => ({ PlayheadPanel: () => null }));
 vi.mock("../panels/RoleMixerPanel", () => ({ RoleMixerPanel: () => null }));
 vi.mock("../state/playheadStore", () => ({
   usePlayheadTimeUsThrottled: () => 0,

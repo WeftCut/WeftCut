@@ -106,7 +106,7 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // Remaining mechanical + meta channels
   move_layer: (a) => ({ op: 'move_layer', args: { layer: a.layerId, to_track: a.newTrackId, t_start_us: a.newTStartUs, escape_group: a.escapeGroup ?? false } }),
   move_layers_to_new_track: (a) => ({ op: 'move_layers_to_new_track', args: { layers: a.layerIds } }),
-  // Anchored z-reorder (ADR 0044) — Nearby's drop gesture. Pure renaming;
+  // Anchored z-reorder (ADR 0044) — the Playhead Panel's drop gesture. Pure renaming;
   // position/anchor validation lives with the mutation.
   restack_layer: (a) => ({ op: 'restack_layer', args: { layer: a.layerId, anchor: a.anchorLayerId, position: a.position } }),
   trim_layer: (a) => ({ op: 'trim_layer', args: { layer: a.layerId, edge: a.edge, new_t_us: a.newTUs, escape_group: a.escapeGroup ?? false } }),

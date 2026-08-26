@@ -405,7 +405,7 @@ describe("Dock Panel registry", () => {
       "quick-actions",
       "attribute",
       "effect",
-      "nearby",
+      "playhead",
     ]);
     // History pulls the edit stack over its own IPC channel, so it joins the
     // on-demand tool Panels: closed by default, costing nothing until opened.
@@ -428,7 +428,7 @@ describe("DockWorkspaceAdapter", () => {
       "media",
       "transitions",
       "preview",
-      "nearby",
+      "playhead",
       "attribute",
       "effect",
       "timeline",
@@ -450,12 +450,12 @@ describe("DockWorkspaceAdapter", () => {
     });
     // Playhead anchors the right column — it is the one inserted beside
     // Preview and the one carrying the column's width.
-    expect(byId.get("nearby")).toMatchObject({
+    expect(byId.get("playhead")).toMatchObject({
       initialWidth: 239,
       position: { referencePanel: "preview", direction: "right" },
     });
     expect(byId.get("attribute")).toMatchObject({
-      position: { referencePanel: "nearby", direction: "below" },
+      position: { referencePanel: "playhead", direction: "below" },
     });
     expect(byId.get("quick-actions")).toMatchObject({
       initialWidth: 44,
@@ -484,7 +484,7 @@ describe("DockWorkspaceAdapter", () => {
     });
     // One call, both axes: width sizes the right column (orthogonal, bubbles
     // up a level), height splits Playhead against the inspector inside it.
-    expect(dock.panels.get("nearby")?.api.setSize).toHaveBeenCalledWith({
+    expect(dock.panels.get("playhead")?.api.setSize).toHaveBeenCalledWith({
       width: 239,
       height: 230,
     });
@@ -832,7 +832,7 @@ describe("DockWorkspaceAdapter", () => {
     adapter.closePanel("caption");
     adapter.closePanel("attribute");
     adapter.closePanel("effect");
-    adapter.closePanel("nearby");
+    adapter.closePanel("playhead");
 
     adapter.openPanel("caption");
 

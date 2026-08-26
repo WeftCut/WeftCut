@@ -316,14 +316,14 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     // The right column is a vertical split, not a tab stack: the Playhead
     // Panel takes the top on its own so the stack under the playhead — how
     // A/B-Roll is read — is on screen from the first launch, and the
-    // inspector's tabs sit below it. `nearby` therefore anchors the column,
+    // inspector's tabs sit below it. `playhead` therefore anchors the column,
     // and Attribute splits off it downward.
-    const nearby = this.addPanel("nearby", {
+    const playhead = this.addPanel("playhead", {
       position: { referencePanel: "preview", direction: "right" },
       initialWidth: columnWidth,
     });
     this.addPanel("attribute", {
-      position: { referencePanel: "nearby", direction: "below" },
+      position: { referencePanel: "playhead", direction: "below" },
     });
     this.addPanel("effect", {
       position: { referencePanel: "attribute", direction: "within" },
@@ -354,7 +354,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     // the inspector. The Timeline clamp has to land first — `playheadHeight` is
     // a share of the editor row, which only reaches its final height once the
     // Timeline row has taken its own.
-    nearby?.api.setSize({ width: columnWidth, height: playheadHeight });
+    playhead?.api.setSize({ width: columnWidth, height: playheadHeight });
     this.captureOpenPlacements();
     this.emitChange();
     return true;
@@ -709,7 +709,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
       kinds.find((candidate) => this.api.getPanel(candidate));
     if (kind === "media") {
       const reference = firstOpen(
-        "preview", "attribute", "effect", "nearby", "caption", "role-mixer", "timeline",
+        "preview", "attribute", "effect", "playhead", "caption", "role-mixer", "timeline",
       );
       this.addPanel(kind, reference
         ? { position: { referencePanel: reference, direction: "left" } }
@@ -719,7 +719,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     if (kind === "preview") {
       const media = firstOpen("media");
       const reference = media ?? firstOpen(
-        "attribute", "effect", "nearby", "caption", "role-mixer", "timeline",
+        "attribute", "effect", "playhead", "caption", "role-mixer", "timeline",
       );
       this.addPanel(kind, reference
         ? {
@@ -733,7 +733,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     }
     if (kind === "timeline") {
       const reference = firstOpen(
-        "preview", "media", "attribute", "effect", "nearby", "caption", "role-mixer",
+        "preview", "media", "attribute", "effect", "playhead", "caption", "role-mixer",
       );
       this.addPanel(kind, reference
         ? { position: { referencePanel: reference, direction: "below" } }
@@ -743,11 +743,11 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     if (kind === "quick-actions") {
       // The tool strip is an edge bar, never a tabbed tool Panel — it must
       // NOT reach the contextual-group fallback below, which would merge it
-      // into Attribute/Effect/Nearby as a 240-wide tab. `left` of the
+      // into Attribute/Effect/Playhead as a 240-wide tab. `left` of the
       // leftmost open Panel reproduces its baseline slot; the narrow
       // initialWidth keeps a fresh split from claiming half the editor.
       const reference = firstOpen(
-        "media", "preview", "timeline", "attribute", "effect", "nearby", "caption", "role-mixer",
+        "media", "preview", "timeline", "attribute", "effect", "playhead", "caption", "role-mixer",
       );
       this.addPanel(kind, reference
         ? {
@@ -759,7 +759,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     }
 
     const contextual = firstOpen(
-      "attribute", "effect", "nearby", "caption", "role-mixer",
+      "attribute", "effect", "playhead", "caption", "role-mixer",
     );
     if (contextual) {
       this.addPanel(kind, {

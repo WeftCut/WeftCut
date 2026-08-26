@@ -38,7 +38,7 @@ vi.mock("./MediaThumbnail", () => ({
   MediaThumbnail: () => <span>thumbnail</span>,
 }));
 
-import { NearbyPanel } from "./NearbyPanel";
+import { PlayheadPanel } from "./PlayheadPanel";
 
 // jsdom has no PointerEvent constructor; MouseEvent carries the same client
 // coordinates the pointer sequence needs (EffectsSection.test.tsx prior art).
@@ -144,7 +144,7 @@ function renderPanel(
 ) {
   const onPick = handlers.onPick ?? vi.fn();
   const { container, rerender } = render(
-    <NearbyPanel
+    <PlayheadPanel
       tracks={tracks}
       selectedLayerId={null}
       fpsNum={30}
@@ -157,7 +157,7 @@ function renderPanel(
   );
   const rerenderPanel = () =>
     rerender(
-      <NearbyPanel
+      <PlayheadPanel
         tracks={tracks}
         selectedLayerId={null}
         fpsNum={30}
@@ -174,16 +174,16 @@ function renderPanel(
 /// Row titles inside `root`, in DOM order — the row button carries the
 /// layer's display name as its title.
 function rowTitles(root: HTMLElement): (string | null)[] {
-  return Array.from(root.querySelectorAll(".peek-item")).map((el) =>
+  return Array.from(root.querySelectorAll(".playhead-item")).map((el) =>
     el.getAttribute("title"),
   );
 }
 
-describe("NearbyPanel", () => {
+describe("PlayheadPanel", () => {
   it("explains All Tracks instead of collapsing to a blank Panel", () => {
     settings.displayMode = "AllTracks";
     const { container } = render(
-      <NearbyPanel
+      <PlayheadPanel
         tracks={[nearbyTrack()]}
         selectedLayerId={null}
         fpsNum={30}
@@ -197,13 +197,13 @@ describe("NearbyPanel", () => {
     // The explainer hands back the way out, and names the key from the
     // effective bindings rather than a literal — no provider here, so this is
     // the default chord.
-    expect(container.querySelector(".peek-empty-kbd")?.textContent).toBe("T");
+    expect(container.querySelector(".playhead-empty-kbd")?.textContent).toBe("T");
   });
 
   // The other idle state has no single key that fixes it, so it offers none.
   it("offers no key hint on the empty-window explainer", () => {
     const { container } = render(
-      <NearbyPanel
+      <PlayheadPanel
         tracks={[]}
         selectedLayerId={null}
         fpsNum={30}
@@ -212,12 +212,12 @@ describe("NearbyPanel", () => {
       />,
     );
 
-    expect(container.querySelector(".peek-empty-kbd")).toBeNull();
+    expect(container.querySelector(".playhead-empty-kbd")).toBeNull();
   });
 
-  it("explains an empty nearby window instead of a blank Panel", () => {
+  it("explains an empty playhead window instead of a blank Panel", () => {
     render(
-      <NearbyPanel
+      <PlayheadPanel
         tracks={[]}
         selectedLayerId={null}
         fpsNum={30}
@@ -234,7 +234,7 @@ describe("NearbyPanel", () => {
   // so no wording of a heading can slip past it.
   it("prints no title bar of its own in any state", () => {
     const { container, rerender } = render(
-      <NearbyPanel
+      <PlayheadPanel
         tracks={[nearbyTrack()]}
         selectedLayerId={null}
         fpsNum={30}
@@ -246,7 +246,7 @@ describe("NearbyPanel", () => {
 
     settings.displayMode = "AllTracks";
     rerender(
-      <NearbyPanel
+      <PlayheadPanel
         tracks={[nearbyTrack()]}
         selectedLayerId={null}
         fpsNum={30}
@@ -262,14 +262,14 @@ describe("NearbyPanel", () => {
       renderPanel([nearbyTrack()]);
 
       expect(
-        screen.getByLabelText("Nearby window").textContent,
+        screen.getByLabelText("Playhead window").textContent,
       ).toContain("±5s");
     });
 
     it("writes the picked preset to app settings", async () => {
       renderPanel([nearbyTrack()]);
 
-      await userEvent.click(screen.getByLabelText("Nearby window"));
+      await userEvent.click(screen.getByLabelText("Playhead window"));
       await userEvent.click(await screen.findByRole("option", { name: "±30s" }));
 
       expect(settings.setAppSettings).toHaveBeenCalledWith({
@@ -284,7 +284,7 @@ describe("NearbyPanel", () => {
       renderPanel([nearbyTrack()]);
 
       expect(
-        screen.getByLabelText("Nearby window").textContent,
+        screen.getByLabelText("Playhead window").textContent,
       ).toContain("±2min");
     });
 
@@ -296,7 +296,7 @@ describe("NearbyPanel", () => {
       renderPanel([nearbyTrack()]);
 
       expect(
-        screen.getByLabelText("Nearby window").textContent,
+        screen.getByLabelText("Playhead window").textContent,
       ).toContain("±7s");
     });
 
@@ -304,7 +304,7 @@ describe("NearbyPanel", () => {
     // outlives the rows — only the chips, which have nothing to filter, grey out.
     it("stays reachable on an empty window while the chips grey out", () => {
       render(
-        <NearbyPanel
+        <PlayheadPanel
           tracks={[]}
           selectedLayerId={null}
           fpsNum={30}
@@ -313,14 +313,14 @@ describe("NearbyPanel", () => {
         />,
       );
 
-      expect(screen.getByLabelText("Nearby window")).toBeTruthy();
+      expect(screen.getByLabelText("Playhead window")).toBeTruthy();
       expect(
         screen.getByRole("checkbox", { name: "Video" }).hasAttribute("disabled"),
       ).toBe(true);
     });
   });
 
-  it("renders nearby items and reveals the picked layer without seeking", () => {
+  it("renders the window's items and reveals the picked layer without seeking", () => {
     const { onPick } = renderPanel([nearbyTrack()]);
 
     const stack = screen.getByRole("region", { name: "Now playing" });
@@ -373,14 +373,14 @@ describe("NearbyPanel", () => {
   });
 });
 
-describe("NearbyPanel two sections", () => {
+describe("PlayheadPanel two sections", () => {
   it("splits rows at the playhead into an At-playhead stack and a Nearby list", () => {
     const { container } = renderPanel(stackedTracks());
 
     // The playhead boundary is the ONLY thing that opens a section — category
     // never does. Each header is trailed by the count of the rows beneath it.
     const headers = Array.from(
-      container.querySelectorAll(".peek-section-header"),
+      container.querySelectorAll(".playhead-section-header"),
     ).map((el) => el.textContent);
     expect(headers).toEqual(["Now playing3", "Nearby1"]);
 
@@ -444,7 +444,7 @@ describe("NearbyPanel two sections", () => {
     expect(
       screen.getByText("Nothing of the checked kinds near the playhead"),
     ).toBeTruthy();
-    expect(container.querySelectorAll(".peek-section-header")).toHaveLength(0);
+    expect(container.querySelectorAll(".playhead-section-header")).toHaveLength(0);
   });
 
   // Checking a second chip must WIDEN the result, never replace the first.
@@ -524,7 +524,7 @@ describe("NearbyPanel two sections", () => {
   });
 });
 
-describe("NearbyPanel drag restack", () => {
+describe("PlayheadPanel drag restack", () => {
   /// The At-playhead section's <li> rows in DOM order (visual stack first,
   /// audio tail after) — the elements the gesture hit-tests against.
   function stackRows(): HTMLElement[] {
@@ -589,8 +589,8 @@ describe("NearbyPanel drag restack", () => {
 
       // Live insertion indicator mid-gesture, but no command before release.
       const rows = stackRows();
-      expect(rows[0]!.className).toContain("peek-row--dragging");
-      expect(rows[1]!.className).toContain("peek-row--drop-after");
+      expect(rows[0]!.className).toContain("playhead-row--dragging");
+      expect(rows[1]!.className).toContain("playhead-row--drop-after");
       expect(onRestack).not.toHaveBeenCalled();
 
       fireEvent.pointerUp(window, { clientX: 8, clientY: 70 });
@@ -602,7 +602,7 @@ describe("NearbyPanel drag restack", () => {
     }
   });
 
-  it("opens the slot: rows past the gap part, the section flags parting, and the drag follows via --peek-drag-y", () => {
+  it("opens the slot: rows past the gap part, the section flags parting, and the drag follows via --playhead-drag-y", () => {
     renderStack();
     fireEvent.pointerDown(screen.getByLabelText("Drag to restack Wash"), {
       button: 0,
@@ -611,17 +611,17 @@ describe("NearbyPanel drag restack", () => {
     });
     const section = screen.getByRole("region", { name: "Now playing" });
     // The follow offset resets at grab, before any move.
-    expect(section.style.getPropertyValue("--peek-drag-y")).toBe("0px");
+    expect(section.style.getPropertyValue("--playhead-drag-y")).toBe("0px");
 
     fireEvent.pointerMove(window, { clientX: 8, clientY: 5 });
     const rows = stackRows();
-    expect(section.className).toContain("peek-stack--parting");
+    expect(section.className).toContain("playhead-stack--parting");
     // Gap 0: Logo parts to open the slot; the dragged Wash never parts —
     // its transform is the pointer follow.
-    expect(rows[0]!.className).toContain("peek-row--parted");
-    expect(rows[1]!.className).toContain("peek-row--dragging");
-    expect(rows[1]!.className).not.toContain("peek-row--parted");
-    expect(section.style.getPropertyValue("--peek-drag-y")).toBe("-45px");
+    expect(rows[0]!.className).toContain("playhead-row--parted");
+    expect(rows[1]!.className).toContain("playhead-row--dragging");
+    expect(rows[1]!.className).not.toContain("playhead-row--parted");
+    expect(section.style.getPropertyValue("--playhead-drag-y")).toBe("-45px");
   });
 
   it("a no-op gap opens no slot: no parting flag, no parted rows", () => {
@@ -634,9 +634,9 @@ describe("NearbyPanel drag restack", () => {
     // y=30 is the gap right below the dragged row — a no-op drop.
     fireEvent.pointerMove(window, { clientX: 8, clientY: 30 });
     const section = screen.getByRole("region", { name: "Now playing" });
-    expect(section.className).toContain("peek-stack--reordering");
-    expect(section.className).not.toContain("peek-stack--parting");
-    expect(container.querySelector(".peek-row--parted")).toBeNull();
+    expect(section.className).toContain("playhead-stack--reordering");
+    expect(section.className).not.toContain("playhead-stack--parting");
+    expect(container.querySelector(".playhead-row--parted")).toBeNull();
   });
 
   it("dragging the bottom visual row above the top targets 'above' the top row", () => {
@@ -647,7 +647,7 @@ describe("NearbyPanel drag restack", () => {
       clientY: 50,
     });
     fireEvent.pointerMove(window, { clientX: 8, clientY: 5 });
-    expect(stackRows()[0]!.className).toContain("peek-row--drop-before");
+    expect(stackRows()[0]!.className).toContain("playhead-row--drop-before");
     fireEvent.pointerUp(window, { clientX: 8, clientY: 5 });
     expect(onRestack).toHaveBeenCalledTimes(1);
     expect(onRestack).toHaveBeenCalledWith("l-wash", "l-logo", "above");
@@ -662,8 +662,8 @@ describe("NearbyPanel drag restack", () => {
     });
     // y=30 is past Logo's midline: the gap right below the dragged row.
     fireEvent.pointerMove(window, { clientX: 8, clientY: 30 });
-    expect(container.querySelector(".peek-row--drop-before")).toBeNull();
-    expect(container.querySelector(".peek-row--drop-after")).toBeNull();
+    expect(container.querySelector(".playhead-row--drop-before")).toBeNull();
+    expect(container.querySelector(".playhead-row--drop-after")).toBeNull();
     fireEvent.pointerUp(window, { clientX: 8, clientY: 30 });
     expect(onRestack).not.toHaveBeenCalled();
   });
@@ -676,10 +676,10 @@ describe("NearbyPanel drag restack", () => {
       clientY: 10,
     });
     fireEvent.pointerMove(window, { clientX: 8, clientY: 70 });
-    expect(stackRows()[1]!.className).toContain("peek-row--drop-after");
+    expect(stackRows()[1]!.className).toContain("playhead-row--drop-after");
 
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(stackRows()[1]!.className).not.toContain("peek-row--drop-after");
+    expect(stackRows()[1]!.className).not.toContain("playhead-row--drop-after");
     fireEvent.pointerUp(window, { clientX: 8, clientY: 70 });
     expect(onRestack).not.toHaveBeenCalled();
   });
@@ -757,7 +757,7 @@ describe("NearbyPanel drag restack", () => {
   });
 });
 
-describe("NearbyPanel row context menu", () => {
+describe("PlayheadPanel row context menu", () => {
   // Bottom→top of the z-stack: Wash (video), Song (audio, sinks to the
   // tail), Caption (text — visual, interleaves), Logo on top; Later is
   // strictly in the future so it lands in the Nearby section. The visible

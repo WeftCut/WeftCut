@@ -213,7 +213,7 @@
 }
 
 .mixer-panel {
-  /* Same 12px inset / 8px rhythm as the Captions and Nearby Panels. */
+  /* Same 12px inset / 8px rhythm as the Captions and Playhead Panels. */
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -373,7 +373,7 @@
 }
 
 /* Captions panel — cue list plus the corpus-wide style controls, on the
-   same 12px inset / 8px rhythm as the Nearby and Role Mixer Panels. */
+   same 12px inset / 8px rhythm as the Playhead and Role Mixer Panels. */
 .captions-panel {
   padding: 12px;
   display: flex;

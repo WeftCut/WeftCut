@@ -257,7 +257,7 @@ const zhCN: Resources = {
       caption: "字幕",
       "role-mixer": "角色混音",
       effect: "效果",
-      nearby: "播放头",
+      playhead: "播放头",
       agent: "代理",
       history: "历史记录",
     },
@@ -509,9 +509,9 @@ const zhCN: Resources = {
     panel_no_target_hint: "先在同一轨道上首尾相接放置两个可视片段，再在下方选择样式。",
     // 失败文案已迁移至 `errors.*`（errors/formatCommandError.ts）。
   },
-  peek: {
+  playhead_panel: {
     section_label: "播放头附近的隐藏轨内容",
-    // 行首的时间值：用单位字而非 timecode（见 `formatPeekDelta`）。包住数值的
+    // 行首的时间值：用单位字而非 timecode（见 `formatPlayheadDelta`）。包住数值的
     // 那个词就是每行省下字段名的原因，翻译必须保留它表达的关系——任何一条退化
     // 成裸数字，歧义就回来了。
     // 不加数字与单位之间的空格（`window_seconds` 那种独立数值仍然保留）：
@@ -530,9 +530,9 @@ const zhCN: Resources = {
     delta_past_aria: "在播放头之前 {{value}} 结束",
     delta_remaining_aria: "还有 {{value}} 播完",
     duration_aria: "时长 {{value}}",
-    // ±Δ 窗口选择器。`value` 已在 peek.ts 里格式化好，不是 count，
+    // ±Δ 窗口选择器。`value` 已在 playheadItems.ts 里格式化好，不是 count，
     // 因此这两个键不带 i18next 的复数后缀。
-    window_label: "附近范围",
+    window_label: "播放头范围",
     window_seconds: "{{value}} 秒",
     window_minutes: "{{value}} 分",
     // 标签是可任意组合的多选框，一个都不勾即不筛选——所以 `filter_empty`

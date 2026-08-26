@@ -3,7 +3,7 @@ import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 
 import { MenuItem } from "../menu/Menu";
 import { useCursorAnchor } from "../timeline/contextMenuAnchor";
-import type { RestackMenuTargets, RestackTarget } from "./peek";
+import type { RestackMenuTargets, RestackTarget } from "./playheadItems";
 
 /// Right-click menu on an At-playhead visual row — the non-drag path to the
 /// same restack op as the grip (ADR 0044 decision 4: every drag has a
@@ -16,7 +16,7 @@ import type { RestackMenuTargets, RestackTarget } from "./peek";
 /// Same virtual-anchor Base UI menu as the timeline's and the media pool's:
 /// placement from the right-click coordinates, outside-press + Escape close
 /// and arrow-key navigation from the library.
-export function NearbyRowContextMenu({
+export function PlayheadRowContextMenu({
   x,
   y,
   label,
@@ -64,12 +64,12 @@ export function NearbyRowContextMenu({
         >
           <MenuPrimitive.Popup
             className="app-menu-list"
-            aria-label={t("peek.row_menu", { label })}
+            aria-label={t("playhead_panel.row_menu", { label })}
           >
-            {item(targets.bringForward, t("peek.restack_forward"))}
-            {item(targets.sendBackward, t("peek.restack_backward"))}
-            {item(targets.bringToFront, t("peek.restack_front"))}
-            {item(targets.sendToBack, t("peek.restack_back"))}
+            {item(targets.bringForward, t("playhead_panel.restack_forward"))}
+            {item(targets.sendBackward, t("playhead_panel.restack_backward"))}
+            {item(targets.bringToFront, t("playhead_panel.restack_front"))}
+            {item(targets.sendToBack, t("playhead_panel.restack_back"))}
           </MenuPrimitive.Popup>
         </MenuPrimitive.Positioner>
       </MenuPrimitive.Portal>

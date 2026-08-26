@@ -1,10 +1,10 @@
-/* Nearby (peek) Panel — the A/B-roll context list and the At-playhead
+/* Playhead Panel — the A/B-roll context list and the At-playhead
    restack gesture (ADR 0044). One home for the panel chrome, rows, filter
-   chips and the reorder presentation; the ordering semantics live in peek.ts
+   chips and the reorder presentation; the ordering semantics live in playheadItems.ts
    and usePointerReorder. The panel's only mount is DockWorkspace's
-   NearbyDockPanel, so it owns the full Dockview content region outright. */
+   PlayheadDockPanel, so it owns the full Dockview content region outright. */
 
-.right-panel-peek {
+.right-panel-playhead {
   width: 100%;
   height: 100%;
   display: flex;
@@ -16,9 +16,9 @@
 /* The Panel's top row: chips leading, ±Δ dial trailing. The chips take the
    width they need and wrap; the dial holds the trailing edge and never
    shrinks below its label. Modelled on the media pool's
-   `.media-pool-search` — see NearbyPanel.tsx for why the row is controls
+   `.media-pool-search` — see PlayheadPanel.tsx for why the row is controls
    rather than a title. */
-.peek-toolbar {
+.playhead-toolbar {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -29,9 +29,9 @@
 
 /* Chip-scale, to sit level with the filter row rather than tower over it:
    `.app-select`'s form-field padding and 8px gap are sized for the settings
-   dialog. `nearby.css` imports after `controls.css`, so equal specificity is
+   dialog. `playhead.css` imports after `controls.css`, so equal specificity is
    enough to win. */
-.peek-window-select {
+.playhead-window-select {
   flex: 0 0 auto;
   height: 22px;
   gap: 4px;
@@ -41,20 +41,20 @@
   font-variant-numeric: tabular-nums;
 }
 
-.right-panel-peek-results {
+.right-panel-playhead-results {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
 }
 
-.right-panel-peek-list {
+.right-panel-playhead-list {
   list-style: none;
   margin: 0;
   padding: 4px 0;
   transition: padding-bottom var(--transition-base);
 }
 
-.right-panel-peek-list li {
+.right-panel-playhead-list li {
   margin: 0;
   padding: 0;
   /* Anchors the slot-line pseudo-elements; lets a parted row glide. */
@@ -66,36 +66,36 @@
    Hover / selection / LIVE paint HERE, not on the inner button — the grip and
    Go To must sit on the same surface as the content, or the row reads as
    three separate objects. */
-.peek-item-row {
+.playhead-item-row {
   display: flex;
   align-items: stretch;
   transition: background var(--transition-fast);
 }
 
-.peek-item-row:hover {
+.playhead-item-row:hover {
   background: var(--hover-neutral);
 }
 
-.peek-item-row.is-selected {
+.playhead-item-row.is-selected {
   background: var(--selection-bg);
 }
 
-.peek-item-row.is-live {
+.playhead-item-row.is-live {
   background: color-mix(in srgb, var(--destructive) 8%, transparent);
 }
 
-.peek-item-row.is-live.is-selected {
+.playhead-item-row.is-live.is-selected {
   background: color-mix(in srgb, var(--destructive) 22%, transparent);
 }
 
 /* Keyboard focus lands on the inner button; the ring draws on the whole row
    — inward, the outer variant would clip against the panel edges. */
-.peek-item-row:has(> .peek-item:focus-visible) {
+.playhead-item-row:has(> .playhead-item:focus-visible) {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
 
-.peek-item-row .peek-item {
+.playhead-item-row .playhead-item {
   flex: 1 1 auto;
   min-width: 0;
   /* Outranks the global .kind-* badge palette (settings.css, later in the
@@ -104,7 +104,7 @@
   background: transparent;
 }
 
-.peek-item {
+.playhead-item {
   display: grid;
   grid-template-columns: 32px 1fr auto;
   align-items: center;
@@ -119,7 +119,7 @@
   font: inherit;
 }
 
-.peek-thumb {
+.playhead-thumb {
   width: 32px;
   height: 24px;
   display: flex;
@@ -130,19 +130,19 @@
   overflow: hidden;
 }
 
-.peek-thumb-fallback {
+.playhead-thumb-fallback {
   display: inline-flex;
   align-items: center;
   color: var(--muted-foreground);
 }
 
-.peek-meta {
+.playhead-meta {
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
-.peek-label {
+.playhead-label {
   font-size: var(--font-size-body);
   font-weight: 500;
   white-space: nowrap;
@@ -150,7 +150,7 @@
   text-overflow: ellipsis;
 }
 
-.peek-sublabel {
+.playhead-sublabel {
   font-size: var(--font-size-caption);
   color: var(--muted-foreground);
   white-space: nowrap;
@@ -161,7 +161,7 @@
 /* Two right-aligned numbers, stacked. Tabular figures because a stacked pair
    whose digits do not line up reads as one smear instead of two values — the
    same opt-in every other readout in the app makes (editor, media, log). */
-.peek-times {
+.playhead-times {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -173,7 +173,7 @@
 /* The playhead relation is what this Panel is FOR; the duration is the row's
    own metadata. Deliberately not the same weight — the hierarchy is a second,
    wordless answer to "which of these two am I looking at". */
-.peek-delta {
+.playhead-delta {
   color: var(--foreground);
 }
 
@@ -181,19 +181,19 @@
    screen right now" that a LIVE badge used to spell out — the badge said only
    what the section header above it already said, and it spent the one slot a
    number could occupy. */
-.peek-delta.is-live {
+.playhead-delta.is-live {
   color: var(--destructive);
   font-weight: 700;
 }
 
-.peek-duration {
+.playhead-duration {
   font-size: var(--font-size-micro);
   color: var(--muted-foreground);
 }
 
 /* Go To is a control IN the row, not an icon floating beside it: an inset
    pill (thumb-height) with its own hover surface on top of the row's. */
-.peek-goto {
+.playhead-goto {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -214,25 +214,25 @@
     background var(--transition-fast);
 }
 
-.peek-item-row:hover .peek-goto,
-.peek-goto:focus-visible {
+.playhead-item-row:hover .playhead-goto,
+.playhead-goto:focus-visible {
   opacity: 1;
 }
 
-.peek-goto:hover {
+.playhead-goto:hover {
   color: var(--foreground);
   background: var(--hover-neutral);
 }
 
-.peek-goto:focus-visible {
+.playhead-goto:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
 
-/* Padding and the seam below belong to `.peek-toolbar`; the chip group owns
+/* Padding and the seam below belong to `.playhead-toolbar`; the chip group owns
    only its own row. It wraps rather than overflows — at the Panel's 240px
    floor the three chips and the dial do not fit on one line. */
-.peek-filter {
+.playhead-filter {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -242,7 +242,7 @@
 /* Unchecked: an outline, carrying no weight of its own. Geometry is identical
    checked or not — only colour moves — so toggling one chip can never reflow
    a wrapped row under the pointer that clicked it. */
-.peek-filter-chip {
+.playhead-filter-chip {
   font-size: var(--font-size-caption);
   font-weight: 600;
   padding: 2px 8px;
@@ -257,30 +257,30 @@
 
 /* Hover excludes both the disabled chips and the checked ones: the neutral
    lift would read as a weaker version of the checked fill and undo it. */
-.peek-filter-chip:not(:disabled):not(.is-active):hover {
+.playhead-filter-chip:not(:disabled):not(.is-active):hover {
   background: var(--hover-neutral);
   color: var(--foreground);
 }
 
-.peek-filter-chip:focus-visible {
+.playhead-filter-chip:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
 
-/* Checked: the selection accent, as `.peek-item-row.is-selected` and every
+/* Checked: the selection accent, as `.playhead-item-row.is-selected` and every
    other selected surface wears it. Three layers of ONE blue — fill, edge,
    label — is what makes it read at chip scale without a solid fill; reaching
    for a stronger blue outside the `--selection-*` family is the drift those
    tokens exist to prevent (`docs/ui-tokens.md`: `--ring` is the one accent).
    Keep in step with `.log-chip.active` (log.css), the same widget one Panel
    over. */
-.peek-filter-chip.is-active {
+.playhead-filter-chip.is-active {
   background: var(--selection-bg);
   border-color: var(--selection-border);
   color: var(--color-blue-300);
 }
 
-.peek-filter-chip.is-active:not(:disabled):hover {
+.playhead-filter-chip.is-active:not(:disabled):hover {
   background: color-mix(in srgb, var(--selection) 26%, transparent);
 }
 
@@ -288,12 +288,12 @@
    clicked would read as broken rather than as inapplicable. A chip that is
    checked keeps its fill through this, just faded — the selection outlives an
    empty window and the chips must not lie about it. */
-.peek-filter-chip:disabled {
+.playhead-filter-chip:disabled {
   opacity: 0.45;
   cursor: default;
 }
 
-.peek-section-header {
+.playhead-section-header {
   display: flex;
   align-items: baseline;
   gap: 6px;
@@ -307,15 +307,15 @@
 
 /* Subordinate to the section's name: same line, lighter weight, no uppercase
    tracking — a number, not a second heading. */
-.peek-section-count {
+.playhead-section-count {
   font-weight: 500;
   letter-spacing: 0;
   font-variant-numeric: tabular-nums;
   opacity: 0.75;
 }
 
-.peek-filter-empty,
-.peek-stack-empty {
+.playhead-filter-empty,
+.playhead-stack-empty {
   margin: 0;
   padding: 10px 12px;
   font-size: var(--font-size-caption);
@@ -323,7 +323,7 @@
 }
 
 /* Self-explaining empty / Show All state. */
-.peek-empty {
+.playhead-empty {
   margin: 0;
   padding: 12px;
   font-size: var(--font-size-body);
@@ -333,7 +333,7 @@
 
 /* The state's own headline, which is why it sits in the body flow rather than
    in a bar of its own: it names the situation, not the Panel. */
-.peek-empty-title {
+.playhead-empty-title {
   margin: 0;
   padding: 12px 12px 0;
   font-size: var(--font-size-body);
@@ -341,13 +341,13 @@
   color: var(--foreground);
 }
 
-.peek-empty-title + .peek-empty {
+.playhead-empty-title + .playhead-empty {
   padding-top: 4px;
 }
 
 /* The way out of the state, set apart from the explanation above it: the
    explanation is prose, this line is an instruction. */
-.peek-empty-hint {
+.playhead-empty-hint {
   margin: 0;
   padding: 0 12px 12px;
   font-size: var(--font-size-caption);
@@ -356,14 +356,14 @@
 }
 
 /* Same key pill as the search palette's rows. */
-.peek-empty-kbd {
+.playhead-empty-kbd {
   padding: 1px 5px;
   font-size: var(--font-size-micro);
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
 }
 
-.peek-rename-input {
+.playhead-rename-input {
   box-sizing: border-box;
   width: 100%;
   padding: 6px 12px;
@@ -381,7 +381,7 @@
    open a slot, and the slot carries a --selection line. The effect chain
    still draws the older 2px-line-only vocabulary until it migrates. */
 
-.peek-grip {
+.playhead-grip {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -392,36 +392,36 @@
   transition: color var(--transition-fast);
 }
 
-.peek-item-row:hover .peek-grip {
+.playhead-item-row:hover .playhead-grip {
   color: var(--muted-foreground);
 }
 
-.peek-stack--reordering .peek-grip {
+.playhead-stack--reordering .playhead-grip {
   cursor: grabbing;
 }
 
-.peek-stack--reordering,
-.peek-stack--reordering * {
+.playhead-stack--reordering,
+.playhead-stack--reordering * {
   user-select: none;
 }
 
 /* Mid-gesture the pointer is a positioning tool: rows under the floating
    row must not light up or sprout the Go To affordance. Selection / LIVE
    tints keep their steady-state rules. */
-.peek-stack--reordering .peek-item-row:not(.is-selected):not(.is-live):hover {
+.playhead-stack--reordering .playhead-item-row:not(.is-selected):not(.is-live):hover {
   background: transparent;
 }
 
-.peek-stack--reordering .peek-item-row:hover .peek-goto {
+.playhead-stack--reordering .playhead-item-row:hover .playhead-goto {
   opacity: 0;
 }
 
 /* The grabbed row: lifted onto the raised surface and following the pointer.
-   --peek-drag-y is written imperatively by the panel per frame; transform is
+   --playhead-drag-y is written imperatively by the panel per frame; transform is
    deliberately NOT in the transition list — the follow must be instant. */
-.peek-row--dragging {
+.playhead-row--dragging {
   z-index: 2;
-  transform: translateY(var(--peek-drag-y, 0px));
+  transform: translateY(var(--playhead-drag-y, 0px));
   background: var(--surface-raised);
   border-radius: var(--radius-control);
   overflow: hidden;
@@ -430,13 +430,13 @@
 }
 
 /* Rows at/past the active gap part to open the slot… */
-.peek-row--parted {
+.playhead-row--parted {
   transform: translateY(8px);
 }
 
 /* …and the list opens matching bottom room, so the parted rows (or the
    end-gap's slot line) never overhang the section that follows. */
-.peek-stack--parting .right-panel-peek-list {
+.playhead-stack--parting .right-panel-playhead-list {
   padding-bottom: 12px;
 }
 
@@ -444,8 +444,8 @@
    effect chain's. --drop-before rows are themselves parted, so their line
    sits centered in the slot they opened; the end gap draws in the list's
    opened bottom padding. */
-.peek-row--drop-before::before,
-.peek-row--drop-after::after {
+.playhead-row--drop-before::before,
+.playhead-row--drop-after::after {
   content: "";
   position: absolute;
   left: 8px;
@@ -454,34 +454,34 @@
   border-radius: 1px;
   background: var(--selection);
   pointer-events: none;
-  animation: peek-slot-line-in 120ms ease-out;
+  animation: playhead-slot-line-in 120ms ease-out;
 }
 
-.peek-row--drop-before::before {
+.playhead-row--drop-before::before {
   top: -5px;
 }
 
-.peek-row--drop-after::after {
+.playhead-row--drop-after::after {
   bottom: -6px;
 }
 
-@keyframes peek-slot-line-in {
+@keyframes playhead-slot-line-in {
   from {
     opacity: 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .right-panel-peek-list,
-  .right-panel-peek-list li,
-  .peek-row--dragging,
-  .peek-filter-chip,
-  .peek-grip {
+  .right-panel-playhead-list,
+  .right-panel-playhead-list li,
+  .playhead-row--dragging,
+  .playhead-filter-chip,
+  .playhead-grip {
     transition: none;
   }
 
-  .peek-row--drop-before::before,
-  .peek-row--drop-after::after {
+  .playhead-row--drop-before::before,
+  .playhead-row--drop-after::after {
     animation: none;
   }
 }

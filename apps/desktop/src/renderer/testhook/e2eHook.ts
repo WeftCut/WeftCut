@@ -261,8 +261,8 @@ export interface E2EHook {
     durationUs: number;
     props?: Record<string, unknown>;
   }): Promise<string>;
-  /// Reveal a layer's track AND select it — the same action as clicking a peek
-  /// item in the right panel (App's `revealTrack`, driven here via the deferred
+  /// Reveal a layer's track AND select it — the same action as clicking a row
+  /// in the Playhead Panel (App's `revealTrack`, driven here via the deferred
   /// `pendingRevealLayerId` so it fires once the summary contains the layer). In
   /// A/B Roll a role-null Overlay track stays COLLAPSED — its timeline
   /// LayerBlock, and the per-layer bake-status dot inside it, never mount — until

@@ -231,7 +231,7 @@ export function createEditingLayout(
     transitions: { siblings: library, index: 1 },
     preview: { siblings: ["preview"], index: 0 },
     timeline: { siblings: ["timeline"], index: 0 },
-    nearby: { siblings: ["nearby"], index: 0 },
+    playhead: { siblings: ["playhead"], index: 0 },
     attribute: { siblings: contextual, index: 0 },
     effect: { siblings: contextual, index: 1 },
   };
@@ -313,8 +313,8 @@ export function createEditingLayout(
                           size: playheadHeight,
                           data: {
                             id: "editing-playhead",
-                            views: ["nearby"],
-                            activeView: "nearby",
+                            views: ["playhead"],
+                            activeView: "playhead",
                           },
                         },
                         {

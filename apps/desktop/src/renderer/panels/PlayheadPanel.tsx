@@ -3,7 +3,7 @@
 // At-playhead restack drag (grip per visual stack row) and the row context
 // menu (the drag's non-drag equivalent); double-click renames via the
 // recorded Layer label command. Windowing, filtering, the At-playhead /
-// Nearby split and the drop's / menu's anchor mappings live in `peek.ts`
+// Nearby split and the drop's / menu's anchor mappings live in `playheadItems.ts`
 // (ADR 0044). The top row is a toolbar — category chips plus the ±Δ window
 // dial — and outside A/B Roll the panel renders an explainer instead of rows.
 
@@ -42,29 +42,29 @@ import { resolveAccelerator } from "../shortcuts/match";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
 import { useCloseOnAnchorMove } from "../timeline/contextMenuAnchor";
 import { MediaThumbnail } from "./MediaThumbnail";
-import { NearbyRowContextMenu } from "./NearbyRowContextMenu";
+import { PlayheadRowContextMenu } from "./PlayheadRowContextMenu";
 import {
-  buildPeekItems,
-  formatPeekWindow,
-  peekCategory,
-  peekDeltaLabels,
-  PEEK_CATEGORY_ORDER,
-  PEEK_WINDOW_PRESETS_US,
+  buildPlayheadItems,
+  formatPlayheadWindow,
+  playheadCategory,
+  playheadDeltaLabels,
+  PLAYHEAD_CATEGORY_ORDER,
+  PLAYHEAD_WINDOW_PRESETS_US,
   restackMenuTargets,
   restackTargetForGap,
-  splitPeekSections,
-  type PeekCategory,
-  type PeekItem,
-  type PeekSections,
+  splitPlayheadSections,
+  type PlayheadCategory,
+  type PlayheadItem,
+  type PlayheadSections,
   type RestackMenuTargets,
-} from "./peek";
+} from "./playheadItems";
 
 /// No category checked — the unfiltered state, and the Panel's initial one.
 /// A module constant so the `useMemo` that splits the sections sees a stable
 /// reference until the user actually touches a chip.
-const NO_CATEGORY_FILTER: ReadonlySet<PeekCategory> = new Set();
+const NO_CATEGORY_FILTER: ReadonlySet<PlayheadCategory> = new Set();
 
-export interface NearbyPanelProps {
+export interface PlayheadPanelProps {
   tracks: TrackSummary[];
   selectedLayerId: string | null;
   fpsNum: number;
@@ -92,7 +92,7 @@ export interface NearbyPanelProps {
     | undefined;
 }
 
-export function NearbyPanel({
+export function PlayheadPanel({
   tracks,
   selectedLayerId,
   fpsNum,
@@ -102,16 +102,16 @@ export function NearbyPanel({
   onGoTo,
   onRename,
   onRestack,
-}: NearbyPanelProps) {
+}: PlayheadPanelProps) {
   const { t } = useTranslation();
   const displayMode = useDisplayMode();
   const deltaWindowUs = useDeltaWindowUs();
   const currentTimeUs = usePlayheadTimeUsThrottled(100, visible);
-  // Checked categories, empty = unfiltered (see `splitPeekSections`). Session
+  // Checked categories, empty = unfiltered (see `splitPlayheadSections`). Session
   // state, not a persisted preference: it answers "what am I looking for right
   // now", which is not a fact about the user that should outlive the question.
   const [filter, setFilter] =
-    useState<ReadonlySet<PeekCategory>>(NO_CATEGORY_FILTER);
+    useState<ReadonlySet<PlayheadCategory>>(NO_CATEGORY_FILTER);
   // The All Tracks explainer names the key that ends that state. Read from the
   // effective bindings — never hard-coded — so a rebound (or cleared)
   // display-mode chord can't leave the hint lying.
@@ -119,18 +119,18 @@ export function NearbyPanel({
 
   const items = useMemo(() => {
     if (displayMode !== "AbRoll") return [];
-    return buildPeekItems(tracks, currentTimeUs, deltaWindowUs, t);
+    return buildPlayheadItems(tracks, currentTimeUs, deltaWindowUs, t);
   }, [tracks, currentTimeUs, deltaWindowUs, displayMode, t]);
 
   const live = useMemo(
-    () => splitPeekSections(items, filter),
+    () => splitPlayheadSections(items, filter),
     [items, filter],
   );
 
   // Each chip is independent: toggling one never clears the others.
   // `Set.delete` reports whether the category was there, so one call decides
   // both directions.
-  const toggleCategory = (category: PeekCategory) => {
+  const toggleCategory = (category: PlayheadCategory) => {
     setFilter((current) => {
       const next = new Set(current);
       if (!next.delete(category)) next.add(category);
@@ -146,11 +146,11 @@ export function NearbyPanel({
   // Both are written at grip pointerdown and only read while the hook
   // reports an active drag; they go stale (not cleared) after the gesture
   // and the next pointerdown overwrites them.
-  const [frozen, setFrozen] = useState<PeekSections | null>(null);
-  const gestureRowsRef = useRef<PeekItem[]>([]);
+  const [frozen, setFrozen] = useState<PlayheadSections | null>(null);
+  const gestureRowsRef = useRef<PlayheadItem[]>([]);
 
   // Gesture presentation (the semantics above stay in the hook): the grabbed
-  // row follows the pointer through --peek-drag-y — written imperatively per
+  // row follows the pointer through --playhead-drag-y — written imperatively per
   // frame on the stack section so the follow never rides the render loop —
   // and the drop lands through useReorderSettle, which holds the row at its
   // release position until the async restack's new order renders, then
@@ -164,7 +164,7 @@ export function NearbyPanel({
     // which are the live ones whenever no gesture is armed.
     rowIds: live.atPlayheadVisual.map((row) => row.layer.id),
     onDragFrame: (offsetY) => {
-      stackSectionRef.current?.style.setProperty("--peek-drag-y", `${offsetY}px`);
+      stackSectionRef.current?.style.setProperty("--playhead-drag-y", `${offsetY}px`);
     },
     onDrop: ({ fromIndex, gap }) => {
       // Resolve against the pointerdown snapshot — the same rows the user
@@ -235,33 +235,33 @@ export function NearbyPanel({
   // Rows render identically in both sections — a row's information set
   // (thumbnail / icon, name, track name, playhead relation, duration) does not
   // depend on which side of the playhead boundary it landed on; only WHICH
-  // question the relation answers does (`peekDeltaLabels`). An
+  // question the relation answers does (`playheadDeltaLabels`). An
   // At-playhead index adds the reorder chrome (grip, rect registration,
   // drag / insertion-indicator classes) to the section's visual prefix; the
   // audio tail and the Nearby section stay grip-less.
-  const renderRow = (item: PeekItem, stackIndex?: number) => {
+  const renderRow = (item: PlayheadItem, stackIndex?: number) => {
     const draggable =
       stackIndex !== undefined && stackIndex < visualRows.length;
     const dragging = draggable && reorder.drag?.id === item.layer.id;
     const gap = reorder.indicatorGap;
     const rowClassName = draggable
       ? [
-          dragging ? "peek-row--dragging" : "",
+          dragging ? "playhead-row--dragging" : "",
           // Rows at/past the active gap part downward to open the slot; the
           // dragged row never parts — its transform is the pointer follow.
           !dragging && gap !== null && stackIndex >= gap
-            ? "peek-row--parted"
+            ? "playhead-row--parted"
             : "",
-          gap === stackIndex ? "peek-row--drop-before" : "",
+          gap === stackIndex ? "playhead-row--drop-before" : "",
           gap === visualRows.length && stackIndex === visualRows.length - 1
-            ? "peek-row--drop-after"
+            ? "playhead-row--drop-after"
             : "",
         ]
           .filter(Boolean)
           .join(" ")
       : "";
     return (
-      <PeekRow
+      <PlayheadRow
         key={item.layer.id}
         item={item}
         isSelected={item.layer.id === selectedLayerId}
@@ -306,31 +306,31 @@ export function NearbyPanel({
   if (displayMode !== "AbRoll") {
     return (
       <Explainer
-        title={t("peek.all_tracks_title")}
-        message={t("peek.all_tracks_msg")}
+        title={t("playhead_panel.all_tracks_title")}
+        message={t("playhead_panel.all_tracks_msg")}
         hintKey={displayModeBinding ?? undefined}
       />
     );
   }
 
   return (
-    <section className="right-panel-peek" aria-label={t("peek.section_label")}>
+    <section className="right-panel-playhead" aria-label={t("playhead_panel.section_label")}>
       {/* Controls where a title bar would be, and deliberately not a title:
           the dock tab names the Panel, so a Panel that names itself spends
           its first line saying nothing. The chips grey out on an empty window
           (there is nothing to filter) but the dial never does — an empty
           window is precisely the moment the user wants to widen it. */}
-      <div className="peek-toolbar">
+      <div className="playhead-toolbar">
         <div
-          className="peek-filter"
+          className="playhead-filter"
           role="group"
-          aria-label={t("peek.filter_label")}
+          aria-label={t("playhead_panel.filter_label")}
         >
           {/* Checkboxes, not a radio set — `role="checkbox"` says so for
               screen readers, and the filled accent says so visually. No tick
               glyph: the fill IS the checked state, and a reserved gutter on
               every chip would spend width the toolbar does not have. */}
-          {PEEK_CATEGORY_ORDER.map((category) => {
+          {PLAYHEAD_CATEGORY_ORDER.map((category) => {
             const checked = filter.has(category);
             return (
               <button
@@ -338,32 +338,32 @@ export function NearbyPanel({
                 type="button"
                 role="checkbox"
                 aria-checked={checked}
-                className={`peek-filter-chip ${checked ? "is-active" : ""}`}
+                className={`playhead-filter-chip ${checked ? "is-active" : ""}`}
                 disabled={items.length === 0}
                 onClick={() => toggleCategory(category)}
               >
-                {t(`peek.cat_${category}`, { defaultValue: category })}
+                {t(`playhead_panel.cat_${category}`, { defaultValue: category })}
               </button>
             );
           })}
         </div>
-        <PeekWindowControl valueUs={deltaWindowUs} />
+        <PlayheadWindowControl valueUs={deltaWindowUs} />
       </div>
-      <div className="right-panel-peek-results">
+      <div className="right-panel-playhead-results">
         {items.length === 0 ? (
           // An empty ±Δ window is a fact about where the playhead is, not a
           // broken Panel — and the sentence names both ways out, one of which
           // is the dial sitting directly above it.
           <>
-            <p className="peek-empty-title">{t("peek.empty_title")}</p>
-            <p className="peek-empty">
-              {t("peek.empty_msg", {
-                window: formatPeekWindow(deltaWindowUs, t),
+            <p className="playhead-empty-title">{t("playhead_panel.empty_title")}</p>
+            <p className="playhead-empty">
+              {t("playhead_panel.empty_msg", {
+                window: formatPlayheadWindow(deltaWindowUs, t),
               })}
             </p>
           </>
         ) : atPlayhead.length === 0 && nearby.length === 0 ? (
-          <p className="peek-filter-empty">{t("peek.filter_empty")}</p>
+          <p className="playhead-filter-empty">{t("playhead_panel.filter_empty")}</p>
         ) : (
           <>
             {/* The stack being composited right now, top-of-stack first.
@@ -376,43 +376,43 @@ export function NearbyPanel({
                 stackSectionRef.current = el;
               }}
               className={[
-                "peek-section",
-                reorder.drag ? "peek-stack--reordering" : "",
+                "playhead-section",
+                reorder.drag ? "playhead-stack--reordering" : "",
                 // An active (non-noop) gap: the list opens bottom room for
                 // the parted rows' slot.
-                reorder.indicatorGap !== null ? "peek-stack--parting" : "",
+                reorder.indicatorGap !== null ? "playhead-stack--parting" : "",
               ]
                 .filter(Boolean)
                 .join(" ")}
-              aria-label={t("peek.section_at_playhead")}
+              aria-label={t("playhead_panel.section_at_playhead")}
             >
               {/* POST-filter, labelling exactly the rows underneath it — a
                   count that can never disagree with what is on screen. Hidden
                   at zero: the empty line below already says it. */}
-              <div className="peek-section-header">
-                {t("peek.section_at_playhead")}
+              <div className="playhead-section-header">
+                {t("playhead_panel.section_at_playhead")}
                 {atPlayhead.length > 0 && (
-                  <span className="peek-section-count">{atPlayhead.length}</span>
+                  <span className="playhead-section-count">{atPlayhead.length}</span>
                 )}
               </div>
               {atPlayhead.length === 0 ? (
-                <p className="peek-stack-empty">{t("peek.at_playhead_empty")}</p>
+                <p className="playhead-stack-empty">{t("playhead_panel.at_playhead_empty")}</p>
               ) : (
-                <ul className="right-panel-peek-list">
+                <ul className="right-panel-playhead-list">
                   {atPlayhead.map((item, i) => renderRow(item, i))}
                 </ul>
               )}
             </section>
             {nearby.length > 0 && (
               <section
-                className="peek-section"
-                aria-label={t("peek.section_nearby")}
+                className="playhead-section"
+                aria-label={t("playhead_panel.section_nearby")}
               >
-                <div className="peek-section-header">
-                  {t("peek.section_nearby")}
-                  <span className="peek-section-count">{nearby.length}</span>
+                <div className="playhead-section-header">
+                  {t("playhead_panel.section_nearby")}
+                  <span className="playhead-section-count">{nearby.length}</span>
                 </div>
-                <ul className="right-panel-peek-list">
+                <ul className="right-panel-playhead-list">
                   {nearby.map((item) => renderRow(item))}
                 </ul>
               </section>
@@ -421,7 +421,7 @@ export function NearbyPanel({
         )}
       </div>
       {rowMenu && onRestack && (
-        <NearbyRowContextMenu
+        <PlayheadRowContextMenu
           key={`${rowMenu.layerId}:${rowMenu.x}:${rowMenu.y}`}
           x={rowMenu.x}
           y={rowMenu.y}
@@ -443,29 +443,29 @@ export function NearbyPanel({
 /// in the settings dialog — the arrangement `media_pool_layout` already uses,
 /// and one surface per value is one that cannot drift from a twin.
 ///
-/// Presets only (see `PEEK_WINDOW_PRESETS_US`), except that a value written
+/// Presets only (see `PLAYHEAD_WINDOW_PRESETS_US`), except that a value written
 /// out of band — MCP, a hand-edited app_settings.json, a future clamp change —
 /// joins the list for as long as it is current. A select whose value is
 /// absent from its options renders a blank trigger, and a blank dial reading
 /// as "unset" would be a lie about a setting that always has a value.
-function PeekWindowControl({ valueUs }: { valueUs: number }) {
+function PlayheadWindowControl({ valueUs }: { valueUs: number }) {
   const { t } = useTranslation();
   const options = useMemo(() => {
-    const values = PEEK_WINDOW_PRESETS_US.includes(valueUs)
-      ? [...PEEK_WINDOW_PRESETS_US]
-      : [...PEEK_WINDOW_PRESETS_US, valueUs].sort((a, b) => a - b);
+    const values = PLAYHEAD_WINDOW_PRESETS_US.includes(valueUs)
+      ? [...PLAYHEAD_WINDOW_PRESETS_US]
+      : [...PLAYHEAD_WINDOW_PRESETS_US, valueUs].sort((a, b) => a - b);
     return values.map((us) => ({
       value: String(us),
-      label: `±${formatPeekWindow(us, t)}`,
+      label: `±${formatPlayheadWindow(us, t)}`,
     }));
   }, [valueUs, t]);
 
   return (
     <AppSelect
-      className="peek-window-select"
+      className="playhead-window-select"
       value={String(valueUs)}
       options={options}
-      ariaLabel={t("peek.window_label")}
+      ariaLabel={t("playhead_panel.window_label")}
       // Fire-and-forget like the media pool's layout chips: main clamps and
       // persists, then broadcasts `app_settings:changed`, and the store's
       // write is what re-renders this Panel. Nothing local to roll back.
@@ -490,17 +490,17 @@ function Explainer({
 }) {
   const { t } = useTranslation();
   return (
-    <section className="right-panel-peek" aria-label={t("peek.section_label")}>
-      <p className="peek-empty-title">{title}</p>
-      <p className="peek-empty">{message}</p>
+    <section className="right-panel-playhead" aria-label={t("playhead_panel.section_label")}>
+      <p className="playhead-empty-title">{title}</p>
+      <p className="playhead-empty">{message}</p>
       {hintKey && (
-        <p className="peek-empty-hint">
+        <p className="playhead-empty-hint">
           {/* The accelerator rides a <kbd> pill, the search palette's
               vocabulary for "this is a key you can press". */}
           <Trans
-            i18nKey="peek.all_tracks_hint"
+            i18nKey="playhead_panel.all_tracks_hint"
             values={{ key: resolveAccelerator(hintKey) }}
-            components={{ key: <kbd className="peek-empty-kbd" /> }}
+            components={{ key: <kbd className="playhead-empty-kbd" /> }}
           />
         </p>
       )}
@@ -508,7 +508,7 @@ function Explainer({
   );
 }
 
-function PeekRow({
+function PlayheadRow({
   item,
   isSelected,
   fpsNum,
@@ -521,7 +521,7 @@ function PeekRow({
   onGripPointerDown,
   onMenuOpen,
 }: {
-  item: PeekItem;
+  item: PlayheadItem;
   isSelected: boolean;
   fpsNum: number;
   fpsDen: number;
@@ -543,13 +543,13 @@ function PeekRow({
 }) {
   const { t } = useTranslation();
   const durationUs = item.layer.t_end_us - item.layer.t_start_us;
-  // The row's two times, deliberately in two vocabularies (`formatPeekDelta`):
+  // The row's two times, deliberately in two vocabularies (`formatPlayheadDelta`):
   // the playhead relation as a phrase carrying unit letters, the length as the
   // media pool's MM:SS. Neither prints a field name, and the shapes are
   // different enough that neither needs one.
-  const delta = peekDeltaLabels(item, fpsNum, fpsDen, t);
+  const delta = playheadDeltaLabels(item, fpsNum, fpsDen, t);
   const durationLabel = formatMediaDuration(durationUs);
-  const durationAria = t("peek.duration_aria", { value: durationLabel });
+  const durationAria = t("playhead_panel.duration_aria", { value: durationLabel });
   const thumbMediaId =
     item.layer.params.kind === "VideoClip" ||
     item.layer.params.kind === "ImageOverlay"
@@ -619,8 +619,8 @@ function PeekRow({
       // sibling row still hit-tests against every visual row's rect.
       <li className={rowClassName} ref={rowRef}>
         <input
-          className="peek-rename-input"
-          aria-label={t("peek.rename_label", { label: primaryLabel })}
+          className="playhead-rename-input"
+          aria-label={t("playhead_panel.rename_label", { label: primaryLabel })}
           value={draft}
           autoFocus
           onChange={(e) => setDraft(e.target.value)}
@@ -649,7 +649,7 @@ function PeekRow({
       {/* Hover / selection / LIVE paint on the ROW, not the inner button —
           the grip and Go To must sit on the same surface as the content. */}
       <div
-        className={`peek-item-row ${isSelected ? "is-selected" : ""} ${
+        className={`playhead-item-row ${isSelected ? "is-selected" : ""} ${
           item.spansPlayhead ? "is-live" : ""
         }`}
       >
@@ -658,9 +658,9 @@ function PeekRow({
             needs its own handle. Pointer-only — see usePointerReorder. */}
         {onGripPointerDown && (
           <span
-            className="peek-grip"
-            title={t("peek.restack_grip", { label: primaryLabel })}
-            aria-label={t("peek.restack_grip", { label: primaryLabel })}
+            className="playhead-grip"
+            title={t("playhead_panel.restack_grip", { label: primaryLabel })}
+            aria-label={t("playhead_panel.restack_grip", { label: primaryLabel })}
             onPointerDown={onGripPointerDown}
           >
             <GripVerticalIcon size={13} />
@@ -668,7 +668,7 @@ function PeekRow({
         )}
         <button
           type="button"
-          className={`peek-item kind-${item.trackKind.toLowerCase()} ${
+          className={`playhead-item kind-${item.trackKind.toLowerCase()} ${
             isSelected ? "is-selected" : ""
           } ${item.spansPlayhead ? "is-live" : ""}`}
           onClick={onReveal}
@@ -679,31 +679,31 @@ function PeekRow({
           aria-haspopup={onMenuOpen ? "menu" : undefined}
           aria-keyshortcuts={onMenuOpen ? "Shift+F10" : undefined}
         >
-          <span className="peek-thumb">
+          <span className="playhead-thumb">
             {thumbMediaId ? (
               <MediaThumbnail mediaId={thumbMediaId} mediaKind={item.trackKind} />
             ) : (
-              <span className="peek-thumb-fallback" aria-hidden="true">
-                {iconForCategory(peekCategory(item.layer.params.kind))}
+              <span className="playhead-thumb-fallback" aria-hidden="true">
+                {iconForCategory(playheadCategory(item.layer.params.kind))}
               </span>
             )}
           </span>
-          <span className="peek-meta">
-            <span className="peek-label">{primaryLabel}</span>
-            <span className="peek-sublabel">{item.trackLabel}</span>
+          <span className="playhead-meta">
+            <span className="playhead-label">{primaryLabel}</span>
+            <span className="playhead-sublabel">{item.trackLabel}</span>
           </span>
           {/* The field names go where they cost no width: each value's
               accessible name, and one title covering both. A nested title wins
               over the button's inside this subtree, so hovering the numbers
               explains the numbers rather than repeating the clip's name. */}
-          <span className="peek-times" title={`${delta.aria} · ${durationAria}`}>
+          <span className="playhead-times" title={`${delta.aria} · ${durationAria}`}>
             <span
-              className={`peek-delta ${item.spansPlayhead ? "is-live" : ""}`}
+              className={`playhead-delta ${item.spansPlayhead ? "is-live" : ""}`}
               aria-label={delta.aria}
             >
               {delta.text}
             </span>
-            <span className="peek-duration" aria-label={durationAria}>
+            <span className="playhead-duration" aria-label={durationAria}>
               {durationLabel}
             </span>
           </span>
@@ -711,10 +711,10 @@ function PeekRow({
         {onGoTo && (
           <button
             type="button"
-            className="peek-goto"
+            className="playhead-goto"
             onClick={onGoTo}
-            title={t("peek.goto", { label: primaryLabel })}
-            aria-label={t("peek.goto", { label: primaryLabel })}
+            title={t("playhead_panel.goto", { label: primaryLabel })}
+            aria-label={t("playhead_panel.goto", { label: primaryLabel })}
           >
             <CrosshairIcon size={14} />
           </button>
@@ -724,7 +724,7 @@ function PeekRow({
   );
 }
 
-function iconForCategory(category: PeekCategory): ReactNode {
+function iconForCategory(category: PlayheadCategory): ReactNode {
   switch (category) {
     case "video":
       return <FilmIcon size={14} />;

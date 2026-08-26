@@ -286,12 +286,12 @@ describe("useWorkspacePersistence", () => {
     const { result } = renderHook(() => useWorkspacePersistence(fake.controller));
     await waitFor(() => expect(result.current!.activeId).toBe("ws-1"));
     await waitFor(() => expect(fake.liveKind()).toBe("media"));
-    fake.setLiveKind("nearby"); // the editor rearranges, then chooses Save
+    fake.setLiveKind("playhead"); // the editor rearranges, then chooses Save
 
     act(() => result.current!.save());
     await waitFor(() =>
       expect(holder.store!.get().profiles.find((p) => p.id === "ws-1")!.saved).toEqual(
-        leaf("nearby"),
+        leaf("playhead"),
       ),
     );
   });

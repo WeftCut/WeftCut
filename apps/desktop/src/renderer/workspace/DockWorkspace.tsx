@@ -49,7 +49,7 @@ import { TransitionsPanel } from "../panels/TransitionsPanel";
 import { AttributePanel } from "../panels/AttributePanel";
 import { CaptionPanel } from "../panels/CaptionPanel";
 import { EffectPanel } from "../panels/EffectPanel";
-import { NearbyPanel } from "../panels/NearbyPanel";
+import { PlayheadPanel } from "../panels/PlayheadPanel";
 import {
   QuickActionsPanel,
   useStripOrientation,
@@ -354,7 +354,7 @@ function CaptionDockPanel() {
         onActivateCue={(layerId, trackId, startUs) => {
           // Cue activation = select the Text Layer, seek to its start, and
           // reveal it in Timeline — synchronizing caption navigation with
-          // timeline context (mirrors Nearby's explicit Go To).
+          // timeline context (mirrors the Playhead Panel's explicit Go To).
           contracts.onSelectLayer(layerId);
           jumpToTimeUs(startUs);
           contracts.onRevealTrack(trackId, layerId);
@@ -374,13 +374,13 @@ function RoleMixerDockPanel() {
   );
 }
 
-function NearbyDockPanel() {
+function PlayheadDockPanel() {
   const contracts = useContracts();
   const runtime = useDockPanelRuntime();
   const summary = contracts.summary;
   return (
     <div className="weft-dock-panel-scroll">
-      <NearbyPanel
+      <PlayheadPanel
         tracks={summary?.tracks ?? []}
         selectedLayerId={contracts.selectedLayerId}
         fpsNum={summary?.composition.fps_num ?? 30}
@@ -471,7 +471,7 @@ const PANEL_COMPONENTS: Readonly<Record<PanelKind, () => ReactElement>> = {
   caption: CaptionDockPanel,
   "role-mixer": RoleMixerDockPanel,
   effect: EffectDockPanel,
-  nearby: NearbyDockPanel,
+  playhead: PlayheadDockPanel,
   agent: AgentDockPanel,
   history: HistoryDockPanel,
 };

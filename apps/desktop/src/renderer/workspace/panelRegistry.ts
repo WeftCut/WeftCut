@@ -17,7 +17,7 @@ export const PANEL_KINDS = [
   "caption",
   "role-mixer",
   "effect",
-  "nearby",
+  "playhead",
   "agent",
   "history",
 ] as const;
@@ -118,9 +118,9 @@ export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
     ...TOOL_MINIMUM,
     initiallyOpen: true,
   },
-  nearby: {
-    kind: "nearby",
-    titleKey: "dock_workspace.panels.nearby",
+  playhead: {
+    kind: "playhead",
+    titleKey: "dock_workspace.panels.playhead",
     ...TOOL_MINIMUM,
     initiallyOpen: true,
   },

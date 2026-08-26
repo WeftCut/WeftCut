@@ -26,7 +26,7 @@ describe('PRODUCTION_OPS', () => {
       'project_create_checkpoint', 'project_delete_checkpoint',
       'project_jump_to', 'project_redo', 'project_restore_checkpoint', 'project_undo',
       'remove_effect', 'remove_marker', 'remove_media', 'remove_transition', 'rename_track',
-      // Nearby's anchored z-reorder drop (ADR 0044 / nearby-z-order ticket 04).
+      // The Playhead Panel's anchored z-reorder drop (ADR 0044).
       'restack_layer', 'restyle_captions',
       'separate_audio_to_new_track', 'set_composition', 'set_role_gain', 'set_scale_linked', 'split_layer_grouped',
       'trim_layer', 'update_effect', 'update_layer', 'update_layer_param_track', 'update_marker',

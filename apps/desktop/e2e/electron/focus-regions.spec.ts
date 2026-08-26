@@ -74,7 +74,7 @@ test('every open Panel is a focus region', async () => {
         'attribute',
         'effect',
         'media',
-        'nearby',
+        'playhead',
         'preview',
         'quick-actions',
         'timeline',
