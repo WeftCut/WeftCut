@@ -89,9 +89,18 @@ test('colorpick: chromakey eyedropper picks canvas blue; one undo reverts', asyn
 
   // Hover across the canvas first: live-apply must stay TRANSIENT — the
   // project's chromakey params record nothing until the click commits.
+  //
+  // Wait on the magnifier's hex readout, not on a fixed settle. The readout is
+  // written in the same rAF pass that calls `onHover` (PickOverlayHost.tsx), so
+  // it is the witness that a hover was actually SAMPLED. A sleep proves only
+  // that time passed: on a loaded runner the moves might not have been
+  // processed yet, and the assertion below would go green for exactly the
+  // reason it must never mean.
   await page.mouse.move(box.x + box.width / 3, box.y + box.height / 3)
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-  await page.waitForTimeout(300)
+  await expect(page.getByTestId('colorpick-hex')).toHaveText(/^#[0-9a-f]{6}$/i, {
+    timeout: 10_000,
+  })
   const during = chromaParams(await summary(page), layerId)
   expect(during.keyB?.value).toBeUndefined()
 

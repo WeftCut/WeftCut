@@ -185,6 +185,11 @@ function PickOverlay({ session }: { session: PickSession }) {
         />
         <span
           ref={hexRef}
+          // Written in the same rAF pass that fires `onHover` (the live-apply),
+          // which makes it the one observable proof from outside that a hover
+          // was sampled — colorpick.spec.ts waits on it before asserting that
+          // the hover recorded NOTHING in the project.
+          data-testid="colorpick-hex"
           style={{
             font: "12px ui-monospace, monospace",
             color: "#e5e7eb",

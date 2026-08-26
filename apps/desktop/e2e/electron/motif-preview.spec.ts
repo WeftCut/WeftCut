@@ -47,10 +47,7 @@ test('motif live preview: accent pixels reach the Pixi compositor via CDP', asyn
     expect(typeof addRes.id).toBe('string')
     expect(addRes.id.length).toBeGreaterThan(0)
 
-    // 4. Give the project:changed bridge a beat before seeking.
-    await page.waitForTimeout(500)
-
-    // 5. Poll until accent content appears on the live composite — or deadline.
+    // 4. Poll until accent content appears on the live composite — or deadline.
     //    Re-seek each round: a paused stale frame must not starve the bind.
     //    weftcutSeekUs throws until the PixiPreview bridge registers (it mounts
     //    async); swallow and continue polling per the documented gotcha.
@@ -98,20 +95,20 @@ test('motif live preview: accent pixels reach the Pixi compositor via CDP', asyn
     }
     if (!s) throw new Error('never sampled the composite')
 
-    // 6. Assert accent-colored pixels from the countdown are present.
+    // 5. Assert accent-colored pixels from the countdown are present.
     expect(s.accentCount).toBeGreaterThan(200)
     expect(s.accentR).toBeGreaterThan(180)
     expect(s.accentG).toBeLessThan(150)
     expect(s.accentB).toBeLessThan(150)
 
-    // 7. Overlay transparency: the countdown backdrop is transparent — only the
+    // 6. Overlay transparency: the countdown backdrop is transparent — only the
     //    numeral + arc are opaque. Guards the CDP transparent-screenshot fix.
     const totalPx = s.w * s.h
     console.log(`[preview] nonTransparent=${s.nonTransparent}/${totalPx}`)
     expect(s.nonTransparent).toBeGreaterThan(0) // content composited
     expect(s.nonTransparent).toBeLessThan(totalPx * 0.5) // not a white box
 
-    // 8. At least one render came through the CDP producer.
+    // 7. At least one render came through the CDP producer.
     console.log('[preview] renders:', renders)
     expect(renders).toBeGreaterThan(0)
   } finally {

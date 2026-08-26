@@ -134,14 +134,14 @@ test('effects: add a blur via MCP renders + persists, undo removes it', async ()
   expect(effectId.length).toBeGreaterThan(0)
 
   // The effect persisted into the project view the renderer reads.
-  let s = await summary(page)
-  let fx = effectsOf(s as any, layerId) as Array<{ kind: string }>
+  const s = await summary(page)
+  const fx = effectsOf(s as any, layerId) as Array<{ kind: string }>
   expect(fx).toHaveLength(1)
   expect(fx[0]!.kind).toBe('blur')
 
-  // Sample the blurred render (already warm). Poll a few rounds so the
-  // project:changed → setProject event has applied the new filter chain.
-  await page.waitForTimeout(800)
+  // Sample the blurred render (already warm). The loop below IS the wait for
+  // the project:changed → setProject event to apply the new filter chain, so
+  // there is no fixed settle in front of it.
   let blurSample = await sampleAt(page, 500_000, 320, 180)
   {
     const deadline = Date.now() + 6_000
@@ -172,12 +172,14 @@ test('effects: add a blur via MCP renders + persists, undo removes it', async ()
     await page.waitForTimeout(600_000)
   }
 
-  // Undo removes the effect from state.
+  // Undo removes the effect from state. Polled rather than slept on: the undo
+  // reaches the renderer through the project:changed bridge, and a fixed
+  // settle that is merely usually long enough is a flake on a loaded runner —
+  // it fails the assertion for the one reason the assertion cannot mean.
   await mcp.callTool({ name: 'undo', arguments: {} })
-  await page.waitForTimeout(800)
-  s = await summary(page)
-  fx = effectsOf(s as any, layerId) as Array<{ kind: string }>
-  expect(fx).toHaveLength(0)
+  await expect
+    .poll(() => summary(page).then((v) => (effectsOf(v as any, layerId) as unknown[]).length))
+    .toBe(0)
   const afterUndo = await sampleAt(page, 500_000, 320, 180)
   console.log('EFFECTS_SMOKE afterUndo =', JSON.stringify(afterUndo))
 
@@ -248,14 +250,14 @@ test('effects: blur on a Motif layer renders + exports + undo', async () => {
   expect(effectId.length).toBeGreaterThan(0)
 
   // The effect persisted into the project view the renderer reads.
-  let s = await summary(page)
-  let fx = effectsOf(s as any, layerId) as Array<{ kind: string }>
+  const s = await summary(page)
+  const fx = effectsOf(s as any, layerId) as Array<{ kind: string }>
   expect(fx).toHaveLength(1)
   expect(fx[0]!.kind).toBe('blur')
 
-  // Sample the blurred render. Poll so the project:changed -> setProject event
-  // applies the new filter chain to the Motif sprite.
-  await page.waitForTimeout(800)
+  // Sample the blurred render. The loop below IS the wait for the
+  // project:changed -> setProject event to apply the new filter chain to the
+  // Motif sprite.
   let blurSample = await sampleAt(page, 500_000, 320, 180)
   {
     const deadline = Date.now() + 8_000
@@ -277,12 +279,12 @@ test('effects: blur on a Motif layer renders + exports + undo', async () => {
     console.log('MOTIF_EFFECTS export ERR =', String(e), '->', exportOut)
   }
 
-  // Undo removes the effect from state.
+  // Undo removes the effect from state — polled, see the note on the first
+  // undo in this file.
   await mcp.callTool({ name: 'undo', arguments: {} })
-  await page.waitForTimeout(800)
-  s = await summary(page)
-  fx = effectsOf(s as any, layerId) as Array<{ kind: string }>
-  expect(fx).toHaveLength(0)
+  await expect
+    .poll(() => summary(page).then((v) => (effectsOf(v as any, layerId) as unknown[]).length))
+    .toBe(0)
 
   // The blur measurably changes the rendered composite vs the sharp baseline
   // (it spreads the motif's alpha footprint into the transparent margins).
@@ -385,8 +387,8 @@ test('effects UI: add/edit/reorder/remove a blur from the inspector panel', asyn
     return f[0]?.params?.strength?.value ?? null
   }).toBe(30)
 
-  // The blur measurably changes the composite vs the sharp baseline.
-  await page.waitForTimeout(800)
+  // The blur measurably changes the composite vs the sharp baseline. The loop
+  // below IS the wait; no fixed settle in front of it.
   let blur = await sampleAt(page, 500_000, 320, 180)
   {
     const deadline = Date.now() + 6_000
@@ -609,10 +611,9 @@ test('effects: chromakey keys out a green color layer; viewMatte previews the ma
   // Undo the param patch and the add — chain must empty.
   await mcp.callTool({ name: 'undo', arguments: {} })
   await mcp.callTool({ name: 'undo', arguments: {} })
-  await page.waitForTimeout(800)
-  const s = await summary(page)
-  const fx = effectsOf(s as any, bgId) as Array<{ kind: string }>
-  expect(fx).toHaveLength(0)
+  await expect
+    .poll(() => summary(page).then((v) => (effectsOf(v as any, bgId) as unknown[]).length))
+    .toBe(0)
   let restored = await sampleAt(page, 500_000, 600, 340)
   {
     const deadline = Date.now() + 6_000
