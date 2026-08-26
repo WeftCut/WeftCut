@@ -11,7 +11,10 @@ const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps_6s.mp4')
 
 test('H.264 import -> export stays frame-aligned with low loss (Electron)', async ({}, testInfo) => {
   test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
-  test.setTimeout(220000)
+  // Clears both inner guards rather than the measured ~117s; at 220s the
+  // export's own 170s poll could not report where it wedged.
+  // See e2e/README.md §Per-test timeout budgets.
+  test.setTimeout(360000)
   const PROJECT_PARENT = tmpDir('weftcut-e2e-proj-')
   const OUTPUT = path.join(tmpDir('weftcut-e2e-out-'), 'out.mp4')
 

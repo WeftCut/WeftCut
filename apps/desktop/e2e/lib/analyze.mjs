@@ -14,6 +14,14 @@ const BIN = path.join(
   process.platform === "win32" ? "media_conformance.exe" : "media_conformance",
 );
 
+// A hung analyzer and a wedged export are the same symptom once the spec's own
+// timeout fires — a bare "test timeout" with nothing attached. Capping the child
+// separates them. 180s is ~2x the heaviest real call (four 1080p SSIM samples,
+// sequential decode to index 270 in two files, debug profile: ~85s on a GPU-less
+// leg, ~121s on a slow one), so only a true hang trips it. Per-leg override:
+// WEFTCUT_ANALYZE_TIMEOUT_MS.
+const TIMEOUT_MS = Number(process.env.WEFTCUT_ANALYZE_TIMEOUT_MS) || 180_000;
+
 let warnedNoBin = false;
 
 // Spawn the analyzer over `args` — the mode flags only; which binary and how to
@@ -28,7 +36,13 @@ let warnedNoBin = false;
 // timeout and invisible in the job log. The bin is a build artifact like `out/`
 // — rebuilding after a change to it is the caller's job, same contract.
 function spawnAnalyzer(args) {
-  if (existsSync(BIN)) return spawnSync(BIN, args, { cwd: REPO, encoding: "utf8" });
+  if (existsSync(BIN))
+    return spawnSync(BIN, args, {
+      cwd: REPO,
+      encoding: "utf8",
+      timeout: TIMEOUT_MS,
+      killSignal: "SIGKILL",
+    });
   if (!warnedNoBin) {
     warnedNoBin = true;
     console.warn(
@@ -42,6 +56,8 @@ function spawnAnalyzer(args) {
       "--bin", "media_conformance", "--features", "jobs,export", "--quiet", "--",
       ...args,
     ],
+    // Uncapped on purpose: this path's cost is COMPILATION, which TIMEOUT_MS is
+    // not calibrated for. The warning above is the signal to fix it.
     { cwd: REPO, encoding: "utf8" },
   );
 }
@@ -52,12 +68,21 @@ function spawnAnalyzer(args) {
 // report. `mode` names the invocation in that error and nowhere else.
 function runAnalyzer(mode, args) {
   const r = spawnAnalyzer(args);
+  const name = `media_conformance${mode ? ` ${mode}` : ""}`;
+  // A child that never ran, or that TIMEOUT_MS killed, reports in `error` while
+  // `status` stays null — so this has to come before the parse, which would
+  // otherwise blame an empty stdout for a process that was killed.
+  if (r.error) {
+    const why =
+      r.error.code === "ETIMEDOUT" ? `hung past ${TIMEOUT_MS}ms` : (r.error.code ?? r.error.message);
+    throw new Error(
+      `${name} did not complete (${why}${r.signal ? `, killed by ${r.signal}` : ""}): ${r.stderr ?? ""}`,
+    );
+  }
   try {
     return JSON.parse(r.stdout);
   } catch {
-    throw new Error(
-      `media_conformance${mode ? ` ${mode}` : ""} exit ${r.status}: ${r.stdout}\n${r.stderr}`,
-    );
+    throw new Error(`${name} exit ${r.status}: ${r.stdout}\n${r.stderr}`);
   }
 }
 

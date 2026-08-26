@@ -64,7 +64,10 @@ test.describe('same-source overlapping clips export (Electron)', () => {
   test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
 
   test('two stacked enabled clips export without wedging or extra decode', async () => {
-    test.setTimeout(220000)
+    // Clears both inner guards rather than the measured ~127s; at 220s the
+    // export's own 170s poll could not report where it wedged.
+    // See e2e/README.md §Per-test timeout budgets.
+    test.setTimeout(360000)
     const { app, page } = await launchApp()
     try {
       const out = path.join(tmpDir('weftcut-e2e-overlap-'), 'stacked.mp4')
@@ -98,9 +101,11 @@ test.describe('same-source overlapping clips export (Electron)', () => {
   })
 
   test('a 2s-offset overlap exports complete with both clips on their own frames', async () => {
-    // The 240-frame export + two window scans measured 344s on a slow Windows
-    // runner — 360s was a coin flip. Budget for the observed worst case.
-    test.setTimeout(540000)
+    // The 240-frame export + two window scans measure 344-366s on a slow
+    // Windows runner, and the budget has to clear analyze()'s 180s cap on top
+    // of that — the second scan is the last thing that can wedge.
+    // See e2e/README.md §Per-test timeout budgets.
+    test.setTimeout(600000)
     const { app, page } = await launchApp()
     try {
       const out = path.join(tmpDir('weftcut-e2e-overlap-'), 'offset.mp4')

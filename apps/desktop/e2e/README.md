@@ -351,6 +351,36 @@ To reproduce a leg's GL stack locally, launch the suite with
 `WEFTCUT_E2E_CONSOLE=1` to stream the renderer/worker console into the test
 output (dispatch CI runs set this automatically).
 
+## Per-test timeout budgets
+
+`test.setTimeout(...)` in an export gate is not an estimate of the test's cost.
+It has to clear the **worst single wedge point** in the body, because every
+heavy helper carries its own guard with a diagnostic attached: `driveExport`
+polls for 170 s and then reports `last state=<kind>/<detail> perf=<...>`, and
+`analyze()` kills the analyzer child after `WEFTCUT_ANALYZE_TIMEOUT_MS`
+(180 s default) and names it. Set the budget below
+*cost-to-reach-a-guard + that guard's cap* and the spec timeout always wins the
+race, so the failure arrives as a bare `Test timeout of Nms exceeded` with no
+state — the one thing these gates exist to tell you.
+
+The wedge points in a 1:1 export gate, measured on the GPU-less Windows leg:
+
+| wedge point | reached after | guard | budget must clear |
+| --- | --- | --- | --- |
+| the export | `launchApp` + `newProject`, ~60 s | `driveExport`, 170 s | ~230 s |
+| the analyzer | + the export itself, ~120 s | `analyze()`, 180 s | ~300 s |
+
+Hosted runners drift about 1.9x run to run, so a single-export gate's floor
+lands near 360 s. `export_eos_tail` takes 420 s because its analyzer scan is the
+suite's heaviest (four 1080p samples decoded out to index 270 in two files), and
+the two-scan `export_overlap_same_source` case 600 s. None of these is a cost
+estimate — those tests measure 117-170 s and 366 s. The headroom is spent only
+when something is actually broken.
+
+A spec whose `launchApp()` sits in `beforeAll` (`audio.spec.ts`) is charged that
+launch against Playwright's separate hook timeout, so its budgets start from the
+first guard inside the body and are correspondingly smaller.
+
 ## The dev control surface
 
 The specs drive `apps/desktop/src/testhook/e2eHook.ts` (`window.__weftcutTest`),
