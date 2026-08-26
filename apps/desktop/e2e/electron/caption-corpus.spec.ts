@@ -158,8 +158,10 @@ test("an unbroken transcript line is born with a wrap width inside the safe area
     expect(params.content.length).toBeGreaterThan(200);
     // Auto height — (box_w, null): the cue wraps at the composition width less
     // the 8% safe-area margin per side, and because Auto height never shrinks,
-    // the stored size is still the size the cue's style asked for.
-    expect(params.box_w).toBeCloseTo(537.6, 3); // 640 - 2 × 8%
+    // the stored size is still the size the cue's style asked for. A whole
+    // number of pixels, because a box axis is an extent and not a position:
+    // 537.6 is not a width a glyph run can be laid out in.
+    expect(params.box_w).toBe(Math.round(CANVAS.width * (1 - 2 * 0.08))); // 538
     expect(params.box_h).toBeNull();
     expect(params.font.size_px).toBe(Math.round(CANVAS.height * 0.05));
 
