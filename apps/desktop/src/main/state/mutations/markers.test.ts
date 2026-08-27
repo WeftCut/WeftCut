@@ -5,7 +5,7 @@ import { applyAddMarker } from './add'
 import { applyUpdateMarker, applyRemoveMarker } from './markers'
 import { frameIndexRound, snapFrameRound, timeUsAtFrame } from '../snap'
 import { isCommandFailure } from '../errors'
-import { root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 const BLUE = { r: 0, g: 128, b: 255, a: 255 }
 function withMarkers(specs: Array<[number, number | null]>): { p: Project; ids: string[] } {
@@ -129,5 +129,21 @@ describe('applyRemoveMarker', () => {
   it('throws MarkerNotFound for a missing marker', () => {
     const { p } = withMarkers([[1_000_000, null]])
     expectCmd(() => applyRemoveMarker(p, 'ghost'), 'MarkerNotFound')
+  })
+})
+
+describe('markers inside a Group', () => {
+  it('add_marker takes composition_id; update / remove derive the composition from the marker id', () => {
+    const gen = seededGen()
+    const { p, groupId } = groupedProject(gen)
+    const rootBefore = structuredClone(root(p))
+    const m = applyAddMarker(p, gen, 500_000, null, 'in group', BLUE, groupId)
+    expect(group(p, groupId).markers.map((x) => x.id)).toEqual([m])
+    applyUpdateMarker(p, m, { label: 'renamed', t_us: 700_000 })
+    expect(group(p, groupId).markers[0]).toMatchObject({ label: 'renamed', t_us: 700_000 })
+    applyRemoveMarker(p, m)
+    expect(group(p, groupId).markers).toEqual([])
+    expect(root(p)).toEqual(rootBefore)
+    expectCmd(() => applyUpdateMarker(p, m, { label: 'x' }), 'MarkerNotFound')
   })
 })

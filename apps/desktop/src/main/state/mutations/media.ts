@@ -3,7 +3,7 @@ import type { DecodeRoute } from '../../../shared/decode-route'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { defaultTransform } from './add'
-import { pruneEmptiedTrack, rootComposition } from './helpers'
+import { pruneEmptiedTrack, requireLayer } from './helpers'
 import { eachLayer } from '../model'
 
 /** The canonical VideoClip layer shape. blend_mode
@@ -134,15 +134,7 @@ export function referencingLayers(p: Project, id: Uuid): Uuid[] {
  *  BEFORE commit's op_id (the keystone). Track defaults == applyAddTrack.
  *  No autofit (no time change). */
 export function applySeparateAudio(p: Project, idGen: IdGen, layerId: Uuid): Uuid {
-  const c = rootComposition(p)
-  let ti = -1, li = -1
-  for (let t = 0; t < c.tracks.length; t++) {
-    const idx = c.tracks[t].layers.findIndex((l) => l.id === layerId)
-    if (idx >= 0) { ti = t; li = idx; break }
-  }
-  if (ti < 0) throw new CommandFailure({ error: 'LayerNotFound', layer: layerId })
-  const source = c.tracks[ti]
-  const layer = source.layers[li]
+  const { comp: c, track: source, layer, trackIndex: ti, layerIndex: li } = requireLayer(p, layerId)
   if (layer.params.kind !== 'Audio') throw new CommandFailure({ error: 'WrongLayerKind', layer: layerId, expected: 'Audio' })
 
   const newId = idGen() // after the checks, before commit's op_id (keystone)

@@ -360,6 +360,13 @@ describe('validate — compositions', () => {
     p.compositions[groupId].tracks[1].layers = [colorLayer(rootLayer.id, 0, 1_000_000)]
     expectRule(p, 'DuplicateLayerId')
   })
+  it('DuplicateMarkerId spans compositions', () => {
+    const { p, groupId } = twoComps()
+    const m = { id: 'mk', t_us: 0, end_t_us: null, label: 'm', color: { r: 0, g: 0, b: 0, a: 255 }, metadata: {} }
+    root(p).markers = [structuredClone(m)]
+    p.compositions[groupId].markers = [structuredClone(m)]
+    expectRule(p, 'DuplicateMarkerId')
+  })
   it('LinkMemberMissing: a link may not reach into another composition', () => {
     const { p, groupId } = twoComps()
     const groupLayer = p.compositions[groupId].tracks[0].layers[0]

@@ -3,11 +3,11 @@ import { seededGen } from '../ids'
 import { blankProject, type Layer, type Project } from '../model'
 import { applyAddLayer, applyAddTrack, colorParams } from './add'
 import { applyDeleteLayer } from './delete'
-import { applyDuplicateLayer, applyPasteLayers } from './duplicate'
+import { applyDuplicateLayer, applyPasteLayer, applyPasteLayers } from './duplicate'
 import { CommandFailure, isCommandFailure } from '../errors'
 import { validate } from '../validate'
 import { AUDIO_GRID, frameGrid, gridIndex, isCanonicalOnGrid, snapOnGrid, timeUsAtGridIndex } from '../snap'
-import { root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 describe('delete + duplicate', () => {
   it('deletes a layer and autofits', () => {
@@ -174,5 +174,48 @@ describe('applyPasteLayers', () => {
     // …so the slip survives in samples, and the kind-blind answer is provably different.
     expect(gridIndex(aClone.t_start_us - vClone.t_start_us, AUDIO_GRID)).toBe(slipBefore)
     expect(snapOnGrid(au.t_start_us + delta, fg)).not.toBe(aClone.t_start_us)
+  })
+})
+
+describe('delete / duplicate / paste inside a Group', () => {
+  const BLACK = { r: 0, g: 0, b: 0, a: 255 }
+  it("deleting the Group's layer shrinks the Group's duration and leaves the root alone", () => {
+    const { p, groupId, innerId } = groupedProject()
+    const rootBefore = structuredClone(root(p))
+    expect(applyDeleteLayer(p, innerId)).toBeNull() // the Group's A roll is reserved
+    expect(group(p, groupId).tracks[0].layers).toEqual([])
+    expect(group(p, groupId).duration_us).toBe(0)
+    expect(root(p)).toEqual(rootBefore) // the parent's window now overhangs (ADR 0052 §6) — and is untouched
+    expect(() => validate(p)).not.toThrow()
+  })
+  it("deleting the last layer on a transient track inside a Group prunes THAT track; the root's tracks stay", () => {
+    const { p, idGen, groupId } = groupedProject()
+    const gt = applyAddTrack(p, idGen, null, undefined, groupId)
+    const l = applyAddLayer(p, idGen, gt, colorParams(BLACK, 1, 1), 0, 500_000)
+    const rootTracks = root(p).tracks.map((t) => t.id)
+    expect(applyDeleteLayer(p, l)).toBe(gt)
+    expect(group(p, groupId).tracks.some((t) => t.id === gt)).toBe(false)
+    expect(root(p).tracks.map((t) => t.id)).toEqual(rootTracks)
+  })
+  it('duplicates inside the Group', () => {
+    const { p, idGen, groupId, innerId } = groupedProject()
+    const dup = applyDuplicateLayer(p, idGen, innerId, 1_000_000)
+    expect(group(p, groupId).tracks[0].layers.map((l) => l.id)).toEqual([innerId, dup])
+    expect(group(p, groupId).duration_us).toBe(2_000_000)
+    expect(root(p).duration_us).toBe(1_000_000)
+  })
+  it('paste refuses a lane in another composition (CrossCompositionMove) and a mixed set (CrossCompositionSet)', () => {
+    const { p, idGen, groupId, innerId, refLayerId } = groupedProject()
+    const before = structuredClone(p)
+    try { applyPasteLayer(p, idGen, innerId, root(p).tracks[1].id, 0); throw new Error('x') }
+    catch (e) { expect(isCommandFailure(e) && e.err).toEqual({ error: 'CrossCompositionMove', layer: innerId, from: groupId, to: p.root_id }) }
+    try { applyPasteLayers(p, idGen, [refLayerId, innerId], 5_000_000, null); throw new Error('x') }
+    catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('CrossCompositionSet') }
+    try { applyPasteLayers(p, idGen, [innerId], 5_000_000, root(p).tracks[1].id); throw new Error('x') }
+    catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('CrossCompositionMove') }
+    expect(p).toEqual(before)
+    // …and pastes inside the Group when the lane is the Group's.
+    const id = applyPasteLayer(p, idGen, innerId, group(p, groupId).tracks[1].id, 2_000_000)
+    expect(group(p, groupId).tracks[1].layers.map((l) => l.id)).toEqual([id])
   })
 })

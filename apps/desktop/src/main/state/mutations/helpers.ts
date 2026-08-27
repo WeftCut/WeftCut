@@ -1,6 +1,5 @@
 import { current, isDraft } from 'immer'
-import type { Composition, Layer, LayerParams, Project, Uuid } from '../model'
-import { rootComposition } from '../model'
+import type { Composition, Layer, LayerParams, Project, Track, Uuid } from '../model'
 import { CommandFailure } from '../errors'
 import { frameGrid, snapUpOnGrid } from '../snap'
 import { forEachAnimatedF64, forEachAnimatedRgba, shiftKeyframes } from './animated'
@@ -10,12 +9,12 @@ export function cloneLayer(layer: Layer): Layer {
   return structuredClone(isDraft(layer) ? current(layer) : layer)
 }
 
-/** The composition every mutation in this directory edits. Layer-addressed ops
- *  address the ROOT: nothing but a hand-written file can place a layer in a
- *  Group yet, so `rootComposition` is the one scope rule, spelled as a call so
- *  the sweep that derives the scope from the layer id later is
- *  `rg 'rootComposition\(' mutations` and nothing else. */
-export { rootComposition } from '../model'
+/** A layer with its holders. `comp` is the scope every mutation on the layer
+ *  edits — the composition's own tracks, links, transitions, duration. The
+ *  indices are read at locate time: a splice on `track.layers` stales
+ *  `layerIndex`, so re-locate after one rather than reuse it. */
+export interface LocatedLayer { comp: Composition; track: Track; layer: Layer; trackIndex: number; layerIndex: number }
+export interface LocatedTrack { comp: Composition; track: Track; trackIndex: number }
 
 /** `p.compositions[id]` or CompositionNotFound. */
 export function compositionOf(p: Project, id: Uuid): Composition {
@@ -24,17 +23,78 @@ export function compositionOf(p: Project, id: Uuid): Composition {
   return c
 }
 
-/** (track index, layer index) of a layer in the ROOT composition, or null. */
-export function locateLayer(p: Project, id: Uuid): [number, number] | null {
-  return locateLayerIn(rootComposition(p), id)
+/** `p.compositions[id]`, or null. */
+export function locateComposition(p: Project, id: Uuid): Composition | null {
+  return p.compositions[id] ?? null
 }
 
-export function locateLayerIn(c: Composition, id: Uuid): [number, number] | null {
+/** The composition a CREATION op places into: the one named, else the root.
+ *  Creation ops are the only ops that take a scope argument — a layer-addressed
+ *  op derives its scope from the layer (see `locateLayer`). */
+export function scopeComposition(p: Project, compositionId?: Uuid | null): Composition {
+  return compositionOf(p, compositionId ?? p.root_id)
+}
+
+export function locateLayerIn(c: Composition, id: Uuid): LocatedLayer | null {
   for (let ti = 0; ti < c.tracks.length; ti++) {
-    const li = c.tracks[ti].layers.findIndex((l) => l.id === id)
-    if (li >= 0) return [ti, li]
+    const track = c.tracks[ti]
+    const li = track.layers.findIndex((l) => l.id === id)
+    if (li >= 0) return { comp: c, track, layer: track.layers[li], trackIndex: ti, layerIndex: li }
   }
   return null
+}
+
+/** Find a layer in WHICHEVER composition holds it. Layer ids are unique
+ *  project-wide (validate: `DuplicateLayerId` spans compositions), which is what
+ *  lets every layer-addressed op derive its composition here instead of taking
+ *  a scope argument — an agent moving a layer inside a Group never has to know
+ *  it is in one (ADR 0052; spec § Invariants). */
+export function locateLayer(p: Project, id: Uuid): LocatedLayer | null {
+  for (const c of Object.values(p.compositions)) {
+    const found = locateLayerIn(c, id)
+    if (found) return found
+  }
+  return null
+}
+
+/** `locateLayer` or LayerNotFound. */
+export function requireLayer(p: Project, id: Uuid): LocatedLayer {
+  const found = locateLayer(p, id)
+  if (!found) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
+  return found
+}
+
+/** Find a track in whichever composition holds it (track ids are minted by
+ *  the one id stream, so a track lives in exactly one). */
+export function locateTrack(p: Project, id: Uuid): LocatedTrack | null {
+  for (const c of Object.values(p.compositions)) {
+    const ti = c.tracks.findIndex((t) => t.id === id)
+    if (ti >= 0) return { comp: c, track: c.tracks[ti], trackIndex: ti }
+  }
+  return null
+}
+
+/** `locateTrack` or TrackNotFound. */
+export function requireTrack(p: Project, id: Uuid): LocatedTrack {
+  const found = locateTrack(p, id)
+  if (!found) throw new CommandFailure({ error: 'TrackNotFound', track: id })
+  return found
+}
+
+/** The ONE composition a set of layers lives in. LayerNotFound for an unknown
+ *  member (checked in input order, before any scope comparison, so a missing
+ *  id is reported as missing rather than as a scope mismatch), then
+ *  CrossCompositionSet naming the first member outside the first member's
+ *  composition. Empty input is the caller's to refuse. */
+export function requireSameComposition(p: Project, layerIds: readonly Uuid[]): Composition {
+  let comp: Composition | null = null
+  for (const id of layerIds) {
+    const found = requireLayer(p, id)
+    if (comp === null) comp = found.comp
+    else if (found.comp !== comp) throw new CommandFailure({ error: 'CrossCompositionSet', layer: id, composition: found.comp.id, expected: comp.id })
+  }
+  if (comp === null) throw new CommandFailure({ error: 'InvalidArgument', field: 'layers', detail: 'at least one layer is required' })
+  return comp
 }
 
 /** Reconcile composition.duration_us with the layer high-water mark (ADR 0005).
@@ -113,13 +173,12 @@ export function dropLayerFromLinks(c: Composition, layerId: Uuid): void {
   }
 }
 
-/** Locked-track guard; missing layer → LayerNotFound. */
-export function checkTrackLock(p: Project, id: Uuid): void {
-  const c = rootComposition(p)
-  const loc = locateLayerIn(c, id)
-  if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
-  const track = c.tracks[loc[0]]
-  if (track.locked) throw new CommandFailure({ error: 'TrackLocked', track: track.id })
+/** Locked-track guard; missing layer → LayerNotFound. Returns the located
+ *  layer so the caller edits what was checked. */
+export function checkTrackLock(p: Project, id: Uuid): LocatedLayer {
+  const found = requireLayer(p, id)
+  if (found.track.locked) throw new CommandFailure({ error: 'TrackLocked', track: found.track.id })
+  return found
 }
 
 /** Shift every animated track's keyframes by deltaUs (trim IN glues keyframes to
@@ -127,4 +186,24 @@ export function checkTrackLock(p: Project, id: Uuid): void {
 export function shiftLayerKeyframes(params: LayerParams, deltaUs: number): void {
   forEachAnimatedF64(params, (a) => shiftKeyframes(a, deltaUs))
   forEachAnimatedRgba(params, (a) => shiftKeyframes(a, deltaUs))
+}
+
+/** The `src_in_us` / `src_out_us` family: the kinds whose timeline window is a
+ *  window into a SOURCE — media for VideoClip / Audio, a composition for a
+ *  Group layer (ADR 0052 §4) — so trim shifts the window edge, split divides it
+ *  and a transition's tail borrow extends it. One predicate, because the three
+ *  sites listing the kinds by hand is how CompositionRef was left out of each. */
+export function hasSourceWindow(params: LayerParams): params is Extract<LayerParams, { src_out_us: number }> {
+  return params.kind === 'VideoClip' || params.kind === 'Audio' || params.kind === 'CompositionRef'
+}
+
+/** The source duration a `src_out_us` may not exceed AT THE GESTURE: the media's
+ *  probed duration, or the referenced composition's `duration_us`. Null when
+ *  unknown (no probe, unknown media) or when the kind has no source window.
+ *  For a Group layer this is a gesture bound only — validate puts no upper
+ *  bound on the window (overhang, ADR 0052 §6). */
+export function sourceDurationUs(p: Project, params: LayerParams): number | null {
+  if (params.kind === 'VideoClip' || params.kind === 'Audio') return p.media_pool[params.media]?.metadata.duration_us ?? null
+  if (params.kind === 'CompositionRef') return p.compositions[params.composition]?.duration_us ?? null
+  return null
 }

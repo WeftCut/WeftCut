@@ -2,7 +2,7 @@ import type { Layer, LayerParams, Marker, Project, Rgba, TextParams, TrackRole, 
 import type { IdGen } from '../ids'
 import { gridForLayerKind, snapOnGrid } from '../snap'
 import { authoredExtentPx } from '../quantize'
-import { applyDurationAutofit, rootComposition } from './helpers'
+import { applyDurationAutofit, locateTrack, scopeComposition } from './helpers'
 import { snapMarkerTimes } from './markers'
 import { CommandFailure } from '../errors'
 import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
@@ -59,17 +59,19 @@ export function defaultTransform() {
  *  played it anyway (`mix.rs` rounds `t_start_us` to a sample), so this stores what
  *  renders instead of a value that renders as something else.
  *
+ *  The composition is the TRACK's: a track lives in exactly one, so the lane
+ *  names the scope and no separate composition argument is needed.
+ *
  *  Allocates the layer id only AFTER the track-existence check (id contract). */
 export function applyAddLayer(p: Project, idGen: IdGen, trackId: Uuid, params: LayerParams, tStartUs: number, tEndUs: number): Uuid {
-  const c = rootComposition(p)
+  const dest = locateTrack(p, trackId)
+  if (!dest) throw new CommandFailure({ error: 'TrackNotFound', track: trackId })
+  const { comp: c, track } = dest
   const grid = gridForLayerKind(params.kind, c.fps)
   const t0 = snapOnGrid(tStartUs, grid)
   const t1 = snapOnGrid(tEndUs, grid)
-  const trackIdx = c.tracks.findIndex((t) => t.id === trackId)
-  if (trackIdx < 0) throw new CommandFailure({ error: 'TrackNotFound', track: trackId })
   const layerId = idGen()
   const layer: Layer = { id: layerId, label: null, t_start_us: t0, t_end_us: t1, enabled: true, locked: false, metadata: {}, params, effects: [] }
-  const track = c.tracks[trackIdx]
   const at = track.layers.findIndex((l) => l.t_start_us > t0)
   track.layers.splice(at < 0 ? track.layers.length : at, 0, layer)
   applyDurationAutofit(c)
@@ -79,9 +81,9 @@ export function applyAddLayer(p: Project, idGen: IdGen, trackId: Uuid, params: L
 /** Insert a new track with Track::new() defaults at `position` (default: end).
  *  `role` is always null here, so `transient` — "not part of the reserved
  *  skeleton" — is always true: every track this mints is a cleanup candidate the
- *  moment it empties (ADR 0042). */
-export function applyAddTrack(p: Project, idGen: IdGen, label: string | null, position?: number): Uuid {
-  const c = rootComposition(p)
+ *  moment it empties (ADR 0042). Lands in `compositionId`, the root by default. */
+export function applyAddTrack(p: Project, idGen: IdGen, label: string | null, position?: number, compositionId?: Uuid | null): Uuid {
+  const c = scopeComposition(p, compositionId)
   const id = idGen()
   const track = { id, label, enabled: true, locked: false, muted: false, solo: false, removable: true, role: null as TrackRole | null, transient: true, height_px: 64, layers: [] as Layer[] }
   const len = c.tracks.length
@@ -92,9 +94,10 @@ export function applyAddTrack(p: Project, idGen: IdGen, label: string | null, po
 
 /** Marker inserted t-sorted, empty metadata. Times land on the composition frame
  *  grid via `snapMarkerTimes`, which also rejects a collapsed region — before the
- *  id is minted, so a rejected marker burns none (id contract). */
-export function applyAddMarker(p: Project, idGen: IdGen, tUs: number, endTUs: number | null, label: string, color: Rgba): Uuid {
-  const c = rootComposition(p)
+ *  id is minted, so a rejected marker burns none (id contract). Markers are
+ *  per composition: `compositionId` names the one to mark, the root by default. */
+export function applyAddMarker(p: Project, idGen: IdGen, tUs: number, endTUs: number | null, label: string, color: Rgba, compositionId?: Uuid | null): Uuid {
+  const c = scopeComposition(p, compositionId)
   const snapped = snapMarkerTimes(c, tUs, endTUs)
   const id = idGen()
   const marker: Marker = { id, t_us: snapped.tUs, end_t_us: snapped.endTUs, label, color, metadata: {} }

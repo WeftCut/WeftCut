@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/mutations/trim.ts
 import type { Layer, Project, Uuid } from '../model'
 import { gridForLayerKind, snapDownOnGrid, snapOnGrid, snapUpOnGrid, type Grid } from '../snap'
-import { applyDurationAutofit, locateLayer, shiftLayerKeyframes, rootComposition } from './helpers'
+import { applyDurationAutofit, hasSourceWindow, locateLayerIn, requireLayer, shiftLayerKeyframes, sourceDurationUs } from './helpers'
 import { CommandFailure } from '../errors'
 import { linkSiblingsExcluding, checkLinkLock } from './links'
 
@@ -16,8 +16,12 @@ export function clampSigned(d: number, min: number, max: number): number {
 /** The RAW µs constraints on a trim delta. `trimEdgeWindowUs` is the bound the
  *  mutation path clamps against — it lifts these onto the composition frame grid.
  *
- *  `sourceDurationUs` is the normalized media content duration for AV layers;
- *  it caps OUT trims so `src_out_us` never extends past source content.
+ *  `sourceDurationUs` is the normalized source content duration for layers with
+ *  a source window (media for VideoClip / Audio, the referenced composition's
+ *  `duration_us` for a Group layer); it caps OUT trims so `src_out_us` never
+ *  extends past source content. Floored at zero: a Group window that already
+ *  overhangs its composition (legal in state, ADR 0052 §6) may not grow, and
+ *  must not be dragged back either — an outward drag is refused, not inverted.
  *
  *  LANDMINE: every `- 1` below is a STRICT-inequality exclusion (`t_start` must
  *  land strictly before `t_end`; `src_in` strictly before `src_out`), never a
@@ -36,14 +40,14 @@ export function trimDeltaBounds(
     const timelineMin = -layer.t_start_us
     const timelineMax = dur - 1
     let srcMin = -INF, srcMax = INF
-    if (pa.kind === 'VideoClip' || pa.kind === 'Audio') { srcMin = -pa.src_in_us; srcMax = pa.src_out_us - pa.src_in_us - 1 }
+    if (hasSourceWindow(pa)) { srcMin = -pa.src_in_us; srcMax = pa.src_out_us - pa.src_in_us - 1 }
     return { min: Math.max(timelineMin, srcMin), max: Math.min(timelineMax, srcMax) }
   } else {
     const timelineMin = -(dur - 1)
     let srcMin = -INF; let srcMax = INF
-    if (pa.kind === 'VideoClip' || pa.kind === 'Audio') {
+    if (hasSourceWindow(pa)) {
       srcMin = -(pa.src_out_us - pa.src_in_us - 1)
-      if (sourceDurationUs != null) srcMax = sourceDurationUs - pa.src_out_us
+      if (sourceDurationUs != null) srcMax = Math.max(0, sourceDurationUs - pa.src_out_us)
     }
     return { min: Math.max(timelineMin, srcMin), max: srcMax }
   }
@@ -79,22 +83,14 @@ export function trimEdgeWindowUs(
   }
 }
 
-function sourceDurationForLayer(p: Project, layer: Layer): number | null {
-  const pa = layer.params
-  if (pa.kind !== 'VideoClip' && pa.kind !== 'Audio') return null
-  return p.media_pool[pa.media]?.metadata.duration_us ?? null
-}
-
 /** Trim one edge. Unless `escapeLink`, every link sibling whose matching edge
  *  sits at the same t moves with it, clamped to the tightest member's window. */
 export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: number, escapeLink: boolean): void {
-  const c = rootComposition(p)
+  const located = requireLayer(p, id)
+  const c = located.comp
   const fps = c.fps
-  const loc = locateLayer(p, id)
-  if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
-  const [ti, li] = loc
-  if (c.tracks[ti].locked) throw new CommandFailure({ error: 'TrackLocked', track: c.tracks[ti].id })
-  const target = c.tracks[ti].layers[li]
+  if (located.track.locked) throw new CommandFailure({ error: 'TrackLocked', track: located.track.id })
+  const target = located.layer
   const snapped = snapOnGrid(newTUs, gridForLayerKind(target.params.kind, fps))
   const curStart = target.t_start_us, curEnd = target.t_end_us
   const curEdgeT = edge === 'In' ? curStart : curEnd
@@ -103,13 +99,13 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   // same t as the target's pre-trim edge.
   const aligned: Uuid[] = [id]
   if (!escapeLink) {
-    for (const sid of linkSiblingsExcluding(p, id)) {
-      const sl = locateLayer(p, sid); if (!sl) continue
-      const s = c.tracks[sl[0]].layers[sl[1]]
+    for (const sid of linkSiblingsExcluding(c, id)) {
+      const sl = locateLayerIn(c, sid); if (!sl) continue
+      const s = sl.layer
       const sEdgeT = edge === 'In' ? s.t_start_us : s.t_end_us
       if (sEdgeT === curEdgeT) aligned.push(sid)
     }
-    checkLinkLock(p, id, aligned)
+    checkLinkLock(c, id, aligned)
   }
 
   const requestedDelta = snapped - curEdgeT
@@ -123,9 +119,8 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   let lo = -INF
   let hi = INF
   for (const mid of aligned) {
-    const ml = locateLayer(p, mid)!
-    const m = c.tracks[ml[0]].layers[ml[1]]
-    const w = trimEdgeWindowUs(m, edge, gridForLayerKind(m.params.kind, fps), sourceDurationForLayer(p, m))
+    const m = locateLayerIn(c, mid)!.layer
+    const w = trimEdgeWindowUs(m, edge, gridForLayerKind(m.params.kind, fps), sourceDurationUs(p, m.params))
     lo = Math.max(lo, w.lo)
     hi = Math.min(hi, w.hi)
   }
@@ -133,8 +128,7 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   if (clamped === 0) throw new CommandFailure({ error: 'TrimEdgeOutOfRange', layer: id, new_t: snapped, cur_start: curStart, cur_end: curEnd })
 
   for (const mid of aligned) {
-    const ml = locateLayer(p, mid)!
-    const m = c.tracks[ml[0]].layers[ml[1]]
+    const m = locateLayerIn(c, mid)!.layer
     const params = m.params
     // Re-derive the delta on each member's OWN grid. Aligned members share one
     // `curEdgeT` (that is what "aligned" means), so at the six rates where the frame
@@ -147,22 +141,18 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
     const delta = snapOnGrid(curEdgeT + clamped, gridForLayerKind(params.kind, fps)) - curEdgeT
     if (edge === 'In') {
       m.t_start_us += delta
-      if (params.kind === 'VideoClip' || params.kind === 'Audio') params.src_in_us += delta
+      if (hasSourceWindow(params)) params.src_in_us += delta
       shiftLayerKeyframes(params, -delta) // keyframes glued to content
     } else {
       m.t_end_us += delta
-      if (params.kind === 'VideoClip' || params.kind === 'Audio') params.src_out_us += delta
+      if (hasSourceWindow(params)) params.src_out_us += delta
     }
   }
 
   // Re-sort touched tracks on IN trims (t_start changed → order may shift).
   if (edge === 'In') {
-    const touched = new Set<Uuid>(aligned.map((m) => c.tracks[locateLayer(p, m)![0]].id))
-    const tracksById = new Map(c.tracks.map((t) => [t.id, t]))
-    for (const tid of touched) {
-      const t = tracksById.get(tid)!
-      t.layers.sort((x, y) => x.t_start_us - y.t_start_us)
-    }
+    const touched = new Set(aligned.map((m) => locateLayerIn(c, m)!.track))
+    for (const t of touched) t.layers.sort((x, y) => x.t_start_us - y.t_start_us)
   }
   applyDurationAutofit(c)
 }

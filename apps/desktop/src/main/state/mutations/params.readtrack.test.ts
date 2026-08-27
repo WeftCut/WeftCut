@@ -3,7 +3,8 @@ import { seededGen } from '../ids'
 import { blankProject } from '../model'
 import { createActor } from '../actor'
 import { readLayerTrack, resolveAnimatedF64 } from './params'
-import { root } from '../__tests__/fixtures/project'
+import { applyAddLayer, textParamsDefault } from './add'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 function colorLayerProject() {
   const idGen = seededGen()
@@ -27,5 +28,14 @@ describe('readLayerTrack', () => {
     const { proj, layerId } = colorLayerProject()
     const loc = root(proj).tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)!
     expect(resolveAnimatedF64(loc, 'opacity')).toBeNull()
+  })
+})
+
+describe('readLayerTrack across compositions', () => {
+  it('finds a Text layer inside a Group', () => {
+    const { p, idGen, groupId } = groupedProject()
+    const g = group(p, groupId)
+    const id = applyAddLayer(p, idGen, g.tracks[1].id, textParamsDefault('hi', g), 0, 1_000_000)
+    expect(readLayerTrack(p, id, 'opacity')).toEqual({ tStartUs: 0, track: { mode: 'Static', value: 1 } })
   })
 })

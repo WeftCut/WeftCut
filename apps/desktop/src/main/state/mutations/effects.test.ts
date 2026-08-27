@@ -4,7 +4,7 @@ import { blankProject, type Project } from '../model'
 import { applyAddLayer, applyAddTrack, colorParams } from './add'
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect } from './effects'
 import { isCommandFailure } from '../errors'
-import { root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 const RED = { r: 255, g: 0, b: 0, a: 255 }
 const sp = (v: number) => ({ mode: 'Static' as const, value: v })
@@ -133,5 +133,16 @@ describe('applyRemoveEffect', () => {
     applyRemoveEffect(p, layerId, eid)
     expectCmd(() => applyRemoveEffect(p, layerId, eid), 'EffectNotFound')
     expectCmd(() => applyRemoveEffect(p, 'ghost', eid), 'LayerNotFound')
+  })
+})
+
+describe('effects inside a Group', () => {
+  it('applyAddEffect / applyUpdateEffect find the layer in its Group', () => {
+    const { p, idGen, groupId, innerId } = groupedProject()
+    const rootBefore = structuredClone(root(p))
+    const eid = applyAddEffect(p, idGen, innerId, 'blur')
+    applyUpdateEffect(p, innerId, eid, { enabled: false })
+    expect(group(p, groupId).tracks[0].layers[0].effects).toEqual([{ id: eid, kind: 'blur', enabled: false, params: {} }])
+    expect(root(p)).toEqual(rootBefore)
   })
 })

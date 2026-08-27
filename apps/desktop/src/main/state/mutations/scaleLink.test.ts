@@ -3,8 +3,9 @@ import { seededGen } from '../ids'
 import { blankProject, type Animated, type Interpolation, type TextParams } from '../model'
 import { createActor } from '../actor'
 import { parseProject, serializeProject } from '../serialize'
-import { scaleTracksTwins } from './scaleLink'
-import { root } from '../__tests__/fixtures/project'
+import { applySetScaleLinked, scaleTracksTwins } from './scaleLink'
+import { applyAddLayer, textParamsDefault } from './add'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 const lin: Interpolation = { kind: 'Linear' }
 const kf = (entries: Array<[string, number, number, Interpolation?]>): Animated<number> =>
@@ -165,5 +166,15 @@ describe('parseProject scale_linked normalize', () => {
     wire.compositions[wire.root_id].tracks[1].layers[0].params.transform.scale_linked = true
     const p = parseProject(wire, { onGridRepair: () => {} })
     expect((root(p).tracks[1].layers[0].params as TextParams).transform.scale_linked).toBe(false)
+  })
+})
+
+describe('scale link inside a Group', () => {
+  it('applySetScaleLinked finds the layer in its Group', () => {
+    const { p, idGen, groupId } = groupedProject()
+    const g = group(p, groupId)
+    const id = applyAddLayer(p, idGen, g.tracks[1].id, textParamsDefault('hi', g), 0, 1_000_000)
+    applySetScaleLinked(p, idGen, id, false)
+    expect((g.tracks[1].layers[0].params as TextParams).transform.scale_linked).toBe(false)
   })
 })

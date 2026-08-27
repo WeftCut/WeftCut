@@ -428,6 +428,11 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
     }
   }
   if (e.error === 'CompositionNotFound') return { code: 'invalid_params', message: `composition ${e.composition} not found` }
+  // Scope refusals (ADR 0052): name BOTH compositions, because the fix is a
+  // different destination or a narrower set, and the ids are what the agent
+  // reads back from `project://compositions`.
+  if (e.error === 'CrossCompositionMove') return { code: 'invalid_params', message: `layer ${e.layer} lives in composition ${e.from}; the destination is in composition ${e.to}. A layer never changes composition by moving: pick a track / anchor inside ${e.from}, or pre-compose / ungroup` }
+  if (e.error === 'CrossCompositionSet') return { code: 'invalid_params', message: `layer ${e.layer} is in composition ${e.composition} but the set's first member is in ${e.expected}; a set operation addresses one composition, so split the set per composition` }
   if (e.error === 'ValidationFailed' && e.detail.rule === 'NegativeLayerStart') {
     const d = e.detail
     return { code: 'invalid_params', message: `layer ${d.layer} would start at ${d.t_start} µs; timeline time starts at 0`, data: {
@@ -498,6 +503,16 @@ export interface McpToolDef {
 // (.scratch/mcp-agent-hardening). mcp.catalog-bijection.test.ts gates this
 // catalog-wide.
 const RGBA_SCHEMA = { type: 'object', properties: { r: { type: 'integer' }, g: { type: 'integer' }, b: { type: 'integer' }, a: { type: 'integer' } }, required: ['r', 'g', 'b', 'a'] }
+// The creation-op scope (ADR 0052): only tools that CREATE take it. Every
+// layer-addressed tool derives its composition from the layer id — an agent
+// editing inside a Group never names the Group. Two spellings of the same
+// optional field: the second for tools whose required `track_id` already fixes
+// the composition, where the id is a cross-check rather than a choice.
+const COMPOSITION_ID_SCHEMA = { type: ['string', 'null'], description: 'Composition to create in — a Group\'s id from `project://compositions`; omit for the root.' }
+const TRACK_COMPOSITION_ID_SCHEMA = { type: ['string', 'null'], description: 'Optional cross-check: the composition `track_id` must belong to (a Group\'s id from `project://compositions`). The track alone fixes the composition; omit unless you want the mismatch refused.' }
+export function parseCompositionIdOpt(v: unknown): string | null {
+  return v === undefined || v === null ? null : parseUuid(v, 'composition_id')
+}
 const INTERP_SCHEMA = {
   type: 'object',
   description: 'Easing: {"kind":"Hold"} | {"kind":"Linear"} | {"kind":"Bezier","p1":[x,y],"p2":[x,y]} | {"kind":"Elastic","dir",amplitude?,period?} | {"kind":"Bounce","dir"}.',
@@ -552,8 +567,8 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // ── table-exec: tracks ───────────────────────────────────────────────────
   { name: 'add_track', exec: 'table',
     description: 'Add a new track to the project. Returns the new track id as a UUID string. Tracks are kind-agnostic — any layer kind can be placed on any track. A track disappears when its last layer leaves it, whether deleted or moved away, so place a layer rather than reserving a track for later; a track created empty was never emptied and survives.',
-    inputSchema: { type: 'object', properties: { label: { type: ['string', 'null'], description: 'Optional name. Omit it and the track is displayed by its position in the stack, which renumbers as tracks come and go.' } }, required: [] },
-    parseArgs: (a) => ({ op: 'add_track', args: { label: parseStrOpt(a.label, 'label') } }),
+    inputSchema: { type: 'object', properties: { label: { type: ['string', 'null'], description: 'Optional name. Omit it and the track is displayed by its position in the stack, which renumbers as tracks come and go.' }, composition_id: COMPOSITION_ID_SCHEMA }, required: [] },
+    parseArgs: (a) => ({ op: 'add_track', args: { label: parseStrOpt(a.label, 'label'), composition_id: parseCompositionIdOpt(a.composition_id) } }),
     shapeResult: (v) => toolText(v as string) },
   { name: 'remove_track', exec: 'table',
     description: 'Remove a track. Rejects if the track has layers unless force=true. Default A roll / B roll tracks cannot be removed.',
@@ -779,12 +794,12 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         color_space: { type: 'string', enum: ['Bt709', 'Bt601', 'Bt2020', 'SRgb'] },
         background: RGBA_SCHEMA,
       },
-    } }, required: ['patch'] },
-    parseArgs: (a) => ({ op: 'set_composition', args: parseObj(a.patch, 'patch') }) },
+    }, composition_id: { type: ['string', 'null'], description: 'The composition whose canvas (width, height, color_space, background) and duration_us the patch sets; omit for the root. fps / sample_rate / channels are ONE lattice for the whole project and cascade to every composition whichever is named.' } }, required: ['patch'] },
+    parseArgs: (a) => ({ op: 'set_composition', args: { ...parseObj(a.patch, 'patch'), composition_id: parseCompositionIdOpt(a.composition_id) } }) },
   { name: 'fit_composition_to_layers', exec: 'table',
-    description: "Clear the composition's duration pin and set `duration_us` to `max(layer.t_end_us)`. The inverse of `set_composition { duration_us }`: that pins, this unpins. After this call, subsequent layer edits track duration in both directions (grow on adds, shrink on deletes/inward trims).",
-    inputSchema: { type: 'object', properties: {}, required: [] },
-    parseArgs: () => ({ op: 'fit_composition_to_layers', args: {} }) },
+    description: "Clear the composition's duration pin and set `duration_us` to `max(layer.t_end_us)`. The inverse of `set_composition { duration_us }`: that pins, this unpins. After this call, subsequent layer edits track duration in both directions (grow on adds, shrink on deletes/inward trims). `composition_id` names a Group's composition; omit for the root.",
+    inputSchema: { type: 'object', properties: { composition_id: COMPOSITION_ID_SCHEMA }, required: [] },
+    parseArgs: (a) => ({ op: 'fit_composition_to_layers', args: { composition_id: parseCompositionIdOpt(a.composition_id) } }) },
   // ── table-exec: markers ──────────────────────────────────────────────────
   { name: 'update_marker', exec: 'table',
     description: 'Update a marker. Setting `t_us` re-sorts the marker list.',
@@ -830,26 +845,29 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // ── dedicated-exec — parseDedicated validates and maps MCP args; behavior lives in actor.ts arms ──
   { name: 'add_color_layer', exec: 'dedicated',
     description: 'Add a solid-color layer to a track. Returns the new layer id. `t_start_us` and `t_end_us` are timeline microseconds (start inclusive, end exclusive). Layer cannot overlap existing layers on the same track.',
-    inputSchema: { type: 'object', properties: { color: RGBA_SCHEMA, height: { type: ['integer', 'null'] }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' }, width: { type: ['integer', 'null'] } }, required: ['color', 't_end_us', 't_start_us', 'track_id'] },
+    inputSchema: { type: 'object', properties: { color: RGBA_SCHEMA, height: { type: ['integer', 'null'] }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' }, width: { type: ['integer', 'null'] }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['color', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), color: parseRgba(a.color, 'color'),
       width: parseNumOpt(a.width, 'width'), height: parseNumOpt(a.height, 'height'),
-      t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us') }) },
+      t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
+      composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'add_video_layer', exec: 'dedicated',
     description: "Add a visual media layer from an imported media item onto a track. For Video media, `src_in_us`/`src_out_us` are the in/out points within the source media; `t_start_us`/`t_end_us` are where the clip lives on the timeline. For Image media, this creates an ImageOverlay over the timeline range, and `src_in_us`/`src_out_us` are accepted for schema compatibility but ignored. Video source and timeline ranges should be the same length unless `speed` is later changed. When a Video source has an audio stream and the project's `auto_pair_audio_on_import` setting is on (default), this also creates a paired dialogue Audio layer on the SAME track's audio lane (every track holds one visual lane plus one audio lane) at the same time bounds and links the two so they move/trim/split together. The whole call is atomic: video, paired audio, and link commit together or not at all — if the audio lane is occupied the call rejects naming the blocking layer, and nothing lands on the timeline. Returns either the visual layer id (no pairing) or `{ video_layer_id, audio_layer_id, link_id }` when a pair was created.",
-    inputSchema: { type: 'object', properties: { media_id: { type: 'string' }, src_in_us: { type: 'integer' }, src_out_us: { type: 'integer' }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' } }, required: ['media_id', 'src_in_us', 'src_out_us', 't_end_us', 't_start_us', 'track_id'] },
+    inputSchema: { type: 'object', properties: { media_id: { type: 'string' }, src_in_us: { type: 'integer' }, src_out_us: { type: 'integer' }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['media_id', 'src_in_us', 'src_out_us', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), media: parseUuid(a.media_id, 'media_id'),
       src_in_us: parseNum(a.src_in_us, 'src_in_us'), src_out_us: parseNum(a.src_out_us, 'src_out_us'),
-      t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us') }) },
+      t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
+      composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'split_layer', exec: 'dedicated',
     description: 'Split a layer into two halves at the given timeline microsecond. Returns {left, right} layer ids. `at_t_us` must be strictly between the layer\'s t_start_us and t_end_us. For media-bearing layers (VideoClip, Audio) the source offsets are adjusted at speed=1 — variable speed support is deferred.',
     inputSchema: { type: 'object', properties: { at_t_us: { type: 'integer' }, escape_link: { type: ['boolean', 'null'] }, layer_id: { type: 'string' } }, required: ['at_t_us', 'layer_id'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'),
       at_t_us: parseNum(a.at_t_us, 'at_t_us'), escape_link: a.escape_link }) },
   { name: 'add_marker', exec: 'dedicated',
-    description: 'Add a marker (point or region) to the timeline. Returns the new marker id. Set `end_t_us` to make it a region marker.',
-    inputSchema: { type: 'object', properties: { color: RGBA_SCHEMA, end_t_us: { type: ['integer', 'null'] }, label: { type: 'string' }, t_us: { type: 'integer' } }, required: ['color', 'label', 't_us'] },
+    description: 'Add a marker (point or region) to a composition\'s timeline — the root, or the Group named by `composition_id`. Returns the new marker id. Set `end_t_us` to make it a region marker.',
+    inputSchema: { type: 'object', properties: { color: RGBA_SCHEMA, end_t_us: { type: ['integer', 'null'] }, label: { type: 'string' }, t_us: { type: 'integer' }, composition_id: COMPOSITION_ID_SCHEMA }, required: ['color', 'label', 't_us'] },
     parseDedicated: (a) => ({ color: parseRgba(a.color, 'color'), t_us: parseNum(a.t_us, 't_us'),
-      end_t_us: parseNumOpt(a.end_t_us, 'end_t_us'), label: parseStr(a.label, 'label') }) },
+      end_t_us: parseNumOpt(a.end_t_us, 'end_t_us'), label: parseStr(a.label, 'label'),
+      composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'lock_history', exec: 'dedicated',
     description: 'Block the user from reverting (undo / redo / jump_to / restore_checkpoint) while the agent is mid-batch. `jump_to` is the history panel\'s click-a-row cursor move — it is a revert path like the rest and rejects the same way. Never affects what RECORDS: the lock rejects reverts, it does not fold a batch into one history entry. `reason` is shown next to the lock badge in the record-panel header and the history panel, and is returned as the error to revert attempts. Last-writer-wins. Always pair with an unlock_history call; releases also happen on workspace change and on user-side agent-mode exit.',
     inputSchema: { type: 'object', properties: { reason: { type: 'string' } }, required: ['reason'] },
@@ -913,6 +931,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         t_end_us: { type: ['integer', 'null'], format: 'int64', description: 'Layer end in timeline microseconds. Defaults to `t_start_us + default_duration_s * 1_000_000` when omitted.' },
         track_id: { type: ['string', 'null'], description: 'Target track id. If omitted, a fresh track is spawned; it carries no stored name and is displayed by its position.' },
         props: { type: 'object', description: 'Motif props as a JSON object. Keys must match the motif\'s `props_schema`; unknown keys reject; missing keys fill from defaults. Omit entirely to use all defaults.' },
+        composition_id: { type: ['string', 'null'], description: 'The composition the spawned track opens in (a Group\'s id); omit for the root. With `track_id` set, the track must belong to it.' },
       },
       required: ['motif_id', 't_start_us'] },
     parseDedicated: (a) => ({
@@ -921,6 +940,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       t_end_us: parseNumOpt(a.t_end_us, 't_end_us') ?? null,
       track_id: a.track_id != null ? parseUuid(a.track_id, 'track_id') : null,
       props: a.props != null ? parseObj(a.props, 'props') : null,
+      composition_id: parseCompositionIdOpt(a.composition_id),
     }) },
   { name: 'checkpoint', exec: 'dedicated',
     description: 'Create an explicit named checkpoint of the current state. Checkpoints survive new commits (they don\'t get truncated like the redo tail) and persist in the .vproj save file. Returns the new checkpoint id. The human\'s agent-mode record panel renders each created checkpoint as a pin-style row with a Restore button — use this at logical batch boundaries.',

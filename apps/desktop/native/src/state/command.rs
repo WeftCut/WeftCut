@@ -107,6 +107,9 @@ pub enum ValidationError {
     #[error("duplicate transition id {transition}")]
     DuplicateTransitionId { transition: TransitionId },
 
+    #[error("duplicate marker id {marker}")]
+    DuplicateMarkerId { marker: MarkerId },
+
     #[error("link {link} references unknown layer {layer}")]
     LinkMemberMissing { link: LinkId, layer: LayerId },
 
@@ -214,6 +217,10 @@ pub enum CommandError {
     LayerNotFound { layer: LayerId },
     #[error("composition {composition} not found")]
     CompositionNotFound { composition: CompositionId },
+    #[error("layer {layer} cannot move from composition {from} to {to} — a layer changes composition only through pre-compose or ungroup")]
+    CrossCompositionMove { layer: LayerId, from: CompositionId, to: CompositionId },
+    #[error("layer {layer} lives in composition {composition}; this op needs every layer in {expected}")]
+    CrossCompositionSet { layer: LayerId, composition: CompositionId, expected: CompositionId },
     /// Returned when `separate_audio_to_new_track` is invoked on a non-Audio
     /// layer.
     #[error("layer {layer} is not a {expected} layer")]

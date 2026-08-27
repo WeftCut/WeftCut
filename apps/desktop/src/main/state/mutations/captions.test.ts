@@ -3,7 +3,7 @@ import { cueToTextParams, applyAddCaptionTrack, applyRestyleCaptions, type Cue, 
 import { seededGen } from '../ids'
 import { blankProject } from '../model'
 import type { TextParams } from '../model'
-import { root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 const cue = (style: CueStyle = {}): Cue => ({ start_us: 0, end_us: 1, text: 'hi', style })
 
@@ -173,5 +173,18 @@ describe('applyRestyleCaptions (project-wide)', () => {
     const gen = seededGen(); const p = blankProject(gen, 'c')
     expect(root(p).tracks.some((t) => t.role === 'Caption')).toBe(false)
     expect(() => applyRestyleCaptions(p, { font_size_px: 60 })).not.toThrow()
+  })
+})
+
+describe('captions inside a Group', () => {
+  it('applyAddCaptionTrack opens its lanes in composition_id; applyRestyleCaptions reaches them', () => {
+    const { p, idGen, groupId } = groupedProject()
+    const rootTracks = root(p).tracks.length
+    const t = applyAddCaptionTrack(p, idGen, [{ start_us: 0, end_us: 1_000_000, text: 'hi' }], 1920, 1080, null, groupId)
+    const g = group(p, groupId)
+    expect(g.tracks.at(-1)!).toMatchObject({ id: t, role: 'Caption' })
+    expect(root(p).tracks).toHaveLength(rootTracks)
+    applyRestyleCaptions(p, { font_size_px: 60 })
+    expect((g.tracks.at(-1)!.layers[0].params as TextParams).font.size_px).toBe(60)
   })
 })

@@ -4,7 +4,7 @@ import { createActor } from '../actor'
 import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
 import { mediaItemTemplate } from '../mutations/media'
-import { root, withGroup } from './fixtures/project'
+import { groupedProject, root, withGroup } from './fixtures/project'
 import { applyAddLayer, colorParams } from '../mutations/add'
 
 function mkActor() {
@@ -119,5 +119,23 @@ describe('serveProjectResource across compositions', () => {
     const comp = JSON.parse(text(serveProjectResource('project://composition', actor)))
     expect(comp.id).toBe(p.root_id)
     expect('tracks' in comp).toBe(false)
+  })
+})
+
+describe('project://compositions and the ?composition= scope', () => {
+  it('lists every composition with its ref_count; tracks / markers select a composition, root when unscoped', () => {
+    const gen = uuidV7Gen()
+    const { p, groupId } = groupedProject(gen, 'r')
+    const actor = createActor({ initial: p, idGen: gen })
+    const rows = JSON.parse(text(serveProjectResource('project://compositions', actor)))
+    expect(rows).toHaveLength(2)
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: p.root_id, label: null, ref_count: 0 }),
+      expect.objectContaining({ id: groupId, ref_count: 1, duration_us: 1_000_000 }),
+    ]))
+    expect(JSON.parse(text(serveProjectResource(`project://tracks?composition=${groupId}`, actor)))).toHaveLength(2)
+    expect(JSON.parse(text(serveProjectResource('project://tracks', actor)))).toHaveLength(root(p).tracks.length)
+    expect(JSON.parse(text(serveProjectResource(`project://markers?composition=${groupId}`, actor)))).toEqual([])
+    expect(() => serveProjectResource('project://tracks?composition=ghost', actor)).toThrow(/not found/)
   })
 })

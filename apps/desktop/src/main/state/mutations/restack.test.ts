@@ -7,7 +7,7 @@ import { applyRestackLayer } from './restack'
 import { isCommandFailure } from '../errors'
 import type { CommandError } from '../errors'
 import { createActor } from '../actor'
-import { root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 function audioL(id: string, t0: number, t1: number): Layer {
   const params: LayerParams = {
@@ -344,5 +344,24 @@ describe('restack_layer over MCP', () => {
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.code).toBe('invalid_params')
     expect(actor.historyStatus().len).toBe(lenBefore)
+  })
+})
+
+describe('applyRestackLayer inside a Group', () => {
+  it('restacks within the Group; an anchor in another composition is CrossCompositionMove', () => {
+    const { p, idGen, groupId, innerId, refLayerId } = groupedProject()
+    const g = group(p, groupId)
+    const over = applyAddTrack(p, idGen, 'over', undefined, groupId) // idx 2 in the Group
+    const y = applyAddLayer(p, idGen, over, C, 0, 1_000_000)
+    const rootBefore = structuredClone(root(p))
+    // The mover sits on the Group's reserved A roll, so it takes the split path
+    // onto a fresh lane directly above `over` — the Group's, not the root's.
+    const dest = applyRestackLayer(p, idGen, innerId, y, 'above')
+    expect(dest).not.toBeNull()
+    expect(g.tracks.at(-1)!.id).toBe(dest)
+    expect(g.tracks.at(-1)!.layers.map((l) => l.id)).toEqual([innerId])
+    expect(root(p)).toEqual(rootBefore)
+    try { applyRestackLayer(p, idGen, y, refLayerId, 'above'); throw new Error('x') }
+    catch (e) { expect(isCommandFailure(e) && e.err).toEqual({ error: 'CrossCompositionMove', layer: y, from: groupId, to: p.root_id }) }
   })
 })

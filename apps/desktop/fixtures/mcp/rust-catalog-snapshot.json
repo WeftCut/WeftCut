@@ -399,6 +399,12 @@
       "mimeType": "application/json"
     },
     {
+      "uri": "project://compositions",
+      "name": "Compositions",
+      "description": "Every composition — the root and each Group — with id, label, duration_us and ref_count (how many CompositionRef layers place it). project://tracks?composition=<id> and project://markers?composition=<id> read one of them; unscoped they read the root.",
+      "mimeType": "application/json"
+    },
+    {
       "uri": "project://history",
       "name": "History",
       "description": "Recent operations and named checkpoints (no snapshots). `ops` is a window: `window_start` is the absolute stack index of `ops[0]`, and `cursor` is absolute too — never an offset into `ops`; absolute indices are the only ones `jump_to` accepts. `evicted` > 0 means the oldest entries were dropped for good.",

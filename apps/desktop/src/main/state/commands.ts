@@ -100,8 +100,10 @@ export { pickFreeOverlayTrack } from './mutations/helpers'
  *  Returns null for channels not in this table. */
 const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; args: Record<string, unknown> }> = {
   // No label: the renderer derives the name, and a literal written here could
-  // never be localized (ADR 0042).
-  add_track: () => ({ op: 'add_track', args: { label: null } }),
+  // never be localized (ADR 0042). `compositionId` is the creation-op scope
+  // (absent = root); layer-addressed channels carry none — the layer id names
+  // its composition (ADR 0052).
+  add_track: (a) => ({ op: 'add_track', args: { label: null, composition_id: a.compositionId ?? null } }),
   update_layer: (a) => ({ op: 'update_layer', args: { layer: a.layerId, patch: a.patch } }),
   // Remaining mechanical + meta channels
   move_layer: (a) => ({ op: 'move_layer', args: { layer: a.layerId, to_track: a.newTrackId, t_start_us: a.newTStartUs, escape_link: a.escapeLink ?? false } }),
@@ -138,9 +140,11 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   update_effect: (a) => ({ op: 'update_effect', args: { layer: a.layerId, effect: a.effectId, patch: a.patch } }),
   move_effect: (a) => ({ op: 'move_effect', args: { layer: a.layerId, effect: a.effectId, new_index: a.newIndex } }),
   remove_effect: (a) => ({ op: 'remove_effect', args: { layer: a.layerId, effect: a.effectId } }),
-  // set_composition: renderer sends { patch: {...} }; dispatch receives the patch directly as its args.
-  set_composition: (a) => ({ op: 'set_composition', args: a.patch as Record<string, unknown> }),
-  fit_composition_to_layers: () => ({ op: 'fit_composition_to_layers', args: {} }),
+  // set_composition: renderer sends { patch: {...}, compositionId? }; dispatch
+  // receives the patch directly as its args, the target composition riding
+  // alongside (absent = root; the lattice fields cascade regardless).
+  set_composition: (a) => ({ op: 'set_composition', args: { ...(a.patch as Record<string, unknown>), composition_id: a.compositionId ?? null } }),
+  fit_composition_to_layers: (a) => ({ op: 'fit_composition_to_layers', args: { composition_id: a.compositionId ?? null } }),
   update_track_flags: (a) => ({ op: 'update_track_flags', args: { track: a.trackId, patch: a.patch } }),
   // `label: null` clears the name back to the derived one, so the header's
   // cleared field must reach the actor as null rather than as an absent field.
@@ -167,7 +171,7 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // `label` defaults to the EMPTY string, not absence: the dispatch arm turns an
   // absent label into agent shorthand ('m'), and a human marker must instead stay
   // unnamed so the ruler tooltip falls back to the translated noun.
-  add_marker: (a) => ({ op: 'add_marker', args: { t_us: a.tUs, end_t_us: a.endTUs ?? null, label: a.label ?? '' } }),
+  add_marker: (a) => ({ op: 'add_marker', args: { t_us: a.tUs, end_t_us: a.endTUs ?? null, label: a.label ?? '', composition_id: a.compositionId ?? null } }),
   update_marker: (a) => ({ op: 'update_marker', args: { marker: a.markerId, patch: a.patch } }),
   remove_marker: (a) => ({ op: 'remove_marker', args: { marker: a.markerId } }),
   project_jump_to: (a) => ({ op: 'jump_to', args: { index: a.index } }),

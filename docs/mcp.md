@@ -159,10 +159,11 @@ around 40, organised below.
 |---|---|
 | `project://current` | full Project JSON (with `schema_version`) |
 | `project://composition` | root composition settings — id, label, canvas, fps, duration, sample rate, channels, colour space, background; no tracks |
+| `project://compositions` | every composition — `{ id, label, duration_us, ref_count }`. `ref_count` is how many `CompositionRef` (Group) layers point at it: 0 for the root and for an orphan. The ids are what a creation tool's `composition_id` takes |
 | `project://media` | media pool listing |
-| `project://tracks` | root composition's tracks + layer envelopes |
+| `project://tracks` | a composition's tracks + layer envelopes — the root's, or `project://tracks?composition=<id>` for a Group's |
 | `project://layers/{id}` | one layer in detail, from whichever composition holds it |
-| `project://markers` | root composition's markers |
+| `project://markers` | a composition's markers — the root's, or `project://markers?composition=<id>` |
 | `project://history` | recent ops + checkpoints (snapshot-free). Each op carries `summary` (English prose), `label_key` + optional `label_args` (its i18n key and interpolation values — `history.*`, see `main/state/history-labels.ts`), `affected` (Track/Layer/Marker refs) and `entity_labels` (names for `affected`, same length and order, resolved against whichever stored snapshot still **holds** each ref — the op's own for an add/update/move, its predecessor's for a delete — so a deleted entity still has a name). An `entity_labels` element is `{"text": "…"}` for a stored name, or `{"label_key": "…", "label_args": {…}}` for a derived one — a clip's kind (`kinds.color`), a track's role (`tracks.roles.a-roll`) or a track's position (`tracks.positional` with `{"n": 3}`) — which the UI translates. The envelope carries `window_start` and `evicted` — see below |
 | `project://compiled` | compiled audio IRGraph (JSON) |
 | `media://{id}/thumbnail` | middle thumbnail as JPG (base64) |
@@ -218,9 +219,28 @@ Media + tracks:
 - `move_track { track_id, new_position }`
 
 Layers:
-- `add_color_layer { track_id, t_start_us, t_end_us, color, width?, height? }` → `LayerId`
-- `add_video_layer { track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us }` → `LayerId`, or `{ video_layer_id, audio_layer_id, link_id }` when the source carries audio and `auto_pair_audio_on_import` is on: the paired dialogue Audio layer lands on the SAME track's audio lane (a track holds one visual + one audio lane) and the two are linked. The triple commits atomically — if the audio lane is occupied, the call rejects naming the blocking layer and nothing lands on the timeline.
-- `add_motif { motif_id, t_start_us, t_end_us?, track_id?, props? }` → `LayerId` — `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates a fresh track when absent, which derives its own name; `props` validates against the motif's `props_schema`. Frame capture is lazy at next render; the tool returns synchronously.
+- `add_color_layer { track_id, t_start_us, t_end_us, color, width?, height?, composition_id? }` → `LayerId`
+- `add_video_layer { track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us, composition_id? }` → `LayerId`, or `{ video_layer_id, audio_layer_id, link_id }` when the source carries audio and `auto_pair_audio_on_import` is on: the paired dialogue Audio layer lands on the SAME track's audio lane (a track holds one visual + one audio lane) and the two are linked. The triple commits atomically — if the audio lane is occupied, the call rejects naming the blocking layer and nothing lands on the timeline.
+- `add_motif { motif_id, t_start_us, t_end_us?, track_id?, props?, composition_id? }` → `LayerId` — `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates a fresh track when absent, which derives its own name; `props` validates against the motif's `props_schema`. Frame capture is lazy at next render; the tool returns synchronously.
+
+**Where a layer is created, and how it is addressed afterwards.** A track
+belongs to exactly one composition, so a tool that names a `track_id` has
+already named the composition; `composition_id` on those tools is a cross-check
+(a track in another composition is refused with the mismatch spelled out). Tools
+that *pick or spawn* a lane — `add_track`, `add_motif` without `track_id`,
+`add_marker`, `set_composition`, `fit_composition_to_layers` — take
+`composition_id` to say which composition, the root when omitted; an unknown id
+is `CompositionNotFound`. Every layer-addressed tool (`move_layer`,
+`trim_layer`, `split_layer`, `update_layer_params`, keyframes, effects, links,
+transitions, …) takes **no** scope: layer ids are unique across the project, so
+the id alone says which composition the layer lives in, and a layer inside a
+Group is edited exactly like one in the root. A destination that names another
+composition — `move_layer`'s `new_track_id`, `restack_layer`'s anchor,
+`paste_layers`' `target_track_id` — is refused with `CrossCompositionMove
+{ layer, from, to }`; a set (`delete_layers`, `set_layers_enabled`,
+`paste_layers`, `links_create`, `links_add_members`) whose members straddle two
+compositions is refused with `CrossCompositionSet { layer, composition,
+expected }`. A layer changes composition only through pre-compose / ungroup.
 - `apply_subtitles { body, format?, track_id?, t_start_us?, t_end_us? }` — SRT/VTT/ASS body inline; format sniffed when omitted. Builds a new caption-role track of editable `Text` layers (one per cue). `track_id`, `t_start_us`, and `t_end_us` are accepted for wire stability but ignored — cue timings come from the body. Returns the new caption track id.
 - `update_layer { layer_id, patch }` — envelope-only (label, time range, enabled, locked).
 - `update_layer_params { layer_id, patch }` — kind-specific params. On a scale-linked layer, a patch that leaves `scale_x ≠ scale_y` auto-clears the link in the same commit; patch both axes to the same value to keep it.
@@ -271,7 +291,7 @@ Links (see [features.md §Links](features.md#links)):
 - Reads: there is no `links_list`/`links_get` tool — link membership is carried on the `project://current` resource as `links: [{ id, label, layer_ids }]`.
 
 Markers + composition:
-- `add_marker { t_us, label, color, end_t_us? }` → `MarkerId`
+- `add_marker { t_us, label, color, end_t_us?, composition_id? }` → `MarkerId` — markers are per composition; `update_marker` / `remove_marker` find theirs by id
 - `update_marker { marker_id, patch }` / `remove_marker { marker_id }`
 - `set_composition { patch }` — nothing in this tool records onto the undo stack;
   the patch is applied to every history snapshot, so undo walks past it. `fps` is

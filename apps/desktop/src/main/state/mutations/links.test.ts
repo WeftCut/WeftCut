@@ -2,9 +2,9 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
 import { blankProject, type Layer, type LayerParams, type Project } from '../model'
-import { indexLinks, linkSiblingsExcluding, checkLinkLock, layerIdSet } from './links'
+import { indexLinks, linkSiblingsExcluding, checkLinkLock, layerIdSet, locateLink } from './links'
 import { isCommandFailure } from '../errors'
-import { root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 function color(id: string, t0: number, t1: number): Layer {
   const params: LayerParams = { kind: 'Color', color: { mode: 'Static', value: { r: 0, g: 0, b: 0, a: 255 } }, width: 1, height: 1 }
@@ -24,21 +24,21 @@ describe('link read-side helpers', () => {
   })
   it('linkSiblingsExcluding returns the other members, sorted, [] when unlinked', () => {
     const p = withTwo()
-    expect(linkSiblingsExcluding(p, 'a')).toEqual(['b'])
-    expect(linkSiblingsExcluding(p, 'b')).toEqual(['a'])
+    expect(linkSiblingsExcluding(root(p), 'a')).toEqual(['b'])
+    expect(linkSiblingsExcluding(root(p), 'b')).toEqual(['a'])
     root(p).links = []
-    expect(linkSiblingsExcluding(p, 'a')).toEqual([])
+    expect(linkSiblingsExcluding(root(p), 'a')).toEqual([])
   })
   it('layerIdSet collects all layer ids', () => {
-    const p = withTwo(); expect([...layerIdSet(p)].sort()).toEqual(['a', 'b'])
+    const p = withTwo(); expect([...layerIdSet(root(p))].sort()).toEqual(['a', 'b'])
   })
   it('checkLinkLock: unlinked anchor is a no-op', () => {
     const p = withTwo(); root(p).links = []
-    expect(() => checkLinkLock(p, 'a', ['a', 'b'])).not.toThrow()
+    expect(() => checkLinkLock(root(p), 'a', ['a', 'b'])).not.toThrow()
   })
   it('checkLinkLock throws LinkLockedMember when a touched member is layer-locked', () => {
     const p = withTwo(); root(p).tracks[0].layers[1].locked = true // 'b' locked
-    try { checkLinkLock(p, 'a', ['a', 'b']); throw new Error('expected throw') }
+    try { checkLinkLock(root(p), 'a', ['a', 'b']); throw new Error('expected throw') }
     catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('LinkLockedMember') }
   })
   it('checkLinkLock throws TrackLocked when a touched member sits on a locked track', () => {
@@ -46,7 +46,18 @@ describe('link read-side helpers', () => {
     // move 'b' to B-roll and lock that track
     root(p).tracks[0].layers = [color('a', 0, 100)]
     root(p).tracks[1].layers = [color('b', 200, 300)]; root(p).tracks[1].locked = true
-    try { checkLinkLock(p, 'a', ['a', 'b']); throw new Error('expected throw') }
+    try { checkLinkLock(root(p), 'a', ['a', 'b']); throw new Error('expected throw') }
     catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('TrackLocked') }
+  })
+})
+
+describe('link read-side helpers take the composition', () => {
+  it("linkSiblingsExcluding reads the Group's links, not the root's; locateLink finds a link in any composition", () => {
+    const { p, groupId, innerId } = groupedProject()
+    group(p, groupId).links = [{ id: 'gl', members: [innerId, 'other'] }]
+    expect(linkSiblingsExcluding(group(p, groupId), innerId)).toEqual(['other'])
+    expect(linkSiblingsExcluding(root(p), innerId)).toEqual([])
+    expect(locateLink(p, 'gl')!.comp).toBe(group(p, groupId))
+    expect(locateLink(p, 'nope')).toBeNull()
   })
 })

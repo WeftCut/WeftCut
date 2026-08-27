@@ -1,5 +1,4 @@
-import type { Composition, Project, Rgba, Uuid } from '../model'
-import { rootComposition } from './helpers'
+import type { Composition, Marker, Project, Rgba, Uuid } from '../model'
 import { CommandFailure } from '../errors'
 import { snapFrameRound } from '../snap'
 
@@ -21,6 +20,23 @@ export function snapMarkerTimes(c: Composition, tUs: number, endTUs: number | nu
   return { tUs: t, endTUs: end }
 }
 
+/** A marker with the composition that holds it. Marker ids are unique
+ *  project-wide (validate: `DuplicateMarkerId`), so the id alone names the
+ *  composition — the same rule layers follow. */
+export interface LocatedMarker { comp: Composition; marker: Marker; index: number }
+export function locateMarker(p: Project, id: Uuid): LocatedMarker | null {
+  for (const c of Object.values(p.compositions)) {
+    const index = c.markers.findIndex((m) => m.id === id)
+    if (index >= 0) return { comp: c, marker: c.markers[index], index }
+  }
+  return null
+}
+function requireMarker(p: Project, id: Uuid): LocatedMarker {
+  const found = locateMarker(p, id)
+  if (!found) throw new CommandFailure({ error: 'MarkerNotFound', marker: id })
+  return found
+}
+
 /** MarkerPatch. null/absent = "don't touch"; end_t_us can only be SET, never
  *  cleared (clearing → remove+add). */
 export interface MarkerPatch {
@@ -35,11 +51,8 @@ export interface MarkerPatch {
  *  the span checked against the MERGED marker, so moving t_us past an existing
  *  end_t_us fails the same way as patching a bad end_t_us. */
 export function applyUpdateMarker(p: Project, id: Uuid, patch: MarkerPatch): void {
-  const c = rootComposition(p)
-  const idx = c.markers.findIndex((m) => m.id === id)
-  if (idx < 0) throw new CommandFailure({ error: 'MarkerNotFound', marker: id })
+  const { comp: c, marker: m } = requireMarker(p, id)
   const needsResort = typeof patch.t_us === 'number'
-  const m = c.markers[idx]
   const snapped = snapMarkerTimes(c, needsResort ? (patch.t_us as number) : m.t_us,
     typeof patch.end_t_us === 'number' ? patch.end_t_us : m.end_t_us)
   if (needsResort) m.t_us = snapped.tUs
@@ -51,8 +64,6 @@ export function applyUpdateMarker(p: Project, id: Uuid, patch: MarkerPatch): voi
 
 /** Remove a marker by id. */
 export function applyRemoveMarker(p: Project, id: Uuid): void {
-  const c = rootComposition(p)
-  const idx = c.markers.findIndex((m) => m.id === id)
-  if (idx < 0) throw new CommandFailure({ error: 'MarkerNotFound', marker: id })
-  c.markers.splice(idx, 1)
+  const { comp: c, index } = requireMarker(p, id)
+  c.markers.splice(index, 1)
 }

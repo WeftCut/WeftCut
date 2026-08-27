@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { seededGen, type IdGen } from '../ids'
 import { blankProject, type Project } from '../model'
 import { applyAddTrack, applyAddLayer, colorParams } from './add'
-import { applyDeleteTrack, applyMoveTrack } from './tracks'
+import { applyDeleteTrack, applyMoveTrack, applyRenameTrack } from './tracks'
 import { isCommandFailure } from '../errors'
-import { root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 function base(): { p: Project; gen: IdGen } { const gen = seededGen(); return { p: blankProject(gen, 't'), gen } }
 function expectCmd(fn: () => void, code: string) { try { fn(); throw new Error(`expected ${code}`) } catch (e) { expect(isCommandFailure(e) && e.err.error).toBe(code) } }
@@ -49,5 +49,20 @@ describe('applyMoveTrack', () => {
   it('throws TrackNotFound for a missing track', () => {
     const { p } = base()
     expectCmd(() => applyMoveTrack(p, 'ghost', 0), 'TrackNotFound')
+  })
+})
+
+describe('track ops inside a Group', () => {
+  it("delete / rename / move address the Group's track by id; the root's tracks are untouched", () => {
+    const { p, idGen, groupId } = groupedProject()
+    const rootBefore = structuredClone(root(p))
+    const t = applyAddTrack(p, idGen, 'extra', undefined, groupId) // idx 2 in the Group
+    applyRenameTrack(p, t, ' Lower third ')
+    expect(group(p, groupId).tracks[2].label).toBe('Lower third')
+    applyMoveTrack(p, t, 0)
+    expect(group(p, groupId).tracks[0].id).toBe(t)
+    applyDeleteTrack(p, t, false)
+    expect(group(p, groupId).tracks.some((x) => x.id === t)).toBe(false)
+    expect(root(p)).toEqual(rootBefore)
   })
 })

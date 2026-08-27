@@ -3,7 +3,7 @@ import type { Animated, Keyframe, Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { gridForLayerKind, snapOnGrid } from '../snap'
 import { CommandFailure } from '../errors'
-import { cloneLayer, locateLayer, rootComposition } from './helpers'
+import { cloneLayer, hasSourceWindow, locateLayerIn, requireLayer } from './helpers'
 import { linkSiblingsExcluding, checkLinkLock, indexLinks } from './links'
 import { forEachAnimatedF64, forEachAnimatedRgba, retainKeyframes, shiftKeyframes, firstKeyframeValue, lastKeyframeValue, collapseToStatic } from './animated'
 
@@ -21,11 +21,7 @@ function splitTrackHalf<T>(a: Animated<T>, splitOffset: number, right: boolean):
 /** Single-layer split (link-unaware). Returns {left,right};
  *  left reuses the original id, right gets a fresh one and is inserted at li+1. */
 function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number): { left: Uuid; right: Uuid } {
-  const c = rootComposition(p)
-  const loc = locateLayer(p, id)
-  if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
-  const [ti, li] = loc
-  const original = c.tracks[ti].layers[li]
+  const { comp: c, track, layer: original, layerIndex: li } = requireLayer(p, id)
   // The cut resolves on THIS layer's grid, not the composition's — so a linked A/V
   // split cuts the audio on the nearest sample boundary while the video cuts on the
   // frame boundary (spec R2-D6). Locate first: the grid depends on `params.kind`.
@@ -33,7 +29,9 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   if (atTUs <= original.t_start_us || atTUs >= original.t_end_us) throw new CommandFailure({ error: 'SplitOutsideLayer', layer: id, at_t: atTUs })
   const splitOffset = atTUs - original.t_start_us
 
-  // RIGHT half — fresh id, [atTUs, original.t_end].
+  // RIGHT half — fresh id, [atTUs, original.t_end]. A source window (media or a
+  // Group's composition) is divided at the same offset: at speed 1 the source
+  // and the timeline advance together.
   const right = cloneLayer(original)
   right.id = idGen()
   right.t_start_us = atTUs
@@ -41,7 +39,7 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   // Split does not re-derive the Motif content cap (no MotifCatalog reaches here;
   // `resolveMotifMaxDurUs` owns it), so a Motif's src_in_us is not rebased.
   const rightCapped = false
-  if (right.params.kind === 'VideoClip' || right.params.kind === 'Audio') right.params.src_in_us += splitOffset
+  if (hasSourceWindow(right.params)) right.params.src_in_us += splitOffset
   else if (right.params.kind === 'Motif' && rightCapped) right.params.src_in_us += splitOffset
   forEachAnimatedF64(right.params, (a) => splitTrackHalf(a, splitOffset, true))
   forEachAnimatedRgba(right.params, (a) => splitTrackHalf(a, splitOffset, true))
@@ -49,24 +47,22 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   // LEFT half — reuses original id, [original.t_start, atTUs].
   const left = cloneLayer(original)
   left.t_end_us = atTUs
-  if (left.params.kind === 'VideoClip' || left.params.kind === 'Audio') left.params.src_out_us = left.params.src_in_us + splitOffset
+  if (hasSourceWindow(left.params)) left.params.src_out_us = left.params.src_in_us + splitOffset
   forEachAnimatedF64(left.params, (a) => splitTrackHalf(a, splitOffset, false))
   forEachAnimatedRgba(left.params, (a) => splitTrackHalf(a, splitOffset, false))
 
-  c.tracks[ti].layers[li] = left
-  c.tracks[ti].layers.splice(li + 1, 0, right)
+  track.layers[li] = left
+  track.layers.splice(li + 1, 0, right)
   return { left: id, right: right.id }
 }
 
 /** Split with link spanning fan-out. */
 export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number, escapeLink: boolean): { left: Uuid; right: Uuid } {
-  const c = rootComposition(p)
   // Pre-flight on the target.
-  const loc = locateLayer(p, id)
-  if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
-  const [ti, li] = loc
-  if (c.tracks[ti].locked) throw new CommandFailure({ error: 'TrackLocked', track: c.tracks[ti].id })
-  const tgt = c.tracks[ti].layers[li]
+  const target = requireLayer(p, id)
+  const c = target.comp
+  if (target.track.locked) throw new CommandFailure({ error: 'TrackLocked', track: target.track.id })
+  const tgt = target.layer
   // Snapped on the TARGET's grid for the pre-flight + containment tests; each
   // spanning sibling then re-snaps `atTUs` on its own grid inside splitSingleLayer.
   const atTUs = snapOnGrid(atTUsRaw, gridForLayerKind(tgt.params.kind, c.fps))
@@ -74,12 +70,11 @@ export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: nu
 
   // Spanning siblings: members whose interval strictly contains atTUs (sorted order).
   // linkSiblingsExcluding returns SORTED members — id-allocation order matches Rust OrdSet.
-  const spanning: Uuid[] = escapeLink ? [] : linkSiblingsExcluding(p, id).filter((s) => {
-    const sl = locateLayer(p, s); if (!sl) return false
-    const l = c.tracks[sl[0]].layers[sl[1]]
-    return l.t_start_us < atTUs && atTUs < l.t_end_us
+  const spanning: Uuid[] = escapeLink ? [] : linkSiblingsExcluding(c, id).filter((s) => {
+    const sl = locateLayerIn(c, s); if (!sl) return false
+    return sl.layer.t_start_us < atTUs && atTUs < sl.layer.t_end_us
   })
-  if (!escapeLink) checkLinkLock(p, id, [id, ...spanning])
+  if (!escapeLink) checkLinkLock(c, id, [id, ...spanning])
 
   // Split target FIRST (id-allocation order: target right-half id comes first).
   const targetHalves = splitSingleLayer(p, idGen, id, atTUs)

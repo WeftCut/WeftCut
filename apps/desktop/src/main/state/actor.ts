@@ -18,7 +18,7 @@ import { applySplitLayer } from './mutations/split'
 import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, applyLinksRename } from './mutations/links'
 import { applySetLayersEnabled, applyUpdateLayer, type LayerPatch } from './mutations/update'
 import { applyFitComposition } from './mutations/composition'
-import { applyDurationAutofit, locateLayer } from './mutations/helpers'
+import { applyDurationAutofit, compositionOf, locateLayer, locateTrack, requireLayer, requireSameComposition, scopeComposition } from './mutations/helpers'
 import { applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
 import { applyDeleteTrack, applyMoveTrack, applyRenameTrack } from './mutations/tracks'
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, type EffectPatch } from './mutations/effects'
@@ -30,7 +30,7 @@ import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applySetScaleLinked, enforceScaleLinkInvariant } from './mutations/scaleLink'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
-import { applyAddCaptionTrack, applyRestyleCaptions, type Cue, type CaptionStylePatch } from './mutations/captions'
+import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, type CaptionStylePatch } from './mutations/captions'
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
@@ -257,23 +257,57 @@ export function createActor(opts: ActorOptions): ActorHandle {
   /** Both side layers of a transition — "this transition sits between these two".
    *  Absent transition → `[]`; the apply then rejects and nothing records. */
   function transitionSideRefs(id: Uuid): EntityRef[] {
-    const t = rootComposition(current()).transitions.find((x) => x.id === id)
-    return t ? layerRefs([t.from_layer, t.to_layer]) : []
+    for (const c of Object.values(current().compositions)) {
+      const t = c.transitions.find((x) => x.id === id)
+      if (t) return layerRefs([t.from_layer, t.to_layer])
+    }
+    return []
   }
   /** A link's member layers. Absent link → `[]` (the apply rejects). */
   function linkMemberRefs(id: Uuid): EntityRef[] {
-    const g = rootComposition(current()).links.find((x) => x.id === id)
-    return g ? layerRefs(g.members) : []
+    for (const c of Object.values(current().compositions)) {
+      const g = c.links.find((x) => x.id === id)
+      if (g) return layerRefs(g.members)
+    }
+    return []
+  }
+  /** Optional `composition_id` arg → the composition, CompositionNotFound for an
+   *  unknown id; absent/null → undefined (the callee defaults to the root). */
+  function compositionArg(a: Record<string, unknown>): Uuid | undefined {
+    const id = a.composition_id
+    if (id === undefined || id === null) return undefined
+    return compositionOf(current(), parseUuid(id, 'composition_id')).id
+  }
+  /** The renderer channel spelling of the same arg (`compositionId`). */
+  function wireCompositionId(wireArgs: Record<string, unknown>): Uuid | undefined {
+    const id = wireArgs.compositionId
+    if (id === undefined || id === null) return undefined
+    return compositionOf(current(), parseUuid(id, 'compositionId')).id
+  }
+  /** An MCP creation tool that names BOTH a track and a composition: the track
+   *  already fixes the composition, so the id is a cross-check — unknown id →
+   *  CompositionNotFound, a track that lives elsewhere → InvalidArgument (it is
+   *  not missing, it is in another composition, and the message says which).
+   *  An unknown track is left to the mutation's own TrackNotFound. */
+  function checkTrackInComposition(trackId: Uuid, compositionId: Uuid | null): void {
+    if (compositionId === null) return
+    const comp = compositionOf(current(), compositionId)
+    const t = locateTrack(current(), trackId)
+    if (t && t.comp !== comp)
+      throw new CommandFailure({ error: 'InvalidArgument', field: 'track_id', detail: `track ${trackId} belongs to composition ${t.comp.id}, not ${compositionId}` })
   }
 
   // ── set_composition — the WHOLE composition envelope is setup, never editing:
   //    one atomic probe validate, then one unrecorded patch fanned out over every
   //    snapshot + checkpoint. Undo walks past a canvas/rate/duration change without
   //    reverting it (docs/features.md #undo-stack-scope); an fps change is LOCKED
-  //    once ANY stored snapshot holds a layer. ──
+  //    once ANY stored snapshot holds a layer. `composition_id` names the
+  //    composition whose canvas / duration the patch sets (root by default); the
+  //    lattice fields cascade to every composition whichever is named. ──
   function setComposition(patch: Record<string, unknown>): void {
     const cur = current()
     const curRoot = rootComposition(cur)
+    const targetId = compositionArg(patch) ?? cur.root_id
     const CANVAS_KEYS = ['width', 'height', 'fps', 'sample_rate', 'channels', 'color_space', 'background']
     const canvasChanges = CANVAS_KEYS.some((k) => patch[k] !== undefined)
     const newFps = (patch.fps as Rational | undefined) ?? curRoot.fps
@@ -316,18 +350,21 @@ export function createActor(opts: ActorOptions): ActorHandle {
     //     content high-water mark, so no snapshot ends up shorter than its own
     //     content.
     //   · fps / sample_rate / channels CASCADE to every composition (single lattice,
-    //     ADR 0052 §5) — the canvas and duration are the root's alone. Without the
+    //     ADR 0052 §5) — the canvas and duration are the TARGET's alone. Without the
     //     cascade a rate change on a project holding a Group fails validate with
-    //     CompositionLatticeMismatch.
+    //     CompositionLatticeMismatch. A snapshot that predates the target (a Group
+    //     created later) takes the cascade and nothing else.
     const LATTICE_KEYS = ['fps', 'sample_rate', 'channels'] as const
     const latticePatch: Record<string, unknown> = {}
     for (const k of LATTICE_KEYS) if (patch[k] !== undefined) latticePatch[k] = patch[k]
     const buildProbe = (d: Project): void => {
-      const dRoot = rootComposition(d)
-      applyCanvasFields(dRoot, patch)
-      if (durationChange !== undefined) { dRoot.duration_us = durationChange; dRoot.duration_pinned = true }
+      const dTarget = d.compositions[targetId]
+      if (dTarget) {
+        applyCanvasFields(dTarget, patch)
+        if (durationChange !== undefined) { dTarget.duration_us = durationChange; dTarget.duration_pinned = true }
+      }
       for (const c of Object.values(d.compositions)) {
-        if (c !== dRoot) applyCanvasFields(c, latticePatch)
+        if (c !== dTarget) applyCanvasFields(c, latticePatch)
         if (fpsChanged) resnapComposition(c)
         applyDurationAutofit(c)
       }
@@ -388,11 +425,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
       current(), { kind: 'Composition' })
   }
 
-  function fitCompositionToLayers(): null {
-    const probe = produce(current(), applyFitComposition)
+  function fitCompositionToLayers(compositionId: Uuid | undefined): null {
+    const probe = produce(current(), (d) => applyFitComposition(d, compositionId))
     runValidate(probe)
     if (probe === current()) return null // already unpinned and fitted → no event
-    history.replaceCompositionEverywhere((p) => produce(p, applyFitComposition))
+    // A snapshot that predates the named Group has nothing to refit.
+    history.replaceCompositionEverywhere((p) => compositionId !== undefined && !(compositionId in p.compositions) ? p : produce(p, (d) => applyFitComposition(d, compositionId)))
     broadcastUnrecorded('Fit composition duration to layers', current(), { kind: 'Composition' })
     return null
   }
@@ -487,7 +525,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   // ── move_track — the cur===new no-op must skip
   //    commit; recording it would burn an op_id and drift every later id. ──
   function moveTrack(id: Uuid, newPosition: number): void {
-    const curIdx = rootComposition(current()).tracks.findIndex((t) => t.id === id)
+    const curIdx = locateTrack(current(), id)?.trackIndex ?? -1
     if (curIdx >= 0 && curIdx === newPosition) return // no-op: no record, no broadcast
     commit(HISTORY_SUMMARY.trackMove, [{ kind: 'Track', id }], { kind: 'Coarse' }, (d) => applyMoveTrack(d, id, newPosition))
   }
@@ -678,8 +716,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, a.track as Uuid, params, parseNum(a.t_start_us, 't_start_us'), parseNum(a.t_end_us, 't_end_us')))
           return { ok: true, value: id }
         }
-        case 'add_track': return { ok: true, value: commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, (a.label as string) ?? null)) }
-        case 'add_marker': return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 })) }
+        // Creation ops take `composition_id?` (root by default) — the ONLY ops
+        // that carry a scope; everything layer-addressed derives it (ADR 0052).
+        case 'add_track': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, (a.label as string) ?? null, undefined, comp)) } }
+        case 'add_marker': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 }, comp)) } }
         case 'move_layer': commit(HISTORY_SUMMARY.layerMove, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_link as boolean) ?? false)); return { ok: true, value: null }
         // move_layers_to_new_track — the whole of z-order rearrangement (ADR 0042
         // decision 2). ONE commit: the lane is minted, the layers move onto it
@@ -734,10 +774,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // therefore means the caller sent a set the UI cannot produce.
         //
         // Empty `layers` leaves the draft untouched, so commit's no-op guard
-        // records nothing.
+        // records nothing. The set is ONE composition's (CrossCompositionSet
+        // otherwise) — a selection never spans two, and the check runs before
+        // the first delete so a refusal leaves everything in place.
         case 'delete_layers': {
           const layers = [...new Set((a.layers as Uuid[]) ?? [])]
           commit(HISTORY_SUMMARY.layerDeleteMulti, layerRefs(layers), { kind: 'Coarse' }, (d) => {
+            if (layers.length > 0) requireSameComposition(d, layers)
             for (const layer of layers) applyDeleteLayer(d, layer)
           })
           return { ok: true, value: null }
@@ -754,7 +797,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           if (layers.length === 0) return { ok: false, error: { error: 'InvalidArgument', field: 'layers', detail: 'at least one layer is required' } }
           const seedLoc = locateLayer(current(), layers[0])
           if (!seedLoc) return { ok: false, error: { error: 'LayerNotFound', layer: layers[0] } }
-          const deltaUs = parseNum(a.t_start_us, 't_start_us') - rootComposition(current()).tracks[seedLoc[0]].layers[seedLoc[1]].t_start_us
+          const deltaUs = parseNum(a.t_start_us, 't_start_us') - seedLoc.layer.t_start_us
           const targetTrackId = (a.target_track_id as Uuid | null | undefined) ?? null
           const clones = commit(pastedLayersSummary(layers.length), (m: Map<Uuid, Uuid>) => layerRefs([...m.values()]), { kind: 'Coarse' },
             (d) => applyPasteLayers(d, idGen, layers, deltaUs, targetTrackId))
@@ -806,7 +849,6 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const ats = (a.at_t_us_list as number[]) ?? []
           const dropShortUs = parseNumOpt(a.drop_short_us, 'drop_short_us') ?? null
           return { ok: true, value: commit(HISTORY_SUMMARY.layerSplitByShots, layerRefs, { kind: 'Coarse' }, (d) => {
-            const dRoot = rootComposition(d)
             let currentId = layer
             const ids: Uuid[] = []
             for (const at of ats) {
@@ -816,9 +858,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
               // first because the grid depends on its kind (spec R2-D6); shot splits
               // target video, but this op is reachable for any kind.
               const loc = locateLayer(d, currentId)
-              const seg = loc ? dRoot.tracks[loc[0]].layers[loc[1]] : null
+              const seg = loc ? loc.layer : null
               if (!seg) continue
-              const atSnapped = snapOnGrid(parseNum(at, 'at_t_us'), gridForLayerKind(seg.params.kind, dRoot.fps))
+              const atSnapped = snapOnGrid(parseNum(at, 'at_t_us'), gridForLayerKind(seg.params.kind, loc!.comp.fps))
               if (atSnapped <= seg.t_start_us || atSnapped >= seg.t_end_us) continue
               const { left, right } = applySplitLayer(d, idGen, currentId, atSnapped, false)
               ids.push(left)
@@ -828,8 +870,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             if (dropShortUs === null) return ids
             const kept: Uuid[] = []
             for (const id of ids) {
-              const loc = locateLayer(d, id)
-              const seg = loc ? dRoot.tracks[loc[0]].layers[loc[1]] : null
+              const seg = locateLayer(d, id)?.layer ?? null
               if (seg && seg.t_end_us - seg.t_start_us < dropShortUs) applyDeleteLayer(d, id)
               else kept.push(id)
             }
@@ -843,8 +884,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // default to the shot-marker style. Returns the new marker ids in order.
         case 'add_markers': {
           const rows = (a.markers as Array<{ t_us: number; end_t_us?: number | null; label?: string; color?: Rgba }>) ?? []
+          const comp = compositionArg(a)
           return { ok: true, value: commit(HISTORY_SUMMARY.markerAddShots, markerRefs, { kind: 'Coarse' }, (d) =>
-            rows.map((m) => applyAddMarker(d, idGen, parseNum(m.t_us, 't_us'), m.end_t_us ?? null, m.label ?? 'Shot', m.color ?? { r: 0, g: 128, b: 255, a: 255 }))) }
+            rows.map((m) => applyAddMarker(d, idGen, parseNum(m.t_us, 't_us'), m.end_t_us ?? null, m.label ?? 'Shot', m.color ?? { r: 0, g: 128, b: 255, a: 255 }, comp))) }
         }
         case 'links_create': return { ok: true, value: commit(HISTORY_SUMMARY.linkCreate, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksCreate(d, idGen, a.layers as Uuid[], (a.label as string) ?? null, (a.reassign as boolean) ?? false)) }
         case 'links_dissolve': commit(HISTORY_SUMMARY.linkDissolve, linkMemberRefs(a.link as Uuid), { kind: 'Coarse' }, (d) => applyLinksDissolve(d, a.link as Uuid)); return { ok: true, value: null }
@@ -885,7 +927,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // MY OWN layer high-water mark" — the snapshot with the long layer keeps its
         // long duration, the one with none collapses to zero. A single fitted value
         // copied everywhere would be wrong for every snapshot but the current.
-        case 'fit_composition_to_layers': return { ok: true, value: fitCompositionToLayers() }
+        case 'fit_composition_to_layers': return { ok: true, value: fitCompositionToLayers(compositionArg(a)) }
         case 'update_marker': commit(HISTORY_SUMMARY.markerUpdate, [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateMarker(d, a.marker as Uuid, a.patch as MarkerPatch)); return { ok: true, value: null }
         case 'remove_marker': commit(HISTORY_SUMMARY.markerRemove, [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveMarker(d, a.marker as Uuid)); return { ok: true, value: null }
         case 'delete_track': commit(HISTORY_SUMMARY.trackDelete, [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyDeleteTrack(d, a.track as Uuid, (a.force as boolean) ?? false)); return { ok: true, value: null }
@@ -943,12 +985,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'set_role_gain': setRoleGain(a.role as string, parseNum(a.gain_db, 'gain_db')); return { ok: true, value: null }
         case 'update_role_flags': updateRoleFlags(a.role as string, a.patch as RoleFlagsPatch); return { ok: true, value: null }
         case 'update_project_settings': updateProjectSettings(a.patch as { prefer_proxies?: boolean | null; proxy_override?: { media_id: string; value: boolean | null } | null }); return { ok: true, value: null }
-        case 'add_caption_track': return { ok: true, value: commit(HISTORY_SUMMARY.trackAddCaption, trackRef, { kind: 'Coarse' }, (d) => applyAddCaptionTrack(d, idGen, a.cues as Cue[], a.comp_w as number, a.comp_h as number, (a.label as string) ?? null)) }
+        case 'add_caption_track': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.trackAddCaption, trackRef, { kind: 'Coarse' }, (d) => applyAddCaptionTrack(d, idGen, a.cues as Cue[], a.comp_w as number, a.comp_h as number, (a.label as string) ?? null, comp)) } }
         case 'restyle_captions': {
-          // Project-wide: one commit over EVERY caption-role track, so overlapping
-          // caption lanes restyle as a single undo entry. Affected refs are read
-          // from the pre-mutation snapshot (same tracks the recipe patches).
-          const captionRefs: EntityRef[] = rootComposition(current()).tracks.filter((t) => t.role === 'Caption').map((t) => ({ kind: 'Track', id: t.id }))
+          // Project-wide: one commit over EVERY caption-role track in every
+          // composition, so overlapping caption lanes restyle as a single undo
+          // entry. Affected refs are read from the pre-mutation snapshot (same
+          // tracks the recipe patches).
+          const captionRefs: EntityRef[] = captionTracks(current()).map((t) => ({ kind: 'Track', id: t.id }))
           commit(HISTORY_SUMMARY.captionRestyle, captionRefs, { kind: 'Coarse' }, (d) => applyRestyleCaptions(d, a.patch as CaptionStylePatch))
           return { ok: true, value: null }
         }
@@ -988,13 +1031,16 @@ export function createActor(opts: ActorOptions): ActorHandle {
       switch (channel) {
         case 'add_color_layer': {
           // Resolve the overlay track when trackId is absent (reverse-scan
-          // non-reserved; spawn one if none free).
+          // non-reserved; spawn one if none free) — inside `compositionId`'s
+          // composition, the root by default. The placement scope and the
+          // canvas-sized default params come from the same composition.
+          const scope = scopeComposition(current(), wireCompositionId(wireArgs))
           const t0 = parseNum(wireArgs.tStartUs, 'tStartUs')
           const dur = resolveDurationUs(parseNumOpt(wireArgs.durationUs, 'durationUs'))
           const t1 = t0 + dur
-          const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : pickFreeOverlayTrack(rootComposition(current()), t0, t1)
+          const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : pickFreeOverlayTrack(scope, t0, t1)
+          const params = prodColorParams(wireArgs, scope)
           if (trackId !== null) {
-            const params = prodColorParams(wireArgs, rootComposition(current()))
             const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, trackId, params, t0, t1))
             return { ok: true, value: id }
@@ -1004,19 +1050,19 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // second commit. Two op_ids. `label: null` leaves the new lane's name
           // to be derived from its position (ADR 0042).
           const newTrackId = commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) =>
-            applyAddTrack(d, idGen, null))
-          const params = prodColorParams(wireArgs, rootComposition(current()))
+            applyAddTrack(d, idGen, null, undefined, scope.id))
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, newTrackId, params, t0, t1))
           return { ok: true, value: id }
         }
         case 'add_text_layer': {
           // Same overlay-track logic as add_color_layer.
+          const scope = scopeComposition(current(), wireCompositionId(wireArgs))
           const t0 = parseNum(wireArgs.tStartUs, 'tStartUs')
           const dur = resolveDurationUs(parseNumOpt(wireArgs.durationUs, 'durationUs'))
           const t1 = t0 + dur
-          const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : pickFreeOverlayTrack(rootComposition(current()), t0, t1)
-          const params = prodTextParams(wireArgs, rootComposition(current()))
+          const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : pickFreeOverlayTrack(scope, t0, t1)
+          const params = prodTextParams(wireArgs, scope)
           if (trackId !== null) {
             const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, trackId, params, t0, t1))
@@ -1024,7 +1070,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           }
           // No free track — same two-commit pattern as add_color_layer above.
           const newTrackId = commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) =>
-            applyAddTrack(d, idGen, null))
+            applyAddTrack(d, idGen, null, undefined, scope.id))
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, newTrackId, params, t0, t1))
           return { ok: true, value: id }
@@ -1044,15 +1090,18 @@ export function createActor(opts: ActorOptions): ActorHandle {
               applyPasteLayer(d, idGen, sourceId, targetTrackId, requestedStart))
             return { ok: true, value: id }
           }
+          // The free lane is sought in the SOURCE's composition: a paste never
+          // crosses compositions (applyPasteLayer refuses a lane elsewhere).
+          const sourceComp = requireLayer(current(), sourceId).comp
           const interval = pasteLayerInterval(current(), sourceId, requestedStart)
-          const trackId = pickFreeOverlayTrack(rootComposition(current()), interval.tStartUs, interval.tEndUs)
+          const trackId = pickFreeOverlayTrack(sourceComp, interval.tStartUs, interval.tEndUs)
           if (trackId !== null) {
             const id = commit(HISTORY_SUMMARY.layerPaste, layerRef, { kind: 'Coarse' }, (d) =>
               applyPasteLayer(d, idGen, sourceId, trackId, requestedStart))
             return { ok: true, value: id }
           }
           const newTrackId = commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) =>
-            applyAddTrack(d, idGen, null))
+            applyAddTrack(d, idGen, null, undefined, sourceComp.id))
           const id = commit(HISTORY_SUMMARY.layerPaste, layerRef, { kind: 'Coarse' }, (d) =>
             applyPasteLayer(d, idGen, sourceId, newTrackId, requestedStart))
           return { ok: true, value: id }
@@ -1081,7 +1130,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           //   track=tracks.front() (spawn one if empty),
           //   t_start=track.last_layer.t_end ?? 0, duration=2s,
           //   color=demo_color(track.layers.len()), w/h=composition size.
-          const snap = rootComposition(current())
+          const snap = scopeComposition(current(), wireCompositionId(wireArgs))
           const firstTrack = snap.tracks[0]
           if (firstTrack) {
             const t0 = firstTrack.layers.at(-1)?.t_end_us ?? 0
@@ -1097,10 +1146,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // No tracks at all — spawn one then add the layer inside one commit.
           // Unreachable in prod (reserved A/B-roll tracks are non-removable, so tracks is never empty); single-commit is fine. Do NOT mirror this onto the reachable no-trackId overlay path — that one resolves the track in its own commit, so the track add gets its own op_id.
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => {
-            const newTrackId = applyAddTrack(d, idGen, null)
+            const newTrackId = applyAddTrack(d, idGen, null, undefined, snap.id)
             const t0 = 0
             const t1 = 2_000_000
-            const params = prodColorParams({ color: demoColor(0) }, rootComposition(d))
+            const params = prodColorParams({ color: demoColor(0) }, compositionOf(d, snap.id))
             return applyAddLayer(d, idGen, newTrackId, params, t0, t1)
           })
           return { ok: true, value: id }
@@ -1115,7 +1164,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             const p = textParamsDefault('TEXT', comp)
             return { ...p, font: { ...p.font, size_px: 96 } }
           }
-          const snap = rootComposition(current())
+          const snap = scopeComposition(current(), wireCompositionId(wireArgs))
           const lastTrack = snap.tracks.at(-1)
           if (lastTrack) {
             const t0 = lastTrack.layers.at(-1)?.t_end_us ?? 0
@@ -1127,8 +1176,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           }
           // No tracks at all — same unreachable single-commit case as add_demo_color_layer.
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => {
-            const newTrackId = applyAddTrack(d, idGen, null)
-            return applyAddLayer(d, idGen, newTrackId, demoText(rootComposition(d)), 0, 3_000_000)
+            const newTrackId = applyAddTrack(d, idGen, null, undefined, snap.id)
+            return applyAddLayer(d, idGen, newTrackId, demoText(compositionOf(d, snap.id)), 0, 3_000_000)
           })
           return { ok: true, value: id }
         }
@@ -1152,9 +1201,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const resolvedEnd = resolveMotifTEndUs(tStartUs, tEndUsRaw, manifest.default_duration_s, resolveMotifMaxDurUs(manifest, canonicalProps))
           if (resolvedEnd <= tStartUs) return { ok: false, error: { error: 'InvalidArgument', field: 't_end_us', detail: `t_end_us ${resolvedEnd} must be greater than t_start_us ${tStartUs}` } }
           const params = motifLayerParams(manifest.id, manifest.version, canonicalProps)
-          // Two-commit: if no track_id → spawn the track FIRST, THEN the Motif layer.
+          // Two-commit: if no track_id → spawn the track FIRST (in the named
+          // composition, root by default), THEN the Motif layer.
+          const scope = scopeComposition(current(), wireCompositionId(wireArgs))
           const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : null
-          const track = trackId ?? commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, null))
+          const track = trackId ?? commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, null, undefined, scope.id))
           const layerId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, tStartUs, resolvedEnd))
           return { ok: true, value: layerId }
         }
@@ -1222,6 +1273,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
       switch (name) {
         case 'add_color_layer': {
           const p = mcpDef('add_color_layer').parseDedicated!(a)
+          checkTrackInComposition(p.track as string, p.composition_id as string | null)
           const params = colorParams(p.color as Rgba, (p.width as number | undefined) ?? 1920, (p.height as number | undefined) ?? 1080)
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, p.track as string, params, p.t_start_us as number, p.t_end_us as number))
           return { ok: true, result: toolText(id) }
@@ -1229,6 +1281,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'add_video_layer': {
           const p = mcpDef('add_video_layer').parseDedicated!(a)
           const track = p.track as string
+          checkTrackInComposition(track, p.composition_id as string | null)
           const media = p.media as string
           const srcIn = p.src_in_us as number
           const srcOut = p.src_out_us as number
@@ -1298,7 +1351,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const tUs = p.t_us as number
           const endT = (p.end_t_us as number | undefined) ?? null
           const label = p.label as string
-          const id = commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, tUs, endT, label, color))
+          const comp = compositionArg(p)
+          const id = commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, tUs, endT, label, color, comp))
           return { ok: true, result: toolText(id) }
         }
         case 'split_layer': {
@@ -1466,7 +1520,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
           if (resolvedEnd <= tStartUs) return { ok: false, error: { code: 'invalid_params', message: `t_end_us ${resolvedEnd} must be greater than t_start_us ${tStartUs}` } }
           const params = motifLayerParams(manifest.id, manifest.version, canonicalProps)
           const trackId = (p.track_id as string | null | undefined) ?? null
-          const track = trackId ?? commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, null))
+          const compositionId = p.composition_id as string | null
+          if (trackId !== null) checkTrackInComposition(trackId, compositionId)
+          const scope = scopeComposition(current(), compositionId)
+          const track = trackId ?? commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, null, undefined, scope.id))
           const layerId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, tStartUs, resolvedEnd))
           return { ok: true, result: toolText(layerId) }
         }

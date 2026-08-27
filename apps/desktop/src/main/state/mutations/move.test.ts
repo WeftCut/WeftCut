@@ -3,10 +3,10 @@ import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
 import { blankProject, type Layer, type LayerParams } from '../model'
 import { applyAddLayer, colorParams } from './add'
-import { applyMoveLayer } from './move'
+import { applyMoveLayer, applyMoveLayersToNewTrack } from './move'
 import { isCommandFailure } from '../errors'
 import { applyLinksCreate } from './links'
-import { root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 function color(id: string, t0: number, t1: number): Layer {
   const params: LayerParams = { kind: 'Color', color: { mode: 'Static', value: { r: 0, g: 0, b: 0, a: 255 } }, width: 1, height: 1 }
@@ -121,5 +121,38 @@ describe('move link lock checks (not corpus-gated)', () => {
     expect(root(p).tracks[1].layers[0].t_start_us).toBe(500_000)
     expect(root(p).tracks[0].layers.map((l) => l.id)).toEqual(['b'])
     expect(root(p).tracks[0].layers[0].t_start_us).toBe(700_000)
+  })
+})
+
+// A layer-addressed move derives its composition from the layer (ADR 0052): no
+// scope argument, and the destination lane has to be in that same composition.
+describe('applyMoveLayer inside a Group', () => {
+  it('moves within the Group with no scope argument; the root is untouched', () => {
+    const { p, groupId, innerId } = groupedProject()
+    const rootBefore = structuredClone(root(p))
+    applyMoveLayer(p, innerId, group(p, groupId).tracks[1].id, 2_000_000, false)
+    expect(group(p, groupId).tracks[0].layers).toEqual([])
+    expect(group(p, groupId).tracks[1].layers[0]).toMatchObject({ id: innerId, t_start_us: 2_000_000, t_end_us: 3_000_000 })
+    expect(group(p, groupId).duration_us).toBe(3_000_000)
+    expect(root(p)).toEqual(rootBefore)
+  })
+  it('refuses a destination track in another composition (CrossCompositionMove), touching nothing', () => {
+    const { p, groupId, innerId, refLayerId } = groupedProject()
+    const before = structuredClone(p)
+    try { applyMoveLayer(p, innerId, root(p).tracks[1].id, 0, false); throw new Error('x') }
+    catch (e) { expect(isCommandFailure(e) && e.err).toEqual({ error: 'CrossCompositionMove', layer: innerId, from: groupId, to: p.root_id }) }
+    try { applyMoveLayer(p, refLayerId, group(p, groupId).tracks[1].id, 0, false); throw new Error('x') }
+    catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('CrossCompositionMove') }
+    expect(p).toEqual(before)
+  })
+  it("applyMoveLayersToNewTrack mints the lane in the layers' composition and refuses a mixed set", () => {
+    const { p, idGen, groupId, innerId, refLayerId } = groupedProject()
+    try { applyMoveLayersToNewTrack(p, idGen, [innerId, refLayerId]); throw new Error('x') }
+    catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('CrossCompositionSet') }
+    const rootTracks = root(p).tracks.length
+    const t = applyMoveLayersToNewTrack(p, idGen, [innerId])
+    expect(group(p, groupId).tracks.at(-1)!.id).toBe(t)
+    expect(group(p, groupId).tracks.at(-1)!.layers.map((l) => l.id)).toEqual([innerId])
+    expect(root(p).tracks).toHaveLength(rootTracks)
   })
 })

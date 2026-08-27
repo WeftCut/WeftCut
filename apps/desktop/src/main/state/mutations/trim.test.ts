@@ -4,11 +4,12 @@ import { seededGen } from '../ids'
 import { blankProject, type Layer, type LayerParams, type MediaItem, type Project } from '../model'
 import { applyAddLayer, colorParams } from './add'
 import { applyTrimLayer, clampSigned } from './trim'
+import { applyDeleteLayer } from './delete'
 import { isCommandFailure } from '../errors'
 import { validate } from '../validate'
 import { applyLinksCreate } from './links'
 import { frameCount, frameIndexFloor, frameIndexRound, timeUsAtFrame } from '../../../renderer/frames'
-import { root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 function color(id: string, t0: number, t1: number): Layer {
   const params: LayerParams = { kind: 'Color', color: { mode: 'Static', value: { r: 0, g: 0, b: 0, a: 255 } }, width: 1, height: 1 }
@@ -300,5 +301,41 @@ describe('trim link aligned-set (live)', () => {
     root(p).tracks[1].layers[0].locked = true
     try { applyTrimLayer(p, 'a', 'Out', 600_000, false); throw new Error('expected throw') }
     catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('LinkLockedMember') }
+  })
+})
+
+describe("applyTrimLayer inside a Group, and the Group layer's source bound", () => {
+  it("trims the Group's layer; the Group autofits, the root does not move", () => {
+    const { p, groupId, innerId } = groupedProject()
+    const rootBefore = structuredClone(root(p))
+    applyTrimLayer(p, innerId, 'Out', 600_000, false)
+    expect(group(p, groupId).tracks[0].layers[0].t_end_us).toBe(600_000)
+    expect(group(p, groupId).duration_us).toBe(600_000)
+    expect(root(p)).toEqual(rootBefore)
+  })
+  it("a CompositionRef OUT trim clamps src_out_us at the composition's duration; an IN trim shifts src_in_us", () => {
+    const { p, idGen, groupId, refLayerId } = groupedProject()
+    // Give the Group more content than the parent's window shows: 3 s.
+    applyAddLayer(p, idGen, group(p, groupId).tracks[1].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 1_000_000, 3_000_000)
+    expect(group(p, groupId).duration_us).toBe(3_000_000)
+    const ref = () => root(p).tracks[2].layers[0].params as Extract<LayerParams, { kind: 'CompositionRef' }>
+    applyTrimLayer(p, refLayerId, 'Out', 5_000_000, false) // asks past the source end
+    expect(root(p).tracks[2].layers[0].t_end_us).toBe(3_000_000) // clamped to the composition's duration
+    expect(ref().src_out_us).toBe(3_000_000)
+    applyTrimLayer(p, refLayerId, 'In', 500_000, false)
+    expect(root(p).tracks[2].layers[0].t_start_us).toBe(500_000)
+    expect(ref().src_in_us).toBe(500_000)
+    expect(() => validate(p)).not.toThrow()
+  })
+  it('an overhanging CompositionRef window may not grow (TrimEdgeOutOfRange) and is not dragged back', () => {
+    const { p, innerId, refLayerId } = groupedProject()
+    applyDeleteLayer(p, innerId) // the Group is now 0 long; the parent's [0, 1 s) window overhangs (ADR 0052 §6)
+    const before = structuredClone(root(p))
+    try { applyTrimLayer(p, refLayerId, 'Out', 2_000_000, false); throw new Error('x') }
+    catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('TrimEdgeOutOfRange') }
+    expect(root(p)).toEqual(before)
+    applyTrimLayer(p, refLayerId, 'Out', 500_000, false) // inward still works
+    expect(root(p).tracks[2].layers[0].t_end_us).toBe(500_000)
+    expect(() => validate(p)).not.toThrow()
   })
 })

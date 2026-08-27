@@ -32,11 +32,32 @@ function resourceNotFound(message: string): never {
   throw e
 }
 
+/** `project://compositions` rows: every composition with how many
+ *  `CompositionRef` layers point at it — 0 for the root (never referenced) and
+ *  for an orphan, which is legal state (ADR 0052 §3). */
+export function compositionListing(p: Project): Array<{ id: string; label: string | null; duration_us: number; ref_count: number }> {
+  const refs = new Map<string, number>()
+  for (const { layer } of eachLayer(p))
+    if (layer.params.kind === 'CompositionRef') refs.set(layer.params.composition, (refs.get(layer.params.composition) ?? 0) + 1)
+  return Object.values(p.compositions).map((c) => ({ id: c.id, label: c.label, duration_us: c.duration_us, ref_count: refs.get(c.id) ?? 0 }))
+}
+
+/** The composition a `?composition=<id>` query selects, the root when absent.
+ *  Not-found for an unknown id, so an agent that guessed wrong learns it from
+ *  the read rather than from an empty track list. */
+function scopedComposition(p: Project, query: string | null): Composition {
+  if (query === null) return rootComposition(p)
+  const c = p.compositions[query]
+  if (!c) return resourceNotFound(`composition ${query} not found`)
+  return c
+}
+
 /** Serve a `project://*` state-view resource directly from the actor (the sole
  *  state owner): returns the wire ResourceResult, or `null` when the URI
  *  is a Rust-compute resource (`project://compiled`, `media://*`,
  *  `composition://meter`) the host forwards to the backend with an injected slice.
- *  Throws not-found for a bad `project://layers/{id}` URI. */
+ *  Throws not-found for a bad `project://layers/{id}` URI or an unknown
+ *  `?composition=` id. */
 export function serveProjectResource(
   uri: string,
   actor: Pick<ActorHandle, 'snapshot' | 'historyView'>,
@@ -50,12 +71,18 @@ export function serveProjectResource(
     if (!layer) resourceNotFound(`layer ${tail} not found`)
     return textResource(uri, layer)
   }
-  switch (uri) {
+  // `project://tracks` and `project://markers` are per composition:
+  // `?composition=<id>` selects one, absent means the root.
+  const q = uri.indexOf('?')
+  const base = q === -1 ? uri : uri.slice(0, q)
+  const composition = q === -1 ? null : new URLSearchParams(uri.slice(q + 1)).get('composition')
+  switch (base) {
     case 'project://current': return textResource(uri, serializeProject(actor.snapshot()))
     case 'project://composition': return textResource(uri, compositionSettings(rootComposition(actor.snapshot())))
+    case 'project://compositions': return textResource(uri, compositionListing(actor.snapshot()))
     case 'project://media': return textResource(uri, actor.snapshot().media_pool)
-    case 'project://tracks': return textResource(uri, rootComposition(actor.snapshot()).tracks)
-    case 'project://markers': return textResource(uri, rootComposition(actor.snapshot()).markers)
+    case 'project://tracks': return textResource(uri, scopedComposition(actor.snapshot(), composition).tracks)
+    case 'project://markers': return textResource(uri, scopedComposition(actor.snapshot(), composition).markers)
     case 'project://history': return textResource(uri, actor.historyView(100))
     default: return null
   }

@@ -6,7 +6,7 @@ import { applyAddLayer, applyAddTrack, colorParams, defaultTransform, textParams
 import { extendLayerTEnd, shrinkLayerTEnd, applyAddTransition, applyRemoveTransition, applyUpdateTransition } from './transitions'
 import { frameIndexRound, timeUsAtFrame } from '../snap'
 import { isCommandFailure } from '../errors'
-import { root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 const RED = { r: 255, g: 0, b: 0, a: 255 }
 const CROSSFADE = { kind: 'Crossfade' as const }
@@ -979,5 +979,23 @@ describe('locked home lane refuses every transition op (TrackLocked)', () => {
     expectCmd(() => applyRemoveTransition(p, tid), 'TrackLocked')
     expect(root(p).transitions.map((t) => t.id)).toEqual([tid])
     expect([layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us]).toEqual([2_000_000, 1_000_000])
+  })
+})
+
+describe('transitions inside a Group', () => {
+  it('add / remove find the participants in their Group; the root is untouched', () => {
+    const { p, idGen, groupId, innerId, innerTrackId } = groupedProject() // inner = [0, 1 s)
+    const b = applyAddLayer(p, idGen, innerTrackId, color(), 1_000_000, 2_000_000)
+    const rootBefore = structuredClone(root(p))
+    const g = group(p, groupId)
+    const bLayer = () => g.tracks[0].layers.find((l) => l.id === b)!
+    const id = addT(p, idGen, innerId, b, 200_000) // 6 frames: B moves left onto the overlap
+    expect(g.transitions.map((t) => t.id)).toEqual([id])
+    expect(bLayer().t_start_us).toBe(800_000)
+    expect(g.duration_us).toBe(1_800_000)
+    applyRemoveTransition(p, id)
+    expect(g.transitions).toEqual([])
+    expect(bLayer().t_start_us).toBe(1_000_000)
+    expect(root(p)).toEqual(rootBefore)
   })
 })

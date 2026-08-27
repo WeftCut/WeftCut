@@ -80,6 +80,10 @@ export type ValidationError =
   // Single lattice: a Group's fps / sample_rate / channels equal the root's, or
   // its `src_*` would sit on a different grid from the parent's `t_*`.
   | { rule: 'CompositionLatticeMismatch'; composition: Uuid; field: 'fps' | 'sample_rate' | 'channels' }
+  // Project-wide like `DuplicateLayerId`: a marker-addressed op derives its
+  // composition from the marker id, so the id must name one marker in the
+  // whole project.
+  | { rule: 'DuplicateMarkerId'; marker: Uuid }
 
 // ── CommandError — the full mutation-error vocabulary. Individual dispatch
 // arms construct only the variants they need. ──
@@ -87,6 +91,16 @@ export type CommandError =
   | { error: 'TrackNotFound'; track: Uuid }
   | { error: 'LayerNotFound'; layer: Uuid }
   | { error: 'CompositionNotFound'; composition: Uuid }
+  // ── Composition scope (ADR 0052; spec § Invariants). A layer-addressed op
+  // derives its composition from the layer id, so the only way to name another
+  // composition is through a DESTINATION — a target track, a restack anchor —
+  // and that is refused: a layer changes composition only by pre-compose /
+  // ungroup. `from` is the layer's composition, `to` the destination's.
+  | { error: 'CrossCompositionMove'; layer: Uuid; from: Uuid; to: Uuid }
+  // A set op (delete_layers, move_layers_to_new_track, paste_layers,
+  // set_layers_enabled, links_*) addresses ONE composition: `expected` is the
+  // first member's, `layer` the member found in `composition` instead.
+  | { error: 'CrossCompositionSet'; layer: Uuid; composition: Uuid; expected: Uuid }
   | { error: 'WrongLayerKind'; layer: Uuid; expected: string }
   | { error: 'MarkerNotFound'; marker: Uuid }
   | { error: 'TransitionNotFound'; transition: Uuid }

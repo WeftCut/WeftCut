@@ -1007,6 +1007,7 @@ struct ChangeEvent {
 | Composition references form no cycle | reject (`CompositionCycle { path }`; orphans — compositions nothing references — are legal) |
 | Every composition's `fps`, `sample_rate`, `channels` equal the root's | reject (`CompositionLatticeMismatch { composition, field }`) |
 | `Layer.id` unique across **all** compositions | reject (`DuplicateLayerId`) |
+| `Marker.id` unique across **all** compositions | reject (`DuplicateMarkerId`) |
 | All references (`MediaId`/`LayerId`/`LinkId`/`TransitionId`) resolve | reject |
 | `Link.id` unique within its composition's `links` | reject (`DuplicateLinkId`) |
 | Every `Link.members` entry names a layer of the **same** composition | reject (`LinkMemberMissing`) |
@@ -1023,8 +1024,24 @@ A failed invariant returns a structured error to the caller (UI shows toast; MCP
 
 Every command maps directly to one MCP tool with the same name. Patches are **strongly typed**, not JSON Patch.
 
-Every command addresses the **root composition**: layer-addressed commands
-resolve their id in `compositions[root_id]` and creation commands place there.
+**Scope is derived, never passed** (ADR 0052 §3; the invariants table above).
+Layer ids are unique across every composition, so a layer-addressed command
+locates its layer in whichever composition holds it and edits *that*
+composition — its tracks, links, transitions, duration autofit and track
+cleanup — with no scope argument; a marker-, track-, link- or
+transition-addressed command does the same by its own id (marker ids are
+project-wide unique too). Only **creation** commands carry a scope:
+`add_track`, `add_marker`, `add_caption_track`, the lane-picking layer adds
+and the composition envelope (`set_composition`, `fit_composition_to_layers`)
+take `composition_id?`, defaulting to the root; a layer add that names a
+`track_id` needs none, because a track lives in exactly one composition.
+Nothing crosses compositions: a destination in another one (a move's target
+track, a restack's anchor, a paste's target lane) is refused with
+`CrossCompositionMove { layer, from, to }`, and a set command whose members
+straddle two compositions (`delete_layers`, `set_layers_enabled`,
+`paste_layers`, `move_layers_to_new_track`, `links_create`,
+`links_add_members`) with `CrossCompositionSet { layer, composition,
+expected }`. A layer changes composition only through pre-compose / ungroup.
 
 The MCP surface mirrors this 1:1 (same names, schemars-derived schemas);
 the UI uses the same actor via backend commands.
@@ -1033,16 +1050,16 @@ the UI uses the same actor via backend commands.
 |---|---|
 | `import_media(path)` → `MediaId` | hashes, probes metadata, fans out proxy / thumbnails / waveform jobs |
 | `remove_media(id, force?)` | rejects with `MediaInUse { referenced_by }` if any layer references it unless `force=true` |
-| `add_track(label?)` → `TrackId` | tracks are kind-agnostic — any layer kind can be placed on any track |
+| `add_track(label?, composition_id?)` → `TrackId` | tracks are kind-agnostic — any layer kind can be placed on any track; lands in the named composition, the root by default |
 | `remove_track(id, force?)` | rejects if non-empty unless `force` |
 | `move_track(id, new_position)` | |
 | `rename_track(id, label?)` | **recorded** (undoable); any track, reserved ones included. A blank or absent `label` stores `None`, which restores the derived name |
 | `update_track_flags(id, patch)` | unrecorded; patch any subset of `{enabled, muted, solo, locked}`; undo never reverts these. `muted`/`solo` round-trip but no longer gate audio (mixing is per-role) |
 | `set_role_gain(role, gain_db)` | **recorded** (undoable); sets a mixing role's bus gain, folded into that role's layers at mix time |
 | `update_role_flags(role, patch)` | unrecorded (like `update_track_flags`); patch `{muted?, solo?}` on a role's mix bus; undo never reverts these |
-| `add_color_layer(track_id, t_start_us, t_end_us, color, width?, height?)` → `LayerId` | rejects on overlap |
-| `add_video_layer(track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us)` → `LayerId` | rejects on overlap |
-| `add_motif(motif_id, t_start_us, t_end_us?, track_id?, props?)` → `LayerId` | `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates an "Overlay" track when absent |
+| `add_color_layer(track_id, t_start_us, t_end_us, color, width?, height?, composition_id?)` → `LayerId` | rejects on overlap; the track fixes the composition, `composition_id` is a cross-check |
+| `add_video_layer(track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us, composition_id?)` → `LayerId` | rejects on overlap; same cross-check |
+| `add_motif(motif_id, t_start_us, t_end_us?, track_id?, props?, composition_id?)` → `LayerId` | `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates a fresh track when absent, in `composition_id` (root by default) |
 | `apply_subtitles(body, format?, track_id?, t_start_us?, t_end_us?)` | Parses `body` (SRT/VTT/ASS) and builds a new caption-role track of editable `Text` layers. `format` is sniffed when omitted. `track_id`, `t_start_us`, and `t_end_us` are accepted on the wire for backward compatibility but are ignored — cue timings come from the body and each import always creates its own caption track. Advanced ASS tags (karaoke, drawings) are stripped; the tool notes when `simplified=true`. Returns the new caption track id. |
 | `duplicate_layer(layer_id, t_offset_us)` → `LayerId` | |
 | `paste_layers(layer_ids, t_start_us, target_track_id?)` → `{ clones: [{ source, clone }] }` | the whole-link duplicate: every clone shifts by the delta the seed (`layer_ids[0]`) travels to `t_start_us`, then snaps on its own lattice; only the seed changes track; any lock or overlap refuses the whole set; two or more clones are linked to each other |
@@ -1059,9 +1076,10 @@ the UI uses the same actor via backend commands.
 | `delete_layers(layer_ids)` | the cross-**layer** form: one recorded entry however many layers it spans, so one undo restores the lot. Ids are de-duplicated; a locked member rejects the WHOLE batch rather than half-deleting. Takes the id set verbatim — no link fan-out, since selection is what carries a link |
 | `links_create(layer_ids, label?, reassign?)` → `LinkId` | fewer than two distinct ids → `LinkCreateNeedsTwoLayers`; a layer already in another link → `LayerAlreadyLinked` unless `reassign: true`, which moves it over |
 | `links_dissolve(link_id)` / `links_add_members(link_id, layer_ids, reassign?)` / `links_remove_members(link_id, layer_ids)` / `links_rename(link_id, label?)` | an unknown `link_id` → `LinkNotFound`; removing a non-member → `LayerNotInLink`; `add_members` shares `links_create`'s `LayerAlreadyLinked` / `reassign` rule |
-| `add_marker(t_us, label, color, end_t_us?)` → `MarkerId` | |
-| `update_marker(marker_id, patch)` / `remove_marker(marker_id)` | |
-| `set_composition(patch)` | never recorded (setup, not editing); `fps` refused with `FpsLockedByContent` once the timeline — or any stored snapshot/checkpoint — holds a layer |
+| `add_marker(t_us, label, color, end_t_us?, composition_id?)` → `MarkerId` | markers are per composition |
+| `update_marker(marker_id, patch)` / `remove_marker(marker_id)` | the marker id names its composition |
+| `set_composition(patch, composition_id?)` | never recorded (setup, not editing); canvas (`width`, `height`, `color_space`, `background`) and `duration_us` land on the named composition, root by default; `fps` / `sample_rate` / `channels` are one lattice and cascade to every composition; `fps` refused with `FpsLockedByContent` once the timeline — or any stored snapshot/checkpoint — holds a layer |
+| `fit_composition_to_layers(composition_id?)` | clears the named composition's duration pin (root by default) |
 | `checkpoint(label)` → `CheckpointId` | |
 | `list_checkpoints()` / `restore_checkpoint(checkpoint_id)` | restore clears redo |
 | `undo()` / `redo()` | |

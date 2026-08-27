@@ -1,6 +1,6 @@
 import type { Layer, Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
-import { applyDurationAutofit, cloneLayer, locateLayer, rootComposition } from './helpers'
+import { applyDurationAutofit, cloneLayer, locateTrack, requireLayer, requireSameComposition } from './helpers'
 import { applyLinksCreate } from './links'
 import { CommandFailure } from '../errors'
 import { gridForLayerKind, snapOnGrid } from '../snap'
@@ -16,18 +16,13 @@ import { layerOverlapClass } from '../validate'
  *  for duplicate and paste, snapped start with the end carried by the resulting
  *  delta, so the copy keeps the source's frame span. */
 export function applyDuplicateLayer(p: Project, idGen: IdGen, id: Uuid, tOffsetUs: number): Uuid {
-  const c = rootComposition(p)
-  const loc = locateLayer(p, id)
-  if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
-  const [ti, li] = loc
-  const source = c.tracks[ti].layers[li]
+  const { comp: c, track, layer: source } = requireLayer(p, id)
   const interval = pasteLayerInterval(p, id, source.t_start_us + tOffsetUs)
   const copy = cloneLayer(source)
   const dupId = idGen()
   copy.id = dupId
   copy.t_start_us = interval.tStartUs
   copy.t_end_us = interval.tEndUs
-  const track = c.tracks[ti]
   const at = track.layers.findIndex((l) => l.t_start_us > copy.t_start_us)
   track.layers.splice(at < 0 ? track.layers.length : at, 0, copy)
   applyDurationAutofit(c)
@@ -45,10 +40,7 @@ export interface PasteLayerInterval {
  *  layer's duration is shifted the same way as a normal move, which preserves its
  *  quantum span on fractional frame-rate grids. */
 export function pasteLayerInterval(p: Project, id: Uuid, tStartUs: number): PasteLayerInterval {
-  const c = rootComposition(p)
-  const loc = locateLayer(p, id)
-  if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
-  const source = c.tracks[loc[0]].layers[loc[1]]
+  const { comp: c, layer: source } = requireLayer(p, id)
   const grid = gridForLayerKind(source.params.kind, c.fps)
   const snappedStart = snapOnGrid(tStartUs, grid)
   const delta = snappedStart - source.t_start_us
@@ -58,10 +50,11 @@ export function pasteLayerInterval(p: Project, id: Uuid, tStartUs: number): Past
   }
 }
 
-/** Paste a detached clone onto an explicitly resolved target track. The caller
- *  owns automatic track selection/creation; this mutation preserves all layer
- *  content and effects, gives only the layer a fresh id, and never joins the
- *  source link. */
+/** Paste a detached clone onto an explicitly resolved target track — in the
+ *  source's own composition (a track elsewhere is CrossCompositionMove). The
+ *  caller owns automatic track selection/creation; this mutation preserves all
+ *  layer content and effects, gives only the layer a fresh id, and never joins
+ *  the source link. */
 export function applyPasteLayer(
   p: Project,
   idGen: IdGen,
@@ -69,22 +62,21 @@ export function applyPasteLayer(
   targetTrackId: Uuid,
   tStartUs: number,
 ): Uuid {
-  const c = rootComposition(p)
-  const sourceLoc = locateLayer(p, sourceId)
-  if (!sourceLoc) throw new CommandFailure({ error: 'LayerNotFound', layer: sourceId })
-  const target = c.tracks.find((track) => track.id === targetTrackId)
+  const source = requireLayer(p, sourceId)
+  const target = locateTrack(p, targetTrackId)
   if (!target) throw new CommandFailure({ error: 'TrackNotFound', track: targetTrackId })
+  if (target.comp !== source.comp) throw new CommandFailure({ error: 'CrossCompositionMove', layer: sourceId, from: source.comp.id, to: target.comp.id })
 
   const interval = pasteLayerInterval(p, sourceId, tStartUs)
-  const copy = cloneLayer(c.tracks[sourceLoc[0]].layers[sourceLoc[1]])
+  const copy = cloneLayer(source.layer)
   const pastedId = idGen()
   copy.id = pastedId
   copy.t_start_us = interval.tStartUs
   copy.t_end_us = interval.tEndUs
 
-  const at = target.layers.findIndex((layer) => layer.t_start_us > interval.tStartUs)
-  target.layers.splice(at < 0 ? target.layers.length : at, 0, copy)
-  applyDurationAutofit(c)
+  const at = target.track.layers.findIndex((layer) => layer.t_start_us > interval.tStartUs)
+  target.track.layers.splice(at < 0 ? target.track.layers.length : at, 0, copy)
+  applyDurationAutofit(source.comp)
   return pastedId
 }
 
@@ -99,7 +91,9 @@ export function applyPasteLayer(
  *  All-or-nothing: every destination is checked for lock and overlap before any
  *  clone is inserted, so a refusal leaves `p` untouched and burns no id. The
  *  overlap refusal is the validator's own `LayerOverlap`, with `b` naming the
- *  SOURCE whose clone would collide — the clone never came to exist.
+ *  SOURCE whose clone would collide — the clone never came to exist. The set is
+ *  one composition's (CrossCompositionSet), and the seed's target track must be
+ *  in it (CrossCompositionMove).
  *
  *  Returns source → clone. Empty input returns an empty map and touches nothing. */
 export function applyPasteLayers(
@@ -109,21 +103,22 @@ export function applyPasteLayers(
   deltaUs: number,
   targetTrackId: Uuid | null,
 ): Map<Uuid, Uuid> {
-  const c = rootComposition(p)
   const ids = [...new Set(layerIds)]
   const result = new Map<Uuid, Uuid>()
   if (ids.length === 0) return result
+  const c = requireSameComposition(p, ids)
 
   interface Plan { source: Layer; trackIdx: number; tStartUs: number; tEndUs: number }
   const plans: Plan[] = []
   for (const [i, id] of ids.entries()) {
-    const loc = locateLayer(p, id)
-    if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
-    const source = c.tracks[loc[0]].layers[loc[1]]
-    let trackIdx = loc[0]
+    const loc = requireLayer(p, id)
+    const source = loc.layer
+    let trackIdx = loc.trackIndex
     if (i === 0 && targetTrackId !== null) {
-      trackIdx = c.tracks.findIndex((t) => t.id === targetTrackId)
-      if (trackIdx < 0) throw new CommandFailure({ error: 'TrackNotFound', track: targetTrackId })
+      const target = locateTrack(p, targetTrackId)
+      if (!target) throw new CommandFailure({ error: 'TrackNotFound', track: targetTrackId })
+      if (target.comp !== c) throw new CommandFailure({ error: 'CrossCompositionMove', layer: id, from: c.id, to: target.comp.id })
+      trackIdx = target.trackIndex
     }
     if (c.tracks[trackIdx].locked) throw new CommandFailure({ error: 'TrackLocked', track: c.tracks[trackIdx].id })
     const interval = pasteLayerInterval(p, id, source.t_start_us + deltaUs)

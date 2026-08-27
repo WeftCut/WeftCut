@@ -25,6 +25,7 @@ export function validate(project: Project): void {
   // layer-addressed op derives its composition from the id), so the duplicate
   // check spans compositions.
   const seenLayers = new Set<Uuid>()
+  const seenMarkers = new Set<Uuid>()
   for (const c of Object.values(project.compositions)) {
     validateComposition(c)
     if (c !== root) validateLattice(c, root)
@@ -35,7 +36,7 @@ export function validate(project: Project): void {
     const layersHere = new Set<Uuid>()
     for (const track of c.tracks) validateTrack(project, c, track, authorized, seenLayers, layersHere)
     validateLinks(c, layersHere)
-    validateMarkers(c)
+    validateMarkers(c, seenMarkers)
   }
   validateCompositionRefs(project)
 }
@@ -105,10 +106,14 @@ function validateComposition(c: Composition): void {
 }
 
 /** Marker times are on the composition grid (`snapMarkerTimes` is the mutation
- *  side). Checked last so this rule never pre-empts an existing structural one. */
-function validateMarkers(c: Composition): void {
+ *  side). Checked last so this rule never pre-empts an existing structural one.
+ *  Ids are PROJECT-wide unique (`seenMarkers` spans compositions), for the same
+ *  reason layer ids are: update/remove derive the composition from the id. */
+function validateMarkers(c: Composition, seenMarkers: Set<Uuid>): void {
   const grid = frameGrid(c.fps)
   for (const m of c.markers) {
+    if (seenMarkers.has(m.id)) fail({ rule: 'DuplicateMarkerId', marker: m.id })
+    seenMarkers.add(m.id)
     if (!isCanonicalOnGrid(m.t_us, grid))
       fail({ rule: 'OffGridTime', entity: 'Marker', id: m.id, field: 't_us', t: m.t_us, fps: c.fps, snap_to: snapOnGrid(m.t_us, grid) })
     if (m.end_t_us !== null && m.end_t_us !== undefined && !isCanonicalOnGrid(m.end_t_us, grid))

@@ -4,7 +4,7 @@ import { blankProject, type Project, type MediaItem } from '../model'
 import { applyAddLayer } from './add'
 import { isCommandFailure } from '../errors'
 import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, mediaItemTemplate, applySetMediaDerivatives, applySetMediaWorkspacePaths, referencingLayers } from './media'
-import { root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
 function expectCmd(fn: () => void, code: string) {
@@ -170,5 +170,18 @@ describe('referencingLayers', () => {
     // Decoy: VideoClip referencing a different media id — must NOT appear in results
     applyAddLayer(p, gen, tA, videoClipParams('00000000-0000-0000-0000-0000000000bb', 0, 1_000_000), 13_000_000, 14_000_000)
     expect(referencingLayers(p, MID)).toEqual([v, a, img])
+  })
+})
+
+describe('separate_audio inside a Group', () => {
+  it("lifts the Group's audio onto a fresh lane inside the Group", () => {
+    const { p, idGen, groupId, innerTrackId } = groupedProject()
+    const a = applyAddLayer(p, idGen, innerTrackId, audioParams(MID, 0, 1_000_000), 0, 1_000_000)
+    const rootBefore = structuredClone(root(p))
+    const t = applySeparateAudio(p, idGen, a)
+    const g = group(p, groupId)
+    expect(g.tracks[0]).toMatchObject({ id: t, transient: true })
+    expect(g.tracks[0].layers.map((l) => l.id)).toEqual([a])
+    expect(root(p)).toEqual(rootBefore)
   })
 })

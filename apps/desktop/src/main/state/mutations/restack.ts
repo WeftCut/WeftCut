@@ -3,7 +3,7 @@ import type { Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { applyAddTrack } from './add'
-import { locateLayer, pruneEmptiedTrack, rootComposition } from './helpers'
+import { pruneEmptiedTrack, requireLayer } from './helpers'
 
 export type RestackPosition = 'above' | 'below'
 
@@ -11,7 +11,8 @@ export type RestackPosition = 'above' | 'below'
  *  order, so the op moves tracks, not indices within one: `position` puts the
  *  mover's track directly above/below the track the ANCHOR layer sits on,
  *  resolved here at apply time — anchors are layers because an index drifts
- *  between a caller's read and its write.
+ *  between a caller's read and its write. Both live in one composition: an
+ *  anchor in another is a destination there, and refused (CrossCompositionMove).
  *
  *  Smart degradation, owned by the model (not composed by callers): a mover
  *  that is its track's sole occupant carries the track itself — id, label,
@@ -32,24 +33,24 @@ export type RestackPosition = 'above' | 'below'
  *  records nothing and burns no op id (the move_track contract). The fresh
  *  track's id is minted only after every check, so a refusal burns no id. */
 export function applyRestackLayer(p: Project, idGen: IdGen, layerId: Uuid, anchorId: Uuid, position: RestackPosition): Uuid | null {
-  const c = rootComposition(p)
   if (position !== 'above' && position !== 'below')
     throw new CommandFailure({ error: 'InvalidArgument', field: 'position', detail: `expected 'above' | 'below', got ${String(position)}` })
-  const moverLoc = locateLayer(p, layerId)
-  if (!moverLoc) throw new CommandFailure({ error: 'LayerNotFound', layer: layerId })
-  const anchorLoc = locateLayer(p, anchorId)
-  if (!anchorLoc) throw new CommandFailure({ error: 'LayerNotFound', layer: anchorId })
+  const mover = requireLayer(p, layerId)
+  const anchor = requireLayer(p, anchorId)
   if (layerId === anchorId)
     throw new CommandFailure({ error: 'InvalidArgument', field: 'anchor', detail: 'anchor must be a layer other than the one being restacked' })
+  if (mover.comp !== anchor.comp)
+    throw new CommandFailure({ error: 'CrossCompositionMove', layer: layerId, from: mover.comp.id, to: anchor.comp.id })
   // Audio composites by role, not by stacking (ADR 0023): z is meaningless for
   // it, so it neither moves nor anchors.
-  if (c.tracks[moverLoc[0]].layers[moverLoc[1]].params.kind === 'Audio')
+  if (mover.layer.params.kind === 'Audio')
     throw new CommandFailure({ error: 'WrongLayerKind', layer: layerId, expected: 'visual' })
-  if (c.tracks[anchorLoc[0]].layers[anchorLoc[1]].params.kind === 'Audio')
+  if (anchor.layer.params.kind === 'Audio')
     throw new CommandFailure({ error: 'WrongLayerKind', layer: anchorId, expected: 'visual' })
 
-  const [mi] = moverLoc
-  const [ai] = anchorLoc
+  const c = mover.comp
+  const mi = mover.trackIndex
+  const ai = anchor.trackIndex
   // Already directly at the requested side of the anchor's track — in z terms
   // the layer already sits where the caller asked, whichever branch would have
   // carried it there, so nothing happens (and a shared track is not split
@@ -70,7 +71,7 @@ export function applyRestackLayer(p: Project, idGen: IdGen, layerId: Uuid, ancho
   // derive its name from position (ADR 0042); the source is re-found by ID
   // because the insertion just shifted indices.
   const srcTrackId = src.id
-  const destTrackId = applyAddTrack(p, idGen, null, position === 'above' ? ai + 1 : ai)
+  const destTrackId = applyAddTrack(p, idGen, null, position === 'above' ? ai + 1 : ai, c.id)
   const dest = c.tracks.find((t) => t.id === destTrackId)! // just inserted
   const from = c.tracks.find((t) => t.id === srcTrackId)!
   const li = from.layers.findIndex((l) => l.id === layerId)

@@ -25,6 +25,7 @@ const URI_COMPOSITION: &str = "project://composition";
 const URI_MEDIA: &str = "project://media";
 const URI_TRACKS: &str = "project://tracks";
 const URI_MARKERS: &str = "project://markers";
+const URI_COMPOSITIONS: &str = "project://compositions";
 const URI_HISTORY: &str = "project://history";
 const URI_COMPILED: &str = "project://compiled";
 const URI_METER: &str = "composition://meter";
@@ -441,6 +442,11 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
         uri: URI_MARKERS,
         name: "Markers",
         description: "Timeline markers, sorted by t_us.",
+    },
+    ResourceDescriptor {
+        uri: URI_COMPOSITIONS,
+        name: "Compositions",
+        description: "Every composition — the root and each Group — with id, label, duration_us and ref_count (how many CompositionRef layers place it). project://tracks?composition=<id> and project://markers?composition=<id> read one of them; unscoped they read the root.",
     },
     ResourceDescriptor {
         uri: URI_HISTORY,

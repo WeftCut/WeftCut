@@ -4,7 +4,7 @@
 import type { IdGen } from '../../ids'
 import { seededGen } from '../../ids'
 import { blankProject, defaultCompositionSettings, newComposition, rootComposition, type Composition, type Project, type Uuid } from '../../model'
-import { applyAddLayer, applyAddTrack, defaultTransform } from '../../mutations/add'
+import { applyAddLayer, applyAddTrack, colorParams, defaultTransform } from '../../mutations/add'
 import { applyDurationAutofit } from '../../mutations/helpers'
 
 /** `rootComposition`, short: tests write `root(p).tracks[0]`. */
@@ -30,8 +30,9 @@ export function mkComposition(idGen: IdGen, over: Partial<Composition> = {}): Co
   return { ...newComposition(id, idGen, null, defaultCompositionSettings()), ...over, id: over.id ?? id }
 }
 
-/** A view of `p` whose root is `c` — the mutations address the root, so this is
- *  how a test drives one (`applyAddLayer(asRoot(p, g), …)`) against a Group.
+/** A view of `p` that CONTAINS `c` (and has it as root, which no mutation reads
+ *  — every layer-addressed op derives its composition from the layer). It is how
+ *  `withGroup`'s `build` fills a Group before the Group is inserted into `p`.
  *  `c` is shared, not copied: the mutation lands in the caller's object. */
 export function asRoot(p: Project, c: Composition): Project {
   return { ...p, compositions: { ...p.compositions, [c.id]: c }, root_id: c.id }
@@ -58,3 +59,23 @@ export function withGroup(p: Project, idGen: IdGen, build?: (g: Composition, vie
   }, 0, srcOut)
   return { p: next, groupId: g.id, refLayerId }
 }
+
+/** `blankProject` + one Group holding one Color layer `[0, 1 s)` on the Group's
+ *  A roll — the smallest project where "the layer's composition" and "the root"
+ *  differ, which is what every scope test needs: run an op on `innerId`, then
+ *  assert `group(p)` changed and `root(p)` did not. `idGen` continues past the
+ *  fixture's ids so the test can keep minting on the same stream. */
+export function groupedProject(idGen: IdGen = seededGen(), name = 'test'): {
+  p: Project; idGen: IdGen; groupId: Uuid; refLayerId: Uuid; innerId: Uuid; innerTrackId: Uuid
+} {
+  let innerId = ''
+  let innerTrackId = ''
+  const { p, groupId, refLayerId } = withGroup(blankProject(idGen, name), idGen, (g, view) => {
+    innerTrackId = g.tracks[0].id
+    innerId = applyAddLayer(view, idGen, innerTrackId, colorParams({ r: 9, g: 9, b: 9, a: 255 }, 16, 9), 0, 1_000_000)
+  })
+  return { p, idGen, groupId, refLayerId, innerId, innerTrackId }
+}
+
+/** `p.compositions[id]`, short: tests write `group(p, groupId).tracks[0]`. */
+export function group(p: Project, id: Uuid): Composition { return p.compositions[id] }

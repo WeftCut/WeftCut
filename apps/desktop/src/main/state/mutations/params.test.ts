@@ -12,7 +12,7 @@ import { applyUpdateLayerParams, applyUpdateLayerParamTrack, resolveAnimatedF64,
 import { animatableParams } from '../../../renderer/keyframe/descriptors'
 import { MotifCatalog } from '../../../shared/motifs/catalog'
 import { validate } from '../validate'
-import { root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
 function expectCmd(fn: () => void, code: string) {
@@ -508,5 +508,15 @@ describe('authored precision at the write seam', () => {
     // Ordering, made observable: the insert writes to the project, so quantizing
     // after it would leave a rejected command having created a param slot.
     expect(layerOf(p, id).effects[0].params).toEqual({})
+  })
+})
+
+describe('param updates inside a Group', () => {
+  it('applyUpdateLayerParams finds the layer in its Group; the root is untouched', () => {
+    const { p, groupId, innerId } = groupedProject()
+    const rootBefore = structuredClone(root(p))
+    applyUpdateLayerParams(p, innerId, { kind: 'Color', width: 640 }, new MotifCatalog())
+    expect((group(p, groupId).tracks[0].layers[0].params as Extract<Layer['params'], { kind: 'Color' }>).width).toBe(640)
+    expect(root(p)).toEqual(rootBefore)
   })
 })

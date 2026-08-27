@@ -120,6 +120,8 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
   TrackNotFound: { tier: "generic" },
   LayerNotFound: { tier: "generic" },
   CompositionNotFound: { tier: "generic" },
+  CrossCompositionMove: { tier: "generic" },
+  CrossCompositionSet: { tier: "generic" },
   WrongLayerKind: { tier: "generic" },
   MarkerNotFound: { tier: "generic" },
   TransitionNotFound: { tier: "generic" },
@@ -262,6 +264,7 @@ const VALIDATION_COPY: { [R in ValidationRule]: Spec<ValidationOf<R>> } = {
   CompositionIdMismatch: { tier: "generic" },
   CompositionMissing: { tier: "generic" },
   RootReferenced: { tier: "generic" },
+  DuplicateMarkerId: { tier: "generic" },
   CompositionCycle: { tier: "generic" },
   CompositionLatticeMismatch: { tier: "generic" },
 };

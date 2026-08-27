@@ -4,7 +4,7 @@ import { seededGen } from '../ids'
 import { blankProject } from '../model'
 import { applyAddLayer, applyAddMarker, applyAddTrack, colorParams } from './add'
 import { isCommandFailure } from '../errors'
-import { root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 describe('additive mutations', () => {
   it('applyAddLayer snaps both edges, inserts t-start-sorted, autofits, returns id', () => {
@@ -50,5 +50,33 @@ describe('additive mutations', () => {
     catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('InvalidArgument') }
     expect(root(p).markers).toEqual([])
     expect(applyAddTrack(p, g, 'L')).toBe('00000000-0000-0000-0000-000000000005') // no id consumed
+  })
+})
+
+// The creation ops are the ONLY ops that take a scope (ADR 0052): a track names
+// its composition, and `composition_id` picks where a lane / marker is born.
+describe('additive mutations inside a Group', () => {
+  const RED = { r: 255, g: 0, b: 0, a: 255 }
+  const BLUE = { r: 0, g: 128, b: 255, a: 255 }
+  it('applyAddLayer onto a Group track lands in the Group and autofits ONLY the Group', () => {
+    const { p, idGen, groupId, innerTrackId } = groupedProject()
+    const rootBefore = structuredClone(root(p))
+    const id = applyAddLayer(p, idGen, innerTrackId, colorParams(RED, 1, 1), 1_000_000, 3_000_000)
+    expect(group(p, groupId).tracks[0].layers.map((l) => l.id)).toContain(id)
+    expect(group(p, groupId).duration_us).toBe(3_000_000)
+    expect(root(p)).toEqual(rootBefore)
+  })
+  it('applyAddTrack / applyAddMarker take composition_id (root by default; unknown → CompositionNotFound)', () => {
+    const { p, idGen, groupId } = groupedProject()
+    const t = applyAddTrack(p, idGen, null, undefined, groupId)
+    expect(group(p, groupId).tracks.at(-1)!.id).toBe(t)
+    expect(root(p).tracks.some((x) => x.id === t)).toBe(false)
+    const m = applyAddMarker(p, idGen, 500_000, null, 'm', BLUE, groupId)
+    expect(group(p, groupId).markers.map((x) => x.id)).toEqual([m])
+    expect(root(p).markers).toEqual([])
+    const rootTrack = applyAddTrack(p, idGen, null)
+    expect(root(p).tracks.at(-1)!.id).toBe(rootTrack)
+    try { applyAddTrack(p, idGen, null, undefined, 'ghost'); throw new Error('x') }
+    catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('CompositionNotFound') }
   })
 })

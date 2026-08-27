@@ -5,7 +5,7 @@ import { blankProject, type Layer, type LayerParams, type Project } from '../mod
 import { applySplitLayer } from './split'
 import { applyLinksCreate } from './links'
 import { isCommandFailure } from '../errors'
-import { root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 function color(id: string, t0: number, t1: number): Layer {
   const params: LayerParams = { kind: 'Color', color: { mode: 'Static', value: { r: 0, g: 0, b: 0, a: 255 } }, width: 1, height: 1 }
@@ -94,5 +94,24 @@ describe('applySplitLayer', () => {
     expect(left.kind === 'Color' && (left.color.mode === 'Keyframed' ? left.color.value.length : -1)).toBe(2)
     // RIGHT keeps t > 400_000 → none → collapses to Static at the LAST keyframe value (r:20).
     expect(right.kind === 'Color' && JSON.stringify(right.color)).toBe(JSON.stringify({ mode: 'Static', value: { r: 20, g: 0, b: 0, a: 255 } }))
+  })
+})
+
+describe('applySplitLayer inside a Group, and of the Group layer itself', () => {
+  it("splits the Group's layer in place; the root is untouched", () => {
+    const { p, idGen, groupId, innerId } = groupedProject()
+    const rootBefore = structuredClone(root(p))
+    const r = applySplitLayer(p, idGen, innerId, 400_000, false)
+    expect(group(p, groupId).tracks[0].layers.map((l) => l.id)).toEqual([r.left, r.right])
+    expect(root(p)).toEqual(rootBefore)
+  })
+  it("splitting a CompositionRef divides its source window like a clip's (ADR 0052 §4)", () => {
+    const { p, idGen, refLayerId } = groupedProject() // ref: t [0, 1 s), src [0, 1 s)
+    const r = applySplitLayer(p, idGen, refLayerId, 400_000, false)
+    const [left, right] = root(p).tracks[2].layers.map((l) => l.params as Extract<LayerParams, { kind: 'CompositionRef' }>)
+    expect([left.src_in_us, left.src_out_us]).toEqual([0, 400_000])
+    expect([right.src_in_us, right.src_out_us]).toEqual([400_000, 1_000_000])
+    expect(root(p).tracks[2].layers.map((l) => [l.t_start_us, l.t_end_us])).toEqual([[0, 400_000], [400_000, 1_000_000]])
+    expect(r.left).toBe(refLayerId)
   })
 })

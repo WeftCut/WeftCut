@@ -3,8 +3,9 @@ import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
 import { blankProject, type Layer, type LayerParams, type Project } from '../model'
 import { applySetLayersEnabled, applyUpdateLayer } from './update'
+import { locateLayer } from './helpers'
 import { isCommandFailure } from '../errors'
-import { root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 function color(id: string, t0: number, t1: number): Layer {
   const params: LayerParams = { kind: 'Color', color: { mode: 'Static', value: { r: 0, g: 0, b: 0, a: 255 } }, width: 1, height: 1 }
@@ -79,5 +80,24 @@ describe('applySetLayersEnabled', () => {
     const before = structuredClone(p)
     expectCmd(() => applySetLayersEnabled(p, ['a', 'ghost'], false), 'LayerNotFound')
     expect(p).toEqual(before)
+  })
+})
+
+describe('envelope updates inside a Group', () => {
+  it("applyUpdateLayer edits the Group's layer; the root is untouched", () => {
+    const { p, groupId, innerId } = groupedProject()
+    const rootBefore = structuredClone(root(p))
+    applyUpdateLayer(p, innerId, { label: 'inner', enabled: false })
+    const l = group(p, groupId).tracks[0].layers[0]
+    expect([l.label, l.enabled]).toEqual(['inner', false])
+    expect(root(p)).toEqual(rootBefore)
+  })
+  it('applySetLayersEnabled refuses a set spanning two compositions, touching nothing', () => {
+    const { p, innerId, refLayerId } = groupedProject()
+    const before = structuredClone(p)
+    expectCmd(() => applySetLayersEnabled(p, [refLayerId, innerId], false), 'CrossCompositionSet')
+    expect(p).toEqual(before)
+    applySetLayersEnabled(p, [innerId], false)
+    expect(locateLayer(p, innerId)!.layer.enabled).toBe(false)
   })
 })
