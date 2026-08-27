@@ -3,7 +3,13 @@
 //!
 //! Time discipline: everything converts to the 48 kHz frame domain ONCE via
 //! `us_to_frame`, then all placement/trim math is integer frames — the audio
-//! analog of the video `frameGrid` rule.
+//! analog of the video `frameGrid` rule. Group placement (offset sums and
+//! window intersections in `for_each_audio_layer`) is that one µs step.
+//!
+//! Audio inside a Group (`LayerParams::CompositionRef`) is reached by
+//! recursing with a time offset, never by flattening state; role buses stay
+//! project-global (ADR 0023). Spec: `.scratch/links-and-groups/spec.md`
+//! § "Time and audio"; shape: ADR 0052 §4.
 
 use std::path::PathBuf;
 
@@ -13,6 +19,7 @@ use uuid::Uuid;
 use crate::audio::conform_reader::ConformReader;
 use crate::audio::envelope::{pan_coeffs_at, sample_gain, sample_pan, Envelope};
 use crate::state::audio_role::RoleMixSettings;
+use crate::state::ids::CompositionId;
 use crate::state::layer::{AudioParams, Layer, LayerParams};
 use crate::state::Project;
 
@@ -29,11 +36,21 @@ pub fn us_to_frame(us: i64) -> i64 {
 pub struct MixLayer {
     pub label: String,
     pub conform_path: PathBuf,
-    /// Layer start on the composition frame grid.
+    /// First frame that sounds, on the root frame grid — the layer's own
+    /// start shifted into root time and clipped to every enclosing Group
+    /// window and the export window.
     pub start_frame: i64,
-    /// Source in/out on the conform frame grid.
+    /// Source in/out on the conform frame grid, already advanced/retreated
+    /// by whatever the clipping cut off, so `[src_in, src_out)` is exactly
+    /// what the mixer reads.
     pub src_in_frame: i64,
     pub src_out_frame: i64,
+    /// How far into the layer's own span `start_frame` sits (0 unless a head
+    /// was clipped). `gain`/`pan` are sampled over the UNCLIPPED span — a
+    /// fade belongs to the layer, and a Group window that cuts into it cuts
+    /// the fade, as trimming a nest does in AE/Premiere — so the mixer
+    /// evaluates them at `local + head_frame`.
+    pub head_frame: i64,
     /// Linear gain (gain_db × fades × role gain), layer-local time domain.
     pub gain: Envelope,
     pub pan: Envelope,
@@ -97,48 +114,129 @@ pub fn role_gain_linear(role: &RoleMixSettings) -> f32 {
     weftcut_eval::role_gain_linear(role.gain_db)
 }
 
-/// Every audible audio layer in track order: whole-track disable gates
-/// (`track.enabled`); audio mute/solo gating lives on ROLES, not tracks
-/// (docs/audio.md) — role mute, the role solo set (mute wins over solo);
-/// plus layer gates (enabled, unlocked, unmuted) and the half-open window
-/// overlap. Shared by `plan_for_project` and `conform_waiting_media` so the
-/// export-readiness gate and the mix plan can never disagree on selection.
-fn audible_audio_layers<'a>(
+/// Deepest Group nesting the walk follows (root = 0). TS validation rejects
+/// composition cycles, but Rust never trusts data it did not validate: a
+/// corrupt file with a self-referencing Group stops here silently instead of
+/// recursing without bound. Far above any real nesting.
+const MAX_COMPOSITION_DEPTH: usize = 32;
+
+/// An `Audio` layer the walk reached, placed in root time.
+struct PlacedAudio<'a> {
+    layer: &'a Layer,
+    params: &'a AudioParams,
+    /// Root time the layer starts sounding: its own `t_start` shifted by the
+    /// accumulated offset, then clipped to every enclosing window.
+    start_us: i64,
+    /// What that clipping cut off the layer's head and tail (each ≥ 0): the
+    /// source read and the envelopes begin `head_us` into the layer, and the
+    /// source read ends `tail_us` before its own out point.
+    head_us: i64,
+    tail_us: i64,
+}
+
+/// Visit every enabled `Audio` layer reachable from `comp_id`, recursing
+/// through `CompositionRef` layers, in depth-first track order.
+///
+/// Time frames: `offset_us` is where the composition's own `t = 0` sits in
+/// ROOT time, so a layer at composition time `t` sounds at root time
+/// `t + offset_us`; `window` is in ROOT time, half-open. Entering a ref
+/// layer maps its child by `offset + ref.t_start − ref.src_in` (the spec's
+/// parent-time `t ↔ t − t_start + src_in`, inverted) and narrows the window
+/// to the ref's own root-time placement `[offset + ref.t_start, offset +
+/// ref.t_end)`. Both accumulate, so nothing below needs to know its depth,
+/// and `f` receives a placement already clipped to the window.
+///
+/// Gates here are structural only — `track.enabled` and `layer.enabled` on
+/// every layer, Audio or ref, and the window. Roles, mute and lock are the
+/// caller's (`audible_audio_layers`). A ref whose composition does not
+/// resolve contributes nothing: validation rejects it, Rust never panics on
+/// data.
+fn for_each_audio_layer<'a>(
     project: &'a Project,
-    w_start_us: i64,
-    w_end_us: i64,
-) -> Vec<(&'a Layer, &'a AudioParams)> {
-    let any_solo = any_role_solo(project.audio_roles.values());
-    let mut out = Vec::new();
-    for track in project.root().tracks.iter() {
-        // Whole-track disable still gates (rule 1).
+    comp_id: &CompositionId,
+    offset_us: i64,
+    window: (i64, i64),
+    depth: usize,
+    f: &mut dyn FnMut(PlacedAudio<'a>),
+) {
+    if depth > MAX_COMPOSITION_DEPTH || window.0 >= window.1 {
+        return;
+    }
+    let Some(comp) = project.composition(comp_id) else {
+        return;
+    };
+    for track in comp.tracks.iter() {
         if !track.enabled {
             continue;
         }
         for layer in track.layers.iter() {
-            if !layer.enabled || layer.locked {
+            if !layer.enabled {
                 continue;
             }
-            let LayerParams::Audio(p) = &layer.params else {
-                continue;
-            };
-            if p.mute {
-                continue;
-            }
-            let role = project.role_mix(p.role);
-            if !role_audible(&role, any_solo) {
-                continue;
-            }
-            // Window gate (half-open [w_start, w_end)): a layer the mix will
-            // never read must neither require a conform cache nor occupy a
-            // reader slot — otherwise a range export hard-errors
-            // (ConformMissing) on clips entirely outside the range.
-            if layer.t_end_us <= w_start_us || layer.t_start_us >= w_end_us {
+            let placed_start = offset_us + layer.t_start_us;
+            let placed_end = offset_us + layer.t_end_us;
+            let start_us = placed_start.max(window.0);
+            let end_us = placed_end.min(window.1);
+            // Half-open overlap gate: a layer the mix will never read must
+            // neither require a conform cache nor occupy a reader slot —
+            // otherwise a range export hard-errors (ConformMissing) on clips
+            // entirely outside the range.
+            if start_us >= end_us {
                 continue;
             }
-            out.push((layer, p));
+            match &layer.params {
+                LayerParams::Audio(p) => f(PlacedAudio {
+                    layer,
+                    params: p,
+                    start_us,
+                    head_us: start_us - placed_start,
+                    tail_us: placed_end - end_us,
+                }),
+                LayerParams::CompositionRef(r) => for_each_audio_layer(
+                    project,
+                    &r.composition,
+                    placed_start - r.src_in_us,
+                    (start_us, end_us),
+                    depth + 1,
+                    f,
+                ),
+                _ => {}
+            }
         }
     }
+}
+
+/// Every audible audio layer in depth-first track order, placed in root
+/// time. Whole-track and layer disable plus the window are the walk's
+/// (`for_each_audio_layer`); audio mute/solo gating lives on ROLES, not
+/// tracks (docs/audio.md) — role mute, the role solo set (mute wins over
+/// solo) — plus the layer's own lock and mute. Shared by `plan_for_project`
+/// and `conform_waiting_media` so the export-readiness gate and the mix plan
+/// can never disagree on selection.
+fn audible_audio_layers<'a>(
+    project: &'a Project,
+    w_start_us: i64,
+    w_end_us: i64,
+) -> Vec<PlacedAudio<'a>> {
+    let any_solo = any_role_solo(project.audio_roles.values());
+    let mut out = Vec::new();
+    for_each_audio_layer(
+        project,
+        &project.root_id,
+        0,
+        (w_start_us, w_end_us),
+        0,
+        &mut |placed| {
+            if placed.layer.locked || placed.params.mute {
+                return;
+            }
+            let role = project.role_mix(placed.params.role);
+            if !role_audible(&role, any_solo) {
+                return;
+            }
+            out.push(placed);
+        },
+    );
     out
 }
 
@@ -150,7 +248,8 @@ pub fn plan_for_project(
 ) -> Result<MixPlan, PlanError> {
     let (w_start_us, w_end_us) = window_us.unwrap_or((0, project.root().duration_us));
     let mut layers = Vec::new();
-    for (layer, p) in audible_audio_layers(project, w_start_us, w_end_us) {
+    for placed in audible_audio_layers(project, w_start_us, w_end_us) {
+        let p = placed.params;
         let media = project
             .media_pool
             .get(&p.media)
@@ -173,12 +272,14 @@ pub fn plan_for_project(
             span_us,
         );
         gain.scale(role_gain);
+        let start_frame = us_to_frame(placed.start_us);
         layers.push(MixLayer {
             label,
             conform_path,
-            start_frame: us_to_frame(layer.t_start_us),
-            src_in_frame: us_to_frame(p.src_in_us),
-            src_out_frame: us_to_frame(p.src_out_us),
+            start_frame,
+            src_in_frame: us_to_frame(p.src_in_us + placed.head_us),
+            src_out_frame: us_to_frame(p.src_out_us - placed.tail_us),
+            head_frame: start_frame - us_to_frame(placed.start_us - placed.head_us),
             gain,
             pan: sample_pan(&p.pan, span_us),
         });
@@ -200,7 +301,8 @@ pub fn conform_waiting_media(project: &Project, window_us: Option<(i64, i64)>) -
     let (w_start_us, w_end_us) = window_us.unwrap_or((0, project.root().duration_us));
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
-    for (_, p) in audible_audio_layers(project, w_start_us, w_end_us) {
+    for placed in audible_audio_layers(project, w_start_us, w_end_us) {
+        let p = placed.params;
         if !seen.insert(p.media) {
             continue;
         }
@@ -245,7 +347,7 @@ pub fn mix_block(
             if comp_f < layer.start_frame || comp_f >= layer_end {
                 continue;
             }
-            let local_f = comp_f - layer.start_frame;
+            let local_f = comp_f - layer.start_frame + layer.head_frame;
             let local_us = local_f * 1_000_000 / MIX_SAMPLE_RATE;
             let g = layer.gain.eval(local_us);
             let [a, b, c, d] = pan_coeffs_at(&layer.pan, ch as i32, local_us);
@@ -269,11 +371,13 @@ mod tests {
     use crate::audio::conform_reader::{write_vconf, ConformReader};
     use crate::state::animated::Animated;
     use crate::state::audio_role::{AudioRole, RoleMixSettings};
+    use crate::state::composition::Composition;
     use crate::state::decode_route::DecodeRoute;
-    use crate::state::layer::{AudioParams, Layer, LayerParams};
+    use crate::state::layer::{AudioParams, CompositionRefParams, Layer, LayerParams};
     use crate::state::media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata};
     use crate::state::project::{Project, ProjectMetadata, ProjectSettings};
     use crate::state::track::Track;
+    use crate::state::transform::{BlendMode, Transform};
     use tempfile::TempDir;
 
     fn flat_mono_conform(dir: &std::path::Path, name: &str, value: f32, frames: usize) -> PathBuf {
@@ -289,6 +393,7 @@ mod tests {
             start_frame,
             src_in_frame: 0,
             src_out_frame: n_frames,
+            head_frame: 0,
             gain: Envelope::constant(1.0, n_frames * 1_000_000 / MIX_SAMPLE_RATE),
             pan: Envelope::constant(0.0, n_frames * 1_000_000 / MIX_SAMPLE_RATE),
         }
@@ -361,139 +466,189 @@ mod tests {
 
     // ── plan_for_project mute/solo helpers ──────────────────────────────────
 
+    /// A 1 s mono audio media item whose conform cache is `conform` — a real
+    /// non-empty file so `cached_ok` passes.
+    fn audio_media(id: Uuid, conform: PathBuf) -> MediaItem {
+        MediaItem {
+            id,
+            label: None,
+            path_abs: conform.clone(),
+            path_rel: None,
+            kind: MediaKind::Audio,
+            metadata: MediaMetadata {
+                duration_us: Some(1_000_000),
+                video: None,
+                audio: Some(AudioStreamMeta {
+                    sample_rate: 48_000,
+                    channels: 1,
+                    codec: "pcm_f32le".into(),
+                    start_pts_us: None,
+                }),
+                ..Default::default()
+            },
+            decode_route: DecodeRoute::Bypass,
+            waveform_path: None,
+            conform_path: Some(conform),
+            thumbnails_dir: None,
+            file_hash_blake3: "0000000000000000".into(),
+            file_size: 1,
+            file_mtime: 0,
+            imported_at: chrono::Utc::now(),
+        }
+    }
+
+    fn base_layer(t_start_us: i64, t_end_us: i64, params: LayerParams) -> Layer {
+        Layer {
+            id: Uuid::new_v4(),
+            label: None,
+            t_start_us,
+            t_end_us,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            params,
+            effects: vec![],
+        }
+    }
+
+    fn audio_layer(
+        media: Uuid,
+        role: AudioRole,
+        t_start_us: i64,
+        t_end_us: i64,
+        src_in_us: i64,
+        src_out_us: i64,
+    ) -> Layer {
+        base_layer(
+            t_start_us,
+            t_end_us,
+            LayerParams::Audio(AudioParams {
+                media,
+                src_in_us,
+                src_out_us,
+                gain_db: Animated::Static(0.0),
+                pan: Animated::Static(0.0),
+                fade_in_us: 0,
+                fade_out_us: 0,
+                mute: false,
+                role,
+            }),
+        )
+    }
+
+    /// A Group layer: `composition` windowed by `[src_in_us, src_out_us)`.
+    fn ref_layer(
+        composition: CompositionId,
+        t_start_us: i64,
+        t_end_us: i64,
+        src_in_us: i64,
+        src_out_us: i64,
+    ) -> Layer {
+        base_layer(
+            t_start_us,
+            t_end_us,
+            LayerParams::CompositionRef(CompositionRefParams {
+                composition,
+                src_in_us,
+                src_out_us,
+                transform: Transform::default(),
+                opacity: Animated::Static(1.0),
+                blend_mode: BlendMode::Normal,
+            }),
+        )
+    }
+
+    fn track_of(layers: Vec<Layer>) -> Track {
+        Track {
+            id: Uuid::new_v4(),
+            label: None,
+            enabled: true,
+            locked: false,
+            muted: false,
+            solo: false,
+            removable: true,
+            role: None,
+            transient: false,
+            height_px: 64,
+            layers: layers.into_iter().collect(),
+        }
+    }
+
+    /// Real projects keep `duration_us ≥ max(layer.t_end_us)` (the ADR 0005
+    /// autofit guard holds even when pinned); the window gate relies on it
+    /// for the `None` ⇒ whole-project window.
+    fn composition_of(id: CompositionId, tracks: Vec<Track>, duration_us: i64) -> Composition {
+        let mut c = Composition::from_skeleton(id, None, tracks.into_iter().collect());
+        c.duration_us = duration_us;
+        c
+    }
+
+    fn project_of(
+        root_id: CompositionId,
+        compositions: Vec<Composition>,
+        media: Vec<MediaItem>,
+    ) -> Project {
+        let now = chrono::Utc::now();
+        Project {
+            schema_version: 1,
+            project_id: Uuid::new_v4(),
+            metadata: ProjectMetadata {
+                name: "mix test".into(),
+                created_at: now,
+                modified_at: now,
+                description: None,
+            },
+            compositions: compositions.into_iter().map(|c| (c.id, c)).collect(),
+            root_id,
+            media_pool: media.into_iter().map(|m| (m.id, m)).collect(),
+            audio_roles: imbl::HashMap::new(),
+            settings: ProjectSettings::default(),
+        }
+    }
+
     /// Build a minimal `Project` with two Audio tracks, one layer each.
     /// Both conform files are written into `dir`. The returned `Project`
     /// is valid for `plan_for_project` — media pool entries point at real
     /// non-zero files so `cached_ok` passes.
     fn two_audio_tracks_project(dir: &std::path::Path) -> Project {
-        let now = chrono::Utc::now();
-
-        // Conform files for each track
         let conform_a = dir.join("a.conform");
         let conform_b = dir.join("b.conform");
         write_vconf(&conform_a, 1, &vec![0.5f32; 48_000]);
         write_vconf(&conform_b, 1, &vec![0.3f32; 48_000]);
 
-        let media_id_a = uuid::Uuid::new_v4();
-        let media_id_b = uuid::Uuid::new_v4();
-
-        let make_media = |id: uuid::Uuid, conform: std::path::PathBuf| -> MediaItem {
-            MediaItem {
-                id,
-                label: None,
-                path_abs: conform.clone(),
-                path_rel: None,
-                kind: MediaKind::Audio,
-                metadata: MediaMetadata {
-                    duration_us: Some(1_000_000),
-                    video: None,
-                    audio: Some(AudioStreamMeta {
-                        sample_rate: 48_000,
-                        channels: 1,
-                        codec: "pcm_f32le".into(),
-                        start_pts_us: None,
-                    }),
-                    ..Default::default()
-                },
-                decode_route: DecodeRoute::Bypass,
-                waveform_path: None,
-                conform_path: Some(conform),
-                thumbnails_dir: None,
-                file_hash_blake3: "0000000000000000".into(),
-                file_size: 1,
-                file_mtime: 0,
-                imported_at: now,
-            }
-        };
-
-        let make_audio_layer =
-            |media_id: uuid::Uuid, role: crate::state::audio_role::AudioRole| -> Layer {
-                Layer {
-                    id: uuid::Uuid::new_v4(),
-                    label: None,
-                    t_start_us: 0,
-                    t_end_us: 1_000_000,
-                    enabled: true,
-                    locked: false,
-                    metadata: imbl::HashMap::new(),
-                    params: LayerParams::Audio(AudioParams {
-                        media: media_id,
-                        src_in_us: 0,
-                        src_out_us: 1_000_000,
-                        gain_db: Animated::Static(0.0),
-                        pan: Animated::Static(0.0),
-                        fade_in_us: 0,
-                        fade_out_us: 0,
-                        mute: false,
-                        role,
-                    }),
-                    effects: vec![],
-                }
-            };
-
-        let track_a = Track {
-            id: uuid::Uuid::new_v4(),
-            label: Some("A".into()),
-            enabled: true,
-            locked: false,
-            muted: false,
-            solo: false,
-            removable: true,
-            role: None,
-            transient: false,
-            height_px: 64,
-            layers: imbl::vector![make_audio_layer(
-                media_id_a,
-                crate::state::audio_role::AudioRole::Dialogue
-            )],
-        };
-        let track_b = Track {
-            id: uuid::Uuid::new_v4(),
-            label: Some("B".into()),
-            enabled: true,
-            locked: false,
-            muted: false,
-            solo: false,
-            removable: true,
-            role: None,
-            transient: false,
-            height_px: 64,
-            layers: imbl::vector![make_audio_layer(
-                media_id_b,
-                crate::state::audio_role::AudioRole::Music
-            )],
-        };
-
-        let mut media_pool = imbl::HashMap::new();
-        media_pool.insert(media_id_a, make_media(media_id_a, conform_a));
-        media_pool.insert(media_id_b, make_media(media_id_b, conform_b));
-
-        // Real projects keep duration_us ≥ max(layer.t_end_us) (the ADR 0005
-        // autofit guard holds even when pinned); the window gate relies on it
-        // for the `None` ⇒ whole-project window.
-        let root_id = uuid::Uuid::new_v4();
-        let mut root = crate::state::composition::Composition::from_skeleton(
+        let media_id_a = Uuid::new_v4();
+        let media_id_b = Uuid::new_v4();
+        let root_id = Uuid::new_v4();
+        let root = composition_of(
             root_id,
-            None,
-            imbl::vector![track_a, track_b],
+            vec![
+                track_of(vec![audio_layer(
+                    media_id_a,
+                    AudioRole::Dialogue,
+                    0,
+                    1_000_000,
+                    0,
+                    1_000_000,
+                )]),
+                track_of(vec![audio_layer(
+                    media_id_b,
+                    AudioRole::Music,
+                    0,
+                    1_000_000,
+                    0,
+                    1_000_000,
+                )]),
+            ],
+            10_000_000,
         );
-        root.duration_us = 10_000_000;
-
-        Project {
-            schema_version: 1,
-            project_id: uuid::Uuid::new_v4(),
-            metadata: ProjectMetadata {
-                name: "mute/solo test".into(),
-                created_at: now,
-                modified_at: now,
-                description: None,
-            },
-            compositions: imbl::OrdMap::unit(root_id, root),
+        project_of(
             root_id,
-            media_pool,
-            audio_roles: imbl::HashMap::new(),
-            settings: ProjectSettings::default(),
-        }
+            vec![root],
+            vec![
+                audio_media(media_id_a, conform_a),
+                audio_media(media_id_b, conform_b),
+            ],
+        )
     }
 
     fn set_role(p: &mut Project, role: AudioRole, s: RoleMixSettings) {
@@ -740,6 +895,354 @@ mod tests {
         let plan = plan_for_project(&project, Some((1_500_000, 2_500_000))).unwrap();
         assert_eq!(plan.layers.len(), 1, "partial overlap plans the layer");
         assert_eq!(plan.layers[0].conform_path, tmp.path().join("b.conform"));
+    }
+
+    // ── Groups: the plan reaches audio through CompositionRef ───────────────
+
+    const S: i64 = 1_000_000;
+    const FRAMES_PER_S: i64 = MIX_SAMPLE_RATE;
+
+    /// 1 s mono conform whose sample value IS its frame index / 48 000, so a
+    /// misread source position shows up in the output value.
+    fn ramp_conform(dir: &std::path::Path) -> PathBuf {
+        let p = dir.join("ramp.conform");
+        let ramp: Vec<f32> = (0..FRAMES_PER_S)
+            .map(|f| f as f32 / FRAMES_PER_S as f32)
+            .collect();
+        write_vconf(&p, 1, &ramp);
+        p
+    }
+
+    /// Mix the plan's whole window in one block; stereo interleaved.
+    fn mix_all(plan: &MixPlan) -> Vec<f32> {
+        let mut readers: Vec<ConformReader> = plan
+            .layers
+            .iter()
+            .map(|l| ConformReader::open(&l.conform_path).unwrap())
+            .collect();
+        let frames = (plan.window_end_frame - plan.window_start_frame) as usize;
+        let mut out = vec![0f32; frames * 2];
+        mix_block(plan, &mut readers, plan.window_start_frame, frames, &mut out).unwrap();
+        out
+    }
+
+    /// Left channel at root frame `f` of a `mix_all` buffer for a plan whose
+    /// window starts at 0.
+    fn left_at(out: &[f32], f: i64) -> f32 {
+        out[f as usize * 2]
+    }
+
+    fn assert_same_placement(a: &MixLayer, b: &MixLayer) {
+        assert_eq!(a.start_frame, b.start_frame, "start_frame");
+        assert_eq!(a.src_in_frame, b.src_in_frame, "src_in_frame");
+        assert_eq!(a.src_out_frame, b.src_out_frame, "src_out_frame");
+        assert_eq!(a.head_frame, b.head_frame, "head_frame");
+        assert_eq!(a.gain, b.gain, "gain envelope");
+        assert_eq!(a.pan, b.pan, "pan envelope");
+    }
+
+    #[test]
+    fn group_at_offset_mixes_like_direct_placement() {
+        let tmp = TempDir::new().unwrap();
+        let conform = ramp_conform(tmp.path());
+        let media = Uuid::new_v4();
+        let root_id = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+        // The layer itself at [2 s, 3 s) …
+        let direct = project_of(
+            root_id,
+            vec![composition_of(
+                root_id,
+                vec![track_of(vec![audio_layer(
+                    media,
+                    AudioRole::Dialogue,
+                    2 * S,
+                    3 * S,
+                    0,
+                    S,
+                )])],
+                4 * S,
+            )],
+            vec![audio_media(media, conform.clone())],
+        );
+        // … versus the same layer at t = 0 inside a Group placed at [2 s, 3 s).
+        let grouped = project_of(
+            root_id,
+            vec![
+                composition_of(
+                    root_id,
+                    vec![track_of(vec![ref_layer(group_id, 2 * S, 3 * S, 0, S)])],
+                    4 * S,
+                ),
+                composition_of(
+                    group_id,
+                    vec![track_of(vec![audio_layer(
+                        media,
+                        AudioRole::Dialogue,
+                        0,
+                        S,
+                        0,
+                        S,
+                    )])],
+                    S,
+                ),
+            ],
+            vec![audio_media(media, conform)],
+        );
+        let a = plan_for_project(&direct, None).unwrap();
+        let b = plan_for_project(&grouped, None).unwrap();
+        assert_eq!(a.layers.len(), 1);
+        assert_eq!(b.layers.len(), 1);
+        assert_same_placement(&a.layers[0], &b.layers[0]);
+        assert_eq!(b.layers[0].start_frame, 2 * FRAMES_PER_S);
+        assert_eq!(mix_all(&a), mix_all(&b), "sample-identical mixes");
+    }
+
+    #[test]
+    fn nested_groups_accumulate_offsets() {
+        let tmp = TempDir::new().unwrap();
+        let conform = ramp_conform(tmp.path());
+        let media = Uuid::new_v4();
+        let (root_id, g1, g2) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        // root ─ G1 at 1 s ─ G2 at 0.5 s ─ audio at 0.25 s ⇒ root 1.75 s.
+        let project = project_of(
+            root_id,
+            vec![
+                composition_of(
+                    root_id,
+                    vec![track_of(vec![ref_layer(g1, S, 4 * S, 0, 3 * S)])],
+                    4 * S,
+                ),
+                composition_of(
+                    g1,
+                    vec![track_of(vec![ref_layer(g2, S / 2, 3 * S, 0, 5 * S / 2)])],
+                    3 * S,
+                ),
+                composition_of(
+                    g2,
+                    vec![track_of(vec![audio_layer(
+                        media,
+                        AudioRole::Music,
+                        S / 4,
+                        5 * S / 4,
+                        0,
+                        S,
+                    )])],
+                    5 * S / 4,
+                ),
+            ],
+            vec![audio_media(media, conform)],
+        );
+        let plan = plan_for_project(&project, None).unwrap();
+        assert_eq!(plan.layers.len(), 1);
+        let l = &plan.layers[0];
+        assert_eq!(l.start_frame, us_to_frame(7 * S / 4));
+        assert_eq!(l.end_frame(), us_to_frame(11 * S / 4));
+        assert_eq!((l.src_in_frame, l.src_out_frame), (0, FRAMES_PER_S));
+        assert_eq!(l.head_frame, 0, "no window cut into the layer");
+        let out = mix_all(&plan);
+        assert_eq!(left_at(&out, us_to_frame(7 * S / 4) - 1), 0.0, "silent before");
+        let half = std::f32::consts::FRAC_PI_4.cos();
+        let mid = left_at(&out, us_to_frame(7 * S / 4) + FRAMES_PER_S / 2);
+        assert!((mid - 0.5 * half).abs() < 1e-4, "source frame 24000 at root 2.25 s, got {mid}");
+    }
+
+    /// Group trimmed shorter than its content: the audio stops exactly at the
+    /// ref's out point instead of leaking the layer's remaining half second.
+    #[test]
+    fn ref_window_clips_the_tail_at_its_out_point() {
+        let tmp = TempDir::new().unwrap();
+        let conform = ramp_conform(tmp.path());
+        let media = Uuid::new_v4();
+        let (root_id, group_id) = (Uuid::new_v4(), Uuid::new_v4());
+        let project = project_of(
+            root_id,
+            vec![
+                composition_of(
+                    root_id,
+                    vec![track_of(vec![ref_layer(group_id, 2 * S, 5 * S / 2, 0, S / 2)])],
+                    3 * S,
+                ),
+                composition_of(
+                    group_id,
+                    vec![track_of(vec![audio_layer(media, AudioRole::Music, 0, S, 0, S)])],
+                    S,
+                ),
+            ],
+            vec![audio_media(media, conform)],
+        );
+        let plan = plan_for_project(&project, None).unwrap();
+        let l = &plan.layers[0];
+        assert_eq!(l.start_frame, 2 * FRAMES_PER_S);
+        assert_eq!(l.end_frame(), 5 * FRAMES_PER_S / 2, "ends at the ref's out point");
+        assert_eq!(l.src_out_frame, FRAMES_PER_S / 2, "source retreats by the cut tail");
+        let out = mix_all(&plan);
+        assert!(left_at(&out, 5 * FRAMES_PER_S / 2 - 1) > 0.3, "last frame inside sounds");
+        assert_eq!(left_at(&out, 5 * FRAMES_PER_S / 2), 0.0, "first frame past the out point is silent");
+    }
+
+    /// `src_in_us > 0` on the ref: the layer's head is never heard and the
+    /// first audible frame reads the source at the ref's in point.
+    #[test]
+    fn ref_src_in_skips_the_head_and_reads_from_it() {
+        let tmp = TempDir::new().unwrap();
+        let conform = ramp_conform(tmp.path());
+        let media = Uuid::new_v4();
+        let (root_id, group_id) = (Uuid::new_v4(), Uuid::new_v4());
+        let project = project_of(
+            root_id,
+            vec![
+                composition_of(
+                    root_id,
+                    vec![track_of(vec![ref_layer(group_id, 2 * S, 5 * S / 2, S / 2, S)])],
+                    3 * S,
+                ),
+                composition_of(
+                    group_id,
+                    vec![track_of(vec![audio_layer(media, AudioRole::Music, 0, S, 0, S)])],
+                    S,
+                ),
+            ],
+            vec![audio_media(media, conform)],
+        );
+        let plan = plan_for_project(&project, None).unwrap();
+        let l = &plan.layers[0];
+        assert_eq!(l.start_frame, 2 * FRAMES_PER_S, "sounds from the ref's start, not 1.5 s");
+        assert_eq!(l.src_in_frame, FRAMES_PER_S / 2, "source advances by the cut head");
+        assert_eq!(l.src_out_frame, FRAMES_PER_S);
+        assert_eq!(l.head_frame, FRAMES_PER_S / 2);
+        let out = mix_all(&plan);
+        assert_eq!(left_at(&out, 2 * FRAMES_PER_S - 1), 0.0, "the skipped head is silent");
+        let half = std::f32::consts::FRAC_PI_4.cos();
+        let first = left_at(&out, 2 * FRAMES_PER_S);
+        assert!((first - 0.5 * half).abs() < 1e-4, "reads source frame 24000, got {first}");
+    }
+
+    /// The fade is the layer's, sampled over its own span: a ref window that
+    /// starts half-way through a 1 s fade-in hears the fade at half, not a
+    /// fade restarting at the window.
+    #[test]
+    fn clipped_head_keeps_the_layers_own_fade() {
+        let tmp = TempDir::new().unwrap();
+        let conform = flat_mono_conform(tmp.path(), "flat.conform", 1.0, FRAMES_PER_S as usize);
+        let media = Uuid::new_v4();
+        let (root_id, group_id) = (Uuid::new_v4(), Uuid::new_v4());
+        let mut fading = audio_layer(media, AudioRole::Music, 0, S, 0, S);
+        let LayerParams::Audio(p) = &mut fading.params else {
+            unreachable!()
+        };
+        p.fade_in_us = S as u64;
+        let project = project_of(
+            root_id,
+            vec![
+                composition_of(
+                    root_id,
+                    vec![track_of(vec![ref_layer(group_id, 2 * S, 5 * S / 2, S / 2, S)])],
+                    3 * S,
+                ),
+                composition_of(group_id, vec![track_of(vec![fading])], S),
+            ],
+            vec![audio_media(media, conform)],
+        );
+        let plan = plan_for_project(&project, None).unwrap();
+        let out = mix_all(&plan);
+        let half = std::f32::consts::FRAC_PI_4.cos();
+        let first = left_at(&out, 2 * FRAMES_PER_S);
+        assert!((first - 0.5 * half).abs() < 2e-3, "fade at its midpoint, got {first}");
+    }
+
+    #[test]
+    fn disabled_ref_or_its_track_contributes_nothing() {
+        let tmp = TempDir::new().unwrap();
+        let conform = ramp_conform(tmp.path());
+        let media = Uuid::new_v4();
+        let (root_id, group_id) = (Uuid::new_v4(), Uuid::new_v4());
+        let build = |ref_enabled: bool, track_enabled: bool| {
+            let mut r = ref_layer(group_id, 2 * S, 3 * S, 0, S);
+            r.enabled = ref_enabled;
+            let mut t = track_of(vec![r]);
+            t.enabled = track_enabled;
+            project_of(
+                root_id,
+                vec![
+                    composition_of(root_id, vec![t], 4 * S),
+                    composition_of(
+                        group_id,
+                        vec![track_of(vec![audio_layer(media, AudioRole::Music, 0, S, 0, S)])],
+                        S,
+                    ),
+                ],
+                vec![audio_media(media, conform.clone())],
+            )
+        };
+        assert_eq!(plan_for_project(&build(true, true), None).unwrap().layers.len(), 1);
+        assert!(plan_for_project(&build(false, true), None).unwrap().layers.is_empty());
+        assert!(plan_for_project(&build(true, false), None).unwrap().layers.is_empty());
+        // The readiness gate agrees: nothing to conform for a silenced Group.
+        std::fs::remove_file(&conform).unwrap();
+        assert_eq!(conform_waiting_media(&build(true, true), None), vec![media]);
+        assert!(conform_waiting_media(&build(false, true), None).is_empty());
+    }
+
+    /// Hand-built cycle TS validation would reject: the walk must still end.
+    #[test]
+    fn self_referencing_composition_terminates() {
+        let tmp = TempDir::new().unwrap();
+        let conform = ramp_conform(tmp.path());
+        let media = Uuid::new_v4();
+        let (root_id, group_id) = (Uuid::new_v4(), Uuid::new_v4());
+        let project = project_of(
+            root_id,
+            vec![
+                composition_of(
+                    root_id,
+                    vec![track_of(vec![ref_layer(group_id, 0, S, 0, S)])],
+                    S,
+                ),
+                composition_of(
+                    group_id,
+                    vec![track_of(vec![
+                        audio_layer(media, AudioRole::Music, 0, S, 0, S),
+                        ref_layer(group_id, 0, S, 0, S),
+                    ])],
+                    S,
+                ),
+            ],
+            vec![audio_media(media, conform)],
+        );
+        let plan = plan_for_project(&project, None).unwrap();
+        // The Group is entered once per depth 1..=MAX; the window never
+        // shrinks, so only the guard could have ended the walk.
+        assert_eq!(plan.layers.len(), MAX_COMPOSITION_DEPTH);
+    }
+
+    #[test]
+    fn waiting_collects_group_media() {
+        let tmp = TempDir::new().unwrap();
+        let conform = ramp_conform(tmp.path());
+        let media = Uuid::new_v4();
+        let (root_id, group_id) = (Uuid::new_v4(), Uuid::new_v4());
+        let project = project_of(
+            root_id,
+            vec![
+                composition_of(
+                    root_id,
+                    vec![track_of(vec![ref_layer(group_id, 2 * S, 3 * S, 0, S)])],
+                    4 * S,
+                ),
+                composition_of(
+                    group_id,
+                    vec![track_of(vec![audio_layer(media, AudioRole::Music, 0, S, 0, S)])],
+                    S,
+                ),
+            ],
+            vec![audio_media(media, conform.clone())],
+        );
+        assert!(conform_waiting_media(&project, None).is_empty());
+        std::fs::remove_file(&conform).unwrap();
+        assert_eq!(conform_waiting_media(&project, None), vec![media]);
+        // Out of the export window ⇒ not waited on, exactly as a root layer.
+        assert!(conform_waiting_media(&project, Some((0, S))).is_empty());
     }
 
     #[test]
