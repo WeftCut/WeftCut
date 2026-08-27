@@ -158,9 +158,14 @@ function samplePngPoints(pngPath: string): FrameSamples {
 /// Seek the live preview and read the probe points off the composited canvas.
 /// weftcutSeekUs throws until the PixiPreview bridge registers; the caller's
 /// readiness poll absorbs that window, so here a failure is real.
+///
+/// The 200 ms after the seek is pacing for the re-composite, and it is only
+/// safe because every caller is a poll (`waitPreviewSettled`) or a failure-
+/// artifact dump. Nothing asserts on a single call's samples — a fixed settle
+/// in front of an assertion is a flake on a loaded runner (e2e/README.md,
+/// "Waiting inside a spec").
 async function collectPreviewFrame(page: Page, tUs: number): Promise<FrameSamples> {
   await page.evaluate((us) => (window as any).__weftcutTest.weftcutSeekUs(us), tUs)
-  // Color layers need no decode; one short settle covers the re-composite.
   await page.waitForTimeout(200)
   const out = {} as FrameSamples
   for (const pt of Object.keys(PROBE_X) as PointName[]) {
@@ -186,6 +191,10 @@ async function collectPreviewFrames(page: Page): Promise<Record<TimeName, FrameS
 /// MCP commit), with a hard deadline. Convergence is checked with the SAME
 /// expectation table the strict assertion uses — on a broken build the poll
 /// times out and the strict assertion then reports the real pixel values.
+///
+/// The returned samples ARE what the strict assertion must read. Re-collecting
+/// after convergence would seek again and put `collectPreviewFrame`'s fixed
+/// settle back in front of the assertion.
 async function waitPreviewSettled(
   page: Page,
   want: Record<TimeName, FrameExpectation>,
@@ -328,8 +337,7 @@ for (const variant of VARIANTS) {
       }
 
       // ── Preview leg ────────────────────────────────────────────────────────
-      await waitPreviewSettled(page, want)
-      const previewFrames = await collectPreviewFrames(page)
+      const previewFrames = await waitPreviewSettled(page, want)
       await dumpPreviewArtifacts(page, variant.name)
       const previewErrs = frameMismatches(`preview/${variant.name}`, previewFrames, want)
       expect(previewErrs, previewErrs.join('\n')).toEqual([])
@@ -377,8 +385,7 @@ for (const variant of VARIANTS) {
           mid: halves(BLUE, RED),
           after: EXPECT_AFTER,
         }
-        await waitPreviewSettled(page, mirrored)
-        const rightFrames = await collectPreviewFrames(page)
+        const rightFrames = await waitPreviewSettled(page, mirrored)
         await dumpPreviewArtifacts(page, 'wipe-right')
         const rightErrs = frameMismatches('preview/wipe-right', rightFrames, mirrored)
         expect(rightErrs, rightErrs.join('\n')).toEqual([])
