@@ -288,11 +288,11 @@ describe("useShortcuts — NLE-style global accelerators", () => {
   });
 
   it("yields a scoped action when no region owns the keyboard", () => {
-    const groupSelected = vi.fn();
-    render(<Harness handlers={{ groupSelected }} />);
+    const toggleLinkSelected = vi.fn();
+    render(<Harness handlers={{ toggleLinkSelected }} />);
 
-    const ev = dispatchBinding(document.body, "Mod+G");
-    expect(groupSelected).not.toHaveBeenCalled();
+    const ev = dispatchBinding(document.body, "Mod+L");
+    expect(toggleLinkSelected).not.toHaveBeenCalled();
     expect(ev.defaultPrevented).toBe(false);
   });
 

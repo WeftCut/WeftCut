@@ -80,14 +80,14 @@ export function pickFreeOverlayTrack(p: Project, t0: number, t1: number): Uuid |
   return null
 }
 
-/** Remove a layer from every group; auto-dissolve below 2. */
-export function dropLayerFromGroups(p: Project, layerId: Uuid): void {
+/** Remove a layer from every link; auto-dissolve below 2. */
+export function dropLayerFromLinks(p: Project, layerId: Uuid): void {
   let i = 0
-  while (i < p.groups.length) {
-    const g = p.groups[i]
+  while (i < p.links.length) {
+    const g = p.links[i]
     if (g.members.includes(layerId)) {
       g.members = g.members.filter((m) => m !== layerId)
-      if (g.members.length < 2) { p.groups.splice(i, 1); continue }
+      if (g.members.length < 2) { p.links.splice(i, 1); continue }
     }
     i++
   }

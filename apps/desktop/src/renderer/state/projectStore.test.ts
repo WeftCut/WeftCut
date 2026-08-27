@@ -47,7 +47,7 @@ function summary(name: string): ProjectSummary {
     tracks: [],
     markers: [],
     transitions: [],
-    groups: [],
+    links: [],
     audio_roles: [],
   };
 }

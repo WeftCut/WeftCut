@@ -133,7 +133,7 @@ function fixtureSummary(): ProjectSummary {
         id: "mk2", t_us: 6_000_000, end_t_us: null, label: "  ", color_hint: "",
       },
     ],
-    groups: [],
+    links: [],
     audio_roles: [],
   };
 }

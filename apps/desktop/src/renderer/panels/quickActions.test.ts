@@ -57,8 +57,7 @@ function state(over: Partial<QuickActionState> = {}): QuickActionState {
     followPlayhead: true,
     safeAreaGuides: false,
     playbackResolution: "full",
-    canGroup: false,
-    canDissolve: false,
+    linkToggle: "needs_two",
     ...over,
   };
 }
@@ -269,23 +268,30 @@ describe("quickActions catalogue", () => {
     });
   });
 
-  // Same disabled-button rule as Clear range, for the pair whose precondition
-  // is a SELECTION rather than project content.
-  it("explains why the group buttons are unavailable", () => {
-    const item = (id: string) =>
-      QUICK_ACTION_SECTIONS.flatMap((s) => s.items).find((i) => i.id === id);
-    expect(item("groupSelected")?.hint?.(state({ canGroup: false }))).toBe(
-      "quick_actions.group_needs_two",
+  // Same disabled-button rule as Clear range, for the button whose
+  // precondition is a SELECTION rather than project content. One button, two
+  // directions: the hint names the direction a click would take, or why
+  // neither applies, and the glyph follows the direction.
+  it("names the link toggle's direction, or why it is unavailable", () => {
+    const item = QUICK_ACTION_SECTIONS.flatMap((s) => s.items).find(
+      (i) => i.id === "toggleLinkSelected",
     );
-    expect(item("groupSelected")?.hint?.(state({ canGroup: true }))).toBe(
-      "actions.group_selected",
+    expect(item?.hint?.(state({ linkToggle: "needs_two" }))).toBe(
+      "quick_actions.link_needs_two",
     );
-    expect(
-      item("dissolveSelectedGroup")?.hint?.(state({ canDissolve: false })),
-    ).toBe("quick_actions.dissolve_no_group");
-    expect(
-      item("dissolveSelectedGroup")?.hint?.(state({ canDissolve: true })),
-    ).toBe("actions.dissolve_selected_group");
+    expect(item?.hint?.(state({ linkToggle: "mixed" }))).toBe(
+      "quick_actions.link_mixed_selection",
+    );
+    expect(item?.hint?.(state({ linkToggle: "link" }))).toBe(
+      "quick_actions.link_selected",
+    );
+    expect(item?.hint?.(state({ linkToggle: "unlink" }))).toBe(
+      "quick_actions.unlink_selected",
+    );
+    expect(item?.iconFor?.(state({ linkToggle: "unlink" }))).not.toBe(
+      item?.iconFor?.(state({ linkToggle: "link" })),
+    );
+    expect(item?.iconFor?.(state({ linkToggle: "link" }))).toBe(item?.icon);
   });
 
   // The strip could hide markers it had no way to create until this row

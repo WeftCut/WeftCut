@@ -386,34 +386,34 @@ describe('production adapter routing — duplicate_layer (mechanical)', () => {
   })
 })
 
-// ── Mechanical channel: groups_create ────────────────────────────────────────
+// ── Mechanical channel: links_create ────────────────────────────────────────
 
-describe('production adapter routing — groups_create (mechanical)', () => {
-  it('valid call routes, returns a group id, and group appears in state', () => {
+describe('production adapter routing — links_create (mechanical)', () => {
+  it('valid call routes, returns a link id, and link appears in state', () => {
     const a = freshActor()
     const trackId = aRollId(a)
     const id1 = addColorLayerCmd(a, trackId, 0, 2_000_000)
     const id2 = addColorLayerCmd(a, trackId, 2_000_000, 4_000_000)
 
-    const r = a.command('groups_create', { layerIds: [id1, id2] })
+    const r = a.command('links_create', { layerIds: [id1, id2] })
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    const groupId = r.value as string
-    expect(typeof groupId).toBe('string')
-    const groups = a.snapshot().groups
-    expect(groups.some((g) => g.id === groupId && g.members.includes(id1) && g.members.includes(id2))).toBe(true)
+    const linkId = r.value as string
+    expect(typeof linkId).toBe('string')
+    const links = a.snapshot().links
+    expect(links.some((g) => g.id === linkId && g.members.includes(id1) && g.members.includes(id2))).toBe(true)
   })
 
-  it('single layer id → structured GroupCreateNeedsTwoLayers error, no throw', () => {
+  it('single layer id → structured LinkCreateNeedsTwoLayers error, no throw', () => {
     const a = freshActor()
     const trackId = aRollId(a)
     const id1 = addColorLayerCmd(a, trackId)
-    // groups_create requires at least 2 distinct layer ids
-    const r = a.command('groups_create', { layerIds: [id1] })
+    // links_create requires at least 2 distinct layer ids
+    const r = a.command('links_create', { layerIds: [id1] })
     expect(r.ok).toBe(false)
     if (r.ok) return
-    expect(r.error.error).toBe('GroupCreateNeedsTwoLayers')
-    expect(a.snapshot().groups).toHaveLength(0)
+    expect(r.error.error).toBe('LinkCreateNeedsTwoLayers')
+    expect(a.snapshot().links).toHaveLength(0)
   })
 })
 

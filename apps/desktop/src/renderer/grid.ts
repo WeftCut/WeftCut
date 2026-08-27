@@ -60,7 +60,7 @@ export function frameGrid(fps: RateLike): Grid {
 }
 
 /** THE grid lookup — the single seam every enforcement and authoring site shares
- *  (`validate.ts`'s predicate, the mutation snaps incl. `move`'s group fan-out,
+ *  (`validate.ts`'s predicate, the mutation snaps incl. `move`'s link fan-out,
  *  `serialize.ts`'s load repair, and the UI's nudge + readout paths). Adding another
  *  site means calling this, never re-deriving the choice.
  *

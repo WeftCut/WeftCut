@@ -23,8 +23,8 @@ import en from "../i18n/locales/en-US";
 
 const noop = () => {};
 
-// App's real HandlerMap keys (everything except the Timeline-local group
-// ops), including the palette action itself.
+// App's real HandlerMap keys (everything except the Timeline-local link
+// op), including the palette action itself.
 const handlers: HandlerMap = {
   save: noop, saveAs: noop, closeProject: noop, undo: noop, redo: noop,
   togglePlay: noop, deleteSelected: noop, copySelected: noop, pasteAtPlayhead: noop,
@@ -61,7 +61,7 @@ describe("buildAppCommands", () => {
     expect(ids).toContain("save");
     expect(ids).toContain("seekStart");
     expect(ids).not.toContain("openSearchPalette");
-    expect(ids).not.toContain("groupSelected"); // Timeline registers those
+    expect(ids).not.toContain("toggleLinkSelected"); // Timeline registers it
     expect(new Set(ids).size).toBe(ids.length);
   });
 
@@ -264,7 +264,7 @@ describe("buildAppCommands", () => {
       layer_count: tracks.reduce((n, t) => n + t.layers.length, 0),
       duration_us: 0,
       history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
-      media: [], tracks, markers: [], transitions: [], groups: [], audio_roles: [],
+      media: [], tracks, markers: [], transitions: [], links: [], audio_roles: [],
     };
     useProjectStore.getState().apply(summary);
   }

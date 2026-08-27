@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GroupSummary, LayerSummary, TrackSummary } from "../ipc";
+import type { LinkSummary, LayerSummary, TrackSummary } from "../ipc";
 import {
   snapDragDeltaToTimelineBoundary,
   snapTimeToTimelineBoundary,
@@ -45,15 +45,15 @@ function track(layers: LayerSummary[]): TrackSummary {
 
 function baseOpts(overrides: {
   visibleTracks?: TrackSummary[];
-  groups?: GroupSummary[];
-  groupByLayerId?: Map<string, string>;
+  links?: LinkSummary[];
+  linkByLayerId?: Map<string, string>;
   currentTimeUs?: number;
   enabled?: boolean;
 } = {}) {
   return {
     visibleTracks: overrides.visibleTracks ?? [track([])],
-    groups: overrides.groups ?? [],
-    groupByLayerId: overrides.groupByLayerId ?? new Map<string, string>(),
+    links: overrides.links ?? [],
+    linkByLayerId: overrides.linkByLayerId ?? new Map<string, string>(),
     currentTimeUs: overrides.currentTimeUs ?? 3_000_000,
     fpsNum: 30,
     fpsDen: 1,
@@ -72,7 +72,7 @@ describe("timeline snapping", () => {
         layerId: "layer-1",
         originalTStart: 1_000_000,
         originalTEnd: 2_000_000,
-        escapeGroup: false,
+        escapeLink: false,
       },
       frameDeltaUs: 950_000,
     });
@@ -88,7 +88,7 @@ describe("timeline snapping", () => {
         layerId: "layer-1",
         originalTStart: 0,
         originalTEnd: 2_000_000,
-        escapeGroup: false,
+        escapeLink: false,
       },
       frameDeltaUs: 950_000,
     });
@@ -104,7 +104,7 @@ describe("timeline snapping", () => {
         layerId: "layer-1",
         originalTStart: 0,
         originalTEnd: 2_000_000,
-        escapeGroup: false,
+        escapeLink: false,
       },
       frameDeltaUs: -1_950_000,
     });
@@ -120,7 +120,7 @@ describe("timeline snapping", () => {
         layerId: "layer-1",
         originalTStart: 2_000_000,
         originalTEnd: 5_000_000,
-        escapeGroup: false,
+        escapeLink: false,
       },
       frameDeltaUs: -950_000,
     });
@@ -136,7 +136,7 @@ describe("timeline snapping", () => {
         layerId: "layer-1",
         originalTStart: 0,
         originalTEnd: 2_000_000,
-        escapeGroup: false,
+        escapeLink: false,
       },
       frameDeltaUs: 1_950_000,
     });
@@ -152,7 +152,7 @@ describe("timeline snapping", () => {
         layerId: "layer-1",
         originalTStart: 0,
         originalTEnd: 2_000_000,
-        escapeGroup: false,
+        escapeLink: false,
       },
       frameDeltaUs: 950_000,
     });

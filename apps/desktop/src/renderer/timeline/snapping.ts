@@ -1,4 +1,4 @@
-import type { GroupSummary, TrackSummary } from "../ipc";
+import type { LinkSummary, TrackSummary } from "../ipc";
 import { adjacentFrameBoundaryUs, snapFrameRound } from "../frames";
 
 const US_PER_SEC = 1_000_000;
@@ -10,13 +10,13 @@ export interface TimelineDragSnapState {
   layerId: string;
   originalTStart: number;
   originalTEnd: number;
-  escapeGroup: boolean;
+  escapeLink: boolean;
 }
 
 interface TimelineSnapOptions {
   visibleTracks: readonly TrackSummary[];
-  groups: readonly GroupSummary[];
-  groupByLayerId: ReadonlyMap<string, string>;
+  links: readonly LinkSummary[];
+  linkByLayerId: ReadonlyMap<string, string>;
   currentTimeUs: number;
   fpsNum: number;
   fpsDen: number;
@@ -27,7 +27,7 @@ interface TimelineSnapOptions {
 
 interface TimelineSnapBoundaryOptions extends TimelineSnapOptions {
   layerId?: string;
-  escapeGroup?: boolean;
+  escapeLink?: boolean;
   isValidSnap?: (boundaryUs: number) => boolean;
 }
 
@@ -38,17 +38,17 @@ function thresholdUs(strengthPx: number, pxPerSec: number): number {
 
 function ignoredLayerIds(
   layerId: string | undefined,
-  escapeGroup: boolean,
-  groups: readonly GroupSummary[],
-  groupByLayerId: ReadonlyMap<string, string>,
+  escapeLink: boolean,
+  links: readonly LinkSummary[],
+  linkByLayerId: ReadonlyMap<string, string>,
 ): Set<string> {
   const ignored = new Set<string>();
   if (!layerId) return ignored;
   ignored.add(layerId);
-  if (!escapeGroup) {
-    const groupId = groupByLayerId.get(layerId);
-    const group = groupId ? groups.find((g) => g.id === groupId) : null;
-    for (const memberId of group?.layer_ids ?? []) {
+  if (!escapeLink) {
+    const linkId = linkByLayerId.get(layerId);
+    const link = linkId ? links.find((g) => g.id === linkId) : null;
+    for (const memberId of link?.layer_ids ?? []) {
       ignored.add(memberId);
     }
   }
@@ -151,9 +151,9 @@ export function snapDragDeltaToTimelineBoundary(
 
   const ignored = ignoredLayerIds(
     opts.state.layerId,
-    opts.state.escapeGroup,
-    opts.groups,
-    opts.groupByLayerId,
+    opts.state.escapeLink,
+    opts.links,
+    opts.linkByLayerId,
   );
   const boundaries = timelineBoundaries(opts, ignored);
   const anchors = dragAnchors(opts.state, opts.frameDeltaUs);
@@ -185,9 +185,9 @@ export function snapTimeToTimelineBoundary(
 
   const ignored = ignoredLayerIds(
     opts.layerId,
-    opts.escapeGroup ?? false,
-    opts.groups,
-    opts.groupByLayerId,
+    opts.escapeLink ?? false,
+    opts.links,
+    opts.linkByLayerId,
   );
   const boundaries = timelineBoundaries(opts, ignored);
 

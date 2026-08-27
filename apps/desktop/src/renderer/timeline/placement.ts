@@ -134,7 +134,7 @@ export function evaluateTimelinePlacements({
     }
   }
 
-  // A cross-track group move can place the anchor onto a sibling's track.
+  // A cross-track link move can place the anchor onto a sibling's track.
   // Their committed positions were removed above, so compare every projected
   // pair to preserve the same invariant inside the moving set.
   for (let i = 0; i < placements.length; i += 1) {

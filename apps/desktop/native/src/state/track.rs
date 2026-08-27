@@ -92,7 +92,7 @@ impl Default for Track {
 /// A/B-roll role stamp. Drives AB display-mode filtering on the UI and the
 /// role-aware AV-pair fan-out when promoting hidden clips onto A or B
 /// (`docs/data-model.md`). The audio variants pair with the video variants
-/// of matching letter — promoting a video to `ARoll` translates a grouped
+/// of matching letter — promoting a video to `ARoll` translates a linked
 /// audio member's destination to the track stamped `AudioA`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TrackRole {
@@ -107,7 +107,7 @@ pub enum TrackRole {
 
 impl TrackRole {
     /// The audio role paired with a video role, and vice versa. Used by the
-    /// group-fanout path when a layer is dragged across the V/A boundary
+    /// link-fanout path when a layer is dragged across the V/A boundary
     /// onto an A or B track.
     /// Caption has no audio pair; it maps to itself so callers that always
     /// call `paired()` don't have to special-case it.

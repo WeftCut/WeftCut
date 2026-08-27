@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
 import { blankProject, type Layer, type LayerParams, type Project } from '../model'
 import { applySplitLayer } from './split'
-import { applyGroupsCreate } from './groups'
+import { applyLinksCreate } from './links'
 import { isCommandFailure } from '../errors'
 
 function color(id: string, t0: number, t1: number): Layer {
@@ -50,30 +50,30 @@ describe('applySplitLayer', () => {
     expect(rr.params.src_in_us).toBe(900_000)  // src_in(500k) + offset(400k)
     expect(rr.params.src_out_us).toBe(1_500_000)
   })
-  it('group spanning split: both halves stay in the group; non-spanning members untouched', () => {
+  it('link spanning split: both halves stay in the link; non-spanning members untouched', () => {
     const p = blankProject(seededGen(), 't')
-    // a:[0,1s] and b:[0,1s] on track B grouped; both span t=400k
+    // a:[0,1s] and b:[0,1s] on track B linked; both span t=400k
     p.tracks[0].layers = [color('a', 0, 1_000_000)]
     p.tracks[1].layers = [color('b', 0, 1_000_000)]
-    const gid = applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
+    const gid = applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     const r = applySplitLayer(p, seededGen(), 'a', 400_000, false)
-    const group = p.groups.find((g) => g.id === gid)!
-    // a's right-half + b's right-half both joined the group → 4 members
-    expect(group.members.length).toBe(4)
-    expect(group.members).toContain(r.right)
+    const link = p.links.find((g) => g.id === gid)!
+    // a's right-half + b's right-half both joined the link → 4 members
+    expect(link.members.length).toBe(4)
+    expect(link.members).toContain(r.right)
     expect(p.tracks[1].layers.length).toBe(2) // b was spanning → split too
   })
-  it('escape_group splits only the target (sibling not split), but the target stays grouped so its right-half joins', () => {
+  it('escape_link splits only the target (sibling not split), but the target stays linked so its right-half joins', () => {
     const p = blankProject(seededGen(), 't')
     p.tracks[0].layers = [color('a', 0, 1_000_000)]
     p.tracks[1].layers = [color('b', 0, 1_000_000)]
-    const gid = applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
+    const gid = applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     const r = applySplitLayer(p, seededGen(), 'a', 400_000, true)
     expect(p.tracks[1].layers.length).toBe(1) // sibling b NOT split (escape → no spanning fan-out)
-    const group = p.groups.find((g) => g.id === gid)!
-    expect(group.members.length).toBe(3) // target stays grouped; its right-half joins
-    expect(group.members).toContain(r.right)
-    expect(group.members).toContain('b')
+    const link = p.links.find((g) => g.id === gid)!
+    expect(link.members.length).toBe(3) // target stays linked; its right-half joins
+    expect(link.members).toContain(r.right)
+    expect(link.members).toContain('b')
   })
   it('splitTrackHalf retains left keyframes and collapses an emptied right half to Static at the boundary value', () => {
     const p = blankProject(seededGen(), 't')

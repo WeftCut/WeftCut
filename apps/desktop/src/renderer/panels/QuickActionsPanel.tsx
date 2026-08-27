@@ -15,10 +15,7 @@ import {
 } from "../settings/appSettingsStore";
 import { useActiveTool } from "../state/toolStore";
 import { useHasMarkedRange } from "../state/rangeStore";
-import {
-  useCanDissolveSelection,
-  useCanGroupSelection,
-} from "../timeline/groupEligibility";
+import { useLinkToggleState } from "../timeline/linkEligibility";
 import {
   QUICK_ACTION_SECTIONS,
   resolveIcon,
@@ -254,13 +251,12 @@ export function QuickActionsPanel({
   const followPlayhead = useFollowPlayheadEnabled();
   const safeAreaGuides = useSafeAreaGuidesVisible();
   const playbackResolution = usePlaybackResolution();
-  // The group pair's enabled state. Same subscribed-not-imperative rule again:
-  // `CommandDef.enabled` for these two is evaluated during THIS render, so
-  // without a subscription both buttons would stay greyed out until some
-  // unrelated state happened to re-render the strip. Boolean selectors, so a
-  // click-select re-renders the strip only when the ANSWER flips.
-  const canGroup = useCanGroupSelection();
-  const canDissolve = useCanDissolveSelection();
+  // The link toggle's state. Same subscribed-not-imperative rule again:
+  // `CommandDef.enabled` for it is evaluated during THIS render, so without a
+  // subscription the button would stay greyed out until some unrelated state
+  // happened to re-render the strip. A string selector, so a click-select
+  // re-renders the strip only when the ANSWER flips.
+  const linkToggle = useLinkToggleState();
   const orientation = useStripOrientation(geometry, docked);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useHorizontalWheel(scrollRef, orientation === "horizontal");
@@ -289,8 +285,7 @@ export function QuickActionsPanel({
     followPlayhead,
     safeAreaGuides,
     playbackResolution,
-    canGroup,
-    canDissolve,
+    linkToggle,
   };
 
   // Buttons resolve against the command registry, so a command whose provider

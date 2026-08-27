@@ -146,7 +146,7 @@ describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)
     expect(s.audio_roles[0]).toEqual({ role: 'dialogue', gain_db: 0, muted: false, solo: false }) // defaults filled
     expect([s.history.cursor, s.history.len, s.history.can_undo, s.history.can_redo]).toEqual([0, 1, false, false])
     expect(s.history.lock_reason).toBeUndefined() // skip_serializing_if=Option::is_none → absent
-    expect([s.media, s.markers, s.groups]).toEqual([[], [], []])
+    expect([s.media, s.markers, s.links]).toEqual([[], [], []])
   })
   /// The settings panel disables its rate control off this one flag, so it has to
   /// carry the HISTORY-scoped truth, not just "are there layers right now".

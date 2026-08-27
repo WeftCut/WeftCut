@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 import { snapFrameRound } from "../frames";
 import type {
-  GroupSummary,
+  LinkSummary,
   MediaSummary,
   TrackSummary,
 } from "../ipc";
@@ -64,8 +64,8 @@ export interface MediaDropPlan {
 
 export interface MediaDropSnapOptions {
   visibleTracks: readonly TrackSummary[];
-  groups: readonly GroupSummary[];
-  groupByLayerId: ReadonlyMap<string, string>;
+  links: readonly LinkSummary[];
+  linkByLayerId: ReadonlyMap<string, string>;
   currentTimeUs: number;
   enabled: boolean;
   strengthPx: number;
@@ -219,12 +219,12 @@ export function planMediaDrop({
           layerId: "__media-drop-ghost__",
           originalTStart: baseTStartUs,
           originalTEnd: baseTEndUs,
-          escapeGroup: true,
+          escapeLink: true,
         },
         frameDeltaUs: 0,
         visibleTracks: snap.visibleTracks,
-        groups: snap.groups,
-        groupByLayerId: snap.groupByLayerId,
+        links: snap.links,
+        linkByLayerId: snap.linkByLayerId,
         currentTimeUs: snap.currentTimeUs,
         fpsNum,
         fpsDen,

@@ -17,19 +17,20 @@ import {
   Bookmark,
   BookmarkPlus,
   FoldVertical,
-  Group,
+  Link,
   Magnet,
   MousePointer2,
   Scissors,
   SquareDashed,
   SquareSplitHorizontal,
-  Ungroup,
   UnfoldVertical,
+  Unlink,
   type LucideProps,
 } from "lucide-react";
 import type { ComponentType } from "react";
 
 import type { AppSettings, DisplayMode } from "../ipc";
+import type { LinkToggleState } from "../timeline/linkEligibility";
 import type { Tool } from "../state/toolStore";
 import { FollowPlayheadIcon } from "./FollowPlayheadIcon";
 import { ClearRangeIcon, MarkInIcon, MarkOutIcon } from "./MarkRangeIcon";
@@ -72,12 +73,11 @@ export interface QuickActionState {
   /// this field IS what the button reports. The preview itself subscribes to
   /// the store directly.
   playbackResolution: AppSettings["playback_resolution"];
-  /// Whether ≥2 layers are selected (`useCanGroupSelection`). A boolean
-  /// selector for the `hasRange` reason: the strip re-renders when the answer
-  /// flips, not on every click-select.
-  canGroup: boolean;
-  /// Whether the selection touches a group (`useCanDissolveSelection`).
-  canDissolve: boolean;
+  /// Which way the Link / Unlink toggle would go for the selection, or why it
+  /// can't (`useLinkToggleState`). A string selector for the `hasRange`
+  /// reason: the strip re-renders when the answer flips, not on every
+  /// click-select.
+  linkToggle: LinkToggleState;
 }
 
 export interface QuickActionItem {
@@ -115,6 +115,15 @@ export interface QuickActionSection {
   mode: "radio" | "independent" | "command";
   items: QuickActionItem[];
 }
+
+/// Tooltip per toggle state: the two live directions name the action, the two
+/// disabled ones name what the selection is missing.
+const LINK_TOGGLE_HINT: Record<LinkToggleState, string> = {
+  link: "quick_actions.link_selected",
+  unlink: "quick_actions.unlink_selected",
+  needs_two: "quick_actions.link_needs_two",
+  mixed: "quick_actions.link_mixed_selection",
+};
 
 export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
   {
@@ -229,21 +238,15 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
         icon: SquareSplitHorizontal,
       },
       {
-        id: "groupSelected",
-        icon: Group,
-        // Same disabled-button rule as `clearRange`: with too small a
-        // selection the hint names the precondition instead of restating a
+        // One button for both directions, as the key is one key: the glyph
+        // shows which way a click would go.
+        id: "toggleLinkSelected",
+        icon: Link,
+        iconFor: (s) => (s.linkToggle === "unlink" ? Unlink : Link),
+        // Same disabled-button rule as `clearRange`: when neither direction
+        // applies the hint names the precondition instead of restating a
         // label that cannot be used.
-        hint: (s) =>
-          s.canGroup ? "actions.group_selected" : "quick_actions.group_needs_two",
-      },
-      {
-        id: "dissolveSelectedGroup",
-        icon: Ungroup,
-        hint: (s) =>
-          s.canDissolve
-            ? "actions.dissolve_selected_group"
-            : "quick_actions.dissolve_no_group",
+        hint: (s) => LINK_TOGGLE_HINT[s.linkToggle],
       },
     ],
   },

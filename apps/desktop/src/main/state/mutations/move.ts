@@ -4,10 +4,10 @@ import type { IdGen } from '../ids'
 import { gridForLayerKind, snapOnGrid } from '../snap'
 import { applyAddTrack } from './add'
 import { applyDurationAutofit, checkTrackLock, locateLayer, pruneEmptiedTrack } from './helpers'
-import { groupSiblingsExcluding, checkGroupLock } from './groups'
+import { linkSiblingsExcluding, checkLinkLock } from './links'
 import { CommandFailure } from '../errors'
 
-/** Earliest `t_start_us` across the whole moving set (target + group siblings) —
+/** Earliest `t_start_us` across the whole moving set (target + link siblings) —
  *  the member that decides where the set stops when it is dragged toward zero.
  *  Read BEFORE the target is spliced out, so `targetStart` is passed in rather than
  *  re-located. A sibling that cannot be located is skipped, matching the move loop's
@@ -23,7 +23,7 @@ function earliestStart(p: Project, targetStart: number, siblings: readonly Uuid[
   return earliest
 }
 
-export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStartUs: number, escapeGroup: boolean): void {
+export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStartUs: number, escapeLink: boolean): void {
   const fps = p.composition.fps
   const src = locateLayer(p, id)
   if (!src) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
@@ -42,10 +42,10 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
     const dst = p.tracks.find((t) => t.id === newTrackId)
     if (dst && dst.locked) throw new CommandFailure({ error: 'TrackLocked', track: newTrackId })
   }
-  const siblings = escapeGroup ? [] : groupSiblingsExcluding(p, id)
+  const siblings = escapeLink ? [] : linkSiblingsExcluding(p, id)
   // Reject up-front if any member (incl. target) is locked / on a locked track.
   // Only fires for a coupled move with real siblings.
-  if (!escapeGroup && siblings.length > 0) checkGroupLock(p, id, [id, ...siblings])
+  if (!escapeLink && siblings.length > 0) checkLinkLock(p, id, [id, ...siblings])
 
   // ── Clamp the DELTA, not each member's start ────────────────────────────────
   // Dragged toward zero, the moving set stops AS A SET: its earliest member lands
@@ -57,7 +57,7 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
   // 0 is a lattice point on every grid, so the earliest member needs no re-snap to
   // stay canonical, and every other member is still `its own start + delta` snapped
   // on its own lattice — which is exactly what keeps a slipped A/V sync offset
-  // intact through a whole-group move (R2-D7).
+  // intact through a whole-link move (R2-D7).
   const delta = Math.max(snapped - curStart, -earliestStart(p, curStart, siblings))
   const newStart = snapOnGrid(curStart + delta, targetGrid)
 
@@ -77,8 +77,8 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
   const at = dest.layers.findIndex((l) => l.t_start_us > newStart)
   dest.layers.splice(at < 0 ? dest.layers.length : at, 0, layer)
 
-  // Group siblings follow + shift by the same delta.
-  if (!escapeGroup) {
+  // Link siblings follow + shift by the same delta.
+  if (!escapeLink) {
     for (const sid of siblings) {
       const loc = locateLayer(p, sid)
       if (!loc) continue
@@ -86,8 +86,8 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
       const s = p.tracks[loc[0]].layers.splice(loc[1], 1)[0]
       if (delta !== 0) {
         // LANDMINE: each sibling snaps on ITS OWN grid, not the target's. Snapping a
-        // grouped audio member on the composition frame grid here would drag it back
-        // to the nearest video frame on any unrelated whole-group move, and the user's
+        // linked audio member on the composition frame grid here would drag it back
+        // to the nearest video frame on any unrelated whole-link move, and the user's
         // deliberately slipped sync offset would silently vanish (spec § Two data-loss
         // dependencies, #1). The offset survives precisely because every member shifts
         // by the same `delta` and then lands on its own lattice — which is also how the
@@ -133,8 +133,8 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
  *  `enabled` predicate prevents that request up front; re-checking it here would
  *  give one rule two homes to drift between.
  *
- *  Group membership is untouched: `p.groups` names layer ids and no invariant
- *  ties a group to a track, so the caller's explicit selection moves and nothing
+ *  Link membership is untouched: `p.links` names layer ids and no invariant
+ *  ties a link to a track, so the caller's explicit selection moves and nothing
  *  is dragged along — unlike `applyMoveLayer`, which has a time delta for
  *  siblings to follow. */
 export function applyMoveLayersToNewTrack(p: Project, idGen: IdGen, layerIds: readonly Uuid[]): Uuid {

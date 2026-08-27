@@ -70,11 +70,11 @@ export const HISTORY_SUMMARY = {
   transitionUpdate: { key: 'history.transition.update', text: 'Updated transition' },
   transitionRemove: { key: 'history.transition.remove', text: 'Removed transition' },
 
-  groupCreate: { key: 'history.group.create', text: 'Created group' },
-  groupDissolve: { key: 'history.group.dissolve', text: 'Dissolved group' },
-  groupAddMembers: { key: 'history.group.add_members', text: 'Added group members' },
-  groupRemoveMembers: { key: 'history.group.remove_members', text: 'Removed group members' },
-  groupRename: { key: 'history.group.rename', text: 'Renamed group' },
+  linkCreate: { key: 'history.link.create', text: 'Created link' },
+  linkDissolve: { key: 'history.link.dissolve', text: 'Dissolved link' },
+  linkAddMembers: { key: 'history.link.add_members', text: 'Added link members' },
+  linkRemoveMembers: { key: 'history.link.remove_members', text: 'Removed link members' },
+  linkRename: { key: 'history.link.rename', text: 'Renamed link' },
 
   captionRestyle: { key: 'history.caption.restyle', text: 'Restyled captions' },
 } satisfies Record<string, HistorySummary>

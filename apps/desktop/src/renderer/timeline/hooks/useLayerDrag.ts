@@ -4,7 +4,7 @@ import {
   moveLayersToNewTrack,
   pasteLayer,
   trimLayer,
-  type GroupSummary,
+  type LinkSummary,
   type LayerSummary,
   type TrackSummary,
 } from "../../ipc";
@@ -78,8 +78,8 @@ interface PointerDragEvaluation {
 /// `moveLayer`/`moveLayersToNewTrack`/`pasteLayer`/`trimLayer`.
 export function useLayerDrag(opts: {
   tracks: TrackSummary[];
-  groups: GroupSummary[];
-  groupByLayerId: Map<string, string>;
+  links: LinkSummary[];
+  linkByLayerId: Map<string, string>;
   orderedTracks: VisualTrack[];
   /// Live track-id → lane-element registry, owned by the Timeline. Measured
   /// per pointer event; see `destinationUnderPointer`.
@@ -108,8 +108,8 @@ export function useLayerDrag(opts: {
 } {
   const {
     tracks,
-    groups,
-    groupByLayerId,
+    links,
+    linkByLayerId,
     orderedTracks,
     laneEls,
     dropStripEl,
@@ -190,14 +190,14 @@ export function useLayerDrag(opts: {
   const buildDragSubjects = useCallback(
     (seed: DragSeed): DragSubject[] => {
       // Alt+drag copies only the layer under the pointer. In particular, an
-      // auto-paired/grouped sibling stays untouched and the duplicate remains
+      // auto-paired/linked sibling stays untouched and the duplicate remains
       // detached, matching duplicate/paste semantics elsewhere in the app.
-      const groupId =
-        seed.duplicate || seed.escapeGroup
+      const linkId =
+        seed.duplicate || seed.escapeLink
           ? undefined
-          : groupByLayerId.get(seed.layerId);
-      const group = groupId ? groups.find((candidate) => candidate.id === groupId) : null;
-      const candidateIds = group?.layer_ids ?? [seed.layerId];
+          : linkByLayerId.get(seed.layerId);
+      const link = linkId ? links.find((candidate) => candidate.id === linkId) : null;
+      const candidateIds = link?.layer_ids ?? [seed.layerId];
       const targetEdgeUs =
         seed.kind === "trim-start"
           ? seed.originalTStart
@@ -232,7 +232,7 @@ export function useLayerDrag(opts: {
       }
       return subjects;
     },
-    [groupByLayerId, groups, layerEntryById],
+    [linkByLayerId, links, layerEntryById],
   );
 
   const setDrag = useCallback(
@@ -399,14 +399,14 @@ export function useLayerDrag(opts: {
       frameDeltaUs: number,
     ): number => {
       return snapDragDeltaToTimelineBoundary({
-        // A duplicate leaves grouped siblings in place, so their boundaries
-        // remain eligible snap targets. escapeGroup=true makes the snapping
+        // A duplicate leaves linked siblings in place, so their boundaries
+        // remain eligible snap targets. escapeLink=true makes the snapping
         // helper ignore only the copied source layer.
-        state: state.duplicate ? { ...state, escapeGroup: true } : state,
+        state: state.duplicate ? { ...state, escapeLink: true } : state,
         frameDeltaUs,
         visibleTracks: visibleSnapTracks,
-        groups,
-        groupByLayerId,
+        links,
+        linkByLayerId,
         // Event-time read (drag pointermove): the playhead is a snap target;
         // its value at the event is what snapping should use.
         currentTimeUs: playheadTimeUs(),
@@ -420,8 +420,8 @@ export function useLayerDrag(opts: {
     [
       fpsNum,
       fpsDen,
-      groupByLayerId,
-      groups,
+      linkByLayerId,
+      links,
       pxPerSec,
       tailSnapEnabled,
       tailSnapStrengthPx,
@@ -651,9 +651,9 @@ export function useLayerDrag(opts: {
       const moveProjection = evaluation.moveProjection;
 
       try {
-        // `docs/features.md#groups` — Alt-held at drag start opts the move /
-        // trim out of group fanout for this single op.
-        const escape = committed.escapeGroup;
+        // `docs/features.md#links` — Alt-held at drag start opts the move /
+        // trim out of link fanout for this single op.
+        const escape = committed.escapeLink;
         switch (committed.kind) {
           case "move": {
             const spawning =

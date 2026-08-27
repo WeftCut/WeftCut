@@ -15,12 +15,12 @@ describe('serialize round-trip', () => {
     const wire = serializeProject(p)
     expect(canonicalString(serializeProject(parseProject(wire)))).toBe(canonicalString(wire))
   })
-  it('sorts group.members and omits a null label', () => {
+  it('sorts link.members and omits a null label', () => {
     const p = blankProject(seededGen(), 'test')
-    p.groups = [{ id: 'g', members: ['00000000-0000-0000-0000-00000000000b', '00000000-0000-0000-0000-00000000000a'] }]
+    p.links = [{ id: 'g', members: ['00000000-0000-0000-0000-00000000000b', '00000000-0000-0000-0000-00000000000a'] }]
     const wire = serializeProject(p) as any
-    expect(wire.groups[0].members).toEqual(['00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-00000000000b'])
-    expect('label' in wire.groups[0]).toBe(false)
+    expect(wire.links[0].members).toEqual(['00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-00000000000b'])
+    expect('label' in wire.links[0]).toBe(false)
   })
   it('rejects any version but the current one, in both directions', () => {
     // parseProject sees only current-shaped input by construction: the gate and

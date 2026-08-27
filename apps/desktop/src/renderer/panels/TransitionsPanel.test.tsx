@@ -74,7 +74,7 @@ function seed(tracks: TrackSummary[]): void {
     layer_count: tracks.reduce((n, t) => n + t.layers.length, 0),
     duration_us: 0,
     history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
-    media: [], tracks, markers: [], transitions: [], groups: [], audio_roles: [],
+    media: [], tracks, markers: [], transitions: [], links: [], audio_roles: [],
   };
   useProjectStore.getState().apply(summary);
 }

@@ -230,7 +230,7 @@ fs.writeFileSync(path.join(project, 'project.json'), JSON.stringify({
   },
   media_pool: {},
   tracks,
-  markers: [], transitions, groups: [], audio_roles: {},
+  markers: [], transitions, links: [], audio_roles: {},
   settings: {
     preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
     history_capacity: 200, auto_pair_audio_on_import: true,

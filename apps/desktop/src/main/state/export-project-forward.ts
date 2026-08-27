@@ -8,7 +8,7 @@ export const EXPORT_PROJECT_CHANNELS: ReadonlySet<string> = new Set([
 ])
 
 /** Inject the wire-shape project into the export-channel args. `serializeProject`
- *  (the canonical wire shape — identity except for group member sorting) is what
+ *  (the canonical wire shape — identity except for link member sorting) is what
  *  the Rust core deserializes into an identical `Project`. */
 export function injectProjectArgs(
   args: Record<string, unknown>,

@@ -72,7 +72,7 @@ function fixtureSummary(layerIds: string[] = ["l1", "l2"]): ProjectSummary {
       },
     ],
     markers: [],
-    groups: [],
+    links: [],
     audio_roles: [],
   } as unknown as ProjectSummary;
 }

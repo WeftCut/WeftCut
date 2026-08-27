@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { checkAllInvariants, invNoUnauthorizedOverlap, invGroupsWellFormed, invTransitionsWellFormed, InvariantError } from './invariants'
+import { checkAllInvariants, invNoUnauthorizedOverlap, invLinksWellFormed, invTransitionsWellFormed, InvariantError } from './invariants'
 import type { WireProject, WireTransition } from './harness'
 
 const base: WireProject = {
   composition: { duration_us: 1000, duration_pinned: false, fps: { num: 30, den: 1 }, width: 1920, height: 1080 },
   tracks: [{ id: 'tA', layers: [{ id: 'l1', t_start_us: 0, t_end_us: 1000, params: { kind: 'Color' } }] }],
-  groups: [], transitions: [],
+  links: [], transitions: [],
 }
 
 describe('structural invariants', () => {
@@ -30,15 +30,15 @@ describe('structural invariants', () => {
     expect(() => invNoUnauthorizedOverlap(ok)).not.toThrow()
   })
 
-  it('rejects a layer in two groups', () => {
+  it('rejects a layer in two links', () => {
     const bad: WireProject = { ...base,
       tracks: [{ id: 'tA', layers: [
         { id: 'l1', t_start_us: 0, t_end_us: 1000, params: { kind: 'Color' } },
         { id: 'l2', t_start_us: 1000, t_end_us: 2000, params: { kind: 'Color' } },
       ] }],
-      groups: [{ id: 'g1', members: ['l1', 'l2'] }, { id: 'g2', members: ['l2'] }],
+      links: [{ id: 'g1', members: ['l1', 'l2'] }, { id: 'g2', members: ['l2'] }],
       composition: { ...base.composition, duration_us: 2000 } }
-    expect(() => invGroupsWellFormed(bad)).toThrow(InvariantError)
+    expect(() => invLinksWellFormed(bad)).toThrow(InvariantError)
   })
 })
 

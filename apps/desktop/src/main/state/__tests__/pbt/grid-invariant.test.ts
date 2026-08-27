@@ -55,7 +55,7 @@ function actorAt(num: number, den: number): ActorT {
 const wire = (a: ActorT) => serializeProject(a.snapshot()) as unknown as WireProject
 
 /** Two visual cuts on A-roll (real tail handles) plus two free-duration cuts and
- *  an audio pair, so transition/group/trim ops have plausible targets from op #1.
+ *  an audio pair, so transition/link/trim ops have plausible targets from op #1.
  *  Requested times are deliberately raw µs — off grid at the fractional rates —
  *  so the seeding itself exercises the mutators' snap. */
 function seedTimeline(a: ActorT): ActorT {
@@ -97,7 +97,7 @@ function offGridFields(p: WireProject): string[] {
   for (const t of p.tracks) for (const l of t.layers) {
     geometry.set(l.id, l)
     // Per-KIND lattice. This is the assertion that fails if ANY of the three
-    // enforcement sites — validate's predicate, a mutation snap (incl. move's group
+    // enforcement sites — validate's predicate, a mutation snap (incl. move's link
     // fan-out), or serialize's load repair — is left frame-only for audio, or
     // conversely starts letting a visual layer off the frame grid.
     const rate = layerRate(l.params.kind, { num, den })
@@ -140,7 +140,7 @@ type Op =
   | { t: 'splitMulti'; n: number; ats: number[] }
   | { t: 'duplicate'; n: number; off: number }
   | { t: 'paste'; n: number; start: number }
-  | { t: 'group'; n: number; m: number }
+  | { t: 'link'; n: number; m: number }
   | { t: 'addTransition'; n: number; dur: number }
   | { t: 'updateTransition'; n: number; dur: number }
   | { t: 'removeTransition'; n: number }
@@ -160,7 +160,7 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
   fc.record({ t: fc.constant('splitMulti' as const), n: fc.nat({ max: 20 }), ats: fc.array(rawUs(3_000_000), { maxLength: 3 }).map((xs) => [...xs].sort((a, b) => a - b)) }),
   fc.record({ t: fc.constant('duplicate' as const), n: fc.nat({ max: 20 }), off: rawUs(4_000_000) }),
   fc.record({ t: fc.constant('paste' as const), n: fc.nat({ max: 20 }), start: rawUs(4_000_000) }),
-  fc.record({ t: fc.constant('group' as const), n: fc.nat({ max: 20 }), m: fc.nat({ max: 20 }) }),
+  fc.record({ t: fc.constant('link' as const), n: fc.nat({ max: 20 }), m: fc.nat({ max: 20 }) }),
   { arbitrary: fc.record({ t: fc.constant('addTransition' as const), n: fc.nat({ max: 20 }), dur: fc.integer({ min: 1, max: 400_000 }) }), weight: 3 },
   { arbitrary: fc.record({ t: fc.constant('updateTransition' as const), n: fc.nat({ max: 6 }), dur: fc.integer({ min: 1, max: 400_000 }) }), weight: 2 },
   fc.record({ t: fc.constant('removeTransition' as const), n: fc.nat({ max: 6 }) }),
@@ -184,14 +184,14 @@ function applyOp(a: ActorT, op: Op): Res {
       if (op.kind !== 'color') { args.media = op.kind === 'video' ? VIDEO_MEDIA : AUDIO_MEDIA; args.src_in_us = 0; args.src_out_us = op.len }
       return a.dispatch('add_layer', args)
     }
-    case 'move': return layers.length ? a.dispatch('move_layer', { layer: pickLayer(op.n), to_track: pickTrack(op.track), t_start_us: op.start, escape_group: false }) : null
-    case 'trim': return layers.length ? a.dispatch('trim_layer', { layer: pickLayer(op.n), edge: op.edge, new_t_us: op.to, escape_group: false }) : null
-    case 'split': return layers.length ? a.dispatch('split_layer', { layer: pickLayer(op.n), at_t_us: op.at, escape_group: false }) : null
+    case 'move': return layers.length ? a.dispatch('move_layer', { layer: pickLayer(op.n), to_track: pickTrack(op.track), t_start_us: op.start, escape_link: false }) : null
+    case 'trim': return layers.length ? a.dispatch('trim_layer', { layer: pickLayer(op.n), edge: op.edge, new_t_us: op.to, escape_link: false }) : null
+    case 'split': return layers.length ? a.dispatch('split_layer', { layer: pickLayer(op.n), at_t_us: op.at, escape_link: false }) : null
     case 'splitMulti': return layers.length ? a.dispatch('split_layer_multi', { layer: pickLayer(op.n), at_t_us_list: op.ats }) : null
     case 'duplicate': return layers.length ? a.dispatch('duplicate_layer', { layer: pickLayer(op.n), t_offset_us: op.off }) : null
     // paste is a production `command` channel (camelCase wire args), not dispatch.
     case 'paste': return layers.length ? a.command('paste_layer', { layerId: pickLayer(op.n), tStartUs: op.start }) : null
-    case 'group': return layers.length >= 2 ? a.dispatch('groups_create', { layers: [pickLayer(op.n), pickLayer(op.m)], label: null, reassign: false }) : null
+    case 'link': return layers.length >= 2 ? a.dispatch('links_create', { layers: [pickLayer(op.n), pickLayer(op.m)], label: null, reassign: false }) : null
     case 'addTransition': {
       if (layers.length < 2) return null
       // Bias to adjacent same-track pairs — the geometry the adjacent-cut adds
@@ -246,9 +246,9 @@ describe('frame-grid invariant over the actor command matrix', () => {
       { t: 'duplicate', n: 4, off: 3_700_009 },
       { t: 'paste', n: 0, start: 4_100_001 },
       { t: 'move', n: 5, track: 1, start: 2_900_007 },
-      { t: 'group', n: 0, m: 1 },
-      { t: 'move', n: 0, track: 0, start: 100_001 },  // grouped move — siblings follow by a delta
-      { t: 'trim', n: 0, edge: 'out', to: 300_003 },  // grouped trim
+      { t: 'link', n: 0, m: 1 },
+      { t: 'move', n: 0, track: 0, start: 100_001 },  // linked move — siblings follow by a delta
+      { t: 'trim', n: 0, edge: 'out', to: 300_003 },  // linked trim
       { t: 'addTransition', n: 0, dur: 133_337 },
       { t: 'updateTransition', n: 0, dur: 66_669 },
       { t: 'addMarker', at: 1_234_567, span: 89_999 },
@@ -356,7 +356,7 @@ describe('frame-grid invariant over the actor command matrix', () => {
 
     // Pull the outgoing layer's Out edge back — the overlap no longer equals the
     // stored duration, so reconcile drops the transition on this very commit.
-    const trimmed = actor.dispatch('trim_layer', { layer: from, edge: 'out', new_t_us: 700_009, escape_group: false })
+    const trimmed = actor.dispatch('trim_layer', { layer: from, edge: 'out', new_t_us: 700_009, escape_link: false })
     expect(offGridRejection(trimmed)).toBeNull()
     expect(trimmed.ok).toBe(true)
     const after = wire(actor)

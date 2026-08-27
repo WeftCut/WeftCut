@@ -161,7 +161,7 @@ function renderPanel(track: TrackSummary, layerId = "layer-1") {
   return onMutated;
 }
 
-function summaryWithGroups(groups: ProjectSummary["groups"]): void {
+function summaryWithLinks(links: ProjectSummary["links"]): void {
   useProjectStore.getState().apply({
     project_id: "p",
     name: "P",
@@ -173,7 +173,7 @@ function summaryWithGroups(groups: ProjectSummary["groups"]): void {
     media: [],
     tracks: [],
     markers: [],
-    groups,
+    links,
     audio_roles: [],
   } as ProjectSummary);
 }
@@ -192,8 +192,8 @@ function expandAdvanced(): void {
 }
 
 describe("AttributePanel Layer envelope", () => {
-  it("shows identity as one meta line (kind · track · group) and keeps Label/Enabled/Duration core", () => {
-    summaryWithGroups([{ id: "g1", label: "Intro", layer_ids: ["layer-1"] }]);
+  it("shows identity as one meta line (kind · track · link) and keeps Label/Enabled/Duration core", () => {
+    summaryWithLinks([{ id: "g1", label: "Intro", layer_ids: ["layer-1"] }]);
     renderPanel(colorTrack());
 
     expect(screen.getByText("Color · Visual · Intro")).toBeTruthy();
@@ -211,28 +211,28 @@ describe("AttributePanel Layer envelope", () => {
     expect(within(advanced()).getByLabelText("Start")).toHaveProperty("value", "00:00:00:00");
   });
 
-  it("falls back to a localized none when the Layer belongs to no group", () => {
-    summaryWithGroups([]);
+  it("falls back to a localized none when the Layer belongs to no link", () => {
+    summaryWithLinks([]);
     renderPanel(colorTrack());
-    expect(screen.getByText("Color · Visual · No group")).toBeTruthy();
+    expect(screen.getByText("Color · Visual · Not linked")).toBeTruthy();
   });
 
   it("shows the media label as the identity title for media kinds only", () => {
-    summaryWithGroups([]);
+    summaryWithLinks([]);
     renderPanel(audioTrack(), "layer-a1");
-    expect(screen.getByText("Audio · A1 · No group")).toBeTruthy();
+    expect(screen.getByText("Audio · A1 · Not linked")).toBeTruthy();
     expect(screen.getByText("voice.wav")).toBeTruthy();
     cleanup();
     clearPropSectionMemory();
-    summaryWithGroups([]);
+    summaryWithLinks([]);
     renderPanel(colorTrack());
     expect(screen.queryByText("voice.wav")).toBeNull();
   });
 
-  // A uuid is never a display name, and groups made from the UI are always
-  // `label: null` — so an unnamed group must describe itself by member count.
-  it("describes an unnamed group by its member count, not its uuid", () => {
-    summaryWithGroups([
+  // A uuid is never a display name, and links made from the UI are always
+  // `label: null` — so an unnamed link must describe itself by member count.
+  it("describes an unnamed link by its member count, not its uuid", () => {
+    summaryWithLinks([
       {
         id: "019fcc4d-20d4-7f65-b368-47ecbe3ef63d",
         label: null,
@@ -241,12 +241,12 @@ describe("AttributePanel Layer envelope", () => {
     ]);
     renderPanel(colorTrack());
 
-    expect(screen.getByText("Color · Visual · Group of 2 layers")).toBeTruthy();
+    expect(screen.getByText("Color · Visual · Link of 2 layers")).toBeTruthy();
     expect(screen.queryByText(/019fcc4d/)).toBeNull();
   });
 
   it("names the multi-select primary after its media file when unnamed, not its uuid", () => {
-    summaryWithGroups([]);
+    summaryWithLinks([]);
     const track = audioTrack();
     (track.layers[0] as { label: string | null }).label = null;
     setLayerSelection("layer-a1", ["layer-a1", "layer-x"]);
@@ -278,14 +278,14 @@ describe("AttributePanel envelope command routing", () => {
     expect(trimLayer).not.toHaveBeenCalled();
   });
 
-  it("routes Start through the group-aware move command with the Layer's current Track", async () => {
+  it("routes Start through the link-aware move command with the Layer's current Track", async () => {
     const onMutated = renderPanel(colorTrack());
     expandAdvanced();
     const start = within(advanced()).getByLabelText("Start");
     fireEvent.change(start, { target: { value: "00:00:01:00" } });
     fireEvent.blur(start);
     await vi.waitFor(() =>
-      // escapeGroup=false: a VISUAL start edit moves the whole group, as it always
+      // escapeLink=false: a VISUAL start edit moves the whole link, as it always
       // has. Only an audio edit escapes, because a sub-frame audio start is a SLIP
       // (ADR 0038) and dragging the video member with it would put that member off
       // its own grid.
@@ -297,20 +297,20 @@ describe("AttributePanel envelope command routing", () => {
 
   // ── Sub-frame audio entry (ADR 0038 / ticket 11) ─────────────────────────────
   it("offers the audio-units selector on an audio layer only", () => {
-    summaryWithGroups([]);
+    summaryWithLinks([]);
     renderPanel(audioTrack(), "layer-a1");
     expandAdvanced();
     expect(within(advanced()).getByLabelText("Audio units")).toBeTruthy();
     cleanup();
     clearPropSectionMemory();
-    summaryWithGroups([]);
+    summaryWithLinks([]);
     renderPanel(colorTrack());
     expandAdvanced();
     expect(within(advanced()).queryByLabelText("Audio units")).toBeNull();
   });
 
   it("round-trips a sample-grid position through the Start field in samples", async () => {
-    summaryWithGroups([]);
+    summaryWithLinks([]);
     setAudioUnits("samples");
     const onMutated = renderPanel(audioTrack(), "layer-a1");
     expandAdvanced();
@@ -323,7 +323,7 @@ describe("AttributePanel envelope command routing", () => {
     fireEvent.change(start, { target: { value: "1608" } });
     fireEvent.blur(start);
     await vi.waitFor(() =>
-      // escapeGroup=true — a sub-frame audio start is a SLIP, so the video member must
+      // escapeLink=true — a sub-frame audio start is a SLIP, so the video member must
       // not follow (it would land off its own grid).
       expect(moveLayer).toHaveBeenCalledWith("layer-a1", "track-a", 33_500, true),
     );
@@ -331,7 +331,7 @@ describe("AttributePanel envelope command routing", () => {
   });
 
   it("reads the same audio time in milliseconds when the unit is switched", () => {
-    summaryWithGroups([]);
+    summaryWithLinks([]);
     setAudioUnits("ms");
     renderPanel(audioTrack(), "layer-a1");
     expandAdvanced();
@@ -341,14 +341,14 @@ describe("AttributePanel envelope command routing", () => {
     cleanup();
     clearPropSectionMemory();
     setAudioUnits("ms");
-    summaryWithGroups([]);
+    summaryWithLinks([]);
     renderPanel(colorTrack());
     expandAdvanced();
     expect(within(advanced()).getByLabelText("Start")).toHaveProperty("value", "00:00:00:00");
     setAudioUnits("frames");
   });
 
-  it("routes duration through the group-aware trim command", async () => {
+  it("routes duration through the link-aware trim command", async () => {
     const onMutated = renderPanel(colorTrack());
     const env = envelope();
 

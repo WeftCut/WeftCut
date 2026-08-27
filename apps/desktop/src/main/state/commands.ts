@@ -104,21 +104,21 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   add_track: () => ({ op: 'add_track', args: { label: null } }),
   update_layer: (a) => ({ op: 'update_layer', args: { layer: a.layerId, patch: a.patch } }),
   // Remaining mechanical + meta channels
-  move_layer: (a) => ({ op: 'move_layer', args: { layer: a.layerId, to_track: a.newTrackId, t_start_us: a.newTStartUs, escape_group: a.escapeGroup ?? false } }),
+  move_layer: (a) => ({ op: 'move_layer', args: { layer: a.layerId, to_track: a.newTrackId, t_start_us: a.newTStartUs, escape_link: a.escapeLink ?? false } }),
   move_layers_to_new_track: (a) => ({ op: 'move_layers_to_new_track', args: { layers: a.layerIds } }),
   // Anchored z-reorder (ADR 0044) — the Playhead Panel's drop gesture. Pure renaming;
   // position/anchor validation lives with the mutation.
   restack_layer: (a) => ({ op: 'restack_layer', args: { layer: a.layerId, anchor: a.anchorLayerId, position: a.position } }),
-  trim_layer: (a) => ({ op: 'trim_layer', args: { layer: a.layerId, edge: a.edge, new_t_us: a.newTUs, escape_group: a.escapeGroup ?? false } }),
+  trim_layer: (a) => ({ op: 'trim_layer', args: { layer: a.layerId, edge: a.edge, new_t_us: a.newTUs, escape_link: a.escapeLink ?? false } }),
   delete_layer: (a) => ({ op: 'delete_layer', args: { layer: a.layerId } }),
   // The selection's delete — a set in, one undo entry out. Same rename as
   // move_layers_to_new_track's, which takes the selection the same way.
   delete_layers: (a) => ({ op: 'delete_layers', args: { layers: a.layerIds } }),
   remove_media: (a) => ({ op: 'remove_media', args: { media: a.mediaId, force: a.force ?? false } }),
   duplicate_layer: (a) => ({ op: 'duplicate_layer', args: { layer: a.layerId, t_offset_us: a.tOffsetUs } }),
-  split_layer_grouped: (a) => ({ op: 'split_layer', args: { layer: a.layerId, at_t_us: a.atTUs, escape_group: a.escapeGroup ?? false } }),
-  groups_create: (a) => ({ op: 'groups_create', args: { layers: a.layerIds, label: a.label ?? null, reassign: a.reassign ?? false } }),
-  groups_dissolve: (a) => ({ op: 'groups_dissolve', args: { group: a.groupId } }),
+  split_layer_linked: (a) => ({ op: 'split_layer', args: { layer: a.layerId, at_t_us: a.atTUs, escape_link: a.escapeLink ?? false } }),
+  links_create: (a) => ({ op: 'links_create', args: { layers: a.layerIds, label: a.label ?? null, reassign: a.reassign ?? false } }),
+  links_dissolve: (a) => ({ op: 'links_dissolve', args: { link: a.linkId } }),
   update_layer_params: (a) => ({ op: 'update_layer_params', args: { layer: a.layerId, patch: a.patch } }),
   update_layer_param_track: (a) => ({ op: 'update_layer_param_track', args: { layer: a.layerId, param_key: a.paramKey, track: a.track } }),
   update_layer_param_tracks: (a) => ({ op: 'update_layer_param_tracks', args: { layer: a.layerId, entries: a.entries } }),
@@ -177,8 +177,8 @@ export const PRODUCTION_OPS = new Set<string>([
   'add_color_layer', 'add_text_layer', 'add_media_layer', 'paste_layer',
   'add_demo_color_layer', 'add_demo_text_layer',
   // Remaining mechanical + meta channels
-  'move_layer', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layer', 'delete_layers', 'remove_media', 'duplicate_layer', 'split_layer_grouped',
-  'groups_create', 'groups_dissolve',
+  'move_layer', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layer', 'delete_layers', 'remove_media', 'duplicate_layer', 'split_layer_linked',
+  'links_create', 'links_dissolve',
   'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks', 'update_param_tracks_multi', 'set_scale_linked',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'set_composition', 'fit_composition_to_layers',

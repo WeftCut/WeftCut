@@ -173,7 +173,7 @@ function sampleFor(tool: string, field: string): unknown {
   if (field === 'patch') return {}
 
   // field-name convention defaults
-  if (field.endsWith('_id') || field === 'group' || field === 'layer') {
+  if (field.endsWith('_id') || field === 'link' || field === 'layer') {
     return '00000000-0000-7000-8000-000000000001'
   }
   if (field.endsWith('_us') || field === 'gain_db' || field === 'value') return 0

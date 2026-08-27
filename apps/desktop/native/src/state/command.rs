@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::ids::{
-    CheckpointId, EffectId, GroupId, LayerId, MarkerId, MediaId, TrackId, TransitionId,
+    CheckpointId, EffectId, LayerId, LinkId, MarkerId, MediaId, TrackId, TransitionId,
 };
 use super::time::TimeUs;
 
@@ -106,21 +106,21 @@ pub enum ValidationError {
     #[error("duplicate transition id {transition}")]
     DuplicateTransitionId { transition: TransitionId },
 
-    #[error("group {group} references unknown layer {layer}")]
-    GroupMemberMissing { group: GroupId, layer: LayerId },
+    #[error("link {link} references unknown layer {layer}")]
+    LinkMemberMissing { link: LinkId, layer: LayerId },
 
-    #[error("layer {layer} appears in more than one group ({first} and {second})")]
-    LayerInMultipleGroups {
+    #[error("layer {layer} appears in more than one link ({first} and {second})")]
+    LayerInMultipleLinks {
         layer: LayerId,
-        first: GroupId,
-        second: GroupId,
+        first: LinkId,
+        second: LinkId,
     },
 
-    #[error("duplicate group id {group}")]
-    DuplicateGroupId { group: GroupId },
+    #[error("duplicate link id {link}")]
+    DuplicateLinkId { link: LinkId },
 
-    #[error("group {group} has fewer than 2 members — should have been auto-dissolved")]
-    GroupBelowMinSize { group: GroupId, members: usize },
+    #[error("link {link} has fewer than 2 members — should have been auto-dissolved")]
+    LinkBelowMinSize { link: LinkId, members: usize },
 }
 
 /// A full export master that landed on disk, plus the encoder format version
@@ -218,10 +218,10 @@ pub enum CommandError {
     #[error("split point {at_t}us is outside layer {layer} bounds")]
     SplitOutsideLayer { layer: LayerId, at_t: TimeUs },
     #[error(
-        "group op on layer {touched} blocked: member {locked_layer} of group {group} is locked"
+        "link op on layer {touched} blocked: member {locked_layer} of link {link} is locked"
     )]
-    GroupLockedMember {
-        group: GroupId,
+    LinkLockedMember {
+        link: LinkId,
         locked_layer: LayerId,
         touched: LayerId,
     },
@@ -240,14 +240,14 @@ pub enum CommandError {
         actual: &'static str,
         patch: &'static str,
     },
-    #[error("group {group} not found")]
-    GroupNotFound { group: GroupId },
-    #[error("layer {layer} is already in group {existing} — pass reassign=true to move it")]
-    LayerAlreadyGrouped { layer: LayerId, existing: GroupId },
-    #[error("groups_create needs at least 2 distinct layers, got {got}")]
-    GroupCreateNeedsTwoLayers { got: usize },
-    #[error("layer {layer} is not a member of group {group}")]
-    LayerNotInGroup { group: GroupId, layer: LayerId },
+    #[error("link {link} not found")]
+    LinkNotFound { link: LinkId },
+    #[error("layer {layer} is already in link {existing} — pass reassign=true to move it")]
+    LayerAlreadyLinked { layer: LayerId, existing: LinkId },
+    #[error("links_create needs at least 2 distinct layers, got {got}")]
+    LinkCreateNeedsTwoLayers { got: usize },
+    #[error("layer {layer} is not a member of link {link}")]
+    LayerNotInLink { link: LinkId, layer: LayerId },
     #[error("nothing to undo")]
     NothingToUndo,
     #[error("nothing to redo")]

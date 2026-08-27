@@ -11,7 +11,7 @@ import { validate } from '../../validate'
 import { applyAddLayer, colorParams } from '../../mutations/add'
 import { applyMoveLayer } from '../../mutations/move'
 import { applyTrimLayer, clampSigned, trimDeltaBounds } from '../../mutations/trim'
-import { applyGroupsCreate } from '../../mutations/groups'
+import { applyLinksCreate } from '../../mutations/links'
 import { ValidationFailure, isCommandFailure } from '../../errors'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -240,7 +240,7 @@ describe('clampSigned boundary min === max', () => {
 describe('applyMoveLayer: layers stay t_start_us sorted after a move', () => {
   it('inserts the moved layer in the correct sorted position among existing layers', () => {
     const p = mkProject()
-    // Add three non-overlapping color layers (no group, no validate issues).
+    // Add three non-overlapping color layers (no link, no validate issues).
     const g = seededGen()
     applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 200_000)
     applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 400_000, 600_000)
@@ -268,16 +268,16 @@ describe('applyMoveLayer: layers stay t_start_us sorted after a move', () => {
   })
 })
 
-// ── applyMoveLayer: delta !== 0 guard for group siblings ────────────────────
+// ── applyMoveLayer: delta !== 0 guard for link siblings ────────────────────
 // Mutant: 'if (delta !== 0)' → 'if (true)' — would shift siblings even on zero delta.
-// Group-sibling follow shifts time only; cross-track moves apply the track change
+// Link-sibling follow shifts time only; cross-track moves apply the track change
 // to the primary layer and leave siblings on their original tracks.
-describe('applyMoveLayer: zero-delta group sibling move is a no-op shift', () => {
+describe('applyMoveLayer: zero-delta link sibling move is a no-op shift', () => {
   it('sibling t_start is unchanged when delta is zero (same position)', () => {
     const p = mkProject()
-    // Place both layers on track 0; group them.
+    // Place both layers on track 0; link them.
     p.tracks[0].layers = [colorLayer('a', 0, 200_000), colorLayer('b', 400_000, 600_000)]
-    applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     // Move 'a' to its current position → delta = 0.
     // Sibling 'b' should stay at 400_000 (no shift applied).
     applyMoveLayer(p, 'a', p.tracks[0].id, 0, false)
@@ -289,7 +289,7 @@ describe('applyMoveLayer: zero-delta group sibling move is a no-op shift', () =>
     const p = mkProject()
     // Both layers on track 0; 'a' at 0 and 'b' at 500_000 (non-overlapping).
     p.tracks[0].layers = [colorLayer('a', 0, 200_000), colorLayer('b', 500_000, 700_000)]
-    applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     // Move 'a' from 0 to 300_000 → delta = 300_000.
     applyMoveLayer(p, 'a', p.tracks[0].id, 300_000, false)
     // Sibling 'b' follows: 500_000 + 300_000 = 800_000.
@@ -437,19 +437,19 @@ describe('applyMoveLayer: locked destination track', () => {
   })
 })
 
-// ── applyMoveLayer: sibling insertion sort (group fanout) ───────────────────
-// Mutants on applyMoveLayer's group-sibling re-insertion: position sorted wrong.
-describe('applyMoveLayer: group sibling insertion position', () => {
-  it('group sibling is reinserted in sorted order after following the delta', () => {
+// ── applyMoveLayer: sibling insertion sort (link fanout) ───────────────────
+// Mutants on applyMoveLayer's link-sibling re-insertion: position sorted wrong.
+describe('applyMoveLayer: link sibling insertion position', () => {
+  it('link sibling is reinserted in sorted order after following the delta', () => {
     const p = mkProject()
-    // Three layers on track 0: a[0,200), b[400,600) grouped, c[800,1000).
+    // Three layers on track 0: a[0,200), b[400,600) linked, c[800,1000).
     // Move 'a' to 600_000 → delta=600_000; sibling 'b' follows to 1_000_000.
     p.tracks[0].layers = [
       colorLayer('a', 0, 200_000),
       colorLayer('b', 400_000, 600_000),
       colorLayer('c', 800_000, 1_000_000),
     ]
-    applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     // After move: a[600k,800k), b[1000k,1200k), c[800k,1000k) — check sort order.
     applyMoveLayer(p, 'a', p.tracks[0].id, 600_000, false)
     const starts = p.tracks[0].layers.map((l) => l.t_start_us)

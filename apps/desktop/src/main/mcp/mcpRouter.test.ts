@@ -29,8 +29,8 @@ describe('routeMcpTool', () => {
     expect(routeMcpTool('preview_motif_draft')).toBe('rust')
   })
   it('routes the live rust-native tools to rust', () => {
-    // Group reads come from the project://current summary resource (it includes
-    // `groups`), not an MCP tool.
+    // Link reads come from the project://current summary resource (it includes
+    // `links`), not an MCP tool.
     for (const t of ['ping', 'detect_silences', 'transcribe_clip'])
       expect(routeMcpTool(t), t).toBe('rust')
   })

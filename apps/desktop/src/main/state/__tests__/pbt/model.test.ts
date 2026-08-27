@@ -33,7 +33,7 @@ class Move implements fc.Command<Model, Real> {
   run(m: Model, r: Real) {
     const id = idsSorted(m)[this.layerN % m.layers.size]
     const before = m.layers.get(id)!
-    const res = r.dispatch('move_layer', { layer: id, to_track: trackOf(m, this.track), t_start_us: this.start, escape_group: false })
+    const res = r.dispatch('move_layer', { layer: id, to_track: trackOf(m, this.track), t_start_us: this.start, escape_link: false })
     if (res.ok) {
       const dur = before.end - before.start
       const next = { id, track: trackOf(m, this.track), start: this.start, end: this.start + dur }

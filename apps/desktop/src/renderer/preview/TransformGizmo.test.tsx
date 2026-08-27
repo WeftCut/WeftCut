@@ -106,7 +106,7 @@ function fixture(params?: Partial<Record<string, unknown>>, kind = "VideoClip"):
         ],
       },
     ],
-    groups: [],
+    links: [],
     markers: [],
     transitions: [],
     audio_roles: [],

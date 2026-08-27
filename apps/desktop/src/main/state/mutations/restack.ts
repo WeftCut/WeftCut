@@ -23,8 +23,8 @@ export type RestackPosition = 'above' | 'below'
  *
  *  Times are untouched, so no re-snap and no `applyDurationAutofit` — the
  *  same reasoning as `applyMoveLayersToNewTrack`: nothing is retimed, so the
- *  high-water mark cannot move. Group membership is untouched for the same
- *  reason as there: no invariant ties a group to a track.
+ *  high-water mark cannot move. Link membership is untouched for the same
+ *  reason as there: no invariant ties a link to a track.
  *
  *  Returns the id of the track the mover ends up on (the moved track, or the
  *  freshly minted one), or null when the mover's track is ALREADY directly at

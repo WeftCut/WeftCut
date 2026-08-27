@@ -15,18 +15,18 @@
 // of those re-render App. Same rule `appCommands.ts` spells out for
 // `clearRange`.
 
-import { splitLayerGrouped, type ProjectSummary } from "../ipc";
+import { splitLayerLinked, type ProjectSummary } from "../ipc";
 import { displayMode } from "../settings/appSettingsStore";
 import { playheadTimeUs } from "../state/playheadStore";
 import { useProjectStore } from "../state/projectStore";
 import { useSelectionStore } from "../state/selectionStore";
 
-/// One layer a cut would land in, paired with the group the cut fans out to
-/// (null when the layer is ungrouped). The group id exists only for the
+/// One layer a cut would land in, paired with the link the cut fans out to
+/// (null when the layer is unlinked). The link id exists only for the
 /// dedupe in `resolveSplitTargets`.
 export interface SplitTarget {
   layerId: string;
-  groupId: string | null;
+  linkId: string | null;
 }
 
 /**
@@ -41,8 +41,8 @@ export interface SplitTarget {
  * - **Locks.** A locked layer or a locked track answers `TrackLocked`. A lock
  *   is the user's own standing instruction, so prevention beats reporting it
  *   back at them (#18).
- * - **One layer per group.** `split_layer_grouped` with `escape_group: false`
- *   splits every spanning group sibling in the SAME commit, so sending the
+ * - **One layer per link.** `split_layer_linked` with `escape_link: false`
+ *   splits every spanning link sibling in the SAME commit, so sending the
  *   partner too would ask the actor to cut an interval it had just closed —
  *   `SplitOutsideLayer` on a clip that *did* get split. Deduping here is what
  *   keeps an auto-paired A/V couple one commit and one undo.
@@ -60,9 +60,9 @@ export function resolveSplitTargets(
   selected: ReadonlySet<string>,
   abRollFilter: boolean,
 ): SplitTarget[] {
-  const groupOf = new Map<string, string>();
-  for (const group of summary.groups) {
-    for (const layerId of group.layer_ids) groupOf.set(layerId, group.id);
+  const linkOf = new Map<string, string>();
+  for (const link of summary.links) {
+    for (const layerId of link.layer_ids) linkOf.set(layerId, link.id);
   }
 
   // Built twice over the same tracks rather than once with a flag: the two
@@ -73,19 +73,19 @@ export function resolveSplitTargets(
     rowVisible: (roleIsNull: boolean) => boolean,
   ): SplitTarget[] => {
     const out: SplitTarget[] = [];
-    const claimedGroups = new Set<string>();
+    const claimedLinks = new Set<string>();
     for (const track of summary.tracks) {
       if (track.locked || !rowVisible(track.role === null)) continue;
       for (const layer of track.layers) {
         if (layer.locked) continue;
         if (!(layer.t_start_us < tUs && tUs < layer.t_end_us)) continue;
         if (!accept(layer.id)) continue;
-        const groupId = groupOf.get(layer.id) ?? null;
-        if (groupId !== null) {
-          if (claimedGroups.has(groupId)) continue;
-          claimedGroups.add(groupId);
+        const linkId = linkOf.get(layer.id) ?? null;
+        if (linkId !== null) {
+          if (claimedLinks.has(linkId)) continue;
+          claimedLinks.add(linkId);
         }
-        out.push({ layerId: layer.id, groupId });
+        out.push({ layerId: layer.id, linkId });
       }
     }
     return out;
@@ -106,15 +106,14 @@ export function resolveSplitTargets(
  * Cut at the playhead.
  *
  * Silent when nothing straddles it — the same answer `deleteSelected` and
- * `handleGroupSelected` give an empty target, and the honest one for a key
+ * `handleToggleLinkSelected` give an empty target, and the honest one for a key
  * pressed over a gap.
  *
  * Rejections propagate: the registry and the keyboard dispatcher both funnel
  * `run` through `runCommandWithLogging`, which turns one into the single
  * `Shortcut`/Error row with the refusal's curated copy. A failure part-way
- * through a multi-clip cut therefore stops the loop — the same behaviour
- * `handleDissolveSelectedGroup` has for its own per-group loop, and the clips
- * already cut stay cut (each split is its own commit).
+ * through a multi-clip cut therefore stops the loop, and the clips already
+ * cut stay cut (each split is its own commit).
  *
  * LANDMINE: N straddling clips are N commits, so N undo steps. One commit
  * would need a new actor op — `split_layer_multi` splits one layer at many
@@ -135,8 +134,8 @@ export async function splitAtPlayhead(): Promise<void> {
     displayMode() === "AbRoll",
   );
   for (const target of targets) {
-    // `escape_group: false` — the group-aware split, exactly as the Blade
-    // sends it, so a grouped A/V pair cuts in lockstep.
-    await splitLayerGrouped(target.layerId, tUs, false);
+    // `escape_link: false` — the link-aware split, exactly as the Blade
+    // sends it, so a linked A/V pair cuts in lockstep.
+    await splitLayerLinked(target.layerId, tUs, false);
   }
 }

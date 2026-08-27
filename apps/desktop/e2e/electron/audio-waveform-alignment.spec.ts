@@ -192,7 +192,7 @@ test.describe('timeline waveform ↔ preview PCM alignment (Electron)', () => {
       layerId: audioLayer,
       newTrackId: await trackOf(audioLayer!),
       newTStartUs: SLIP_US,
-      escapeGroup: true,
+      escapeLink: true,
     })
     expect(await startOf(audioLayer!), 'the slip must be stored verbatim').toBe(SLIP_US)
     expect(await startOf(layerId), 'the video member must not move').toBe(0)

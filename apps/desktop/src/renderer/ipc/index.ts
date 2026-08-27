@@ -411,16 +411,16 @@ export interface ProjectSummary {
   /// renderer's two-input transition node. Optional: older snapshots and
   /// test fixtures omit it — consumers treat absent as empty.
   transitions?: TransitionSummary[];
-  /// `docs/features.md#groups`. Empty when no groups exist. UI uses this to
-  /// render the tinted-border indicator and to resolve "what group is
-  /// this layer in?" for click-selects-whole-group behavior.
-  groups: GroupSummary[];
+  /// `docs/features.md#links`. Empty when no links exist. UI uses this to
+  /// render the tinted-border indicator and to resolve "what link is
+  /// this layer in?" for click-selects-whole-link behavior.
+  links: LinkSummary[];
   /// `docs/audio.md`. Always exactly 4 entries in canonical role order
   /// (dialogue, music, sfx, voiceover) — the project-level role mixer.
   audio_roles: RoleMixView[];
 }
 
-export interface GroupSummary {
+export interface LinkSummary {
   id: string;
   label: string | null;
   layer_ids: string[];
@@ -1221,13 +1221,13 @@ export async function moveLayer(
   layerId: string,
   newTrackId: string,
   newTStartUs: number,
-  escapeGroup = false,
+  escapeLink = false,
 ): Promise<void> {
   return invoke<void>("move_layer", {
     layerId,
     newTrackId,
     newTStartUs,
-    escapeGroup,
+    escapeLink,
   });
 }
 
@@ -1252,52 +1252,52 @@ export async function restackLayer(
   return invoke<void>("restack_layer", { layerId, anchorLayerId, position });
 }
 
-/** `docs/features.md#groups` — group-aware trim. `edge` is `"in"` or `"out"`. */
+/** `docs/features.md#links` — link-aware trim. `edge` is `"in"` or `"out"`. */
 export async function trimLayer(
   layerId: string,
   edge: "in" | "out",
   newTUs: number,
-  escapeGroup = false,
+  escapeLink = false,
 ): Promise<void> {
   return invoke<void>("trim_layer", {
     layerId,
     edge,
     newTUs,
-    escapeGroup,
+    escapeLink,
   });
 }
 
-export async function splitLayerGrouped(
+export async function splitLayerLinked(
   layerId: string,
   atTUs: number,
-  escapeGroup = false,
+  escapeLink = false,
 ): Promise<[string, string]> {
-  return invoke<[string, string]>("split_layer_grouped", {
+  return invoke<[string, string]>("split_layer_linked", {
     layerId,
     atTUs,
-    escapeGroup,
+    escapeLink,
   });
 }
 
-/** `docs/features.md#groups` — bundle ≥2 layer ids into a group. */
-export async function groupsCreate(
+/** `docs/features.md#links` — bundle ≥2 layer ids into a link. */
+export async function linksCreate(
   layerIds: string[],
   label: string | null = null,
   reassign = false,
 ): Promise<string> {
-  return invoke<string>("groups_create", {
+  return invoke<string>("links_create", {
     layerIds,
     label,
     reassign,
   });
 }
 
-export async function groupsDissolve(groupId: string): Promise<void> {
-  return invoke<void>("groups_dissolve", { groupId });
+export async function linksDissolve(linkId: string): Promise<void> {
+  return invoke<void>("links_dissolve", { linkId });
 }
 
 /// Lift an Audio layer onto a freshly-created track inserted directly below its
-/// source in the z-stack, so the new row reads one row down the screen. Group
+/// source in the z-stack, so the new row reads one row down the screen. Link
 /// membership survives. Returns the new track's id. UI consequence: the combined
 /// row collapses to V-only on the source row; the new row below shows the
 /// waveform on its own (J/L-cut friendly).
@@ -1341,9 +1341,9 @@ export async function deleteLayer(layerId: string): Promise<void> {
 /// Shift+click set and Select All all arrive here. Deleting exactly one layer
 /// belongs in `deleteLayer` above. An empty set is a no-op that records nothing.
 ///
-/// Takes the selection VERBATIM: delete is local at the op level (a group is
-/// never fanned out — docs/features.md § Groups), because the selection already
-/// carries the whole group; clicking one member selects all of them.
+/// Takes the selection VERBATIM: delete is local at the op level (a link is
+/// never fanned out — docs/features.md § Links), because the selection already
+/// carries the whole link; clicking one member selects all of them.
 export async function deleteLayers(layerIds: string[]): Promise<void> {
   return invoke<void>("delete_layers", { layerIds });
 }
@@ -1357,7 +1357,7 @@ export async function deleteLayers(layerIds: string[]): Promise<void> {
 /// the incoming layer moves left by the frame-rounded `durationUs`, trimmed
 /// ranges preserved, no tail borrowed (ADR 0048). Crossfade must OMIT
 /// `direction`; Wipe/Slide must carry one — the backend rejects the other
-/// pairing. Throws structured refusals (shared group, t = 0 crossing,
+/// pairing. Throws structured refusals (shared link, t = 0 crossing,
 /// duration over a participant's length) — surface them, never clamp.
 export async function addTransition(args: {
   fromLayerId: string;

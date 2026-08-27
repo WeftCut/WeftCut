@@ -242,8 +242,10 @@ const enUS = {
     safe_area_off_hint: "Safe-area guides hidden. Click to show.",
     // Disabled-button reasons, the `clear_range_empty` rule: name the
     // precondition rather than restate a label that can't be acted on.
-    group_needs_two: "Select two or more clips to group them",
-    dissolve_no_group: "No group in the selection",
+    link_selected: "Link selected layers",
+    unlink_selected: "Unlink selected layers",
+    link_needs_two: "Select two or more unlinked clips to link them",
+    link_mixed_selection: "Select clips that are all unlinked, or all in one link",
   },
   dock_workspace: {
     editing_label: "Editing workspace",
@@ -371,8 +373,7 @@ const enUS = {
     focus_previous_panel: "Focus previous Panel",
     toggle_maximize_panel: "Maximize / restore Panel",
     restore_maximized_panel: "Restore maximized Panel",
-    group_selected: "Group selected layers",
-    dissolve_selected_group: "Dissolve group of selected layer",
+    toggle_link_selected: "Link / Unlink selected layers",
     nudge_audio_sample_back: "Nudge audio 1 sample earlier",
     nudge_audio_sample_forward: "Nudge audio 1 sample later",
     nudge_audio_ms_back: "Nudge audio 1 ms earlier",
@@ -629,8 +630,8 @@ const enUS = {
     track_locked: "{{track}} is locked.",
     track_not_empty: "{{track}} still has clips on it.",
     track_not_removable: "{{track}} is reserved and can't be removed.",
-    group_locked_member:
-      "“{{layer}}” is grouped with the locked layer “{{locked}}”.",
+    link_locked_member:
+      "“{{layer}}” is linked with the locked layer “{{locked}}”.",
     trim_edge_out_of_range:
       "Can't trim “{{layer}}” to {{time}} — outside the clip's range.",
     split_outside_layer:
@@ -639,8 +640,8 @@ const enUS = {
       "“{{layer}}” has only {{available}} of source handle — not enough for this transition.",
     transition_restore_collision:
       "Removing the transition needs to move “{{layer}}” back to the cut, but that space is now occupied.",
-    transition_participants_share_group:
-      "“{{from}}” and “{{to}}” are in the same group — moving one drags the other, so the overlap can't open. Ungroup them first.",
+    transition_participants_share_link:
+      "“{{from}}” and “{{to}}” are in the same link — moving one drags the other, so the overlap can't open. Unlink them first.",
     transition_layers_not_adjacent:
       "“{{from}}” and “{{to}}” must touch to add a transition.",
     fps_locked_by_content:
@@ -1218,9 +1219,9 @@ const enUS = {
     t_start: "Start",
     t_start_hint: "Inclusive — frame at this timecode is the layer's first.",
     kind: "Kind",
-    group_none: "No group",
-    group_of_one: "Group of {{count}} layer",
-    group_of_other: "Group of {{count}} layers",
+    link_none: "Not linked",
+    link_of_one: "Link of {{count}} layer",
+    link_of_other: "Link of {{count}} layers",
     locked: "Locked",
     duration: "Duration",
     multi_primary: "Editing primary layer “{{label}}” — {{count}} layers selected; changes apply only to this layer.",
@@ -1468,12 +1469,12 @@ const enUS = {
       update: "Updated transition",
       remove: "Removed transition",
     },
-    group: {
-      create: "Created group",
-      dissolve: "Dissolved group",
-      add_members: "Added group members",
-      remove_members: "Removed group members",
-      rename: "Renamed group",
+    link: {
+      create: "Created link",
+      dissolve: "Dissolved link",
+      add_members: "Added link members",
+      remove_members: "Removed link members",
+      rename: "Renamed link",
     },
     caption: { restyle: "Restyled captions" },
     media: {

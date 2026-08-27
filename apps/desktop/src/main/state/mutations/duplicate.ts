@@ -6,7 +6,7 @@ import { gridForLayerKind, snapOnGrid } from '../snap'
 
 /** Shallow-clone the layer with one fresh id (nested keyframe/effect ids are
  *  NOT regenerated), offset by tOffsetUs, insert t-start-sorted on the same
- *  track, autofit. Duplicate does NOT join a group.
+ *  track, autofit. Duplicate does NOT join a link.
  *
  *  `tOffsetUs` arrives raw from `duplicate_layer` (MCP-only — no UI caller), so
  *  offsetting both edges by it directly takes them off the frame grid at every
@@ -57,7 +57,7 @@ export function pasteLayerInterval(p: Project, id: Uuid, tStartUs: number): Past
 /** Paste a detached clone onto an explicitly resolved target track. The caller
  *  owns automatic track selection/creation; this mutation preserves all layer
  *  content and effects, gives only the layer a fresh id, and never joins the
- *  source group. */
+ *  source link. */
 export function applyPasteLayer(
   p: Project,
   idGen: IdGen,

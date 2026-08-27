@@ -31,10 +31,10 @@ describe('ProjectSummary projection', () => {
     expect(s.composition.fps_den).toBe(1)
     expect(s.composition.duration_pinned).toBe(false)
 
-    // Fresh project has no media, markers, or groups
+    // Fresh project has no media, markers, or links
     expect(s.media).toHaveLength(0)
     expect(s.markers).toHaveLength(0)
-    expect(s.groups).toHaveLength(0)
+    expect(s.links).toHaveLength(0)
 
     // Four standard audio roles always present
     expect(s.audio_roles.map((r) => r.role)).toEqual(['dialogue', 'music', 'sfx', 'voiceover'])

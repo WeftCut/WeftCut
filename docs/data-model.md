@@ -57,9 +57,9 @@ audio precision; it no longer does.
 One function, `gridForLayerKind(kind, fps)` in
 `apps/desktop/src/main/state/snap.ts`, picks the lattice, and all three
 enforcement sites ask it: the validator's predicate, every mutation snap
-(including `move`'s group fan-out), and the load repair. That single seam is not
+(including `move`'s link fan-out), and the load repair. That single seam is not
 tidiness — a kind-blind fan-out drags a slipped audio member back onto the
-nearest video frame on any unrelated group move, and a kind-blind load repair
+nearest video frame on any unrelated link move, and a kind-blind load repair
 does it on *every open*. Both destroy authored sync silently, because a snap
 that "succeeds" looks like a no-op.
 
@@ -94,7 +94,7 @@ origin. This is a bounds rule (`NegativeLayerStart`) kept separate from the
 grid rules, because a negative time is usually perfectly canonical —
 `-1_000_000` is frame -30 at 30 fps — so reporting it as off-grid would point
 at the wrong fix. A move dragged toward the origin stops *as a set*: the
-clamp applies to the shared delta, so the earliest member of a group lands on
+clamp applies to the shared delta, so the earliest member of a link lands on
 0 and every other member keeps its spacing, rather than individual layers
 being shortened in place.
 
@@ -223,7 +223,7 @@ type KeyframeId = Uuid;
 type MarkerId = Uuid;
 type CheckpointId = Uuid;
 type OpId = Uuid;
-type GroupId = Uuid;
+type LinkId = Uuid;
 type TransitionId = Uuid;
 ```
 
@@ -251,7 +251,7 @@ struct Project {
     tracks: imbl::Vector<Track>,                  // 0 = bottom z-stack, last = top
     markers: imbl::Vector<Marker>,
     transitions: imbl::Vector<Transition>,
-    groups: imbl::Vector<Group>,
+    links: imbl::Vector<Link>,
     audio_roles: imbl::HashMap<AudioRole, RoleMixSettings>,  // per-role mix buses
     settings: ProjectSettings,                    // proxy res, autosave, etc.
 }
@@ -479,7 +479,7 @@ and silences its audio together. The lock sets `locked` (the actor
 rejects `move_layer`, `move_layers_to_new_track`, `trim_layer`,
 `split_layer`, `delete_layer`, `update_layer`, and
 `update_layer_params` on layers that belong to a
-locked track, including via group fan-out). Both are toggled through
+locked track, including via link fan-out). Both are toggled through
 `update_track_flags`, an **unrecorded** mutation (same
 `replace_settings_everywhere` convention as `ProjectSettings` patches)
 so undo never flips a track control back.
@@ -823,6 +823,23 @@ struct Marker {
 }
 ```
 
+## `Link`
+
+```rust
+struct Link {
+    id: LinkId,
+    label: Option<String>,            // omitted on the wire when absent (`skip_serializing_if`), never `null`
+    members: imbl::OrdSet<LayerId>,   // ≥ 2; a layer is in at most one link; the TS twin keeps its array sorted to match
+}
+```
+
+A flat, non-nesting set of layers whose move / trim / split fan out to every
+member; nothing else about a link is rendered, mixed or exported. The
+behaviour contract is [features.md § Links](features.md#links). On the read
+surface a link is `LinkSummary { id, label: string | null, layer_ids }` —
+`links` on `project://current` — where the omitted label becomes an explicit
+`null`.
+
 ## History
 
 ```rust
@@ -912,7 +929,7 @@ struct ChangeEvent {
 | Invariant | Failure |
 |---|---|
 | `t_start_us < t_end_us` | reject |
-| `t_start_us >= 0` | clamped in the mutator (a group move stops as a set), then reject as a backstop (`NegativeLayerStart`); a project loaded from disk is repaired in `parseProject` instead of rejected |
+| `t_start_us >= 0` | clamped in the mutator (a link move stops as a set), then reject as a backstop (`NegativeLayerStart`); a project loaded from disk is repaired in `parseProject` instead of rejected |
 | Visual `t_start_us`, `t_end_us`, `composition.duration_us`, marker `t_us`/`end_t_us` on the composition-frame grid | snap-round (half-up) in the mutator, then reject as a backstop (`OffGridLayerBoundary` / `OffGridTime`); a project loaded from disk is repaired in `parseProject` instead of rejected. Both errors carry `snap_to`, the value the caller should have sent |
 | Audio `t_start_us`, `t_end_us` on the fixed 48 kHz sample lattice | same three-site enforcement, against the audio grid; the error carries `grid: "sample"` and `fps: 48000/1` |
 | `fps` immutable once the timeline — or any stored snapshot / checkpoint — holds a layer | reject (`FpsLockedByContent`, carrying `locked_by: current \| history`). History scope, because the unrecorded rate change writes to every snapshot: judging on the live state alone would let `undo` resurrect old-grid layers at the new rate. Set the rate on a project whose timeline has never held anything |
@@ -922,7 +939,12 @@ struct ChangeEvent {
 | `composition.duration_us == max(layer.t_end_us)` while `duration_pinned == false` | auto-fit bidirectionally (grow on adds, shrink on deletes/inward trims) |
 | `composition.duration_us ≥ max(layer.t_end_us)` while `duration_pinned == true` | overflow guard only — pinned value grows if a layer extends past it, never shrinks |
 | `composition.fps.den > 0`, `width/height > 0` | reject |
-| All references (`MediaId`/`LayerId`/`GroupId`/`TransitionId`) resolve | reject |
+| All references (`MediaId`/`LayerId`/`LinkId`/`TransitionId`) resolve | reject |
+| `Link.id` unique across `Project.links` | reject (`DuplicateLinkId`) |
+| Every `Link.members` entry names a layer in the project | reject (`LinkMemberMissing`) |
+| A layer is in at most one link | reject (`LayerInMultipleLinks`) |
+| A link holds ≥ 2 members | dissolved in the mutator when a delete or `links_remove_members` takes it below two — delete is local, so this is the only way a member leaves — then reject as a backstop (`LinkBelowMinSize`) |
+| A transition's two participants do not share a link | reject at `add_transition` (`TransitionParticipantsShareLink`): placement moves the incoming layer with its link siblings, so a shared link would drag the outgoing layer along and the overlap would never open |
 | Keyframe `t_us` outside `[0, layer.duration]` | **allowed** — trim/split intentionally keep out-of-range keys (non-destructive); `value_at` clamps and the UI hides them |
 | Motif props match the Motif manifest's `props_schema` | reject |
 | `Animated` with empty keyframes ⇔ `Static` | normalize |
@@ -956,14 +978,14 @@ the UI uses the same actor via backend commands.
 | `update_layer_params(layer_id, patch)` | kind-specific params |
 | `update_layer_param_track(layer_id, param_key, track)` / `update_layer_param_tracks(layer_id, entries)` | replace one / several `Animated<f64>` tracks; normalized (frame-snap / sort / dedupe-last-wins), recorded, rejects empty-keyframed / unknown-param / locked-track |
 | `update_param_tracks_multi(entries)` | the cross-**layer** form of the batch above: every `(layer_id, param_key, track)` entry names its own layer, and the whole set is **one** recorded entry however many layers it spans — so one undo reverts the lot. Same normalization and rejections per entry; the scale-link invariant is checked once per distinct layer after every entry has landed, never mid-batch |
-| `move_layer(layer_id, new_track_id, new_t_start_us, escape_group?)` | rejects on overlap; group-aware (see `features.md#groups`) |
+| `move_layer(layer_id, new_track_id, new_t_start_us, escape_link?)` | rejects on overlap; link-aware (see `features.md#links`): a fan-out that would touch a locked member rejects whole with `LinkLockedMember` |
 | `restack_layer(layer_id, anchor_layer_id, position)` | anchored z-reorder: `position` ∈ `"above" \| "below"` the anchor layer's track, resolved at apply time. Sole-occupant mover moves its whole track (identity survives); a shared-track mover splits onto a new track at the target position (emptied source pruned by the usual rule); a role-stamped source never moves. Already-in-place calls are no-ops that record nothing; Audio movers/anchors and self-anchors reject |
-| `split_layer(layer_id, at_t_us, escape_group?)` → `(LayerId, LayerId)` | |
-| `trim_layer(layer_id, edge, new_t_us, escape_group?)` | `edge` ∈ `"in" | "out"` |
+| `split_layer(layer_id, at_t_us, escape_link?)` → `(LayerId, LayerId)` | |
+| `trim_layer(layer_id, edge, new_t_us, escape_link?)` | `edge` ∈ `"in" | "out"` |
 | `delete_layer(layer_id)` | |
-| `delete_layers(layer_ids)` | the cross-**layer** form: one recorded entry however many layers it spans, so one undo restores the lot. Ids are de-duplicated; a locked member rejects the WHOLE batch rather than half-deleting. Takes the id set verbatim — no group fan-out, since selection is what carries a group |
-| `groups_create(layer_ids, label?, reassign?)` → `GroupId` | |
-| `groups_dissolve(group_id)` / `groups_add_members(group_id, layer_ids, reassign?)` / `groups_remove_members(group_id, layer_ids)` / `groups_rename(group_id, label?)` | |
+| `delete_layers(layer_ids)` | the cross-**layer** form: one recorded entry however many layers it spans, so one undo restores the lot. Ids are de-duplicated; a locked member rejects the WHOLE batch rather than half-deleting. Takes the id set verbatim — no link fan-out, since selection is what carries a link |
+| `links_create(layer_ids, label?, reassign?)` → `LinkId` | fewer than two distinct ids → `LinkCreateNeedsTwoLayers`; a layer already in another link → `LayerAlreadyLinked` unless `reassign: true`, which moves it over |
+| `links_dissolve(link_id)` / `links_add_members(link_id, layer_ids, reassign?)` / `links_remove_members(link_id, layer_ids)` / `links_rename(link_id, label?)` | an unknown `link_id` → `LinkNotFound`; removing a non-member → `LayerNotInLink`; `add_members` shares `links_create`'s `LayerAlreadyLinked` / `reassign` rule |
 | `add_marker(t_us, label, color, end_t_us?)` → `MarkerId` | |
 | `update_marker(marker_id, patch)` / `remove_marker(marker_id)` | |
 | `set_composition(patch)` | never recorded (setup, not editing); `fps` refused with `FpsLockedByContent` once the timeline — or any stored snapshot/checkpoint — holds a layer |
@@ -1150,6 +1172,11 @@ blind pass because the cut-over gate left no alternative, and the on-disk
 shape drifted across three generations while the version sat still. ADR 0047
 has the history.
 
+Until first release there is no chain to extend: an incompatible change
+rewrites the shape in place — `SCHEMA_VERSION` stays 1, `STEPS` stays empty —
+and regenerates `fixtures/projects/v1.json`; the migration chain begins with
+the first post-release bump (ADR 0052).
+
 A step imports **nothing** — not `SCHEMA_VERSION` (the target version is a
 parameter), not a model type, not `defaultSettings()`. It takes the wire
 object, declares local types for the fields it touches, and writes frozen
@@ -1163,8 +1190,8 @@ the unknown fields drop on next save.
 ### Bumping `SCHEMA_VERSION`
 
 A bump ships **in the same change** as its migration step and a frozen fixture
-of the version it leaves behind (`fixtures/projects/v{n}.json`, never
-regenerated — see that directory's README). `migrate.completeness.test.ts`
+of the version it leaves behind (`fixtures/projects/v{n}.json`, frozen from
+the moment a step reads it — see that directory's README). `migrate.completeness.test.ts`
 fails otherwise: it pins `MIN_SCHEMA_VERSION + STEPS.length ===
 SCHEMA_VERSION`, that the steps sit at exactly the versions in between, and
 that every fixture still upgrades and passes `parseProject` + `validate`.

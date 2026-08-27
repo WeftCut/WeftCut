@@ -35,8 +35,7 @@ export type ActionId =
   | "focusPreviousPanel"
   | "toggleMaximizePanel"
   | "restoreMaximizedPanel"
-  | "groupSelected"
-  | "dissolveSelectedGroup"
+  | "toggleLinkSelected"
   | "nudgeAudioSampleBack"
   | "nudgeAudioSampleForward"
   | "nudgeAudioMsBack"
@@ -223,13 +222,13 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
     fireWhenEditing: false,
     suppressInTransientWidget: true,
   },
-  // `docs/features.md#groups` — Ctrl/Cmd+G groups the current multi-
-  // selection; Ctrl/Cmd+Shift+G dissolves every group represented in
-  // the selection. Handler lives in Timeline.tsx, while the complete
-  // selection itself is renderer-global. Surfaced here so the Keyboard
-  // Shortcuts panel shows them and the user can rebind.
-  groupSelected:          { defaultKeys: ["Mod+G"],        labelKey: "actions.group_selected", scope: TIMELINE_SELECTION },
-  dissolveSelectedGroup:  { defaultKeys: ["Mod+Shift+G"],  labelKey: "actions.dissolve_selected_group", scope: TIMELINE_SELECTION },
+  // `docs/features.md#links` — Ctrl/Cmd+L toggles the link on the current
+  // selection, Premiere's Link: two or more unlinked layers link, a selection
+  // inside one link unlinks it (`timeline/linkEligibility.ts` decides).
+  // Handler lives in Timeline.tsx, while the complete selection itself is
+  // renderer-global. Surfaced here so the Keyboard Shortcuts panel shows it
+  // and the user can rebind.
+  toggleLinkSelected:     { defaultKeys: ["Mod+L"],        labelKey: "actions.toggle_link_selected", scope: TIMELINE_SELECTION },
   // Sub-frame audio slip (ADR 0038). Deliberately UNSCOPED, unlike its
   // structural siblings above: nudging audio sync while watching and listening
   // to the preview is the workflow these keys exist for, and scoping Alt+Arrow

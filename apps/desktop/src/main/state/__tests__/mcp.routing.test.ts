@@ -4,7 +4,7 @@
 // and rejects malformed args with a structured error envelope (no throw).
 // Coverage:
 // table-exec tools (add_track, delete_layer, trim_layer, move_layer,
-// groups_create, set_role_gain, undo/redo) and dedicated-exec tools
+// links_create, set_role_gain, undo/redo) and dedicated-exec tools
 // (add_color_layer, add_marker, split_layer, set_keyframe, add_track).
 import { describe, it, expect } from 'vitest'
 import { freshActor, aRollId, bRollId } from './pbt/harness'
@@ -353,36 +353,36 @@ describe('MCP adapter routing — move_layer (table)', () => {
   })
 })
 
-// ── Table-exec: groups_create ──────────────────────────────────────────────────
+// ── Table-exec: links_create ──────────────────────────────────────────────────
 
-describe('MCP adapter routing — groups_create (table)', () => {
-  it('valid call routes, returns a group id, and group appears in state', () => {
+describe('MCP adapter routing — links_create (table)', () => {
+  it('valid call routes, returns a link id, and link appears in state', () => {
     const a = freshActor()
     const trackId = aRollId(a)
     const id1 = addColorLayerMcp(a, trackId, 0, 2_000_000)
     const id2 = addColorLayerMcp(a, trackId, 2_000_000, 4_000_000)
 
-    const r = a.mcpCall('groups_create', JSON.stringify({ layer_ids: [id1, id2] }))
+    const r = a.mcpCall('links_create', JSON.stringify({ layer_ids: [id1, id2] }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    const groupId = r.result.content[0].text
-    expect(typeof groupId).toBe('string')
-    const groups = a.snapshot().groups
-    expect(groups.some((g) => g.id === groupId && g.members.includes(id1) && g.members.includes(id2))).toBe(true)
+    const linkId = r.result.content[0].text
+    expect(typeof linkId).toBe('string')
+    const links = a.snapshot().links
+    expect(links.some((g) => g.id === linkId && g.members.includes(id1) && g.members.includes(id2))).toBe(true)
   })
 
   it('malformed layer_ids (not an array) → structured invalid_params error, no throw', () => {
     const a = freshActor()
-    const r = a.mcpCall('groups_create', JSON.stringify({ layer_ids: 'not-an-array' }))
+    const r = a.mcpCall('links_create', JSON.stringify({ layer_ids: 'not-an-array' }))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')
-    expect(a.snapshot().groups).toHaveLength(0)
+    expect(a.snapshot().links).toHaveLength(0)
   })
 
   it('malformed layer_ids entries (non-UUID strings) → structured invalid_params error, no throw', () => {
     const a = freshActor()
-    const r = a.mcpCall('groups_create', JSON.stringify({ layer_ids: ['not-a-uuid', 'also-bad'] }))
+    const r = a.mcpCall('links_create', JSON.stringify({ layer_ids: ['not-a-uuid', 'also-bad'] }))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')

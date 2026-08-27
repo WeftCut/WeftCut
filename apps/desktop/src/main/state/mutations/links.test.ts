@@ -1,8 +1,8 @@
-// apps/desktop/src/main/state/mutations/groups.test.ts (read-side helpers)
+// apps/desktop/src/main/state/mutations/links.test.ts (read-side helpers)
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
 import { blankProject, type Layer, type LayerParams, type Project } from '../model'
-import { indexGroups, groupSiblingsExcluding, checkGroupLock, layerIdSet } from './groups'
+import { indexLinks, linkSiblingsExcluding, checkLinkLock, layerIdSet } from './links'
 import { isCommandFailure } from '../errors'
 
 function color(id: string, t0: number, t1: number): Layer {
@@ -12,40 +12,40 @@ function color(id: string, t0: number, t1: number): Layer {
 function withTwo(): Project {
   const p = blankProject(seededGen(), 't')
   p.tracks[0].layers = [color('a', 0, 100), color('b', 200, 300)]
-  p.groups = [{ id: 'g', members: ['a', 'b'] }]
+  p.links = [{ id: 'g', members: ['a', 'b'] }]
   return p
 }
 
-describe('group read-side helpers', () => {
-  it('indexGroups maps each member to its group', () => {
-    const m = indexGroups([{ id: 'g', members: ['a', 'b'] }])
+describe('link read-side helpers', () => {
+  it('indexLinks maps each member to its link', () => {
+    const m = indexLinks([{ id: 'g', members: ['a', 'b'] }])
     expect(m.get('a')).toBe('g'); expect(m.get('b')).toBe('g'); expect(m.get('x')).toBeUndefined()
   })
-  it('groupSiblingsExcluding returns the other members, sorted, [] when ungrouped', () => {
+  it('linkSiblingsExcluding returns the other members, sorted, [] when unlinked', () => {
     const p = withTwo()
-    expect(groupSiblingsExcluding(p, 'a')).toEqual(['b'])
-    expect(groupSiblingsExcluding(p, 'b')).toEqual(['a'])
-    p.groups = []
-    expect(groupSiblingsExcluding(p, 'a')).toEqual([])
+    expect(linkSiblingsExcluding(p, 'a')).toEqual(['b'])
+    expect(linkSiblingsExcluding(p, 'b')).toEqual(['a'])
+    p.links = []
+    expect(linkSiblingsExcluding(p, 'a')).toEqual([])
   })
   it('layerIdSet collects all layer ids', () => {
     const p = withTwo(); expect([...layerIdSet(p)].sort()).toEqual(['a', 'b'])
   })
-  it('checkGroupLock: ungrouped anchor is a no-op', () => {
-    const p = withTwo(); p.groups = []
-    expect(() => checkGroupLock(p, 'a', ['a', 'b'])).not.toThrow()
+  it('checkLinkLock: unlinked anchor is a no-op', () => {
+    const p = withTwo(); p.links = []
+    expect(() => checkLinkLock(p, 'a', ['a', 'b'])).not.toThrow()
   })
-  it('checkGroupLock throws GroupLockedMember when a touched member is layer-locked', () => {
+  it('checkLinkLock throws LinkLockedMember when a touched member is layer-locked', () => {
     const p = withTwo(); p.tracks[0].layers[1].locked = true // 'b' locked
-    try { checkGroupLock(p, 'a', ['a', 'b']); throw new Error('expected throw') }
-    catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('GroupLockedMember') }
+    try { checkLinkLock(p, 'a', ['a', 'b']); throw new Error('expected throw') }
+    catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('LinkLockedMember') }
   })
-  it('checkGroupLock throws TrackLocked when a touched member sits on a locked track', () => {
+  it('checkLinkLock throws TrackLocked when a touched member sits on a locked track', () => {
     const p = withTwo()
     // move 'b' to B-roll and lock that track
     p.tracks[0].layers = [color('a', 0, 100)]
     p.tracks[1].layers = [color('b', 200, 300)]; p.tracks[1].locked = true
-    try { checkGroupLock(p, 'a', ['a', 'b']); throw new Error('expected throw') }
+    try { checkLinkLock(p, 'a', ['a', 'b']); throw new Error('expected throw') }
     catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('TrackLocked') }
   })
 })

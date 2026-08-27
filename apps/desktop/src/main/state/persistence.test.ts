@@ -98,7 +98,7 @@ function withMedia(items: MediaItem[]): Project {
     composition: { width: 1920, height: 1080, fps: { num: 30, den: 1 }, duration_us: 0, duration_pinned: false,
       sample_rate: 48000, channels: 2, color_space: 'Bt709', background: { r: 0, g: 0, b: 0, a: 255 } },
     media_pool: Object.fromEntries(items.map((i) => [i.id, i])), tracks: [], markers: [],
-    transitions: [], groups: [], audio_roles: {},
+    transitions: [], links: [], audio_roles: {},
     settings: { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60, history_capacity: 200, auto_pair_audio_on_import: true, prefer_proxies: false, proxy_overrides: {} },
   }
 }

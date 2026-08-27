@@ -91,13 +91,13 @@ describe('validate', () => {
     q.tracks[0].layers = [al]; expectRule(q, 'InvalidSrcRange')
   })
 
-  it('rejects a group below 2 members, a missing member, and a layer in two groups', () => {
+  it('rejects a link below 2 members, a missing member, and a layer in two links', () => {
     const p = blankProject(seededGen(), 't'); p.tracks[0].layers = [colorLayer('a', 0, 100_000)]
-    p.groups = [{ id: 'g', members: ['a'] }]; expectRule(p, 'GroupBelowMinSize')
+    p.links = [{ id: 'g', members: ['a'] }]; expectRule(p, 'LinkBelowMinSize')
     const q = blankProject(seededGen(), 't'); q.tracks[0].layers = [colorLayer('a', 0, 100_000)]
-    q.groups = [{ id: 'g', members: ['a', 'ghost'] }]; expectRule(q, 'GroupMemberMissing')
+    q.links = [{ id: 'g', members: ['a', 'ghost'] }]; expectRule(q, 'LinkMemberMissing')
     const r = blankProject(seededGen(), 't'); r.tracks[0].layers = [colorLayer('a', 0, 100_000), colorLayer('b', 200_000, 300_000)]
-    r.groups = [{ id: 'g1', members: ['a', 'b'] }, { id: 'g2', members: ['a', 'b'] }]; expectRule(r, 'LayerInMultipleGroups')
+    r.links = [{ id: 'g1', members: ['a', 'b'] }, { id: 'g2', members: ['a', 'b'] }]; expectRule(r, 'LayerInMultipleLinks')
   })
 
   it('does NOT reject out-of-range keyframes (intentional, validate.rs:495-509)', () => {

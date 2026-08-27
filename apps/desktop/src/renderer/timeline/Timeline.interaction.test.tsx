@@ -12,7 +12,7 @@ import {
 import "../i18n"; // initialize i18next so t(key) resolves in chrome
 import type {
   AnimTrack,
-  GroupSummary,
+  LinkSummary,
   LayerSummary,
   MediaSummary,
   TrackSummary,
@@ -61,7 +61,7 @@ const ipcMocks = vi.hoisted(() => ({
   pasteLayer: vi.fn().mockResolvedValue("duplicated-layer"),
   trimLayer: vi.fn().mockResolvedValue(undefined),
   getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
-  groupsCreate: vi.fn().mockResolvedValue("group-created"),
+  linksCreate: vi.fn().mockResolvedValue("link-created"),
   updateLayerParamTrack: vi.fn().mockResolvedValue(undefined),
   updateParamTracksMulti: vi.fn().mockResolvedValue(undefined),
   logEmit: vi.fn().mockResolvedValue(undefined),
@@ -93,7 +93,7 @@ vi.mock("../ipc", async (importOriginal) => {
     pasteLayer: ipcMocks.pasteLayer,
     trimLayer: ipcMocks.trimLayer,
     getWaveformPeaks: ipcMocks.getWaveformPeaks,
-    groupsCreate: ipcMocks.groupsCreate,
+    linksCreate: ipcMocks.linksCreate,
     updateLayerParamTrack: ipcMocks.updateLayerParamTrack,
     updateParamTracksMulti: ipcMocks.updateParamTracksMulti,
     logEmit: ipcMocks.logEmit,
@@ -167,7 +167,7 @@ const tinyVideoTrack: TrackSummary = {
   layers: [tinyVideoLayer],
 };
 
-const groupedLayer: LayerSummary = {
+const linkedLayer: LayerSummary = {
   ...layer,
   id: "layer-2",
   label: "Clip B",
@@ -176,15 +176,15 @@ const groupedLayer: LayerSummary = {
   color_hint: "#cc8844",
 };
 
-const groupedTrack: TrackSummary = {
+const linkedTrack: TrackSummary = {
   ...track,
-  layers: [layer, groupedLayer],
+  layers: [layer, linkedLayer],
 };
 
-const group: GroupSummary = {
-  id: "group-1",
+const link: LinkSummary = {
+  id: "link-1",
   label: null,
-  layer_ids: [layer.id, groupedLayer.id],
+  layer_ids: [layer.id, linkedLayer.id],
 };
 
 const sourceMedia: MediaSummary = {
@@ -207,7 +207,7 @@ function renderTimeline(overrides: {
   onSeek?: () => void;
   bladeMode?: boolean;
   tracks?: TrackSummary[];
-  groups?: GroupSummary[];
+  links?: LinkSummary[];
   media?: MediaSummary[];
   onMutated?: () => Promise<void>;
   fpsNum?: number;
@@ -220,7 +220,7 @@ function renderTimeline(overrides: {
   return render(
     <Timeline
       tracks={overrides.tracks ?? [track]}
-      groups={overrides.groups ?? []}
+      links={overrides.links ?? []}
       durationUs={overrides.durationUs ?? 5_000_000}
       keybindings={{}}
       fpsNum={overrides.fpsNum ?? 30}
@@ -251,7 +251,7 @@ describe("Timeline seek/selection coupling", () => {
     ipcMocks.pasteLayer.mockClear();
     ipcMocks.trimLayer.mockClear();
     ipcMocks.getWaveformPeaks.mockClear();
-    ipcMocks.groupsCreate.mockClear();
+    ipcMocks.linksCreate.mockClear();
     ipcMocks.logEmit.mockClear();
     // All Tracks so the role-stamped track always renders regardless of the
     // default AB-roll filter.
@@ -700,10 +700,10 @@ describe("Timeline seek/selection coupling", () => {
     expect(onSeek).not.toHaveBeenCalled();
   });
 
-  it("writes plain, Alt escape, and Shift toggle group selection globally", () => {
+  it("writes plain, Alt escape, and Shift toggle link selection globally", () => {
     const { getByText } = renderTimeline({
-      tracks: [groupedTrack],
-      groups: [group],
+      tracks: [linkedTrack],
+      links: [link],
     });
     const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
     const second = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
@@ -711,21 +711,21 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerDown(first, { button: 0, clientX: 40 });
     fireEvent.pointerUp(window, { clientX: 40 });
     expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([layer.id, groupedLayer.id]);
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([layer.id, linkedLayer.id]);
 
     fireEvent.pointerDown(second, { button: 0, clientX: 200, altKey: true });
     fireEvent.pointerUp(window, { clientX: 200, altKey: true });
-    expect(useSelectionStore.getState().primaryLayerId).toBe(groupedLayer.id);
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([groupedLayer.id]);
+    expect(useSelectionStore.getState().primaryLayerId).toBe(linkedLayer.id);
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([linkedLayer.id]);
 
     fireEvent.pointerDown(first, { button: 0, clientX: 40, shiftKey: true });
     fireEvent.pointerUp(window, { clientX: 40, shiftKey: true });
     expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
     expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
-      new Set([layer.id, groupedLayer.id]),
+      new Set([layer.id, linkedLayer.id]),
     );
 
-    // The same Shift+click again TAKES THE GROUP BACK OUT — the additive
+    // The same Shift+click again TAKES THE LINK BACK OUT — the additive
     // modifier toggles, so there is a way back from an over-wide selection
     // without starting over.
     fireEvent.pointerDown(first, { button: 0, clientX: 40, shiftKey: true });
@@ -766,7 +766,7 @@ describe("Timeline seek/selection coupling", () => {
   describe("select all / deselect all", () => {
     // Both are timeline-scoped (ADR 0041) and this harness renders Timeline
     // bare, outside the dock Panel that would BE the region — so the region is
-    // declared directly, as the group test below does.
+    // declared directly, as the link test below does.
     beforeEach(() => {
       setActiveRegion("timeline");
     });
@@ -775,12 +775,12 @@ describe("Timeline seek/selection coupling", () => {
       fireEvent.keyDown(window, { key: "a", code: "KeyA", ctrlKey: true });
 
     it("selects every clip on the rendered tracks", () => {
-      renderTimeline({ tracks: [groupedTrack] });
+      renderTimeline({ tracks: [linkedTrack] });
 
       pressSelectAll();
 
       expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
-        new Set([layer.id, groupedLayer.id]),
+        new Set([layer.id, linkedLayer.id]),
       );
       expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
     });
@@ -796,7 +796,7 @@ describe("Timeline seek/selection coupling", () => {
         ...track,
         id: "track-hidden",
         role: null,
-        layers: [{ ...groupedLayer, id: "layer-hidden", label: "Hidden" }],
+        layers: [{ ...linkedLayer, id: "layer-hidden", label: "Hidden" }],
       };
       renderTimeline({ tracks: [track, hidden] });
 
@@ -815,7 +815,7 @@ describe("Timeline seek/selection coupling", () => {
         ...track,
         id: "track-locked",
         locked: true,
-        layers: [{ ...groupedLayer, id: "layer-locked", label: "Locked" }],
+        layers: [{ ...linkedLayer, id: "layer-locked", label: "Locked" }],
       };
       renderTimeline({ tracks: [track, locked] });
 
@@ -830,18 +830,18 @@ describe("Timeline seek/selection coupling", () => {
     // panel does not jump to another clip.
     it("keeps a primary that survives the new selection", () => {
       renderTimeline({
-        tracks: [groupedTrack],
-        selectedLayerId: groupedLayer.id,
+        tracks: [linkedTrack],
+        selectedLayerId: linkedLayer.id,
       });
 
       pressSelectAll();
 
-      expect(useSelectionStore.getState().primaryLayerId).toBe(groupedLayer.id);
+      expect(useSelectionStore.getState().primaryLayerId).toBe(linkedLayer.id);
       expect(useSelectionStore.getState().selectedLayerIds.size).toBe(2);
     });
 
     it("drops the whole selection on Ctrl+Shift+A", () => {
-      renderTimeline({ tracks: [groupedTrack] });
+      renderTimeline({ tracks: [linkedTrack] });
       pressSelectAll();
       expect(useSelectionStore.getState().selectedLayerIds.size).toBe(2);
 
@@ -863,10 +863,10 @@ describe("Timeline seek/selection coupling", () => {
   // right-press must not arm a drag), which is why the menu handler does the
   // selecting.
   describe("right-click selection", () => {
-    it("selects the clicked clip, group-aware, like a left click", () => {
+    it("selects the clicked clip, link-aware, like a left click", () => {
       const { getByText } = renderTimeline({
-        tracks: [groupedTrack],
-        groups: [group],
+        tracks: [linkedTrack],
+        links: [link],
       });
       const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
 
@@ -874,20 +874,20 @@ describe("Timeline seek/selection coupling", () => {
       expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
       expect(
         Array.from(useSelectionStore.getState().selectedLayerIds),
-      ).toEqual([layer.id, groupedLayer.id]);
+      ).toEqual([layer.id, linkedLayer.id]);
     });
 
-    it("honours Alt to escape the group, the same as a left click", () => {
+    it("honours Alt to escape the link, the same as a left click", () => {
       const { getByText } = renderTimeline({
-        tracks: [groupedTrack],
-        groups: [group],
+        tracks: [linkedTrack],
+        links: [link],
       });
       const second = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
 
       fireEvent.contextMenu(second, { clientX: 200, clientY: 30, altKey: true });
       expect(
         Array.from(useSelectionStore.getState().selectedLayerIds),
-      ).toEqual([groupedLayer.id]);
+      ).toEqual([linkedLayer.id]);
     });
 
     // The clip menu's first section comes from the command registry, so the
@@ -900,7 +900,7 @@ describe("Timeline seek/selection coupling", () => {
         { id: "splitAtPlayhead", actionId: "splitAtPlayhead", labelKey: "actions.split_at_playhead", run: () => {} },
       ]);
       try {
-        const { getByText } = renderTimeline({ tracks: [groupedTrack] });
+        const { getByText } = renderTimeline({ tracks: [linkedTrack] });
         const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
         fireEvent.contextMenu(first, { clientX: 40, clientY: 30 });
 
@@ -921,12 +921,12 @@ describe("Timeline seek/selection coupling", () => {
     // Collapsing to the clicked clip would silently shrink the target.
     it("keeps a multi-selection when the click lands inside it", () => {
       const { getByText } = renderTimeline({
-        tracks: [groupedTrack],
-        groups: [group],
+        tracks: [linkedTrack],
+        links: [link],
       });
       const second = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
 
-      // Alt-select just Clip B, then Shift-extend back over Clip A's group so
+      // Alt-select just Clip B, then Shift-extend back over Clip A's link so
       // the selection holds both and its primary is NOT the clip about to be
       // right-clicked.
       fireEvent.pointerDown(second, { button: 0, clientX: 200, altKey: true });
@@ -946,15 +946,15 @@ describe("Timeline seek/selection coupling", () => {
     });
   });
 
-  it("groups the complete global selection through the existing shortcut", async () => {
-    // `groupSelected` is timeline-scoped (ADR 0041) and this harness renders
+  it("links the complete global selection through the existing shortcut", async () => {
+    // `toggleLinkSelected` is timeline-scoped (ADR 0041) and this harness renders
     // Timeline bare, outside the dock Panel that would BE the region — so the
-    // region is declared directly. Under test here is the group fan-out, not
+    // region is declared directly. Under test here is the link fan-out, not
     // the scope gate (`useShortcuts.test.tsx` owns that).
     setActiveRegion("timeline");
     const { getByText } = renderTimeline({
-      tracks: [groupedTrack],
-      groups: [],
+      tracks: [linkedTrack],
+      links: [],
     });
     const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
     const second = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
@@ -963,11 +963,11 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerUp(window, { clientX: 40 });
     fireEvent.pointerDown(second, { button: 0, clientX: 200, shiftKey: true });
     fireEvent.pointerUp(window, { clientX: 200, shiftKey: true });
-    fireEvent.keyDown(window, { key: "g", code: "KeyG", ctrlKey: true });
+    fireEvent.keyDown(window, { key: "l", code: "KeyL", ctrlKey: true });
 
     await waitFor(() => {
-      expect(ipcMocks.groupsCreate).toHaveBeenCalledWith(
-        [layer.id, groupedLayer.id],
+      expect(ipcMocks.linksCreate).toHaveBeenCalledWith(
+        [layer.id, linkedLayer.id],
         null,
         false,
       );
@@ -1230,11 +1230,11 @@ describe("Timeline seek/selection coupling", () => {
     });
   });
 
-  it("previews every grouped layer during and immediately after a move drag", async () => {
+  it("previews every linked layer during and immediately after a move drag", async () => {
     const onMutated = vi.fn().mockResolvedValue(undefined);
     const { getByText } = renderTimeline({
-      tracks: [groupedTrack],
-      groups: [group],
+      tracks: [linkedTrack],
+      links: [link],
       selectedLayerId: layer.id,
       onMutated,
     });
@@ -1260,11 +1260,11 @@ describe("Timeline seek/selection coupling", () => {
     });
   });
 
-  it("Alt+drag keeps a grouped source in place and duplicates only the dragged layer", async () => {
+  it("Alt+drag keeps a linked source in place and duplicates only the dragged layer", async () => {
     const onMutated = vi.fn().mockResolvedValue(undefined);
     const { getByText, container } = renderTimeline({
-      tracks: [groupedTrack],
-      groups: [group],
+      tracks: [linkedTrack],
+      links: [link],
       selectedLayerId: layer.id,
       onMutated,
     });
@@ -1328,9 +1328,9 @@ describe("Timeline seek/selection coupling", () => {
 
   it("shows a collision state and blocks an existing visual clip move before IPC", () => {
     const { getByText } = renderTimeline({
-      tracks: [groupedTrack],
-      groups: [],
-      selectedLayerId: groupedLayer.id,
+      tracks: [linkedTrack],
+      links: [],
+      selectedLayerId: linkedLayer.id,
     });
     const moving = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
 
@@ -1370,7 +1370,7 @@ describe("Timeline seek/selection coupling", () => {
       },
     };
     const movingVisual: LayerSummary = {
-      ...groupedLayer,
+      ...linkedLayer,
       id: "moving-visual",
       label: "Moving visual",
     };
@@ -1403,24 +1403,24 @@ describe("Timeline seek/selection coupling", () => {
     );
   });
 
-  it("marks every group ghost invalid when a sibling would collide", () => {
+  it("marks every link ghost invalid when a sibling would collide", () => {
     const anchor: LayerSummary = {
       ...layer,
-      id: "group-anchor",
-      label: "Group anchor",
+      id: "link-anchor",
+      label: "Link anchor",
       t_start_us: 0,
       t_end_us: 1_000_000,
     };
     const sibling: LayerSummary = {
-      ...groupedLayer,
-      id: "group-sibling",
-      label: "Group sibling",
+      ...linkedLayer,
+      id: "link-sibling",
+      label: "Link sibling",
       t_start_us: 2_000_000,
       t_end_us: 3_000_000,
     };
     const blocker: LayerSummary = {
       ...layer,
-      id: "group-blocker",
+      id: "link-blocker",
       label: "Blocker",
       t_start_us: 4_000_000,
       t_end_us: 5_000_000,
@@ -1429,24 +1429,24 @@ describe("Timeline seek/selection coupling", () => {
       ...track,
       layers: [anchor, sibling, blocker],
     };
-    const collisionGroup: GroupSummary = {
-      id: "collision-group",
+    const collisionLink: LinkSummary = {
+      id: "collision-link",
       label: null,
       layer_ids: [anchor.id, sibling.id],
     };
     const { getByText } = renderTimeline({
       tracks: [collisionTrack],
-      groups: [collisionGroup],
+      links: [collisionLink],
       selectedLayerId: anchor.id,
     });
-    const anchorBlock = getByText("Group anchor").closest(
+    const anchorBlock = getByText("Link anchor").closest(
       ".timeline-layer",
     ) as HTMLElement;
-    const siblingBlock = getByText(/Group siblin/).closest(
+    const siblingBlock = getByText(/Link siblin/).closest(
       ".timeline-layer",
     ) as HTMLElement;
 
-    // +2s keeps the two group members adjacent, but moves the sibling onto Blocker.
+    // +2s keeps the two link members adjacent, but moves the sibling onto Blocker.
     fireEvent.pointerDown(anchorBlock, { button: 0, clientX: 0, clientY: 30 });
     fireEvent.pointerMove(window, { clientX: 160, clientY: 30 });
 
@@ -1824,10 +1824,10 @@ describe("Timeline seek/selection coupling", () => {
     expect(ipcMocks.addTrack).not.toHaveBeenCalled();
   });
 
-  it("raises a whole group onto the ONE new lane", async () => {
+  it("raises a whole link onto the ONE new lane", async () => {
     const { container, getByText } = renderTimeline({
-      tracks: [groupedTrack],
-      groups: [group],
+      tracks: [linkedTrack],
+      links: [link],
       selectedLayerId: layer.id,
     });
     stubRaiseLayout(container);
@@ -1841,15 +1841,15 @@ describe("Timeline seek/selection coupling", () => {
     await waitFor(() => {
       expect(ipcMocks.moveLayersToNewTrack).toHaveBeenCalledWith([
         layer.id,
-        groupedLayer.id,
+        linkedLayer.id,
       ]);
     });
   });
 
-  // Two lanes, one clip each, grouped — the shape a raise has to judge as a set
+  // Two lanes, one clip each, linked — the shape a raise has to judge as a set
   // rather than one clip at a time. `tracks` is bottom-of-z-stack first, so the
   // SECOND entry renders in the top lane band.
-  const twoLaneGroup = (
+  const twoLaneLink = (
     lower: LayerSummary,
     upper: LayerSummary,
     upperTrack: Partial<TrackSummary> = {},
@@ -1865,9 +1865,9 @@ describe("Timeline seek/selection coupling", () => {
         ...upperTrack,
       },
     ] as TrackSummary[],
-    groups: [
-      { id: "raise-group", label: null, layer_ids: [lower.id, upper.id] },
-    ] as GroupSummary[],
+    links: [
+      { id: "raise-link", label: null, layer_ids: [lower.id, upper.id] },
+    ] as LinkSummary[],
   });
 
   it("refuses a subject set that would overlap itself on the one new lane", () => {
@@ -1880,7 +1880,7 @@ describe("Timeline seek/selection coupling", () => {
       t_end_us: 3_000_000,
     };
     const { container, getByText } = renderTimeline({
-      ...twoLaneGroup(anchor, overlapping),
+      ...twoLaneLink(anchor, overlapping),
       selectedLayerId: anchor.id,
     });
     stubRaiseLayout(container);
@@ -1907,7 +1907,7 @@ describe("Timeline seek/selection coupling", () => {
       t_end_us: 4_000_000,
     };
     const { container, getByText } = renderTimeline({
-      ...twoLaneGroup(anchor, pinned, { locked: true }),
+      ...twoLaneLink(anchor, pinned, { locked: true }),
       selectedLayerId: anchor.id,
     });
     stubRaiseLayout(container);

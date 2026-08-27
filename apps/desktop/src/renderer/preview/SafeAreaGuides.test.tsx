@@ -34,7 +34,7 @@ function fixture(): ProjectSummary {
     history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
     media: [],
     tracks: [],
-    groups: [],
+    links: [],
     markers: [],
     transitions: [],
     audio_roles: [],

@@ -102,10 +102,10 @@ _Avoid_: reveal side, wipe from, source edge
 
 **Overlap placement**:
 The default arrangement of every `add_transition`: the incoming layer moves
-left by the frame-rounded duration (group siblings following on their own
+left by the frame-rounded duration (link siblings following on their own
 lattices), so both participants play exactly their trimmed ranges — no
 default touches the user's cut (ADR 0048). The vacated span stays a gap
-(groups, not ripple, express "these move together"), and a shifted sibling
+(links, not ripple, express "these move together"), and a shifted sibling
 that collides on its lane bounces to a free one.
 _Avoid_: start-at-cut, auto-extend, handle-checked add, silent extend fallback
 
@@ -277,6 +277,73 @@ The placement verdict meaning *no track can take this, so make one* — the four
 collision, so a selection that would overlap itself on the one new track still
 refuses.
 _Avoid_: auto-create, insert track, overflow
+
+## Links and Groups
+
+**Link**:
+A flat set of two or more layers in one composition whose structural edits —
+move, trim, split — fan out to every member (`Link` in `Project.links`; no
+nesting, a layer in at most one). Premiere's Link with any number of members:
+it says "these travel together" and nothing more — no bounds, no timeline of
+its own, no rendering significance, no identity beyond an accent hue. `Ctrl+L`
+toggles it on the selection. UI word: Link / 链接.
+_Avoid_: group (that is a composition placed as a layer), bundle, pair (a link
+may hold more than two)
+
+**Group**:
+A composition placed as one layer in another composition — After Effects'
+precomp, Premiere's nest, Resolve's compound clip. It says "this is one
+thing": it has bounds, a timeline and a duration of its own, and it renders.
+The word is reserved for exactly this and is never a synonym for a link.
+UI word: Group / 组.
+_Avoid_: group for the propagation relationship (that is a link); nest,
+compound, precomp in UI copy
+
+**Composition**:
+A timeline — settings, tracks, markers, transitions and links. The root is
+one and every Group is one, with the same shape: there is no "sub" type,
+so every walk, mutation and validator has one path. UI word: Composition /
+合成, never shown as a noun for the root — that is "the timeline".
+_Avoid_: sub-composition (as a data-model term), sequence, nested timeline
+
+**Root composition**:
+The composition export renders and a fresh project opens on
+(`Project.root_id`). Unnamed in the UI: it is the timeline.
+_Avoid_: main composition, master sequence, top level (as a noun)
+
+**Group layer**:
+The layer a Group occupies in its parent's timeline — a media-bearing layer
+whose source is a composition rather than a file, so trim clamping, split's
+source distribution and keyframe re-basing apply to it verbatim. On screen it
+is the Group clip.
+_Avoid_: nested clip, comp layer, reference layer
+
+**Pre-compose**:
+The verb that turns a selection into a Group in place — After Effects' word;
+Premiere says Nest and Resolve says Create Compound Clip. Reserves `Ctrl+G`
+(and, with Ungroup, `Ctrl+Shift+G`), which is why linking sits on `Ctrl+L`.
+UI word: Group / 编组.
+_Avoid_: nest, compound, precomp (as the verb in UI copy); group (bare — that
+is the noun)
+
+**Ungroup**:
+Expanding a Group layer back into its members in place — Resolve's Decompose
+in Place. The inverse of Pre-compose and only that: it is not dissolving a
+link. UI word: Ungroup / 解组.
+_Avoid_: unlink (that dissolves a link), decompose, flatten, un-nest
+
+**Link override**:
+A session toggle under which every gesture behaves as if `escape_link` were
+set, so a linked clip edits alone without the link being dissolved — Reaper's
+*Grouping enabled*, inverted. Session state, never in the project. UI word:
+Link override / 链接覆盖.
+_Avoid_: unlink mode, solo edit, temporary unlink
+
+**Hull**:
+The hover / selection outline drawn around every member of one link across
+lanes — one rectangle from the earliest start to the latest end, top-most to
+bottom-most visible member. Renderer-only; nothing in the data model knows it.
+_Avoid_: group outline, bounding box, selection frame
 
 ## Motifs
 

@@ -68,8 +68,8 @@ describe('actor commit pipeline', () => {
   })
 })
 
-describe('dispatch: split + groups', () => {
-  it('groups_create then split_layer through dispatch produce ok results', () => {
+describe('dispatch: split + links', () => {
+  it('links_create then split_layer through dispatch produce ok results', () => {
     const idGen = seededGen()
     const initial = blankProject(idGen, 'd')
     const a = initial.tracks[0].id
@@ -81,10 +81,10 @@ describe('dispatch: split + groups', () => {
     // l1.ok/l2.ok asserted true above; cast to narrow for test fixture access
     const l1v = (l1 as { ok: true; value: unknown }).value
     const l2v = (l2 as { ok: true; value: unknown }).value
-    const g = actor.dispatch('groups_create', { layers: [l1v, l2v], reassign: false })
+    const g = actor.dispatch('links_create', { layers: [l1v, l2v], reassign: false })
     expect(g.ok).toBe(true)
-    expect(actor.snapshot().groups.length).toBe(1)
-    const s = actor.dispatch('split_layer', { layer: l1v, at_t_us: 400_000, escape_group: false })
+    expect(actor.snapshot().links.length).toBe(1)
+    const s = actor.dispatch('split_layer', { layer: l1v, at_t_us: 400_000, escape_link: false })
     expect(s.ok).toBe(true)
   })
   it('split_layer_multi splits at every cut in ONE commit (one undo reverts all), returns segment ids', () => {
@@ -136,20 +136,20 @@ describe('dispatch: split + groups', () => {
     expect(actor.dispatch('undo', {}).ok).toBe(true) // single commit → one undo
     expect(JSON.stringify(actor.snapshot())).toBe(before)
   })
-  it('groups_create with < 2 layers returns a GroupCreateNeedsTwoLayers error', () => {
+  it('links_create with < 2 layers returns a LinkCreateNeedsTwoLayers error', () => {
     const idGen = seededGen()
     const initial = blankProject(idGen, 'd')
     const a = initial.tracks[0].id
     const actor = createActor({ initial, idGen, clock: () => '<TS>' })
     const l1 = actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
     const l1v = (l1 as { ok: true; value: unknown }).value
-    const g = actor.dispatch('groups_create', { layers: [l1v], reassign: false })
+    const g = actor.dispatch('links_create', { layers: [l1v], reassign: false })
     expect(g.ok).toBe(false)
-    expect(g.ok === false && g.error.error).toBe('GroupCreateNeedsTwoLayers')
+    expect(g.ok === false && g.error.error).toBe('LinkCreateNeedsTwoLayers')
   })
 })
 
-describe('dispatch: group-membership family', () => {
+describe('dispatch: link-membership family', () => {
   function setup() {
     const idGen = seededGen(); const initial = blankProject(idGen, 'g'); const a = initial.tracks[0].id
     const actor = createActor({ initial, idGen, clock: () => '<TS>' })
@@ -159,20 +159,20 @@ describe('dispatch: group-membership family', () => {
   it('add_members then remove_members (auto-dissolve below 2)', () => {
     const { actor, mk } = setup()
     const l1 = mk(0, 1_000_000), l2 = mk(2_000_000, 3_000_000), l3 = mk(4_000_000, 5_000_000)
-    const g = (actor.dispatch('groups_create', { layers: [l1, l2] }) as { ok: true; value: string }).value
-    expect(actor.dispatch('groups_add_members', { group: g, layers: [l3] }).ok).toBe(true)
-    expect(actor.snapshot().groups[0].members).toEqual([l1, l2, l3].sort())
-    expect(actor.dispatch('groups_remove_members', { group: g, layers: [l2, l3] }).ok).toBe(true)
-    expect(actor.snapshot().groups.length).toBe(0) // dropped below 2 → auto-dissolved
+    const g = (actor.dispatch('links_create', { layers: [l1, l2] }) as { ok: true; value: string }).value
+    expect(actor.dispatch('links_add_members', { link: g, layers: [l3] }).ok).toBe(true)
+    expect(actor.snapshot().links[0].members).toEqual([l1, l2, l3].sort())
+    expect(actor.dispatch('links_remove_members', { link: g, layers: [l2, l3] }).ok).toBe(true)
+    expect(actor.snapshot().links.length).toBe(0) // dropped below 2 → auto-dissolved
   })
   it('rename then dissolve', () => {
     const { actor, mk } = setup()
     const l1 = mk(0, 1_000_000), l2 = mk(2_000_000, 3_000_000)
-    const g = (actor.dispatch('groups_create', { layers: [l1, l2] }) as { ok: true; value: string }).value
-    expect(actor.dispatch('groups_rename', { group: g, label: 'scene' }).ok).toBe(true)
-    expect(actor.snapshot().groups[0].label).toBe('scene')
-    expect(actor.dispatch('groups_dissolve', { group: g }).ok).toBe(true)
-    expect(actor.snapshot().groups.length).toBe(0)
+    const g = (actor.dispatch('links_create', { layers: [l1, l2] }) as { ok: true; value: string }).value
+    expect(actor.dispatch('links_rename', { link: g, label: 'scene' }).ok).toBe(true)
+    expect(actor.snapshot().links[0].label).toBe('scene')
+    expect(actor.dispatch('links_dissolve', { link: g }).ok).toBe(true)
+    expect(actor.snapshot().links.length).toBe(0)
   })
 })
 
@@ -526,7 +526,7 @@ describe('dispatch: transitions', () => {
     // a1's end — collapses the overlap to 0 ≠ duration 1M, so reconcile drops
     // the transition.
     const { actor, a2 } = withCrossfade()
-    const out = actor.dryRun([{ kind: 'TrimLayer', id: a2, edge: 'In', new_t_us: 2_500_000, escape_group: false }])
+    const out = actor.dryRun([{ kind: 'TrimLayer', id: a2, edge: 'In', new_t_us: 2_500_000, escape_link: false }])
     expect(out[0].ok, 'dry-run must match the real succeed-with-drop outcome').toBe(true)
     expect(actor.snapshot().transitions).toHaveLength(1) // dry-run committed nothing
     // parity: the real command also succeeds and drops the transition
@@ -1131,10 +1131,10 @@ describe('replace_state (wholesale swap + history reset)', () => {
     const actor = createActor({ initial: blankProject(gen, 'orig'), idGen: gen, clock: () => '<TS>' })
     actor.dispatch('add_track', { label: 'x' })
     const before = actor.snapshot()
-    // A group with <2 members violates the group-size invariant (§2.4) → the
+    // A link with <2 members violates the link-size invariant (§2.4) → the
     // simplest deterministic ValidationFailed without constructing layer params.
     const bad: Project = blankProject(seededGen(), 'bad')
-    bad.groups = [{ id: '00000000-0000-0000-0000-0000000000b1', members: ['00000000-0000-0000-0000-0000000000a1'] }]
+    bad.links = [{ id: '00000000-0000-0000-0000-0000000000b1', members: ['00000000-0000-0000-0000-0000000000a1'] }]
     expect(() => actor.replaceState(bad)).toThrow()
     expect(actor.snapshot()).toEqual(before)               // history + state unchanged
   })
@@ -1212,7 +1212,7 @@ describe('media-pool mutations dispatch (Phase 3c-i)', () => {
 describe('dispatch: attribute-panel timing/envelope ops', () => {
   // The Attribute panel routes Start edits to move_layer, End/duration edits
   // to trim_layer, and label/enabled/locked edits to update_layer. Each edit
-  // must record exactly ONE history entry; snapping and group fan-out happen
+  // must record exactly ONE history entry; snapping and link fan-out happen
   // inside the command, not in the panel.
   function setup() {
     const idGen = seededGen()
@@ -1229,23 +1229,23 @@ describe('dispatch: attribute-panel timing/envelope ops', () => {
     const l = mk(0, 1_000_000)
     const before = actor.historyStatus().len
     // 500_001 µs sits between frames 15 and 16 at 30 fps; the command snaps.
-    const r = actor.dispatch('move_layer', { layer: l, to_track: a, t_start_us: 500_001, escape_group: false })
+    const r = actor.dispatch('move_layer', { layer: l, to_track: a, t_start_us: 500_001, escape_link: false })
     expect(r.ok).toBe(true)
     expect(actor.snapshot().tracks[0].layers[0].t_start_us).toBe(500_000)
     expect(actor.snapshot().tracks[0].layers[0].t_end_us).toBe(1_500_000) // duration preserved
     expect(actor.historyStatus().len).toBe(before + 1)
   })
 
-  it('trim_layer Out fans out to an aligned group sibling within the same single undo entry', () => {
+  it('trim_layer Out fans out to an aligned link sibling within the same single undo entry', () => {
     const { actor, mk } = setup()
     const b = actor.snapshot().tracks[1].id
     // Siblings on different tracks sharing the SAME out-edge: the coupled
     // trim fans out (mirrors mutations/trim.test.ts's aligned-set cases).
     const l1 = mk(0, 1_000_000)
     const l2 = (actor.dispatch('add_layer', { track: b, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }) as { ok: true; value: string }).value
-    actor.dispatch('groups_create', { layers: [l1, l2], reassign: false })
+    actor.dispatch('links_create', { layers: [l1, l2], reassign: false })
     const beforeTrim = actor.historyStatus().len
-    const r = actor.dispatch('trim_layer', { layer: l1, edge: 'out', new_t_us: 2_000_000, escape_group: false })
+    const r = actor.dispatch('trim_layer', { layer: l1, edge: 'out', new_t_us: 2_000_000, escape_link: false })
     expect(r.ok).toBe(true)
     const tracks = actor.snapshot().tracks
     expect(tracks[0].layers.find((x) => x.id === l1)?.t_end_us).toBe(2_000_000)
@@ -1369,7 +1369,7 @@ describe('dispatch: emptied-track cleanup', () => {
     const siblingLane = addLane(actor)
     const target = addClip(actor, targetLane)
     const sibling = addClip(actor, siblingLane)
-    expect(actor.dispatch('groups_create', { layers: [target, sibling], label: null, reassign: false }).ok).toBe(true)
+    expect(actor.dispatch('links_create', { layers: [target, sibling], label: null, reassign: false }).ok).toBe(true)
     expect(actor.dispatch('move_layer', { layer: target, to_track: aRoll, t_start_us: 2_000_000 }).ok).toBe(true)
     expect(lanes(actor)).not.toContain(targetLane)
     // The sibling is spliced out of its lane and re-inserted on the SAME lane, so
@@ -1390,7 +1390,7 @@ describe('dispatch: emptied-track cleanup', () => {
 })
 
 // delete_layers — the SELECTION's delete, and the marquee's headline gesture.
-// The singular form's own behaviour (the lane prune, the group drop) is covered
+// The singular form's own behaviour (the lane prune, the link drop) is covered
 // above, so what is tested here is only what the BATCH adds: N clips cost one
 // entry, a duplicate id is harmless, a refusal takes the whole gesture with it,
 // and every lane the batch emptied still goes.
@@ -1435,7 +1435,7 @@ describe('dispatch: delete_layers', () => {
     expect(actor.historyStatus().len).toBe(lenBefore) // commit's no-op guard: no id, no entry
   })
 
-  // A group brings its members into the selection, so a set that names one layer
+  // A link brings its members into the selection, so a set that names one layer
   // twice is a caller bug rather than a user one — and the second applyDeleteLayer
   // for that id throws LayerNotFound, which would spend the whole gesture on it.
   it('deletes a duplicated id once instead of failing the gesture', () => {

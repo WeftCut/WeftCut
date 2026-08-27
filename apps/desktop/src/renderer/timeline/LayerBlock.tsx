@@ -16,7 +16,7 @@ import {
   HEADER_COL_PX,
   LAYER_FULL_LABEL_MIN_PX,
   LAYER_LABEL_MIN_PX,
-  groupHue,
+  linkHue,
   keyframeHitTest,
   keyframeXWithinClip,
   layerSliceRect,
@@ -75,9 +75,9 @@ export interface DragSeed {
   /// Alt+body-drag duplicates the layer at the drop position. This is a fixed
   /// timeline gesture rather than a configurable keyboard shortcut.
   duplicate: boolean;
-  /// Group escape remains available to trim gestures. Body-drag reserves Alt
-  /// for duplicate, so ordinary moves continue to fan out across the group.
-  escapeGroup: boolean;
+  /// Link escape remains available to trim gestures. Body-drag reserves Alt
+  /// for duplicate, so ordinary moves continue to fan out across the link.
+  escapeLink: boolean;
   /// Selection state before this pointerdown. An unselected clip body gets a
   /// short temporal arm delay so a selection click cannot become a move;
   /// selected clips and explicit trim handles respond immediately.
@@ -180,7 +180,7 @@ export function LayerBlock({
   slice,
   isPrimary,
   isSelected,
-  groupId,
+  linkId,
   dragState,
   pendingPlacement,
   previewOnly = false,
@@ -214,8 +214,8 @@ export function LayerBlock({
   isPrimary: boolean;
   /// Member of the current selection set (highlight only).
   isSelected: boolean;
-  /// `docs/features.md#groups` — null when ungrouped.
-  groupId: string | null;
+  /// `docs/features.md#links` — null when unlinked.
+  linkId: string | null;
   dragState: DragState | null;
   pendingPlacement: PendingLayerPlacement | null;
   /// Non-interactive in-flight clone rendered for an Alt+drag duplicate.
@@ -427,8 +427,8 @@ export function LayerBlock({
     );
     const kind: DragKind =
       zone === "left" ? "trim-start" : zone === "right" ? "trim-end" : "move";
-    // `docs/features.md#groups` — match click-selection semantics on
-    // pointerdown so drag and click share the same group-aware path.
+    // `docs/features.md#links` — match click-selection semantics on
+    // pointerdown so drag and click share the same link-aware path.
     const stillSelected = onSelectFromClick(layer.id, {
       altKey: e.altKey,
       shiftKey: e.shiftKey,
@@ -452,7 +452,7 @@ export function LayerBlock({
       deltaUs: 0,
       overTrackId: trackId,
       duplicate: e.altKey && kind === "move",
-      escapeGroup: e.altKey && kind !== "move",
+      escapeLink: e.altKey && kind !== "move",
       wasSelectedAtPointerDown: isSelected,
     });
   };
@@ -468,12 +468,12 @@ export function LayerBlock({
     slice,
   );
 
-  // `docs/features.md#groups` — tinted left border + chain-link icon hue
-  // derived from group_id so all members share an accent color.
-  const groupStyle: React.CSSProperties = {};
-  if (groupId !== null) {
-    const hue = groupHue(groupId);
-    groupStyle.borderLeft = `2px solid hsl(${hue} 75% 60%)`;
+  // `docs/features.md#links` — tinted left border in a hue derived from
+  // link_id so every member of a link shares one accent colour.
+  const linkStyle: React.CSSProperties = {};
+  if (linkId !== null) {
+    const hue = linkHue(linkId);
+    linkStyle.borderLeft = `2px solid hsl(${hue} 75% 60%)`;
   }
 
   const sliceClasses =
@@ -567,7 +567,7 @@ export function LayerBlock({
             : !layer.locked && !trackLocked && !bladeMode && !isDragging && edgeHover !== null
             ? "ew-resize"
             : undefined,
-        ...groupStyle,
+        ...linkStyle,
       }}
       onClick={(e) => {
         // Selection happens on pointerdown (onLayerPointerDown, which also arms

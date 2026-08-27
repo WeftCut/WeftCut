@@ -6,7 +6,7 @@ import { applyAddLayer, colorParams } from './add'
 import { applyTrimLayer, clampSigned } from './trim'
 import { isCommandFailure } from '../errors'
 import { validate } from '../validate'
-import { applyGroupsCreate } from './groups'
+import { applyLinksCreate } from './links'
 import { frameCount, frameIndexFloor, frameIndexRound, timeUsAtFrame } from '../../../renderer/frames'
 
 function color(id: string, t0: number, t1: number): Layer {
@@ -215,11 +215,11 @@ describe.each(RATES)('trim bounds on the %s/%s grid', (num, den) => {
     expect(frameCount(l.t_start_us, l.t_end_us, num, den)).toBe(2)
   })
 
-  it('clamps a group-aligned OUT over-trim at the tightest member, on grid', () => {
+  it('clamps a link-aligned OUT over-trim at the tightest member, on grid', () => {
     const p = projectAtRate(num, den)
     p.tracks[0].layers = [color('a', at(0), at(90))]
     p.tracks[1].layers = [color('b', at(60), at(90))] // shorter → governs
-    applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     applyTrimLayer(p, 'a', 'Out', 0, false)
     for (const l of [p.tracks[0].layers[0], p.tracks[1].layers[0]]) {
       expect(l.t_end_us).toBe(at(61))
@@ -228,11 +228,11 @@ describe.each(RATES)('trim bounds on the %s/%s grid', (num, den) => {
     expect(p.tracks[1].layers[0].t_start_us).toBe(at(60)) // tightest = one frame
   })
 
-  it('clamps a group-aligned IN over-trim at the tightest member, on grid', () => {
+  it('clamps a link-aligned IN over-trim at the tightest member, on grid', () => {
     const p = projectAtRate(num, den)
     p.tracks[0].layers = [color('a', at(30), at(120))]
     p.tracks[1].layers = [color('b', at(30), at(60))] // shorter → governs
-    applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     applyTrimLayer(p, 'a', 'In', at(500), false)
     for (const l of [p.tracks[0].layers[0], p.tracks[1].layers[0]]) {
       expect(l.t_start_us).toBe(at(59))
@@ -241,12 +241,12 @@ describe.each(RATES)('trim bounds on the %s/%s grid', (num, den) => {
     expect(p.tracks[1].layers[0].t_end_us).toBe(at(60)) // tightest = one frame
   })
 
-  it('clamps a group-aligned OUT growth at the media-capped member, on grid', () => {
+  it('clamps a link-aligned OUT growth at the media-capped member, on grid', () => {
     const p = projectAtRate(num, den)
     p.media_pool.m = media('m', OFF_GRID_MEDIA_DUR)
     p.tracks[0].layers = [color('a', 0, at(30))]
     p.tracks[1].layers = [video('v', 'm', 0, at(30), 0, at(30))]
-    applyGroupsCreate(p, seededGen(), ['a', 'v'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'v'], null, false)
     applyTrimLayer(p, 'a', 'Out', 60_000_000, false)
     const lastWhole = timeUsAtFrame(frameIndexFloor(OFF_GRID_MEDIA_DUR, num, den), num, den)
     for (const l of [p.tracks[0].layers[0], p.tracks[1].layers[0]]) {
@@ -273,12 +273,12 @@ describe.each(RATES)('trim bounds on the %s/%s grid', (num, den) => {
   })
 })
 
-describe('trim group aligned-set (live)', () => {
+describe('trim link aligned-set (live)', () => {
   it('coupled OUT trim fans out to a sibling sharing the same out-edge', () => {
     const p = blankProject(seededGen(), 't')
     p.tracks[0].layers = [color('a', 0, 1_000_000)]
     p.tracks[1].layers = [color('b', 0, 1_000_000)] // same out-edge 1_000_000
-    applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     applyTrimLayer(p, 'a', 'Out', 600_000, false)
     expect(p.tracks[0].layers[0].t_end_us).toBe(600_000)
     expect(p.tracks[1].layers[0].t_end_us).toBe(600_000) // sibling fanned out
@@ -287,7 +287,7 @@ describe('trim group aligned-set (live)', () => {
     const p = blankProject(seededGen(), 't')
     p.tracks[0].layers = [color('a', 0, 1_000_000)]
     p.tracks[1].layers = [color('b', 0, 800_000)] // different out-edge
-    applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     applyTrimLayer(p, 'a', 'Out', 600_000, false)
     expect(p.tracks[1].layers[0].t_end_us).toBe(800_000) // untouched
   })
@@ -295,9 +295,9 @@ describe('trim group aligned-set (live)', () => {
     const p = blankProject(seededGen(), 't')
     p.tracks[0].layers = [color('a', 0, 1_000_000)]
     p.tracks[1].layers = [color('b', 0, 1_000_000)]
-    applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
+    applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     p.tracks[1].layers[0].locked = true
     try { applyTrimLayer(p, 'a', 'Out', 600_000, false); throw new Error('expected throw') }
-    catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('GroupLockedMember') }
+    catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('LinkLockedMember') }
   })
 })

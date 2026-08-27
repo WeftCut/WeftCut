@@ -106,7 +106,7 @@ function fixture(kind: string, params: Record<string, unknown> = {}): ProjectSum
         layers: [layer],
       },
     ],
-    groups: [],
+    links: [],
     markers: [],
     transitions: [],
     audio_roles: [],

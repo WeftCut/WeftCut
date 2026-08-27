@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 /// Renderer-global Layer selection. `primaryLayerId` drives contextual tools;
-/// `selectedLayerIds` is the complete selection used by Timeline group
+/// `selectedLayerIds` is the complete selection used by Timeline link
 /// operations and every other selection-aware surface.
 /// `selectedTransitionId` is the selected transition chip — mutually
 /// exclusive with layer selection (selecting either deselects the other),
@@ -85,7 +85,7 @@ export function setLayerSelection(
 /// click.
 ///
 /// The direction is decided by the CLICKED Layer, not by "are all `layerIds`
-/// already selected": with a group the members arrive together, and the clip the
+/// already selected": with a link the members arrive together, and the clip the
 /// user pointed at is the one whose highlight they can see.
 export function toggleLayerSelection(
   clickedLayerId: string,

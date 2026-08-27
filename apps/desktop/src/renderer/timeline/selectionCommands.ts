@@ -1,7 +1,7 @@
 // Select All / Deselect All, and the one rule they both rest on: which Layers a
 // selection can legitimately contain.
 //
-// Lifted out of Timeline for the reason `groupEligibility.ts` gives — a
+// Lifted out of Timeline for the reason `linkEligibility.ts` gives — a
 // command's `enabled` gate is evaluated inside `listCommands()` by whichever
 // surface draws the row, where there is no React and no reach into Timeline's
 // locals — and because "which Layers can a click reach" is a rule worth stating

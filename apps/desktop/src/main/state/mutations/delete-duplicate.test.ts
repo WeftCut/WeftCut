@@ -26,14 +26,14 @@ describe('delete + duplicate', () => {
     const g = seededGen(); const p = blankProject(g, 't')
     try { applyDeleteLayer(p, 'ghost'); throw new Error('x') } catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('LayerNotFound') }
   })
-  it('duplicates with a fresh id, offset, sorted insert, and no group join', () => {
+  it('duplicates with a fresh id, offset, sorted insert, and no link join', () => {
     const g = seededGen(); const p = blankProject(g, 't')
     const a = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 1_000_000)
     const dup = applyDuplicateLayer(p, g, a, 2_000_000)
     expect(dup).not.toBe(a)
     const copy = p.tracks[0].layers.find((l) => l.id === dup)!
     expect(copy.t_start_us).toBe(2_000_000); expect(copy.t_end_us).toBe(3_000_000)
-    expect(p.groups).toHaveLength(0)
+    expect(p.links).toHaveLength(0)
   })
   it('snaps the duplicate onto the frame grid at a fractional rate', () => {
     // Both edges land on the grid via the snap-start-then-carry-the-delta model (duplicate.ts).

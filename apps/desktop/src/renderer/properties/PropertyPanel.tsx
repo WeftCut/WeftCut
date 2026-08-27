@@ -168,7 +168,7 @@ function LayerPanel({
   const { t } = useTranslation();
   const summary = useProjectSummary();
   const selectionCount = useSelectedLayerIds().size;
-  const group = summary?.groups.find((g) => g.layer_ids.includes(layer.id)) ?? null;
+  const link = summary?.links.find((g) => g.layer_ids.includes(layer.id)) ?? null;
   const env = useEnvelope({ layer, track, onMutated, fpsNum, fpsDen });
 
   const kindLabel = t(`kinds.${layer.kind.toLowerCase()}`, { defaultValue: layer.kind });
@@ -181,14 +181,14 @@ function LayerPanel({
     layer.params.kind === "Audio"
       ? layer.params.media_label
       : null;
-  // Groups created from the UI carry no label (Timeline passes `label: null`),
-  // so a `group.id` fallback rendered a raw uuid on every grouped layer. Member
+  // Links created from the UI carry no label (Timeline passes `label: null`),
+  // so a `link.id` fallback rendered a raw uuid on every linked layer. Member
   // count is the part a user can act on; a real name only arrives via MCP
-  // `groups_rename`.
-  const groupLabel = group
-    ? group.label?.trim() ||
-      t("property_panel.group_of", { count: group.layer_ids.length })
-    : t("property_panel.group_none");
+  // `links_rename`.
+  const linkLabel = link
+    ? link.label?.trim() ||
+      t("property_panel.link_of", { count: link.layer_ids.length })
+    : t("property_panel.link_none");
 
   const tInLayerUs = currentTimeUs - layer.t_start_us;
   const playheadInSpan = currentTimeUs >= layer.t_start_us && currentTimeUs < layer.t_end_us;
@@ -198,7 +198,7 @@ function LayerPanel({
       <div className="prop-identity">
         {mediaLabel ? <p className="prop-identity-title">{mediaLabel}</p> : null}
         <p className="prop-identity-meta">
-          {kindLabel} · {trackLabel} · {groupLabel}
+          {kindLabel} · {trackLabel} · {linkLabel}
         </p>
       </div>
       {selectionCount > 1 ? (
@@ -278,9 +278,9 @@ function LayerPanel({
 /// State + commit routing for the Layer envelope: identity (label), flags
 /// (enabled/locked), and timing (Start/duration). Shared between the core
 /// envelope Section and the advanced bucket, which split the rows between
-/// them. Timing edits route through the SAME group-aware commands as Timeline
+/// them. Timing edits route through the SAME link-aware commands as Timeline
 /// gestures — Start through `move_layer`, duration through `trim_layer` — so
-/// snapping, group fan-out, lock checks, and composition autofit behave
+/// snapping, link fan-out, lock checks, and composition autofit behave
 /// identically no matter where the edit comes from (spec: the inspector
 /// must not create a different editing model; raw `update_layer` envelope
 /// patching is deliberately NOT used for time edits because it neither
@@ -314,7 +314,7 @@ function useEnvelope({
   const [startTc, setStartTc] = useState(() => fmtTime(layer.t_start_us));
   const [durTc, setDurTc] = useState(() => fmtTime(layer.t_end_us - layer.t_start_us));
   // Resync from the authoritative snapshot whenever the committed envelope
-  // changes (own commit round-trip, group fan-out, undo) — or when the audio unit
+  // changes (own commit round-trip, link fan-out, undo) — or when the audio unit
   // flips, which re-renders the same times in the new unit. Primitive deps —
   // not the layer object — so unrelated project refreshes can't clobber a
   // field mid-typing.
@@ -357,7 +357,7 @@ function useEnvelope({
     }
   };
 
-  // Start edits move the whole Layer (group-aware); the command snaps to
+  // Start edits move the whole Layer (link-aware); the command snaps to
   // the comp frame grid and autofits the composition.
   const commitStart = async (): Promise<void> => {
     const us = parseTime(startTc);
@@ -366,8 +366,8 @@ function useEnvelope({
       return;
     }
     if (us === layer.t_start_us || !track) return;
-    // `escapeGroup` on an audio layer: a sub-frame start edit is a SLIP, so it must
-    // move this member alone. Dragging the whole group to a sample boundary would
+    // `escapeLink` on an audio layer: a sub-frame start edit is a SLIP, so it must
+    // move this member alone. Dragging the whole link to a sample boundary would
     // put the video member off its own grid (ADR 0038 / R2-D7).
     if (await tryMutate(() => moveLayer(layer.id, track.id, us, isAudio), "Move layer")) {
       await onMutated();

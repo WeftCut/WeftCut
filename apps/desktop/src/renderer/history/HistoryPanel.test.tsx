@@ -146,7 +146,7 @@ function summaryWith(layerIds: string[]): ProjectSummary {
       },
     ],
     markers: [],
-    groups: [],
+    links: [],
     audio_roles: [],
   } as unknown as ProjectSummary;
 }

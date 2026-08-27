@@ -83,7 +83,7 @@ export const useHasTransitionCut = (): boolean =>
 /// 1 s frame-snapped duration — no placement arg, so the add takes the
 /// overlap default (the incoming layer moves left; ADR 0048). The eligibility
 /// gate above prevents the duration-bound refusal; the ones state can still
-/// spring (participants sharing a group, a moved sibling crossing t = 0)
+/// spring (participants sharing a link, a moved sibling crossing t = 0)
 /// surface through the status log as structured refusals — never a silent
 /// clamp or fallback.
 ///

@@ -14,7 +14,7 @@ import { setLayerSelection } from "./selectionStore";
 /// rows for `add_track` / `add_caption_track` carry a Track ref and nothing
 /// else, and `selectionStore` has no track-selection concept — so revealing
 /// without selecting is the honest outcome, not a degraded one. App's
-/// `revealTrack` skips its `selectLayerWithGroup` for null, leaving whatever
+/// `revealTrack` skips its `selectLayerWithLink` for null, leaving whatever
 /// was selected alone rather than clearing it.
 type RevealTrackFn = (trackId: string, layerId: string | null) => void;
 type ScrollToTimeFn = (tUs: number) => void;
@@ -198,7 +198,7 @@ export function jumpToLayer(layerId: string): boolean {
 /// (spec decision 8).
 ///
 /// Goes through App's `revealTrack` when mounted, so the selection is
-/// group-aware exactly as a timeline click is; falls back to a plain
+/// link-aware exactly as a timeline click is; falls back to a plain
 /// selection when nothing has registered. Returns false for a Layer that
 /// isn't in the live index.
 export function revealLayerWithoutSeek(layerId: string): boolean {

@@ -21,14 +21,14 @@ describe('PRODUCTION_OPS', () => {
       'add_marker',
       'add_media_layer', 'add_motif', 'add_text_layer', 'add_track', 'add_transition',
       'delete_layer', 'delete_layers', 'duplicate_layer',
-      'fit_composition_to_layers', 'groups_create', 'groups_dissolve', 'move_effect',
+      'fit_composition_to_layers', 'links_create', 'links_dissolve', 'move_effect',
       'move_layer', 'move_layers_to_new_track', 'paste_layer',
       'project_create_checkpoint', 'project_delete_checkpoint',
       'project_jump_to', 'project_redo', 'project_restore_checkpoint', 'project_undo',
       'remove_effect', 'remove_marker', 'remove_media', 'remove_transition', 'rename_track',
       // The Playhead Panel's anchored z-reorder drop (ADR 0044).
       'restack_layer', 'restyle_captions',
-      'separate_audio_to_new_track', 'set_composition', 'set_role_gain', 'set_scale_linked', 'split_layer_grouped',
+      'separate_audio_to_new_track', 'set_composition', 'set_role_gain', 'set_scale_linked', 'split_layer_linked',
       'trim_layer', 'update_effect', 'update_layer', 'update_layer_param_track', 'update_marker',
       'update_layer_param_tracks', 'update_layer_params', 'update_param_tracks_multi', 'update_project_settings',
       'update_role_flags', 'update_track_flags', 'update_transition',
@@ -218,7 +218,7 @@ function makeProject(overrides?: Partial<Project>): Project {
     composition: { width: 1920, height: 1080, fps: { num: 30, den: 1 }, duration_us: 0,
       duration_pinned: false, sample_rate: 48000, channels: 2, color_space: 'Bt709',
       background: { r: 0, g: 0, b: 0, a: 255 } },
-    media_pool: {}, tracks: [], markers: [], transitions: [], groups: [], audio_roles: {},
+    media_pool: {}, tracks: [], markers: [], transitions: [], links: [], audio_roles: {},
     settings: { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
       history_capacity: 200, auto_pair_audio_on_import: true,
       prefer_proxies: false, proxy_overrides: {} },
@@ -340,7 +340,7 @@ describe('add_media_layer auto-pair', () => {
     if (aud.params.kind === 'Audio') expect(aud.params.role).toBe('dialogue')
   })
 
-  it('video+audio: exactly one group contains both the video and audio layer ids', () => {
+  it('video+audio: exactly one link contains both the video and audio layer ids', () => {
     const { actor, mediaId, aRollId } = makeActorWithMedia(true)
     const r = actor.command('add_media_layer', { trackId: aRollId, mediaId, tStartUs: 0 })
     expect(r.ok).toBe(true)
@@ -348,14 +348,14 @@ describe('add_media_layer auto-pair', () => {
     const track = snap.tracks.find((t) => t.id === aRollId)!
     const vidId = track.layers.find((l) => l.params.kind === 'VideoClip')!.id
     const audId = track.layers.find((l) => l.params.kind === 'Audio')!.id
-    // groups_create([videoId, audioId]) produces exactly one group with both members
-    const groups = snap.groups.filter((g) => g.members.includes(vidId) && g.members.includes(audId))
-    expect(groups).toHaveLength(1)
+    // links_create([videoId, audioId]) produces exactly one link with both members
+    const links = snap.links.filter((g) => g.members.includes(vidId) && g.members.includes(audId))
+    expect(links).toHaveLength(1)
     // snapshot is immer-frozen: spread before sorting to avoid mutation error
-    expect([...groups[0].members].sort()).toEqual([vidId, audId].sort())
+    expect([...links[0].members].sort()).toEqual([vidId, audId].sort())
   })
 
-  it('video-only media (no audio): no pair, single layer, no group', () => {
+  it('video-only media (no audio): no pair, single layer, no link', () => {
     const { actor, mediaId, aRollId } = makeActorWithMedia(false)
     const r = actor.command('add_media_layer', { trackId: aRollId, mediaId, tStartUs: 0 })
     expect(r.ok).toBe(true)
@@ -363,7 +363,7 @@ describe('add_media_layer auto-pair', () => {
     const track = snap.tracks.find((t) => t.id === aRollId)!
     expect(track.layers).toHaveLength(1)
     expect(track.layers[0].params.kind).toBe('VideoClip')
-    expect(snap.groups).toHaveLength(0)
+    expect(snap.links).toHaveLength(0)
   })
 
   it('auto_pair_audio_on_import=false: no pair even when media has audio', () => {
@@ -373,7 +373,7 @@ describe('add_media_layer auto-pair', () => {
     const snap = actor.snapshot()
     const track = snap.tracks.find((t) => t.id === aRollId)!
     expect(track.layers).toHaveLength(1)
-    expect(snap.groups).toHaveLength(0)
+    expect(snap.links).toHaveLength(0)
   })
 
   it('prodMediaLayer: autoPairAudio is non-null only when media has audio and setting on', () => {

@@ -58,7 +58,7 @@ const summary: ProjectSummary = {
   media: [],
   tracks: [track],
   markers: [],
-  groups: [],
+  links: [],
   audio_roles: [],
 };
 

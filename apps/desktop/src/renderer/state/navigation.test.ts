@@ -81,7 +81,7 @@ function fixtureSummary(): ProjectSummary {
       },
     ],
     markers: [],
-    groups: [],
+    links: [],
     audio_roles: [],
   };
 }

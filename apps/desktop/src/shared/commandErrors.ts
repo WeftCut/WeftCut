@@ -66,10 +66,10 @@ export type ValidationError =
   | { rule: 'InvalidSrcRange'; layer: Uuid; src_in: TimeUs; src_out: TimeUs }
   | { rule: 'SrcRangeExceedsMedia'; layer: Uuid; src_in: TimeUs; src_out: TimeUs; media_duration: TimeUs }
   | { rule: 'LayerOverlap'; track: Uuid; a: Uuid; a_start: TimeUs; a_end: TimeUs; b: Uuid; b_start: TimeUs; b_end: TimeUs }
-  | { rule: 'DuplicateGroupId'; group: Uuid }
-  | { rule: 'GroupBelowMinSize'; group: Uuid; members: number }
-  | { rule: 'GroupMemberMissing'; group: Uuid; layer: Uuid }
-  | { rule: 'LayerInMultipleGroups'; layer: Uuid; first: Uuid; second: Uuid }
+  | { rule: 'DuplicateLinkId'; link: Uuid }
+  | { rule: 'LinkBelowMinSize'; link: Uuid; members: number }
+  | { rule: 'LinkMemberMissing'; link: Uuid; layer: Uuid }
+  | { rule: 'LayerInMultipleLinks'; layer: Uuid; first: Uuid; second: Uuid }
 
 // ── CommandError — the full mutation-error vocabulary. Individual dispatch
 // arms construct only the variants they need. ──
@@ -83,15 +83,15 @@ export type CommandError =
   | { error: 'TransitionUnsupportedLayerKind'; layer: Uuid; kind: string }
   | { error: 'TransitionInsufficientHandle'; layer: Uuid; available_us: TimeUs }
   // remove_transition's restore move is blocked: `layer` (the incoming layer or
-  // one of its group siblings) cannot land on its destination because a
+  // one of its link siblings) cannot land on its destination because a
   // non-moving layer occupies it — the user may have filled the vacated gap,
   // and the system never makes room.
   | { error: 'TransitionRestoreCollision'; layer: Uuid }
-  // Overlap-placement add refused: the participants share a group, so moving
+  // Overlap-placement add refused: the participants share a link, so moving
   // the incoming layer would drag the outgoing one along and the overlap never
-  // opens. Never falls back to extend silently — the caller ungroup-s or asks
+  // opens. Never falls back to extend silently — the caller unlink-s or asks
   // for placement 'extend' explicitly.
-  | { error: 'TransitionParticipantsShareGroup'; from: Uuid; to: Uuid }
+  | { error: 'TransitionParticipantsShareLink'; from: Uuid; to: Uuid }
   | { error: 'CheckpointNotFound'; checkpoint: Uuid }
   | { error: 'MediaNotFound'; media: Uuid }
   | { error: 'MediaInUse'; media: Uuid; referenced_by: Uuid[] }
@@ -100,13 +100,13 @@ export type CommandError =
   | { error: 'TrackNotRemovable'; track: Uuid }
   | { error: 'TrackLocked'; track: Uuid }
   | { error: 'SplitOutsideLayer'; layer: Uuid; at_t: TimeUs }
-  | { error: 'GroupLockedMember'; group: Uuid; locked_layer: Uuid; touched: Uuid }
+  | { error: 'LinkLockedMember'; link: Uuid; locked_layer: Uuid; touched: Uuid }
   | { error: 'TrimEdgeOutOfRange'; layer: Uuid; new_t: TimeUs; cur_start: TimeUs; cur_end: TimeUs }
   | { error: 'LayerParamsKindMismatch'; layer: Uuid; actual: string; patch: string }
-  | { error: 'GroupNotFound'; group: Uuid }
-  | { error: 'LayerAlreadyGrouped'; layer: Uuid; existing: Uuid }
-  | { error: 'GroupCreateNeedsTwoLayers'; got: number }
-  | { error: 'LayerNotInGroup'; group: Uuid; layer: Uuid }
+  | { error: 'LinkNotFound'; link: Uuid }
+  | { error: 'LayerAlreadyLinked'; layer: Uuid; existing: Uuid }
+  | { error: 'LinkCreateNeedsTwoLayers'; got: number }
+  | { error: 'LayerNotInLink'; link: Uuid; layer: Uuid }
   | { error: 'NothingToUndo' }
   | { error: 'NothingToRedo' }
   | { error: 'HistoryLocked'; reason: string }

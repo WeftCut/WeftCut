@@ -1,4 +1,4 @@
-import type { GroupSummary, LayerSummary, TrackSummary } from "../ipc";
+import type { LinkSummary, LayerSummary, TrackSummary } from "../ipc";
 import { displayedFrameStartUs, inclusiveOutBoundaryUs } from "../frames";
 import {
   animatableParams,
@@ -77,7 +77,7 @@ export interface VisualTrack {
   /// True when this is the first lane of its section — the renderer adds a
   /// divider line above it. Sections are role-stamped vs role-less, not kind
   /// buckets, so there is exactly one boundary (see `visualOrderedTracks`).
-  isGroupStart: boolean;
+  isRoleSectionStart: boolean;
 }
 
 /// Layer-overlap class. Visual-class layers (VideoClip,
@@ -190,7 +190,7 @@ export function layerSliceRect(
 //   │ idx 5 — additional (newest)     │         │ A roll                      │
 //   └─────────────────────────────────┘         └─────────────────────────────┘
 //
-// One group-start divider separates the two sections: it lands on the first
+// One role-section divider separates the two sections: it lands on the first
 // role-stamped row, i.e. under the "additional" region at the top.
 export function visualOrderedTracks(tracks: TrackSummary[]): VisualTrack[] {
   const reversed = tracks.slice().reverse();
@@ -202,8 +202,8 @@ export function visualOrderedTracks(tracks: TrackSummary[]): VisualTrack[] {
     // (transient imports, spawned additional tracks) forms the section
     // above them. The boundary between them gets a divider.
     const section: "role" | "extra" = track.role !== null ? "role" : "extra";
-    const isGroupStart = prevSection !== null && section !== prevSection;
-    out.push({ track, isGroupStart });
+    const isRoleSectionStart = prevSection !== null && section !== prevSection;
+    out.push({ track, isRoleSectionStart });
     prevSection = section;
   }
   return out;
@@ -276,25 +276,25 @@ export function playheadFrameShadowPx(
   return { leftPx: (startUs / 1_000_000) * pxPerSec, widthPx };
 }
 
-/// `docs/features.md#groups`. Stable, deterministic hue per group id so all
+/// `docs/features.md#links`. Stable, deterministic hue per link id so all
 /// members share an accent color across renders. Skips the yellow/green
 /// band that conflicts with the selection highlight (ring token) on LayerBlock.
-export function groupHue(groupId: string): number {
+export function linkHue(linkId: string): number {
   let h = 0;
-  for (let i = 0; i < groupId.length; i++) {
-    h = (h * 31 + groupId.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < linkId.length; i++) {
+    h = (h * 31 + linkId.charCodeAt(i)) >>> 0;
   }
   const raw = h % 300;
   return raw < 60 ? raw : raw + 60;
 }
 
-/// Build the layer-id → group-id lookup used by every render path that
-/// asks "what group is this in?". Built by a flat walk over each group's
-/// `layer_ids`: `groups` is small in practice (a handful), so nothing
+/// Build the layer-id → link-id lookup used by every render path that
+/// asks "what link is this in?". Built by a flat walk over each link's
+/// `layer_ids`: `links` is small in practice (a handful), so nothing
 /// incremental is worth keeping.
-export function indexGroups(groups: GroupSummary[]): Map<string, string> {
+export function indexLinks(links: LinkSummary[]): Map<string, string> {
   const idx = new Map<string, string>();
-  for (const g of groups) {
+  for (const g of links) {
     for (const lid of g.layer_ids) {
       idx.set(lid, g.id);
     }

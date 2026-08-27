@@ -76,7 +76,7 @@ function summary(layers: LayerSummary[]): ProjectSummary {
     media: [],
     tracks: [track],
     markers: [],
-    groups: [],
+    links: [],
     audio_roles: [],
   };
 }

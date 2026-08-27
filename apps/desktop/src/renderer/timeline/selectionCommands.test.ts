@@ -74,7 +74,7 @@ function seed(tracks: TrackSummary[]): void {
     tracks,
     markers: [],
     transitions: [],
-    groups: [],
+    links: [],
     audio_roles: [],
   };
   useProjectStore.getState().apply(summary);

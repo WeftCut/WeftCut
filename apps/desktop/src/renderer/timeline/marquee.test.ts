@@ -9,7 +9,7 @@ import {
   type MeasuredSubLaneRow,
 } from "./marquee";
 import type {
-  GroupSummary,
+  LinkSummary,
   Interpolation,
   Keyframe,
   LayerSummary,
@@ -238,10 +238,10 @@ describe("marqueeHitClips", () => {
 });
 
 describe("resolveMarqueeSelection", () => {
-  const grouped: GroupSummary[] = [
+  const linked: LinkSummary[] = [
     { id: "g", label: null, layer_ids: ["in-box", "off-screen"] },
   ];
-  const groupIndex = new Map([
+  const linkIndex = new Map([
     ["in-box", "g"],
     ["off-screen", "g"],
   ]);
@@ -251,61 +251,61 @@ describe("resolveMarqueeSelection", () => {
       resolveMarqueeSelection({
         snapshotPrimary: "was-selected",
         hit: [],
-        groupByLayerId: groupIndex,
-        groups: grouped,
+        linkByLayerId: linkIndex,
+        links: linked,
         mode: "replace",
       }),
     ).toEqual({ ids: [], primary: null });
   });
 
-  it("pulls in group members the box never touched", () => {
+  it("pulls in link members the box never touched", () => {
     expect(
       resolveMarqueeSelection({
         snapshotPrimary: null,
         hit: ["in-box"],
-        groupByLayerId: groupIndex,
-        groups: grouped,
+        linkByLayerId: linkIndex,
+        links: linked,
         mode: "replace",
       }),
     ).toEqual({ ids: ["in-box", "off-screen"], primary: "in-box" });
   });
 
-  it("leaves an ungrouped hit standing alone", () => {
+  it("leaves an unlinked hit standing alone", () => {
     expect(
       resolveMarqueeSelection({
         snapshotPrimary: null,
         hit: ["loner"],
-        groupByLayerId: groupIndex,
-        groups: grouped,
+        linkByLayerId: linkIndex,
+        links: linked,
         mode: "replace",
       }).ids,
     ).toEqual(["loner"]);
   });
 
-  it("fans out to every id the group lists, including ones the hit-test excluded", () => {
+  it("fans out to every id the link lists, including ones the hit-test excluded", () => {
     // The hit-test drops locked clips; fan-out does not re-apply that, because a
-    // click on a grouped clip selects its locked members too.
+    // click on a linked clip selects its locked members too.
     expect(
       resolveMarqueeSelection({
         snapshotPrimary: null,
         hit: ["a"],
-        groupByLayerId: new Map([
+        linkByLayerId: new Map([
           ["a", "g"],
           ["locked", "g"],
         ]),
-        groups: [{ id: "g", label: null, layer_ids: ["a", "locked"] }],
+        links: [{ id: "g", label: null, layer_ids: ["a", "locked"] }],
         mode: "replace",
       }).ids,
     ).toEqual(["a", "locked"]);
   });
 
-  it("names each id once when several members of one group are hit", () => {
+  it("names each id once when several members of one link are hit", () => {
     expect(
       resolveMarqueeSelection({
         snapshotPrimary: null,
         hit: ["in-box", "off-screen"],
-        groupByLayerId: groupIndex,
-        groups: grouped,
+        linkByLayerId: linkIndex,
+        links: linked,
         mode: "replace",
       }).ids,
     ).toEqual(["in-box", "off-screen"]);
@@ -316,8 +316,8 @@ describe("resolveMarqueeSelection", () => {
       resolveMarqueeSelection({
         snapshotPrimary: "off-screen",
         hit: ["in-box"],
-        groupByLayerId: groupIndex,
-        groups: grouped,
+        linkByLayerId: linkIndex,
+        links: linked,
         mode: "replace",
       }).primary,
     ).toBe("off-screen");
@@ -328,8 +328,8 @@ describe("resolveMarqueeSelection", () => {
       resolveMarqueeSelection({
         snapshotPrimary: "dropped",
         hit: ["second", "third"],
-        groupByLayerId: new Map(),
-        groups: [],
+        linkByLayerId: new Map(),
+        links: [],
         mode: "replace",
       }),
     ).toEqual({ ids: ["second", "third"], primary: "second" });
@@ -340,8 +340,8 @@ describe("resolveMarqueeSelection", () => {
       resolveMarqueeSelection({
         snapshotPrimary: null,
         hit: ["second", "third"],
-        groupByLayerId: new Map(),
-        groups: [],
+        linkByLayerId: new Map(),
+        links: [],
         mode: "replace",
       }).primary,
     ).toBe("second");

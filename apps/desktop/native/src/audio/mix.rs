@@ -490,7 +490,7 @@ mod tests {
             tracks: imbl::vector![track_a, track_b],
             markers: imbl::Vector::new(),
             transitions: imbl::Vector::new(),
-            groups: imbl::Vector::new(),
+            links: imbl::Vector::new(),
             audio_roles: imbl::HashMap::new(),
             settings: ProjectSettings::default(),
         }

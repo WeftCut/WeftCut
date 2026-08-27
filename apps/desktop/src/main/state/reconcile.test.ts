@@ -129,7 +129,7 @@ describe('reconcile-on-commit: drops', () => {
 describe('reconcile-on-commit: splits', () => {
   it('split of the to participant beyond the overlap: the transition SURVIVES on the left half', () => {
     const { actor, logged, a2, tid } = withTransition()
-    const r = actor.dispatch('split_layer', { layer: a2, at_t_us: 3_500_000, escape_group: false })
+    const r = actor.dispatch('split_layer', { layer: a2, at_t_us: 3_500_000, escape_link: false })
     expect(r.ok).toBe(true)
     expect(actor.snapshot().transitions.map((t) => t.id)).toEqual([tid])
     expect(layerOf(actor.snapshot(), a2).t_end_us).toBe(3_500_000) // left half keeps the id
@@ -145,7 +145,7 @@ describe('reconcile-on-commit: splits', () => {
     // remove-only reconcile (only geometry edits could legalize it).
     const { actor, logged, a1, tid } = withTransition()
     const before = actor.snapshot()
-    const r = actor.dispatch('split_layer', { layer: a1, at_t_us: 1_000_000, escape_group: false })
+    const r = actor.dispatch('split_layer', { layer: a1, at_t_us: 1_000_000, escape_link: false })
     expect(r.ok).toBe(false)
     if (!r.ok) {
       expect(r.error.error).toBe('ValidationFailed')
@@ -158,7 +158,7 @@ describe('reconcile-on-commit: splits', () => {
 
   it('split of the to participant inside the overlap is likewise rejected atomically', () => {
     const { actor, a2, tid } = withTransition()
-    const r = actor.dispatch('split_layer', { layer: a2, at_t_us: 2_500_000, escape_group: false })
+    const r = actor.dispatch('split_layer', { layer: a2, at_t_us: 2_500_000, escape_link: false })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.error).toBe('ValidationFailed')
     expect(actor.snapshot().transitions.map((t) => t.id)).toEqual([tid])
@@ -166,10 +166,10 @@ describe('reconcile-on-commit: splits', () => {
 })
 
 describe('reconcile-on-commit: survival + atomic undo', () => {
-  it('transition SURVIVES a group move of both participants (overlap preserved)', () => {
+  it('transition SURVIVES a link move of both participants (overlap preserved)', () => {
     const { actor, logged, aRoll, a1, a2, tid } = withTransition()
-    expect(actor.dispatch('groups_create', { layers: [a1, a2], label: null, reassign: false }).ok).toBe(true)
-    expect(actor.dispatch('move_layer', { layer: a1, to_track: aRoll, t_start_us: 5_000_000, escape_group: false }).ok).toBe(true)
+    expect(actor.dispatch('links_create', { layers: [a1, a2], label: null, reassign: false }).ok).toBe(true)
+    expect(actor.dispatch('move_layer', { layer: a1, to_track: aRoll, t_start_us: 5_000_000, escape_link: false }).ok).toBe(true)
     expect(layerOf(actor.snapshot(), a1).t_start_us).toBe(5_000_000)
     expect(layerOf(actor.snapshot(), a1).t_end_us).toBe(8_000_000)
     expect(layerOf(actor.snapshot(), a2).t_start_us).toBe(7_000_000) // sibling shifted by the same delta

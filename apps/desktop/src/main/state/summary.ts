@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/summary.ts
-import type { Animated, Effect, Group, Layer, LayerParams, Marker, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid, VAlign } from './model'
+import type { Animated, Effect, Link, Layer, LayerParams, Marker, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid, VAlign } from './model'
 import type { HistoryStatus } from './history'
 import type { DecodeRoute } from '../../shared/decode-route'
 
@@ -173,7 +173,7 @@ export interface CompositionSummary {
 }
 export interface HistoryView { cursor: number; len: number; can_undo: boolean; can_redo: boolean; lock_reason?: string }
 export interface RoleMixView { role: string; gain_db: number; muted: boolean; solo: boolean }
-export interface GroupSummary { id: string; label: string | null; layer_ids: string[] }
+export interface LinkSummary { id: string; label: string | null; layer_ids: string[] }
 export interface MarkerSummary { id: string; t_us: number; end_t_us: number | null; label: string; color_hint: string }
 /** Wire shape == model shape (model.ts `Transition`) — the compositor's
  *  two-input node consumes it verbatim in both realms (preview snapshot and
@@ -203,7 +203,7 @@ export interface TrackSummary {
 export interface ProjectSummary {
   project_id: string; name: string; composition: CompositionSummary
   track_count: number; layer_count: number; duration_us: number; history: HistoryView
-  media: MediaSummary[]; tracks: TrackSummary[]; markers: MarkerSummary[]; transitions: TransitionView[]; groups: GroupSummary[]; audio_roles: RoleMixView[]
+  media: MediaSummary[]; tracks: TrackSummary[]; markers: MarkerSummary[]; transitions: TransitionView[]; links: LinkSummary[]; audio_roles: RoleMixView[]
 }
 
 // The kebab wire form of TrackRole — what renderer/ipc/index.ts declares. The
@@ -276,7 +276,7 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
   const transitions: TransitionView[] = p.transitions.map((t) => ({
     id: t.id, from_layer: t.from_layer, to_layer: t.to_layer, duration_us: t.duration_us, kind: t.kind, extended_us: t.extended_us,
   }))
-  const groups: GroupSummary[] = p.groups.map((g: Group) => ({ id: g.id, label: g.label ?? null, layer_ids: g.members }))
+  const links: LinkSummary[] = p.links.map((g: Link) => ({ id: g.id, label: g.label ?? null, layer_ids: g.members }))
   const audio_roles: RoleMixView[] = ROLE_ORDER.map((role) => {
     const s = p.audio_roles[role] ?? DEFAULT_ROLE
     return { role, gain_db: s.gain_db, muted: s.muted, solo: s.solo }
@@ -289,7 +289,7 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
       fps_locked: history.holds_layer_anywhere },
     track_count: p.tracks.length, layer_count, duration_us: p.composition.duration_us,
     history: { cursor: history.cursor, len: history.len, can_undo: history.can_undo, can_redo: history.can_redo },
-    media, tracks, markers, transitions, groups, audio_roles,
+    media, tracks, markers, transitions, links, audio_roles,
   }
   if (history.lock_reason !== undefined) view.history.lock_reason = history.lock_reason
   return view

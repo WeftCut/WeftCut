@@ -1,5 +1,5 @@
 /// Sample-precision audio authoring: the pure half. Nudge steps and the derived
-/// group sync offset (ADR 0038 / spec R2-D6, R2-D7), with no React and no IPC, so
+/// link sync offset (ADR 0038 / spec R2-D6, R2-D7), with no React and no IPC, so
 /// every acceptance property is a unit test rather than a UI walkthrough.
 import { AUDIO_GRID, AUDIO_SAMPLES_PER_MS, gridIndex, stepOnGrid } from "../grid";
 
@@ -35,7 +35,7 @@ export function nudgedStartUs(layer: SlipLayer, steps: number): number {
  *  applying them to a visual layer would either do nothing (its grid has no sample
  *  step) or silently move it by a whole frame. A mixed selection nudges only its
  *  audio members, which is also what makes the command safe to fire on a
- *  whole-group selection — the video member stays put. */
+ *  whole-link selection — the video member stays put. */
 export function slippableAudioLayers(
   selection: ReadonlySet<string>,
   layers: readonly SlipLayer[],
@@ -43,8 +43,8 @@ export function slippableAudioLayers(
   return layers.filter((l) => selection.has(l.id) && l.kind === "Audio");
 }
 
-/** The sync offset of a grouped audio layer, in SAMPLES, or `null` when the layer is
- *  not in a group with a visual member to measure against.
+/** The sync offset of a linked audio layer, in SAMPLES, or `null` when the layer is
+ *  not in a link with a visual member to measure against.
  *
  *  DERIVED, never stored (R2-D7), so no field can ever disagree with the geometry.
  *
@@ -56,14 +56,14 @@ export function slippableAudioLayers(
  *  to the same sample when nothing has been slipped, so this reads exactly 0 there and
  *  exactly N after N nudges.
  *
- *  The reference is the group's visual member whose start is CLOSEST to the audio's —
+ *  The reference is the link's visual member whose start is CLOSEST to the audio's —
  *  "the clip this is paired with". For the auto-paired A/V case (the only one that can
  *  currently produce a slip) that is the single visual member. */
 export function syncOffsetSamples(
   audio: SlipLayer,
-  groupMembers: readonly SlipLayer[],
+  linkMembers: readonly SlipLayer[],
 ): number | null {
-  const visual = groupMembers.filter((l) => l.id !== audio.id && l.kind !== "Audio");
+  const visual = linkMembers.filter((l) => l.id !== audio.id && l.kind !== "Audio");
   if (visual.length === 0) return null;
   let ref = visual[0]!;
   for (const v of visual) {
@@ -78,9 +78,9 @@ export function syncOffsetSamples(
  *  mint a history entry). */
 export function resyncStartUs(
   audio: SlipLayer,
-  groupMembers: readonly SlipLayer[],
+  linkMembers: readonly SlipLayer[],
 ): number | null {
-  const offset = syncOffsetSamples(audio, groupMembers);
+  const offset = syncOffsetSamples(audio, linkMembers);
   if (offset === null || offset === 0) return null;
   return nudgedStartUs(audio, -offset);
 }

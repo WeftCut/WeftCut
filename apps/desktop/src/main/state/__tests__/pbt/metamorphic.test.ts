@@ -32,10 +32,10 @@ export function applyOps(actor: ReturnType<typeof freshActor>, ops: Op[]) {
         actor.dispatch('add_layer', { track: tracks()[op.track], kind: 'color', t_start_us: op.start, t_end_us: op.start + op.len })
         break
       case 'move':
-        if (layers.length) actor.dispatch('move_layer', { layer: layers[op.layerN % layers.length], to_track: tracks()[op.track], t_start_us: op.start, escape_group: false })
+        if (layers.length) actor.dispatch('move_layer', { layer: layers[op.layerN % layers.length], to_track: tracks()[op.track], t_start_us: op.start, escape_link: false })
         break
       case 'trim':
-        if (layers.length) actor.dispatch('trim_layer', { layer: layers[op.layerN % layers.length], edge: op.edge, new_t_us: op.to, escape_group: false })
+        if (layers.length) actor.dispatch('trim_layer', { layer: layers[op.layerN % layers.length], edge: op.edge, new_t_us: op.to, escape_link: false })
         break
       case 'delete':
         if (layers.length) actor.dispatch('delete_layer', { layer: layers[op.layerN % layers.length] })

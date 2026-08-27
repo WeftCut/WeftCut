@@ -215,7 +215,7 @@ test.describe('export range + audio settings (Electron)', () => {
   // An audio layer authored to a 48 kHz sample boundary that is deliberately HALF A
   // FRAME off the composition frame grid, driven through the real renderer → actor
   // IPC and the real persistence round trip. Both data-loss dependencies live here at
-  // integration level: a kind-blind group fan-out would re-sync the slip on the group
+  // integration level: a kind-blind link fan-out would re-sync the slip on the link
   // move, and a kind-blind load repair would erase it on reopen.
   //
   // Deliberately NOT asserted: the exported PCM's sub-frame start offset. AAC encoder
@@ -226,13 +226,13 @@ test.describe('export range + audio settings (Electron)', () => {
   // faithful audio from it (the mixer places at `us_to_frame(t_start_us, 48000)`, so a
   // sub-frame start must not break the mux). Sample-exact placement is proven in
   // `main/state/__tests__/audio-grid.test.ts` against the same leaf math the mixer uses.
-  test('a sub-frame audio slip survives the group move, save/reopen, and export', async () => {
+  test('a sub-frame audio slip survives the link move, save/reopen, and export', async () => {
     test.setTimeout(300000)
     const projectDir = await bootProject('e2e-audio-slip-')
     const { layerId: videoLayer } = await importAndPlaceMedia(page, { mediaAbsPath: SOURCE })
 
     // `add_media_layer` auto-pairs an AV source: video + Audio layer on the same
-    // track, grouped. Find the audio half.
+    // track, linked. Find the audio half.
     const s0 = await summary(page)
     const audioLayer = s0.tracks
       .flatMap((t) => t.layers)
@@ -249,7 +249,7 @@ test.describe('export range + audio settings (Electron)', () => {
       layerId: audioLayer,
       newTrackId: s0.tracks.find((t) => t.layers.some((l) => l.id === audioLayer))!.id,
       newTStartUs: SLIP_US,
-      escapeGroup: true,
+      escapeLink: true,
     })
     const startOf = async (id: string | undefined) =>
       ((await summary(page)) as unknown as {
@@ -260,17 +260,17 @@ test.describe('export range + audio settings (Electron)', () => {
     const videoStart = await startOf(videoLayer)
     const offsetBefore = SLIP_US - videoStart
 
-    // A whole-group move must shift both members by the same delta. A kind-blind
+    // A whole-link move must shift both members by the same delta. A kind-blind
     // fan-out would drag the audio back onto the nearest video frame here.
     const MOVE_TO_US = 1_000_000 // frame 30 at 30 fps
     await invokeCmd(page, 'move_layer', {
       layerId: videoLayer,
       newTrackId: s0.tracks.find((t) => t.layers.some((l) => l.id === videoLayer))!.id,
       newTStartUs: MOVE_TO_US,
-      escapeGroup: false,
+      escapeLink: false,
     })
     const movedOffset = (await startOf(audioLayer)) - (await startOf(videoLayer))
-    expect(movedOffset, 'a whole-group move must preserve the slip exactly').toBe(offsetBefore)
+    expect(movedOffset, 'a whole-link move must preserve the slip exactly').toBe(offsetBefore)
     const slippedAfterMove = await startOf(audioLayer)
 
     // Save + reopen: the load repair must report nothing and move nothing.
@@ -285,7 +285,7 @@ test.describe('export range + audio settings (Electron)', () => {
     if (!r.done.ok) throw new Error(`export failed: ${r.done.error} | kind=${r.lastKind} detail=${r.lastDetail}`)
     const pcm = extractPcm(output)
     const cands = [toneHz(0), toneHz(1), toneHz(2), toneHz(3)]
-    // The audio layer now starts at 1.35 s (1 s group position + the 350 ms slip), so
+    // The audio layer now starts at 1.35 s (1 s link position + the 350 ms slip), so
     // source second k occupies output [1.35 + k, 2.35 + k). Windows are inset 50 ms
     // from each boundary so the assertion reads ONE tone rather than a blend.
     const audioStartS = (MOVE_TO_US + SLIP_US) / 1_000_000

@@ -15,7 +15,7 @@ import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
 import { applyDuplicateLayer, applyPasteLayer, pasteLayerInterval } from './mutations/duplicate'
 import { applySplitLayer } from './mutations/split'
-import { applyGroupsCreate, applyGroupsDissolve, applyGroupsAddMembers, applyGroupsRemoveMembers, applyGroupsRename } from './mutations/groups'
+import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, applyLinksRename } from './mutations/links'
 import { applyUpdateLayer, type LayerPatch } from './mutations/update'
 import { applyFitComposition } from './mutations/composition'
 import { applyDurationAutofit, locateLayer } from './mutations/helpers'
@@ -53,9 +53,9 @@ export type DryRunOp =
   | { kind: 'DeleteLayer'; id: Uuid }
   | { kind: 'UpdateLayer'; id: Uuid; patch: LayerPatch }
   | { kind: 'UpdateLayerParams'; id: Uuid; patch: LayerParamsPatch }
-  | { kind: 'MoveLayer'; id: Uuid; new_track_id: Uuid; new_t_start_us: number; escape_group: boolean }
-  | { kind: 'SplitLayer'; id: Uuid; at_t_us: number; escape_group: boolean }
-  | { kind: 'TrimLayer'; id: Uuid; edge: LayerEdge; new_t_us: number; escape_group: boolean }
+  | { kind: 'MoveLayer'; id: Uuid; new_track_id: Uuid; new_t_start_us: number; escape_link: boolean }
+  | { kind: 'SplitLayer'; id: Uuid; at_t_us: number; escape_link: boolean }
+  | { kind: 'TrimLayer'; id: Uuid; edge: LayerEdge; new_t_us: number; escape_link: boolean }
   // `transition_kind`, not `kind`: the discriminant owns that name.
   | { kind: 'AddTransition'; from: Uuid; to: Uuid; duration_us: number; transition_kind: TransitionKind; placement: 'overlap' | 'extend' }
 export type DryRunOutput =
@@ -141,7 +141,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
    *  validation failure.
    *
    *  Reconcile (Policy B, spec § Edit-interaction policy) runs on EVERY commit
-   *  — trim/move/split/delete/group ops stay transition-blind — inside the same
+   *  — trim/move/split/delete/link ops stay transition-blind — inside the same
    *  produce(), so the drop lands in the SAME snapshot as the edit (one undo
    *  restores both). add/update/remove_transition need no exemption either:
    *  their OWN transition holds by construction after apply, and when
@@ -245,7 +245,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   //    from an id-only arg comes off the PRE-mutation snapshot (same rule as
   //    restyle_captions'). `EntityRef` has three variants and gains none: it is a
   //    wire type the MCP resource exposes, and the renderer has no
-  //    selected-transition or selected-group model to receive one.
+  //    selected-transition or selected-link model to receive one.
   //
   //    The SINGULAR three double as commit()'s function form — `commit(s, layerRef,
   //    …)` names whatever layer id the recipe returned. ──
@@ -260,9 +260,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
     const t = current().transitions.find((x) => x.id === id)
     return t ? layerRefs([t.from_layer, t.to_layer]) : []
   }
-  /** A group's member layers. Absent group → `[]` (the apply rejects). */
-  function groupMemberRefs(id: Uuid): EntityRef[] {
-    const g = current().groups.find((x) => x.id === id)
+  /** A link's member layers. Absent link → `[]` (the apply rejects). */
+  function linkMemberRefs(id: Uuid): EntityRef[] {
+    const g = current().links.find((x) => x.id === id)
     return g ? layerRefs(g.members) : []
   }
 
@@ -525,7 +525,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   //    (when referenced && !force) → unused path (validate probe BEFORE broadcast,
   //    durable, 1 broadcast id) | force-cascade (RAW inline layer removal +
   //    commit, 1 op_id, undoable). The force path must NOT reuse applyDeleteLayer
-  //    (no empty-track prune / no group cleanup). ──
+  //    (no empty-track prune / no link cleanup). ──
   function removeMedia(id: Uuid, force: boolean): void {
     const cur = current()
     if (!(id in cur.media_pool)) throw new CommandFailure({ error: 'MediaNotFound', media: id })
@@ -611,9 +611,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
             case 'DeleteLayer': applyDeleteLayer(d, op.id); break
             case 'UpdateLayer': applyUpdateLayer(d, op.id, op.patch); break
             case 'UpdateLayerParams': applyUpdateLayerParams(d, op.id, op.patch, motifCatalog); break
-            case 'MoveLayer': applyMoveLayer(d, op.id, op.new_track_id, op.new_t_start_us, op.escape_group); break
-            case 'SplitLayer': { const s = applySplitLayer(d, idGen, op.id, op.at_t_us, op.escape_group); value = { kind: 'SplitLayer', left_id: s.left, right_id: s.right }; break }
-            case 'TrimLayer': applyTrimLayer(d, op.id, op.edge, op.new_t_us, op.escape_group); break
+            case 'MoveLayer': applyMoveLayer(d, op.id, op.new_track_id, op.new_t_start_us, op.escape_link); break
+            case 'SplitLayer': { const s = applySplitLayer(d, idGen, op.id, op.at_t_us, op.escape_link); value = { kind: 'SplitLayer', left_id: s.left, right_id: s.right }; break }
+            case 'TrimLayer': applyTrimLayer(d, op.id, op.edge, op.new_t_us, op.escape_link); break
             // The SAME apply the wet arm runs, so moves, bounces, spawns and
             // refusals are predicted by one code path (bounces are primitives —
             // safe to carry out of the discarded draft).
@@ -663,7 +663,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
         case 'add_track': return { ok: true, value: commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, (a.label as string) ?? null)) }
         case 'add_marker': return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 })) }
-        case 'move_layer': commit(HISTORY_SUMMARY.layerMove, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_group as boolean) ?? false)); return { ok: true, value: null }
+        case 'move_layer': commit(HISTORY_SUMMARY.layerMove, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_link as boolean) ?? false)); return { ok: true, value: null }
         // move_layers_to_new_track — the whole of z-order rearrangement (ADR 0042
         // decision 2). ONE commit: the lane is minted, the layers move onto it
         // keeping their times, and every lane the raise emptied goes with them, so
@@ -690,7 +690,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             (d) => applyRestackLayer(d, idGen, layer, a.anchor as Uuid, a.position as RestackPosition))
           return { ok: true, value: null }
         }
-        case 'trim_layer': commit(HISTORY_SUMMARY.layerTrim, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyTrimLayer(d, a.layer as Uuid, ((a.edge as string) === 'out' ? 'Out' : 'In'), parseNum(a.new_t_us, 'new_t_us'), (a.escape_group as boolean) ?? false)); return { ok: true, value: null }
+        case 'trim_layer': commit(HISTORY_SUMMARY.layerTrim, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyTrimLayer(d, a.layer as Uuid, ((a.edge as string) === 'out' ? 'Out' : 'In'), parseNum(a.new_t_us, 'new_t_us'), (a.escape_link as boolean) ?? false)); return { ok: true, value: null }
         case 'delete_layer': commit(HISTORY_SUMMARY.layerDelete, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyDeleteLayer(d, a.layer as Uuid)); return { ok: true, value: null }
         // The SELECTION's delete, and the marquee's headline gesture: N swept
         // clips must cost ONE undo entry, which the singular form above cannot
@@ -699,7 +699,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // cannot name a change spanning several.
         //
         // The recipe is the loop and nothing else. applyDeleteLayer already drops
-        // the layer from its group (auto-dissolving below 2 members), prunes the
+        // the layer from its link (auto-dissolving below 2 members), prunes the
         // track it emptied and re-runs the duration autofit on EVERY call, so a
         // batch that empties three lanes prunes three lanes with no extra
         // bookkeeping here.
@@ -741,20 +741,20 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: checkpoint(label) }
         }
         case 'delete_checkpoint': deleteCheckpoint(parseUuid(a.checkpoint_id, 'checkpoint_id')); return { ok: true, value: null }
-        case 'split_layer': return { ok: true, value: commit(HISTORY_SUMMARY.layerSplit, (s: { left: Uuid; right: Uuid }) => layerRefs([s.left, s.right]), { kind: 'Coarse' }, (d) => applySplitLayer(d, idGen, a.layer as Uuid, parseNum(a.at_t_us, 'at_t_us'), (a.escape_group as boolean) ?? false)) }
+        case 'split_layer': return { ok: true, value: commit(HISTORY_SUMMARY.layerSplit, (s: { left: Uuid; right: Uuid }) => layerRefs([s.left, s.right]), { kind: 'Coarse' }, (d) => applySplitLayer(d, idGen, a.layer as Uuid, parseNum(a.at_t_us, 'at_t_us'), (a.escape_link as boolean) ?? false)) }
         // split_layer_multi — coalesced multi-split for the auto_split_by_shot
         // hybrid: split `layer` at every ascending, strictly-interior timeline
         // time in `at_t_us_list` inside ONE commit, so a whole shot-split is a
         // single undo (mirrors update_layer_param_tracks' one-commit batch, per
         // the ticket's single-history-entry acceptance). Each split's RIGHT half
-        // carries forward to the next cut; group-aware (escape_group=false) so an
+        // carries forward to the next cut; link-aware (escape_link=false) so an
         // auto-paired audio partner splits in lockstep with the video. Cuts arrive
         // pre-snapped from resolveShotCuts, but each is re-checked against the
         // CURRENT segment bounds and a non-interior one is SKIPPED (not thrown),
         // so a redundant/collapsed cut can never abort the whole batch.
         // When `drop_short_us` is set, any resulting VIDEO segment shorter than it
         // is deleted (applyDeleteLayer honors empty-track cleanup). LANDMINE: the
-        // drop walks only the video ids the splits returned, NOT their group-paired
+        // drop walks only the video ids the splits returned, NOT their link-paired
         // audio halves, so drop_short leaves the paired audio sliver orphaned at
         // that cut — a known v1 limitation (called out in docs/mcp.md). Returns the
         // ordered target segment layer ids that survived.
@@ -802,11 +802,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: commit(HISTORY_SUMMARY.markerAddShots, markerRefs, { kind: 'Coarse' }, (d) =>
             rows.map((m) => applyAddMarker(d, idGen, parseNum(m.t_us, 't_us'), m.end_t_us ?? null, m.label ?? 'Shot', m.color ?? { r: 0, g: 128, b: 255, a: 255 }))) }
         }
-        case 'groups_create': return { ok: true, value: commit(HISTORY_SUMMARY.groupCreate, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyGroupsCreate(d, idGen, a.layers as Uuid[], (a.label as string) ?? null, (a.reassign as boolean) ?? false)) }
-        case 'groups_dissolve': commit(HISTORY_SUMMARY.groupDissolve, groupMemberRefs(a.group as Uuid), { kind: 'Coarse' }, (d) => applyGroupsDissolve(d, a.group as Uuid)); return { ok: true, value: null }
-        case 'groups_add_members': commit(HISTORY_SUMMARY.groupAddMembers, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyGroupsAddMembers(d, a.group as Uuid, a.layers as Uuid[], (a.reassign as boolean) ?? false)); return { ok: true, value: null }
-        case 'groups_remove_members': commit(HISTORY_SUMMARY.groupRemoveMembers, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyGroupsRemoveMembers(d, a.group as Uuid, a.layers as Uuid[])); return { ok: true, value: null }
-        case 'groups_rename': commit(HISTORY_SUMMARY.groupRename, groupMemberRefs(a.group as Uuid), { kind: 'Coarse' }, (d) => applyGroupsRename(d, a.group as Uuid, (a.label as string) ?? null)); return { ok: true, value: null }
+        case 'links_create': return { ok: true, value: commit(HISTORY_SUMMARY.linkCreate, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksCreate(d, idGen, a.layers as Uuid[], (a.label as string) ?? null, (a.reassign as boolean) ?? false)) }
+        case 'links_dissolve': commit(HISTORY_SUMMARY.linkDissolve, linkMemberRefs(a.link as Uuid), { kind: 'Coarse' }, (d) => applyLinksDissolve(d, a.link as Uuid)); return { ok: true, value: null }
+        case 'links_add_members': commit(HISTORY_SUMMARY.linkAddMembers, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksAddMembers(d, a.link as Uuid, a.layers as Uuid[], (a.reassign as boolean) ?? false)); return { ok: true, value: null }
+        case 'links_remove_members': commit(HISTORY_SUMMARY.linkRemoveMembers, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksRemoveMembers(d, a.link as Uuid, a.layers as Uuid[])); return { ok: true, value: null }
+        case 'links_rename': commit(HISTORY_SUMMARY.linkRename, linkMemberRefs(a.link as Uuid), { kind: 'Coarse' }, (d) => applyLinksRename(d, a.link as Uuid, (a.label as string) ?? null)); return { ok: true, value: null }
         case 'update_layer': commit(HISTORY_SUMMARY.layerUpdate, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayer(d, a.layer as Uuid, a.patch as LayerPatch)); return { ok: true, value: null }
         // The four commands below end with the scale-link invariant check
         // (mutations/scaleLink.ts): result-based, so it runs once per COMMIT —
@@ -1016,7 +1016,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // add_media_layer: track_id required, kind-matched
           // params. When auto-pair fires (Video + audio.is_some() + setting on):
           // THREE separate commits (three op_ids) — add video layer, add audio
-          // layer (role=dialogue) on the SAME track and span, then groups_create.
+          // layer (role=dialogue) on the SAME track and span, then links_create.
           const trackId = parseUuid(wireArgs.trackId, 'trackId')
           const t0 = parseNum(wireArgs.tStartUs, 'tStartUs')
           const { params, durationUs, autoPairAudio } = prodMediaLayer(wireArgs, current())
@@ -1026,8 +1026,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           if (autoPairAudio !== null) {
             const audioId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, trackId, autoPairAudio, t0, t1))
-            commit(HISTORY_SUMMARY.groupCreate, layerRefs([videoId, audioId]), { kind: 'Coarse' }, (d) =>
-              applyGroupsCreate(d, idGen, [videoId, audioId], null, false))
+            commit(HISTORY_SUMMARY.linkCreate, layerRefs([videoId, audioId]), { kind: 'Coarse' }, (d) =>
+              applyLinksCreate(d, idGen, [videoId, audioId], null, false))
           }
           return { ok: true, value: videoId }
         }
@@ -1148,9 +1148,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
       case 'update_layer_params':
         return { kind: 'UpdateLayerParams', id: parseUuid(spec.layer_id, 'layer_id'), patch: spec.patch as LayerParamsPatch }
       case 'move_layer':
-        return { kind: 'MoveLayer', id: parseUuid(spec.layer_id, 'layer_id'), new_track_id: parseUuid(spec.new_track_id, 'new_track_id'), new_t_start_us: parseNum(spec.new_t_start_us, 'new_t_start_us'), escape_group: (spec.escape_group as boolean) ?? false }
+        return { kind: 'MoveLayer', id: parseUuid(spec.layer_id, 'layer_id'), new_track_id: parseUuid(spec.new_track_id, 'new_track_id'), new_t_start_us: parseNum(spec.new_t_start_us, 'new_t_start_us'), escape_link: (spec.escape_link as boolean) ?? false }
       case 'split_layer':
-        return { kind: 'SplitLayer', id: parseUuid(spec.layer_id, 'layer_id'), at_t_us: parseNum(spec.at_t_us, 'at_t_us'), escape_group: (spec.escape_group as boolean) ?? false }
+        return { kind: 'SplitLayer', id: parseUuid(spec.layer_id, 'layer_id'), at_t_us: parseNum(spec.at_t_us, 'at_t_us'), escape_link: (spec.escape_link as boolean) ?? false }
       case 'delete_layer':
         return { kind: 'DeleteLayer', id: parseUuid(spec.layer_id, 'layer_id') }
       case 'add_transition':
@@ -1204,16 +1204,16 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // Paired A/V: ONE commit — video + dialogue audio on the SAME track
           // (a track holds one visual and one audio lane, so the pair shares a
           // combined row exactly like production add_media_layer) + the pair
-          // group. Any failure discards the whole draft: the call commits or
+          // link. Any failure discards the whole draft: the call commits or
           // rejects as a unit — splitting it into separate commits strands the
           // video on the timeline when the audio placement fails.
           const aParams = { ...audioParams(media, srcIn, srcOut), role: 'dialogue' as const }
           try {
-            const ids = commit(HISTORY_SUMMARY.layerAddAvPair, (r: { video_layer_id: Uuid; audio_layer_id: Uuid; group_id: Uuid }) => layerRefs([r.video_layer_id, r.audio_layer_id]), { kind: 'Coarse' }, (d) => {
+            const ids = commit(HISTORY_SUMMARY.layerAddAvPair, (r: { video_layer_id: Uuid; audio_layer_id: Uuid; link_id: Uuid }) => layerRefs([r.video_layer_id, r.audio_layer_id]), { kind: 'Coarse' }, (d) => {
               const videoId = applyAddLayer(d, idGen, track, vParams, t0, t1)
               const audioId = applyAddLayer(d, idGen, track, aParams, t0, t1)
-              const groupId = applyGroupsCreate(d, idGen, [videoId, audioId], null, false)
-              return { video_layer_id: videoId, audio_layer_id: audioId, group_id: groupId }
+              const linkId = applyLinksCreate(d, idGen, [videoId, audioId], null, false)
+              return { video_layer_id: videoId, audio_layer_id: audioId, link_id: linkId }
             })
             return { ok: true, result: toolJson(ids) }
           } catch (err) {
@@ -1259,7 +1259,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'split_layer': {
           const p = mcpDef('split_layer').parseDedicated!(a)
           const layer = p.layer as string
-          const r = dispatch('split_layer', { layer, at_t_us: p.at_t_us, escape_group: (p.escape_group as boolean) ?? false })
+          const r = dispatch('split_layer', { layer, at_t_us: p.at_t_us, escape_link: (p.escape_link as boolean) ?? false })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           // dispatch('split_layer') (applySplitLayer) already returns
           // `{left, right}` (left = original layer, right = new) — return it verbatim.

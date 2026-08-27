@@ -65,20 +65,20 @@ describe('dry_run add_transition parity (same apply as the wet command, produce-
     expect(a.snapshot().transitions[0].extended_us).toBe(0)
   })
 
-  it('a dry-run overlap add predicts the SAME refusal as the wet run (shared group), and mutates nothing', () => {
+  it('a dry-run overlap add predicts the SAME refusal as the wet run (shared link), and mutates nothing', () => {
     const { a, a1, a2 } = withCut()
-    expect(a.dispatch('groups_create', { layers: [a1, a2], label: null, reassign: false }).ok).toBe(true)
+    expect(a.dispatch('links_create', { layers: [a1, a2], label: null, reassign: false }).ok).toBe(true)
     const before = a.snapshot()
     const out = body(a.mcpCall('dry_run', JSON.stringify({ operations: [
       { kind: 'add_transition', from_layer_id: a1, to_layer_id: a2, duration_us: 1_000_000 },
     ] })))
     expect(out.halted_at).toBe(0)
     expect(out.results[0].status).toBe('error')
-    expect(out.results[0].error).toContain('share a group')
+    expect(out.results[0].error).toContain('share a link')
     expect(a.snapshot()).toBe(before)
     const wet = a.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000 })
     expect(wet.ok).toBe(false)
-    if (!wet.ok) expect(wet.error.error).toBe('TransitionParticipantsShareGroup')
+    if (!wet.ok) expect(wet.error.error).toBe('TransitionParticipantsShareLink')
   })
 
   it("placement 'extend' rides the op spec: the dry run predicts extend's handle refusal that overlap would not hit", () => {
@@ -104,7 +104,7 @@ describe('dry_run add_transition parity (same apply as the wet command, produce-
     expect(a.dispatch('add_media', { id: 'm-a', kind: 'Audio', duration_us: 10_000_000, with_audio: true }).ok).toBe(true)
     val(a.dispatch('add_layer', { track: bRoll, kind: 'audio', media: 'm-a', src_in_us: 0, src_out_us: 1_000_000, t_start_us: 1_000_000, t_end_us: 2_000_000 })) // blocker
     const aud = val(a.dispatch('add_layer', { track: bRoll, kind: 'audio', media: 'm-a', src_in_us: 0, src_out_us: 2_000_000, t_start_us: 2_000_000, t_end_us: 4_000_000 }))
-    expect(a.dispatch('groups_create', { layers: [a2, aud], label: null, reassign: false }).ok).toBe(true)
+    expect(a.dispatch('links_create', { layers: [a2, aud], label: null, reassign: false }).ok).toBe(true)
     const out = body(a.mcpCall('dry_run', JSON.stringify({ operations: [
       { kind: 'add_transition', from_layer_id: a1, to_layer_id: a2, duration_us: 1_000_000 },
     ] })))

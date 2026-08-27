@@ -45,7 +45,7 @@ export function TrackLane({
   selectedLayerIds,
   transitions,
   selectedTransitionId,
-  groupByLayerId,
+  linkByLayerId,
   dragState,
   pendingPlacements,
   pendingLayerById,
@@ -61,7 +61,7 @@ export function TrackLane({
   onChipResize,
   onCommitLabel,
   onCommitParamTrack,
-  isGroupStart,
+  isRoleSectionStart,
   isRevealed,
   isResizing,
   onHeightDragStart,
@@ -85,7 +85,7 @@ export function TrackLane({
   /// participants live on this track.
   transitions: TransitionSummary[];
   selectedTransitionId: string | null;
-  groupByLayerId: Map<string, string>;
+  linkByLayerId: Map<string, string>;
   dragState: DragState | null;
   pendingPlacements: PendingLayerPlacement[] | null;
   pendingLayerById: ReadonlyMap<string, LayerSummary>;
@@ -123,7 +123,7 @@ export function TrackLane({
   onChipResize: (args: TransitionResizeArgs) => void;
   onCommitLabel: (layerId: string, label: string) => void;
   onCommitParamTrack: (layerId: string, paramKey: string, track: AnimTrack<number>) => void;
-  isGroupStart: boolean;
+  isRoleSectionStart: boolean;
   /// Inline-reveal flag. The lane renders with extra chrome
   /// (dashed border / "hidden" badge) so the user knows this row is
   /// only here because they clicked a Playhead Panel row.
@@ -420,7 +420,7 @@ export function TrackLane({
               : isRevealed
                 ? "outline outline-1 outline-dashed -outline-offset-1 outline-blue-400/55 bg-blue-400/5"
                 : "",
-        isGroupStart ? "border-t border-t-border" : "",
+        isRoleSectionStart ? "border-t border-t-border" : "",
       ].join(" ")}
       style={{ height }}
       onPointerDown={onMarqueeDown}
@@ -503,7 +503,7 @@ export function TrackLane({
             slice={slices.get(layer.id) ?? "full"}
             isPrimary={selectedLayerId === layer.id}
             isSelected={selectedLayerIds.has(layer.id)}
-            groupId={groupByLayerId.get(layer.id) ?? null}
+            linkId={linkByLayerId.get(layer.id) ?? null}
             dragState={
               dragState?.duplicate &&
               dragState.subjects.some((subject) => subject.layerId === layer.id)
@@ -539,7 +539,7 @@ export function TrackLane({
               slice={slices.get(duplicatePreview.sliceLayer.id) ?? "full"}
               isPrimary={false}
               isSelected={false}
-              groupId={null}
+              linkId={null}
               dragState={dragState}
               pendingPlacement={null}
               previewOnly

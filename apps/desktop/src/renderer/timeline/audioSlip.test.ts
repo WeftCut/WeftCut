@@ -73,7 +73,7 @@ describe("audio nudge", () => {
     expect(nudgedStartUs(l, -10)).toBe(0);
   });
 
-  it("selects only audio layers, so a whole-group selection leaves the video alone", () => {
+  it("selects only audio layers, so a whole-link selection leaves the video alone", () => {
     const layers = [audio("a", sample(100)), video("v", frame(3)), audio("b", sample(200))];
     const sel = new Set(["a", "v"]);
     expect(slippableAudioLayers(sel, layers).map((l) => l.id)).toEqual(["a"]);
@@ -81,7 +81,7 @@ describe("audio nudge", () => {
   });
 });
 
-describe("derived group sync offset", () => {
+describe("derived link sync offset", () => {
   it("reads ZERO for a freshly paired A/V clip, despite the two lattices differing", () => {
     // THE case a raw-µs offset would get wrong: one requested time resolved on two
     // lattices leaves the members up to ~10 µs apart at 29.97, and a µs-based badge
@@ -108,14 +108,14 @@ describe("derived group sync offset", () => {
     }
   });
 
-  it("is null with no visual partner — an audio-only group has nothing to measure against", () => {
+  it("is null with no visual partner — an audio-only link has nothing to measure against", () => {
     const a = audio("a", sample(100));
     const b = audio("b", sample(500));
     expect(syncOffsetSamples(a, [a, b])).toBeNull();
     expect(syncOffsetSamples(a, [a])).toBeNull();
   });
 
-  it("measures against the CLOSEST visual member when a group holds several", () => {
+  it("measures against the CLOSEST visual member when a link holds several", () => {
     const a = audio("a", sample(gridIndex(frame(31), AUDIO_GRID) + 3));
     const near = video("near", frame(31));
     const far = video("far", frame(600));
@@ -172,7 +172,7 @@ describe("deriveAudioSyncOffsets", () => {
     expect(selectAudioSyncOffset(out, "v")).toBeNull();
   });
 
-  it("ignores ungrouped layers and a group whose member ids no longer resolve", () => {
+  it("ignores unlinked layers and a link whose member ids no longer resolve", () => {
     const { v, slipped } = fixtures();
     expect(deriveAudioSyncOffsets([v, slipped], [])).toEqual({});
     expect(deriveAudioSyncOffsets([slipped], [{ id: "g", layer_ids: ["v", "b"] }])).toEqual({});

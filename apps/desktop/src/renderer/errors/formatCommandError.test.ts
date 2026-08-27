@@ -64,7 +64,7 @@ function seedStore(): void {
     ],
     markers: [],
     transitions: [],
-    groups: [],
+    links: [],
     audio_roles: [],
   } as unknown as ProjectSummary;
   useProjectStore.getState().apply(summary);

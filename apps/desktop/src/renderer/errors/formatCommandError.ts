@@ -141,9 +141,9 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
     key: "errors.transition_restore_collision",
     args: (e, ctx) => ({ layer: ctx.layer(e.layer) }),
   },
-  TransitionParticipantsShareGroup: {
+  TransitionParticipantsShareLink: {
     tier: "curated",
-    key: "errors.transition_participants_share_group",
+    key: "errors.transition_participants_share_link",
     args: (e, ctx) => ({ from: ctx.layer(e.from), to: ctx.layer(e.to) }),
   },
   CheckpointNotFound: { tier: "generic" },
@@ -176,9 +176,9 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
       time: ctx.timecode(e.at_t),
     }),
   },
-  GroupLockedMember: {
+  LinkLockedMember: {
     tier: "curated",
-    key: "errors.group_locked_member",
+    key: "errors.link_locked_member",
     args: (e, ctx) => ({
       layer: ctx.layer(e.touched),
       locked: ctx.layer(e.locked_layer),
@@ -193,10 +193,10 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
     }),
   },
   LayerParamsKindMismatch: { tier: "generic" },
-  GroupNotFound: { tier: "generic" },
-  LayerAlreadyGrouped: { tier: "generic" },
-  GroupCreateNeedsTwoLayers: { tier: "generic" },
-  LayerNotInGroup: { tier: "generic" },
+  LinkNotFound: { tier: "generic" },
+  LayerAlreadyLinked: { tier: "generic" },
+  LinkCreateNeedsTwoLayers: { tier: "generic" },
+  LayerNotInLink: { tier: "generic" },
   NothingToUndo: { tier: "suppress" },
   NothingToRedo: { tier: "suppress" },
   HistoryLocked: { tier: "generic" },
@@ -251,10 +251,10 @@ const VALIDATION_COPY: { [R in ValidationRule]: Spec<ValidationOf<R>> } = {
       track: ctx.track(e.track),
     }),
   },
-  DuplicateGroupId: { tier: "generic" },
-  GroupBelowMinSize: { tier: "generic" },
-  GroupMemberMissing: { tier: "generic" },
-  LayerInMultipleGroups: { tier: "generic" },
+  DuplicateLinkId: { tier: "generic" },
+  LinkBelowMinSize: { tier: "generic" },
+  LinkMemberMissing: { tier: "generic" },
+  LayerInMultipleLinks: { tier: "generic" },
 };
 
 // ── Composition ─────────────────────────────────────────────────────────────

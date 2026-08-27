@@ -9,7 +9,7 @@ const ALL_54_NAMES = new Set<string>([
   'add_track', 'remove_track', 'rename_track', 'duplicate_layer', 'move_track',
   'update_layer', 'update_layer_params', 'set_scale_linked',
   'move_layer', 'restack_layer', 'trim_layer', 'delete_layer',
-  'groups_create', 'groups_dissolve', 'groups_add_members', 'groups_remove_members', 'groups_rename',
+  'links_create', 'links_dissolve', 'links_add_members', 'links_remove_members', 'links_rename',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'add_transition', 'update_transition', 'remove_transition',
   'set_composition', 'fit_composition_to_layers',
@@ -98,18 +98,18 @@ describe('MCP tool table projections', () => {
 
   it('shapeResult tools are the expected 5', () => {
     const shapers = MCP_TOOL_DEFS.filter((d) => d.shapeResult).map((d) => d.name).sort()
-    expect(shapers).toEqual(['add_effect', 'add_track', 'add_transition', 'duplicate_layer', 'groups_create'])
+    expect(shapers).toEqual(['add_effect', 'add_track', 'add_transition', 'duplicate_layer', 'links_create'])
   })
 
-  it('parseBoolOpt hardening: escape_group rejects non-boolean', () => {
+  it('parseBoolOpt hardening: escape_link rejects non-boolean', () => {
     const u = '00000000-0000-7000-8000-000000000001'
     const u2 = '00000000-0000-7000-8000-000000000002'
-    expect(() => MCP_ARG_PARSERS['move_layer']({ layer_id: u, new_track_id: u2, new_t_start_us: 0, escape_group: 'true' })).toThrow()
+    expect(() => MCP_ARG_PARSERS['move_layer']({ layer_id: u, new_track_id: u2, new_t_start_us: 0, escape_link: 'true' })).toThrow()
   })
 
   it('asArray hardening: layer_ids rejects non-array', () => {
     const u = '00000000-0000-7000-8000-000000000001'
-    expect(() => MCP_ARG_PARSERS['groups_create']({ layer_ids: u, label: null })).toThrow()
+    expect(() => MCP_ARG_PARSERS['links_create']({ layer_ids: u, label: null })).toThrow()
   })
 
   it('transition tools round-trip valid args to dispatch vocabulary', () => {
@@ -159,7 +159,7 @@ describe('MCP tool table projections', () => {
 
   it('parseStrOpt hardening: label rejects non-string non-null', () => {
     const u = '00000000-0000-7000-8000-000000000001'
-    expect(() => MCP_ARG_PARSERS['groups_create']({ layer_ids: [u], label: 42 })).toThrow()
+    expect(() => MCP_ARG_PARSERS['links_create']({ layer_ids: [u], label: 42 })).toThrow()
   })
 })
 
@@ -256,15 +256,15 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     expect(layers.find((l) => l.id === a2)!.t_start_us).toBe(1_500_000)
   })
 
-  it('TransitionParticipantsShareGroup surfaces prose + structured data with the two ways out', () => {
+  it('TransitionParticipantsShareLink surfaces prose + structured data with the two ways out', () => {
     const { actor, a1, a2 } = withCut()
-    expect(actor.dispatch('groups_create', { layers: [a1, a2], label: null, reassign: false }).ok).toBe(true)
+    expect(actor.dispatch('links_create', { layers: [a1, a2], label: null, reassign: false }).ok).toBe(true)
     const r = actor.mcpCall('add_transition', JSON.stringify({ from_layer_id: a1, to_layer_id: a2, duration_us: 1_000_000 }))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')
-    expect(r.error.message).toContain('share a group')
-    expect(r.error.data).toMatchObject({ error: 'TransitionParticipantsShareGroup', from: a1, to: a2 })
+    expect(r.error.message).toContain('share a link')
+    expect(r.error.data).toMatchObject({ error: 'TransitionParticipantsShareLink', from: a1, to: a2 })
     expect(actor.snapshot().transitions).toEqual([])
   })
 

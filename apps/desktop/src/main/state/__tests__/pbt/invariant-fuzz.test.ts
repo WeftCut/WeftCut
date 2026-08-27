@@ -51,7 +51,7 @@ type Op =
   | { t: 'move'; n: number; track: number; start: number }
   | { t: 'trim'; n: number; edge: 'in' | 'out'; to: number }
   | { t: 'delete'; n: number }
-  | { t: 'group'; n: number; m: number }
+  | { t: 'link'; n: number; m: number }
   | { t: 'addTransition'; pick: 'adjacent' | 'any'; n: number; m: number; dur: number; kindArg: KindArg; placement: 'overlap' | 'extend' | undefined }
   | { t: 'updateTransition'; n: number; unknownId: boolean; dur: number | undefined; ext: number | undefined; kindArg: KindArg | undefined }
   | { t: 'removeTransition'; n: number; unknownId: boolean }
@@ -107,7 +107,7 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
   { arbitrary: fc.record({ t: fc.constant('move' as const), n: fc.nat({ max: 20 }), track: fc.nat({ max: 5 }), start: tu(12) }), weight: 2 },
   { arbitrary: fc.record({ t: fc.constant('trim' as const), n: fc.nat({ max: 20 }), edge: fc.constantFrom('in', 'out') as fc.Arbitrary<'in' | 'out'>, to: tu(12) }), weight: 2 },
   fc.record({ t: fc.constant('delete' as const), n: fc.nat({ max: 20 }) }),
-  fc.record({ t: fc.constant('group' as const), n: fc.nat({ max: 20 }), m: fc.nat({ max: 20 }) }),
+  fc.record({ t: fc.constant('link' as const), n: fc.nat({ max: 20 }), m: fc.nat({ max: 20 }) }),
   // Transition ops get extra weight: reconcile — the feature's most bug-prone
   // part — only churns when live transitions meet the layer edits above.
   { arbitrary: fc.record({ t: fc.constant('addTransition' as const),
@@ -141,11 +141,11 @@ function applyOp(actor: ActorT, op: Op): { ok: boolean } | null {
     case 'addTrack': return actor.dispatch('add_track', { label: null })
     case 'deleteTrack': return actor.dispatch('delete_track', { track: pickTrack(op.n), force: op.force })
     case 'duplicate': return layers.length ? actor.dispatch('duplicate_layer', { layer: pickLayer(op.n), t_offset_us: op.off }) : null
-    case 'split': return layers.length ? actor.dispatch('split_layer', { layer: pickLayer(op.n), at_t_us: op.at, escape_group: false }) : null
-    case 'move': return layers.length ? actor.dispatch('move_layer', { layer: pickLayer(op.n), to_track: pickTrack(op.track), t_start_us: op.start, escape_group: false }) : null
-    case 'trim': return layers.length ? actor.dispatch('trim_layer', { layer: pickLayer(op.n), edge: op.edge, new_t_us: op.to, escape_group: false }) : null
+    case 'split': return layers.length ? actor.dispatch('split_layer', { layer: pickLayer(op.n), at_t_us: op.at, escape_link: false }) : null
+    case 'move': return layers.length ? actor.dispatch('move_layer', { layer: pickLayer(op.n), to_track: pickTrack(op.track), t_start_us: op.start, escape_link: false }) : null
+    case 'trim': return layers.length ? actor.dispatch('trim_layer', { layer: pickLayer(op.n), edge: op.edge, new_t_us: op.to, escape_link: false }) : null
     case 'delete': return layers.length ? actor.dispatch('delete_layer', { layer: pickLayer(op.n) }) : null
-    case 'group': return layers.length >= 2 ? actor.dispatch('groups_create', { layers: [pickLayer(op.n), pickLayer(op.m)], label: null, reassign: false }) : null
+    case 'link': return layers.length >= 2 ? actor.dispatch('links_create', { layers: [pickLayer(op.n), pickLayer(op.m)], label: null, reassign: false }) : null
     case 'addTransition': {
       if (layers.length < 2) return null
       let from = pickLayer(op.n), to = pickLayer(op.m)
@@ -248,7 +248,7 @@ describe('rejected transition commands burn no ids (pre-mint failure paths)', ()
   // failing calls yields byte-identical state AND the same next minted id.
   // (Deliberately NOT covered: a downstream ValidationFailed burns one id by
   // design — the known keystone landmine, gated elsewhere.)
-  it('insufficient handle / audio participant / bad pairing / non-adjacent / shared group / zero-cross / over-length / unknown id consume no id', () => {
+  it('insufficient handle / audio participant / bad pairing / non-adjacent / shared link / zero-cross / over-length / unknown id consume no id', () => {
     type DispatchRes = ReturnType<ActorT['dispatch']>
     const err = (r: DispatchRes) => (r.ok ? null : r.error.error)
     const val = (r: DispatchRes) => (r.ok ? r.value : null) as string
@@ -260,14 +260,14 @@ describe('rejected transition commands burn no ids (pre-mint failure paths)', ()
       const a1 = actor.dispatch('add_layer', { track: aTrack, kind: 'audio', media: AUDIO_MEDIA, src_in_us: 0, src_out_us: 500_000, t_start_us: 0, t_end_us: 500_000 })
       const a2 = actor.dispatch('add_layer', { track: aTrack, kind: 'audio', media: AUDIO_MEDIA, src_in_us: 0, src_out_us: 500_000, t_start_us: 500_000, t_end_us: 1_000_000 })
       // Fixtures for the overlap-placement refusals, seeded in BOTH runs: a color
-      // cut whose incoming layer is grouped with a near-origin audio sibling
-      // (zero-cross), and the v1+v2 pair grouped (shared participants).
+      // cut whose incoming layer is linked with a near-origin audio sibling
+      // (zero-cross), and the v1+v2 pair linked (shared participants).
       const c1 = actor.dispatch('add_layer', { track: vTrack, kind: 'color', t_start_us: 2_000_000, t_end_us: 3_000_000 })
       const c2 = actor.dispatch('add_layer', { track: vTrack, kind: 'color', t_start_us: 3_000_000, t_end_us: 4_000_000 })
       const tExtra = actor.dispatch('add_track', { label: null })
       const aud = actor.dispatch('add_layer', { track: val(tExtra), kind: 'audio', media: AUDIO_MEDIA, src_in_us: 0, src_out_us: 500_000, t_start_us: 200_000, t_end_us: 700_000 })
-      const g1 = actor.dispatch('groups_create', { layers: [val(v1), val(v2)], label: null, reassign: false })
-      const g2 = actor.dispatch('groups_create', { layers: [val(c2), val(aud)], label: null, reassign: false })
+      const g1 = actor.dispatch('links_create', { layers: [val(v1), val(v2)], label: null, reassign: false })
+      const g2 = actor.dispatch('links_create', { layers: [val(c2), val(aud)], label: null, reassign: false })
       expect([v1.ok, v2.ok, a1.ok, a2.ok, c1.ok, c2.ok, tExtra.ok, aud.ok, g1.ok, g2.ok]).toEqual([true, true, true, true, true, true, true, true, true, true])
       if (withFailures) {
         const [fv1, fv2, fa1, fa2, fc1, fc2] = [v1, v2, a1, a2, c1, c2].map(val)
@@ -275,8 +275,8 @@ describe('rejected transition commands burn no ids (pre-mint failure paths)', ()
         const insufficient = actor.dispatch('add_transition', { from: fv1, to: fv2, duration_us: 200_000, placement: 'extend' })
         expect(err(insufficient)).toBe('TransitionInsufficientHandle')
         if (!insufficient.ok && insufficient.error.error === 'TransitionInsufficientHandle') expect(insufficient.error.available_us).toBe(100_000)
-        // Overlap default on the same grouped pair: participants share a group.
-        expect(err(actor.dispatch('add_transition', { from: fv1, to: fv2, duration_us: 100_000 }))).toBe('TransitionParticipantsShareGroup')
+        // Overlap default on the same linked pair: participants share a link.
+        expect(err(actor.dispatch('add_transition', { from: fv1, to: fv2, duration_us: 100_000 }))).toBe('TransitionParticipantsShareLink')
         // c2's audio sibling would cross t = 0 (200k − 1M) → pre-mint ValidationFailed(NegativeLayerStart).
         expect(err(actor.dispatch('add_transition', { from: fc1, to: fc2, duration_us: 1_000_000 }))).toBe('ValidationFailed')
         // d > min(len_A, len_B) → pre-mint ValidationFailed(TransitionDurationOutOfRange, transition: null).

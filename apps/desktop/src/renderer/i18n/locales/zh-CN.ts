@@ -232,8 +232,10 @@ const zhCN: Resources = {
     safe_area_on_hint: "当前显示安全框参考线。点击隐藏。",
     safe_area_off_hint: "已隐藏安全框参考线。点击显示。",
     // 禁用原因，与 clear_range_empty 同一条规则：说明前置条件，而不是重复点不了的标签。
-    group_needs_two: "选中两个或更多片段才能编组",
-    dissolve_no_group: "所选内容不在任何编组中",
+    link_selected: "链接所选图层",
+    unlink_selected: "取消链接所选图层",
+    link_needs_two: "选中两个或更多未链接的片段才能链接",
+    link_mixed_selection: "所选片段需全部未链接，或同属一个链接",
   },
   dock_workspace: {
     editing_label: "编辑工作区",
@@ -348,8 +350,7 @@ const zhCN: Resources = {
     focus_previous_panel: "聚焦上一个面板",
     toggle_maximize_panel: "最大化 / 还原面板",
     restore_maximized_panel: "还原最大化面板",
-    group_selected: "将所选图层编组",
-    dissolve_selected_group: "解散所选图层所在的编组",
+    toggle_link_selected: "链接 / 取消链接所选图层",
     nudge_audio_sample_back: "音频前移 1 个采样",
     nudge_audio_sample_forward: "音频后移 1 个采样",
     nudge_audio_ms_back: "音频前移 1 毫秒",
@@ -583,15 +584,15 @@ const zhCN: Resources = {
     track_locked: "{{track}}已锁定。",
     track_not_empty: "{{track}}上仍有片段。",
     track_not_removable: "{{track}}是保留轨道，不能删除。",
-    group_locked_member: "“{{layer}}”与已锁定的图层“{{locked}}”在同一分组。",
+    link_locked_member: "“{{layer}}”与已锁定的图层“{{locked}}”已链接。",
     trim_edge_out_of_range: "无法将“{{layer}}”裁剪到 {{time}}——超出片段范围。",
     split_outside_layer: "无法在 {{time}} 分割“{{layer}}”——该位置不在片段内。",
     transition_insufficient_handle:
       "“{{layer}}”的素材余量只有 {{available}}，不足以放置该转场。",
     transition_restore_collision:
       "移除转场需要把“{{layer}}”移回剪切点，但该位置已被占用。",
-    transition_participants_share_group:
-      "“{{from}}”与“{{to}}”在同一分组——移动其中一个会带动另一个，重叠无法打开。请先解除分组。",
+    transition_participants_share_link:
+      "“{{from}}”与“{{to}}”已链接——移动其中一个会带动另一个，重叠无法打开。请先取消链接。",
     transition_layers_not_adjacent: "“{{from}}”与“{{to}}”必须相邻才能添加转场。",
     fps_locked_by_content:
       "帧率保持 {{current}} fps——时间线上仍有 {{layers}} 个片段。",
@@ -1139,9 +1140,9 @@ const zhCN: Resources = {
       "音频编辑对齐到精确的 48 kHz 采样，因此这些字段可读取并接受帧内时间。拖拽仍吸附到帧——最大缩放下一个采样仅 0.042 像素宽。使用 Alt+←/→ 微调一个采样，Alt+Shift+←/→ 微调 1 毫秒。",
     t_start_hint: "包含该时刻——此时间码对应的帧是图层的第一帧。",
     kind: "类型",
-    group_none: "未编组",
-    group_of_one: "编组（{{count}} 个图层）",
-    group_of_other: "编组（{{count}} 个图层）",
+    link_none: "未链接",
+    link_of_one: "链接（{{count}} 个图层）",
+    link_of_other: "链接（{{count}} 个图层）",
     locked: "锁定",
     duration: "时长",
     multi_primary: "正在编辑主图层“{{label}}”——已选中 {{count}} 个图层；修改仅应用于此图层。",
@@ -1380,12 +1381,12 @@ const zhCN: Resources = {
       update: "修改转场",
       remove: "删除转场",
     },
-    group: {
-      create: "编组",
-      dissolve: "解散编组",
-      add_members: "添加编组成员",
-      remove_members: "移除编组成员",
-      rename: "重命名编组",
+    link: {
+      create: "链接",
+      dissolve: "取消链接",
+      add_members: "添加链接成员",
+      remove_members: "移除链接成员",
+      rename: "重命名链接",
     },
     caption: { restyle: "修改字幕样式" },
     media: { remove_cascade: "删除素材 {{media}} 及其 {{count}} 个引用图层" },

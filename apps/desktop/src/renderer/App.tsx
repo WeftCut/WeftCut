@@ -248,31 +248,31 @@ export function App({ onCloseProject }: AppProps) {
   // R.7: click on a Playhead Panel row → reveal that hidden track inline at its
   // natural accretion slot AND select the clicked layer. Single-track
   // exclusive (later row click replaces).
-  const selectLayerWithGroup = useCallback(
+  const selectLayerWithLink = useCallback(
     (layerId: string | null) => {
       if (layerId === null) {
         clearLayerSelection();
         return;
       }
-      const group = summary?.groups.find((candidate) =>
+      const link = summary?.links.find((candidate) =>
         candidate.layer_ids.includes(layerId),
       );
-      setLayerSelection(layerId, group?.layer_ids ?? [layerId]);
+      setLayerSelection(layerId, link?.layer_ids ?? [layerId]);
     },
-    [summary?.groups],
+    [summary?.links],
   );
 
   /// `layerId === null`: reveal + scroll the track and select NOTHING —
   /// History rows for `add_track` / `add_caption_track` carry a Track ref and
   /// nothing else, and there is no track-selection concept to satisfy. Skipping
-  /// `selectLayerWithGroup` (rather than passing it null, which CLEARS the
+  /// `selectLayerWithLink` (rather than passing it null, which CLEARS the
   /// selection) leaves the user's current selection undisturbed.
   const revealTrack = useCallback(
     (trackId: string, layerId: string | null) => {
       setRevealedTrackId(trackId);
-      if (layerId !== null) selectLayerWithGroup(layerId);
+      if (layerId !== null) selectLayerWithLink(layerId);
     },
-    [selectLayerWithGroup],
+    [selectLayerWithLink],
   );
 
   // Palette navigation reaches R.7 reveal-track through the module-level
@@ -521,9 +521,9 @@ export function App({ onCloseProject }: AppProps) {
   // this callback was last built. No-ops on an empty selection (the
   // `useShortcuts` dispatcher fires the handler regardless).
   //
-  // The op takes the selection VERBATIM — delete never fans out over a group
-  // (docs/features.md § Groups), and it does not need to: selection is what
-  // carries the group, so a swept or clicked member already brought its
+  // The op takes the selection VERBATIM — delete never fans out over a link
+  // (docs/features.md § Links), and it does not need to: selection is what
+  // carries the link, so a swept or clicked member already brought its
   // siblings along.
   const deleteSelected = useCallback(async () => {
     const layerIds = [...useSelectionStore.getState().selectedLayerIds];
@@ -866,7 +866,7 @@ export function App({ onCloseProject }: AppProps) {
       onMutated: refresh,
       onImportMedia: importMediaFiles,
       selectedLayerId: primaryLayerId,
-      onSelectLayer: selectLayerWithGroup,
+      onSelectLayer: selectLayerWithLink,
       onRevealTrack: revealTrack,
     }),
     [
@@ -884,7 +884,7 @@ export function App({ onCloseProject }: AppProps) {
       refresh,
       importMediaFiles,
       primaryLayerId,
-      selectLayerWithGroup,
+      selectLayerWithLink,
       revealTrack,
     ],
   );

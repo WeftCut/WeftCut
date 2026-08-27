@@ -17,6 +17,13 @@ a reason to rewrite the file.
 Hand-editing one is allowed for exactly one reason: the version it declares must
 match its filename.
 
+Until first release the rule has nothing to guard: `STEPS` is empty, so there is
+no step to test against a past shape, and an incompatible shape change instead
+rewrites the shape in place — `SCHEMA_VERSION` stays 1 — and regenerates
+`v1.json` by driving the actor through the scenario below. The frozen rule
+applies from the first post-release bump, when a step exists to be tested
+against a past shape (ADR 0052).
+
 ## Provenance
 
 `v1.json` was produced once by driving the real actor (`state/actor.ts`) with a
@@ -24,7 +31,7 @@ seeded id generator, then frozen:
 
 - a `Video` media item with audio, workspace paths, and a `Proxied` decode route
   carrying a landed full proxy, waveform and thumbnails
-- A-roll: an auto-paired `VideoClip` + `Audio` layer, and the `Group` that pairing
+- A-roll: an auto-paired `VideoClip` + `Audio` layer, and the `Link` that pairing
   creates
 - B-roll: two adjacent `Color` layers with a `Crossfade` transition across the
   join (so the authorized-overlap invariant is represented, not just the field)

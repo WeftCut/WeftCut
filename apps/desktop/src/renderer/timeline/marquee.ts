@@ -4,7 +4,7 @@
 // rows the way `geometry.test.ts` proves `trackIdAtClientY`. The gesture and the
 // overlay rectangle live elsewhere. See ADR 0051.
 
-import type { GroupSummary, TrackSummary } from "../ipc";
+import type { LinkSummary, TrackSummary } from "../ipc";
 import {
   computeValueRange,
   timeToXPx,
@@ -78,7 +78,7 @@ function containsHalfOpen(v: number, lo: number, hi: number): boolean {
 /// lanes it actually rendered. Re-reading the filter here would be a second copy
 /// of a rule that must not drift from the one the lanes obey.
 ///
-/// Groups are not fanned out here; that is `resolveMarqueeSelection`'s job. This
+/// Links are not fanned out here; that is `resolveMarqueeSelection`'s job. This
 /// function answers "what did the box touch" and stays free of project
 /// semantics.
 export function marqueeHitClips(args: {
@@ -226,11 +226,11 @@ export function marqueeHitKeyframes(args: {
 export function resolveMarqueeSelection(args: {
   snapshotPrimary: string | null;
   hit: readonly string[];
-  groupByLayerId: ReadonlyMap<string, string>;
-  groups: readonly GroupSummary[];
+  linkByLayerId: ReadonlyMap<string, string>;
+  links: readonly LinkSummary[];
   mode: "replace";
 }): { ids: string[]; primary: string | null } {
-  const groupById = new Map(args.groups.map((group) => [group.id, group]));
+  const linkById = new Map(args.links.map((link) => [link.id, link]));
   const ids: string[] = [];
   const seen = new Set<string>();
   const take = (id: string): void => {
@@ -240,15 +240,15 @@ export function resolveMarqueeSelection(args: {
   };
   for (const layerId of args.hit) {
     take(layerId);
-    // Touching one member takes the whole group, as a plain click does
+    // Touching one member takes the whole link, as a plain click does
     // (`selectFromClick`) — members and all, locked ones included, so the box
     // cannot build a selection a click could not. The cost is a highlight
-    // outside the box, possibly off screen; the alternative is a half-group
+    // outside the box, possibly off screen; the alternative is a half-link
     // selection the next Delete would tear apart, since only selection carries
-    // the group and the op level does not fan out.
-    const groupId = args.groupByLayerId.get(layerId);
-    if (groupId === undefined) continue;
-    for (const memberId of groupById.get(groupId)?.layer_ids ?? []) {
+    // the link and the op level does not fan out.
+    const linkId = args.linkByLayerId.get(layerId);
+    if (linkId === undefined) continue;
+    for (const memberId of linkById.get(linkId)?.layer_ids ?? []) {
       take(memberId);
     }
   }

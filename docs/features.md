@@ -112,10 +112,10 @@ Attribute panel always have exactly one kind of target.
 
 **Click semantics.** Plain click replaces the selection; a click on blank lane
 space clears it, per *Background clicks* below. `Shift+click` **toggles** — the
-clicked clip (and its group) goes in if it was out and out if it was in. Toggle
+clicked clip (and its link) goes in if it was out and out if it was in. Toggle
 rather than union because that is the additive modifier in Resolve, FCP and
 Premiere alike, and a union-only gesture leaves no way back from an over-wide
-selection except starting over. `Alt+click` selects one member out of a group.
+selection except starting over. `Alt+click` selects one member out of a link.
 Right-click also selects, but only when the clip is *outside* the current
 selection, so right-clicking inside a multi-selection keeps it.
 
@@ -146,8 +146,8 @@ selection.
 
 **Delete takes the whole clip selection, as one undo entry** however many clips
 and lanes it spans — so one undo brings a swept block back in one step. It takes
-the selection verbatim and never fans out over a group: selection is what carries
-a group, so a clicked or swept member has already brought its siblings along.
+the selection verbatim and never fans out over a link: selection is what carries
+a link, so a clicked or swept member has already brought its siblings along.
 
 **Marquee.** Dragging from blank timeline space draws a box, and **the surface
 the drag started on decides what the box selects** (ADR 0051) — a track lane, the
@@ -166,7 +166,7 @@ viewport can never be enclosed, and it is slice-aware, so grazing the top half o
 a combined A/V row takes the visual layer and not the audio one. It shares Select
 All's two rules for Select All's reasons: it **respects the A/B Roll filter**
 (only rendered lanes can be swept) and it **excludes locks rather than refusing
-them**. Touching one member of a group takes the whole group, exactly as a click
+them**. Touching one member of a link takes the whole link, exactly as a click
 does — locked members included, so a box can never build a selection a click
 could not. A surviving primary is kept, so a sweep does not move the Attribute
 panel off the clip being inspected.
@@ -207,66 +207,70 @@ outside selects it first, the way the clip menu behaves.
 selection between an anchor and a click, and the directional "select every clip
 forward on this track" tools.
 
-## Groups
+## Links
 
-A `Group` is a project-level entity owning a flat set of member `LayerId`s —
-a layer is in at most one group, no nesting. Moving, trimming, or splitting
+A `Link` is a project-level entity owning a flat set of member `LayerId`s —
+a layer is in at most one link, no nesting. Moving, trimming, or splitting
 a member fans the edit out to the other members under the rules below;
-everything else (keyframes, opacity, gain, delete) stays local. Groups have
+everything else (keyframes, opacity, gain, delete) stays local. A link has
 no rendering significance — the renderer composes every member
-independently. One mechanism serves both auto-paired AV from a single
-source and manual scene bundles (B-roll + voiceover + lower-third that
-travel together).
+independently — and no identity beyond its accent: it says "these travel
+together", which is Premiere's Link with any number of members. One
+mechanism serves both auto-paired AV from a single source and manual scene
+bundles (B-roll + voiceover + lower-third that travel together). "This is
+one thing" is a different intent and a different word: a *Group* is a
+composition placed as one layer ([CONTEXT.md](../CONTEXT.md#links-and-groups),
+ADR 0052), never a link.
 
-**Fan-out rules** — any single op can bypass them with `escape_group: true`:
+**Fan-out rules** — any single op can bypass them with `escape_link: true`:
 
 - **Move** propagates the time delta to every member's `t_start_us`/`t_end_us`;
   the track change applies only to the targeted layer. Rejects if any
   member's new range would overlap its track or leave the composition.
-  Dragged toward the origin the group **stops as a set**: the clamp applies to
+  Dragged toward the origin the link **stops as a set**: the clamp applies to
   the shared delta, so the earliest member lands on 0 and everyone keeps their
   spacing — no member is shortened in place. Each member then re-snaps on *its
   own* lattice, which is what preserves a slipped A/V sync offset.
 - **Trim** propagates only to members whose corresponding edge sits at the
   same exact `t` (alignment is recomputed per op — there is no stored
-  "linked" state), with the delta clamped so no member crosses its source
+  "aligned" state), with the delta clamped so no member crosses its source
   bounds (`src_in_us`/`src_out_us`) or inverts.
 - **Split** cuts every member spanning `T`, distributing source in/out
-  proportionally for media-bearing kinds; all pieces stay in the group.
+  proportionally for media-bearing kinds; all pieces stay in the link.
 - **Raise to a new track** is not a fan-out: `move_layers_to_new_track` moves
   exactly the layers it is handed, onto one fresh lane, with every time carried
   verbatim — there is no delta for a member to follow. What differs between its
   two entry points is only which layers they name. The **Move to a new track**
   command names the selection; a clip dragged into the **drop strip** names the
-  drag's subject set, so a grouped clip takes its group up with it and every
+  drag's subject set, so a linked clip takes its link up with it and every
   member changes lane, unlike a plain Move (above), where only the targeted layer
   does.
 - **Locks reject the whole op:** if a fan-out would touch a member with
   `locked == true` — or any layer on a `Track.locked` track — the op fails
-  with `GroupLockedMember` / `TrackLocked` rather than partially applying.
+  with `LinkLockedMember` / `TrackLocked` rather than partially applying.
 
 **Invariants** (validated on every commit): every member resolves to a real
-layer; no layer appears in two groups; a group auto-dissolves below 2
+layer; no layer appears in two links; a link auto-dissolves below 2
 members *in the same commit* (delete is always local — `delete_layer` never
-fans out); `groups_create`/`groups_add_members` reject already-grouped
+fans out); `links_create`/`links_add_members` reject already-linked
 layers unless `reassign: true`, which moves the layer over.
 
 **Import auto-pair.** When `auto_pair_audio_on_import` is on (default) and
 an imported video source has an audio stream, import creates a `VideoClip`
-plus an `Audio` layer (same media, same span) and groups them atomically.
+plus an `Audio` layer (same media, same span) and links them atomically.
 `VideoClip` lowering does not emit audio — the paired `Audio` layer is the
 audible one.
 
-**UI.** Click a member → select the whole group; `Shift+click` toggles by
-group (a second one takes it back out — a deselecting click never starts a
+**UI.** Click a member → select the whole link; `Shift+click` toggles by
+link (a second one takes it back out — a deselecting click never starts a
 drag); `Alt+click` selects only the clicked layer, and `Alt+trim` escapes
 that one trim (body `Alt+drag` instead duplicates the single layer at the
-drop position). Grouped layers show a 2 px left accent in a hue derived
-deterministically from `group_id` plus a small chain-link icon. `Ctrl+G`
-creates from the selection, `Ctrl+Shift+G` dissolves — rebindable via the
-TS keybindings store, and both also sit in the Quick Actions strip's `edit`
-section, where each greys out with its own precondition named in the tooltip
-(fewer than two layers selected; no group in the selection).
+drop position). Linked layers show a 2 px left accent in a hue derived
+deterministically from `link_id`. `Ctrl+L` **toggles** link ↔ unlink, as in
+Premiere: a selection inside one link unlinks it, two or more unlinked layers
+link, and anything else greys out with the reason in the tooltip. It is one
+command, rebindable via the TS keybindings store, and the same toggle sits in
+the Quick Actions strip's `edit` section as Link / Unlink.
 
 **A/V sync offset.** An audio member can be slipped off its video partner
 (audio lives on the 48 kHz sample lattice — see [audio.md](audio.md)), and the
@@ -278,7 +282,7 @@ slip. With no field, nothing can disagree with where the clips actually are.
 A non-zero offset shows as a badge on the audio clip (`+3 smp`, `−2.00 ms`).
 The two existing fan-out rules already behave correctly for it, and this is
 worth stating because it looks like an inconsistency and is not: a
-**whole-group move preserves the offset** (every member shifts by the same
+**whole-link move preserves the offset** (every member shifts by the same
 delta, then lands on its own lattice), while a **video trim does not drag
 slipped audio** (the aligned set requires coinciding edges — which is the
 right outcome for a deliberately slipped track).
@@ -293,18 +297,18 @@ arrives through the nudges and through the inspector's numeric fields, whose
 unit (timecode / milliseconds / samples) is switchable per the audio-units
 selector — audio readouts only; the ruler and playhead stay frame-based.
 
-Mutations live in `apps/desktop/src/main/state/mutations/groups.ts`, with
+Mutations live in `apps/desktop/src/main/state/mutations/links.ts`, with
 fan-out enforcement in `move.ts` / `trim.ts` / `split.ts`. MCP tools
-(`groups_create` … `groups_rename`, plus `escape_group` on the structural
-ops) and the read surface (`groups` on `project://current`; there is no
-`groups_list` tool): [mcp.md](mcp.md). Wire shape: [data-model.md](data-model.md).
+(`links_create` … `links_rename`, plus `escape_link` on the structural
+ops) and the read surface (`links` on `project://current`; there is no
+`links_list` tool): [mcp.md](mcp.md). Wire shape: [data-model.md](data-model.md).
 
 ## Split at the playhead
 
 `Mod+B` cuts every clip the playhead is inside. It is the Blade tool's
 keyboard half — the tool can only ever cut where the pointer is — and reaches
-the same `split_layer_grouped` channel a blade click does, `escape_group: false`
-included, so a grouped A/V pair cuts in lockstep. Also on the Edit menu, in the
+the same `split_layer_linked` channel a blade click does, `escape_link: false`
+included, so a linked A/V pair cuts in lockstep. Also on the Edit menu, in the
 Quick Actions strip, in a clip's context menu and in the search palette.
 Resolution lives in `apps/desktop/src/renderer/commands/splitAtPlayhead.ts`.
 
@@ -314,7 +318,7 @@ straddling clip is cut. That is Premiere's contract, and it is also what keeps
 the common case — one clip, or one auto-paired couple — to a single history
 entry, because each clip is its own commit.
 
-**One target per group, not one per member.** A grouped split already fans out
+**One target per link, not one per member.** A linked split already fans out
 to every spanning sibling inside one commit, so sending the partner as well
 would ask for a cut in an interval that commit had just closed.
 
@@ -326,10 +330,10 @@ reveal is already showing it — so the selection path ignores the filter.
 
 **Locks are prevented, not refused.** Locked layers and locked tracks are
 filtered out before dispatch: a lock is the user's own standing instruction, not
-an error to report back at them. The one refusal that survives is a group
+an error to report back at them. The one refusal that survives is a link
 straddling a locked track, where the actor's `TrackLocked` is the useful answer
-— half the pair is pinned, and a partial split of a group is not a thing
-`escape_group: false` can express.
+— half the pair is pinned, and a partial split of a link is not a thing
+`escape_link: false` can express.
 
 **No disabled state, on purpose.** Whether a clip straddles the playhead
 changes as the playhead moves, so gating the command would mean subscribing the

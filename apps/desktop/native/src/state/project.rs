@@ -7,8 +7,8 @@ use uuid::Uuid;
 
 use super::audio_role::{AudioRole, RoleMixSettings};
 use super::composition::Composition;
-use super::group::Group;
 use super::ids::{new_id, MediaId};
+use super::link::Link;
 use super::marker::Marker;
 use super::media::MediaItem;
 use super::track::{Track, TrackRole};
@@ -36,13 +36,13 @@ pub struct Project {
     /// otherwise. `#[serde(default)]` keeps older `.vproj` files loadable.
     #[serde(default)]
     pub transitions: imbl::Vector<Transition>,
-    /// Layer groups (`docs/features.md#groups`). Each `Group` owns a set of
-    /// `LayerId`s; flat membership (a layer is in at most one group). The
-    /// actor maintains a derived `LayerId → GroupId` index for fast lookup
+    /// Links (`docs/features.md#links`). Each `Link` owns a set of
+    /// `LayerId`s; flat membership (a layer is in at most one link). The
+    /// actor maintains a derived `LayerId → LinkId` index for fast lookup
     /// and fans out move/trim/split ops across members. `#[serde(default)]`
     /// keeps the field optional on the wire.
     #[serde(default)]
-    pub groups: imbl::Vector<Group>,
+    pub links: imbl::Vector<Link>,
     /// Per-role mix-bus settings (`docs/audio.md`). Absent keys resolve to
     /// `RoleMixSettings::default()` via `role_mix`. `#[serde(default)]`
     /// makes pre-roles `.vproj` files load with every role at unity.
@@ -91,7 +91,7 @@ impl Project {
             tracks,
             markers: imbl::Vector::new(),
             transitions: imbl::Vector::new(),
-            groups: imbl::Vector::new(),
+            links: imbl::Vector::new(),
             audio_roles: imbl::HashMap::new(),
             settings: ProjectSettings::default(),
         }
@@ -122,7 +122,7 @@ pub struct ProjectSettings {
     pub history_capacity: usize,
     /// When `true` (default), importing a video source that has an audio
     /// stream creates both a `VideoClip` and an `Audio` layer pointing at
-    /// the same media, and groups them. See `docs/features.md#groups`. When
+    /// the same media, and links them. See `docs/features.md#links`. When
     /// `false`, only the `VideoClip` layer is created (audio is silently
     /// dropped).
     #[serde(default = "default_auto_pair_audio_on_import")]

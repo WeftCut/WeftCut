@@ -333,7 +333,7 @@ export function dryRunErrorString(e: CommandError): string {
   }
   if (e.error === 'TransitionInsufficientHandle') return `insufficient tail media on the outgoing layer ${e.layer}: ${e.available_us} µs available`
   if (e.error === 'TransitionRestoreCollision') return `removing the transition would move layer ${e.layer} back onto occupied space`
-  if (e.error === 'TransitionParticipantsShareGroup') return `layers ${e.from} and ${e.to} share a group, so the incoming layer cannot move to open the overlap`
+  if (e.error === 'TransitionParticipantsShareLink') return `layers ${e.from} and ${e.to} share a link, so the incoming layer cannot move to open the overlap`
   if (e.error === 'TransitionUnsupportedLayerKind') return `transitions are for visual layers only: layer ${e.layer} is ${e.kind}`
   return e.error
 }
@@ -440,11 +440,11 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
       error: 'TransitionRestoreCollision', layer: e.layer,
     } }
   }
-  if (e.error === 'TransitionParticipantsShareGroup') {
-    return { code: 'invalid_params', message: `layers ${e.from} and ${e.to} share a group: overlap placement moves the incoming layer left, which would drag the outgoing layer along and the overlap would never open. Options: ungroup them (groups_remove_members) and retry; or pass placement 'extend' to borrow outgoing tail media instead (positions untouched).`, data: {
-      error: 'TransitionParticipantsShareGroup', from: e.from, to: e.to,
+  if (e.error === 'TransitionParticipantsShareLink') {
+    return { code: 'invalid_params', message: `layers ${e.from} and ${e.to} share a link: overlap placement moves the incoming layer left, which would drag the outgoing layer along and the overlap would never open. Options: unlink them (links_remove_members) and retry; or pass placement 'extend' to borrow outgoing tail media instead (positions untouched).`, data: {
+      error: 'TransitionParticipantsShareLink', from: e.from, to: e.to,
       options: [
-        { action: 'ungroup_then_retry', layer_ids: [e.from, e.to] },
+        { action: 'unlink_then_retry', layer_ids: [e.from, e.to] },
         { action: 'retry_with_placement', placement: 'extend' },
       ],
     } }
@@ -631,8 +631,8 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'set_scale_linked', args: { layer: parseUuid(a.layer_id, 'layer_id'), linked: parseBool(a.linked, 'linked') } }) },
   { name: 'move_layer', exec: 'table',
     description: 'Move a layer to a different track and/or start time. The end time shifts by the same delta. Cross-track moves are validated against the destination\'s existing layers — overlap rejects with structured options.',
-    inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, new_t_start_us: { type: 'integer' }, new_track_id: { type: 'string' }, escape_group: { type: ['boolean', 'null'] } }, required: ['layer_id', 'new_t_start_us', 'new_track_id'] },
-    parseArgs: (a) => ({ op: 'move_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), to_track: parseUuid(a.new_track_id, 'new_track_id'), t_start_us: parseNum(a.new_t_start_us, 'new_t_start_us'), escape_group: parseBoolOpt(a.escape_group, 'escape_group', false) } }) },
+    inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, new_t_start_us: { type: 'integer' }, new_track_id: { type: 'string' }, escape_link: { type: ['boolean', 'null'] } }, required: ['layer_id', 'new_t_start_us', 'new_track_id'] },
+    parseArgs: (a) => ({ op: 'move_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), to_track: parseUuid(a.new_track_id, 'new_track_id'), t_start_us: parseNum(a.new_t_start_us, 'new_t_start_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false) } }) },
   { name: 'restack_layer', exec: 'table',
     description: "Restack a visual layer in the z-order relative to an ANCHOR layer: position 'above' | 'below' places it directly above/below the track the anchor sits on, resolved at apply time (anchors are layers, not indices — an index drifts between your read and your write). Z is track-array order, and the op degrades smartly: a mover that is its track's sole occupant moves the whole track (its id, label, lock and height survive); a mover sharing its track (an off-screen neighbour or a co-resident audio layer) splits onto a new track at the target position, and the source is cleaned up only if that emptied it. A role-stamped (A/B-roll skeleton) source track never moves — the mover always splits off it and the skeleton stays put. The anchor MAY sit on a reserved track. Restacking a layer to where it already sits is a no-op that records nothing. Audio never stacks (mixing is by role): an Audio mover or Audio anchor rejects, as does anchoring a layer on itself. Front/back are not variants — derive them as above-the-top / below-the-bottom of the visual stack you are looking at. One recorded commit: a single undo restores the layer, its track and any pruned track together.",
     inputSchema: { type: 'object', properties: {
@@ -642,35 +642,35 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     }, required: ['anchor_layer_id', 'layer_id', 'position'] },
     parseArgs: (a) => ({ op: 'restack_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), anchor: parseUuid(a.anchor_layer_id, 'anchor_layer_id'), position: parseRestackPosition(a.position) } }) },
   { name: 'trim_layer', exec: 'table',
-    description: "Trim one edge of a layer's timeline range. `edge` is 'in' (t_start) or 'out' (t_end). For media-bearing layers the corresponding src bound (src_in_us or src_out_us) moves by the same delta; over-trimming past the source bound is clamped. When the layer is in a group and `escape_group` is false (default), every group member whose corresponding edge sits at the same t as the trimmed edge is moved by the same delta, clamped to the tightest aligned member's bounds. Pass `escape_group=true` to trim only this layer. See `docs/features.md#groups`.",
-    inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, edge: { type: 'string' }, new_t_us: { type: 'integer' }, escape_group: { type: ['boolean', 'null'] } }, required: ['edge', 'layer_id', 'new_t_us'] },
-    parseArgs: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: parseStr(a.edge, 'edge'), new_t_us: parseNum(a.new_t_us, 'new_t_us'), escape_group: parseBoolOpt(a.escape_group, 'escape_group', false) } }) },
+    description: "Trim one edge of a layer's timeline range. `edge` is 'in' (t_start) or 'out' (t_end). For media-bearing layers the corresponding src bound (src_in_us or src_out_us) moves by the same delta; over-trimming past the source bound is clamped. When the layer is in a link and `escape_link` is false (default), every link member whose corresponding edge sits at the same t as the trimmed edge is moved by the same delta, clamped to the tightest aligned member's bounds. Pass `escape_link=true` to trim only this layer. See `docs/features.md#links`.",
+    inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, edge: { type: 'string' }, new_t_us: { type: 'integer' }, escape_link: { type: ['boolean', 'null'] } }, required: ['edge', 'layer_id', 'new_t_us'] },
+    parseArgs: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: parseStr(a.edge, 'edge'), new_t_us: parseNum(a.new_t_us, 'new_t_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false) } }) },
   { name: 'delete_layer', exec: 'table',
     description: 'Delete a layer. If this empties a non-reserved, unlocked track, the track is deleted in the same history entry (one undo restores both). A/B-roll and other role-stamped tracks stay.',
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' } }, required: ['layer_id'] },
     parseArgs: (a) => ({ op: 'delete_layer', args: { layer: parseUuid(a.layer_id, 'layer_id') } }) },
-  // ── table-exec: groups ───────────────────────────────────────────────────
-  { name: 'groups_create', exec: 'table',
-    description: 'Create a new group from >=2 distinct layer ids. Optional `label`. If any layer is already in another group, the op fails unless `reassign=true`, which removes them from their prior group(s) first (auto-dissolving any group that falls below 2 members). Returns the new group id.',
+  // ── table-exec: links ───────────────────────────────────────────────────
+  { name: 'links_create', exec: 'table',
+    description: 'Create a new link from >=2 distinct layer ids. Optional `label`. If any layer is already in another link, the op fails unless `reassign=true`, which removes them from their prior link(s) first (auto-dissolving any link that falls below 2 members). Returns the new link id.',
     inputSchema: { type: 'object', properties: { layer_ids: { type: 'array', items: { type: 'string' } }, label: { type: ['string', 'null'] }, reassign: { type: ['boolean', 'null'] } }, required: ['layer_ids'] },
-    parseArgs: (a) => ({ op: 'groups_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label'), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }),
+    parseArgs: (a) => ({ op: 'links_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label'), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }),
     shapeResult: (v) => toolText(v as string) },
-  { name: 'groups_dissolve', exec: 'table',
-    description: 'Dissolve (delete) a group. The member layers themselves are not deleted.',
-    inputSchema: { type: 'object', properties: { group_id: { type: 'string' } }, required: ['group_id'] },
-    parseArgs: (a) => ({ op: 'groups_dissolve', args: { group: parseUuid(a.group_id, 'group_id') } }) },
-  { name: 'groups_add_members', exec: 'table',
-    description: 'Add member layers to an existing group. Same reassign semantics as groups_create.',
-    inputSchema: { type: 'object', properties: { group_id: { type: 'string' }, layer_ids: { type: 'array', items: { type: 'string' } }, reassign: { type: ['boolean', 'null'] } }, required: ['group_id', 'layer_ids'] },
-    parseArgs: (a) => ({ op: 'groups_add_members', args: { group: parseUuid(a.group_id, 'group_id'), layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }) },
-  { name: 'groups_remove_members', exec: 'table',
-    description: 'Remove member layers from a group. If the remaining membership falls below 2, the group auto-dissolves.',
-    inputSchema: { type: 'object', properties: { group_id: { type: 'string' }, layer_ids: { type: 'array', items: { type: 'string' } } }, required: ['group_id', 'layer_ids'] },
-    parseArgs: (a) => ({ op: 'groups_remove_members', args: { group: parseUuid(a.group_id, 'group_id'), layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) } }) },
-  { name: 'groups_rename', exec: 'table',
-    description: "Update a group's label. Pass `label: null` to clear it.",
-    inputSchema: { type: 'object', properties: { group_id: { type: 'string' }, label: { type: ['string', 'null'] } }, required: ['group_id'] },
-    parseArgs: (a) => ({ op: 'groups_rename', args: { group: parseUuid(a.group_id, 'group_id'), label: parseStrOpt(a.label, 'label') } }) },
+  { name: 'links_dissolve', exec: 'table',
+    description: 'Dissolve (delete) a link. The member layers themselves are not deleted.',
+    inputSchema: { type: 'object', properties: { link_id: { type: 'string' } }, required: ['link_id'] },
+    parseArgs: (a) => ({ op: 'links_dissolve', args: { link: parseUuid(a.link_id, 'link_id') } }) },
+  { name: 'links_add_members', exec: 'table',
+    description: 'Add member layers to an existing link. Same reassign semantics as links_create.',
+    inputSchema: { type: 'object', properties: { link_id: { type: 'string' }, layer_ids: { type: 'array', items: { type: 'string' } }, reassign: { type: ['boolean', 'null'] } }, required: ['link_id', 'layer_ids'] },
+    parseArgs: (a) => ({ op: 'links_add_members', args: { link: parseUuid(a.link_id, 'link_id'), layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }) },
+  { name: 'links_remove_members', exec: 'table',
+    description: 'Remove member layers from a link. If the remaining membership falls below 2, the link auto-dissolves.',
+    inputSchema: { type: 'object', properties: { link_id: { type: 'string' }, layer_ids: { type: 'array', items: { type: 'string' } } }, required: ['link_id', 'layer_ids'] },
+    parseArgs: (a) => ({ op: 'links_remove_members', args: { link: parseUuid(a.link_id, 'link_id'), layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) } }) },
+  { name: 'links_rename', exec: 'table',
+    description: "Update a link's label. Pass `label: null` to clear it.",
+    inputSchema: { type: 'object', properties: { link_id: { type: 'string' }, label: { type: ['string', 'null'] } }, required: ['link_id'] },
+    parseArgs: (a) => ({ op: 'links_rename', args: { link: parseUuid(a.link_id, 'link_id'), label: parseStrOpt(a.label, 'label') } }) },
   // ── table-exec: effects ──────────────────────────────────────────────────
   { name: 'add_effect', exec: 'table',
     description: 'Add an effect to a layer\'s chain (appended to the end of the chain, applied last). `kind` is the catalog key ("blur", "chromakey", "brightness", "contrast", "saturation", "sharpen"). The three colour entries each take one param `amount`, a percentage offset from neutral in [-100, 100] with 0 = no change (so `amount: 20` is "+20 %"); "sharpen" takes `amount` too, but in [0, 100] with 0 = no change — it has no negative side, because that would be a blur. Returns the new effect id. The effect is created with no params set; use update_effect to set a static value first, then set_keyframe to keyframe it.',
@@ -698,7 +698,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'remove_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id') } }) },
   // ── table-exec: transitions ──────────────────────────────────────────────
   { name: 'add_transition', exec: 'table',
-    description: "Add a transition at the cut between two layers on the SAME track. `from_layer_id` (outgoing) and `to_layer_id` (incoming) must be adjacent — the outgoing layer's t_end_us equal to the incoming layer's t_start_us. Default placement is 'overlap': the INCOMING layer moves LEFT by the frame-rounded duration, so both layers still play exactly their trimmed ranges (extended_us = 0) and the span it vacated stays a gap — nothing ripples. The incoming layer's group siblings follow the move; a shifted sibling whose lane is now occupied bounces to a free lane, spawning one when none exists (each bounce lands a status-log row). Refusals: the participants share a group (moving one would drag the other, so the overlap never opens), a moved member would cross t = 0, or the duration exceeds either participant's length. `placement: 'extend'` borrows outgoing tail media past its source out-point instead — positions untouched, extended_us = duration — pre-checked against the remaining tail: too little fails with TransitionInsufficientHandle carrying `available_us`. A pair already overlapped by EXACTLY the duration attaches as-is under both placements (nothing moves, extended_us = 0). `kind` ∈ 'Crossfade' (default when omitted) | 'Wipe' | 'Slide'. `direction` is the MOTION direction ('left' = the wipe boundary / sliding content moves leftward); it is required for Wipe/Slide and rejected for Crossfade. Visual layers only (video, image, text, color, motif) — an Audio participant fails with TransitionUnsupportedLayerKind. Returns the new transition id. Recorded (one undo restores every moved layer too).",
+    description: "Add a transition at the cut between two layers on the SAME track. `from_layer_id` (outgoing) and `to_layer_id` (incoming) must be adjacent — the outgoing layer's t_end_us equal to the incoming layer's t_start_us. Default placement is 'overlap': the INCOMING layer moves LEFT by the frame-rounded duration, so both layers still play exactly their trimmed ranges (extended_us = 0) and the span it vacated stays a gap — nothing ripples. The incoming layer's link siblings follow the move; a shifted sibling whose lane is now occupied bounces to a free lane, spawning one when none exists (each bounce lands a status-log row). Refusals: the participants share a link (moving one would drag the other, so the overlap never opens), a moved member would cross t = 0, or the duration exceeds either participant's length. `placement: 'extend'` borrows outgoing tail media past its source out-point instead — positions untouched, extended_us = duration — pre-checked against the remaining tail: too little fails with TransitionInsufficientHandle carrying `available_us`. A pair already overlapped by EXACTLY the duration attaches as-is under both placements (nothing moves, extended_us = 0). `kind` ∈ 'Crossfade' (default when omitted) | 'Wipe' | 'Slide'. `direction` is the MOTION direction ('left' = the wipe boundary / sliding content moves leftward); it is required for Wipe/Slide and rejected for Crossfade. Visual layers only (video, image, text, color, motif) — an Audio participant fails with TransitionUnsupportedLayerKind. Returns the new transition id. Recorded (one undo restores every moved layer too).",
     inputSchema: { type: 'object', properties: {
       direction: { type: 'string', enum: ['left', 'right', 'up', 'down'] },
       duration_us: { type: 'integer' },
@@ -714,7 +714,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     },
     shapeResult: (v) => toolText(v as string) },
   { name: 'update_transition', exec: 'table',
-    description: "Patch a transition's `duration_us`, `kind`/`direction`, and/or `extended_us` in ONE recorded commit (one undo step). Only fields you set are applied. `direction` rides inside `kind`: changing kind to Wipe/Slide requires `direction` in the same call, and `direction` alone (without `kind`) or alongside Crossfade is rejected. Geometry is a two-target model: the pair (duration_us, extended_us) fully determines both window edges. `extended_us` is the borrowed share of the overlap — how much outgoing tail media the transition consumed (0 = pure placement, duration_us = pure borrow); the outgoing layer ends at its sacred exit frame + extended_us, and the incoming layer starts duration_us before that end. When `extended_us` is OMITTED the routing preserves trimmed ranges: growing the duration moves the INCOMING layer further left and never borrows tail; shrinking returns borrowed tail first, then moves the incoming layer right by the remainder. Only an explicit `extended_us` can grow the borrow, and only that direction is pre-checked against the outgoing layer's remaining tail media (TransitionInsufficientHandle carries `available_us`). A NEGATIVE explicit `extended_us` is a deliberate tail trim: all borrowed tail returns and the outgoing layer's real content is trimmed by the remainder, so its exit frame itself moves left (stored extended_us becomes 0); no implicit routing ever does this. The incoming layer's group siblings follow its move; a move that lands on occupied space or crosses t = 0 refuses the whole commit. Errors with TransitionNotFound for an unknown id.",
+    description: "Patch a transition's `duration_us`, `kind`/`direction`, and/or `extended_us` in ONE recorded commit (one undo step). Only fields you set are applied. `direction` rides inside `kind`: changing kind to Wipe/Slide requires `direction` in the same call, and `direction` alone (without `kind`) or alongside Crossfade is rejected. Geometry is a two-target model: the pair (duration_us, extended_us) fully determines both window edges. `extended_us` is the borrowed share of the overlap — how much outgoing tail media the transition consumed (0 = pure placement, duration_us = pure borrow); the outgoing layer ends at its sacred exit frame + extended_us, and the incoming layer starts duration_us before that end. When `extended_us` is OMITTED the routing preserves trimmed ranges: growing the duration moves the INCOMING layer further left and never borrows tail; shrinking returns borrowed tail first, then moves the incoming layer right by the remainder. Only an explicit `extended_us` can grow the borrow, and only that direction is pre-checked against the outgoing layer's remaining tail media (TransitionInsufficientHandle carries `available_us`). A NEGATIVE explicit `extended_us` is a deliberate tail trim: all borrowed tail returns and the outgoing layer's real content is trimmed by the remainder, so its exit frame itself moves left (stored extended_us becomes 0); no implicit routing ever does this. The incoming layer's link siblings follow its move; a move that lands on occupied space or crosses t = 0 refuses the whole commit. Errors with TransitionNotFound for an unknown id.",
     inputSchema: { type: 'object', properties: {
       direction: { type: 'string', enum: ['left', 'right', 'up', 'down'] },
       duration_us: { type: 'integer' },
@@ -729,7 +729,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { op: 'update_transition', args: { transition: parseUuid(a.transition_id, 'transition_id'), duration_us: a.duration_us, kind: a.kind, direction: a.direction, extended_us: a.extended_us } }
     } },
   { name: 'remove_transition', exec: 'table',
-    description: "Remove a transition by id. The restore is routed by provenance: the outgoing layer's end shrinks back by the transition's `extended_us` (only borrowed tail media is returned — real content of a pre-positioned overlap is never trimmed) and the incoming layer moves RIGHT by the remainder (`duration_us − extended_us`), its group siblings following, restoring the hard cut exactly. Refuses with TransitionRestoreCollision when a moved layer's destination is occupied (the vacated gap has since been filled) — the system never makes room; move or delete the blocking layer first. Recorded (undoable). Errors with TransitionNotFound for an unknown id.",
+    description: "Remove a transition by id. The restore is routed by provenance: the outgoing layer's end shrinks back by the transition's `extended_us` (only borrowed tail media is returned — real content of a pre-positioned overlap is never trimmed) and the incoming layer moves RIGHT by the remainder (`duration_us − extended_us`), its link siblings following, restoring the hard cut exactly. Refuses with TransitionRestoreCollision when a moved layer's destination is occupied (the vacated gap has since been filled) — the system never makes room; move or delete the blocking layer first. Recorded (undoable). Errors with TransitionNotFound for an unknown id.",
     inputSchema: { type: 'object', properties: { transition_id: { type: 'string' } }, required: ['transition_id'] },
     parseArgs: (a) => ({ op: 'remove_transition', args: { transition: parseUuid(a.transition_id, 'transition_id') } }) },
   // ── table-exec: composition ──────────────────────────────────────────────
@@ -804,16 +804,16 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       width: parseNumOpt(a.width, 'width'), height: parseNumOpt(a.height, 'height'),
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us') }) },
   { name: 'add_video_layer', exec: 'dedicated',
-    description: "Add a visual media layer from an imported media item onto a track. For Video media, `src_in_us`/`src_out_us` are the in/out points within the source media; `t_start_us`/`t_end_us` are where the clip lives on the timeline. For Image media, this creates an ImageOverlay over the timeline range, and `src_in_us`/`src_out_us` are accepted for schema compatibility but ignored. Video source and timeline ranges should be the same length unless `speed` is later changed. When a Video source has an audio stream and the project's `auto_pair_audio_on_import` setting is on (default), this also creates a paired dialogue Audio layer on the SAME track's audio lane (every track holds one visual lane plus one audio lane) at the same time bounds and groups the two so they move/trim/split together. The whole call is atomic: video, paired audio, and group commit together or not at all — if the audio lane is occupied the call rejects naming the blocking layer, and nothing lands on the timeline. Returns either the visual layer id (no pairing) or `{ video_layer_id, audio_layer_id, group_id }` when a pair was created.",
+    description: "Add a visual media layer from an imported media item onto a track. For Video media, `src_in_us`/`src_out_us` are the in/out points within the source media; `t_start_us`/`t_end_us` are where the clip lives on the timeline. For Image media, this creates an ImageOverlay over the timeline range, and `src_in_us`/`src_out_us` are accepted for schema compatibility but ignored. Video source and timeline ranges should be the same length unless `speed` is later changed. When a Video source has an audio stream and the project's `auto_pair_audio_on_import` setting is on (default), this also creates a paired dialogue Audio layer on the SAME track's audio lane (every track holds one visual lane plus one audio lane) at the same time bounds and links the two so they move/trim/split together. The whole call is atomic: video, paired audio, and link commit together or not at all — if the audio lane is occupied the call rejects naming the blocking layer, and nothing lands on the timeline. Returns either the visual layer id (no pairing) or `{ video_layer_id, audio_layer_id, link_id }` when a pair was created.",
     inputSchema: { type: 'object', properties: { media_id: { type: 'string' }, src_in_us: { type: 'integer' }, src_out_us: { type: 'integer' }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' } }, required: ['media_id', 'src_in_us', 'src_out_us', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), media: parseUuid(a.media_id, 'media_id'),
       src_in_us: parseNum(a.src_in_us, 'src_in_us'), src_out_us: parseNum(a.src_out_us, 'src_out_us'),
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us') }) },
   { name: 'split_layer', exec: 'dedicated',
     description: 'Split a layer into two halves at the given timeline microsecond. Returns {left, right} layer ids. `at_t_us` must be strictly between the layer\'s t_start_us and t_end_us. For media-bearing layers (VideoClip, Audio) the source offsets are adjusted at speed=1 — variable speed support is deferred.',
-    inputSchema: { type: 'object', properties: { at_t_us: { type: 'integer' }, escape_group: { type: ['boolean', 'null'] }, layer_id: { type: 'string' } }, required: ['at_t_us', 'layer_id'] },
+    inputSchema: { type: 'object', properties: { at_t_us: { type: 'integer' }, escape_link: { type: ['boolean', 'null'] }, layer_id: { type: 'string' } }, required: ['at_t_us', 'layer_id'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'),
-      at_t_us: parseNum(a.at_t_us, 'at_t_us'), escape_group: a.escape_group }) },
+      at_t_us: parseNum(a.at_t_us, 'at_t_us'), escape_link: a.escape_link }) },
   { name: 'add_marker', exec: 'dedicated',
     description: 'Add a marker (point or region) to the timeline. Returns the new marker id. Set `end_t_us` to make it a region marker.',
     inputSchema: { type: 'object', properties: { color: RGBA_SCHEMA, end_t_us: { type: ['integer', 'null'] }, label: { type: 'string' }, t_us: { type: 'integer' } }, required: ['color', 'label', 't_us'] },

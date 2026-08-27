@@ -1,7 +1,7 @@
 // Independently re-derived structural invariants over the serialized wire
 // project. DELIBERATELY does NOT import src/main/state/validate.ts — asserting
 // against the production validator would be tautological. The rules below are a
-// fresh statement of the same domain laws (linear-NLE overlap; group
+// fresh statement of the same domain laws (linear-NLE overlap; link
 // well-formedness), written so a mutation that forgot to call validate, or two
 // mutations that interact to break a law, surfaces here. Duration-autofit is
 // deliberately NOT here — it is per-operation behavior, not a state invariant
@@ -105,18 +105,18 @@ export function invTransitionsWellFormed(p: WireProject): void {
   }
 }
 
-export function invGroupsWellFormed(p: WireProject): void {
+export function invLinksWellFormed(p: WireProject): void {
   const known = new Set<string>()
   for (const t of p.tracks) for (const l of t.layers) known.add(l.id)
   const seenG = new Set<string>(), member = new Map<string, string>()
-  for (const g of p.groups) {
-    if (seenG.has(g.id)) fail(`duplicate group id ${g.id}`)
+  for (const g of p.links) {
+    if (seenG.has(g.id)) fail(`duplicate link id ${g.id}`)
     seenG.add(g.id)
-    if (g.members.length < 2) fail(`group ${g.id} below min size (${g.members.length})`)
+    if (g.members.length < 2) fail(`link ${g.id} below min size (${g.members.length})`)
     for (const m of g.members) {
-      if (!known.has(m)) fail(`group ${g.id} references missing layer ${m}`)
+      if (!known.has(m)) fail(`link ${g.id} references missing layer ${m}`)
       const first = member.get(m)
-      if (first) fail(`layer ${m} in two groups (${first}, ${g.id})`)
+      if (first) fail(`layer ${m} in two links (${first}, ${g.id})`)
       member.set(m, g.id)
     }
   }
@@ -131,5 +131,5 @@ export function checkAllInvariants(p: WireProject): void {
   // autofit; update_layer intentionally does NOT), NOT a universal state invariant
   // — so it is not checked here. See the update_layer intent example in
   // intent.examples.test.ts.
-  invGroupsWellFormed(p)
+  invLinksWellFormed(p)
 }

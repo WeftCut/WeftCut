@@ -28,22 +28,22 @@ function totalLayerCount(actor: Actor): number {
 // ── Issue 03/04: paired A/V placement ────────────────────────────────────────
 
 describe('add_video_layer auto-pair — combined-row placement (issue 04)', () => {
-  it('lands video + dialogue audio + group on the SAME track', () => {
+  it('lands video + dialogue audio + link on the SAME track', () => {
     const a = freshActor()
     const media = addVideoWithAudio(a)
     const trackId = aRollId(a)
     const r = a.mcpCall('add_video_layer', videoLayerArgs(trackId, media, 0, 5_000_000))
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    const ids = JSON.parse(r.result.content[0].text) as { video_layer_id: string; audio_layer_id: string; group_id: string }
+    const ids = JSON.parse(r.result.content[0].text) as { video_layer_id: string; audio_layer_id: string; link_id: string }
     const track = a.snapshot().tracks.find((t) => t.id === trackId)!
     const video = track.layers.find((l) => l.id === ids.video_layer_id)
     const audio = track.layers.find((l) => l.id === ids.audio_layer_id)
     expect(video?.params.kind).toBe('VideoClip')
     expect(audio?.params.kind).toBe('Audio')
     expect(audio?.params.kind === 'Audio' && audio.params.role).toBe('dialogue')
-    const group = a.snapshot().groups.find((g) => g.id === ids.group_id)
-    expect(new Set(group?.members)).toEqual(new Set([ids.video_layer_id, ids.audio_layer_id]))
+    const link = a.snapshot().links.find((g) => g.id === ids.link_id)
+    expect(new Set(link?.members)).toEqual(new Set([ids.video_layer_id, ids.audio_layer_id]))
   })
 
   it('two clips at overlapping times on DIFFERENT tracks both succeed (the run2–4 failure)', () => {
@@ -62,7 +62,7 @@ describe('add_video_layer auto-pair — combined-row placement (issue 04)', () =
 })
 
 describe('add_video_layer auto-pair — atomicity (issue 03)', () => {
-  it('rejects the WHOLE call when the audio lane is blocked: no video layer, no group, rich error', () => {
+  it('rejects the WHOLE call when the audio lane is blocked: no video layer, no link, rich error', () => {
     const a = freshActor()
     const media = addVideoWithAudio(a)
     const trackId = aRollId(a)
@@ -84,7 +84,7 @@ describe('add_video_layer auto-pair — atomicity (issue 03)', () => {
     expect(data.options.length).toBeGreaterThan(0)
     // Atomic: the half-committed video of the old three-commit path is gone.
     expect(totalLayerCount(a)).toBe(before)
-    expect(a.snapshot().groups).toHaveLength(0)
+    expect(a.snapshot().links).toHaveLength(0)
   })
 
   it('video-lane overlap still reports the generic enriched LayerOverlap', () => {

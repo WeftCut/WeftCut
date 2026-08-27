@@ -13,19 +13,19 @@ import {
   addMediaLayer,
   addTrack,
   addTransition,
-  groupsCreate,
-  groupsDissolve,
+  linksCreate,
+  linksDissolve,
   moveLayer,
   removeTransition,
   separateAudioToNewTrack,
-  splitLayerGrouped,
+  splitLayerLinked,
   updateLayer,
   updateLayerParamTrack,
   updateLayerParamTracks,
   updateParamTracksMulti,
   updateTransition,
   type AnimTrack,
-  type GroupSummary,
+  type LinkSummary,
   type KeybindingsMap,
   type LayerSummary,
   type MediaSummary,
@@ -56,7 +56,11 @@ import {
   type SlipLayer,
 } from "./audioSlip";
 import { deriveAudioSyncOffsets, setAudioSyncOffsets } from "./audioSyncOffsetStore";
-import { canDissolveSelection, canGroupSelection } from "./groupEligibility";
+import {
+  canToggleLinkSelection,
+  enclosingLink,
+  linkToggleState,
+} from "./linkEligibility";
 import {
   canDeselectAll,
   canSelectAll,
@@ -69,7 +73,7 @@ import {
   DROP_STRIP_HEIGHT_PX,
   HEADER_COL_PX,
   computeTimelineExtent,
-  indexGroups,
+  indexLinks,
   playheadFrameShadowPx,
   trackKeyframeProperties,
   visualOrderedTracks,
@@ -161,8 +165,8 @@ import { TransitionChipMenu } from "./TransitionChipMenu";
 
 interface TimelineProps {
   tracks: TrackSummary[];
-  /// `docs/features.md#groups`. Empty array when no groups exist.
-  groups: GroupSummary[];
+  /// `docs/features.md#links`. Empty array when no links exist.
+  links: LinkSummary[];
   /// Transitions between same-track adjacent visual layers, rendered as
   /// chips over the incoming layer's head. Optional — older snapshots and
   /// test fixtures omit the field; absent means empty.
@@ -175,8 +179,8 @@ interface TimelineProps {
   /// reveal.
   revealedTrackId?: string | null;
   /// User-overridden keybindings, threaded through from App for the
-  /// timeline-scoped `groupSelected` + `dissolveSelectedGroup`
-  /// actions. Missing entries fall back to `ACTION_DEFS` defaults.
+  /// timeline-scoped `toggleLinkSelected` action. Missing entries fall back
+  /// to `ACTION_DEFS` defaults.
   keybindings: KeybindingsMap;
   /// Composition fps for frame-grid snapping of seek / drag / scrub
   /// targets. UI snaps eagerly so the ghost matches the actor's
@@ -213,7 +217,7 @@ const EMPTY_TRANSITIONS: TransitionSummary[] = [];
 
 export function Timeline({
   tracks,
-  groups,
+  links,
   transitions = EMPTY_TRANSITIONS,
   durationUs,
   revealedTrackId,
@@ -355,7 +359,7 @@ export function Timeline({
     enabled: followEnabled && visible,
   });
 
-  const groupByLayerId = useMemo(() => indexGroups(groups), [groups]);
+  const linkByLayerId = useMemo(() => indexLinks(links), [links]);
 
   // The derived A/V sync offset (R2-D7). Published to a store rather than threaded as
   // a prop so only the badged clip re-renders; `setAudioSyncOffsets` no-ops when the
@@ -364,10 +368,10 @@ export function Timeline({
     setAudioSyncOffsets(
       deriveAudioSyncOffsets(
         tracks.flatMap((t) => t.layers),
-        groups,
+        links,
       ),
     );
-  }, [tracks, groups]);
+  }, [tracks, links]);
 
   // A/B-roll display mode comes from the app-level settings store
   // (`docs/data-model.md`). The store hydrates on app mount via
@@ -399,14 +403,14 @@ export function Timeline({
   const mediaDropSnap = useMemo(
     () => ({
       visibleTracks: visibleSnapTracks,
-      groups,
-      groupByLayerId,
+      links,
+      linkByLayerId,
       enabled: tailSnapEnabled,
       strengthPx: tailSnapStrengthPx,
     }),
     [
-      groupByLayerId,
-      groups,
+      linkByLayerId,
+      links,
       tailSnapEnabled,
       tailSnapStrengthPx,
       visibleSnapTracks,
@@ -414,9 +418,9 @@ export function Timeline({
   );
 
   /// Map a click event on a layer chip to the resulting selection set.
-  /// `docs/features.md#groups`: plain click on a grouped layer selects the
-  /// whole group; `Alt+click` selects only the clicked layer (escape
-  /// path); `Shift+click` TOGGLES the clicked layer (with its whole group
+  /// `docs/features.md#links`: plain click on a linked layer selects the
+  /// whole link; `Alt+click` selects only the clicked layer (escape
+  /// path); `Shift+click` TOGGLES the clicked layer (with its whole link
   /// if any) in and out of the current selection.
   ///
   /// Returns whether the clicked layer is selected afterwards — `false` only
@@ -428,10 +432,10 @@ export function Timeline({
       layerId: string,
       e: { altKey: boolean; shiftKey: boolean; metaKey: boolean },
     ): boolean => {
-      const gid = groupByLayerId.get(layerId);
+      const gid = linkByLayerId.get(layerId);
       const memberSet = (): Set<string> => {
         if (!gid || e.altKey) return new Set([layerId]);
-        const g = groups.find((x) => x.id === gid);
+        const g = links.find((x) => x.id === gid);
         return new Set(g?.layer_ids ?? [layerId]);
       };
       const members = memberSet();
@@ -439,20 +443,22 @@ export function Timeline({
       setLayerSelection(layerId, members);
       return true;
     },
-    [groupByLayerId, groups],
+    [linkByLayerId, links],
   );
 
-  /// Handlers for the group actions (`ACTION_DEFS.groupSelected` /
-  /// `dissolveSelectedGroup` own the keys and the why). They read state via
-  /// refs to avoid the stale-closure trap of multi-key chord dispatch.
+  /// Handler for the link toggle (`ACTION_DEFS.toggleLinkSelected` owns the
+  /// key and the why). It reads state via refs to avoid the stale-closure trap
+  /// of multi-key chord dispatch.
   const selectedLayerIdsRef = useRef(selectedLayerIds);
-  const groupByLayerIdRef = useRef(groupByLayerId);
+  const linkByLayerIdRef = useRef(linkByLayerId);
+  const linksRef = useRef(links);
   const onMutatedRef = useRef(onMutated);
   useLayoutEffect(() => {
     selectedLayerIdsRef.current = selectedLayerIds;
-    groupByLayerIdRef.current = groupByLayerId;
+    linkByLayerIdRef.current = linkByLayerId;
+    linksRef.current = links;
     onMutatedRef.current = onMutated;
-  }, [selectedLayerIds, groupByLayerId, onMutated]);
+  }, [selectedLayerIds, linkByLayerId, links, onMutated]);
 
   const shortcutOverrides = useMemo<OverrideMap>(
     () => keybindings as OverrideMap,
@@ -474,33 +480,25 @@ export function Timeline({
     [visibleSnapTracks],
   );
 
-  const handleGroupSelected = useCallback(async () => {
+  /// One key, two directions (`linkEligibility.ts` decides which): a selection
+  /// inside one link dissolves that link; two or more unlinked layers become
+  /// one. A mixed selection is a no-op here, the same silence the strip's
+  /// disabled button shows.
+  const handleToggleLinkSelected = useCallback(async () => {
     const sel = selectedLayerIdsRef.current;
-    if (sel.size < 2) return;
+    const currentLinks = linksRef.current;
     try {
-      await groupsCreate(Array.from(sel), null, false);
-      await onMutatedRef.current();
-    } catch (err) {
-      logMutationFailure(err, "Group layers");
-    }
-  }, []);
-
-  const handleDissolveSelectedGroup = useCallback(async () => {
-    const sel = selectedLayerIdsRef.current;
-    if (sel.size < 1) return;
-    const targetGroups = new Set<string>();
-    sel.forEach((lid) => {
-      const gid = groupByLayerIdRef.current.get(lid);
-      if (gid) targetGroups.add(gid);
-    });
-    if (targetGroups.size === 0) return;
-    try {
-      for (const gid of targetGroups) {
-        await groupsDissolve(gid);
+      const enclosing = enclosingLink(sel, currentLinks);
+      if (enclosing) {
+        await linksDissolve(enclosing.id);
+      } else if (linkToggleState(sel, currentLinks) === "link") {
+        await linksCreate(Array.from(sel), null, false);
+      } else {
+        return;
       }
       await onMutatedRef.current();
     } catch (err) {
-      logMutationFailure(err, "Dissolve group");
+      logMutationFailure(err, "Link / Unlink layers");
     }
   }, []);
 
@@ -508,11 +506,10 @@ export function Timeline({
   // Why keys are the authoring surface at all: see the ADR 0038 note on
   // `ACTION_DEFS.nudgeAudioSampleBack`.
   //
-  // `escapeGroup: true` on every one of them: the whole point is to move the audio
+  // `escapeLink: true` on every one of them: the whole point is to move the audio
   // WITHOUT its video partner. That is also what creates the implicit sync offset
   // R2-D7 surfaces as the clip badge — there is no field to write.
   const layersByIdRef = useRef(new Map<string, LayerSummary>());
-  const groupsRef = useRef(groups);
   const trackOfLayerRef = useRef(new Map<string, string>());
   useLayoutEffect(() => {
     const byId = new Map<string, LayerSummary>();
@@ -525,8 +522,7 @@ export function Timeline({
     }
     layersByIdRef.current = byId;
     trackOfLayerRef.current = trackOf;
-    groupsRef.current = groups;
-  }, [tracks, groups]);
+  }, [tracks]);
 
   /// Move every selected audio layer to `nextStart(layer)`, or skip it when that
   /// resolves to null / no movement. One `move_layer` per layer, then one refresh.
@@ -537,9 +533,9 @@ export function Timeline({
       if (targets.length === 0) return;
       let moved = false;
       for (const audio of targets) {
-        const gid = groupByLayerIdRef.current.get(audio.id);
+        const gid = linkByLayerIdRef.current.get(audio.id);
         const members = gid
-          ? (groupsRef.current.find((g) => g.id === gid)?.layer_ids ?? [])
+          ? (linksRef.current.find((g) => g.id === gid)?.layer_ids ?? [])
               .map((id) => byId.get(id))
               .filter((l): l is LayerSummary => l !== undefined)
           : [];
@@ -592,8 +588,7 @@ export function Timeline({
     handlers: {
       selectAll: handleSelectAll,
       deselectAll,
-      groupSelected: handleGroupSelected,
-      dissolveSelectedGroup: handleDissolveSelectedGroup,
+      toggleLinkSelected: handleToggleLinkSelected,
       nudgeAudioSampleBack: handleNudgeAudioSampleBack,
       nudgeAudioSampleForward: handleNudgeAudioSampleForward,
       nudgeAudioMsBack: handleNudgeAudioMsBack,
@@ -626,23 +621,16 @@ export function Timeline({
       run: deselectAll,
     },
     {
-      id: "groupSelected",
-      actionId: "groupSelected",
-      labelKey: ACTION_DEFS.groupSelected.labelKey,
+      id: "toggleLinkSelected",
+      actionId: "toggleLinkSelected",
+      labelKey: ACTION_DEFS.toggleLinkSelected.labelKey,
       // Live store reads, not this render's `selectedLayerIds`: the predicate
       // is evaluated inside `listCommands()` by whichever surface is drawing
       // the row (the Quick Actions strip, the palette, a context menu), and a
       // value captured when Timeline last rendered would freeze. Same rule
       // `appCommands.ts` states for `clearRange`.
-      enabled: canGroupSelection,
-      run: handleGroupSelected,
-    },
-    {
-      id: "dissolveSelectedGroup",
-      actionId: "dissolveSelectedGroup",
-      labelKey: ACTION_DEFS.dissolveSelectedGroup.labelKey,
-      enabled: canDissolveSelection,
-      run: handleDissolveSelectedGroup,
+      enabled: canToggleLinkSelection,
+      run: handleToggleLinkSelected,
     },
     {
       id: "nudgeAudioSampleBack",
@@ -756,8 +744,8 @@ export function Timeline({
   const { drag, setDrag, pendingPlacements, pendingLayerById, dragLayerById } =
     useLayerDrag({
       tracks,
-      groups,
-      groupByLayerId,
+      links,
+      linkByLayerId,
       orderedTracks,
       laneEls: laneElsRef,
       dropStripEl: dropStripElRef,
@@ -853,7 +841,7 @@ export function Timeline({
       // Only when the clip is OUTSIDE the current selection: right-clicking
       // inside a multi-selection keeps it, so "select four clips, right-click
       // one, Delete" behaves the way it reads. Modifier semantics are the
-      // click path's (`selectFromClick`): plain takes the whole group,
+      // click path's (`selectFromClick`): plain takes the whole link,
       // `Alt` escapes it, `Shift` toggles — and the guard below is what keeps
       // the toggle one-directional here, since a right-click on an
       // already-selected clip never reaches it. A right-click that DESELECTED
@@ -892,7 +880,7 @@ export function Timeline({
   // the hardcoded 1 s snapped DOWN to whole comp frames; no placement arg, so
   // the add takes the overlap default (the incoming layer moves left,
   // ADR 0048). The refusals the eligibility gate cannot prevent (participants
-  // sharing a group, a moved sibling crossing t = 0) surface through the
+  // sharing a link, a moved sibling crossing t = 0) surface through the
   // status bar / log (errors/formatCommandError.ts owns the copy). NO silent
   // clamping.
   const onAddTransition = useCallback(
@@ -1167,10 +1155,10 @@ export function Timeline({
       const atUs = snapTimeToTimelineBoundary({
         timeUs: frameUs,
         layerId: layer.id,
-        escapeGroup: false,
+        escapeLink: false,
         visibleTracks: visibleSnapTracks,
-        groups,
-        groupByLayerId,
+        links,
+        linkByLayerId,
         // Event-time read: the playhead is a snap TARGET here, so the value
         // at the moment of the mouse event is the correct one — no reactive
         // subscription needed.
@@ -1188,8 +1176,8 @@ export function Timeline({
     [
       fpsNum,
       fpsDen,
-      groupByLayerId,
-      groups,
+      linkByLayerId,
+      links,
       pxPerSec,
       tailSnapEnabled,
       tailSnapStrengthPx,
@@ -1225,7 +1213,7 @@ export function Timeline({
       if (atUs === null) return;
       setBladePreview(null);
       try {
-        await splitLayerGrouped(layer.id, atUs, false);
+        await splitLayerLinked(layer.id, atUs, false);
         await onMutated();
       } catch (err) {
         logMutationFailure(err, "Blade split");
@@ -1380,8 +1368,8 @@ export function Timeline({
           tracks,
           pxPerSec,
         }),
-        groupByLayerId,
-        groups,
+        linkByLayerId,
+        links,
         mode: "replace",
       });
       setLayerSelection(primary, ids);
@@ -1392,8 +1380,8 @@ export function Timeline({
       if (ids.length > 0) clearKeyframeSelection();
     },
     [
-      groupByLayerId,
-      groups,
+      linkByLayerId,
+      links,
       measureMarqueeRows,
       measureMarqueeSubLaneRows,
       pxPerSec,
@@ -1464,13 +1452,13 @@ export function Timeline({
             style={{ height: DROP_STRIP_HEIGHT_PX }}
             aria-hidden="true"
           />
-          {orderedTracks.map(({ track, isGroupStart }) => (
+          {orderedTracks.map(({ track, isRoleSectionStart }) => (
             <Fragment key={track.id}>
               <TrackHeader
                 track={track}
                 height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
                 isRevealed={track.id === (revealedTrackId ?? null)}
-                isGroupStart={isGroupStart}
+                isRoleSectionStart={isRoleSectionStart}
                 isExpanded={expandedTracks.has(track.id)}
                 hasKeyframes={trackKeyframeProperties(track).length > 0}
                 onToggleExpand={() => toggleExpanded(track.id)}
@@ -1544,7 +1532,7 @@ export function Timeline({
               by kind. The role-less section is the one at the top, which is
               where the strip above spawns into.
             */}
-            {orderedTracks.map(({ track, isGroupStart }) => (
+            {orderedTracks.map(({ track, isRoleSectionStart }) => (
               <Fragment key={track.id}>
               <TrackLane
                 track={track}
@@ -1556,7 +1544,7 @@ export function Timeline({
                 selectedLayerIds={selectedLayerIds}
                 transitions={transitions}
                 selectedTransitionId={selectedTransitionId}
-                groupByLayerId={groupByLayerId}
+                linkByLayerId={linkByLayerId}
                 dragState={drag}
                 pendingPlacements={pendingPlacements}
                 pendingLayerById={pendingLayerById}
@@ -1572,7 +1560,7 @@ export function Timeline({
                 onCommitLabel={onCommitLabel}
                 onCommitParamTrack={onCommitParamTrack}
                 onMediaDrop={onMediaDrop}
-                isGroupStart={isGroupStart}
+                isRoleSectionStart={isRoleSectionStart}
                 isRevealed={track.id === (revealedTrackId ?? null)}
                 isResizing={heightDrag !== null}
                 onHeightDragStart={beginHeightDrag(track.id)}

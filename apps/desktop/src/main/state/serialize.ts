@@ -1,18 +1,18 @@
-import { SCHEMA_VERSION, defaultSettings, type Animated, type Group, type Project } from './model'
+import { SCHEMA_VERSION, defaultSettings, type Animated, type Link, type Project } from './model'
 import { frameGrid, gridForLayerKind, snapOnGrid, snapUpOnGrid, type Grid } from './snap'
 import { scaleTracksTwins } from './mutations/scaleLink'
 
-function serializeGroup(g: Group): unknown {
+function serializeLink(g: Link): unknown {
   const out: Record<string, unknown> = { id: g.id, members: [...g.members].sort() }
   if (g.label !== undefined && g.label !== null) out.label = g.label // skip_serializing_if = None
   return out
 }
 
 /** Produce the on-disk/wire JSON shape. The model is already JSON-native, so
- *  this is mostly identity; the only non-identity rules are group member
- *  sorting and the `Group.label` omission (mirrors serde skip_serializing_if). */
+ *  this is mostly identity; the only non-identity rules are link member
+ *  sorting and the `Link.label` omission (mirrors serde skip_serializing_if). */
 export function serializeProject(p: Project): unknown {
-  return { ...p, groups: p.groups.map(serializeGroup) }
+  return { ...p, links: p.links.map(serializeLink) }
 }
 
 /** One timeline field the load pass had to move: onto its own lattice (the
@@ -108,7 +108,7 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
    *  everything else on its track. Lifting its start would collapse it onto
    *  `[0, one quantum)`, and that CAN collide with whatever the track already holds
    *  at the head. Parking is collision-free by construction, and it beats dropping
-   *  the layer because a drop cascades into `GroupMemberMissing` /
+   *  the layer because a drop cascades into `LinkMemberMissing` /
    *  `TransitionLayerMissing`. The layer never occupied a renderable microsecond
    *  either way; parked, it is at least visible and movable.
    *
@@ -328,7 +328,7 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   requireArray('tracks')
   requireArray('markers')
   requireArray('transitions')
-  requireArray('groups')
+  requireArray('links')
   requireObject('audio_roles')
   requireObject('settings')
   // Additive settings fields (prefer_proxies/proxy_overrides, added later WITHOUT

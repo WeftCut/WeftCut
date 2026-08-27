@@ -1,5 +1,5 @@
 // Per-audio-layer sync offset, in SAMPLES, surfaced as the clip badge (ADR 0038 /
-// spec R2-D7). Recomputed from project geometry whenever tracks/groups change, and
+// spec R2-D7). Recomputed from project geometry whenever tracks/links change, and
 // read via ATOMIC selectors only (`feedback_zustand_composite_selector` — never
 // select the whole map object).
 //
@@ -8,7 +8,7 @@
 // annotation, so a store selector re-renders the ONE clip whose offset changed
 // instead of every lane on every project update.
 //
-// An ABSENT layerId means "nothing to show" — either not audio, not grouped with a
+// An ABSENT layerId means "nothing to show" — either not audio, not linked with a
 // visual member, or genuinely in sync. The value is never stored in the project: it
 // IS the geometry, so no field can disagree with it.
 
@@ -41,12 +41,12 @@ export const useAudioSyncOffset = (layerId: string): number | null =>
 /// true and keeps the map empty for the overwhelmingly common in-sync project.
 export function deriveAudioSyncOffsets(
   layers: readonly SlipLayer[],
-  groups: readonly { id: string; layer_ids: string[] }[],
+  links: readonly { id: string; layer_ids: string[] }[],
 ): Record<string, number> {
-  if (groups.length === 0) return {};
+  if (links.length === 0) return {};
   const byId = new Map(layers.map((l) => [l.id, l]));
   const out: Record<string, number> = {};
-  for (const g of groups) {
+  for (const g of links) {
     const members = g.layer_ids
       .map((id) => byId.get(id))
       .filter((l): l is SlipLayer => l !== undefined);

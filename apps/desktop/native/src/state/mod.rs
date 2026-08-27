@@ -16,10 +16,10 @@ pub mod command;
 pub mod composition;
 pub mod decode_route;
 pub mod effect;
-pub mod group;
 pub mod ids;
 pub mod keyframe_edits;
 pub mod layer;
+pub mod link;
 pub mod marker;
 pub mod media;
 pub mod project;
@@ -36,9 +36,9 @@ pub use audio_role::{AudioRole, RoleFlagsPatch, RoleMixSettings};
 pub use color::{ColorSpace, Rgba};
 pub use composition::Composition;
 pub use effect::{Effect, EffectPatch};
-pub use group::{index_groups, Group};
+pub use link::{index_links, Link};
 pub use ids::{
-    new_id, CheckpointId, EffectId, GroupId, KeyframeId, LayerId, MarkerId, MediaId, OpId, TrackId,
+    new_id, CheckpointId, EffectId, KeyframeId, LayerId, LinkId, MarkerId, MediaId, OpId, TrackId,
     TransitionId,
 };
 pub use layer::{
@@ -191,7 +191,7 @@ mod tests {
                     extended_us: 500_000,
                 },
             ],
-            groups: imbl::Vector::new(),
+            links: imbl::Vector::new(),
             audio_roles: imbl::HashMap::new(),
             settings: ProjectSettings::default(),
         }

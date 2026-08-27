@@ -114,7 +114,7 @@ function fixtureSummary(): ProjectSummary {
     markers: [
       { id: "mk1", t_us: 5_000_000, end_t_us: null, label: "章节一", color_hint: "" },
     ],
-    groups: [],
+    links: [],
     audio_roles: [],
   };
 }

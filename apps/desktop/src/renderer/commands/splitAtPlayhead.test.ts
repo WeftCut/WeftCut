@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { resolveSplitTargets } from "./splitAtPlayhead";
 import type {
-  GroupSummary,
+  LinkSummary,
   LayerSummary,
   ProjectSummary,
   TrackSummary,
@@ -56,7 +56,7 @@ function track(
 
 function summary(
   tracks: TrackSummary[],
-  groups: GroupSummary[] = [],
+  links: LinkSummary[] = [],
 ): ProjectSummary {
   return {
     project_id: "p",
@@ -77,7 +77,7 @@ function summary(
     tracks,
     markers: [],
     transitions: [],
-    groups,
+    links,
     audio_roles: [],
   };
 }
@@ -121,11 +121,11 @@ describe("resolveSplitTargets", () => {
   });
 
   // The one filter that exists for a reason no single layer can see:
-  // `split_layer_grouped` with `escape_group: false` cuts every spanning group
+  // `split_layer_linked` with `escape_link: false` cuts every spanning link
   // sibling in the SAME commit, so sending the partner as well would ask the
-  // actor to split an interval it had already closed. One entry per group is
+  // actor to split an interval it had already closed. One entry per link is
   // also what keeps an auto-paired A/V couple to one commit and one undo.
-  it("emits one target per group, not one per member", () => {
+  it("emits one target per link, not one per member", () => {
     const p = summary(
       [
         track("video", [layer("v", 0, 2_000_000)]),
@@ -135,10 +135,10 @@ describe("resolveSplitTargets", () => {
     );
     const targets = resolveSplitTargets(p, 1_000_000, NOTHING_SELECTED, false);
     expect(targets).toHaveLength(1);
-    expect(targets[0]?.groupId).toBe("g1");
+    expect(targets[0]?.linkId).toBe("g1");
   });
 
-  it("still emits both when two straddling clips are in different groups", () => {
+  it("still emits both when two straddling clips are in different links", () => {
     const p = summary(
       [
         track("t1", [layer("v1", 0, 2_000_000)]),

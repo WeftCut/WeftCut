@@ -160,8 +160,8 @@ describe("media drag placement", () => {
       fpsDen: 1,
       snap: {
         visibleTracks: [targetTrack],
-        groups: [],
-        groupByLayerId: new Map(),
+        links: [],
+        linkByLayerId: new Map(),
         currentTimeUs: 10_000_000,
         enabled: true,
         strengthPx: 20,
@@ -186,8 +186,8 @@ describe("media drag placement", () => {
       fpsDen: 1,
       snap: {
         visibleTracks: [targetTrack],
-        groups: [],
-        groupByLayerId: new Map(),
+        links: [],
+        linkByLayerId: new Map(),
         currentTimeUs: 10_000_000,
         enabled: false,
         strengthPx: 20,
@@ -211,8 +211,8 @@ describe("media drag placement", () => {
       fpsDen: 1,
       snap: {
         visibleTracks: [targetTrack],
-        groups: [],
-        groupByLayerId: new Map(),
+        links: [],
+        linkByLayerId: new Map(),
         currentTimeUs: 10_000_000,
         enabled: true,
         strengthPx: 20,

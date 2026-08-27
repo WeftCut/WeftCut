@@ -39,12 +39,12 @@ function FlagButton({ active, activeClass, label, onToggle, children }: {
 /// `rename_track`, so one undo can revert a name without touching a control the
 /// editor set (ADR 0042); `onMutated` re-fetches the summary.
 /// pointerdown must not bubble into the timeline root's seek path.
-export function TrackHeader({ track, height, isRevealed, isGroupStart, isExpanded, hasKeyframes, onToggleExpand, onMutated }: {
+export function TrackHeader({ track, height, isRevealed, isRoleSectionStart, isExpanded, hasKeyframes, onToggleExpand, onMutated }: {
   track: TrackSummary;
   height: number;
   isRevealed: boolean;
   /// Mirrors the lane's section-divider border so it crosses the header column too.
-  isGroupStart: boolean;
+  isRoleSectionStart: boolean;
   /// True when this track's keyframe sub-lanes are expanded (twirl points down).
   isExpanded: boolean;
   /// True when at least one layer on the track has a keyframed property —
@@ -111,7 +111,7 @@ export function TrackHeader({ track, height, isRevealed, isGroupStart, isExpande
   };
   return (
     <div
-      className={`flex items-center gap-1 border-b border-border-soft px-1.5 ${isGroupStart ? "border-t border-t-border" : ""}`}
+      className={`flex items-center gap-1 border-b border-border-soft px-1.5 ${isRoleSectionStart ? "border-t border-t-border" : ""}`}
       style={{ height }}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}

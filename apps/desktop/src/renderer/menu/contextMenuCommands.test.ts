@@ -68,7 +68,7 @@ describe.each(Object.entries(MENUS))("%s", (_name, entries) => {
   );
 
   // Both menus draw only from App's own catalogue on purpose. A row backed by
-  // Timeline's provider (the group pair, the audio nudges) would vanish
+  // Timeline's provider (the link toggle, the audio nudges) would vanish
   // whenever the Timeline Panel is closed — and a context menu opened from
   // inside the timeline that silently loses rows is worse than one that never
   // offered them.

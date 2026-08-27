@@ -17,7 +17,7 @@ export function validate(project: Project): void {
   const authorized = validateTransitions(project) // also enforces transition rules
   const seenLayers = new Set<Uuid>()
   for (const track of project.tracks) validateTrack(project, track, authorized, seenLayers)
-  validateGroups(project, seenLayers)
+  validateLinks(project, seenLayers)
   validateMarkers(project)
 }
 
@@ -249,18 +249,18 @@ function validateTrack(p: Project, track: Project['tracks'][number], authorized:
   }
 }
 
-function validateGroups(p: Project, knownLayers: Set<Uuid>): void {
+function validateLinks(p: Project, knownLayers: Set<Uuid>): void {
   const seenIds = new Set<Uuid>()
-  const layerToGroup = new Map<Uuid, Uuid>()
-  for (const g of p.groups) {
-    if (seenIds.has(g.id)) fail({ rule: 'DuplicateGroupId', group: g.id })
+  const layerToLink = new Map<Uuid, Uuid>()
+  for (const g of p.links) {
+    if (seenIds.has(g.id)) fail({ rule: 'DuplicateLinkId', link: g.id })
     seenIds.add(g.id)
-    if (g.members.length < 2) fail({ rule: 'GroupBelowMinSize', group: g.id, members: g.members.length })
+    if (g.members.length < 2) fail({ rule: 'LinkBelowMinSize', link: g.id, members: g.members.length })
     for (const m of g.members) {
-      if (!knownLayers.has(m)) fail({ rule: 'GroupMemberMissing', group: g.id, layer: m })
-      const first = layerToGroup.get(m)
-      if (first !== undefined) fail({ rule: 'LayerInMultipleGroups', layer: m, first, second: g.id })
-      layerToGroup.set(m, g.id)
+      if (!knownLayers.has(m)) fail({ rule: 'LinkMemberMissing', link: g.id, layer: m })
+      const first = layerToLink.get(m)
+      if (first !== undefined) fail({ rule: 'LayerInMultipleLinks', layer: m, first, second: g.id })
+      layerToLink.set(m, g.id)
     }
   }
 }

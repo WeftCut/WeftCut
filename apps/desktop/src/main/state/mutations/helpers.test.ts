@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
 import { blankProject, type Layer, type LayerParams, type Project } from '../model'
-import { applyDurationAutofit, dropLayerFromGroups, locateLayer, pruneEmptiedTrack, checkTrackLock } from './helpers'
+import { applyDurationAutofit, dropLayerFromLinks, locateLayer, pruneEmptiedTrack, checkTrackLock } from './helpers'
 import { isCommandFailure } from '../errors'
 
 function color(id: string, t0: number, t1: number): Layer {
@@ -41,11 +41,11 @@ describe('helpers', () => {
     expect(pruneEmptiedTrack(p, 'tx')).toBe('tx')
     expect(p.tracks.find((t) => t.id === 'tx')).toBeUndefined()
   })
-  it('dropLayerFromGroups removes the member and auto-dissolves below 2', () => {
+  it('dropLayerFromLinks removes the member and auto-dissolves below 2', () => {
     const p = blankProject(seededGen(), 't')
-    p.groups = [{ id: 'g', members: ['a', 'b'] }]
-    dropLayerFromGroups(p, 'a')
-    expect(p.groups.length).toBe(0) // dropped to 1 → dissolved
+    p.links = [{ id: 'g', members: ['a', 'b'] }]
+    dropLayerFromLinks(p, 'a')
+    expect(p.links.length).toBe(0) // dropped to 1 → dissolved
   })
   it('checkTrackLock throws TrackLocked / LayerNotFound', () => {
     const p = blankProject(seededGen(), 't'); p.tracks[0].locked = true; p.tracks[0].layers = [color('a', 0, 1)]

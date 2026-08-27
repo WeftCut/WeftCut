@@ -6,8 +6,8 @@ import {
   computeTimelineExtent,
   computeLayerSlices,
   formatRulerLabel,
-  groupHue,
-  indexGroups,
+  linkHue,
+  indexLinks,
   keyframeAbsoluteX,
   keyframeHitTest,
   keyframeXWithinClip,
@@ -199,25 +199,25 @@ describe("visualOrderedTracks", () => {
     const spawned = track({ id: "spawned", role: null, transient: true });
     const out = visualOrderedTracks([aRoll, bRoll, spawned]);
     expect(out.map((v) => v.track.id)).toEqual(["spawned", "b-roll", "a-roll"]);
-    expect(out.map((v) => v.isGroupStart)).toEqual([false, true, false]);
+    expect(out.map((v) => v.isRoleSectionStart)).toEqual([false, true, false]);
   });
-  it("produces isGroupStart === false for every entry when all tracks have role: null", () => {
+  it("produces isRoleSectionStart === false for every entry when all tracks have role: null", () => {
     const tracks = [
       track({ id: "t0", role: null }),
       track({ id: "t1", role: null }),
       track({ id: "t2", role: null }),
     ];
     const out = visualOrderedTracks(tracks);
-    expect(out.every((v) => v.isGroupStart === false)).toBe(true);
+    expect(out.every((v) => v.isRoleSectionStart === false)).toBe(true);
   });
 });
 
-describe("groupHue", () => {
+describe("linkHue", () => {
   it("is deterministic, integer, in [0,360), and skips the 60-120 band for 20 ids", () => {
     for (let i = 0; i < 20; i++) {
       const id = `g-${i}`;
-      const h = groupHue(id);
-      expect(h).toBe(groupHue(id));
+      const h = linkHue(id);
+      expect(h).toBe(linkHue(id));
       expect(Number.isInteger(h)).toBe(true);
       expect(h).toBeGreaterThanOrEqual(0);
       expect(h).toBeLessThan(360);
@@ -226,9 +226,9 @@ describe("groupHue", () => {
   });
 });
 
-describe("indexGroups", () => {
-  it("maps layer ids to group ids", () => {
-    const idx = indexGroups([
+describe("indexLinks", () => {
+  it("maps layer ids to link ids", () => {
+    const idx = indexLinks([
       { id: "g1", label: null, layer_ids: ["a", "b"] },
     ]);
     expect(idx.get("a")).toBe("g1");

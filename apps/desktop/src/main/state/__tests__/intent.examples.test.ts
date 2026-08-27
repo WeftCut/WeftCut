@@ -116,18 +116,18 @@ describe('timeline mutation intent', () => {
     expect(afterUndo?.t_end_us).toBe(3_000_000)
   })
 
-  // ── (e-i) Coupled group trim ──────────────────────────────────────────────
-  // L1 on @A and L2 on @B share a group AND the same Out-edge timestamp, so
+  // ── (e-i) Coupled link trim ──────────────────────────────────────────────
+  // L1 on @A and L2 on @B share a link AND the same Out-edge timestamp, so
   // trimming L1's Out edge must shift BOTH members by the same delta.
-  it('group trim shifts all aligned members by the same delta (coupled alignment)', () => {
+  it('link trim shifts all aligned members by the same delta (coupled alignment)', () => {
     const a = freshActor()
     const trackA = aRollId(a)
     const trackB = bRollId(a)
     const l1Id = okValue(a.dispatch('add_layer', { track: trackA, kind: 'color', t_start_us: 0, t_end_us: 8_000_000 })) as string
     const l2Id = okValue(a.dispatch('add_layer', { track: trackB, kind: 'text', t_start_us: 0, t_end_us: 8_000_000 })) as string
-    a.dispatch('groups_create', { layers: [l1Id, l2Id], label: 'sync' })
-    // Trim L1's Out edge from 8s → 5s without escaping the group.
-    const trimmed = a.dispatch('trim_layer', { layer: l1Id, edge: 'out', new_t_us: 5_000_000, escape_group: false })
+    a.dispatch('links_create', { layers: [l1Id, l2Id], label: 'sync' })
+    // Trim L1's Out edge from 8s → 5s without escaping the link.
+    const trimmed = a.dispatch('trim_layer', { layer: l1Id, edge: 'out', new_t_us: 5_000_000, escape_link: false })
     expect(trimmed.ok).toBe(true)
     const snap = wireSnapshot(a)
     const findLayer = (id: string) => snap.tracks.flatMap((tr) => tr.layers).find((l) => l.id === id)
@@ -139,16 +139,16 @@ describe('timeline mutation intent', () => {
     expect(findLayer(l2Id)?.t_start_us).toBe(0)
   })
 
-  // ── (e-ii) Locked grouped sibling ─────────────────────────────────────────
-  it('group move is rejected when a grouped sibling is locked', () => {
+  // ── (e-ii) Locked linked sibling ─────────────────────────────────────────
+  it('link move is rejected when a linked sibling is locked', () => {
     const a = freshActor()
     const t = aRollId(a)
     const l1Id = okValue(a.dispatch('add_layer', { track: t, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })) as string
     const l2Id = okValue(a.dispatch('add_layer', { track: t, kind: 'color', t_start_us: 2_000_000, t_end_us: 3_000_000 })) as string
-    a.dispatch('groups_create', { layers: [l1Id, l2Id] })
-    // Lock L2 — moving L1 within the group must now be rejected (can't drag L2).
+    a.dispatch('links_create', { layers: [l1Id, l2Id] })
+    // Lock L2 — moving L1 within the link must now be rejected (can't drag L2).
     a.dispatch('update_layer', { layer: l2Id, patch: { locked: true } })
-    const moved = a.dispatch('move_layer', { layer: l1Id, to_track: t, t_start_us: 5_000_000, escape_group: false })
+    const moved = a.dispatch('move_layer', { layer: l1Id, to_track: t, t_start_us: 5_000_000, escape_link: false })
     expect(moved.ok).toBe(false)
     // Both layers remain at their original positions.
     const layers = wireSnapshot(a).tracks.flatMap((tr) => tr.layers)

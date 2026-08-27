@@ -131,7 +131,7 @@ export interface Transition {
   extended_us: TimeUs
 }
 /** `members` kept sorted; `label` omitted (not null) when absent — see serialize.ts. */
-export interface Group { id: Uuid; label?: string; members: Uuid[] }
+export interface Link { id: Uuid; label?: string; members: Uuid[] }
 export interface RoleMixSettings { gain_db: number; muted: boolean; solo: boolean }
 export interface MediaVideoMetadata {
   width?: number; height?: number; fps_num?: number; fps_den?: number
@@ -173,7 +173,7 @@ export interface ProjectSettings {
 export interface Project {
   schema_version: number; project_id: Uuid; metadata: ProjectMetadata; composition: Composition
   media_pool: Record<string, MediaItem>; tracks: Track[]; markers: Marker[]
-  transitions: Transition[]; groups: Group[]; audio_roles: Record<string, RoleMixSettings>
+  transitions: Transition[]; links: Link[]; audio_roles: Record<string, RoleMixSettings>
   settings: ProjectSettings
 }
 
@@ -211,6 +211,6 @@ export function blankProject(idGen: IdGen, name: string): Project {
     schema_version: SCHEMA_VERSION, project_id: projectId,
     metadata: { name, created_at: now, modified_at: now, description: null },
     composition: defaultComposition(), media_pool: {}, tracks: [aRoll, bRoll],
-    markers: [], transitions: [], groups: [], audio_roles: {}, settings: defaultSettings(),
+    markers: [], transitions: [], links: [], audio_roles: {}, settings: defaultSettings(),
   }
 }

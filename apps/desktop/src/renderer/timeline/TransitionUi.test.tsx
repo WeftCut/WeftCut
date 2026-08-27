@@ -115,7 +115,7 @@ function renderTimeline(overrides: {
   return render(
     <Timeline
       tracks={overrides.tracks ?? [makeTrack([layerA, layerB])]}
-      groups={[]}
+      links={[]}
       {...(overrides.transitions ? { transitions: overrides.transitions } : {})}
       durationUs={5_000_000}
       keybindings={{}}
@@ -406,7 +406,7 @@ describe("chip two-edge drag (spec D6)", () => {
     const { container } = render(
       <Timeline
         tracks={[makeTrack([extendedA, layerB])]}
-        groups={[]}
+        links={[]}
         transitions={[transition]}
         durationUs={5_000_000}
         keybindings={{}}
@@ -497,12 +497,12 @@ describe("cut context menu", () => {
   });
 
   it("a structured add refusal surfaces through the status log — never a silent clamp", async () => {
-    // TransitionParticipantsShareGroup — a refusal this surface can actually
+    // TransitionParticipantsShareLink — a refusal this surface can actually
     // spring (the overlap-default add never handle-checks; its reachable
-    // refusals are shared group and a moved member crossing t = 0).
+    // refusals are shared link and a moved member crossing t = 0).
     ipcMocks.addTransition.mockRejectedValueOnce(
       new Error(
-        '{"error":"TransitionParticipantsShareGroup","from":"layer-a","to":"layer-b"}',
+        '{"error":"TransitionParticipantsShareLink","from":"layer-a","to":"layer-b"}',
       ),
     );
     const { getByText } = renderTimeline({});
@@ -516,7 +516,7 @@ describe("cut context menu", () => {
           level: "error",
           // The curated refusal copy names both participants
           // (errors/formatCommandError.ts).
-          message: expect.stringContaining("same group"),
+          message: expect.stringContaining("same link"),
         }),
       );
     });

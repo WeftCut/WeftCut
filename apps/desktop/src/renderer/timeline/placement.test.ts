@@ -92,7 +92,7 @@ describe("evaluateTimelinePlacements", () => {
     expect(result.sharesLane).toBe(true);
   });
 
-  it("detects collisions between two projected group members", () => {
+  it("detects collisions between two projected link members", () => {
     const result = evaluateTimelinePlacements({
       tracks: [track("track-1", []), track("track-2", [])],
       placements: [

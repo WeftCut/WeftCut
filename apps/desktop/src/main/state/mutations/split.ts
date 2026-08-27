@@ -4,7 +4,7 @@ import type { IdGen } from '../ids'
 import { gridForLayerKind, snapOnGrid } from '../snap'
 import { CommandFailure } from '../errors'
 import { cloneLayer, locateLayer } from './helpers'
-import { groupSiblingsExcluding, checkGroupLock, indexGroups } from './groups'
+import { linkSiblingsExcluding, checkLinkLock, indexLinks } from './links'
 import { forEachAnimatedF64, forEachAnimatedRgba, retainKeyframes, shiftKeyframes, firstKeyframeValue, lastKeyframeValue, collapseToStatic } from './animated'
 
 /** Partition one Animated<T> track for a split at the
@@ -18,14 +18,14 @@ function splitTrackHalf<T>(a: Animated<T>, splitOffset: number, right: boolean):
   if (a.mode === 'Keyframed' && (a.value as Keyframe<T>[]).length === 0 && boundary !== null) collapseToStatic(a, boundary)
 }
 
-/** Single-layer split (group-unaware). Returns {left,right};
+/** Single-layer split (link-unaware). Returns {left,right};
  *  left reuses the original id, right gets a fresh one and is inserted at li+1. */
 function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number): { left: Uuid; right: Uuid } {
   const loc = locateLayer(p, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
   const [ti, li] = loc
   const original = p.tracks[ti].layers[li]
-  // The cut resolves on THIS layer's grid, not the composition's — so a grouped A/V
+  // The cut resolves on THIS layer's grid, not the composition's — so a linked A/V
   // split cuts the audio on the nearest sample boundary while the video cuts on the
   // frame boundary (spec R2-D6). Locate first: the grid depends on `params.kind`.
   const atTUs = snapOnGrid(atTUsRaw, gridForLayerKind(original.params.kind, p.composition.fps))
@@ -57,8 +57,8 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   return { left: id, right: right.id }
 }
 
-/** Split with group spanning fan-out. */
-export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number, escapeGroup: boolean): { left: Uuid; right: Uuid } {
+/** Split with link spanning fan-out. */
+export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number, escapeLink: boolean): { left: Uuid; right: Uuid } {
   // Pre-flight on the target.
   const loc = locateLayer(p, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
@@ -71,33 +71,33 @@ export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: nu
   if (atTUs <= tgt.t_start_us || atTUs >= tgt.t_end_us) throw new CommandFailure({ error: 'SplitOutsideLayer', layer: id, at_t: atTUs })
 
   // Spanning siblings: members whose interval strictly contains atTUs (sorted order).
-  // groupSiblingsExcluding returns SORTED members — id-allocation order matches Rust OrdSet.
-  const spanning: Uuid[] = escapeGroup ? [] : groupSiblingsExcluding(p, id).filter((s) => {
+  // linkSiblingsExcluding returns SORTED members — id-allocation order matches Rust OrdSet.
+  const spanning: Uuid[] = escapeLink ? [] : linkSiblingsExcluding(p, id).filter((s) => {
     const sl = locateLayer(p, s); if (!sl) return false
     const l = p.tracks[sl[0]].layers[sl[1]]
     return l.t_start_us < atTUs && atTUs < l.t_end_us
   })
-  if (!escapeGroup) checkGroupLock(p, id, [id, ...spanning])
+  if (!escapeLink) checkLinkLock(p, id, [id, ...spanning])
 
   // Split target FIRST (id-allocation order: target right-half id comes first).
   const targetHalves = splitSingleLayer(p, idGen, id, atTUs)
-  const groupByMember = indexGroups(p.groups)
-  const groupById = new Map(p.groups.map((g) => [g.id, g]))
+  const linkByMember = indexLinks(p.links)
+  const linkById = new Map(p.links.map((g) => [g.id, g]))
 
-  // Split each spanning sibling in sorted order; add its right-half to the sibling's group.
+  // Split each spanning sibling in sorted order; add its right-half to the sibling's link.
   for (const sid of spanning) {
     const { right: rightId } = splitSingleLayer(p, idGen, sid, atTUs)
-    const gid = groupByMember.get(sid)
+    const gid = linkByMember.get(sid)
     if (gid !== undefined) {
-      const g = groupById.get(gid)
+      const g = linkById.get(gid)
       if (g) { g.members = [...g.members, rightId].sort() }
     }
   }
-  // Add the target's right-half to its group, if any. UNCONDITIONAL:
-  // even with escape_group, the target's left half keeps the original id and stays grouped,
-  // so its right half joins too (split.test.ts: an escape_group split leaves 3 members).
-  const tgid = groupByMember.get(targetHalves.left)
-  if (tgid !== undefined) { const g = groupById.get(tgid); if (g) { g.members = [...g.members, targetHalves.right].sort() } }
+  // Add the target's right-half to its link, if any. UNCONDITIONAL:
+  // even with escape_link, the target's left half keeps the original id and stays linked,
+  // so its right half joins too (split.test.ts: an escape_link split leaves 3 members).
+  const tgid = linkByMember.get(targetHalves.left)
+  if (tgid !== undefined) { const g = linkById.get(tgid); if (g) { g.members = [...g.members, targetHalves.right].sort() } }
 
   return targetHalves
 }

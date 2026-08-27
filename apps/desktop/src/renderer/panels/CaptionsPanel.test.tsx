@@ -90,7 +90,7 @@ function apply(tracks: ReturnType<typeof captionTrack>[]) {
     history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
     media: [],
     markers: [],
-    groups: [],
+    links: [],
     audio_roles: [],
     tracks,
   });

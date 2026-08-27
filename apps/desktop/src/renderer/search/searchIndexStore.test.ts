@@ -49,7 +49,7 @@ function fixtureSummary(label = "beach.mp4"): ProjectSummary {
       },
     ],
     markers: [],
-    groups: [],
+    links: [],
     audio_roles: [],
   };
 }

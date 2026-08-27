@@ -235,7 +235,7 @@ function TimelineDockPanel() {
     <section className="timeline">
       <Timeline
         tracks={summary?.tracks ?? []}
-        groups={summary?.groups ?? []}
+        links={summary?.links ?? []}
         transitions={summary?.transitions ?? []}
         durationUs={summary?.duration_us ?? 0}
         revealedTrackId={contracts.revealedTrackId}

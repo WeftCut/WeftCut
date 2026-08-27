@@ -92,7 +92,7 @@ const summary: ProjectSummary = {
       extended_us: 0,
     },
   ],
-  groups: [],
+  links: [],
   audio_roles: [],
 };
 

@@ -3,7 +3,7 @@ import type { Layer, Project, Uuid } from '../model'
 import { gridForLayerKind, snapDownOnGrid, snapOnGrid, snapUpOnGrid, type Grid } from '../snap'
 import { applyDurationAutofit, locateLayer, shiftLayerKeyframes } from './helpers'
 import { CommandFailure } from '../errors'
-import { groupSiblingsExcluding, checkGroupLock } from './groups'
+import { linkSiblingsExcluding, checkLinkLock } from './links'
 
 export type LayerEdge = 'In' | 'Out'
 const INF = Math.floor(Number.MAX_SAFE_INTEGER / 4)
@@ -85,9 +85,9 @@ function sourceDurationForLayer(p: Project, layer: Layer): number | null {
   return p.media_pool[pa.media]?.metadata.duration_us ?? null
 }
 
-/** Trim one edge. Unless `escapeGroup`, every group sibling whose matching edge
+/** Trim one edge. Unless `escapeLink`, every link sibling whose matching edge
  *  sits at the same t moves with it, clamped to the tightest member's window. */
-export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: number, escapeGroup: boolean): void {
+export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: number, escapeLink: boolean): void {
   const fps = p.composition.fps
   const loc = locateLayer(p, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
@@ -98,17 +98,17 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   const curStart = target.t_start_us, curEnd = target.t_end_us
   const curEdgeT = edge === 'In' ? curStart : curEnd
 
-  // Aligned set: the target + every group sibling whose MATCHING edge sits at the
+  // Aligned set: the target + every link sibling whose MATCHING edge sits at the
   // same t as the target's pre-trim edge.
   const aligned: Uuid[] = [id]
-  if (!escapeGroup) {
-    for (const sid of groupSiblingsExcluding(p, id)) {
+  if (!escapeLink) {
+    for (const sid of linkSiblingsExcluding(p, id)) {
       const sl = locateLayer(p, sid); if (!sl) continue
       const s = p.tracks[sl[0]].layers[sl[1]]
       const sEdgeT = edge === 'In' ? s.t_start_us : s.t_end_us
       if (sEdgeT === curEdgeT) aligned.push(sid)
     }
-    checkGroupLock(p, id, aligned)
+    checkLinkLock(p, id, aligned)
   }
 
   const requestedDelta = snapped - curEdgeT

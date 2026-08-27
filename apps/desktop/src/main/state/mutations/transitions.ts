@@ -4,7 +4,7 @@ import { CommandFailure } from '../errors'
 import { frameIndexRound, gridForLayerKind, snapOnGrid, timeUsAtFrame } from '../snap'
 import { applyDurationAutofit, pickFreeOverlayTrack } from './helpers'
 import { applyAddTrack } from './add'
-import { checkGroupLock, groupSiblingsExcluding, indexGroups } from './groups'
+import { checkLinkLock, linkSiblingsExcluding, indexLinks } from './links'
 
 // ── Geometry vocabulary (ADR 0048 — extended_us provenance and inverse-op routing) ──
 // A = from_layer (outgoing), B = to_layer (incoming); the window is
@@ -93,8 +93,8 @@ function wholeFrameDurationUs(p: Project, cutUs: number, requestedUs: number): n
  *  so the move/trim/split lock convention lands here as a whole-command gate:
  *  add/update/remove all retime, borrow, or re-authorize rendering on the
  *  participants' shared lane, and a kind-only patch is no exception — locked
- *  means untouchable, not merely un-retimable. Grouped siblings on OTHER lanes
- *  keep their own gate (checkGroupLock via incomingMoveSet). */
+ *  means untouchable, not merely un-retimable. Linked siblings on OTHER lanes
+ *  keep their own gate (checkLinkLock via incomingMoveSet). */
 function checkTransitionTrackLock(p: Project, trackIdx: number): void {
   if (p.tracks[trackIdx].locked)
     throw new CommandFailure({ error: 'TrackLocked', track: p.tracks[trackIdx].id })
@@ -107,12 +107,12 @@ function rejectAudioParticipant(layer: Layer): void {
     throw new CommandFailure({ error: 'TransitionUnsupportedLayerKind', layer: layer.id, kind: layer.params.kind })
 }
 
-/** Shift a moving set (the incoming layer + its group siblings) by ONE µs delta,
+/** Shift a moving set (the incoming layer + its link siblings) by ONE µs delta,
  *  each member landing on its OWN lattice, and re-insert each at its track's
  *  sorted position — the applyMoveLayer discipline verbatim.
  *
  *  LANDMINE (shared with move.ts): each member snaps on ITS OWN grid, not the
- *  incoming layer's. Snapping a grouped audio member on the composition frame
+ *  incoming layer's. Snapping a linked audio member on the composition frame
  *  grid here would drag it to the nearest video frame on every duration edit,
  *  silently erasing a deliberately slipped sync offset — the offset survives
  *  precisely because every member shifts by the same delta and then lands on
@@ -134,13 +134,13 @@ function shiftLayerSet(p: Project, memberIds: readonly Uuid[], deltaUs: number):
   }
 }
 
-/** The moving set for the incoming layer's shift: B + its group siblings, with
- *  the group-lock check up front (before ANY mutation, so a plain-object caller
+/** The moving set for the incoming layer's shift: B + its link siblings, with
+ *  the link-lock check up front (before ANY mutation, so a plain-object caller
  *  sees a clean refusal too — inside commit the discarded draft makes ordering
  *  moot, but the mutation tests run on plain objects). */
 function incomingMoveSet(p: Project, toLayer: Uuid): Uuid[] {
-  const siblings = groupSiblingsExcluding(p, toLayer)
-  if (siblings.length > 0) checkGroupLock(p, toLayer, [toLayer, ...siblings])
+  const siblings = linkSiblingsExcluding(p, toLayer)
+  if (siblings.length > 0) checkLinkLock(p, toLayer, [toLayer, ...siblings])
   return [toLayer, ...siblings]
 }
 
@@ -151,7 +151,7 @@ function incomingMoveSet(p: Project, toLayer: Uuid): Uuid[] {
  *  reference would be revoked) and into LogBus rows. */
 export interface TransitionBounce { layer: Uuid; from_track: Uuid; to_track: Uuid; spawned: boolean }
 
-/** Bounce pass for an overlap add's moved GROUP SIBLINGS (ADR 0042: no free
+/** Bounce pass for an overlap add's moved LINK SIBLINGS (ADR 0042: no free
  *  lane, so make one). Runs AFTER the shift: a sibling whose lane now holds a
  *  NON-moving layer of its own overlap class (audio vs visual — the lane law)
  *  over its span moves to the first free overlay lane, spawning one when none
@@ -190,7 +190,7 @@ function bounceCollidingSiblings(p: Project, idGen: IdGen, memberIds: readonly U
 /** add_transition. Both layers must live on the SAME track. Cases:
  *
  *  - exact-adjacent cut, `placement: 'overlap'` (the default): the incoming
- *    layer (and its group siblings) moves LEFT by the frame-rounded duration —
+ *    layer (and its link siblings) moves LEFT by the frame-rounded duration —
  *    both participants play exactly their trimmed ranges; `extended_us = 0`.
  *    Colliding shifted siblings bounce lanes (bounceCollidingSiblings); the
  *    vacated span stays a gap (no ripple).
@@ -205,8 +205,8 @@ function bounceCollidingSiblings(p: Project, idGen: IdGen, memberIds: readonly U
  *  Every refusal is pre-id-mint (LayerNotFound / TrackLocked /
  *  TransitionUnsupportedLayerKind / TransitionInsufficientHandle /
  *  TransitionLayersNotAdjacent / the overlap branch's
- *  TransitionDurationOutOfRange, TransitionParticipantsShareGroup,
- *  NegativeLayerStart and group-lock refusals burn no id); the transition id is
+ *  TransitionDurationOutOfRange, TransitionParticipantsShareLink,
+ *  NegativeLayerStart and link-lock refusals burn no id); the transition id is
  *  minted after them all but BEFORE commit's validate — a downstream
  *  ValidationFailed burns it (the keystone landmine). A bounce-spawned track id
  *  is minted before the transition id by design. */
@@ -262,16 +262,16 @@ export function applyAddTransition(
       const maxDur = Math.min(fromEnd - fromLayerObj.t_start_us, toLayerObj.t_end_us - toStart)
       if (durUs > maxDur)
         throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'TransitionDurationOutOfRange', transition: null, duration: durUs } })
-      // Participants sharing a group: moving B would drag A along and the
+      // Participants sharing a link: moving B would drag A along and the
       // overlap never opens. Structured refusal, never a silent extend fallback.
-      const groupIdx = indexGroups(p.groups)
-      const fromGroup = groupIdx.get(fromLayer)
-      if (fromGroup !== undefined && fromGroup === groupIdx.get(toLayer))
-        throw new CommandFailure({ error: 'TransitionParticipantsShareGroup', from: fromLayer, to: toLayer })
-      const moveSet = incomingMoveSet(p, toLayer) // group-lock refusal inside
+      const linkIdx = indexLinks(p.links)
+      const fromLink = linkIdx.get(fromLayer)
+      if (fromLink !== undefined && fromLink === linkIdx.get(toLayer))
+        throw new CommandFailure({ error: 'TransitionParticipantsShareLink', from: fromLayer, to: toLayer })
+      const moveSet = incomingMoveSet(p, toLayer) // link-lock refusal inside
       // Zero-cross pre-check over the whole moving set, mirroring shiftLayerSet's
       // own-lattice snap: B cannot cross (see maxDur), but an earlier-starting
-      // group sibling can. Pre-mint and pre-mutation, like every refusal here.
+      // link sibling can. Pre-mint and pre-mutation, like every refusal here.
       for (const id of moveSet) {
         const loc = locate(p, id)
         if (!loc) continue
@@ -315,7 +315,7 @@ export function applyAddTransition(
  *  gets the tail-handle pre-check — shrinking and pure-placement growth touch
  *  no source material.
  *
- *  B's move takes its group siblings along on their own lattices (shiftLayerSet).
+ *  B's move takes its link siblings along on their own lattices (shiftLayerSet).
  *  Collisions from B's move and a negative B start are deliberately NOT checked
  *  here: commit's validate is the backstop (LayerOverlap / NegativeLayerStart →
  *  whole-commit refusal) — no clamping, no bouncing. A following transition
@@ -378,7 +378,7 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
     const endDelta = newEndUs - fromLayerObj.t_end_us
     const startDelta = newStartUs - toLayerObj.t_start_us
     if (endDelta !== 0 || startDelta !== 0) {
-      // Group-lock refusal before any write (see incomingMoveSet).
+      // Link-lock refusal before any write (see incomingMoveSet).
       const moveSet = startDelta !== 0 ? incomingMoveSet(p, tr.to_layer) : []
       if (endDelta > 0) {
         // e′ > e is the ONLY handle-consuming direction, so only it pre-checks.
@@ -431,7 +431,7 @@ function precheckRestoreCollision(p: Project, memberIds: readonly Uuid[], deltaU
  *  routed by provenance: shrink the outgoing layer's tail by `extended_us`
  *  (back to its sacred end S — only borrowed material is returned, never real
  *  content of a pre-positioned overlap) and move the incoming layer RIGHT by
- *  `duration_us − extended_us` (its group siblings following on their own
+ *  `duration_us − extended_us` (its link siblings following on their own
  *  lattices), restoring adjacency exactly: B.start′ = S = A.end′. Since e ≤ d
  *  the move is never negative, so B cannot cross 0 here.
  *

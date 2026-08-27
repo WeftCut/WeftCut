@@ -171,26 +171,26 @@ describe('applyAddTransition overlap-placement refusals (all pre-id-mint, never 
     expect([layerOf(p, a2).t_start_us, layerOf(p, a2).t_end_us]).toEqual([0, 2_000_000])
     expect(p.transitions[0].duration_us).toBe(2_000_000)
   })
-  it('participants sharing a group → TransitionParticipantsShareGroup {from, to}; NO id burned', () => {
+  it('participants sharing a link → TransitionParticipantsShareLink {from, to}; NO id burned', () => {
     const { p, gen, a1, a2 } = twoAdjacent()
-    p.groups.push({ id: 'g', members: [a1, a2].sort() })
+    p.links.push({ id: 'g', members: [a1, a2].sort() })
     expect(expectCmdErr(() => applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)))
-      .toEqual({ error: 'TransitionParticipantsShareGroup', from: a1, to: a2 })
+      .toEqual({ error: 'TransitionParticipantsShareLink', from: a1, to: a2 })
     expect([layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us]).toEqual([2_000_000, 2_000_000])
     expect(p.transitions).toEqual([])
     expect(applyAddLayer(p, gen, p.tracks[1].id, color(), 0, 1_000_000)).toBe('00000000-0000-0000-0000-000000000006') // #6 → no burn
   })
-  it("shared group does NOT block placement 'extend' (nothing moves there) or a pre-overlapped classify", () => {
+  it("shared link does NOT block placement 'extend' (nothing moves there) or a pre-overlapped classify", () => {
     const { p, gen, a1, a2 } = twoAdjacent()
-    p.groups.push({ id: 'g', members: [a1, a2].sort() })
+    p.links.push({ id: 'g', members: [a1, a2].sort() })
     expect(() => addT(p, gen, a1, a2, 1_000_000, 'extend')).not.toThrow()
   })
-  it('a group sibling pushed across t = 0 → ValidationFailed(NegativeLayerStart) naming the SIBLING; nothing moves, NO id burned', () => {
+  it('a link sibling pushed across t = 0 → ValidationFailed(NegativeLayerStart) naming the SIBLING; nothing moves, NO id burned', () => {
     const { p, gen, a1, a2 } = twoAdjacent()
     addMedia(p, 'm', 'Audio', 10_000_000)
     // Sibling starts 300k from the origin; the 1M leftward shift would land it at −700k.
     const aud = applyAddLayer(p, gen, p.tracks[1].id, audioParams('m', 0, 1_000_000), 300_000, 1_300_000) // #6
-    p.groups.push({ id: 'g', members: [a2, aud].sort() })
+    p.links.push({ id: 'g', members: [a2, aud].sort() })
     expect(expectCmdErr(() => applyAddTransition(p, gen, a1, a2, 1_000_000, CROSSFADE)))
       .toEqual({ error: 'ValidationFailed', detail: { rule: 'NegativeLayerStart', layer: aud, t_start: -700_000 } })
     expect([layerOf(p, a2).t_start_us, layerOf(p, aud).t_start_us]).toEqual([2_000_000, 300_000]) // untouched
@@ -202,7 +202,7 @@ describe('applyAddTransition overlap-placement refusals (all pre-id-mint, never 
 describe('applyAddTransition overlap placement: geometry consequences', () => {
   it('no ripple: the vacated span stays a gap — no other layer moves', () => {
     const { p, gen, a1, a2 } = twoAdjacent()
-    const c = applyAddLayer(p, gen, p.tracks[0].id, color(), 4_000_000, 6_000_000) // downstream, ungrouped
+    const c = applyAddLayer(p, gen, p.tracks[0].id, color(), 4_000_000, 6_000_000) // downstream, unlinked
     const d = applyAddLayer(p, gen, p.tracks[1].id, color(), 0, 3_000_000) // other lane
     addT(p, gen, a1, a2, 1_000_000)
     expect([layerOf(p, c).t_start_us, layerOf(p, c).t_end_us]).toEqual([4_000_000, 6_000_000]) // unmoved
@@ -683,15 +683,15 @@ describe('applyRemoveTransition', () => {
   })
 })
 
-describe('group siblings follow the incoming layer', () => {
-  /** twoAdjacent + an audio sibling grouped with a2, slipped +500µs off a2's
+describe('link siblings follow the incoming layer', () => {
+  /** twoAdjacent + an audio sibling linked with a2, slipped +500µs off a2's
    *  start — sample-aligned (500µs = 24 samples) but NOT frame-aligned, so any
    *  wrong-grid snap in the follow logic destroys the offset visibly. */
   function withSlippedSibling() {
     const base = twoAdjacent()
     addMedia(base.p, 'm', 'Audio', 10_000_000)
     const aud = applyAddLayer(base.p, base.gen, base.p.tracks[1].id, audioParams('m', 0, 2_000_000), 2_000_500, 4_000_500)
-    base.p.groups.push({ id: 'g', members: [base.a2, aud].sort() })
+    base.p.links.push({ id: 'g', members: [base.a2, aud].sort() })
     return { ...base, aud }
   }
   const offsetOf = (p: Project, aud: string, a2: string) => layerOf(p, aud).t_start_us - layerOf(p, a2).t_start_us
@@ -733,7 +733,7 @@ describe('overlap add: sibling lane bounce (ADR 0042)', () => {
     addMedia(base.p, 'm', 'Audio', 10_000_000)
     const blocker = applyAddLayer(base.p, base.gen, base.p.tracks[1].id, audioParams('m', 0, 1_000_000), 1_000_000, 2_000_000) // #6
     const aud = applyAddLayer(base.p, base.gen, base.p.tracks[1].id, audioParams('m', 0, 2_000_000), 2_000_000, 4_000_000) // #7
-    base.p.groups.push({ id: 'g', members: [base.a2, aud].sort() })
+    base.p.links.push({ id: 'g', members: [base.a2, aud].sort() })
     return { ...base, blocker, aud }
   }
 
@@ -792,14 +792,14 @@ describe('applyRemoveTransition restore-collision pre-check', () => {
     expect(p.transitions.map((t) => t.id)).toEqual([tid])
     expect([layerOf(p, a1).t_end_us, layerOf(p, a2).t_start_us]).toEqual([3_000_000, 2_000_000])
   })
-  it("a group SIBLING's destination is occupied → TransitionRestoreCollision naming the sibling", () => {
+  it("a link SIBLING's destination is occupied → TransitionRestoreCollision naming the sibling", () => {
     const { p, gen, a1, a2 } = twoAdjacent()
     layerOf(p, a1).t_end_us = 3_000_000 // e = 0, m = 1M
     const tid = addT(p, gen, a1, a2, 1_000_000)
     addMedia(p, 'm', 'Audio', 10_000_000)
     const aud = applyAddLayer(p, gen, p.tracks[1].id, audioParams('m', 0, 2_000_000), 2_000_000, 4_000_000)
     const blocker = applyAddLayer(p, gen, p.tracks[1].id, audioParams('m', 0, 500_000), 4_500_000, 5_000_000)
-    p.groups.push({ id: 'g', members: [a2, aud].sort() })
+    p.links.push({ id: 'g', members: [a2, aud].sort() })
     expect(expectCmdErr(() => applyRemoveTransition(p, tid)))
       .toEqual({ error: 'TransitionRestoreCollision', layer: aud })
     expect(p.transitions.map((t) => t.id)).toEqual([tid])
@@ -859,7 +859,7 @@ describe('update_transition through the actor: backstop + chained reconcile', ()
     // so shrinking moves B RIGHT, into D. Note D also blocks B's lane —
     // reconcile drops nothing here because t1's own overlap stays consistent;
     // the refusal is the overlap rule. (B is the moving layer itself, not a
-    // group sibling, so the update path never bounces it — D2's bounce is for
+    // link sibling, so the update path never bounces it — D2's bounce is for
     // siblings on OTHER lanes during the add.)
     const { actor, ids: [a, b] } = actorWith([[0, 2_000_000], [2_000_000, 4_000_000]])
     const t1 = (actor.dispatch('add_transition', { from: a, to: b, duration_us: 1_000_000 }) as { ok: true; value: string }).value
@@ -875,15 +875,15 @@ describe('update_transition through the actor: backstop + chained reconcile', ()
     expect(actor.snapshot()).toBe(before) // atomic: the partial A/B geometry never landed
   })
 
-  it("a group sibling pushed across t = 0 by B's leftward move is refused ATOMICALLY (NegativeLayerStart)", () => {
+  it("a link sibling pushed across t = 0 by B's leftward move is refused ATOMICALLY (NegativeLayerStart)", () => {
     const { actor, ids: [a, b] } = actorWith([[0, 2_000_000], [2_000_000, 4_000_000]])
-    // Audio sibling near the origin on the B-roll, grouped with B. The add is
+    // Audio sibling near the origin on the B-roll, linked with B. The add is
     // pinned to 'extend' so nothing moves at add time — the update's growth is
     // what pushes the set left (the ADD-time zero-cross has its own pre-mint
     // refusal, covered in the overlap-placement refusal suite above).
     expect(actor.dispatch('add_media', { id: 'm-aud', kind: 'Audio', duration_us: 10_000_000, with_audio: true }).ok).toBe(true)
     const aud = (actor.dispatch('add_layer', { track: actor.snapshot().tracks[1].id, kind: 'audio', media: 'm-aud', src_in_us: 0, src_out_us: 1_000_000, t_start_us: 300_000, t_end_us: 1_300_000 }) as { ok: true; value: string }).value
-    expect(actor.dispatch('groups_create', { layers: [b, aud], label: null, reassign: false }).ok).toBe(true)
+    expect(actor.dispatch('links_create', { layers: [b, aud], label: null, reassign: false }).ok).toBe(true)
     const t1 = (actor.dispatch('add_transition', { from: a, to: b, duration_us: 1_000_000, placement: 'extend' }) as { ok: true; value: string }).value
     const before = actor.snapshot()
     // Growth moves B (and the sibling) left by 500k → sibling start −200k.
@@ -903,7 +903,7 @@ describe('update_transition through the actor: backstop + chained reconcile', ()
     // Sibling of B at [2M,4M] on the B-roll audio lane; a non-moving blocker at [1M,2M].
     const blocker = (actor.dispatch('add_layer', { track: bRoll, kind: 'audio', media: 'm-aud', src_in_us: 0, src_out_us: 1_000_000, t_start_us: 1_000_000, t_end_us: 2_000_000 }) as { ok: true; value: string }).value
     const aud = (actor.dispatch('add_layer', { track: bRoll, kind: 'audio', media: 'm-aud', src_in_us: 0, src_out_us: 2_000_000, t_start_us: 2_000_000, t_end_us: 4_000_000 }) as { ok: true; value: string }).value
-    expect(actor.dispatch('groups_create', { layers: [b, aud], label: null, reassign: false }).ok).toBe(true)
+    expect(actor.dispatch('links_create', { layers: [b, aud], label: null, reassign: false }).ok).toBe(true)
     const r = actor.dispatch('add_transition', { from: a, to: b, duration_us: 1_000_000 })
     expect(r.ok).toBe(true)
     const tid = (r as { ok: true; value: string }).value // wire shape unchanged: the value IS the id
@@ -926,14 +926,14 @@ describe('update_transition through the actor: backstop + chained reconcile', ()
     expect(actor.snapshot().tracks.find((t) => t.id === bRoll)!.layers.map((l) => l.id)).toEqual([blocker, aud])
   })
 
-  it('an overlap add refused for a shared group burns NO op_id and surfaces the structured error through dispatch', () => {
+  it('an overlap add refused for a shared link burns NO op_id and surfaces the structured error through dispatch', () => {
     const { actor, ids: [a, b] } = actorWith([[0, 2_000_000], [2_000_000, 4_000_000]])
-    expect(actor.dispatch('groups_create', { layers: [a, b], label: null, reassign: false }).ok).toBe(true)
+    expect(actor.dispatch('links_create', { layers: [a, b], label: null, reassign: false }).ok).toBe(true)
     const before = actor.snapshot()
     const historyBefore = actor.historyStatus().len
     const r = actor.dispatch('add_transition', { from: a, to: b, duration_us: 1_000_000 })
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.error).toEqual({ error: 'TransitionParticipantsShareGroup', from: a, to: b })
+    if (!r.ok) expect(r.error).toEqual({ error: 'TransitionParticipantsShareLink', from: a, to: b })
     expect(actor.snapshot()).toBe(before)
     expect(actor.historyStatus().len).toBe(historyBefore)
   })
@@ -950,7 +950,7 @@ describe('update_transition through the actor: backstop + chained reconcile', ()
 describe('locked home lane refuses every transition op (TrackLocked)', () => {
   // Transitions are the one mutation family whose subject is not a layer, so
   // the move/trim/split lock convention lands as a whole-command gate — the
-  // ungrouped incoming layer included, which checkGroupLock alone would miss.
+  // unlinked incoming layer included, which checkLinkLock alone would miss.
   it('add refuses under BOTH placements: no id burned, geometry untouched', () => {
     for (const placement of ['overlap', 'extend'] as const) {
       const { p, gen, a1, a2 } = twoAdjacent()
