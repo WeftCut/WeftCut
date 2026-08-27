@@ -2,13 +2,14 @@ import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
 import { blankProject } from '../model'
 import { createActor, type ActorLogEntry } from '../actor'
+import { root } from './fixtures/project'
 
 function actor() {
   const idGen = seededGen()
   const initial = blankProject(idGen, 't')
   const logged: ActorLogEntry[] = []
   const a = createActor({ initial, idGen, clock: () => '<TS>', emitLog: (e) => logged.push(e) })
-  return { a, logged, aRoll: initial.tracks[0].id, bRoll: initial.tracks[1].id }
+  return { a, logged, aRoll: root(initial).tracks[0].id, bRoll: root(initial).tracks[1].id }
 }
 
 function body(r: ReturnType<ReturnType<typeof createActor>['mcpCall']>): { halted_at: number | null; results: Array<{ index: number; status: string; output?: Record<string, unknown>; error?: string }> } {
@@ -61,8 +62,8 @@ describe('dry_run add_transition parity (same apply as the wet command, produce-
     expect(a.snapshot()).toBe(before) // dry-run committed nothing — no move, no transition
     // Wet parity: the real command succeeds with the geometry the dry run walked.
     expect(a.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000 }).ok).toBe(true)
-    expect(a.snapshot().tracks[0].layers.find((l) => l.id === a2)!.t_start_us).toBe(1_000_000)
-    expect(a.snapshot().transitions[0].extended_us).toBe(0)
+    expect(root(a.snapshot()).tracks[0].layers.find((l) => l.id === a2)!.t_start_us).toBe(1_000_000)
+    expect(root(a.snapshot()).transitions[0].extended_us).toBe(0)
   })
 
   it('a dry-run overlap add predicts the SAME refusal as the wet run (shared link), and mutates nothing', () => {
@@ -112,7 +113,7 @@ describe('dry_run add_transition parity (same apply as the wet command, produce-
     const predicted = (out.results[0].output as { bounces: Array<{ layer: string; from_track: string; spawned: boolean }> }).bounces
     expect(predicted).toHaveLength(1)
     expect(predicted[0]).toMatchObject({ layer: aud, from_track: bRoll, spawned: true })
-    expect(a.snapshot().transitions).toEqual([]) // nothing committed, nothing logged
+    expect(root(a.snapshot()).transitions).toEqual([]) // nothing committed, nothing logged
     expect(logged).toEqual([])
     // Wet run: same bounce, now performed and logged (spawned-track ids differ —
     // the dry run consumed deterministic ids of its own).

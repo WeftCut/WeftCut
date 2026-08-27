@@ -3,7 +3,7 @@ import type { Animated, Keyframe, Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { gridForLayerKind, snapOnGrid } from '../snap'
 import { CommandFailure } from '../errors'
-import { cloneLayer, locateLayer } from './helpers'
+import { cloneLayer, locateLayer, rootComposition } from './helpers'
 import { linkSiblingsExcluding, checkLinkLock, indexLinks } from './links'
 import { forEachAnimatedF64, forEachAnimatedRgba, retainKeyframes, shiftKeyframes, firstKeyframeValue, lastKeyframeValue, collapseToStatic } from './animated'
 
@@ -21,14 +21,15 @@ function splitTrackHalf<T>(a: Animated<T>, splitOffset: number, right: boolean):
 /** Single-layer split (link-unaware). Returns {left,right};
  *  left reuses the original id, right gets a fresh one and is inserted at li+1. */
 function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number): { left: Uuid; right: Uuid } {
+  const c = rootComposition(p)
   const loc = locateLayer(p, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
   const [ti, li] = loc
-  const original = p.tracks[ti].layers[li]
+  const original = c.tracks[ti].layers[li]
   // The cut resolves on THIS layer's grid, not the composition's — so a linked A/V
   // split cuts the audio on the nearest sample boundary while the video cuts on the
   // frame boundary (spec R2-D6). Locate first: the grid depends on `params.kind`.
-  const atTUs = snapOnGrid(atTUsRaw, gridForLayerKind(original.params.kind, p.composition.fps))
+  const atTUs = snapOnGrid(atTUsRaw, gridForLayerKind(original.params.kind, c.fps))
   if (atTUs <= original.t_start_us || atTUs >= original.t_end_us) throw new CommandFailure({ error: 'SplitOutsideLayer', layer: id, at_t: atTUs })
   const splitOffset = atTUs - original.t_start_us
 
@@ -52,37 +53,38 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   forEachAnimatedF64(left.params, (a) => splitTrackHalf(a, splitOffset, false))
   forEachAnimatedRgba(left.params, (a) => splitTrackHalf(a, splitOffset, false))
 
-  p.tracks[ti].layers[li] = left
-  p.tracks[ti].layers.splice(li + 1, 0, right)
+  c.tracks[ti].layers[li] = left
+  c.tracks[ti].layers.splice(li + 1, 0, right)
   return { left: id, right: right.id }
 }
 
 /** Split with link spanning fan-out. */
 export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number, escapeLink: boolean): { left: Uuid; right: Uuid } {
+  const c = rootComposition(p)
   // Pre-flight on the target.
   const loc = locateLayer(p, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
   const [ti, li] = loc
-  if (p.tracks[ti].locked) throw new CommandFailure({ error: 'TrackLocked', track: p.tracks[ti].id })
-  const tgt = p.tracks[ti].layers[li]
+  if (c.tracks[ti].locked) throw new CommandFailure({ error: 'TrackLocked', track: c.tracks[ti].id })
+  const tgt = c.tracks[ti].layers[li]
   // Snapped on the TARGET's grid for the pre-flight + containment tests; each
   // spanning sibling then re-snaps `atTUs` on its own grid inside splitSingleLayer.
-  const atTUs = snapOnGrid(atTUsRaw, gridForLayerKind(tgt.params.kind, p.composition.fps))
+  const atTUs = snapOnGrid(atTUsRaw, gridForLayerKind(tgt.params.kind, c.fps))
   if (atTUs <= tgt.t_start_us || atTUs >= tgt.t_end_us) throw new CommandFailure({ error: 'SplitOutsideLayer', layer: id, at_t: atTUs })
 
   // Spanning siblings: members whose interval strictly contains atTUs (sorted order).
   // linkSiblingsExcluding returns SORTED members — id-allocation order matches Rust OrdSet.
   const spanning: Uuid[] = escapeLink ? [] : linkSiblingsExcluding(p, id).filter((s) => {
     const sl = locateLayer(p, s); if (!sl) return false
-    const l = p.tracks[sl[0]].layers[sl[1]]
+    const l = c.tracks[sl[0]].layers[sl[1]]
     return l.t_start_us < atTUs && atTUs < l.t_end_us
   })
   if (!escapeLink) checkLinkLock(p, id, [id, ...spanning])
 
   // Split target FIRST (id-allocation order: target right-half id comes first).
   const targetHalves = splitSingleLayer(p, idGen, id, atTUs)
-  const linkByMember = indexLinks(p.links)
-  const linkById = new Map(p.links.map((g) => [g.id, g]))
+  const linkByMember = indexLinks(c.links)
+  const linkById = new Map(c.links.map((g) => [g.id, g]))
 
   // Split each spanning sibling in sorted order; add its right-half to the sibling's link.
   for (const sid of spanning) {

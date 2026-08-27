@@ -125,9 +125,10 @@ async function titleSafeInCompPx(
 /// to what SURVIVES a save rather than to a projection of live state.
 function storedCaptionParams(projectDir: string): StoredTextParams {
   const wire = JSON.parse(fs.readFileSync(path.join(projectDir, "project.json"), "utf8")) as {
-    tracks: Array<{ role: string | null; layers: Array<{ params: StoredTextParams }> }>;
+    compositions: Record<string, { tracks: Array<{ role: string | null; layers: Array<{ params: StoredTextParams }> }> }>;
+    root_id: string;
   };
-  const params = wire.tracks
+  const params = wire.compositions[wire.root_id].tracks
     .filter((t) => t.role === "Caption")
     .flatMap((t) => t.layers.map((l) => l.params))
     .filter((p) => p.kind === "Text");

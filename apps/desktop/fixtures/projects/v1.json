@@ -7,25 +7,540 @@
     "modified_at": "2026-01-01T00:00:00.000Z",
     "description": "Frozen v1 schema fixture — see fixtures/projects/README.md"
   },
-  "composition": {
-    "width": 1920,
-    "height": 1080,
-    "fps": {
-      "num": 30,
-      "den": 1
+  "compositions": {
+    "00000000-0000-0000-0000-000000000004": {
+      "id": "00000000-0000-0000-0000-000000000004",
+      "label": null,
+      "width": 1920,
+      "height": 1080,
+      "fps": {
+        "num": 30,
+        "den": 1
+      },
+      "sample_rate": 48000,
+      "channels": 2,
+      "color_space": "Bt709",
+      "background": {
+        "r": 0,
+        "g": 0,
+        "b": 0,
+        "a": 255
+      },
+      "duration_us": 5000000,
+      "duration_pinned": false,
+      "tracks": [
+        {
+          "id": "00000000-0000-0000-0000-000000000001",
+          "label": null,
+          "enabled": true,
+          "locked": false,
+          "muted": false,
+          "solo": false,
+          "removable": false,
+          "role": "ARoll",
+          "transient": false,
+          "height_px": 64,
+          "layers": [
+            {
+              "id": "00000000-0000-0000-0000-000000000009",
+              "label": null,
+              "t_start_us": 0,
+              "t_end_us": 5000000,
+              "enabled": true,
+              "locked": false,
+              "metadata": {},
+              "params": {
+                "kind": "VideoClip",
+                "media": "00000000-0000-0000-0000-0000000000aa",
+                "src_in_us": 0,
+                "src_out_us": 5000000,
+                "transform": {
+                  "x": {
+                    "mode": "Static",
+                    "value": 0
+                  },
+                  "y": {
+                    "mode": "Static",
+                    "value": 0
+                  },
+                  "scale_x": {
+                    "mode": "Static",
+                    "value": 1
+                  },
+                  "scale_y": {
+                    "mode": "Static",
+                    "value": 1
+                  },
+                  "rotation_deg": {
+                    "mode": "Static",
+                    "value": 0
+                  },
+                  "anchor_x": {
+                    "mode": "Static",
+                    "value": 0.5
+                  },
+                  "anchor_y": {
+                    "mode": "Static",
+                    "value": 0.5
+                  },
+                  "scale_linked": true
+                },
+                "opacity": {
+                  "mode": "Static",
+                  "value": 1
+                },
+                "crop": null,
+                "flip_h": false,
+                "flip_v": false,
+                "blend_mode": "Normal",
+                "speed": 1,
+                "fade_in_us": 0,
+                "fade_out_us": 0
+              },
+              "effects": []
+            },
+            {
+              "id": "00000000-0000-0000-0000-00000000000b",
+              "label": null,
+              "t_start_us": 0,
+              "t_end_us": 5000000,
+              "enabled": true,
+              "locked": false,
+              "metadata": {},
+              "params": {
+                "kind": "Audio",
+                "media": "00000000-0000-0000-0000-0000000000aa",
+                "src_in_us": 0,
+                "src_out_us": 5000000,
+                "gain_db": {
+                  "mode": "Static",
+                  "value": 0
+                },
+                "pan": {
+                  "mode": "Static",
+                  "value": 0
+                },
+                "fade_in_us": 0,
+                "fade_out_us": 0,
+                "mute": false,
+                "role": "dialogue"
+              },
+              "effects": []
+            }
+          ]
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000002",
+          "label": null,
+          "enabled": true,
+          "locked": false,
+          "muted": false,
+          "solo": false,
+          "removable": false,
+          "role": "BRoll",
+          "transient": false,
+          "height_px": 64,
+          "layers": [
+            {
+              "id": "00000000-0000-0000-0000-00000000000f",
+              "label": null,
+              "t_start_us": 0,
+              "t_end_us": 2500000,
+              "enabled": true,
+              "locked": false,
+              "metadata": {},
+              "params": {
+                "kind": "Color",
+                "color": {
+                  "mode": "Static",
+                  "value": {
+                    "r": 0,
+                    "g": 0,
+                    "b": 0,
+                    "a": 255
+                  }
+                },
+                "width": 1920,
+                "height": 1080
+              },
+              "effects": []
+            },
+            {
+              "id": "00000000-0000-0000-0000-000000000011",
+              "label": null,
+              "t_start_us": 2000000,
+              "t_end_us": 4000000,
+              "enabled": true,
+              "locked": false,
+              "metadata": {},
+              "params": {
+                "kind": "Color",
+                "color": {
+                  "mode": "Static",
+                  "value": {
+                    "r": 0,
+                    "g": 0,
+                    "b": 0,
+                    "a": 255
+                  }
+                },
+                "width": 1920,
+                "height": 1080
+              },
+              "effects": []
+            }
+          ]
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000015",
+          "label": null,
+          "enabled": true,
+          "locked": false,
+          "muted": false,
+          "solo": false,
+          "removable": true,
+          "role": null,
+          "transient": true,
+          "height_px": 64,
+          "layers": [
+            {
+              "id": "00000000-0000-0000-0000-000000000017",
+              "label": null,
+              "t_start_us": 1000000,
+              "t_end_us": 4000000,
+              "enabled": true,
+              "locked": false,
+              "metadata": {},
+              "params": {
+                "kind": "Text",
+                "content": "Text",
+                "font": {
+                  "family": "Liberation Sans, Noto Sans SC",
+                  "size_px": 72,
+                  "weight": 400,
+                  "italic": false
+                },
+                "color": {
+                  "mode": "Static",
+                  "value": {
+                    "r": 255,
+                    "g": 255,
+                    "b": 255,
+                    "a": 255
+                  }
+                },
+                "align": "Center",
+                "transform": {
+                  "x": {
+                    "mode": "Keyframed",
+                    "value": [
+                      {
+                        "id": "00000000-0000-0000-0000-00000000001d",
+                        "t_us": 1000000,
+                        "value": 0,
+                        "interp": {
+                          "kind": "Bezier",
+                          "p1": [
+                            0.42,
+                            0
+                          ],
+                          "p2": [
+                            1,
+                            1
+                          ]
+                        }
+                      },
+                      {
+                        "id": "00000000-0000-0000-0000-00000000001e",
+                        "t_us": 3000000,
+                        "value": 400,
+                        "interp": {
+                          "kind": "Elastic",
+                          "dir": "Out",
+                          "amplitude": 1,
+                          "period": 0.3
+                        }
+                      },
+                      {
+                        "id": "00000000-0000-0000-0000-00000000001f",
+                        "t_us": 4000000,
+                        "value": 100,
+                        "interp": {
+                          "kind": "Hold"
+                        }
+                      }
+                    ]
+                  },
+                  "y": {
+                    "mode": "Static",
+                    "value": 540
+                  },
+                  "scale_x": {
+                    "mode": "Static",
+                    "value": 1
+                  },
+                  "scale_y": {
+                    "mode": "Static",
+                    "value": 1
+                  },
+                  "rotation_deg": {
+                    "mode": "Static",
+                    "value": 0
+                  },
+                  "anchor_x": {
+                    "mode": "Static",
+                    "value": 0.5
+                  },
+                  "anchor_y": {
+                    "mode": "Static",
+                    "value": 0.5
+                  },
+                  "scale_linked": true
+                },
+                "opacity": {
+                  "mode": "Static",
+                  "value": 1
+                },
+                "shadow": null,
+                "outline": null,
+                "intro": null,
+                "outro": null,
+                "box_w": null,
+                "box_h": null,
+                "valign": "Middle",
+                "line_height": 0,
+                "letter_spacing": 0
+              },
+              "effects": [
+                {
+                  "id": "00000000-0000-0000-0000-000000000021",
+                  "kind": "blur",
+                  "enabled": true,
+                  "params": {
+                    "strength": {
+                      "mode": "Keyframed",
+                      "value": [
+                        {
+                          "id": "00000000-0000-0000-0000-000000000023",
+                          "t_us": 1000000,
+                          "value": 0,
+                          "interp": {
+                            "kind": "Linear"
+                          }
+                        },
+                        {
+                          "id": "00000000-0000-0000-0000-000000000024",
+                          "t_us": 4000000,
+                          "value": 20,
+                          "interp": {
+                            "kind": "Bounce",
+                            "dir": "Out"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "00000000-0000-0000-0000-00000000002c",
+          "label": null,
+          "enabled": true,
+          "locked": false,
+          "muted": false,
+          "solo": false,
+          "removable": true,
+          "role": null,
+          "transient": true,
+          "height_px": 64,
+          "layers": [
+            {
+              "id": "00000000-0000-0000-0000-00000000002d",
+              "label": null,
+              "t_start_us": 3000000,
+              "t_end_us": 5000000,
+              "enabled": true,
+              "locked": false,
+              "metadata": {},
+              "params": {
+                "kind": "CompositionRef",
+                "composition": "00000000-0000-0000-0000-000000000028",
+                "src_in_us": 0,
+                "src_out_us": 2000000,
+                "transform": {
+                  "x": {
+                    "mode": "Static",
+                    "value": 0
+                  },
+                  "y": {
+                    "mode": "Static",
+                    "value": 0
+                  },
+                  "scale_x": {
+                    "mode": "Static",
+                    "value": 1
+                  },
+                  "scale_y": {
+                    "mode": "Static",
+                    "value": 1
+                  },
+                  "rotation_deg": {
+                    "mode": "Static",
+                    "value": 0
+                  },
+                  "anchor_x": {
+                    "mode": "Static",
+                    "value": 0.5
+                  },
+                  "anchor_y": {
+                    "mode": "Static",
+                    "value": 0.5
+                  },
+                  "scale_linked": true
+                },
+                "opacity": {
+                  "mode": "Static",
+                  "value": 1
+                },
+                "blend_mode": "Normal"
+              },
+              "effects": []
+            }
+          ]
+        }
+      ],
+      "markers": [
+        {
+          "id": "00000000-0000-0000-0000-000000000019",
+          "t_us": 1000000,
+          "end_t_us": null,
+          "label": "point",
+          "color": {
+            "r": 0,
+            "g": 128,
+            "b": 255,
+            "a": 255
+          },
+          "metadata": {}
+        },
+        {
+          "id": "00000000-0000-0000-0000-00000000001b",
+          "t_us": 2000000,
+          "end_t_us": 3000000,
+          "label": "region",
+          "color": {
+            "r": 0,
+            "g": 128,
+            "b": 255,
+            "a": 255
+          },
+          "metadata": {}
+        }
+      ],
+      "transitions": [
+        {
+          "id": "00000000-0000-0000-0000-000000000013",
+          "from_layer": "00000000-0000-0000-0000-00000000000f",
+          "to_layer": "00000000-0000-0000-0000-000000000011",
+          "duration_us": 500000,
+          "kind": {
+            "kind": "Crossfade"
+          },
+          "extended_us": 500000
+        }
+      ],
+      "links": [
+        {
+          "id": "00000000-0000-0000-0000-00000000000d",
+          "members": [
+            "00000000-0000-0000-0000-000000000009",
+            "00000000-0000-0000-0000-00000000000b"
+          ]
+        }
+      ]
     },
-    "duration_us": 5000000,
-    "duration_pinned": false,
-    "sample_rate": 48000,
-    "channels": 2,
-    "color_space": "Bt709",
-    "background": {
-      "r": 0,
-      "g": 0,
-      "b": 0,
-      "a": 255
+    "00000000-0000-0000-0000-000000000028": {
+      "id": "00000000-0000-0000-0000-000000000028",
+      "label": null,
+      "width": 1920,
+      "height": 1080,
+      "fps": {
+        "num": 30,
+        "den": 1
+      },
+      "sample_rate": 48000,
+      "channels": 2,
+      "color_space": "Bt709",
+      "background": {
+        "r": 0,
+        "g": 0,
+        "b": 0,
+        "a": 255
+      },
+      "duration_us": 2000000,
+      "duration_pinned": false,
+      "tracks": [
+        {
+          "id": "00000000-0000-0000-0000-000000000029",
+          "label": null,
+          "enabled": true,
+          "locked": false,
+          "muted": false,
+          "solo": false,
+          "removable": false,
+          "role": "ARoll",
+          "transient": false,
+          "height_px": 64,
+          "layers": [
+            {
+              "id": "00000000-0000-0000-0000-00000000002b",
+              "label": null,
+              "t_start_us": 0,
+              "t_end_us": 2000000,
+              "enabled": true,
+              "locked": false,
+              "metadata": {},
+              "params": {
+                "kind": "Color",
+                "color": {
+                  "mode": "Static",
+                  "value": {
+                    "r": 255,
+                    "g": 0,
+                    "b": 0,
+                    "a": 255
+                  }
+                },
+                "width": 1920,
+                "height": 1080
+              },
+              "effects": []
+            }
+          ]
+        },
+        {
+          "id": "00000000-0000-0000-0000-00000000002a",
+          "label": null,
+          "enabled": true,
+          "locked": false,
+          "muted": false,
+          "solo": false,
+          "removable": false,
+          "role": "BRoll",
+          "transient": false,
+          "height_px": 64,
+          "layers": []
+        }
+      ],
+      "markers": [],
+      "transitions": [],
+      "links": []
     }
   },
+  "root_id": "00000000-0000-0000-0000-000000000004",
   "media_pool": {
     "00000000-0000-0000-0000-0000000000aa": {
       "id": "00000000-0000-0000-0000-0000000000aa",
@@ -58,368 +573,6 @@
       "thumbnails_dir": "Cache/clip.thumbs"
     }
   },
-  "tracks": [
-    {
-      "id": "00000000-0000-0000-0000-000000000001",
-      "label": null,
-      "enabled": true,
-      "locked": false,
-      "muted": false,
-      "solo": false,
-      "removable": false,
-      "role": "ARoll",
-      "transient": false,
-      "height_px": 64,
-      "layers": [
-        {
-          "id": "00000000-0000-0000-0000-000000000008",
-          "label": null,
-          "t_start_us": 0,
-          "t_end_us": 5000000,
-          "enabled": true,
-          "locked": false,
-          "metadata": {},
-          "params": {
-            "kind": "VideoClip",
-            "media": "00000000-0000-0000-0000-0000000000aa",
-            "src_in_us": 0,
-            "src_out_us": 5000000,
-            "transform": {
-              "x": {
-                "mode": "Static",
-                "value": 0
-              },
-              "y": {
-                "mode": "Static",
-                "value": 0
-              },
-              "scale_x": {
-                "mode": "Static",
-                "value": 1
-              },
-              "scale_y": {
-                "mode": "Static",
-                "value": 1
-              },
-              "rotation_deg": {
-                "mode": "Static",
-                "value": 0
-              },
-              "anchor_x": {
-                "mode": "Static",
-                "value": 0.5
-              },
-              "anchor_y": {
-                "mode": "Static",
-                "value": 0.5
-              },
-              "scale_linked": true
-            },
-            "opacity": {
-              "mode": "Static",
-              "value": 1
-            },
-            "crop": null,
-            "flip_h": false,
-            "flip_v": false,
-            "blend_mode": "Normal",
-            "speed": 1,
-            "fade_in_us": 0,
-            "fade_out_us": 0
-          },
-          "effects": []
-        },
-        {
-          "id": "00000000-0000-0000-0000-00000000000a",
-          "label": null,
-          "t_start_us": 0,
-          "t_end_us": 5000000,
-          "enabled": true,
-          "locked": false,
-          "metadata": {},
-          "params": {
-            "kind": "Audio",
-            "media": "00000000-0000-0000-0000-0000000000aa",
-            "src_in_us": 0,
-            "src_out_us": 5000000,
-            "gain_db": {
-              "mode": "Static",
-              "value": 0
-            },
-            "pan": {
-              "mode": "Static",
-              "value": 0
-            },
-            "fade_in_us": 0,
-            "fade_out_us": 0,
-            "mute": false,
-            "role": "dialogue"
-          },
-          "effects": []
-        }
-      ]
-    },
-    {
-      "id": "00000000-0000-0000-0000-000000000002",
-      "label": null,
-      "enabled": true,
-      "locked": false,
-      "muted": false,
-      "solo": false,
-      "removable": false,
-      "role": "BRoll",
-      "transient": false,
-      "height_px": 64,
-      "layers": [
-        {
-          "id": "00000000-0000-0000-0000-00000000000e",
-          "label": null,
-          "t_start_us": 0,
-          "t_end_us": 2500000,
-          "enabled": true,
-          "locked": false,
-          "metadata": {},
-          "params": {
-            "kind": "Color",
-            "color": {
-              "mode": "Static",
-              "value": {
-                "r": 0,
-                "g": 0,
-                "b": 0,
-                "a": 255
-              }
-            },
-            "width": 1920,
-            "height": 1080
-          },
-          "effects": []
-        },
-        {
-          "id": "00000000-0000-0000-0000-000000000010",
-          "label": null,
-          "t_start_us": 2000000,
-          "t_end_us": 4000000,
-          "enabled": true,
-          "locked": false,
-          "metadata": {},
-          "params": {
-            "kind": "Color",
-            "color": {
-              "mode": "Static",
-              "value": {
-                "r": 0,
-                "g": 0,
-                "b": 0,
-                "a": 255
-              }
-            },
-            "width": 1920,
-            "height": 1080
-          },
-          "effects": []
-        }
-      ]
-    },
-    {
-      "id": "00000000-0000-0000-0000-000000000014",
-      "label": null,
-      "enabled": true,
-      "locked": false,
-      "muted": false,
-      "solo": false,
-      "removable": true,
-      "role": null,
-      "transient": true,
-      "height_px": 64,
-      "layers": [
-        {
-          "id": "00000000-0000-0000-0000-000000000016",
-          "label": null,
-          "t_start_us": 1000000,
-          "t_end_us": 4000000,
-          "enabled": true,
-          "locked": false,
-          "metadata": {},
-          "params": {
-            "kind": "Text",
-            "content": "Text",
-            "font": {
-              "family": "Arial",
-              "size_px": 72,
-              "weight": 400,
-              "italic": false
-            },
-            "color": {
-              "mode": "Static",
-              "value": {
-                "r": 255,
-                "g": 255,
-                "b": 255,
-                "a": 255
-              }
-            },
-            "align": "Center",
-            "transform": {
-              "x": {
-                "mode": "Keyframed",
-                "value": [
-                  {
-                    "id": "00000000-0000-0000-0000-00000000001c",
-                    "t_us": 1000000,
-                    "value": 0,
-                    "interp": {
-                      "kind": "Bezier",
-                      "p1": [
-                        0.42,
-                        0
-                      ],
-                      "p2": [
-                        1,
-                        1
-                      ]
-                    }
-                  },
-                  {
-                    "id": "00000000-0000-0000-0000-00000000001d",
-                    "t_us": 3000000,
-                    "value": 400,
-                    "interp": {
-                      "kind": "Elastic",
-                      "dir": "Out",
-                      "amplitude": 1,
-                      "period": 0.3
-                    }
-                  },
-                  {
-                    "id": "00000000-0000-0000-0000-00000000001e",
-                    "t_us": 4000000,
-                    "value": 100,
-                    "interp": {
-                      "kind": "Hold"
-                    }
-                  }
-                ]
-              },
-              "y": {
-                "mode": "Static",
-                "value": 0
-              },
-              "scale_x": {
-                "mode": "Static",
-                "value": 1
-              },
-              "scale_y": {
-                "mode": "Static",
-                "value": 1
-              },
-              "rotation_deg": {
-                "mode": "Static",
-                "value": 0
-              },
-              "anchor_x": {
-                "mode": "Static",
-                "value": 0.5
-              },
-              "anchor_y": {
-                "mode": "Static",
-                "value": 0.5
-              },
-              "scale_linked": true
-            },
-            "opacity": {
-              "mode": "Static",
-              "value": 1
-            },
-            "shadow": null,
-            "outline": null,
-            "intro": null,
-            "outro": null,
-            "backend_hint": "DrawText"
-          },
-          "effects": [
-            {
-              "id": "00000000-0000-0000-0000-000000000020",
-              "kind": "blur",
-              "enabled": true,
-              "params": {
-                "strength": {
-                  "mode": "Keyframed",
-                  "value": [
-                    {
-                      "id": "00000000-0000-0000-0000-000000000022",
-                      "t_us": 1000000,
-                      "value": 0,
-                      "interp": {
-                        "kind": "Linear"
-                      }
-                    },
-                    {
-                      "id": "00000000-0000-0000-0000-000000000023",
-                      "t_us": 4000000,
-                      "value": 20,
-                      "interp": {
-                        "kind": "Bounce",
-                        "dir": "Out"
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          ]
-        }
-      ]
-    }
-  ],
-  "markers": [
-    {
-      "id": "00000000-0000-0000-0000-000000000018",
-      "t_us": 1000000,
-      "end_t_us": null,
-      "label": "point",
-      "color": {
-        "r": 0,
-        "g": 128,
-        "b": 255,
-        "a": 255
-      },
-      "metadata": {}
-    },
-    {
-      "id": "00000000-0000-0000-0000-00000000001a",
-      "t_us": 2000000,
-      "end_t_us": 3000000,
-      "label": "region",
-      "color": {
-        "r": 0,
-        "g": 128,
-        "b": 255,
-        "a": 255
-      },
-      "metadata": {}
-    }
-  ],
-  "transitions": [
-    {
-      "id": "00000000-0000-0000-0000-000000000012",
-      "from_layer": "00000000-0000-0000-0000-00000000000e",
-      "to_layer": "00000000-0000-0000-0000-000000000010",
-      "duration_us": 500000,
-      "kind": {
-        "kind": "Crossfade"
-      }
-    }
-  ],
-  "links": [
-    {
-      "id": "00000000-0000-0000-0000-00000000000c",
-      "members": [
-        "00000000-0000-0000-0000-000000000008",
-        "00000000-0000-0000-0000-00000000000a"
-      ]
-    }
-  ],
   "audio_roles": {
     "dialogue": {
       "gain_db": -3,

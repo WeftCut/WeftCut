@@ -7,6 +7,7 @@ import { applyRestackLayer } from './restack'
 import { isCommandFailure } from '../errors'
 import type { CommandError } from '../errors'
 import { createActor } from '../actor'
+import { root } from '../__tests__/fixtures/project'
 
 function audioL(id: string, t0: number, t1: number): Layer {
   const params: LayerParams = {
@@ -28,8 +29,8 @@ function overlayStack(): { p: Project; g: IdGen; washId: string; logoId: string;
   const y = applyAddLayer(p, g, logoId, C, 0, 1_000_000)
   return { p, g, washId, logoId, x, y }
 }
-const order = (p: Project): string[] => p.tracks.map((t) => t.id)
-const track = (p: Project, id: string) => p.tracks.find((t) => t.id === id)
+const order = (p: Project): string[] => root(p).tracks.map((t) => t.id)
+const track = (p: Project, id: string) => root(p).tracks.find((t) => t.id === id)
 
 function cmdErr(fn: () => void): CommandError {
   try { fn() } catch (e) {
@@ -47,7 +48,7 @@ describe('applyRestackLayer — smart degradation', () => {
     wash.height_px = 96
     const ret = applyRestackLayer(p, g, x, y, 'above')
     expect(ret).toBe(washId) // the destination track IS the moved one
-    expect(order(p)).toEqual([p.tracks[0].id, p.tracks[1].id, logoId, washId])
+    expect(order(p)).toEqual([root(p).tracks[0].id, root(p).tracks[1].id, logoId, washId])
     const moved = track(p, washId)!
     expect(moved.label).toBe('wash')
     expect(moved.locked).toBe(true)
@@ -58,7 +59,7 @@ describe('applyRestackLayer — smart degradation', () => {
   it('sole-occupant mover: below splices the track directly beneath the anchor', () => {
     const { p, g, washId, logoId, y } = overlayStack()
     const [aRoll, bRoll] = order(p)
-    const ret = applyRestackLayer(p, g, y, /* anchor */ p.tracks[2].layers[0].id, 'below')
+    const ret = applyRestackLayer(p, g, y, /* anchor */ root(p).tracks[2].layers[0].id, 'below')
     expect(ret).toBe(logoId)
     expect(order(p)).toEqual([aRoll, bRoll, logoId, washId])
   })
@@ -106,21 +107,21 @@ describe('applyRestackLayer — smart degradation', () => {
     const z = applyAddLayer(p, g, washId, C, 2_000_000, 3_000_000) // same class, no overlap
     const ret = applyRestackLayer(p, g, x, z, 'above')
     expect(ret).not.toBe(washId)
-    expect(order(p)).toEqual([p.tracks[0].id, p.tracks[1].id, washId, ret!])
+    expect(order(p)).toEqual([root(p).tracks[0].id, root(p).tracks[1].id, washId, ret!])
     expect(track(p, washId)!.layers.map((l) => l.id)).toEqual([z])
     expect(track(p, ret!)!.layers.map((l) => l.id)).toEqual([x])
   })
 
   it('a role-stamped source never moves: a sole mover leaving it takes the split path and the emptied skeleton stays put', () => {
     const { p, g, y } = overlayStack()
-    const bRoll = p.tracks[1]
+    const bRoll = root(p).tracks[1]
     expect(bRoll.role).toBe('BRoll')
     const m = applyAddLayer(p, g, bRoll.id, C, 2_000_000, 3_000_000) // sole occupant of B roll
     const ret = applyRestackLayer(p, g, m, y, 'above')
     expect(ret).not.toBe(bRoll.id)
     // the skeleton is still at index 1, emptied but NOT pruned (reserved tracks are not transient)
-    expect(p.tracks[1].id).toBe(bRoll.id)
-    expect(p.tracks[1].layers).toEqual([])
+    expect(root(p).tracks[1].id).toBe(bRoll.id)
+    expect(root(p).tracks[1].layers).toEqual([])
     expect(track(p, ret!)!.layers.map((l) => l.id)).toEqual([m])
   })
 
@@ -133,7 +134,7 @@ describe('applyRestackLayer — smart degradation', () => {
   // prune predicate (helpers.pruneEmptiedTrack) rather than deciding for itself.
   it('prune-on-empty rides the single predicate: an emptied source the predicate accepts is removed', () => {
     const { p, g, y } = overlayStack()
-    const bRoll = p.tracks[1]
+    const bRoll = root(p).tracks[1]
     bRoll.transient = true // synthetic: forces split (role) AND satisfies the predicate
     const m = applyAddLayer(p, g, bRoll.id, C, 2_000_000, 3_000_000)
     applyRestackLayer(p, g, m, y, 'above')
@@ -161,9 +162,9 @@ describe('applyRestackLayer — no-op and typed errors', () => {
   it('a shared-track mover already at the requested side of the anchor is also a no-op (no gratuitous split)', () => {
     const { p, g, washId, x, y } = overlayStack()
     track(p, washId)!.layers.push(audioL('au', 0, 1_000_000))
-    const len = p.tracks.length
+    const len = root(p).tracks.length
     expect(applyRestackLayer(p, g, x, y, 'below')).toBeNull()
-    expect(p.tracks.length).toBe(len)
+    expect(root(p).tracks.length).toBe(len)
   })
 
   it('unknown mover → LayerNotFound naming the mover', () => {
@@ -235,8 +236,8 @@ describe('restack_layer through the actor', () => {
     expect(last.label_key).toBe('history.layer.restack')
     expect(last.summary).toBe('Restacked layer')
     // the split landed: a fresh track above the anchor's holds x
-    expect(actor.snapshot().tracks.length).toBe(before.tracks.length + 1)
-    expect(actor.snapshot().tracks.at(-1)!.layers.map((l) => l.id)).toEqual([x])
+    expect(root(actor.snapshot()).tracks.length).toBe(root(before).tracks.length + 1)
+    expect(root(actor.snapshot()).tracks.at(-1)!.layers.map((l) => l.id)).toEqual([x])
     // ONE undo puts the layer back on its shared track and drops the fresh one
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     expect(actor.snapshot()).toEqual(before)
@@ -246,7 +247,7 @@ describe('restack_layer through the actor', () => {
     const { actor, x, y } = actorWithSharedStack()
     actor.dispatch('restack_layer', { layer: x, anchor: y, position: 'above' })
     const last = actor.historyView(10).ops.at(-1)!
-    const dest = actor.snapshot().tracks.at(-1)!.id
+    const dest = root(actor.snapshot()).tracks.at(-1)!.id
     expect(last.affected).toEqual([{ kind: 'Layer', id: x }, { kind: 'Track', id: dest }])
   })
 
@@ -259,7 +260,7 @@ describe('restack_layer through the actor', () => {
     const y = (actor.dispatch('add_layer', { track: t3, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }) as { ok: true; value: string }).value
     const before = actor.snapshot()
     expect(actor.dispatch('restack_layer', { layer: x, anchor: y, position: 'above' }).ok).toBe(true)
-    expect(actor.snapshot().tracks.at(-1)!.id).toBe(t2) // the whole track moved
+    expect(root(actor.snapshot()).tracks.at(-1)!.id).toBe(t2) // the whole track moved
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     expect(actor.snapshot()).toEqual(before)
   })
@@ -275,7 +276,7 @@ describe('restack_layer through the actor', () => {
   it('single undo of a split + prune restores mover, fresh track and the pruned source with its identity', () => {
     const idGen = seededGen()
     const initial = blankProject(idGen, 't')
-    const bRoll = initial.tracks[1]
+    const bRoll = root(initial).tracks[1]
     expect(bRoll.role).toBe('BRoll')
     bRoll.transient = true // synthetic: forces the split (role) AND satisfies the prune predicate
     const actor = createActor({ initial, idGen, clock: () => '<TS>' })
@@ -288,18 +289,18 @@ describe('restack_layer through the actor', () => {
     expect(actor.dispatch('restack_layer', { layer: m, anchor: y, position: 'above' }).ok).toBe(true)
     expect(actor.historyStatus().len).toBe(lenBefore + 1) // split + prune in ONE commit
     const after = actor.snapshot()
-    expect(after.tracks.find((t) => t.id === bRoll.id)).toBeUndefined() // source pruned
-    const fresh = after.tracks.at(-1)!
-    expect(before.tracks.map((t) => t.id)).not.toContain(fresh.id) // a minted track holds the mover
+    expect(root(after).tracks.find((t) => t.id === bRoll.id)).toBeUndefined() // source pruned
+    const fresh = root(after).tracks.at(-1)!
+    expect(root(before).tracks.map((t) => t.id)).not.toContain(fresh.id) // a minted track holds the mover
     expect(fresh.layers.map((l) => l.id)).toEqual([m])
 
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     const restored = actor.snapshot()
     // the pruned source is back with its identity — id, role, position — holding the mover
-    expect(restored.tracks[1].id).toBe(bRoll.id)
-    expect(restored.tracks[1].role).toBe('BRoll')
-    expect(restored.tracks[1].layers.map((l) => l.id)).toEqual([m])
-    expect(restored.tracks.map((t) => t.id)).not.toContain(fresh.id) // the fresh track is gone
+    expect(root(restored).tracks[1].id).toBe(bRoll.id)
+    expect(root(restored).tracks[1].role).toBe('BRoll')
+    expect(root(restored).tracks[1].layers.map((l) => l.id)).toEqual([m])
+    expect(root(restored).tracks.map((t) => t.id)).not.toContain(fresh.id) // the fresh track is gone
     expect(restored).toEqual(before)
   })
 
@@ -321,7 +322,7 @@ describe('restack_layer over MCP', () => {
     const { actor, t2, x, y } = actorWithSharedStack()
     const r = actor.mcpCall('restack_layer', JSON.stringify({ layer_id: x, anchor_layer_id: y, position: 'above' }))
     expect(r.ok).toBe(true)
-    const tracks = actor.snapshot().tracks
+    const tracks = root(actor.snapshot()).tracks
     expect(tracks.at(-1)!.layers.map((l) => l.id)).toEqual([x])
     expect(tracks.find((t) => t.id === t2)!.layers.map((l) => l.id)).not.toContain(x)
   })

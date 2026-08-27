@@ -7,12 +7,8 @@ use uuid::Uuid;
 
 use super::audio_role::{AudioRole, RoleMixSettings};
 use super::composition::Composition;
-use super::ids::{new_id, MediaId};
-use super::link::Link;
-use super::marker::Marker;
+use super::ids::{new_id, CompositionId, MediaId};
 use super::media::MediaItem;
-use super::track::{Track, TrackRole};
-use super::transition::Transition;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
@@ -25,24 +21,21 @@ pub struct Project {
     pub schema_version: u32,
     pub project_id: Uuid,
     pub metadata: ProjectMetadata,
-    pub composition: Composition,
+    /// Every timeline of the project — the root and each Group — keyed by
+    /// `Composition::id` (ADR 0052 §3). Required on the wire, like `root_id`:
+    /// a file without them is the pre-container shape and must fail to load
+    /// rather than deserialize to an empty project.
+    ///
+    /// `OrdMap`, not `HashMap`: imbl's `HashMap` iterates in `RandomState`
+    /// order, so two serializations of the same two-entry map could differ and
+    /// `project_json_round_trip`'s byte-identity would be order-flaky. Sorted
+    /// keys are deterministic (same reason `Link.members` is an `OrdSet`). TS
+    /// writes insertion order; nothing compares TS bytes to Rust bytes.
+    pub compositions: imbl::OrdMap<CompositionId, Composition>,
+    /// Key of the root composition in `compositions`. TS validates that it
+    /// resolves (`ValidationError::RootMissing`); `root()` trusts it.
+    pub root_id: CompositionId,
     pub media_pool: imbl::HashMap<MediaId, MediaItem>,
-    /// 0 = bottom of z-stack, last = top.
-    pub tracks: imbl::Vector<Track>,
-    pub markers: imbl::Vector<Marker>,
-    /// Authorized layer-pair overlaps with transition semantics. Each entry
-    /// authorizes a specific overlap between two
-    /// adjacent layers on the same track; validation rejects the project
-    /// otherwise. `#[serde(default)]` keeps older `.vproj` files loadable.
-    #[serde(default)]
-    pub transitions: imbl::Vector<Transition>,
-    /// Links (`docs/features.md#links`). Each `Link` owns a set of
-    /// `LayerId`s; flat membership (a layer is in at most one link). The
-    /// actor maintains a derived `LayerId → LinkId` index for fast lookup
-    /// and fans out move/trim/split ops across members. `#[serde(default)]`
-    /// keeps the field optional on the wire.
-    #[serde(default)]
-    pub links: imbl::Vector<Link>,
     /// Per-role mix-bus settings (`docs/audio.md`). Absent keys resolve to
     /// `RoleMixSettings::default()` via `role_mix`. `#[serde(default)]`
     /// makes pre-roles `.vproj` files load with every role at unity.
@@ -54,47 +47,46 @@ pub struct Project {
 impl Project {
     pub fn new_blank(name: impl Into<String>) -> Self {
         let now = Utc::now();
-        // A fresh project seeds two reserved, kind-agnostic tracks (A roll,
-        // B roll); layers of any kind coexist on them. V+A pairs from import
-        // land on the same track and render as one combined row. See
-        // `docs/data-model.md`.
-        //
-        // A roll is the primary base and B roll overlays paint on top, per the
-        // z-order convention on the `tracks` field. Separated-audio rows insert
-        // adjacent to their source video; on-screen order is derived from this
-        // data order, not stored.
-        //
-        // `label` is left `None`: a reserved track's name is DERIVED from its
-        // `role` in the renderer (ADR 0042), so a literal written here could
-        // never be localized. Mirrors TS `blankProject` (model.ts).
-        let mut a_roll = Track::new();
-        a_roll.removable = false;
-        a_roll.role = Some(TrackRole::ARoll);
-
-        let mut b_roll = Track::new();
-        b_roll.removable = false;
-        b_roll.role = Some(TrackRole::BRoll);
-
-        let tracks = imbl::vector![a_roll, b_roll];
+        // Mint order mirrors TS `blankProject` (model.ts): A roll, B roll,
+        // project_id, root_id — the skeleton before the two ids that name it.
+        let tracks = Composition::skeleton_tracks();
+        let project_id = new_id();
+        let root_id = new_id();
+        let root = Composition::from_skeleton(root_id, None, tracks);
         Self {
             // TS owns the real number (see the field doc); this is a fixture.
             schema_version: 1,
-            project_id: new_id(),
+            project_id,
             metadata: ProjectMetadata {
                 name: name.into(),
                 created_at: now,
                 modified_at: now,
                 description: None,
             },
-            composition: Composition::default(),
+            compositions: imbl::OrdMap::unit(root_id, root),
+            root_id,
             media_pool: imbl::HashMap::new(),
-            tracks,
-            markers: imbl::Vector::new(),
-            transitions: imbl::Vector::new(),
-            links: imbl::Vector::new(),
             audio_roles: imbl::HashMap::new(),
             settings: ProjectSettings::default(),
         }
+    }
+
+    /// The root composition. Panics if `root_id` does not resolve — TS
+    /// validates that before any project reaches Rust.
+    pub fn root(&self) -> &Composition {
+        self.compositions
+            .get(&self.root_id)
+            .expect("validated: root_id resolves")
+    }
+
+    pub fn root_mut(&mut self) -> &mut Composition {
+        self.compositions
+            .get_mut(&self.root_id)
+            .expect("validated: root_id resolves")
+    }
+
+    pub fn composition(&self, id: &CompositionId) -> Option<&Composition> {
+        self.compositions.get(id)
     }
 
     /// Mix settings for a role, defaulted when the table has no entry.

@@ -2,6 +2,7 @@
 import { TEXT_NAME_MAX, textSnippet } from '../../shared/textSnippet'
 import type { EntityRef } from './history'
 import type { Layer, Project, Uuid } from './model'
+import { eachLayer } from './model'
 import { mediaLabel, TRACK_ROLE_WIRE } from './summary'
 
 /** One history row's text, carried as BOTH the i18n key the panel translates and
@@ -203,29 +204,37 @@ function labelIn(p: Project, layers: Layer[], ref: EntityRef): EntityLabel | nul
       return l ? layerLabel(p, l) : null
     }
     case 'Track': {
-      const index = p.tracks.findIndex((x) => x.id === ref.id)
-      if (index < 0) return null
-      const t = p.tracks[index]
-      const own = t.label?.trim()
-      // The DERIVED name, not the dominant-layer-class one: a role-stamped
-      // track's label is null, and the kind rung would render "Video" in a
-      // history row while its header reads "A roll".
-      return own ? { text: own } : derivedTrackKey(t.role, index)
+      // Whichever composition holds it; the derived name's index is the track's
+      // position inside ITS OWN composition.
+      for (const c of Object.values(p.compositions)) {
+        const index = c.tracks.findIndex((x) => x.id === ref.id)
+        if (index < 0) continue
+        const t = c.tracks[index]
+        const own = t.label?.trim()
+        // The DERIVED name, not the dominant-layer-class one: a role-stamped
+        // track's label is null, and the kind rung would render "Video" in a
+        // history row while its header reads "A roll".
+        return own ? { text: own } : derivedTrackKey(t.role, index)
+      }
+      return null
     }
     case 'Marker': {
-      const m = p.markers.find((x) => x.id === ref.id)
-      if (!m) return null
-      const own = m.label.trim()
-      // Markers carry no kind discriminant, so the rung is the word itself —
-      // without it a blank-labelled marker fell through to the raw uuid, which
-      // is exactly what this module's "Never the uuid" rule forbids.
-      return own ? { text: own } : kindKey('Marker')
+      for (const c of Object.values(p.compositions)) {
+        const m = c.markers.find((x) => x.id === ref.id)
+        if (!m) continue
+        const own = m.label.trim()
+        // Markers carry no kind discriminant, so the rung is the word itself —
+        // without it a blank-labelled marker fell through to the raw uuid, which
+        // is exactly what this module's "Never the uuid" rule forbids.
+        return own ? { text: own } : kindKey('Marker')
+      }
+      return null
     }
   }
 }
 
-/** Memoized `tracks.flatMap(t => t.layers)` keyed on snapshot IDENTITY, for the
- *  span of ONE `view()` call.
+/** Memoized flattening of every composition's layers, keyed on snapshot
+ *  IDENTITY, for the span of ONE `view()` call.
  *
  *  Consecutive stack entries SHARE snapshot objects — entry i's `after` is entry
  *  i+1's `before` — so a naive resolve flattens every snapshot twice, and this is
@@ -238,7 +247,7 @@ export function createLayerFlattener(): (p: Project) => Layer[] {
   return (p) => {
     const hit = cache.get(p)
     if (hit) return hit
-    const flat = p.tracks.flatMap((t) => t.layers)
+    const flat = [...eachLayer(p)].map((e) => e.layer)
     cache.set(p, flat)
     return flat
   }

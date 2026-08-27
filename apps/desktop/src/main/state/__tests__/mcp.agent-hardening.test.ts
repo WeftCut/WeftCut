@@ -6,6 +6,7 @@
 // lane, not a shared one.
 import { describe, it, expect } from 'vitest'
 import { freshActor, aRollId, bRollId } from './pbt/harness'
+import { root } from './fixtures/project'
 
 const VIDEO_MEDIA = '00000000-0000-7000-8000-000000000201'
 
@@ -22,7 +23,7 @@ function videoLayerArgs(trackId: string, mediaId: string, t0: number, t1: number
 }
 
 function totalLayerCount(actor: Actor): number {
-  return actor.snapshot().tracks.reduce((n, t) => n + t.layers.length, 0)
+  return root(actor.snapshot()).tracks.reduce((n, t) => n + t.layers.length, 0)
 }
 
 // ── Issue 03/04: paired A/V placement ────────────────────────────────────────
@@ -36,13 +37,13 @@ describe('add_video_layer auto-pair — combined-row placement (issue 04)', () =
     expect(r.ok).toBe(true)
     if (!r.ok) return
     const ids = JSON.parse(r.result.content[0].text) as { video_layer_id: string; audio_layer_id: string; link_id: string }
-    const track = a.snapshot().tracks.find((t) => t.id === trackId)!
+    const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     const video = track.layers.find((l) => l.id === ids.video_layer_id)
     const audio = track.layers.find((l) => l.id === ids.audio_layer_id)
     expect(video?.params.kind).toBe('VideoClip')
     expect(audio?.params.kind).toBe('Audio')
     expect(audio?.params.kind === 'Audio' && audio.params.role).toBe('dialogue')
-    const link = a.snapshot().links.find((g) => g.id === ids.link_id)
+    const link = root(a.snapshot()).links.find((g) => g.id === ids.link_id)
     expect(new Set(link?.members)).toEqual(new Set([ids.video_layer_id, ids.audio_layer_id]))
   })
 
@@ -56,8 +57,8 @@ describe('add_video_layer auto-pair — combined-row placement (issue 04)', () =
     expect(r1.ok).toBe(true)
     expect(r2.ok).toBe(true)
     const snap = a.snapshot()
-    expect(snap.tracks[0].layers).toHaveLength(2) // video + paired audio, A roll
-    expect(snap.tracks[1].layers).toHaveLength(2) // video + paired audio, B roll
+    expect(root(snap).tracks[0].layers).toHaveLength(2) // video + paired audio, A roll
+    expect(root(snap).tracks[1].layers).toHaveLength(2) // video + paired audio, B roll
   })
 })
 
@@ -84,7 +85,7 @@ describe('add_video_layer auto-pair — atomicity (issue 03)', () => {
     expect(data.options.length).toBeGreaterThan(0)
     // Atomic: the half-committed video of the old three-commit path is gone.
     expect(totalLayerCount(a)).toBe(before)
-    expect(a.snapshot().links).toHaveLength(0)
+    expect(root(a.snapshot()).links).toHaveLength(0)
   })
 
   it('video-lane overlap still reports the generic enriched LayerOverlap', () => {
@@ -122,7 +123,7 @@ describe('update_effect — strict patch (issue 02)', () => {
   }
 
   function effectParams(a: Actor, layerId: string): Record<string, unknown> {
-    const layer = a.snapshot().tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)!
+    const layer = root(a.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)!
     return layer.effects[0].params
   }
 
@@ -168,7 +169,7 @@ describe('update_effect — strict patch (issue 02)', () => {
       patch: { enabled: false, params: { strength: { mode: 'Static', value: 8 } } },
     }))
     expect(r.ok).toBe(true)
-    const layer = a.snapshot().tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)!
+    const layer = root(a.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)!
     expect(layer.effects[0].enabled).toBe(false)
     expect(layer.effects[0].params.strength).toEqual({ mode: 'Static', value: 8 })
   })

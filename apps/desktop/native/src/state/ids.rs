@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use uuid::Uuid;
 
 pub type MediaId = Uuid;
+pub type CompositionId = Uuid;
 pub type TrackId = Uuid;
 pub type LayerId = Uuid;
 pub type KeyframeId = Uuid;

@@ -3,12 +3,13 @@ import { seededGen } from '../ids'
 import { blankProject } from '../model'
 import { createActor } from '../actor'
 import { readLayerTrack, resolveAnimatedF64 } from './params'
+import { root } from '../__tests__/fixtures/project'
 
 function colorLayerProject() {
   const idGen = seededGen()
   const initial = blankProject(idGen, 't')
   const actor = createActor({ initial, idGen, clock: () => '<TS>' })
-  const aRoll = initial.tracks[0].id
+  const aRoll = root(initial).tracks[0].id
   const r = actor.dispatch('add_layer', { kind: 'color', track: aRoll, t_start_us: 500000, t_end_us: 1500000 })
   return { proj: actor.snapshot(), layerId: r.ok ? (r.value as string) : '' }
 }
@@ -24,7 +25,7 @@ describe('readLayerTrack', () => {
   })
   it('resolveAnimatedF64 returns null for Color opacity', () => {
     const { proj, layerId } = colorLayerProject()
-    const loc = proj.tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)!
+    const loc = root(proj).tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)!
     expect(resolveAnimatedF64(loc, 'opacity')).toBeNull()
   })
 })

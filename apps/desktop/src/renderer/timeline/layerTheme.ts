@@ -14,6 +14,9 @@ const THEMES: Record<
   ImageOverlay: { surface: "#24212e", accent: "#9786bc" },
   Text: { surface: "#2a251b", accent: "#d2a65d" },
   Motif: { surface: "#28202e", accent: "#b17bc1" },
+  // A Group (a placed composition): neutral slate, the one kind with no media
+  // hue of its own — it holds every other kind. Placeholder until the Group UI.
+  CompositionRef: { surface: "#22262b", accent: "#8a94a0" },
 };
 
 /**

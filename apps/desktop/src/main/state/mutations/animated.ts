@@ -11,6 +11,7 @@ export function forEachAnimatedF64(p: LayerParams, fn: (a: Animated<number>) => 
     case 'VideoClip': forEachTransformF64(p.transform, fn); fn(p.opacity); break
     case 'ImageOverlay': forEachTransformF64(p.transform, fn); fn(p.opacity); break
     case 'Motif': forEachTransformF64(p.transform, fn); fn(p.opacity); break
+    case 'CompositionRef': forEachTransformF64(p.transform, fn); fn(p.opacity); break
     case 'Audio': fn(p.gain_db); fn(p.pan); break
   }
 }
@@ -27,7 +28,7 @@ export function forEachAnimatedRgba(p: LayerParams, fn: (a: Animated<Rgba>) => v
   switch (p.kind) {
     case 'Color': fn(p.color); break
     case 'Text': fn(p.color); break
-    case 'VideoClip': case 'ImageOverlay': case 'Motif': case 'Audio': break
+    case 'VideoClip': case 'ImageOverlay': case 'Motif': case 'Audio': case 'CompositionRef': break
   }
 }
 

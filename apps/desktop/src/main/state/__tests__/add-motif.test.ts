@@ -7,6 +7,7 @@ import { createActor } from '../actor'
 import { blankProject } from '../model'
 import { seededGen } from '../ids'
 import { MotifCatalog } from '../../../shared/motifs/catalog'
+import { root } from './fixtures/project'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function makeActor() {
@@ -32,7 +33,7 @@ describe('actor.command("add_motif") — no track_id', () => {
   it('creates Overlay track THEN Motif layer (track id < layer id, idGen order)', () => {
     const actor = makeActor()
     const before = actor.snapshot()
-    const trackCountBefore = before.tracks.length
+    const trackCountBefore = root(before).tracks.length
 
     const result = actor.command('add_motif', { motifId: 'countdown', tStartUs: 0 })
     expect(result.ok).toBe(true)
@@ -40,10 +41,10 @@ describe('actor.command("add_motif") — no track_id', () => {
 
     const snap = actor.snapshot()
     // One new track was created
-    expect(snap.tracks.length).toBe(trackCountBefore + 1)
+    expect(root(snap).tracks.length).toBe(trackCountBefore + 1)
     // The new track stores no label — its name is derived renderer-side — and
     // carries no role, so it is the spawned one.
-    const overlayTrack = snap.tracks.find((t) => t.label === null && t.role === null)
+    const overlayTrack = root(snap).tracks.find((t) => t.label === null && t.role === null)
     expect(overlayTrack).toBeDefined()
     // The layer is on the overlay track
     const layer = overlayTrack!.layers.find((l) => l.id === layerId)
@@ -61,7 +62,7 @@ describe('actor.command("add_motif") — no track_id', () => {
     const layerId = result.ok ? result.value as string : ''
 
     const snap = actor.snapshot()
-    const layer = snap.tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)
+    const layer = root(snap).tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)
     expect(layer).toBeDefined()
     const p = layer!.params
     expect(p.kind).toBe('Motif')
@@ -90,7 +91,7 @@ describe('actor.command("add_motif") — no track_id', () => {
     expect(result.ok).toBe(true)
     const layerId = result.ok ? result.value as string : ''
     const snap = actor.snapshot()
-    const layer = snap.tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)
+    const layer = root(snap).tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)
     expect(layer).toBeDefined()
     // default_duration_s=5.0 → Math.trunc(5.0*1e6)+1e6 = 6_000_000
     expect(layer!.t_end_us - layer!.t_start_us).toBeGreaterThan(0)
@@ -108,7 +109,7 @@ describe('actor.command("add_motif") — with track_id', () => {
     const trackResult = actor.dispatch('add_track', { label: 'MyTrack' })
     expect(trackResult.ok).toBe(true)
     const trackId = trackResult.ok ? trackResult.value as string : ''
-    const trackCountBefore = actor.snapshot().tracks.length
+    const trackCountBefore = root(actor.snapshot()).tracks.length
 
     const result = actor.command('add_motif', { motifId: 'countdown', trackId, tStartUs: 0 })
     expect(result.ok).toBe(true)
@@ -116,9 +117,9 @@ describe('actor.command("add_motif") — with track_id', () => {
 
     const snap = actor.snapshot()
     // No new tracks
-    expect(snap.tracks.length).toBe(trackCountBefore)
+    expect(root(snap).tracks.length).toBe(trackCountBefore)
     // Layer is on the specified track
-    const track = snap.tracks.find((t) => t.id === trackId)
+    const track = root(snap).tracks.find((t) => t.id === trackId)
     const layer = track?.layers.find((l) => l.id === layerId)
     expect(layer).toBeDefined()
   })
@@ -136,9 +137,9 @@ describe('actor.command("add_motif") — reject-before-commit', () => {
     expect(result.ok).toBe(false)
     const snapAfter = actor.snapshot()
     // No new tracks or layers committed
-    expect(snapAfter.tracks.length).toBe(snapBefore.tracks.length)
-    expect(snapAfter.tracks.flatMap((t) => t.layers).length)
-      .toBe(snapBefore.tracks.flatMap((t) => t.layers).length)
+    expect(root(snapAfter).tracks.length).toBe(root(snapBefore).tracks.length)
+    expect(root(snapAfter).tracks.flatMap((t) => t.layers).length)
+      .toBe(root(snapBefore).tracks.flatMap((t) => t.layers).length)
   })
 
   it('unknown motif_id → reject, no track/layer committed', () => {
@@ -149,7 +150,7 @@ describe('actor.command("add_motif") — reject-before-commit', () => {
     expect(result.ok).toBe(false)
     expect((result as { ok: false; error: { error: string; detail?: string } }).error.error).toBe('InvalidArgument')
     const snapAfter = actor.snapshot()
-    expect(snapAfter.tracks.length).toBe(snapBefore.tracks.length)
+    expect(root(snapAfter).tracks.length).toBe(root(snapBefore).tracks.length)
   })
 
   it('invalid prop value (seconds out of range) → reject before commit', () => {
@@ -161,7 +162,7 @@ describe('actor.command("add_motif") — reject-before-commit', () => {
     })
     expect(result.ok).toBe(false)
     const snapAfter = actor.snapshot()
-    expect(snapAfter.tracks.length).toBe(snapBefore.tracks.length)
+    expect(root(snapAfter).tracks.length).toBe(root(snapBefore).tracks.length)
   })
 })
 
@@ -180,14 +181,14 @@ describe('actor.mcpCall("add_motif") — MCP dedicated arm', () => {
     expect(text!.length).toBeGreaterThan(0)
     // Verify the layer was actually created
     const snap = actor.snapshot()
-    const layers = snap.tracks.flatMap((t) => t.layers)
+    const layers = root(snap).tracks.flatMap((t) => t.layers)
     const layer = layers.find((l) => l.id === text)
     expect(layer).toBeDefined()
     expect(layer!.params.kind).toBe('Motif')
     // No-track MCP path mints the spawned track FIRST, then the layer — so the
     // returned layer id is ordered AFTER the minted track id (idGen call order).
     // This mirrors the command-path id-order assertion.
-    const overlayTrack = snap.tracks.find((t) => t.label === null && t.role === null)
+    const overlayTrack = root(snap).tracks.find((t) => t.label === null && t.role === null)
     expect(overlayTrack).toBeDefined()
     expect(overlayTrack!.id < text!).toBe(true)
   })
@@ -215,7 +216,7 @@ describe('actor.mcpCall("add_motif") — MCP dedicated arm', () => {
     if (result.ok) return
     expect(result.error.code).toBe('invalid_params')
     const snapAfter = actor.snapshot()
-    expect(snapAfter.tracks.length).toBe(snapBefore.tracks.length)
+    expect(root(snapAfter).tracks.length).toBe(root(snapBefore).tracks.length)
   })
 
   it('MCP missing motif_id → rejects (required field)', () => {
@@ -228,7 +229,7 @@ describe('actor.mcpCall("add_motif") — MCP dedicated arm', () => {
     const actor = makeActor()
     const trackResult = actor.dispatch('add_track', { label: 'MyTrack' })
     const trackId = trackResult.ok ? trackResult.value as string : ''
-    const trackCountBefore = actor.snapshot().tracks.length
+    const trackCountBefore = root(actor.snapshot()).tracks.length
 
     const result = actor.mcpCall('add_motif', JSON.stringify({
       motif_id: 'countdown',
@@ -236,7 +237,7 @@ describe('actor.mcpCall("add_motif") — MCP dedicated arm', () => {
       track_id: trackId,
     }))
     expect(result.ok).toBe(true)
-    expect(actor.snapshot().tracks.length).toBe(trackCountBefore)
+    expect(root(actor.snapshot()).tracks.length).toBe(trackCountBefore)
   })
 })
 

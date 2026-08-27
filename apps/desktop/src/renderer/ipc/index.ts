@@ -217,7 +217,29 @@ export type LayerParamsView =
   | ({ kind: "Text" } & TextView)
   | ({ kind: "Color" } & ColorView)
   | ({ kind: "Audio" } & AudioView)
-  | ({ kind: "Motif" } & MotifView);
+  | ({ kind: "Motif" } & MotifView)
+  | ({ kind: "CompositionRef" } & CompositionRefView);
+
+/// A Group layer: its source is another composition (ADR 0052 §4). Nothing
+/// renders it yet; the type exists so the flat summary can carry one.
+export interface CompositionRefView {
+  composition_id: string;
+  /// The referenced composition's own label; null → derive "Group N".
+  composition_label: string | null;
+  /// Window into the referenced composition's time. No upper bound is
+  /// enforced: `src_out_us` may overhang its duration (ADR 0052 §6).
+  src_in_us: number;
+  src_out_us: number;
+  x: AnimTrack<number>;
+  y: AnimTrack<number>;
+  scale_x: AnimTrack<number>;
+  scale_y: AnimTrack<number>;
+  scale_linked: boolean;
+  rotation_deg: AnimTrack<number>;
+  opacity: AnimTrack<number>;
+  anchor_x: AnimTrack<number>;
+  anchor_y: AnimTrack<number>;
+}
 
 export interface MotifView {
   motif_id: string;

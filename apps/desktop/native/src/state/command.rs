@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::ids::{
-    CheckpointId, EffectId, LayerId, LinkId, MarkerId, MediaId, TrackId, TransitionId,
+    CheckpointId, CompositionId, EffectId, LayerId, LinkId, MarkerId, MediaId, TrackId,
+    TransitionId,
 };
 use super::time::TimeUs;
 
@@ -121,6 +122,41 @@ pub enum ValidationError {
 
     #[error("link {link} has fewer than 2 members — should have been auto-dissolved")]
     LinkBelowMinSize { link: LinkId, members: usize },
+
+    #[error("root composition {root_id} is not in compositions")]
+    RootMissing { root_id: CompositionId },
+
+    #[error("compositions[{key}] carries id {id}")]
+    CompositionIdMismatch { key: CompositionId, id: CompositionId },
+
+    #[error("layer {layer} references missing composition {composition}")]
+    CompositionMissing {
+        layer: LayerId,
+        composition: CompositionId,
+    },
+
+    #[error("layer {layer} references the root composition")]
+    RootReferenced { layer: LayerId },
+
+    #[error("composition reference cycle: {path:?}")]
+    CompositionCycle { path: Vec<CompositionId> },
+
+    #[error("composition {composition} differs from the root on {field:?}")]
+    CompositionLatticeMismatch {
+        composition: CompositionId,
+        field: LatticeField,
+    },
+}
+
+/// The three settings every composition must share with the root (ADR 0052
+/// §5). Wire form `fps` / `sample_rate` / `channels` — the TS union's
+/// string literals.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LatticeField {
+    Fps,
+    SampleRate,
+    Channels,
 }
 
 /// A full export master that landed on disk, plus the encoder format version
@@ -176,6 +212,8 @@ pub enum CommandError {
     TrackNotFound { track: TrackId },
     #[error("layer {layer} not found")]
     LayerNotFound { layer: LayerId },
+    #[error("composition {composition} not found")]
+    CompositionNotFound { composition: CompositionId },
     /// Returned when `separate_audio_to_new_track` is invoked on a non-Audio
     /// layer.
     #[error("layer {layer} is not a {expected} layer")]

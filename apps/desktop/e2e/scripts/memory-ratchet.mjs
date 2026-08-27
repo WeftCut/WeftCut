@@ -215,22 +215,28 @@ const tracks = SCENARIO === 'text-box'
   : [track('019f0000-0000-7000-8000-0000000000aa', layers)];
 log(`scenario: ${SCENARIO} (${layers.length} layers on ${tracks.length} tracks, ${transitions.length} transitions)`);
 
+const ROOT_ID = '019f0000-0000-7000-8000-00000000c0df';
 fs.writeFileSync(path.join(project, 'project.json'), JSON.stringify({
   // The app must OPEN this file, so it declares the CURRENT schema version
-  // (src/main/state/model.ts). A .mjs script cannot import the TS constant; when
-  // SCHEMA_VERSION bumps, this literal moves with it or the ratchet stops opening.
+  // (src/main/state/model.ts) and the CURRENT container shape (the timeline
+  // lives under `compositions[root_id]`). A .mjs script cannot import the TS
+  // model; when SCHEMA_VERSION bumps or the shape changes, this literal moves
+  // with it or the ratchet stops opening.
   schema_version: 1,
   project_id: '019f0000-0000-7000-8000-00000000c0de',
   metadata: { name: `memory-ratchet-${SCENARIO}`, created_at: '2026-01-01T00:00:00.000Z', modified_at: '2026-01-01T00:00:00.000Z', description: null },
-  composition: {
-    width: 1920, height: 1080, fps: { num: 30, den: 1 },
-    duration_us: DURATION_US, duration_pinned: true,
-    sample_rate: 48000, channels: 2, color_space: 'Bt709',
-    background: { r: 0, g: 0, b: 0, a: 255 },
+  compositions: {
+    [ROOT_ID]: {
+      id: ROOT_ID, label: null,
+      width: 1920, height: 1080, fps: { num: 30, den: 1 },
+      duration_us: DURATION_US, duration_pinned: true,
+      sample_rate: 48000, channels: 2, color_space: 'Bt709',
+      background: { r: 0, g: 0, b: 0, a: 255 },
+      tracks, markers: [], transitions, links: [],
+    },
   },
-  media_pool: {},
-  tracks,
-  markers: [], transitions, links: [], audio_roles: {},
+  root_id: ROOT_ID,
+  media_pool: {}, audio_roles: {},
   settings: {
     preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
     history_capacity: 200, auto_pair_audio_on_import: true,

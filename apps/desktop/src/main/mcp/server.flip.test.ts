@@ -4,6 +4,7 @@ import { createActor } from '../state/actor'
 import { uuidV7Gen } from '../state/ids'
 import { blankProject } from '../state/model'
 import { mediaItemTemplate } from '../state/mutations/media'
+import { root } from '../state/__tests__/fixtures/project'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
 
@@ -22,7 +23,7 @@ function tsHostStub() {
     enqueueWorkspaceCopy: vi.fn(async () => {}),
     workspaceDir: () => null,
     readFile: () => '',
-    snapshotComposition: () => actor.snapshot().composition,
+    snapshotComposition: () => root(actor.snapshot()),
   }
   return { actor, mcpCall: (name: string, argsJson: string) => actor.mcpCall(name, argsJson), hybridDeps, handleInvoke: async () => null, start: () => {}, stop: () => {}, beginAgentSessionSlot: () => {} } as any
 }
@@ -33,10 +34,10 @@ function fakeBackend(mcpCallTool: (n: string, a: string) => Promise<string>) {
 describe('handleCallTool flip routing', () => {
   it('routes a mutation tool to the TS actor (state changes)', async () => {
     const ts = tsHostStub()
-    const track = ts.actor.snapshot().tracks[0].id
+    const track = root(ts.actor.snapshot()).tracks[0].id
     const out: any = await handleCallTool(fakeBackend(async () => { throw new Error('rust must not be called') }), () => ts, 'add_color_layer', { track_id: track, color: { r: 0, g: 0, b: 0, a: 1 }, t_start_us: 0, t_end_us: 1_000_000 })
     expect(out.content[0].type).toBe('text') // a uuid
-    const layers = ts.actor.snapshot().tracks.reduce((n: number, t: any) => n + t.layers.length, 0)
+    const layers = root(ts.actor.snapshot()).tracks.reduce((n: number, t: any) => n + t.layers.length, 0)
     expect(layers).toBe(1)
   })
   it('routes synthesize_speech through the hybrid (not blocked, Task 6)', async () => {

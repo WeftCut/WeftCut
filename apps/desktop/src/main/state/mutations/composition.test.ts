@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
 import { blankProject, type Layer, type LayerParams } from '../model'
 import { applyFitComposition } from './composition'
+import { root } from '../__tests__/fixtures/project'
 
 function color(id: string, t0: number, t1: number): Layer {
   const params: LayerParams = { kind: 'Color', color: { mode: 'Static', value: { r: 0, g: 0, b: 0, a: 255 } }, width: 1, height: 1 }
@@ -11,15 +12,15 @@ function color(id: string, t0: number, t1: number): Layer {
 
 describe('applyFitComposition', () => {
   it('unpins and refits duration to the layer high-water mark (shrink)', () => {
-    const p = blankProject(seededGen(), 't'); p.tracks[0].layers = [color('a', 0, 2_000_000)]
-    p.composition.duration_pinned = true; p.composition.duration_us = 9_000_000
+    const p = blankProject(seededGen(), 't'); root(p).tracks[0].layers = [color('a', 0, 2_000_000)]
+    root(p).duration_pinned = true; root(p).duration_us = 9_000_000
     applyFitComposition(p)
-    expect(p.composition.duration_pinned).toBe(false)
-    expect(p.composition.duration_us).toBe(2_000_000)
+    expect(root(p).duration_pinned).toBe(false)
+    expect(root(p).duration_us).toBe(2_000_000)
   })
   it('refits to 0 when there are no layers', () => {
-    const p = blankProject(seededGen(), 't'); p.composition.duration_pinned = true; p.composition.duration_us = 5_000_000
+    const p = blankProject(seededGen(), 't'); root(p).duration_pinned = true; root(p).duration_us = 5_000_000
     applyFitComposition(p)
-    expect(p.composition.duration_us).toBe(0)
+    expect(root(p).duration_us).toBe(0)
   })
 })

@@ -7,6 +7,8 @@ import {
 import { seededGen } from './ids'
 import { blankProject } from './model'
 import { createActor } from './actor'
+import { root, withGroup } from './__tests__/fixtures/project'
+import { applyAddLayer, colorParams } from './mutations/add'
 
 const stat = <T>(value: T) => ({ mode: 'Static' as const, value })
 const xf = () => ({ x: stat(0), y: stat(0), scale_x: stat(1), scale_y: stat(1), rotation_deg: stat(0), anchor_x: stat(0.5), anchor_y: stat(0.5), scale_linked: true })
@@ -154,7 +156,7 @@ describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)
     const gen = seededGen()
     const initial = blankProject(gen, 'lock')
     const actor = createActor({ initial, idGen: gen, clock: () => '<TS>' })
-    const added = actor.dispatch('add_layer', { track: initial.tracks[0].id, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    const added = actor.dispatch('add_layer', { track: root(initial).tracks[0].id, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
     expect(buildProjectSummary(actor.snapshot(), actor.historyStatus(), NEVER).composition.fps_locked).toBe(true)
 
     // Delete it: the timeline is empty again, but undo still reaches the layer.
@@ -167,7 +169,7 @@ describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)
   it('a built project: track kind, layer kind/color_hint, media sorted desc + label', () => {
     const gen = seededGen()
     const initial = blankProject(gen, 'demo')
-    const a = initial.tracks[0].id
+    const a = root(initial).tracks[0].id
     const actor = createActor({ initial, idGen: gen, clock: () => '<TS>' })
     actor.dispatch('add_media', { id: '00000000-0000-0000-0000-0000000000aa', kind: 'Video', duration_us: 5_000_000 })
     actor.dispatch('add_media', { id: '00000000-0000-0000-0000-0000000000bb', kind: 'Audio', duration_us: 3_000_000 })
@@ -203,3 +205,24 @@ function textParamsLite(): Omit<Extract<LayerParams, { kind: 'Text' }>, 'kind'> 
     box_w: null, box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0,
   }
 }
+
+describe('buildProjectSummary projects the ROOT composition (the flat shim)', () => {
+  const HISTORY = { cursor: 0, len: 1, can_undo: false, can_redo: false, holds_layer_anywhere: false }
+  it('a Group changes nothing the renderer sees except the layer that references it', () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 'shim')
+    applyAddLayer(p, gen, root(p).tracks[0].id, colorParams({ r: 1, g: 2, b: 3, a: 255 }, 16, 9), 0, 1_000_000)
+    const flat = JSON.stringify(buildProjectSummary(p, HISTORY, NEVER))
+    const { p: grouped, groupId, refLayerId } = withGroup(p, gen, (g, view) => applyAddLayer(view, gen, g.tracks[0].id, colorParams({ r: 9, g: 9, b: 9, a: 255 }, 16, 9), 0, 1_000_000))
+    grouped.compositions[groupId].label = 'Lower third'
+    const s = buildProjectSummary(grouped, HISTORY, NEVER)
+    // Drop the fresh lane the Group's reference lives on: byte for byte, the rest IS the flat summary.
+    const withoutRefLane = { ...s, tracks: s.tracks.filter((t) => !t.layers.some((l) => l.id === refLayerId)), track_count: s.track_count - 1, layer_count: s.layer_count - 1 }
+    expect(JSON.stringify(withoutRefLane)).toBe(flat)
+    // The Group's own layers never reach the summary; its reference does, as a view.
+    expect(s.layer_count).toBe(2)
+    const ref = s.tracks.flatMap((t) => t.layers).find((l) => l.id === refLayerId)!
+    expect(ref.kind).toBe('CompositionRef')
+    expect(ref.params).toMatchObject({ kind: 'CompositionRef', composition_id: groupId, composition_label: 'Lower third', src_in_us: 0, src_out_us: 1_000_000, scale_linked: true })
+  })
+})

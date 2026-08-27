@@ -1,6 +1,6 @@
 import { describe, it } from 'vitest'
 import fc from 'fast-check'
-import { freshActor, canonicalSnapshot, wireSnapshot, aRollId, bRollId, PBT_SEED, PBT_RUNS } from './harness'
+import { freshActor, canonicalSnapshot, wireSnapshot, wireRoot, aRollId, bRollId, PBT_SEED, PBT_RUNS } from './harness'
 import { parseProject, serializeProject } from '../../serialize'
 import { canonicalString } from '../../canonical'
 
@@ -26,7 +26,7 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
 export function applyOps(actor: ReturnType<typeof freshActor>, ops: Op[]) {
   const tracks = () => [aRollId(actor), bRollId(actor)]
   for (const op of ops) {
-    const layers = wireSnapshot(actor).tracks.flatMap((t) => t.layers.map((l) => l.id))
+    const layers = wireRoot(wireSnapshot(actor)).tracks.flatMap((t) => t.layers.map((l) => l.id))
     switch (op.t) {
       case 'add':
         actor.dispatch('add_layer', { track: tracks()[op.track], kind: 'color', t_start_us: op.start, t_end_us: op.start + op.len })

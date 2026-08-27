@@ -17,15 +17,23 @@ describe('parseProject structural conformance', () => {
     expect(() => parseProject({ ...good, schema_version: SCHEMA_VERSION - 1 })).toThrow(/schema_version/)
   })
   it('rejects a project missing required top-level fields', () => {
-    const { composition, ...noComposition } = good
-    expect(() => parseProject(noComposition)).toThrow(/composition/)
-    const { tracks, ...noTracks } = good
-    expect(() => parseProject(noTracks)).toThrow(/tracks/)
+    // The container is REQUIRED with no default: a flat pre-container file still
+    // says schema_version 1 and must fail HERE, not open as an empty project
+    // (spec § Cut-over).
+    const { compositions, ...noCompositions } = good
+    expect(() => parseProject(noCompositions)).toThrow(/compositions/)
+    const { root_id, ...noRoot } = good
+    expect(() => parseProject(noRoot)).toThrow(/root_id/)
     const { media_pool, ...noPool } = good
     expect(() => parseProject(noPool)).toThrow(/media_pool/)
   })
+  it('rejects a root_id that is not a key of compositions', () => {
+    expect(() => parseProject({ ...good, root_id: 'ghost' })).toThrow(/root_id ghost is not a key/)
+  })
   it('rejects a wrong field type', () => {
-    expect(() => parseProject({ ...good, tracks: {} })).toThrow(/tracks/)
-    expect(() => parseProject({ ...good, composition: 'x' })).toThrow(/composition/)
+    const rootId = good.root_id
+    expect(() => parseProject({ ...good, compositions: { [rootId]: { ...good.compositions[rootId], tracks: {} } } })).toThrow(/tracks must be an array/)
+    expect(() => parseProject({ ...good, compositions: { [rootId]: 'x' } })).toThrow(/must be an object/)
+    expect(() => parseProject({ ...good, compositions: [] })).toThrow(/compositions/)
   })
 })

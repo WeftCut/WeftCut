@@ -6,6 +6,7 @@ import { colorParams } from './mutations/add'
 import { History, type HistoryEntry } from './history'
 import { HISTORY_SUMMARY } from './history-labels'
 import type { MediaItem } from './model'
+import { root, withRoot } from './__tests__/fixtures/project'
 
 const U = { kind: 'User' as const }
 // `label_key` is required on a HistoryEntry; these fixtures exercise stack
@@ -224,7 +225,7 @@ describe('History', () => {
       enabled: true, locked: false, metadata: {},
       params: colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1920, 1080), effects: [],
     }
-    const withLayer = { ...p0, tracks: p0.tracks.map((t, i) => (i === 0 ? { ...t, layers: [held] } : t)) }
+    const withLayer = withRoot(p0, { tracks: root(p0).tracks.map((t, i) => (i === 0 ? { ...t, layers: [held] } : t)) })
     const h = new History(withLayer, U, gen())
     // The delete entry's own snapshot no longer holds L1 — the PREVIOUS one does,
     // so the name has to come from there.
@@ -243,15 +244,15 @@ describe('History', () => {
   it('flattens each snapshot at most ONCE per view() call', () => {
     const gen = seededGen()
     let reads = 0
-    /// A snapshot that counts `.tracks` reads. Only Layer refs are used below,
-    /// so the label chain touches `tracks` for exactly one reason: flattening.
+    /// A snapshot whose ROOT counts `.tracks` reads. Only Layer refs are used
+    /// below, so the label chain touches `tracks` for exactly one reason: flattening.
     const counted = (p: Project): Project => {
-      const clone = { ...p }
-      Object.defineProperty(clone, 'tracks', {
-        get() { reads += 1; return p.tracks },
+      const r = { ...root(p) }
+      Object.defineProperty(r, 'tracks', {
+        get() { reads += 1; return root(p).tracks },
         enumerable: true, configurable: true,
       })
-      return clone
+      return { ...p, compositions: { ...p.compositions, [p.root_id]: r } }
     }
     const base = blankProject(gen, 'memo')
     const h = new History(counted(base), U, gen())
@@ -343,7 +344,7 @@ describe('History', () => {
       enabled: true, locked: false, metadata: {},
       params: colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1920, 1080), effects: [],
     }
-    const withLayer = { ...p0, tracks: p0.tracks.map((t, i) => (i === 0 ? { ...t, layers: [held] } : t)) }
+    const withLayer = withRoot(p0, { tracks: root(p0).tracks.map((t, i) => (i === 0 ? { ...t, layers: [held] } : t)) })
     const h = new History(withLayer, U, gen())
     h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted layer', label_key: 'history.layer.delete', affected: [{ kind: 'Layer', id: 'L1' }], snapshot: p0 })
     const ops = h.view(1).ops // window holds ONLY the delete; its predecessor is the seed
@@ -358,19 +359,19 @@ describe('replaceCompositionEverywhere', () => {
     const p0 = blankProject(gen, 'h')
     const h = new History(p0, { kind: 'User' }, gen())
     // record a second snapshot that differs (a duration change)
-    const p1 = { ...p0, composition: { ...p0.composition, duration_us: 5_000_000, duration_pinned: true } }
+    const p1 = withRoot(p0, { duration_us: 5_000_000, duration_pinned: true })
     h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', label_key: KEY, affected: [], snapshot: p1 })
     const canvas = { width: 1280, height: 720, fps: { num: 24, den: 1 }, background: { r: 10, g: 20, b: 30, a: 255 } }
-    h.replaceCompositionEverywhere((p) => ({ ...p, composition: { ...p.composition, ...canvas } }))
+    h.replaceCompositionEverywhere((p) => withRoot(p, canvas))
     // head (p1): canvas patched, this transform leaves duration alone
-    expect(h.current().composition.width).toBe(1280)
-    expect(h.current().composition.fps).toEqual({ num: 24, den: 1 })
-    expect(h.current().composition.duration_us).toBe(5_000_000)
-    expect(h.current().composition.duration_pinned).toBe(true)
+    expect(root(h.current()).width).toBe(1280)
+    expect(root(h.current()).fps).toEqual({ num: 24, den: 1 })
+    expect(root(h.current()).duration_us).toBe(5_000_000)
+    expect(root(h.current()).duration_pinned).toBe(true)
     // earlier snapshot (Initial) also patched
     const initial = h.undo()!
-    expect(initial.composition.width).toBe(1280)
-    expect(initial.composition.duration_us).toBe(0)
+    expect(root(initial).width).toBe(1280)
+    expect(root(initial).duration_us).toBe(0)
   })
 
   /// A transform, not a value copy, precisely so it can read each snapshot: this is
@@ -379,13 +380,11 @@ describe('replaceCompositionEverywhere', () => {
     const gen = seededGen()
     const p0 = blankProject(gen, 'h2')
     const h = new History(p0, { kind: 'User' }, gen())
-    const p1 = { ...p0, composition: { ...p0.composition, duration_us: 5_000_000 } }
+    const p1 = withRoot(p0, { duration_us: 5_000_000 })
     h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', label_key: KEY, affected: [], snapshot: p1 })
-    h.replaceCompositionEverywhere((p) => ({
-      ...p, composition: { ...p.composition, duration_us: Math.max(p.composition.duration_us, 1_000_000) },
-    }))
-    expect(h.current().composition.duration_us).toBe(5_000_000) // its own value won
-    expect(h.undo()!.composition.duration_us).toBe(1_000_000) // the floor won
+    h.replaceCompositionEverywhere((p) => withRoot(p, { duration_us: Math.max(root(p).duration_us, 1_000_000) }))
+    expect(root(h.current()).duration_us).toBe(5_000_000) // its own value won
+    expect(root(h.undo()!).duration_us).toBe(1_000_000) // the floor won
   })
 })
 
@@ -396,7 +395,7 @@ describe('storedSnapshotsHoldLayer', () => {
     params: colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1920, 1080), effects: [],
   }
   function withLayer(p: Project): Project {
-    return { ...p, tracks: p.tracks.map((t, i) => (i === 0 ? { ...t, layers: [LAYER] } : t)) }
+    return withRoot(p, { tracks: root(p).tracks.map((t, i) => (i === 0 ? { ...t, layers: [LAYER] } : t)) })
   }
 
   it('is false for a stack that has never held a layer', () => {
@@ -411,7 +410,7 @@ describe('storedSnapshotsHoldLayer', () => {
     const gen = seededGen(); const p0 = blankProject(gen, 's2')
     const h = new History(withLayer(p0), { kind: 'User' }, gen())
     h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 'deleted it', label_key: KEY, affected: [], snapshot: p0 })
-    expect(h.current().tracks.every((t) => t.layers.length === 0)).toBe(true)
+    expect(root(h.current()).tracks.every((t) => t.layers.length === 0)).toBe(true)
     expect(h.storedSnapshotsHoldLayer()).toBe(true)
   })
 
@@ -428,25 +427,25 @@ describe('storedSnapshotsHoldLayer', () => {
 
 describe('History.replaceTrackFlagsEverywhere', () => {
   it('patches all snapshots + persists across undo, unrecorded', () => {
-    const gen = seededGen(); const p0 = blankProject(gen, 't'); const tid = p0.tracks[0].id
+    const gen = seededGen(); const p0 = blankProject(gen, 't'); const tid = root(p0).tracks[0].id
     const h = new History(p0, { kind: 'User' }, gen())
     // record a second snapshot so there's something to undo to
-    const p1 = { ...h.current(), markers: [...h.current().markers] }
+    const p1 = withRoot(h.current(), { markers: [...root(h.current()).markers] })
     h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 'edit', label_key: KEY, affected: [], snapshot: p1 })
     h.replaceTrackFlagsEverywhere(tid, { locked: true })
-    expect(h.current().tracks.find((t) => t.id === tid)!.locked).toBe(true)
+    expect(root(h.current()).tracks.find((t) => t.id === tid)!.locked).toBe(true)
     expect(h.len()).toBe(2) // not recorded
     const prev = h.undo()!
-    expect(prev.tracks.find((t) => t.id === tid)!.locked).toBe(true) // persists across undo
+    expect(root(prev).tracks.find((t) => t.id === tid)!.locked).toBe(true) // persists across undo
   })
   it('only typeof-defined fields apply; absent track is skipped', () => {
-    const gen = seededGen(); const p0 = blankProject(gen, 't'); const tid = p0.tracks[0].id
+    const gen = seededGen(); const p0 = blankProject(gen, 't'); const tid = root(p0).tracks[0].id
     const h = new History(p0, { kind: 'User' }, gen())
     h.replaceTrackFlagsEverywhere(tid, { muted: true })
-    const t = h.current().tracks.find((x) => x.id === tid)!
+    const t = root(h.current()).tracks.find((x) => x.id === tid)!
     expect(t.muted).toBe(true); expect(t.locked).toBe(false) // untouched
     h.replaceTrackFlagsEverywhere('ghost', { locked: true }) // no such track → no-op, no throw
-    expect(h.current().tracks.every((x) => !x.locked)).toBe(true)
+    expect(root(h.current()).tracks.every((x) => !x.locked)).toBe(true)
   })
 })
 
@@ -455,13 +454,13 @@ describe('History.replaceRoleFlagsEverywhere', () => {
     const gen = seededGen()
     const p0 = blankProject(gen, 'h')
     const h = new History(p0, { kind: 'User' }, gen())
-    const p1 = { ...p0, composition: { ...p0.composition, duration_us: 5_000_000 } }
+    const p1 = withRoot(p0, { duration_us: 5_000_000 })
     h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', label_key: KEY, affected: [], snapshot: p1 })
     h.replaceRoleFlagsEverywhere('music', { muted: true })
     expect(h.current().audio_roles.music).toEqual({ gain_db: 0, muted: true, solo: false }) // head patched, defaults filled
     const earlier = h.undo()! // back to the Initial snapshot
     expect(earlier.audio_roles.music).toEqual({ gain_db: 0, muted: true, solo: false }) // earlier patched too
-    expect(earlier.composition.duration_us).toBe(0) // role-only patch leaves the rest intact
+    expect(root(earlier).duration_us).toBe(0) // role-only patch leaves the rest intact
   })
   it('preserves an existing gain_db while toggling solo', () => {
     const gen = seededGen()
@@ -484,13 +483,13 @@ describe('History.replaceMediaPoolEverywhere', () => {
     const p0 = blankProject(gen, 'h')
     const h = new History(p0, { kind: 'User' }, gen())
     // record a second snapshot (an unrelated edit) so there are two entries to patch
-    const p1 = { ...p0, composition: { ...p0.composition, duration_us: 5_000_000 } }
+    const p1 = withRoot(p0, { duration_us: 5_000_000 })
     h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', label_key: KEY, affected: [], snapshot: p1 })
     const id = '00000000-0000-0000-0000-0000000000aa'
     h.replaceMediaPoolEverywhere({ [id]: mediaItem(id) })
     expect(Object.keys(h.current().media_pool)).toEqual([id]) // head patched
     const earlier = h.undo()! // back to the Initial snapshot
     expect(Object.keys(earlier.media_pool)).toEqual([id])       // earlier snapshot patched too (durable across undo)
-    expect(earlier.composition.duration_us).toBe(0)             // pool-only patch leaves the rest intact
+    expect(root(earlier).duration_us).toBe(0)             // pool-only patch leaves the rest intact
   })
 })

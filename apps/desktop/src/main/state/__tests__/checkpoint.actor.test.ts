@@ -2,12 +2,13 @@ import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
 import { blankProject } from '../model'
 import { createActor } from '../actor'
+import { root } from './fixtures/project'
 
 function setup() {
   const idGen = seededGen()
   const initial = blankProject(idGen, 't') // mints A#1, B#2, project#3
   const actor = createActor({ initial, idGen, clock: () => '<TS>' }) // Initial op_id #4
-  const aRoll = initial.tracks[0].id
+  const aRoll = root(initial).tracks[0].id
   let colorOffset = 0
   function addColor() {
     const start = colorOffset * 2_000_000

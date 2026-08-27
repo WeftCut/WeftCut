@@ -1,6 +1,6 @@
 // src/main/state/mutations/update.ts
 import type { Project, Uuid } from '../model'
-import { checkTrackLock, locateLayer } from './helpers'
+import { checkTrackLock, locateLayer, rootComposition } from './helpers'
 
 /** LayerPatch. null/absent = "don't touch". */
 export interface LayerPatch {
@@ -15,9 +15,10 @@ export interface LayerPatch {
  *  edits on a locked track / missing layer), then apply only the provided fields.
  *  Does NOT autofit: a t_end edit here never moves composition.duration_us. */
 export function applyUpdateLayer(p: Project, id: Uuid, patch: LayerPatch): void {
+  const c = rootComposition(p)
   checkTrackLock(p, id) // throws LayerNotFound (missing) or TrackLocked (locked track)
   const loc = locateLayer(p, id)! // existence guaranteed by checkTrackLock
-  const layer = p.tracks[loc[0]].layers[loc[1]]
+  const layer = c.tracks[loc[0]].layers[loc[1]]
   if (typeof patch.label === 'string') layer.label = patch.label
   if (typeof patch.t_start_us === 'number') layer.t_start_us = patch.t_start_us
   if (typeof patch.t_end_us === 'number') layer.t_end_us = patch.t_end_us
@@ -32,10 +33,11 @@ export function applyUpdateLayer(p: Project, id: Uuid, patch: LayerPatch): void 
  *  refuses the WHOLE set before any layer is written (`checkTrackLock` also
  *  throws LayerNotFound for an unknown id). */
 export function applySetLayersEnabled(p: Project, layerIds: readonly Uuid[], enabled: boolean): void {
+  const c = rootComposition(p)
   const ids = [...new Set(layerIds)]
   for (const id of ids) checkTrackLock(p, id)
   for (const id of ids) {
     const loc = locateLayer(p, id)! // verified by checkTrackLock
-    p.tracks[loc[0]].layers[loc[1]].enabled = enabled
+    c.tracks[loc[0]].layers[loc[1]].enabled = enabled
   }
 }

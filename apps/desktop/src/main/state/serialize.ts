@@ -10,16 +10,21 @@ function serializeLink(g: Link): unknown {
 
 /** Produce the on-disk/wire JSON shape. The model is already JSON-native, so
  *  this is mostly identity; the only non-identity rules are link member
- *  sorting and the `Link.label` omission (mirrors serde skip_serializing_if). */
+ *  sorting and the `Link.label` omission (mirrors serde skip_serializing_if),
+ *  applied inside every composition. `Composition.label` is NOT omitted —
+ *  null is written (the Rust twin is a plain `Option<String>`). */
 export function serializeProject(p: Project): unknown {
-  return { ...p, links: p.links.map(serializeLink) }
+  const compositions: Record<string, unknown> = {}
+  for (const [id, c] of Object.entries(p.compositions)) compositions[id] = { ...c, links: c.links.map(serializeLink) }
+  return { ...p, compositions }
 }
 
 /** One timeline field the load pass had to move: onto its own lattice (the
  *  composition frame grid, or the 48 kHz sample lattice for audio), or up to 0. */
 export interface GridRepair {
   entity: 'Layer' | 'Composition' | 'Marker' | 'Transition'
-  /** Entity id, or null for the composition (a singleton). */
+  /** Entity id (for `'Composition'` the composition's own id); null only when
+   *  the wire object carries no string id. */
   id: string | null
   field: string
   from: number
@@ -71,14 +76,6 @@ function warnGridRepair(repairs: readonly GridRepair[]): void {
  *  cast to `Project`: a corrupt field is left for validate to reject with its own
  *  structured error rather than being coerced here. */
 function repairGrid(o: Record<string, unknown>): GridRepair[] {
-  const comp = o.composition as Record<string, unknown> | undefined
-  const fps = comp?.fps as { num?: unknown; den?: unknown } | undefined
-  const num = fps?.num
-  const den = fps?.den
-  // A degenerate rate has no grid to snap to; `InvalidFps` is the right report.
-  if (comp === undefined || typeof num !== 'number' || typeof den !== 'number' || num <= 0 || den <= 0) return []
-  const compGrid = frameGrid({ num, den })
-
   const repairs: GridRepair[] = []
   /** Snap `holder[field]` onto `grid`, recording the move. Returns the value now in
    *  place, or null when the field is absent/non-numeric (validate owns that shape). */
@@ -143,77 +140,90 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
     return next
   }
 
-  // Layer endpoints first: transition durations are re-derived from the repaired
-  // geometry below, so they must read the final values.
-  const geometry = new Map<string, { start: number; end: number }>()
-  for (const track of (o.tracks as Array<{ layers?: unknown }> | undefined) ?? []) {
-    const layers = (track?.layers as Array<Record<string, unknown>> | undefined) ?? []
-    // Where an entirely-negative layer gets parked. Read from the RAW ends before any
-    // repair runs, so a parked layer can never land on a live one; advanced as each is
-    // placed. A negative end cannot raise it, which is what makes 0 the floor.
-    let parkAt = 0
-    for (const l of layers) {
-      const e = l === null || typeof l !== 'object' ? null : l.t_end_us
-      if (typeof e === 'number' && Number.isFinite(e) && e > parkAt) parkAt = e
-    }
-    for (const layer of layers) {
-      if (layer === null || typeof layer !== 'object') continue
-      const id = typeof layer.id === 'string' ? layer.id : null
-      const kind = (layer.params as { kind?: unknown } | undefined)?.kind
-      const grid = gridForLayerKind(typeof kind === 'string' ? kind : '', { num, den })
-      parkAt = repairNegativeStart(id, layer, grid, parkAt)
-      const start = snapField('Layer', id, layer, 't_start_us', grid)
-      let end = snapField('Layer', id, layer, 't_end_us', grid)
-      if (start !== null && end !== null && end <= start) end = widenToOneQuantum('Layer', id, layer, 't_end_us', start, grid)
-      if (id !== null && start !== null && end !== null) geometry.set(id, { start, end })
-    }
-  }
+  // One pass per composition: a Group has its own grid-bound fields and its own
+  // transitions, whose participants are same-composition layers — so the
+  // geometry map is per composition too.
+  for (const comp of wireCompositions(o)) {
+    const fps = comp.fps as { num?: unknown; den?: unknown } | undefined
+    const num = fps?.num
+    const den = fps?.den
+    // A degenerate rate has no grid to snap to; `InvalidFps` is the right report.
+    if (typeof num !== 'number' || typeof den !== 'number' || num <= 0 || den <= 0) continue
+    const compGrid = frameGrid({ num, den })
+    const compId = typeof comp.id === 'string' ? comp.id : null
 
-  // A transition's duration is the geometric overlap of its participants, not a
-  // grid time of its own (see validate.ts's TransitionDurationMismatch note), so
-  // moving an endpoint by 1 µs changes what the duration must be. Re-derive it or
-  // the repaired project fails to open on the mismatch rule instead.
-  // A non-overlapping pair is left alone: that transition is structurally dead,
-  // not off-grid, and validate/reconcile own it.
-  for (const tr of (o.transitions as Array<Record<string, unknown>> | undefined) ?? []) {
-    if (tr === null || typeof tr !== 'object') continue
-    const from = geometry.get(tr.from_layer as string)
-    const to = geometry.get(tr.to_layer as string)
-    if (!from || !to || typeof tr.duration_us !== 'number') continue
-    const overlap = Math.min(from.end, to.end) - Math.max(from.start, to.start)
-    if (overlap > 0 && overlap !== tr.duration_us) {
-      repairs.push({ entity: 'Transition', id: typeof tr.id === 'string' ? tr.id : null, field: 'duration_us', from: tr.duration_us, to: overlap })
-      tr.duration_us = overlap
+    // Layer endpoints first: transition durations are re-derived from the repaired
+    // geometry below, so they must read the final values.
+    const geometry = new Map<string, { start: number; end: number }>()
+    for (const track of (comp.tracks as Array<{ layers?: unknown }> | undefined) ?? []) {
+      const layers = (track?.layers as Array<Record<string, unknown>> | undefined) ?? []
+      // Where an entirely-negative layer gets parked. Read from the RAW ends before any
+      // repair runs, so a parked layer can never land on a live one; advanced as each is
+      // placed. A negative end cannot raise it, which is what makes 0 the floor.
+      let parkAt = 0
+      for (const l of layers) {
+        const e = l === null || typeof l !== 'object' ? null : l.t_end_us
+        if (typeof e === 'number' && Number.isFinite(e) && e > parkAt) parkAt = e
+      }
+      for (const layer of layers) {
+        if (layer === null || typeof layer !== 'object') continue
+        const id = typeof layer.id === 'string' ? layer.id : null
+        const kind = (layer.params as { kind?: unknown } | undefined)?.kind
+        const grid = gridForLayerKind(typeof kind === 'string' ? kind : '', { num, den })
+        parkAt = repairNegativeStart(id, layer, grid, parkAt)
+        const start = snapField('Layer', id, layer, 't_start_us', grid)
+        let end = snapField('Layer', id, layer, 't_end_us', grid)
+        if (start !== null && end !== null && end <= start) end = widenToOneQuantum('Layer', id, layer, 't_end_us', start, grid)
+        if (id !== null && start !== null && end !== null) geometry.set(id, { start, end })
+      }
     }
-  }
 
-  // The composition duration is a FRAME count regardless of which kind reaches
-  // furthest (validateComposition), so it snaps on the composition grid even when
-  // the content that defines it is audio on the sample lattice.
-  const snappedDuration = snapField('Composition', null, comp, 'duration_us', compGrid)
-  // Repairing an audio endpoint can push it up to one sample PAST the stored
-  // duration, so grow the duration to enclose the repaired content — the same
-  // overflow guard `applyDurationAutofit` applies, and for the same reason: a
-  // composition shorter than its content silently drops the tail. Grow-only, so a
-  // deliberately pinned longer duration is never shortened here.
-  if (snappedDuration !== null) {
-    let maxEnd = 0
-    for (const g of geometry.values()) if (g.end > maxEnd) maxEnd = g.end
-    const needed = snapUpOnGrid(maxEnd, compGrid)
-    if (needed > snappedDuration) {
-      repairs.push({ entity: 'Composition', id: null, field: 'duration_us', from: snappedDuration, to: needed })
-      comp.duration_us = needed
+    // A transition's duration is the geometric overlap of its participants, not a
+    // grid time of its own (see validate.ts's TransitionDurationMismatch note), so
+    // moving an endpoint by 1 µs changes what the duration must be. Re-derive it or
+    // the repaired project fails to open on the mismatch rule instead.
+    // A non-overlapping pair is left alone: that transition is structurally dead,
+    // not off-grid, and validate/reconcile own it.
+    for (const tr of (comp.transitions as Array<Record<string, unknown>> | undefined) ?? []) {
+      if (tr === null || typeof tr !== 'object') continue
+      const from = geometry.get(tr.from_layer as string)
+      const to = geometry.get(tr.to_layer as string)
+      if (!from || !to || typeof tr.duration_us !== 'number') continue
+      const overlap = Math.min(from.end, to.end) - Math.max(from.start, to.start)
+      if (overlap > 0 && overlap !== tr.duration_us) {
+        repairs.push({ entity: 'Transition', id: typeof tr.id === 'string' ? tr.id : null, field: 'duration_us', from: tr.duration_us, to: overlap })
+        tr.duration_us = overlap
+      }
     }
-  }
 
-  // Markers stay sorted: the snap is monotonic, so a snapped `t_us` never crosses
-  // its neighbours.
-  for (const m of (o.markers as Array<Record<string, unknown>> | undefined) ?? []) {
-    if (m === null || typeof m !== 'object') continue
-    const id = typeof m.id === 'string' ? m.id : null
-    const t = snapField('Marker', id, m, 't_us', compGrid)
-    const end = snapField('Marker', id, m, 'end_t_us', compGrid)
-    if (t !== null && end !== null && end <= t) widenToOneQuantum('Marker', id, m, 'end_t_us', t, compGrid)
+    // The composition duration is a FRAME count regardless of which kind reaches
+    // furthest (validateComposition), so it snaps on the composition grid even when
+    // the content that defines it is audio on the sample lattice.
+    const snappedDuration = snapField('Composition', compId, comp, 'duration_us', compGrid)
+    // Repairing an audio endpoint can push it up to one sample PAST the stored
+    // duration, so grow the duration to enclose the repaired content — the same
+    // overflow guard `applyDurationAutofit` applies, and for the same reason: a
+    // composition shorter than its content silently drops the tail. Grow-only, so a
+    // deliberately pinned longer duration is never shortened here.
+    if (snappedDuration !== null) {
+      let maxEnd = 0
+      for (const g of geometry.values()) if (g.end > maxEnd) maxEnd = g.end
+      const needed = snapUpOnGrid(maxEnd, compGrid)
+      if (needed > snappedDuration) {
+        repairs.push({ entity: 'Composition', id: compId, field: 'duration_us', from: snappedDuration, to: needed })
+        comp.duration_us = needed
+      }
+    }
+
+    // Markers stay sorted: the snap is monotonic, so a snapped `t_us` never crosses
+    // its neighbours.
+    for (const m of (comp.markers as Array<Record<string, unknown>> | undefined) ?? []) {
+      if (m === null || typeof m !== 'object') continue
+      const id = typeof m.id === 'string' ? m.id : null
+      const t = snapField('Marker', id, m, 't_us', compGrid)
+      const end = snapField('Marker', id, m, 'end_t_us', compGrid)
+      if (t !== null && end !== null && end <= t) widenToOneQuantum('Marker', id, m, 'end_t_us', t, compGrid)
+    }
   }
 
   return repairs
@@ -266,16 +276,29 @@ function normalizeTextParams(o: Record<string, unknown>): void {
   })
 }
 
-/** Every layer's params object on the WIRE shape. THE definition of "what counts
- *  as a layer" for the normalize passes — both descend from here, so a second
- *  pass cannot disagree with the first about which layers it visits. */
+/** The object values of `o.compositions` on the WIRE shape — root and Groups
+ *  alike. Non-object entries are skipped here and rejected by parseProject's
+ *  shape check, so the repair passes never coerce one. */
+function wireCompositions(o: Record<string, unknown>): Array<Record<string, unknown>> {
+  const comps = o.compositions
+  if (comps === null || typeof comps !== 'object' || Array.isArray(comps)) return []
+  return Object.values(comps as Record<string, unknown>)
+    .filter((c): c is Record<string, unknown> => c !== null && typeof c === 'object' && !Array.isArray(c))
+}
+
+/** Every layer's params object on the WIRE shape, in every composition. THE
+ *  definition of "what counts as a layer" for the normalize passes — both
+ *  descend from here, so a second pass cannot disagree with the first about
+ *  which layers it visits. */
 function forEachWireLayerParams(o: Record<string, unknown>, fn: (params: Record<string, unknown>) => void): void {
-  for (const track of (o.tracks as Array<{ layers?: unknown }> | undefined) ?? []) {
-    for (const layer of (track?.layers as Array<Record<string, unknown>> | undefined) ?? []) {
-      if (layer === null || typeof layer !== 'object') continue
-      const p = layer.params
-      if (p === null || typeof p !== 'object') continue
-      fn(p as Record<string, unknown>)
+  for (const comp of wireCompositions(o)) {
+    for (const track of (comp.tracks as Array<{ layers?: unknown }> | undefined) ?? []) {
+      for (const layer of (track?.layers as Array<Record<string, unknown>> | undefined) ?? []) {
+        if (layer === null || typeof layer !== 'object') continue
+        const p = layer.params
+        if (p === null || typeof p !== 'object') continue
+        fn(p as Record<string, unknown>)
+      }
     }
   }
 }
@@ -314,23 +337,29 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   const requireObject = (k: string) => {
     if (o[k] === null || typeof o[k] !== 'object' || Array.isArray(o[k])) throw new Error(`parseProject: ${k} must be an object`)
   }
-  const requireArray = (k: string) => {
-    if (!Array.isArray(o[k])) throw new Error(`parseProject: ${k} must be an array`)
-  }
   const requireString = (k: string) => {
     if (typeof o[k] !== 'string') throw new Error(`parseProject: ${k} must be a string`)
   }
   // Top-level shape of Project (model.ts `Project`). Shallow presence/kind only.
   requireString('project_id')
   requireObject('metadata')
-  requireObject('composition')
   requireObject('media_pool')
-  requireArray('tracks')
-  requireArray('markers')
-  requireArray('transitions')
-  requireArray('links')
   requireObject('audio_roles')
   requireObject('settings')
+  // The composition container. REQUIRED, no default: a file without it is the
+  // flat pre-container shape and must fail here, loudly, rather than open as an
+  // empty project (spec § Cut-over). `id === key`, fps and the lattice are
+  // validate's; this only proves the four collections are arrays so the repair
+  // passes above can walk them.
+  requireString('root_id')
+  requireObject('compositions')
+  const comps = o.compositions as Record<string, unknown>
+  if (!((o.root_id as string) in comps)) throw new Error(`parseProject: root_id ${String(o.root_id)} is not a key of compositions`)
+  for (const [k, c] of Object.entries(comps)) {
+    if (c === null || typeof c !== 'object' || Array.isArray(c)) throw new Error(`parseProject: compositions[${k}] must be an object`)
+    for (const arr of ['tracks', 'markers', 'transitions', 'links'] as const)
+      if (!Array.isArray((c as Record<string, unknown>)[arr])) throw new Error(`parseProject: compositions[${k}].${arr} must be an array`)
+  }
   // Additive settings fields (prefer_proxies/proxy_overrides, added later WITHOUT
   // a schema bump) deserialize as absent on projects saved before they existed.
   // Backfill here, or a consumer that reads a field as non-optional (e.g.
@@ -364,9 +393,11 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   // repaired geometry, and the backfill must copy the FINAL value or a
   // shrinking repair would mint `extended_us > duration_us` — a project that
   // fails validate's structural check and refuses to open.
-  for (const tr of (o.transitions as Array<Record<string, unknown>> | undefined) ?? []) {
-    if (tr === null || typeof tr !== 'object') continue
-    if (tr.extended_us === undefined && typeof tr.duration_us === 'number') tr.extended_us = tr.duration_us
+  for (const comp of wireCompositions(o)) {
+    for (const tr of (comp.transitions as Array<Record<string, unknown>> | undefined) ?? []) {
+      if (tr === null || typeof tr !== 'object') continue
+      if (tr.extended_us === undefined && typeof tr.duration_us === 'number') tr.extended_us = tr.duration_us
+    }
   }
   return json as Project
 }

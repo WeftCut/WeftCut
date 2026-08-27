@@ -9,6 +9,7 @@
 // per hybrid tool.
 import type { ActorHandle } from './actor'
 import type { Layer, MediaItem, VideoClipParams } from './model'
+import { eachLayer, rootComposition } from './model'
 import { snapFrameRound } from './snap'
 
 /** Rust compute facade — each method runs a native (no-actor-write) computation
@@ -61,9 +62,9 @@ export type HybridDeps = {
 /** Return the id of the topmost (last) track, or create a new "Voiceover"
  *  track and return its id. "Topmost" = last in the `tracks` array. */
 function ensureAudioTrack(deps: HybridDeps): string {
-  const snap = deps.actor.snapshot()
-  if (snap.tracks.length > 0) {
-    return snap.tracks[snap.tracks.length - 1].id
+  const root = rootComposition(deps.actor.snapshot())
+  if (root.tracks.length > 0) {
+    return root.tracks[root.tracks.length - 1].id
   }
   // No tracks at all — create a "Voiceover" track. Pathological-only branch:
   // production projects always carry the reserved, non-removable A/B-roll tracks,
@@ -123,9 +124,9 @@ async function resolveShotCuts(
   if (!analyze) throw new Error('auto_split_by_shot: shot analysis is not available in this build')
   const snap = deps.actor.snapshot()
   let layer: Layer | undefined
-  for (const track of snap.tracks) {
-    const l = track.layers.find((x) => x.id === layerId)
-    if (l) { layer = l; break }
+  let fps = rootComposition(snap).fps
+  for (const e of eachLayer(snap)) {
+    if (e.layer.id === layerId) { layer = e.layer; fps = e.composition.fps; break }
   }
   if (!layer) throw new Error(`auto_split_by_shot: layer ${layerId} not found`)
   if (layer.params.kind !== 'VideoClip')
@@ -138,7 +139,6 @@ async function resolveShotCuts(
   if (typeof minShotUs === 'number') opts.min_shot_us = minShotUs
   const report = JSON.parse(await analyze(JSON.stringify(media), JSON.stringify(opts))) as ShotReport
 
-  const fps = snap.composition.fps
   const seen = new Set<number>()
   const cutTimelineUs: number[] = []
   for (const s of report.shots) {

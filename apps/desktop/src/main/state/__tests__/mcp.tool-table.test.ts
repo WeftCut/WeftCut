@@ -3,6 +3,7 @@ import { MCP_TOOL_DEFS, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, MCP_TOOLS } from '.
 import { createActor } from '../actor'
 import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
+import { root } from './fixtures/project'
 
 const ALL_56_NAMES = new Set<string>([
   // table-exec tools (35)
@@ -184,7 +185,7 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     const idGen = uuidV7Gen()
     const initial = blankProject(idGen, 't')
     const actor = createActor({ initial, idGen, clock: () => '2026-01-01T00:00:00.000Z' })
-    const track = initial.tracks[0].id
+    const track = root(initial).tracks[0].id
     const a1 = (actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 }) as { ok: true; value: string }).value
     const a2 = (actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 2_000_000, t_end_us: 4_000_000 }) as { ok: true; value: string }).value
     return { actor, track, a1, a2 }
@@ -196,13 +197,13 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     expect(add.ok).toBe(true)
     if (!add.ok) return
     const tid = add.result.content[0].text
-    expect(actor.snapshot().transitions[0]).toMatchObject({ id: tid, kind: { kind: 'Wipe', direction: 'left' } })
+    expect(root(actor.snapshot()).transitions[0]).toMatchObject({ id: tid, kind: { kind: 'Wipe', direction: 'left' } })
     const upd = actor.mcpCall('update_transition', JSON.stringify({ transition_id: tid, duration_us: 500_000, kind: 'Crossfade' }))
     expect(upd.ok).toBe(true)
-    expect(actor.snapshot().transitions[0]).toMatchObject({ duration_us: 500_000, kind: { kind: 'Crossfade' } })
+    expect(root(actor.snapshot()).transitions[0]).toMatchObject({ duration_us: 500_000, kind: { kind: 'Crossfade' } })
     const rem = actor.mcpCall('remove_transition', JSON.stringify({ transition_id: tid }))
     expect(rem.ok).toBe(true)
-    expect(actor.snapshot().transitions).toEqual([])
+    expect(root(actor.snapshot()).transitions).toEqual([])
   })
 
   it('bad kind / missing direction / direction on Crossfade → clean invalid_params, no commit', () => {
@@ -218,7 +219,7 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
       expect(r.ok, JSON.stringify(args)).toBe(false)
       if (!r.ok) expect(r.error.code).toBe('invalid_params')
     }
-    expect(actor.snapshot().transitions).toEqual([])
+    expect(root(actor.snapshot()).transitions).toEqual([])
   })
 
   it('the default (no placement arg) add is overlap: MCP moves the incoming layer instead of extending', () => {
@@ -231,10 +232,10 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     const v1 = (actor.dispatch('add_layer', { track, kind: 'video', media: MID, src_in_us: 0, src_out_us: 2_000_000, t_start_us: 0, t_end_us: 2_000_000 }) as { ok: true; value: string }).value
     const r = actor.mcpCall('add_transition', JSON.stringify({ from_layer_id: v1, to_layer_id: a2, duration_us: 1_000_000 }))
     expect(r.ok).toBe(true)
-    const layers = actor.snapshot().tracks[0].layers
+    const layers = root(actor.snapshot()).tracks[0].layers
     expect(layers.find((l) => l.id === v1)!.t_end_us).toBe(2_000_000) // A untouched
     expect(layers.find((l) => l.id === a2)!.t_start_us).toBe(1_000_000) // B moved left
-    expect(actor.snapshot().transitions[0].extended_us).toBe(0)
+    expect(root(actor.snapshot()).transitions[0].extended_us).toBe(0)
   })
 
   it("placement 'extend' rides the MCP surface: TransitionInsufficientHandle surfaces friendly prose + structured data (available_us)", () => {
@@ -251,7 +252,7 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     expect(r.error.code).toBe('invalid_params')
     expect(r.error.message).toContain('µs remaining')
     expect(r.error.data).toEqual({ error: 'TransitionInsufficientHandle', layer: v1, available_us: 0 })
-    expect(actor.snapshot().transitions).toEqual([])
+    expect(root(actor.snapshot()).transitions).toEqual([])
   })
 
   it('update_transition threads an explicit extended_us: the window slides onto borrowed tail through the MCP surface', () => {
@@ -265,8 +266,8 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     expect(upd.ok).toBe(true)
     // Duration unchanged; the whole window slid right by the borrow: A.end =
     // S + e′ = 2.5M (Color layers have unlimited handle), B.start = 1.5M.
-    expect(actor.snapshot().transitions[0]).toMatchObject({ duration_us: 1_000_000, extended_us: 500_000 })
-    const layers = actor.snapshot().tracks[0].layers
+    expect(root(actor.snapshot()).transitions[0]).toMatchObject({ duration_us: 1_000_000, extended_us: 500_000 })
+    const layers = root(actor.snapshot()).tracks[0].layers
     expect(layers.find((l) => l.id === a1)!.t_end_us).toBe(2_500_000)
     expect(layers.find((l) => l.id === a2)!.t_start_us).toBe(1_500_000)
   })
@@ -280,7 +281,7 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     expect(r.error.code).toBe('invalid_params')
     expect(r.error.message).toContain('share a link')
     expect(r.error.data).toMatchObject({ error: 'TransitionParticipantsShareLink', from: a1, to: a2 })
-    expect(actor.snapshot().transitions).toEqual([])
+    expect(root(actor.snapshot()).transitions).toEqual([])
   })
 
   it('audio participant → TransitionUnsupportedLayerKind prose + data', () => {

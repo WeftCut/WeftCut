@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/ts-actor-host.ts
 import { createActor, type ActorHandle, type ChangeEvent } from './actor'
 import { uuidV7Gen } from './ids'
-import { blankProject } from './model'
+import { blankProject, eachLayer, rootComposition } from './model'
 import { buildProjectSummary } from './summary'
 import { routeChannel } from './router'
 import { createAutosave, type AutosaveController, type AutosaveFs } from './autosave'
@@ -248,7 +248,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     enqueueWorkspaceCopy: deps.enqueueWorkspaceCopy,
     workspaceDir: deps.workspaceDir,
     readFile: deps.readFile,
-    snapshotComposition: () => actor.snapshot().composition,
+    snapshotComposition: () => rootComposition(actor.snapshot()),
   }
 
   // Only state-replacing routes cross this gate. Save As preserves the current
@@ -281,11 +281,11 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       store: deps.motifStore,
       builtins: deps.motifBuiltins ?? [],
       motifLayers: () =>
-        actor.snapshot().tracks.flatMap((t) => t.layers.flatMap((l) => {
+        [...eachLayer(actor.snapshot())].flatMap(({ layer: l }) => {
           if (l.params.kind !== 'Motif') return []
           const p = l.params as MotifParams
           return [{ layerId: l.id, motifId: p.motif_id, version: p.motif_version, props: p.props } satisfies MotifLayerRef]
-        })),
+        }),
       dispatchRebind: (updates: MotifRebindEntry[]) => { const r = actor.dispatch('rebind_motif', { updates }); if (!r.ok) throw new Error(JSON.stringify(r.error)) },
       emitChanged: () => deps.send('motifs:changed', {}),
       refreshCatalog: () => refreshMotifCatalog(),

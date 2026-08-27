@@ -7,6 +7,7 @@
 // deliberately NOT here — it is per-operation behavior, not a state invariant
 // (see checkAllInvariants).
 import type { WireProject, WireLayer } from './harness'
+import { wireRoot } from './harness'
 
 export class InvariantError extends Error {}
 function fail(msg: string): never { throw new InvariantError(msg) }
@@ -16,14 +17,14 @@ function pairKey(a: string, b: string): string { return a < b ? `${a}|${b}` : `$
 
 export function invUniqueLayerIds(p: WireProject): void {
   const seen = new Set<string>()
-  for (const t of p.tracks) for (const l of t.layers) {
+  for (const t of wireRoot(p).tracks) for (const l of t.layers) {
     if (seen.has(l.id)) fail(`duplicate layer id ${l.id}`)
     seen.add(l.id)
   }
 }
 
 export function invLayerRanges(p: WireProject): void {
-  for (const t of p.tracks) for (const l of t.layers)
+  for (const t of wireRoot(p).tracks) for (const l of t.layers)
     if (l.t_start_us >= l.t_end_us) fail(`layer ${l.id} has empty/inverted range [${l.t_start_us}, ${l.t_end_us})`)
 }
 
@@ -31,14 +32,14 @@ export function invNoUnauthorizedOverlap(p: WireProject): void {
   // Authorized overlap per layer-pair = the geometric overlap of the two
   // transition-linked layers (independently recomputed, not read from validate).
   const idx = new Map<string, WireLayer>()
-  for (const t of p.tracks) for (const l of t.layers) idx.set(l.id, l)
+  for (const t of wireRoot(p).tracks) for (const l of t.layers) idx.set(l.id, l)
   const authorized = new Map<string, number>()
-  for (const tr of p.transitions) {
+  for (const tr of wireRoot(p).transitions) {
     const a = idx.get(tr.from_layer), b = idx.get(tr.to_layer)
     if (!a || !b) continue
     authorized.set(pairKey(tr.from_layer, tr.to_layer), Math.max(Math.min(a.t_end_us, b.t_end_us) - Math.max(a.t_start_us, b.t_start_us), 0))
   }
-  for (const t of p.tracks) {
+  for (const t of wireRoot(p).tracks) {
     for (const cls of ['visual', 'audio'] as const) {
       const lane = t.layers.filter((l) => overlapClass(l.params.kind) === cls).sort((x, y) => x.t_start_us - y.t_start_us)
       // Track the longest-reaching prior layer (a long clip can start before a
@@ -64,10 +65,10 @@ const TRANSITION_DIRECTIONS = new Set(['left', 'right', 'up', 'down'])
  *  any of these. Fresh statement of the domain rules, NOT a validate.ts import. */
 export function invTransitionsWellFormed(p: WireProject): void {
   const loc = new Map<string, { track: string; layer: WireLayer }>()
-  for (const t of p.tracks) for (const l of t.layers) loc.set(l.id, { track: t.id, layer: l })
+  for (const t of wireRoot(p).tracks) for (const l of t.layers) loc.set(l.id, { track: t.id, layer: l })
   const seen = new Set<string>()
   const asFrom = new Set<string>(), asTo = new Set<string>()
-  for (const tr of p.transitions) {
+  for (const tr of wireRoot(p).transitions) {
     if (seen.has(tr.id)) fail(`duplicate transition id ${tr.id}`)
     seen.add(tr.id)
     if (tr.from_layer === tr.to_layer) fail(`transition ${tr.id} is self-referencing (${tr.from_layer})`)
@@ -107,9 +108,9 @@ export function invTransitionsWellFormed(p: WireProject): void {
 
 export function invLinksWellFormed(p: WireProject): void {
   const known = new Set<string>()
-  for (const t of p.tracks) for (const l of t.layers) known.add(l.id)
+  for (const t of wireRoot(p).tracks) for (const l of t.layers) known.add(l.id)
   const seenG = new Set<string>(), member = new Map<string, string>()
-  for (const g of p.links) {
+  for (const g of wireRoot(p).links) {
     if (seenG.has(g.id)) fail(`duplicate link id ${g.id}`)
     seenG.add(g.id)
     if (g.members.length < 2) fail(`link ${g.id} below min size (${g.members.length})`)

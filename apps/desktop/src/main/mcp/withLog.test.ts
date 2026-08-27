@@ -19,6 +19,7 @@ import { HISTORY_SUMMARY } from '../state/history-labels'
 import { uuidV7Gen } from '../state/ids'
 import { blankProject } from '../state/model'
 import { BUILTIN_MANIFESTS } from '../../shared/motifs/catalog'
+import { root } from '../state/__tests__/fixtures/project'
 
 // preview_motif_draft's route ends in a real CDP frame capture, which has no
 // business running in a unit test. Stubbed so the tool still crosses the funnel
@@ -70,7 +71,7 @@ function tsHostStub(compute: Record<string, unknown> = {}) {
     enqueueWorkspaceCopy: vi.fn(async () => {}),
     workspaceDir: () => null,
     readFile: () => '',
-    snapshotComposition: () => actor.snapshot().composition,
+    snapshotComposition: () => root(actor.snapshot()),
   }
   return {
     actor, hybridDeps,
@@ -199,7 +200,7 @@ describe('level follows the tool route', () => {
   it("a mutation is the user's business: Info", async () => {
     const { entries, deps } = collector()
     const ts = tsHostStub()
-    const track = ts.actor.snapshot().tracks[0].id
+    const track = root(ts.actor.snapshot()).tracks[0].id
     const handler = withLog('tools/call', async (req: { params: { name: string; arguments: Record<string, unknown> } }) =>
       handleCallTool(fakeBackend(), () => ts, req.params.name, req.params.arguments), deps)
     await handler({ params: { name: 'add_color_layer', arguments: { track_id: track, color: { r: 0, g: 0, b: 0, a: 1 }, t_start_us: 0, t_end_us: 1_000_000 } } }, undefined)
@@ -325,7 +326,7 @@ describe('a mutation row reads the way the history panel does', () => {
     const { entries, deps } = collector()
     const ts = tsHostStub()
     const call = sessionCallTool(deps, ts)
-    const track = ts.actor.snapshot().tracks[0].id
+    const track = root(ts.actor.snapshot()).tracks[0].id
     await call('add_color_layer', { track_id: track, color: BLACK, t_start_us: 0, t_end_us: 1_000_000 })
 
     // Asserted against the panel's OWN read, not an English literal: the row has
@@ -365,7 +366,7 @@ describe('a mutation row reads the way the history panel does', () => {
     const { entries, deps } = collector()
     const ts = tsHostStub()
     const call = sessionCallTool(deps, ts)
-    const track = ts.actor.snapshot().tracks[0].id
+    const track = root(ts.actor.snapshot()).tracks[0].id
     await call('add_color_layer', { track_id: track, color: BLACK, t_start_us: 0, t_end_us: 1_000_000 })
     await call('undo')
     // undo broadcasts an unrecorded ChangeEvent: real user-facing text, but no
@@ -393,7 +394,7 @@ describe('the commit window is closed before the first await', () => {
     const { entries, deps } = collector()
     const ts = tsHostStub()
     const observed: McpLogDeps = { ...deps, observe: mcpCommitObserver(() => ts) }
-    const track = ts.actor.snapshot().tracks[0].id
+    const track = root(ts.actor.snapshot()).tracks[0].id
     // Stands in for the shape the landmine in withLog.ts warns about: the 'ts'
     // route's commit moved behind an await. The window has closed by then, so
     // the row falls back — this test is what fails if that ever happens for real.
@@ -412,7 +413,7 @@ describe('the commit window is closed before the first await', () => {
     const { entries, deps } = collector()
     const ts = tsHostStub()
     const observed: McpLogDeps = { ...deps, observe: mcpCommitObserver(() => ts) }
-    const track = ts.actor.snapshot().tracks[0].id
+    const track = root(ts.actor.snapshot()).tracks[0].id
     let release = (): void => {}
     const gate = new Promise<void>((r) => { release = r })
     const route = (req: { params: { name: string; arguments: Record<string, unknown> } }) =>

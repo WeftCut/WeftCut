@@ -158,11 +158,11 @@ around 40, organised below.
 | URI | Returns |
 |---|---|
 | `project://current` | full Project JSON (with `schema_version`) |
-| `project://composition` | composition only |
+| `project://composition` | root composition settings — id, label, canvas, fps, duration, sample rate, channels, colour space, background; no tracks |
 | `project://media` | media pool listing |
-| `project://tracks` | tracks + layer envelopes |
-| `project://layers/{id}` | one layer in detail |
-| `project://markers` | all markers |
+| `project://tracks` | root composition's tracks + layer envelopes |
+| `project://layers/{id}` | one layer in detail, from whichever composition holds it |
+| `project://markers` | root composition's markers |
 | `project://history` | recent ops + checkpoints (snapshot-free). Each op carries `summary` (English prose), `label_key` + optional `label_args` (its i18n key and interpolation values — `history.*`, see `main/state/history-labels.ts`), `affected` (Track/Layer/Marker refs) and `entity_labels` (names for `affected`, same length and order, resolved against whichever stored snapshot still **holds** each ref — the op's own for an add/update/move, its predecessor's for a delete — so a deleted entity still has a name). An `entity_labels` element is `{"text": "…"}` for a stored name, or `{"label_key": "…", "label_args": {…}}` for a derived one — a clip's kind (`kinds.color`), a track's role (`tracks.roles.a-roll`) or a track's position (`tracks.positional` with `{"n": 3}`) — which the UI translates. The envelope carries `window_start` and `evicted` — see below |
 | `project://compiled` | compiled audio IRGraph (JSON) |
 | `media://{id}/thumbnail` | middle thumbnail as JPG (base64) |

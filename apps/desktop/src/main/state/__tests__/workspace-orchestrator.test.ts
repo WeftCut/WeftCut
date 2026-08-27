@@ -9,6 +9,7 @@ import { applyAddLayer, colorParams } from '../mutations/add'
 import { blankProject, SCHEMA_VERSION } from '../model'
 import type { MediaItem } from '../model'
 import { seededGen } from '../ids'
+import { root } from './fixtures/project'
 
 const posixJoin = (...p: string[]) => p.join('/')
 
@@ -95,9 +96,9 @@ describe('openProject', () => {
   function offGridJson(): string {
     const g = seededGen()
     const p = blankProject(g, 'Demo')
-    applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 255, g: 0, b: 0, a: 255 }, 16, 9), 0, 2_000_000)
+    applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 255, g: 0, b: 0, a: 255 }, 16, 9), 0, 2_000_000)
     const wire = serializeProject(p) as any
-    wire.tracks[0].layers[0].t_end_us = 2_999_999
+    wire.compositions[wire.root_id].tracks[0].layers[0].t_end_us = 2_999_999
     return JSON.stringify(wire)
   }
 
@@ -253,7 +254,7 @@ describe('newWorkspace', () => {
     const out = await newWorkspace(d, args)
     expect(out).toBe('/parent/Fresh')
     const written = JSON.parse((d.fs as any).files.get(`/parent/Fresh/${PROJECT_FILE}`))
-    expect(written.composition).toMatchObject({ width: 1280, height: 720, fps: { num: 24, den: 1 } })
+    expect(root(written)).toMatchObject({ width: 1280, height: 720, fps: { num: 24, den: 1 } })
     expect(d.calls).toEqual(['commit:/parent/Fresh', 'replaceState', 'recent:/parent/Fresh:Fresh', 'parent:/parent'])
   })
 })

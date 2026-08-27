@@ -8,6 +8,7 @@ import { isCommandFailure } from '../errors'
 import { validate } from '../validate'
 import { applyLinksCreate } from './links'
 import { frameCount, frameIndexFloor, frameIndexRound, timeUsAtFrame } from '../../../renderer/frames'
+import { root } from '../__tests__/fixtures/project'
 
 function color(id: string, t0: number, t1: number): Layer {
   const params: LayerParams = { kind: 'Color', color: { mode: 'Static', value: { r: 0, g: 0, b: 0, a: 255 } }, width: 1, height: 1 }
@@ -39,7 +40,7 @@ function media(id: string, durationUs: number): MediaItem {
 
 function setup() {
   const g = seededGen(); const p = blankProject(g, 't')
-  const a = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 1_000_000, 3_000_000)
+  const a = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 1_000_000, 3_000_000)
   return { p, a }
 }
 describe('trim', () => {
@@ -51,7 +52,7 @@ describe('trim', () => {
   it('trims the IN edge later (shortening)', () => {
     const { p, a } = setup()
     applyTrimLayer(p, a, 'In', 1_500_000, false)
-    const l = p.tracks[0].layers.find((x) => x.id === a)!
+    const l = root(p).tracks[0].layers.find((x) => x.id === a)!
     expect(l.t_start_us).toBe(1_500_000); expect(l.t_end_us).toBe(3_000_000)
   })
   // Over-trim clamps to one composition frame, not one microsecond — both edges
@@ -59,19 +60,19 @@ describe('trim', () => {
   it('clamps an IN over-trim to one composition frame, not one microsecond', () => {
     const { p, a } = setup()
     applyTrimLayer(p, a, 'In', 9_000_000, false) // way past t_end
-    const l = p.tracks[0].layers.find((x) => x.id === a)!
+    const l = root(p).tracks[0].layers.find((x) => x.id === a)!
     expect(l.t_start_us).toBe(2_966_667) // frame 89 at 30/1 — frame 90 is t_end
     expect(l.t_end_us - l.t_start_us).toBe(33_333)
   })
   it('trims the OUT edge, and clamps an inverting OUT trim to one frame (ticket 03)', () => {
     const { p, a } = setup()
     applyTrimLayer(p, a, 'Out', 4_000_000, false)
-    expect(p.tracks[0].layers.find((x) => x.id === a)!.t_end_us).toBe(4_000_000)
+    expect(root(p).tracks[0].layers.find((x) => x.id === a)!.t_end_us).toBe(4_000_000)
     // Trimming OUT to the current end returns via the no-op path, NOT an error.
     // Trimming OUT down to t_start would invert: clamped to the frame after t_start.
     const { p: p2, a: a2 } = setup()
     applyTrimLayer(p2, a2, 'Out', 1_000_000, false)
-    const l2 = p2.tracks[0].layers.find((x) => x.id === a2)!
+    const l2 = root(p2).tracks[0].layers.find((x) => x.id === a2)!
     expect(l2.t_start_us).toBe(1_000_000)
     expect(l2.t_end_us).toBe(1_033_333) // frame 31 at 30/1
   })
@@ -81,21 +82,21 @@ describe('trim', () => {
   ] as const)('accepts a one-frame %s trim from the timeline UI', (edge, atUs) => {
     const { p, a } = setup()
     applyTrimLayer(p, a, edge, atUs, false)
-    const l = p.tracks[0].layers.find((x) => x.id === a)!
+    const l = root(p).tracks[0].layers.find((x) => x.id === a)!
     expect(l.t_end_us - l.t_start_us).toBe(33_333)
   })
   it('clamps an AV OUT trim at normalized media duration', () => {
     const p = blankProject(seededGen(), 't')
     p.media_pool.m = media('m', 2_000_000)
-    p.tracks[0].layers = [video('v', 'm', 0, 1_000_000, 0, 1_000_000)]
+    root(p).tracks[0].layers = [video('v', 'm', 0, 1_000_000, 0, 1_000_000)]
     applyTrimLayer(p, 'v', 'Out', 3_000_000, false)
-    const l = p.tracks[0].layers[0]
+    const l = root(p).tracks[0].layers[0]
     expect(l.t_end_us).toBe(2_000_000)
     expect(l.params.kind).toBe('VideoClip')
     if (l.params.kind === 'VideoClip') expect(l.params.src_out_us).toBe(2_000_000)
   })
   it('rejects a locked track', () => {
-    const { p, a } = setup(); p.tracks[0].locked = true
+    const { p, a } = setup(); root(p).tracks[0].locked = true
     try { applyTrimLayer(p, a, 'In', 1_500_000, false); throw new Error('x') } catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('TrackLocked') }
   })
 })
@@ -117,7 +118,7 @@ function expectCanonical(us: number, num: number, den: number): void {
 
 function projectAtRate(num: number, den: number): Project {
   const p = blankProject(seededGen(), 't')
-  p.composition.fps = { num, den }
+  root(p).fps = { num, den }
   return p
 }
 
@@ -133,9 +134,9 @@ describe.each(RATES)('trim bounds on the %s/%s grid', (num, den) => {
     ['requested delta far beyond the layer', 600],
   ] as const)('over-trimming IN leaves one canonical frame (%s)', (_label, over) => {
     const p = projectAtRate(num, den)
-    p.tracks[0].layers = [color('a', at(30), at(120))]
+    root(p).tracks[0].layers = [color('a', at(30), at(120))]
     applyTrimLayer(p, 'a', 'In', at(120 + over), false)
-    const l = p.tracks[0].layers[0]
+    const l = root(p).tracks[0].layers[0]
     expect(l.t_start_us).toBe(at(119))
     expect(l.t_end_us).toBe(at(120))
     expectCanonical(l.t_start_us, num, den)
@@ -149,9 +150,9 @@ describe.each(RATES)('trim bounds on the %s/%s grid', (num, den) => {
     ['requested delta far beyond the layer', -600],
   ] as const)('over-trimming OUT leaves one canonical frame (%s)', (_label, targetFrame) => {
     const p = projectAtRate(num, den)
-    p.tracks[0].layers = [color('a', at(30), at(120))]
+    root(p).tracks[0].layers = [color('a', at(30), at(120))]
     applyTrimLayer(p, 'a', 'Out', Math.max(0, at(targetFrame)), false)
-    const l = p.tracks[0].layers[0]
+    const l = root(p).tracks[0].layers[0]
     expect(l.t_start_us).toBe(at(30))
     expect(l.t_end_us).toBe(at(31))
     expectCanonical(l.t_end_us, num, den)
@@ -160,9 +161,9 @@ describe.each(RATES)('trim bounds on the %s/%s grid', (num, den) => {
 
   it('clamps an IN growth past composition zero to frame 0', () => {
     const p = projectAtRate(num, den)
-    p.tracks[0].layers = [color('a', at(30), at(120))]
+    root(p).tracks[0].layers = [color('a', at(30), at(120))]
     applyTrimLayer(p, 'a', 'In', at(-150), false) // before the composition start
-    const l = p.tracks[0].layers[0]
+    const l = root(p).tracks[0].layers[0]
     expect(l.t_start_us).toBe(0)
     expect(l.t_end_us).toBe(at(120))
   })
@@ -170,9 +171,9 @@ describe.each(RATES)('trim bounds on the %s/%s grid', (num, den) => {
   it('OUT-trims to the last whole frame inside an off-grid media duration', () => {
     const p = projectAtRate(num, den)
     p.media_pool.m = media('m', OFF_GRID_MEDIA_DUR)
-    p.tracks[0].layers = [video('v', 'm', 0, at(30), 0, at(30))]
+    root(p).tracks[0].layers = [video('v', 'm', 0, at(30), 0, at(30))]
     applyTrimLayer(p, 'v', 'Out', 60_000_000, false)
-    const l = p.tracks[0].layers[0]
+    const l = root(p).tracks[0].layers[0]
     const lastIdx = frameIndexFloor(OFF_GRID_MEDIA_DUR, num, den)
     const lastWhole = timeUsAtFrame(lastIdx, num, den)
     expect(l.t_end_us).toBe(lastWhole)
@@ -192,15 +193,15 @@ describe.each(RATES)('trim bounds on the %s/%s grid', (num, den) => {
     ['Out', 10],
   ] as const)('refuses to trim a one-frame clip inward at the %s edge', (edge, targetFrame) => {
     const p = projectAtRate(num, den)
-    p.tracks[0].layers = [color('a', at(10), at(11))]
+    root(p).tracks[0].layers = [color('a', at(10), at(11))]
     try {
       applyTrimLayer(p, 'a', edge, at(targetFrame), false)
       throw new Error('expected TrimEdgeOutOfRange')
     } catch (e) {
       expect(isCommandFailure(e) && e.err.error).toBe('TrimEdgeOutOfRange')
     }
-    expect(p.tracks[0].layers[0].t_start_us).toBe(at(10)) // no partial commit
-    expect(p.tracks[0].layers[0].t_end_us).toBe(at(11))
+    expect(root(p).tracks[0].layers[0].t_start_us).toBe(at(10)) // no partial commit
+    expect(root(p).tracks[0].layers[0].t_end_us).toBe(at(11))
   })
 
   it.each([
@@ -208,48 +209,48 @@ describe.each(RATES)('trim bounds on the %s/%s grid', (num, den) => {
     ['Out', 12, 10, 12],
   ] as const)('grows a one-frame clip to exactly two frames at the %s edge', (edge, target, f0, f1) => {
     const p = projectAtRate(num, den)
-    p.tracks[0].layers = [color('a', at(10), at(11))]
+    root(p).tracks[0].layers = [color('a', at(10), at(11))]
     applyTrimLayer(p, 'a', edge, at(target), false)
-    const l = p.tracks[0].layers[0]
+    const l = root(p).tracks[0].layers[0]
     expect([l.t_start_us, l.t_end_us]).toEqual([at(f0), at(f1)])
     expect(frameCount(l.t_start_us, l.t_end_us, num, den)).toBe(2)
   })
 
   it('clamps a link-aligned OUT over-trim at the tightest member, on grid', () => {
     const p = projectAtRate(num, den)
-    p.tracks[0].layers = [color('a', at(0), at(90))]
-    p.tracks[1].layers = [color('b', at(60), at(90))] // shorter → governs
+    root(p).tracks[0].layers = [color('a', at(0), at(90))]
+    root(p).tracks[1].layers = [color('b', at(60), at(90))] // shorter → governs
     applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     applyTrimLayer(p, 'a', 'Out', 0, false)
-    for (const l of [p.tracks[0].layers[0], p.tracks[1].layers[0]]) {
+    for (const l of [root(p).tracks[0].layers[0], root(p).tracks[1].layers[0]]) {
       expect(l.t_end_us).toBe(at(61))
       expectCanonical(l.t_end_us, num, den)
     }
-    expect(p.tracks[1].layers[0].t_start_us).toBe(at(60)) // tightest = one frame
+    expect(root(p).tracks[1].layers[0].t_start_us).toBe(at(60)) // tightest = one frame
   })
 
   it('clamps a link-aligned IN over-trim at the tightest member, on grid', () => {
     const p = projectAtRate(num, den)
-    p.tracks[0].layers = [color('a', at(30), at(120))]
-    p.tracks[1].layers = [color('b', at(30), at(60))] // shorter → governs
+    root(p).tracks[0].layers = [color('a', at(30), at(120))]
+    root(p).tracks[1].layers = [color('b', at(30), at(60))] // shorter → governs
     applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     applyTrimLayer(p, 'a', 'In', at(500), false)
-    for (const l of [p.tracks[0].layers[0], p.tracks[1].layers[0]]) {
+    for (const l of [root(p).tracks[0].layers[0], root(p).tracks[1].layers[0]]) {
       expect(l.t_start_us).toBe(at(59))
       expectCanonical(l.t_start_us, num, den)
     }
-    expect(p.tracks[1].layers[0].t_end_us).toBe(at(60)) // tightest = one frame
+    expect(root(p).tracks[1].layers[0].t_end_us).toBe(at(60)) // tightest = one frame
   })
 
   it('clamps a link-aligned OUT growth at the media-capped member, on grid', () => {
     const p = projectAtRate(num, den)
     p.media_pool.m = media('m', OFF_GRID_MEDIA_DUR)
-    p.tracks[0].layers = [color('a', 0, at(30))]
-    p.tracks[1].layers = [video('v', 'm', 0, at(30), 0, at(30))]
+    root(p).tracks[0].layers = [color('a', 0, at(30))]
+    root(p).tracks[1].layers = [video('v', 'm', 0, at(30), 0, at(30))]
     applyLinksCreate(p, seededGen(), ['a', 'v'], null, false)
     applyTrimLayer(p, 'a', 'Out', 60_000_000, false)
     const lastWhole = timeUsAtFrame(frameIndexFloor(OFF_GRID_MEDIA_DUR, num, den), num, den)
-    for (const l of [p.tracks[0].layers[0], p.tracks[1].layers[0]]) {
+    for (const l of [root(p).tracks[0].layers[0], root(p).tracks[1].layers[0]]) {
       expect(l.t_end_us).toBe(lastWhole)
       expectCanonical(l.t_end_us, num, den)
     }
@@ -260,9 +261,9 @@ describe.each(RATES)('trim bounds on the %s/%s grid', (num, den) => {
     const p = projectAtRate(num, den)
     p.media_pool.m = media('m', OFF_GRID_MEDIA_DUR)
     // src range deliberately off-grid: it is source-media time (spec: NOT snapped).
-    p.tracks[0].layers = [video('v', 'm', at(10), at(40), 777, 777 + at(40) - at(10))]
+    root(p).tracks[0].layers = [video('v', 'm', at(10), at(40), 777, 777 + at(40) - at(10))]
     applyTrimLayer(p, 'v', 'In', at(1000), false) // over-trim → clamps to at(39)
-    const l = p.tracks[0].layers[0]
+    const l = root(p).tracks[0].layers[0]
     expect(l.t_start_us).toBe(at(39))
     expectCanonical(l.t_start_us, num, den)
     if (l.params.kind === 'VideoClip') {
@@ -276,27 +277,27 @@ describe.each(RATES)('trim bounds on the %s/%s grid', (num, den) => {
 describe('trim link aligned-set (live)', () => {
   it('coupled OUT trim fans out to a sibling sharing the same out-edge', () => {
     const p = blankProject(seededGen(), 't')
-    p.tracks[0].layers = [color('a', 0, 1_000_000)]
-    p.tracks[1].layers = [color('b', 0, 1_000_000)] // same out-edge 1_000_000
+    root(p).tracks[0].layers = [color('a', 0, 1_000_000)]
+    root(p).tracks[1].layers = [color('b', 0, 1_000_000)] // same out-edge 1_000_000
     applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     applyTrimLayer(p, 'a', 'Out', 600_000, false)
-    expect(p.tracks[0].layers[0].t_end_us).toBe(600_000)
-    expect(p.tracks[1].layers[0].t_end_us).toBe(600_000) // sibling fanned out
+    expect(root(p).tracks[0].layers[0].t_end_us).toBe(600_000)
+    expect(root(p).tracks[1].layers[0].t_end_us).toBe(600_000) // sibling fanned out
   })
   it('does NOT fan out to a sibling whose edge differs', () => {
     const p = blankProject(seededGen(), 't')
-    p.tracks[0].layers = [color('a', 0, 1_000_000)]
-    p.tracks[1].layers = [color('b', 0, 800_000)] // different out-edge
+    root(p).tracks[0].layers = [color('a', 0, 1_000_000)]
+    root(p).tracks[1].layers = [color('b', 0, 800_000)] // different out-edge
     applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     applyTrimLayer(p, 'a', 'Out', 600_000, false)
-    expect(p.tracks[1].layers[0].t_end_us).toBe(800_000) // untouched
+    expect(root(p).tracks[1].layers[0].t_end_us).toBe(800_000) // untouched
   })
   it('rejects a coupled trim when an aligned sibling is locked', () => {
     const p = blankProject(seededGen(), 't')
-    p.tracks[0].layers = [color('a', 0, 1_000_000)]
-    p.tracks[1].layers = [color('b', 0, 1_000_000)]
+    root(p).tracks[0].layers = [color('a', 0, 1_000_000)]
+    root(p).tracks[1].layers = [color('b', 0, 1_000_000)]
     applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
-    p.tracks[1].layers[0].locked = true
+    root(p).tracks[1].layers[0].locked = true
     try { applyTrimLayer(p, 'a', 'Out', 600_000, false); throw new Error('expected throw') }
     catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('LinkLockedMember') }
   })

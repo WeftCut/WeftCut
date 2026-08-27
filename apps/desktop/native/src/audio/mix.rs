@@ -110,7 +110,7 @@ fn audible_audio_layers<'a>(
 ) -> Vec<(&'a Layer, &'a AudioParams)> {
     let any_solo = any_role_solo(project.audio_roles.values());
     let mut out = Vec::new();
-    for track in project.tracks.iter() {
+    for track in project.root().tracks.iter() {
         // Whole-track disable still gates (rule 1).
         if !track.enabled {
             continue;
@@ -148,7 +148,7 @@ pub fn plan_for_project(
     project: &Project,
     window_us: Option<(i64, i64)>,
 ) -> Result<MixPlan, PlanError> {
-    let (w_start_us, w_end_us) = window_us.unwrap_or((0, project.composition.duration_us));
+    let (w_start_us, w_end_us) = window_us.unwrap_or((0, project.root().duration_us));
     let mut layers = Vec::new();
     for (layer, p) in audible_audio_layers(project, w_start_us, w_end_us) {
         let media = project
@@ -197,7 +197,7 @@ pub fn plan_for_project(
 /// Media without an audio stream can never conform and are excluded;
 /// `plan_for_project` remains the backstop for that pathological case.
 pub fn conform_waiting_media(project: &Project, window_us: Option<(i64, i64)>) -> Vec<Uuid> {
-    let (w_start_us, w_end_us) = window_us.unwrap_or((0, project.composition.duration_us));
+    let (w_start_us, w_end_us) = window_us.unwrap_or((0, project.root().duration_us));
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for (_, p) in audible_audio_layers(project, w_start_us, w_end_us) {
@@ -471,10 +471,13 @@ mod tests {
         // Real projects keep duration_us ≥ max(layer.t_end_us) (the ADR 0005
         // autofit guard holds even when pinned); the window gate relies on it
         // for the `None` ⇒ whole-project window.
-        let composition = crate::state::composition::Composition {
-            duration_us: 10_000_000,
-            ..Default::default()
-        };
+        let root_id = uuid::Uuid::new_v4();
+        let mut root = crate::state::composition::Composition::from_skeleton(
+            root_id,
+            None,
+            imbl::vector![track_a, track_b],
+        );
+        root.duration_us = 10_000_000;
 
         Project {
             schema_version: 1,
@@ -485,12 +488,9 @@ mod tests {
                 modified_at: now,
                 description: None,
             },
-            composition,
+            compositions: imbl::OrdMap::unit(root_id, root),
+            root_id,
             media_pool,
-            tracks: imbl::vector![track_a, track_b],
-            markers: imbl::Vector::new(),
-            transitions: imbl::Vector::new(),
-            links: imbl::Vector::new(),
             audio_roles: imbl::HashMap::new(),
             settings: ProjectSettings::default(),
         }
@@ -606,9 +606,9 @@ mod tests {
 
     // ── conform_waiting_media ────────────────────────────────────────────────
 
-    /// Media id behind the (single) audio layer of `project.tracks[track]`.
+    /// Media id behind the (single) audio layer of `project.root().tracks[track]`.
     fn layer_media(project: &Project, track: usize) -> uuid::Uuid {
-        let LayerParams::Audio(p) = &project.tracks[track].layers[0].params else {
+        let LayerParams::Audio(p) = &project.root().tracks[track].layers[0].params else {
             unreachable!("fixture tracks carry audio layers");
         };
         p.media
@@ -636,11 +636,11 @@ mod tests {
         let mut project = two_audio_tracks_project(tmp.path());
         std::fs::remove_file(tmp.path().join("b.conform")).unwrap();
         // Out of window: the plan never reads it, so the gate never waits.
-        project.tracks[1].layers[0].t_start_us = 2_000_000;
-        project.tracks[1].layers[0].t_end_us = 3_000_000;
+        project.root_mut().tracks[1].layers[0].t_start_us = 2_000_000;
+        project.root_mut().tracks[1].layers[0].t_end_us = 3_000_000;
         assert!(conform_waiting_media(&project, Some((0, 1_000_000))).is_empty());
-        project.tracks[1].layers[0].t_start_us = 0;
-        project.tracks[1].layers[0].t_end_us = 1_000_000;
+        project.root_mut().tracks[1].layers[0].t_start_us = 0;
+        project.root_mut().tracks[1].layers[0].t_end_us = 1_000_000;
         // Muted role (track B carries the Music role).
         set_role(
             &mut project,
@@ -662,9 +662,9 @@ mod tests {
             },
         );
         // Locked layer.
-        project.tracks[1].layers[0].locked = true;
+        project.root_mut().tracks[1].layers[0].locked = true;
         assert!(conform_waiting_media(&project, None).is_empty());
-        project.tracks[1].layers[0].locked = false;
+        project.root_mut().tracks[1].layers[0].locked = false;
         // Solo'd out by the Dialogue role (track A).
         set_role(
             &mut project,
@@ -684,9 +684,9 @@ mod tests {
         let mut project = two_audio_tracks_project(tmp.path());
         std::fs::remove_file(tmp.path().join("b.conform")).unwrap();
         // A second layer of the same media ⇒ still one waiting entry.
-        let mut extra = project.tracks[1].layers[0].clone();
+        let mut extra = project.root().tracks[1].layers[0].clone();
         extra.id = uuid::Uuid::new_v4();
-        project.tracks[1].layers.push_back(extra);
+        project.root_mut().tracks[1].layers.push_back(extra);
         assert_eq!(conform_waiting_media(&project, None).len(), 1);
         // Media with no audio stream can never conform ⇒ excluded from the
         // wait set (plan_for_project's ConformMissing stays the backstop).
@@ -706,8 +706,8 @@ mod tests {
         // Track B's layer sits past the window and its conform cache is gone.
         // A window-limited plan must neither error on it nor include it — the
         // mix will never read a frame of it.
-        project.tracks[1].layers[0].t_start_us = 2_000_000;
-        project.tracks[1].layers[0].t_end_us = 3_000_000;
+        project.root_mut().tracks[1].layers[0].t_start_us = 2_000_000;
+        project.root_mut().tracks[1].layers[0].t_end_us = 3_000_000;
         std::fs::remove_file(tmp.path().join("b.conform")).unwrap();
         let plan = plan_for_project(&project, Some((0, 1_000_000))).unwrap();
         assert_eq!(plan.layers.len(), 1, "only the in-window layer plans");
@@ -728,8 +728,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut project = two_audio_tracks_project(tmp.path());
         // Track B's layer at [1s, 2s); track A's stays at [0, 1s).
-        project.tracks[1].layers[0].t_start_us = 1_000_000;
-        project.tracks[1].layers[0].t_end_us = 2_000_000;
+        project.root_mut().tracks[1].layers[0].t_start_us = 1_000_000;
+        project.root_mut().tracks[1].layers[0].t_end_us = 2_000_000;
         // Window [0, 1s): B's t_start == window end ⇒ B excluded.
         let plan = plan_for_project(&project, Some((0, 1_000_000))).unwrap();
         assert_eq!(plan.layers.len(), 1, "t_start == w_end is no overlap");

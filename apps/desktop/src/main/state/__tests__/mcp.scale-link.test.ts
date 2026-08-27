@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest'
 import { freshActor, aRollId, bRollId } from './pbt/harness'
 import { layerParamsView } from '../summary'
 import type { TextParams } from '../model'
+import { root } from './fixtures/project'
 
 // Factory, not a shared literal: a dispatched track object gets frozen by the
 // actor's immer produce, so reusing one instance across dispatches throws.
@@ -18,7 +19,7 @@ function addTextLayer(actor: ReturnType<typeof freshActor>): string {
   return (r as { ok: true; value: string }).value
 }
 const textTransform = (actor: ReturnType<typeof freshActor>, id: string) => {
-  for (const t of actor.snapshot().tracks) {
+  for (const t of root(actor.snapshot()).tracks) {
     const l = t.layers.find((x) => x.id === id)
     if (l) return (l.params as TextParams).transform
   }
@@ -72,7 +73,7 @@ describe('MCP set_scale_linked', () => {
   it('scale_linked rides the layer params view agents read', () => {
     const a = freshActor()
     const id = addTextLayer(a)
-    for (const t of a.snapshot().tracks) {
+    for (const t of root(a.snapshot()).tracks) {
       const l = t.layers.find((x) => x.id === id)
       if (!l) continue
       const view = layerParamsView(l.params, {}) as { scale_linked?: boolean }

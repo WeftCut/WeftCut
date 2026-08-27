@@ -7,21 +7,22 @@ import { applyDuplicateLayer, applyPasteLayers } from './duplicate'
 import { CommandFailure, isCommandFailure } from '../errors'
 import { validate } from '../validate'
 import { AUDIO_GRID, frameGrid, gridIndex, isCanonicalOnGrid, snapOnGrid, timeUsAtGridIndex } from '../snap'
+import { root } from '../__tests__/fixtures/project'
 
 describe('delete + duplicate', () => {
   it('deletes a layer and autofits', () => {
     const g = seededGen(); const p = blankProject(g, 't')
-    const a = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 2_000_000)
+    const a = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 2_000_000)
     expect(applyDeleteLayer(p, a)).toBeNull() // A-roll not removable
-    expect(p.tracks[0].layers).toHaveLength(0)
-    expect(p.composition.duration_us).toBe(0)
+    expect(root(p).tracks[0].layers).toHaveLength(0)
+    expect(root(p).duration_us).toBe(0)
   })
   it('auto-deletes an emptied removable track and reports its id', () => {
     const g = seededGen(); const p = blankProject(g, 't')
     const tx = applyAddTrack(p, g, 'X')
     const a = applyAddLayer(p, g, tx, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 1_000_000)
     expect(applyDeleteLayer(p, a)).toBe(tx)
-    expect(p.tracks.find((t) => t.id === tx)).toBeUndefined()
+    expect(root(p).tracks.find((t) => t.id === tx)).toBeUndefined()
   })
   it('rejects deleting a missing layer / locked track', () => {
     const g = seededGen(); const p = blankProject(g, 't')
@@ -29,20 +30,20 @@ describe('delete + duplicate', () => {
   })
   it('duplicates with a fresh id, offset, sorted insert, and no link join', () => {
     const g = seededGen(); const p = blankProject(g, 't')
-    const a = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 1_000_000)
+    const a = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 1_000_000)
     const dup = applyDuplicateLayer(p, g, a, 2_000_000)
     expect(dup).not.toBe(a)
-    const copy = p.tracks[0].layers.find((l) => l.id === dup)!
+    const copy = root(p).tracks[0].layers.find((l) => l.id === dup)!
     expect(copy.t_start_us).toBe(2_000_000); expect(copy.t_end_us).toBe(3_000_000)
-    expect(p.links).toHaveLength(0)
+    expect(root(p).links).toHaveLength(0)
   })
   it('snaps the duplicate onto the frame grid at a fractional rate', () => {
     // Both edges land on the grid via the snap-start-then-carry-the-delta model (duplicate.ts).
     const g = seededGen(); const p = blankProject(g, 't')
-    p.composition.fps = { num: 30000, den: 1001 }
-    const a = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 100_100)
+    root(p).fps = { num: 30000, den: 1001 }
+    const a = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 100_100)
     const dup = applyDuplicateLayer(p, g, a, 500_000) // 500_000 µs is NOT a boundary at 29.97
-    const copy = p.tracks[0].layers.find((l) => l.id === dup)!
+    const copy = root(p).tracks[0].layers.find((l) => l.id === dup)!
     expect(copy.t_start_us).toBe(500_500) // frame 15
     expect(copy.t_end_us).toBe(600_600)   // frame 18 — the source's 3-frame span, preserved
     expect(() => validate(p)).not.toThrow()
@@ -57,12 +58,12 @@ describe('applyPasteLayers', () => {
   const BLACK = { r: 0, g: 0, b: 0, a: 255 }
   function three() {
     const g = seededGen(); const p = blankProject(g, 't')
-    const a = applyAddLayer(p, g, p.tracks[0].id, colorParams(BLACK, 1, 1), 0, 1_000_000)
-    const b = applyAddLayer(p, g, p.tracks[0].id, colorParams(BLACK, 1, 1), 1_000_000, 2_000_000)
-    const c = applyAddLayer(p, g, p.tracks[1].id, colorParams(BLACK, 1, 1), 500_000, 1_500_000)
+    const a = applyAddLayer(p, g, root(p).tracks[0].id, colorParams(BLACK, 1, 1), 0, 1_000_000)
+    const b = applyAddLayer(p, g, root(p).tracks[0].id, colorParams(BLACK, 1, 1), 1_000_000, 2_000_000)
+    const c = applyAddLayer(p, g, root(p).tracks[1].id, colorParams(BLACK, 1, 1), 500_000, 1_500_000)
     return { g, p, a, b, c }
   }
-  const layersOf = (p: Project): Layer[] => p.tracks.flatMap((t) => t.layers)
+  const layersOf = (p: Project): Layer[] => root(p).tracks.flatMap((t) => t.layers)
   const find = (p: Project, id: string): Layer => layersOf(p).find((l) => l.id === id)!
 
   it('clones a batch of 3 and links exactly the clones — never the sources', () => {
@@ -78,10 +79,10 @@ describe('applyPasteLayers', () => {
       const s = find(p, src); const k = find(p, clone)
       expect(k.t_start_us - s.t_start_us).toBe(5_000_000)
       expect(k.t_end_us - k.t_start_us).toBe(s.t_end_us - s.t_start_us)
-      expect(p.tracks.find((t) => t.layers.includes(k))!.id).toBe(p.tracks.find((t) => t.layers.includes(s))!.id)
+      expect(root(p).tracks.find((t) => t.layers.includes(k))!.id).toBe(root(p).tracks.find((t) => t.layers.includes(s))!.id)
     }
-    expect(p.links).toHaveLength(1)
-    expect([...p.links[0].members].sort()).toEqual([...clones].sort())
+    expect(root(p).links).toHaveLength(1)
+    expect([...root(p).links[0].members].sort()).toEqual([...clones].sort())
     expect([a, b, c].map((id) => find(p, id))).toEqual(sources) // sources untouched
     expect(() => validate(p)).not.toThrow()
   })
@@ -90,7 +91,7 @@ describe('applyPasteLayers', () => {
     const { g, p, a } = three()
     const map = applyPasteLayers(p, g, [a], 5_000_000, null)
     expect(map.size).toBe(1)
-    expect(p.links).toHaveLength(0)
+    expect(root(p).links).toHaveLength(0)
     expect(layersOf(p)).toHaveLength(4)
   })
 
@@ -98,8 +99,8 @@ describe('applyPasteLayers', () => {
     const { g, p, a, b } = three()
     const x = applyAddTrack(p, g, 'X')
     const map = applyPasteLayers(p, g, [a, b], 5_000_000, x)
-    expect(p.tracks.find((t) => t.id === x)!.layers.map((l) => l.id)).toEqual([map.get(a)])
-    expect(p.tracks[0].layers.map((l) => l.id)).toContain(map.get(b))
+    expect(root(p).tracks.find((t) => t.id === x)!.layers.map((l) => l.id)).toEqual([map.get(a)])
+    expect(root(p).tracks[0].layers.map((l) => l.id)).toContain(map.get(b))
   })
 
   // Atomicity at the mutation level: `b`'s clone would land on `a`'s source,
@@ -119,15 +120,15 @@ describe('applyPasteLayers', () => {
 
   it('refuses the WHOLE batch when any destination lane is locked, burning no id', () => {
     const { g, p, a, c } = three()
-    p.tracks[1].locked = true // `c` lives here — and would be pasted back here
+    root(p).tracks[1].locked = true // `c` lives here — and would be pasted back here
     const before = structuredClone(p)
     const fresh = seededGen()
     try { applyPasteLayers(p, g, [a, c], 5_000_000, null); throw new Error('x') }
     catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('TrackLocked') }
     expect(p).toEqual(before)
-    // `g` has minted exactly the six ids `three()` did (project, two tracks,
-    // three layers): its next id is a fresh stream's seventh.
-    for (let i = 0; i < 6; i++) fresh()
+    // `g` has minted exactly the seven ids `three()` did (two tracks, project,
+    // root composition, three layers): its next id is a fresh stream's eighth.
+    for (let i = 0; i < 7; i++) fresh()
     expect(g()).toBe(fresh())
   })
 
@@ -151,14 +152,14 @@ describe('applyPasteLayers', () => {
     // A frame whose canonical µs is NOT a sample boundary (every 5th frame is).
     const offSample = (from: number) => { for (let i = from; ; i++) if (snapOnGrid(frame(i), AUDIO_GRID) !== frame(i)) return i }
     const F = offSample(30), M = offSample(90)
-    const g = seededGen(); const p = blankProject(g, 't'); p.composition.fps = FPS
-    const v = applyAddLayer(p, g, p.tracks[0].id, colorParams(BLACK, 1, 1), frame(F), frame(F + 60))
+    const g = seededGen(); const p = blankProject(g, 't'); root(p).fps = FPS
+    const v = applyAddLayer(p, g, root(p).tracks[0].id, colorParams(BLACK, 1, 1), frame(F), frame(F + 60))
     const slipped = sample(gridIndex(frame(F), AUDIO_GRID) + 7)
     const au: Layer = {
       id: 'au', label: null, t_start_us: slipped, t_end_us: sample(gridIndex(slipped, AUDIO_GRID) + 96_000), enabled: true, locked: false, metadata: {}, effects: [],
       params: { kind: 'Audio', media: 'm', src_in_us: 0, src_out_us: 2_000_000, gain_db: { mode: 'Static', value: 0 }, pan: { mode: 'Static', value: 0 }, fade_in_us: 0, fade_out_us: 0, mute: false, role: 'dialogue' },
     }
-    p.tracks[1].layers = [au]
+    root(p).tracks[1].layers = [au]
     const slipBefore = gridIndex(au.t_start_us - find(p, v).t_start_us, AUDIO_GRID)
     expect(slipBefore).not.toBe(0)
 

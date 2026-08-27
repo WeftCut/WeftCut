@@ -22,7 +22,8 @@ import { blankProject } from '../../model'
 import { createActor } from '../../actor'
 import { serializeProject } from '../../serialize'
 import { frameIndexRound, timeUsAtFrame } from '../../snap'
-import { PBT_SEED, PBT_RUNS } from './harness'
+import { PBT_SEED, PBT_RUNS, wireRoot, type WireComposition, type WireProject } from './harness'
+import { root } from '../fixtures/project'
 
 // spec § Gates and test assets — the rate matrix every ticket in this round runs.
 const RATES: ReadonlyArray<[number, number]> = [
@@ -35,18 +36,12 @@ const VIDEO_MEDIA_DUR = 4_000_000
 const AUDIO_MEDIA_DUR = 8_000_000
 
 type ActorT = ReturnType<typeof createActor>
-interface WireLayer { id: string; t_start_us: number; t_end_us: number; params: { kind: string } }
-interface WireProject {
-  composition: { duration_us: number; fps: { num: number; den: number } }
-  tracks: Array<{ id: string; layers: WireLayer[] }>
-  markers: Array<{ id: string; t_us: number; end_t_us: number | null }>
-  transitions: Array<{ id: string; from_layer: string; to_layer: string; duration_us: number }>
-}
+type WireLayer = WireComposition['tracks'][number]['layers'][number]
 
 function actorAt(num: number, den: number): ActorT {
   const idGen = seededGen()
   const initial = blankProject(idGen, 'grid')
-  initial.composition.fps = { num, den }
+  root(initial).fps = { num, den }
   const actor = createActor({ initial, idGen, clock: () => '<TS>' })
   actor.dispatch('add_media', { id: VIDEO_MEDIA, kind: 'Video', duration_us: VIDEO_MEDIA_DUR, with_audio: false })
   actor.dispatch('add_media', { id: AUDIO_MEDIA, kind: 'Audio', duration_us: AUDIO_MEDIA_DUR, with_audio: true })
@@ -59,7 +54,7 @@ const wire = (a: ActorT) => serializeProject(a.snapshot()) as unknown as WirePro
  *  Requested times are deliberately raw µs — off grid at the fractional rates —
  *  so the seeding itself exercises the mutators' snap. */
 function seedTimeline(a: ActorT): ActorT {
-  const [aRoll, bRoll] = a.snapshot().tracks.map((t) => t.id)
+  const [aRoll, bRoll] = root(a.snapshot()).tracks.map((t) => t.id)
   a.dispatch('add_layer', { track: aRoll, kind: 'video', media: VIDEO_MEDIA, src_in_us: 0, src_out_us: 500_001, t_start_us: 0, t_end_us: 500_001 })
   a.dispatch('add_layer', { track: aRoll, kind: 'video', media: VIDEO_MEDIA, src_in_us: 0, src_out_us: 499_999, t_start_us: 500_001, t_end_us: 1_000_000 })
   a.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 1_100_003, t_end_us: 1_700_003 })
@@ -85,16 +80,16 @@ function layerRate(kind: string, fps: { num: number; den: number }): { num: numb
 }
 
 function offGridFields(p: WireProject): string[] {
-  const { num, den } = p.composition.fps
+  const { num, den } = wireRoot(p).fps
   const bad: string[] = []
   const check = (what: string, t: number, rate = { num, den }) => {
     if (!isCanonical(t, rate.num, rate.den)) bad.push(`${what}=${t}`)
   }
   // The composition duration stays a FRAME count even when the furthest-reaching
   // content is audio — `applyDurationAutofit` rounds the high-water mark up.
-  check('composition.duration_us', p.composition.duration_us)
+  check('composition.duration_us', wireRoot(p).duration_us)
   const geometry = new Map<string, WireLayer>()
-  for (const t of p.tracks) for (const l of t.layers) {
+  for (const t of wireRoot(p).tracks) for (const l of t.layers) {
     geometry.set(l.id, l)
     // Per-KIND lattice. This is the assertion that fails if ANY of the three
     // enforcement sites — validate's predicate, a mutation snap (incl. move's link
@@ -104,13 +99,13 @@ function offGridFields(p: WireProject): string[] {
     check(`layer ${l.id} (${l.params.kind}).t_start_us`, l.t_start_us, rate)
     check(`layer ${l.id} (${l.params.kind}).t_end_us`, l.t_end_us, rate)
   }
-  for (const m of p.markers) {
+  for (const m of wireRoot(p).markers) {
     check(`marker ${m.id}.t_us`, m.t_us)
     if (m.end_t_us !== null) check(`marker ${m.id}.end_t_us`, m.end_t_us)
   }
   // A duration is a DISTANCE between two canonical boundaries, so it is checked as
   // the overlap relation, never as a canonical time of its own.
-  for (const tr of p.transitions) {
+  for (const tr of wireRoot(p).transitions) {
     const from = geometry.get(tr.from_layer), to = geometry.get(tr.to_layer)
     if (!from || !to) continue
     const overlap = Math.min(from.t_end_us, to.t_end_us) - Math.max(from.t_start_us, to.t_start_us)
@@ -172,10 +167,10 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
 
 function applyOp(a: ActorT, op: Op): Res {
   const snap = wire(a)
-  const trackIds = snap.tracks.map((t) => t.id)
-  const layers = snap.tracks.flatMap((t) => t.layers.map((l) => l.id))
-  const markers = snap.markers.map((m) => m.id)
-  const transitions = snap.transitions.map((tr) => tr.id)
+  const trackIds = wireRoot(snap).tracks.map((t) => t.id)
+  const layers = wireRoot(snap).tracks.flatMap((t) => t.layers.map((l) => l.id))
+  const markers = wireRoot(snap).markers.map((m) => m.id)
+  const transitions = wireRoot(snap).transitions.map((tr) => tr.id)
   const pickLayer = (i: number) => layers[i % layers.length]
   const pickTrack = (i: number) => trackIds[i % trackIds.length]
   switch (op.t) {
@@ -198,7 +193,7 @@ function applyOp(a: ActorT, op: Op): Res {
       // accept, and the one whose backward-measured B-shift (overlap default)
       // can push endpoints off the grid if mismeasured.
       const pairs: Array<[string, string]> = []
-      for (const t of snap.tracks) for (const x of t.layers) for (const y of t.layers)
+      for (const t of wireRoot(snap).tracks) for (const x of t.layers) for (const y of t.layers)
         if (x.id !== y.id && x.t_end_us === y.t_start_us) pairs.push([x.id, y.id])
       const [from, to] = pairs.length ? pairs[op.n % pairs.length] : [pickLayer(op.n), pickLayer(op.n + 1)]
       return a.dispatch('add_transition', { from, to, duration_us: op.dur })
@@ -279,10 +274,10 @@ describe('frame-grid invariant over the actor command matrix', () => {
     expect(offGridRejection(res)).toBeNull()
     expect(res.ok).toBe(true)
     const after = wire(actor)
-    expect(after.composition.fps).toEqual({ num, den })
+    expect(wireRoot(after).fps).toEqual({ num, den })
     expect(offGridFields(after)).toEqual([])
     // Region markers stay non-degenerate: an fps change must not collapse one.
-    for (const m of after.markers) if (m.end_t_us !== null) expect(m.end_t_us).toBeGreaterThan(m.t_us)
+    for (const m of wireRoot(after).markers) if (m.end_t_us !== null) expect(m.end_t_us).toBeGreaterThan(m.t_us)
   })
 
   // The rate lock is what keeps the fps re-snap from ever having to move a layer
@@ -325,7 +320,7 @@ describe('frame-grid invariant over the actor command matrix', () => {
   // depend on renderer UI (the one deliberate exception is the shared eval leaf).
   it.each(RATES)('at %s/%s the first layer lands canonical and the rate locks from then on', (num, den) => {
     const actor = actorAt(num, den)
-    const track = actor.snapshot().tracks[0]!.id
+    const track = root(actor.snapshot()).tracks[0]!.id
     // Off grid at every fractional rate — the mutator's snap must fix it, not the caller.
     expect(actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 100_003, t_end_us: 1_700_007 }).ok).toBe(true)
     expect(offGridFields(wire(actor))).toEqual([])
@@ -345,14 +340,14 @@ describe('frame-grid invariant over the actor command matrix', () => {
   // layer's endpoint behind off the grid.
   it.each(RATES)('a trim that makes reconcile DROP a transition leaves no off-grid endpoint at %s/%s', (num, den) => {
     const actor = actorAt(num, den)
-    const track = actor.snapshot().tracks[0].id
+    const track = root(actor.snapshot()).tracks[0].id
     const first = actor.dispatch('add_layer', { track, kind: 'video', media: VIDEO_MEDIA, src_in_us: 0, src_out_us: 1_000_001, t_start_us: 0, t_end_us: 1_000_001 })
     const second = actor.dispatch('add_layer', { track, kind: 'video', media: VIDEO_MEDIA, src_in_us: 0, src_out_us: 1_000_001, t_start_us: 1_000_001, t_end_us: 2_000_003 })
     expect([first.ok, second.ok]).toEqual([true, true])
     const from = first.ok ? (first.value as string) : ''
     const to = second.ok ? (second.value as string) : ''
     expect(actor.dispatch('add_transition', { from, to, duration_us: 200_003 }).ok).toBe(true)
-    expect(wire(actor).transitions).toHaveLength(1)
+    expect(wireRoot(wire(actor)).transitions).toHaveLength(1)
 
     // Pull the outgoing layer's Out edge back — the overlap no longer equals the
     // stored duration, so reconcile drops the transition on this very commit.
@@ -360,7 +355,7 @@ describe('frame-grid invariant over the actor command matrix', () => {
     expect(offGridRejection(trimmed)).toBeNull()
     expect(trimmed.ok).toBe(true)
     const after = wire(actor)
-    expect(after.transitions).toHaveLength(0)
+    expect(wireRoot(after).transitions).toHaveLength(0)
     expect(offGridFields(after)).toEqual([])
   })
 })

@@ -3,12 +3,13 @@ import { seededGen } from '../ids'
 import { blankProject } from '../model'
 import { createActor } from '../actor'
 import type { MotifParams } from '../model'
+import { root } from './fixtures/project'
 
 function setup() {
   const idGen = seededGen()
   const initial = blankProject(idGen, 't') // mints A#1, B#2, project#3
   const actor = createActor({ initial, idGen, clock: () => '<TS>' })
-  const aRoll = initial.tracks[0].id
+  const aRoll = root(initial).tracks[0].id
   return { actor, aRoll }
 }
 
@@ -32,7 +33,7 @@ describe('rebind_motif dispatch', () => {
 
     // verify the layer state
     const snap = actor.snapshot()
-    const layer = snap.tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)
+    const layer = root(snap).tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)
     expect(layer).toBeDefined()
     const p = layer!.params as MotifParams
     expect(p.kind).toBe('Motif')
@@ -62,7 +63,7 @@ describe('rebind_motif dispatch', () => {
     expect(r.ok).toBe(true)
 
     const snap = actor.snapshot()
-    const layer = snap.tracks.flatMap((t) => t.layers).find((l) => l.id === colorId)
+    const layer = root(snap).tracks.flatMap((t) => t.layers).find((l) => l.id === colorId)
     expect(layer!.params.kind).toBe('Color')
   })
 
@@ -90,7 +91,7 @@ describe('rebind_motif dispatch', () => {
     })
     expect(r.ok).toBe(true)
 
-    const layers = actor.snapshot().tracks.flatMap((t) => t.layers)
+    const layers = root(actor.snapshot()).tracks.flatMap((t) => t.layers)
     const l1 = layers.find((l) => l.id === id1)!.params as MotifParams
     const l2 = layers.find((l) => l.id === id2)!.params as MotifParams
     expect(l1.motif_id).toBe('my')

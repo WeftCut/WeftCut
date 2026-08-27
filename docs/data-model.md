@@ -246,16 +246,22 @@ struct Project {
     schema_version: u32,
     project_id: Uuid,                             // stable across saves
     metadata: ProjectMetadata,
-    composition: Composition,
+    compositions: imbl::OrdMap<CompositionId, Composition>,  // keyed by Composition.id; the root and every Group
+    root_id: CompositionId,                       // compositions[root_id] is what export renders
     media_pool: imbl::HashMap<MediaId, MediaItem>,
-    tracks: imbl::Vector<Track>,                  // 0 = bottom z-stack, last = top
-    markers: imbl::Vector<Marker>,
-    transitions: imbl::Vector<Transition>,
-    links: imbl::Vector<Link>,
     audio_roles: imbl::HashMap<AudioRole, RoleMixSettings>,  // per-role mix buses
     settings: ProjectSettings,                    // proxy res, autosave, etc.
 }
 ```
+
+Every composition has the same shape (next section). The root is
+`compositions[root_id]`; a Group is another entry, referenced from some
+composition's timeline by a `CompositionRef` layer. There is no sub-composition
+type — every walk, mutation and validator has one path over one shape
+([ADR 0052](adr/0052-link-propagates-group-composes.md) §3). `compositions` and
+`root_id` carry no serde default: a file without them is not a project. The
+TypeScript twin keys a plain object; Rust keeps an `OrdMap` so the serialised
+order is deterministic.
 
 `audio_roles` holds one `RoleMixSettings { gain_db, muted, solo }` per
 mixing role. The map is sparse: an absent role resolves to defaults
@@ -270,6 +276,8 @@ is described in [docs/audio.md](audio.md) and [ADR 0023](adr/0023-audio-mixes-by
 
 ```rust
 struct Composition {
+    id: CompositionId,
+    label: Option<String>,    // None on the root and on an unnamed Group (the UI derives "Group N"); always written, `null` on the wire
     width: u32,
     height: u32,
     fps: Rational,            // (num, den) — handles 23.976, 29.97 cleanly
@@ -279,8 +287,28 @@ struct Composition {
     channels: u8,             // 2 default
     color_space: ColorSpace,  // Bt709 default
     background: Rgba,
+    tracks: imbl::Vector<Track>,            // 0 = bottom z-stack, last = top
+    markers: imbl::Vector<Marker>,
+    transitions: imbl::Vector<Transition>,
+    links: imbl::Vector<Link>,
 }
 ```
+
+One timeline: settings plus the four collections that live on it. The root
+and every Group are instances of this one struct, so the per-composition
+rules apply to each alike — duration autofit (ADR 0005), track cleanup
+(ADR 0042), the overlap classes, the reserved A/B skeleton, transitions
+between same-track layers, links between same-composition layers. A new
+Group copies its parent's settings and starts with the skeleton, exactly as
+`blankProject` seeds the root.
+
+**Single lattice.** Every composition's `fps`, `sample_rate` and `channels`
+equal the root's (`CompositionLatticeMismatch` otherwise): a Group on another
+rate would put its `src_*` window on a different grid from the parent's
+`t_*`, which is time-remapping under another name (ADR 0052 §5).
+`set_composition` on the root cascades those three to every composition;
+`width` / `height` may differ per composition (copied at pre-compose, not
+editable in v1).
 
 `fps` MUST be rational. `30000/1001 ≠ 29.97`, and ffmpeg cares.
 
@@ -583,6 +611,7 @@ enum LayerParams {
     Motif(MotifParams),
     Audio(AudioParams),
     Color(ColorParams),
+    CompositionRef(CompositionRefParams),
 }
 
 // A per-layer effect instance. Rust stores the ordered instances + their
@@ -697,6 +726,37 @@ struct AudioParams {
 `#[serde(default)]`). The mixer groups by this, not by track — every
 layer tagged `music` shares one bus, wherever its track sits. The bus
 settings live in `Project.audio_roles` (below); see [docs/audio.md](audio.md).
+
+### `CompositionRefParams`
+
+```rust
+struct CompositionRefParams {
+    composition: CompositionId,       // the Group; never root_id, never on a reference cycle
+    src_in_us: i64,                   // window into the composition's own time
+    src_out_us: i64,
+    transform: Transform,
+    opacity: Animated<f64>,
+    blend_mode: BlendMode,
+}
+```
+
+A Group layer is a media-bearing layer whose source is a composition
+(ADR 0052 §4). Its source duration is `compositions[composition].duration_us`,
+and parent time `t` maps to composition time `t − t_start_us + src_in_us`.
+That sentence is what lets the kind join `VideoClip` / `Audio` in the
+`src_in_us` / `src_out_us` family: trim clamping, split's proportional source
+distribution and keyframe re-basing apply verbatim.
+
+**Overhang is tolerated in state and clamped at the gesture** (ADR 0052 §6).
+Validation requires `0 ≤ src_in_us < src_out_us` and nothing more — no upper
+bound — because a bound would refuse a delete *inside* the Group whenever
+autofit shrank its duration under a parent's window. A trim drag clamps
+`src_out_us` to the composition's duration; past the end the Group renders
+nothing.
+
+The kind is visual, so a Group layer may be a transition participant. Not in
+v1: `speed`, `crop`, `flip_*`, a ref-level audio gain. `Layer.effects` applies
+as on any layer.
 
 ### `Transform`
 
@@ -833,8 +893,9 @@ struct Link {
 }
 ```
 
-A flat, non-nesting set of layers whose move / trim / split fan out to every
-member; nothing else about a link is rendered, mixed or exported. The
+A flat, non-nesting set of layers of **one composition** whose move / trim /
+split fan out to every member; nothing else about a link is rendered, mixed
+or exported. The
 behaviour contract is [features.md § Links](features.md#links). On the read
 surface a link is `LinkSummary { id, label: string | null, layer_ids }` —
 `links` on `project://current` — where the omitted label becomes an explicit
@@ -930,18 +991,25 @@ struct ChangeEvent {
 |---|---|
 | `t_start_us < t_end_us` | reject |
 | `t_start_us >= 0` | clamped in the mutator (a link move stops as a set), then reject as a backstop (`NegativeLayerStart`); a project loaded from disk is repaired in `parseProject` instead of rejected |
-| Visual `t_start_us`, `t_end_us`, `composition.duration_us`, marker `t_us`/`end_t_us` on the composition-frame grid | snap-round (half-up) in the mutator, then reject as a backstop (`OffGridLayerBoundary` / `OffGridTime`); a project loaded from disk is repaired in `parseProject` instead of rejected. Both errors carry `snap_to`, the value the caller should have sent |
+| Visual `t_start_us`, `t_end_us`, the composition's `duration_us`, marker `t_us`/`end_t_us` on that composition's frame grid | snap-round (half-up) in the mutator, then reject as a backstop (`OffGridLayerBoundary` / `OffGridTime`); a project loaded from disk is repaired in `parseProject` instead of rejected. Both errors carry `snap_to`, the value the caller should have sent |
 | Audio `t_start_us`, `t_end_us` on the fixed 48 kHz sample lattice | same three-site enforcement, against the audio grid; the error carries `grid: "sample"` and `fps: 48000/1` |
 | `fps` immutable once the timeline — or any stored snapshot / checkpoint — holds a layer | reject (`FpsLockedByContent`, carrying `locked_by: current \| history`). History scope, because the unrecorded rate change writes to every snapshot: judging on the live state alone would let `undo` resurrect old-grid layers at the new rate. Set the rate on a project whose timeline has never held anything |
 | `transition.duration_us` == the geometric overlap of its participants | reject — this *is* the transition's grid rule; a duration is a distance, not a boundary time |
-| `0 ≤ src_in_us < src_out_us ≤ media.duration_us` | reject |
+| `0 ≤ src_in_us < src_out_us`, and `src_out_us ≤ media.duration_us` for `VideoClip` / `Audio` | reject. A `CompositionRef` window has **no** upper bound — overhang past the referenced composition's duration is tolerated (ADR 0052 §6) |
 | No two layers in the same track overlap in `[t_start, t_end)` | reject (with structured options) |
-| `composition.duration_us == max(layer.t_end_us)` while `duration_pinned == false` | auto-fit bidirectionally (grow on adds, shrink on deletes/inward trims) |
-| `composition.duration_us ≥ max(layer.t_end_us)` while `duration_pinned == true` | overflow guard only — pinned value grows if a layer extends past it, never shrinks |
-| `composition.fps.den > 0`, `width/height > 0` | reject |
+| Per composition: `duration_us == max(layer.t_end_us)` while `duration_pinned == false` | auto-fit bidirectionally (grow on adds, shrink on deletes/inward trims) |
+| Per composition: `duration_us ≥ max(layer.t_end_us)` while `duration_pinned == true` | overflow guard only — pinned value grows if a layer extends past it, never shrinks |
+| Per composition: `fps.den > 0`, `width/height > 0` | reject |
+| `root_id` is a key of `compositions` | reject (`RootMissing`) |
+| `compositions[k].id == k` | reject (`CompositionIdMismatch`) |
+| Every `CompositionRef.composition` names an existing composition | reject (`CompositionMissing`) |
+| No `CompositionRef` targets `root_id` | reject (`RootReferenced`) |
+| Composition references form no cycle | reject (`CompositionCycle { path }`; orphans — compositions nothing references — are legal) |
+| Every composition's `fps`, `sample_rate`, `channels` equal the root's | reject (`CompositionLatticeMismatch { composition, field }`) |
+| `Layer.id` unique across **all** compositions | reject (`DuplicateLayerId`) |
 | All references (`MediaId`/`LayerId`/`LinkId`/`TransitionId`) resolve | reject |
-| `Link.id` unique across `Project.links` | reject (`DuplicateLinkId`) |
-| Every `Link.members` entry names a layer in the project | reject (`LinkMemberMissing`) |
+| `Link.id` unique within its composition's `links` | reject (`DuplicateLinkId`) |
+| Every `Link.members` entry names a layer of the **same** composition | reject (`LinkMemberMissing`) |
 | A layer is in at most one link | reject (`LayerInMultipleLinks`) |
 | A link holds ≥ 2 members | dissolved in the mutator when a delete or `links_remove_members` takes it below two — delete is local, so this is the only way a member leaves — then reject as a backstop (`LinkBelowMinSize`) |
 | A transition's two participants do not share a link | reject at `add_transition` (`TransitionParticipantsShareLink`): placement moves the incoming layer with its link siblings, so a shared link would drag the outgoing layer along and the overlap would never open |
@@ -954,6 +1022,9 @@ A failed invariant returns a structured error to the caller (UI shows toast; MCP
 ## Mutation surface
 
 Every command maps directly to one MCP tool with the same name. Patches are **strongly typed**, not JSON Patch.
+
+Every command addresses the **root composition**: layer-addressed commands
+resolve their id in `compositions[root_id]` and creation commands place there.
 
 The MCP surface mirrors this 1:1 (same names, schemars-derived schemas);
 the UI uses the same actor via backend commands.

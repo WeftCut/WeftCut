@@ -13,6 +13,7 @@ import { createActor, type ActorLogEntry } from './actor'
 import { reconcileTransitions } from './validate'
 import { applyAddLayer, colorParams } from './mutations/add'
 import { applyAddTransition } from './mutations/transitions'
+import { root } from './__tests__/fixtures/project'
 
 const RED = { r: 255, g: 0, b: 0, a: 255 }
 const color = () => colorParams(RED, 1920, 1080)
@@ -22,7 +23,7 @@ function val(r: { ok: true; value: unknown } | { ok: false; error: unknown }): s
   return r.value as string
 }
 function layerOf(p: Project, id: string): Layer {
-  for (const t of p.tracks) { const l = t.layers.find((x) => x.id === id); if (l) return l }
+  for (const t of root(p).tracks) { const l = t.layers.find((x) => x.id === id); if (l) return l }
   throw new Error(`layer ${id} not found`)
 }
 
@@ -36,8 +37,8 @@ function withTransition() {
   const initial = blankProject(idGen, 'rt')
   const logged: ActorLogEntry[] = []
   const actor = createActor({ initial, idGen, clock: () => '<TS>', emitLog: (e) => logged.push(e) })
-  const aRoll = initial.tracks[0].id
-  const bRoll = initial.tracks[1].id
+  const aRoll = root(initial).tracks[0].id
+  const bRoll = root(initial).tracks[1].id
   const a1 = val(actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 }))
   const a2 = val(actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 2_000_000, t_end_us: 4_000_000 }))
   const tid = val(actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000, placement: 'extend' }))
@@ -47,7 +48,7 @@ function withTransition() {
 describe('reconcile-on-commit: exemption for the transition commands themselves', () => {
   it('add_transition is not eaten by its own commit (invariant holds by construction); no log row', () => {
     const { actor, logged, a1, a2, tid } = withTransition()
-    expect(actor.snapshot().transitions.map((t) => t.id)).toEqual([tid])
+    expect(root(actor.snapshot()).transitions.map((t) => t.id)).toEqual([tid])
     expect(layerOf(actor.snapshot(), a1).t_end_us).toBe(3_000_000)
     expect(layerOf(actor.snapshot(), a2).t_start_us).toBe(2_000_000)
     expect(logged).toEqual([])
@@ -58,7 +59,7 @@ describe('reconcile-on-commit: drops', () => {
   it('participant delete drops the transition in the same commit; NO shrink-back of the outgoing layer', () => {
     const { actor, logged, a1, a2 } = withTransition()
     expect(actor.dispatch('delete_layer', { layer: a2 }).ok).toBe(true)
-    expect(actor.snapshot().transitions).toEqual([])
+    expect(root(actor.snapshot()).transitions).toEqual([])
     // The outgoing layer keeps its extended tail — reconcile removal never
     // shrinks back (only explicit remove_transition does).
     expect(layerOf(actor.snapshot(), a1).t_end_us).toBe(3_000_000)
@@ -68,7 +69,7 @@ describe('reconcile-on-commit: drops', () => {
   it('trim of from.t_end drops it; geometry is exactly what the edit made it', () => {
     const { actor, logged, a1, tid } = withTransition()
     expect(actor.dispatch('trim_layer', { layer: a1, edge: 'out', new_t_us: 2_000_000 }).ok).toBe(true)
-    expect(actor.snapshot().transitions).toEqual([])
+    expect(root(actor.snapshot()).transitions).toEqual([])
     expect(layerOf(actor.snapshot(), a1).t_end_us).toBe(2_000_000) // trim result, no extra shrink
     expect(logged).toHaveLength(1)
     expect(logged[0].message).toContain('Transition removed: edit broke its overlap')
@@ -79,7 +80,7 @@ describe('reconcile-on-commit: drops', () => {
   it('trim of to.t_start (past the overlap) drops it; from-layer untouched', () => {
     const { actor, logged, a1, a2 } = withTransition()
     expect(actor.dispatch('trim_layer', { layer: a2, edge: 'in', new_t_us: 3_000_000 }).ok).toBe(true)
-    expect(actor.snapshot().transitions).toEqual([])
+    expect(root(actor.snapshot()).transitions).toEqual([])
     expect(layerOf(actor.snapshot(), a2).t_start_us).toBe(3_000_000)
     expect(layerOf(actor.snapshot(), a1).t_end_us).toBe(3_000_000) // no shrink-back
     expect(logged).toHaveLength(1)
@@ -88,7 +89,7 @@ describe('reconcile-on-commit: drops', () => {
   it('move-apart of the to layer drops it (DurationMismatch reason)', () => {
     const { actor, logged, aRoll, a2 } = withTransition()
     expect(actor.dispatch('move_layer', { layer: a2, to_track: aRoll, t_start_us: 6_000_000 }).ok).toBe(true)
-    expect(actor.snapshot().transitions).toEqual([])
+    expect(root(actor.snapshot()).transitions).toEqual([])
     expect(layerOf(actor.snapshot(), a2).t_start_us).toBe(6_000_000)
     expect(logged).toHaveLength(1)
     expect((logged[0].details as { reason: { rule: string } }).reason.rule).toBe('TransitionDurationMismatch')
@@ -97,7 +98,7 @@ describe('reconcile-on-commit: drops', () => {
   it('move of the from layer to another track drops it (CrossTrack reason)', () => {
     const { actor, logged, bRoll, a1 } = withTransition()
     expect(actor.dispatch('move_layer', { layer: a1, to_track: bRoll, t_start_us: 0 }).ok).toBe(true)
-    expect(actor.snapshot().transitions).toEqual([])
+    expect(root(actor.snapshot()).transitions).toEqual([])
     expect(logged).toHaveLength(1)
     expect((logged[0].details as { reason: { rule: string } }).reason.rule).toBe('TransitionCrossTrack')
   })
@@ -107,15 +108,15 @@ describe('reconcile-on-commit: drops', () => {
     const initial = blankProject(idGen, 'rt2')
     const logged: ActorLogEntry[] = []
     const actor = createActor({ initial, idGen, clock: () => '<TS>', emitLog: (e) => logged.push(e) })
-    const aRoll = initial.tracks[0].id
+    const aRoll = root(initial).tracks[0].id
     const l1 = val(actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 }))
     const l2 = val(actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 2_000_000, t_end_us: 4_000_000 }))
     const l3 = val(actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 4_000_000, t_end_us: 6_000_000 }))
     const t1 = val(actor.dispatch('add_transition', { from: l1, to: l2, duration_us: 1_000_000, placement: 'extend' })) // l1 → 3M
     const t2 = val(actor.dispatch('add_transition', { from: l2, to: l3, duration_us: 1_000_000, placement: 'extend' })) // l2 → 5M
-    expect(actor.snapshot().transitions).toHaveLength(2)
+    expect(root(actor.snapshot()).transitions).toHaveLength(2)
     expect(actor.dispatch('delete_layer', { layer: l2 }).ok).toBe(true) // shared participant
-    expect(actor.snapshot().transitions).toEqual([])
+    expect(root(actor.snapshot()).transitions).toEqual([])
     expect(logged).toHaveLength(2)
     expect(logged.map((e) => (e.details as { transition: string }).transition).sort()).toEqual([t1, t2].sort())
     for (const e of logged) {
@@ -131,7 +132,7 @@ describe('reconcile-on-commit: splits', () => {
     const { actor, logged, a2, tid } = withTransition()
     const r = actor.dispatch('split_layer', { layer: a2, at_t_us: 3_500_000, escape_link: false })
     expect(r.ok).toBe(true)
-    expect(actor.snapshot().transitions.map((t) => t.id)).toEqual([tid])
+    expect(root(actor.snapshot()).transitions.map((t) => t.id)).toEqual([tid])
     expect(layerOf(actor.snapshot(), a2).t_end_us).toBe(3_500_000) // left half keeps the id
     expect(logged).toEqual([])
   })
@@ -152,7 +153,7 @@ describe('reconcile-on-commit: splits', () => {
       expect((r.error as { error: 'ValidationFailed'; detail: { rule: string } }).detail.rule).toBe('LayerOverlap')
     }
     expect(actor.snapshot()).toBe(before) // state untouched — drop never landed
-    expect(actor.snapshot().transitions.map((t) => t.id)).toEqual([tid])
+    expect(root(actor.snapshot()).transitions.map((t) => t.id)).toEqual([tid])
     expect(logged).toEqual([]) // rejected commit logs nothing
   })
 
@@ -161,7 +162,7 @@ describe('reconcile-on-commit: splits', () => {
     const r = actor.dispatch('split_layer', { layer: a2, at_t_us: 2_500_000, escape_link: false })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.error).toBe('ValidationFailed')
-    expect(actor.snapshot().transitions.map((t) => t.id)).toEqual([tid])
+    expect(root(actor.snapshot()).transitions.map((t) => t.id)).toEqual([tid])
   })
 })
 
@@ -173,20 +174,20 @@ describe('reconcile-on-commit: survival + atomic undo', () => {
     expect(layerOf(actor.snapshot(), a1).t_start_us).toBe(5_000_000)
     expect(layerOf(actor.snapshot(), a1).t_end_us).toBe(8_000_000)
     expect(layerOf(actor.snapshot(), a2).t_start_us).toBe(7_000_000) // sibling shifted by the same delta
-    expect(actor.snapshot().transitions.map((t) => t.id)).toEqual([tid]) // overlap still 1M
+    expect(root(actor.snapshot()).transitions.map((t) => t.id)).toEqual([tid]) // overlap still 1M
     expect(logged).toEqual([])
   })
 
   it('ONE undo restores both the edit and the transition (drop rides the same snapshot)', () => {
     const { actor, a1, tid } = withTransition()
     expect(actor.dispatch('trim_layer', { layer: a1, edge: 'out', new_t_us: 2_000_000 }).ok).toBe(true)
-    expect(actor.snapshot().transitions).toEqual([])
+    expect(root(actor.snapshot()).transitions).toEqual([])
     expect(actor.dispatch('undo', {}).ok).toBe(true) // single step
-    expect(actor.snapshot().transitions.map((t) => t.id)).toEqual([tid])
+    expect(root(actor.snapshot()).transitions.map((t) => t.id)).toEqual([tid])
     expect(layerOf(actor.snapshot(), a1).t_end_us).toBe(3_000_000)
     // and redo re-applies edit + drop together
     expect(actor.dispatch('redo', {}).ok).toBe(true)
-    expect(actor.snapshot().transitions).toEqual([])
+    expect(root(actor.snapshot()).transitions).toEqual([])
     expect(layerOf(actor.snapshot(), a1).t_end_us).toBe(2_000_000)
   })
 
@@ -194,12 +195,12 @@ describe('reconcile-on-commit: survival + atomic undo', () => {
     const idGen = seededGen()
     const initial = blankProject(idGen, 'rt3')
     const actor = createActor({ initial, idGen, clock: () => '<TS>' })
-    const aRoll = initial.tracks[0].id
+    const aRoll = root(initial).tracks[0].id
     const a1 = val(actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 }))
     const a2 = val(actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 2_000_000, t_end_us: 4_000_000 }))
     val(actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000 }))
     expect(actor.dispatch('delete_layer', { layer: a2 }).ok).toBe(true)
-    expect(actor.snapshot().transitions).toEqual([])
+    expect(root(actor.snapshot()).transitions).toEqual([])
   })
 })
 
@@ -207,7 +208,7 @@ describe('reconcileTransitions (direct, plain object)', () => {
   it('removes in place, returns {id, from, to, reason} per drop, keeps healthy transitions', () => {
     const gen = seededGen()
     const p = blankProject(gen, 't')
-    const track = p.tracks[0].id
+    const track = root(p).tracks[0].id
     const l1 = applyAddLayer(p, gen, track, color(), 0, 2_000_000)
     const l2 = applyAddLayer(p, gen, track, color(), 2_000_000, 4_000_000)
     const l3 = applyAddLayer(p, gen, track, color(), 4_000_000, 6_000_000)
@@ -215,14 +216,14 @@ describe('reconcileTransitions (direct, plain object)', () => {
     const t2 = applyAddTransition(p, gen, l2, l3, 1_000_000, { kind: 'Crossfade' }, 'extend').id // l2 → 5M
     expect(reconcileTransitions(p)).toEqual([]) // both healthy → no-op
     // Break t1 only: hand-shrink l1's tail (edit-shaped geometry change).
-    const l1Obj = p.tracks[0].layers.find((l) => l.id === l1)!
+    const l1Obj = root(p).tracks[0].layers.find((l) => l.id === l1)!
     l1Obj.t_end_us = 2_000_000
     const drops = reconcileTransitions(p)
     expect(drops).toEqual([{
       id: t1, from_layer: l1, to_layer: l2,
       reason: { rule: 'TransitionDurationMismatch', transition: t1, duration: 1_000_000, overlap: 0 },
     }])
-    expect(p.transitions.map((t) => t.id)).toEqual([t2]) // t2 untouched
+    expect(root(p).transitions.map((t) => t.id)).toEqual([t2]) // t2 untouched
     expect(l1Obj.t_end_us).toBe(2_000_000) // no shrink-back
   })
 })

@@ -5,6 +5,7 @@ import { blankProject, type MediaItem } from '../model'
 import { mediaItemTemplate } from '../mutations/media'
 import { runHybrid, dropShotMarkers, type HybridDeps } from '../hybrids'
 import { applyWorkspacePathsEvent } from '../jobs-writeback'
+import { root } from './fixtures/project'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
 
@@ -60,7 +61,7 @@ function makeDeps(actor: ActorHandle, opts: { workspaceDir?: string | null; file
     enqueueWorkspaceCopy,
     workspaceDir: () => opts.workspaceDir ?? null,
     readFile,
-    snapshotComposition: () => actor.snapshot().composition,
+    snapshotComposition: () => root(actor.snapshot()),
   }
   return Object.assign(deps, {
     _probeMedia: probeMedia,
@@ -172,7 +173,7 @@ describe('runHybrid: apply_subtitles (MCP hybrid)', () => {
     expect((result as string).length).toBeGreaterThan(0)
     // The returned id must name a caption track with exactly 2 layers (one per cue).
     const snap = actor.snapshot()
-    const track = snap.tracks.find((t) => t.id === result)
+    const track = root(snap).tracks.find((t) => t.id === result)
     expect(track).toBeTruthy()
     expect(track!.layers).toHaveLength(2)
   })
@@ -191,7 +192,7 @@ describe('runHybrid: apply_subtitles (MCP hybrid)', () => {
     expect(result).toMatch(/ \(some ASS styling was simplified\)$/)
     // The id prefix must still resolve to a real track.
     const id = (result as string).replace(/ \(some ASS styling was simplified\)$/, '')
-    expect(actor.snapshot().tracks.find((t) => t.id === id)).toBeTruthy()
+    expect(root(actor.snapshot()).tracks.find((t) => t.id === id)).toBeTruthy()
   })
 
   it('calls compute.parseSubtitles with the body and format', async () => {
@@ -231,7 +232,7 @@ describe('runHybrid: import_media .srt (renderer subtitle branch)', () => {
     const actor = freshActor()
     const deps = makeDeps(actor, { fileContent: TWO_CUE_SRT })
     const id = await runHybrid('import_media', { path: 'C:\\My Subs\\captions.srt' }, deps) as string
-    const track = actor.snapshot().tracks.find((t) => t.id === id)
+    const track = root(actor.snapshot()).tracks.find((t) => t.id === id)
     expect(track).toBeTruthy()
     // The import_media subtitle branch labels the track with the full filename
     // → "captions.srt" WITH extension.
@@ -286,10 +287,10 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     const deps = makeDeps(actor)
     deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
     const snap0 = actor.snapshot()
-    const tStart = snap0.composition.duration_us
+    const tStart = root(snap0).duration_us
     await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: trackId }, deps)
     const snap = actor.snapshot()
-    const track = snap.tracks.find((t) => t.id === trackId)!
+    const track = root(snap).tracks.find((t) => t.id === trackId)!
     expect(track).toBeTruthy()
     expect(track.layers).toHaveLength(1)
     const layer = track.layers[0]
@@ -314,7 +315,7 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     const lenAfter = actor.historyStatus().len
     expect(lenAfter - lenBefore).toBe(1)
     const snap = actor.snapshot()
-    const track = snap.tracks.find((t) => t.id === trackId)!
+    const track = root(snap).tracks.find((t) => t.id === trackId)!
     const layer = track.layers[0]
     expect((layer.params as import('../model').AudioParams).role).toBe('voiceover')
   })
@@ -378,10 +379,10 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1 }, deps)
     const snap = actor.snapshot()
     // A layer must have been placed on some track.
-    const layerCount = snap.tracks.flatMap((t) => t.layers).length
+    const layerCount = root(snap).tracks.flatMap((t) => t.layers).length
     expect(layerCount).toBeGreaterThanOrEqual(1)
     // The placed layer must be on the last existing track.
-    const lastTrack = snap.tracks[snap.tracks.length - 1]
+    const lastTrack = root(snap).tracks[root(snap).tracks.length - 1]
     expect(lastTrack.layers).toHaveLength(1)
   })
 })
@@ -401,7 +402,7 @@ function shotReport(boundariesUs: number[], endUs: number): string {
 /** Fresh project with a full-window VideoClip layer on the A-roll track. */
 function withVideoLayer(durationUs = 6_000_000) {
   const actor = freshActor()
-  const track = actor.snapshot().tracks[0].id
+  const track = root(actor.snapshot()).tracks[0].id
   const VID = '00000000-0000-0000-0000-0000000000cc'
   actor.dispatch('add_media', { id: VID, kind: 'Video', duration_us: durationUs })
   const add = actor.dispatch('add_layer', { track, kind: 'video', media: VID, src_in_us: 0, src_out_us: durationUs, t_start_us: 0, t_end_us: durationUs })
@@ -420,7 +421,7 @@ describe('runHybrid: auto_split_by_shot', () => {
     expect(actor.historyStatus().len - lenBefore).toBe(1)
     const parsed = JSON.parse(result as string) as { layer_ids: string[] }
     expect(parsed.layer_ids).toHaveLength(3)
-    const track = actor.snapshot().tracks.find((t) => t.layers.some((l) => l.id === layerId))!
+    const track = root(actor.snapshot()).tracks.find((t) => t.layers.some((l) => l.id === layerId))!
     expect(track.layers.map((l) => [l.t_start_us, l.t_end_us])).toEqual([
       [0, 2_000_000], [2_000_000, 4_000_000], [4_000_000, 6_000_000],
     ])
@@ -455,7 +456,7 @@ describe('runHybrid: auto_split_by_shot', () => {
     expect(actor.historyStatus().len - lenBefore).toBe(1) // still ONE commit (split + drop)
     const parsed = JSON.parse(result as string) as { layer_ids: string[] }
     expect(parsed.layer_ids).toHaveLength(2) // the 0.3s segment was dropped
-    const track = actor.snapshot().tracks.find((t) => t.layers.length > 0 && t.layers.some((l) => parsed.layer_ids.includes(l.id)))!
+    const track = root(actor.snapshot()).tracks.find((t) => t.layers.length > 0 && t.layers.some((l) => parsed.layer_ids.includes(l.id)))!
     expect(track.layers).toHaveLength(2)
   })
 
@@ -481,7 +482,7 @@ describe('runHybrid: auto_split_by_shot', () => {
 
   it('rejects a non-VideoClip layer', async () => {
     const actor = freshActor()
-    const track = actor.snapshot().tracks[0].id
+    const track = root(actor.snapshot()).tracks[0].id
     const add = actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 })
     expect(add.ok).toBe(true)
     if (!add.ok) return
@@ -508,7 +509,7 @@ describe('dropShotMarkers (human shot-marker surface)', () => {
     expect(ids).toHaveLength(2)
     // Consistency with the tool: markers land at the interior cut times (2s, 4s),
     // the exact source→timeline boundaries auto_split_by_shot would split at.
-    expect(actor.snapshot().markers.map((m) => m.t_us).sort((a, b) => a - b)).toEqual([2_000_000, 4_000_000])
+    expect(root(actor.snapshot()).markers.map((m) => m.t_us).sort((a, b) => a - b)).toEqual([2_000_000, 4_000_000])
   })
 
   it('is a no-op (no markers, no commit) when the clip has no interior cut', async () => {
@@ -519,7 +520,7 @@ describe('dropShotMarkers (human shot-marker surface)', () => {
     const ids = await dropShotMarkers(layerId, deps)
     expect(ids).toEqual([])
     expect(actor.historyStatus().len - lenBefore).toBe(0)
-    expect(actor.snapshot().markers).toEqual([])
+    expect(root(actor.snapshot()).markers).toEqual([])
   })
 })
 

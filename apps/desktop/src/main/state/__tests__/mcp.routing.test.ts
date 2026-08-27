@@ -8,11 +8,12 @@
 // (add_color_layer, add_marker, split_layer, set_keyframe, add_track).
 import { describe, it, expect } from 'vitest'
 import { freshActor, aRollId, bRollId } from './pbt/harness'
+import { root } from './fixtures/project'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function totalLayerCount(actor: ReturnType<typeof freshActor>): number {
-  return actor.snapshot().tracks.reduce((n, t) => n + t.layers.length, 0)
+  return root(actor.snapshot()).tracks.reduce((n, t) => n + t.layers.length, 0)
 }
 
 /** Add a color layer via the MCP adapter and assert it succeeded. Returns the new layer id. */
@@ -55,7 +56,7 @@ describe('MCP adapter routing — add_color_layer (dedicated)', () => {
     expect(typeof layerId).toBe('string')
     expect(layerId.length).toBeGreaterThan(0)
     // state mutation: one layer exists on the A-roll track
-    const track = a.snapshot().tracks.find((t) => t.id === trackId)!
+    const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(track.layers).toHaveLength(1)
     expect(track.layers[0].id).toBe(layerId)
     expect(track.layers[0].params.kind).toBe('Color')
@@ -108,7 +109,7 @@ describe('MCP adapter routing — add_video_layer Image media (dedicated)', () =
     expect(r.ok).toBe(true)
     if (!r.ok) return
     const layerId = r.result.content[0].text
-    const track = a.snapshot().tracks.find((t) => t.id === trackId)!
+    const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(track.layers).toHaveLength(1)
     expect(track.layers[0].id).toBe(layerId)
     expect(track.layers[0].params.kind).toBe('ImageOverlay')
@@ -151,7 +152,7 @@ describe('MCP adapter routing — add_marker (dedicated)', () => {
     if (!r.ok) return
     const markerId = r.result.content[0].text
     expect(typeof markerId).toBe('string')
-    const markers = a.snapshot().markers
+    const markers = root(a.snapshot()).markers
     expect(markers).toHaveLength(1)
     expect(markers[0].id).toBe(markerId)
     expect(markers[0].label).toBe('My Marker')
@@ -168,7 +169,7 @@ describe('MCP adapter routing — add_marker (dedicated)', () => {
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')
-    expect(a.snapshot().markers).toHaveLength(0)
+    expect(root(a.snapshot()).markers).toHaveLength(0)
   })
 
   it('malformed color → structured invalid_params error, no throw', () => {
@@ -204,7 +205,7 @@ describe('MCP adapter routing — split_layer (dedicated)', () => {
     expect(typeof parsed.right).toBe('string')
     expect(parsed.left).toBe(layerId) // original layer id = left
     // state: track now has two layers
-    const track = a.snapshot().tracks.find((t) => t.id === trackId)!
+    const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(track.layers).toHaveLength(2)
   })
 
@@ -225,13 +226,13 @@ describe('MCP adapter routing — split_layer (dedicated)', () => {
 describe('MCP adapter routing — add_track (table)', () => {
   it('valid call routes, returns a track id, and track appears in state', () => {
     const a = freshActor()
-    const before = a.snapshot().tracks.length
+    const before = root(a.snapshot()).tracks.length
     const r = a.mcpCall('add_track', JSON.stringify({ label: 'VFX' }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
     const trackId = r.result.content[0].text
     expect(typeof trackId).toBe('string')
-    const after = a.snapshot().tracks
+    const after = root(a.snapshot()).tracks
     expect(after.length).toBe(before + 1)
     const newTrack = after.find((t) => t.id === trackId)!
     expect(newTrack).toBeDefined()
@@ -243,12 +244,12 @@ describe('MCP adapter routing — add_track (table)', () => {
   // 42 is neither a string nor null/undefined → invalid_params, no track added.
   it('invalid label type (number) → structured error, no throw, no extra track', () => {
     const a = freshActor()
-    const before = a.snapshot().tracks.length
+    const before = root(a.snapshot()).tracks.length
     const r = a.mcpCall('add_track', JSON.stringify({ label: 42 }))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')
-    expect(a.snapshot().tracks.length).toBe(before)
+    expect(root(a.snapshot()).tracks.length).toBe(before)
   })
 })
 
@@ -294,7 +295,7 @@ describe('MCP adapter routing — trim_layer (table)', () => {
       new_t_us: 2_000_000,
     }))
     expect(r.ok).toBe(true)
-    const track = a.snapshot().tracks.find((t) => t.id === trackId)!
+    const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(track.layers[0].t_end_us).toBe(2_000_000)
   })
 
@@ -327,10 +328,10 @@ describe('MCP adapter routing — move_layer (table)', () => {
     }))
     expect(r.ok).toBe(true)
     // Layer must be on the destination track now
-    const dst = a.snapshot().tracks.find((t) => t.id === dstTrackId)!
+    const dst = root(a.snapshot()).tracks.find((t) => t.id === dstTrackId)!
     expect(dst.layers.some((l) => l.id === layerId)).toBe(true)
     // Layer must be absent from source track
-    const src = a.snapshot().tracks.find((t) => t.id === srcTrackId)!
+    const src = root(a.snapshot()).tracks.find((t) => t.id === srcTrackId)!
     expect(src.layers.some((l) => l.id === layerId)).toBe(false)
   })
 
@@ -348,7 +349,7 @@ describe('MCP adapter routing — move_layer (table)', () => {
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')
     // Layer must still be on the original track
-    const src = a.snapshot().tracks.find((t) => t.id === trackId)!
+    const src = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(src.layers.some((l) => l.id === layerId)).toBe(true)
   })
 })
@@ -367,7 +368,7 @@ describe('MCP adapter routing — links_create (table)', () => {
     if (!r.ok) return
     const linkId = r.result.content[0].text
     expect(typeof linkId).toBe('string')
-    const links = a.snapshot().links
+    const links = root(a.snapshot()).links
     expect(links.some((g) => g.id === linkId && g.members.includes(id1) && g.members.includes(id2))).toBe(true)
   })
 
@@ -377,7 +378,7 @@ describe('MCP adapter routing — links_create (table)', () => {
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')
-    expect(a.snapshot().links).toHaveLength(0)
+    expect(root(a.snapshot()).links).toHaveLength(0)
   })
 
   it('malformed layer_ids entries (non-UUID strings) → structured invalid_params error, no throw', () => {

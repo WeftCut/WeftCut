@@ -6,6 +6,8 @@ import type { Project, Layer, LayerParams } from './model'
 import { validate } from './validate'
 import { isValidationFailure } from './errors'
 import { timeUsAtFrame } from './snap'
+import { asRoot, root, withGroup } from './__tests__/fixtures/project'
+import { applyAddLayer } from './mutations/add'
 
 function colorLayer(id: string, t0: number, t1: number): Layer {
   const params: LayerParams = { kind: 'Color', color: { mode: 'Static', value: { r: 255, g: 0, b: 0, a: 255 } }, width: 1920, height: 1080 }
@@ -27,20 +29,20 @@ describe('validate', () => {
   it('passes a blank project', () => { expect(() => validate(blankProject(seededGen(), 't'))).not.toThrow() })
 
   it('rejects zero canvas width/height and fps', () => {
-    const p = blankProject(seededGen(), 't'); p.composition.width = 0; expectRule(p, 'InvalidCanvas')
-    const q = blankProject(seededGen(), 't'); q.composition.fps = { num: 0, den: 1 }; expectRule(q, 'InvalidFps')
+    const p = blankProject(seededGen(), 't'); root(p).width = 0; expectRule(p, 'InvalidCanvas')
+    const q = blankProject(seededGen(), 't'); root(q).fps = { num: 0, den: 1 }; expectRule(q, 'InvalidFps')
   })
 
   it('rejects two overlapping visual layers on one track', () => {
     const p = blankProject(seededGen(), 't')
-    p.tracks[0].layers = [colorLayer('a', 0, 1_000_000), colorLayer('b', 500_000, 1_500_000)]
+    root(p).tracks[0].layers = [colorLayer('a', 0, 1_000_000), colorLayer('b', 500_000, 1_500_000)]
     expectRule(p, 'LayerOverlap')
   })
 
   it('allows a visual + an audio layer to coexist on one track', () => {
     const p = blankProject(seededGen(), 't')
     p.media_pool['m'] = { id: 'm', label: null, path_abs: '/x', path_rel: null, kind: 'Audio', metadata: { duration_us: 2_000_000 }, file_hash_blake3: '', file_size: 0, file_mtime: 0, imported_at: '<TS>', decode_route: { route: 'bypass' }, conform_path: null, waveform_path: null, thumbnails_dir: null }
-    p.tracks[0].layers = [colorLayer('a', 0, 1_000_000), audioLayer('b', 'm', 0, 1_000_000)]
+    root(p).tracks[0].layers = [colorLayer('a', 0, 1_000_000), audioLayer('b', 'm', 0, 1_000_000)]
     expect(() => validate(p)).not.toThrow()
   })
 
@@ -49,15 +51,15 @@ describe('validate', () => {
     // Audio from-layer: an otherwise-valid audio↔audio transition (overlap === duration).
     const p = blankProject(seededGen(), 't')
     p.media_pool['m'] = mediaItem
-    p.tracks[0].layers = [audioLayer('a', 'm', 0, 1_000_000), audioLayer('b', 'm', 800_000, 1_800_000)]
-    p.transitions = [{ id: 'tr', from_layer: 'a', to_layer: 'b', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 }]
+    root(p).tracks[0].layers = [audioLayer('a', 'm', 0, 1_000_000), audioLayer('b', 'm', 800_000, 1_800_000)]
+    root(p).transitions = [{ id: 'tr', from_layer: 'a', to_layer: 'b', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 }]
     try { validate(p); throw new Error('expected TransitionUnsupportedLayerKind, but validate passed') }
     catch (e) { if (!isValidationFailure(e)) throw e; expect(e.err).toEqual({ rule: 'TransitionUnsupportedLayerKind', transition: 'tr', layer: 'a' }) }
     // Audio to-layer behind a visual from-layer.
     const q = blankProject(seededGen(), 't')
     q.media_pool['m'] = mediaItem
-    q.tracks[0].layers = [colorLayer('a', 0, 1_000_000), audioLayer('b', 'm', 800_000, 1_800_000)]
-    q.transitions = [{ id: 'tr', from_layer: 'a', to_layer: 'b', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 }]
+    root(q).tracks[0].layers = [colorLayer('a', 0, 1_000_000), audioLayer('b', 'm', 800_000, 1_800_000)]
+    root(q).transitions = [{ id: 'tr', from_layer: 'a', to_layer: 'b', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 }]
     try { validate(q); throw new Error('expected TransitionUnsupportedLayerKind, but validate passed') }
     catch (e) { if (!isValidationFailure(e)) throw e; expect(e.err).toEqual({ rule: 'TransitionUnsupportedLayerKind', transition: 'tr', layer: 'b' }) }
   })
@@ -66,45 +68,45 @@ describe('validate', () => {
     // A=[0,1s) with B=[0.5s,0.8s) contained in it: a plain overlap reject — the A/B
     // pair trips LayerOverlap before C=[0.9s,1.2s) is ever reached.
     const p = blankProject(seededGen(), 't')
-    p.tracks[0].layers = [colorLayer('a', 0, 1_000_000), colorLayer('b', 500_000, 800_000), colorLayer('c', 900_000, 1_200_000)]
+    root(p).tracks[0].layers = [colorLayer('a', 0, 1_000_000), colorLayer('b', 500_000, 800_000), colorLayer('c', 900_000, 1_200_000)]
     expectRule(p, 'LayerOverlap')
   })
 
   it('rejects an inverted layer range', () => {
-    const p = blankProject(seededGen(), 't'); p.tracks[0].layers = [colorLayer('a', 1_000_000, 1_000_000)]
+    const p = blankProject(seededGen(), 't'); root(p).tracks[0].layers = [colorLayer('a', 1_000_000, 1_000_000)]
     expectRule(p, 'InvalidLayerRange')
   })
 
   it('rejects a duplicate layer id across tracks', () => {
     const p = blankProject(seededGen(), 't')
-    p.tracks[0].layers = [colorLayer('dup', 0, 100_000)]
-    p.tracks[1].layers = [colorLayer('dup', 0, 100_000)]
+    root(p).tracks[0].layers = [colorLayer('dup', 0, 100_000)]
+    root(p).tracks[1].layers = [colorLayer('dup', 0, 100_000)]
     expectRule(p, 'DuplicateLayerId')
   })
 
   it('rejects audio referencing missing media and an invalid src range', () => {
-    const p = blankProject(seededGen(), 't'); p.tracks[0].layers = [audioLayer('a', 'nope', 0, 100_000)]
+    const p = blankProject(seededGen(), 't'); root(p).tracks[0].layers = [audioLayer('a', 'nope', 0, 100_000)]
     expectRule(p, 'MissingMedia')
     const q = blankProject(seededGen(), 't')
     q.media_pool['m'] = { id: 'm', label: null, path_abs: '/x', path_rel: null, kind: 'Audio', metadata: { duration_us: null }, file_hash_blake3: '', file_size: 0, file_mtime: 0, imported_at: '<TS>', decode_route: { route: 'bypass' }, conform_path: null, waveform_path: null, thumbnails_dir: null }
     const al = audioLayer('a', 'm', 0, 100_000); (al.params as any).src_in_us = 100; (al.params as any).src_out_us = 50
-    q.tracks[0].layers = [al]; expectRule(q, 'InvalidSrcRange')
+    root(q).tracks[0].layers = [al]; expectRule(q, 'InvalidSrcRange')
   })
 
   it('rejects a link below 2 members, a missing member, and a layer in two links', () => {
-    const p = blankProject(seededGen(), 't'); p.tracks[0].layers = [colorLayer('a', 0, 100_000)]
-    p.links = [{ id: 'g', members: ['a'] }]; expectRule(p, 'LinkBelowMinSize')
-    const q = blankProject(seededGen(), 't'); q.tracks[0].layers = [colorLayer('a', 0, 100_000)]
-    q.links = [{ id: 'g', members: ['a', 'ghost'] }]; expectRule(q, 'LinkMemberMissing')
-    const r = blankProject(seededGen(), 't'); r.tracks[0].layers = [colorLayer('a', 0, 100_000), colorLayer('b', 200_000, 300_000)]
-    r.links = [{ id: 'g1', members: ['a', 'b'] }, { id: 'g2', members: ['a', 'b'] }]; expectRule(r, 'LayerInMultipleLinks')
+    const p = blankProject(seededGen(), 't'); root(p).tracks[0].layers = [colorLayer('a', 0, 100_000)]
+    root(p).links = [{ id: 'g', members: ['a'] }]; expectRule(p, 'LinkBelowMinSize')
+    const q = blankProject(seededGen(), 't'); root(q).tracks[0].layers = [colorLayer('a', 0, 100_000)]
+    root(q).links = [{ id: 'g', members: ['a', 'ghost'] }]; expectRule(q, 'LinkMemberMissing')
+    const r = blankProject(seededGen(), 't'); root(r).tracks[0].layers = [colorLayer('a', 0, 100_000), colorLayer('b', 200_000, 300_000)]
+    root(r).links = [{ id: 'g1', members: ['a', 'b'] }, { id: 'g2', members: ['a', 'b'] }]; expectRule(r, 'LayerInMultipleLinks')
   })
 
   it('does NOT reject out-of-range keyframes (intentional, validate.rs:495-509)', () => {
     const p = blankProject(seededGen(), 't')
     const l = colorLayer('a', 0, 100_000)
     ;(l.params as any).color = { mode: 'Keyframed', value: [{ id: 'k', t_us: -50_000, value: { r: 1, g: 2, b: 3, a: 4 }, interp: { kind: 'Linear' } }] }
-    p.tracks[0].layers = [l]
+    root(p).tracks[0].layers = [l]
     expect(() => validate(p)).not.toThrow()
   })
 
@@ -115,7 +117,7 @@ describe('validate', () => {
     const p = blankProject(seededGen(), 't')
     const l = colorLayer('a', 0, 100_000)
     ;(l.params as any).color = { mode: 'Keyframed', value: [{ id: 'k', t_us: 33_334, value: { r: 1, g: 2, b: 3, a: 4 }, interp: { kind: 'Linear' } }] }
-    p.tracks[0].layers = [l]
+    root(p).tracks[0].layers = [l]
     expect(() => validate(p)).not.toThrow()
   })
 })
@@ -124,14 +126,14 @@ describe('validate — frame-grid backstop', () => {
   it('rejects an off-grid t_start_us / t_end_us with the offending field, time, rate and the value to retry with', () => {
     // 2_999_999 µs is 1 µs below frame 90 at 30/1.
     const p = blankProject(seededGen(), 't')
-    p.tracks[0].layers = [colorLayer('a', 2_999_999, 4_000_000)]
+    root(p).tracks[0].layers = [colorLayer('a', 2_999_999, 4_000_000)]
     try { validate(p); throw new Error('expected OffGridLayerBoundary, but validate passed') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
       expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'a', field: 't_start_us', t: 2_999_999, fps: { num: 30, den: 1 }, grid: 'frame', snap_to: 3_000_000 })
     }
     const q = blankProject(seededGen(), 't')
-    q.tracks[0].layers = [colorLayer('a', 0, 2_999_999)]
+    root(q).tracks[0].layers = [colorLayer('a', 0, 2_999_999)]
     try { validate(q); throw new Error('expected OffGridLayerBoundary, but validate passed') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
@@ -155,19 +157,19 @@ describe('validate — frame-grid backstop', () => {
 
     // Audio ACCEPTS a sample boundary the frame grid would reject...
     const ok = blankProject(seededGen(), 't')
-    ok.composition.fps = FPS
-    ok.composition.duration_us = timeUsAtFrame(2, FPS.num, FPS.den) // encloses the tail
+    root(ok).fps = FPS
+    root(ok).duration_us = timeUsAtFrame(2, FPS.num, FPS.den) // encloses the tail
     audioMedia(ok)
-    ok.tracks[0].layers = [audioLayer('a', 'm', 0, SAMPLE_1602)]
+    root(ok).tracks[0].layers = [audioLayer('a', 'm', 0, SAMPLE_1602)]
     expect(() => validate(ok)).not.toThrow()
 
     // ...and REJECTS a frame boundary that is not a sample boundary, with the
     // lattice it was measured against named in the error.
     const bad = blankProject(seededGen(), 't')
-    bad.composition.fps = FPS
-    bad.composition.duration_us = timeUsAtFrame(2, FPS.num, FPS.den)
+    root(bad).fps = FPS
+    root(bad).duration_us = timeUsAtFrame(2, FPS.num, FPS.den)
     audioMedia(bad)
-    bad.tracks[0].layers = [audioLayer('a', 'm', 0, FRAME_1)]
+    root(bad).tracks[0].layers = [audioLayer('a', 'm', 0, FRAME_1)]
     try { validate(bad); throw new Error('expected OffGridLayerBoundary for frame-aligned audio at 29.97') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
@@ -180,14 +182,14 @@ describe('validate — frame-grid backstop', () => {
     // boundary does not. This is the assertion that fails if the predicate ever
     // collapses back to one grid for both kinds.
     const vis = blankProject(seededGen(), 't')
-    vis.composition.fps = FPS
-    vis.composition.duration_us = timeUsAtFrame(2, FPS.num, FPS.den)
-    vis.tracks[0].layers = [colorLayer('v', 0, FRAME_1)]
+    root(vis).fps = FPS
+    root(vis).duration_us = timeUsAtFrame(2, FPS.num, FPS.den)
+    root(vis).tracks[0].layers = [colorLayer('v', 0, FRAME_1)]
     expect(() => validate(vis)).not.toThrow()
     const visBad = blankProject(seededGen(), 't')
-    visBad.composition.fps = FPS
-    visBad.composition.duration_us = timeUsAtFrame(2, FPS.num, FPS.den)
-    visBad.tracks[0].layers = [colorLayer('v', 0, SAMPLE_1602)]
+    root(visBad).fps = FPS
+    root(visBad).duration_us = timeUsAtFrame(2, FPS.num, FPS.den)
+    root(visBad).tracks[0].layers = [colorLayer('v', 0, SAMPLE_1602)]
     try { validate(visBad); throw new Error('expected OffGridLayerBoundary for sample-aligned video at 29.97') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
@@ -200,19 +202,19 @@ describe('validate — frame-grid backstop', () => {
     // The half-open `[t_start, t_end)` comparison gives this for free at 20.83 µs
     // precision — the regression exists so nobody "fixes" it with a tolerance.
     const p = blankProject(seededGen(), 't')
-    p.composition.fps = { num: 30000, den: 1001 }
+    root(p).fps = { num: 30000, den: 1001 }
     p.media_pool['m'] = { id: 'm', label: null, path_abs: '/x', path_rel: null, kind: 'Audio', metadata: { duration_us: 10_000_000 }, file_hash_blake3: '', file_size: 0, file_mtime: 0, imported_at: '<TS>', decode_route: { route: 'bypass' }, conform_path: null, waveform_path: null, thumbnails_dir: null }
     const s = (i: number) => timeUsAtFrame(i, 48_000, 1)
-    p.composition.duration_us = timeUsAtFrame(1, 30000, 1001)
+    root(p).duration_us = timeUsAtFrame(1, 30000, 1001)
     // Abutting at sample 480, then one more layer starting exactly one sample later.
-    p.tracks[0].layers = [audioLayer('a', 'm', s(0), s(480)), audioLayer('b', 'm', s(480), s(960))]
+    root(p).tracks[0].layers = [audioLayer('a', 'm', s(0), s(480)), audioLayer('b', 'm', s(480), s(960))]
     expect(() => validate(p)).not.toThrow()
     // And a one-sample genuine overlap IS still caught.
     const q = blankProject(seededGen(), 't')
-    q.composition.fps = { num: 30000, den: 1001 }
+    root(q).fps = { num: 30000, den: 1001 }
     q.media_pool['m'] = p.media_pool['m']
-    q.composition.duration_us = timeUsAtFrame(1, 30000, 1001)
-    q.tracks[0].layers = [audioLayer('a', 'm', s(0), s(481)), audioLayer('b', 'm', s(480), s(960))]
+    root(q).duration_us = timeUsAtFrame(1, 30000, 1001)
+    root(q).tracks[0].layers = [audioLayer('a', 'm', s(0), s(481)), audioLayer('b', 'm', s(480), s(960))]
     expectRule(q, 'LayerOverlap')
   })
 
@@ -220,14 +222,14 @@ describe('validate — frame-grid backstop', () => {
     // At 30000/1001 frame 1 is 33_367 µs, not 33_366 — the divergence that makes a
     // hand-computed grid wrong.
     const p = blankProject(seededGen(), 't')
-    p.composition.fps = { num: 30000, den: 1001 }
-    p.composition.duration_us = 33_367
-    p.tracks[0].layers = [colorLayer('a', 0, 33_367)]
+    root(p).fps = { num: 30000, den: 1001 }
+    root(p).duration_us = 33_367
+    root(p).tracks[0].layers = [colorLayer('a', 0, 33_367)]
     expect(() => validate(p)).not.toThrow()
     const q = blankProject(seededGen(), 't')
-    q.composition.fps = { num: 30000, den: 1001 }
-    q.composition.duration_us = 33_366
-    q.tracks[0].layers = [colorLayer('a', 0, 33_366)]
+    root(q).fps = { num: 30000, den: 1001 }
+    root(q).duration_us = 33_366
+    root(q).tracks[0].layers = [colorLayer('a', 0, 33_366)]
     expectRule(q, 'OffGridTime') // composition duration is checked first
   })
 
@@ -236,7 +238,7 @@ describe('validate — frame-grid backstop', () => {
     // waves it through. This is the rule that catches it, and reporting it as
     // "off grid" instead would point the caller at the wrong fix.
     const p = blankProject(seededGen(), 't')
-    p.tracks[0].layers = [colorLayer('a', -1_000_000, 1_000_000)]
+    root(p).tracks[0].layers = [colorLayer('a', -1_000_000, 1_000_000)]
     try { validate(p); throw new Error('expected NegativeLayerStart, but validate passed') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
@@ -244,30 +246,30 @@ describe('validate — frame-grid backstop', () => {
     }
     // A layer starting exactly at 0 is fine — the bound is inclusive.
     const q = blankProject(seededGen(), 't')
-    q.tracks[0].layers = [colorLayer('a', 0, 1_000_000)]
+    root(q).tracks[0].layers = [colorLayer('a', 0, 1_000_000)]
     expect(() => validate(q)).not.toThrow()
   })
 
   it('rejects an off-grid composition.duration_us', () => {
     const p = blankProject(seededGen(), 't')
-    p.composition.duration_us = 2_999_999
+    root(p).duration_us = 2_999_999
     try { validate(p); throw new Error('expected OffGridTime, but validate passed') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
-      expect(e.err).toEqual({ rule: 'OffGridTime', entity: 'Composition', id: null, field: 'duration_us', t: 2_999_999, fps: { num: 30, den: 1 }, snap_to: 3_000_000 })
+      expect(e.err).toEqual({ rule: 'OffGridTime', entity: 'Composition', id: p.root_id, field: 'duration_us', t: 2_999_999, fps: { num: 30, den: 1 }, snap_to: 3_000_000 })
     }
   })
 
   it('rejects an off-grid marker t_us / end_t_us', () => {
     const p = blankProject(seededGen(), 't')
-    p.markers = [{ id: 'mk', t_us: 2_999_999, end_t_us: null, label: 'm', color: { r: 0, g: 0, b: 0, a: 255 }, metadata: {} }]
+    root(p).markers = [{ id: 'mk', t_us: 2_999_999, end_t_us: null, label: 'm', color: { r: 0, g: 0, b: 0, a: 255 }, metadata: {} }]
     try { validate(p); throw new Error('expected OffGridTime, but validate passed') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
       expect(e.err).toEqual({ rule: 'OffGridTime', entity: 'Marker', id: 'mk', field: 't_us', t: 2_999_999, fps: { num: 30, den: 1 }, snap_to: 3_000_000 })
     }
     const q = blankProject(seededGen(), 't')
-    q.markers = [{ id: 'mk', t_us: 0, end_t_us: 2_999_999, label: 'm', color: { r: 0, g: 0, b: 0, a: 255 }, metadata: {} }]
+    root(q).markers = [{ id: 'mk', t_us: 0, end_t_us: 2_999_999, label: 'm', color: { r: 0, g: 0, b: 0, a: 255 }, metadata: {} }]
     expectRule(q, 'OffGridTime')
   })
 
@@ -276,20 +278,115 @@ describe('validate — frame-grid backstop', () => {
     // grid as an absolute time, exactly right as a distance. Both endpoints are
     // canonical and overlap === duration_us, so validate must accept it.
     const p = blankProject(seededGen(), 't')
-    p.composition.fps = { num: 30000, den: 1001 }
+    root(p).fps = { num: 30000, den: 1001 }
     const cut = 33_367            // frame 1
     const fromEnd = 66_733        // frame 2
-    p.composition.duration_us = 100_100 // frame 3
-    p.tracks[0].layers = [colorLayer('a', 0, fromEnd), colorLayer('b', cut, 100_100)]
-    p.transitions = [{ id: 'tr', from_layer: 'a', to_layer: 'b', duration_us: fromEnd - cut, kind: { kind: 'Crossfade' }, extended_us: 0 }]
+    root(p).duration_us = 100_100 // frame 3
+    root(p).tracks[0].layers = [colorLayer('a', 0, fromEnd), colorLayer('b', cut, 100_100)]
+    root(p).transitions = [{ id: 'tr', from_layer: 'a', to_layer: 'b', duration_us: fromEnd - cut, kind: { kind: 'Crossfade' }, extended_us: 0 }]
     expect(fromEnd - cut).toBe(33_366) // NOT a canonical time
     expect(() => validate(p)).not.toThrow()
   })
 
   it('reports every endpoint as on-grid under a degenerate rate (InvalidFps owns that project)', () => {
     const p = blankProject(seededGen(), 't')
-    p.composition.fps = { num: 0, den: 1 }
-    p.tracks[0].layers = [colorLayer('a', 2_999_999, 4_000_001)]
+    root(p).fps = { num: 0, den: 1 }
+    root(p).tracks[0].layers = [colorLayer('a', 2_999_999, 4_000_001)]
     expectRule(p, 'InvalidFps')
   })
 })
+
+// ── The composition container (ADR 0052 §3–§6) ───────────────────────────────
+describe('validate — compositions', () => {
+  const twoComps = () => {
+    const gen = seededGen()
+    return { gen, ...withGroup(blankProject(gen, 't'), gen, (g, view) => applyAddLayer(view, gen, g.tracks[0].id, colorLayer('gl', 0, 1_000_000).params, 0, 1_000_000)) }
+  }
+
+  it('passes a root + Group project, and a Group with layers of its own', () => {
+    const { p } = twoComps()
+    expect(Object.keys(p.compositions)).toHaveLength(2)
+    expect(() => validate(p)).not.toThrow()
+  })
+  it('CompositionCycle: A → B → A is refused, naming the loop', () => {
+    const { p, gen, groupId } = twoComps()
+    // the Group references the root's OTHER Group… make a second Group that the
+    // first references, and have the second reference the first.
+    const second = withGroup(p, gen)
+    const g1 = second.p.compositions[groupId]
+    const g2 = second.p.compositions[second.groupId]
+    applyAddLayer(asRoot(second.p, g1), gen, g1.tracks[1].id, { kind: 'CompositionRef', composition: g2.id, src_in_us: 0, src_out_us: 1_000_000, transform: textTransform(), opacity: { mode: 'Static', value: 1 }, blend_mode: 'Normal' }, 0, 1_000_000)
+    applyAddLayer(asRoot(second.p, g2), gen, g2.tracks[0].id, { kind: 'CompositionRef', composition: g1.id, src_in_us: 0, src_out_us: 1_000_000, transform: textTransform(), opacity: { mode: 'Static', value: 1 }, blend_mode: 'Normal' }, 0, 1_000_000)
+    try { validate(second.p); throw new Error('expected CompositionCycle') }
+    catch (e) {
+      if (!isValidationFailure(e)) throw e
+      expect(e.err.rule).toBe('CompositionCycle')
+      if (e.err.rule === 'CompositionCycle') {
+        expect(e.err.path[0]).toBe(e.err.path[e.err.path.length - 1])
+        expect(new Set(e.err.path)).toEqual(new Set([g1.id, g2.id]))
+      }
+    }
+  })
+  it('CompositionLatticeMismatch: a 25 fps Group under a 30 fps root; 60/2 under 30/1 is the same rate', () => {
+    const { p, groupId } = twoComps()
+    const q = structuredClone(p)
+    q.compositions[groupId].fps = { num: 25, den: 1 }
+    try { validate(q); throw new Error('expected CompositionLatticeMismatch') }
+    catch (e) { if (!isValidationFailure(e)) throw e; expect(e.err).toEqual({ rule: 'CompositionLatticeMismatch', composition: groupId, field: 'fps' }) }
+    const r = structuredClone(p)
+    r.compositions[groupId].fps = { num: 60, den: 2 }
+    expect(() => validate(r)).not.toThrow()
+    const s = structuredClone(p)
+    s.compositions[groupId].sample_rate = 44_100
+    expectRule(s, 'CompositionLatticeMismatch')
+    const t = structuredClone(p)
+    t.compositions[groupId].channels = 1
+    expectRule(t, 'CompositionLatticeMismatch')
+  })
+  it('tolerates src_out_us past the referenced composition\'s duration (overhang, ADR 0052 §6)', () => {
+    const { p, refLayerId, groupId } = twoComps()
+    const ref = root(p).tracks.flatMap((t) => t.layers).find((l) => l.id === refLayerId)!
+    expect(ref.params.kind).toBe('CompositionRef')
+    if (ref.params.kind !== 'CompositionRef') return
+    ref.params.src_out_us = p.compositions[groupId].duration_us + 10_000_000
+    expect(() => validate(p)).not.toThrow()
+    // …but the window itself must still be well-formed.
+    ref.params.src_in_us = ref.params.src_out_us
+    expectRule(p, 'InvalidSrcRange')
+  })
+  it('DuplicateLayerId spans compositions', () => {
+    const { p, groupId } = twoComps()
+    const rootLayer = root(p).tracks.flatMap((t) => t.layers)[0]
+    p.compositions[groupId].tracks[1].layers = [colorLayer(rootLayer.id, 0, 1_000_000)]
+    expectRule(p, 'DuplicateLayerId')
+  })
+  it('LinkMemberMissing: a link may not reach into another composition', () => {
+    const { p, groupId } = twoComps()
+    const groupLayer = p.compositions[groupId].tracks[0].layers[0]
+    const rootLayer = root(p).tracks.flatMap((t) => t.layers)[0]
+    root(p).links = [{ id: 'g', members: [groupLayer.id, rootLayer.id].sort() }]
+    expectRule(p, 'LinkMemberMissing')
+  })
+  it('CompositionMissing / RootReferenced / RootMissing / CompositionIdMismatch', () => {
+    const { p, refLayerId } = twoComps()
+    const ref = () => root(p).tracks.flatMap((t) => t.layers).find((l) => l.id === refLayerId)!.params as Extract<LayerParams, { kind: 'CompositionRef' }>
+    const q = structuredClone(p); (root(q).tracks.flatMap((t) => t.layers).find((l) => l.id === refLayerId)!.params as Extract<LayerParams, { kind: 'CompositionRef' }>).composition = 'ghost'
+    expectRule(q, 'CompositionMissing')
+    const r = structuredClone(p); (root(r).tracks.flatMap((t) => t.layers).find((l) => l.id === refLayerId)!.params as Extract<LayerParams, { kind: 'CompositionRef' }>).composition = r.root_id
+    expectRule(r, 'RootReferenced')
+    const s = structuredClone(p); s.root_id = 'ghost'
+    expectRule(s, 'RootMissing')
+    const t = structuredClone(p); t.compositions['other'] = t.compositions[ref().composition]
+    expectRule(t, 'CompositionIdMismatch')
+  })
+  it('an orphan composition is legal', () => {
+    const { p, refLayerId } = twoComps()
+    for (const t of root(p).tracks) t.layers = t.layers.filter((l) => l.id !== refLayerId)
+    expect(() => validate(p)).not.toThrow()
+  })
+})
+
+function textTransform(): Extract<LayerParams, { kind: 'Text' }>['transform'] {
+  const s = (v: number) => ({ mode: 'Static' as const, value: v })
+  return { x: s(0), y: s(0), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor_x: s(0.5), anchor_y: s(0.5), scale_linked: true }
+}

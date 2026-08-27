@@ -3,7 +3,8 @@ import type { DecodeRoute } from '../../../shared/decode-route'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { defaultTransform } from './add'
-import { pruneEmptiedTrack } from './helpers'
+import { pruneEmptiedTrack, rootComposition } from './helpers'
+import { eachLayer } from '../model'
 
 /** The canonical VideoClip layer shape. blend_mode
  *  default = Normal, transform default per defaultTransform. */
@@ -115,11 +116,12 @@ export function applySetMediaHash(pool: Record<string, MediaItem>, id: Uuid, has
   return { ...pool, [id]: { ...item, file_hash_blake3: hash } }
 }
 
-/** Layer ids referencing this media, scanned in track-then-layer order.
+/** Layer ids referencing this media, in composition-then-track-then-layer
+ *  order, across EVERY composition — a Group's clip pins its media too.
  *  VideoClip/Audio/ImageOverlay only. */
 export function referencingLayers(p: Project, id: Uuid): Uuid[] {
   const out: Uuid[] = []
-  for (const t of p.tracks) for (const l of t.layers) {
+  for (const { layer: l } of eachLayer(p)) {
     const k = l.params.kind
     if ((k === 'VideoClip' || k === 'Audio' || k === 'ImageOverlay') && l.params.media === id) out.push(l.id)
   }
@@ -132,13 +134,14 @@ export function referencingLayers(p: Project, id: Uuid): Uuid[] {
  *  BEFORE commit's op_id (the keystone). Track defaults == applyAddTrack.
  *  No autofit (no time change). */
 export function applySeparateAudio(p: Project, idGen: IdGen, layerId: Uuid): Uuid {
+  const c = rootComposition(p)
   let ti = -1, li = -1
-  for (let t = 0; t < p.tracks.length; t++) {
-    const idx = p.tracks[t].layers.findIndex((l) => l.id === layerId)
+  for (let t = 0; t < c.tracks.length; t++) {
+    const idx = c.tracks[t].layers.findIndex((l) => l.id === layerId)
     if (idx >= 0) { ti = t; li = idx; break }
   }
   if (ti < 0) throw new CommandFailure({ error: 'LayerNotFound', layer: layerId })
-  const source = p.tracks[ti]
+  const source = c.tracks[ti]
   const layer = source.layers[li]
   if (layer.params.kind !== 'Audio') throw new CommandFailure({ error: 'WrongLayerKind', layer: layerId, expected: 'Audio' })
 
@@ -158,11 +161,11 @@ export function applySeparateAudio(p: Project, idGen: IdGen, layerId: Uuid): Uui
   source.layers.splice(li, 1)
   const newTrack: Track = { id: newId, label, enabled: true, locked: false, muted: false, solo: false,
     removable: true, role: null, transient: true, height_px: 64, layers: [layer] }
-  p.tracks.splice(ti, 0, newTrack)
+  c.tracks.splice(ti, 0, newTrack)
   // Lifting is a layer leaving a lane, so the one cleanup rule applies here too —
   // reachable only when the audio was that lane's last layer, which the usual
   // A/V-pair case never is. The lifted lane was inserted at the source's own
   // index, so it ends up occupying the slot the pruned lane vacated.
-  pruneEmptiedTrack(p, sourceTrackId)
+  pruneEmptiedTrack(c, sourceTrackId)
   return newId
 }

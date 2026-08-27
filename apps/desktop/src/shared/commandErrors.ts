@@ -70,12 +70,23 @@ export type ValidationError =
   | { rule: 'LinkBelowMinSize'; link: Uuid; members: number }
   | { rule: 'LinkMemberMissing'; link: Uuid; layer: Uuid }
   | { rule: 'LayerInMultipleLinks'; layer: Uuid; first: Uuid; second: Uuid }
+  // ── Composition container (ADR 0052 §3–§6) ──
+  | { rule: 'RootMissing'; root_id: Uuid }
+  | { rule: 'CompositionIdMismatch'; key: Uuid; id: Uuid }
+  | { rule: 'CompositionMissing'; layer: Uuid; composition: Uuid }
+  | { rule: 'RootReferenced'; layer: Uuid }
+  // The reference chain that closes on itself: `path[0] === path.at(-1)`.
+  | { rule: 'CompositionCycle'; path: Uuid[] }
+  // Single lattice: a Group's fps / sample_rate / channels equal the root's, or
+  // its `src_*` would sit on a different grid from the parent's `t_*`.
+  | { rule: 'CompositionLatticeMismatch'; composition: Uuid; field: 'fps' | 'sample_rate' | 'channels' }
 
 // ── CommandError — the full mutation-error vocabulary. Individual dispatch
 // arms construct only the variants they need. ──
 export type CommandError =
   | { error: 'TrackNotFound'; track: Uuid }
   | { error: 'LayerNotFound'; layer: Uuid }
+  | { error: 'CompositionNotFound'; composition: Uuid }
   | { error: 'WrongLayerKind'; layer: Uuid; expected: string }
   | { error: 'MarkerNotFound'; marker: Uuid }
   | { error: 'TransitionNotFound'; transition: Uuid }

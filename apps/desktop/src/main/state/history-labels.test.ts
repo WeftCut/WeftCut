@@ -11,6 +11,7 @@ import { seededGen } from './ids'
 import { colorParams, textParamsDefault } from './mutations/add'
 import { videoClipParams } from './mutations/media'
 import { TEXT_NAME_MAX, textSnippet } from '../../shared/textSnippet'
+import { root, withRoot } from './__tests__/fixtures/project'
 
 /** Dotted leaf keys of a locale subtree, e.g. `history.layer.add`. */
 function leafKeys(obj: Record<string, unknown>, prefix: string): string[] {
@@ -91,7 +92,7 @@ function mediaItem(id: string, path: string, label: string | null): MediaItem {
   }
 }
 function layer(p: Project, l: Layer): Project {
-  return { ...p, tracks: p.tracks.map((t, i) => (i === 0 ? { ...t, layers: [...t.layers, l] } : t)) }
+  return withRoot(p, { tracks: root(p).tracks.map((t, i) => (i === 0 ? { ...t, layers: [...t.layers, l] } : t)) })
 }
 function mkLayer(id: string, label: string | null, params: Layer['params']): Layer {
   return { id, label, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {}, params, effects: [] }
@@ -148,12 +149,12 @@ describe('resolveEntityLabels', () => {
   // track vector, which is the same number the renderer counts.
   it('names a track by its label, else its role, else its position', () => {
     const p = fresh()
-    const [t0, t1] = p.tracks
-    expect(labels({ ...p, tracks: [{ ...t0, label: 'A-Roll' }, t1] }, [{ kind: 'Track', id: t0.id }])).toEqual([{ text: 'A-Roll' }])
+    const [t0, t1] = root(p).tracks
+    expect(labels(withRoot(p, { tracks: [{ ...t0, label: 'A-Roll' }, t1] }), [{ kind: 'Track', id: t0.id }])).toEqual([{ text: 'A-Roll' }])
     expect(labels(p, [{ kind: 'Track', id: t0.id }])).toEqual([{ label_key: 'tracks.roles.a-roll' }])
     expect(labels(p, [{ kind: 'Track', id: t1.id }])).toEqual([{ label_key: 'tracks.roles.b-roll' }])
     const extra = { ...t1, id: 'T-extra', role: null, label: null }
-    expect(labels({ ...p, tracks: [t0, t1, extra] }, [{ kind: 'Track', id: 'T-extra' }]))
+    expect(labels(withRoot(p, { tracks: [t0, t1, extra] }), [{ kind: 'Track', id: 'T-extra' }]))
       .toEqual([{ label_key: 'tracks.positional', label_args: { n: 3 } }])
   })
   // Every branch trims, not just the Layer one. The panel filters zero-length
@@ -161,9 +162,9 @@ describe('resolveEntityLabels', () => {
   // strictly worse than the kind rung the same track would get from `null`.
   it('treats a blank track label as absent, exactly as the layer chain does', () => {
     const p = fresh()
-    const [t0, t1] = p.tracks
+    const [t0, t1] = root(p).tracks
     for (const blank of ['', '   ']) {
-      expect(labels({ ...p, tracks: [{ ...t0, label: blank }, t1] }, [{ kind: 'Track', id: t0.id }]))
+      expect(labels(withRoot(p, { tracks: [{ ...t0, label: blank }, t1] }), [{ kind: 'Track', id: t0.id }]))
         .toEqual([{ label_key: 'tracks.roles.a-roll' }])
     }
   })
@@ -171,7 +172,7 @@ describe('resolveEntityLabels', () => {
     ({ id: 'M', t_us: 0, end_t_us: null, label, color: { r: 0, g: 0, b: 0, a: 255 }, metadata: {} })
   it('names a marker by its label', () => {
     const p = fresh()
-    expect(labels({ ...p, markers: [marker('Shot 3')] }, [{ kind: 'Marker', id: 'M' }])).toEqual([{ text: 'Shot 3' }])
+    expect(labels(withRoot(p, { markers: [marker('Shot 3')] }), [{ kind: 'Marker', id: 'M' }])).toEqual([{ text: 'Shot 3' }])
   })
   // Markers carry no kind discriminant of their own, so before this rung existed
   // a blank-labelled marker fell through to the raw uuid — contradicting this
@@ -179,7 +180,7 @@ describe('resolveEntityLabels', () => {
   it('gives a blank-labelled marker its kind rung rather than the uuid', () => {
     const p = fresh()
     for (const blank of ['', '   ']) {
-      expect(labels({ ...p, markers: [marker(blank)] }, [{ kind: 'Marker', id: 'M' }]))
+      expect(labels(withRoot(p, { markers: [marker(blank)] }), [{ kind: 'Marker', id: 'M' }]))
         .toEqual([{ label_key: 'kinds.marker' }])
     }
   })
@@ -189,7 +190,7 @@ describe('resolveEntityLabels', () => {
   })
   it('stays parallel to affected — same length, same order', () => {
     const p = layer(fresh(), mkLayer('L1', 'Clip 01', colorParams({ r: 0, g: 0, b: 0, a: 255 }, 16, 9)))
-    const refs = [{ kind: 'Layer' as const, id: 'gone' }, { kind: 'Layer' as const, id: 'L1' }, { kind: 'Track' as const, id: p.tracks[0].id }]
+    const refs = [{ kind: 'Layer' as const, id: 'gone' }, { kind: 'Layer' as const, id: 'L1' }, { kind: 'Track' as const, id: root(p).tracks[0].id }]
     expect(labels(p, refs)).toHaveLength(refs.length)
     expect(labels(p, refs)[1]).toEqual({ text: 'Clip 01' })
   })

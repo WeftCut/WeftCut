@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 import { seededGen } from '../ids'
 import { blankProject } from '../model'
 import { createActor, type ActorHandle } from '../actor'
+import { root } from '../__tests__/fixtures/project'
 
 interface GoldenCase {
   name: string
@@ -43,9 +44,9 @@ const fixture = JSON.parse(
 function buildCase(c: GoldenCase): { actor: ActorHandle; tid: string; a: string; b: string } {
   const gen = seededGen()
   const initial = blankProject(gen, 'golden')
-  initial.composition.fps = { ...c.fps }
+  root(initial).fps = { ...c.fps }
   const actor = createActor({ initial, idGen: gen, clock: () => '<TS>', emitLog: () => {} })
-  const track = initial.tracks[0].id
+  const track = root(initial).tracks[0].id
   const aSpan = c.setup.cutUs - c.setup.aStartUs
   let a: string
   if (c.setup.mediaDurationUs !== null) {
@@ -65,7 +66,7 @@ function buildCase(c: GoldenCase): { actor: ActorHandle; tid: string; a: string;
 }
 
 function layerOf(actor: ActorHandle, id: string) {
-  for (const t of actor.snapshot().tracks) {
+  for (const t of root(actor.snapshot()).tracks) {
     const l = t.layers.find((x) => x.id === id)
     if (l) return l
   }
@@ -86,7 +87,7 @@ describe('transition edge clamp golden (main-process leg, through the actor)', (
       expect(layerOf(actor, b).t_start_us).toBe(c.geometry.bStartUs)
       expect(layerOf(actor, b).t_end_us).toBe(c.geometry.bEndUs)
       expect(srcOutOf(actor, a)).toBe(c.geometry.aSrcOutUs)
-      expect(actor.snapshot().transitions[0]).toMatchObject({
+      expect(root(actor.snapshot()).transitions[0]).toMatchObject({
         id: tid,
         duration_us: c.geometry.aEndUs - c.geometry.bStartUs,
         extended_us: c.geometry.extendedUs,
@@ -107,7 +108,7 @@ describe('transition edge clamp golden (main-process leg, through the actor)', (
       expect(layerOf(actor, a).t_end_us).toBe(c.after.aEndUs)
       expect(layerOf(actor, b).t_start_us).toBe(c.after.bStartUs)
       expect(srcOutOf(actor, a)).toBe(c.after.aSrcOutUs)
-      expect(actor.snapshot().transitions[0]).toMatchObject({
+      expect(root(actor.snapshot()).transitions[0]).toMatchObject({
         duration_us: c.after.durationUs,
         extended_us: c.after.extendedUs,
       })

@@ -3,6 +3,7 @@ import { History } from '../history'
 import { blankProject } from '../model'
 import { uuidV7Gen, seededGen } from '../ids'
 import { createActor } from '../actor'
+import { root } from './fixtures/project'
 
 describe('HistoryView checkpoints carry actor', () => {
   it('includes the checkpoint actor', () => {
@@ -15,7 +16,7 @@ describe('HistoryView checkpoints carry actor', () => {
 })
 
 function twoLayers() {
-  const idGen = seededGen(); const initial = blankProject(idGen, 'hv'); const track = initial.tracks[0].id
+  const idGen = seededGen(); const initial = blankProject(idGen, 'hv'); const track = root(initial).tracks[0].id
   const actor = createActor({ initial, idGen, clock: () => '<TS>' })
   const val = (r: ReturnType<typeof actor.dispatch>): string => (r as { ok: true; value: string }).value
   const l1 = val(actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 }))
@@ -94,7 +95,7 @@ describe('affected backfill', () => {
   })
   it('link create / add / remove name the layers named in the call', () => {
     const { actor, l1, l2, val } = twoLayers()
-    const l3 = val(actor.dispatch('add_layer', { track: actor.snapshot().tracks[0].id, kind: 'color', t_start_us: 4_000_000, t_end_us: 5_000_000 }))
+    const l3 = val(actor.dispatch('add_layer', { track: root(actor.snapshot()).tracks[0].id, kind: 'color', t_start_us: 4_000_000, t_end_us: 5_000_000 }))
     actor.dispatch('update_layer', { layer: l3, patch: { label: 'Clip 03' } })
     const gid = val(actor.dispatch('links_create', { layers: [l1, l2] }))
     expect(head(actor)).toMatchObject({ summary: 'Created link', entity_labels: [{ text: 'Clip 01' }, { text: 'Clip 02' }] })

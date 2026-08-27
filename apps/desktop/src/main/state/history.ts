@@ -190,18 +190,23 @@ export class History {
   }
 
   /** Patch one track's flags into EVERY snapshot + checkpoint where the track
-   *  exists; skip snapshots that lack it;
-   *  cursor unchanged; never recorded (project_settings_patch_convention). */
+   *  exists — in whichever composition holds it (a track id lives in exactly
+   *  one); skip snapshots that lack it; cursor unchanged; never recorded
+   *  (project_settings_patch_convention). Rebuilt by spread, never mutated in
+   *  place: `createLayerFlattener` memoizes on snapshot identity. */
   replaceTrackFlagsEverywhere(trackId: Uuid, patch: TrackFlagsPatch): void {
     const patchTrack = (p: Project): Project => {
-      const ti = p.tracks.findIndex((t) => t.id === trackId)
-      if (ti < 0) return p
-      const nt = { ...p.tracks[ti] }
-      if (typeof patch.enabled === 'boolean') nt.enabled = patch.enabled
-      if (typeof patch.muted === 'boolean') nt.muted = patch.muted
-      if (typeof patch.solo === 'boolean') nt.solo = patch.solo
-      if (typeof patch.locked === 'boolean') nt.locked = patch.locked
-      return { ...p, tracks: p.tracks.map((t, i) => (i === ti ? nt : t)) }
+      for (const [cid, c] of Object.entries(p.compositions)) {
+        const ti = c.tracks.findIndex((t) => t.id === trackId)
+        if (ti < 0) continue
+        const nt = { ...c.tracks[ti] }
+        if (typeof patch.enabled === 'boolean') nt.enabled = patch.enabled
+        if (typeof patch.muted === 'boolean') nt.muted = patch.muted
+        if (typeof patch.solo === 'boolean') nt.solo = patch.solo
+        if (typeof patch.locked === 'boolean') nt.locked = patch.locked
+        return { ...p, compositions: { ...p.compositions, [cid]: { ...c, tracks: c.tracks.map((t, i) => (i === ti ? nt : t)) } } }
+      }
+      return p // the snapshot predates the track
     }
     for (const e of this.snapshots) e.snapshot = patchTrack(e.snapshot)
     for (const cp of this.checkpoints.values()) cp.snapshot = patchTrack(cp.snapshot)
@@ -255,7 +260,8 @@ export class History {
    *  state; the actor tests the current layer count first only to report WHICH
    *  scope blocked (`locked_by`). */
   storedSnapshotsHoldLayer(): boolean {
-    const holds = (p: Project): boolean => p.tracks.some((t) => t.layers.length > 0)
+    // Every composition: the fps write this guards lands in all of them.
+    const holds = (p: Project): boolean => Object.values(p.compositions).some((c) => c.tracks.some((t) => t.layers.length > 0))
     return this.snapshots.some((e) => holds(e.snapshot))
       || [...this.checkpoints.values()].some((cp) => holds(cp.snapshot))
   }

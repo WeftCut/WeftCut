@@ -3,8 +3,8 @@
 
 // imbl's persistent collections have deep type chains (`Vector<T>` → internal
 // RRB nodes → Arc<Chunk<Node<T>>>); proving `Send`/`Sync` for the nested
-// project state (`state::Project` → `Vector<Track>` → `Vector<Layer>`) blows
-// the default trait-recursion limit.
+// project state (`state::Project` → `OrdMap<_, Composition>` → `Vector<Track>`
+// → `Vector<Layer>`) blows the default trait-recursion limit.
 #![recursion_limit = "512"]
 
 // `audio::{conform_reader, mix}` read the VCONF conform format produced by

@@ -13,6 +13,7 @@ import { applyMoveLayer } from '../../mutations/move'
 import { applyTrimLayer, clampSigned, trimDeltaBounds } from '../../mutations/trim'
 import { applyLinksCreate } from '../../mutations/links'
 import { ValidationFailure, isCommandFailure } from '../../errors'
+import { root } from '../fixtures/project'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -60,11 +61,11 @@ function projectWithMedia(): Project {
 describe('validate: layerOverlapClass distinguishes audio from visual', () => {
   it('two audio layers that overlap on the same track fail validation', () => {
     const p = projectWithMedia()
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       audioLayer('a1', 0, 1_000_000),
       audioLayer('a2', 500_000, 1_500_000),
     ]
-    p.composition.duration_us = 1_500_000
+    root(p).duration_us = 1_500_000
     // If audio is classified as visual (mutant), the overlap is checked in the
     // visual lane; if as audio (correct), it's checked in the audio lane.
     // Either way an unauthorized overlap must be rejected.
@@ -73,11 +74,11 @@ describe('validate: layerOverlapClass distinguishes audio from visual', () => {
 
   it('audio and visual layers can overlap freely (different lanes)', () => {
     const p = projectWithMedia()
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       colorLayer('v1', 0, 1_000_000),
       audioLayer('a1', 500_000, 1_500_000),
     ]
-    p.composition.duration_us = 1_500_000
+    root(p).duration_us = 1_500_000
     expect(() => validate(p)).not.toThrow()
   })
 })
@@ -87,13 +88,13 @@ describe('validate: layerOverlapClass distinguishes audio from visual', () => {
 describe('validate: checkSrcRange negative srcIn', () => {
   it('rejects a VideoClip with srcIn < 0', () => {
     const p = projectWithMedia()
-    p.tracks[0].layers = [videoClipLayer('v1', 0, 1_000_000, -1, 1_000_000)]
+    root(p).tracks[0].layers = [videoClipLayer('v1', 0, 1_000_000, -1, 1_000_000)]
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 
   it('rejects an Audio layer with srcIn < 0', () => {
     const p = projectWithMedia()
-    p.tracks[0].layers = [audioLayer('a1', 0, 1_000_000, -100, 1_000_000)]
+    root(p).tracks[0].layers = [audioLayer('a1', 0, 1_000_000, -100, 1_000_000)]
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 })
@@ -109,14 +110,14 @@ describe('validate: srcOut vs media duration allows null duration', () => {
       imported_at: new Date().toISOString(), decode_route: { route: 'bypass' },
       conform_path: null, waveform_path: null, thumbnails_dir: null,
     }
-    p.tracks[0].layers = [videoClipLayer('v1', 0, 5_000_000, 0, 5_000_000)]
-    p.composition.duration_us = 5_000_000
+    root(p).tracks[0].layers = [videoClipLayer('v1', 0, 5_000_000, 0, 5_000_000)]
+    root(p).duration_us = 5_000_000
     expect(() => validate(p)).not.toThrow()
   })
 
   it('rejects a VideoClip whose srcOut exceeds a finite media duration', () => {
     const p = projectWithMedia() // media-1 has duration 10s
-    p.tracks[0].layers = [videoClipLayer('v1', 0, 1_000_000, 0, 11_000_000)]
+    root(p).tracks[0].layers = [videoClipLayer('v1', 0, 1_000_000, 0, 11_000_000)]
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 })
@@ -127,12 +128,12 @@ describe('validate: srcOut vs media duration allows null duration', () => {
 describe('validate: stacked unauthorized overlaps on one lane', () => {
   it('rejects a track with multiple unauthorized same-lane overlaps', () => {
     const p = mkProject()
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       colorLayer('long', 0, 2_000_000),
       colorLayer('short', 0, 500_000),   // same start, ends earlier
       colorLayer('late', 400_000, 1_200_000),
     ]
-    p.composition.duration_us = 2_000_000
+    root(p).duration_us = 2_000_000
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 })
@@ -150,12 +151,12 @@ describe('validate: pairKey lookup (authorized overlap)', () => {
     // Ensure 'id-b' < 'id-a' lexicographically.
     const fromId = 'id-b-from'
     const toId   = 'id-a-to'   // 'id-a' < 'id-b' → pairKey should produce 'id-a-to|id-b-from'
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       colorLayer(fromId, 0, 1_000_000),
       colorLayer(toId, 800_000, 1_800_000),  // 200µs overlap
     ]
-    p.transitions.push({ id: 'tr1', from_layer: fromId, to_layer: toId, duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
-    p.composition.duration_us = 1_800_000
+    root(p).transitions.push({ id: 'tr1', from_layer: fromId, to_layer: toId, duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    root(p).duration_us = 1_800_000
     // Should be accepted — the authorized overlap exactly matches.
     expect(() => validate(p)).not.toThrow()
   })
@@ -196,10 +197,10 @@ describe('trimDeltaBounds: VideoClip/Audio src-bound constraints', () => {
     const p = projectWithMedia()
     p.media_pool['media-1'].metadata.duration_us = 10_000_000
     // Layer at [0, 2s], src_in=0, src_out=2s.
-    p.tracks[0].layers = [videoClipLayer('v1', 0, 2_000_000, 0, 2_000_000)]
+    root(p).tracks[0].layers = [videoClipLayer('v1', 0, 2_000_000, 0, 2_000_000)]
     // Trim In to 500_000: delta = +500_000; src_in shifts by +500_000 → 500_000.
     applyTrimLayer(p, 'v1', 'In', 500_000, false)
-    const l = p.tracks[0].layers.find((x) => x.id === 'v1')!
+    const l = root(p).tracks[0].layers.find((x) => x.id === 'v1')!
     expect(l.t_start_us).toBe(500_000)
     // src_in should advance by the same delta (glued to content).
     const pa = l.params as { kind: 'VideoClip'; src_in_us: number; src_out_us: number }
@@ -210,9 +211,9 @@ describe('trimDeltaBounds: VideoClip/Audio src-bound constraints', () => {
   it('trim Out on VideoClip adjusts src_out correctly', () => {
     const p = projectWithMedia()
     p.media_pool['media-1'].metadata.duration_us = 10_000_000
-    p.tracks[0].layers = [videoClipLayer('v1', 0, 3_000_000, 0, 3_000_000)]
+    root(p).tracks[0].layers = [videoClipLayer('v1', 0, 3_000_000, 0, 3_000_000)]
     applyTrimLayer(p, 'v1', 'Out', 2_000_000, false)
-    const l = p.tracks[0].layers.find((x) => x.id === 'v1')!
+    const l = root(p).tracks[0].layers.find((x) => x.id === 'v1')!
     const pa = l.params as { kind: 'VideoClip'; src_in_us: number; src_out_us: number }
     expect(pa.src_out_us).toBe(2_000_000)
     expect(pa.src_in_us).toBe(0) // unchanged
@@ -242,14 +243,14 @@ describe('applyMoveLayer: layers stay t_start_us sorted after a move', () => {
     const p = mkProject()
     // Add three non-overlapping color layers (no link, no validate issues).
     const g = seededGen()
-    applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 200_000)
-    applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 400_000, 600_000)
-    const c = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 800_000, 1_000_000)
+    applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 200_000)
+    applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 400_000, 600_000)
+    const c = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 800_000, 1_000_000)
 
     // Move 'c' to 300_000 so it should land between the first two.
-    applyMoveLayer(p, c, p.tracks[0].id, 300_000, false)
+    applyMoveLayer(p, c, root(p).tracks[0].id, 300_000, false)
     // After move the move itself doesn't validate; check the sort order.
-    const starts = p.tracks[0].layers.map((l) => l.t_start_us)
+    const starts = root(p).tracks[0].layers.map((l) => l.t_start_us)
     // starts should be non-decreasing after the move.
     for (let i = 1; i < starts.length; i++) {
       expect(starts[i]).toBeGreaterThanOrEqual(starts[i - 1])
@@ -259,12 +260,12 @@ describe('applyMoveLayer: layers stay t_start_us sorted after a move', () => {
   it('layer moved to position 0 appears first, not last', () => {
     const p = mkProject()
     const g = seededGen()
-    applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 500_000, 700_000)
-    const id = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 800_000, 1_000_000)
+    applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 500_000, 700_000)
+    const id = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 800_000, 1_000_000)
     // Move 'id' to t=0, ahead of the existing layer at 500_000.
-    applyMoveLayer(p, id, p.tracks[0].id, 0, false)
-    expect(p.tracks[0].layers[0].id).toBe(id)
-    expect(p.tracks[0].layers[0].t_start_us).toBe(0)
+    applyMoveLayer(p, id, root(p).tracks[0].id, 0, false)
+    expect(root(p).tracks[0].layers[0].id).toBe(id)
+    expect(root(p).tracks[0].layers[0].t_start_us).toBe(0)
   })
 })
 
@@ -276,24 +277,24 @@ describe('applyMoveLayer: zero-delta link sibling move is a no-op shift', () => 
   it('sibling t_start is unchanged when delta is zero (same position)', () => {
     const p = mkProject()
     // Place both layers on track 0; link them.
-    p.tracks[0].layers = [colorLayer('a', 0, 200_000), colorLayer('b', 400_000, 600_000)]
+    root(p).tracks[0].layers = [colorLayer('a', 0, 200_000), colorLayer('b', 400_000, 600_000)]
     applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     // Move 'a' to its current position → delta = 0.
     // Sibling 'b' should stay at 400_000 (no shift applied).
-    applyMoveLayer(p, 'a', p.tracks[0].id, 0, false)
-    const bAfter = p.tracks[0].layers.find((l) => l.id === 'b')!.t_start_us
+    applyMoveLayer(p, 'a', root(p).tracks[0].id, 0, false)
+    const bAfter = root(p).tracks[0].layers.find((l) => l.id === 'b')!.t_start_us
     expect(bAfter).toBe(400_000)
   })
 
   it('sibling correctly shifts by the same delta when delta is non-zero', () => {
     const p = mkProject()
     // Both layers on track 0; 'a' at 0 and 'b' at 500_000 (non-overlapping).
-    p.tracks[0].layers = [colorLayer('a', 0, 200_000), colorLayer('b', 500_000, 700_000)]
+    root(p).tracks[0].layers = [colorLayer('a', 0, 200_000), colorLayer('b', 500_000, 700_000)]
     applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     // Move 'a' from 0 to 300_000 → delta = 300_000.
-    applyMoveLayer(p, 'a', p.tracks[0].id, 300_000, false)
+    applyMoveLayer(p, 'a', root(p).tracks[0].id, 300_000, false)
     // Sibling 'b' follows: 500_000 + 300_000 = 800_000.
-    const bAfter = p.tracks[0].layers.find((l) => l.id === 'b')!.t_start_us
+    const bAfter = root(p).tracks[0].layers.find((l) => l.id === 'b')!.t_start_us
     expect(bAfter).toBe(800_000)
   })
 })
@@ -306,12 +307,12 @@ describe('applyTrimLayer: track re-sorted after In trim changes start', () => {
     // Two layers: a [300_000, 600_000), b [700_000, 1_000_000).
     // Trim b's In edge to 500_000 → b now starts at 500_000 — still after a.
     // But if we trim b to 200_000 → b starts before a. Re-sort must restore order.
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       colorLayer('a', 300_000, 600_000),
       colorLayer('b', 700_000, 1_000_000),
     ]
     applyTrimLayer(p, 'b', 'In', 200_000, false)
-    const starts = p.tracks[0].layers.map((l) => l.t_start_us)
+    const starts = root(p).tracks[0].layers.map((l) => l.t_start_us)
     for (let i = 1; i < starts.length; i++) {
       expect(starts[i]).toBeGreaterThanOrEqual(starts[i - 1])
     }
@@ -319,13 +320,13 @@ describe('applyTrimLayer: track re-sorted after In trim changes start', () => {
 
   it('Out trim does NOT re-sort (t_start unchanged)', () => {
     const p = mkProject()
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       colorLayer('a', 0, 500_000),
       colorLayer('b', 600_000, 1_000_000),
     ]
-    const aIdxBefore = p.tracks[0].layers.findIndex((l) => l.id === 'a')
+    const aIdxBefore = root(p).tracks[0].layers.findIndex((l) => l.id === 'a')
     applyTrimLayer(p, 'a', 'Out', 300_000, false)
-    const aIdxAfter = p.tracks[0].layers.findIndex((l) => l.id === 'a')
+    const aIdxAfter = root(p).tracks[0].layers.findIndex((l) => l.id === 'a')
     // 'a' stays in position 0 (Out trim never changes t_start, so no re-sort needed).
     expect(aIdxAfter).toBe(aIdxBefore)
   })
@@ -336,36 +337,36 @@ describe('applyTrimLayer: track re-sorted after In trim changes start', () => {
 describe('validate: transition duration boundary checks', () => {
   it('rejects a transition with duration_us === 0', () => {
     const p = mkProject()
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       colorLayer('l1', 0, 1_000_000),
       colorLayer('l2', 1_000_000, 2_000_000),  // adjacent, no overlap
     ]
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 0, kind: { kind: 'Crossfade' }, extended_us: 0 })
-    p.composition.duration_us = 2_000_000
+    root(p).transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 0, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    root(p).duration_us = 2_000_000
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 
   it('rejects a transition whose duration exactly equals layer length', () => {
     // duration_us > fromLen is required; duration === fromLen should fail.
     const p = mkProject()
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       colorLayer('l1', 0, 500_000),   // len=500_000
       colorLayer('l2', 300_000, 800_000), // overlap=200_000 < len
     ]
     // duration_us = 500_000 = fromLen → must be rejected (> fromLen fails).
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 500_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
-    p.composition.duration_us = 800_000
+    root(p).transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 500_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    root(p).duration_us = 800_000
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 
   it('accepts a valid transition whose duration matches the overlap and is < layer lengths', () => {
     const p = mkProject()
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       colorLayer('l1', 0, 1_000_000),
       colorLayer('l2', 800_000, 1_800_000), // overlap = 200_000
     ]
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
-    p.composition.duration_us = 1_800_000
+    root(p).transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    root(p).duration_us = 1_800_000
     expect(() => validate(p)).not.toThrow()
   })
 })
@@ -399,10 +400,10 @@ describe('trimDeltaBounds: Audio layer src-bound constraints', () => {
   it('applies Audio src trim correctly through applyTrimLayer', () => {
     const p = projectWithMedia()
     p.media_pool['media-1'].metadata.duration_us = 10_000_000
-    p.tracks[0].layers = [audioLayer('a1', 0, 3_000_000, 0, 3_000_000)]
+    root(p).tracks[0].layers = [audioLayer('a1', 0, 3_000_000, 0, 3_000_000)]
     // Trim In to 500_000: delta = +500_000 → src_in shifts too.
     applyTrimLayer(p, 'a1', 'In', 500_000, false)
-    const l = p.tracks[0].layers.find((x) => x.id === 'a1')!
+    const l = root(p).tracks[0].layers.find((x) => x.id === 'a1')!
     const pa = l.params as { kind: 'Audio'; src_in_us: number; src_out_us: number }
     expect(pa.src_in_us).toBe(500_000)
     expect(pa.src_out_us).toBe(3_000_000)
@@ -411,9 +412,9 @@ describe('trimDeltaBounds: Audio layer src-bound constraints', () => {
   it('trim Out on Audio adjusts src_out correctly', () => {
     const p = projectWithMedia()
     p.media_pool['media-1'].metadata.duration_us = 10_000_000
-    p.tracks[0].layers = [audioLayer('a1', 0, 3_000_000, 0, 3_000_000)]
+    root(p).tracks[0].layers = [audioLayer('a1', 0, 3_000_000, 0, 3_000_000)]
     applyTrimLayer(p, 'a1', 'Out', 2_000_000, false)
-    const l = p.tracks[0].layers.find((x) => x.id === 'a1')!
+    const l = root(p).tracks[0].layers.find((x) => x.id === 'a1')!
     const pa = l.params as { kind: 'Audio'; src_in_us: number; src_out_us: number }
     expect(pa.src_out_us).toBe(2_000_000)
     expect(pa.src_in_us).toBe(0)
@@ -426,10 +427,10 @@ describe('applyMoveLayer: locked destination track', () => {
   it('rejects a cross-track move when the destination track is locked', () => {
     const p = mkProject()
     const g = seededGen()
-    const id = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 500_000)
-    p.tracks[1].locked = true
+    const id = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 500_000)
+    root(p).tracks[1].locked = true
     try {
-      applyMoveLayer(p, id, p.tracks[1].id, 0, false)
+      applyMoveLayer(p, id, root(p).tracks[1].id, 0, false)
       throw new Error('expected throw')
     } catch (e: unknown) {
       expect(isCommandFailure(e) && (e as { err: { error: string } }).err.error).toBe('TrackLocked')
@@ -444,15 +445,15 @@ describe('applyMoveLayer: link sibling insertion position', () => {
     const p = mkProject()
     // Three layers on track 0: a[0,200), b[400,600) linked, c[800,1000).
     // Move 'a' to 600_000 → delta=600_000; sibling 'b' follows to 1_000_000.
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       colorLayer('a', 0, 200_000),
       colorLayer('b', 400_000, 600_000),
       colorLayer('c', 800_000, 1_000_000),
     ]
     applyLinksCreate(p, seededGen(), ['a', 'b'], null, false)
     // After move: a[600k,800k), b[1000k,1200k), c[800k,1000k) — check sort order.
-    applyMoveLayer(p, 'a', p.tracks[0].id, 600_000, false)
-    const starts = p.tracks[0].layers.map((l) => l.t_start_us)
+    applyMoveLayer(p, 'a', root(p).tracks[0].id, 600_000, false)
+    const starts = root(p).tracks[0].layers.map((l) => l.t_start_us)
     for (let i = 1; i < starts.length; i++) {
       expect(starts[i]).toBeGreaterThanOrEqual(starts[i - 1])
     }
@@ -463,19 +464,19 @@ describe('applyMoveLayer: link sibling insertion position', () => {
 // Mutants: 'c.width === 0 || c.height === 0' drops one arm; fps arms similar.
 describe('validate: validateComposition', () => {
   it('rejects zero width', () => {
-    const p = mkProject(); p.composition.width = 0
+    const p = mkProject(); root(p).width = 0
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
   it('rejects zero height', () => {
-    const p = mkProject(); p.composition.height = 0
+    const p = mkProject(); root(p).height = 0
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
   it('rejects zero fps.num', () => {
-    const p = mkProject(); p.composition.fps.num = 0
+    const p = mkProject(); root(p).fps.num = 0
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
   it('rejects zero fps.den', () => {
-    const p = mkProject(); p.composition.fps.den = 0
+    const p = mkProject(); root(p).fps.den = 0
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 })
@@ -485,58 +486,58 @@ describe('validate: validateComposition', () => {
 describe('validate: transition structural integrity', () => {
   it('rejects a duplicate transition id', () => {
     const p = mkProject()
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       colorLayer('l1', 0, 1_000_000),
       colorLayer('l2', 800_000, 1_800_000),
     ]
-    p.composition.duration_us = 1_800_000
+    root(p).duration_us = 1_800_000
     // Add the same transition twice — second has a duplicate tr.id.
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    root(p).transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    root(p).transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 
   it('rejects a self-referencing transition (from_layer === to_layer)', () => {
     const p = mkProject()
-    p.tracks[0].layers = [colorLayer('l1', 0, 1_000_000)]
-    p.composition.duration_us = 1_000_000
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l1', duration_us: 100_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    root(p).tracks[0].layers = [colorLayer('l1', 0, 1_000_000)]
+    root(p).duration_us = 1_000_000
+    root(p).transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l1', duration_us: 100_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 
   it('rejects a cross-track transition', () => {
     const p = mkProject()
-    p.tracks[0].layers = [colorLayer('l1', 0, 1_000_000)]
-    p.tracks[1].layers = [colorLayer('l2', 800_000, 1_800_000)]
-    p.composition.duration_us = 1_800_000
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    root(p).tracks[0].layers = [colorLayer('l1', 0, 1_000_000)]
+    root(p).tracks[1].layers = [colorLayer('l2', 800_000, 1_800_000)]
+    root(p).duration_us = 1_800_000
+    root(p).transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 
   it('rejects a layer used as from_layer in two transitions', () => {
     const p = mkProject()
     // l1 → l2 and l1 → l3: l1 appears as from_layer twice.
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       colorLayer('l1', 0, 1_000_000),
       colorLayer('l2', 800_000, 1_800_000),
       colorLayer('l3', 900_000, 1_900_000),
     ]
-    p.composition.duration_us = 1_900_000
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
-    p.transitions.push({ id: 'tr2', from_layer: 'l1', to_layer: 'l3', duration_us: 100_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    root(p).duration_us = 1_900_000
+    root(p).transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    root(p).transitions.push({ id: 'tr2', from_layer: 'l1', to_layer: 'l3', duration_us: 100_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 
   it('rejects a layer used as to_layer in two transitions', () => {
     const p = mkProject()
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       colorLayer('l1', 0, 1_000_000),
       colorLayer('l2', 0, 1_000_000),
       colorLayer('l3', 800_000, 1_800_000),
     ]
-    p.composition.duration_us = 1_800_000
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l3', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
-    p.transitions.push({ id: 'tr2', from_layer: 'l2', to_layer: 'l3', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    root(p).duration_us = 1_800_000
+    root(p).transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l3', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    root(p).transitions.push({ id: 'tr2', from_layer: 'l2', to_layer: 'l3', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 
@@ -545,12 +546,12 @@ describe('validate: transition structural integrity', () => {
     // command writes these values). Both directions, so a `>=`/`<=` flip dies.
     for (const extended of [-1, 200_001]) {
       const p = mkProject()
-      p.tracks[0].layers = [
+      root(p).tracks[0].layers = [
         colorLayer('l1', 0, 1_000_000),
         colorLayer('l2', 800_000, 1_800_000),
       ]
-      p.composition.duration_us = 1_800_000
-      p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: extended })
+      root(p).duration_us = 1_800_000
+      root(p).transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: extended })
       expect(() => validate(p)).toThrow(ValidationFailure)
     }
   })
@@ -559,13 +560,13 @@ describe('validate: transition structural integrity', () => {
     // A transition with duration_us > fromLen should fail.
     // fromLen = l1.end - l1.start = 300_000. If mutated to start-end → negative → duration always OK.
     const p = mkProject()
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       colorLayer('l1', 0, 300_000),        // fromLen = 300_000
       colorLayer('l2', 200_000, 700_000),  // overlap = 100_000, toLen = 500_000
     ]
-    p.composition.duration_us = 700_000
+    root(p).duration_us = 700_000
     // duration_us = 400_000 > fromLen=300_000 → must be rejected.
-    p.transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 400_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    root(p).transitions.push({ id: 'tr1', from_layer: 'l1', to_layer: 'l2', duration_us: 400_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 })
@@ -576,7 +577,7 @@ describe('validate: srcIn === srcOut (zero-length source range)', () => {
   it('rejects srcIn === srcOut (empty source range)', () => {
     const p = projectWithMedia()
     // srcIn = srcOut = 0 → empty range; should fail InvalidSrcRange.
-    p.tracks[0].layers = [videoClipLayer('v1', 0, 1_000_000, 500_000, 500_000)]
+    root(p).tracks[0].layers = [videoClipLayer('v1', 0, 1_000_000, 500_000, 500_000)]
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 })
@@ -593,8 +594,8 @@ describe('validate: ImageOverlay missing media', () => {
       opacity: s(1), blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0,
     }
     const layer: Layer = { id: 'img1', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {}, params, effects: [] }
-    p.tracks[0].layers = [layer]
-    p.composition.duration_us = 1_000_000
+    root(p).tracks[0].layers = [layer]
+    root(p).duration_us = 1_000_000
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 })
@@ -606,11 +607,11 @@ describe('validate: overlap detection is storage-order-independent', () => {
   it('detects an unauthorized overlap regardless of layer storage order', () => {
     const p = mkProject()
     // Store layers in reverse t_start order: l2 first, then l1.
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       colorLayer('l2', 600_000, 1_400_000),
       colorLayer('l1', 0, 800_000),
     ]
-    p.composition.duration_us = 1_400_000
+    root(p).duration_us = 1_400_000
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 })
@@ -623,23 +624,23 @@ describe('validate: pairKey produces a non-empty canonical key', () => {
     // any pair would also produce '' → incorrectly authorize ALL overlaps.
     // Prove by showing a valid transition passes AND an invalid one fails.
     const p = mkProject()
-    p.tracks[0].layers = [
+    root(p).tracks[0].layers = [
       colorLayer('aaa', 0, 1_000_000),
       colorLayer('bbb', 800_000, 1_800_000),
     ]
     // Valid: 200µs overlap authorized.
-    p.transitions.push({ id: 'tr1', from_layer: 'aaa', to_layer: 'bbb', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
-    p.composition.duration_us = 1_800_000
+    root(p).transitions.push({ id: 'tr1', from_layer: 'aaa', to_layer: 'bbb', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    root(p).duration_us = 1_800_000
     expect(() => validate(p)).not.toThrow()
 
     // Now change the overlap to 300µs without updating the transition → mismatch.
     const p2 = mkProject()
-    p2.tracks[0].layers = [
+    root(p2).tracks[0].layers = [
       colorLayer('aaa', 0, 1_000_000),
       colorLayer('bbb', 700_000, 1_700_000), // overlap = 300_000
     ]
-    p2.transitions.push({ id: 'tr1', from_layer: 'aaa', to_layer: 'bbb', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
-    p2.composition.duration_us = 1_700_000
+    root(p2).transitions.push({ id: 'tr1', from_layer: 'aaa', to_layer: 'bbb', duration_us: 200_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    root(p2).duration_us = 1_700_000
     expect(() => validate(p2)).toThrow(ValidationFailure)
   })
 })

@@ -4,6 +4,7 @@ import { blankProject, type Project } from '../model'
 import { applyAddTrack, applyAddLayer, colorParams } from './add'
 import { applyDeleteTrack, applyMoveTrack } from './tracks'
 import { isCommandFailure } from '../errors'
+import { root } from '../__tests__/fixtures/project'
 
 function base(): { p: Project; gen: IdGen } { const gen = seededGen(); return { p: blankProject(gen, 't'), gen } }
 function expectCmd(fn: () => void, code: string) { try { fn(); throw new Error(`expected ${code}`) } catch (e) { expect(isCommandFailure(e) && e.err.error).toBe(code) } }
@@ -12,11 +13,11 @@ describe('applyDeleteTrack', () => {
   it('removes an empty custom track', () => {
     const { p, gen } = base(); const t = applyAddTrack(p, gen, 'extra')
     applyDeleteTrack(p, t, false)
-    expect(p.tracks.find((x) => x.id === t)).toBeUndefined()
+    expect(root(p).tracks.find((x) => x.id === t)).toBeUndefined()
   })
   it('rejects a reserved (non-removable) track', () => {
     const { p } = base()
-    expectCmd(() => applyDeleteTrack(p, p.tracks[0].id, false), 'TrackNotRemovable')
+    expectCmd(() => applyDeleteTrack(p, root(p).tracks[0].id, false), 'TrackNotRemovable')
   })
   it('rejects a non-empty track without force', () => {
     const { p, gen } = base(); const t = applyAddTrack(p, gen, 'extra')
@@ -27,7 +28,7 @@ describe('applyDeleteTrack', () => {
     const { p, gen } = base(); const t = applyAddTrack(p, gen, 'extra')
     applyAddLayer(p, gen, t, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 1_000_000)
     applyDeleteTrack(p, t, true)
-    expect(p.tracks.find((x) => x.id === t)).toBeUndefined()
+    expect(root(p).tracks.find((x) => x.id === t)).toBeUndefined()
   })
   it('throws TrackNotFound for a missing track', () => {
     const { p } = base()
@@ -39,11 +40,11 @@ describe('applyMoveTrack', () => {
   it('reorders a track to a new position', () => {
     const { p, gen } = base(); const t = applyAddTrack(p, gen, 'extra') // appended at idx 2
     applyMoveTrack(p, t, 0)
-    expect(p.tracks[0].id).toBe(t)
+    expect(root(p).tracks[0].id).toBe(t)
   })
   it('throws TrackPositionOutOfRange when position >= len', () => {
     const { p } = base()
-    expectCmd(() => applyMoveTrack(p, p.tracks[0].id, 9), 'TrackPositionOutOfRange')
+    expectCmd(() => applyMoveTrack(p, root(p).tracks[0].id, 9), 'TrackPositionOutOfRange')
   })
   it('throws TrackNotFound for a missing track', () => {
     const { p } = base()

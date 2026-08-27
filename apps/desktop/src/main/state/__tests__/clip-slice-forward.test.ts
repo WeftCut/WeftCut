@@ -11,7 +11,7 @@ const media2 = { id: 'm2', file_hash_blake3: 'h2' } as never
 const vclip = { id: 'L1', params: { kind: 'VideoClip', media: 'm1' } } as never
 const vclip2 = { id: 'L3', params: { kind: 'VideoClip', media: 'm2' } } as never
 const text = { id: 'L2', params: { kind: 'Text', content: 'hi' } } as never
-const snap = { tracks: [{ layers: [vclip, vclip2, text] }], media_pool: { m1: media, m2: media2 } } as never
+const snap = { compositions: { r: { tracks: [{ layers: [vclip, vclip2, text] }] } }, root_id: 'r', media_pool: { m1: media, m2: media2 } } as never
 
 describe('resolveClipSliceArgs', () => {
   it('injects the layer and its MediaItem for an AV layer, preserving args', () => {

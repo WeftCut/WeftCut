@@ -2,7 +2,7 @@ import type { Layer, Project, Transition, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { frameIndexRound, gridForLayerKind, snapOnGrid, timeUsAtFrame } from '../snap'
-import { applyDurationAutofit, pickFreeOverlayTrack } from './helpers'
+import { applyDurationAutofit, pickFreeOverlayTrack, rootComposition } from './helpers'
 import { applyAddTrack } from './add'
 import { checkLinkLock, linkSiblingsExcluding, indexLinks } from './links'
 
@@ -40,8 +40,9 @@ export function shrinkLayerTEnd(layer: Layer, deltaUs: number): void {
 
 /** Locate a layer's (trackIdx, layerIdx) or null. */
 function locate(p: Project, id: Uuid): [number, number] | null {
-  for (let ti = 0; ti < p.tracks.length; ti++) {
-    const li = p.tracks[ti].layers.findIndex((l) => l.id === id)
+  const c = rootComposition(p)
+  for (let ti = 0; ti < c.tracks.length; ti++) {
+    const li = c.tracks[ti].layers.findIndex((l) => l.id === id)
     if (li >= 0) return [ti, li]
   }
   return null
@@ -63,7 +64,8 @@ function tailHandleUs(p: Project, layer: Layer): number {
  *  under half a frame (precise, pre-id-mint) rather than collapsing to a
  *  zero-length transition. */
 function requestedFrames(p: Project, requestedUs: number, field: string): number {
-  const { num, den } = p.composition.fps
+  const c = rootComposition(p)
+  const { num, den } = c.fps
   // A span and an absolute time share the same index arithmetic, so the round
   // INDEX policy doubles as "how many frames long is this".
   const frames = frameIndexRound(requestedUs, num, den)
@@ -83,7 +85,8 @@ function requestedFrames(p: Project, requestedUs: number, field: string): number
  *  `overlap === duration_us`; both cannot hold. The distance between two
  *  canonical boundaries satisfies both at once. */
 function wholeFrameDurationUs(p: Project, cutUs: number, requestedUs: number): number {
-  const { num, den } = p.composition.fps
+  const c = rootComposition(p)
+  const { num, den } = c.fps
   const frames = requestedFrames(p, requestedUs, 'duration_us')
   return timeUsAtFrame(frameIndexRound(cutUs, num, den) + frames, num, den) - cutUs
 }
@@ -96,8 +99,9 @@ function wholeFrameDurationUs(p: Project, cutUs: number, requestedUs: number): n
  *  means untouchable, not merely un-retimable. Linked siblings on OTHER lanes
  *  keep their own gate (checkLinkLock via incomingMoveSet). */
 function checkTransitionTrackLock(p: Project, trackIdx: number): void {
-  if (p.tracks[trackIdx].locked)
-    throw new CommandFailure({ error: 'TrackLocked', track: p.tracks[trackIdx].id })
+  const c = rootComposition(p)
+  if (c.tracks[trackIdx].locked)
+    throw new CommandFailure({ error: 'TrackLocked', track: c.tracks[trackIdx].id })
 }
 
 /** Audio participants are rejected here (precise, pre-id-mint error); validate's
@@ -119,12 +123,13 @@ function rejectAudioParticipant(layer: Layer): void {
  *  its own lattice. An unlocatable member is skipped, the move loop's own
  *  tolerance for a stale id. */
 function shiftLayerSet(p: Project, memberIds: readonly Uuid[], deltaUs: number): void {
+  const c = rootComposition(p)
   if (deltaUs === 0) return
-  const fps = p.composition.fps
+  const fps = c.fps
   for (const id of memberIds) {
     const loc = locate(p, id)
     if (!loc) continue
-    const track = p.tracks[loc[0]]
+    const track = c.tracks[loc[0]]
     const l = track.layers.splice(loc[1], 1)[0]
     const g = gridForLayerKind(l.params.kind, fps)
     l.t_start_us = snapOnGrid(l.t_start_us + deltaUs, g)
@@ -163,23 +168,24 @@ export interface TransitionBounce { layer: Uuid; from_track: Uuid; to_track: Uui
  *  No pruneEmptiedTrack: the blocking layer that caused the bounce stays on
  *  the vacated lane, so a bounce can never empty it. */
 function bounceCollidingSiblings(p: Project, idGen: IdGen, memberIds: readonly Uuid[], toLayer: Uuid, out: TransitionBounce[]): void {
+  const c = rootComposition(p)
   const moving = new Set(memberIds)
   for (const id of memberIds) {
     if (id === toLayer) continue
     const loc = locate(p, id)
     if (!loc) continue
-    const track = p.tracks[loc[0]]
+    const track = c.tracks[loc[0]]
     const l = track.layers[loc[1]]
     const cls = l.params.kind === 'Audio' ? 'audio' : 'visual'
     const collides = track.layers.some((other) =>
       !moving.has(other.id) && (other.params.kind === 'Audio' ? 'audio' : 'visual') === cls
       && other.t_start_us < l.t_end_us && l.t_start_us < other.t_end_us)
     if (!collides) continue
-    const free = pickFreeOverlayTrack(p, l.t_start_us, l.t_end_us)
+    const free = pickFreeOverlayTrack(c, l.t_start_us, l.t_end_us)
     // A track id minted for the landing is acceptable pre-transition-id use —
     // the same discipline as applyMoveLayersToNewTrack's lane mint.
     const destId = free ?? applyAddTrack(p, idGen, null)
-    const dest = p.tracks.find((t) => t.id === destId)!
+    const dest = c.tracks.find((t) => t.id === destId)!
     track.layers.splice(track.layers.findIndex((x) => x.id === id), 1)
     const at = dest.layers.findIndex((x) => x.t_start_us > l.t_start_us)
     dest.layers.splice(at < 0 ? dest.layers.length : at, 0, l)
@@ -214,10 +220,11 @@ export function applyAddTransition(
   p: Project, idGen: IdGen, fromLayer: Uuid, toLayer: Uuid, durationUs: number,
   kind: Transition['kind'], placement: 'overlap' | 'extend' = 'overlap',
 ): { id: Uuid; bounces: TransitionBounce[] } {
+  const c = rootComposition(p)
   const fromLoc = locate(p, fromLayer)
   if (!fromLoc) throw new CommandFailure({ error: 'LayerNotFound', layer: fromLayer })
   const [trackIdx, fromIdx] = fromLoc
-  const toIdx = p.tracks[trackIdx].layers.findIndex((l) => l.id === toLayer)
+  const toIdx = c.tracks[trackIdx].layers.findIndex((l) => l.id === toLayer)
   if (toIdx < 0) throw new CommandFailure({ error: 'LayerNotFound', layer: toLayer })
   // Same-track invariant ⇒ ONE lock check covers both participants: every
   // branch below retimes or borrows content on this lane (even the
@@ -225,8 +232,8 @@ export function applyAddTransition(
   // untouchable by any mutation (the move/trim/split convention).
   checkTransitionTrackLock(p, trackIdx)
 
-  const fromLayerObj = p.tracks[trackIdx].layers[fromIdx]
-  const toLayerObj = p.tracks[trackIdx].layers[toIdx]
+  const fromLayerObj = c.tracks[trackIdx].layers[fromIdx]
+  const toLayerObj = c.tracks[trackIdx].layers[toIdx]
   rejectAudioParticipant(fromLayerObj)
   rejectAudioParticipant(toLayerObj)
 
@@ -251,7 +258,7 @@ export function applyAddTransition(
       // why as wholeFrameDurationUs, mirrored — at 1001-denominator rates a bare
       // "n frames in µs" differs from the boundary distance by up to 1 µs, which
       // would put B.start′ off the grid or break validate's overlap === duration.
-      const { num, den } = p.composition.fps
+      const { num, den } = c.fps
       const frames = requestedFrames(p, durationUs, 'duration_us')
       const newStartUs = timeUsAtFrame(frameIndexRound(fromEnd, num, den) - frames, num, den)
       durUs = fromEnd - newStartUs
@@ -264,7 +271,7 @@ export function applyAddTransition(
         throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'TransitionDurationOutOfRange', transition: null, duration: durUs } })
       // Participants sharing a link: moving B would drag A along and the
       // overlap never opens. Structured refusal, never a silent extend fallback.
-      const linkIdx = indexLinks(p.links)
+      const linkIdx = indexLinks(c.links)
       const fromLink = linkIdx.get(fromLayer)
       if (fromLink !== undefined && fromLink === linkIdx.get(toLayer))
         throw new CommandFailure({ error: 'TransitionParticipantsShareLink', from: fromLayer, to: toLayer })
@@ -275,8 +282,8 @@ export function applyAddTransition(
       for (const id of moveSet) {
         const loc = locate(p, id)
         if (!loc) continue
-        const l = p.tracks[loc[0]].layers[loc[1]]
-        const destStart = snapOnGrid(l.t_start_us - durUs, gridForLayerKind(l.params.kind, p.composition.fps))
+        const l = c.tracks[loc[0]].layers[loc[1]]
+        const destStart = snapOnGrid(l.t_start_us - durUs, gridForLayerKind(l.params.kind, c.fps))
         if (destStart < 0)
           throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'NegativeLayerStart', layer: id, t_start: destStart } })
       }
@@ -284,7 +291,7 @@ export function applyAddTransition(
       bounceCollidingSiblings(p, idGen, moveSet, toLayer, bounces)
       extendedUs = 0
     }
-    applyDurationAutofit(p) // both adjacent branches retime an edge (A.end grows / B's set moves)
+    applyDurationAutofit(c) // both adjacent branches retime an edge (A.end grows / B's set moves)
   } else {
     durUs = wholeFrameDurationUs(p, toStart, durationUs)
     if (curOverlap === durUs) { extendedUs = 0 /* pre-positioned; pure placement — overlap under BOTH placements; nothing moves, no autofit */ }
@@ -292,7 +299,7 @@ export function applyAddTransition(
   }
 
   const id = idGen() // after ALL checks, before commit's validate (keystone)
-  p.transitions.push({ id, from_layer: fromLayer, to_layer: toLayer, duration_us: durUs, kind, extended_us: extendedUs })
+  c.transitions.push({ id, from_layer: fromLayer, to_layer: toLayer, duration_us: durUs, kind, extended_us: extendedUs })
   return { id, bounces }
 }
 
@@ -324,7 +331,8 @@ export function applyAddTransition(
  *
  *  Kind change is a pure field swap, never geometry. */
 export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { duration_us?: number; kind?: Transition['kind']; extended_us?: number }): void {
-  const tr = p.transitions.find((t) => t.id === transitionId)
+  const c = rootComposition(p)
+  const tr = c.transitions.find((t) => t.id === transitionId)
   if (!tr) throw new CommandFailure({ error: 'TransitionNotFound', transition: transitionId })
   // Whole-command lock gate, kind-only patches included (see
   // checkTransitionTrackLock). Either participant locates the shared lane; a
@@ -340,9 +348,9 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
     if (!fromLoc) throw new CommandFailure({ error: 'LayerNotFound', layer: tr.from_layer })
     const toLoc = locate(p, tr.to_layer)
     if (!toLoc) throw new CommandFailure({ error: 'LayerNotFound', layer: tr.to_layer })
-    const fromLayerObj = p.tracks[fromLoc[0]].layers[fromLoc[1]]
-    const toLayerObj = p.tracks[toLoc[0]].layers[toLoc[1]]
-    const { num, den } = p.composition.fps
+    const fromLayerObj = c.tracks[fromLoc[0]].layers[fromLoc[1]]
+    const toLayerObj = c.tracks[toLoc[0]].layers[toLoc[1]]
+    const { num, den } = c.fps
 
     // Current geometry in frame indices. A.end and S are canonical boundaries
     // (S by the extended_us invariant), so the differences are exact counts.
@@ -392,7 +400,7 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
       // Negative e′ (tail trim) stores 0, never a negative counter: the trim
       // moved the sacred end itself, so post-commit NOTHING is borrowed.
       tr.extended_us = Math.max(0, newEndUs - timeUsAtFrame(sFrame, num, den))
-      applyDurationAutofit(p)
+      applyDurationAutofit(c)
     }
   }
   if (patch.kind !== undefined) tr.kind = patch.kind
@@ -407,17 +415,18 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
  *  structured refusal naming the member that cannot land; the system never
  *  makes room (the user may have filled the vacated gap deliberately). */
 function precheckRestoreCollision(p: Project, memberIds: readonly Uuid[], deltaUs: number, fromLayer: Uuid, shrunkFromEnd: number | null): void {
-  const fps = p.composition.fps
+  const c = rootComposition(p)
+  const fps = c.fps
   const moving = new Set(memberIds)
   for (const id of memberIds) {
     const loc = locate(p, id)
     if (!loc) continue
-    const l = p.tracks[loc[0]].layers[loc[1]]
+    const l = c.tracks[loc[0]].layers[loc[1]]
     const g = gridForLayerKind(l.params.kind, fps)
     const destStart = snapOnGrid(l.t_start_us + deltaUs, g)
     const destEnd = snapOnGrid(l.t_end_us + deltaUs, g)
     const cls = l.params.kind === 'Audio' ? 'audio' : 'visual'
-    for (const other of p.tracks[loc[0]].layers) {
+    for (const other of c.tracks[loc[0]].layers) {
       if (moving.has(other.id)) continue
       if ((other.params.kind === 'Audio' ? 'audio' : 'visual') !== cls) continue
       const otherEnd = shrunkFromEnd !== null && other.id === fromLayer ? shrunkFromEnd : other.t_end_us
@@ -442,9 +451,10 @@ function precheckRestoreCollision(p: Project, memberIds: readonly Uuid[], deltaU
  *  following B→C transition broken by B's move is commit-reconcile's designed
  *  drop. */
 export function applyRemoveTransition(p: Project, transitionId: Uuid): void {
-  const idx = p.transitions.findIndex((t) => t.id === transitionId)
+  const c = rootComposition(p)
+  const idx = c.transitions.findIndex((t) => t.id === transitionId)
   if (idx < 0) throw new CommandFailure({ error: 'TransitionNotFound', transition: transitionId })
-  const tr = p.transitions[idx]
+  const tr = c.transitions[idx]
   const moveUs = tr.duration_us - tr.extended_us // ≥ 0: validate holds e ≤ d
   const fromLoc = locate(p, tr.from_layer)
   const toLoc = locate(p, tr.to_layer)
@@ -455,12 +465,12 @@ export function applyRemoveTransition(p: Project, transitionId: Uuid): void {
   let moveSet: Uuid[] = []
   if (toLoc && moveUs > 0) {
     moveSet = incomingMoveSet(p, tr.to_layer)
-    const shrunkFromEnd = fromLoc ? p.tracks[fromLoc[0]].layers[fromLoc[1]].t_end_us - tr.extended_us : null
+    const shrunkFromEnd = fromLoc ? c.tracks[fromLoc[0]].layers[fromLoc[1]].t_end_us - tr.extended_us : null
     precheckRestoreCollision(p, moveSet, moveUs, tr.from_layer, shrunkFromEnd)
   }
 
-  p.transitions.splice(idx, 1)
-  if (fromLoc) shrinkLayerTEnd(p.tracks[fromLoc[0]].layers[fromLoc[1]], tr.extended_us)
+  c.transitions.splice(idx, 1)
+  if (fromLoc) shrinkLayerTEnd(c.tracks[fromLoc[0]].layers[fromLoc[1]], tr.extended_us)
   shiftLayerSet(p, moveSet, moveUs)
-  applyDurationAutofit(p)
+  applyDurationAutofit(c)
 }

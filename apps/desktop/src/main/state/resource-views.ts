@@ -1,6 +1,7 @@
 import type { ServerResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ActorHandle } from './actor'
-import type { Layer, Project } from './model'
+import type { Composition, Layer, Project } from './model'
+import { eachLayer, rootComposition } from './model'
 import { serializeProject } from './serialize'
 
 const APP_JSON = 'application/json'
@@ -11,6 +12,16 @@ const PREFIX_MEDIA = 'media://'
  *  whose `text` is the pretty-printed body (matches resources.rs `text_resource`). */
 function textResource(uri: string, body: unknown): ServerResult {
   return { contents: [{ uri, mimeType: APP_JSON, text: JSON.stringify(body, null, 2) }] } as unknown as ServerResult
+}
+
+/** `project://composition` keeps its documented meaning — canvas size, fps,
+ *  sample rate, colour space, background (docs/mcp.md) — by projecting the root's
+ *  SETTINGS. Emitting the whole root would ship every track on a resource an
+ *  agent reads for the frame size. */
+export function compositionSettings(c: Composition): Record<string, unknown> {
+  return { id: c.id, label: c.label, width: c.width, height: c.height, fps: c.fps, duration_us: c.duration_us,
+    duration_pinned: c.duration_pinned, sample_rate: c.sample_rate, channels: c.channels,
+    color_space: c.color_space, background: c.background }
 }
 
 /** Throw the SDK-shaped not-found error (code -32601), mirroring Rust's
@@ -34,16 +45,17 @@ export function serveProjectResource(
     const tail = uri.slice(PREFIX_LAYERS.length)
     const slash = tail.indexOf('/')
     if (slash !== -1) resourceNotFound(`unsupported layer sub-resource '${tail.slice(slash + 1)}'`)
-    const layer: Layer | undefined = actor.snapshot().tracks.flatMap((t) => t.layers).find((l) => l.id === tail)
+    let layer: Layer | undefined
+    for (const e of eachLayer(actor.snapshot())) if (e.layer.id === tail) { layer = e.layer; break }
     if (!layer) resourceNotFound(`layer ${tail} not found`)
     return textResource(uri, layer)
   }
   switch (uri) {
     case 'project://current': return textResource(uri, serializeProject(actor.snapshot()))
-    case 'project://composition': return textResource(uri, actor.snapshot().composition)
+    case 'project://composition': return textResource(uri, compositionSettings(rootComposition(actor.snapshot())))
     case 'project://media': return textResource(uri, actor.snapshot().media_pool)
-    case 'project://tracks': return textResource(uri, actor.snapshot().tracks)
-    case 'project://markers': return textResource(uri, actor.snapshot().markers)
+    case 'project://tracks': return textResource(uri, rootComposition(actor.snapshot()).tracks)
+    case 'project://markers': return textResource(uri, rootComposition(actor.snapshot()).markers)
     case 'project://history': return textResource(uri, actor.historyView(100))
     default: return null
   }

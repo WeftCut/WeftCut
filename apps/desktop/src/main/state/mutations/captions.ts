@@ -1,4 +1,5 @@
 import type { Project, Rgba, TextAlign, TextParams, Track, Uuid } from '../model'
+import { rootComposition } from './helpers'
 import type { IdGen } from '../ids'
 import { snapFrameRound } from '../snap'
 import { quantizeExtentPx, quantizeParam } from '../quantize'
@@ -125,7 +126,8 @@ export interface CaptionStylePatch {
  *  then apply_add_layer exactly. No explicit autofit (applyAddLayer autofits per
  *  layer). */
 export function applyAddCaptionTrack(p: Project, idGen: IdGen, cues: Cue[], compW: number, compH: number, label: string | null): Uuid {
-  const fps = p.composition.fps
+  const c = rootComposition(p)
+  const fps = c.fps
   const sorted = cues.slice().sort((a, b) => (a.start_us < b.start_us ? -1 : a.start_us > b.start_us ? 1 : 0)) // stable by start_us
   const trackIds: Uuid[] = []
   const trackEnds: number[] = []
@@ -147,8 +149,9 @@ export function applyAddCaptionTrack(p: Project, idGen: IdGen, cues: Cue[], comp
  *  `transient` is false and emptying it never removes it — unlike every track
  *  `applyAddTrack` mints. */
 function newCaptionTrack(p: Project, idGen: IdGen, label: string | null): Uuid {
+  const c = rootComposition(p)
   const id = idGen()
-  p.tracks.push({ id, label, enabled: true, locked: false, muted: false, solo: false,
+  c.tracks.push({ id, label, enabled: true, locked: false, muted: false, solo: false,
     removable: true, role: 'Caption', transient: false, height_px: 64, layers: [] })
   return id
 }
@@ -176,7 +179,8 @@ function restyleTrackTextLayers(track: Track, patch: CaptionStylePatch): void {
  *  is no TrackNotFound — a project may legitimately hold zero caption tracks, in
  *  which case this is a no-op (commit's no-op guard then records nothing). */
 export function applyRestyleCaptions(p: Project, patch: CaptionStylePatch): void {
-  for (const track of p.tracks) {
+  const c = rootComposition(p)
+  for (const track of c.tracks) {
     if (track.role !== 'Caption') continue
     restyleTrackTextLayers(track, patch)
   }

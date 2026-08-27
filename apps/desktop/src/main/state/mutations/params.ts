@@ -2,7 +2,7 @@ import type { Animated, AudioParams, AudioRole, ColorParams, ImageOverlayParams,
 import { CommandFailure } from '../errors'
 import { snapFrameFloor, snapFrameCeil, gridForLayerKind, snapOnGrid } from '../snap'
 import { authoredExtentPx, authoredValue, quantizeTrack } from '../quantize'
-import { checkTrackLock, locateLayer, applyDurationAutofit } from './helpers'
+import { checkTrackLock, locateLayer, applyDurationAutofit, rootComposition } from './helpers'
 import { normalizeKeyframes } from './animated'
 import type { MotifCatalog } from '../../../shared/motifs/catalog'
 import { resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
@@ -267,9 +267,10 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
  *  resolveMotifTEndUs twin note in catalog.ts — diverges from Rust saturating
  *  arithmetic only for absurd timestamps far beyond realistic use. */
 export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsPatch, catalog: MotifCatalog): void {
+  const c = rootComposition(p)
   checkTrackLock(p, id) // LayerNotFound / TrackLocked
   const loc = locateLayer(p, id)! // existence guaranteed by checkTrackLock
-  const layer = p.tracks[loc[0]].layers[loc[1]]
+  const layer = c.tracks[loc[0]].layers[loc[1]]
   applyParamsPatch(layer, patch)
 
   // Content-window model: after a Motif params update, if the cap-driving prop
@@ -296,7 +297,7 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
     // Clamp the window start into content (keep >= 0, < contentDur). Floor (not
     // round) so newSrcIn can never round UP toward contentDur on off-grid inputs.
     const maxSrcIn = Math.max(contentDur - 1, 0)
-    const fps = p.composition.fps
+    const fps = c.fps
     const newSrcIn = snapFrameFloor(Math.min(srcIn, maxSrcIn), fps.num, fps.den)
     // Largest grid t_end whose derived src_out stays <= contentDur.
     const cappedEnd = snapFrameFloor(tStart + (contentDur - newSrcIn), fps.num, fps.den)
@@ -308,7 +309,7 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
 
     params.src_in_us = newSrcIn
     layer.t_end_us = newTEnd
-    applyDurationAutofit(p)
+    applyDurationAutofit(c)
   }
 }
 
@@ -375,9 +376,10 @@ export function resolveAnimatedF64(layer: Layer, key: string): Animated<number> 
  *  keyframe tools for timeline-absolute↔layer-local conversion. Read-only (no
  *  commit, no id mint). */
 export function readLayerTrack(p: Project, id: Uuid, paramKey: string): { tStartUs: number; track: Animated<number> } {
+  const c = rootComposition(p)
   const loc = locateLayer(p, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
-  const layer = p.tracks[loc[0]].layers[loc[1]]
+  const layer = c.tracks[loc[0]].layers[loc[1]]
   const track = resolveAnimatedF64(layer, paramKey)
   if (track === null) throw new CommandFailure({ error: 'UnknownKeyframeParam', layer: id, param_key: paramKey })
   return { tStartUs: layer.t_start_us, track }
@@ -389,9 +391,10 @@ export function readLayerTrack(p: Project, id: Uuid, paramKey: string): { tStart
  *  (UnknownKeyframeParam) → assign. NO autofit (a keyframe write never moves
  *  t_start/t_end). Keyframe param-tracks are Animated<f64> only. */
 export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: string, track: Animated<number>): void {
+  const c = rootComposition(p)
   checkTrackLock(p, id) // LayerNotFound / TrackLocked — BEFORE normalize
   const loc = locateLayer(p, id)! // existence guaranteed by checkTrackLock
-  const layer = p.tracks[loc[0]].layers[loc[1]]
+  const layer = c.tracks[loc[0]].layers[loc[1]]
   // Located BEFORE normalize because the write-time grid depends on the layer's
   // kind: an audio envelope — gain_db, pan, and the audio-role automation —
   // quantizes on the 48 kHz lattice, so audio automation is never coarser than the
@@ -402,7 +405,7 @@ export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: strin
   // by validate (see validate.ts's validateLayerParams note): trim/split rebase keys
   // by a delta, and re-snapping the shifted set would dedupe-merge two keys that
   // landed on one quantum — authored data lost.
-  if (!normalizeKeyframes(track, (t) => snapOnGrid(t, gridForLayerKind(layer.params.kind, p.composition.fps)))) {
+  if (!normalizeKeyframes(track, (t) => snapOnGrid(t, gridForLayerKind(layer.params.kind, c.fps)))) {
     throw new CommandFailure({ error: 'EmptyKeyframeTrack', layer: id, param_key: paramKey })
   }
   // Values, after the times. Here rather than beside `lens.set` because the lazy

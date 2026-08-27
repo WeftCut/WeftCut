@@ -14,6 +14,7 @@ import { createActor } from '../actor'
 import { parseProject, serializeProject, type GridRepair } from '../serialize'
 import { serializeProjectToJson } from '../persistence'
 import { AUDIO_GRID, frameGrid, gridIndex, snapFrameRound, timeUsAtGridIndex } from '../snap'
+import { root } from './fixtures/project'
 
 // 29.97 is the discriminating rate: 48000 * 1001/30000 = 1601.6 samples per frame, so
 // the frame lattice is NOT a sublattice of the 48 kHz one and each grid rejects the
@@ -63,11 +64,11 @@ interface Fixture {
 function pairedFixture(): Fixture {
   const idGen = seededGen()
   const initial = blankProject(idGen, 'audio-grid')
-  initial.composition.fps = FPS
+  root(initial).fps = FPS
   const actor = createActor({ initial, idGen, clock: () => '<TS>' })
   actor.dispatch('add_media', { id: VIDEO_MEDIA, kind: 'Video', duration_us: 10_000_000, with_audio: false })
   actor.dispatch('add_media', { id: AUDIO_MEDIA, kind: 'Audio', duration_us: 10_000_000, with_audio: true })
-  const [videoTrack, audioTrack] = actor.snapshot().tracks.map((t) => t.id)
+  const [videoTrack, audioTrack] = root(actor.snapshot()).tracks.map((t) => t.id)
   const at = frame(V_START_FRAME())
   const v = actor.dispatch('add_layer', { track: videoTrack, kind: 'video', media: VIDEO_MEDIA, src_in_us: 0, src_out_us: 2_000_000, t_start_us: at, t_end_us: at + 2_000_000 })
   const a = actor.dispatch('add_layer', { track: audioTrack, kind: 'audio', media: AUDIO_MEDIA, src_in_us: 0, src_out_us: 2_000_000, t_start_us: at, t_end_us: at + 2_000_000 })
@@ -78,7 +79,7 @@ function pairedFixture(): Fixture {
   return { actor, videoLayer, audioLayer, videoTrack, audioTrack }
 }
 
-const findLayer = (p: Project, id: string) => p.tracks.flatMap((t) => t.layers).find((l) => l.id === id)!
+const findLayer = (p: Project, id: string) => root(p).tracks.flatMap((t) => t.layers).find((l) => l.id === id)!
 
 describe('audio grid — the 48 kHz mix lattice', () => {
   it('the authoring index IS the mixer sample index (leaf twin, not a parallel implementation)', () => {
@@ -122,7 +123,7 @@ describe('audio grid — the 48 kHz mix lattice', () => {
     // grid — the request is honoured to the nearest frame, never persisted raw.
     const videoTarget = sample(gridIndex(frame(60), AUDIO_GRID) + 7)
     expect(videoTarget).not.toBe(snapFrameRound(videoTarget, FPS.num, FPS.den))
-    expect(actor.dispatch('move_layer', { layer: videoLayer, to_track: actor.snapshot().tracks[0].id, t_start_us: videoTarget, escape_link: true }).ok).toBe(true)
+    expect(actor.dispatch('move_layer', { layer: videoLayer, to_track: root(actor.snapshot()).tracks[0].id, t_start_us: videoTarget, escape_link: true }).ok).toBe(true)
     const movedVideo = findLayer(actor.snapshot(), videoLayer)
     expect(movedVideo.t_start_us).toBe(snapFrameRound(videoTarget, FPS.num, FPS.den))
     expect(movedVideo.t_start_us).not.toBe(videoTarget)
@@ -208,14 +209,18 @@ describe('audio grid — the 48 kHz mix lattice', () => {
     const slipped = sample(gridIndex(frame(V_START_FRAME()), AUDIO_GRID) + 7)
     expect(actor.dispatch('move_layer', { layer: audioLayer, to_track: audioTrack, t_start_us: slipped, escape_link: true }).ok).toBe(true)
     const wire = JSON.parse(serializeProjectToJson(actor.snapshot())) as {
-      composition: { fps: { num: number; den: number } }
-      tracks: Array<{ layers: Array<{ id: string; t_start_us: number; t_end_us: number }> }>
+      compositions: Record<string, {
+        fps: { num: number; den: number }
+        tracks: Array<{ layers: Array<{ id: string; t_start_us: number; t_end_us: number }> }>
+      }>
+      root_id: string
     }
+    const wireRoot = wire.compositions[wire.root_id]
 
     const moved: string[] = []
-    for (const track of wire.tracks) {
+    for (const track of wireRoot.tracks) {
       for (const l of track.layers) {
-        const snappedStart = snapFrameRound(l.t_start_us, wire.composition.fps.num, wire.composition.fps.den)
+        const snappedStart = snapFrameRound(l.t_start_us, wireRoot.fps.num, wireRoot.fps.den)
         if (snappedStart !== l.t_start_us) moved.push(l.id)
       }
     }
@@ -230,9 +235,10 @@ describe('audio grid — the 48 kHz mix lattice', () => {
     // repaired by ≤ half a sample (~10 µs, inaudible) — not be rejected.
     const { actor, audioLayer } = pairedFixture()
     const wire = JSON.parse(serializeProjectToJson(actor.snapshot())) as Record<string, unknown> & {
-      tracks: Array<{ layers: Array<Record<string, unknown>> }>
+      compositions: Record<string, { tracks: Array<{ layers: Array<Record<string, unknown>> }> }>
+      root_id: string
     }
-    for (const track of wire.tracks) {
+    for (const track of wire.compositions[wire.root_id].tracks) {
       for (const l of track.layers) {
         if (l.id !== audioLayer) continue
         l.t_start_us = frame(V_START_FRAME()) // legacy: frame-aligned audio
@@ -257,7 +263,7 @@ describe('audio grid — the 48 kHz mix lattice', () => {
     expect(actor.dispatch('delete_layer', { layer: videoLayer }).ok).toBe(true)
     const end = sample(gridIndex(frame(120), AUDIO_GRID) + 3)
     expect(actor.dispatch('trim_layer', { layer: audioLayer, edge: 'out', new_t_us: end, escape_link: true }).ok).toBe(true)
-    const comp = actor.snapshot().composition
+    const comp = root(actor.snapshot())
     const audio = findLayer(actor.snapshot(), audioLayer)
     expect(audio.t_end_us).toBe(end)
     expect(snapFrameRound(comp.duration_us, FPS.num, FPS.den)).toBe(comp.duration_us)
@@ -304,12 +310,12 @@ describe('audio grid — the 48 kHz mix lattice', () => {
 
   it('composition.sample_rate is untouched by all of this (export target, not a grid)', () => {
     const { actor, audioLayer, audioTrack } = pairedFixture()
-    const before = actor.snapshot().composition.sample_rate
+    const before = root(actor.snapshot()).sample_rate
     expect(actor.dispatch('move_layer', { layer: audioLayer, to_track: audioTrack, t_start_us: sample(1234567), escape_link: true }).ok).toBe(true)
-    expect(actor.snapshot().composition.sample_rate).toBe(before)
+    expect(root(actor.snapshot()).sample_rate).toBe(before)
     // And it is still freely settable — no lock (spec finding 8).
     expect(actor.dispatch('set_composition', { sample_rate: 44_100 }).ok).toBe(true)
-    expect(actor.snapshot().composition.sample_rate).toBe(44_100)
+    expect(root(actor.snapshot()).sample_rate).toBe(44_100)
   })
 
   it('audio param tracks (gain/pan) normalize on the sample lattice, visual params on the frame grid', () => {

@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { serveProjectResource, buildResourceInjection } from '../resource-views'
+import { serveProjectResource, buildResourceInjection, compositionSettings } from '../resource-views'
 import { createActor } from '../actor'
 import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
 import { mediaItemTemplate } from '../mutations/media'
+import { root, withGroup } from './fixtures/project'
+import { applyAddLayer, colorParams } from '../mutations/add'
 
 function mkActor() {
   const idGen = uuidV7Gen()
@@ -53,15 +55,16 @@ describe('serveProjectResource', () => {
   it('serves composition / tracks from the snapshot', () => {
     const actor = mkActor()
     const snap = actor.snapshot()
-    expect(JSON.parse(text(serveProjectResource('project://composition', actor)))).toEqual(structuredClone(snap.composition))
-    expect(JSON.parse(text(serveProjectResource('project://tracks', actor)))).toHaveLength(snap.tracks.length)
+    // The root's SETTINGS projection, not the whole root (docs/mcp.md: "composition only").
+    expect(JSON.parse(text(serveProjectResource('project://composition', actor)))).toEqual(structuredClone(compositionSettings(root(snap))))
+    expect(JSON.parse(text(serveProjectResource('project://tracks', actor)))).toHaveLength(root(snap).tracks.length)
   })
   it('serves a single layer for project://layers/{id}', () => {
     const actor = mkActor()
-    const track = actor.snapshot().tracks[0].id
+    const track = root(actor.snapshot()).tracks[0].id
     const r = actor.mcpCall('add_color_layer', JSON.stringify({ track_id: track, color: { r: 0, g: 0, b: 0, a: 1 }, t_start_us: 0, t_end_us: 1_000_000 }))
     expect(r.ok).toBe(true)
-    const layerId = actor.snapshot().tracks.flatMap((t) => t.layers)[0].id
+    const layerId = root(actor.snapshot()).tracks.flatMap((t) => t.layers)[0].id
     expect(JSON.parse(text(serveProjectResource(`project://layers/${layerId}`, actor))).id).toBe(layerId)
   })
   it('throws not-found for an absent layer id', () => {
@@ -100,5 +103,21 @@ describe('buildResourceInjection', () => {
   it('injects nothing for composition://meter', () => {
     const actor = mkActor()
     expect(buildResourceInjection('composition://meter', actor.snapshot())).toBe('{}')
+  })
+})
+
+describe('serveProjectResource across compositions', () => {
+  it('project://layers/{id} finds a layer inside a Group; project://tracks stays the root', () => {
+    const gen = uuidV7Gen()
+    const initial = blankProject(gen, 'r')
+    const { p, groupId } = withGroup(initial, gen, (g, view) => applyAddLayer(view, gen, g.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 16, 9), 0, 1_000_000))
+    const actor = createActor({ initial: p, idGen: gen })
+    const inner = p.compositions[groupId].tracks[0].layers[0]
+    const text = (r: ReturnType<typeof serveProjectResource>) => (r as { contents: Array<{ text: string }> }).contents[0].text
+    expect(JSON.parse(text(serveProjectResource(`project://layers/${inner.id}`, actor))).id).toBe(inner.id)
+    expect(JSON.parse(text(serveProjectResource('project://tracks', actor)))).toHaveLength(root(p).tracks.length)
+    const comp = JSON.parse(text(serveProjectResource('project://composition', actor)))
+    expect(comp.id).toBe(p.root_id)
+    expect('tracks' in comp).toBe(false)
   })
 })

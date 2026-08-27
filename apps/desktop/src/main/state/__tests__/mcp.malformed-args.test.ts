@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createTsActorHost } from '../ts-actor-host'
+import { root } from './fixtures/project'
 
 // The actor.mcpCall dedicated arms must reject malformed wire args at the arg
 // boundary, before any commit — invalid_params out, NO state mutation.
@@ -23,7 +24,7 @@ describe('mcpCall rejects malformed args before commit (soak finding)', () => {
     const r = host.actor.mcpCall('add_marker', JSON.stringify({ color: '#fff', label: 'x', t_us: 1_000_000 }))
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.code).toBe('invalid_params')
-    expect(host.actor.snapshot().markers.length, 'no garbage marker committed').toBe(0)
+    expect(root(host.actor.snapshot()).markers.length, 'no garbage marker committed').toBe(0)
     host.stop()
   })
 
@@ -33,18 +34,18 @@ describe('mcpCall rejects malformed args before commit (soak finding)', () => {
     const r = host.actor.mcpCall('add_marker', JSON.stringify({ color: { r: 0, g: 128, b: 255, a: 255 }, label: 'x', t_us: 'abc' }))
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.code).toBe('invalid_params')
-    expect(host.actor.snapshot().markers.length).toBe(0)
+    expect(root(host.actor.snapshot()).markers.length).toBe(0)
     host.stop()
   })
 
   it('add_color_layer with a string color → invalid_params, no layer committed', () => {
     const host = createTsActorHost(makeDeps())
     host.start()
-    const track = host.actor.snapshot().tracks[0].id
+    const track = root(host.actor.snapshot()).tracks[0].id
     const r = host.actor.mcpCall('add_color_layer', JSON.stringify({ track_id: track, color: '#fff', t_start_us: 0, t_end_us: 1_000_000 }))
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.code).toBe('invalid_params')
-    const layers = host.actor.snapshot().tracks.reduce((n, t) => n + t.layers.length, 0)
+    const layers = root(host.actor.snapshot()).tracks.reduce((n, t) => n + t.layers.length, 0)
     expect(layers, 'no garbage layer committed').toBe(0)
     host.stop()
   })
@@ -52,10 +53,10 @@ describe('mcpCall rejects malformed args before commit (soak finding)', () => {
   it('add_color_layer with a valid color still works (regression guard)', () => {
     const host = createTsActorHost(makeDeps())
     host.start()
-    const track = host.actor.snapshot().tracks[0].id
+    const track = root(host.actor.snapshot()).tracks[0].id
     const r = host.actor.mcpCall('add_color_layer', JSON.stringify({ track_id: track, color: { r: 10, g: 20, b: 30, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 }))
     expect(r.ok).toBe(true)
-    const layers = host.actor.snapshot().tracks.reduce((n, t) => n + t.layers.length, 0)
+    const layers = root(host.actor.snapshot()).tracks.reduce((n, t) => n + t.layers.length, 0)
     expect(layers).toBe(1)
     host.stop()
   })

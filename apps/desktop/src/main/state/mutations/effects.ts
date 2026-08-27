@@ -1,4 +1,5 @@
 import type { Animated, Effect, Project, Uuid } from '../model'
+import { rootComposition } from './helpers'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { quantizeEffectTrack } from '../quantize'
@@ -12,7 +13,8 @@ export interface EffectPatch {
 
 /** Locate the layer's effect chain or throw LayerNotFound. */
 function effectsOrThrow(p: Project, layerId: Uuid): Effect[] {
-  for (const track of p.tracks) {
+  const c = rootComposition(p)
+  for (const track of c.tracks) {
     const l = track.layers.find((x) => x.id === layerId)
     if (l) return l.effects
   }

@@ -3,7 +3,7 @@ import type { Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { applyAddTrack } from './add'
-import { locateLayer, pruneEmptiedTrack } from './helpers'
+import { locateLayer, pruneEmptiedTrack, rootComposition } from './helpers'
 
 export type RestackPosition = 'above' | 'below'
 
@@ -32,6 +32,7 @@ export type RestackPosition = 'above' | 'below'
  *  records nothing and burns no op id (the move_track contract). The fresh
  *  track's id is minted only after every check, so a refusal burns no id. */
 export function applyRestackLayer(p: Project, idGen: IdGen, layerId: Uuid, anchorId: Uuid, position: RestackPosition): Uuid | null {
+  const c = rootComposition(p)
   if (position !== 'above' && position !== 'below')
     throw new CommandFailure({ error: 'InvalidArgument', field: 'position', detail: `expected 'above' | 'below', got ${String(position)}` })
   const moverLoc = locateLayer(p, layerId)
@@ -42,9 +43,9 @@ export function applyRestackLayer(p: Project, idGen: IdGen, layerId: Uuid, ancho
     throw new CommandFailure({ error: 'InvalidArgument', field: 'anchor', detail: 'anchor must be a layer other than the one being restacked' })
   // Audio composites by role, not by stacking (ADR 0023): z is meaningless for
   // it, so it neither moves nor anchors.
-  if (p.tracks[moverLoc[0]].layers[moverLoc[1]].params.kind === 'Audio')
+  if (c.tracks[moverLoc[0]].layers[moverLoc[1]].params.kind === 'Audio')
     throw new CommandFailure({ error: 'WrongLayerKind', layer: layerId, expected: 'visual' })
-  if (p.tracks[anchorLoc[0]].layers[anchorLoc[1]].params.kind === 'Audio')
+  if (c.tracks[anchorLoc[0]].layers[anchorLoc[1]].params.kind === 'Audio')
     throw new CommandFailure({ error: 'WrongLayerKind', layer: anchorId, expected: 'visual' })
 
   const [mi] = moverLoc
@@ -56,13 +57,13 @@ export function applyRestackLayer(p: Project, idGen: IdGen, layerId: Uuid, ancho
   // must refuse, not silently succeed.
   if (mi === (position === 'above' ? ai + 1 : ai - 1)) return null
 
-  const src = p.tracks[mi]
+  const src = c.tracks[mi]
   if (src.layers.length === 1 && src.role === null) {
     // Sole occupant on an ordinary track: the track IS the layer's z, so the
     // track moves whole and its identity — id, label, lock, height — survives.
-    p.tracks.splice(mi, 1)
+    c.tracks.splice(mi, 1)
     const anchorIdx = ai > mi ? ai - 1 : ai // the removal shifted tracks above mi down by one
-    p.tracks.splice(position === 'above' ? anchorIdx + 1 : anchorIdx, 0, src)
+    c.tracks.splice(position === 'above' ? anchorIdx + 1 : anchorIdx, 0, src)
     return src.id
   }
   // Split path: the mover leaves alone. `label: null` lets the fresh track
@@ -70,13 +71,13 @@ export function applyRestackLayer(p: Project, idGen: IdGen, layerId: Uuid, ancho
   // because the insertion just shifted indices.
   const srcTrackId = src.id
   const destTrackId = applyAddTrack(p, idGen, null, position === 'above' ? ai + 1 : ai)
-  const dest = p.tracks.find((t) => t.id === destTrackId)! // just inserted
-  const from = p.tracks.find((t) => t.id === srcTrackId)!
+  const dest = c.tracks.find((t) => t.id === destTrackId)! // just inserted
+  const from = c.tracks.find((t) => t.id === srcTrackId)!
   const li = from.layers.findIndex((l) => l.id === layerId)
   dest.layers.push(from.layers.splice(li, 1)[0]) // dest is empty, so push keeps t-sort trivially
   // Cleanup rides in the SAME mutation (one undo restores layer + new track +
   // pruned source together). The predicate declines the reserved skeleton and
   // locked tracks on its own — one rule, one home.
-  pruneEmptiedTrack(p, srcTrackId)
+  pruneEmptiedTrack(c, srcTrackId)
   return destTrackId
 }

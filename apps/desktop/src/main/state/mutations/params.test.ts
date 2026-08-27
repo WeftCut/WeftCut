@@ -12,41 +12,42 @@ import { applyUpdateLayerParams, applyUpdateLayerParamTrack, resolveAnimatedF64,
 import { animatableParams } from '../../../renderer/keyframe/descriptors'
 import { MotifCatalog } from '../../../shared/motifs/catalog'
 import { validate } from '../validate'
+import { root } from '../__tests__/fixtures/project'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
 function expectCmd(fn: () => void, code: string) {
   try { fn(); throw new Error(`expected ${code}`) } catch (e) { expect(isCommandFailure(e) && e.err.error).toBe(code) }
 }
 function layerOf(p: Project, id: string): Layer {
-  for (const t of p.tracks) { const l = t.layers.find((x) => x.id === id); if (l) return l }
+  for (const t of root(p).tracks) { const l = t.layers.find((x) => x.id === id); if (l) return l }
   throw new Error('not found')
 }
 
 describe('applyUpdateLayerParams (field merge)', () => {
   it('Text patch sets content/opacity/x (animated fields → Static)', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
-    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('hi', p.composition), 0, 1_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('hi', root(p)), 0, 1_000_000)
     applyUpdateLayerParams(p, id, { kind: 'Text', content: 'world', opacity: 0.5, x: 10 }, new MotifCatalog())
     const t = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Text' }>
     expect([t.content, t.opacity, t.transform.x]).toEqual(['world', { mode: 'Static', value: 0.5 }, { mode: 'Static', value: 10 }])
   })
   it('Color patch sets color + width', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
-    const id = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 100, 100), 0, 1_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 100, 100), 0, 1_000_000)
     applyUpdateLayerParams(p, id, { kind: 'Color', color: { r: 1, g: 2, b: 3, a: 255 }, width: 640 }, new MotifCatalog())
     const c = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Color' }>
     expect([c.color, c.width, c.height]).toEqual([{ mode: 'Static', value: { r: 1, g: 2, b: 3, a: 255 } }, 640, 100])
   })
   it('VideoClip patch sets src range + scale + speed + flip', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
-    const id = applyAddLayer(p, g, p.tracks[0].id, videoClipParams(MID, 0, 4_000_000), 0, 4_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[0].id, videoClipParams(MID, 0, 4_000_000), 0, 4_000_000)
     applyUpdateLayerParams(p, id, { kind: 'VideoClip', src_in_us: 500_000, src_out_us: 3_000_000, scale_x: 2, speed: 1.5, flip_h: true }, new MotifCatalog())
     const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
     expect([v.src_in_us, v.src_out_us, v.transform.scale_x, v.speed, v.flip_h]).toEqual([500_000, 3_000_000, { mode: 'Static', value: 2 }, 1.5, true])
   })
   it('Audio patch sets gain/mute/role', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
-    const id = applyAddLayer(p, g, p.tracks[0].id, audioParams(MID, 0, 3_000_000), 0, 3_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[0].id, audioParams(MID, 0, 3_000_000), 0, 3_000_000)
     applyUpdateLayerParams(p, id, { kind: 'Audio', gain_db: -6, mute: true, role: 'dialogue' }, new MotifCatalog())
     const a = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Audio' }>
     expect([a.gain_db, a.mute, a.role]).toEqual([{ mode: 'Static', value: -6 }, true, 'dialogue'])
@@ -55,20 +56,20 @@ describe('applyUpdateLayerParams (field merge)', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
     const motif: MotifParams = { kind: 'Motif', motif_id: 'm', motif_version: 1, props: { a: 1, b: 2 },
       src_in_us: 0, transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 } }
-    p.tracks[0].layers.push({ id: 'mo', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {}, params: motif, effects: [] })
+    root(p).tracks[0].layers.push({ id: 'mo', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {}, params: motif, effects: [] })
     applyUpdateLayerParams(p, 'mo', { kind: 'Motif', opacity: 0.3, props: { b: 9, c: 3 } }, new MotifCatalog())
     const m = layerOf(p, 'mo').params as MotifParams
     expect([m.props, m.opacity]).toEqual([{ a: 1, b: 9, c: 3 }, { mode: 'Static', value: 0.3 }])
   })
   it('kind mismatch → LayerParamsKindMismatch', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
-    const id = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 10, 10), 0, 1_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 10, 10), 0, 1_000_000)
     expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', content: 'x' }, new MotifCatalog()), 'LayerParamsKindMismatch')
   })
   it('locked track → TrackLocked; missing layer → LayerNotFound', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
-    const id = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 10, 10), 0, 1_000_000)
-    p.tracks[0].locked = true
+    const id = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 10, 10), 0, 1_000_000)
+    root(p).tracks[0].locked = true
     expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Color', width: 1 }, new MotifCatalog()), 'TrackLocked')
     expectCmd(() => applyUpdateLayerParams(p, 'ghost', { kind: 'Color', width: 1 }, new MotifCatalog()), 'LayerNotFound')
   })
@@ -83,7 +84,7 @@ describe('applyUpdateLayerParams (field merge)', () => {
 describe('Text box patch', () => {
   function textLayer(): { p: Project; id: string } {
     const g = seededGen(); const p = blankProject(g, 'box')
-    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('hi', p.composition), 0, 1_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('hi', root(p)), 0, 1_000_000)
     return { p, id }
   }
   const boxOf = (p: Project, id: string) => {
@@ -186,7 +187,7 @@ describe('applyUpdateLayerParamTrack', () => {
   ] })
   function textLayer(): { p: Project; id: string } {
     const g = seededGen(); const p = blankProject(g, 'kf')
-    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('t', p.composition), 0, 2_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('t', root(p)), 0, 2_000_000)
     return { p, id }
   }
   it('writes a keyframed track to opacity', () => {
@@ -213,7 +214,7 @@ describe('applyUpdateLayerParamTrack', () => {
   })
   it('locked track → TrackLocked (checked before normalize)', () => {
     const { p, id } = textLayer()
-    p.tracks[1].locked = true
+    root(p).tracks[1].locked = true
     expectCmd(() => applyUpdateLayerParamTrack(p, id, 'opacity', { mode: 'Keyframed', value: [] }), 'TrackLocked')
   })
 })
@@ -258,13 +259,13 @@ describe('animatable params are writable on both sides of the IPC boundary', () 
     const g = seededGen()
     const p = blankProject(g, 'gate')
     const params: LayerParams =
-      kind === 'Text' ? textParamsDefault('hi', p.composition)
+      kind === 'Text' ? textParamsDefault('hi', root(p))
       : kind === 'Color' ? colorParams({ r: 1, g: 2, b: 3, a: 255 }, 16, 9)
       : kind === 'Audio' ? audioParams('00000000-0000-0000-0000-0000000000a1', 0, 1_000_000)
       : kind === 'Motif' ? { kind: 'Motif', motif_id: 'countdown', motif_version: 1, props: {}, src_in_us: 0, transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 } } as LayerParams
       : kind === 'ImageOverlay' ? { kind: 'ImageOverlay', media: '00000000-0000-0000-0000-0000000000a2', transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 }, blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0 } as LayerParams
       : videoClipParams('00000000-0000-0000-0000-0000000000a3', 0, 1_000_000)
-    const id = applyAddLayer(p, g, p.tracks[0].id, params, 0, 1_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[0].id, params, 0, 1_000_000)
     return layerOf(p, id)
   }
 })
@@ -281,7 +282,7 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
     const g = seededGen()
     const p = blankProject(g, 'clamp-test')
     // fps 30/1 for clean integer frame boundaries
-    p.composition.fps = { num: 30, den: 1 }
+    root(p).fps = { num: 30, den: 1 }
     const motif: MotifParams = {
       kind: 'Motif',
       motif_id: 'countdown',
@@ -292,7 +293,7 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
       transform: textParamsDefaultTransform(),
       opacity: { mode: 'Static', value: 1 },
     }
-    p.tracks[0].layers.push({
+    root(p).tracks[0].layers.push({
       id: 'mo1',
       label: null,
       t_start_us: 0,
@@ -310,7 +311,7 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
     const { p } = makeCountdownProject()
     const catalog = new MotifCatalog() // countdown is built-in
     applyUpdateLayerParams(p, 'mo1', { kind: 'Motif', props: { seconds: 3 } }, catalog)
-    const layer = p.tracks[0].layers.find((l) => l.id === 'mo1')!
+    const layer = root(p).tracks[0].layers.find((l) => l.id === 'mo1')!
     const m = layer.params as MotifParams
     expect(m.src_in_us).toBe(0)
     expect(layer.t_end_us).toBe(3_000_000)
@@ -322,7 +323,7 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
     const { p } = makeCountdownProject()
     const catalog = new MotifCatalog()
     applyUpdateLayerParams(p, 'mo1', { kind: 'Motif', props: { seconds: 15 } }, catalog)
-    const layer = p.tracks[0].layers.find((l) => l.id === 'mo1')!
+    const layer = root(p).tracks[0].layers.find((l) => l.id === 'mo1')!
     const m = layer.params as MotifParams
     expect(m.src_in_us).toBe(0)
     expect(layer.t_end_us).toBe(10_000_000)
@@ -334,9 +335,9 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
     { fps: { num: 30_000, den: 1001 }, expected: 33_367 },
   ])('content under one frame clamps to exactly one frame at $fps.num/$fps.den', ({ fps, expected }) => {
     const { p } = makeCountdownProject()
-    p.composition.fps = fps
+    root(p).fps = fps
     applyUpdateLayerParams(p, 'mo1', { kind: 'Motif', props: { seconds: 0.01 } }, new MotifCatalog())
-    const layer = p.tracks[0].layers.find((l) => l.id === 'mo1')!
+    const layer = root(p).tracks[0].layers.find((l) => l.id === 'mo1')!
     expect(layer.t_start_us).toBe(0)
     expect(layer.t_end_us).toBe(expected)
     expect(() => validate(p)).not.toThrow()
@@ -355,10 +356,10 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
       transform: textParamsDefaultTransform(),
       opacity: { mode: 'Static', value: 1 },
     }
-    p.tracks[0].layers.push({ id: 'mo2', label: null, t_start_us: 0, t_end_us: 10_000_000, enabled: true, locked: false, metadata: {}, params: motif, effects: [] })
+    root(p).tracks[0].layers.push({ id: 'mo2', label: null, t_start_us: 0, t_end_us: 10_000_000, enabled: true, locked: false, metadata: {}, params: motif, effects: [] })
     const catalog = new MotifCatalog()
     applyUpdateLayerParams(p, 'mo2', { kind: 'Motif', props: { seconds: 3 } }, catalog)
-    const layer = p.tracks[0].layers.find((l) => l.id === 'mo2')!
+    const layer = root(p).tracks[0].layers.find((l) => l.id === 'mo2')!
     // No clamp because no catalog entry
     expect(layer.t_end_us).toBe(10_000_000)
   })
@@ -367,7 +368,7 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
     const motif: MotifParams = { kind: 'Motif', motif_id: 'm', motif_version: 1, props: { a: 1, b: 2 },
       src_in_us: 0, transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 } }
-    p.tracks[0].layers.push({ id: 'mo', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {}, params: motif, effects: [] })
+    root(p).tracks[0].layers.push({ id: 'mo', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {}, params: motif, effects: [] })
     applyUpdateLayerParams(p, 'mo', { kind: 'Motif', opacity: 0.3, props: { b: 9, c: 3 } }, new MotifCatalog())
     const m = layerOf(p, 'mo').params as MotifParams
     expect([m.props, m.opacity]).toEqual([{ a: 1, b: 9, c: 3 }, { mode: 'Static', value: 0.3 }])
@@ -383,7 +384,7 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
 describe('authored precision at the write seam', () => {
   function visualLayer(): { p: Project; id: string } {
     const g = seededGen(); const p = blankProject(g, 'q')
-    const id = applyAddLayer(p, g, p.tracks[0].id, videoClipParams(MID, 0, 4_000_000), 0, 4_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[0].id, videoClipParams(MID, 0, 4_000_000), 0, 4_000_000)
     return { p, id }
   }
   const staticOf = (a: unknown): number => (a as { value: number }).value
@@ -441,7 +442,7 @@ describe('authored precision at the write seam', () => {
 
   it('rounds the text box to whole pixels and refuses one that rounds away', () => {
     const g = seededGen(); const p = blankProject(g, 'q')
-    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('t', p.composition), 0, 1_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('t', root(p)), 0, 1_000_000)
     applyUpdateLayerParams(p, id, { kind: 'Text', box_w: 640.4 }, new MotifCatalog())
     expect((layerOf(p, id).params as TextParams).box_w).toBe(640)
     // Passes a raw `> 0` test, then records as the zero box that test exists to
@@ -453,7 +454,7 @@ describe('authored precision at the write seam', () => {
     const g = seededGen(); const p = blankProject(g, 'q')
     // The constructor is the one MCP reaches with an agent's raw JSON size
     // (actor.ts add_layer), so a layer must not be able to be BORN fractional.
-    const id = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 255, g: 0, b: 0, a: 255 }, 1920.7, 1080.2), 0, 1_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 255, g: 0, b: 0, a: 255 }, 1920.7, 1080.2), 0, 1_000_000)
     const born = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Color' }>
     expect([born.width, born.height]).toEqual([1921, 1080])
     applyUpdateLayerParams(p, id, { kind: 'Color', width: 640.4, height: 360.5 }, new MotifCatalog())
@@ -463,7 +464,7 @@ describe('authored precision at the write seam', () => {
 
   it('refuses a Color extent that rounds away, leaving the colour unwritten', () => {
     const g = seededGen(); const p = blankProject(g, 'q')
-    const id = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 255, g: 0, b: 0, a: 255 }, 1920, 1080), 0, 1_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 255, g: 0, b: 0, a: 255 }, 1920, 1080), 0, 1_000_000)
     expectCmd(() => applyUpdateLayerParams(p, id,
       { kind: 'Color', color: { r: 0, g: 255, b: 0, a: 255 }, width: 0.4 }, new MotifCatalog()), 'InvalidArgument')
     const c = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Color' }>
@@ -473,13 +474,13 @@ describe('authored precision at the write seam', () => {
 
   it('refuses a non-positive font size', () => {
     const g = seededGen(); const p = blankProject(g, 'q')
-    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('t', p.composition), 0, 1_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('t', root(p)), 0, 1_000_000)
     expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Text', font_size_px: 0 }, new MotifCatalog()), 'InvalidArgument')
   })
 
   it('quantizes gain_db and refuses an out-of-range pan', () => {
     const g = seededGen(); const p = blankProject(g, 'q')
-    const id = applyAddLayer(p, g, p.tracks[0].id, audioParams(MID, 0, 3_000_000), 0, 3_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[0].id, audioParams(MID, 0, 3_000_000), 0, 3_000_000)
     applyUpdateLayerParams(p, id, { kind: 'Audio', gain_db: -6.0333, pan: 0.333333 }, new MotifCatalog())
     const au = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Audio' }>
     expect([staticOf(au.gain_db), staticOf(au.pan)]).toEqual([-6, 0.333])
@@ -490,7 +491,7 @@ describe('authored precision at the write seam', () => {
 
   it('quantizes every keyframe of a track write, not just the first', () => {
     const g = seededGen(); const p = blankProject(g, 'q')
-    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('t', p.composition), 0, 2_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('t', root(p)), 0, 2_000_000)
     applyUpdateLayerParamTrack(p, id, 'x', { mode: 'Keyframed', value: [
       { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 10.373737, interp: { kind: 'Linear' } },
       { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: 20.982, interp: { kind: 'Linear' } },
@@ -501,7 +502,7 @@ describe('authored precision at the write seam', () => {
 
   it('refuses an out-of-range keyframe BEFORE the lazy effect-slot insert', () => {
     const g = seededGen(); const p = blankProject(g, 'q')
-    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('t', p.composition), 0, 2_000_000)
+    const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('t', root(p)), 0, 2_000_000)
     layerOf(p, id).effects.push({ id: '00000000-0000-0000-0000-0000000000e1', kind: 'blur', enabled: true, params: {} })
     expectCmd(() => applyUpdateLayerParamTrack(p, id, 'opacity', { mode: 'Static', value: 3 }), 'InvalidArgument')
     // Ordering, made observable: the insert writes to the project, so quantizing

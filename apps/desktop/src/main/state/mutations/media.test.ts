@@ -4,6 +4,7 @@ import { blankProject, type Project, type MediaItem } from '../model'
 import { applyAddLayer } from './add'
 import { isCommandFailure } from '../errors'
 import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, mediaItemTemplate, applySetMediaDerivatives, applySetMediaWorkspacePaths, referencingLayers } from './media'
+import { root } from '../__tests__/fixtures/project'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
 function expectCmd(fn: () => void, code: string) {
@@ -41,20 +42,20 @@ describe('applySeparateAudio', () => {
   /** A-roll holds one Audio layer (id #4 — #1-3 blank). */
   function withAudio(): { p: Project; gen: IdGen; a1: string } {
     const gen = seededGen()
-    const p = blankProject(gen, 's') // #1 A #2 B #3 project
-    const a1 = applyAddLayer(p, gen, p.tracks[0].id, audioParams('00000000-0000-0000-0000-0000000000aa', 0, 3_000_000), 0, 3_000_000) // #4
+    const p = blankProject(gen, 's') // #1 A #2 B #3 project #4 root
+    const a1 = applyAddLayer(p, gen, root(p).tracks[0].id, audioParams('00000000-0000-0000-0000-0000000000aa', 0, 3_000_000), 0, 3_000_000) // #5
     return { p, gen, a1 }
   }
   it('lifts the audio layer onto a new track inserted before the source', () => {
     const { p, gen, a1 } = withAudio()
-    expect(p.tracks[0].layers.map((l) => l.id)).toEqual([a1]) // A roll holds it
-    const newTrack = applySeparateAudio(p, gen, a1) // #5
-    expect(newTrack).toBe('00000000-0000-0000-0000-000000000005')
+    expect(root(p).tracks[0].layers.map((l) => l.id)).toEqual([a1]) // A roll holds it
+    const newTrack = applySeparateAudio(p, gen, a1) // #6
+    expect(newTrack).toBe('00000000-0000-0000-0000-000000000006')
     // new track inserted at the source index (0) → [newAudio, A, B]
-    expect(p.tracks[0].id).toBe(newTrack)
-    expect(p.tracks[0].layers.map((l) => l.id)).toEqual([a1]) // layer moved here
-    expect(p.tracks[0].removable).toBe(true)
-    expect(p.tracks[1].layers).toEqual([]) // A roll now empty
+    expect(root(p).tracks[0].id).toBe(newTrack)
+    expect(root(p).tracks[0].layers.map((l) => l.id)).toEqual([a1]) // layer moved here
+    expect(root(p).tracks[0].removable).toBe(true)
+    expect(root(p).tracks[1].layers).toEqual([]) // A roll now empty
   })
   // The single stored-label exception, and the limit of it: a source name is
   // quoted only when the source HAS one. A source on its own derived name gives
@@ -62,27 +63,27 @@ describe('applySeparateAudio', () => {
   // freezing main's English into the project file.
   it('quotes a NAMED source as "<src> (audio)", and stores nothing for an unnamed one', () => {
     const { p, gen, a1 } = withAudio()
-    p.tracks[0].label = 'Interview'
+    root(p).tracks[0].label = 'Interview'
     applySeparateAudio(p, gen, a1)
-    expect(p.tracks[0].label).toBe('Interview (audio)')
+    expect(root(p).tracks[0].label).toBe('Interview (audio)')
 
     const blank = withAudio()
-    blank.p.tracks[0].label = '   '
+    root(blank.p).tracks[0].label = '   '
     applySeparateAudio(blank.p, blank.gen, blank.a1)
-    expect(blank.p.tracks[0].label).toBeNull()
+    expect(root(blank.p).tracks[0].label).toBeNull()
   })
   it('LayerNotFound (no id minted)', () => {
     const { p, gen } = withAudio()
     expectCmd(() => applySeparateAudio(p, gen, 'ghost'), 'LayerNotFound')
     // gen un-advanced: next add_layer id is #5 (not #6)
-    expect(applyAddLayer(p, gen, p.tracks[1].id, audioParams('00000000-0000-0000-0000-0000000000aa', 0, 1_000_000), 0, 1_000_000)).toBe('00000000-0000-0000-0000-000000000005')
+    expect(applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('00000000-0000-0000-0000-0000000000aa', 0, 1_000_000), 0, 1_000_000)).toBe('00000000-0000-0000-0000-000000000006')
   })
   it('WrongLayerKind on a non-audio layer (no id minted)', () => {
     const gen = seededGen()
     const p = blankProject(gen, 's')
-    const c1 = applyAddLayer(p, gen, p.tracks[0].id, videoClipParams('00000000-0000-0000-0000-0000000000aa', 0, 2_000_000), 0, 2_000_000) // #4 (video, not audio)
+    const c1 = applyAddLayer(p, gen, root(p).tracks[0].id, videoClipParams('00000000-0000-0000-0000-0000000000aa', 0, 2_000_000), 0, 2_000_000) // #5 (video, not audio)
     expectCmd(() => applySeparateAudio(p, gen, c1), 'WrongLayerKind')
-    expect(applyAddLayer(p, gen, p.tracks[1].id, audioParams('00000000-0000-0000-0000-0000000000aa', 0, 1_000_000), 0, 1_000_000)).toBe('00000000-0000-0000-0000-000000000005') // no burn
+    expect(applyAddLayer(p, gen, root(p).tracks[1].id, audioParams('00000000-0000-0000-0000-0000000000aa', 0, 1_000_000), 0, 1_000_000)).toBe('00000000-0000-0000-0000-000000000006') // no burn
   })
 })
 
@@ -161,7 +162,7 @@ describe('referencingLayers', () => {
   it('finds VideoClip/Audio/ImageOverlay layers that reference the media id; ignores others', () => {
     const gen = seededGen()
     const p = blankProject(gen, 'r')
-    const tA = p.tracks[0].id
+    const tA = root(p).tracks[0].id
     // Three non-overlapping layers referencing MID (VideoClip, Audio, ImageOverlay)
     const v = applyAddLayer(p, gen, tA, videoClipParams(MID, 0, 4_000_000), 0, 4_000_000)
     const a = applyAddLayer(p, gen, tA, audioParams(MID, 0, 3_000_000), 5_000_000, 8_000_000)

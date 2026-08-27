@@ -27,7 +27,12 @@ against a past shape (ADR 0052).
 ## Provenance
 
 `v1.json` was produced once by driving the real actor (`state/actor.ts`) with a
-seeded id generator, then frozen:
+seeded id generator, then frozen. It holds two compositions: the root, built by
+the scenario below, and a Group — a second `Composition` holding one `Color`
+layer, composed from the same mutation primitives pre-compose calls
+(`newComposition` + `applyAddLayer` + `applyDurationAutofit`) and referenced by
+a `CompositionRef` layer on a fresh lane in the root, windowed to the Group's
+full duration. The root scenario:
 
 - a `Video` media item with audio, workspace paths, and a `Proxied` decode route
   carrying a landed full proxy, waveform and thumbnails
@@ -43,9 +48,9 @@ seeded id generator, then frozen:
 - `audio_roles.dialogue` off unity, `prefer_proxies` on, and one
   `proxy_overrides` entry
 
-Two fields could not come from the actor and were pinned by hand at generation
-time, because `blankProject` stamps wall-clock time: `metadata.created_at` and
-`metadata.modified_at`.
+Three fields could not come from the actor and were pinned by hand at generation
+time — `metadata.created_at` and `metadata.modified_at`, because `blankProject`
+stamps wall-clock time, and `metadata.description`.
 
 The coverage above is the point — a step that forgets a field is only caught if
 the fixture *has* that field. When adding a fixture for a later version, aim at

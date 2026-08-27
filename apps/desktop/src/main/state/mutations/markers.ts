@@ -1,4 +1,5 @@
-import type { Project, Rgba, Uuid } from '../model'
+import type { Composition, Project, Rgba, Uuid } from '../model'
+import { rootComposition } from './helpers'
 import { CommandFailure } from '../errors'
 import { snapFrameRound } from '../snap'
 
@@ -10,8 +11,8 @@ import { snapFrameRound } from '../snap'
  *  A region whose span collapses to zero frames under the snap FAILS: persisting
  *  `end_t_us <= t_us` would leave a region no UI can hit and no later snap-target
  *  logic can use. */
-export function snapMarkerTimes(p: Project, tUs: number, endTUs: number | null): { tUs: number; endTUs: number | null } {
-  const { num, den } = p.composition.fps
+export function snapMarkerTimes(c: Composition, tUs: number, endTUs: number | null): { tUs: number; endTUs: number | null } {
+  const { num, den } = c.fps
   const t = snapFrameRound(tUs, num, den)
   const end = endTUs === null ? null : snapFrameRound(endTUs, num, den)
   if (end !== null && end <= t)
@@ -34,22 +35,24 @@ export interface MarkerPatch {
  *  the span checked against the MERGED marker, so moving t_us past an existing
  *  end_t_us fails the same way as patching a bad end_t_us. */
 export function applyUpdateMarker(p: Project, id: Uuid, patch: MarkerPatch): void {
-  const idx = p.markers.findIndex((m) => m.id === id)
+  const c = rootComposition(p)
+  const idx = c.markers.findIndex((m) => m.id === id)
   if (idx < 0) throw new CommandFailure({ error: 'MarkerNotFound', marker: id })
   const needsResort = typeof patch.t_us === 'number'
-  const m = p.markers[idx]
-  const snapped = snapMarkerTimes(p, needsResort ? (patch.t_us as number) : m.t_us,
+  const m = c.markers[idx]
+  const snapped = snapMarkerTimes(c, needsResort ? (patch.t_us as number) : m.t_us,
     typeof patch.end_t_us === 'number' ? patch.end_t_us : m.end_t_us)
   if (needsResort) m.t_us = snapped.tUs
   if (typeof patch.end_t_us === 'number') m.end_t_us = snapped.endTUs
   if (typeof patch.label === 'string') m.label = patch.label
   if (patch.color && typeof patch.color === 'object') m.color = patch.color
-  if (needsResort) p.markers.sort((a, b) => (a.t_us < b.t_us ? -1 : a.t_us > b.t_us ? 1 : 0))
+  if (needsResort) c.markers.sort((a, b) => (a.t_us < b.t_us ? -1 : a.t_us > b.t_us ? 1 : 0))
 }
 
 /** Remove a marker by id. */
 export function applyRemoveMarker(p: Project, id: Uuid): void {
-  const idx = p.markers.findIndex((m) => m.id === id)
+  const c = rootComposition(p)
+  const idx = c.markers.findIndex((m) => m.id === id)
   if (idx < 0) throw new CommandFailure({ error: 'MarkerNotFound', marker: id })
-  p.markers.splice(idx, 1)
+  c.markers.splice(idx, 1)
 }

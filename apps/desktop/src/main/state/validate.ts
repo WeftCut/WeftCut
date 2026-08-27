@@ -1,5 +1,6 @@
 // apps/desktop/src/main/state/validate.ts
-import type { Layer, LayerParams, Project, Transition, Uuid } from './model'
+import type { Composition, Layer, LayerParams, Project, Track, Transition, Uuid } from './model'
+import { eachLayer } from './model'
 import { ValidationFailure, type ValidationError } from './errors'
 import { frameGrid, gridForLayerKind, isCanonicalOnGrid, snapOnGrid, type Grid } from './snap'
 
@@ -8,7 +9,9 @@ function fail(err: ValidationError): never { throw new ValidationFailure(err) }
 type OverlapClass = 'visual' | 'audio'
 /** Exported for the batch mutations that must refuse a collision BEFORE
  *  touching the draft (`applyPasteLayers`) — the same class split the track
- *  rule below enforces, so a pre-check and the validator cannot disagree. */
+ *  rule below enforces, so a pre-check and the validator cannot disagree.
+ *  A CompositionRef is visual: a Group clip composites like any clip, and may
+ *  be a transition participant for the same reason. */
 export function layerOverlapClass(params: LayerParams): OverlapClass {
   return params.kind === 'Audio' ? 'audio' : 'visual'
 }
@@ -16,12 +19,43 @@ export function layerOverlapClass(params: LayerParams): OverlapClass {
 function pairKey(a: Uuid, b: Uuid): string { return a < b ? `${a}|${b}` : `${b}|${a}` }
 
 export function validate(project: Project): void {
-  validateComposition(project)
-  const authorized = validateTransitions(project) // also enforces transition rules
+  validateProjectShape(project)
+  const root = project.compositions[project.root_id]
+  // PROJECT-wide: a layer id names one layer in the whole project (every
+  // layer-addressed op derives its composition from the id), so the duplicate
+  // check spans compositions.
   const seenLayers = new Set<Uuid>()
-  for (const track of project.tracks) validateTrack(project, track, authorized, seenLayers)
-  validateLinks(project, seenLayers)
-  validateMarkers(project)
+  for (const c of Object.values(project.compositions)) {
+    validateComposition(c)
+    if (c !== root) validateLattice(c, root)
+    const authorized = validateTransitions(c) // also enforces transition rules
+    // Links get THIS composition's layer set, not `seenLayers`: a link's members
+    // are layers of one composition, and the project-wide set would accept a
+    // member that lives in a Group.
+    const layersHere = new Set<Uuid>()
+    for (const track of c.tracks) validateTrack(project, c, track, authorized, seenLayers, layersHere)
+    validateLinks(c, layersHere)
+    validateMarkers(c)
+  }
+  validateCompositionRefs(project)
+}
+
+/** `root_id` resolves and every entry sits under its own id. First, because
+ *  everything below indexes `compositions[root_id]` and trusts the key. */
+function validateProjectShape(p: Project): void {
+  if (!(p.root_id in p.compositions)) fail({ rule: 'RootMissing', root_id: p.root_id })
+  for (const [key, c] of Object.entries(p.compositions))
+    if (c.id !== key) fail({ rule: 'CompositionIdMismatch', key, id: c.id })
+}
+
+/** Single lattice (ADR 0052 §5): a Group's `src_*` window is on the SAME grid
+ *  as the parent's `t_*`, or the reference is time-remapping under another
+ *  name. Rationals compare cross-multiplied (30/1 and 60/2 are one rate);
+ *  `width`/`height` may differ per composition and are not checked. */
+function validateLattice(c: Composition, root: Composition): void {
+  if (c.fps.num * root.fps.den !== root.fps.num * c.fps.den) fail({ rule: 'CompositionLatticeMismatch', composition: c.id, field: 'fps' })
+  if (c.sample_rate !== root.sample_rate) fail({ rule: 'CompositionLatticeMismatch', composition: c.id, field: 'sample_rate' })
+  if (c.channels !== root.channels) fail({ rule: 'CompositionLatticeMismatch', composition: c.id, field: 'channels' })
 }
 
 // ── Frame-grid backstop ───────────────────────────────────────────────────────
@@ -58,8 +92,7 @@ function offGridBoundary(layer: Uuid, field: 't_start_us' | 't_end_us', t: numbe
   return { rule: 'OffGridLayerBoundary', layer, field, t, fps: { num: grid.num, den: grid.den }, grid: grid.domain, snap_to: snapOnGrid(t, grid) }
 }
 
-function validateComposition(p: Project): void {
-  const c = p.composition
+function validateComposition(c: Composition): void {
   if (c.width === 0 || c.height === 0) fail({ rule: 'InvalidCanvas', width: c.width, height: c.height })
   if (c.fps.num === 0 || c.fps.den === 0) fail({ rule: 'InvalidFps', num: c.fps.num, den: c.fps.den })
   // The composition duration is a FRAME count even when the content reaching
@@ -68,18 +101,18 @@ function validateComposition(p: Project): void {
   // inside the composition rather than pushing its duration off grid.
   const compGrid = frameGrid(c.fps)
   if (!isCanonicalOnGrid(c.duration_us, compGrid))
-    fail({ rule: 'OffGridTime', entity: 'Composition', id: null, field: 'duration_us', t: c.duration_us, fps: c.fps, snap_to: snapOnGrid(c.duration_us, compGrid) })
+    fail({ rule: 'OffGridTime', entity: 'Composition', id: c.id, field: 'duration_us', t: c.duration_us, fps: c.fps, snap_to: snapOnGrid(c.duration_us, compGrid) })
 }
 
 /** Marker times are on the composition grid (`snapMarkerTimes` is the mutation
  *  side). Checked last so this rule never pre-empts an existing structural one. */
-function validateMarkers(p: Project): void {
-  const grid = frameGrid(p.composition.fps)
-  for (const m of p.markers) {
+function validateMarkers(c: Composition): void {
+  const grid = frameGrid(c.fps)
+  for (const m of c.markers) {
     if (!isCanonicalOnGrid(m.t_us, grid))
-      fail({ rule: 'OffGridTime', entity: 'Marker', id: m.id, field: 't_us', t: m.t_us, fps: p.composition.fps, snap_to: snapOnGrid(m.t_us, grid) })
+      fail({ rule: 'OffGridTime', entity: 'Marker', id: m.id, field: 't_us', t: m.t_us, fps: c.fps, snap_to: snapOnGrid(m.t_us, grid) })
     if (m.end_t_us !== null && m.end_t_us !== undefined && !isCanonicalOnGrid(m.end_t_us, grid))
-      fail({ rule: 'OffGridTime', entity: 'Marker', id: m.id, field: 'end_t_us', t: m.end_t_us, fps: p.composition.fps, snap_to: snapOnGrid(m.end_t_us, grid) })
+      fail({ rule: 'OffGridTime', entity: 'Marker', id: m.id, field: 'end_t_us', t: m.end_t_us, fps: c.fps, snap_to: snapOnGrid(m.end_t_us, grid) })
   }
 }
 
@@ -89,11 +122,13 @@ function validateMarkers(p: Project): void {
 // ADR 0035 § Ordinary edits reconcile transitions on commit): validate and
 // reconcile can never disagree about what a healthy transition looks like.
 
-/** layer id → {track, start, end, kind} geometry snapshot for the predicate. */
+/** layer id → {track, start, end, kind} geometry snapshot for the predicate.
+ *  Per composition: a transition's participants share a track, so they share a
+ *  composition. */
 type TransitionLayerIndex = Map<Uuid, { track: Uuid; start: number; end: number; kind: LayerParams['kind'] }>
-function buildTransitionLayerIndex(p: Project): TransitionLayerIndex {
+function buildTransitionLayerIndex(c: Composition): TransitionLayerIndex {
   const idx: TransitionLayerIndex = new Map()
-  for (const t of p.tracks) for (const l of t.layers) idx.set(l.id, { track: t.id, start: l.t_start_us, end: l.t_end_us, kind: l.params.kind })
+  for (const t of c.tracks) for (const l of t.layers) idx.set(l.id, { track: t.id, start: l.t_start_us, end: l.t_end_us, kind: l.params.kind })
   return idx
 }
 
@@ -135,13 +170,13 @@ function transitionInvariantError(tr: Transition, idx: TransitionLayerIndex): Va
 }
 
 /** Returns authorized overlaps (pairKey → overlap µs) for the per-track check. */
-function validateTransitions(p: Project): Map<string, number> {
-  const idx = buildTransitionLayerIndex(p)
+function validateTransitions(c: Composition): Map<string, number> {
+  const idx = buildTransitionLayerIndex(c)
   const authorized = new Map<string, number>()
   const seenIds = new Set<Uuid>()
   const asFrom = new Set<Uuid>()
   const asTo = new Set<Uuid>()
-  for (const tr of p.transitions) {
+  for (const tr of c.transitions) {
     if (seenIds.has(tr.id)) fail({ rule: 'DuplicateTransitionId', transition: tr.id })
     seenIds.add(tr.id)
     if (tr.from_layer === tr.to_layer) fail({ rule: 'TransitionSelfReference', transition: tr.id, layer: tr.from_layer })
@@ -170,24 +205,28 @@ function validateTransitions(p: Project): Map<string, number> {
 export interface DroppedTransition { id: Uuid; from_layer: Uuid; to_layer: Uuid; reason: ValidationError }
 
 /** Reconcile-on-commit (Policy B): remove every transition whose invariant no
- *  longer holds. The actor runs this inside commit's produce() — AFTER the
- *  mutation apply, BEFORE validate — so ordinary edits stay transition-blind
- *  and the removal lands in the SAME history snapshot (one undo restores the
- *  edit and the transition together). Deliberately does NOT shrink the outgoing
- *  layer back: the user's edit defines the new shape (only the explicit
- *  applyRemoveTransition shrinks). Returns primitive drop info (never draft
- *  references — immer revokes them) for the actor's status-log rows. */
+ *  longer holds, in every composition. The actor runs this inside commit's
+ *  produce() — AFTER the mutation apply, BEFORE validate — so ordinary edits
+ *  stay transition-blind and the removal lands in the SAME history snapshot
+ *  (one undo restores the edit and the transition together). Deliberately does
+ *  NOT shrink the outgoing layer back: the user's edit defines the new shape
+ *  (only the explicit applyRemoveTransition shrinks). Returns primitive drop
+ *  info (never draft references — immer revokes them) for the actor's
+ *  status-log rows. */
 export function reconcileTransitions(p: Project): DroppedTransition[] {
-  if (p.transitions.length === 0) return []
-  const idx = buildTransitionLayerIndex(p)
   const dropped: DroppedTransition[] = []
-  const kept: Transition[] = []
-  for (const tr of p.transitions) {
-    const reason = transitionInvariantError(tr, idx)
-    if (reason === null) kept.push(tr)
-    else dropped.push({ id: tr.id, from_layer: tr.from_layer, to_layer: tr.to_layer, reason })
+  for (const c of Object.values(p.compositions)) {
+    if (c.transitions.length === 0) continue
+    const idx = buildTransitionLayerIndex(c)
+    const kept: Transition[] = []
+    let droppedHere = false
+    for (const tr of c.transitions) {
+      const reason = transitionInvariantError(tr, idx)
+      if (reason === null) kept.push(tr)
+      else { dropped.push({ id: tr.id, from_layer: tr.from_layer, to_layer: tr.to_layer, reason }); droppedHere = true }
+    }
+    if (droppedHere) c.transitions = kept
   }
-  if (dropped.length > 0) p.transitions = kept
   return dropped
 }
 
@@ -211,22 +250,33 @@ function validateLayerParams(p: Project, layer: Layer): void {
   const pa = layer.params
   if (pa.kind === 'VideoClip' || pa.kind === 'Audio') checkSrcRange(p, layer.id, pa.media, pa.src_in_us, pa.src_out_us)
   else if (pa.kind === 'ImageOverlay') { if (!(pa.media in p.media_pool)) fail({ rule: 'MissingMedia', layer: layer.id, media: pa.media }) }
+  else if (pa.kind === 'CompositionRef') {
+    // Beside `checkSrcRange`, not inside it: that helper is media-specific, and a
+    // composition window has NO upper bound — `src_out_us` past the referenced
+    // composition's `duration_us` is tolerated in state and clamped at the
+    // gesture (ADR 0052 §6), or deleting a layer INSIDE a Group would be refused
+    // because a parent's window overhangs. Target existence is
+    // validateCompositionRefs' (it needs the whole graph for the cycle check).
+    if (pa.src_in_us < 0 || pa.src_in_us >= pa.src_out_us)
+      fail({ rule: 'InvalidSrcRange', layer: layer.id, src_in: pa.src_in_us, src_out: pa.src_out_us })
+  }
 }
 
-function validateTrack(p: Project, track: Project['tracks'][number], authorized: Map<string, number>, seenLayers: Set<Uuid>): void {
+function validateTrack(p: Project, c: Composition, track: Track, authorized: Map<string, number>, seenLayers: Set<Uuid>, layersHere: Set<Uuid>): void {
   const sorted = [...track.layers].sort((x, y) => x.t_start_us - y.t_start_us)
   let prevVisual: Layer | null = null
   let prevAudio: Layer | null = null
   for (const layer of sorted) {
     if (seenLayers.has(layer.id)) fail({ rule: 'DuplicateLayerId', layer: layer.id })
     seenLayers.add(layer.id)
+    layersHere.add(layer.id)
     if (layer.t_start_us >= layer.t_end_us) fail({ rule: 'InvalidLayerRange', layer: layer.id, t_start: layer.t_start_us, t_end: layer.t_end_us })
     // Bounds BEFORE lattice: a negative start is usually also off-grid, and
     // "off grid" is the less actionable of the two reports (the caller's mistake was
     // the sign, not the quantum). `t_end` needs no companion rule — start >= 0 and
     // start < end together force it positive.
     if (layer.t_start_us < 0) fail({ rule: 'NegativeLayerStart', layer: layer.id, t_start: layer.t_start_us })
-    const grid = layerEndpointGrid(layer.params.kind, p.composition.fps)
+    const grid = layerEndpointGrid(layer.params.kind, c.fps)
     if (!isCanonicalOnGrid(layer.t_start_us, grid))
       fail(offGridBoundary(layer.id, 't_start_us', layer.t_start_us, grid))
     if (!isCanonicalOnGrid(layer.t_end_us, grid))
@@ -252,10 +302,10 @@ function validateTrack(p: Project, track: Project['tracks'][number], authorized:
   }
 }
 
-function validateLinks(p: Project, knownLayers: Set<Uuid>): void {
+function validateLinks(c: Composition, knownLayers: Set<Uuid>): void {
   const seenIds = new Set<Uuid>()
   const layerToLink = new Map<Uuid, Uuid>()
-  for (const g of p.links) {
+  for (const g of c.links) {
     if (seenIds.has(g.id)) fail({ rule: 'DuplicateLinkId', link: g.id })
     seenIds.add(g.id)
     if (g.members.length < 2) fail({ rule: 'LinkBelowMinSize', link: g.id, members: g.members.length })
@@ -266,4 +316,36 @@ function validateLinks(p: Project, knownLayers: Set<Uuid>): void {
       layerToLink.set(m, g.id)
     }
   }
+}
+
+/** The reference graph (ADR 0052 §3): every `CompositionRef` names an existing
+ *  composition that is not the root, and no chain of references closes on
+ *  itself. One pass collects the edges; a white/grey/black DFS then starts from
+ *  EVERY composition — orphans (referenced by nothing) are legal and may cycle
+ *  among themselves, so a walk from the root alone would miss them. */
+function validateCompositionRefs(p: Project): void {
+  const refs = new Map<Uuid, Uuid[]>()
+  for (const id of Object.keys(p.compositions)) refs.set(id, [])
+  for (const { composition, layer } of eachLayer(p)) {
+    const pa = layer.params
+    if (pa.kind !== 'CompositionRef') continue
+    if (!(pa.composition in p.compositions)) fail({ rule: 'CompositionMissing', layer: layer.id, composition: pa.composition })
+    if (pa.composition === p.root_id) fail({ rule: 'RootReferenced', layer: layer.id })
+    refs.get(composition.id)!.push(pa.composition)
+  }
+  const state = new Map<Uuid, 'grey' | 'black'>()
+  const path: Uuid[] = []
+  const visit = (id: Uuid): void => {
+    const s = state.get(id)
+    if (s === 'black') return
+    // `path` from the repeated id back round to it, so the report reads as the
+    // loop it is: `[A, B, A]`.
+    if (s === 'grey') fail({ rule: 'CompositionCycle', path: [...path.slice(path.indexOf(id)), id] })
+    state.set(id, 'grey')
+    path.push(id)
+    for (const next of refs.get(id) ?? []) visit(next)
+    path.pop()
+    state.set(id, 'black')
+  }
+  for (const id of Object.keys(p.compositions)) visit(id)
 }

@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/mutations/trim.ts
 import type { Layer, Project, Uuid } from '../model'
 import { gridForLayerKind, snapDownOnGrid, snapOnGrid, snapUpOnGrid, type Grid } from '../snap'
-import { applyDurationAutofit, locateLayer, shiftLayerKeyframes } from './helpers'
+import { applyDurationAutofit, locateLayer, shiftLayerKeyframes, rootComposition } from './helpers'
 import { CommandFailure } from '../errors'
 import { linkSiblingsExcluding, checkLinkLock } from './links'
 
@@ -88,12 +88,13 @@ function sourceDurationForLayer(p: Project, layer: Layer): number | null {
 /** Trim one edge. Unless `escapeLink`, every link sibling whose matching edge
  *  sits at the same t moves with it, clamped to the tightest member's window. */
 export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: number, escapeLink: boolean): void {
-  const fps = p.composition.fps
+  const c = rootComposition(p)
+  const fps = c.fps
   const loc = locateLayer(p, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
   const [ti, li] = loc
-  if (p.tracks[ti].locked) throw new CommandFailure({ error: 'TrackLocked', track: p.tracks[ti].id })
-  const target = p.tracks[ti].layers[li]
+  if (c.tracks[ti].locked) throw new CommandFailure({ error: 'TrackLocked', track: c.tracks[ti].id })
+  const target = c.tracks[ti].layers[li]
   const snapped = snapOnGrid(newTUs, gridForLayerKind(target.params.kind, fps))
   const curStart = target.t_start_us, curEnd = target.t_end_us
   const curEdgeT = edge === 'In' ? curStart : curEnd
@@ -104,7 +105,7 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   if (!escapeLink) {
     for (const sid of linkSiblingsExcluding(p, id)) {
       const sl = locateLayer(p, sid); if (!sl) continue
-      const s = p.tracks[sl[0]].layers[sl[1]]
+      const s = c.tracks[sl[0]].layers[sl[1]]
       const sEdgeT = edge === 'In' ? s.t_start_us : s.t_end_us
       if (sEdgeT === curEdgeT) aligned.push(sid)
     }
@@ -123,7 +124,7 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   let hi = INF
   for (const mid of aligned) {
     const ml = locateLayer(p, mid)!
-    const m = p.tracks[ml[0]].layers[ml[1]]
+    const m = c.tracks[ml[0]].layers[ml[1]]
     const w = trimEdgeWindowUs(m, edge, gridForLayerKind(m.params.kind, fps), sourceDurationForLayer(p, m))
     lo = Math.max(lo, w.lo)
     hi = Math.min(hi, w.hi)
@@ -133,7 +134,7 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
 
   for (const mid of aligned) {
     const ml = locateLayer(p, mid)!
-    const m = p.tracks[ml[0]].layers[ml[1]]
+    const m = c.tracks[ml[0]].layers[ml[1]]
     const params = m.params
     // Re-derive the delta on each member's OWN grid. Aligned members share one
     // `curEdgeT` (that is what "aligned" means), so at the six rates where the frame
@@ -156,12 +157,12 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
 
   // Re-sort touched tracks on IN trims (t_start changed → order may shift).
   if (edge === 'In') {
-    const touched = new Set<Uuid>(aligned.map((m) => p.tracks[locateLayer(p, m)![0]].id))
-    const tracksById = new Map(p.tracks.map((t) => [t.id, t]))
+    const touched = new Set<Uuid>(aligned.map((m) => c.tracks[locateLayer(p, m)![0]].id))
+    const tracksById = new Map(c.tracks.map((t) => [t.id, t]))
     for (const tid of touched) {
       const t = tracksById.get(tid)!
       t.layers.sort((x, y) => x.t_start_us - y.t_start_us)
     }
   }
-  applyDurationAutofit(p)
+  applyDurationAutofit(c)
 }

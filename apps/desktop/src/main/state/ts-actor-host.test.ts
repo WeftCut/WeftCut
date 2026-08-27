@@ -11,6 +11,7 @@ import { createKeybindingsStore } from '../keybindings'
 import { createRecentsStore } from '../recents'
 import { createWorkspaceStore } from '../workspace'
 import { EDITING_WORKSPACE_ID, activeWorkspaceProfile, type WorkspaceDocument } from '../../shared/workspace'
+import { root } from './__tests__/fixtures/project'
 
 describe('mapChangeEvent', () => {
   it('maps a User ChangeEvent to the Rust project:changed payload shape', () => {
@@ -107,12 +108,12 @@ describe('createTsActorHost — persistence-route integration', () => {
       await host.handleInvoke('project_open', { path: targetDir })
 
       const persisted = JSON.parse(vfs[`${currentDir}/project.json`]!) as {
-        tracks: Array<{ label: string | null; role: string | null }>
+        compositions: Record<string, { tracks: Array<{ label: string | null; role: string | null }> }>; root_id: string
       }
       // The flushed edit is the third track; it stores no label, because a
       // spawned lane's name is derived renderer-side.
-      expect(persisted.tracks).toHaveLength(3)
-      expect(persisted.tracks.at(-1)).toMatchObject({ label: null, role: null })
+      expect(persisted.compositions[persisted.root_id].tracks).toHaveLength(3)
+      expect(persisted.compositions[persisted.root_id].tracks.at(-1)).toMatchObject({ label: null, role: null })
       expect(await host.handleInvoke('project_summary', {})).toMatchObject({ name: 'target' })
     } finally {
       host.stop()
@@ -147,9 +148,9 @@ describe('createTsActorHost — persistence-route integration', () => {
       })
 
       const persisted = JSON.parse(vfs[`${currentDir}/project.json`]!) as {
-        tracks: Array<{ label: string }>
+        compositions: Record<string, { tracks: Array<{ label: string }> }>; root_id: string
       }
-      expect(persisted.tracks).toHaveLength(3)
+      expect(persisted.compositions[persisted.root_id].tracks).toHaveLength(3)
       expect(await host.handleInvoke('project_summary', {})).toMatchObject({ name: 'replacement' })
     } finally {
       host.stop()
@@ -237,11 +238,11 @@ describe('createTsActorHost — persistence-route integration', () => {
     await host.handleInvoke('project_new_workspace', { parentFolder: '/projects', name: 'jt', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 })
     await host.handleInvoke('add_track', {})
     await host.handleInvoke('add_track', {})
-    const tracksAtHead = host.actor.snapshot().tracks.length
+    const tracksAtHead = root(host.actor.snapshot()).tracks.length
 
     await host.handleInvoke('project_jump_to', { index: 0 })
     expect(host.actor.historyStatus().cursor).toBe(0)
-    expect(host.actor.snapshot().tracks.length).toBe(tracksAtHead - 2)
+    expect(root(host.actor.snapshot()).tracks.length).toBe(tracksAtHead - 2)
     expect(sent.filter((s) => s.event === 'project:changed').length).toBeGreaterThan(0)
 
     // Out of range surfaces as a structured refusal on the IPC rejection.

@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest'
 import { seededGen, type IdGen } from '../ids'
 import { blankProject } from '../model'
 import { createActor, type ChangeEvent, type DispatchResult } from '../actor'
+import { root } from './fixtures/project'
 
 /** An IdGen that reports how many ids it has handed out — the id-burn convention
  *  (a rejected path consumes ZERO op_ids) is otherwise invisible. */
@@ -19,7 +20,7 @@ function setup() {
   const { gen, burned } = countingGen()
   const initial = blankProject(gen, 'hn')
   const actor = createActor({ initial, idGen: gen, clock: () => '<TS>' })
-  const track = initial.tracks[0].id
+  const track = root(initial).tracks[0].id
   let at = 0
   /** One recorded edit — a color layer laid end to end with the previous. */
   function edit(): void {
@@ -33,7 +34,7 @@ function setup() {
 
 const err = (r: DispatchResult): string => (r.ok ? 'ok' : r.error.error)
 const layerCount = (a: ReturnType<typeof createActor>): number =>
-  a.snapshot().tracks.reduce((n, t) => n + t.layers.length, 0)
+  root(a.snapshot()).tracks.reduce((n, t) => n + t.layers.length, 0)
 
 describe('jump_to — random access over the stack', () => {
   it('moves the cursor backward and forward, swapping in that entry\'s state', () => {
@@ -233,7 +234,7 @@ describe('evicted on the actor-served view', () => {
     const { gen } = countingGen()
     const initial = blankProject(gen, 'ev')
     const actor = createActor({ initial, idGen: gen, clock: () => '<TS>' })
-    const track = initial.tracks[0].id
+    const track = root(initial).tracks[0].id
     for (let i = 0; i < 205; i++)
       actor.dispatch('add_layer', { track, kind: 'color', t_start_us: i * 1_000_000, t_end_us: i * 1_000_000 + 500_000 })
     const overflowed = actor.historyView(200)

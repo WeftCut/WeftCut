@@ -12,7 +12,7 @@ import type { ActorHandle } from './actor'
 import { isCommandFailure } from './errors'
 import type { IdGen } from './ids'
 import type { Project } from './model'
-import { blankProject } from './model'
+import { blankProject, rootComposition } from './model'
 import { loadProjectFromJson, serializeProjectToJson, PROJECT_FILE, preUpgradeBackupFile } from './persistence'
 import { relinkMissingMedia, type RelinkDeps, type RelinkReport } from './relink'
 import { serializeProject, type GridRepair } from './serialize'
@@ -231,9 +231,10 @@ export async function newWorkspace(deps: OrchestratorDeps, args: NewWorkspaceArg
   if (fs.exists(target)) throw new WorkspaceFailure({ error: 'ProjectFolderExists' })
 
   const project = blankProject(idGen, trimmed)
-  project.composition.width = args.width
-  project.composition.height = args.height
-  project.composition.fps = { num: args.fpsNum, den: args.fpsDen }
+  const root = rootComposition(project)
+  root.width = args.width
+  root.height = args.height
+  root.fps = { num: args.fpsNum, den: args.fpsDen }
 
   fs.mkdirp(target)
   fs.writeFile(join(target, PROJECT_FILE), serializeProjectToJson(project))

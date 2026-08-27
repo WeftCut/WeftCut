@@ -17,6 +17,7 @@ import { describe, it, expect } from 'vitest'
 import { freshActor, bRollId } from './pbt/harness'
 import { MCP_TOOL_DEFS } from '../mcp-commands'
 import type { TextParams } from '../model'
+import { root } from './fixtures/project'
 
 function addTextLayer(actor: ReturnType<typeof freshActor>): string {
   const r = actor.dispatch('add_layer', { track: bRollId(actor), kind: 'text', t_start_us: 0, t_end_us: 2_000_000 })
@@ -25,7 +26,7 @@ function addTextLayer(actor: ReturnType<typeof freshActor>): string {
 }
 
 function textParams(actor: ReturnType<typeof freshActor>, id: string): TextParams {
-  for (const t of actor.snapshot().tracks) {
+  for (const t of root(actor.snapshot()).tracks) {
     const l = t.layers.find((x) => x.id === id)
     if (l) return l.params as TextParams
   }

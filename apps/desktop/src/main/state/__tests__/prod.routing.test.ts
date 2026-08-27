@@ -6,11 +6,12 @@
 import { describe, it, expect } from 'vitest'
 import { freshActor, aRollId, bRollId } from './pbt/harness'
 import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
+import { root } from './fixtures/project'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function totalLayerCount(actor: ReturnType<typeof freshActor>): number {
-  return actor.snapshot().tracks.reduce((n, t) => n + t.layers.length, 0)
+  return root(actor.snapshot()).tracks.reduce((n, t) => n + t.layers.length, 0)
 }
 
 /** Add a color layer via the production adapter and return the new layer id. */
@@ -33,7 +34,7 @@ describe('production adapter routing — add_color_layer (rich)', () => {
     const layerId = r.value as string
     expect(typeof layerId).toBe('string')
     expect(layerId.length).toBeGreaterThan(0)
-    const track = a.snapshot().tracks.find((t) => t.id === trackId)!
+    const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(track.layers).toHaveLength(1)
     expect(track.layers[0].id).toBe(layerId)
     expect(track.layers[0].params.kind).toBe('Color')
@@ -72,7 +73,7 @@ describe('production adapter routing — add_text_layer (rich)', () => {
     if (!r.ok) return
     const layerId = r.value as string
     expect(typeof layerId).toBe('string')
-    const track = a.snapshot().tracks.find((t) => t.id === trackId)!
+    const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(track.layers).toHaveLength(1)
     expect(track.layers[0].params.kind).toBe('Text')
     // Defaults come from the one factory (mutations/add.ts textParamsDefault) —
@@ -112,8 +113,8 @@ describe('production adapter routing — paste_layer (rich)', () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     const pastedId = r.value as string
-    const sourceTrack = a.snapshot().tracks.find((track) => track.id === aRollId(a))!
-    const targetTrack = a.snapshot().tracks.find((track) => track.id === targetTrackId)!
+    const sourceTrack = root(a.snapshot()).tracks.find((track) => track.id === aRollId(a))!
+    const targetTrack = root(a.snapshot()).tracks.find((track) => track.id === targetTrackId)!
     expect(sourceTrack.layers.map((layer) => layer.id)).toEqual([sourceId])
     expect(targetTrack.layers.find((layer) => layer.id === pastedId)).toMatchObject({
       t_start_us: 3_000_000,
@@ -127,7 +128,7 @@ describe('production adapter routing — paste_layer (rich)', () => {
     const sourceId = addColorLayerCmd(a, aRollId(a), 0, 2_000_000)
     a.command('update_layer', { layerId: sourceId, patch: { label: 'Copied clip' } })
     a.command('add_effect', { layerId: sourceId, kind: 'blur' })
-    const source = a.snapshot().tracks[0].layers[0]
+    const source = root(a.snapshot()).tracks[0].layers[0]
 
     const r = a.command('paste_layer', { layerId: sourceId, tStartUs: 3_000_000 })
 
@@ -135,7 +136,7 @@ describe('production adapter routing — paste_layer (rich)', () => {
     if (!r.ok) return
     const pastedId = r.value as string
     const snap = a.snapshot()
-    const target = snap.tracks.find((track) => track.layers.some((layer) => layer.id === pastedId))!
+    const target = root(snap).tracks.find((track) => track.layers.some((layer) => layer.id === pastedId))!
     const pasted = target.layers.find((layer) => layer.id === pastedId)!
     expect(target.role).toBeNull()
     expect(target.label).toBeNull() // spawned lanes store no name; it is derived
@@ -154,25 +155,25 @@ describe('production adapter routing — paste_layer (rich)', () => {
 
     const first = a.command('paste_layer', { layerId: sourceId, tStartUs: 3_000_000 })
     expect(first.ok).toBe(true)
-    const firstTarget = a.snapshot().tracks.find((track) =>
+    const firstTarget = root(a.snapshot()).tracks.find((track) =>
       track.layers.some((layer) => layer.id === (first.ok ? first.value : null)),
     )!.id
 
     const second = a.command('paste_layer', { layerId: sourceId, tStartUs: 6_000_000 })
     expect(second.ok).toBe(true)
-    const secondTarget = a.snapshot().tracks.find((track) =>
+    const secondTarget = root(a.snapshot()).tracks.find((track) =>
       track.layers.some((layer) => layer.id === (second.ok ? second.value : null)),
     )!.id
     expect(secondTarget).toBe(firstTarget)
-    expect(a.snapshot().tracks).toHaveLength(3)
+    expect(root(a.snapshot()).tracks).toHaveLength(3)
 
     const conflicting = a.command('paste_layer', { layerId: sourceId, tStartUs: 6_000_000 })
     expect(conflicting.ok).toBe(true)
-    const conflictingTarget = a.snapshot().tracks.find((track) =>
+    const conflictingTarget = root(a.snapshot()).tracks.find((track) =>
       track.layers.some((layer) => layer.id === (conflicting.ok ? conflicting.value : null)),
     )!.id
     expect(conflictingTarget).not.toBe(firstTarget)
-    expect(a.snapshot().tracks).toHaveLength(4)
+    expect(root(a.snapshot()).tracks).toHaveLength(4)
   })
 
   it('rejects a missing copied layer before creating a track', () => {
@@ -184,7 +185,7 @@ describe('production adapter routing — paste_layer (rich)', () => {
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.error).toBe('LayerNotFound')
-    expect(a.snapshot().tracks).toHaveLength(2)
+    expect(root(a.snapshot()).tracks).toHaveLength(2)
   })
 })
 
@@ -200,7 +201,7 @@ describe('production adapter routing — add_demo_color_layer (rich)', () => {
     const layerId = r.value as string
     expect(typeof layerId).toBe('string')
     // Layer lands on the first (A-roll) track
-    const track = a.snapshot().tracks.find((t) => t.id === trackId)!
+    const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(track.layers).toHaveLength(1)
     expect(track.layers[0].id).toBe(layerId)
     expect(track.layers[0].params.kind).toBe('Color')
@@ -212,7 +213,7 @@ describe('production adapter routing — add_demo_color_layer (rich)', () => {
     const a = freshActor()
     a.command('add_demo_color_layer', {})
     a.command('add_demo_color_layer', {})
-    const track = a.snapshot().tracks[0]
+    const track = root(a.snapshot()).tracks[0]
     expect(track.layers).toHaveLength(2)
     // Second layer starts where first ends
     expect(track.layers[1].t_start_us).toBe(track.layers[0].t_end_us)
@@ -229,7 +230,7 @@ describe('production adapter routing — add_demo_text_layer (rich)', () => {
     if (!r.ok) return
     const layerId = r.value as string
     const snap = a.snapshot()
-    const lastTrack = snap.tracks[snap.tracks.length - 1]
+    const lastTrack = root(snap).tracks[root(snap).tracks.length - 1]
     expect(lastTrack.layers.some((l) => l.id === layerId)).toBe(true)
     const layer = lastTrack.layers.find((l) => l.id === layerId)!
     expect(layer.params.kind).toBe('Text')
@@ -251,7 +252,7 @@ describe('production adapter routing — update_layer (mechanical)', () => {
 
     const r = a.command('update_layer', { layerId, patch: { label: 'Hero Clip' } })
     expect(r.ok).toBe(true)
-    const track = a.snapshot().tracks.find((t) => t.id === trackId)!
+    const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(track.layers[0].label).toBe('Hero Clip')
   })
 
@@ -278,9 +279,9 @@ describe('production adapter routing — move_layer (mechanical)', () => {
 
     const r = a.command('move_layer', { layerId, newTrackId: dstTrackId, newTStartUs: 0 })
     expect(r.ok).toBe(true)
-    const dst = a.snapshot().tracks.find((t) => t.id === dstTrackId)!
+    const dst = root(a.snapshot()).tracks.find((t) => t.id === dstTrackId)!
     expect(dst.layers.some((l) => l.id === layerId)).toBe(true)
-    const src = a.snapshot().tracks.find((t) => t.id === srcTrackId)!
+    const src = root(a.snapshot()).tracks.find((t) => t.id === srcTrackId)!
     expect(src.layers.some((l) => l.id === layerId)).toBe(false)
   })
 
@@ -295,7 +296,7 @@ describe('production adapter routing — move_layer (mechanical)', () => {
     if (r.ok) return
     expect(r.error.error).toBe('TrackNotFound')
     // Layer must still be on the source track
-    const src = a.snapshot().tracks.find((t) => t.id === trackId)!
+    const src = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(src.layers.some((l) => l.id === layerId)).toBe(true)
   })
 })
@@ -310,7 +311,7 @@ describe('production adapter routing — trim_layer (mechanical)', () => {
 
     const r = a.command('trim_layer', { layerId, edge: 'out', newTUs: 2_000_000 })
     expect(r.ok).toBe(true)
-    const track = a.snapshot().tracks.find((t) => t.id === trackId)!
+    const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(track.layers[0].t_end_us).toBe(2_000_000)
   })
 
@@ -326,7 +327,7 @@ describe('production adapter routing — trim_layer (mechanical)', () => {
     if (r.ok) return
     expect(r.error.error).toBe('InvalidArgument')
     // Layer end must be unchanged
-    const track = a.snapshot().tracks.find((t) => t.id === trackId)!
+    const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(track.layers[0].t_end_us).toBe(4_000_000)
   })
 })
@@ -368,7 +369,7 @@ describe('production adapter routing — duplicate_layer (mechanical)', () => {
     if (!r.ok) return
     const newId = r.value as string
     expect(newId).not.toBe(layerId)
-    const track = a.snapshot().tracks.find((t) => t.id === trackId)!
+    const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(track.layers).toHaveLength(2)
     // Duplicate starts at offset
     const dup = track.layers.find((l) => l.id === newId)!
@@ -400,7 +401,7 @@ describe('production adapter routing — links_create (mechanical)', () => {
     if (!r.ok) return
     const linkId = r.value as string
     expect(typeof linkId).toBe('string')
-    const links = a.snapshot().links
+    const links = root(a.snapshot()).links
     expect(links.some((g) => g.id === linkId && g.members.includes(id1) && g.members.includes(id2))).toBe(true)
   })
 
@@ -413,7 +414,7 @@ describe('production adapter routing — links_create (mechanical)', () => {
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.error).toBe('LinkCreateNeedsTwoLayers')
-    expect(a.snapshot().links).toHaveLength(0)
+    expect(root(a.snapshot()).links).toHaveLength(0)
   })
 })
 
@@ -452,11 +453,11 @@ describe('production adapter routing — fit_composition_to_layers (mechanical)'
     addColorLayerCmd(a, trackId, 0, 8_000_000)
     // Pin duration to something else
     a.command('set_composition', { patch: { duration_us: 20_000_000 } })
-    expect(a.snapshot().composition.duration_pinned).toBe(true)
+    expect(root(a.snapshot()).duration_pinned).toBe(true)
 
     const r = a.command('fit_composition_to_layers', {})
     expect(r.ok).toBe(true)
-    const comp = a.snapshot().composition
+    const comp = root(a.snapshot())
     expect(comp.duration_us).toBe(8_000_000)
     expect(comp.duration_pinned).toBe(false)
   })
@@ -505,7 +506,7 @@ describe('production adapter routing — add_marker (mechanical)', () => {
     const r = a.command('add_marker', { tUs: 1_000_000, label: '' })
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    const markers = a.snapshot().markers
+    const markers = root(a.snapshot()).markers
     expect(markers).toHaveLength(1)
     expect(markers[0].id).toBe(r.value as string)
     expect(markers[0].t_us).toBe(1_000_000)
@@ -520,7 +521,7 @@ describe('production adapter routing — add_marker (mechanical)', () => {
     const a = freshActor()
     const r = a.command('add_marker', { tUs: 0 })
     expect(r.ok).toBe(true)
-    expect(a.snapshot().markers[0].label).toBe('')
+    expect(root(a.snapshot()).markers[0].label).toBe('')
   })
 
   it('tUs missing (not a number) → structured InvalidArgument error, no throw, no marker added', () => {
@@ -529,7 +530,7 @@ describe('production adapter routing — add_marker (mechanical)', () => {
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.error).toBe('InvalidArgument')
-    expect(a.snapshot().markers).toHaveLength(0)
+    expect(root(a.snapshot()).markers).toHaveLength(0)
   })
 })
 
@@ -541,7 +542,7 @@ describe('production adapter routing — update_marker (mechanical)', () => {
     if (!add.ok) return
     const r = a.command('update_marker', { markerId: add.value as string, patch: { label: 'cut here' } })
     expect(r.ok).toBe(true)
-    expect(a.snapshot().markers[0].label).toBe('cut here')
+    expect(root(a.snapshot()).markers[0].label).toBe('cut here')
   })
 
   it('non-existent markerId → structured MarkerNotFound error, no throw', () => {
@@ -561,7 +562,7 @@ describe('production adapter routing — remove_marker (mechanical)', () => {
     if (!add.ok) return
     const r = a.command('remove_marker', { markerId: add.value as string })
     expect(r.ok).toBe(true)
-    expect(a.snapshot().markers).toHaveLength(0)
+    expect(root(a.snapshot()).markers).toHaveLength(0)
   })
 
   it('non-existent markerId → structured MarkerNotFound error, no throw', () => {

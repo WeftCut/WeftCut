@@ -106,8 +106,8 @@ async fn mix_and_encode(
         return Ok(false);
     }
 
-    let target_sr = audio.sample_rate.unwrap_or(project.composition.sample_rate);
-    let target_ch = target_channels(audio, project.composition.channels);
+    let target_sr = audio.sample_rate.unwrap_or(project.root().sample_rate);
+    let target_ch = target_channels(audio, project.root().channels);
 
     // Create the output's parent dir if missing. Audio-only export sends this
     // straight to the dialog's location (defaults to `<workspace>/output`,
@@ -432,10 +432,10 @@ mod tests {
         let m1 = Uuid::parse_str("01900000-0000-7000-8000-0000000000d1").unwrap();
         let m2 = Uuid::parse_str("01900000-0000-7000-8000-0000000000d2").unwrap();
         let mut p = Project::new_blank("mix-roundtrip");
-        p.composition.duration_us = 1_000_000;
+        p.root_mut().duration_us = 1_000_000;
         p.media_pool.insert(m1, mk_media(m1, &c1));
         p.media_pool.insert(m2, mk_media(m2, &c2));
-        p.tracks.push_back(Track {
+        p.root_mut().tracks.push_back(Track {
             id: Uuid::parse_str("01900000-0000-7000-8000-0000000000d3").unwrap(),
             label: None,
             enabled: true,

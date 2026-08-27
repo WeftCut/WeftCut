@@ -4,6 +4,7 @@ import { blankProject, type Animated, type Interpolation, type TextParams } from
 import { createActor } from '../actor'
 import { parseProject, serializeProject } from '../serialize'
 import { scaleTracksTwins } from './scaleLink'
+import { root } from '../__tests__/fixtures/project'
 
 const lin: Interpolation = { kind: 'Linear' }
 const kf = (entries: Array<[string, number, number, Interpolation?]>): Animated<number> =>
@@ -39,11 +40,11 @@ describe('scaleTracksTwins', () => {
 function textActor() {
   const idGen = seededGen(); const initial = blankProject(idGen, 'sl')
   const actor = createActor({ initial, idGen, clock: () => '<TS>' })
-  const id = (actor.dispatch('add_layer', { track: initial.tracks[1].id, kind: 'text', t_start_us: 0, t_end_us: 2_000_000 }) as { ok: true; value: string }).value
+  const id = (actor.dispatch('add_layer', { track: root(initial).tracks[1].id, kind: 'text', t_start_us: 0, t_end_us: 2_000_000 }) as { ok: true; value: string }).value
   return { actor, id }
 }
 const textParams = (actor: ReturnType<typeof textActor>['actor']) =>
-  actor.snapshot().tracks[1].layers[0].params as TextParams
+  root(actor.snapshot()).tracks[1].layers[0].params as TextParams
 
 describe('set_scale_linked', () => {
   it('new layers default to linked', () => {
@@ -81,7 +82,7 @@ describe('set_scale_linked', () => {
   it('rejects kinds without a transform', () => {
     const idGen = seededGen(); const initial = blankProject(idGen, 'sl')
     const actor = createActor({ initial, idGen, clock: () => '<TS>' })
-    const id = (actor.dispatch('add_layer', { track: initial.tracks[0].id, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }) as { ok: true; value: string }).value
+    const id = (actor.dispatch('add_layer', { track: root(initial).tracks[0].id, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }) as { ok: true; value: string }).value
     const r = actor.dispatch('set_scale_linked', { layer: id, linked: true })
     expect((r as { ok: false; error: { error: string } }).error.error).toBe('UnknownKeyframeParam')
   })
@@ -115,8 +116,8 @@ describe('scale-link invariant (result-based, same commit)', () => {
     const a2 = createActor({ initial, idGen, clock: () => '<TS>' })
     const IMG = '00000000-0000-0000-0000-0000000000aa'
     expect(a2.dispatch('add_media', { id: IMG, kind: 'Image', duration_us: null }).ok).toBe(true)
-    const lid = (a2.dispatch('add_layer', { track: initial.tracks[1].id, kind: 'image', media: IMG, t_start_us: 0, t_end_us: 1_000_000 }) as { ok: true; value: string }).value
-    const params = () => a2.snapshot().tracks[1].layers[0].params as { transform: { scale_linked: boolean } }
+    const lid = (a2.dispatch('add_layer', { track: root(initial).tracks[1].id, kind: 'image', media: IMG, t_start_us: 0, t_end_us: 1_000_000 }) as { ok: true; value: string }).value
+    const params = () => root(a2.snapshot()).tracks[1].layers[0].params as { transform: { scale_linked: boolean } }
     expect(a2.dispatch('update_layer_params', { layer: lid, patch: { kind: 'ImageOverlay', scale_x: 2, scale_y: 2 } }).ok).toBe(true)
     expect(params().transform.scale_linked).toBe(true) // result is twins → still linked
     expect(a2.dispatch('update_layer_params', { layer: lid, patch: { kind: 'ImageOverlay', scale_y: 3 } }).ok).toBe(true)
@@ -134,8 +135,8 @@ describe('parseProject scale_linked normalize', () => {
     if (diverge) actor.dispatch('update_layer_param_track', { layer: id, param_key: 'scale_y', track: kf([['00000000-0000-0000-0000-0000000000f1', 0, 2]]) })
     // Deep copy: serializeProject is a shallow spread, so a `delete` on the raw
     // wire would reach back into the actor's live state.
-    const wire = JSON.parse(JSON.stringify(serializeProject(actor.snapshot()))) as { tracks: Array<{ layers: Array<{ params: { transform: Record<string, unknown> } }> }> }
-    delete wire.tracks[1].layers[0].params.transform.scale_linked
+    const wire = JSON.parse(JSON.stringify(serializeProject(actor.snapshot()))) as { compositions: Record<string, { tracks: Array<{ layers: Array<{ params: { transform: Record<string, unknown> } }> }> }>; root_id: string }
+    delete wire.compositions[wire.root_id].tracks[1].layers[0].params.transform.scale_linked
     return wire
   }
   it('absent flag → false, even when the tracks happen to be twins', () => {
@@ -143,26 +144,26 @@ describe('parseProject scale_linked normalize', () => {
     // direction (the next edit collapses one axis onto the other). So the default
     // never manufactures a link the file did not claim.
     const p = parseProject(wireWithoutFlag(false), { onGridRepair: () => {} })
-    expect((p.tracks[1].layers[0].params as TextParams).transform.scale_linked).toBe(false)
+    expect((root(p).tracks[1].layers[0].params as TextParams).transform.scale_linked).toBe(false)
   })
   it('absent flag + diverged tracks → false', () => {
     const p = parseProject(wireWithoutFlag(true), { onGridRepair: () => {} })
-    expect((p.tracks[1].layers[0].params as TextParams).transform.scale_linked).toBe(false)
+    expect((root(p).tracks[1].layers[0].params as TextParams).transform.scale_linked).toBe(false)
   })
   it('never leaves the flag undefined for the UI to read', () => {
     const p = parseProject(wireWithoutFlag(false), { onGridRepair: () => {} })
-    expect('scale_linked' in (p.tracks[1].layers[0].params as TextParams).transform).toBe(true)
+    expect('scale_linked' in (root(p).tracks[1].layers[0].params as TextParams).transform).toBe(true)
   })
   it('present flag is honored: explicit false over twin tracks stays false', () => {
     const wire = wireWithoutFlag(false)
-    wire.tracks[1].layers[0].params.transform.scale_linked = false
+    wire.compositions[wire.root_id].tracks[1].layers[0].params.transform.scale_linked = false
     const p = parseProject(wire, { onGridRepair: () => {} })
-    expect((p.tracks[1].layers[0].params as TextParams).transform.scale_linked).toBe(false)
+    expect((root(p).tracks[1].layers[0].params as TextParams).transform.scale_linked).toBe(false)
   })
   it('a lying true over diverged tracks is repaired to false on load', () => {
     const wire = wireWithoutFlag(true)
-    wire.tracks[1].layers[0].params.transform.scale_linked = true
+    wire.compositions[wire.root_id].tracks[1].layers[0].params.transform.scale_linked = true
     const p = parseProject(wire, { onGridRepair: () => {} })
-    expect((p.tracks[1].layers[0].params as TextParams).transform.scale_linked).toBe(false)
+    expect((root(p).tracks[1].layers[0].params as TextParams).transform.scale_linked).toBe(false)
   })
 })

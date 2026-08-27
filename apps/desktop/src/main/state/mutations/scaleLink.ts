@@ -2,7 +2,7 @@ import type { Animated, Keyframe, Layer, Project, Transform, Uuid } from '../mod
 import type { IdGen } from '../ids'
 import { cloneInterp, interpEqExact } from '../../../shared/easing'
 import { CommandFailure } from '../errors'
-import { checkTrackLock, locateLayer } from './helpers'
+import { checkTrackLock, locateLayer, rootComposition } from './helpers'
 
 /** The transform of a layer whose kind carries one, else null (Color/Audio). */
 export function transformOf(layer: Layer): Transform | null {
@@ -51,9 +51,10 @@ export function copyTrackFreshIds(track: Animated<number>, idGen: IdGen): Animat
  *  does. Runs at commit granularity, NOT per batch entry: a linked fan-out
  *  batch is mid-divergence between its scale_x and scale_y entries. */
 export function enforceScaleLinkInvariant(p: Project, id: Uuid): void {
+  const c = rootComposition(p)
   const loc = locateLayer(p, id)
   if (!loc) return
-  const t = transformOf(p.tracks[loc[0]].layers[loc[1]])
+  const t = transformOf(c.tracks[loc[0]].layers[loc[1]])
   if (!t || t.scale_linked !== true) return
   if (!scaleTracksTwins(t.scale_x, t.scale_y)) t.scale_linked = false
 }
@@ -64,9 +65,10 @@ export function enforceScaleLinkInvariant(p: Project, id: Uuid): void {
  *  (single rule, no special cases; undo is the safety net). Unlinking touches
  *  only the flag, so the tracks stay twins until the first divergent edit. */
 export function applySetScaleLinked(p: Project, idGen: IdGen, id: Uuid, linked: boolean): void {
+  const c = rootComposition(p)
   checkTrackLock(p, id) // LayerNotFound / TrackLocked
   const loc = locateLayer(p, id)! // existence guaranteed by checkTrackLock
-  const layer = p.tracks[loc[0]].layers[loc[1]]
+  const layer = c.tracks[loc[0]].layers[loc[1]]
   const t = transformOf(layer)
   if (!t) throw new CommandFailure({ error: 'UnknownKeyframeParam', layer: id, param_key: 'scale_linked' })
   if (linked) t.scale_y = copyTrackFreshIds(t.scale_x, idGen)

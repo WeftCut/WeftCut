@@ -3,6 +3,7 @@ import { cueToTextParams, applyAddCaptionTrack, applyRestyleCaptions, type Cue, 
 import { seededGen } from '../ids'
 import { blankProject } from '../model'
 import type { TextParams } from '../model'
+import { root } from '../__tests__/fixtures/project'
 
 const cue = (style: CueStyle = {}): Cue => ({ start_us: 0, end_us: 1, text: 'hi', style })
 
@@ -99,9 +100,9 @@ describe('applyAddCaptionTrack', () => {
   it('one cue → a Caption track appended after B-roll with one Text layer, returns the primary id', () => {
     const { p, gen } = blank()
     const tid = applyAddCaptionTrack(p, gen, [{ start_us: 0, end_us: 1_000_000, text: 'a', style: CLEAN }], 1920, 1080, 'Captions')
-    expect(tid).toBe('00000000-0000-0000-0000-000000000004') // track id #4 (Track::new first), layer #5
-    expect(p.tracks.map((t) => t.id).slice(2)).toEqual([tid]) // appended after [A, B]
-    const ct = p.tracks[2]
+    expect(tid).toBe('00000000-0000-0000-0000-000000000005') // track id #5 (Track::new first), layer #6
+    expect(root(p).tracks.map((t) => t.id).slice(2)).toEqual([tid]) // appended after [A, B]
+    const ct = root(p).tracks[2]
     expect([ct.role, ct.label, ct.removable, ct.transient]).toEqual(['Caption', 'Captions', true, false])
     expect(ct.layers).toHaveLength(1)
     expect(ct.layers[0].params.kind).toBe('Text')
@@ -113,7 +114,7 @@ describe('applyAddCaptionTrack', () => {
       { start_us: 1_000_000, end_us: 3_000_000, text: 'b', style: CLEAN }, // overlaps lane1 (2s>1s) → lane2
       { start_us: 2_000_000, end_us: 3_000_000, text: 'c', style: CLEAN }, // lane1 end 2s <= 2s → reuse lane1
     ], 1920, 1080, null)
-    const caps = p.tracks.filter((t) => t.role === 'Caption')
+    const caps = root(p).tracks.filter((t) => t.role === 'Caption')
     expect(caps).toHaveLength(2)
     expect(caps[0].layers.map((l) => (l.params as { content: string }).content)).toEqual(['a', 'c'])
     expect(caps[1].layers.map((l) => (l.params as { content: string }).content)).toEqual(['b'])
@@ -121,8 +122,8 @@ describe('applyAddCaptionTrack', () => {
   it('empty cues → one empty Caption track (raw-contract safety net)', () => {
     const { p, gen } = blank()
     const tid = applyAddCaptionTrack(p, gen, [], 1920, 1080, 'X')
-    expect(p.tracks[2].id).toBe(tid)
-    expect([p.tracks[2].role, p.tracks[2].layers.length]).toEqual(['Caption', 0])
+    expect(root(p).tracks[2].id).toBe(tid)
+    expect([root(p).tracks[2].role, root(p).tracks[2].layers.length]).toEqual(['Caption', 0])
   })
 })
 
@@ -140,7 +141,7 @@ describe('applyRestyleCaptions (project-wide)', () => {
 
   it('patches Text layers on EVERY caption-role track, not just the first', () => {
     const p = twoLaneProject()
-    const caps = p.tracks.filter((t) => t.role === 'Caption')
+    const caps = root(p).tracks.filter((t) => t.role === 'Caption')
     expect(caps).toHaveLength(2)
     applyRestyleCaptions(p, { font_family: 'Arial', font_size_px: 72, outline_width: 4 })
     for (const track of caps) {
@@ -156,7 +157,7 @@ describe('applyRestyleCaptions (project-wide)', () => {
   it('leaves non-caption tracks untouched', () => {
     const p = twoLaneProject()
     // A-roll is a non-caption track from blankProject; give it a Text layer.
-    const aRoll = p.tracks.find((t) => t.role === 'ARoll')!
+    const aRoll = root(p).tracks.find((t) => t.role === 'ARoll')!
     aRoll.layers.push({
       id: 'x', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false,
       metadata: {},
@@ -170,7 +171,7 @@ describe('applyRestyleCaptions (project-wide)', () => {
 
   it('no-op (no throw) when the project has zero caption tracks', () => {
     const gen = seededGen(); const p = blankProject(gen, 'c')
-    expect(p.tracks.some((t) => t.role === 'Caption')).toBe(false)
+    expect(root(p).tracks.some((t) => t.role === 'Caption')).toBe(false)
     expect(() => applyRestyleCaptions(p, { font_size_px: 60 })).not.toThrow()
   })
 })

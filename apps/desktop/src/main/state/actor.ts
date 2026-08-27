@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
 import type { Animated, AudioRole, Composition, Interpolation, LayerParams, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid } from './model'
-import { blankProject } from './model'
+import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
 import { HISTORY_SUMMARY, layersEnabledSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
@@ -257,12 +257,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
   /** Both side layers of a transition — "this transition sits between these two".
    *  Absent transition → `[]`; the apply then rejects and nothing records. */
   function transitionSideRefs(id: Uuid): EntityRef[] {
-    const t = current().transitions.find((x) => x.id === id)
+    const t = rootComposition(current()).transitions.find((x) => x.id === id)
     return t ? layerRefs([t.from_layer, t.to_layer]) : []
   }
   /** A link's member layers. Absent link → `[]` (the apply rejects). */
   function linkMemberRefs(id: Uuid): EntityRef[] {
-    const g = current().links.find((x) => x.id === id)
+    const g = rootComposition(current()).links.find((x) => x.id === id)
     return g ? layerRefs(g.members) : []
   }
 
@@ -273,10 +273,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
   //    once ANY stored snapshot holds a layer. ──
   function setComposition(patch: Record<string, unknown>): void {
     const cur = current()
+    const curRoot = rootComposition(cur)
     const CANVAS_KEYS = ['width', 'height', 'fps', 'sample_rate', 'channels', 'color_space', 'background']
     const canvasChanges = CANVAS_KEYS.some((k) => patch[k] !== undefined)
-    const newFps = (patch.fps as Rational | undefined) ?? cur.composition.fps
-    const fpsChanged = patch.fps !== undefined && (newFps.num !== cur.composition.fps.num || newFps.den !== cur.composition.fps.den)
+    const newFps = (patch.fps as Rational | undefined) ?? curRoot.fps
+    const fpsChanged = patch.fps !== undefined && (newFps.num !== curRoot.fps.num || newFps.den !== curRoot.fps.den)
 
     // ── The rate lock (spec R2-D1/R2-D2) ─────────────────────────────────────
     // Reject BEFORE any draft work, so a locked project mints no op_id, patches no
@@ -292,13 +293,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
     // current-state-only test is unsound; `errors.ts` FpsLockedByContent owns the
     // caller-facing remedy. See docs/features.md #undo-stack-scope.
     if (fpsChanged) {
-      const layerCount = cur.tracks.reduce((n, t) => n + t.layers.length, 0)
+      const layerCount = [...eachLayer(cur)].length // every composition: the fps write lands in all of them
       // `storedSnapshotsHoldLayer` subsumes the current state; test the live count
       // first so `locked_by` names the scope the caller can actually act on.
       const lockedByCurrent = layerCount > 0
       if (lockedByCurrent || history.storedSnapshotsHoldLayer()) {
         throw new CommandFailure({
-          error: 'FpsLockedByContent', current: cur.composition.fps, requested: newFps,
+          error: 'FpsLockedByContent', current: curRoot.fps, requested: newFps,
           layer_count: layerCount, locked_by: lockedByCurrent ? 'current' : 'history',
         })
       }
@@ -314,11 +315,27 @@ export function createActor(opts: ActorOptions): ActorHandle {
     //   · `applyDurationAutofit` floors a pinned duration at THAT snapshot's own
     //     content high-water mark, so no snapshot ends up shorter than its own
     //     content.
+    //   · fps / sample_rate / channels CASCADE to every composition (single lattice,
+    //     ADR 0052 §5) — the canvas and duration are the root's alone. Without the
+    //     cascade a rate change on a project holding a Group fails validate with
+    //     CompositionLatticeMismatch.
+    const LATTICE_KEYS = ['fps', 'sample_rate', 'channels'] as const
+    const latticePatch: Record<string, unknown> = {}
+    for (const k of LATTICE_KEYS) if (patch[k] !== undefined) latticePatch[k] = patch[k]
     const buildProbe = (d: Project): void => {
-      applyCanvasFields(d.composition, patch)
-      if (durationChange !== undefined) { d.composition.duration_us = durationChange; d.composition.duration_pinned = true }
-      if (fpsChanged) {
-        const nf = d.composition.fps
+      const dRoot = rootComposition(d)
+      applyCanvasFields(dRoot, patch)
+      if (durationChange !== undefined) { dRoot.duration_us = durationChange; dRoot.duration_pinned = true }
+      for (const c of Object.values(d.compositions)) {
+        if (c !== dRoot) applyCanvasFields(c, latticePatch)
+        if (fpsChanged) resnapComposition(c)
+        applyDurationAutofit(c)
+      }
+    }
+    /** Re-snap one composition's grid-bound fields onto its (new) frame grid. */
+    const resnapComposition = (c: Composition): void => {
+      {
+        const nf = c.fps
         // The layer loop is unreachable BY CONSTRUCTION: the history-scoped rate
         // lock means EVERY snapshot this recipe runs over is layer-less. It stays
         // on purpose, as the correctness backstop for the two ways that can change:
@@ -326,7 +343,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // while still layer-less, then adds), and any relaxation of the lock. The
         // marker + duration re-snap below is NOT dead: a layer-less project can hold
         // both, and validate's grid backstop rejects the whole fps change without it.
-        for (const t of d.tracks) for (const l of t.layers) {
+        for (const t of c.tracks) for (const l of t.layers) {
           // Per-KIND grid: an audio layer lives on the fixed 48 kHz lattice, which
           // does not move when fps does, so re-snapping it here would be wrong twice
           // over — it would drop a sample-precise edit AND put the endpoint off the
@@ -338,7 +355,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // Audio src_in_us is normalized source content time (left untouched).
           if (l.params.kind === 'Motif') l.params.src_in_us = snapFrameRound(l.params.src_in_us, nf.num, nf.den)
         }
-        d.composition.duration_us = snapFrameRound(d.composition.duration_us, nf.num, nf.den)
+        c.duration_us = snapFrameRound(c.duration_us, nf.num, nf.den)
         // Markers ride the SAME composition grid as layer endpoints, so they
         // re-snap with them — miss them and validate's grid backstop rejects the
         // whole fps change (OffGridTime) on any project that has a marker.
@@ -346,7 +363,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // an fps change must not fail because a region quantizes to zero frames at
         // the new rate, so such a region widens to one frame. Order is preserved —
         // the snap is monotonic.
-        for (const m of d.markers) {
+        for (const m of c.markers) {
           m.t_us = snapFrameRound(m.t_us, nf.num, nf.den)
           if (m.end_t_us !== null && m.end_t_us !== undefined) {
             const end = snapFrameRound(m.end_t_us, nf.num, nf.den)
@@ -354,7 +371,6 @@ export function createActor(opts: ActorOptions): ActorHandle {
           }
         }
       }
-      applyDurationAutofit(d)
     }
 
     // Validate the CURRENT probe first, then fan out — atomicity: a rejected patch
@@ -398,7 +414,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     if (typeof patch.sample_rate === 'number') c.sample_rate = patch.sample_rate
     if (typeof patch.channels === 'number') c.channels = patch.channels
     if (patch.color_space) c.color_space = patch.color_space as Composition['color_space']
-    if (patch.background) c.background = patch.background as Project['composition']['background']
+    if (patch.background) c.background = patch.background as Composition['background']
   }
 
   // ── meta ──
@@ -471,7 +487,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   // ── move_track — the cur===new no-op must skip
   //    commit; recording it would burn an op_id and drift every later id. ──
   function moveTrack(id: Uuid, newPosition: number): void {
-    const curIdx = current().tracks.findIndex((t) => t.id === id)
+    const curIdx = rootComposition(current()).tracks.findIndex((t) => t.id === id)
     if (curIdx >= 0 && curIdx === newPosition) return // no-op: no record, no broadcast
     commit(HISTORY_SUMMARY.trackMove, [{ kind: 'Track', id }], { kind: 'Coarse' }, (d) => applyMoveTrack(d, id, newPosition))
   }
@@ -480,7 +496,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
   //    TrackNotFound first; then replace-everywhere + broadcast (burns one id,
   //    matching broadcast_unrecorded so the det counter stays aligned). ──
   function updateTrackFlags(id: Uuid, patch: TrackFlagsPatch): void {
-    if (!current().tracks.some((t) => t.id === id)) throw new CommandFailure({ error: 'TrackNotFound', track: id })
+    // Any composition: the history patch below searches them all too.
+    if (!Object.values(current().compositions).some((c) => c.tracks.some((t) => t.id === id))) throw new CommandFailure({ error: 'TrackNotFound', track: id })
     history.replaceTrackFlagsEverywhere(id, patch)
     broadcastUnrecorded('Updated track flags', current())
   }
@@ -542,7 +559,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     const affected: EntityRef[] = referencing.map((l) => ({ kind: 'Layer', id: l }))
     commit(removedMediaSummary(id, referencing.length), affected, { kind: 'Coarse' }, (d) => {
       for (const layerId of referencing) {
-        for (const t of d.tracks) {
+        for (const { track: t } of eachLayer(d)) {
           const idx = t.layers.findIndex((l) => l.id === layerId)
           if (idx >= 0) { t.layers.splice(idx, 1); break }
         }
@@ -592,7 +609,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   //    checkpoints + lock — they reference a different project_id) then broadcast
   //    unrecorded. modified_at is NOT touched. Mints exactly 2 ids on success
   //    (reset op_id + broadcast event id); a caller that built `next` via
-  //    blankProject already spent its 3 ids → 5 total. ──
+  //    blankProject already spent its 4 ids → 6 total. ──
   function replaceState(next: Project): void {
     runValidate(next)                              // throws CommandFailure(ValidationFailed); no id spent
     history.reset(next, actor, idGen(), clock())   // +1 id (the 'Initial' op_id)
@@ -645,7 +662,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const kind = a.kind as string
           let params: LayerParams
           switch (kind) {
-            case 'text': params = textParamsDefault('hello', current().composition); break
+            case 'text': params = textParamsDefault('hello', rootComposition(current())); break
             case 'color': params = colorParams({ r: 255, g: 0, b: 0, a: 255 }, 1920, 1080); break
             case 'video': params = videoClipParams(a.media as Uuid, parseNum(a.src_in_us, 'src_in_us'), parseNum(a.src_out_us, 'src_out_us')); break
             // Optional `role` override (default 'music'): mirrors the add-layer-site
@@ -737,7 +754,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           if (layers.length === 0) return { ok: false, error: { error: 'InvalidArgument', field: 'layers', detail: 'at least one layer is required' } }
           const seedLoc = locateLayer(current(), layers[0])
           if (!seedLoc) return { ok: false, error: { error: 'LayerNotFound', layer: layers[0] } }
-          const deltaUs = parseNum(a.t_start_us, 't_start_us') - current().tracks[seedLoc[0]].layers[seedLoc[1]].t_start_us
+          const deltaUs = parseNum(a.t_start_us, 't_start_us') - rootComposition(current()).tracks[seedLoc[0]].layers[seedLoc[1]].t_start_us
           const targetTrackId = (a.target_track_id as Uuid | null | undefined) ?? null
           const clones = commit(pastedLayersSummary(layers.length), (m: Map<Uuid, Uuid>) => layerRefs([...m.values()]), { kind: 'Coarse' },
             (d) => applyPasteLayers(d, idGen, layers, deltaUs, targetTrackId))
@@ -789,6 +806,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const ats = (a.at_t_us_list as number[]) ?? []
           const dropShortUs = parseNumOpt(a.drop_short_us, 'drop_short_us') ?? null
           return { ok: true, value: commit(HISTORY_SUMMARY.layerSplitByShots, layerRefs, { kind: 'Coarse' }, (d) => {
+            const dRoot = rootComposition(d)
             let currentId = layer
             const ids: Uuid[] = []
             for (const at of ats) {
@@ -798,9 +816,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
               // first because the grid depends on its kind (spec R2-D6); shot splits
               // target video, but this op is reachable for any kind.
               const loc = locateLayer(d, currentId)
-              const seg = loc ? d.tracks[loc[0]].layers[loc[1]] : null
+              const seg = loc ? dRoot.tracks[loc[0]].layers[loc[1]] : null
               if (!seg) continue
-              const atSnapped = snapOnGrid(parseNum(at, 'at_t_us'), gridForLayerKind(seg.params.kind, d.composition.fps))
+              const atSnapped = snapOnGrid(parseNum(at, 'at_t_us'), gridForLayerKind(seg.params.kind, dRoot.fps))
               if (atSnapped <= seg.t_start_us || atSnapped >= seg.t_end_us) continue
               const { left, right } = applySplitLayer(d, idGen, currentId, atSnapped, false)
               ids.push(left)
@@ -811,7 +829,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             const kept: Uuid[] = []
             for (const id of ids) {
               const loc = locateLayer(d, id)
-              const seg = loc ? d.tracks[loc[0]].layers[loc[1]] : null
+              const seg = loc ? dRoot.tracks[loc[0]].layers[loc[1]] : null
               if (seg && seg.t_end_us - seg.t_start_us < dropShortUs) applyDeleteLayer(d, id)
               else kept.push(id)
             }
@@ -930,7 +948,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // Project-wide: one commit over EVERY caption-role track, so overlapping
           // caption lanes restyle as a single undo entry. Affected refs are read
           // from the pre-mutation snapshot (same tracks the recipe patches).
-          const captionRefs: EntityRef[] = current().tracks.filter((t) => t.role === 'Caption').map((t) => ({ kind: 'Track', id: t.id }))
+          const captionRefs: EntityRef[] = rootComposition(current()).tracks.filter((t) => t.role === 'Caption').map((t) => ({ kind: 'Track', id: t.id }))
           commit(HISTORY_SUMMARY.captionRestyle, captionRefs, { kind: 'Coarse' }, (d) => applyRestyleCaptions(d, a.patch as CaptionStylePatch))
           return { ok: true, value: null }
         }
@@ -943,9 +961,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // Test vehicle — builds a blank from the args; production callers
           // (project_open) call replaceState(loadedProject) directly.
           const next = blankProject(idGen, (a.name as string) ?? 'untitled')
-          if (typeof a.width === 'number') next.composition.width = a.width
-          if (typeof a.height === 'number') next.composition.height = a.height
-          if (typeof a.fps_num === 'number' && typeof a.fps_den === 'number') next.composition.fps = { num: a.fps_num, den: a.fps_den }
+          const nextRoot = rootComposition(next)
+          if (typeof a.width === 'number') nextRoot.width = a.width
+          if (typeof a.height === 'number') nextRoot.height = a.height
+          if (typeof a.fps_num === 'number' && typeof a.fps_den === 'number') nextRoot.fps = { num: a.fps_num, den: a.fps_den }
           replaceState(next)
           return { ok: true, value: null }
         }
@@ -973,9 +992,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const t0 = parseNum(wireArgs.tStartUs, 'tStartUs')
           const dur = resolveDurationUs(parseNumOpt(wireArgs.durationUs, 'durationUs'))
           const t1 = t0 + dur
-          const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : pickFreeOverlayTrack(current(), t0, t1)
+          const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : pickFreeOverlayTrack(rootComposition(current()), t0, t1)
           if (trackId !== null) {
-            const params = prodColorParams(wireArgs, current().composition)
+            const params = prodColorParams(wireArgs, rootComposition(current()))
             const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, trackId, params, t0, t1))
             return { ok: true, value: id }
@@ -986,7 +1005,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // to be derived from its position (ADR 0042).
           const newTrackId = commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) =>
             applyAddTrack(d, idGen, null))
-          const params = prodColorParams(wireArgs, current().composition)
+          const params = prodColorParams(wireArgs, rootComposition(current()))
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, newTrackId, params, t0, t1))
           return { ok: true, value: id }
@@ -996,8 +1015,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const t0 = parseNum(wireArgs.tStartUs, 'tStartUs')
           const dur = resolveDurationUs(parseNumOpt(wireArgs.durationUs, 'durationUs'))
           const t1 = t0 + dur
-          const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : pickFreeOverlayTrack(current(), t0, t1)
-          const params = prodTextParams(wireArgs, current().composition)
+          const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : pickFreeOverlayTrack(rootComposition(current()), t0, t1)
+          const params = prodTextParams(wireArgs, rootComposition(current()))
           if (trackId !== null) {
             const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, trackId, params, t0, t1))
@@ -1026,7 +1045,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             return { ok: true, value: id }
           }
           const interval = pasteLayerInterval(current(), sourceId, requestedStart)
-          const trackId = pickFreeOverlayTrack(current(), interval.tStartUs, interval.tEndUs)
+          const trackId = pickFreeOverlayTrack(rootComposition(current()), interval.tStartUs, interval.tEndUs)
           if (trackId !== null) {
             const id = commit(HISTORY_SUMMARY.layerPaste, layerRef, { kind: 'Coarse' }, (d) =>
               applyPasteLayer(d, idGen, sourceId, trackId, requestedStart))
@@ -1062,14 +1081,14 @@ export function createActor(opts: ActorOptions): ActorHandle {
           //   track=tracks.front() (spawn one if empty),
           //   t_start=track.last_layer.t_end ?? 0, duration=2s,
           //   color=demo_color(track.layers.len()), w/h=composition size.
-          const snap = current()
+          const snap = rootComposition(current())
           const firstTrack = snap.tracks[0]
           if (firstTrack) {
             const t0 = firstTrack.layers.at(-1)?.t_end_us ?? 0
             const t1 = t0 + 2_000_000
             const params = prodColorParams(
               { color: demoColor(firstTrack.layers.length) },
-              snap.composition,
+              snap,
             )
             const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, firstTrack.id, params, t0, t1))
@@ -1081,7 +1100,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             const newTrackId = applyAddTrack(d, idGen, null)
             const t0 = 0
             const t1 = 2_000_000
-            const params = prodColorParams({ color: demoColor(0) }, d.composition)
+            const params = prodColorParams({ color: demoColor(0) }, rootComposition(d))
             return applyAddLayer(d, idGen, newTrackId, params, t0, t1)
           })
           return { ok: true, value: id }
@@ -1096,12 +1115,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
             const p = textParamsDefault('TEXT', comp)
             return { ...p, font: { ...p.font, size_px: 96 } }
           }
-          const snap = current()
+          const snap = rootComposition(current())
           const lastTrack = snap.tracks.at(-1)
           if (lastTrack) {
             const t0 = lastTrack.layers.at(-1)?.t_end_us ?? 0
             const t1 = t0 + 3_000_000
-            const params = demoText(snap.composition)
+            const params = demoText(snap)
             const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
               applyAddLayer(d, idGen, lastTrack.id, params, t0, t1))
             return { ok: true, value: id }
@@ -1109,7 +1128,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // No tracks at all — same unreachable single-commit case as add_demo_color_layer.
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => {
             const newTrackId = applyAddTrack(d, idGen, null)
-            return applyAddLayer(d, idGen, newTrackId, demoText(d.composition), 0, 3_000_000)
+            return applyAddLayer(d, idGen, newTrackId, demoText(rootComposition(d)), 0, 3_000_000)
           })
           return { ok: true, value: id }
         }
@@ -1251,7 +1270,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
               // is exactly the case agents misdiagnosed for three sessions
               // running — name the cause and the ways out IN THE MESSAGE
               // (clients drop error.data).
-              const existing = snap.tracks.flatMap((t) => t.layers).find((l) => l.id === d.a || l.id === d.b)
+              const existing = [...eachLayer(snap)].map((e) => e.layer).find((l) => l.id === d.a || l.id === d.b)
               if (existing && existing.params.kind === 'Audio') {
                 return { ok: false, error: {
                   code: 'invalid_params',

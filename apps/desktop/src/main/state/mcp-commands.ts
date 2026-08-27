@@ -414,6 +414,20 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
       options: [{ action: 'retry_snapped', field: d.field, t_us: d.snap_to }],
     } }
   }
+  // ── Composition container rules (ADR 0052) — structural, so prose only. ──
+  if (e.error === 'ValidationFailed') {
+    const d = e.detail
+    switch (d.rule) {
+      case 'RootMissing': return { code: 'invalid_params', message: `root_id ${d.root_id} is not a key of compositions` }
+      case 'CompositionIdMismatch': return { code: 'invalid_params', message: `compositions[${d.key}] carries id ${d.id}; the key must equal the composition's id` }
+      case 'CompositionMissing': return { code: 'invalid_params', message: `layer ${d.layer} references composition ${d.composition}, which does not exist` }
+      case 'RootReferenced': return { code: 'invalid_params', message: `layer ${d.layer} references the root composition; only a Group can be placed as a layer` }
+      case 'CompositionCycle': return { code: 'invalid_params', message: `composition references form a cycle: ${d.path.join(' → ')}` }
+      case 'CompositionLatticeMismatch': return { code: 'invalid_params', message: `composition ${d.composition} differs from the root on ${d.field}; every composition shares the root's fps, sample_rate and channels (set_composition on the root cascades them)` }
+      default: break
+    }
+  }
+  if (e.error === 'CompositionNotFound') return { code: 'invalid_params', message: `composition ${e.composition} not found` }
   if (e.error === 'ValidationFailed' && e.detail.rule === 'NegativeLayerStart') {
     const d = e.detail
     return { code: 'invalid_params', message: `layer ${d.layer} would start at ${d.t_start} µs; timeline time starts at 0`, data: {

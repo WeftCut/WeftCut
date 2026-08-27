@@ -119,6 +119,7 @@ type Spec<E> =
 const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
   TrackNotFound: { tier: "generic" },
   LayerNotFound: { tier: "generic" },
+  CompositionNotFound: { tier: "generic" },
   WrongLayerKind: { tier: "generic" },
   MarkerNotFound: { tier: "generic" },
   TransitionNotFound: { tier: "generic" },
@@ -255,6 +256,14 @@ const VALIDATION_COPY: { [R in ValidationRule]: Spec<ValidationOf<R>> } = {
   LinkBelowMinSize: { tier: "generic" },
   LinkMemberMissing: { tier: "generic" },
   LayerInMultipleLinks: { tier: "generic" },
+  // Composition-tree rules (Groups). Generic until the Group UI lands with
+  // copy of its own; today nothing in the renderer can trip them.
+  RootMissing: { tier: "generic" },
+  CompositionIdMismatch: { tier: "generic" },
+  CompositionMissing: { tier: "generic" },
+  RootReferenced: { tier: "generic" },
+  CompositionCycle: { tier: "generic" },
+  CompositionLatticeMismatch: { tier: "generic" },
 };
 
 // ── Composition ─────────────────────────────────────────────────────────────

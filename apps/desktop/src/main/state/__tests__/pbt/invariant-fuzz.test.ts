@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
-import { freshActor, wireSnapshot, canonicalSnapshot, aRollId, bRollId, PBT_SEED, PBT_RUNS } from './harness'
+import { freshActor, wireSnapshot, canonicalSnapshot, aRollId, bRollId, PBT_SEED, PBT_RUNS, wireRoot } from './harness'
 import { checkAllInvariants } from './invariants'
 
 // ── Seeded media ──────────────────────────────────────────────────────────────
@@ -127,9 +127,9 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
  *  property (dispatch returns structured errors for every hostile input). */
 function applyOp(actor: ActorT, op: Op): { ok: boolean } | null {
   const snap = wireSnapshot(actor)
-  const trackIds = snap.tracks.map((t) => t.id)
-  const layers = snap.tracks.flatMap((t) => t.layers.map((l) => l.id))
-  const transitions = snap.transitions.map((tr) => tr.id)
+  const trackIds = wireRoot(snap).tracks.map((t) => t.id)
+  const layers = wireRoot(snap).tracks.flatMap((t) => t.layers.map((l) => l.id))
+  const transitions = wireRoot(snap).transitions.map((tr) => tr.id)
   const pickLayer = (i: number) => layers[i % layers.length]
   const pickTrack = (i: number) => trackIds[i % trackIds.length]
   switch (op.t) {
@@ -156,7 +156,7 @@ function applyOp(actor: ActorT, op: Op): { ok: boolean } | null {
         // hostile arbitrary pick (cross-track / non-adjacent / self) when the
         // timeline has no cuts.
         const pairs: Array<[string, string]> = []
-        for (const t of snap.tracks) for (const a of t.layers) for (const b of t.layers)
+        for (const t of wireRoot(snap).tracks) for (const a of t.layers) for (const b of t.layers)
           if (a.id !== b.id && a.t_end_us === b.t_start_us) pairs.push([a.id, b.id])
         if (pairs.length) [from, to] = pairs[op.n % pairs.length]
       }

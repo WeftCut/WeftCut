@@ -95,8 +95,19 @@ export interface AudioParams {
   fade_in_us: number; fade_out_us: number; mute: boolean; role: AudioRole
 }
 export interface ColorParams { kind: 'Color'; color: Animated<Rgba>; width: number; height: number }
+/** A Group layer: a media-bearing layer whose SOURCE is another composition
+ *  (ADR 0052 §4). `src_in_us`/`src_out_us` window the referenced composition's
+ *  time exactly as VideoClip/Audio window their media, so the source duration is
+ *  `compositions[composition].duration_us`. Validation puts NO upper bound on
+ *  `src_out_us` — overhang is tolerated in state and clamped at the gesture
+ *  (ADR 0052 §6): rejecting it would refuse a delete INSIDE the Group whenever
+ *  autofit shrank the duration under a parent's window. */
+export interface CompositionRefParams {
+  kind: 'CompositionRef'; composition: Uuid; src_in_us: TimeUs; src_out_us: TimeUs
+  transform: Transform; opacity: Animated<number>; blend_mode: BlendMode
+}
 export type LayerParams =
-  | VideoClipParams | ImageOverlayParams | TextParams | MotifParams | AudioParams | ColorParams
+  | VideoClipParams | ImageOverlayParams | TextParams | MotifParams | AudioParams | ColorParams | CompositionRefParams
 
 export interface Effect { id: Uuid; kind: string; enabled: boolean; params: Record<string, Animated<number>> }
 export interface Layer {
@@ -108,10 +119,6 @@ export interface Track {
   id: Uuid; label: string | null; enabled: boolean; locked: boolean
   muted: boolean; solo: boolean; removable: boolean; role: TrackRole | null
   transient: boolean; height_px: number; layers: Layer[]
-}
-export interface Composition {
-  width: number; height: number; fps: Rational; duration_us: TimeUs; duration_pinned: boolean
-  sample_rate: number; channels: number; color_space: ColorSpace; background: Rgba
 }
 export interface Marker { id: Uuid; t_us: TimeUs; end_t_us: TimeUs | null; label: string; color: Rgba; metadata: Record<string, unknown> }
 /** Motion direction, not reveal side — semantics in native/src/state/transition.rs (the serde twin). */
@@ -130,8 +137,25 @@ export interface Transition {
    *  Invariant `0 ≤ extended_us ≤ duration_us` (validate, structural). */
   extended_us: TimeUs
 }
-/** `members` kept sorted; `label` omitted (not null) when absent — see serialize.ts. */
+/** `members` kept sorted; `label` omitted (not null) when absent — see serialize.ts.
+ *  Members are layers of ONE composition (validate checks them against that
+ *  composition's own layer set, never the project-wide one). */
 export interface Link { id: Uuid; label?: string; members: Uuid[] }
+/** One timeline: settings + tracks + markers + transitions + links. The root and
+ *  every Group share this shape (ADR 0052 §3) — there is no sub type, so every
+ *  walk, mutation and validator has ONE path. `label` is null on the root and
+ *  on an unnamed Group (the renderer derives "Group N"); unlike `Link.label` it
+ *  is ALWAYS written (null, never omitted) — the Rust twin is a plain
+ *  `Option<String>`. */
+export interface Composition {
+  id: Uuid; label: string | null
+  width: number; height: number; fps: Rational; duration_us: TimeUs; duration_pinned: boolean
+  sample_rate: number; channels: number; color_space: ColorSpace; background: Rgba
+  tracks: Track[]; markers: Marker[]; transitions: Transition[]; links: Link[]
+}
+/** The per-composition fields that are not timeline content — what a new Group
+ *  copies from its parent at pre-compose, and what `project://composition` emits. */
+export type CompositionSettings = Pick<Composition, 'width' | 'height' | 'fps' | 'sample_rate' | 'channels' | 'color_space' | 'background'>
 export interface RoleMixSettings { gain_db: number; muted: boolean; solo: boolean }
 export interface MediaVideoMetadata {
   width?: number; height?: number; fps_num?: number; fps_den?: number
@@ -171,9 +195,14 @@ export interface ProjectSettings {
   proxy_overrides: Record<string, boolean>
 }
 export interface Project {
-  schema_version: number; project_id: Uuid; metadata: ProjectMetadata; composition: Composition
-  media_pool: Record<string, MediaItem>; tracks: Track[]; markers: Marker[]
-  transitions: Transition[]; links: Link[]; audio_roles: Record<string, RoleMixSettings>
+  schema_version: number; project_id: Uuid; metadata: ProjectMetadata
+  /** Keyed by `Composition.id` (validate: key === id). A plain object rather
+   *  than a Map because the model is JSON-native end to end — Immer drafts it,
+   *  `structuredClone` copies it and the wire shape IS this shape; the Rust twin
+   *  is an `OrdMap` for its own reasons. The root is `compositions[root_id]`;
+   *  a Group is another entry, referenced by a `CompositionRef` layer. */
+  compositions: Record<Uuid, Composition>; root_id: Uuid
+  media_pool: Record<string, MediaItem>; audio_roles: Record<string, RoleMixSettings>
   settings: ProjectSettings
 }
 
@@ -184,10 +213,30 @@ function newTrack(id: Uuid, role: TrackRole): Track {
   return { id, label: null, enabled: true, locked: false, muted: false, solo: false,
     removable: false, role, transient: false, height_px: 64, layers: [] }
 }
-function defaultComposition(): Composition {
-  return { width: 1920, height: 1080, fps: { num: 30, den: 1 }, duration_us: 0,
-    duration_pinned: false, sample_rate: 48000, channels: 2, color_space: 'Bt709',
-    background: { r: 0, g: 0, b: 0, a: 255 } }
+export function defaultCompositionSettings(): CompositionSettings {
+  return { width: 1920, height: 1080, fps: { num: 30, den: 1 }, sample_rate: 48000, channels: 2,
+    color_space: 'Bt709', background: { r: 0, g: 0, b: 0, a: 255 } }
+}
+/** Settings + the reserved A/B skeleton (ADR 0042), empty timeline. Mints the
+ *  two track ids (A roll, then B roll); the caller mints `id` itself so it can
+ *  choose where the composition id falls in the det-id order (see blankProject).
+ *  Pre-compose builds here; blankProject inlines the same skeleton because its
+ *  det-id order puts project_id between the two track ids and the root id. */
+export function newComposition(id: Uuid, idGen: IdGen, label: string | null, settings: CompositionSettings): Composition {
+  const aRoll = newTrack(idGen(), 'ARoll')
+  const bRoll = newTrack(idGen(), 'BRoll')
+  return { id, label, ...settings, duration_us: 0, duration_pinned: false,
+    tracks: [aRoll, bRoll], markers: [], transitions: [], links: [] }
+}
+/** `compositions[root_id]` — validate guarantees it resolves (RootMissing). */
+export function rootComposition(p: Project): Composition {
+  return p.compositions[p.root_id]
+}
+/** Every layer of every composition, with its holders. */
+export function* eachLayer(p: Pick<Project, 'compositions'>): Iterable<{ composition: Composition; track: Track; layer: Layer }> {
+  for (const composition of Object.values(p.compositions))
+    for (const track of composition.tracks)
+      for (const layer of track.layers) yield { composition, track, layer }
 }
 export function defaultSettings(): ProjectSettings {
   return { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
@@ -195,11 +244,16 @@ export function defaultSettings(): ProjectSettings {
     prefer_proxies: false, proxy_overrides: {} }
 }
 
-/** Mirror of Rust `Project::new_blank`. Id order: A-roll, B-roll, project_id. */
+/** Mirror of Rust `Project::new_blank`. Id order: A-roll, B-roll, project_id,
+ *  root composition id — the root's id comes LAST so `…0001/0002/0003` keep
+ *  their meaning in every det-id test. */
 export function blankProject(idGen: IdGen, name: string): Project {
   const aRoll = newTrack(idGen(), 'ARoll')
   const bRoll = newTrack(idGen(), 'BRoll')
   const projectId = idGen()
+  const rootId = idGen()
+  const root: Composition = { id: rootId, label: null, ...defaultCompositionSettings(), duration_us: 0,
+    duration_pinned: false, tracks: [aRoll, bRoll], markers: [], transitions: [], links: [] }
   // LANDMINE: real RFC3339 timestamps, NOT the '<TS>' sentinel. canonicalize()
   // normalizes these away for differential comparison, so a sentinel would pass
   // the gates — but this JSON still round-trips through Rust `DateTime<Utc>`
@@ -210,7 +264,7 @@ export function blankProject(idGen: IdGen, name: string): Project {
   return {
     schema_version: SCHEMA_VERSION, project_id: projectId,
     metadata: { name, created_at: now, modified_at: now, description: null },
-    composition: defaultComposition(), media_pool: {}, tracks: [aRoll, bRoll],
-    markers: [], transitions: [], links: [], audio_roles: {}, settings: defaultSettings(),
+    compositions: { [rootId]: root }, root_id: rootId,
+    media_pool: {}, audio_roles: {}, settings: defaultSettings(),
   }
 }

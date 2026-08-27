@@ -1,56 +1,59 @@
 import { describe, it, expect } from 'vitest'
 import { checkAllInvariants, invNoUnauthorizedOverlap, invLinksWellFormed, invTransitionsWellFormed, InvariantError } from './invariants'
-import type { WireProject, WireTransition } from './harness'
+import type { WireComposition, WireProject, WireTransition } from './harness'
 
-const base: WireProject = {
-  composition: { duration_us: 1000, duration_pinned: false, fps: { num: 30, den: 1 }, width: 1920, height: 1080 },
+const ROOT: WireComposition = {
+  id: 'root', duration_us: 1000, duration_pinned: false, fps: { num: 30, den: 1 }, width: 1920, height: 1080,
   tracks: [{ id: 'tA', layers: [{ id: 'l1', t_start_us: 0, t_end_us: 1000, params: { kind: 'Color' } }] }],
-  links: [], transitions: [],
+  markers: [], links: [], transitions: [],
 }
+/** One-composition wire project whose root is `ROOT` patched by `over`. */
+const wp = (over: Partial<WireComposition>): WireProject => ({ root_id: 'root', compositions: { root: { ...ROOT, ...over } } })
+const base = wp({})
 
 describe('structural invariants', () => {
   it('accepts a well-formed project', () => expect(() => checkAllInvariants(base)).not.toThrow())
 
   it('rejects unauthorized same-class overlap', () => {
-    const bad: WireProject = { ...base, tracks: [{ id: 'tA', layers: [
+    const bad: WireProject = wp({ tracks: [{ id: 'tA', layers: [
       { id: 'l1', t_start_us: 0, t_end_us: 1000, params: { kind: 'Color' } },
       { id: 'l2', t_start_us: 500, t_end_us: 1500, params: { kind: 'Color' } },
-    ] }], composition: { ...base.composition, duration_us: 1500 } }
+    ] }], duration_us: 1500 })
     expect(() => invNoUnauthorizedOverlap(bad)).toThrow(InvariantError)
   })
 
   it('allows overlap exactly covered by an authorized transition', () => {
-    const ok: WireProject = { ...base,
+    const ok: WireProject = wp({
       tracks: [{ id: 'tA', layers: [
         { id: 'l1', t_start_us: 0, t_end_us: 1000, params: { kind: 'Color' } },
         { id: 'l2', t_start_us: 800, t_end_us: 1800, params: { kind: 'Color' } },
       ] }],
       transitions: [{ id: 'x', from_layer: 'l1', to_layer: 'l2', duration_us: 200, kind: { kind: 'Crossfade' }, extended_us: 0 }],
-      composition: { ...base.composition, duration_us: 1800 } }
+      duration_us: 1800 })
     expect(() => invNoUnauthorizedOverlap(ok)).not.toThrow()
   })
 
   it('rejects a layer in two links', () => {
-    const bad: WireProject = { ...base,
+    const bad: WireProject = wp({
       tracks: [{ id: 'tA', layers: [
         { id: 'l1', t_start_us: 0, t_end_us: 1000, params: { kind: 'Color' } },
         { id: 'l2', t_start_us: 1000, t_end_us: 2000, params: { kind: 'Color' } },
       ] }],
       links: [{ id: 'g1', members: ['l1', 'l2'] }, { id: 'g2', members: ['l2'] }],
-      composition: { ...base.composition, duration_us: 2000 } }
+      duration_us: 2000 })
     expect(() => invLinksWellFormed(bad)).toThrow(InvariantError)
   })
 })
 
 describe('transition invariant (re-derived, Policy B reconcile guarantee)', () => {
   // Overlapped pair with an exactly-matching transition — the healthy shape.
-  const withPair = (tr: Partial<WireTransition>, layers?: WireProject['tracks']): WireProject => ({ ...base,
+  const withPair = (tr: Partial<WireTransition>, layers?: WireComposition['tracks']): WireProject => wp({
     tracks: layers ?? [{ id: 'tA', layers: [
       { id: 'l1', t_start_us: 0, t_end_us: 1000, params: { kind: 'Color' } },
       { id: 'l2', t_start_us: 800, t_end_us: 1800, params: { kind: 'Color' } },
     ] }],
     transitions: [{ id: 'x', from_layer: 'l1', to_layer: 'l2', duration_us: 200, kind: { kind: 'Crossfade' }, extended_us: 0, ...tr }],
-    composition: { ...base.composition, duration_us: 1800 } })
+    duration_us: 1800 })
 
   it('accepts a healthy Crossfade, and a Wipe/Slide with direction', () => {
     expect(() => invTransitionsWellFormed(withPair({}))).not.toThrow()
@@ -93,7 +96,7 @@ describe('transition invariant (re-derived, Policy B reconcile guarantee)', () =
   })
 
   it('rejects a layer participating twice on the same side', () => {
-    const p: WireProject = { ...base,
+    const p: WireProject = wp({
       tracks: [{ id: 'tA', layers: [
         { id: 'l1', t_start_us: 0, t_end_us: 1000, params: { kind: 'Color' } },
         { id: 'l2', t_start_us: 800, t_end_us: 1800, params: { kind: 'Color' } },
@@ -103,7 +106,7 @@ describe('transition invariant (re-derived, Policy B reconcile guarantee)', () =
         { id: 'x', from_layer: 'l1', to_layer: 'l2', duration_us: 200, kind: { kind: 'Crossfade' }, extended_us: 0 },
         { id: 'y', from_layer: 'l1', to_layer: 'l3', duration_us: 200, kind: { kind: 'Crossfade' }, extended_us: 0 },
       ],
-      composition: { ...base.composition, duration_us: 2600 } }
+      duration_us: 2600 })
     expect(() => invTransitionsWellFormed(p)).toThrow(InvariantError)
   })
 

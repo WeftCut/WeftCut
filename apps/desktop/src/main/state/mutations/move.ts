@@ -3,7 +3,7 @@ import type { Layer, Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { gridForLayerKind, snapOnGrid } from '../snap'
 import { applyAddTrack } from './add'
-import { applyDurationAutofit, checkTrackLock, locateLayer, pruneEmptiedTrack } from './helpers'
+import { applyDurationAutofit, checkTrackLock, locateLayer, pruneEmptiedTrack, rootComposition } from './helpers'
 import { linkSiblingsExcluding, checkLinkLock } from './links'
 import { CommandFailure } from '../errors'
 
@@ -13,33 +13,35 @@ import { CommandFailure } from '../errors'
  *  re-located. A sibling that cannot be located is skipped, matching the move loop's
  *  own tolerance for a stale member id. */
 function earliestStart(p: Project, targetStart: number, siblings: readonly Uuid[]): number {
+  const c = rootComposition(p)
   let earliest = targetStart
   for (const sid of siblings) {
     const loc = locateLayer(p, sid)
     if (!loc) continue
-    const s = p.tracks[loc[0]].layers[loc[1]].t_start_us
+    const s = c.tracks[loc[0]].layers[loc[1]].t_start_us
     if (s < earliest) earliest = s
   }
   return earliest
 }
 
 export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStartUs: number, escapeLink: boolean): void {
-  const fps = p.composition.fps
+  const c = rootComposition(p)
+  const fps = c.fps
   const src = locateLayer(p, id)
   if (!src) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
   const [srcTi] = src
   // Read the source track's ID, not its index: the splices below shift indices,
   // and pruning has to name the lane the layer LEFT once the move has settled.
-  const srcTrackId = p.tracks[srcTi].id
-  const target = p.tracks[srcTi].layers[src[1]]
+  const srcTrackId = c.tracks[srcTi].id
+  const target = c.tracks[srcTi].layers[src[1]]
   // The requested start snaps on the TARGET's own grid — the audio lattice for an
   // Audio layer, the composition frame grid otherwise (spec R2-D6).
   const targetGrid = gridForLayerKind(target.params.kind, fps)
   const snapped = snapOnGrid(newTStartUs, targetGrid)
   const curStart = target.t_start_us
-  if (p.tracks[srcTi].locked) throw new CommandFailure({ error: 'TrackLocked', track: p.tracks[srcTi].id })
-  if (newTrackId !== p.tracks[srcTi].id) {
-    const dst = p.tracks.find((t) => t.id === newTrackId)
+  if (c.tracks[srcTi].locked) throw new CommandFailure({ error: 'TrackLocked', track: c.tracks[srcTi].id })
+  if (newTrackId !== c.tracks[srcTi].id) {
+    const dst = c.tracks.find((t) => t.id === newTrackId)
     if (dst && dst.locked) throw new CommandFailure({ error: 'TrackLocked', track: newTrackId })
   }
   const siblings = escapeLink ? [] : linkSiblingsExcluding(p, id)
@@ -63,7 +65,7 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
 
   // Remove the target layer.
   let moved: Layer | undefined
-  for (const track of p.tracks) {
+  for (const track of c.tracks) {
     const idx = track.layers.findIndex((l) => l.id === id)
     if (idx >= 0) { moved = track.layers.splice(idx, 1)[0]; break }
   }
@@ -71,9 +73,9 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
   layer.t_start_us = newStart
   // Re-snap t_end on the same grid (alternating 33_333/33_334µs frame widths at 30fps).
   layer.t_end_us = snapOnGrid(layer.t_end_us + delta, targetGrid)
-  const destIdx = p.tracks.findIndex((t) => t.id === newTrackId)
+  const destIdx = c.tracks.findIndex((t) => t.id === newTrackId)
   if (destIdx < 0) throw new CommandFailure({ error: 'TrackNotFound', track: newTrackId })
-  const dest = p.tracks[destIdx]
+  const dest = c.tracks[destIdx]
   const at = dest.layers.findIndex((l) => l.t_start_us > newStart)
   dest.layers.splice(at < 0 ? dest.layers.length : at, 0, layer)
 
@@ -82,8 +84,8 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
     for (const sid of siblings) {
       const loc = locateLayer(p, sid)
       if (!loc) continue
-      const siblingTrackId = p.tracks[loc[0]].id
-      const s = p.tracks[loc[0]].layers.splice(loc[1], 1)[0]
+      const siblingTrackId = c.tracks[loc[0]].id
+      const s = c.tracks[loc[0]].layers.splice(loc[1], 1)[0]
       if (delta !== 0) {
         // LANDMINE: each sibling snaps on ITS OWN grid, not the target's. Snapping a
         // linked audio member on the composition frame grid here would drag it back
@@ -99,18 +101,18 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
       // No per-sibling floor here: `delta` is already clamped so no member can cross
       // 0, and snapping a non-negative time can only return a non-negative lattice
       // point. Re-introducing one would resurrect the shortening defect.
-      const di = p.tracks.findIndex((t) => t.id === siblingTrackId)
-      const sAt = p.tracks[di].layers.findIndex((l) => l.t_start_us > s.t_start_us)
-      p.tracks[di].layers.splice(sAt < 0 ? p.tracks[di].layers.length : sAt, 0, s)
+      const di = c.tracks.findIndex((t) => t.id === siblingTrackId)
+      const sAt = c.tracks[di].layers.findIndex((l) => l.t_start_us > s.t_start_us)
+      c.tracks[di].layers.splice(sAt < 0 ? c.tracks[di].layers.length : sAt, 0, s)
     }
   }
 
-  applyDurationAutofit(p)
+  applyDurationAutofit(c)
   // Cleanup rides in the SAME mutation, so one undo restores the layer's previous
   // position and its track together. Runs last, on settled state: a same-track move
   // has already put the layer back. Only the target changes tracks — every sibling
   // is re-inserted on the one it came from — so this is the only track a move empties.
-  pruneEmptiedTrack(p, srcTrackId)
+  pruneEmptiedTrack(c, srcTrackId)
 }
 
 /** Raise a set of layers onto ONE fresh lane at the tail of the track vector —
@@ -133,11 +135,12 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
  *  `enabled` predicate prevents that request up front; re-checking it here would
  *  give one rule two homes to drift between.
  *
- *  Link membership is untouched: `p.links` names layer ids and no invariant
+ *  Link membership is untouched: `c.links` names layer ids and no invariant
  *  ties a link to a track, so the caller's explicit selection moves and nothing
  *  is dragged along — unlike `applyMoveLayer`, which has a time delta for
  *  siblings to follow. */
 export function applyMoveLayersToNewTrack(p: Project, idGen: IdGen, layerIds: readonly Uuid[]): Uuid {
+  const c = rootComposition(p)
   const ids = [...new Set(layerIds)]
   if (ids.length === 0) throw new CommandFailure({ error: 'InvalidArgument', field: 'layers', detail: 'at least one layer is required' })
   // Locate and lock-check EVERY layer before the lane is minted, so a refusal
@@ -147,21 +150,21 @@ export function applyMoveLayersToNewTrack(p: Project, idGen: IdGen, layerIds: re
   const sourceTrackIds: Uuid[] = []
   for (const id of ids) {
     checkTrackLock(p, id) // LayerNotFound, then TrackLocked
-    const srcTrackId = p.tracks[locateLayer(p, id)![0]].id // located by checkTrackLock
+    const srcTrackId = c.tracks[locateLayer(p, id)![0]].id // located by checkTrackLock
     if (!sourceTrackIds.includes(srcTrackId)) sourceTrackIds.push(srcTrackId)
   }
   // `label: null` lets the renderer derive the name — a literal written here
   // could never be localized (ADR 0042).
   const trackId = applyAddTrack(p, idGen, null)
-  const dest = p.tracks.find((t) => t.id === trackId)! // just inserted
+  const dest = c.tracks.find((t) => t.id === trackId)! // just inserted
   for (const id of ids) {
     const loc = locateLayer(p, id)! // verified above, and nothing has removed it
-    const layer = p.tracks[loc[0]].layers.splice(loc[1], 1)[0]
+    const layer = c.tracks[loc[0]].layers.splice(loc[1], 1)[0]
     const at = dest.layers.findIndex((l) => l.t_start_us > layer.t_start_us)
     dest.layers.splice(at < 0 ? dest.layers.length : at, 0, layer)
   }
   // Once per DISTINCT source lane, on settled state: a multi-clip raise off two
   // lanes has to take both with it, in this same history entry.
-  for (const srcTrackId of sourceTrackIds) pruneEmptiedTrack(p, srcTrackId)
+  for (const srcTrackId of sourceTrackIds) pruneEmptiedTrack(c, srcTrackId)
   return trackId
 }

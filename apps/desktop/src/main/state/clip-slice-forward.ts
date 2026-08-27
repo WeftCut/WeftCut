@@ -1,4 +1,5 @@
 import type { Layer, MediaItem, Project } from './model'
+import { eachLayer } from './model'
 
 /** MCP clip compute tools whose Rust handler takes one layer + its MediaItem
  *  (the `resolve_clip_audio_source` / `resolve_clip_video_source` inputs) as an
@@ -20,10 +21,10 @@ export const TWO_SLICE_TOOLS: ReadonlySet<string> = new Set(['compare_frames'])
  *  not-found / not-analyzable error (single source of truth). */
 function resolveLayerSlice(
   layerId: string,
-  snapshot: Pick<Project, 'tracks' | 'media_pool'>,
+  snapshot: Pick<Project, 'compositions' | 'media_pool'>,
 ): { layer: Layer | null; media: MediaItem | null } {
-  const layer: Layer | null =
-    snapshot.tracks.flatMap((t) => t.layers).find((l) => l.id === layerId) ?? null
+  let layer: Layer | null = null
+  for (const e of eachLayer(snapshot)) if (e.layer.id === layerId) { layer = e.layer; break }
   const mediaId =
     layer && (layer.params.kind === 'VideoClip' || layer.params.kind === 'Audio')
       ? layer.params.media
@@ -36,7 +37,7 @@ function resolveLayerSlice(
  *  top-level `layer_id` and merge it into the tool args. */
 export function resolveClipSliceArgs(
   args: Record<string, unknown>,
-  snapshot: Pick<Project, 'tracks' | 'media_pool'>,
+  snapshot: Pick<Project, 'compositions' | 'media_pool'>,
 ): Record<string, unknown> {
   const { layer, media } = resolveLayerSlice((args as { layer_id?: string }).layer_id ?? '', snapshot)
   return { ...args, layer, media }
@@ -48,7 +49,7 @@ export function resolveClipSliceArgs(
  *  Rust produces the not-found / not-video error per side). */
 export function resolveTwoSliceArgs(
   args: Record<string, unknown>,
-  snapshot: Pick<Project, 'tracks' | 'media_pool'>,
+  snapshot: Pick<Project, 'compositions' | 'media_pool'>,
 ): Record<string, unknown> {
   const resolveSide = (raw: unknown): Record<string, unknown> => {
     const side = (raw ?? {}) as Record<string, unknown>

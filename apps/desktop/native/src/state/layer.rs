@@ -11,7 +11,7 @@ use super::animated::Animated;
 use super::audio_role::AudioRole;
 use super::color::Rgba;
 use super::effect::Effect;
-use super::ids::{LayerId, MediaId};
+use super::ids::{CompositionId, LayerId, MediaId};
 use super::time::TimeUs;
 use super::transform::{BlendMode, Rect, Transform};
 
@@ -65,6 +65,25 @@ pub enum LayerParams {
     Motif(MotifParams),
     Audio(AudioParams),
     Color(ColorParams),
+    CompositionRef(CompositionRefParams),
+}
+
+/// A Group layer: a media-bearing layer whose source is a composition
+/// (ADR 0052 §4). Source duration is the referenced composition's
+/// `duration_us`; `src_out_us` may overhang it — tolerated in state, clamped
+/// at the gesture (ADR 0052 §6). Joins `VideoClip` / `Audio` in the
+/// `src_in_us` / `src_out_us` family, so trim, split and keyframe re-basing
+/// apply verbatim. Not in v1: speed, crop, flip, gain.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CompositionRefParams {
+    /// Key into `Project.compositions`; never the root (TS validates).
+    pub composition: CompositionId,
+    pub src_in_us: TimeUs,
+    pub src_out_us: TimeUs,
+    pub transform: Transform,
+    pub opacity: Animated<f64>,
+    #[serde(default)]
+    pub blend_mode: BlendMode,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -266,6 +285,10 @@ pub(crate) fn for_each_animated_f64(
             f(&mut p.pan);
         }
         LayerParams::Color(_) => {}
+        LayerParams::CompositionRef(p) => {
+            visit_transform_f64(&mut p.transform, &mut f);
+            f(&mut p.opacity);
+        }
     }
 }
 
@@ -298,7 +321,8 @@ pub(crate) fn for_each_animated_rgba(
         LayerParams::VideoClip(_)
         | LayerParams::ImageOverlay(_)
         | LayerParams::Motif(_)
-        | LayerParams::Audio(_) => {}
+        | LayerParams::Audio(_)
+        | LayerParams::CompositionRef(_) => {}
     }
 }
 
@@ -319,6 +343,9 @@ pub(crate) fn resolve_animated_f64<'a>(
             _ => None,
         },
         LayerParams::Color(_) => None,
+        LayerParams::CompositionRef(p) => {
+            transform_or_opacity_ref(&p.transform, &p.opacity, key)
+        }
     }
 }
 
@@ -357,6 +384,9 @@ pub(crate) fn resolve_animated_f64_mut<'a>(
             _ => None,
         },
         LayerParams::Color(_) => None,
+        LayerParams::CompositionRef(p) => {
+            transform_or_opacity(&mut p.transform, &mut p.opacity, key)
+        }
     }
 }
 

@@ -4,6 +4,7 @@ import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
 import { routeChannel } from '../router'
 import { routeMcpTool } from '../../mcp/mutationTools'
+import { root } from './fixtures/project'
 
 describe('project_restore_checkpoint wiring', () => {
   it('renderer channel routes to command and MCP routes to ts', () => {
@@ -20,11 +21,11 @@ describe('project_restore_checkpoint wiring', () => {
     const cpId = (made as { ok: true; result: { content: Array<{ text: string }> } }).result.content[0].text
     // mutate so state diverges from the checkpoint
     actor.command('add_track', { })
-    const before = actor.snapshot().tracks.length
+    const before = root(actor.snapshot()).tracks.length
     // restore via the renderer command channel
     const r = actor.command('project_restore_checkpoint', { checkpointId: cpId })
     expect(r.ok).toBe(true)
-    expect(actor.snapshot().tracks.length).toBe(before - 1)
+    expect(root(actor.snapshot()).tracks.length).toBe(before - 1)
   })
 
   it('command(project_restore_checkpoint) with a bad uuid rejects before mutating', () => {

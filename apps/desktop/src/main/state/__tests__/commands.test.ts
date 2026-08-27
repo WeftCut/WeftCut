@@ -2,12 +2,13 @@
 // Unit tests for production param builders in commands.ts.
 import { describe, it, expect } from 'vitest'
 import { prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, demoColor, pickFreeOverlayTrack, PRODUCTION_OPS, parseMechanical } from '../commands'
-import type { LayerParams, Project } from '../model'
+import type { LayerParams, Project, Composition } from '../model'
 import { createActor } from '../actor'
 import { blankProject, SCHEMA_VERSION } from '../model'
 import { seededGen } from '../ids'
 import { textParamsDefault } from '../mutations/add'
 import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
+import { root } from './fixtures/project'
 
 // ── PRODUCTION_OPS coverage assertion ────────────────────────────────────────
 // Pins the exact set of renderer channels the production adapter handles.
@@ -179,9 +180,9 @@ describe('prodTextParams', () => {
     const gen = seededGen()
     const a = createActor({ initial: blankProject(gen, 'demo'), idGen: gen, clock: () => '<TS>' })
     expect(a.command('add_demo_text_layer', {}).ok).toBe(true)
-    const layers = a.snapshot().tracks.flatMap((t) => t.layers)
+    const layers = root(a.snapshot()).tracks.flatMap((t) => t.layers)
     const demo = layers.find((l) => l.params.kind === 'Text')?.params as Extract<LayerParams, { kind: 'Text' }>
-    const base = textParamsDefault('TEXT', a.snapshot().composition)
+    const base = textParamsDefault('TEXT', root(a.snapshot()))
     expect(demo.font.size_px).toBe(96)
     expect({ ...demo, font: { ...demo.font, size_px: base.font.size_px } }).toEqual(base)
   })
@@ -213,18 +214,23 @@ describe('demoColor', () => {
 })
 
 // ── prodMediaLayer ────────────────────────────────────────────────────────
-function makeProject(overrides?: Partial<Project>): Project {
+function makeProject(overrides?: Partial<Project> & { tracks?: Composition['tracks'] }): Project {
+  const { tracks, ...projectOverrides } = overrides ?? {}
+  const rootComp: Composition = {
+    id: 'root', label: null, width: 1920, height: 1080, fps: { num: 30, den: 1 }, duration_us: 0,
+    duration_pinned: false, sample_rate: 48000, channels: 2, color_space: 'Bt709',
+    background: { r: 0, g: 0, b: 0, a: 255 },
+    tracks: tracks ?? [], markers: [], transitions: [], links: [],
+  }
   const base: Project = {
     schema_version: SCHEMA_VERSION, project_id: 'proj',
     metadata: { name: 'test', created_at: '', modified_at: '', description: null },
-    composition: { width: 1920, height: 1080, fps: { num: 30, den: 1 }, duration_us: 0,
-      duration_pinned: false, sample_rate: 48000, channels: 2, color_space: 'Bt709',
-      background: { r: 0, g: 0, b: 0, a: 255 } },
-    media_pool: {}, tracks: [], markers: [], transitions: [], links: [], audio_roles: {},
+    compositions: { root: rootComp }, root_id: 'root',
+    media_pool: {}, audio_roles: {},
     settings: { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
       history_capacity: 200, auto_pair_audio_on_import: true,
       prefer_proxies: false, proxy_overrides: {} },
-    ...overrides,
+    ...projectOverrides,
   }
   return base
 }
@@ -281,7 +287,7 @@ describe('pickFreeOverlayTrack', () => {
       { id: 'a', label: null, enabled: true, locked: false, muted: false, solo: false,
         removable: false, role: 'ARoll', transient: false, height_px: 64, layers: [] },
     ] })
-    expect(pickFreeOverlayTrack(p, 0, 5_000_000)).toBeNull()
+    expect(pickFreeOverlayTrack(root(p), 0, 5_000_000)).toBeNull()
   })
 
   it('returns last non-reserved track with no overlap', () => {
@@ -291,7 +297,7 @@ describe('pickFreeOverlayTrack', () => {
       { id: 't1', label: 'T1', enabled: true, locked: false, muted: false, solo: false,
         removable: true, role: null, transient: false, height_px: 64, layers: [] },
     ] })
-    expect(pickFreeOverlayTrack(p, 0, 5_000_000)).toBe('t1')
+    expect(pickFreeOverlayTrack(root(p), 0, 5_000_000)).toBe('t1')
   })
 
   it('a locked lane is never a candidate — every caller PLACES content on the pick', () => {
@@ -304,7 +310,7 @@ describe('pickFreeOverlayTrack', () => {
         removable: true, role: null, transient: false, height_px: 64, layers: [] },
     ] })
     // 'shut' wins the reverse scan on position but is locked → 'open' is picked.
-    expect(pickFreeOverlayTrack(p, 0, 5_000_000)).toBe('open')
+    expect(pickFreeOverlayTrack(root(p), 0, 5_000_000)).toBe('open')
   })
 })
 
@@ -319,7 +325,7 @@ describe('add_media_layer auto-pair', () => {
     // Use a fixed media id separate from idGen chain; template produces audio block when withAudio=true
     const mediaId = '11111111-1111-1111-1111-111111111111' as const
     actor.dispatch('add_media', { id: mediaId, kind: 'Video', duration_us: 4_000_000, with_audio: withAudio })
-    return { actor, mediaId, aRollId: initial.tracks[0].id }
+    return { actor, mediaId, aRollId: root(initial).tracks[0].id }
   }
 
   it('video+audio: track has a VideoClip and Audio(role=dialogue) layer at same span', () => {
@@ -327,7 +333,7 @@ describe('add_media_layer auto-pair', () => {
     const r = actor.command('add_media_layer', { trackId: aRollId, mediaId, tStartUs: 0 })
     expect(r.ok).toBe(true)
     const snap = actor.snapshot()
-    const track = snap.tracks.find((t) => t.id === aRollId)!
+    const track = root(snap).tracks.find((t) => t.id === aRollId)!
     expect(track.layers).toHaveLength(2)
     const vid = track.layers.find((l) => l.params.kind === 'VideoClip')!
     const aud = track.layers.find((l) => l.params.kind === 'Audio')!
@@ -347,11 +353,11 @@ describe('add_media_layer auto-pair', () => {
     const r = actor.command('add_media_layer', { trackId: aRollId, mediaId, tStartUs: 0 })
     expect(r.ok).toBe(true)
     const snap = actor.snapshot()
-    const track = snap.tracks.find((t) => t.id === aRollId)!
+    const track = root(snap).tracks.find((t) => t.id === aRollId)!
     const vidId = track.layers.find((l) => l.params.kind === 'VideoClip')!.id
     const audId = track.layers.find((l) => l.params.kind === 'Audio')!.id
     // links_create([videoId, audioId]) produces exactly one link with both members
-    const links = snap.links.filter((g) => g.members.includes(vidId) && g.members.includes(audId))
+    const links = root(snap).links.filter((g) => g.members.includes(vidId) && g.members.includes(audId))
     expect(links).toHaveLength(1)
     // snapshot is immer-frozen: spread before sorting to avoid mutation error
     expect([...links[0].members].sort()).toEqual([vidId, audId].sort())
@@ -362,10 +368,10 @@ describe('add_media_layer auto-pair', () => {
     const r = actor.command('add_media_layer', { trackId: aRollId, mediaId, tStartUs: 0 })
     expect(r.ok).toBe(true)
     const snap = actor.snapshot()
-    const track = snap.tracks.find((t) => t.id === aRollId)!
+    const track = root(snap).tracks.find((t) => t.id === aRollId)!
     expect(track.layers).toHaveLength(1)
     expect(track.layers[0].params.kind).toBe('VideoClip')
-    expect(snap.links).toHaveLength(0)
+    expect(root(snap).links).toHaveLength(0)
   })
 
   it('auto_pair_audio_on_import=false: no pair even when media has audio', () => {
@@ -373,9 +379,9 @@ describe('add_media_layer auto-pair', () => {
     const r = actor.command('add_media_layer', { trackId: aRollId, mediaId, tStartUs: 0 })
     expect(r.ok).toBe(true)
     const snap = actor.snapshot()
-    const track = snap.tracks.find((t) => t.id === aRollId)!
+    const track = root(snap).tracks.find((t) => t.id === aRollId)!
     expect(track.layers).toHaveLength(1)
-    expect(snap.links).toHaveLength(0)
+    expect(root(snap).links).toHaveLength(0)
   })
 
   it('prodMediaLayer: autoPairAudio is non-null only when media has audio and setting on', () => {

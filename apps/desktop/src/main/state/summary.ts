@@ -1,5 +1,6 @@
 // apps/desktop/src/main/state/summary.ts
-import type { Animated, Effect, Link, Layer, LayerParams, Marker, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid, VAlign } from './model'
+import type { Animated, Composition, Effect, Link, Layer, LayerParams, Marker, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid, VAlign } from './model'
+import { rootComposition } from './model'
 import type { HistoryStatus } from './history'
 import type { DecodeRoute } from '../../shared/decode-route'
 
@@ -39,7 +40,15 @@ export interface MotifView {
   anchor_x: Animated<number>; anchor_y: Animated<number>
   src_in_us: number; props: Record<string, unknown>
 }
-export type LayerParamsView = VideoClipView | ImageOverlayView | TextView | ColorView | AudioView | MotifView
+/** A Group layer's projection. `composition_label` is the referenced
+ *  composition's own label (null → the renderer derives "Group N"). */
+export interface CompositionRefView {
+  kind: 'CompositionRef'; composition_id: string; composition_label: string | null
+  src_in_us: number; src_out_us: number
+  x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
+  anchor_x: Animated<number>; anchor_y: Animated<number>
+}
+export type LayerParamsView = VideoClipView | ImageOverlayView | TextView | ColorView | AudioView | MotifView | CompositionRefView
 
 export function layerKind(params: LayerParams): string { return params.kind }
 
@@ -54,7 +63,7 @@ export function deriveTrackKindLabel(track: Track): string {
   let hasVisual = false, hasAudio = false
   for (const l of track.layers) {
     if (l.params.kind === 'Audio') hasAudio = true
-    else hasVisual = true // VideoClip | ImageOverlay | Color | Motif | Text
+    else hasVisual = true // VideoClip | ImageOverlay | Color | Motif | Text | CompositionRef
   }
   if (hasVisual) return 'Video'
   if (hasAudio) return 'Audio'
@@ -117,8 +126,9 @@ function mediaLabelFor(id: Uuid, pool: Record<Uuid, MediaItem>): string {
 }
 
 /** Kind-matched UI projection. NOTE: the Motif arm is covered by unit tests
- *  only (summary.test.ts) — no integration fixture builds a Motif layer. */
-export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaItem>): LayerParamsView {
+ *  only (summary.test.ts) — no integration fixture builds a Motif layer.
+ *  `compositions` resolves a CompositionRef's label; the other arms never read it. */
+export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaItem>, compositions: Record<Uuid, Composition> = {}): LayerParamsView {
   switch (params.kind) {
     case 'VideoClip': {
       const t = params.transform
@@ -156,6 +166,13 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
       return { kind: 'Motif', motif_id: params.motif_id, x: t.x, y: t.y, scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
         anchor_x: t.anchor_x, anchor_y: t.anchor_y,
         opacity: params.opacity, src_in_us: params.src_in_us, props: params.props }
+    }
+    case 'CompositionRef': {
+      const t = params.transform
+      return { kind: 'CompositionRef', composition_id: params.composition, composition_label: compositions[params.composition]?.label ?? null,
+        src_in_us: params.src_in_us, src_out_us: params.src_out_us,
+        x: t.x, y: t.y, scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg, opacity: params.opacity,
+        anchor_x: t.anchor_x, anchor_y: t.anchor_y }
     }
   }
 }
@@ -217,9 +234,15 @@ const ROLE_ORDER = ['dialogue', 'music', 'sfx', 'voiceover'] as const
 const DEFAULT_ROLE: RoleMixSettings = { gain_db: 0, muted: false, solo: false }
 
 /** The read-only IPC view the renderer pulls on project:changed. Pure;
- *  `fileExists` is injected (filesystem fields). */
+ *  `fileExists` is injected (filesystem fields).
+ *
+ *  FLAT: the view projects the ROOT composition — its tracks, markers,
+ *  transitions, links and settings — so the renderer sees one timeline and a
+ *  one-composition project produces exactly the summary it always did.
+ *  `track_count` / `layer_count` count the root for the same reason. */
 export function buildProjectSummary(p: Project, history: HistoryStatus, fileExists: (absPath: string) => boolean): ProjectSummary {
-  const layer_count = p.tracks.reduce((n, t) => n + t.layers.length, 0)
+  const root = rootComposition(p)
+  const layer_count = root.tracks.reduce((n, t) => n + t.layers.length, 0)
 
   const fileOrNull = (path: string | null | undefined): string | null => (path && fileExists(path) ? path : null)
   // The decode route's readiness paths are existence-gated the same way the
@@ -260,23 +283,23 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
   })
   media.sort((x, y) => (x.id < y.id ? 1 : x.id > y.id ? -1 : 0)) // b.id.cmp(&a.id) — descending
 
-  const tracks: TrackSummary[] = p.tracks.map((t: Track) => ({
+  const tracks: TrackSummary[] = root.tracks.map((t: Track) => ({
     id: t.id, kind: deriveTrackKindLabel(t), label: t.label, enabled: t.enabled, locked: t.locked,
     muted: t.muted, solo: t.solo, role: t.role != null ? TRACK_ROLE_WIRE[t.role] : null, transient: t.transient,
     layers: t.layers.map((l: Layer): LayerSummary => ({
       id: l.id, label: l.label, t_start_us: l.t_start_us, t_end_us: l.t_end_us, kind: layerKind(l.params),
       color_hint: layerColorHint(l), enabled: l.enabled, locked: l.locked,
-      params: layerParamsView(l.params, p.media_pool), effects: l.effects,
+      params: layerParamsView(l.params, p.media_pool, p.compositions), effects: l.effects,
     })),
   }))
 
-  const markers: MarkerSummary[] = p.markers.map((m: Marker) => ({
+  const markers: MarkerSummary[] = root.markers.map((m: Marker) => ({
     id: m.id, t_us: m.t_us, end_t_us: m.end_t_us, label: m.label, color_hint: markerColorHint(m.color),
   }))
-  const transitions: TransitionView[] = p.transitions.map((t) => ({
+  const transitions: TransitionView[] = root.transitions.map((t) => ({
     id: t.id, from_layer: t.from_layer, to_layer: t.to_layer, duration_us: t.duration_us, kind: t.kind, extended_us: t.extended_us,
   }))
-  const links: LinkSummary[] = p.links.map((g: Link) => ({ id: g.id, label: g.label ?? null, layer_ids: g.members }))
+  const links: LinkSummary[] = root.links.map((g: Link) => ({ id: g.id, label: g.label ?? null, layer_ids: g.members }))
   const audio_roles: RoleMixView[] = ROLE_ORDER.map((role) => {
     const s = p.audio_roles[role] ?? DEFAULT_ROLE
     return { role, gain_db: s.gain_db, muted: s.muted, solo: s.solo }
@@ -284,10 +307,10 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
 
   const view: ProjectSummary = {
     project_id: p.project_id, name: p.metadata.name,
-    composition: { width: p.composition.width, height: p.composition.height, fps_num: p.composition.fps.num,
-      fps_den: p.composition.fps.den, duration_pinned: p.composition.duration_pinned,
+    composition: { width: root.width, height: root.height, fps_num: root.fps.num,
+      fps_den: root.fps.den, duration_pinned: root.duration_pinned,
       fps_locked: history.holds_layer_anywhere },
-    track_count: p.tracks.length, layer_count, duration_us: p.composition.duration_us,
+    track_count: root.tracks.length, layer_count, duration_us: root.duration_us,
     history: { cursor: history.cursor, len: history.len, can_undo: history.can_undo, can_redo: history.can_redo },
     media, tracks, markers, transitions, links, audio_roles,
   }

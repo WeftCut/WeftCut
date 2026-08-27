@@ -1,5 +1,6 @@
 import { current, isDraft } from 'immer'
-import type { Layer, LayerParams, Project, Uuid } from '../model'
+import type { Composition, Layer, LayerParams, Project, Uuid } from '../model'
+import { rootComposition } from '../model'
 import { CommandFailure } from '../errors'
 import { frameGrid, snapUpOnGrid } from '../snap'
 import { forEachAnimatedF64, forEachAnimatedRgba, shiftKeyframes } from './animated'
@@ -9,9 +10,28 @@ export function cloneLayer(layer: Layer): Layer {
   return structuredClone(isDraft(layer) ? current(layer) : layer)
 }
 
+/** The composition every mutation in this directory edits. Layer-addressed ops
+ *  address the ROOT: nothing but a hand-written file can place a layer in a
+ *  Group yet, so `rootComposition` is the one scope rule, spelled as a call so
+ *  the sweep that derives the scope from the layer id later is
+ *  `rg 'rootComposition\(' mutations` and nothing else. */
+export { rootComposition } from '../model'
+
+/** `p.compositions[id]` or CompositionNotFound. */
+export function compositionOf(p: Project, id: Uuid): Composition {
+  const c = p.compositions[id]
+  if (!c) throw new CommandFailure({ error: 'CompositionNotFound', composition: id })
+  return c
+}
+
+/** (track index, layer index) of a layer in the ROOT composition, or null. */
 export function locateLayer(p: Project, id: Uuid): [number, number] | null {
-  for (let ti = 0; ti < p.tracks.length; ti++) {
-    const li = p.tracks[ti].layers.findIndex((l) => l.id === id)
+  return locateLayerIn(rootComposition(p), id)
+}
+
+export function locateLayerIn(c: Composition, id: Uuid): [number, number] | null {
+  for (let ti = 0; ti < c.tracks.length; ti++) {
+    const li = c.tracks[ti].layers.findIndex((l) => l.id === id)
     if (li >= 0) return [ti, li]
   }
   return null
@@ -28,13 +48,13 @@ export function locateLayer(p: Project, id: Uuid): [number, number] | null {
  *  make the composition shorter than its own content. Identity for frame-aligned
  *  content, which is every visual layer and all audio at the six rates where the
  *  frame lattice is an exact sublattice of the sample lattice. */
-export function applyDurationAutofit(p: Project): void {
+export function applyDurationAutofit(c: Composition): void {
   let maxEnd = 0
-  for (const t of p.tracks) for (const l of t.layers) if (l.t_end_us > maxEnd) maxEnd = l.t_end_us
-  const grid = frameGrid(p.composition.fps)
+  for (const t of c.tracks) for (const l of t.layers) if (l.t_end_us > maxEnd) maxEnd = l.t_end_us
+  const grid = frameGrid(c.fps)
   const fitted = maxEnd > 0 ? snapUpOnGrid(maxEnd, grid) : 0
-  if (p.composition.duration_pinned) { if (fitted > p.composition.duration_us) p.composition.duration_us = fitted }
-  else p.composition.duration_us = fitted
+  if (c.duration_pinned) { if (fitted > c.duration_us) c.duration_us = fitted }
+  else c.duration_us = fitted
 }
 
 /** A track disappears when its last layer leaves it (ADR 0042). The one prune,
@@ -48,12 +68,12 @@ export function applyDurationAutofit(p: Project): void {
  *  locking is the user pinning a row, and cleanup does not out-rank that.
  *
  *  Returns the removed track id, so a caller can report what went with the edit. */
-export function pruneEmptiedTrack(p: Project, trackId: Uuid): Uuid | null {
-  const idx = p.tracks.findIndex((t) => t.id === trackId)
+export function pruneEmptiedTrack(c: Composition, trackId: Uuid): Uuid | null {
+  const idx = c.tracks.findIndex((t) => t.id === trackId)
   if (idx < 0) return null
-  const t = p.tracks[idx]
+  const t = c.tracks[idx]
   if (t.layers.length !== 0 || !t.transient || t.locked) return null
-  p.tracks.splice(idx, 1)
+  c.tracks.splice(idx, 1)
   return trackId
 }
 
@@ -70,8 +90,8 @@ export function pruneEmptiedTrack(p: Project, trackId: Uuid): Uuid | null {
  *  and a locked lane must not receive content any more than it may lose it —
  *  the renderer's drop placement already refuses locked lanes for the same
  *  reason. */
-export function pickFreeOverlayTrack(p: Project, t0: number, t1: number): Uuid | null {
-  const tracks = [...p.tracks].reverse()
+export function pickFreeOverlayTrack(c: Composition, t0: number, t1: number): Uuid | null {
+  const tracks = [...c.tracks].reverse()
   for (const t of tracks) {
     if (t.role !== null || t.locked) continue
     const free = t.layers.every((l) => !(t0 < l.t_end_us && l.t_start_us < t1))
@@ -81,13 +101,13 @@ export function pickFreeOverlayTrack(p: Project, t0: number, t1: number): Uuid |
 }
 
 /** Remove a layer from every link; auto-dissolve below 2. */
-export function dropLayerFromLinks(p: Project, layerId: Uuid): void {
+export function dropLayerFromLinks(c: Composition, layerId: Uuid): void {
   let i = 0
-  while (i < p.links.length) {
-    const g = p.links[i]
+  while (i < c.links.length) {
+    const g = c.links[i]
     if (g.members.includes(layerId)) {
       g.members = g.members.filter((m) => m !== layerId)
-      if (g.members.length < 2) { p.links.splice(i, 1); continue }
+      if (g.members.length < 2) { c.links.splice(i, 1); continue }
     }
     i++
   }
@@ -95,9 +115,10 @@ export function dropLayerFromLinks(p: Project, layerId: Uuid): void {
 
 /** Locked-track guard; missing layer → LayerNotFound. */
 export function checkTrackLock(p: Project, id: Uuid): void {
-  const loc = locateLayer(p, id)
+  const c = rootComposition(p)
+  const loc = locateLayerIn(c, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
-  const track = p.tracks[loc[0]]
+  const track = c.tracks[loc[0]]
   if (track.locked) throw new CommandFailure({ error: 'TrackLocked', track: track.id })
 }
 
