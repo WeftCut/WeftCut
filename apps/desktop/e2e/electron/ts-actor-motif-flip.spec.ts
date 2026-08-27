@@ -91,10 +91,12 @@ test('TS actor: MCP add_motif returns the layer id + the summary reflects a Moti
 
       // The `project://current` state view (served by the TS MCP host) reflects a Motif layer.
       const after = await client.readResource({ uri: 'project://current' })
+      // The raw project: the root timeline lives under `compositions[root_id]`.
+      type WireTrack = { layers: Array<{ id: string; params: { kind: string; motif_id?: string } }> }
       const proj = JSON.parse((after.contents[0] as { text: string }).text) as {
-        tracks: Array<{ layers: Array<{ id: string; params: { kind: string; motif_id?: string } }> }>
+        root_id: string; compositions: Record<string, { tracks: WireTrack[] }>
       }
-      const motifs = proj.tracks.flatMap((t) => t.layers).filter((l) => l.params.kind === 'Motif')
+      const motifs = proj.compositions[proj.root_id]!.tracks.flatMap((t) => t.layers).filter((l) => l.params.kind === 'Motif')
       expect(motifs.length).toBe(1)
       expect(motifs[0]!.params.motif_id ?? 'countdown').toBe('countdown')
       // The returned text is the LAYER id, present in the project.
