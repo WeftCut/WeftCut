@@ -4,6 +4,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+/// Type-only, so Playwright's transform erases it: the stall probe reads the
+/// renderer's `ExportState` mirror field by field (labels, progress.frame,
+/// step), and a rename there must fail HERE at type-check time rather than
+/// freeze a cursor and surface as a STALLED export one budget later.
+import type { ExportState } from '../../../src/renderer/panels/ExportPanel'
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /// Built Electron main entry. Helpers live at e2e/electron/helpers; the build
 /// output is apps/desktop/out/main/index.js → three levels up.
@@ -511,13 +517,7 @@ async function sampleExport(page: Page): Promise<ExportCursor | 'no-answer'> {
       page.evaluate((): ExportCursor => {
         const w = window as unknown as {
           __e2eExportDone?: { ok: boolean; error?: string } | null
-          __weftcutExportState?:
-            | { kind: 'starting' }
-            | { kind: 'preparing'; labels?: string[] }
-            | { kind: 'progress'; progress?: { frame?: number } }
-            | { kind: 'finalizing'; step?: string }
-            | { kind: 'complete' | 'error' }
-            | null
+          __weftcutExportState?: ExportState | null
         }
         const done = w.__e2eExportDone ?? null
         if (done) return { phase: 'pending', cursor: 'done', done }
@@ -526,11 +526,11 @@ async function sampleExport(page: Page): Promise<ExportCursor | 'no-answer'> {
           case 'starting':
             return { phase: 'starting', cursor: 'starting', done: null }
           case 'preparing':
-            return { phase: 'preparing', cursor: (s.labels ?? []).join('|'), done: null }
+            return { phase: 'preparing', cursor: s.labels.join('|'), done: null }
           case 'progress':
-            return { phase: 'progress', cursor: 'f' + String(s.progress?.frame ?? -1), done: null }
+            return { phase: 'progress', cursor: 'f' + String(s.progress.frame), done: null }
           case 'finalizing':
-            return { phase: 'finalizing', cursor: s.step ?? '?', done: null }
+            return { phase: 'finalizing', cursor: s.step, done: null }
           default:
             // null, or a PREVIOUS run's complete/error still on the mirror.
             return { phase: 'pending', cursor: 'pending', done: null }
@@ -646,7 +646,12 @@ async function awaitExportByLiveness(
       }
     } else {
       unresponsiveSince = null
-      if (sample.done) return sample.done
+      if (sample.done) {
+        if (process.env.WEFTCUT_E2E_EXPORT_TRACE === '1') {
+          console.log(`[e2e] export ${sample.done.ok ? 'done' : 'FAILED'} at +${secs(now - startedAt)}s`)
+        }
+        return sample.done
+      }
       if (sample.phase !== phase || sample.cursor !== cursor) {
         // Trace PHASE changes only — the cursor ticks once per encoded frame,
         // which would bury the timeline in its own noise.
