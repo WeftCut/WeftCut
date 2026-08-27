@@ -312,7 +312,17 @@ export function App({ onCloseProject }: AppProps) {
   // becomes null) does NOT collapse — the user might still want to peek
   // back at that hidden layer's track. Only an active selection on a
   // foreign track clears the reveal.
+  //
+  // A CHANGE of primary is the trigger, not its standing value: a reveal that
+  // selects nothing (`revealTrackWithoutSelection` — the timeline's
+  // hidden-member badge, a history row for an added track) must survive a
+  // selection that already sat on another lane, or it collapses in the same
+  // tick it opened.
+  const lastPrimaryForRevealRef = useRef<string | null>(primaryLayerId);
   useEffect(() => {
+    const primaryChanged = lastPrimaryForRevealRef.current !== primaryLayerId;
+    lastPrimaryForRevealRef.current = primaryLayerId;
+    if (!primaryChanged) return;
     if (revealedTrackId === null || primaryLayerId === null) return;
     const owner = (summary?.tracks ?? []).find((t) =>
       t.layers.some((l) => l.id === primaryLayerId),

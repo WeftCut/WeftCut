@@ -8,6 +8,8 @@ import {
   formatRulerLabel,
   linkHue,
   indexLinks,
+  indexLinkTabs,
+  linkHullRect,
   keyframeAbsoluteX,
   keyframeHitTest,
   keyframeXWithinClip,
@@ -234,6 +236,116 @@ describe("indexLinks", () => {
     expect(idx.get("a")).toBe("g1");
     expect(idx.get("b")).toBe("g1");
     expect(idx.get("c")).toBeUndefined();
+  });
+});
+
+describe("indexLinkTabs", () => {
+  const video = layer({ id: "V", kind: "VideoClip", t_start_us: 1_000_000 });
+  const audio = layer({
+    id: "A",
+    kind: "Audio",
+    t_start_us: 1_000_000,
+    params: { kind: "Audio" } as LayerSummary["params"],
+  });
+  const overlay = layer({ id: "O", t_start_us: 3_000_000 });
+  // Visual order: `top` above `combined` above `bottom`.
+  const bottom = track({ id: "bottom", role: "a-roll", layers: [video, audio] });
+  const combined = track({ id: "mid", role: "b-roll", layers: [overlay] });
+  const hiddenLane = track({ id: "hidden", role: null, layers: [] });
+  const link = { id: "L", label: "Pair", layer_ids: ["A", "V", "O"] };
+
+  it("anchors on the top-most rendered member and names no other member", () => {
+    const tabs = indexLinkTabs([link], [combined, bottom], [combined, bottom]);
+    expect([...tabs.keys()]).toEqual(["O"]);
+    expect(tabs.get("O")).toEqual({ linkId: "L", label: "Pair", hidden: [] });
+  });
+
+  it("inside one combined row the visual half anchors over the audio half", () => {
+    const tabs = indexLinkTabs(
+      [{ ...link, layer_ids: ["A", "V"] }],
+      [bottom],
+      [bottom],
+    );
+    expect([...tabs.keys()]).toEqual(["V"]);
+  });
+
+  it("counts members whose lane is not rendered, in link order, with their lane for the reveal", () => {
+    const separated = track({ id: "hidden", role: null, layers: [audio] });
+    const visible = track({ id: "bottom", role: "a-roll", layers: [video] });
+    const tabs = indexLinkTabs(
+      [{ ...link, layer_ids: ["A", "V", "O"] }],
+      [visible],
+      [visible, separated, combined],
+    );
+    expect(tabs.get("V")).toEqual({
+      linkId: "L",
+      label: "Pair",
+      hidden: [
+        { layerId: "A", trackId: "hidden" },
+        { layerId: "O", trackId: "mid" },
+      ],
+    });
+  });
+
+  it("counts nothing when every lane is rendered, and skips a link with no rendered member", () => {
+    const all = [combined, bottom, hiddenLane];
+    expect(indexLinkTabs([link], all, all).get("O")?.hidden).toEqual([]);
+    expect(indexLinkTabs([link], [hiddenLane], all).size).toBe(0);
+  });
+
+  it("does not count a member that is in no lane at all", () => {
+    const tabs = indexLinkTabs(
+      [{ ...link, layer_ids: ["V", "gone"] }],
+      [bottom],
+      [bottom],
+    );
+    expect(tabs.get("V")?.hidden).toEqual([]);
+  });
+});
+
+describe("linkHullRect", () => {
+  const rows = [
+    { trackId: "top", top: 0, bottom: 56 },
+    // A 72 px sub-lane strip sits between `top` and `low`: measured, not
+    // tabulated, so the hull's bottom edge lands on `low` itself.
+    { trackId: "low", top: 128, bottom: 184 },
+  ];
+  // Exactly representable, so the products can be compared with `toEqual`.
+  const pxPerUs = 0.5;
+
+  it("spans min start to max end and top-most to bottom-most rendered lane", () => {
+    const rect = linkHullRect(
+      [
+        { tStartUs: 100, tEndUs: 300, trackId: "top" },
+        { tStartUs: 200, tEndUs: 400, trackId: "low" },
+      ],
+      rows,
+      pxPerUs,
+    );
+    expect(rect).toEqual({ x: 50, width: 150, top: 0, bottom: 184 });
+  });
+
+  it("collapses to one row when only one member's lane is rendered, keeping the whole time span", () => {
+    const rect = linkHullRect(
+      [
+        { tStartUs: 100, tEndUs: 300, trackId: "top" },
+        { tStartUs: 0, tEndUs: 500, trackId: "filtered-out" },
+      ],
+      rows,
+      pxPerUs,
+    );
+    expect(rect).toEqual({ x: 0, width: 250, top: 0, bottom: 56 });
+  });
+
+  it("is null with no rendered member lane, and with no members", () => {
+    expect(
+      linkHullRect(
+        [{ tStartUs: 0, tEndUs: 1, trackId: "filtered-out" }],
+        rows,
+        pxPerUs,
+      ),
+    ).toBeNull();
+    expect(linkHullRect([], rows, pxPerUs)).toBeNull();
   });
 });
 

@@ -41,6 +41,7 @@ import { refusalText, tryMutate } from "../errors/tryMutate";
 import { getGizmoProbe } from "../preview/gizmoProbeRegistry";
 import { isShrunk, TEXT_BOX_MIN_PX } from "../render/textBox";
 import { InspectorAnimField } from "./InspectorAnimField";
+import { LinkLabelField } from "./LinkLabelField";
 import { ScaleFields } from "./ScaleFields";
 import { TEXT_BOX_MODES, textBoxModeOf, textBoxPatchFor, type TextBoxMode } from "./textBoxMode";
 import { useTextFit } from "./useTextFit";
@@ -181,15 +182,6 @@ function LayerPanel({
     layer.params.kind === "Audio"
       ? layer.params.media_label
       : null;
-  // Links created from the UI carry no label (Timeline passes `label: null`),
-  // so a `link.id` fallback rendered a raw uuid on every linked layer. Member
-  // count is the part a user can act on; a real name only arrives via MCP
-  // `links_rename`.
-  const linkLabel = link
-    ? link.label?.trim() ||
-      t("property_panel.link_of", { count: link.layer_ids.length })
-    : t("property_panel.link_none");
-
   const tInLayerUs = currentTimeUs - layer.t_start_us;
   const playheadInSpan = currentTimeUs >= layer.t_start_us && currentTimeUs < layer.t_end_us;
 
@@ -197,9 +189,12 @@ function LayerPanel({
     <>
       <div className="prop-identity">
         {mediaLabel ? <p className="prop-identity-title">{mediaLabel}</p> : null}
-        <p className="prop-identity-meta">
-          {kindLabel} · {trackLabel} · {linkLabel}
-        </p>
+        <LinkLabelField
+          kindLabel={kindLabel}
+          trackLabel={trackLabel}
+          link={link}
+          onMutated={onMutated}
+        />
       </div>
       {selectionCount > 1 ? (
         <p className="prop-primary-note">

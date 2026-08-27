@@ -1,17 +1,38 @@
 // Pure Playhead Panel list logic: which hidden-track layers sit near the playhead
-// (`buildPlayheadItems`), what category a layer falls into (`playheadCategory`),
-// and how the items split into the At-playhead stack vs the Nearby list
-// under the AB-mode filter (`splitPlayheadSections`).
+// (`buildPlayheadItems`, which also folds a link's listed members into one
+// entry), what category a layer falls into (`playheadCategory`), and how the
+// items split into the At-playhead stack vs the Nearby list under the AB-mode
+// filter (`splitPlayheadSections`).
 // Kept separate from presentation so it is unit-testable without a DOM.
 
 import { frameIndexRound } from "../frames";
-import type { LayerSummary, TrackSummary } from "../ipc";
+import type { LayerSummary, LinkSummary, TrackSummary } from "../ipc";
 import { trackDisplayName } from "../lib/trackName";
+import { indexLinks } from "../timeline/geometry";
 
 /// One row in the Playhead Panel. Carries enough state to render the row +
 /// drive selection / reveal on click.
+///
+/// A link whose members the panel lists is ONE item: `layer` (and every
+/// per-layer field beside it) is the member nearest the playhead, and
+/// `linkMembers` holds each member's own item. The nearest member stands in
+/// for the entry wherever a single layer is needed — the sort, the split, the
+/// click's reveal target, the restack anchor.
 export interface PlayheadItem {
   layer: LayerSummary;
+  /// The link `layer` belongs to, or null. Set on every linked row — the
+  /// folded entry and each member under it — because the accent stripe is a
+  /// property of the row, not of the fold.
+  linkId: string | null;
+  linkLabel: string | null;
+  /// `LinkSummary.layer_ids.length`: the N of the row's `×N` glyph. Counts
+  /// members on lanes the panel does not list too — the glyph names the
+  /// link's size, which does not change when the playhead moves.
+  linkSize: number;
+  /// A folded entry's members, nearest the playhead first (`layer` is
+  /// `linkMembers[0].layer`). Empty on an unlinked row, on a member row, and
+  /// on a linked row whose other members the panel does not list.
+  linkMembers: PlayheadItem[];
   trackId: string;
   /// The name the track's own header shows (`lib/trackName.ts`), already
   /// resolved — one lane has one name everywhere.
@@ -38,14 +59,22 @@ export interface PlayheadItem {
 /// `t` is injected rather than imported so this module stays DOM- and
 /// i18n-instance-free; the label it resolves has to be built here because the
 /// item order breaks its ties on the track name.
+///
+/// Folding is confined to what the panel already lists: a link's members on
+/// role-carrying (visible) lanes are the timeline's business, so a link with
+/// one member here and one on screen stays a single linked row — accent and
+/// glyph, no fold.
 export function buildPlayheadItems(
   tracks: TrackSummary[],
   currentTimeUs: number,
   deltaUs: number,
   t: (key: string, values: Record<string, unknown>) => string,
+  links: LinkSummary[] = [],
 ): PlayheadItem[] {
   const lo = currentTimeUs - deltaUs;
   const hi = currentTimeUs + deltaUs;
+  const linkOfLayer = indexLinks(links);
+  const linkById = new Map(links.map((link) => [link.id, link]));
   const items: PlayheadItem[] = [];
   for (const [trackIndex, track] of tracks.entries()) {
     if (track.role !== null) continue;
@@ -58,8 +87,13 @@ export function buildPlayheadItems(
         : layer.t_start_us > currentTimeUs
           ? layer.t_start_us - currentTimeUs
           : layer.t_end_us - currentTimeUs;
+      const link = linkById.get(linkOfLayer.get(layer.id) ?? "");
       items.push({
         layer,
+        linkId: link?.id ?? null,
+        linkLabel: link?.label ?? null,
+        linkSize: link?.layer_ids.length ?? 0,
+        linkMembers: [],
         trackId: track.id,
         trackLabel: trackDisplayName(track, tracks, t),
         trackKind: track.kind,
@@ -70,10 +104,11 @@ export function buildPlayheadItems(
       });
     }
   }
+  const folded = foldLinks(items);
   // Order: spanning items first (the playing stack bubbles up), then
   // chronologically by t_start. Equal t_start ties break by track label
   // (stable enough).
-  items.sort((a, b) => {
+  folded.sort((a, b) => {
     if (a.spansPlayhead !== b.spansPlayhead) {
       return a.spansPlayhead ? -1 : 1;
     }
@@ -82,7 +117,48 @@ export function buildPlayheadItems(
     }
     return a.trackLabel.localeCompare(b.trackLabel);
   });
-  return items;
+  return folded;
+}
+
+/// Replace every set of two or more items sharing a `linkId` with one entry
+/// standing on the member nearest the playhead. Everything else — unlinked
+/// rows and a link's lone listed member — passes through untouched.
+function foldLinks(items: PlayheadItem[]): PlayheadItem[] {
+  const byLink = new Map<string, PlayheadItem[]>();
+  const out: PlayheadItem[] = [];
+  for (const item of items) {
+    if (item.linkId === null) {
+      out.push(item);
+      continue;
+    }
+    const members = byLink.get(item.linkId);
+    if (members) members.push(item);
+    else byLink.set(item.linkId, [item]);
+  }
+  for (const members of byLink.values()) {
+    if (members.length === 1) {
+      out.push(members[0]!);
+      continue;
+    }
+    members.sort(compareProximity);
+    out.push({ ...members[0]!, linkMembers: members });
+  }
+  return out;
+}
+
+/// Nearest the playhead first. Equal distances (the A/V pair, cut together)
+/// resolve to a visual member over an audio one, then top-of-stack first:
+/// the fold then lands in the reorderable visual stack with a thumbnail,
+/// where the audio member's row would have sunk gripless to the tail.
+function compareProximity(a: PlayheadItem, b: PlayheadItem): number {
+  if (a.spansPlayhead !== b.spansPlayhead) return a.spansPlayhead ? -1 : 1;
+  const byDistance = Math.abs(a.offsetUs) - Math.abs(b.offsetUs);
+  if (byDistance !== 0) return byDistance;
+  const aAudio = playheadCategory(a.layer.params.kind) === "audio";
+  const bAudio = playheadCategory(b.layer.params.kind) === "audio";
+  if (aAudio !== bAudio) return aAudio ? 1 : -1;
+  if (a.trackIndex !== b.trackIndex) return b.trackIndex - a.trackIndex;
+  return a.trackLabel.localeCompare(b.trackLabel);
 }
 
 /// The ±Δ window values the Panel offers, roughly doubling across the clamp
@@ -260,6 +336,10 @@ export interface PlayheadSections {
 /// (same-class layers on one track cannot overlap in time), so the
 /// descending-index sort is total for the rows it orders. Spanning audio
 /// keeps its input order at the tail.
+///
+/// A folded link is one item and is routed by its nearest member, but it
+/// passes the filter when ANY member's kind is checked: the Audio chip must
+/// still surface the A/V pair whose video half happens to stand in front.
 export function splitPlayheadSections(
   items: PlayheadItem[],
   filter: ReadonlySet<PlayheadCategory>,
@@ -267,11 +347,10 @@ export function splitPlayheadSections(
   const visual: PlayheadItem[] = [];
   const audio: PlayheadItem[] = [];
   const nearby: PlayheadItem[] = [];
+  const passes = (item: PlayheadItem) =>
+    filter.has(playheadCategory(item.layer.params.kind));
   for (const item of items) {
-    if (
-      filter.size > 0 &&
-      !filter.has(playheadCategory(item.layer.params.kind))
-    ) {
+    if (filter.size > 0 && !passes(item) && !item.linkMembers.some(passes)) {
       continue;
     }
     if (!item.spansPlayhead) {

@@ -10,7 +10,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../i18n";
-import type { LayerSummary, TrackSummary } from "../ipc";
+import type { LayerSummary, LinkSummary, TrackSummary } from "../ipc";
 
 // `deltaWindowUs` is mutable so the ±Δ dial's tests can assert what a
 // non-preset value does without reaching for the real store.
@@ -38,6 +38,22 @@ vi.mock("./MediaThumbnail", () => ({
   MediaThumbnail: () => <span>thumbnail</span>,
 }));
 
+// The link actions commit straight through IPC (the `project:changed` bridge
+// refreshes the summary), so the panel test observes the IPC calls themselves.
+const ipcMocks = vi.hoisted(() => ({
+  linksRename: vi.fn(async () => {}),
+  linksDissolve: vi.fn(async () => {}),
+}));
+
+vi.mock("../ipc", async (importActual) => {
+  const actual = await importActual<typeof import("../ipc")>();
+  return {
+    ...actual,
+    linksRename: ipcMocks.linksRename,
+    linksDissolve: ipcMocks.linksDissolve,
+  };
+});
+
 import { PlayheadPanel } from "./PlayheadPanel";
 
 // jsdom has no PointerEvent constructor; MouseEvent carries the same client
@@ -48,6 +64,8 @@ beforeEach(() => {
   settings.displayMode = "AbRoll";
   settings.deltaWindowUs = 5_000_000;
   settings.setAppSettings.mockClear();
+  ipcMocks.linksRename.mockClear();
+  ipcMocks.linksDissolve.mockClear();
   playhead.timeUs = 1_000_000;
 });
 
@@ -141,11 +159,13 @@ function renderPanel(
       position: "above" | "below",
     ) => void;
   } = {},
+  links: LinkSummary[] = [],
 ) {
   const onPick = handlers.onPick ?? vi.fn();
   const { container, rerender } = render(
     <PlayheadPanel
       tracks={tracks}
+      links={links}
       selectedLayerId={null}
       fpsNum={30}
       fpsDen={1}
@@ -159,6 +179,7 @@ function renderPanel(
     rerender(
       <PlayheadPanel
         tracks={tracks}
+        links={links}
         selectedLayerId={null}
         fpsNum={30}
         fpsDen={1}
@@ -185,6 +206,7 @@ describe("PlayheadPanel", () => {
     const { container } = render(
       <PlayheadPanel
         tracks={[nearbyTrack()]}
+        links={[]}
         selectedLayerId={null}
         fpsNum={30}
         fpsDen={1}
@@ -205,6 +227,7 @@ describe("PlayheadPanel", () => {
     const { container } = render(
       <PlayheadPanel
         tracks={[]}
+        links={[]}
         selectedLayerId={null}
         fpsNum={30}
         fpsDen={1}
@@ -219,6 +242,7 @@ describe("PlayheadPanel", () => {
     render(
       <PlayheadPanel
         tracks={[]}
+        links={[]}
         selectedLayerId={null}
         fpsNum={30}
         fpsDen={1}
@@ -236,6 +260,7 @@ describe("PlayheadPanel", () => {
     const { container, rerender } = render(
       <PlayheadPanel
         tracks={[nearbyTrack()]}
+        links={[]}
         selectedLayerId={null}
         fpsNum={30}
         fpsDen={1}
@@ -248,6 +273,7 @@ describe("PlayheadPanel", () => {
     rerender(
       <PlayheadPanel
         tracks={[nearbyTrack()]}
+        links={[]}
         selectedLayerId={null}
         fpsNum={30}
         fpsDen={1}
@@ -306,6 +332,7 @@ describe("PlayheadPanel", () => {
       render(
         <PlayheadPanel
           tracks={[]}
+          links={[]}
           selectedLayerId={null}
           fpsNum={30}
           fpsDen={1}
@@ -1064,5 +1091,208 @@ describe("PlayheadPanel row context menu", () => {
     fireEvent.click(screen.getByTitle("Caption"));
     expect(onPick).toHaveBeenCalledWith("l-cap", "t-cap");
     expect(screen.getByLabelText("Drag to restack Caption")).toBeTruthy();
+  });
+});
+
+describe("PlayheadPanel folded link rows", () => {
+  // Playhead at 1s. Cam (video) and Cam audio are cut together and linked;
+  // Wash is an unlinked layer under them. Both link members span the
+  // playhead, so the fold stands on the visual one (Cam) and sits in the
+  // visual stack above Wash.
+  const LINK = { id: "link-1", label: null, layer_ids: ["l-v", "l-a"] };
+  function linkedTracks(): TrackSummary[] {
+    return [
+      makeTrack("t-wash", "Wash lane", "Video", [
+        makeLayer("l-wash", "Wash", "Color", 0, 2_000_000),
+      ]),
+      makeTrack("t-v", "Cam lane", "Video", [
+        makeLayer("l-v", "Cam", "VideoClip", 500_000, 1_500_000),
+      ]),
+      makeTrack("t-a", "Cam audio lane", "Audio", [
+        makeLayer("l-a", "Cam audio", "Audio", 500_000, 1_500_000),
+      ]),
+    ];
+  }
+
+  function openMenuOn(title: string): HTMLElement {
+    fireEvent.contextMenu(screen.getByTitle(title), { clientX: 40, clientY: 40 });
+    return screen.getByRole("menu");
+  }
+
+  it("folds two linked members into one row wearing ×2 and the link accent", () => {
+    renderPanel(linkedTracks(), { onRestack: vi.fn() }, [LINK]);
+
+    expect(screen.getAllByTitle("Cam")).toHaveLength(1);
+    expect(screen.queryByTitle("Cam audio")).toBeNull();
+    expect(screen.getByTestId("playhead-row-link-count").textContent).toBe("×2");
+    const li = screen.getByTitle("Cam").closest("li")!;
+    expect(li.getAttribute("data-link-id")).toBe("link-1");
+    expect(li.querySelector<HTMLElement>(".playhead-item-row")!.style.boxShadow).toContain(
+      "inset 2px 0 0",
+    );
+    // The unlinked neighbour carries neither.
+    const wash = screen.getByTitle("Wash").closest("li")!;
+    expect(wash.getAttribute("data-link-id")).toBeNull();
+    expect(wash.querySelector("[data-testid='playhead-row-link-count']")).toBeNull();
+  });
+
+  it("prints the link's label on the fold when it has one, the nearest member's name otherwise", () => {
+    renderPanel(linkedTracks(), {}, [{ ...LINK, label: "Interview" }]);
+    expect(screen.getByTitle("Interview")).toBeTruthy();
+    expect(screen.queryByTitle("Cam")).toBeNull();
+  });
+
+  it("expanding lists the members as indented rows; collapsing hides them again", () => {
+    renderPanel(linkedTracks(), {}, [LINK]);
+    const expand = screen.getByTestId("playhead-row-expand");
+    expect(expand.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelectorAll(".playhead-row--member")).toHaveLength(0);
+
+    fireEvent.click(expand);
+    const members = Array.from(document.querySelectorAll(".playhead-row--member"));
+    expect(members).toHaveLength(2);
+    expect(
+      members.map((m) => m.querySelector(".playhead-item")!.getAttribute("title")),
+    ).toEqual(["Cam", "Cam audio"]);
+    expect(screen.getByTestId("playhead-row-expand").getAttribute("aria-expanded")).toBe(
+      "true",
+    );
+    // Members carry the accent, not the count — the fold above them does.
+    expect(screen.getAllByTestId("playhead-row-link-count")).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId("playhead-row-expand"));
+    expect(document.querySelectorAll(".playhead-row--member")).toHaveLength(0);
+  });
+
+  it("clicking the fold picks the nearest member; clicking a member picks that member alone", () => {
+    const { onPick } = renderPanel(linkedTracks(), {}, [LINK]);
+
+    fireEvent.click(screen.getByTitle("Cam"));
+    expect(onPick).toHaveBeenLastCalledWith("l-v", "t-v");
+
+    fireEvent.click(screen.getByTestId("playhead-row-expand"));
+    const audioMember = document
+      .querySelectorAll(".playhead-row--member")[1]!
+      .querySelector(".playhead-item")!;
+    fireEvent.click(audioMember);
+    expect(onPick).toHaveBeenLastCalledWith("l-a", "t-a");
+  });
+
+  it("stacks one thumbnail per member with media", () => {
+    const withMedia = (layer: LayerSummary, mediaId: string): LayerSummary => ({
+      ...layer,
+      params: { kind: "VideoClip", media_id: mediaId } as LayerSummary["params"],
+    });
+    const tracks = [
+      makeTrack("t-a", "A lane", "Video", [
+        withMedia(makeLayer("l-a", "A", "VideoClip", 500_000, 1_500_000), "m-a"),
+      ]),
+      makeTrack("t-b", "B lane", "Video", [
+        withMedia(makeLayer("l-b", "B", "VideoClip", 500_000, 1_500_000), "m-b"),
+      ]),
+    ];
+    renderPanel(tracks, {}, [{ id: "link-2", label: null, layer_ids: ["l-a", "l-b"] }]);
+
+    expect(screen.getAllByText("thumbnail")).toHaveLength(2);
+  });
+
+  it("the fold's context menu offers Rename link… and Unlink beside the ordering items", () => {
+    renderPanel(linkedTracks(), { onRestack: vi.fn() }, [LINK]);
+    const menu = openMenuOn("Cam");
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((el) => el.textContent),
+    ).toEqual([
+      "Bring forward",
+      "Send backward",
+      "Bring to front",
+      "Send to back",
+      "Rename link…",
+      "Unlink",
+    ]);
+  });
+
+  it("a fold outside the visual stack opens a link-only menu", () => {
+    // Both members strictly in the future → the fold lands in Nearby, where
+    // no row has ordering items; the link's own actions still apply.
+    const tracks = [
+      makeTrack("t-v", "Cam lane", "Video", [
+        makeLayer("l-v", "Cam", "VideoClip", 2_000_000, 3_000_000),
+      ]),
+      makeTrack("t-a", "Cam audio lane", "Audio", [
+        makeLayer("l-a", "Cam audio", "Audio", 2_000_000, 3_000_000),
+      ]),
+    ];
+    renderPanel(tracks, {}, [LINK]);
+    const menu = openMenuOn("Cam");
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((el) => el.textContent),
+    ).toEqual(["Rename link…", "Unlink"]);
+  });
+
+  it("Unlink dissolves the link through IPC", async () => {
+    const user = userEvent.setup();
+    renderPanel(linkedTracks(), {}, [LINK]);
+    openMenuOn("Cam");
+
+    await user.click(screen.getByRole("menuitem", { name: "Unlink" }));
+
+    expect(ipcMocks.linksDissolve).toHaveBeenCalledTimes(1);
+    expect(ipcMocks.linksDissolve).toHaveBeenCalledWith("link-1");
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("Rename link… opens the inline editor; Enter commits the label through IPC", async () => {
+    const user = userEvent.setup();
+    const onRename = vi.fn();
+    renderPanel(linkedTracks(), { onRename }, [LINK]);
+    openMenuOn("Cam");
+
+    await user.click(screen.getByRole("menuitem", { name: "Rename link…" }));
+    const input = screen.getByLabelText("Rename Cam");
+    fireEvent.change(input, { target: { value: "Interview" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(ipcMocks.linksRename).toHaveBeenCalledWith("link-1", "Interview");
+    // The link was renamed, not the member standing in for it.
+    expect(onRename).not.toHaveBeenCalled();
+  });
+
+  it("an emptied link label commits as null; Escape commits nothing", () => {
+    renderPanel(linkedTracks(), {}, [{ ...LINK, label: "Interview" }]);
+
+    fireEvent.doubleClick(screen.getByTitle("Interview"));
+    let input = screen.getByLabelText("Rename Interview");
+    fireEvent.change(input, { target: { value: "Renamed" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(ipcMocks.linksRename).not.toHaveBeenCalled();
+
+    fireEvent.doubleClick(screen.getByTitle("Interview"));
+    input = screen.getByLabelText("Rename Interview");
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(ipcMocks.linksRename).toHaveBeenCalledWith("link-1", null);
+  });
+
+  it("a link's lone listed member keeps its own row, marked with the accent and ×2", () => {
+    // The audio member sits on a role-carrying lane the panel never lists.
+    const tracks = linkedTracks();
+    tracks[2] = { ...tracks[2]!, role: "dialogue" as TrackSummary["role"] };
+    const onRename = vi.fn();
+    renderPanel(tracks, { onRename }, [LINK]);
+
+    expect(screen.getByTitle("Cam")).toBeTruthy();
+    expect(screen.getByTestId("playhead-row-link-count").textContent).toBe("×2");
+    expect(screen.queryByTestId("playhead-row-expand")).toBeNull();
+    // Not a fold: double-click renames the layer, as on any plain row.
+    fireEvent.doubleClick(screen.getByTitle("Cam"));
+    const input = screen.getByLabelText("Rename Cam");
+    fireEvent.change(input, { target: { value: "Cam 2" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onRename).toHaveBeenCalledWith("l-v", "Cam 2");
+    expect(ipcMocks.linksRename).not.toHaveBeenCalled();
   });
 });

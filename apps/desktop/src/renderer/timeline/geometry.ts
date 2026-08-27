@@ -302,6 +302,139 @@ export function indexLinks(links: LinkSummary[]): Map<string, string> {
   return idx;
 }
 
+/// A member of a link whose lane is not rendered — the reveal target the
+/// hidden-member badge cycles through.
+export interface HiddenLinkMember {
+  layerId: string;
+  trackId: string;
+}
+
+/// What a link draws at its one on-clip anchor: the label tab and the count of
+/// members the display filter hides. `LayerBlock` receives it only on the
+/// anchor member; every other member gets null.
+export interface LinkTab {
+  linkId: string;
+  label: string | null;
+  /// In link order, so "reveal the first hidden member" is stable across
+  /// re-renders. Empty in All Tracks display by construction.
+  hidden: HiddenLinkMember[];
+}
+
+/// The anchor member of every link — keyed by that member's layer id — for the
+/// lanes actually rendered.
+///
+/// One anchor per link, its TOP-MOST rendered member: lowest visual row, and
+/// inside a combined row the visual half over the audio half, then the earlier
+/// clip. A labelled link is named once rather than once per member, and the
+/// badge that counts filtered-out members sits where the eye lands first.
+///
+/// `visibleTracks` is the rendered lane list in visual order (top row first),
+/// so the A/B Roll filter is honoured structurally: a member whose lane is not
+/// in it is `hidden`, and revealing that lane moves the member out of the
+/// count with no second copy of the filter here. `allTracks` only resolves a
+/// hidden member's lane for the reveal. A link with no rendered member has no
+/// anchor and draws nothing.
+export function indexLinkTabs(
+  links: readonly LinkSummary[],
+  visibleTracks: readonly TrackSummary[],
+  allTracks: readonly TrackSummary[],
+): Map<string, LinkTab> {
+  const visibleTrackIds = new Set(visibleTracks.map((track) => track.id));
+  const trackIdByLayerId = new Map<string, string>();
+  for (const track of allTracks) {
+    for (const layer of track.layers) trackIdByLayerId.set(layer.id, track.id);
+  }
+  // Rank of every rendered layer: row first, visual half before audio half,
+  // then start time. Lower ranks anchor.
+  const rank = new Map<string, [number, number, number]>();
+  visibleTracks.forEach((track, row) => {
+    for (const layer of track.layers) {
+      rank.set(layer.id, [
+        row,
+        layerOverlapClass(layer) === "visual" ? 0 : 1,
+        layer.t_start_us,
+      ]);
+    }
+  });
+  const before = (a: [number, number, number], b: [number, number, number]) =>
+    a[0] !== b[0] ? a[0] < b[0] : a[1] !== b[1] ? a[1] < b[1] : a[2] < b[2];
+
+  const out = new Map<string, LinkTab>();
+  for (const link of links) {
+    let anchorId: string | null = null;
+    let anchorRank: [number, number, number] | null = null;
+    const hidden: HiddenLinkMember[] = [];
+    for (const layerId of link.layer_ids) {
+      const r = rank.get(layerId);
+      if (r !== undefined) {
+        if (anchorRank === null || before(r, anchorRank)) {
+          anchorId = layerId;
+          anchorRank = r;
+        }
+        continue;
+      }
+      const trackId = trackIdByLayerId.get(layerId);
+      // A member with no lane at all is not hidden, it is gone — a stale link
+      // the next summary prunes.
+      if (trackId !== undefined && !visibleTrackIds.has(trackId)) {
+        hidden.push({ layerId, trackId });
+      }
+    }
+    if (anchorId === null) continue;
+    out.set(anchorId, { linkId: link.id, label: link.label, hidden });
+  }
+  return out;
+}
+
+/// The hull's canvas-relative box. `x`/`width` span the whole link in time,
+/// `top`/`bottom` the rendered member lanes only.
+export interface LinkHullRect {
+  x: number;
+  width: number;
+  top: number;
+  bottom: number;
+}
+
+/// One rectangle around a link: `min t_start → max t_end` over EVERY member —
+/// hidden ones included, so the rails say how far the link reaches even when a
+/// lane is filtered out — and top-most → bottom-most rendered member lane.
+///
+/// `laneRects` are MEASURED (`getBoundingClientRect`, canvas-relative), never
+/// an arithmetic table of track heights — `trackIdAtClientY`'s LANDMINE applies
+/// verbatim: an expanded track's keyframe sub-lanes sit between its lane and
+/// the next, so a table puts the hull's bottom edge a row above the member it
+/// should enclose. A lane a member sits on but that was not measured is not
+/// rendered and contributes nothing; with one rendered member the hull
+/// collapses to that member's row and still draws. Null when no member lane
+/// is rendered.
+export function linkHullRect(
+  members: readonly { tStartUs: number; tEndUs: number; trackId: string }[],
+  laneRects: readonly MeasuredTrackRow[],
+  pxPerUs: number,
+): LinkHullRect | null {
+  if (members.length === 0) return null;
+  const rowByTrackId = new Map(laneRects.map((row) => [row.trackId, row]));
+  let top = Infinity;
+  let bottom = -Infinity;
+  let startUs = Infinity;
+  let endUs = -Infinity;
+  for (const member of members) {
+    startUs = Math.min(startUs, member.tStartUs);
+    endUs = Math.max(endUs, member.tEndUs);
+    const row = rowByTrackId.get(member.trackId);
+    if (row === undefined) continue;
+    top = Math.min(top, row.top);
+    bottom = Math.max(bottom, row.bottom);
+  }
+  if (!Number.isFinite(top)) return null;
+  return {
+    x: startUs * pxPerUs,
+    width: Math.max(0, (endUs - startUs) * pxPerUs),
+    top,
+    bottom,
+  };
+}
+
 /// Map a layer-local keyframe time (µs) to an x offset (px) within a clip
 /// chip of `clipDurationUs` rendered `clipWidthPx` wide. Clamps out-of-range
 /// keyframes (kept in data after trims) to the clip bounds.

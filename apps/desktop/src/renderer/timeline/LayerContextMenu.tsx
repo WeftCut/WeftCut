@@ -67,9 +67,11 @@ export function LayerContextMenu({
   layerId,
   layerKind,
   layerEnabled,
+  linkId,
   transitionCut,
   onClose,
   onRename,
+  onRenameLink,
   onToggleEnabled,
   onSeparateAudio,
   onPrebakeNow,
@@ -80,9 +82,13 @@ export function LayerContextMenu({
   layerId: string;
   layerKind: string;
   layerEnabled: boolean;
+  /// The right-clicked layer's link, or null — gates the link rename row.
+  linkId: string | null;
   transitionCut: TransitionCut | null;
   onClose: () => void;
   onRename: (id: string) => void;
+  /// Opens the inline editor on the link's label tab (`renameStore`).
+  onRenameLink: (linkId: string) => void;
   onToggleEnabled: (id: string, enabled: boolean) => void;
   onSeparateAudio: (id: string) => void;
   onPrebakeNow: (id: string) => void;
@@ -133,6 +139,12 @@ export function LayerContextMenu({
               label={t("timeline.rename", { defaultValue: "Rename" })}
               onSelect={() => onRename(layerId)}
             />
+            {linkId !== null && (
+              <MenuItem
+                label={t("timeline.rename_link", { defaultValue: "Rename link…" })}
+                onSelect={() => onRenameLink(linkId)}
+              />
+            )}
             <MenuItem
               label={
                 layerEnabled

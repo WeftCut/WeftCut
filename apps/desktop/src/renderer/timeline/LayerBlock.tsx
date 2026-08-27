@@ -4,6 +4,7 @@ import {
   AudioWaveform,
   Film,
   Image as ImageIcon,
+  Link2,
   Palette,
   Sparkles,
   Type,
@@ -21,13 +22,21 @@ import {
   keyframeXWithinClip,
   layerSliceRect,
   type LayerSlice,
+  type LinkTab as LinkTabInfo,
 } from "./geometry";
 import { TimelineVisualPreview } from "./TimelineVisualPreview";
 import { useLayerBakePhase } from "./motifBakeStatusStore";
 import { formatSyncOffset } from "./audioSlip";
 import { useAudioSyncOffset } from "./audioSyncOffsetStore";
 import type { AnimTrack, LayerSummary } from "../ipc";
-import { useEditingLayerId, beginLayerRename, endRename } from "./renameStore";
+import {
+  useEditingLayerId,
+  useEditingLinkId,
+  beginLayerRename,
+  endRename,
+} from "./renameStore";
+import { hoverLink, unhoverLink } from "./linkHoverStore";
+import { revealTrackWithoutSelection } from "../state/navigation";
 import { useFocusedParamFor } from "../keyframe/focusStore";
 import { readParamTrack } from "../keyframe/descriptors";
 import { interpGlyphClass } from "../keyframe/curve";
@@ -88,6 +97,10 @@ export interface DragState extends DragSeed {
   subjects: DragSubject[];
   validity: PlacementValidity;
   conflictingLayerIds: string[];
+  /// Subjects on lanes the display filter hides. A move fans out to them with
+  /// nothing on screen to show it, so the dragged member's ghost carries this
+  /// count as a badge for the duration of the gesture.
+  hiddenSubjectCount: number;
 }
 
 export interface PendingLayerPlacement {
@@ -146,6 +159,122 @@ function AudioSyncBadge({ layerId }: { layerId: string }) {
   );
 }
 
+/// A link's chrome above its anchor member's top-left corner: the label tab
+/// when the link is named (or being named), and the `+N` badge when the display
+/// filter hides members. Both share one anchor so a labelled link with hidden
+/// members reads `label · +N`. Badge click reveals the first hidden member's
+/// lane and nothing else — revealing is not selecting, and because the reveal is
+/// single-lane the member revealed leaves the count, so a second click reaches
+/// the next one.
+///
+/// Every pointer event stops here: the tab sits inside the block, whose
+/// pointerdown selects and arms a drag, and a click meant for the badge must
+/// not become either.
+function LinkTab({
+  tab,
+  hue,
+  clipWidthPx,
+  hiddenCount,
+  isEditing,
+  onCommitLabel,
+}: {
+  tab: LinkTabInfo;
+  hue: number;
+  clipWidthPx: number;
+  /// The count to draw — the tab's own while idle, the drag's while this
+  /// member is the drag anchor.
+  hiddenCount: number;
+  isEditing: boolean;
+  onCommitLabel: (linkId: string, label: string | null) => void;
+}) {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (isEditing) {
+      setDraft(tab.label ?? "");
+      inputRef.current?.focus({ preventScroll: true });
+      inputRef.current?.select();
+    }
+  }, [isEditing, tab.label]);
+  const showTab = tab.label !== null || isEditing;
+  if (!showTab && hiddenCount === 0) return null;
+
+  const commit = () => {
+    const next = draft.trim() || null;
+    if (next !== tab.label) onCommitLabel(tab.linkId, next);
+    endRename();
+  };
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+  const badgeTitle = t("timeline.link_hidden_members", { count: hiddenCount });
+
+  return (
+    <div
+      data-testid="link-tab-anchor"
+      className="absolute left-0 bottom-full z-[4] flex max-w-full items-stretch gap-1 rounded-t px-1 py-0.5 text-[10px] font-semibold leading-none text-white"
+      style={{
+        maxWidth: clipWidthPx,
+        backgroundColor: `hsl(${hue} 75% 45%)`,
+      }}
+      onPointerDown={stop}
+      onClick={stop}
+      onDoubleClick={stop}
+      onContextMenu={stop}
+    >
+      {isEditing ? (
+        <AppInput
+          ref={inputRef}
+          className="z-[2]"
+          style={{ width: "8rem", maxWidth: "100%", height: "1rem", fontSize: 10 }}
+          value={draft}
+          ariaLabel={t("timeline.link_label")}
+          onValueChange={setDraft}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              endRename();
+            }
+          }}
+        />
+      ) : tab.label !== null ? (
+        <span
+          data-testid="link-tab"
+          className="overflow-hidden text-ellipsis whitespace-nowrap"
+          title={tab.label}
+        >
+          {tab.label}
+        </span>
+      ) : null}
+      {showTab && hiddenCount > 0 && !isEditing && (
+        <span aria-hidden="true" className="opacity-70">
+          ·
+        </span>
+      )}
+      {hiddenCount > 0 && !isEditing && (
+        <button
+          type="button"
+          data-testid="link-hidden-badge"
+          className="shrink-0 cursor-pointer rounded-sm bg-black/30 px-1 hover:bg-black/50"
+          title={badgeTitle}
+          aria-label={badgeTitle}
+          onClick={(e) => {
+            e.stopPropagation();
+            const first = tab.hidden[0];
+            if (first) revealTrackWithoutSelection(first.trackId);
+          }}
+        >
+          +{hiddenCount}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function shortLayerLabel(label: string): string {
   const clean = label.trim();
   if (clean.length <= 12) return clean;
@@ -181,6 +310,7 @@ export function LayerBlock({
   isPrimary,
   isSelected,
   linkId,
+  linkTab,
   dragState,
   pendingPlacement,
   previewOnly = false,
@@ -191,6 +321,7 @@ export function LayerBlock({
   onDragStart,
   onContextMenu,
   onCommitLabel,
+  onCommitLinkLabel,
   onCommitParamTrack,
   fpsNum,
   fpsDen,
@@ -216,6 +347,9 @@ export function LayerBlock({
   isSelected: boolean;
   /// `docs/features.md#links` — null when unlinked.
   linkId: string | null;
+  /// Non-null only on the link's anchor member (`indexLinkTabs`): the label
+  /// tab and hidden-member badge draw there and nowhere else.
+  linkTab: LinkTabInfo | null;
   dragState: DragState | null;
   pendingPlacement: PendingLayerPlacement | null;
   /// Non-interactive in-flight clone rendered for an Alt+drag duplicate.
@@ -243,6 +377,9 @@ export function LayerBlock({
   /// label → block falls back to the kind name). Wired by Timeline to
   /// `updateLayer({label}) + onMutated`, matching the drag-commit pattern.
   onCommitLabel: (layerId: string, label: string) => void;
+  /// Persist a link's label from the tab editor; `null` clears it, which is a
+  /// link's ordinary unlabelled state. Wired by Timeline to `linksRename`.
+  onCommitLinkLabel: (linkId: string, label: string | null) => void;
   /// Persist a keyframe track edit — a diamond retime. Wired by Timeline to
   /// `updateLayerParamTrack + onMutated`. The multi-key operations do NOT come
   /// through here: they commit the whole selection at once (`keyframeBatch.ts`).
@@ -271,6 +408,9 @@ export function LayerBlock({
 
   const editingLayerId = useEditingLayerId();
   const isEditing = editingLayerId === layer.id;
+  const editingLinkId = useEditingLinkId();
+  const isEditingLinkTab =
+    linkTab !== null && editingLinkId === linkTab.linkId;
   const focusedParam = useFocusedParamFor(layer.id);
   const [draft, setDraft] = useState("");
   // Which of THIS layer+param's keyframes are selected. Reads the shared
@@ -406,6 +546,11 @@ export function LayerBlock({
   const onPointerLeaveHover = () => {
     if (bladeMode) onBladePreview(null);
     if (edgeHover !== null) setEdgeHover(null);
+    if (linkId !== null) unhoverLink(linkId);
+  };
+
+  const onPointerEnterHover = () => {
+    if (linkId !== null && !previewOnly) hoverLink(linkId);
   };
 
   const onLayerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -468,13 +613,37 @@ export function LayerBlock({
     slice,
   );
 
-  // `docs/features.md#links` — tinted left border in a hue derived from
-  // link_id so every member of a link shares one accent colour.
+  // `docs/features.md#links` — a 2 px left border in the link's hue on every
+  // member, plus a chain glyph inside that edge on a clip wide enough for its
+  // full label (a narrow clip keeps the accent alone). The glyph is the same
+  // `Link2` the inspector's scale-link uses: one chain means "tied together"
+  // everywhere. The extra left padding keeps the label clear of the glyph.
+  const linkHueValue = linkId !== null ? linkHue(linkId) : null;
+  const showLinkGlyph = linkHueValue !== null && showFullAffordances;
   const linkStyle: React.CSSProperties = {};
-  if (linkId !== null) {
-    const hue = linkHue(linkId);
-    linkStyle.borderLeft = `2px solid hsl(${hue} 75% 60%)`;
+  if (linkHueValue !== null) {
+    linkStyle.borderLeft = `2px solid hsl(${linkHueValue} 75% 60%)`;
   }
+  if (showLinkGlyph) linkStyle.paddingLeft = 16;
+  // The count the anchor's badge draws. During a move the dragged member's
+  // ghost carries the drag's own count instead — that is the one moment the
+  // invisible fan-out is happening — and every other member draws none.
+  const linkHiddenCount =
+    linkTab === null
+      ? 0
+      : dragSubject !== null
+        ? isDragAnchor && dragState?.kind === "move"
+          ? dragState.hiddenSubjectCount
+          : 0
+        : linkTab.hidden.length;
+  // The tab sits above the block's top edge, in the seam where the lane
+  // above's resize handle (`z-[3]`) lives. A selected block is a `z-[2]`
+  // stacking context, so the tab cannot out-rank the handle on its own — the
+  // BLOCK is lifted while it draws link chrome, or the badge is unclickable.
+  const linkChromeShown =
+    linkTab !== null &&
+    !previewOnly &&
+    (linkTab.label !== null || isEditingLinkTab || linkHiddenCount > 0);
 
   const sliceClasses =
     slice === "top"
@@ -512,6 +681,7 @@ export function LayerBlock({
         isDragging && dragState?.kind === "move" ? dragValidity : undefined
       }
       data-duplicate-preview={previewOnly || undefined}
+      data-link-id={linkId ?? undefined}
       aria-invalid={dragIsInvalid || undefined}
       className={[
         "timeline-layer", // JS hook for the blade-cursor rule; carries no styles itself.
@@ -520,7 +690,7 @@ export function LayerBlock({
         "shadow-[0_1px_2px_rgba(0,0,0,0.28)] transition-[outline,box-shadow,border-color] duration-75",
         "hover:border-white/20 hover:shadow-[0_2px_5px_rgba(0,0,0,0.36)]",
         sliceClasses,
-        isSelected ? "z-[2]" : "",
+        linkChromeShown && !isDragging ? "z-[4]" : isSelected ? "z-[2]" : "",
         isDragging
           ? "z-[3] cursor-grabbing border-white/25 shadow-[0_4px_10px_rgba(0,0,0,0.45)]"
           : "",
@@ -581,6 +751,7 @@ export function LayerBlock({
         beginLayerRename(layer.id);
       }}
       onPointerDown={onLayerPointerDown}
+      onPointerEnter={onPointerEnterHover}
       onPointerMove={onPointerMoveHover}
       onPointerLeave={onPointerLeaveHover}
       onContextMenu={(e) => {
@@ -633,6 +804,26 @@ export function LayerBlock({
           className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-0.5 opacity-90"
           style={{ backgroundColor: layerTheme.accent }}
           aria-hidden="true"
+        />
+      )}
+      {showLinkGlyph && (
+        <span
+          data-testid="link-glyph"
+          className="pointer-events-none absolute left-[3px] top-1/2 z-[1] -translate-y-1/2"
+          style={{ color: `hsl(${linkHueValue} 75% 72%)` }}
+          aria-hidden="true"
+        >
+          <Link2 size={10} strokeWidth={2} />
+        </span>
+      )}
+      {linkTab !== null && linkHueValue !== null && !previewOnly && (
+        <LinkTab
+          tab={linkTab}
+          hue={linkHueValue}
+          clipWidthPx={layerWidthPx}
+          hiddenCount={linkHiddenCount}
+          isEditing={isEditingLinkTab}
+          onCommitLabel={onCommitLinkLabel}
         />
       )}
       {layer.params.kind === "Audio" && !previewOnly && <AudioSyncBadge layerId={layer.id} />}

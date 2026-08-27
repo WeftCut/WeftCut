@@ -7,7 +7,12 @@ import {
   type DragSubject,
   type PendingLayerPlacement,
 } from "./LayerBlock";
-import { computeLayerSlices, layerSliceRect, type LayerSlice } from "./geometry";
+import {
+  computeLayerSlices,
+  layerSliceRect,
+  type LayerSlice,
+  type LinkTab,
+} from "./geometry";
 import { formatTimecode } from "../frames";
 import { TransitionChip } from "./TransitionChip";
 import {
@@ -46,6 +51,7 @@ export function TrackLane({
   transitions,
   selectedTransitionId,
   linkByLayerId,
+  linkTabByLayerId,
   dragState,
   pendingPlacements,
   pendingLayerById,
@@ -60,6 +66,7 @@ export function TrackLane({
   onChipContextMenu,
   onChipResize,
   onCommitLabel,
+  onCommitLinkLabel,
   onCommitParamTrack,
   isRoleSectionStart,
   isRevealed,
@@ -86,6 +93,9 @@ export function TrackLane({
   transitions: TransitionSummary[];
   selectedTransitionId: string | null;
   linkByLayerId: Map<string, string>;
+  /// Each link's anchor member → its tab (`indexLinkTabs`); a layer absent
+  /// from the map draws no link chrome beyond the accent.
+  linkTabByLayerId: ReadonlyMap<string, LinkTab>;
   dragState: DragState | null;
   pendingPlacements: PendingLayerPlacement[] | null;
   pendingLayerById: ReadonlyMap<string, LayerSummary>;
@@ -122,6 +132,7 @@ export function TrackLane({
   /// `updateTransition` (one commit per gesture, spec D6).
   onChipResize: (args: TransitionResizeArgs) => void;
   onCommitLabel: (layerId: string, label: string) => void;
+  onCommitLinkLabel: (linkId: string, label: string | null) => void;
   onCommitParamTrack: (layerId: string, paramKey: string, track: AnimTrack<number>) => void;
   isRoleSectionStart: boolean;
   /// Inline-reveal flag. The lane renders with extra chrome
@@ -405,6 +416,7 @@ export function TrackLane({
     <div
       ref={laneRef}
       data-testid="track-lane"
+      data-track-id={track.id}
       className={[
         "relative border-b border-border-soft bg-track-lane",
         // Mutually exclusive so emit order never decides which state's
@@ -504,6 +516,7 @@ export function TrackLane({
             isPrimary={selectedLayerId === layer.id}
             isSelected={selectedLayerIds.has(layer.id)}
             linkId={linkByLayerId.get(layer.id) ?? null}
+            linkTab={linkTabByLayerId.get(layer.id) ?? null}
             dragState={
               dragState?.duplicate &&
               dragState.subjects.some((subject) => subject.layerId === layer.id)
@@ -520,6 +533,7 @@ export function TrackLane({
             onDragStart={onDragStart}
             onContextMenu={onContextMenu}
             onCommitLabel={onCommitLabel}
+            onCommitLinkLabel={onCommitLinkLabel}
             onCommitParamTrack={onCommitParamTrack}
             fpsNum={fpsNum}
             fpsDen={fpsDen}
@@ -540,6 +554,7 @@ export function TrackLane({
               isPrimary={false}
               isSelected={false}
               linkId={null}
+              linkTab={null}
               dragState={dragState}
               pendingPlacement={null}
               previewOnly
@@ -550,6 +565,7 @@ export function TrackLane({
               onDragStart={onDragStart}
               onContextMenu={onContextMenu}
               onCommitLabel={onCommitLabel}
+              onCommitLinkLabel={onCommitLinkLabel}
               onCommitParamTrack={onCommitParamTrack}
               fpsNum={fpsNum}
               fpsDen={fpsDen}

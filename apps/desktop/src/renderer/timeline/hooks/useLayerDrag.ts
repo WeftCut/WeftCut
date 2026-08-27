@@ -241,11 +241,20 @@ export function useLayerDrag(opts: {
         setGesture(null);
         return;
       }
+      const subjects = buildDragSubjects(seed);
+      // Counted against the RENDERED lanes, so the A/B Roll filter decides
+      // what is hidden here exactly as it does for the lanes themselves.
+      const visibleTrackIds = new Set(
+        orderedTracks.map(({ track }) => track.id),
+      );
       const state: DragState = {
         ...seed,
-        subjects: buildDragSubjects(seed),
+        subjects,
         validity: "valid",
         conflictingLayerIds: [],
+        hiddenSubjectCount: subjects.filter(
+          (subject) => !visibleTrackIds.has(subject.trackId),
+        ).length,
       };
       const armDelayMs =
         seed.kind === "move" && !seed.wasSelectedAtPointerDown
@@ -259,7 +268,7 @@ export function useLayerDrag(opts: {
         lastClientY: seed.startY,
       });
     },
-    [buildDragSubjects],
+    [buildDragSubjects, orderedTracks],
   );
 
   // -------- Layer drag (move / trim) --------

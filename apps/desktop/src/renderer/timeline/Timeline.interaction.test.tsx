@@ -51,6 +51,9 @@ import { setActiveRegion } from "../focus/focusRegionStore";
 import { setTool } from "../state/toolStore";
 import { registerCommandProvider } from "../commands/registry";
 import { registerTransport, releaseTransport } from "../state/playbackStore";
+import { registerRevealTrack } from "../state/navigation";
+import { useProjectStore } from "../state/projectStore";
+import { resetLinkHover } from "./linkHoverStore";
 import { DEFAULT_TRACK_HEIGHT, HEADER_COL_PX } from "./geometry";
 
 const ipcMocks = vi.hoisted(() => ({
@@ -3010,5 +3013,186 @@ describe("Timeline marquee", () => {
 
     expect(ipcMocks.updateParamTracksMulti).toHaveBeenCalledTimes(1);
     expect(committedInterps()).toEqual([["kl-b", ["Hold", "Linear"]]]);
+  });
+});
+
+describe("Timeline link chrome", () => {
+  // Data order [lower, upper] → `upper` renders as the TOP row.
+  const lowerTrack: TrackSummary = { ...track, id: "track-lower", layers: [layer] };
+  const upperTrack: TrackSummary = {
+    ...track,
+    id: "track-upper",
+    role: "b-roll",
+    layers: [linkedLayer],
+  };
+  const hiddenTrack: TrackSummary = {
+    ...track,
+    id: "track-hidden",
+    role: null,
+    transient: true,
+    layers: [linkedLayer],
+  };
+  const blockOf = (label: string) =>
+    screen.getByText(label).closest(".timeline-layer") as HTMLElement;
+
+  beforeEach(() => {
+    clearLayerSelection();
+    setActiveRegion(null);
+    resetLinkHover();
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, display_mode: "AllTracks", tail_snap_enabled: false },
+    }));
+  });
+  afterEach(() => {
+    cleanup();
+    resetLinkHover();
+    vi.useRealTimers();
+  });
+
+  it("a linked clip carries its link id and, when wide enough for its full label, the chain glyph", () => {
+    renderTimeline({ tracks: [linkedTrack], links: [link] });
+    const first = blockOf("Clip A");
+    expect(first.getAttribute("data-link-id")).toBe(link.id);
+    expect(first.querySelector('[data-testid="link-glyph"]')).not.toBeNull();
+    expect(screen.queryByTestId("link-tab")).toBeNull();
+  });
+
+  it("an unlinked clip carries neither the id nor the glyph", () => {
+    renderTimeline({ tracks: [linkedTrack], links: [] });
+    const first = blockOf("Clip A");
+    expect(first.hasAttribute("data-link-id")).toBe(false);
+    expect(first.querySelector('[data-testid="link-glyph"]')).toBeNull();
+  });
+
+  it("a labelled link draws its tab once, on the top-most visible member", () => {
+    renderTimeline({
+      tracks: [lowerTrack, upperTrack],
+      links: [{ ...link, label: "Pair" }],
+    });
+    const tabs = screen.getAllByTestId("link-tab");
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]!.textContent).toBe("Pair");
+    expect(blockOf("Clip B").contains(tabs[0]!)).toBe(true);
+    expect(screen.queryByTestId("link-hidden-badge")).toBeNull();
+  });
+
+  it("in A/B Roll the visible member counts its filtered-out siblings; All Tracks counts none", () => {
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, display_mode: "AbRoll" },
+    }));
+    const { unmount } = renderTimeline({ tracks: [lowerTrack, hiddenTrack], links: [link] });
+    expect(screen.queryByText("Clip B")).toBeNull();
+    const badge = screen.getByTestId("link-hidden-badge");
+    expect(badge.textContent).toBe("+1");
+    expect(blockOf("Clip A").contains(badge)).toBe(true);
+    unmount();
+
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, display_mode: "AllTracks" },
+    }));
+    renderTimeline({ tracks: [lowerTrack, hiddenTrack], links: [link] });
+    expect(screen.queryByTestId("link-hidden-badge")).toBeNull();
+  });
+
+  it("clicking the badge reveals the first hidden member's lane and leaves the selection alone", () => {
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, display_mode: "AbRoll" },
+    }));
+    useProjectStore.setState({
+      summary: { tracks: [lowerTrack, hiddenTrack] } as unknown as ReturnType<
+        typeof useProjectStore.getState
+      >["summary"],
+    });
+    const reveal = vi.fn();
+    const unregister = registerRevealTrack(reveal);
+    try {
+      renderTimeline({ tracks: [lowerTrack, hiddenTrack], links: [link] });
+      act(() => setLayerSelection(layer.id, [layer.id, linkedLayer.id]));
+      fireEvent.click(screen.getByTestId("link-hidden-badge"));
+      expect(reveal).toHaveBeenCalledTimes(1);
+      expect(reveal).toHaveBeenCalledWith(hiddenTrack.id, null);
+      expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
+      expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
+        new Set([layer.id, linkedLayer.id]),
+      );
+    } finally {
+      unregister();
+      useProjectStore.setState({ summary: null });
+    }
+  });
+
+  it("a move drag carries the hidden-subject count on the dragged member", () => {
+    vi.useFakeTimers();
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, display_mode: "AbRoll" },
+    }));
+    renderTimeline({
+      tracks: [lowerTrack, hiddenTrack],
+      links: [link],
+      selectedLayerId: layer.id,
+    });
+    const block = blockOf("Clip A");
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 160, clientY: 30 });
+    // Armed: the ghost moved a whole second.
+    expect(block.style.left).toBe("80px");
+    expect(block.getAttribute("data-drag-validity")).toBe("valid");
+    expect(block.querySelector('[data-testid="link-hidden-badge"]')?.textContent).toBe("+1");
+    fireEvent.pointerUp(window, { clientX: 160, clientY: 30 });
+  });
+
+  it("resting on a member draws one hull that survives crossing to a sibling and clears a frame after leaving", () => {
+    vi.useFakeTimers();
+    renderTimeline({ tracks: [linkedTrack], links: [link] });
+    const first = blockOf("Clip A");
+    const second = blockOf("Clip B");
+    expect(screen.queryByTestId("link-hull")).toBeNull();
+
+    fireEvent.pointerOver(first);
+    expect(screen.getAllByTestId("link-hull")).toHaveLength(1);
+    expect(screen.getByTestId("link-hull").getAttribute("data-link-id")).toBe(link.id);
+
+    fireEvent.pointerOut(first);
+    fireEvent.pointerOver(second);
+    act(() => void vi.advanceTimersByTime(40));
+    expect(screen.getAllByTestId("link-hull")).toHaveLength(1);
+
+    fireEvent.pointerOut(second);
+    expect(screen.getAllByTestId("link-hull")).toHaveLength(1);
+    act(() => void vi.advanceTimersByTime(40));
+    expect(screen.queryByTestId("link-hull")).toBeNull();
+  });
+
+  it("selecting the whole link draws the hull; a single-member selection does not", () => {
+    renderTimeline({ tracks: [linkedTrack], links: [link] });
+    act(() => setLayerSelection(layer.id, [layer.id, linkedLayer.id]));
+    expect(screen.getAllByTestId("link-hull")).toHaveLength(1);
+    act(() => setLayerSelection(linkedLayer.id, [linkedLayer.id]));
+    expect(screen.queryByTestId("link-hull")).toBeNull();
+  });
+
+  it("no hull is drawn during a drag", () => {
+    vi.useFakeTimers();
+    renderTimeline({ tracks: [linkedTrack], links: [link], selectedLayerId: layer.id });
+    act(() => setLayerSelection(layer.id, [layer.id, linkedLayer.id]));
+    expect(screen.getAllByTestId("link-hull")).toHaveLength(1);
+    const block = blockOf("Clip A");
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 160, clientY: 30 });
+    expect(block.getAttribute("data-drag-validity")).toBe("valid");
+    expect(screen.queryByTestId("link-hull")).toBeNull();
+    fireEvent.pointerUp(window, { clientX: 160, clientY: 30 });
+  });
+
+  it("the layer context menu offers a link rename only for a linked clip", async () => {
+    renderTimeline({ tracks: [linkedTrack], links: [link] });
+    fireEvent.contextMenu(blockOf("Clip A"), { clientX: 40, clientY: 30 });
+    await waitFor(() => expect(screen.queryByText("Rename link…")).not.toBeNull());
+    fireEvent.click(screen.getByText("Rename link…"));
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Link name")).not.toBeNull(),
+    );
+    // The editor opens on the anchor member's tab even for an unlabelled link.
+    expect(screen.queryByTestId("link-tab-anchor")).not.toBeNull();
   });
 });

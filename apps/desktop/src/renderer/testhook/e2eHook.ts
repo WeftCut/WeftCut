@@ -440,6 +440,9 @@ export interface E2EHook {
   /// what the entry touched; the timeline's LayerBlock carries no id attribute,
   /// so selection is not observable from the DOM at all.
   getSelectedLayerId(): string | null;
+  /// The whole selection set, for a spec proving a gesture LEFT it alone —
+  /// the hidden-member badge's reveal must not select.
+  getSelectedLayerIds(): string[];
   /// What the renderer DID with a Text layer's box, straight off the live
   /// `GizmoProbe`. Null before a preview registers one.
   ///
@@ -623,6 +626,8 @@ export function installBootstrapHook(
   hookSlot().getPlayheadUs = () => playheadTimeUs();
   hookSlot().getSelectedLayerId = () =>
     useSelectionStore.getState().primaryLayerId;
+  hookSlot().getSelectedLayerIds = () =>
+    Array.from(useSelectionStore.getState().selectedLayerIds);
   // Read through the registry on every call rather than capturing the probe:
   // PixiPreview registers on mount and clears on unmount, and this hook is
   // installed at boot — before any preview exists.

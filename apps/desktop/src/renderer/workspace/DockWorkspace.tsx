@@ -382,6 +382,7 @@ function PlayheadDockPanel() {
     <div className="weft-dock-panel-scroll">
       <PlayheadPanel
         tracks={summary?.tracks ?? []}
+        links={summary?.links ?? []}
         selectedLayerId={contracts.selectedLayerId}
         fpsNum={summary?.composition.fps_num ?? 30}
         fpsDen={summary?.composition.fps_den ?? 1}

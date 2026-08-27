@@ -15,6 +15,7 @@ import {
   addTransition,
   linksCreate,
   linksDissolve,
+  linksRename,
   moveLayer,
   removeTransition,
   separateAudioToNewTrack,
@@ -74,6 +75,7 @@ import {
   HEADER_COL_PX,
   computeTimelineExtent,
   indexLinks,
+  indexLinkTabs,
   playheadFrameShadowPx,
   trackKeyframeProperties,
   visualOrderedTracks,
@@ -99,7 +101,8 @@ import {
 } from "./KeyframeLane";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { MarqueeOverlay } from "./MarqueeOverlay";
-import { beginLayerRename } from "./renameStore";
+import { LinkHull } from "./LinkHull";
+import { beginLayerRename, beginLinkRename } from "./renameStore";
 import {
   MarqueeAnchorContext,
   beginMarquee,
@@ -399,6 +402,13 @@ export function Timeline({
   const visibleSnapTracks = useMemo(
     () => orderedTracks.map(({ track }) => track),
     [orderedTracks],
+  );
+  // Each link's anchor member and what it draws there. Built from the RENDERED
+  // lanes, so the hidden-member count follows the display filter and the
+  // inline reveal with no rule of its own.
+  const linkTabByLayerId = useMemo(
+    () => indexLinkTabs(links, visibleSnapTracks, tracks),
+    [links, visibleSnapTracks, tracks],
   );
   const mediaDropSnap = useMemo(
     () => ({
@@ -998,6 +1008,18 @@ export function Timeline({
     [onMutated],
   );
 
+  const onCommitLinkLabel = useCallback(
+    async (linkId: string, label: string | null) => {
+      try {
+        await linksRename(linkId, label);
+        await onMutated();
+      } catch (e) {
+        logMutationFailure(e, "Rename link");
+      }
+    },
+    [onMutated],
+  );
+
   const onCommitParamTrack = useCallback(
     async (layerId: string, paramKey: string, track: AnimTrack<number>) => {
       try {
@@ -1087,6 +1109,11 @@ export function Timeline({
   const onRename = useCallback((layerId: string) => {
     setContextMenu(null);
     beginLayerRename(layerId);
+  }, []);
+
+  const onRenameLink = useCallback((linkId: string) => {
+    setContextMenu(null);
+    beginLinkRename(linkId);
   }, []);
 
   const onToggleEnabled = useCallback(
@@ -1545,6 +1572,7 @@ export function Timeline({
                 transitions={transitions}
                 selectedTransitionId={selectedTransitionId}
                 linkByLayerId={linkByLayerId}
+                linkTabByLayerId={linkTabByLayerId}
                 dragState={drag}
                 pendingPlacements={pendingPlacements}
                 pendingLayerById={pendingLayerById}
@@ -1558,6 +1586,7 @@ export function Timeline({
                 onChipContextMenu={onChipContextMenu}
                 onChipResize={(args) => void onChipResize(args)}
                 onCommitLabel={onCommitLabel}
+                onCommitLinkLabel={onCommitLinkLabel}
                 onCommitParamTrack={onCommitParamTrack}
                 onMediaDrop={onMediaDrop}
                 isRoleSectionStart={isRoleSectionStart}
@@ -1586,6 +1615,14 @@ export function Timeline({
               />
             )}
             <OutOfRangeDim pxPerSec={pxPerSec} />
+            <LinkHull
+              links={links}
+              tracks={tracks}
+              selectedLayerIds={selectedLayerIds}
+              suppressed={drag !== null}
+              measureRows={measureMarqueeRows}
+              pxPerSec={pxPerSec}
+            />
             <MarqueeOverlay />
           </div>
           <TimelinePlayhead
@@ -1604,9 +1641,11 @@ export function Timeline({
         layerId={contextMenu.layerId}
         layerKind={contextMenu.layerKind}
         layerEnabled={contextMenu.layerEnabled}
+        linkId={linkByLayerId.get(contextMenu.layerId) ?? null}
         transitionCut={contextMenu.cut}
         onClose={() => setContextMenu(null)}
         onRename={onRename}
+        onRenameLink={onRenameLink}
         onToggleEnabled={onToggleEnabled}
         onSeparateAudio={onSeparateAudio}
         onPrebakeNow={onPrebakeNow}
