@@ -240,6 +240,8 @@ const enUS = {
     follow_off_hint: "Timeline auto-scroll off. Click to enable.",
     safe_area_on_hint: "Showing safe-area guides. Click to hide.",
     safe_area_off_hint: "Safe-area guides hidden. Click to show.",
+    link_override_on_hint: "Links off — edits act on single layers. Click to restore links.",
+    link_override_off_hint: "Links on. Click to edit single layers without holding Alt.",
     // Disabled-button reasons, the `clear_range_empty` rule: name the
     // precondition rather than restate a label that can't be acted on.
     link_selected: "Link selected layers",
@@ -374,6 +376,7 @@ const enUS = {
     toggle_maximize_panel: "Maximize / restore Panel",
     restore_maximized_panel: "Restore maximized Panel",
     toggle_link_selected: "Link / Unlink selected layers",
+    toggle_link_override: "Toggle link override",
     nudge_audio_sample_back: "Nudge audio 1 sample earlier",
     nudge_audio_sample_forward: "Nudge audio 1 sample later",
     nudge_audio_ms_back: "Nudge audio 1 ms earlier",
@@ -501,6 +504,13 @@ const enUS = {
     rename_track_label: "Rename {{label}}",
     enable_layer: "Enable layer",
     disable_layer: "Disable layer",
+    // The row's label when the toggle fans out across the link: the count says
+    // what one click will touch. `_one` never renders (a fan-out is ≥ 2) but
+    // completes the plural pair.
+    enable_linked_layers_one: "Enable {{count}} linked layer",
+    enable_linked_layers_other: "Enable {{count}} linked layers",
+    disable_linked_layers_one: "Disable {{count}} linked layer",
+    disable_linked_layers_other: "Disable {{count}} linked layers",
     bake_dot_warming: "Warming…",
     bake_dot_baking: "Pre-baking…",
     bake_dot_ready: "Pre-baked",
@@ -1380,6 +1390,8 @@ const enUS = {
     error_badge_hint: "{{count}} error(s) — click to view",
     running_badge_hint: "{{count}} running operation(s) — click to view",
     announce_error_prefix: "Error",
+    links_off: "Links off",
+    links_off_hint: "Link override is on (Alt+Shift+G): edits act on single layers",
   },
   system_status: {
     trigger: "System {{count}}",

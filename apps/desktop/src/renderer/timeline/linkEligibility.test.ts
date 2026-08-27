@@ -3,9 +3,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   canToggleLinkSelection,
   enclosingLink,
+  linkFanoutActive,
   linkToggleForSelection,
 } from "./linkEligibility";
 import type { LinkSummary, ProjectSummary } from "../ipc";
+import { setLinkOverride } from "../state/linkOverrideStore";
 import { useProjectStore } from "../state/projectStore";
 import { clearLayerSelection, setLayerSelection } from "../state/selectionStore";
 
@@ -40,6 +42,31 @@ function seed(links: LinkSummary[]): void {
 afterEach(() => {
   clearLayerSelection();
   useProjectStore.getState().apply(null);
+  setLinkOverride(false);
+});
+
+// The one predicate every fan-out site reads. Two escapes, one answer: the
+// session override and a gesture's own Alt each switch the link off, and
+// neither is consulted anywhere else.
+describe("linkFanoutActive", () => {
+  it.each([
+    [false, false, true],
+    [false, true, false],
+    [true, false, false],
+    [true, true, false],
+  ])(
+    "override %s, altKey %s → fans out %s",
+    (override, altKey, expected) => {
+      setLinkOverride(override);
+      expect(linkFanoutActive({ altKey })).toBe(expected);
+    },
+  );
+
+  it("reads the override alone when the site has no gesture", () => {
+    expect(linkFanoutActive()).toBe(true);
+    setLinkOverride(true);
+    expect(linkFanoutActive()).toBe(false);
+  });
 });
 
 describe("linkToggleForSelection", () => {

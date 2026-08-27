@@ -4,6 +4,7 @@ import { AlertTriangleIcon, InfoIcon, OctagonAlertIcon } from "lucide-react";
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { renderLogMessage } from "./renderMessage";
 import { useLogStore } from "./store";
+import { useLinkOverride } from "../state/linkOverrideStore";
 import { MEDIA_JOB_EVENTS, type LogEntry, type LogLevel } from "../ipc";
 import type { AppNotice } from "../../shared/ipc";
 
@@ -64,6 +65,10 @@ export function StatusBar({
   // separately from `latest` so a flurry of low-severity entries
   // doesn't spam the screen reader.
   const [announce, setAnnounce] = useState("");
+  // Link override chip. State, not an event: it shows for as long as the
+  // switch is on and never enters the log, because a mode the user is IN is
+  // not something that happened.
+  const linksOff = useLinkOverride();
 
   useEffect(() => {
     if (latest && latest.level === "error") {
@@ -126,6 +131,15 @@ export function StatusBar({
         )}
       </div>
       <div className="status-bar-right">
+        {linksOff && (
+          <span
+            className="status-bar-chip status-bar-chip-links-off"
+            data-testid="link-override-chip"
+            title={t("status_bar.links_off_hint")}
+          >
+            {t("status_bar.links_off")}
+          </span>
+        )}
         {pendingDerivatives > 0 && (
           <span
             className="derivatives-pill"

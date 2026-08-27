@@ -258,6 +258,21 @@ describe("resolveMarqueeSelection", () => {
     ).toEqual({ ids: [], primary: null });
   });
 
+  // The link override: the box takes what it touched and nothing more, so a
+  // member outside it stays unselected.
+  it("takes only the hit clips when link fan-out is off", () => {
+    expect(
+      resolveMarqueeSelection({
+        snapshotPrimary: null,
+        hit: ["in-box"],
+        linkByLayerId: linkIndex,
+        links: linked,
+        mode: "replace",
+        linkFanout: false,
+      }),
+    ).toEqual({ ids: ["in-box"], primary: "in-box" });
+  });
+
   it("pulls in link members the box never touched", () => {
     expect(
       resolveMarqueeSelection({

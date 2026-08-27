@@ -237,26 +237,32 @@ export function TrackLane({
     [track, transitions],
   );
 
-  const duplicatePreview = useMemo(() => {
-    if (dragState?.kind !== "move" || !dragState.duplicate) return null;
-    const subject = dragState.subjects.find(
-      (candidate) => candidate.layerId === dragState.layerId,
-    );
-    const layer = subject ? dragLayerById.get(subject.layerId) : null;
-    if (!subject || !layer) return null;
-    const previewTrackId = dragState.overTrackId ?? subject.trackId;
-    if (previewTrackId !== track.id) return null;
-
-    const tStartUs = Math.max(0, subject.originalTStart + dragState.deltaUs);
-    return {
-      layer,
-      sliceLayer: {
-        ...layer,
-        id: `${layer.id}::duplicate-preview`,
-        t_start_us: tStartUs,
-        t_end_us: tStartUs + subject.originalTEnd - subject.originalTStart,
-      } satisfies LayerSummary,
-    };
+  // One in-flight clone ghost per duplicate subject landing on THIS lane: the
+  // dragged seed follows the pointer's lane, every other member stays on its
+  // own — the same rule the move projection and `paste_layers` apply.
+  const duplicatePreviews = useMemo(() => {
+    if (dragState?.kind !== "move" || !dragState.duplicate) return [];
+    const out: { layer: LayerSummary; sliceLayer: LayerSummary }[] = [];
+    for (const subject of dragState.subjects) {
+      const layer = dragLayerById.get(subject.layerId);
+      if (!layer) continue;
+      const previewTrackId =
+        subject.layerId === dragState.layerId
+          ? (dragState.overTrackId ?? subject.trackId)
+          : subject.trackId;
+      if (previewTrackId !== track.id) continue;
+      const tStartUs = Math.max(0, subject.originalTStart + dragState.deltaUs);
+      out.push({
+        layer,
+        sliceLayer: {
+          ...layer,
+          id: `${layer.id}::duplicate-preview`,
+          t_start_us: tStartUs,
+          t_end_us: tStartUs + subject.originalTEnd - subject.originalTStart,
+        } satisfies LayerSummary,
+      });
+    }
+    return out;
   }, [dragLayerById, dragState, track.id]);
 
   const onDragOver = useCallback(
@@ -498,9 +504,10 @@ export function TrackLane({
       <div className={track.enabled ? "contents" : "pointer-events-none opacity-40"}>
       {(() => {
         // Compute per-layer slice once per track render (see `LayerSlice`).
-        const sliceLayers = duplicatePreview
-          ? [...renderedLayers, duplicatePreview.sliceLayer]
-          : renderedLayers;
+        const sliceLayers = [
+          ...renderedLayers,
+          ...duplicatePreviews.map((preview) => preview.sliceLayer),
+        ];
         const slices = computeLayerSlices(sliceLayers);
         const blocks = renderedLayers.map((layer) => (
           <LayerBlock
@@ -539,18 +546,18 @@ export function TrackLane({
             fpsDen={fpsDen}
           />
         ));
-        if (duplicatePreview && dragState) {
+        for (const preview of dragState ? duplicatePreviews : []) {
           blocks.push(
             <LayerBlock
-              key={duplicatePreview.sliceLayer.id}
-              layer={duplicatePreview.layer}
+              key={preview.sliceLayer.id}
+              layer={preview.layer}
               trackId={track.id}
               trackKind={track.kind}
               trackLocked={track.locked}
               isTrackExpanded={isExpanded}
               pxPerSec={pxPerSec}
               laneHeight={height}
-              slice={slices.get(duplicatePreview.sliceLayer.id) ?? "full"}
+              slice={slices.get(preview.sliceLayer.id) ?? "full"}
               isPrimary={false}
               isSelected={false}
               linkId={null}

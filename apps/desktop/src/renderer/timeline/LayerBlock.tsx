@@ -36,7 +36,9 @@ import {
   endRename,
 } from "./renameStore";
 import { hoverLink, unhoverLink } from "./linkHoverStore";
+import { useLinkOverride } from "../state/linkOverrideStore";
 import { revealTrackWithoutSelection } from "../state/navigation";
+import { useSelectionStore } from "../state/selectionStore";
 import { useFocusedParamFor } from "../keyframe/focusStore";
 import { readParamTrack } from "../keyframe/descriptors";
 import { interpGlyphClass } from "../keyframe/curve";
@@ -91,6 +93,12 @@ export interface DragSeed {
   /// short temporal arm delay so a selection click cannot become a move;
   /// selected clips and explicit trim handles respond immediately.
   wasSelectedAtPointerDown: boolean;
+  /// The selection as it stood BEFORE this pointerdown's own click applied. A
+  /// duplicate's subject set reads it (`buildDragSubjects`): the whole link,
+  /// unless the user had already narrowed the selection to some of its members
+  /// — an `Alt`+click first. The selection is the escape, because `Alt` on the
+  /// body already means duplicate and the click itself always Alt-selects.
+  selectedAtPointerDown: ReadonlySet<string>;
 }
 
 export interface DragState extends DragSeed {
@@ -173,6 +181,7 @@ function AudioSyncBadge({ layerId }: { layerId: string }) {
 function LinkTab({
   tab,
   hue,
+  accentAlpha,
   clipWidthPx,
   hiddenCount,
   isEditing,
@@ -180,6 +189,8 @@ function LinkTab({
 }: {
   tab: LinkTabInfo;
   hue: number;
+  /// The block's accent alpha — 0.4 under the link override, else 1.
+  accentAlpha: number;
   clipWidthPx: number;
   /// The count to draw — the tab's own while idle, the drag's while this
   /// member is the drag anchor.
@@ -214,7 +225,7 @@ function LinkTab({
       className="absolute left-0 bottom-full z-[4] flex max-w-full items-stretch gap-1 rounded-t px-1 py-0.5 text-[10px] font-semibold leading-none text-white"
       style={{
         maxWidth: clipWidthPx,
-        backgroundColor: `hsl(${hue} 75% 45%)`,
+        backgroundColor: `hsl(${hue} 75% 45% / ${accentAlpha})`,
       }}
       onPointerDown={stop}
       onClick={stop}
@@ -409,6 +420,7 @@ export function LayerBlock({
   const editingLayerId = useEditingLayerId();
   const isEditing = editingLayerId === layer.id;
   const editingLinkId = useEditingLinkId();
+  const linksOff = useLinkOverride();
   const isEditingLinkTab =
     linkTab !== null && editingLinkId === linkTab.linkId;
   const focusedParam = useFocusedParamFor(layer.id);
@@ -572,6 +584,10 @@ export function LayerBlock({
     );
     const kind: DragKind =
       zone === "left" ? "trim-start" : zone === "right" ? "trim-end" : "move";
+    // Snapshotted BEFORE the click's selection applies — see
+    // `DragSeed.selectedAtPointerDown`.
+    const selectedAtPointerDown =
+      useSelectionStore.getState().selectedLayerIds;
     // `docs/features.md#links` — match click-selection semantics on
     // pointerdown so drag and click share the same link-aware path.
     const stillSelected = onSelectFromClick(layer.id, {
@@ -599,6 +615,7 @@ export function LayerBlock({
       duplicate: e.altKey && kind === "move",
       escapeLink: e.altKey && kind !== "move",
       wasSelectedAtPointerDown: isSelected,
+      selectedAtPointerDown,
     });
   };
 
@@ -620,9 +637,12 @@ export function LayerBlock({
   // everywhere. The extra left padding keeps the label clear of the glyph.
   const linkHueValue = linkId !== null ? linkHue(linkId) : null;
   const showLinkGlyph = linkHueValue !== null && showFullAffordances;
+  // Dimmed to 40 % under the link override (`linkOverrideStore.ts`), so the
+  // canvas itself says links are not in force; `LinkHull` dims the same way.
+  const linkAccentAlpha = linksOff ? 0.4 : 1;
   const linkStyle: React.CSSProperties = {};
   if (linkHueValue !== null) {
-    linkStyle.borderLeft = `2px solid hsl(${linkHueValue} 75% 60%)`;
+    linkStyle.borderLeft = `2px solid hsl(${linkHueValue} 75% 60% / ${linkAccentAlpha})`;
   }
   if (showLinkGlyph) linkStyle.paddingLeft = 16;
   // The count the anchor's badge draws. During a move the dragged member's
@@ -810,7 +830,7 @@ export function LayerBlock({
         <span
           data-testid="link-glyph"
           className="pointer-events-none absolute left-[3px] top-1/2 z-[1] -translate-y-1/2"
-          style={{ color: `hsl(${linkHueValue} 75% 72%)` }}
+          style={{ color: `hsl(${linkHueValue} 75% 72% / ${linkAccentAlpha})` }}
           aria-hidden="true"
         >
           <Link2 size={10} strokeWidth={2} />
@@ -820,6 +840,7 @@ export function LayerBlock({
         <LinkTab
           tab={linkTab}
           hue={linkHueValue}
+          accentAlpha={linkAccentAlpha}
           clipWidthPx={layerWidthPx}
           hiddenCount={linkHiddenCount}
           isEditing={isEditingLinkTab}

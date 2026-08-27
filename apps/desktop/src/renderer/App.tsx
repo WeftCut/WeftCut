@@ -89,6 +89,7 @@ import {
   toggleFollowPlayhead,
   toggleMarkersVisible,
 } from "./settings/appSettingsStore";
+import { toggleLinkOverride } from "./state/linkOverrideStore";
 import { setTool } from "./state/toolStore";
 import { logEmit } from "./ipc";
 import { logMutationFailure, tryMutate } from "./errors/tryMutate";
@@ -626,6 +627,8 @@ export function App({ onCloseProject }: AppProps) {
     toggleFollowPlayhead: () => {
       void toggleFollowPlayhead();
     },
+    // Session switch, no IPC and no history row (`linkOverrideStore.ts`).
+    toggleLinkOverride,
     focusNextPanel: () => workspaceController?.focusNextPanel(),
     focusPreviousPanel: () => workspaceController?.focusPreviousPanel(),
     toggleMaximizePanel: () => workspaceController?.toggleMaximize(),

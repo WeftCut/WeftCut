@@ -138,6 +138,21 @@ describe("resolveSplitTargets", () => {
     expect(targets[0]?.linkId).toBe("g1");
   });
 
+  // The link override: every member is its own target, because the split each
+  // one gets is escaped and would otherwise leave the partner uncut.
+  it("emits one target per member when link fan-out is off", () => {
+    const p = summary(
+      [
+        track("video", [layer("v", 0, 2_000_000)]),
+        track("audio", [layer("a", 0, 2_000_000)]),
+      ],
+      [{ id: "g1", label: null, layer_ids: ["v", "a"] }],
+    );
+    const targets = resolveSplitTargets(p, 1_000_000, NOTHING_SELECTED, false, false);
+    expect(ids(targets)).toEqual(["v", "a"]);
+    expect(targets.every((t) => t.linkId === null)).toBe(true);
+  });
+
   it("still emits both when two straddling clips are in different links", () => {
     const p = summary(
       [

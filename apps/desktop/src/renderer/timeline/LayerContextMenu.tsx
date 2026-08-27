@@ -8,7 +8,9 @@ import {
 } from "../commands/registry";
 import { CommandContextItem } from "../menu/CommandContextItem";
 import { MenuItem, MenuSeparator } from "../menu/Menu";
+import { useLinkOverride } from "../state/linkOverrideStore";
 import { useCursorAnchor } from "./contextMenuAnchor";
+import { linkFanoutActive } from "./linkEligibility";
 import {
   TRANSITION_DIRECTIONS,
   type TransitionCut,
@@ -68,6 +70,8 @@ export function LayerContextMenu({
   layerKind,
   layerEnabled,
   linkId,
+  linkMemberIds,
+  escapeLink,
   transitionCut,
   onClose,
   onRename,
@@ -84,12 +88,20 @@ export function LayerContextMenu({
   layerEnabled: boolean;
   /// The right-clicked layer's link, or null — gates the link rename row.
   linkId: string | null;
+  /// Every member of that link, the clicked layer included; `[layerId]` when
+  /// unlinked. The Enable/Disable row's fan-out set (`docs/features.md#links`).
+  linkMemberIds: readonly string[];
+  /// `Alt` was held on the right-click: the same escape a left click makes,
+  /// applied to the row below.
+  escapeLink: boolean;
   transitionCut: TransitionCut | null;
   onClose: () => void;
   onRename: (id: string) => void;
   /// Opens the inline editor on the link's label tab (`renameStore`).
   onRenameLink: (linkId: string) => void;
-  onToggleEnabled: (id: string, enabled: boolean) => void;
+  /// The set is resolved HERE and handed over whole — `set_layers_enabled`
+  /// expands nothing, and one call is one undo step however many it names.
+  onToggleEnabled: (layerIds: string[], enabled: boolean) => void;
   onSeparateAudio: (id: string) => void;
   onPrebakeNow: (id: string) => void;
   onAddTransition: (
@@ -104,6 +116,30 @@ export function LayerContextMenu({
   // subscription is here so the rows survive a provider remounting under an
   // already-open menu, and costs one line.
   useSyncExternalStore(subscribeCommandRegistry, commandRegistryVersion);
+  // Subscribed, not read: `linkFanoutActive` reads the store itself, but a
+  // menu left open across `Alt+Shift+G` has to re-label, and only a
+  // subscription re-renders it.
+  useLinkOverride();
+  // The Enable/Disable row's targets: the link's members unless escaped — by
+  // `Alt` on this right-click or by the session override — or unlinked.
+  const enabledTargets =
+    linkMemberIds.length > 1 && linkFanoutActive({ altKey: escapeLink })
+      ? [...linkMemberIds]
+      : [layerId];
+  const enabledLabel =
+    enabledTargets.length > 1
+      ? layerEnabled
+        ? t("timeline.disable_linked_layers", {
+            count: enabledTargets.length,
+            defaultValue: "Disable {{count}} linked layers",
+          })
+        : t("timeline.enable_linked_layers", {
+            count: enabledTargets.length,
+            defaultValue: "Enable {{count}} linked layers",
+          })
+      : layerEnabled
+        ? t("timeline.disable_layer", { defaultValue: "Disable layer" })
+        : t("timeline.enable_layer", { defaultValue: "Enable layer" });
   const directionLabel = (d: TransitionDirection) =>
     t(`transitions.direction_${d}`, { defaultValue: d });
   return (
@@ -146,14 +182,8 @@ export function LayerContextMenu({
               />
             )}
             <MenuItem
-              label={
-                layerEnabled
-                  ? t("timeline.disable_layer", {
-                      defaultValue: "Disable layer",
-                    })
-                  : t("timeline.enable_layer", { defaultValue: "Enable layer" })
-              }
-              onSelect={() => onToggleEnabled(layerId, !layerEnabled)}
+              label={enabledLabel}
+              onSelect={() => onToggleEnabled(enabledTargets, !layerEnabled)}
             />
             {layerKind === "Audio" && (
               <>

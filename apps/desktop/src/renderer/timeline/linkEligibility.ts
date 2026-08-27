@@ -18,8 +18,27 @@
 // greyed-out needs a SUBSCRIPTION or it never re-evaluates.
 
 import type { LinkSummary } from "../ipc";
+import { linkOverrideOn } from "../state/linkOverrideStore";
 import { useProjectStore } from "../state/projectStore";
 import { useSelectionStore } from "../state/selectionStore";
+
+/**
+ * Whether an edit fans out across the link right now.
+ *
+ * ONE predicate for every site that consults link membership — click
+ * selection, the drag hook's subject set and every IPC it commits, the blade
+ * and `splitAtPlayhead`, the marquee, the `enabled` toggle — so "when does a
+ * link apply" has exactly one answer. False under the session-wide link
+ * override (`linkOverrideStore.ts`) or when the gesture's own `Alt` is held;
+ * the two are the same escape at two time scales, which is why neither site
+ * re-derives the rule.
+ *
+ * `e` is optional because the override alone decides for the sites with no
+ * gesture (a command run from the palette, the inspector's checkbox).
+ */
+export function linkFanoutActive(e?: { altKey: boolean }): boolean {
+  return !linkOverrideOn() && !(e?.altKey ?? false);
+}
 
 /// Stable empty reference. A fresh `[]` per selector call would defeat the
 /// reference-equality bail-out the hooks below rely on.

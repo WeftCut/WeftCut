@@ -58,6 +58,7 @@ function state(over: Partial<QuickActionState> = {}): QuickActionState {
     safeAreaGuides: false,
     playbackResolution: "full",
     linkToggle: "needs_two",
+    linkOverride: false,
     ...over,
   };
 }
@@ -244,6 +245,7 @@ describe("quickActions catalogue", () => {
       ["toggleTailSnap", "snapEnabled"],
       ["toggleFollowPlayhead", "followPlayhead"],
       ["toggleSafeAreaGuides", "safeAreaGuides"],
+      ["toggleLinkOverride", "linkOverride"],
     ] as const)("tracks %s with its setting", (id, field) => {
       expect(item(id).active?.(state({ [field]: true }))).toBe(true);
       expect(item(id).active?.(state({ [field]: false }))).toBe(false);
@@ -259,6 +261,7 @@ describe("quickActions catalogue", () => {
       "toggleTailSnap",
       "toggleFollowPlayhead",
       "toggleSafeAreaGuides",
+      "toggleLinkOverride",
     ])("puts %s in the independent-toggles section", (id) => {
       const section = QUICK_ACTION_SECTIONS.find((s) =>
         s.items.some((i) => i.id === id),

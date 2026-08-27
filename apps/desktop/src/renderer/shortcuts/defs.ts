@@ -36,6 +36,7 @@ export type ActionId =
   | "toggleMaximizePanel"
   | "restoreMaximizedPanel"
   | "toggleLinkSelected"
+  | "toggleLinkOverride"
   | "nudgeAudioSampleBack"
   | "nudgeAudioSampleForward"
   | "nudgeAudioMsBack"
@@ -229,6 +230,12 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // renderer-global. Surfaced here so the Keyboard Shortcuts panel shows it
   // and the user can rebind.
   toggleLinkSelected:     { defaultKeys: ["Mod+L"],        labelKey: "actions.toggle_link_selected", scope: TIMELINE_SELECTION },
+  // Link override — the held-`Alt` escape as a switch (`linkOverrideStore.ts`).
+  // Reaper's *Grouping enabled* key; nothing else here claims `Alt+Shift+G`
+  // (the audio slip family below takes `Alt+Shift+Arrow` and `Alt+Shift+S`).
+  // Handled in App so the catalogue lists it, timeline-scoped because it only
+  // changes what timeline gestures do.
+  toggleLinkOverride:     { defaultKeys: ["Alt+Shift+G"],  labelKey: "actions.toggle_link_override", scope: TIMELINE_SELECTION },
   // Sub-frame audio slip (ADR 0038). Deliberately UNSCOPED, unlike its
   // structural siblings above: nudging audio sync while watching and listening
   // to the preview is the workflow these keys exist for, and scoping Alt+Arrow

@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   moveLayer,
   moveLayersToNewTrack,
-  pasteLayer,
+  pasteLayers,
   trimLayer,
   type LinkSummary,
   type LayerSummary,
   type TrackSummary,
 } from "../../ipc";
+import { linkFanoutActive } from "../linkEligibility";
 import {
   adjacentFrameBoundaryUs,
   boundaryDisplayFrameUs,
@@ -75,7 +76,7 @@ interface PointerDragEvaluation {
 /// Layer drag state machine (move / trim-start / trim-end): ghost
 /// tracking via window pointermove, frame + timeline-boundary snapping,
 /// and the commit-on-pointerup switch that lowers to
-/// `moveLayer`/`moveLayersToNewTrack`/`pasteLayer`/`trimLayer`.
+/// `moveLayer`/`moveLayersToNewTrack`/`pasteLayers`/`trimLayer`.
 export function useLayerDrag(opts: {
   tracks: TrackSummary[];
   links: LinkSummary[];
@@ -171,8 +172,12 @@ export function useLayerDrag(opts: {
     const allLanded = pendingPlacements.every((placement) => {
       const track = tracks.find((t) => t.id === placement.trackId);
       const layer = track?.layers.find((l) => l.id === placement.layerId);
+      if (!layer) return false;
+      // A clone has landed the moment it exists: the actor placed it where its
+      // own lattice says (`paste_layers` re-snaps every member), so holding the
+      // ghost to the projected time could pin it over the real clip for good.
+      if (placement.sourceLayerId !== undefined) return true;
       return (
-        layer &&
         layer.t_start_us === placement.tStartUs &&
         layer.t_end_us === placement.tEndUs
       );
@@ -189,15 +194,22 @@ export function useLayerDrag(opts: {
 
   const buildDragSubjects = useCallback(
     (seed: DragSeed): DragSubject[] => {
-      // Alt+drag copies only the layer under the pointer. In particular, an
-      // auto-paired/linked sibling stays untouched and the duplicate remains
-      // detached, matching duplicate/paste semantics elsewhere in the app.
-      const linkId =
-        seed.duplicate || seed.escapeLink
-          ? undefined
-          : linkByLayerId.get(seed.layerId);
+      // A duplicate's subjects are the link too (`docs/features.md#links`):
+      // Alt+drag on a linked A/V pair copies both halves, as Premiere does. The
+      // escape is the SELECTION, not a key — Alt on the body already means
+      // duplicate — so a selection the user had narrowed to some members before
+      // this pointerdown (an Alt+click first) narrows the copy to those.
+      const linkId = seed.escapeLink
+        ? undefined
+        : linkByLayerId.get(seed.layerId);
       const link = linkId ? links.find((candidate) => candidate.id === linkId) : null;
-      const candidateIds = link?.layer_ids ?? [seed.layerId];
+      let candidateIds = link?.layer_ids ?? [seed.layerId];
+      if (seed.duplicate && link && seed.selectedAtPointerDown.has(seed.layerId)) {
+        const narrowed = link.layer_ids.filter((id) =>
+          seed.selectedAtPointerDown.has(id),
+        );
+        if (narrowed.length < link.layer_ids.length) candidateIds = narrowed;
+      }
       const targetEdgeUs =
         seed.kind === "trim-start"
           ? seed.originalTStart
@@ -240,6 +252,13 @@ export function useLayerDrag(opts: {
       if (!seed) {
         setGesture(null);
         return;
+      }
+      // The link override reaches this whole gesture through the seed's own
+      // escape flag, folded in ONCE: the subject set, the snapping exclusions
+      // and every IPC the commit sends already read `escapeLink`, so nothing
+      // downstream consults the store a second time.
+      if (!linkFanoutActive({ altKey: seed.escapeLink })) {
+        seed = { ...seed, escapeLink: true };
       }
       const subjects = buildDragSubjects(seed);
       // Counted against the RENDERED lanes, so the A/B Roll filter decides
@@ -408,10 +427,10 @@ export function useLayerDrag(opts: {
       frameDeltaUs: number,
     ): number => {
       return snapDragDeltaToTimelineBoundary({
-        // A duplicate leaves linked siblings in place, so their boundaries
-        // remain eligible snap targets. escapeLink=true makes the snapping
-        // helper ignore only the copied source layer.
-        state: state.duplicate ? { ...state, escapeLink: true } : state,
+        // The helper ignores the seed and, unless escaped, its link members —
+        // which is the subject set for a move and for a duplicate alike, so a
+        // copy never snaps to the sources it is leaving in place.
+        state,
         frameDeltaUs,
         visibleTracks: visibleSnapTracks,
         links,
@@ -541,7 +560,7 @@ export function useLayerDrag(opts: {
         state.kind === "move" && movedVertically
           ? destinationUnderPointer(clientY)
           : null;
-      // Alt+drag lowers to `pasteLayer`, which needs a lane that already exists,
+      // Alt+drag lowers to `pasteLayers`, which needs a lane that already exists,
       // and there is no create-and-paste operation — so the strip is simply not a
       // destination for a duplicate. Withheld here rather than refused at
       // release, the same instinct as this gesture's other pre-checks.
@@ -700,30 +719,43 @@ export function useLayerDrag(opts: {
               break;
             }
             if (committed.duplicate) {
-              const pendingDuplicate = moveProjection.placements.find(
-                (placement) => placement.layerId === committed.layerId,
-              );
-              if (!pendingDuplicate) return;
-              const pendingId = `${committed.layerId}::pending-duplicate`;
-              setPendingPlacements([
-                {
-                  ...pendingDuplicate,
-                  layerId: pendingId,
-                  sourceLayerId: committed.layerId,
-                },
-              ]);
-              const duplicatedLayerId = await pasteLayer(
+              // ONE `paste_layers` for the whole subject set, so the clones are
+              // one history row and one undo (`docs/features.md#links`). The
+              // dragged seed goes first: the op reads the drop position as the
+              // seed's, shifts every other clone by the delta the seed
+              // travelled, and changes track for the seed alone.
+              const seedFirst = [
                 committed.layerId,
+                ...committed.subjects
+                  .map((subject) => subject.layerId)
+                  .filter((id) => id !== committed.layerId),
+              ];
+              // One ghost per subject under a provisional id, then the same
+              // batch again under the ids the actor minted — a single state
+              // update each way, so no frame shows a partial set.
+              const ghosts = (cloneIdFor: (sourceId: string) => string) =>
+                moveProjection.placements.map((placement) => ({
+                  ...placement,
+                  layerId: cloneIdFor(placement.layerId),
+                  sourceLayerId: placement.layerId,
+                }));
+              setPendingPlacements(
+                ghosts((sourceId) => `${sourceId}::pending-duplicate`),
+              );
+              const { clones } = await pasteLayers(
+                seedFirst,
                 moveProjection.anchorStartUs,
                 moveProjection.destinationTrackId,
               );
-              setPendingPlacements([
-                {
-                  ...pendingDuplicate,
-                  layerId: duplicatedLayerId,
-                  sourceLayerId: committed.layerId,
-                },
-              ]);
+              const cloneBySource = new Map(
+                clones.map((pair) => [pair.source, pair.clone]),
+              );
+              setPendingPlacements(
+                ghosts(
+                  (sourceId) =>
+                    cloneBySource.get(sourceId) ?? `${sourceId}::pending-duplicate`,
+                ),
+              );
               break;
             }
             setPendingPlacements(moveProjection.placements);

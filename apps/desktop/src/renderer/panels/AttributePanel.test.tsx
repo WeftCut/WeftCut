@@ -356,7 +356,10 @@ describe("AttributePanel envelope command routing", () => {
     const dur = within(env).getByLabelText("Duration");
     fireEvent.change(dur, { target: { value: "00:00:01:00" } });
     fireEvent.blur(dur);
-    await vi.waitFor(() => expect(trimLayer).toHaveBeenCalledWith("layer-1", "out", 1_000_000));
+    // Link-aware (`escapeLink` false) — the override off is the default.
+    await vi.waitFor(() =>
+      expect(trimLayer).toHaveBeenCalledWith("layer-1", "out", 1_000_000, false),
+    );
 
     expect(moveLayer).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(onMutated).toHaveBeenCalledOnce());

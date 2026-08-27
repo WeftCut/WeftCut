@@ -14,6 +14,7 @@ import {
   useTailSnapEnabled,
 } from "../settings/appSettingsStore";
 import { useActiveTool } from "../state/toolStore";
+import { useLinkOverride } from "../state/linkOverrideStore";
 import { useHasMarkedRange } from "../state/rangeStore";
 import { useLinkToggleState } from "../timeline/linkEligibility";
 import {
@@ -257,6 +258,8 @@ export function QuickActionsPanel({
   // happened to re-render the strip. A string selector, so a click-select
   // re-renders the strip only when the ANSWER flips.
   const linkToggle = useLinkToggleState();
+  // The override's pressed state; a boolean selector like the settings toggles.
+  const linkOverride = useLinkOverride();
   const orientation = useStripOrientation(geometry, docked);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useHorizontalWheel(scrollRef, orientation === "horizontal");
@@ -286,6 +289,7 @@ export function QuickActionsPanel({
     safeAreaGuides,
     playbackResolution,
     linkToggle,
+    linkOverride,
   };
 
   // Buttons resolve against the command registry, so a command whose provider

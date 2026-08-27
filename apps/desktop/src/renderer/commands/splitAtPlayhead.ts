@@ -20,6 +20,7 @@ import { displayMode } from "../settings/appSettingsStore";
 import { playheadTimeUs } from "../state/playheadStore";
 import { useProjectStore } from "../state/projectStore";
 import { useSelectionStore } from "../state/selectionStore";
+import { linkFanoutActive } from "../timeline/linkEligibility";
 
 /// One layer a cut would land in, paired with the link the cut fans out to
 /// (null when the layer is unlinked). The link id exists only for the
@@ -53,12 +54,17 @@ export interface SplitTarget {
  *   visible rows. The SELECTION path deliberately ignores the filter: a
  *   selected layer is one the user reached on purpose, and the timeline's
  *   inline reveal already shows it.
+ *
+ * `linkFanout` false (the link override, `linkFanoutActive`) switches the
+ * one-per-link filter off: each straddling member is then its own target,
+ * because the split it gets sent is `escape_link: true` and cuts nothing else.
  */
 export function resolveSplitTargets(
   summary: ProjectSummary,
   tUs: number,
   selected: ReadonlySet<string>,
   abRollFilter: boolean,
+  linkFanout = true,
 ): SplitTarget[] {
   const linkOf = new Map<string, string>();
   for (const link of summary.links) {
@@ -80,7 +86,7 @@ export function resolveSplitTargets(
         if (layer.locked) continue;
         if (!(layer.t_start_us < tUs && tUs < layer.t_end_us)) continue;
         if (!accept(layer.id)) continue;
-        const linkId = linkOf.get(layer.id) ?? null;
+        const linkId = linkFanout ? (linkOf.get(layer.id) ?? null) : null;
         if (linkId !== null) {
           if (claimedLinks.has(linkId)) continue;
           claimedLinks.add(linkId);
@@ -127,15 +133,19 @@ export async function splitAtPlayhead(): Promise<void> {
   // against one instant and cutting at another would send a time that no
   // longer falls inside the clip the resolve picked.
   const tUs = playheadTimeUs();
+  // Read once too, so the target list and the escape flag agree.
+  const fanout = linkFanoutActive();
   const targets = resolveSplitTargets(
     summary,
     tUs,
     useSelectionStore.getState().selectedLayerIds,
     displayMode() === "AbRoll",
+    fanout,
   );
   for (const target of targets) {
-    // `escape_link: false` — the link-aware split, exactly as the Blade
-    // sends it, so a linked A/V pair cuts in lockstep.
-    await splitLayerLinked(target.layerId, tUs, false);
+    // The link-aware split, exactly as the Blade sends it, so a linked A/V
+    // pair cuts in lockstep — escaped only under the link override, where the
+    // resolver has already listed every member on its own.
+    await splitLayerLinked(target.layerId, tUs, !fanout);
   }
 }

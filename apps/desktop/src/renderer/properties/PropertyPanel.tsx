@@ -20,6 +20,7 @@ import {
   updateLayer,
   updateLayerParams,
   moveLayer,
+  setLayersEnabled,
   trimLayer,
   installMotif,
   deleteMotif,
@@ -30,6 +31,7 @@ import {
   type AudioRole,
   type LayerParamsPatch,
   type LayerSummary,
+  type LinkSummary,
   type Rgba,
   type TrackSummary,
   trackStatic,
@@ -39,6 +41,7 @@ import { layerDisplayName } from "../lib/layerName";
 import { trackDisplayName } from "../lib/trackName";
 import { refusalText, tryMutate } from "../errors/tryMutate";
 import { getGizmoProbe } from "../preview/gizmoProbeRegistry";
+import { linkFanoutActive } from "../timeline/linkEligibility";
 import { isShrunk, TEXT_BOX_MIN_PX } from "../render/textBox";
 import { InspectorAnimField } from "./InspectorAnimField";
 import { LinkLabelField } from "./LinkLabelField";
@@ -170,7 +173,7 @@ function LayerPanel({
   const summary = useProjectSummary();
   const selectionCount = useSelectedLayerIds().size;
   const link = summary?.links.find((g) => g.layer_ids.includes(layer.id)) ?? null;
-  const env = useEnvelope({ layer, track, onMutated, fpsNum, fpsDen });
+  const env = useEnvelope({ layer, track, link, onMutated, fpsNum, fpsDen });
 
   const kindLabel = t(`kinds.${layer.kind.toLowerCase()}`, { defaultValue: layer.kind });
   const trackLabel = track
@@ -283,12 +286,15 @@ function LayerPanel({
 function useEnvelope({
   layer,
   track,
+  link,
   onMutated,
   fpsNum,
   fpsDen,
 }: {
   layer: LayerSummary;
   track: TrackSummary | undefined;
+  /// The layer's link, or null — the Enabled switch's fan-out set.
+  link: LinkSummary | null;
   onMutated: () => Promise<void>;
   fpsNum: number;
   fpsDen: number;
@@ -347,7 +353,15 @@ function useEnvelope({
   };
 
   const commitFlag = async (patch: { enabled: boolean } | { locked: boolean }): Promise<void> => {
-    if (await tryMutate(() => updateLayer(layer.id, patch), "Update layer flag")) {
+    // `enabled` follows the link (`docs/features.md#links`): the members go in
+    // ONE `set_layers_enabled`, one undo step, unless the link override is on.
+    // `locked` stays local — a lock is not a fan-out property.
+    const members = link?.layer_ids ?? [];
+    const op =
+      "enabled" in patch && members.length > 1 && linkFanoutActive()
+        ? () => setLayersEnabled(members, patch.enabled)
+        : () => updateLayer(layer.id, patch);
+    if (await tryMutate(op, "Update layer flag")) {
       await onMutated();
     }
   };
@@ -363,8 +377,10 @@ function useEnvelope({
     if (us === layer.t_start_us || !track) return;
     // `escapeLink` on an audio layer: a sub-frame start edit is a SLIP, so it must
     // move this member alone. Dragging the whole link to a sample boundary would
-    // put the video member off its own grid (ADR 0038 / R2-D7).
-    if (await tryMutate(() => moveLayer(layer.id, track.id, us, isAudio), "Move layer")) {
+    // put the video member off its own grid (ADR 0038 / R2-D7). The link
+    // override escapes too, as it does for every timeline gesture.
+    const escape = isAudio || !linkFanoutActive();
+    if (await tryMutate(() => moveLayer(layer.id, track.id, us, escape), "Move layer")) {
       await onMutated();
     } else {
       setStartTc(fmtTime(layer.t_start_us));
@@ -381,7 +397,12 @@ function useEnvelope({
     }
     const newEnd = layer.t_start_us + us;
     if (newEnd === layer.t_end_us) return;
-    if (await tryMutate(() => trimLayer(layer.id, "out", newEnd), "Trim layer")) {
+    if (
+      await tryMutate(
+        () => trimLayer(layer.id, "out", newEnd, !linkFanoutActive()),
+        "Trim layer",
+      )
+    ) {
       await onMutated();
     } else {
       setDurTc(fmtTime(layer.t_end_us - layer.t_start_us));

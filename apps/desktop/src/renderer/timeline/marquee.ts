@@ -229,6 +229,9 @@ export function resolveMarqueeSelection(args: {
   linkByLayerId: ReadonlyMap<string, string>;
   links: readonly LinkSummary[];
   mode: "replace";
+  /// False under the link override (`linkFanoutActive`): the box then takes
+  /// exactly what it touched, members and non-members alike. Default true.
+  linkFanout?: boolean;
 }): { ids: string[]; primary: string | null } {
   const linkById = new Map(args.links.map((link) => [link.id, link]));
   const ids: string[] = [];
@@ -240,6 +243,7 @@ export function resolveMarqueeSelection(args: {
   };
   for (const layerId of args.hit) {
     take(layerId);
+    if (args.linkFanout === false) continue;
     // Touching one member takes the whole link, as a plain click does
     // (`selectFromClick`) — members and all, locked ones included, so the box
     // cannot build a selection a click could not. The cost is a highlight

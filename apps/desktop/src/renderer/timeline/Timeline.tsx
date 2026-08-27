@@ -19,6 +19,7 @@ import {
   moveLayer,
   removeTransition,
   separateAudioToNewTrack,
+  setLayersEnabled,
   splitLayerLinked,
   updateLayer,
   updateLayerParamTrack,
@@ -60,6 +61,7 @@ import { deriveAudioSyncOffsets, setAudioSyncOffsets } from "./audioSyncOffsetSt
 import {
   canToggleLinkSelection,
   enclosingLink,
+  linkFanoutActive,
   linkToggleState,
 } from "./linkEligibility";
 import {
@@ -248,6 +250,9 @@ export function Timeline({
     layerId: string;
     layerKind: string;
     layerEnabled: boolean;
+    /// `Alt` held on the right-click — the menu's Enable/Disable row escapes
+    /// the link fan-out, as the click's selection did.
+    escapeLink: boolean;
     cut: TransitionCut | null;
   } | null>(null);
   // Transition-chip context-menu state — the chip counterpart of
@@ -430,8 +435,9 @@ export function Timeline({
   /// Map a click event on a layer chip to the resulting selection set.
   /// `docs/features.md#links`: plain click on a linked layer selects the
   /// whole link; `Alt+click` selects only the clicked layer (escape
-  /// path); `Shift+click` TOGGLES the clicked layer (with its whole link
-  /// if any) in and out of the current selection.
+  /// path), and so does every click while the link override is on
+  /// (`linkFanoutActive`); `Shift+click` TOGGLES the clicked layer (with its
+  /// whole link if any) in and out of the current selection.
   ///
   /// Returns whether the clicked layer is selected afterwards — `false` only
   /// for a Shift+click that removed it. `LayerBlock` needs that answer because
@@ -444,7 +450,7 @@ export function Timeline({
     ): boolean => {
       const gid = linkByLayerId.get(layerId);
       const memberSet = (): Set<string> => {
-        if (!gid || e.altKey) return new Set([layerId]);
+        if (!gid || !linkFanoutActive(e)) return new Set([layerId]);
         const g = links.find((x) => x.id === gid);
         return new Set(g?.layer_ids ?? [layerId]);
       };
@@ -880,6 +886,7 @@ export function Timeline({
         layerId,
         layerKind,
         layerEnabled,
+        escapeLink: e.altKey,
         cut,
       });
     },
@@ -1116,11 +1123,14 @@ export function Timeline({
     beginLinkRename(linkId);
   }, []);
 
+  /// The menu hands over the resolved set — the link's members, or the clicked
+  /// layer alone when escaped — and `set_layers_enabled` records it as ONE
+  /// history row (`docs/features.md#links`).
   const onToggleEnabled = useCallback(
-    async (layerId: string, enabled: boolean) => {
+    async (layerIds: string[], enabled: boolean) => {
       setContextMenu(null);
       try {
-        await updateLayer(layerId, { enabled });
+        await setLayersEnabled(layerIds, enabled);
         await onMutated();
       } catch (e) {
         logMutationFailure(e, "Toggle layer");
@@ -1182,7 +1192,9 @@ export function Timeline({
       const atUs = snapTimeToTimelineBoundary({
         timeUs: frameUs,
         layerId: layer.id,
-        escapeLink: false,
+        // Escaped under the link override: the split then cuts this layer
+        // alone, so its siblings' edges are snap targets again.
+        escapeLink: !linkFanoutActive(),
         visibleTracks: visibleSnapTracks,
         links,
         linkByLayerId,
@@ -1240,7 +1252,9 @@ export function Timeline({
       if (atUs === null) return;
       setBladePreview(null);
       try {
-        await splitLayerLinked(layer.id, atUs, false);
+        // Link-aware, as `splitAtPlayhead` sends it; escaped only under the
+        // link override.
+        await splitLayerLinked(layer.id, atUs, !linkFanoutActive());
         await onMutated();
       } catch (err) {
         logMutationFailure(err, "Blade split");
@@ -1398,6 +1412,7 @@ export function Timeline({
         linkByLayerId,
         links,
         mode: "replace",
+        linkFanout: linkFanoutActive(),
       });
       setLayerSelection(primary, ids);
       // So the Delete that follows reaches the clips just swept: whenever a
@@ -1642,6 +1657,11 @@ export function Timeline({
         layerKind={contextMenu.layerKind}
         layerEnabled={contextMenu.layerEnabled}
         linkId={linkByLayerId.get(contextMenu.layerId) ?? null}
+        linkMemberIds={
+          links.find((l) => l.id === linkByLayerId.get(contextMenu.layerId))
+            ?.layer_ids ?? [contextMenu.layerId]
+        }
+        escapeLink={contextMenu.escapeLink}
         transitionCut={contextMenu.cut}
         onClose={() => setContextMenu(null)}
         onRename={onRename}

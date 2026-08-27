@@ -277,13 +277,33 @@ audible one.
 **UI.** Click a member → select the whole link; `Shift+click` toggles by
 link (a second one takes it back out — a deselecting click never starts a
 drag); `Alt+click` selects only the clicked layer, and `Alt+trim` escapes
-that one trim (body `Alt+drag` instead duplicates the single layer at the
-drop position). Linked layers show a 2 px left accent in a hue derived
+that one trim. Body `Alt+drag` duplicates the **whole link**: one ghost per
+member during the drag, one `paste_layers` on release, the clones linked to
+each other and never to their sources, one undo. The escape is the
+selection — `Alt+click` a member first and the copy is that member alone,
+unlinked — because `Alt` on the body already means duplicate. A collision on
+any member's destination shows the drag invalid and creates nothing.
+**Enable / Disable** in a clip's context menu and the inspector's Enabled
+switch send the link's members in one `set_layers_enabled` (the menu row
+reads `Disable 2 linked layers`); `Alt`+right-click narrows the row to the
+clicked layer. Linked layers show a 2 px left accent in a hue derived
 deterministically from `link_id`. `Ctrl+L` **toggles** link ↔ unlink, as in
 Premiere: a selection inside one link unlinks it, two or more unlinked layers
 link, and anything else greys out with the reason in the tooltip. It is one
 command, rebindable via the TS keybindings store, and the same toggle sits in
 the Quick Actions strip's `edit` section as Link / Unlink.
+
+**Link override.** `Alt+Shift+G` (Reaper's *Grouping enabled* key; also a
+toggle in the Quick Actions strip and a row in the search palette) flips a
+session switch that stands in for a held `Alt`. While it is on, every site
+that consults link membership treats the link as absent: a plain click
+selects one member, a drag moves or duplicates one, the blade and `Mod+B`
+split one, the marquee takes exactly what it touched, and Enable / Disable
+toggles one. The status bar shows a `Links off` chip and the timeline's link
+accents dim to 40 % for as long as it is on, so the mode is stated on screen
+rather than remembered. Nothing is written: links keep every membership, the
+toggle records no history entry, and it is not persisted. MCP is unaffected
+— an agent passes `escape_link` explicitly.
 
 **A/V sync offset.** An audio member can be slipped off its video partner
 (audio lives on the 48 kHz sample lattice — see [audio.md](audio.md)), and the

@@ -26,6 +26,7 @@ import {
   toggleSafeAreaGuides,
   toggleTailSnap,
 } from "../settings/appSettingsStore";
+import { linkOverrideOn } from "../state/linkOverrideStore";
 import { playheadTimeUs } from "../state/playheadStore";
 import { hasMarkedRange } from "../state/rangeStore";
 import { hasTransitionCut } from "../timeline/applyTransition";
@@ -357,6 +358,8 @@ export function buildAppCommands(
     // Same live-read reason as `clearRange` below the flags: App does not
     // re-render on an app-settings flip, so a captured flag would freeze.
     toggleFollowPlayhead: () => followPlayheadEnabled(),
+    // Session store, same live-read rule: App never re-renders on the flip.
+    toggleLinkOverride: () => linkOverrideOn(),
   };
 
   const defs: CommandDef[] = [];

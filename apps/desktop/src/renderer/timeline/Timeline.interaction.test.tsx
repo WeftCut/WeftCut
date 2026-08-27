@@ -61,7 +61,13 @@ const ipcMocks = vi.hoisted(() => ({
   addTrack: vi.fn().mockResolvedValue("spawned-track"),
   moveLayer: vi.fn().mockResolvedValue(undefined),
   moveLayersToNewTrack: vi.fn().mockResolvedValue("raised-track"),
-  pasteLayer: vi.fn().mockResolvedValue("duplicated-layer"),
+  // Answers with one clone per id it was handed, so the pending-ghost swap
+  // has a real id per subject.
+  pasteLayers: vi.fn((layerIds: string[]) =>
+    Promise.resolve({
+      clones: layerIds.map((source) => ({ source, clone: `${source}::clone` })),
+    }),
+  ),
   trimLayer: vi.fn().mockResolvedValue(undefined),
   getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
   linksCreate: vi.fn().mockResolvedValue("link-created"),
@@ -93,7 +99,7 @@ vi.mock("../ipc", async (importOriginal) => {
     addTrack: ipcMocks.addTrack,
     moveLayer: ipcMocks.moveLayer,
     moveLayersToNewTrack: ipcMocks.moveLayersToNewTrack,
-    pasteLayer: ipcMocks.pasteLayer,
+    pasteLayers: ipcMocks.pasteLayers,
     trimLayer: ipcMocks.trimLayer,
     getWaveformPeaks: ipcMocks.getWaveformPeaks,
     linksCreate: ipcMocks.linksCreate,
@@ -251,7 +257,7 @@ describe("Timeline seek/selection coupling", () => {
     ipcMocks.addTrack.mockClear();
     ipcMocks.moveLayer.mockClear();
     ipcMocks.moveLayersToNewTrack.mockClear();
-    ipcMocks.pasteLayer.mockClear();
+    ipcMocks.pasteLayers.mockClear();
     ipcMocks.trimLayer.mockClear();
     ipcMocks.getWaveformPeaks.mockClear();
     ipcMocks.linksCreate.mockClear();
@@ -1263,14 +1269,19 @@ describe("Timeline seek/selection coupling", () => {
     });
   });
 
-  it("Alt+drag keeps a linked source in place and duplicates only the dragged layer", async () => {
+  // Premiere's Alt+drag on a linked clip copies both halves: one ghost per
+  // member during the drag, both sources left in place, and ONE `paste_layers`
+  // with the dragged seed first — the op reads the drop position as the seed's.
+  it("Alt+drag duplicates the whole link in one paste, sources untouched", async () => {
     const onMutated = vi.fn().mockResolvedValue(undefined);
     const { getByText, container } = renderTimeline({
       tracks: [linkedTrack],
       links: [link],
-      selectedLayerId: layer.id,
       onMutated,
     });
+    // The whole link selected, as a plain click leaves it: a selected clip arms
+    // the drag at once, and a selection covering every member narrows nothing.
+    act(() => setLayerSelection(layer.id, [layer.id, linkedLayer.id]));
 
     const source = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
     const sibling = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
@@ -1281,26 +1292,95 @@ describe("Timeline seek/selection coupling", () => {
       clientY: 30,
       altKey: true,
     });
-    fireEvent.pointerMove(window, { clientX: 320, clientY: 30, altKey: true });
+    fireEvent.pointerMove(window, { clientX: 400, clientY: 30, altKey: true });
 
-    const preview = container.querySelector(
-      '[data-duplicate-preview="true"]',
-    ) as HTMLElement;
+    const previews = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-duplicate-preview="true"]'),
+    );
     expect(source.style.left).toBe("0px");
     expect(sibling.style.left).toBe("160px");
-    expect(preview).not.toBeNull();
-    expect(preview.style.left).toBe("320px");
+    expect(previews.map((ghost) => ghost.style.left).sort()).toEqual([
+      "400px",
+      "560px",
+    ]);
 
-    fireEvent.pointerUp(window, { clientX: 320, clientY: 30, altKey: true });
+    fireEvent.pointerUp(window, { clientX: 400, clientY: 30, altKey: true });
 
     await waitFor(() => {
-      expect(ipcMocks.pasteLayer).toHaveBeenCalledWith(
-        layer.id,
-        4_000_000,
+      expect(ipcMocks.pasteLayers).toHaveBeenCalledWith(
+        [layer.id, linkedLayer.id],
+        5_000_000,
         track.id,
       );
     });
+    expect(ipcMocks.pasteLayers).toHaveBeenCalledTimes(1);
     expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+  });
+
+  // The escape is the selection: Alt on the body already means duplicate, so a
+  // selection narrowed to one member BEFORE the drag (an Alt+click first) is
+  // what makes the copy a single, unlinked clone.
+  it("Alt+drag after an Alt+click duplicates only the selected member", async () => {
+    const { getByText, container } = renderTimeline({
+      tracks: [linkedTrack],
+      links: [link],
+      selectedLayerId: layer.id,
+    });
+
+    const source = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    fireEvent.pointerDown(source, {
+      button: 0,
+      clientX: 0,
+      clientY: 30,
+      altKey: true,
+    });
+    fireEvent.pointerMove(window, { clientX: 400, clientY: 30, altKey: true });
+
+    expect(
+      container.querySelectorAll('[data-duplicate-preview="true"]'),
+    ).toHaveLength(1);
+
+    fireEvent.pointerUp(window, { clientX: 400, clientY: 30, altKey: true });
+
+    await waitFor(() => {
+      expect(ipcMocks.pasteLayers).toHaveBeenCalledWith(
+        [layer.id],
+        5_000_000,
+        track.id,
+      );
+    });
+  });
+
+  // A collision on ANY destination refuses the whole set — here the sibling's
+  // landing spot overlaps the untouched sources — and nothing is created.
+  it("blocks a whole-link duplicate when one member's destination collides", () => {
+    const { getByText, container } = renderTimeline({
+      tracks: [linkedTrack],
+      links: [link],
+    });
+    act(() => setLayerSelection(layer.id, [layer.id, linkedLayer.id]));
+    const source = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(source, {
+      button: 0,
+      clientX: 0,
+      clientY: 30,
+      altKey: true,
+    });
+    // At 3 s Clip A's copy (3–5 s) overlaps the untouched Clip B (2–4 s);
+    // Clip B's own copy (5–7 s) is clear. One member colliding is enough.
+    fireEvent.pointerMove(window, { clientX: 240, clientY: 30, altKey: true });
+
+    const previews = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-duplicate-preview="true"]'),
+    );
+    expect(previews).toHaveLength(2);
+    expect(previews.every((ghost) => ghost.dataset.dragValidity === "collision")).toBe(
+      true,
+    );
+
+    fireEvent.pointerUp(window, { clientX: 240, clientY: 30, altKey: true });
+    expect(ipcMocks.pasteLayers).not.toHaveBeenCalled();
   });
 
   it("blocks an Alt+drag duplicate that would overlap its source", () => {
@@ -1325,7 +1405,7 @@ describe("Timeline seek/selection coupling", () => {
     expect(preview.dataset.dragValidity).toBe("collision");
 
     fireEvent.pointerUp(window, { clientX: 80, clientY: 30, altKey: true });
-    expect(ipcMocks.pasteLayer).not.toHaveBeenCalled();
+    expect(ipcMocks.pasteLayers).not.toHaveBeenCalled();
     expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
   });
 
@@ -1962,7 +2042,7 @@ describe("Timeline seek/selection coupling", () => {
     });
     fireEvent.pointerMove(window, { clientX: 320, clientY: 7, altKey: true });
 
-    // A duplicate lowers to `pasteLayer`, which needs a lane that exists, so the
+    // A duplicate lowers to `pasteLayers`, which needs a lane that exists, so the
     // strip stays dark and the copy lands on the source's own lane.
     //
     // The fallback is not a silent surprise, which is what makes it defensible:
@@ -1980,8 +2060,8 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerUp(window, { clientX: 320, clientY: 7, altKey: true });
 
     await waitFor(() => {
-      expect(ipcMocks.pasteLayer).toHaveBeenCalledWith(
-        layer.id,
+      expect(ipcMocks.pasteLayers).toHaveBeenCalledWith(
+        [layer.id],
         4_000_000,
         track.id,
       );

@@ -152,6 +152,24 @@
   color: var(--color-blue-300);
 }
 
+/* A standing mode chip, not a button: the badges above open the log, this one
+   only says which state the timeline is in. */
+.status-bar-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+}
+
+.status-bar-chip-links-off {
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.32);
+  color: var(--color-amber-200);
+}
+
 @keyframes status-bar-error-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0); }
   50% { box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.35); }

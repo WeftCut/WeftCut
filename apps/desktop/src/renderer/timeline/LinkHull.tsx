@@ -14,6 +14,7 @@ import {
   type MeasuredTrackRow,
 } from "./geometry";
 import { useHoveredLinkId } from "./linkHoverStore";
+import { useLinkOverride } from "../state/linkOverrideStore";
 
 interface HullBox extends LinkHullRect {
   linkId: string;
@@ -52,6 +53,9 @@ export function LinkHull({
   pxPerSec: number;
 }) {
   const hoveredLinkId = useHoveredLinkId();
+  // Under the link override the accent dims to 40 % (`LayerBlock` does the
+  // same to its border) — the canvas itself says links are not in force.
+  const accentAlpha = useLinkOverride() ? 0.4 : 1;
 
   const activeLinks = useMemo(() => {
     const out: LinkSummary[] = [];
@@ -115,7 +119,7 @@ export function LinkHull({
     <>
       {boxes.map((box) => {
         const hue = linkHue(box.linkId);
-        const edge = `hsl(${hue} 75% 60% / 0.8)`;
+        const edge = `hsl(${hue} 75% 60% / ${0.8 * accentAlpha})`;
         return (
           <div
             key={box.linkId}
@@ -128,7 +132,7 @@ export function LinkHull({
               top: box.top,
               width: box.width,
               height: box.bottom - box.top,
-              backgroundColor: `hsl(${hue} 75% 60% / 0.06)`,
+              backgroundColor: `hsl(${hue} 75% 60% / ${0.06 * accentAlpha})`,
               borderTop: `1px solid ${edge}`,
               borderBottom: `1px solid ${edge}`,
               borderLeft: `1px dashed ${edge}`,

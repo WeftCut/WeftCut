@@ -18,6 +18,7 @@ import {
   BookmarkPlus,
   FoldVertical,
   Link,
+  Link2Off,
   Magnet,
   MousePointer2,
   Scissors,
@@ -78,6 +79,9 @@ export interface QuickActionState {
   /// reason: the strip re-renders when the answer flips, not on every
   /// click-select.
   linkToggle: LinkToggleState;
+  /// Whether the link override is on (`linkOverrideStore.ts`): links are
+  /// not in force, every edit acts on single layers.
+  linkOverride: boolean;
 }
 
 export interface QuickActionItem {
@@ -218,6 +222,20 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
           s.safeAreaGuides
             ? "quick_actions.safe_area_on_hint"
             : "quick_actions.safe_area_off_hint",
+      },
+      {
+        // Link override (`linkOverrideStore.ts`). Sits here rather than beside
+        // the Link / Unlink button in `edit`: that section is `command` mode,
+        // and this is a switch whose whole point is its pressed state —
+        // `aria-pressed` is only honest in an `independent` section. A broken
+        // chain: pressed = links not in force.
+        id: "toggleLinkOverride",
+        icon: Link2Off,
+        active: (s) => s.linkOverride,
+        hint: (s) =>
+          s.linkOverride
+            ? "quick_actions.link_override_on_hint"
+            : "quick_actions.link_override_off_hint",
       },
     ],
   },
