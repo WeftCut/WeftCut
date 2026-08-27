@@ -1,8 +1,10 @@
-import type { Project, Uuid } from '../model'
+import type { Layer, Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { applyDurationAutofit, cloneLayer, locateLayer } from './helpers'
+import { applyLinksCreate } from './links'
 import { CommandFailure } from '../errors'
 import { gridForLayerKind, snapOnGrid } from '../snap'
+import { layerOverlapClass } from '../validate'
 
 /** Shallow-clone the layer with one fresh id (nested keyframe/effect ids are
  *  NOT regenerated), offset by tOffsetUs, insert t-start-sorted on the same
@@ -81,4 +83,84 @@ export function applyPasteLayer(
   target.layers.splice(at < 0 ? target.layers.length : at, 0, copy)
   applyDurationAutofit(p)
   return pastedId
+}
+
+/** Paste a SET of layers as one edit — the whole-link duplicate. Every clone
+ *  shifts by the shared `deltaUs` and then snaps on ITS OWN lattice
+ *  (`pasteLayerInterval`), which is the same rule `applyMoveLayer` fans out
+ *  under and what keeps a slipped A/V offset intact. Only the SEED
+ *  (`layerIds[0]`) changes track, onto `targetTrackId`; every other clone lands
+ *  on its source's track, mirroring the move rule. Two or more clones are linked
+ *  to each other — never to their sources.
+ *
+ *  All-or-nothing: every destination is checked for lock and overlap before any
+ *  clone is inserted, so a refusal leaves `p` untouched and burns no id. The
+ *  overlap refusal is the validator's own `LayerOverlap`, with `b` naming the
+ *  SOURCE whose clone would collide — the clone never came to exist.
+ *
+ *  Returns source → clone. Empty input returns an empty map and touches nothing. */
+export function applyPasteLayers(
+  p: Project,
+  idGen: IdGen,
+  layerIds: readonly Uuid[],
+  deltaUs: number,
+  targetTrackId: Uuid | null,
+): Map<Uuid, Uuid> {
+  const ids = [...new Set(layerIds)]
+  const result = new Map<Uuid, Uuid>()
+  if (ids.length === 0) return result
+
+  interface Plan { source: Layer; trackIdx: number; tStartUs: number; tEndUs: number }
+  const plans: Plan[] = []
+  for (const [i, id] of ids.entries()) {
+    const loc = locateLayer(p, id)
+    if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
+    const source = p.tracks[loc[0]].layers[loc[1]]
+    let trackIdx = loc[0]
+    if (i === 0 && targetTrackId !== null) {
+      trackIdx = p.tracks.findIndex((t) => t.id === targetTrackId)
+      if (trackIdx < 0) throw new CommandFailure({ error: 'TrackNotFound', track: targetTrackId })
+    }
+    if (p.tracks[trackIdx].locked) throw new CommandFailure({ error: 'TrackLocked', track: p.tracks[trackIdx].id })
+    const interval = pasteLayerInterval(p, id, source.t_start_us + deltaUs)
+    plans.push({ source, trackIdx, tStartUs: interval.tStartUs, tEndUs: interval.tEndUs })
+  }
+
+  // Half-open `[start, end)` per overlap class — the track rule in validate.ts.
+  // Clones sharing a destination are checked against each other too: two members
+  // of one link on one track collide only if the shift lands them apart from
+  // how they sit today, and validate would refuse that after the fact.
+  const collides = (a: { t_start_us: number; t_end_us: number }, b: { t_start_us: number; t_end_us: number }) =>
+    a.t_start_us < b.t_end_us && b.t_start_us < a.t_end_us
+  for (const [i, plan] of plans.entries()) {
+    const cls = layerOverlapClass(plan.source.params)
+    const track = p.tracks[plan.trackIdx]
+    const clone = { t_start_us: plan.tStartUs, t_end_us: plan.tEndUs }
+    const refuse = (other: { id: Uuid; t_start_us: number; t_end_us: number }): never => {
+      throw new CommandFailure({ error: 'ValidationFailed', detail: {
+        rule: 'LayerOverlap', track: track.id,
+        a: other.id, a_start: other.t_start_us, a_end: other.t_end_us,
+        b: plan.source.id, b_start: clone.t_start_us, b_end: clone.t_end_us,
+      } })
+    }
+    for (const l of track.layers) if (layerOverlapClass(l.params) === cls && collides(clone, l)) refuse(l)
+    for (const [j, other] of plans.entries()) {
+      if (j >= i || other.trackIdx !== plan.trackIdx || layerOverlapClass(other.source.params) !== cls) continue
+      if (collides(clone, { t_start_us: other.tStartUs, t_end_us: other.tEndUs })) refuse({ id: other.source.id, t_start_us: other.tStartUs, t_end_us: other.tEndUs })
+    }
+  }
+
+  for (const plan of plans) {
+    const copy = cloneLayer(plan.source)
+    copy.id = idGen()
+    copy.t_start_us = plan.tStartUs
+    copy.t_end_us = plan.tEndUs
+    const track = p.tracks[plan.trackIdx]
+    const at = track.layers.findIndex((l) => l.t_start_us > copy.t_start_us)
+    track.layers.splice(at < 0 ? track.layers.length : at, 0, copy)
+    result.set(plan.source.id, copy.id)
+  }
+  if (result.size >= 2) applyLinksCreate(p, idGen, [...result.values()], null, false)
+  applyDurationAutofit(p)
+  return result
 }

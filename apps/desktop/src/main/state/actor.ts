@@ -4,7 +4,7 @@ import type { Animated, AudioRole, Composition, Interpolation, LayerParams, Moti
 import { blankProject } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
-import { HISTORY_SUMMARY, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
+import { HISTORY_SUMMARY, layersEnabledSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileTransitions, type DroppedTransition } from './validate'
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
@@ -13,10 +13,10 @@ import { applyMoveLayer, applyMoveLayersToNewTrack } from './mutations/move'
 import { applyRestackLayer, type RestackPosition } from './mutations/restack'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
-import { applyDuplicateLayer, applyPasteLayer, pasteLayerInterval } from './mutations/duplicate'
+import { applyDuplicateLayer, applyPasteLayer, applyPasteLayers, pasteLayerInterval } from './mutations/duplicate'
 import { applySplitLayer } from './mutations/split'
 import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, applyLinksRename } from './mutations/links'
-import { applyUpdateLayer, type LayerPatch } from './mutations/update'
+import { applySetLayersEnabled, applyUpdateLayer, type LayerPatch } from './mutations/update'
 import { applyFitComposition } from './mutations/composition'
 import { applyDurationAutofit, locateLayer } from './mutations/helpers'
 import { applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
@@ -34,7 +34,7 @@ import { applyAddCaptionTrack, applyRestyleCaptions, type Cue, type CaptionStyle
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseStr, parseRgba, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setKeyframeInterp, smoothKeyframe, smoothTrack } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 
@@ -726,6 +726,32 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: null }
         }
         case 'duplicate_layer': return { ok: true, value: commit(HISTORY_SUMMARY.layerDuplicate, layerRef, { kind: 'Coarse' }, (d) => applyDuplicateLayer(d, idGen, a.layer as Uuid, parseNum(a.t_offset_us, 't_offset_us'))) }
+        // paste_layers — the whole-link duplicate. `t_start_us` is where the SEED's
+        // clone starts; the shared delta is measured from the seed on the
+        // pre-mutation snapshot so a drop position and an agent's request mean the
+        // same thing. One commit: one undo removes every clone and their link.
+        // Empty `layers` is a caller bug, not a no-op — there is no seed to
+        // measure from.
+        case 'paste_layers': {
+          const layers = [...new Set((a.layers as Uuid[]) ?? [])]
+          if (layers.length === 0) return { ok: false, error: { error: 'InvalidArgument', field: 'layers', detail: 'at least one layer is required' } }
+          const seedLoc = locateLayer(current(), layers[0])
+          if (!seedLoc) return { ok: false, error: { error: 'LayerNotFound', layer: layers[0] } }
+          const deltaUs = parseNum(a.t_start_us, 't_start_us') - current().tracks[seedLoc[0]].layers[seedLoc[1]].t_start_us
+          const targetTrackId = (a.target_track_id as Uuid | null | undefined) ?? null
+          const clones = commit(pastedLayersSummary(layers.length), (m: Map<Uuid, Uuid>) => layerRefs([...m.values()]), { kind: 'Coarse' },
+            (d) => applyPasteLayers(d, idGen, layers, deltaUs, targetTrackId))
+          return { ok: true, value: { clones: layers.map((source) => ({ source, clone: clones.get(source)! })) } }
+        }
+        // set_layers_enabled — the caller's set, verbatim (the renderer hands it a
+        // link's members when the toggle fans out). One entry; a set already in
+        // the requested state leaves the draft untouched and records nothing.
+        case 'set_layers_enabled': {
+          const layers = [...new Set((a.layers as Uuid[]) ?? [])]
+          const enabled = parseBool(a.enabled, 'enabled')
+          commit(layersEnabledSummary(enabled, layers.length), layerRefs(layers), { kind: 'Coarse' }, (d) => applySetLayersEnabled(d, layers, enabled))
+          return { ok: true, value: null }
+        }
         case 'set_composition': setComposition(a); return { ok: true, value: null }
         case 'undo': undo(); return { ok: true, value: null }
         case 'redo': redo(); return { ok: true, value: null }

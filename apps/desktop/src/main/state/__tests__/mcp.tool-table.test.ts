@@ -4,10 +4,10 @@ import { createActor } from '../actor'
 import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
 
-const ALL_54_NAMES = new Set<string>([
-  // table-exec tools (33)
-  'add_track', 'remove_track', 'rename_track', 'duplicate_layer', 'move_track',
-  'update_layer', 'update_layer_params', 'set_scale_linked',
+const ALL_56_NAMES = new Set<string>([
+  // table-exec tools (35)
+  'add_track', 'remove_track', 'rename_track', 'duplicate_layer', 'paste_layers', 'move_track',
+  'update_layer', 'set_layers_enabled', 'update_layer_params', 'set_scale_linked',
   'move_layer', 'restack_layer', 'trim_layer', 'delete_layer',
   'links_create', 'links_dissolve', 'links_add_members', 'links_remove_members', 'links_rename',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
@@ -29,8 +29,8 @@ const ALL_54_NAMES = new Set<string>([
 ])
 
 describe('MCP tool table projections', () => {
-  it('MCP_TOOLS contains exactly the 54 tool names', () => {
-    expect(MCP_TOOLS).toEqual(ALL_54_NAMES)
+  it('MCP_TOOLS contains exactly the 56 tool names', () => {
+    expect(MCP_TOOLS).toEqual(ALL_56_NAMES)
   })
 
   it('MCP_TOOLS equals the set of def names', () => {
@@ -70,7 +70,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(33)
+    expect(table.length).toBe(35)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }
@@ -96,9 +96,24 @@ describe('MCP tool table projections', () => {
     expect(def.description).toContain(REVERT_PATHS)
   })
 
-  it('shapeResult tools are the expected 5', () => {
+  it('shapeResult tools are the expected 6', () => {
     const shapers = MCP_TOOL_DEFS.filter((d) => d.shapeResult).map((d) => d.name).sort()
-    expect(shapers).toEqual(['add_effect', 'add_track', 'add_transition', 'duplicate_layer', 'links_create'])
+    expect(shapers).toEqual(['add_effect', 'add_track', 'add_transition', 'duplicate_layer', 'links_create', 'paste_layers'])
+  })
+
+  it('paste_layers / set_layers_enabled round-trip valid args and reject malformed ones', () => {
+    const u1 = '00000000-0000-7000-8000-000000000001'
+    const u2 = '00000000-0000-7000-8000-000000000002'
+    const t = '00000000-0000-7000-8000-0000000000aa'
+    expect(MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1, u2], t_start_us: 1_000_000 }))
+      .toEqual({ op: 'paste_layers', args: { layers: [u1, u2], t_start_us: 1_000_000, target_track_id: null } })
+    expect(MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, target_track_id: t }).args.target_track_id).toBe(t)
+    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: u1, t_start_us: 0 })).toThrow()               // not an array
+    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 'later' })).toThrow()      // non-number start
+    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, target_track_id: 'A roll' })).toThrow() // non-uuid track
+    expect(MCP_ARG_PARSERS['set_layers_enabled']({ layer_ids: [u1, u2], enabled: false }))
+      .toEqual({ op: 'set_layers_enabled', args: { layers: [u1, u2], enabled: false } })
+    expect(() => MCP_ARG_PARSERS['set_layers_enabled']({ layer_ids: [u1], enabled: 'no' })).toThrow()      // non-boolean
   })
 
   it('parseBoolOpt hardening: escape_link rejects non-boolean', () => {

@@ -233,6 +233,8 @@ Layers:
 - `trim_layer { layer_id, edge, new_t_us, escape_link? }` — `edge` ∈ `"in" | "out"`.
 - `delete_layer { layer_id }`
 - `duplicate_layer { layer_id, t_offset_us }` → `LayerId`
+- `paste_layers { layer_ids, t_start_us, target_track_id? }` → `{ clones: [{ source, clone }] }` — the whole-link duplicate, one recorded edit. `layer_ids[0]` is the **seed**: `t_start_us` is where its clone starts, and every other clone shifts by that same delta, each snapped on its own lattice (an audio member keeps a slipped A/V offset). `target_track_id` moves only the seed's clone; every other clone lands on its source's track. **All-or-nothing:** a locked or occupied destination for any member rejects the batch (`TrackLocked`, or `ValidationFailed`/`LayerOverlap` whose `b` names the source whose clone would collide) and nothing is created. Two or more clones are linked to each other, never to their sources. Pass a single id to copy one linked layer without its partners.
+- `set_layers_enabled { layer_ids, enabled }` — set `enabled` on exactly these layers in one recorded edit. Nothing is expanded here: to disable a linked pair together, pass both members. A layer's own `locked` does not block the toggle (visibility is not content); a layer on a locked track rejects the whole batch. One layer: `update_layer { patch: { enabled } }`.
 
 Effects (per-layer Pixi filter chains; catalog: `blur`, `chromakey`, `brightness`, `contrast`, `saturation`, `sharpen`):
 - In v1, effects render on all five visual layer kinds: VideoClip, ImageOverlay, Color, Text, and Motif.

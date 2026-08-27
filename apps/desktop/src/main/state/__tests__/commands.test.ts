@@ -14,7 +14,7 @@ import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
 // If this fails, a channel was added or removed unintentionally — do NOT
 // silently update the expected list; investigate first.
 describe('PRODUCTION_OPS', () => {
-  it('contains exactly the 51 in-scope renderer channels', () => {
+  it('contains exactly the 53 in-scope renderer channels', () => {
     const expected = [
       'add_color_layer', 'add_demo_color_layer', 'add_demo_text_layer', 'add_effect',
       // Markers (marker-authoring ticket 01) — the renderer's first marker channels.
@@ -23,6 +23,8 @@ describe('PRODUCTION_OPS', () => {
       'delete_layer', 'delete_layers', 'duplicate_layer',
       'fit_composition_to_layers', 'links_create', 'links_dissolve', 'links_rename', 'move_effect',
       'move_layer', 'move_layers_to_new_track', 'paste_layer',
+      // Link fan-out batches: the whole-link duplicate and the enabled toggle.
+      'paste_layers', 'set_layers_enabled',
       'project_create_checkpoint', 'project_delete_checkpoint',
       'project_jump_to', 'project_redo', 'project_restore_checkpoint', 'project_undo',
       'remove_effect', 'remove_marker', 'remove_media', 'remove_transition', 'rename_track',

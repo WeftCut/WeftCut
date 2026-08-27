@@ -1623,3 +1623,148 @@ describe('dispatch: move to a new track', () => {
     expect(top.affected).toEqual([{ kind: 'Layer', id: clip }, { kind: 'Track', id: newLane }])
   })
 })
+
+// paste_layers — the whole-link duplicate. The mutation's own geometry (per-
+// member lattice, seed-only lane change, all-or-nothing) is pinned in
+// mutations/delete-duplicate.test.ts; what is tested here is the ACTOR's half:
+// the delta is measured from the seed, N clones cost one entry, the result names
+// every pair, and a refusal records nothing.
+describe('dispatch: paste_layers', () => {
+  function setup() {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'paste-multi')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    return { actor, aRoll: initial.tracks[0].id, bRoll: initial.tracks[1].id }
+  }
+  type Actor = ReturnType<typeof createActor>
+  function value<T>(r: DispatchResult): T {
+    if (!r.ok) throw new Error(`dispatch refused: ${JSON.stringify(r.error)}`)
+    return r.value as T
+  }
+  const addClip = (actor: Actor, track: string, t0 = 0, t1 = 1_000_000): string =>
+    value(actor.dispatch('add_layer', { track, kind: 'color', t_start_us: t0, t_end_us: t1 }))
+  const layers = (actor: Actor) => actor.snapshot().tracks.flatMap((t) => t.layers)
+  type Clones = { clones: { source: string; clone: string }[] }
+
+  it('records ONE entry for a two-layer paste, links the clones, and one undo removes both', () => {
+    const { actor, aRoll, bRoll } = setup()
+    const v = addClip(actor, aRoll, 1_000_000, 2_000_000)
+    const a = addClip(actor, bRoll, 1_000_000, 2_000_000)
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    // `t_start_us` is the SEED's new start: 4 s → delta +3 s for every member.
+    const r = value<Clones>(actor.dispatch('paste_layers', { layers: [v, a], t_start_us: 4_000_000, target_track_id: null }))
+    expect(r.clones.map((c) => c.source)).toEqual([v, a])
+    const clones = r.clones.map((c) => c.clone)
+    expect(layers(actor)).toHaveLength(4)
+    for (const c of clones) expect(layers(actor).find((l) => l.id === c)!.t_start_us).toBe(4_000_000)
+    expect(actor.snapshot().links).toHaveLength(1)
+    expect([...actor.snapshot().links[0].members].sort()).toEqual([...clones].sort())
+    expect(actor.historyStatus().len - lenBefore).toBe(1)
+    const head = actor.historyView(1).ops.at(-1)!
+    expect(head.summary).toBe('Duplicated 2 layers')
+    expect(head.label_key).toBe('history.layer.paste_multi')
+    expect(head.label_args).toEqual({ count: 2 })
+    expect(head.affected.map((x) => x.id).sort()).toEqual([...clones].sort())
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
+  it('refuses the whole gesture on a destination collision and records nothing', () => {
+    const { actor, aRoll, bRoll } = setup()
+    const v = addClip(actor, aRoll, 0, 1_000_000)
+    const a = addClip(actor, bRoll, 0, 1_000_000)
+    addClip(actor, bRoll, 3_000_000, 4_000_000) // sits where `a`'s clone would land
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    const r = actor.dispatch('paste_layers', { layers: [v, a], t_start_us: 3_000_000, target_track_id: null })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.error).toBe('ValidationFailed')
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+    expect(actor.historyStatus().len).toBe(lenBefore)
+  })
+
+  it('rejects an empty set — there is no seed to measure the delta from', () => {
+    const { actor } = setup()
+    const r = actor.dispatch('paste_layers', { layers: [], t_start_us: 0, target_track_id: null })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.error).toBe('InvalidArgument')
+  })
+
+  it('rides the renderer channel with camelCase args and the MCP tool with snake_case', () => {
+    const { actor, aRoll, bRoll } = setup()
+    const v = addClip(actor, aRoll, 0, 1_000_000)
+    const a = addClip(actor, bRoll, 0, 1_000_000)
+    const viaChannel = actor.command('paste_layers', { layerIds: [v, a], tStartUs: 2_000_000 })
+    expect(viaChannel.ok).toBe(true)
+    if (viaChannel.ok) expect((viaChannel.value as Clones).clones).toHaveLength(2)
+    const viaMcp = actor.mcpCall('paste_layers', JSON.stringify({ layer_ids: [v, a], t_start_us: 4_000_000 }))
+    expect(viaMcp.ok).toBe(true)
+    if (viaMcp.ok) {
+      const parsed = JSON.parse(viaMcp.result.content[0].text) as Clones
+      expect(parsed.clones.map((c) => c.source)).toEqual([v, a])
+    }
+    expect(layers(actor)).toHaveLength(6)
+    expect(actor.snapshot().links).toHaveLength(2)
+  })
+})
+
+// set_layers_enabled — the `enabled` fan-out's actor half: the set arrives
+// resolved, N toggles cost one entry, and the label names the direction.
+describe('dispatch: set_layers_enabled', () => {
+  function setup() {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'enabled-multi')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    return { actor, aRoll: initial.tracks[0].id, bRoll: initial.tracks[1].id }
+  }
+  type Actor = ReturnType<typeof createActor>
+  const addClip = (actor: Actor, track: string): string => {
+    const r = actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    if (!r.ok) throw new Error(JSON.stringify(r.error))
+    return r.value as string
+  }
+  const enabledOf = (actor: Actor) => actor.snapshot().tracks.flatMap((t) => t.layers).map((l) => l.enabled)
+
+  it('toggles two layers in ONE entry, and one undo re-enables both', () => {
+    const { actor, aRoll, bRoll } = setup()
+    const v = addClip(actor, aRoll); const a = addClip(actor, bRoll)
+    const lenBefore = actor.historyStatus().len
+    expect(actor.dispatch('set_layers_enabled', { layers: [v, a], enabled: false }).ok).toBe(true)
+    expect(enabledOf(actor)).toEqual([false, false])
+    expect(actor.historyStatus().len - lenBefore).toBe(1)
+    const head = actor.historyView(1).ops.at(-1)!
+    expect(head.summary).toBe('Disabled 2 layers')
+    expect(head.label_key).toBe('history.layer.disabled_multi')
+    expect(head.label_args).toEqual({ count: 2 })
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(enabledOf(actor)).toEqual([true, true])
+    expect(actor.dispatch('set_layers_enabled', { layers: [v, a], enabled: true }).ok).toBe(true)
+    expect(actor.historyStatus().len - lenBefore).toBe(1) // already enabled: the no-op guard records nothing
+  })
+
+  it('refuses the whole set on a locked track and records nothing; a layer`s own lock does not', () => {
+    const { actor, aRoll, bRoll } = setup()
+    const v = addClip(actor, aRoll); const a = addClip(actor, bRoll)
+    expect(actor.dispatch('update_layer', { layer: v, patch: { locked: true } }).ok).toBe(true)
+    expect(actor.dispatch('set_layers_enabled', { layers: [v, a], enabled: false }).ok).toBe(true) // layer lock: no bar
+    expect(enabledOf(actor)).toEqual([false, false])
+    expect(actor.dispatch('update_track_flags', { track: bRoll, patch: { locked: true } }).ok).toBe(true)
+    const lenBefore = actor.historyStatus().len
+    const r = actor.dispatch('set_layers_enabled', { layers: [v, a], enabled: true })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.error).toBe('TrackLocked')
+    expect(enabledOf(actor)).toEqual([false, false])
+    expect(actor.historyStatus().len).toBe(lenBefore)
+  })
+
+  it('rides the renderer channel and the MCP tool; a non-boolean rejects at the boundary', () => {
+    const { actor, aRoll, bRoll } = setup()
+    const v = addClip(actor, aRoll); const a = addClip(actor, bRoll)
+    expect(actor.command('set_layers_enabled', { layerIds: [v, a], enabled: false }).ok).toBe(true)
+    expect(enabledOf(actor)).toEqual([false, false])
+    expect(actor.mcpCall('set_layers_enabled', JSON.stringify({ layer_ids: [v, a], enabled: true })).ok).toBe(true)
+    expect(enabledOf(actor)).toEqual([true, true])
+    const bad = actor.mcpCall('set_layers_enabled', JSON.stringify({ layer_ids: [v], enabled: 'no' }))
+    expect(bad.ok).toBe(false)
+    if (!bad.ok) expect(bad.error.code).toBe('invalid_params')
+  })
+})

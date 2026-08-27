@@ -24,3 +24,18 @@ export function applyUpdateLayer(p: Project, id: Uuid, patch: LayerPatch): void 
   if (typeof patch.enabled === 'boolean') layer.enabled = patch.enabled
   if (typeof patch.locked === 'boolean') layer.locked = patch.locked
 }
+
+/** Set `enabled` on exactly the layers named — the caller supplies a link's
+ *  member set when the toggle should fan out; nothing is expanded here. A
+ *  layer's own `locked` does not block it: the eye is visibility, not content,
+ *  the same reasoning the track-flag path applies. A locked track does, and it
+ *  refuses the WHOLE set before any layer is written (`checkTrackLock` also
+ *  throws LayerNotFound for an unknown id). */
+export function applySetLayersEnabled(p: Project, layerIds: readonly Uuid[], enabled: boolean): void {
+  const ids = [...new Set(layerIds)]
+  for (const id of ids) checkTrackLock(p, id)
+  for (const id of ids) {
+    const loc = locateLayer(p, id)! // verified by checkTrackLock
+    p.tracks[loc[0]].layers[loc[1]].enabled = enabled
+  }
+}

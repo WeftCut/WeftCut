@@ -27,7 +27,7 @@ add an entry, and Ctrl-Z walks straight past them.
 | `add_track`, `delete_track`, `move_track` | yes |
 | `rename_track` | yes — a name is content, and the layer label already records; the two rename surfaces cannot disagree about undo |
 | `update_track_flags` (eye/M/S/lock toggles) | no — patched into every history snapshot; undo never flips a track control |
-| `add_layer`, `update_layer`, `update_layer_params`, `move_layer`, `duplicate_layer`, `split_layer`, `delete_layer` | yes |
+| `add_layer`, `update_layer`, `update_layer_params`, `set_layers_enabled`, `move_layer`, `duplicate_layer`, `paste_layers`, `split_layer`, `delete_layer` | yes |
 | `move_layers_to_new_track` | yes — **one** entry for the whole raise: the new track, every layer moved onto it, and every source track the raise emptied. Two entries would let one undo return the clips while leaving them on a track that no longer belongs to them |
 | `add_marker`, `update_marker`, `remove_marker` | yes |
 | `add_transition`, `update_transition`, `remove_transition` | yes |
@@ -210,9 +210,10 @@ forward on this track" tools.
 ## Links
 
 A `Link` is a project-level entity owning a flat set of member `LayerId`s —
-a layer is in at most one link, no nesting. Moving, trimming, or splitting
-a member fans the edit out to the other members under the rules below;
-everything else (keyframes, opacity, gain, delete) stays local. A link has
+a layer is in at most one link, no nesting. Moving, trimming, splitting,
+duplicating, or toggling `enabled` on a member fans the edit out to the other
+members under the rules below; everything else (keyframes, opacity, gain,
+delete) stays local. A link has
 no rendering significance — the renderer composes every member
 independently — and no identity beyond its accent: it says "these travel
 together", which is Premiere's Link with any number of members. One
@@ -237,6 +238,18 @@ ADR 0052), never a link.
   bounds (`src_in_us`/`src_out_us`) or inverts.
 - **Split** cuts every member spanning `T`, distributing source in/out
   proportionally for media-bearing kinds; all pieces stay in the link.
+- **Duplicate** (`paste_layers`) clones every member and links the clones to
+  each other — never to their sources — as **one** undo step. The first id is
+  the seed the drop position refers to; every other clone shifts by the same
+  delta and snaps on its own lattice, and only the seed's clone changes track
+  (the Move rule). A locked or occupied destination for any member rejects the
+  whole batch; nothing is created.
+- **`enabled`** (`set_layers_enabled`) toggles every member unless escaped. A
+  member's own `locked` does not block it — the eye is visibility, not content
+  — but a locked track rejects the whole set.
+- Both batch ops take the **set they are handed** and expand nothing: the UI
+  supplies the link's members (or the clicked layer alone when escaped), and an
+  agent names the layers it means.
 - **Raise to a new track** is not a fan-out: `move_layers_to_new_track` moves
   exactly the layers it is handed, onto one fresh lane, with every time carried
   verbatim — there is no delta for a member to follow. What differs between its

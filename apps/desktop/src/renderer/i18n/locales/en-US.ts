@@ -485,6 +485,14 @@ const enUS = {
     separate_audio: "Separate audio to new track",
     prebake_now: "Pre-bake now",
     rename: "Rename",
+    rename_link: "Rename link…",
+    // Accessible name for the label tab's inline editor.
+    link_label: "Link name",
+    // Tooltip of the `+N` badge on a link whose members sit on filtered lanes.
+    link_hidden_members_one:
+      "{{count}} linked clip on a hidden track — click to reveal it",
+    link_hidden_members_other:
+      "{{count}} linked clips on hidden tracks — click to reveal the next",
     // The marker menu names its subject: its target is a ~5 px glyph, so a
     // bare "Delete" would leave "of what?" to a tooltip the menu just covered.
     delete_marker: "Delete marker",
@@ -596,6 +604,14 @@ const enUS = {
     restack_backward: "Send backward",
     restack_front: "Bring to front",
     restack_back: "Send to back",
+    // Folded link rows. `link_count_aria` names the `×N` glyph; N is the link's
+    // full member count, so it is never 1.
+    link_count_aria: "Link of {{count}} layers",
+    expand_link: "Show the layers linked with {{label}}",
+    collapse_link: "Hide the layers linked with {{label}}",
+    link_menu: "Link {{label}}",
+    rename_link: "Rename link…",
+    unlink: "Unlink",
     all_tracks_title: "All Tracks",
     all_tracks_msg:
       "Every track is already on the timeline — nothing is hidden for this Panel to surface.",
@@ -1222,6 +1238,7 @@ const enUS = {
     link_none: "Not linked",
     link_of_one: "Link of {{count}} layer",
     link_of_other: "Link of {{count}} layers",
+    link_rename: "Rename link",
     locked: "Locked",
     duration: "Duration",
     multi_primary: "Editing primary layer “{{label}}” — {{count}} layers selected; changes apply only to this layer.",
@@ -1426,6 +1443,9 @@ const enUS = {
       add: "Added layer",
       paste: "Pasted layer",
       duplicate: "Duplicated layer",
+      paste_multi: "Duplicated {{count}} layers",
+      enabled_multi: "Enabled {{count}} layers",
+      disabled_multi: "Disabled {{count}} layers",
       move: "Moved layer",
       move_to_new_track: "Moved to a new track",
       restack: "Restacked layer",

@@ -116,6 +116,13 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   delete_layers: (a) => ({ op: 'delete_layers', args: { layers: a.layerIds } }),
   remove_media: (a) => ({ op: 'remove_media', args: { media: a.mediaId, force: a.force ?? false } }),
   duplicate_layer: (a) => ({ op: 'duplicate_layer', args: { layer: a.layerId, t_offset_us: a.tOffsetUs } }),
+  // The whole-link duplicate: a set in (the first id is the seed the drop
+  // position refers to), one undo entry out. `targetTrackId` re-lanes the seed's
+  // clone only; absent means "stay on the seed's track".
+  paste_layers: (a) => ({ op: 'paste_layers', args: { layers: a.layerIds, t_start_us: a.tStartUs, target_track_id: a.targetTrackId ?? null } }),
+  // The set the renderer resolved (a link's members unless escaped) — the op
+  // toggles exactly what it is handed.
+  set_layers_enabled: (a) => ({ op: 'set_layers_enabled', args: { layers: a.layerIds, enabled: a.enabled } }),
   split_layer_linked: (a) => ({ op: 'split_layer', args: { layer: a.layerId, at_t_us: a.atTUs, escape_link: a.escapeLink ?? false } }),
   links_create: (a) => ({ op: 'links_create', args: { layers: a.layerIds, label: a.label ?? null, reassign: a.reassign ?? false } }),
   links_dissolve: (a) => ({ op: 'links_dissolve', args: { link: a.linkId } }),
@@ -178,7 +185,7 @@ export const PRODUCTION_OPS = new Set<string>([
   'add_color_layer', 'add_text_layer', 'add_media_layer', 'paste_layer',
   'add_demo_color_layer', 'add_demo_text_layer',
   // Remaining mechanical + meta channels
-  'move_layer', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layer', 'delete_layers', 'remove_media', 'duplicate_layer', 'split_layer_linked',
+  'move_layer', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layer', 'delete_layers', 'remove_media', 'duplicate_layer', 'paste_layers', 'set_layers_enabled', 'split_layer_linked',
   'links_create', 'links_dissolve', 'links_rename',
   'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks', 'update_param_tracks_multi', 'set_scale_linked',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',

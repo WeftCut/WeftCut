@@ -6,7 +6,10 @@ import { frameGrid, gridForLayerKind, isCanonicalOnGrid, snapOnGrid, type Grid }
 function fail(err: ValidationError): never { throw new ValidationFailure(err) }
 
 type OverlapClass = 'visual' | 'audio'
-function layerOverlapClass(params: LayerParams): OverlapClass {
+/** Exported for the batch mutations that must refuse a collision BEFORE
+ *  touching the draft (`applyPasteLayers`) — the same class split the track
+ *  rule below enforces, so a pre-check and the validator cannot disagree. */
+export function layerOverlapClass(params: LayerParams): OverlapClass {
   return params.kind === 'Audio' ? 'audio' : 'visual'
 }
 /** Canonical unordered layer-pair key for the authorized-overlap map. */

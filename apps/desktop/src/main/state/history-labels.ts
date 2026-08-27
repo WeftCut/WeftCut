@@ -98,8 +98,19 @@ export function roleGainSummary(role: string): HistorySummary {
 export function restoredCheckpointSummary(label: string): HistorySummary {
   return { key: 'history.checkpoint.restore', text: `Restored checkpoint '${label}'`, label_args: { label } }
 }
+/** `paste_layers` — the summary counts the clones. */
+export function pastedLayersSummary(count: number): HistorySummary {
+  return { key: 'history.layer.paste_multi', text: `Duplicated ${count} layers`, label_args: { count } }
+}
+/** `set_layers_enabled` — one key per direction rather than a `{{state}}`
+ *  placeholder, so each locale conjugates the verb natively. */
+export function layersEnabledSummary(enabled: boolean, count: number): HistorySummary {
+  return enabled
+    ? { key: 'history.layer.enabled_multi', text: `Enabled ${count} layers`, label_args: { count } }
+    : { key: 'history.layer.disabled_multi', text: `Disabled ${count} layers`, label_args: { count } }
+}
 
-/** Every key this module can emit — the table's plus the three templated ones,
+/** Every key this module can emit — the table's plus the templated ones,
  *  harvested from the builders themselves so a renamed key cannot slip past the
  *  locale drift test. */
 export const HISTORY_SUMMARY_KEYS: readonly string[] = [
@@ -107,6 +118,9 @@ export const HISTORY_SUMMARY_KEYS: readonly string[] = [
   removedMediaSummary('', 0).key,
   roleGainSummary('').key,
   restoredCheckpointSummary('').key,
+  pastedLayersSummary(0).key,
+  layersEnabledSummary(true, 0).key,
+  layersEnabledSummary(false, 0).key,
 ]
 
 // ── entity labels — the other half of a readable row ──

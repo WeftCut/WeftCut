@@ -1341,6 +1341,37 @@ export async function pasteLayer(
   );
 }
 
+/// The whole-link duplicate: every layer in `layerIds` is cloned as ONE undo
+/// step. `layerIds[0]` is the seed — `tStartUs` is its clone's start, and every
+/// other clone shifts by the same delta on its own lattice (a slipped audio
+/// member keeps its offset). `targetTrackId` re-lanes the seed's clone only;
+/// the rest land on their sources' tracks. All-or-nothing: a locked or occupied
+/// destination for any member rejects the batch and nothing is created. Two or
+/// more clones are linked to each other, never to their sources. Returns
+/// source → clone pairs in input order. A single-layer copy with automatic lane
+/// placement stays on `pasteLayer`.
+export async function pasteLayers(
+  layerIds: string[],
+  tStartUs: number,
+  targetTrackId: string | null = null,
+): Promise<{ clones: { source: string; clone: string }[] }> {
+  return invoke<{ clones: { source: string; clone: string }[] }>(
+    "paste_layers",
+    { layerIds, tStartUs, targetTrackId },
+  );
+}
+
+/// Set `enabled` on exactly these layers in ONE undo step. The caller resolves
+/// the set — a link's members when the toggle fans out, the clicked layer alone
+/// when escaped; the op never expands it. A layer's own lock does not block the
+/// toggle; a locked track rejects the whole batch. One layer: `updateLayer`.
+export async function setLayersEnabled(
+  layerIds: string[],
+  enabled: boolean,
+): Promise<void> {
+  return invoke<void>("set_layers_enabled", { layerIds, enabled });
+}
+
 export async function deleteLayer(layerId: string): Promise<void> {
   return invoke<void>("delete_layer", { layerId });
 }

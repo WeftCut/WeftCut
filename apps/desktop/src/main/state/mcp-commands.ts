@@ -559,6 +559,23 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, t_offset_us: { type: 'integer' } }, required: ['layer_id', 't_offset_us'] },
     parseArgs: (a) => ({ op: 'duplicate_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), t_offset_us: parseNum(a.t_offset_us, 't_offset_us') } }),
     shapeResult: (v) => toolText(v as string) },
+  { name: 'paste_layers', exec: 'table',
+    description: "Duplicate a SET of layers as one recorded edit (one undo removes every clone). `layer_ids[0]` is the seed: `t_start_us` is where the seed's clone starts, and every other clone shifts by that same delta, each snapped on its own lattice (an audio member keeps a slipped A/V offset). `target_track_id` moves only the seed's clone onto that track; every other clone lands on its source's track. All-or-nothing: a locked or occupied destination for ANY member rejects the whole batch (`TrackLocked` / `ValidationFailed` with `LayerOverlap`, whose `b` names the source whose clone would collide) and nothing is created. Two or more clones are linked to each other, never to their sources; a single clone joins no link. Returns `{ clones: [{ source, clone }] }` in input order. To copy one linked layer without its partners, pass just that id. Same-track copy of one layer: `duplicate_layer`.",
+    inputSchema: { type: 'object', properties: {
+      layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to clone; the first is the seed the start time refers to.' },
+      t_start_us: { type: 'integer', description: "Start time of the seed's clone; the other clones keep their offsets from it." },
+      target_track_id: { type: ['string', 'null'], description: "Track for the seed's clone. Omit to keep it on the seed's track." },
+    }, required: ['layer_ids', 't_start_us'] },
+    parseArgs: (a) => ({ op: 'paste_layers', args: {
+      layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')),
+      t_start_us: parseNum(a.t_start_us, 't_start_us'),
+      target_track_id: a.target_track_id === undefined || a.target_track_id === null ? null : parseUuid(a.target_track_id, 'target_track_id'),
+    } }),
+    shapeResult: (v) => toolJson(v) },
+  { name: 'set_layers_enabled', exec: 'table',
+    description: "Set `enabled` on a set of layers in ONE recorded edit (one undo). Toggles exactly the ids it is given — to disable a linked A/V pair together, pass both members. A layer's own `locked` does not block the toggle (visibility is not content); any layer on a locked track rejects the whole batch (`TrackLocked`) and nothing changes. For one layer, `update_layer { patch: { enabled } }` is the same write.",
+    inputSchema: { type: 'object', properties: { layer_ids: { type: 'array', items: { type: 'string' } }, enabled: { type: 'boolean' } }, required: ['layer_ids', 'enabled'] },
+    parseArgs: (a) => ({ op: 'set_layers_enabled', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), enabled: parseBool(a.enabled, 'enabled') } }) },
   { name: 'update_layer', exec: 'table',
     description: "Update a layer's envelope (label, time range, enabled, locked). Only fields you set are applied. Time range changes go through validation.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, patch: {
