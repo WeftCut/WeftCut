@@ -11,10 +11,13 @@ const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps_6s.mp4')
 
 test('H.264 import -> export stays frame-aligned with low loss (Electron)', async ({}, testInfo) => {
   test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
-  // Clears driveExport's 170s poll rather than tracking the measured ~117s;
-  // at 220s that poll could not report where an export wedged.
-  // See e2e/README.md §Per-test timeout budgets.
-  test.setTimeout(360000)
+  // Cost bound only — driveExport's stall probe is the failure detector, and
+  // this timeout must never preempt it. A wedge at the END of the export
+  // (finalizing) gets a 180 s stall budget, and on the Windows leg the export
+  // itself is over by ~150 s at worst (80-154 s end to end, the analyzer scan
+  // after it), so 330 s is the floor; the rest is headroom for the 1.9x
+  // run-to-run drift. See e2e/README.md §Per-test timeout budgets.
+  test.setTimeout(420000)
   const PROJECT_PARENT = tmpDir('weftcut-e2e-proj-')
   const OUTPUT = path.join(tmpDir('weftcut-e2e-out-'), 'out.mp4')
 

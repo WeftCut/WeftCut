@@ -375,18 +375,38 @@ for 30 s — the main thread is blocked, not the pipeline slow), and *slow but
 still ticking* (the hard deadline expired while the cursor was moving — raise
 that call's `timeout`, there is no hang to hunt).
 
-**`test.setTimeout(...)` is only a cost bound.** It must clear the export's real
-worst-case duration plus one stall budget — not plus the whole 170-580 s
-deadline, which is what the old wait forced. On the GPU-less legs `launchApp` +
-`newProject` reach the export around 60 s and hosted runners drift about 1.9x
-run to run, so a single-export gate still wants a few minutes; what changed is
-that the headroom is no longer *spent* on every failure. A broken export now
-reports within a stall budget of the wedge instead of consuming its entire
-allowance in silence.
+**`test.setTimeout(...)` is only a cost bound**, sized by two terms and set to
+clear the larger:
 
-None of these numbers is a cost estimate. `conformance` measures ~117 s against
-360 s, `export_eos_tail` ~150 s against 420 s, and the 2s-offset
-`export_overlap_same_source` case 208-366 s against 600 s.
+- the slowest observed green run, with headroom for the ~1.9x run-to-run drift
+  of hosted runners;
+- the latest point a wedge can happen — the moment the export finishes on the
+  slowest leg — plus the largest stall budget in play. Every export ends in
+  `finalizing` (the mux step is unconditional), so that is
+  `STALL_MS.finalizing`, 180 s. Below this the timeout preempts the probe and
+  the failure arrives as a bare `Test timeout` with no state — the one thing
+  these gates exist to tell you.
+
+The second term is what pins a short export's budget: a 20 s export still needs
+its 180 s tail budget clear. Shrink these numbers by shrinking that phase budget
+once the tail is measured tighter, never by trimming the call sites. On the
+GPU-less legs `launchApp` + `newProject` reach the export around 60 s; what the
+probe changed is that the headroom is no longer *spent* on every failure.
+
+Measured on the Windows leg across five scheduled runs, end to end — the
+analyzer scan runs after the export and is outside the probe, so "export over
+by" is the wedge term's input:
+
+| gate | end to end | export over by | floor (+180 s) | budget |
+| --- | --- | --- | --- | --- |
+| `conformance` | 80–154 s | ~150 s | 330 s | 420 s |
+| `export_eos_tail` | 134–170 s, one run past 240 s | ~160 s | 340 s | 420 s |
+| `export_overlap_same_source` stacked | 117–133 s | ~130 s | 310 s | 360 s |
+| `export_overlap_same_source` 2s-offset | 324–436 s | ~190 s | 370 s | 600 s — the green run binds |
+
+None of these numbers is a cost estimate. To re-measure a gate's "export over
+by", run it with `WEFTCUT_E2E_EXPORT_TRACE=1`: the driver prints every phase
+transition and the completion as `+Ns` from the `driveExport` call.
 
 A spec whose `launchApp()` sits in `beforeAll` (`audio.spec.ts`) is charged that
 launch against Playwright's separate hook timeout, so its budgets start from the
@@ -399,6 +419,9 @@ first guard inside the body and are correspondingly smaller.
 - `WEFTCUT_E2E_NO_STALL_PROBE=1` restores the old deadline-only wait, so a
   suspected probe misfire can be ruled out in one run rather than by reverting
   the helper.
+- `WEFTCUT_E2E_EXPORT_TRACE=1` prints each phase transition and the completion
+  as `+Ns` from the `driveExport` call — phase changes only, since the cursor
+  ticks once per frame.
 
 The budgets themselves live in `STALL_MS` in `electron/helpers/driver.ts`, each
 annotated with the gap it has to cover. Widen the one phase that is genuinely

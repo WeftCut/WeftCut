@@ -64,9 +64,10 @@ test.describe('same-source overlapping clips export (Electron)', () => {
   test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
 
   test('two stacked enabled clips export without wedging or extra decode', async () => {
-    // Clears driveExport's 170s poll rather than tracking the measured ~127s;
-    // at 220s that poll could not report where an export wedged.
-    // See e2e/README.md §Per-test timeout budgets.
+    // Cost bound only; driveExport's stall probe detects failure. On the
+    // Windows leg this runs 117-133 s end to end with the export over by
+    // ~130 s at worst, so a wedge in finalizing (180 s stall budget) reports
+    // by ~310 s. See e2e/README.md §Per-test timeout budgets.
     test.setTimeout(360000)
     const { app, page } = await launchApp()
     try {
@@ -103,8 +104,10 @@ test.describe('same-source overlapping clips export (Electron)', () => {
   test('a 2s-offset overlap exports complete with both clips on their own frames', async () => {
     // The most expensive gate in the suite: a 240-frame export plus the
     // 62-candidate `--window` scan below, which alone runs ~250s on the
-    // GPU-less Windows leg. Measured 208-366s end to end depending on the
-    // runner, so the budget is sized for the slow end, not the median.
+    // GPU-less Windows leg. Measured 324-436s end to end there, so the budget
+    // is sized for the slow end, not the median — and here the green run is
+    // the binding term, not the wedge report (the export is over by ~190 s,
+    // plus finalizing's 180 s stall budget).
     // See e2e/README.md §Per-test timeout budgets.
     test.setTimeout(600000)
     const { app, page } = await launchApp()
