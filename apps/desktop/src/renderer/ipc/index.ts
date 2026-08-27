@@ -1296,6 +1296,15 @@ export async function linksDissolve(linkId: string): Promise<void> {
   return invoke<void>("links_dissolve", { linkId });
 }
 
+/** Set or clear (`null`) a link's label; the tab on its top-most visible
+ *  member is the only place the label is drawn. */
+export async function linksRename(
+  linkId: string,
+  label: string | null,
+): Promise<void> {
+  return invoke<void>("links_rename", { linkId, label });
+}
+
 /// Lift an Audio layer onto a freshly-created track inserted directly below its
 /// source in the z-stack, so the new row reads one row down the screen. Link
 /// membership survives. Returns the new track's id. UI consequence: the combined
