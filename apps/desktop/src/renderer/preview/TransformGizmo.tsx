@@ -30,7 +30,6 @@ import {
   type AnimTrack,
   type CompositionSummary,
   type LayerSummary,
-  type ProjectSummary,
   type TextPatch,
 } from "../ipc";
 import { autoKeyTrack } from "../keyframe/autoKey";
@@ -45,7 +44,7 @@ import {
   transformOverrideFor,
   type TransformDelta,
 } from "../render/transformOverrides";
-import { useProjectStore } from "../state/projectStore";
+import { useOpenComposition } from "../state/projectStore";
 import { playheadTimeUs } from "../state/playheadStore";
 import { usePrimaryLayerId } from "../state/selectionStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
@@ -245,13 +244,13 @@ interface SnapContext {
 /// through the OVERRIDE instead — the transform channels as `mergedDelta`'s carry,
 /// the box as `boxChannels`. Layering either in here would double-count it.
 function otherLayerBoxes(
-  summary: { tracks: readonly { layers: readonly LayerSummary[] }[] },
+  composition: { tracks: readonly { layers: readonly LayerSummary[] }[] },
   selfId: string,
   tUs: number,
   probe: GizmoProbe,
 ): Aabb[] {
   const boxes: Aabb[] = [];
-  for (const track of summary.tracks) {
+  for (const track of composition.tracks) {
     for (const other of track.layers) {
       if (other.id === selfId) continue;
       if (!TRANSFORMABLE_KINDS.has(other.params.kind)) continue;
@@ -267,10 +266,12 @@ function otherLayerBoxes(
 
 export function TransformGizmoHost() {
   const primaryLayerId = usePrimaryLayerId();
-  const summary = useProjectStore((s) => s.summary);
-  if (!primaryLayerId || !summary) return null;
+  // The OPEN composition: the selection is one of its layers, and its canvas is
+  // the space the box is drawn in.
+  const composition = useOpenComposition();
+  if (!primaryLayerId || !composition) return null;
   let found: LayerSummary | null = null;
-  for (const track of summary.tracks) {
+  for (const track of composition.tracks) {
     for (const layer of track.layers) {
       if (layer.id === primaryLayerId) found = layer;
     }
@@ -278,7 +279,7 @@ export function TransformGizmoHost() {
   if (!found || !TRANSFORMABLE_KINDS.has(found.params.kind)) return null;
   // Keyed on the layer id so switching selection remounts with fresh drag
   // state instead of carrying a half-finished gesture across layers.
-  return <TransformGizmo key={found.id} layer={found} summary={summary} />;
+  return <TransformGizmo key={found.id} layer={found} composition={composition} />;
 }
 
 interface DragBase {
@@ -619,12 +620,11 @@ function thresholdFor(
 
 function TransformGizmo({
   layer,
-  summary,
+  composition,
 }: {
   layer: LayerSummary;
-  summary: ProjectSummary;
+  composition: CompositionSummary;
 }) {
-  const composition: CompositionSummary = summary.composition;
   const svgRef = useRef<SVGSVGElement | null>(null);
   const boxRef = useRef<SVGPolygonElement | null>(null);
   const stalkRef = useRef<SVGLineElement | null>(null);
@@ -658,8 +658,8 @@ function TransformGizmo({
   const compRef = useRef(composition);
   compRef.current = composition;
   // Read only at pointerdown, to build the frozen snap target set.
-  const summaryRef = useRef(summary);
-  summaryRef.current = summary;
+  const compositionRef = useRef(composition);
+  compositionRef.current = composition;
   /// Tracks committed by this gizmo whose `project:changed` → refetch has not
   /// come back yet. Two readers: the NEXT gesture's commit base (`paramTrack`),
   /// and the carry the override has to hold so the picture does not fall back to
@@ -1051,7 +1051,7 @@ function TransformGizmo({
     if (!probe) return null;
     const comp = compRef.current;
     const others = otherLayerBoxes(
-      summaryRef.current,
+      compositionRef.current,
       layerRef.current.id,
       playheadTimeUs(),
       probe,

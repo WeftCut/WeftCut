@@ -10,32 +10,31 @@ import type { LinkSummary, ProjectSummary } from "../ipc";
 import { setLinkOverride } from "../state/linkOverrideStore";
 import { useProjectStore } from "../state/projectStore";
 import { clearLayerSelection, setLayerSelection } from "../state/selectionStore";
+import { summaryFixture } from "../testing/summaryFixture";
 
 /// Only the two fields the predicates read carry any content — everything else
 /// is the shape `ProjectSummary` demands.
 function seed(links: LinkSummary[]): void {
-  const summary: ProjectSummary = {
+  const summary: ProjectSummary = summaryFixture({
     project_id: "p",
     name: "p",
-    composition: {
+    media: [],
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+    audio_roles: [],
+    root: {
       width: 640,
       height: 360,
       fps_num: 30,
       fps_den: 1,
       duration_pinned: false,
       fps_locked: false,
+      duration_us: 0,
+      tracks: [],
+      markers: [],
+      transitions: [],
+      links: links,
     },
-    track_count: 0,
-    layer_count: 0,
-    duration_us: 0,
-    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
-    media: [],
-    tracks: [],
-    markers: [],
-    transitions: [],
-    links,
-    audio_roles: [],
-  };
+  });
   useProjectStore.getState().apply(summary);
 }
 

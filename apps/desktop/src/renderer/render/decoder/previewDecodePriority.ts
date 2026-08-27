@@ -1,4 +1,4 @@
-import type { LayerSummary, ProjectSummary } from "../../ipc";
+import type { CompositionSummary, LayerSummary } from "../../ipc";
 import { swapKeys } from "../swapKeys";
 
 export interface PreviewDecodePriorityPlan {
@@ -17,7 +17,7 @@ export interface PreviewDecodePriorityPlan {
 /// later boundaries are deliberately absent so the pool may reclaim them only
 /// after main reports real admission pressure.
 export function planPreviewDecodePriority(
-  summary: ProjectSummary,
+  composition: CompositionSummary,
   tUs: number,
   windowUs: number,
 ): PreviewDecodePriorityPlan {
@@ -26,7 +26,7 @@ export function planPreviewDecodePriority(
   let upcomingLayers: LayerSummary[] = [];
   const horizonEndUs = tUs + windowUs;
 
-  for (const track of summary.tracks) {
+  for (const track of composition.tracks) {
     if (!track.enabled) continue;
     for (const layer of track.layers) {
       if (!layer.enabled || layer.params.kind !== "VideoClip") continue;

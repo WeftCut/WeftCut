@@ -19,7 +19,12 @@
 
 import type { LinkSummary } from "../ipc";
 import { linkOverrideOn } from "../state/linkOverrideStore";
-import { useProjectStore } from "../state/projectStore";
+import { useCompositionScopeStore } from "../state/compositionScopeStore";
+import {
+  compositionOrRoot,
+  currentOpenComposition,
+  useProjectStore,
+} from "../state/projectStore";
 import { useSelectionStore } from "../state/selectionStore";
 
 /**
@@ -84,7 +89,7 @@ export function linkToggleState(
 }
 
 function currentLinks(): readonly LinkSummary[] {
-  return useProjectStore.getState().summary?.links ?? NO_LINKS;
+  return currentOpenComposition()?.links ?? NO_LINKS;
 }
 
 /// Imperative form, for `CommandDef.enabled` and the Timeline handler.
@@ -112,7 +117,8 @@ export function canToggleLinkSelection(): boolean {
  */
 export const useLinkToggleState = (): LinkToggleState => {
   const selected = useSelectionStore((s) => s.selectedLayerIds);
+  const openId = useCompositionScopeStore((s) => s.openId);
   return useProjectStore((s) =>
-    linkToggleState(selected, s.summary?.links ?? NO_LINKS),
+    linkToggleState(selected, compositionOrRoot(s.summary, openId)?.links ?? NO_LINKS),
   );
 };

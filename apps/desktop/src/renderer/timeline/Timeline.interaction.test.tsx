@@ -53,6 +53,7 @@ import { registerCommandProvider } from "../commands/registry";
 import { registerTransport, releaseTransport } from "../state/playbackStore";
 import { registerRevealTrack } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
+import { summaryFixture } from "../testing/summaryFixture";
 import { resetLinkHover } from "./linkHoverStore";
 import { DEFAULT_TRACK_HEIGHT, HEADER_COL_PX } from "./geometry";
 
@@ -110,6 +111,10 @@ vi.mock("../ipc", async (importOriginal) => {
     viewStateSet: ipcMocks.viewStateSet,
   };
 });
+// The drop's lane spawn goes through the composition-scoped wrapper.
+vi.mock("../ipc/compositionScoped", () => ({
+  addTrackInOpenComposition: ipcMocks.addTrack,
+}));
 
 const staticNum = (value: number) => ({ mode: "Static" as const, value });
 
@@ -3178,11 +3183,11 @@ describe("Timeline link chrome", () => {
     useAppSettingsStore.setState((s) => ({
       settings: { ...s.settings, display_mode: "AbRoll" },
     }));
-    useProjectStore.setState({
-      summary: { tracks: [lowerTrack, hiddenTrack] } as unknown as ReturnType<
-        typeof useProjectStore.getState
-      >["summary"],
-    });
+    // Through `apply`: the reveal resolves the lane's composition off the
+    // store's index, which only `apply` builds.
+    useProjectStore.getState().apply(
+      summaryFixture({ root: { tracks: [lowerTrack, hiddenTrack] } }),
+    );
     const reveal = vi.fn();
     const unregister = registerRevealTrack(reveal);
     try {

@@ -7,7 +7,7 @@
 import { forwardRef, useImperativeHandle, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
-import { useProjectStore } from "../state/projectStore";
+import { compositionOrRoot, useProjectStore } from "../state/projectStore";
 import { PixiPreview } from "../render/PixiPreview";
 import type {
   PixiExportResult,
@@ -74,7 +74,9 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
     forwardedRef,
   ) {
     const { t } = useTranslation();
-    const composition = useProjectStore((s) => s.summary?.composition);
+    // The ROOT: it is what the Compositor draws today (slice 14 hands it the
+    // open composition — compositionScopeStore.ts).
+    const composition = useProjectStore((s) => compositionOrRoot(s.summary, null));
 
     const pixiRef = useRef<PixiPreviewHandle | null>(null);
 

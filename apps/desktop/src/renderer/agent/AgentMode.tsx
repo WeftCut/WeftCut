@@ -12,6 +12,7 @@ import {
   type AgentSession,
   type ProjectSummary,
 } from "../ipc";
+import { useOpenComposition } from "../state/projectStore";
 import {
   PreviewSurface,
   type PreviewSurfaceHandle,
@@ -70,6 +71,9 @@ export const AgentMode = forwardRef(function AgentMode(
   previewRef: ForwardedRef<PreviewSurfaceHandle>,
 ) {
   const { t } = useTranslation();
+  // The mini timeline shows the OPEN composition; `summary` keeps the
+  // project-wide fields (layer_count, history).
+  const comp = useOpenComposition();
   const [recordWidth, setRecordWidth] = useState(RECORD_WIDTH_DEFAULT);
 
   /* Width sash between the left column and the record panel — the only
@@ -144,11 +148,11 @@ export const AgentMode = forwardRef(function AgentMode(
 
       <section className="agent-mini-timeline">
         <MiniTimeline
-          durationUs={summary?.duration_us ?? 0}
-          markers={summary?.markers ?? []}
+          durationUs={comp?.duration_us ?? 0}
+          markers={comp?.markers ?? []}
           onSeek={onSeek}
-          fpsNum={summary?.composition.fps_num ?? 30}
-          fpsDen={summary?.composition.fps_den ?? 1}
+          fpsNum={comp?.fps_num ?? 30}
+          fpsDen={comp?.fps_den ?? 1}
         />
       </section>
 

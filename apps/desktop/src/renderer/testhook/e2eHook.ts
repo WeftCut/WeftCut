@@ -32,7 +32,12 @@ import { requestPrebake } from "../render/motifs/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
 import { getGizmoProbe } from "../preview/gizmoProbeRegistry";
 import { playheadTimeUs } from "../state/playheadStore";
-import { useProjectStore } from "../state/projectStore";
+import { rootCompositionOf, useProjectStore } from "../state/projectStore";
+import {
+  openComposition,
+  useCompositionScopeStore,
+  type CompositionCrumb,
+} from "../state/compositionScopeStore";
 import { useSelectionStore } from "../state/selectionStore";
 import {
   setPreferProxies,
@@ -135,7 +140,7 @@ export interface E2EHook {
   importAndPlaceMedia(args: {
     mediaAbsPath: string;
     tStartUs?: number;
-  }): Promise<{ mediaId: string; layerId: string; kind: string }>;
+  }): Promise<{ mediaId: string; layerId: string; kind: string; compositionId: string }>;
   /// Place an ALREADY-imported media 1:1 at `tStartUs` (default 0) on a fresh
   /// track — the placement half of `importAndPlaceMedia`. Lets a spec put N
   /// copies of ONE mediaId on the timeline (the same-source overlap export
@@ -144,7 +149,7 @@ export interface E2EHook {
   placeMediaLayer(args: {
     mediaId: string;
     tStartUs?: number;
-  }): Promise<{ layerId: string }>;
+  }): Promise<{ layerId: string; compositionId: string }>;
   /// Resolve once `resolveDecode(media).exportPath` is non-null — for a
   /// Video source that means the proxy/bypass route has been decided AND any
   /// needed proxy has landed. The animated-gif spec uses this to prove the
@@ -443,6 +448,13 @@ export interface E2EHook {
   /// The whole selection set, for a spec proving a gesture LEFT it alone —
   /// the hidden-member badge's reveal must not select.
   getSelectedLayerIds(): string[];
+  /// Open a composition by id — the scope store's `openComposition` with no
+  /// entry layer, exactly what a spec needs before the breadcrumb and the
+  /// double-click exist (slice 15). False when the summary does not carry it.
+  setOpenComposition(compositionId: string): boolean;
+  /// The open composition's id and the path it was entered through; the id is
+  /// the root's while nothing is open. Null before a project is loaded.
+  getOpenComposition(): { id: string; crumbs: CompositionCrumb[] } | null;
   /// What the renderer DID with a Text layer's box, straight off the live
   /// `GizmoProbe`. Null before a preview registers one.
   ///
@@ -628,6 +640,11 @@ export function installBootstrapHook(
     useSelectionStore.getState().primaryLayerId;
   hookSlot().getSelectedLayerIds = () =>
     Array.from(useSelectionStore.getState().selectedLayerIds);
+  hookSlot().setOpenComposition = (compositionId) => openComposition(compositionId, null);
+  hookSlot().getOpenComposition = () => {
+    const { openId, crumbs } = useCompositionScopeStore.getState();
+    return openId === null ? null : { id: openId, crumbs: [...crumbs] };
+  };
   // Read through the registry on every call rather than capturing the probe:
   // PixiPreview registers on mount and clears on unmount, and this hook is
   // installed at boot — before any preview exists.
@@ -878,13 +895,13 @@ export function installMotifTestHooks(): void {
     // Derive the cacheKey from the current project summary.
     const summary = await projectSummary();
     let cacheKey: string | null = null;
-    outer: for (const track of summary.tracks) {
+    outer: for (const comp of Object.values(summary.compositions)) for (const track of comp.tracks) {
       for (const layer of track.layers) {
         if (layer.id !== layerId || layer.params.kind !== "Motif") continue;
         const motif = getMotif(layer.params.motif_id);
         if (!motif) break outer;
         const durationUs = layer.t_end_us - layer.t_start_us;
-        const desc = motifFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, motif);
+        const desc = motifFrameDescriptor(layer.params, 0, durationUs, comp.fps_num, comp.fps_den, motif);
         if (desc) cacheKey = desc.cacheKey;
         break outer;
       }
@@ -933,13 +950,13 @@ export function installMotifTestHooks(): void {
 
   hookSlot().cacheKeyForLayer = async (layerId) => {
     const summary = await projectSummary();
-    for (const track of summary.tracks) {
+    for (const comp of Object.values(summary.compositions)) for (const track of comp.tracks) {
       for (const layer of track.layers) {
         if (layer.id !== layerId || layer.params.kind !== "Motif") continue;
         const motif = getMotif(layer.params.motif_id);
         if (!motif) return null;
         const durationUs = layer.t_end_us - layer.t_start_us;
-        const desc = motifFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, motif);
+        const desc = motifFrameDescriptor(layer.params, 0, durationUs, comp.fps_num, comp.fps_den, motif);
         return desc?.cacheKey ?? null;
       }
     }
@@ -1143,6 +1160,19 @@ function throwNoOutput(outputAbsPath: string): never {
   );
 }
 
+/// The composition a freshly placed layer landed in, off a fresh summary (the
+/// store may still be a round trip behind the command that placed it). The
+/// unscoped `addTrack` above always spawns in the root, which is what every
+/// export spec means by "the timeline".
+async function compositionOfLayerFresh(layerId: string): Promise<string> {
+  const summary = await projectSummary();
+  for (const comp of Object.values(summary.compositions)) {
+    if (comp.tracks.some((t) => t.layers.some((l) => l.id === layerId))) return comp.id;
+  }
+  throw new Error(`layer ${layerId} is in no composition of the fresh summary`);
+}
+const compositionOfLayer = compositionOfLayerFresh;
+
 export function installExportHook(
   runExport: RunExport,
   revealLayer: (layerId: string) => void,
@@ -1154,13 +1184,13 @@ export function installExportHook(
     const trackId = await addTrack();
     const layerId = await addMediaLayer(trackId, mediaId, tStartUs ?? 0);
     await waitForMediaInStore(mediaId, 10000, "store sync");
-    return { mediaId, layerId, kind: mediaFromStore(mediaId)!.kind };
+    return { mediaId, layerId, kind: mediaFromStore(mediaId)!.kind, compositionId: await compositionOfLayer(layerId) };
   };
 
   hookSlot().placeMediaLayer = async ({ mediaId, tStartUs }) => {
     const trackId = await addTrack();
     const layerId = await addMediaLayer(trackId, mediaId, tStartUs ?? 0);
-    return { layerId };
+    return { layerId, compositionId: await compositionOfLayer(layerId) };
   };
 
   hookSlot().waitMediaExportReady = async ({ mediaId, timeoutMs }) => {
@@ -1236,7 +1266,8 @@ export function installExportHook(
     if (audioPatches && audioPatches.length > 0) {
       const summary = await projectSummary();
       const audioLayerIds: string[] = [];
-      for (const tr of summary.tracks) {
+      // The ROOT's lanes — where `addTrack` above put every copy.
+      for (const tr of rootCompositionOf(summary).tracks) {
         for (const l of tr.layers) {
           if (l.params.kind === "Audio") audioLayerIds.push(l.id);
         }

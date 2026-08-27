@@ -12,7 +12,7 @@ import {
   clearKeyframeSelection,
   hasKeyframeSelection,
 } from "../keyframe/selectionStore";
-import { useProjectStore } from "../state/projectStore";
+import { currentOpenComposition } from "../state/projectStore";
 import {
   clearLayerSelection,
   setLayerSelection,
@@ -77,7 +77,7 @@ export function deselectAll(): void {
 /// has exactly one definition; the list is bounded by the project's clip count
 /// and this runs once per surface render.
 export function canSelectAll(): boolean {
-  const tracks = useProjectStore.getState().summary?.tracks ?? [];
+  const tracks = currentOpenComposition()?.tracks ?? [];
   return selectableLayerIds(tracks).length > 0;
 }
 

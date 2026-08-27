@@ -1,7 +1,8 @@
 import { lastFrameAnchorUs } from "../frames";
+import { openComposition, useCompositionScopeStore } from "./compositionScopeStore";
 import { transportSeek } from "./playbackStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "./playheadStore";
-import { useProjectStore } from "./projectStore";
+import { currentOpenComposition, useProjectStore } from "./projectStore";
 import { setLayerSelection } from "./selectionStore";
 
 /// Imperative navigation verbs for callers outside the React ref chain
@@ -17,11 +18,13 @@ import { setLayerSelection } from "./selectionStore";
 /// `revealTrack` skips its `selectLayerWithLink` for null, leaving whatever
 /// was selected alone rather than clearing it.
 type RevealTrackFn = (trackId: string, layerId: string | null) => void;
+type RevealCollapseFn = () => void;
 type ScrollToTimeFn = (tUs: number) => void;
 type RevealMediaFn = (mediaId: string) => void;
 type OpenMediaPoolPanelFn = () => void;
 
 let revealTrackFn: RevealTrackFn | null = null;
+let revealCollapseFn: RevealCollapseFn | null = null;
 let scrollToTimeFn: ScrollToTimeFn | null = null;
 let revealMediaFn: RevealMediaFn | null = null;
 let openMediaPoolPanelFn: OpenMediaPoolPanelFn | null = null;
@@ -34,6 +37,20 @@ export function registerRevealTrack(fn: RevealTrackFn): () => void {
   return () => {
     if (revealTrackFn === fn) revealTrackFn = null;
   };
+}
+
+/// The inverse of `revealTrack`: drop the inline reveal. The composition scope
+/// store calls this on every switch — a revealed lane belongs to the timeline
+/// being left.
+export function registerRevealCollapse(fn: RevealCollapseFn): () => void {
+  revealCollapseFn = fn;
+  return () => {
+    if (revealCollapseFn === fn) revealCollapseFn = null;
+  };
+}
+
+export function collapseReveal(): void {
+  revealCollapseFn?.();
 }
 
 export function registerScrollToTime(fn: ScrollToTimeFn): () => void {
@@ -70,14 +87,14 @@ export function registerOpenMediaPoolPanel(
   };
 }
 
-/// Clamp a target playhead time to [0, lastFrameAnchorUs] against the
-/// current summary — the same rule App.tsx's seekTo applies (Q5 of the
-/// frame-anchor spec).
+/// Clamp a target playhead time to [0, lastFrameAnchorUs] against the OPEN
+/// composition — the same rule App.tsx's seekTo applies (Q5 of the
+/// frame-anchor spec). The playhead lives on the open timeline's axis.
 export function clampSeekUs(tUs: number): number {
-  const summary = useProjectStore.getState().summary;
-  const fpsNum = summary?.composition.fps_num ?? 30;
-  const fpsDen = summary?.composition.fps_den ?? 1;
-  const upper = lastFrameAnchorUs(summary?.duration_us ?? 0, fpsNum, fpsDen);
+  const comp = currentOpenComposition();
+  const fpsNum = comp?.fps_num ?? 30;
+  const fpsDen = comp?.fps_den ?? 1;
+  const upper = lastFrameAnchorUs(comp?.duration_us ?? 0, fpsNum, fpsDen);
   return Math.max(0, Math.min(tUs, upper));
 }
 
@@ -102,13 +119,13 @@ export function jumpToTimeUs(tUs: number): void {
   scrollToTimeFn?.(clamped);
 }
 
-/// Canonical edit points of the current composition: every layer boundary on
+/// Canonical edit points of the OPEN composition: every layer boundary on
 /// every track, plus 0. All tracks participate — navigation is timeline
 /// geometry, not audibility, and there is no track targeting to scope it.
 function editPointsUs(): number[] {
-  const summary = useProjectStore.getState().summary;
+  const comp = currentOpenComposition();
   const points = new Set<number>([0]);
-  for (const track of summary?.tracks ?? []) {
+  for (const track of comp?.tracks ?? []) {
     for (const layer of track.layers) {
       points.add(layer.t_start_us);
       points.add(layer.t_end_us);
@@ -169,14 +186,27 @@ export function selectLayer(layerId: string): boolean {
   return selectLayers([layerId], layerId);
 }
 
-/// Select + seek + scroll to a layer. Validates against the live index —
-/// the caller may hold a stale search entry (index rebuilds are
-/// debounced). Returns false (and changes nothing) when the layer is gone.
+/// Open the composition `layerId` lives in, when it is not the open one. The
+/// index spans every composition, so a search hit inside a Group resolves; the
+/// selection it is about to receive only means something on that Group's
+/// timeline, hence the switch comes first. False when the layer is unknown.
+function openCompositionOfLayer(layerId: string): boolean {
+  const compositionId = useProjectStore.getState().compositionIdByLayerId.get(layerId);
+  if (compositionId === undefined) return false;
+  if (useCompositionScopeStore.getState().openId === compositionId) return true;
+  return openComposition(compositionId, null);
+}
+
+/// Select + seek + scroll to a layer, opening its composition first when it
+/// sits inside a Group. Validates against the live index — the caller may hold
+/// a stale search entry (index rebuilds are debounced). Returns false (and
+/// changes nothing) when the layer is gone.
 export function jumpToLayer(layerId: string): boolean {
   const { layerById, trackIdByLayerId } = useProjectStore.getState();
   const layer = layerById.get(layerId);
   if (!layer) return false;
   const trackId = trackIdByLayerId.get(layerId);
+  if (!openCompositionOfLayer(layerId)) return false;
   if (!selectLayer(layerId)) return false;
   if (trackId && revealTrackFn) {
     // App's revealTrack both reveals a hidden track (R.7) and selects the
@@ -204,6 +234,7 @@ export function jumpToLayer(layerId: string): boolean {
 export function revealLayerWithoutSeek(layerId: string): boolean {
   const { layerById, trackIdByLayerId } = useProjectStore.getState();
   if (!layerById.has(layerId)) return false;
+  if (!openCompositionOfLayer(layerId)) return false;
   const trackId = trackIdByLayerId.get(layerId);
   if (trackId !== undefined && revealTrackFn) {
     revealTrackFn(trackId, layerId);
@@ -216,9 +247,15 @@ export function revealLayerWithoutSeek(layerId: string): boolean {
 /// false when the Track is gone from the live summary, or when no reveal
 /// handle is mounted (nothing observable would happen).
 export function revealTrackWithoutSelection(trackId: string): boolean {
-  const summary = useProjectStore.getState().summary;
-  if (!summary?.tracks.some((track) => track.id === trackId)) return false;
+  const compositionId = useProjectStore.getState().compositionIdByTrackId.get(trackId);
+  if (compositionId === undefined) return false;
   if (!revealTrackFn) return false;
+  if (
+    useCompositionScopeStore.getState().openId !== compositionId &&
+    !openComposition(compositionId, null)
+  ) {
+    return false;
+  }
   revealTrackFn(trackId, null);
   return true;
 }

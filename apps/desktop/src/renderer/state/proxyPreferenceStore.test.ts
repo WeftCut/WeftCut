@@ -9,21 +9,11 @@ vi.mock("../ipc", () => ({
 import { useProxyPrefStore, proxyIntent, wireProxyPrefStore } from "./proxyPreferenceStore";
 import { useProjectStore } from "./projectStore";
 import type { ProjectSummary } from "../ipc";
+import { summaryFixture } from "../testing/summaryFixture";
 
-// Minimal summary stub — only project_id is read by the code under test,
-// the rest is padding to satisfy the type.
+// Minimal summary — only project_id is read by the code under test.
 function summaryWithId(project_id: string): ProjectSummary {
-  return {
-    project_id,
-    name: "p",
-    composition: { width: 1920, height: 1080, fps: 30, duration_us: 0 },
-    track_count: 0,
-    layer_count: 0,
-    duration_us: 0,
-    media: [],
-    tracks: [],
-    audio_roles: [],
-  } as unknown as ProjectSummary;
+  return summaryFixture({ project_id, name: "p" });
 }
 
 describe("proxyPreferenceStore", () => {

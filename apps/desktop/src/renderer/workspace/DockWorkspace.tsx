@@ -69,6 +69,7 @@ import { type ProxyState } from "../panels/mediaReadiness";
 import { type OptimizeInfo } from "../panels/importOptimize";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
+import { useOpenComposition } from "../state/projectStore";
 import { jumpToTimeUs } from "../state/navigation";
 import { setTool, useActiveTool } from "../state/toolStore";
 import { Menu, MenuItem } from "../menu/Menu";
@@ -183,17 +184,21 @@ function useWorkspaceChrome(): WorkspaceChromeCommands {
 function MediaDockPanel() {
   const contracts = useContracts();
   const summary = contracts.summary;
+  // Every Panel below shows the OPEN composition (compositionScopeStore.ts):
+  // its tracks, links, transitions and duration. The summary itself still
+  // supplies what is project-wide — media, history.
+  const comp = useOpenComposition();
   return (
     <MediaDropZone>
       <MediaPool
         media={summary?.media ?? []}
-        tracks={summary?.tracks ?? []}
+        tracks={comp?.tracks ?? []}
         importing={contracts.importingMediaIds}
         proxyState={contracts.proxyState}
         previewDecodable={contracts.previewDecodableMediaIds}
         optimizeById={contracts.optimizeById}
-        fpsNum={summary?.composition.fps_num ?? 30}
-        fpsDen={summary?.composition.fps_den ?? 1}
+        fpsNum={comp?.fps_num ?? 30}
+        fpsDen={comp?.fps_den ?? 1}
         onCancelImport={async (id) => {
           await importCancel(id).catch(() => false);
         }}
@@ -231,17 +236,18 @@ function TimelineDockPanel() {
   // `bladeMode` boolean prop — it fans out to a dozen call sites in
   // LayerBlock/TrackLane and none of them need to know about tools.
   const bladeMode = useActiveTool() === "blade";
+  const comp = useOpenComposition();
   return (
     <section className="timeline">
       <Timeline
-        tracks={summary?.tracks ?? []}
-        links={summary?.links ?? []}
-        transitions={summary?.transitions ?? []}
-        durationUs={summary?.duration_us ?? 0}
+        tracks={comp?.tracks ?? []}
+        links={comp?.links ?? []}
+        transitions={comp?.transitions ?? []}
+        durationUs={comp?.duration_us ?? 0}
         revealedTrackId={contracts.revealedTrackId}
         keybindings={contracts.keybindings}
-        fpsNum={summary?.composition.fps_num ?? 30}
-        fpsDen={summary?.composition.fps_den ?? 1}
+        fpsNum={comp?.fps_num ?? 30}
+        fpsDen={comp?.fps_den ?? 1}
         bladeMode={bladeMode}
         media={summary?.media ?? []}
         importing={contracts.importingMediaIds}
@@ -313,15 +319,15 @@ function AttributeDockPanel() {
   const contracts = useContracts();
   const runtime = useDockPanelRuntime();
   const currentTimeUs = usePlayheadTimeUsThrottled(100, runtime.isVisible);
-  const summary = contracts.summary;
+  const comp = useOpenComposition();
   return (
     <div className="weft-dock-panel-scroll">
       <AttributePanel
-        tracks={summary?.tracks ?? []}
+        tracks={comp?.tracks ?? []}
         selectedLayerId={contracts.selectedLayerId}
         onMutated={contracts.onMutated}
-        fpsNum={summary?.composition.fps_num ?? 30}
-        fpsDen={summary?.composition.fps_den ?? 1}
+        fpsNum={comp?.fps_num ?? 30}
+        fpsDen={comp?.fps_den ?? 1}
         currentTimeUs={currentTimeUs}
       />
     </div>
@@ -332,10 +338,11 @@ function EffectDockPanel() {
   const contracts = useContracts();
   const runtime = useDockPanelRuntime();
   const currentTimeUs = usePlayheadTimeUsThrottled(100, runtime.isVisible);
+  const comp = useOpenComposition();
   return (
     <div className="weft-dock-panel-scroll">
       <EffectPanel
-        tracks={contracts.summary?.tracks ?? []}
+        tracks={comp?.tracks ?? []}
         selectedLayerId={contracts.selectedLayerId}
         currentTimeUs={currentTimeUs}
         onMutated={contracts.onMutated}
@@ -377,15 +384,15 @@ function RoleMixerDockPanel() {
 function PlayheadDockPanel() {
   const contracts = useContracts();
   const runtime = useDockPanelRuntime();
-  const summary = contracts.summary;
+  const comp = useOpenComposition();
   return (
     <div className="weft-dock-panel-scroll">
       <PlayheadPanel
-        tracks={summary?.tracks ?? []}
-        links={summary?.links ?? []}
+        tracks={comp?.tracks ?? []}
+        links={comp?.links ?? []}
         selectedLayerId={contracts.selectedLayerId}
-        fpsNum={summary?.composition.fps_num ?? 30}
-        fpsDen={summary?.composition.fps_den ?? 1}
+        fpsNum={comp?.fps_num ?? 30}
+        fpsDen={comp?.fps_den ?? 1}
         visible={runtime.isVisible}
         onPick={(layerId, trackId) => {
           // Reveal without seeking: the near-playhead window stays put.

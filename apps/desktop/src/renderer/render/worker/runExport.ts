@@ -16,6 +16,7 @@ import type { MediaSummary, ProjectSummary } from "../../ipc";
 import { rendererOS } from "../../platform";
 import { resolveDecode } from "../decodeRoute";
 import { referencedVideoMediaIds } from "../activeVideoLayers";
+import { rootCompositionOf } from "../../ipc/compositions";
 import { ffprobeColorToWebCodecs } from "../decoder/ffprobeColorSpace";
 import { hwExportDecodeAllowed, type ExportDecodeRouting } from "../exportDecodeRouting";
 import { tenBitExportCapable } from "../exportSettings";
@@ -100,11 +101,13 @@ function defaultEncoderConfig(
 
 export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   const summary = init.summary;
-  const comp = summary.composition;
+  // Export renders the ROOT, whatever composition the editor has open
+  // (compositionScopeStore.ts). Groups enter through the recursive walk (14).
+  const comp = rootCompositionOf(summary);
   const fpsNum = comp.fps_num;
   const fpsDen = comp.fps_den;
   const startUs = init.startUs ?? 0;
-  const endUs = init.endUs ?? summary.duration_us;
+  const endUs = init.endUs ?? comp.duration_us;
 
   // 1. Pre-resolve asset URLs for every media item. The Worker has no renderer
   // bridge so it can't call `convertFileSrc` itself. Only REFERENCED video
@@ -166,7 +169,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     height: comp.height,
     fpsNum,
     fpsDen,
-    durationUs: summary.duration_us,
+    durationUs: comp.duration_us,
     summary,
     proxyAssetUrls,
     originalAssetUrls,
@@ -462,7 +465,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
 /// user-chosen OS fonts pre-resolved as bytes (main-thread IPC only).
 function collectTextFontFamilies(summary: ProjectSummary): string[] {
   const families: string[] = [];
-  for (const track of summary.tracks) {
+  for (const track of rootCompositionOf(summary).tracks) {
     for (const layer of track.layers) {
       if (layer.params.kind === "Text" && layer.params.font_family) {
         families.push(layer.params.font_family);

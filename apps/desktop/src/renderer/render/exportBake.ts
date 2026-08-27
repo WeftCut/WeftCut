@@ -24,6 +24,7 @@
 
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import type { ProjectSummary, MotifView } from "../ipc";
+import { rootCompositionOf } from "../ipc/compositions";
 import { getMotif, resolveMotifContentDurationUs, type Motif } from "./motifs/catalog";
 import { canonicalizeProps } from "./motifs/Rasterizer";
 import { bakeMotifFrame } from "./motifs/motifRaster";
@@ -115,7 +116,8 @@ export function motifLayersToBake(
   fpsDen: number,
 ): MotifBakeSpec[] {
   const out: MotifBakeSpec[] = [];
-  for (const track of summary.tracks) {
+  // The ROOT's motifs — what export renders (slice 14 recurses into Groups).
+  for (const track of rootCompositionOf(summary).tracks) {
     if (!track.enabled) continue;
     for (const layer of track.layers) {
       if (!layer.enabled) continue;

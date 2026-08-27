@@ -10,7 +10,8 @@
 import { Application, Container, Texture } from "pixi.js";
 
 import { lastFrameAnchorUs as computeLastFrameStartUs, snapFrameFloor } from "../frames";
-import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
+import type { CompositionSummary, LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
+import { EMPTY_COMPOSITION, rootCompositionOf } from "../ipc/compositions";
 import { anchorPivot } from "./anchorPivot";
 import { withTextBoxOverride, withTransformOverride } from "./transformOverrides";
 import { AudioGraph } from "./audio/AudioGraph";
@@ -502,6 +503,11 @@ export class Compositor {
   /// (`resolveSource` vs `proxyAssetUrl`), and the upcoming-clip prewarm.
   private mode: "preview" | "export";
   private projectSummary: ProjectSummary | null = null;
+  /// The composition this Compositor draws: the ROOT of `projectSummary`.
+  /// Export always renders the root; the preview does too until slice 14 hands
+  /// `setProject` the open composition's id (compositionScopeStore.ts). The
+  /// empty sentinel while no project is loaded keeps every walk a plain loop.
+  private composition: CompositionSummary = EMPTY_COMPOSITION;
   /// O(1) layer lookup by id. Rebuilt in `setProject` whenever the
   /// project snapshot changes; read on every tick from `setAnchorTime`
   /// and `hasLookaheadAt`. Without this map those would be O(layers)
@@ -875,6 +881,7 @@ export class Compositor {
   setProject(summary: ProjectSummary | null): void {
     this.decodePriorityPlanCache = null;
     this.projectSummary = summary;
+    this.composition = summary ? rootCompositionOf(summary) : EMPTY_COMPOSITION;
     this.layerById.clear();
     this.trackEnabledByLayer.clear();
     if (!summary) {
@@ -899,7 +906,7 @@ export class Compositor {
     }
     // Recompute the frame-snap fps state whenever the project changes
     // (composition fps could differ between projects).
-    const c = summary.composition;
+    const c = this.composition;
     if (c.fps_num > 0 && c.fps_den > 0) {
       this.fpsNum = c.fps_num;
       this.fpsDen = c.fps_den;
@@ -907,7 +914,7 @@ export class Compositor {
       this.underrun.bindFrameBudgetMs((1_000 * this.fpsDen) / this.fpsNum);
     }
     const livingLayerIds = new Set<string>();
-    for (const t of summary.tracks) {
+    for (const t of this.composition.tracks) {
       for (const l of t.layers) {
         livingLayerIds.add(l.id);
         this.layerById.set(l.id, l);
@@ -1093,7 +1100,7 @@ export class Compositor {
       const roles = this.projectSummary.audio_roles ?? [];
       const anySolo = anyRoleSolo(roles);
       const tickedAudio = new Set<string>();
-      for (const track of this.projectSummary.tracks) {
+      for (const track of this.composition.tracks) {
         if (!track.enabled) continue; // whole-track disable still gates
         for (const layer of track.layers) {
           if (!layer.enabled) continue;
@@ -1192,7 +1199,7 @@ export class Compositor {
     // runs when the active set is empty but nodes linger, so a just-finished
     // window returns its RTs to the pool that same frame.
     const activeTransitions = selectActiveTransitions(
-      this.projectSummary.transitions,
+      this.composition.transitions,
       tUsSnapped,
       (id) => this.layerById.get(id),
       (id) => this.trackEnabledByLayer.get(id) ?? false,
@@ -1207,7 +1214,7 @@ export class Compositor {
 
     let z = 0;
     const tSweep = stageNow();
-    for (const track of this.projectSummary.tracks) {
+    for (const track of this.composition.tracks) {
       if (!track.enabled) continue;
       for (const layer of track.layers) {
         if (!layer.enabled) continue;
@@ -1332,7 +1339,7 @@ export class Compositor {
   /// the alternative is letting the clock run past the last layer into
   /// the empty black region forever, which is never the user's intent.
   compositionDurationUs(): number {
-    return this.projectSummary?.duration_us ?? 0;
+    return this.composition.duration_us;
   }
 
   /// Exact-rational "last frame start" for an exclusive `endUs` boundary,
@@ -1358,7 +1365,7 @@ export class Compositor {
   playableEndUs(): number {
     if (!this.projectSummary) return 0;
     let end = 0;
-    for (const t of this.projectSummary.tracks) {
+    for (const t of this.composition.tracks) {
       if (!t.enabled) continue;
       for (const l of t.layers) {
         if (!l.enabled) continue;
@@ -1659,7 +1666,7 @@ export class Compositor {
     // caller invokes prewarm from a different tick path.
     const plan = this.updateDecodePriorities(tUs)
       ?? planPreviewDecodePriority(
-        this.projectSummary,
+        this.composition,
         tUs,
         UPCOMING_CLIP_PREWARM_US,
       );
@@ -1713,7 +1720,7 @@ export class Compositor {
       return cached.plan;
     }
     const plan = planPreviewDecodePriority(
-      this.projectSummary,
+      this.composition,
       tUs,
       UPCOMING_CLIP_PREWARM_US,
     );
@@ -1747,7 +1754,7 @@ export class Compositor {
   private updatePrewarmTargets(tUs: number): void {
     if (!this.prewarmer || !this.projectSummary) return;
     const specs: PrewarmContentSpec[] = [];
-    for (const track of this.projectSummary.tracks) {
+    for (const track of this.composition.tracks) {
       if (!track.enabled) continue;
       for (const layer of track.layers) {
         if (!layer.enabled || layer.params.kind !== "Motif") continue;
@@ -1797,7 +1804,7 @@ export class Compositor {
     if (!this.baker || !this.projectSummary) return;
     const globalOn = useAppSettingsStore.getState().settings.prebake_motifs;
     const specs: BakeContentSpec[] = [];
-    for (const track of this.projectSummary.tracks) {
+    for (const track of this.composition.tracks) {
       if (!track.enabled) continue;
       for (const layer of track.layers) {
         if (!layer.enabled || layer.params.kind !== "Motif") continue;
@@ -1835,7 +1842,7 @@ export class Compositor {
   private async hydrateBakedIndexAndGc(): Promise<void> {
     if (!this.projectSummary) return;
     const activeKeys: string[] = [];
-    for (const track of this.projectSummary.tracks) {
+    for (const track of this.composition.tracks) {
       for (const layer of track.layers) {
         if (layer.params.kind !== "Motif") continue;
         const motif = getMotif(layer.params.motif_id);
@@ -1880,7 +1887,7 @@ export class Compositor {
       return;
     }
     const byLayer: Record<string, LayerBakeStatus> = {};
-    for (const track of this.projectSummary.tracks) {
+    for (const track of this.composition.tracks) {
       for (const layer of track.layers) {
         if (layer.params.kind !== "Motif") continue;
         const motif = getMotif(layer.params.motif_id);
@@ -2391,7 +2398,7 @@ export class Compositor {
   async preloadImages(): Promise<void> {
     if (!this.projectSummary) return;
     const imageLayerIds: string[] = [];
-    for (const track of this.projectSummary.tracks) {
+    for (const track of this.composition.tracks) {
       for (const layer of track.layers) {
         if (layer.params.kind === "ImageOverlay") imageLayerIds.push(layer.id);
       }

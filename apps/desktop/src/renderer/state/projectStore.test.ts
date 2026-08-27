@@ -21,35 +21,35 @@ vi.mock("@/bridge/events", () => ({
 }));
 
 import { useProjectStore, wireProjectStore } from "./projectStore";
+import { compositionFixture, ROOT_ID, summaryFixture } from "../testing/summaryFixture";
+import type { LayerSummary, TrackSummary } from "../ipc";
 
 function summary(name: string): ProjectSummary {
-  return {
+  return summaryFixture({
     project_id: "project-1",
-    name,
-    composition: {
-      width: 640,
-      height: 360,
-      fps_num: 30,
-      fps_den: 1,
-      duration_pinned: false,
-      fps_locked: false,
-    },
-    track_count: 0,
-    layer_count: 0,
-    duration_us: 0,
+    name: name,
+    media: [],
     history: {
       cursor: 0,
       len: 0,
       can_undo: false,
       can_redo: false,
     },
-    media: [],
-    tracks: [],
-    markers: [],
-    transitions: [],
-    links: [],
     audio_roles: [],
-  };
+    root: {
+      width: 640,
+      height: 360,
+      fps_num: 30,
+      fps_den: 1,
+      duration_pinned: false,
+      fps_locked: false,
+      duration_us: 0,
+      tracks: [],
+      markers: [],
+      transitions: [],
+      links: [],
+    },
+  });
 }
 
 function deferred<T>(): {
@@ -135,5 +135,36 @@ describe("wireProjectStore summary ordering", () => {
 
     expect(mocks.unlisten).toHaveBeenCalledOnce();
     expect(useProjectStore.getState().summary?.name).toBe("baseline");
+  });
+});
+
+describe("indices span every composition", () => {
+  const stat = <T,>(value: T) => ({ mode: "Static" as const, value });
+  const color = (id: string): LayerSummary => ({
+    id, label: null, t_start_us: 0, t_end_us: 1_000_000, kind: "Color", color_hint: "#000000",
+    enabled: true, locked: false, effects: [],
+    params: { kind: "Color", color: stat({ r: 0, g: 0, b: 0, a: 255 }), width: 16, height: 9 },
+  });
+  const track = (id: string, layers: LayerSummary[]): TrackSummary => ({
+    id, kind: "Video", label: null, enabled: true, locked: false, muted: false, solo: false,
+    role: null, transient: true, layers,
+  });
+
+  it("resolves a layer inside a Group to its layer, track and composition", () => {
+    useProjectStore.getState().apply(
+      summaryFixture({
+        root: { tracks: [track("t-root", [color("root-a")])] },
+        groups: [compositionFixture({ id: "comp-g1", tracks: [track("t-g1", [color("inner-a")])] })],
+      }),
+    );
+    const s = useProjectStore.getState();
+    expect(s.layerById.get("inner-a")?.id).toBe("inner-a");
+    expect(s.trackIdByLayerId.get("inner-a")).toBe("t-g1");
+    expect(s.compositionIdByLayerId.get("inner-a")).toBe("comp-g1");
+    expect(s.compositionIdByLayerId.get("root-a")).toBe(ROOT_ID);
+    expect(s.compositionIdByTrackId.get("t-g1")).toBe("comp-g1");
+    expect(s.compositionIdByTrackId.get("t-root")).toBe(ROOT_ID);
+    useProjectStore.getState().apply(null);
+    expect(useProjectStore.getState().compositionIdByLayerId.size).toBe(0);
   });
 });

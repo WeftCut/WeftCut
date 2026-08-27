@@ -5,7 +5,7 @@ import {
   launchApp,
   newProject,
   tmpDir,
-  waitForHook,
+  waitForHook, rootSummary,
 } from './helpers/driver'
 
 // Role Gain audition — renders the REAL preview Role-gain fold
@@ -95,10 +95,7 @@ test.describe('Role Mixer panel flow (Electron UI)', () => {
 
   const panel = () => dockPanel(page, 'role-mixer')
   const dialogueGain = async (): Promise<number> => {
-    const s = await invokeCmd<{ audio_roles?: Array<{ role: string; gain_db: number }> }>(
-      page,
-      'project_summary',
-    )
+    const s = await rootSummary<{ audio_roles?: Array<{ role: string; gain_db: number }> }>(page)
     return s.audio_roles?.find((r) => r.role === 'dialogue')?.gain_db ?? 0
   }
   // Pointer-drag the Dialogue fader thumb by `dx` px and release.

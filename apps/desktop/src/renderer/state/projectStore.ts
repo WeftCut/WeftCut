@@ -3,12 +3,18 @@ import { listen, type UnlistenFn } from "@/bridge/events";
 
 import {
   projectSummary,
+  type CompositionSummary,
   type LayerSummary,
   type MarkerSummary,
   type MediaSummary,
   type ProjectSummary,
   type RoleMixView,
 } from "../ipc";
+import { compositionOrRoot, rootCompositionOf } from "../ipc/compositions";
+import {
+  reconcileCompositionScope,
+  useCompositionScopeStore,
+} from "./compositionScopeStore";
 import {
   retainLayerSelection,
   retainTransitionSelection,
@@ -36,6 +42,12 @@ export interface ProjectStoreState {
   /// `layer_id → track_id` reverse index — handy for z-order
   /// (track order) lookups without iterating tracks each time.
   trackIdByLayerId: Map<string, string>;
+  /// `layer_id → composition_id` / `track_id → composition_id`. Every index
+  /// spans ALL compositions: a search hit or a history row may name a layer
+  /// inside a Group, and the answer to "where does it live" has to come
+  /// before the scope store can open that Group.
+  compositionIdByLayerId: Map<string, string>;
+  compositionIdByTrackId: Map<string, string>;
   /// True after the initial `project_summary` fetch + subscription is
   /// wired. Distinguishes "no project loaded" (`summary === null`,
   /// `ready === true`) from "haven't fetched yet"
@@ -54,19 +66,28 @@ function buildIndices(summary: ProjectSummary | null): {
   mediaById: Map<string, MediaSummary>;
   layerById: Map<string, LayerSummary>;
   trackIdByLayerId: Map<string, string>;
+  compositionIdByLayerId: Map<string, string>;
+  compositionIdByTrackId: Map<string, string>;
 } {
   const mediaById = new Map<string, MediaSummary>();
   const layerById = new Map<string, LayerSummary>();
   const trackIdByLayerId = new Map<string, string>();
-  if (!summary) return { mediaById, layerById, trackIdByLayerId };
+  const compositionIdByLayerId = new Map<string, string>();
+  const compositionIdByTrackId = new Map<string, string>();
+  const indices = { mediaById, layerById, trackIdByLayerId, compositionIdByLayerId, compositionIdByTrackId };
+  if (!summary) return indices;
   for (const m of summary.media) mediaById.set(m.id, m);
-  for (const t of summary.tracks) {
-    for (const l of t.layers) {
-      layerById.set(l.id, l);
-      trackIdByLayerId.set(l.id, t.id);
+  for (const c of Object.values(summary.compositions)) {
+    for (const t of c.tracks) {
+      compositionIdByTrackId.set(t.id, c.id);
+      for (const l of t.layers) {
+        layerById.set(l.id, l);
+        trackIdByLayerId.set(l.id, t.id);
+        compositionIdByLayerId.set(l.id, c.id);
+      }
     }
   }
-  return { mediaById, layerById, trackIdByLayerId };
+  return indices;
 }
 
 export const useProjectStore = create<
@@ -76,6 +97,8 @@ export const useProjectStore = create<
   mediaById: new Map(),
   layerById: new Map(),
   trackIdByLayerId: new Map(),
+  compositionIdByLayerId: new Map(),
+  compositionIdByTrackId: new Map(),
   ready: false,
 
   apply: (summary) => {
@@ -86,11 +109,14 @@ export const useProjectStore = create<
       ready: true,
     });
     retainLayerSelection(indices.layerById.keys());
-    // Transitions are optional on the wire (older snapshots omit them);
-    // absent == empty, so a missing field also clears a stale chip selection.
     retainTransitionSelection(
-      (summary?.transitions ?? []).map((tr) => tr.id),
+      summary
+        ? Object.values(summary.compositions).flatMap((c) => c.transitions.map((tr) => tr.id))
+        : [],
     );
+    // After the indices and the retained selections: the fallback switch this
+    // may run clears the selection, and reads the summary just published.
+    reconcileCompositionScope(summary);
   },
 }));
 
@@ -148,10 +174,32 @@ export const useProjectSummary = (): ProjectSummary | null =>
 export const useAudioRoles = (): RoleMixView[] =>
   useProjectStore((s) => s.summary?.audio_roles ?? EMPTY_ROLES);
 
-/// The project's markers. Absent on stub summaries and pre-workspace, which is
-/// why this reads through the empty sentinel rather than asserting the field.
+/// The OPEN composition's markers — the ruler paints one timeline's markers.
+/// Reads through the empty sentinel pre-workspace.
 export const useProjectMarkers = (): MarkerSummary[] =>
-  useProjectStore((s) => s.summary?.markers ?? EMPTY_MARKERS);
+  useOpenComposition()?.markers ?? EMPTY_MARKERS;
+
+// ===== Compositions =========================================================
+
+export { compositionOrRoot, rootCompositionOf };
+
+/// Imperative read of the open composition for event-time callers (shortcut
+/// handlers, command predicates) — the non-hook twin of `useOpenComposition`.
+export function currentOpenComposition(): CompositionSummary | null {
+  return compositionOrRoot(
+    useProjectStore.getState().summary,
+    useCompositionScopeStore.getState().openId,
+  );
+}
+
+/// The open composition, for React. Two atomic subscriptions rather than one
+/// composite selector: each yields a stable reference (the id is a string, the
+/// composition a sub-object of the summary), so an unrelated store tick bails
+/// out instead of re-rendering.
+export const useOpenComposition = (): CompositionSummary | null => {
+  const openId = useCompositionScopeStore((s) => s.openId);
+  return useProjectStore((s) => compositionOrRoot(s.summary, openId));
+};
 
 /// Resolve a media item by id without forcing the caller to subscribe
 /// to the whole media array. The selector reads from `mediaById`, which

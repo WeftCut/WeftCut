@@ -42,6 +42,7 @@ import { useProjectStore } from "../state/projectStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "../state/playheadStore";
 import { clearLayerSelection, useSelectionStore } from "../state/selectionStore";
 import { useHistoryStore } from "../state/historyStore";
+import { summaryFixture } from "../testing/summaryFixture";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -99,23 +100,21 @@ function windowedView(
 }
 
 function summaryWith(layerIds: string[]): ProjectSummary {
-  return {
+  return summaryFixture({
     project_id: "p1",
     name: "fixture",
-    composition: {
+    media: [],
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+    audio_roles: [],
+    root: {
       width: 1920,
       height: 1080,
       fps_num: 30,
       fps_den: 1,
       duration_pinned: false,
       fps_locked: false,
-    },
-    track_count: 1,
-    layer_count: layerIds.length,
-    duration_us: 10_000_000,
-    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
-    media: [],
-    tracks: [
+      duration_us: 10_000_000,
+      tracks: [
       {
         id: "t9",
         kind: "Video",
@@ -145,10 +144,10 @@ function summaryWith(layerIds: string[]): ProjectSummary {
         })),
       },
     ],
-    markers: [],
-    links: [],
-    audio_roles: [],
-  } as unknown as ProjectSummary;
+      markers: [],
+      links: [],
+    },
+  }) as unknown as ProjectSummary;
 }
 
 /// Mount the panel with `view` as the seeded stack, waiting for the wiring

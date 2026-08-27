@@ -9,6 +9,7 @@ import {
 
 import { type ProjectSummary } from "../ipc";
 import { formatTimecode } from "../frames";
+import { useOpenComposition } from "../state/projectStore";
 import {
   playheadTimeUs,
   setPlayheadTimeUs,
@@ -52,15 +53,16 @@ export function PreviewSection({
   // playhead at the moment editing opens (instead of live-updating the field
   // from a React-subscribed time) keeps the edit box stable during playback.
   const [tcEditUs, setTcEditUs] = useState<number | null>(null);
+  // The transport and the meta line describe the OPEN composition — the
+  // timeline the playhead runs on. `summary` stays for the project-wide bits.
+  const comp = useOpenComposition();
 
   const fpsLabel =
-    summary &&
-    (summary.composition.fps_den === 1
-      ? t("project.fps_simple", { fps: summary.composition.fps_num })
+    comp &&
+    (comp.fps_den === 1
+      ? t("project.fps_simple", { fps: comp.fps_num })
       : t("project.fps_rational", {
-          fps: (
-            summary.composition.fps_num / summary.composition.fps_den
-          ).toFixed(2),
+          fps: (comp.fps_num / comp.fps_den).toFixed(2),
         }));
 
   return (
@@ -80,8 +82,8 @@ export function PreviewSection({
           <AppTimecodeField
             className="preview-timecode"
             valueUs={tcEditUs}
-            fpsNum={summary?.composition.fps_num ?? 30}
-            fpsDen={summary?.composition.fps_den ?? 1}
+            fpsNum={comp?.fps_num ?? 30}
+            fpsDen={comp?.fps_den ?? 1}
             autoFocus
             ariaLabel={t("transport.timecode_label")}
             onCommit={(us) => {
@@ -92,8 +94,8 @@ export function PreviewSection({
           />
         ) : (
           <PlayheadTimecode
-            fpsNum={summary?.composition.fps_num ?? 30}
-            fpsDen={summary?.composition.fps_den ?? 1}
+            fpsNum={comp?.fps_num ?? 30}
+            fpsDen={comp?.fps_den ?? 1}
             visible={visible}
             editHint={t("transport.timecode_edit_hint")}
             onActivate={() => setTcEditUs(playheadTimeUs())}
@@ -123,10 +125,10 @@ export function PreviewSection({
           </button>
           <button
             type="button"
-            onClick={() => onSeek(summary?.duration_us ?? 0)}
+            onClick={() => onSeek(comp?.duration_us ?? 0)}
             title={t("transport.to_end_hint")}
             aria-label={t("transport.to_end_hint")}
-            disabled={!summary || summary.duration_us === 0}
+            disabled={!comp || comp.duration_us === 0}
           >
             <SkipForwardIcon size={16} aria-hidden />
           </button>
@@ -134,16 +136,16 @@ export function PreviewSection({
         <span className="preview-meta-cell">
           <DroppedFramesIndicator />
           <span className="preview-meta" aria-hidden="true">
-            {summary && (
+            {comp && (
               <>
                 {t("project.canvas", {
-                  width: summary.composition.width,
-                  height: summary.composition.height,
+                  width: comp.width,
+                  height: comp.height,
                   fps: fpsLabel,
                 })}
                 {" · "}
                 {t("project.duration", {
-                  value: formatTimecode(summary.duration_us, summary.composition.fps_num, summary.composition.fps_den),
+                  value: formatTimecode(comp.duration_us, comp.fps_num, comp.fps_den),
                 })}
               </>
             )}

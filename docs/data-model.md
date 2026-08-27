@@ -901,6 +901,51 @@ surface a link is `LinkSummary { id, label: string | null, layer_ids }` —
 `links` on `project://current` — where the omitted label becomes an explicit
 `null`.
 
+## Read surface: `ProjectSummary`
+
+The renderer never holds a `Project`. It mirrors the read-only view main builds
+on every `project:changed` (`main/state/summary.ts` `buildProjectSummary`;
+`renderer/ipc/index.ts` declares the same shapes):
+
+```ts
+interface ProjectSummary {
+  project_id: string; name: string
+  root_id: string                                  // compositions[root_id] is what export renders
+  compositions: Record<CompositionId, CompositionSummary>
+  track_count: number; layer_count: number         // counted over EVERY composition
+  history: { cursor, len, can_undo, can_redo, lock_reason? }
+  media: MediaSummary[]                            // the pool, availability-gated by fs.existsSync
+  audio_roles: RoleMixView[]                       // the 4 roles, canonical order, defaults filled
+}
+
+interface CompositionSummary {
+  id: CompositionId; label: string | null
+  width: number; height: number; fps_num: number; fps_den: number
+  duration_us: number; duration_pinned: boolean
+  fps_locked: boolean                              // history-scoped, so project-wide — repeated on every entry
+  tracks: TrackSummary[]; markers: MarkerSummary[]; transitions: TransitionView[]; links: LinkSummary[]
+}
+```
+
+Every composition is projected, keyed by id; the projection of one is a pure
+function of that composition (plus the media pool, and the label lookup a
+`CompositionRef` layer's view carries as `composition_label`). Timeline fields
+live only on the entries — there is no flat `tracks` on the project — so a
+consumer names the composition it reads. The renderer keeps that name in one
+place, `state/compositionScopeStore.ts`: the timeline, the inspector, the
+Playhead panel, the ruler and every creation channel (`add_track`,
+`add_marker`, `add_color_layer`, …, stamped with `compositionId`) follow the
+OPEN composition, while export and, until the preview learns to enter a Group,
+the compositor read `compositions[root_id]`. Should the open composition
+vanish from a summary — undoing the pre-compose that created it while standing
+inside it — the store falls back to the nearest crumb it was entered through,
+then the root.
+
+`TrackSummary.kind` is a derived class label (Video / Audio), never a name:
+`renderer/lib/trackName.ts` is the single answer to what a lane is called
+(ADR 0042). `TrackRole` is emitted in kebab form (`a-roll`, `b-roll`,
+`audio-a`, `audio-b`, `caption`).
+
 ## History
 
 ```rust
@@ -1005,6 +1050,7 @@ struct ChangeEvent {
 | Every `CompositionRef.composition` names an existing composition | reject (`CompositionMissing`) |
 | No `CompositionRef` targets `root_id` | reject (`RootReferenced`) |
 | Composition references form no cycle | reject (`CompositionCycle { path }`; orphans — compositions nothing references — are legal) |
+| A composition is removed only by `groups_ungroup` of its last reference or by `compositions_delete` when unreferenced | reject (`CompositionInUse { composition, ref_count }`). Deleting a Group layer never cascades into its composition — the orphan stays, legal, until `compositions_delete` |
 | Every composition's `fps`, `sample_rate`, `channels` equal the root's | reject (`CompositionLatticeMismatch { composition, field }`) |
 | `Layer.id` unique across **all** compositions | reject (`DuplicateLayerId`) |
 | `Marker.id` unique across **all** compositions | reject (`DuplicateMarkerId`) |
@@ -1076,6 +1122,10 @@ the UI uses the same actor via backend commands.
 | `delete_layers(layer_ids)` | the cross-**layer** form: one recorded entry however many layers it spans, so one undo restores the lot. Ids are de-duplicated; a locked member rejects the WHOLE batch rather than half-deleting. Takes the id set verbatim — no link fan-out, since selection is what carries a link |
 | `links_create(layer_ids, label?, reassign?)` → `LinkId` | fewer than two distinct ids → `LinkCreateNeedsTwoLayers`; a layer already in another link → `LayerAlreadyLinked` unless `reassign: true`, which moves it over |
 | `links_dissolve(link_id)` / `links_add_members(link_id, layer_ids, reassign?)` / `links_remove_members(link_id, layer_ids)` / `links_rename(link_id, label?)` | an unknown `link_id` → `LinkNotFound`; removing a non-member → `LayerNotInLink`; `add_members` shares `links_create`'s `LayerAlreadyLinked` / `reassign` rule |
+| `groups_create(layer_ids, label?)` → `{ composition_id, layer_id }` | pre-compose (ADR 0052; [features.md §Groups](features.md#groups)): the set — one or more layers of one composition — moves into a new composition carrying the parent's settings and the reserved A/B skeleton, its former tracks mapped bottom-up onto A roll, B roll, then fresh lanes; a Group layer takes its place at the earliest start on the top-most former lane (the drop strip's fallback on collision). Never partial: a locked member → `GroupLockedMember`, a locked track → `TrackLocked`, before anything moves. Links fully inside move with their ids, a straddling link loses its inside members; transitions between two members move, a straddling one is reconciled away and logged; markers stay |
+| `groups_ungroup(layer_id)` | expand a **plain** Group layer in place — identity transform, static opacity 1, no effects; otherwise `GroupNotPlain { reason: transform \| opacity \| effects }`. Members intersecting `[src_in_us, src_out_us)` copy in at `t + t_start_us − src_in_us`, trimmed to the window with source in/out and keyframes following; members outside are dropped; the composition's tracks become fresh transient lanes at the ref's track index; links and transitions inside carry over under fresh ids; the composition is removed when its last reference goes |
+| `groups_rename(composition_id, label?)` | `null` / blank clears back to the derived name; the root → `RootComposition` |
+| `compositions_delete(composition_id)` | removes an unreferenced composition; referenced → `CompositionInUse { composition, ref_count }`; the root → `RootComposition` |
 | `add_marker(t_us, label, color, end_t_us?, composition_id?)` → `MarkerId` | markers are per composition |
 | `update_marker(marker_id, patch)` / `remove_marker(marker_id)` | the marker id names its composition |
 | `set_composition(patch, composition_id?)` | never recorded (setup, not editing); canvas (`width`, `height`, `color_space`, `background`) and `duration_us` land on the named composition, root by default; `fps` / `sample_rate` / `channels` are one lattice and cascade to every composition; `fps` refused with `FpsLockedByContent` once the timeline — or any stored snapshot/checkpoint — holds a layer |

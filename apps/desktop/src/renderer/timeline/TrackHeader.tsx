@@ -5,7 +5,7 @@ import { ChevronDown, ChevronRight, Eye, EyeOff, Lock, LockOpen, Music } from "l
 import { renameTrack, updateTrackFlags, type TrackSummary } from "../ipc";
 import { AppInput } from "../components/AppInput";
 import { trackDisplayName } from "../lib/trackName";
-import { useProjectStore } from "../state/projectStore";
+import { useOpenComposition } from "../state/projectStore";
 import { trackHeaderControls } from "./geometry";
 import { beginTrackRename, endRename, useEditingTrackId } from "./renameStore";
 import { TrackContextMenu } from "./TrackContextMenu";
@@ -58,8 +58,9 @@ export function TrackHeader({ track, height, isRevealed, isRoleSectionStart, isE
   // PROJECT's track vector, read from the mirror rather than from the rows this
   // header renders beside: the timeline's row list is filtered in A/B Roll, so
   // numbering off it would renumber every lane when the user toggles the filter.
-  // Atomic selector — `tracks` is one field of one snapshot.
-  const tracks = useProjectStore((s) => s.summary?.tracks);
+  // The OPEN composition's vector: a lane's number counts within its own
+  // timeline.
+  const tracks = useOpenComposition()?.tracks;
   const name = trackDisplayName(track, tracks ?? [], t);
   const toggle = (patch: Parameters<typeof updateTrackFlags>[1]) => async () => {
     if (await tryMutate(() => updateTrackFlags(track.id, patch), "Update track flag")) {

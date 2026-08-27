@@ -4,9 +4,10 @@ import { resolveSplitTargets } from "./splitAtPlayhead";
 import type {
   LinkSummary,
   LayerSummary,
-  ProjectSummary,
+  CompositionSummary,
   TrackSummary,
 } from "../ipc";
+import { rootOf, summaryFixture } from "../testing/summaryFixture";
 
 /// `Color` rather than a media kind: nothing here touches decode, and a
 /// synthetic layer with no media id keeps the fixture to the fields the
@@ -57,29 +58,27 @@ function track(
 function summary(
   tracks: TrackSummary[],
   links: LinkSummary[] = [],
-): ProjectSummary {
-  return {
+): CompositionSummary {
+  return rootOf(summaryFixture({
     project_id: "p",
     name: "p",
-    composition: {
+    media: [],
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+    audio_roles: [],
+    root: {
       width: 640,
       height: 360,
       fps_num: 30,
       fps_den: 1,
       duration_pinned: false,
       fps_locked: false,
+      duration_us: 10_000_000,
+      tracks: tracks,
+      markers: [],
+      transitions: [],
+      links: links,
     },
-    track_count: tracks.length,
-    layer_count: tracks.reduce((n, t) => n + t.layers.length, 0),
-    duration_us: 10_000_000,
-    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
-    media: [],
-    tracks,
-    markers: [],
-    transitions: [],
-    links,
-    audio_roles: [],
-  };
+  }));
 }
 
 const ids = (

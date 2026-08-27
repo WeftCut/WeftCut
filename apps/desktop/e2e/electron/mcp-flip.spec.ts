@@ -52,8 +52,8 @@ test('TS actor: MCP mutate → resource read reflects it; blocked tool rejects',
       expect((added.content as Array<{ type: string }>)[0].type).toBe('text')
       // The mirror reflects the mutation on the next read.
       const after = await client.readResource({ uri: 'project://current' })
-      const proj = JSON.parse((after.contents[0] as { text: string }).text) as { tracks: Array<{ layers: unknown[] }> }
-      expect(proj.tracks.reduce((n, t) => n + t.layers.length, 0)).toBe(1)
+      const proj = JSON.parse((after.contents[0] as { text: string }).text) as { root_id: string; compositions: Record<string, { tracks: Array<{ layers: unknown[] }> }> }
+      expect(proj.compositions[proj.root_id]!.tracks.reduce((n, t) => n + t.layers.length, 0)).toBe(1)
       // A blocked hybrid rejects.
       await expect(client.callTool({ name: 'import_media', arguments: { path: '/nope.mp4' } })).rejects.toThrow()
     } finally {

@@ -11,7 +11,6 @@ import {
 import { useTranslation } from "react-i18next";
 import {
   addMediaLayer,
-  addTrack,
   addTransition,
   linksCreate,
   linksDissolve,
@@ -128,6 +127,7 @@ import {
   revealTrackWithoutSelection,
 } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
+import { addTrackInOpenComposition } from "../ipc/compositionScoped";
 import {
   clearLayerSelection,
   clearTransitionSelection,
@@ -815,7 +815,7 @@ export function Timeline({
         // a lane that no longer belongs to it. A fresh import empties nothing, so
         // the first undo removes the layer and the second removes the lane —
         // each step reversing exactly what it did.
-        const trackId = track !== null ? track.id : await addTrack();
+        const trackId = track !== null ? track.id : await addTrackInOpenComposition();
         await addMediaLayer(trackId, payload.mediaId, plan.rawStartUs);
         if (track === null) revealSpawnedTrack(trackId);
         await onMutated();

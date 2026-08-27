@@ -2,20 +2,16 @@ import { describe, expect, it } from "vitest";
 import { buildEntries } from "./buildEntries";
 import type { SearchEntry } from "./types";
 import type { ProjectSummary } from "../ipc";
+import { summaryFixture } from "../testing/summaryFixture";
 
 /// 10 s 30 fps summary: video track (clip at 2 s), caption track (one real
 /// Text layer + one whitespace-only Text layer), a B-Roll track whose clip
 /// reuses media m1 EARLIER (500 ms — exercises the usage sort), one labeled
 /// + one blank-label marker, and one media item.
 function fixtureSummary(): ProjectSummary {
-  return {
+  return summaryFixture({
     project_id: "p1",
     name: "fixture",
-    composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false },
-    track_count: 3,
-    layer_count: 5,
-    duration_us: 10_000_000,
-    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
     media: [
       {
         id: "m1", label: "beach.mp4", path: "C:/x/beach.mp4", kind: "Video",
@@ -24,7 +20,17 @@ function fixtureSummary(): ProjectSummary {
         codec: "h264", pix_fmt: "yuv420p",
       },
     ],
-    tracks: [
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+    audio_roles: [],
+    root: {
+      width: 1920,
+      height: 1080,
+      fps_num: 30,
+      fps_den: 1,
+      duration_pinned: false,
+      fps_locked: false,
+      duration_us: 10_000_000,
+      tracks: [
       {
         id: "t1", kind: "Video", label: "A-Roll", enabled: true, locked: false,
         muted: false, solo: false, role: "a-roll", transient: false,
@@ -125,7 +131,7 @@ function fixtureSummary(): ProjectSummary {
         ],
       },
     ],
-    markers: [
+      markers: [
       {
         id: "mk1", t_us: 5_000_000, end_t_us: null, label: "章节一", color_hint: "",
       },
@@ -133,9 +139,9 @@ function fixtureSummary(): ProjectSummary {
         id: "mk2", t_us: 6_000_000, end_t_us: null, label: "  ", color_hint: "",
       },
     ],
-    links: [],
-    audio_roles: [],
-  };
+      links: [],
+    },
+  });
 }
 
 const CMDS = [

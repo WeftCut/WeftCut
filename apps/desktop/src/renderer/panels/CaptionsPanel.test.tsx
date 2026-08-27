@@ -15,6 +15,7 @@ vi.mock("../ipc", async (importActual) => {
 });
 
 import { updateLayerParams, restyleCaptions } from "../ipc";
+import { summaryFixture } from "../testing/summaryFixture";
 
 const ignoreCueActivation = () => {};
 
@@ -80,20 +81,25 @@ function captionTrack(id: string, layers: ReturnType<typeof textLayer>[]) {
 }
 
 function apply(tracks: ReturnType<typeof captionTrack>[]) {
-  useProjectStore.getState().apply({
+  useProjectStore.getState().apply(summaryFixture({
     project_id: "p1",
     name: "Test",
-    composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false },
-    track_count: tracks.length,
-    layer_count: tracks.reduce((n, t) => n + t.layers.length, 0),
-    duration_us: 3_000_000,
-    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
     media: [],
-    markers: [],
-    links: [],
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
     audio_roles: [],
-    tracks,
-  });
+    root: {
+      width: 1920,
+      height: 1080,
+      fps_num: 30,
+      fps_den: 1,
+      duration_pinned: false,
+      fps_locked: false,
+      duration_us: 3_000_000,
+      markers: [],
+      links: [],
+      tracks: tracks,
+    },
+  }));
 }
 
 /// Single caption track with one cue "Hello" at 1s (layer L1 / track t1).

@@ -2,7 +2,7 @@ import i18n from "../i18n";
 import { formatTimecode } from "../frames";
 import { layerDisplayName } from "../lib/layerName";
 import { trackDisplayName } from "../lib/trackName";
-import { useProjectStore } from "../state/projectStore";
+import { currentOpenComposition, useProjectStore } from "../state/projectStore";
 import type {
   CommandError,
   Rational,
@@ -71,11 +71,14 @@ export function liveRefusalContext(
       return layer ? layerDisplayName(layer, t) : shortId(id);
     },
     track(id) {
-      const tracks = useProjectStore.getState().summary?.tracks ?? [];
-      const track = tracks.find((candidate) => candidate.id === id);
+      // A refusal may name a lane in ANY composition; its name counts within
+      // the composition that holds it.
+      const compositions = useProjectStore.getState().summary?.compositions ?? {};
+      const owner = Object.values(compositions).find((c) => c.tracks.some((candidate) => candidate.id === id));
+      const track = owner?.tracks.find((candidate) => candidate.id === id);
       // The header's own name, or a refusal reads as being about a lane the
       // user cannot find.
-      return track ? trackDisplayName(track, tracks, t) : shortId(id);
+      return track && owner ? trackDisplayName(track, owner.tracks, t) : shortId(id);
     },
     media(id) {
       const media = useProjectStore.getState().mediaById.get(id);
@@ -83,7 +86,7 @@ export function liveRefusalContext(
       return label ? label : shortId(id);
     },
     timecode(us) {
-      const comp = useProjectStore.getState().summary?.composition;
+      const comp = currentOpenComposition();
       return formatTimecode(us, comp?.fps_num ?? 30, comp?.fps_den ?? 1);
     },
     seconds(us) {
@@ -122,10 +125,6 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
   CompositionNotFound: { tier: "generic" },
   CrossCompositionMove: { tier: "generic" },
   CrossCompositionSet: { tier: "generic" },
-  GroupLockedMember: { tier: "generic" },
-  GroupNotPlain: { tier: "generic" },
-  CompositionInUse: { tier: "generic" },
-  RootComposition: { tier: "generic" },
   WrongLayerKind: { tier: "generic" },
   MarkerNotFound: { tier: "generic" },
   TransitionNotFound: { tier: "generic" },
@@ -204,6 +203,10 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
   LayerAlreadyLinked: { tier: "generic" },
   LinkCreateNeedsTwoLayers: { tier: "generic" },
   LayerNotInLink: { tier: "generic" },
+  GroupLockedMember: { tier: "generic" },
+  GroupNotPlain: { tier: "generic" },
+  CompositionInUse: { tier: "generic" },
+  RootComposition: { tier: "generic" },
   NothingToUndo: { tier: "suppress" },
   NothingToRedo: { tier: "suppress" },
   HistoryLocked: { tier: "generic" },

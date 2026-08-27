@@ -24,6 +24,11 @@ vi.mock("../ipc", async (importActual) => {
   const actual = await importActual<typeof import("../ipc")>();
   return { ...actual, ...ipcMocks };
 });
+// The picker adds through the composition-scoped wrapper; the same mock
+// stands in so the assertions below read the args it was handed.
+vi.mock("../ipc/compositionScoped", () => ({
+  addMotifInOpenComposition: ipcMocks.addMotif,
+}));
 vi.mock("@/bridge/events", () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
 }));

@@ -11,7 +11,8 @@ import { logEmit } from "../ipc";
 import { resolveAccelerator } from "../shortcuts/match";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { jumpToLayer, jumpToTimeUs, revealInMediaPool } from "../state/navigation";
-import { useProjectStore } from "../state/projectStore";
+import { useOpenComposition } from "../state/projectStore";
+import { openComposition, openCompositionId } from "../state/compositionScopeStore";
 import { GROUP_ORDER, rankEntries, type RankedResult } from "./matcher";
 import { useSearchEntries } from "./searchIndexStore";
 import type { MediaUsage, SearchEntryType } from "./types";
@@ -49,8 +50,9 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
   const [expanded, setExpanded] = useState<Set<SearchEntryType>>(new Set());
   const subRef = useRef<MediaSubList | null>(null);
   const setSub = (v: MediaSubList | null) => { subRef.current = v; setSubState(v); };
-  const fpsNum = useProjectStore((s) => s.summary?.composition.fps_num ?? 30);
-  const fpsDen = useProjectStore((s) => s.summary?.composition.fps_den ?? 1);
+  const comp = useOpenComposition();
+  const fpsNum = comp?.fps_num ?? 30;
+  const fpsDen = comp?.fps_den ?? 1;
 
   const grouped = useMemo(() => rankEntries(query, entries, RANK_CAP), [query, entries]);
   // Visible rows after per-group slicing; `flat` drives keyboard order.
@@ -129,6 +131,15 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
         onClose();
         return;
       case "marker":
+        // The marker's timeline first — a seek means nothing on another one.
+        if (
+          p.compositionId !== openCompositionId() &&
+          !openComposition(p.compositionId, null)
+        ) {
+          logStaleTarget();
+          onClose();
+          return;
+        }
         jumpToTimeUs(p.tUs);
         onClose();
         return;

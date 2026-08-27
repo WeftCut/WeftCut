@@ -1,6 +1,5 @@
 // apps/desktop/src/main/state/summary.ts
 import type { Animated, Composition, Effect, Link, Layer, LayerParams, Marker, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid, VAlign } from './model'
-import { rootComposition } from './model'
 import type { HistoryStatus } from './history'
 import type { DecodeRoute } from '../../shared/decode-route'
 
@@ -179,14 +178,27 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
 
 // ── top-level view types ──
 
+/** One composition's timeline, settings and the four collections that live on
+ *  it — the root and every Group project to this same shape (ADR 0052 §3).
+ *  `fps_locked` is HISTORY-scoped and therefore project-wide: one lattice, one
+ *  answer, repeated on every entry so a consumer holding one composition never
+ *  has to reach for another. */
 export interface CompositionSummary {
-  width: number; height: number; fps_num: number; fps_den: number; duration_pinned: boolean
+  id: string
+  /** The composition's own label; null on the root and on an unnamed Group
+   *  (the renderer derives "Group N"). */
+  label: string | null
+  width: number; height: number; fps_num: number; fps_den: number
+  /** EXCLUSIVE end boundary of the timeline `[0, duration_us)`, never a frame anchor. */
+  duration_us: number
+  duration_pinned: boolean
   /** Would a `set_composition { fps }` be rejected right now? True once the
    *  timeline holds a layer OR any stored snapshot/checkpoint does (spec R2-D1,
    *  history-scoped — see actor.setComposition). Lets the settings panel disable
    *  the rate control instead of offering a click that always errors. Read-only:
    *  the actor's own check stays the source of truth. */
   fps_locked: boolean
+  tracks: TrackSummary[]; markers: MarkerSummary[]; transitions: TransitionView[]; links: LinkSummary[]
 }
 export interface HistoryView { cursor: number; len: number; can_undo: boolean; can_redo: boolean; lock_reason?: string }
 export interface RoleMixView { role: string; gain_db: number; muted: boolean; solo: boolean }
@@ -218,9 +230,15 @@ export interface TrackSummary {
   role: string | null; transient: boolean; layers: LayerSummary[]
 }
 export interface ProjectSummary {
-  project_id: string; name: string; composition: CompositionSummary
-  track_count: number; layer_count: number; duration_us: number; history: HistoryView
-  media: MediaSummary[]; tracks: TrackSummary[]; markers: MarkerSummary[]; transitions: TransitionView[]; links: LinkSummary[]; audio_roles: RoleMixView[]
+  project_id: string; name: string
+  /** `compositions[root_id]` is what export renders; the renderer's scope store
+   *  picks which entry its timeline and panels show. */
+  root_id: string
+  compositions: Record<string, CompositionSummary>
+  /** Counted over EVERY composition — a project-wide figure, not the root's. */
+  track_count: number; layer_count: number
+  history: HistoryView
+  media: MediaSummary[]; audio_roles: RoleMixView[]
 }
 
 // The kebab wire form of TrackRole — what renderer/ipc/index.ts declares. The
@@ -236,13 +254,15 @@ const DEFAULT_ROLE: RoleMixSettings = { gain_db: 0, muted: false, solo: false }
 /** The read-only IPC view the renderer pulls on project:changed. Pure;
  *  `fileExists` is injected (filesystem fields).
  *
- *  FLAT: the view projects the ROOT composition — its tracks, markers,
- *  transitions, links and settings — so the renderer sees one timeline and a
- *  one-composition project produces exactly the summary it always did.
- *  `track_count` / `layer_count` count the root for the same reason. */
+ *  Every composition is projected, keyed by id; the renderer opens one of them
+ *  and export reads the root. The projection of a composition is a pure
+ *  function of that composition (plus the media pool and the label lookup for
+ *  its Group references), so a one-composition project's root entry is exactly
+ *  the timeline the flat summary used to carry. */
 export function buildProjectSummary(p: Project, history: HistoryStatus, fileExists: (absPath: string) => boolean): ProjectSummary {
-  const root = rootComposition(p)
-  const layer_count = root.tracks.reduce((n, t) => n + t.layers.length, 0)
+  const all = Object.values(p.compositions)
+  const track_count = all.reduce((n, c) => n + c.tracks.length, 0)
+  const layer_count = all.reduce((n, c) => n + c.tracks.reduce((m, t) => m + t.layers.length, 0), 0)
 
   const fileOrNull = (path: string | null | undefined): string | null => (path && fileExists(path) ? path : null)
   // The decode route's readiness paths are existence-gated the same way the
@@ -283,36 +303,39 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
   })
   media.sort((x, y) => (x.id < y.id ? 1 : x.id > y.id ? -1 : 0)) // b.id.cmp(&a.id) — descending
 
-  const tracks: TrackSummary[] = root.tracks.map((t: Track) => ({
-    id: t.id, kind: deriveTrackKindLabel(t), label: t.label, enabled: t.enabled, locked: t.locked,
-    muted: t.muted, solo: t.solo, role: t.role != null ? TRACK_ROLE_WIRE[t.role] : null, transient: t.transient,
-    layers: t.layers.map((l: Layer): LayerSummary => ({
-      id: l.id, label: l.label, t_start_us: l.t_start_us, t_end_us: l.t_end_us, kind: layerKind(l.params),
-      color_hint: layerColorHint(l), enabled: l.enabled, locked: l.locked,
-      params: layerParamsView(l.params, p.media_pool, p.compositions), effects: l.effects,
+  const compositionSummary = (c: Composition): CompositionSummary => ({
+    id: c.id, label: c.label, width: c.width, height: c.height, fps_num: c.fps.num, fps_den: c.fps.den,
+    duration_us: c.duration_us, duration_pinned: c.duration_pinned, fps_locked: history.holds_layer_anywhere,
+    tracks: c.tracks.map((t: Track): TrackSummary => ({
+      id: t.id, kind: deriveTrackKindLabel(t), label: t.label, enabled: t.enabled, locked: t.locked,
+      muted: t.muted, solo: t.solo, role: t.role != null ? TRACK_ROLE_WIRE[t.role] : null, transient: t.transient,
+      layers: t.layers.map((l: Layer): LayerSummary => ({
+        id: l.id, label: l.label, t_start_us: l.t_start_us, t_end_us: l.t_end_us, kind: layerKind(l.params),
+        color_hint: layerColorHint(l), enabled: l.enabled, locked: l.locked,
+        params: layerParamsView(l.params, p.media_pool, p.compositions), effects: l.effects,
+      })),
     })),
-  }))
+    markers: c.markers.map((m: Marker): MarkerSummary => ({
+      id: m.id, t_us: m.t_us, end_t_us: m.end_t_us, label: m.label, color_hint: markerColorHint(m.color),
+    })),
+    transitions: c.transitions.map((t): TransitionView => ({
+      id: t.id, from_layer: t.from_layer, to_layer: t.to_layer, duration_us: t.duration_us, kind: t.kind, extended_us: t.extended_us,
+    })),
+    links: c.links.map((g: Link): LinkSummary => ({ id: g.id, label: g.label ?? null, layer_ids: g.members })),
+  })
+  const compositions: Record<string, CompositionSummary> = {}
+  for (const c of all) compositions[c.id] = compositionSummary(c)
 
-  const markers: MarkerSummary[] = root.markers.map((m: Marker) => ({
-    id: m.id, t_us: m.t_us, end_t_us: m.end_t_us, label: m.label, color_hint: markerColorHint(m.color),
-  }))
-  const transitions: TransitionView[] = root.transitions.map((t) => ({
-    id: t.id, from_layer: t.from_layer, to_layer: t.to_layer, duration_us: t.duration_us, kind: t.kind, extended_us: t.extended_us,
-  }))
-  const links: LinkSummary[] = root.links.map((g: Link) => ({ id: g.id, label: g.label ?? null, layer_ids: g.members }))
   const audio_roles: RoleMixView[] = ROLE_ORDER.map((role) => {
     const s = p.audio_roles[role] ?? DEFAULT_ROLE
     return { role, gain_db: s.gain_db, muted: s.muted, solo: s.solo }
   })
 
   const view: ProjectSummary = {
-    project_id: p.project_id, name: p.metadata.name,
-    composition: { width: root.width, height: root.height, fps_num: root.fps.num,
-      fps_den: root.fps.den, duration_pinned: root.duration_pinned,
-      fps_locked: history.holds_layer_anywhere },
-    track_count: root.tracks.length, layer_count, duration_us: root.duration_us,
+    project_id: p.project_id, name: p.metadata.name, root_id: p.root_id, compositions,
+    track_count, layer_count,
     history: { cursor: history.cursor, len: history.len, can_undo: history.can_undo, can_redo: history.can_redo },
-    media, tracks, markers, transitions, links, audio_roles,
+    media, audio_roles,
   }
   if (history.lock_reason !== undefined) view.history.lock_reason = history.lock_reason
   return view

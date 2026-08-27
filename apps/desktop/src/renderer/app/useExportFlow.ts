@@ -65,7 +65,7 @@ import {
 } from "../render/exportReadiness";
 import { type ExportState } from "../panels/ExportPanel";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
-import { useProjectStore } from "../state/projectStore";
+import { rootCompositionOf, useProjectStore } from "../state/projectStore";
 import { resolveDecode } from "../render/decodeRoute";
 
 /// Owns the export lifecycle: the export panel/dialog state, the window
@@ -246,7 +246,8 @@ export function useExportFlow(deps: {
       const proj = await projectSummary().catch(() => useProjectStore.getState().summary);
       if (proj) {
         const sUs = range?.startUs ?? 0;
-        const eUs = range?.endUs ?? proj.duration_us;
+        // Export renders the ROOT, whatever composition is open (compositionScopeStore.ts).
+        const eUs = range?.endUs ?? rootCompositionOf(proj).duration_us;
         if (!hasVisibleContent(proj, sUs, eUs)) {
           setExportState({ kind: "error", detail: t("export.no_video_material") });
           return;
@@ -272,7 +273,7 @@ export function useExportFlow(deps: {
         return;
       }
       const startUs = range?.startUs ?? 0;
-      const endUs = range?.endUs ?? proj.duration_us;
+      const endUs = range?.endUs ?? rootCompositionOf(proj).duration_us;
       setExportState({ kind: "starting" });
       const tracker = createConformTracker(listen);
       try {
@@ -351,7 +352,7 @@ export function useExportFlow(deps: {
         return;
       }
       const startUs = range?.startUs ?? 0;
-      const endUs = range?.endUs ?? proj.duration_us;
+      const endUs = range?.endUs ?? rootCompositionOf(proj).duration_us;
       const referencedIds = referencedVideoMediaIds(proj, startUs, endUs);
       const referencedMedia = [...referencedIds]
         .map((id) => store.mediaById.get(id))
@@ -494,10 +495,10 @@ export function useExportFlow(deps: {
     const tempAudioPath = await join(tempBase, `weftcut-pixi-${stamp}.${audioExt}`);
 
     const summary = useProjectStore.getState().summary!;
-    const comp = summary.composition;
+    const comp = rootCompositionOf(summary);
     const exportRange = {
       startUs: range?.startUs ?? 0,
-      endUs: range?.endUs ?? summary.duration_us,
+      endUs: range?.endUs ?? comp.duration_us,
     };
 
     // ---- Bake Motif layers --------------------------------------------
@@ -513,7 +514,7 @@ export function useExportFlow(deps: {
     let motifFrames: Record<string, ImageBitmap[]> = {};
     try {
       const motifIds = new Set<string>();
-      for (const tr of summary.tracks) {
+      for (const tr of comp.tracks) {
         for (const l of tr.layers) {
           if (l.enabled && l.params.kind === "Motif") {
             motifIds.add(l.params.motif_id);

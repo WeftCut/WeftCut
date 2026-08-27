@@ -14,6 +14,7 @@ import {
 } from "../preview/gizmoProbeRegistry";
 import type { HandlerMap } from "../shortcuts";
 import { buildAppCommands } from "./appCommands";
+import { summaryFixture } from "../testing/summaryFixture";
 
 type Entries = [string, AnimTrack<number>][];
 const commit = vi.fn(async (_layerId: string, _entries: Entries) => {});
@@ -76,23 +77,21 @@ function fixture(kind: string, params: Record<string, unknown> = {}): ProjectSum
       ...params,
     } as unknown as LayerParamsView,
   } as unknown as LayerSummary;
-  return {
+  return summaryFixture({
     project_id: "p1",
     name: "fixture",
-    composition: {
+    media: [],
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+    audio_roles: [],
+    root: {
       width: 1280,
       height: 720,
       fps_num: 30,
       fps_den: 1,
       duration_pinned: false,
       fps_locked: false,
-    },
-    track_count: 1,
-    layer_count: 1,
-    duration_us: 10_000_000,
-    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
-    media: [],
-    tracks: [
+      duration_us: 10_000_000,
+      tracks: [
       {
         id: "t1",
         kind: "Video",
@@ -106,11 +105,11 @@ function fixture(kind: string, params: Record<string, unknown> = {}): ProjectSum
         layers: [layer],
       },
     ],
-    links: [],
-    markers: [],
-    transitions: [],
-    audio_roles: [],
-  } as unknown as ProjectSummary;
+      links: [],
+      markers: [],
+      transitions: [],
+    },
+  }) as unknown as ProjectSummary;
 }
 
 /// 640×360 of content, whatever the layer is.

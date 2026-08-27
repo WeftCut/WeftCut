@@ -20,6 +20,7 @@ import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { clearLayerSelection, setLayerSelection } from "../state/selectionStore";
 import { setTool } from "../state/toolStore";
 import en from "../i18n/locales/en-US";
+import { summaryFixture } from "../testing/summaryFixture";
 
 const noop = () => {};
 
@@ -257,15 +258,26 @@ describe("buildAppCommands", () => {
     };
   }
   function seed(tracks: TrackSummary[]): void {
-    const summary: ProjectSummary = {
-      project_id: "p", name: "p",
-      composition: { width: 640, height: 360, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false },
-      track_count: tracks.length,
-      layer_count: tracks.reduce((n, t) => n + t.layers.length, 0),
-      duration_us: 0,
+    const summary: ProjectSummary = summaryFixture({
+      project_id: "p",
+      name: "p",
+      media: [],
       history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
-      media: [], tracks, markers: [], transitions: [], links: [], audio_roles: [],
-    };
+      audio_roles: [],
+      root: {
+        width: 640,
+        height: 360,
+        fps_num: 30,
+        fps_den: 1,
+        duration_pinned: false,
+        fps_locked: false,
+        duration_us: 0,
+        tracks: tracks,
+        markers: [],
+        transitions: [],
+        links: [],
+      },
+    });
     useProjectStore.getState().apply(summary);
   }
 

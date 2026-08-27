@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { invokeCmd, launchApp } from './helpers/driver'
+import { invokeCmd, launchApp, rootSummary } from './helpers/driver'
 
 interface SmokeSummary {
   track_count: number
@@ -20,7 +20,7 @@ test('boots, creates a project, rename_track round-trips through the bridge', as
 
   // The blank project boots with the reserved A/B-roll skeleton; read the count
   // rather than hardcoding it, so changing the skeleton does not fail here.
-  const summary0 = await invokeCmd<SmokeSummary>(page, 'project_summary')
+  const summary0 = await rootSummary<SmokeSummary>(page)
   expect(typeof summary0.track_count).toBe('number')
   expect(summary0.track_count).toBeGreaterThan(0)
   const target = summary0.tracks[0]!
@@ -28,13 +28,13 @@ test('boots, creates a project, rename_track round-trips through the bridge', as
   expect(target.label).toBeNull()
 
   await invokeCmd(page, 'rename_track', { trackId: target.id, label: 'Smoke' })
-  const summary1 = await invokeCmd<SmokeSummary>(page, 'project_summary')
+  const summary1 = await rootSummary<SmokeSummary>(page)
   expect(summary1.tracks.find((t) => t.id === target.id)!.label).toBe('Smoke')
   expect(summary1.track_count).toBe(summary0.track_count)
 
   // Clearing writes null, which is what hands the lane back to its derived name.
   await invokeCmd(page, 'rename_track', { trackId: target.id, label: null })
-  const summary2 = await invokeCmd<SmokeSummary>(page, 'project_summary')
+  const summary2 = await rootSummary<SmokeSummary>(page)
   expect(summary2.tracks.find((t) => t.id === target.id)!.label).toBeNull()
 
   await app.close()

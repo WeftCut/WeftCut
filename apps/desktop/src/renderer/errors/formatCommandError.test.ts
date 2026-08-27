@@ -2,7 +2,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { formatCommandError } from "./formatCommandError";
 import { useProjectStore } from "../state/projectStore";
-import type { ProjectSummary } from "../ipc";
+import type { CompositionSummary, ProjectSummary } from "../ipc";
+import { summaryFixture } from "../testing/summaryFixture";
 
 /// Minimal mirror snapshot: two named clips on a labelled track, one track
 /// with no label (positional fallback), 30 fps composition.
@@ -21,22 +22,13 @@ function seedStore(): void {
       : { kind: "Color" },
     effects: [],
   });
-  const summary = {
+  const summary = summaryFixture({
     project_id: "p-1",
     name: "Test",
-    composition: {
-      width: 1920,
-      height: 1080,
-      fps_num: 30,
-      fps_den: 1,
-      duration_pinned: false,
-    },
-    track_count: 2,
-    layer_count: 2,
-    duration_us: 2_000_000,
-    history: { undo_len: 0, redo_len: 0 },
-    media: [{ id: "m-1", label: "Aurora.mp4" }],
-    tracks: [
+    media: [{ id: "m-1", label: "Aurora.mp4" }] as unknown as ProjectSummary["media"],
+    root: {
+      duration_us: 2_000_000,
+      tracks: [
       {
         id: "t-1",
         kind: "Video",
@@ -61,12 +53,9 @@ function seedStore(): void {
         transient: false,
         layers: [],
       },
-    ],
-    markers: [],
-    transitions: [],
-    links: [],
-    audio_roles: [],
-  } as unknown as ProjectSummary;
+    ] as unknown as CompositionSummary["tracks"],
+    },
+  });
   useProjectStore.getState().apply(summary);
 }
 

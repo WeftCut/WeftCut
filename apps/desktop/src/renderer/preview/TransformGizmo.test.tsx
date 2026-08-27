@@ -14,6 +14,7 @@ import { TEXT_BOX_MIN_PX, type TextFit } from "../render/textBox";
 import { clearGizmoProbe, registerGizmoProbe, type GizmoProbe } from "./gizmoProbeRegistry";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { TransformGizmoHost } from "./TransformGizmo";
+import { rootOf, summaryFixture } from "../testing/summaryFixture";
 
 // jsdom does not implement PointerEvent; alias it to MouseEvent so
 // fireEvent.pointerDown carries a usable .button / .clientX (same shim
@@ -63,23 +64,21 @@ function fixture(params?: Partial<Record<string, unknown>>, kind = "VideoClip"):
     fade_out_us: 0,
     ...params,
   };
-  return {
+  return summaryFixture({
     project_id: "p1",
     name: "fixture",
-    composition: {
+    media: [],
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+    audio_roles: [],
+    root: {
       width: 1280,
       height: 720,
       fps_num: 30,
       fps_den: 1,
       duration_pinned: false,
       fps_locked: false,
-    },
-    track_count: 1,
-    layer_count: 1,
-    duration_us: 10_000_000,
-    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
-    media: [],
-    tracks: [
+      duration_us: 10_000_000,
+      tracks: [
       {
         id: "t1",
         kind: "Video",
@@ -106,11 +105,11 @@ function fixture(params?: Partial<Record<string, unknown>>, kind = "VideoClip"):
         ],
       },
     ],
-    links: [],
-    markers: [],
-    transitions: [],
-    audio_roles: [],
-  } as unknown as ProjectSummary;
+      links: [],
+      markers: [],
+      transitions: [],
+    },
+  }) as unknown as ProjectSummary;
 }
 
 /// What the layer's params + tracks alone would measure to. Null models a layer
@@ -287,16 +286,15 @@ describe("TransformGizmoHost", () => {
 /// The fixture plus a second staged VideoClip at x = 700, so the solver has a
 /// LAYER target to find alongside the composition's own lines.
 function twoLayerFixture(): ProjectSummary {
-  const s = fixture() as unknown as {
-    tracks: { layers: Array<Record<string, unknown>> }[];
-  };
-  const first = s.tracks[0]!.layers[0]!;
-  s.tracks[0]!.layers.push({
+  const s = fixture();
+  const track = rootOf(s).tracks[0]! as unknown as { layers: Array<Record<string, unknown>> };
+  const first = track.layers[0]!;
+  track.layers.push({
     ...first,
     id: "l2",
     params: { ...(first.params as Record<string, unknown>), x: stat(700) },
   });
-  return s as unknown as ProjectSummary;
+  return s;
 }
 
 function guide(axis: "x" | "y"): HTMLElement {

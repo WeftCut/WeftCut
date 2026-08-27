@@ -62,25 +62,33 @@ export function buildEntries(
   }
   if (!summary) return entries;
 
-  const { fps_num: fpsNum, fps_den: fpsDen } = summary.composition;
+  // EVERY composition is indexed: a clip inside a Group is as findable as one
+  // on the root, and activating it opens the Group first (navigation.ts). One
+  // fps lattice for the whole project, so the root's rate formats every time.
+  const compositions = Object.values(summary.compositions);
+  const root = summary.compositions[summary.root_id];
+  const fpsNum = root?.fps_num ?? 30;
+  const fpsDen = root?.fps_den ?? 1;
   const tc = (us: number) => formatTimecode(us, fpsNum, fpsDen);
 
   const usagesByMedia = new Map<string, MediaUsage[]>();
-  summary.tracks.forEach((track) => {
-    const trackLabel = trackDisplayName(track, summary.tracks, locale.t);
-    for (const layer of track.layers) {
-      const p = layer.params as { media_id?: string };
-      if (typeof p.media_id !== "string") continue;
-      const list = usagesByMedia.get(p.media_id) ?? [];
-      list.push({
-        layerId: layer.id,
-        trackId: track.id,
-        trackLabel,
-        tStartUs: layer.t_start_us,
-      });
-      usagesByMedia.set(p.media_id, list);
+  for (const comp of compositions) {
+    for (const track of comp.tracks) {
+      const trackLabel = trackDisplayName(track, comp.tracks, locale.t);
+      for (const layer of track.layers) {
+        const p = layer.params as { media_id?: string };
+        if (typeof p.media_id !== "string") continue;
+        const list = usagesByMedia.get(p.media_id) ?? [];
+        list.push({
+          layerId: layer.id,
+          trackId: track.id,
+          trackLabel,
+          tStartUs: layer.t_start_us,
+        });
+        usagesByMedia.set(p.media_id, list);
+      }
     }
-  });
+  }
   for (const list of usagesByMedia.values()) {
     list.sort((a, b) => a.tStartUs - b.tStartUs);
   }
@@ -101,11 +109,11 @@ export function buildEntries(
     });
   }
 
-  summary.tracks.forEach((track) => {
+  for (const comp of compositions) for (const track of comp.tracks) {
     // Same name the header shows. A derived name is locale-dependent, so the
     // en-US pass earns a second haystack exactly as a clip's kind fallback does.
-    const trackLabel = trackDisplayName(track, summary.tracks, locale.t);
-    const enTrackLabel = trackDisplayName(track, summary.tracks, locale.tEn);
+    const trackLabel = trackDisplayName(track, comp.tracks, locale.t);
+    const enTrackLabel = trackDisplayName(track, comp.tracks, locale.tEn);
     const first = track.layers.reduce<{ id: string; t: number } | null>(
       (acc, l) => (acc === null || l.t_start_us < acc.t ? { id: l.id, t: l.t_start_us } : acc),
       null,
@@ -152,9 +160,9 @@ export function buildEntries(
         });
       }
     }
-  });
+  }
 
-  for (const mk of summary.markers) {
+  for (const comp of compositions) for (const mk of comp.markers) {
     if (!mk.label.trim()) continue;
     entries.push({
       key: `marker:${mk.id}`,
@@ -162,7 +170,7 @@ export function buildEntries(
       label: mk.label,
       context: tc(mk.t_us),
       haystacks: withPinyin([mk.label]),
-      payload: { type: "marker", markerId: mk.id, tUs: mk.t_us },
+      payload: { type: "marker", markerId: mk.id, tUs: mk.t_us, compositionId: comp.id },
     });
   }
 

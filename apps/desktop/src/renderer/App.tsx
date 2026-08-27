@@ -3,9 +3,6 @@ import { getCurrentWindow } from "@/bridge/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  addColorLayer,
-  addMarkerAt,
-  addTextLayer,
   deleteLayers,
   moveLayersToNewTrack,
   pasteLayer,
@@ -40,6 +37,7 @@ import {
 import {
   clampSeekUs,
   registerOpenMediaPoolPanel,
+  registerRevealCollapse,
   registerRevealTrack,
   seekToNextEdit,
   seekToPrevEdit,
@@ -93,7 +91,17 @@ import { toggleLinkOverride } from "./state/linkOverrideStore";
 import { setTool } from "./state/toolStore";
 import { logEmit } from "./ipc";
 import { logMutationFailure, tryMutate } from "./errors/tryMutate";
-import { useProjectStore } from "./state/projectStore";
+import {
+  compositionOrRoot,
+  currentOpenComposition,
+  rootCompositionOf,
+} from "./state/projectStore";
+import { useOpenCompositionId } from "./state/compositionScopeStore";
+import {
+  addColorLayerInOpenComposition,
+  addMarkerAtInOpenComposition,
+  addTextLayerInOpenComposition,
+} from "./ipc/compositionScoped";
 import { markerStartingInFrame } from "./timeline/markerAtFrame";
 import { MarkerRenameDialog } from "./timeline/MarkerRenameDialog";
 import { openMarkerRenamePrompt } from "./timeline/markerRenamePrompt";
@@ -129,6 +137,10 @@ export function App({ onCloseProject }: AppProps) {
     summaryRequestsRef.current = new LatestRequestCoordinator();
   }
   const summaryRequests = summaryRequestsRef.current;
+  // The timeline the panels, the shortcuts and the Insert menu act on. Export
+  // reads the root below regardless (compositionScopeStore.ts says why).
+  const openId = useOpenCompositionId();
+  const comp = compositionOrRoot(summary, openId);
   const [busy, setBusy] = useState(false);
   // Write-only: error text is surfaced through the status bar / log (see the
   // setError call sites), not rendered here, so we keep only the setter.
@@ -255,12 +267,12 @@ export function App({ onCloseProject }: AppProps) {
         clearLayerSelection();
         return;
       }
-      const link = summary?.links.find((candidate) =>
+      const link = comp?.links.find((candidate) =>
         candidate.layer_ids.includes(layerId),
       );
       setLayerSelection(layerId, link?.layer_ids ?? [layerId]);
     },
-    [summary?.links],
+    [comp?.links],
   );
 
   /// `layerId === null`: reveal + scroll the track and select NOTHING —
@@ -279,6 +291,9 @@ export function App({ onCloseProject }: AppProps) {
   // Palette navigation reaches R.7 reveal-track through the module-level
   // registry (state/navigation.ts) — App owns the revealedTrackId state.
   useEffect(() => registerRevealTrack(revealTrack), [revealTrack]);
+  // A switch of composition drops the reveal: the revealed lane belongs to the
+  // timeline being left.
+  useEffect(() => registerRevealCollapse(() => setRevealedTrackId(null)), []);
 
   // "New Motif" auto-places the fresh draft (MotifPicker.onDraftPlaced) and
   // should land the user on its property panel with the layer visible. The
@@ -288,14 +303,14 @@ export function App({ onCloseProject }: AppProps) {
   const [pendingRevealLayerId, setPendingRevealLayerId] = useState<string | null>(null);
   useEffect(() => {
     if (pendingRevealLayerId === null) return;
-    const owner = (summary?.tracks ?? []).find((t) =>
+    const owner = (comp?.tracks ?? []).find((t) =>
       t.layers.some((l) => l.id === pendingRevealLayerId),
     );
     if (owner) {
       revealTrack(owner.id, pendingRevealLayerId);
       setPendingRevealLayerId(null);
     }
-  }, [pendingRevealLayerId, summary, revealTrack]);
+  }, [pendingRevealLayerId, comp, revealTrack]);
 
   // R.7: Esc collapses the inline reveal.
   useEffect(() => {
@@ -325,13 +340,13 @@ export function App({ onCloseProject }: AppProps) {
     lastPrimaryForRevealRef.current = primaryLayerId;
     if (!primaryChanged) return;
     if (revealedTrackId === null || primaryLayerId === null) return;
-    const owner = (summary?.tracks ?? []).find((t) =>
+    const owner = (comp?.tracks ?? []).find((t) =>
       t.layers.some((l) => l.id === primaryLayerId),
     );
     if (owner && owner.id !== revealedTrackId) {
       setRevealedTrackId(null);
     }
-  }, [primaryLayerId, summary, revealedTrackId]);
+  }, [primaryLayerId, comp, revealedTrackId]);
 
   const togglePlay = useCallback(() => {
     const handle = previewRef.current;
@@ -648,7 +663,7 @@ export function App({ onCloseProject }: AppProps) {
     // frame duration instead would land off-grid at fractional rates and only
     // look right because the snap corrects it.
     seekFrameBack: () => {
-      const fps = summary?.composition;
+      const fps = comp;
       void seekTo(
         adjacentFrameBoundaryUs(
           playheadTimeUs(),
@@ -659,7 +674,7 @@ export function App({ onCloseProject }: AppProps) {
       );
     },
     seekFrameForward: () => {
-      const fps = summary?.composition;
+      const fps = comp;
       void seekTo(
         adjacentFrameBoundaryUs(
           playheadTimeUs(),
@@ -687,7 +702,7 @@ export function App({ onCloseProject }: AppProps) {
       void seekTo(0);
     },
     seekEnd: () => {
-      void seekTo(summary?.duration_us ?? 0);
+      void seekTo(comp?.duration_us ?? 0);
     },
     // In/out marking bridges the playhead's frame-ANCHOR convention to the
     // range's start-inclusive / end-EXCLUSIVE one. Both translations go
@@ -696,14 +711,12 @@ export function App({ onCloseProject }: AppProps) {
     // the playhead can't pass the last frame's start — make the final frame
     // unreachable. See `docs/data-model.md` (boundary semantics).
     markIn: () => {
-      const comp = summary?.composition;
       if (!comp) return;
       setRangeIn(
         displayedFrameStartUs(playheadTimeUs(), comp.fps_num, comp.fps_den),
       );
     },
     markOut: () => {
-      const comp = summary?.composition;
       if (!comp) return;
       setRangeOut(
         inclusiveOutBoundaryUs(playheadTimeUs(), comp.fps_num, comp.fps_den),
@@ -717,7 +730,6 @@ export function App({ onCloseProject }: AppProps) {
     // dead key (the documented Premiere confusion), an invisible rename as
     // editing blind. The layer toggle exists to silence agent sweeps, not this.
     addMarkerAtPlayhead: () => {
-      const comp = summary?.composition;
       if (!comp) return;
       const frameUs = displayedFrameStartUs(
         playheadTimeUs(),
@@ -726,7 +738,7 @@ export function App({ onCloseProject }: AppProps) {
       );
       // Live store read, not the render-captured summary — same reason the
       // raise-selection handler reads its stores at press time.
-      const markers = useProjectStore.getState().summary?.markers ?? [];
+      const markers = currentOpenComposition()?.markers ?? [];
       const existing = markerStartingInFrame(
         markers,
         frameUs,
@@ -738,7 +750,7 @@ export function App({ onCloseProject }: AppProps) {
         openMarkerRenamePrompt(existing.id);
         return;
       }
-      void tryMutate(() => addMarkerAt(frameUs), "add_marker");
+      void tryMutate(() => addMarkerAtInOpenComposition(frameUs), "add_marker");
     },
     clearRange: () => clearMarkedRange(),
     openSearchPalette: () => {
@@ -770,13 +782,13 @@ export function App({ onCloseProject }: AppProps) {
   // Shared by the Insert menu and the search palette — one implementation,
   // two entry points.
   const handleAddColorLayer = useCallback(async () => {
-    const layerId = await addColorLayer({ tStartUs: playheadTimeUs() });
+    const layerId = await addColorLayerInOpenComposition({ tStartUs: playheadTimeUs() });
     setPendingRevealLayerId(layerId);
     await refresh();
   }, [refresh]);
 
   const handleAddTextLayer = useCallback(async () => {
-    const layerId = await addTextLayer({ tStartUs: playheadTimeUs() });
+    const layerId = await addTextLayerInOpenComposition({ tStartUs: playheadTimeUs() });
     setPendingRevealLayerId(layerId);
     await refresh();
   }, [refresh]);
@@ -974,8 +986,8 @@ export function App({ onCloseProject }: AppProps) {
           UI interaction until the user dismisses on complete/error. */}
       {exportDialogOpen && summary && exportState == null && (
         <ExportSettingsDialog
-          comp={summary.composition}
-          durationUs={summary.duration_us}
+          comp={rootCompositionOf(summary)}
+          durationUs={rootCompositionOf(summary).duration_us}
           hasTenBitSource={summary.media.some(
             (m) => m.kind === "Video" && tenBitExportCapable(m),
           )}
@@ -1035,23 +1047,24 @@ export function App({ onCloseProject }: AppProps) {
           keybindings={keybindings}
           onKeybindingsChanged={setKeybindings}
           composition={
-            summary
+            comp
               ? {
-                  durationUs: summary.duration_us,
-                  durationPinned: summary.composition.duration_pinned,
+                  id: comp.id,
+                  durationUs: comp.duration_us,
+                  durationPinned: comp.duration_pinned,
                   // The floor for a user-set duration: `max(layer.t_end_us)`
                   // across every track/layer. Mirrors the
                   // `applyDurationAutofit` overflow guard in
                   // main/state/mutations/helpers.ts so the UI can pre-validate
                   // before invoking `set_composition`.
-                  layersMaxEndUs: summary.tracks
+                  layersMaxEndUs: comp.tracks
                     .flatMap((t) => t.layers.map((l) => l.t_end_us))
                     .reduce((a, b) => Math.max(a, b), 0),
-                  fpsNum: summary.composition.fps_num,
-                  fpsDen: summary.composition.fps_den,
-                  width: summary.composition.width,
-                  height: summary.composition.height,
-                  fpsLocked: summary.composition.fps_locked,
+                  fpsNum: comp.fps_num,
+                  fpsDen: comp.fps_den,
+                  width: comp.width,
+                  height: comp.height,
+                  fpsLocked: comp.fps_locked,
                 }
               : null
           }
@@ -1064,11 +1077,11 @@ export function App({ onCloseProject }: AppProps) {
           onAdded={refresh}
           onDraftPlaced={setPendingRevealLayerId}
           currentTimeUs={playheadTimeUs()}
-          tracks={summary?.tracks ?? []}
-          fpsNum={summary?.composition.fps_num ?? 30}
-          fpsDen={summary?.composition.fps_den ?? 1}
-          compWidth={summary?.composition.width ?? 1920}
-          compHeight={summary?.composition.height ?? 1080}
+          tracks={comp?.tracks ?? []}
+          fpsNum={comp?.fps_num ?? 30}
+          fpsDen={comp?.fps_den ?? 1}
+          compWidth={comp?.width ?? 1920}
+          compHeight={comp?.height ?? 1080}
         />
       )}
       {logConsoleOpen && (

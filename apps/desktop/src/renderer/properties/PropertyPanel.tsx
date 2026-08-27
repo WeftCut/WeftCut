@@ -55,7 +55,7 @@ import { useTextFit } from "./useTextFit";
 const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
 const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
 import { getMotif, subscribeMotifCatalog, motifCatalogRevision } from "../render/motifs/catalog";
-import { useProjectStore, useProjectSummary } from "../state/projectStore";
+import { useOpenComposition, useProjectStore } from "../state/projectStore";
 import { useSelectedLayerIds, useSelectedTransitionId } from "../state/selectionStore";
 import { TransitionFields } from "./TransitionFields";
 import { Field } from "./Field";
@@ -100,15 +100,15 @@ export function AttributePanel({
   // compete. Resolved from the project store; the summary is the same
   // snapshot the timeline chips render from.
   const selectedTransitionId = useSelectedTransitionId();
-  const summaryForTransition = useProjectSummary();
+  const compForTransition = useOpenComposition();
   const transition = useMemo(
     () =>
       selectedTransitionId === null
         ? null
-        : (summaryForTransition?.transitions ?? []).find(
+        : (compForTransition?.transitions ?? []).find(
             (tr) => tr.id === selectedTransitionId,
           ) ?? null,
-    [selectedTransitionId, summaryForTransition],
+    [selectedTransitionId, compForTransition],
   );
 
   if (transition) {
@@ -170,14 +170,14 @@ function LayerPanel({
   currentTimeUs: number;
 }) {
   const { t } = useTranslation();
-  const summary = useProjectSummary();
+  const comp = useOpenComposition();
   const selectionCount = useSelectedLayerIds().size;
-  const link = summary?.links.find((g) => g.layer_ids.includes(layer.id)) ?? null;
+  const link = comp?.links.find((g) => g.layer_ids.includes(layer.id)) ?? null;
   const env = useEnvelope({ layer, track, link, onMutated, fpsNum, fpsDen });
 
   const kindLabel = t(`kinds.${layer.kind.toLowerCase()}`, { defaultValue: layer.kind });
   const trackLabel = track
-    ? trackDisplayName(track, summary?.tracks ?? [], t)
+    ? trackDisplayName(track, comp?.tracks ?? [], t)
     : "—";
   const mediaLabel =
     layer.params.kind === "VideoClip" ||
@@ -1241,7 +1241,9 @@ function MotifLifecycleRow({
   // edited layer is on the draft, so a target-only count would read "0 layers").
   const updateBlastRadius = (targetId: string) => {
     let count = 0;
-    for (const track of useProjectStore.getState().summary?.tracks ?? []) {
+    // Every composition: a motif placed inside a Group is still this project's.
+    const compositions = useProjectStore.getState().summary?.compositions ?? {};
+    for (const track of Object.values(compositions).flatMap((c) => c.tracks)) {
       for (const l of track.layers) {
         if (l.kind !== "Motif") continue;
         const mid = (l.params as { motif_id?: string }).motif_id;

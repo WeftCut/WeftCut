@@ -8,7 +8,7 @@ import {
   launchApp,
   newProject,
   tmpDir,
-  waitForHook,
+  waitForHook, rootSummary,
 } from "./helpers/driver";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -42,7 +42,7 @@ interface MarqueeSummary {
   }>;
 }
 
-const snapshot = (page: Page) => invokeCmd<MarqueeSummary>(page, "project_summary", {});
+const snapshot = (page: Page) => rootSummary<MarqueeSummary>(page);
 
 /// A layer's committed `opacity` keyframes, straight out of the summary — the
 /// only observable this spec has for "which diamonds survived". Empty for a

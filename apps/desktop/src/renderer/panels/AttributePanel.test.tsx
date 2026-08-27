@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import "../i18n";
-import type { LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
+import type { CompositionSummary, LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
 
 vi.mock("../ipc", async (importActual) => {
   const actual = await importActual<typeof import("../ipc")>();
@@ -46,6 +46,7 @@ vi.mock("../components/AppSwitch", () => ({
 }));
 
 import { AttributePanel } from "./AttributePanel";
+import { summaryFixture } from "../testing/summaryFixture";
 
 afterEach(() => {
   cleanup();
@@ -161,21 +162,26 @@ function renderPanel(track: TrackSummary, layerId = "layer-1") {
   return onMutated;
 }
 
-function summaryWithLinks(links: ProjectSummary["links"]): void {
-  useProjectStore.getState().apply({
+function summaryWithLinks(links: CompositionSummary["links"]): void {
+  useProjectStore.getState().apply(summaryFixture({
     project_id: "p",
     name: "P",
-    composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false },
-    track_count: 1,
-    layer_count: 1,
-    duration_us: 2_000_000,
-    history: { cursor: 0, len: 1, can_undo: false, can_redo: false },
     media: [],
-    tracks: [],
-    markers: [],
-    links,
+    history: { cursor: 0, len: 1, can_undo: false, can_redo: false },
     audio_roles: [],
-  } as ProjectSummary);
+    root: {
+      width: 1920,
+      height: 1080,
+      fps_num: 30,
+      fps_den: 1,
+      duration_pinned: false,
+      fps_locked: false,
+      duration_us: 2_000_000,
+      tracks: [],
+      markers: [],
+      links: links,
+    },
+  }) as ProjectSummary);
 }
 
 function envelope(): HTMLElement {

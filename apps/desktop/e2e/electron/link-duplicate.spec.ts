@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { invokeCmd, launchApp, newProject, tmpDir } from "./helpers/driver";
+import { invokeCmd, launchApp, newProject, tmpDir, rootSummary } from "./helpers/driver";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // An AV source: `add_media_layer` auto-pairs it into a linked video + Audio
@@ -20,7 +20,7 @@ interface LinkSummary {
   history: { cursor: number; len: number; can_undo: boolean };
 }
 
-const snapshot = (page: Page) => invokeCmd<LinkSummary>(page, "project_summary", {});
+const snapshot = (page: Page) => rootSummary<LinkSummary>(page);
 const layerIds = (s: LinkSummary): string[] =>
   s.tracks.flatMap((t) => t.layers.map((l) => l.id)).sort();
 const spanOf = (s: LinkSummary, layerId: string) => {

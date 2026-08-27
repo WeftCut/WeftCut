@@ -13,32 +13,31 @@ import {
   SafeAreaGuidesHost,
   TITLE_SAFE_FRACTION,
 } from "./SafeAreaGuides";
+import { summaryFixture } from "../testing/summaryFixture";
 
 /// A 1280×720 composition with NO layers: the guides are a property of the
 /// frame, so an empty project is a legitimate state for them.
 function fixture(): ProjectSummary {
-  return {
+  return summaryFixture({
     project_id: "p1",
     name: "fixture",
-    composition: {
+    media: [],
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+    audio_roles: [],
+    root: {
       width: 1280,
       height: 720,
       fps_num: 30,
       fps_den: 1,
       duration_pinned: false,
       fps_locked: false,
+      duration_us: 0,
+      tracks: [],
+      links: [],
+      markers: [],
+      transitions: [],
     },
-    track_count: 0,
-    layer_count: 0,
-    duration_us: 0,
-    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
-    media: [],
-    tracks: [],
-    links: [],
-    markers: [],
-    transitions: [],
-    audio_roles: [],
-  } as unknown as ProjectSummary;
+  }) as unknown as ProjectSummary;
 }
 
 /// Canvas box is HALF the composition and sits at the panel origin, so every

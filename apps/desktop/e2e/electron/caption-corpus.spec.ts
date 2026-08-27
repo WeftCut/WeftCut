@@ -10,7 +10,7 @@ import {
   newProject,
   textBoxProbe,
   tmpDir,
-  waitForHook,
+  waitForHook, rootSummary,
 } from "./helpers/driver";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -38,13 +38,13 @@ interface CaptionLayer {
 /// Every caption-role Track's Text layers, flattened + sorted by start — the
 /// backend truth the Panel presents.
 async function captionLayers(page: import("@playwright/test").Page): Promise<CaptionLayer[]> {
-  const s = await invokeCmd<{
+  const s = await rootSummary<{
     tracks: Array<{
       id: string;
       role: string | null;
       layers: Array<{ id: string; t_start_us: number; params: { kind: string; font_size_px?: number } }>;
     }>;
-  }>(page, "project_summary", {});
+  }>(page);
   const out: CaptionLayer[] = [];
   for (const tr of s.tracks) {
     if (tr.role !== "caption") continue;

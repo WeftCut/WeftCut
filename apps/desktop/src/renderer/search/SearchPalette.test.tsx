@@ -22,6 +22,8 @@ import { useSearchIndexStore } from "./searchIndexStore";
 import { buildEntries } from "./buildEntries";
 import { SearchPalette } from "./SearchPalette";
 import type { ProjectSummary } from "../ipc";
+import { rootOf, summaryFixture } from "../testing/summaryFixture";
+import { useProjectStore } from "../state/projectStore";
 
 // jsdom doesn't implement Element.scrollIntoView at all — the active-row
 // ref callback calls it unconditionally (see panels/MediaPool.tsx's
@@ -38,14 +40,9 @@ if (!Element.prototype.scrollIntoView) {
 /// usage (unlike buildEntries.test.ts's two-usage fixture) so the
 /// expand-media-row test below has exactly one deterministic usage row.
 function fixtureSummary(): ProjectSummary {
-  return {
+  return summaryFixture({
     project_id: "p1",
     name: "fixture",
-    composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false },
-    track_count: 2,
-    layer_count: 2,
-    duration_us: 10_000_000,
-    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
     media: [
       {
         id: "m1", label: "beach.mp4", path: "C:/x/beach.mp4", kind: "Video",
@@ -63,7 +60,17 @@ function fixtureSummary(): ProjectSummary {
         codec: "h264", pix_fmt: "yuv420p",
       },
     ],
-    tracks: [
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+    audio_roles: [],
+    root: {
+      width: 1920,
+      height: 1080,
+      fps_num: 30,
+      fps_den: 1,
+      duration_pinned: false,
+      fps_locked: false,
+      duration_us: 10_000_000,
+      tracks: [
       {
         id: "t1", kind: "Video", label: "A-Roll", enabled: true, locked: false,
         muted: false, solo: false, role: "a-roll", transient: false,
@@ -111,12 +118,12 @@ function fixtureSummary(): ProjectSummary {
         ],
       },
     ],
-    markers: [
+      markers: [
       { id: "mk1", t_us: 5_000_000, end_t_us: null, label: "章节一", color_hint: "" },
     ],
-    links: [],
-    audio_roles: [],
-  };
+      links: [],
+    },
+  });
 }
 
 const runSpy = vi.fn();
@@ -280,9 +287,12 @@ describe("SearchPalette", () => {
       cmds.map((c) => ({ id: c.id, labelKey: "actions.save", run: runSpy })),
     );
     const summary = fixtureSummary();
-    summary.markers = [
+    rootOf(summary).markers = [
       { id: "mk1", t_us: 5_000_000, end_t_us: null, label: "save point", color_hint: "" },
     ];
+    // The marker's composition has to be the open one for the seek to be
+    // direct — a project is loaded whenever the palette can be opened.
+    useProjectStore.getState().apply(summary);
     useSearchIndexStore.setState({ entries: buildEntries(summary, cmds, LOCALE), version: 1 });
 
     const onClose = vi.fn();

@@ -11,7 +11,12 @@
 import { addTransition, type TransitionDirection } from "../ipc";
 import { logMutationFailure } from "../errors/tryMutate";
 import { playheadTimeUs } from "../state/playheadStore";
-import { useProjectStore } from "../state/projectStore";
+import { useCompositionScopeStore } from "../state/compositionScopeStore";
+import {
+  compositionOrRoot,
+  currentOpenComposition,
+  useProjectStore,
+} from "../state/projectStore";
 import {
   setTransitionSelection,
   useSelectionStore,
@@ -30,15 +35,12 @@ import {
 /// is what `enabled` predicates gate on — prevention rather than refusal, per
 /// the menus/toasts convention.
 export function transitionTargetCut(): TransitionCut | null {
-  const summary = useProjectStore.getState().summary;
-  if (!summary) return null;
+  const comp = currentOpenComposition();
+  if (!comp) return null;
   return findNearestCut(
-    summary.tracks,
+    comp.tracks,
     playheadTimeUs(),
-    defaultTransitionDurationUs(
-      summary.composition.fps_num,
-      summary.composition.fps_den,
-    ),
+    defaultTransitionDurationUs(comp.fps_num, comp.fps_den),
     useSelectionStore.getState().selectedLayerIds,
   );
 }
@@ -47,16 +49,13 @@ export function transitionTargetCut(): TransitionCut | null {
 /// ANY (default-duration-eligible) cut exists does not — so this probes at
 /// t=0 and skips the playhead and selection reads.
 export function hasTransitionCut(): boolean {
-  const summary = useProjectStore.getState().summary;
-  if (!summary) return false;
+  const comp = currentOpenComposition();
+  if (!comp) return false;
   return (
     findNearestCut(
-      summary.tracks,
+      comp.tracks,
       0,
-      defaultTransitionDurationUs(
-        summary.composition.fps_num,
-        summary.composition.fps_den,
-      ),
+      defaultTransitionDurationUs(comp.fps_num, comp.fps_den),
     ) !== null
   );
 }
@@ -65,19 +64,20 @@ export function hasTransitionCut(): boolean {
 /// (the Transitions-panel cards). Boolean selector on purpose: an edit
 /// re-renders the subscriber only when cut-existence flips, not on every
 /// summary refresh.
-export const useHasTransitionCut = (): boolean =>
-  useProjectStore(
-    (s) =>
-      s.summary !== null &&
+export const useHasTransitionCut = (): boolean => {
+  const openId = useCompositionScopeStore((s) => s.openId);
+  return useProjectStore((s) => {
+    const comp = compositionOrRoot(s.summary, openId);
+    return (
+      comp !== null &&
       findNearestCut(
-        s.summary.tracks,
+        comp.tracks,
         0,
-        defaultTransitionDurationUs(
-          s.summary.composition.fps_num,
-          s.summary.composition.fps_den,
-        ),
-      ) !== null,
-  );
+        defaultTransitionDurationUs(comp.fps_num, comp.fps_den),
+      ) !== null
+    );
+  });
+};
 
 /// Apply `kind` (+ `direction`) at the resolved target with the default
 /// 1 s frame-snapped duration — no placement arg, so the add takes the
@@ -96,8 +96,8 @@ export async function applyTransitionAtPlayhead(
   direction: TransitionDirection | undefined,
   refresh: () => Promise<void> | void,
 ): Promise<void> {
-  const summary = useProjectStore.getState().summary;
-  if (!summary) return;
+  const comp = currentOpenComposition();
+  if (!comp) return;
   const cut = transitionTargetCut();
   if (!cut) return;
   const args = buildTransitionKindArgs(kind, direction ?? null);
@@ -105,10 +105,7 @@ export async function applyTransitionAtPlayhead(
     const id = await addTransition({
       fromLayerId: cut.fromLayerId,
       toLayerId: cut.toLayerId,
-      durationUs: defaultTransitionDurationUs(
-        summary.composition.fps_num,
-        summary.composition.fps_den,
-      ),
+      durationUs: defaultTransitionDurationUs(comp.fps_num, comp.fps_den),
       kind: args.kind,
       ...(args.direction !== undefined ? { direction: args.direction } : {}),
     });

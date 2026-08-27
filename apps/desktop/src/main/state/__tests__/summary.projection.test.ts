@@ -3,38 +3,42 @@
 // Focused unit tests for buildProjectSummary — the pure projection from
 // Project + HistoryStatus + fileExists into the renderer's ProjectSummary view.
 import { describe, it, expect } from 'vitest'
-import { buildProjectSummary } from '../summary'
+import { buildProjectSummary, type ProjectSummary } from '../summary'
 import { freshActor, aRollId, bRollId } from './pbt/harness'
 import { mediaItemTemplate } from '../mutations/media'
+
+/// The root entry — what a one-composition project's whole timeline is.
+const root = (s: ProjectSummary) => s.compositions[s.root_id]!
 
 describe('ProjectSummary projection', () => {
   it('projects an empty project with the two reserved tracks and zero layers', () => {
     const a = freshActor()
     const s = buildProjectSummary(a.snapshot(), a.historyStatus(), () => false)
+    const r = root(s)
 
     // Top-level counts
     expect(s.track_count).toBe(2)
     expect(s.layer_count).toBe(0)
-    expect(s.duration_us).toBe(0)
+    expect(r.duration_us).toBe(0)
 
     // Two reserved tracks: A-roll first, B-roll second
-    expect(s.tracks).toHaveLength(2)
-    expect(s.tracks[0].role).toBe('a-roll')
-    expect(s.tracks[1].role).toBe('b-roll')
-    expect(s.tracks[0].layers).toHaveLength(0)
-    expect(s.tracks[1].layers).toHaveLength(0)
+    expect(r.tracks).toHaveLength(2)
+    expect(r.tracks[0].role).toBe('a-roll')
+    expect(r.tracks[1].role).toBe('b-roll')
+    expect(r.tracks[0].layers).toHaveLength(0)
+    expect(r.tracks[1].layers).toHaveLength(0)
 
     // Composition defaults
-    expect(s.composition.width).toBe(1920)
-    expect(s.composition.height).toBe(1080)
-    expect(s.composition.fps_num).toBe(30)
-    expect(s.composition.fps_den).toBe(1)
-    expect(s.composition.duration_pinned).toBe(false)
+    expect(r.width).toBe(1920)
+    expect(r.height).toBe(1080)
+    expect(r.fps_num).toBe(30)
+    expect(r.fps_den).toBe(1)
+    expect(r.duration_pinned).toBe(false)
 
     // Fresh project has no media, markers, or links
     expect(s.media).toHaveLength(0)
-    expect(s.markers).toHaveLength(0)
-    expect(s.links).toHaveLength(0)
+    expect(r.markers).toHaveLength(0)
+    expect(r.links).toHaveLength(0)
 
     // Four standard audio roles always present
     expect(s.audio_roles.map((r) => r.role)).toEqual(['dialogue', 'music', 'sfx', 'voiceover'])
@@ -47,9 +51,9 @@ describe('ProjectSummary projection', () => {
 
     expect(s.layer_count).toBe(1)
     // duration_us autofits to the layer end when not pinned
-    expect(s.duration_us).toBe(5_000_000)
+    expect(root(s).duration_us).toBe(5_000_000)
 
-    const aRoll = s.tracks[0]
+    const aRoll = root(s).tracks[0]
     expect(aRoll.layers).toHaveLength(1)
     const layer = aRoll.layers[0]
     expect(layer.kind).toBe('Color')
@@ -68,10 +72,10 @@ describe('ProjectSummary projection', () => {
 
     expect(s.layer_count).toBe(2)
     // duration_us is max of all layer ends
-    expect(s.duration_us).toBe(4_000_000)
+    expect(root(s).duration_us).toBe(4_000_000)
 
-    const aRoll = s.tracks.find((t) => t.role === 'a-roll')!
-    const bRoll = s.tracks.find((t) => t.role === 'b-roll')!
+    const aRoll = root(s).tracks.find((t) => t.role === 'a-roll')!
+    const bRoll = root(s).tracks.find((t) => t.role === 'b-roll')!
 
     expect(aRoll.layers).toHaveLength(1)
     expect(aRoll.layers[0].t_end_us).toBe(3_000_000)

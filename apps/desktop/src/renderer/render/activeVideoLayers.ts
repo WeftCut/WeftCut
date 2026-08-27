@@ -7,6 +7,7 @@
 // failure returns) or the export hangs on a proxy it never needed.
 
 import type { ProjectSummary } from "../ipc";
+import { rootCompositionOf } from "../ipc/compositions";
 
 export interface ActiveVideoLayer {
   layerId: string;
@@ -26,7 +27,9 @@ export function selectActiveVideoLayers(
   bUs: number,
 ): ActiveVideoLayer[] {
   const out: ActiveVideoLayer[] = [];
-  for (const track of summary.tracks) {
+  // Export renders the ROOT (compositionScopeStore.ts). A Group's clips join
+  // this walk when it learns to recurse through CompositionRef layers (slice 14).
+  for (const track of rootCompositionOf(summary).tracks) {
     if (!track.enabled) continue;
     for (const layer of track.layers) {
       if (!layer.enabled) continue;
@@ -69,7 +72,7 @@ export function hasVisibleContent(
   startUs: number,
   endUs: number,
 ): boolean {
-  for (const track of summary.tracks) {
+  for (const track of rootCompositionOf(summary).tracks) {
     if (!track.enabled) continue;
     for (const layer of track.layers) {
       if (!layer.enabled) continue;

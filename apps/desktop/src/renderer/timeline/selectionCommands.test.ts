@@ -19,6 +19,7 @@ import {
   selectAllLayers,
   selectableLayerIds,
 } from "./selectionCommands";
+import { summaryFixture } from "../testing/summaryFixture";
 
 function layer(partial: Partial<LayerSummary>): LayerSummary {
   return {
@@ -55,28 +56,26 @@ function track(partial: Partial<TrackSummary>): TrackSummary {
 /// Only `tracks` carries content — everything else is the shape
 /// `ProjectSummary` demands.
 function seed(tracks: TrackSummary[]): void {
-  const summary: ProjectSummary = {
+  const summary: ProjectSummary = summaryFixture({
     project_id: "p",
     name: "p",
-    composition: {
+    media: [],
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+    audio_roles: [],
+    root: {
       width: 640,
       height: 360,
       fps_num: 30,
       fps_den: 1,
       duration_pinned: false,
       fps_locked: false,
+      duration_us: 0,
+      tracks: tracks,
+      markers: [],
+      transitions: [],
+      links: [],
     },
-    track_count: tracks.length,
-    layer_count: tracks.reduce((n, t) => n + t.layers.length, 0),
-    duration_us: 0,
-    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
-    media: [],
-    tracks,
-    markers: [],
-    transitions: [],
-    links: [],
-    audio_roles: [],
-  };
+  });
   useProjectStore.getState().apply(summary);
 }
 

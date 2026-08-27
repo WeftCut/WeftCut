@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
-import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
+import { invokeCmd, launchApp, newProject, tmpDir, waitForHook, rootSummary } from './helpers/driver'
 
 /**
  * Markers painted on the timeline ruler, and the one switch that silences them.
@@ -124,7 +124,7 @@ test('the ruler paints markers, and one toggle silences them from either surface
     )
     // A canvas-noise control and nothing more: the markers are still project
     // content, so the search palette can still find and navigate to them.
-    const state = await invokeCmd<{ markers: unknown[] }>(page, 'project_summary', {})
+    const state = await rootSummary<{ markers: unknown[] }>(page)
     expect(state.markers).toHaveLength(2)
 
     // ── Show again from the strip ─────────────────────────────────────────
@@ -185,7 +185,7 @@ test('markers are authorable from the keyboard and the ruler — no MCP client a
     await expect(marks).toHaveCount(1)
     // Unlabelled by design: the tooltip's translated fallback is the name.
     await expect(marks).toHaveAttribute('title', /^Marker · /)
-    const summary = await invokeCmd<{ markers: Array<{ label: string }> }>(page, 'project_summary', {})
+    const summary = await rootSummary<{ markers: Array<{ label: string }> }>(page)
     expect(summary.markers).toHaveLength(1)
     expect(summary.markers[0].label).toBe('')
 
@@ -202,7 +202,7 @@ test('markers are authorable from the keyboard and the ruler — no MCP client a
     await marks.click({ button: 'right' })
     await page.locator('.app-menu-item', { hasText: 'Delete marker' }).click()
     await expect(marks).toHaveCount(0)
-    const afterDelete = await invokeCmd<{ markers: unknown[] }>(page, 'project_summary', {})
+    const afterDelete = await rootSummary<{ markers: unknown[] }>(page)
     expect(afterDelete.markers).toHaveLength(0)
 
     // ── M under a hidden layer turns the layer back on with the new mark ───

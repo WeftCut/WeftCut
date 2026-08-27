@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
 import { Compositor } from "./Compositor";
 import type { DecoderPool } from "./decoder/session";
+import { summaryFixture } from "../testing/summaryFixture";
 
 // Decode sessions are pool-owned and keyed by LAYER id, so the only thing that
 // frees one — and, on the ffmpeg hardware lane, the GPU session inside it — is
@@ -44,20 +45,25 @@ function summaryWith(layers: LayerSummary[]): ProjectSummary {
     transient: false,
     layers,
   };
-  return {
+  return summaryFixture({
     project_id: "project-1",
     name: "Session lifetime",
-    composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false },
-    track_count: 1,
-    layer_count: layers.length,
-    duration_us: 2_000_000,
-    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
     media: [],
-    tracks: [track],
-    markers: [],
-    links: [],
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
     audio_roles: [],
-  };
+    root: {
+      width: 1920,
+      height: 1080,
+      fps_num: 30,
+      fps_den: 1,
+      duration_pinned: false,
+      fps_locked: false,
+      duration_us: 2_000_000,
+      tracks: [track],
+      markers: [],
+      links: [],
+    },
+  });
 }
 
 /// A clip is only ever built by `ensureClip`, which needs a resolver, a live

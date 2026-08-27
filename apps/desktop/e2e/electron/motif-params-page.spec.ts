@@ -1,6 +1,6 @@
 import { expect, test, type FrameLocator, type Locator, type Page } from '@playwright/test'
 
-import { dockPanel, invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
+import { dockPanel, invokeCmd, launchApp, newProject, tmpDir, waitForHook, rootSummary } from './helpers/driver'
 
 /**
  * A Motif's own parameter page, driven for real: the first e2e to click a
@@ -28,7 +28,7 @@ interface Summary {
   }>
 }
 
-const summary = (page: Page) => invokeCmd<Summary>(page, 'project_summary', {})
+const summary = (page: Page) => rootSummary<Summary>(page)
 const historyLen = async (page: Page) => (await summary(page)).history.len
 /// Where the undo cursor sits. `len` counts the stack including the redo tail, so
 /// it is `cursor` — not `len` — that comes back down when one undo is spent.

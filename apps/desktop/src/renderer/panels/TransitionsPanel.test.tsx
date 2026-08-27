@@ -12,6 +12,7 @@ import { useProjectStore } from "../state/projectStore";
 import { useSelectionStore } from "../state/selectionStore";
 import { setPlayheadTimeUs } from "../state/playheadStore";
 import { TransitionsPanel } from "./TransitionsPanel";
+import { summaryFixture } from "../testing/summaryFixture";
 
 const ipcMocks = vi.hoisted(() => ({
   addTransition: vi.fn().mockResolvedValue("new-transition"),
@@ -63,19 +64,26 @@ function makeTrack(id: string, layers: LayerSummary[]): TrackSummary {
 }
 
 function seed(tracks: TrackSummary[]): void {
-  const summary: ProjectSummary = {
+  const summary: ProjectSummary = summaryFixture({
     project_id: "p",
     name: "p",
-    composition: {
-      width: 640, height: 360, fps_num: 30, fps_den: 1,
-      duration_pinned: false, fps_locked: false,
-    },
-    track_count: tracks.length,
-    layer_count: tracks.reduce((n, t) => n + t.layers.length, 0),
-    duration_us: 0,
+    media: [],
     history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
-    media: [], tracks, markers: [], transitions: [], links: [], audio_roles: [],
-  };
+    audio_roles: [],
+    root: {
+      width: 640,
+      height: 360,
+      fps_num: 30,
+      fps_den: 1,
+      duration_pinned: false,
+      fps_locked: false,
+      duration_us: 0,
+      tracks: tracks,
+      markers: [],
+      transitions: [],
+      links: [],
+    },
+  });
   useProjectStore.getState().apply(summary);
 }
 

@@ -7,7 +7,7 @@ import {
   launchApp,
   newProject,
   tmpDir,
-  waitForHook,
+  waitForHook, rootSummary,
 } from './helpers/driver'
 
 type Layer = {
@@ -34,7 +34,7 @@ const videoLayers = (summary: Summary): Layer[] =>
     .filter((layer) => layer.params.kind === 'VideoClip')
 
 const readSummary = (page: Page): Promise<Summary> =>
-  invokeCmd<Summary>(page, 'project_summary')
+  rootSummary<Summary>(page)
 
 test('an older summary cannot restore a VideoClip after split-right-delete', async () => {
   const { app, page } = await launchApp()

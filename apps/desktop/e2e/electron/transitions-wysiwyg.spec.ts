@@ -32,7 +32,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { PNG } from 'pngjs'
-import { launchApp, newProject, invokeCmd, driveExport, tmpDir } from './helpers/driver'
+import { launchApp, newProject, invokeCmd, driveExport, tmpDir, rootSummary } from './helpers/driver'
 
 // ── Composition + timeline shape ─────────────────────────────────────────────
 // RED [0, 2s] + BLUE authored [2s, 4s] on ONE track; add_transition (overlap
@@ -311,7 +311,7 @@ for (const variant of VARIANTS) {
       // State sanity: overlap placement moved BLUE left by the duration, RED's
       // trimmed end is untouched, and the transition is in the read surface
       // with its full shape.
-      const summary = (await invokeCmd(page, 'project_summary', {})) as {
+      const summary = (await rootSummary(page)) as {
         tracks: Array<{ layers: Array<{ id: string; t_start_us: number; t_end_us: number }> }>
         transitions: Array<{ id: string; from_layer: string; to_layer: string; duration_us: number; kind: Record<string, unknown> }>
       }

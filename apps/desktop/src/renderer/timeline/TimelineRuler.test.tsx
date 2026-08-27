@@ -8,7 +8,8 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../i18n"; // real en-US bundle, so a tooltip is the shipped string
-import type { MarkerSummary, ProjectSummary } from "../ipc";
+import type { MarkerSummary } from "../ipc";
+import { summaryFixture } from "../testing/summaryFixture";
 
 const ipcMocks = vi.hoisted(() => ({
   removeMarker: vi.fn(),
@@ -232,12 +233,10 @@ describe("markers", () => {
     );
   };
 
-  /// Only `markers` is read off the summary here; the rest is padding to
-  /// satisfy the type (same stub shape as proxyPreferenceStore.test.ts).
+  /// Only the root's `markers` carry content; the ruler reads them through the
+  /// open composition, so the seed goes through `apply` (which also opens it).
   const seed = (markers: MarkerSummary[]) => {
-    useProjectStore.setState({
-      summary: { markers } as unknown as ProjectSummary,
-    });
+    useProjectStore.getState().apply(summaryFixture({ root: { markers } }));
   };
 
   const point = (over: Partial<MarkerSummary> = {}): MarkerSummary => ({

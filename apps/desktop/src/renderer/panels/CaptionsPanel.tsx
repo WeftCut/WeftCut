@@ -11,7 +11,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { tryMutate } from "../errors/tryMutate";
-import { useProjectSummary } from "../state/projectStore";
+import { useOpenComposition } from "../state/projectStore";
 import { AppColorField } from "../components/AppColorField";
 import { AppNumberField } from "../components/AppNumberField";
 import {
@@ -86,9 +86,9 @@ function CaptionCueRow({
 
 export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: CaptionPanelProps) {
   const { t } = useTranslation();
-  const summary = useProjectSummary();
+  const comp = useOpenComposition();
 
-  const captionTracks = (summary?.tracks ?? []).filter((tr) => tr.role === "caption");
+  const captionTracks = (comp?.tracks ?? []).filter((tr) => tr.role === "caption");
 
   // Flatten every caption-role track's Text layers in start-time order,
   // carrying the owning track id so activation can reveal the right lane.

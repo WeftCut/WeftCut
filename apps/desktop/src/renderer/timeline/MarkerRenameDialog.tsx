@@ -6,7 +6,7 @@ import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
 import { tryMutate } from "../errors/tryMutate";
 import { renameMarker } from "../ipc";
-import { useProjectStore } from "../state/projectStore";
+import { currentOpenComposition } from "../state/projectStore";
 import {
   closeMarkerRenamePrompt,
   useMarkerRenamePromptStore,
@@ -33,9 +33,7 @@ export function MarkerRenameDialog() {
   // the user's cursor on every summary tick.
   useEffect(() => {
     if (markerId !== null) {
-      const current = useProjectStore
-        .getState()
-        .summary?.markers.find((m) => m.id === markerId);
+      const current = currentOpenComposition()?.markers.find((m) => m.id === markerId);
       setLabel(current?.label ?? "");
       setSaving(false);
     }

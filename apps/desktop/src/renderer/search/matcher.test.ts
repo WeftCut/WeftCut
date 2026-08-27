@@ -15,7 +15,7 @@ function mk(type: SearchEntryType, label: string, extra: string[] = []): SearchE
     label,
     context: "",
     haystacks: hay,
-    payload: { type: "marker", markerId: String(n), tUs: 0 },
+    payload: { type: "marker", markerId: String(n), tUs: 0, compositionId: "comp-root" },
   };
 }
 

@@ -72,8 +72,8 @@ function motifLayer(
   return { id, t_start_us: tStartUs, t_end_us: tEndUs, params };
 }
 
-/// Minimal ProjectSummary carrying one track of the given layers. Only the
-/// fields `motifLayersToBake` reads are populated; the rest is cast.
+/// Minimal ProjectSummary whose ROOT carries one track of the given layers.
+/// Only the fields `motifLayersToBake` reads are populated; the rest is cast.
 function summaryWith(
   layers: Array<{
     id: string;
@@ -85,15 +85,20 @@ function summaryWith(
   trackEnabled = true,
 ): ProjectSummary {
   return {
-    tracks: [
-      {
-        enabled: trackEnabled,
-        layers: layers.map((l) => ({
-          enabled: l.enabled ?? true,
-          ...l,
-        })),
+    root_id: "root",
+    compositions: {
+      root: {
+        tracks: [
+          {
+            enabled: trackEnabled,
+            layers: layers.map((l) => ({
+              enabled: l.enabled ?? true,
+              ...l,
+            })),
+          },
+        ],
       },
-    ],
+    },
   } as unknown as ProjectSummary;
 }
 

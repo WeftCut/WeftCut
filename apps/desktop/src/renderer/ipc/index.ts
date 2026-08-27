@@ -15,11 +15,22 @@ import type { RecentEntry } from "../../shared/recents";
 export type { RecentEntry } from "../../shared/recents";
 import type { Interpolation } from "../../shared/easing";
 
+/// One composition's timeline — the root and every Group share this shape
+/// (ADR 0052 §3). Mirrors main/state/summary.ts `CompositionSummary`.
 export interface CompositionSummary {
+  id: string;
+  /// The composition's own label; null on the root and on an unnamed Group
+  /// (the UI derives "Group N").
+  label: string | null;
   width: number;
   height: number;
   fps_num: number;
   fps_den: number;
+  /// Composition length as an EXCLUSIVE boundary; timeline interval is
+  /// `[0, duration_us)`. NOT a frame anchor — see `t_end_us` on
+  /// `LayerSummary` for the long version. The playhead's upper bound
+  /// is `lastFrameAnchorUs(duration_us, fpsNum, fpsDen)`.
+  duration_us: number;
   /// True when the user has explicitly set the composition duration via
   /// `set_composition { duration_us }`. While pinned, layer edits no
   /// longer mutate `duration_us` (except the `>= max(layer.t_end_us)`
@@ -30,8 +41,19 @@ export interface CompositionSummary {
   /// change lands in all of them, so undo would otherwise resurrect layers
   /// quantized to the old grid). The rate becomes settable again only on a
   /// project whose history has never held a layer, i.e. after emptying the
-  /// timeline and reopening the project.
+  /// timeline and reopening the project. History-scoped, so project-wide: the
+  /// same value on every composition.
   fps_locked: boolean;
+  tracks: TrackSummary[];
+  markers: MarkerSummary[];
+  /// Transitions between same-track visual layers, composited by the
+  /// renderer's two-input transition node.
+  transitions: TransitionSummary[];
+  /// `docs/features.md#links`. Empty when no links exist. UI uses this to
+  /// render the tinted-border indicator and to resolve "what link is
+  /// this layer in?" for click-selects-whole-link behavior. A link's members
+  /// all live in THIS composition.
+  links: LinkSummary[];
 }
 
 export interface HistoryView {
@@ -220,8 +242,8 @@ export type LayerParamsView =
   | ({ kind: "Motif" } & MotifView)
   | ({ kind: "CompositionRef" } & CompositionRefView);
 
-/// A Group layer: its source is another composition (ADR 0052 §4). Nothing
-/// renders it yet; the type exists so the flat summary can carry one.
+/// A Group layer: its source is another composition (ADR 0052 §4) — the entry
+/// `ProjectSummary.compositions[composition_id]`. Nothing renders it yet.
 export interface CompositionRefView {
   composition_id: string;
   /// The referenced composition's own label; null → derive "Group N".
@@ -417,26 +439,15 @@ export interface TrackSummary {
 export interface ProjectSummary {
   project_id: string;
   name: string;
-  composition: CompositionSummary;
+  /// `compositions[root_id]` is what export renders and what the scope store
+  /// opens by default (`state/compositionScopeStore.ts`).
+  root_id: string;
+  compositions: Record<string, CompositionSummary>;
+  /// Counted over EVERY composition, not the open one.
   track_count: number;
   layer_count: number;
-  /// Composition length as an EXCLUSIVE boundary; timeline interval is
-  /// `[0, duration_us)`. NOT a frame anchor — see `t_end_us` on
-  /// `LayerSummary` for the long version. The playhead's upper bound
-  /// is `lastFrameAnchorUs(duration_us, fpsNum, fpsDen)`.
-  duration_us: number;
   history: HistoryView;
   media: MediaSummary[];
-  tracks: TrackSummary[];
-  markers: MarkerSummary[];
-  /// Transitions between same-track visual layers, composited by the
-  /// renderer's two-input transition node. Optional: older snapshots and
-  /// test fixtures omit it — consumers treat absent as empty.
-  transitions?: TransitionSummary[];
-  /// `docs/features.md#links`. Empty when no links exist. UI uses this to
-  /// render the tinted-border indicator and to resolve "what link is
-  /// this layer in?" for click-selects-whole-link behavior.
-  links: LinkSummary[];
   /// `docs/audio.md`. Always exactly 4 entries in canonical role order
   /// (dialogue, music, sfx, voiceover) — the project-level role mixer.
   audio_roles: RoleMixView[];
@@ -1325,6 +1336,41 @@ export async function linksRename(
   label: string | null,
 ): Promise<void> {
   return invoke<void>("links_rename", { linkId, label });
+}
+
+/// `docs/features.md#groups` — pre-compose: the selection (≥ 1 layer, one
+/// composition) becomes a new composition placed back as one Group layer at the
+/// set's earliest start. Refuses whole on any locked member or track. Returns
+/// the new composition's id and the Group layer's id; one undo restores all.
+export async function groupsCreate(
+  layerIds: string[],
+  label: string | null = null,
+): Promise<{ composition_id: string; layer_id: string }> {
+  return invoke<{ composition_id: string; layer_id: string }>("groups_create", {
+    layerIds,
+    label,
+  });
+}
+
+/// Expand a PLAIN Group layer (identity transform, opacity 1, no effects) back
+/// into its members in place; refuses with `GroupNotPlain { reason }` otherwise.
+/// The composition goes with it when nothing else references it.
+export async function groupsUngroup(layerId: string): Promise<void> {
+  return invoke<void>("groups_ungroup", { layerId });
+}
+
+/// Set or clear (`null` / blank) a Group's composition name. The root refuses.
+export async function groupsRename(
+  compositionId: string,
+  label: string | null,
+): Promise<void> {
+  return invoke<void>("groups_rename", { compositionId, label });
+}
+
+/// Delete an orphan composition (no Group layer references it); refuses with
+/// `CompositionInUse` otherwise, and refuses the root.
+export async function compositionsDelete(compositionId: string): Promise<void> {
+  return invoke<void>("compositions_delete", { compositionId });
 }
 
 /// Lift an Audio layer onto a freshly-created track inserted directly below its

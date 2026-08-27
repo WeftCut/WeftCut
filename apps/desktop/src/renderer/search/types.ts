@@ -24,7 +24,9 @@ export type SearchPayload =
   | { type: "track"; trackId: string; firstLayerId: string | null }
   | { type: "clip"; layerId: string; tStartUs: number }
   | { type: "caption"; layerId: string; tStartUs: number }
-  | { type: "marker"; markerId: string; tUs: number };
+  /// `compositionId`: a marker sits on one composition's timeline, and the
+  /// palette has to open that timeline before it can seek there.
+  | { type: "marker"; markerId: string; tUs: number; compositionId: string };
 
 export interface SearchEntry {
   /// `${type}:${id}` — stable React list key.

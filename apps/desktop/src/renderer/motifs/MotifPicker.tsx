@@ -10,7 +10,6 @@ import { AppInput } from "../components/AppInput";
 import { AppSelect } from "../components/AppSelect";
 import { Button } from "@/components/ui/button";
 import {
-  addMotif,
   importMotif,
   listMotifs,
   MOTIFS_CHANGED_EVENT,
@@ -19,6 +18,7 @@ import {
   type MotifSummary,
   type TrackSummary,
 } from "../ipc";
+import { addMotifInOpenComposition } from "../ipc/compositionScoped";
 import { trackDisplayName } from "../lib/trackName";
 import { MotifPropField } from "../properties/MotifPropFields";
 import { captureMotifFramePngBlob } from "../render/motifs/host";
@@ -145,7 +145,7 @@ export function MotifPicker({
       // Straight into the editing surface: place the draft at the playhead
       // (default props/duration, fresh overlay track), hand the new layer to
       // the App for select + reveal, and close the picker.
-      const layerId = await addMotif({
+      const layerId = await addMotifInOpenComposition({
         motifId: draftId,
         tStartUs: currentTimeUs,
       });
@@ -276,7 +276,7 @@ export function MotifPicker({
                   onSubmit={async ({ tStartUs, props, trackId }) => {
                     setError(null);
                     try {
-                      await addMotif({
+                      await addMotifInOpenComposition({
                         motifId: selected.id,
                         tStartUs,
                         props,

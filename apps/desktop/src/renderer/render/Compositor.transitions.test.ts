@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
 import { Compositor } from "./Compositor";
 import type { DecoderPool } from "./decoder/session";
+import { summaryFixture } from "../testing/summaryFixture";
 
 // GlProgram construction probes fragment precision through a DOMAdapter test
 // canvas; node has no document, so hand the adapter a context-less canvas
@@ -64,25 +65,23 @@ const track: TrackSummary = {
   layers: [layerA, layerB],
 };
 
-const summary: ProjectSummary = {
+const summary: ProjectSummary = summaryFixture({
   project_id: "project-1",
   name: "Transition Node",
-  composition: {
+  media: [],
+  history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+  audio_roles: [],
+  root: {
     width: 1920,
     height: 1080,
     fps_num: 30,
     fps_den: 1,
     duration_pinned: false,
     fps_locked: false,
-  },
-  track_count: 1,
-  layer_count: 2,
-  duration_us: 3_000_000,
-  history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
-  media: [],
-  tracks: [track],
-  markers: [],
-  transitions: [
+    duration_us: 3_000_000,
+    tracks: [track],
+    markers: [],
+    transitions: [
     {
       id: "tr-1",
       from_layer: "layer-a",
@@ -92,9 +91,9 @@ const summary: ProjectSummary = {
       extended_us: 0,
     },
   ],
-  links: [],
-  audio_roles: [],
-};
+    links: [],
+  },
+});
 
 interface RenderCall {
   containerChildren: number;

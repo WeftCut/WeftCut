@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir } from './helpers/driver'
+import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, rootSummary } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
@@ -44,9 +44,7 @@ test.describe('animated gif is a looping Image (Electron)', () => {
       const { mediaId, layerId, kind } = await importAndPlaceMedia(page, { mediaAbsPath: GIF, tStartUs: 0 })
       expect(kind, 'multi-frame gif must classify as Image').toBe('Image')
 
-      const sum = await invokeCmd<{ media: MediaEntry[]; tracks: { layers: LayerEntry[] }[] }>(
-        page, 'project_summary', {},
-      )
+      const sum = await rootSummary<{ media: MediaEntry[]; tracks: { layers: LayerEntry[] }[] }>(page)
       const entry = sum.media.find((m) => m.id === mediaId)
       expect(entry, `media ${mediaId} present in pool`).toBeTruthy()
       expect(entry!.kind).toBe('Image')
@@ -56,9 +54,7 @@ test.describe('animated gif is a looping Image (Electron)', () => {
       const layer = sum.tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)
       expect(layer, 'placed layer present').toBeTruthy()
       expect(layer!.params.kind).toBe('ImageOverlay')
-      const meta = await invokeCmd<{ media: { id: string; duration_us: number | null }[] }>(
-        page, 'project_summary', {},
-      )
+      const meta = await rootSummary<{ media: { id: string; duration_us: number | null }[] }>(page)
       const nativeDurUs = meta.media.find((m) => m.id === mediaId)!.duration_us
       expect(nativeDurUs, 'gif reports a native duration').toBeTruthy()
       expect(layer!.t_end_us - layer!.t_start_us).toBe(nativeDurUs)

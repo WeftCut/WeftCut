@@ -2,17 +2,18 @@
 //
 // Covers the "Canvas" Settings section (exported from SettingsPanel.tsx): the
 // resolution preset dropdown, the custom width/height pair behind an explicit
-// Apply, and the frame-rate dropdown with its history-scoped lock. `ipc` is
-// stubbed at the module boundary so each test asserts the exact
-// `set_composition` patch that leaves the renderer.
+// Apply, and the frame-rate dropdown with its history-scoped lock. The scoped
+// `set_composition` wrapper is stubbed at the module boundary so each test
+// asserts the exact patch that leaves the renderer — and which composition it
+// names.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const ipc = vi.hoisted(() => ({ setComposition: vi.fn() }));
+const ipc = vi.hoisted(() => ({ setCompositionOf: vi.fn() }));
 
-vi.mock("../ipc", async (importActual) => {
-  const actual = await importActual<typeof import("../ipc")>();
+vi.mock("../ipc/compositionScoped", async (importActual) => {
+  const actual = await importActual<typeof import("../ipc/compositionScoped")>();
   return { ...actual, ...ipc };
 });
 
@@ -26,6 +27,7 @@ const onError = vi.fn();
 const onChanged = vi.fn();
 
 const COMP: CompositionState = {
+  id: "comp-1",
   durationUs: 2_000_000,
   durationPinned: false,
   layersMaxEndUs: 2_000_000,
@@ -105,7 +107,7 @@ beforeEach(async () => {
   await i18n.changeLanguage("en-US");
   onError.mockReset();
   onChanged.mockReset();
-  ipc.setComposition.mockReset().mockResolvedValue(undefined);
+  ipc.setCompositionOf.mockReset().mockResolvedValue(undefined);
 });
 
 describe("CanvasSection resolution", () => {
@@ -132,8 +134,8 @@ describe("CanvasSection resolution", () => {
     await openSelect(user, "Resolution");
     await pickOption(user, "1280 × 720");
 
-    await waitFor(() => expect(ipc.setComposition).toHaveBeenCalledTimes(1));
-    expect(ipc.setComposition).toHaveBeenCalledWith({ width: 1280, height: 720 });
+    await waitFor(() => expect(ipc.setCompositionOf).toHaveBeenCalledTimes(1));
+    expect(ipc.setCompositionOf).toHaveBeenCalledWith("comp-1", { width: 1280, height: 720 });
   });
 });
 
@@ -173,7 +175,7 @@ describe("CanvasSection lock", () => {
 
     await user.click(lockSwitch()); // same switch, re-engaging the lock
     expect(screen.queryByLabelText("Width")).toBeNull(); // custom mode left
-    expect(ipc.setComposition).not.toHaveBeenCalled();
+    expect(ipc.setCompositionOf).not.toHaveBeenCalled();
 
     await unlock(user);
     await enterCustom(user);
@@ -210,7 +212,7 @@ describe("CanvasSection custom size", () => {
     renderSection();
     await unlock(user);
     await enterCustom(user);
-    expect(ipc.setComposition).not.toHaveBeenCalled();
+    expect(ipc.setCompositionOf).not.toHaveBeenCalled();
   });
 
   /// A size the ladder cannot represent has to show the fields unprompted —
@@ -229,7 +231,7 @@ describe("CanvasSection custom size", () => {
     await openSelect(user, "Resolution");
     await pickOption(user, "1280 × 720");
 
-    await waitFor(() => expect(ipc.setComposition).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(ipc.setCompositionOf).toHaveBeenCalledTimes(1));
     expect(screen.queryByLabelText("Width")).toBeNull();
   });
 });
@@ -252,11 +254,11 @@ describe("CanvasSection custom size validation", () => {
     await enterCustom(user);
     await typeSize(user, "Width", "3840");
     await typeSize(user, "Height", "2160");
-    expect(ipc.setComposition).not.toHaveBeenCalled(); // nothing yet — Apply gates it
+    expect(ipc.setCompositionOf).not.toHaveBeenCalled(); // nothing yet — Apply gates it
 
     await user.click(screen.getByRole("button", { name: "Apply" }));
-    await waitFor(() => expect(ipc.setComposition).toHaveBeenCalledTimes(1));
-    expect(ipc.setComposition).toHaveBeenCalledWith({ width: 3840, height: 2160 });
+    await waitFor(() => expect(ipc.setCompositionOf).toHaveBeenCalledTimes(1));
+    expect(ipc.setCompositionOf).toHaveBeenCalledWith("comp-1", { width: 3840, height: 2160 });
   });
 
   it("rejects an odd dimension instead of letting export shave a pixel", async () => {
@@ -294,7 +296,7 @@ describe("CanvasSection custom size validation", () => {
 
   it("surfaces an actor rejection through onError", async () => {
     const user = userEvent.setup();
-    ipc.setComposition.mockRejectedValue(new Error("ValidationFailed"));
+    ipc.setCompositionOf.mockRejectedValue(new Error("ValidationFailed"));
     renderSection();
     await unlock(user);
     await enterCustom(user);
@@ -326,8 +328,8 @@ describe("CanvasSection frame rate", () => {
     await openSelect(user, "Frame rate");
     await pickOption(user, "29.97 fps");
 
-    await waitFor(() => expect(ipc.setComposition).toHaveBeenCalledTimes(1));
-    expect(ipc.setComposition).toHaveBeenCalledWith({ fps: { num: 30_000, den: 1001 } });
+    await waitFor(() => expect(ipc.setCompositionOf).toHaveBeenCalledTimes(1));
+    expect(ipc.setCompositionOf).toHaveBeenCalledWith("comp-1", { fps: { num: 30_000, den: 1001 } });
   });
 
   /// A rate an MCP caller set that isn't on the ladder still has to render.

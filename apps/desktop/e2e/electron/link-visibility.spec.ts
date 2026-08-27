@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from "./helpers/driver";
+import { invokeCmd, launchApp, newProject, tmpDir, waitForHook, rootSummary } from "./helpers/driver";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // An AV source: `add_media_layer` auto-pairs it into a linked video + Audio
@@ -19,7 +19,7 @@ interface LinkSummary {
   links: Array<{ id: string; label: string | null; layer_ids: string[] }>;
 }
 
-const snapshot = (page: Page) => invokeCmd<LinkSummary>(page, "project_summary", {});
+const snapshot = (page: Page) => rootSummary<LinkSummary>(page);
 
 const selectedLayerIds = async (page: Page): Promise<string[]> => {
   await waitForHook(page, "getSelectedLayerIds");

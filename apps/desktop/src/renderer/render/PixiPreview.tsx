@@ -25,7 +25,7 @@ import {
   setTransportPlaying,
 } from "../state/playbackStore";
 import { playheadTimeUs } from "../state/playheadStore";
-import { useProjectStore } from "../state/projectStore";
+import { compositionOrRoot, rootCompositionOf, useProjectStore } from "../state/projectStore";
 import { useAppSettingsStore, useDecodeEngine } from "../settings/appSettingsStore";
 import {
   useDecodeComponentAvailable,
@@ -188,7 +188,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   );
   const summary = useProjectStore((s) => s.summary);
   const mediaById = useProjectStore((s) => s.mediaById);
-  const composition = summary?.composition;
+  // The ROOT: the Compositor renders it until slice 14 hands it the open id
+  // (compositionScopeStore.ts). Size and fps here must describe what it draws.
+  const composition = compositionOrRoot(summary, null) ?? undefined;
   const decodeEngine = useDecodeEngine();
   const decodeComponentAvailable = useDecodeComponentAvailable();
 
@@ -333,9 +335,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
       const engine = new PlaybackEngine({ compositor, ticker: app.ticker });
       const resourceGeneration = ++previewResourceSequence;
+      const initialComposition = compositionOrRoot(initialSummary, null);
       engine.bindFps(
-        initialSummary?.composition.fps_num ?? 30,
-        initialSummary?.composition.fps_den ?? 1,
+        initialComposition?.fps_num ?? 30,
+        initialComposition?.fps_den ?? 1,
       );
       // Seed the fresh engine from the live playhead store, AFTER bindFps so
       // the position snaps on the composition's real frame grid. Application
@@ -715,13 +718,13 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     if (!compositorRef.current) return;
     compositorRef.current.setProject(summary);
     engineRef.current?.bindFps(
-      summary?.composition.fps_num ?? 30,
-      summary?.composition.fps_den ?? 1,
+      composition?.fps_num ?? 30,
+      composition?.fps_den ?? 1,
     );
     const t = engineRef.current?.positionUs() ?? 0;
     compositorRef.current.setAnchorTime(t);
     compositorRef.current.compositeFrame(t);
-  }, [summary, mediaById]);
+  }, [summary, composition, mediaById]);
 
   // A draft edit / install / delete updates the runtime Motif catalog (via the
   // async motifs:changed → syncUserMotifsFromBackend → setUserMotifs chain). We
@@ -917,8 +920,8 @@ async function handlePixiExport(
         : {}),
       ...(opts.decodeRouting ? { decodeRouting: opts.decodeRouting } : {}),
     });
-    const outFpsNum = opts.outputFps?.num ?? summary.composition.fps_num;
-    const outFpsDen = opts.outputFps?.den ?? summary.composition.fps_den;
+    const outFpsNum = opts.outputFps?.num ?? rootCompositionOf(summary).fps_num;
+    const outFpsDen = opts.outputFps?.den ?? rootCompositionOf(summary).fps_den;
     return {
       framesEncoded: result.framesEncoded,
       totalFrames: result.totalFrames,

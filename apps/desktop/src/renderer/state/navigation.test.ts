@@ -25,18 +25,14 @@ import {
   useSelectionStore,
 } from "./selectionStore";
 import type { ProjectSummary } from "../ipc";
+import { rootOf, summaryFixture } from "../testing/summaryFixture";
 
 /// 10 s 30 fps summary with one video track (one clip at 2 s) and one
 /// media item. Only the fields navigation touches need to be realistic.
 function fixtureSummary(): ProjectSummary {
-  return {
+  return summaryFixture({
     project_id: "p1",
     name: "fixture",
-    composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false },
-    track_count: 1,
-    layer_count: 2,
-    duration_us: 10_000_000,
-    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
     media: [
       {
         id: "m1", label: "beach.mp4", path: "C:/x/beach.mp4", kind: "Video",
@@ -45,7 +41,17 @@ function fixtureSummary(): ProjectSummary {
         codec: "h264", pix_fmt: "yuv420p",
       },
     ],
-    tracks: [
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+    audio_roles: [],
+    root: {
+      width: 1920,
+      height: 1080,
+      fps_num: 30,
+      fps_den: 1,
+      duration_pinned: false,
+      fps_locked: false,
+      duration_us: 10_000_000,
+      tracks: [
       {
         id: "t1", kind: "Video", label: "A-Roll", enabled: true, locked: false,
         muted: false, solo: false, role: "a-roll", transient: false,
@@ -80,10 +86,10 @@ function fixtureSummary(): ProjectSummary {
         ],
       },
     ],
-    markers: [],
-    links: [],
-    audio_roles: [],
-  };
+      markers: [],
+      links: [],
+    },
+  });
 }
 
 beforeEach(() => {
@@ -159,7 +165,7 @@ describe("seekToPrevEdit / seekToNextEdit", () => {
     // Stretch l2 to the composition end: its t_end (10s) is exclusive, so
     // "next edit" from 6s parks on the last frame's start, not on 10s.
     const summary = fixtureSummary();
-    summary.tracks[0]!.layers[1]!.t_end_us = 10_000_000;
+    rootOf(summary).tracks[0]!.layers[1]!.t_end_us = 10_000_000;
     useProjectStore.getState().apply(summary);
     setPlayheadTimeUs(6_000_000);
     seekToNextEdit();

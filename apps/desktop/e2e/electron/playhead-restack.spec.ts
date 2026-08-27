@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 
-import { dockPanel, dockTab, invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver'
+import { dockPanel, dockTab, invokeCmd, launchApp, newProject, tmpDir, rootSummary } from './helpers/driver'
 
 /**
  * Playhead Panel z-order restack in the real app (ADR 0044).
@@ -26,7 +26,7 @@ interface StackSummary {
   tracks: Array<{ id: string; role: string | null; layers: Array<{ id: string }> }>
 }
 
-const stackSummary = (page: Page) => invokeCmd<StackSummary>(page, 'project_summary', {})
+const stackSummary = (page: Page) => rootSummary<StackSummary>(page)
 
 /// The overlay stack as the PROJECT holds it: layer ids on role-less tracks in
 /// track-vector order, bottom-of-z first. The real-stacking assertions read

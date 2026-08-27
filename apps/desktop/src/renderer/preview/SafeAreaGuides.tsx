@@ -16,7 +16,7 @@ import { useEffect, useRef } from "react";
 
 import type { CompositionSummary } from "../ipc";
 import { useSafeAreaGuidesVisible } from "../settings/appSettingsStore";
-import { useProjectStore } from "../state/projectStore";
+import { compositionOrRoot, useProjectStore } from "../state/projectStore";
 import { compToClient, containFit } from "./gizmoGeometry";
 import { getGizmoProbe } from "./gizmoProbeRegistry";
 
@@ -58,7 +58,8 @@ const SAFE_AREA_UNDER_WIDTH_PX = 3;
 /// selection nor playhead: a safe area does not move.
 export function SafeAreaGuidesHost() {
   const visible = useSafeAreaGuidesVisible();
-  const composition = useProjectStore((s) => s.summary?.composition);
+  // The ROOT — the frame the preview draws (see PreviewSurface).
+  const composition = useProjectStore((s) => compositionOrRoot(s.summary, null));
   if (!visible || !composition) return null;
   return <SafeAreaGuides composition={composition} />;
 }

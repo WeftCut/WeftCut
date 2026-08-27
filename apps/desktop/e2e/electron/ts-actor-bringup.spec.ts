@@ -7,8 +7,11 @@ import { launchApp } from './helpers/driver'
 // the renderer asks for state.
 
 interface Summary {
-  tracks: Array<{ id: string; layers: Array<{ id: string; params: { kind: string } }> }>
+  root_id: string
+  compositions: Record<string, { tracks: Array<{ id: string; layers: Array<{ id: string; params: { kind: string } }> }> }>
 }
+/// The root's timeline — where every channel driven here lands.
+const rootOf = (s: Summary) => s.compositions[s.root_id]!
 const invoke = <T = unknown>(page: Page, cmd: string, args: Record<string, unknown> = {}) =>
   page.evaluate(([c, a]) => (window as any).api.backend.invoke(c, a), [cmd, args] as const) as Promise<T>
 
@@ -22,7 +25,7 @@ test('bring-up: project summary is available immediately after boot (no flag)', 
     // the two reserved tracks. If the actor were not ready at boot, this summary
     // pull would fail.
     const summary = await invoke<Summary>(page, 'project_summary')
-    expect(summary.tracks.length).toBeGreaterThanOrEqual(2)
+    expect(rootOf(summary).tracks.length).toBeGreaterThanOrEqual(2)
   } finally {
     await app.close()
   }

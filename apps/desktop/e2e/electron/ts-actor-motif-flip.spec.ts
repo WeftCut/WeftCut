@@ -10,13 +10,16 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 // independently covered by motif-preview/motif-export/motif-capture specs.)
 
 interface Summary {
-  tracks: Array<{ id: string; layers: Array<{ id: string; params: { kind: string; motif_id?: string } }> }>
+  root_id: string
+  compositions: Record<string, { tracks: Array<{ id: string; layers: Array<{ id: string; params: { kind: string; motif_id?: string } }> }> }>
 }
+/// The root's timeline — where every channel driven here lands.
+const rootOf = (s: Summary) => s.compositions[s.root_id]!
 const invoke = <T = unknown>(page: Page, cmd: string, args: Record<string, unknown> = {}) =>
   page.evaluate(([c, a]) => (window as any).api.backend.invoke(c, a), [cmd, args] as const) as Promise<T>
-const layerCount = (s: Summary) => s.tracks.reduce((n, t) => n + t.layers.length, 0)
+const layerCount = (s: Summary) => rootOf(s).tracks.reduce((n, t) => n + t.layers.length, 0)
 const motifLayers = (s: Summary) =>
-  s.tracks.flatMap((t) => t.layers).filter((l) => l.params.kind === 'Motif')
+  rootOf(s).tracks.flatMap((t) => t.layers).filter((l) => l.params.kind === 'Motif')
 
 // Parse the `[mcp] connect: {…}` line the host logs in unpackaged runs (mcp/index.ts).
 function parseConnect(line: string): { url: string; token: string } | null {

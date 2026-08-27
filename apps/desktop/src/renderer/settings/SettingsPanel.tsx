@@ -14,10 +14,8 @@ import {
   dataRootPendingCleanup,
   dataRootPickAndMigrate,
   dataRootRelaunch,
-  fitCompositionToLayers,
   recentsGetReopenOnLaunch,
   recentsSetReopenOnLaunch,
-  setComposition,
   settingsClearApiKey,
   settingsSetApiKey,
   settingsTestProvider,
@@ -29,6 +27,7 @@ import {
   type SpeechBackendsView,
   type PreferredEngine,
 } from "../ipc";
+import { fitCompositionToLayersOf, setCompositionOf } from "../ipc/compositionScoped";
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { open as openFileDialog } from "@/bridge/dialog";
 import { formatTimecode, parseTimecode, wallClockAside } from "../frames";
@@ -90,6 +89,9 @@ const CATEGORIES: ReadonlyArray<{ id: SettingsCategory; labelKey: string }> = [
 ];
 
 export interface CompositionState {
+  /// The composition these fields describe — the OPEN one, which is also the
+  /// one the form's `set_composition` / `fit_composition_to_layers` name.
+  id: string;
   durationUs: number;
   durationPinned: boolean;
   /// Live `max(layer.t_end_us)` — the floor a pinned duration can't sit
@@ -1004,7 +1006,7 @@ export function CanvasSection({
     setBusy(true);
     onError("");
     try {
-      await setComposition(fields);
+      await setCompositionOf(composition.id, fields);
       await onChanged();
       setDraft(null);
     } catch (e) {
@@ -1221,9 +1223,9 @@ function CompositionSection({
       if (next) {
         // Pin at the current auto-fitted value — the user can edit the
         // input afterward to change it.
-        await setComposition({ duration_us: composition.durationUs });
+        await setCompositionOf(composition.id, { duration_us: composition.durationUs });
       } else {
-        await fitCompositionToLayers();
+        await fitCompositionToLayersOf(composition.id);
       }
       await onChanged();
     } catch (e) {
@@ -1250,7 +1252,7 @@ function CompositionSection({
     setBusy(true);
     onError("");
     try {
-      await setComposition({ duration_us: parsed });
+      await setCompositionOf(composition.id, { duration_us: parsed });
       await onChanged();
       setDraft(null);
     } catch (e) {

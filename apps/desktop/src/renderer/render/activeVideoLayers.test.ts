@@ -14,8 +14,9 @@ const layer = (over: Record<string, unknown>) => ({
     fade_in_us: 0, fade_out_us: 0 },
   ...over,
 });
+/// The tracks land on the ROOT — the composition export walks.
 const summaryOf = (tracks: unknown[]): ProjectSummary =>
-  ({ tracks } as unknown as ProjectSummary);
+  ({ root_id: "root", compositions: { root: { tracks } } } as unknown as ProjectSummary);
 
 describe("selectActiveVideoLayers", () => {
   it("selects enabled VideoClip layers on enabled tracks overlapping [aUs, bUs]", () => {

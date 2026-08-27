@@ -30,7 +30,7 @@ import { linkOverrideOn } from "../state/linkOverrideStore";
 import { playheadTimeUs } from "../state/playheadStore";
 import { hasMarkedRange } from "../state/rangeStore";
 import { hasTransitionCut } from "../timeline/applyTransition";
-import { useProjectStore } from "../state/projectStore";
+import { currentOpenComposition } from "../state/projectStore";
 import { useSelectionStore } from "../state/selectionStore";
 import { activeTool } from "../state/toolStore";
 import { layerOverlapClass } from "../timeline/geometry";
@@ -204,18 +204,18 @@ interface CenterTarget {
 /// documents: this runs inside `listCommands()`, and App re-renders on neither.
 function centerTarget(): CenterTarget | null {
   const layerId = useSelectionStore.getState().primaryLayerId;
-  const summary = useProjectStore.getState().summary;
-  if (!layerId || !summary) return null;
-  for (const track of summary.tracks) {
+  const comp = currentOpenComposition();
+  if (!layerId || !comp) return null;
+  for (const track of comp.tracks) {
     for (const layer of track.layers) {
       if (layer.id !== layerId) continue;
       if (!TRANSFORMABLE_KINDS.has(layer.params.kind)) return null;
       return {
         layer,
-        compW: summary.composition.width,
-        compH: summary.composition.height,
-        fpsNum: summary.composition.fps_num,
-        fpsDen: summary.composition.fps_den,
+        compW: comp.width,
+        compH: comp.height,
+        fpsNum: comp.fps_num,
+        fpsDen: comp.fps_den,
       };
     }
   }
@@ -296,7 +296,7 @@ async function centerPrimaryLayer(axis: "x" | "y"): Promise<void> {
 function canMoveSelectionToNewTrack(): boolean {
   const selected = useSelectionStore.getState().selectedLayerIds;
   if (selected.size === 0) return false;
-  const tracks = useProjectStore.getState().summary?.tracks ?? [];
+  const tracks = currentOpenComposition()?.tracks ?? [];
   const placements: TimelinePlacement[] = [];
   for (const track of tracks) {
     for (const layer of track.layers) {

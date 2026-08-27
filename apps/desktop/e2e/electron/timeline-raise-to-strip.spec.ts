@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { importAndPlaceMedia, invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
+import { importAndPlaceMedia, invokeCmd, launchApp, newProject, tmpDir, waitForHook, rootSummary } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // A still image is ready the moment it is imported — no proxy job, so nothing
@@ -15,7 +15,7 @@ interface RaiseSummary {
   tracks: Array<{ id: string; role: string | null; layers: Array<{ id: string }> }>
 }
 
-const raiseSummary = (page: Page) => invokeCmd<RaiseSummary>(page, 'project_summary', {})
+const raiseSummary = (page: Page) => rootSummary<RaiseSummary>(page)
 
 const laneHolding = (s: RaiseSummary, layerId: string): string | null =>
   s.tracks.find((t) => t.layers.some((l) => l.id === layerId))?.id ?? null

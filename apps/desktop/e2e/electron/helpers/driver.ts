@@ -359,13 +359,44 @@ export async function invokeCmd<T = unknown>(
   )) as T
 }
 
-/// The current project summary (tracks → layers + composition). Loosely typed;
-/// callers narrow the fields they read.
-export interface ProjectSummary {
-  composition: { fps_num: number; fps_den: number }
-  tracks: Array<{ id: string; layers: Array<{ id: string; params: { kind: string } }> }>
+/// One composition on the wire — the root and every Group share the shape
+/// (`main/state/summary.ts` CompositionSummary). Loosely typed; callers narrow
+/// the fields they read.
+export interface CompositionSummary {
+  id: string
+  label: string | null
+  fps_num: number
+  fps_den: number
+  duration_us: number
+  tracks: Array<{ id: string; role?: string | null; label?: string | null; layers: Array<{ id: string; params: { kind: string } }> }>
+  markers: unknown[]
+  links: unknown[]
 }
-export const summary = (page: Page) => invokeCmd<ProjectSummary>(page, 'project_summary', {})
+/// The project summary as `project_summary` returns it: every composition keyed
+/// by id, the root named by `root_id`.
+export interface ProjectSummaryWire {
+  root_id: string
+  compositions: Record<string, CompositionSummary>
+  track_count: number
+  layer_count: number
+  media: Array<{ id: string }>
+}
+/// The project fields with the ROOT's timeline spread flat — `s.tracks`,
+/// `s.links`, `s.markers`, `s.duration_us` — which is how every spec in this
+/// suite reads it: they all edit the root. `composition-scope.spec.ts` is the
+/// one that opens a Group, and it reads `compositions` itself.
+export type ProjectSummary = ProjectSummaryWire & CompositionSummary
+export function flattenRoot<T = ProjectSummary>(s: ProjectSummaryWire): T {
+  const root = s.compositions[s.root_id]
+  if (!root) throw new Error(`project_summary carries no root composition ${s.root_id}`)
+  return { ...s, ...root } as unknown as T
+}
+export const summary = async (page: Page): Promise<ProjectSummary> =>
+  flattenRoot(await invokeCmd<ProjectSummaryWire>(page, 'project_summary', {}))
+/// `summary` with the caller's own narrowing, for the specs that declare the
+/// handful of fields they read.
+export const rootSummary = async <T>(page: Page): Promise<T> =>
+  flattenRoot<T>(await invokeCmd<ProjectSummaryWire>(page, 'project_summary', {}))
 
 /// What `TextSprite` did with a Text layer's box, off the live `GizmoProbe` (the
 /// `textBoxProbe` hook). Shared because everything ADR 0049 derives — the

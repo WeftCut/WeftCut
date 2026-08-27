@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import "../i18n";
 
-import type { ProjectSummary } from "../ipc";
+import { summaryFixture } from "../testing/summaryFixture";
 
 const mocks = vi.hoisted(() => ({
   renameMarker: vi.fn(),
@@ -34,13 +34,13 @@ import {
 } from "./markerRenamePrompt";
 
 function seedMarker(id: string, label: string): void {
-  useProjectStore.setState({
-    summary: {
-      markers: [
-        { id, t_us: 80_000, end_t_us: null, label, color_hint: "#0080ff" },
-      ],
-    } as unknown as ProjectSummary,
-  });
+  useProjectStore.getState().apply(
+    summaryFixture({
+      root: {
+        markers: [{ id, t_us: 80_000, end_t_us: null, label, color_hint: "#0080ff" }],
+      },
+    }),
+  );
 }
 
 function input(): HTMLInputElement {

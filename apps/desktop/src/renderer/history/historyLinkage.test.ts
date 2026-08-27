@@ -9,27 +9,26 @@ import {
   useSelectionStore,
 } from "../state/selectionStore";
 import { afterNextProjectSummary, revealAffected } from "./historyLinkage";
+import { summaryFixture } from "../testing/summaryFixture";
 
 /// Two tracks, two layers. Only the fields the linkage touches need to be
 /// realistic.
 function fixtureSummary(layerIds: string[] = ["l1", "l2"]): ProjectSummary {
-  return {
+  return summaryFixture({
     project_id: "p1",
     name: "fixture",
-    composition: {
+    media: [],
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+    audio_roles: [],
+    root: {
       width: 1920,
       height: 1080,
       fps_num: 30,
       fps_den: 1,
       duration_pinned: false,
       fps_locked: false,
-    },
-    track_count: 2,
-    layer_count: layerIds.length,
-    duration_us: 10_000_000,
-    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
-    media: [],
-    tracks: [
+      duration_us: 10_000_000,
+      tracks: [
       {
         id: "t1",
         kind: "Video",
@@ -71,10 +70,10 @@ function fixtureSummary(layerIds: string[] = ["l1", "l2"]): ProjectSummary {
         layers: [],
       },
     ],
-    markers: [],
-    links: [],
-    audio_roles: [],
-  } as unknown as ProjectSummary;
+      markers: [],
+      links: [],
+    },
+  }) as unknown as ProjectSummary;
 }
 
 beforeEach(() => {

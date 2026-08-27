@@ -11,7 +11,7 @@ import {
   launchApp,
   newProject,
   tmpDir,
-  waitForHook,
+  waitForHook, rootSummary,
 } from "./helpers/driver";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -104,7 +104,7 @@ interface HistoryView {
   cursor: number;
 }
 const history = async (page: Page): Promise<HistoryView> => {
-  const s = await invokeCmd<{ history: HistoryView }>(page, "project_summary", {});
+  const s = await rootSummary<{ history: HistoryView }>(page);
   return s.history;
 };
 
@@ -441,11 +441,7 @@ test("Workspace mutations never change Project undo depth, and a business edit a
     await setupEditor(page, "dock-undo");
 
     const layerCount = async (): Promise<number> => {
-      const s = await invokeCmd<{ tracks: Array<{ layers: unknown[] }> }>(
-        page,
-        "project_summary",
-        {},
-      );
+      const s = await rootSummary<{ tracks: Array<{ layers: unknown[] }> }>(page);
       return s.tracks.reduce((n, t) => n + t.layers.length, 0);
     };
 
@@ -520,9 +516,9 @@ test("selection and business Panels keep working after a Panel move and a Worksp
     );
 
     const effectOrder = async (): Promise<string[]> => {
-      const s = await invokeCmd<{
+      const s = await rootSummary<{
         tracks: Array<{ layers: Array<{ id: string; effects?: Array<{ id: string }> }> }>;
-      }>(page, "project_summary", {});
+      }>(page);
       for (const track of s.tracks) {
         for (const layer of track.layers) {
           if (layer.id === layerId) return (layer.effects ?? []).map((e) => e.id);

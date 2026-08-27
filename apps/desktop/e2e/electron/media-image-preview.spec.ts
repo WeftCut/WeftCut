@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir } from './helpers/driver'
+import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, rootSummary } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const FIXTURE = path.resolve(__dirname, '../fixtures/media/test_chart_320x240.png')
@@ -23,9 +23,9 @@ test.describe('still image media preview', () => {
       const placed = await importAndPlaceMedia(page, { mediaAbsPath: FIXTURE, tStartUs: 0 })
       expect(placed.kind).toBe('Image')
 
-      const summary = await invokeCmd<{
+      const summary = await rootSummary<{
         tracks: Array<{ layers: Array<{ id: string; params: { kind: string } }> }>
-      }>(page, 'project_summary', {})
+      }>(page)
       const layer = summary.tracks.flatMap((t) => t.layers).find((l) => l.id === placed.layerId)
       expect(layer?.params.kind).toBe('ImageOverlay')
 

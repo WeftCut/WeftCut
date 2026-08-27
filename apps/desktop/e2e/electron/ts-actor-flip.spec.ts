@@ -11,11 +11,14 @@ import { launchApp, tmpDir } from './helpers/driver'
 // save → cross-workspace persistence round-trip.
 
 interface Summary {
-  tracks: Array<{ id: string; layers: Array<{ id: string; params: { kind: string } }> }>
+  root_id: string
+  compositions: Record<string, { tracks: Array<{ id: string; layers: Array<{ id: string; params: { kind: string } }> }> }>
 }
+/// The root's timeline — where every channel driven here lands.
+const rootOf = (s: Summary) => s.compositions[s.root_id]!
 const invoke = <T = unknown>(page: Page, cmd: string, args: Record<string, unknown> = {}) =>
   page.evaluate(([c, a]) => (window as any).api.backend.invoke(c, a), [cmd, args] as const) as Promise<T>
-const layerCount = (s: Summary) => s.tracks.reduce((n, t) => n + t.layers.length, 0)
+const layerCount = (s: Summary) => rootOf(s).tracks.reduce((n, t) => n + t.layers.length, 0)
 
 test('TS actor: edit → summary → undo/redo → save → workspace-switch round-trip', async () => {
   const ws = tmpDir('wc-flip-')
@@ -35,7 +38,7 @@ test('TS actor: edit → summary → undo/redo → save → workspace-switch rou
     await invoke(page, 'add_color_layer', { tStartUs: 0 })
     const afterAdd = await invoke<Summary>(page, 'project_summary')
     expect(layerCount(afterAdd)).toBe(1)
-    expect(afterAdd.tracks.some((t) => t.layers.some((l) => l.params.kind === 'Color'))).toBe(true)
+    expect(rootOf(afterAdd).tracks.some((t) => t.layers.some((l) => l.params.kind === 'Color'))).toBe(true)
 
     // Undo / redo through the TS actor's history.
     await invoke(page, 'project_undo')

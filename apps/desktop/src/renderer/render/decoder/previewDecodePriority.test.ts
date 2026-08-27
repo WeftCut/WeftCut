@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { LayerSummary, ProjectSummary, TrackSummary } from "../../ipc";
+import type { CompositionSummary, LayerSummary, TrackSummary } from "../../ipc";
 import { planPreviewDecodePriority } from "./previewDecodePriority";
+import { rootOf, summaryFixture } from "../../testing/summaryFixture";
 
 function video(
   id: string,
@@ -42,7 +43,7 @@ function video(
   };
 }
 
-function summary(layers: LayerSummary[]): ProjectSummary {
+function summary(layers: LayerSummary[]): CompositionSummary {
   const track: TrackSummary = {
     id: "track",
     kind: "Video",
@@ -55,27 +56,25 @@ function summary(layers: LayerSummary[]): ProjectSummary {
     transient: false,
     layers,
   };
-  return {
+  return rootOf(summaryFixture({
     project_id: "project",
     name: "Priority",
-    composition: {
+    media: [],
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+    audio_roles: [],
+    root: {
       width: 1920,
       height: 1080,
       fps_num: 30,
       fps_den: 1,
       duration_pinned: false,
       fps_locked: false,
+      duration_us: 20_000_000,
+      tracks: [track],
+      markers: [],
+      links: [],
     },
-    track_count: 1,
-    layer_count: layers.length,
-    duration_us: 20_000_000,
-    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
-    media: [],
-    tracks: [track],
-    markers: [],
-    links: [],
-    audio_roles: [],
-  };
+  }));
 }
 
 describe("preview decode priority plan", () => {

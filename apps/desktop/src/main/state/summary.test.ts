@@ -7,7 +7,7 @@ import {
 import { seededGen } from './ids'
 import { blankProject } from './model'
 import { createActor } from './actor'
-import { root, withGroup } from './__tests__/fixtures/project'
+import { root, withGroup, groupedProject } from './__tests__/fixtures/project'
 import { applyAddLayer, colorParams } from './mutations/add'
 
 const stat = <T>(value: T) => ({ mode: 'Static' as const, value })
@@ -142,28 +142,31 @@ describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)
     const s = buildProjectSummary(actor.snapshot(), actor.historyStatus(), NEVER)
     expect(s.name).toBe('demo')
     expect([s.track_count, s.layer_count]).toEqual([2, 0]) // A-roll + B-roll, no layers
+    expect(Object.keys(s.compositions)).toEqual([s.root_id])
+    const r = s.compositions[s.root_id]!
     // fps_locked false on a blank project: nothing in the stack has ever held a layer.
-    expect(s.composition).toEqual({ width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false })
+    expect(r).toMatchObject({ id: s.root_id, label: null, width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_us: 0, duration_pinned: false, fps_locked: false })
     expect(s.audio_roles.map((r) => r.role)).toEqual(['dialogue', 'music', 'sfx', 'voiceover']) // ALL order
     expect(s.audio_roles[0]).toEqual({ role: 'dialogue', gain_db: 0, muted: false, solo: false }) // defaults filled
     expect([s.history.cursor, s.history.len, s.history.can_undo, s.history.can_redo]).toEqual([0, 1, false, false])
     expect(s.history.lock_reason).toBeUndefined() // skip_serializing_if=Option::is_none → absent
-    expect([s.media, s.markers, s.links]).toEqual([[], [], []])
+    expect([s.media, r.markers, r.transitions, r.links]).toEqual([[], [], [], []])
   })
   /// The settings panel disables its rate control off this one flag, so it has to
   /// carry the HISTORY-scoped truth, not just "are there layers right now".
-  it('composition.fps_locked follows the stored history, not the live layer count', () => {
+  it('fps_locked follows the stored history, not the live layer count', () => {
     const gen = seededGen()
     const initial = blankProject(gen, 'lock')
     const actor = createActor({ initial, idGen: gen, clock: () => '<TS>' })
     const added = actor.dispatch('add_layer', { track: root(initial).tracks[0].id, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
-    expect(buildProjectSummary(actor.snapshot(), actor.historyStatus(), NEVER).composition.fps_locked).toBe(true)
+    const locked = buildProjectSummary(actor.snapshot(), actor.historyStatus(), NEVER)
+    expect(locked.compositions[locked.root_id]!.fps_locked).toBe(true)
 
     // Delete it: the timeline is empty again, but undo still reaches the layer.
     expect(actor.dispatch('delete_layer', { layer: added.ok ? added.value : '' }).ok).toBe(true)
     const s = buildProjectSummary(actor.snapshot(), actor.historyStatus(), NEVER)
     expect(s.layer_count).toBe(0)
-    expect(s.composition.fps_locked).toBe(true)
+    expect(s.compositions[s.root_id]!.fps_locked).toBe(true)
   })
 
   it('a built project: track kind, layer kind/color_hint, media sorted desc + label', () => {
@@ -179,10 +182,10 @@ describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)
       '00000000-0000-0000-0000-0000000000bb', '00000000-0000-0000-0000-0000000000aa',
     ])
     expect(s.media[0]).toMatchObject({ label: 'clip.bin', kind: 'Audio', available: false, decode_route: { route: 'bypass' } })
-    const t0 = s.tracks[0]
+    const t0 = s.compositions[s.root_id]!.tracks[0]!
     expect(t0.kind).toBe('Video')
-    expect(t0.layers[0].kind).toBe('Color')
-    expect(t0.layers[0].color_hint).toBe('#ff0000') // default add_layer color is red (255,0,0)
+    expect(t0.layers[0]!.kind).toBe('Color')
+    expect(t0.layers[0]!.color_hint).toBe('#ff0000') // default add_layer color is red (255,0,0)
     expect(s.layer_count).toBe(1)
   })
   it('track roles emit kebab wire form (ARoll→a-roll, BRoll→b-roll)', () => {
@@ -192,7 +195,7 @@ describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)
     const initial = blankProject(gen, 'demo')
     const actor = createActor({ initial, idGen: gen, clock: () => '<TS>' })
     const s = buildProjectSummary(actor.snapshot(), actor.historyStatus(), NEVER)
-    expect(s.tracks.map((t) => t.role)).toEqual(['a-roll', 'b-roll'])
+    expect(s.compositions[s.root_id]!.tracks.map((t) => t.role)).toEqual(['a-roll', 'b-roll'])
   })
 })
 
@@ -206,23 +209,55 @@ function textParamsLite(): Omit<Extract<LayerParams, { kind: 'Text' }>, 'kind'> 
   }
 }
 
-describe('buildProjectSummary projects the ROOT composition (the flat shim)', () => {
+describe('buildProjectSummary carries every composition', () => {
   const HISTORY = { cursor: 0, len: 1, can_undo: false, can_redo: false, holds_layer_anywhere: false }
-  it('a Group changes nothing the renderer sees except the layer that references it', () => {
+  it('the root entry of a Grouped project is the flat summary plus the lane its reference lives on', () => {
     const gen = seededGen()
     const p = blankProject(gen, 'shim')
     applyAddLayer(p, gen, root(p).tracks[0].id, colorParams({ r: 1, g: 2, b: 3, a: 255 }, 16, 9), 0, 1_000_000)
-    const flat = JSON.stringify(buildProjectSummary(p, HISTORY, NEVER))
+    const before = buildProjectSummary(p, HISTORY, NEVER)
+    const flatRoot = JSON.stringify(before.compositions[before.root_id])
     const { p: grouped, groupId, refLayerId } = withGroup(p, gen, (g, view) => applyAddLayer(view, gen, g.tracks[0].id, colorParams({ r: 9, g: 9, b: 9, a: 255 }, 16, 9), 0, 1_000_000))
     grouped.compositions[groupId].label = 'Lower third'
     const s = buildProjectSummary(grouped, HISTORY, NEVER)
-    // Drop the fresh lane the Group's reference lives on: byte for byte, the rest IS the flat summary.
-    const withoutRefLane = { ...s, tracks: s.tracks.filter((t) => !t.layers.some((l) => l.id === refLayerId)), track_count: s.track_count - 1, layer_count: s.layer_count - 1 }
-    expect(JSON.stringify(withoutRefLane)).toBe(flat)
-    // The Group's own layers never reach the summary; its reference does, as a view.
-    expect(s.layer_count).toBe(2)
-    const ref = s.tracks.flatMap((t) => t.layers).find((l) => l.id === refLayerId)!
+    expect(s.root_id).toBe(before.root_id)
+    expect(Object.keys(s.compositions).sort()).toEqual([s.root_id, groupId].sort())
+    // Drop the fresh lane the Group's reference lives on: byte for byte, the rest IS the root entry from before.
+    const r = s.compositions[s.root_id]!
+    const withoutRefLane = { ...r, tracks: r.tracks.filter((t) => !t.layers.some((l) => l.id === refLayerId)) }
+    expect(JSON.stringify(withoutRefLane)).toBe(flatRoot)
+    // The reference projects as a view carrying the Group's label.
+    const ref = r.tracks.flatMap((t) => t.layers).find((l) => l.id === refLayerId)!
     expect(ref.kind).toBe('CompositionRef')
     expect(ref.params).toMatchObject({ kind: 'CompositionRef', composition_id: groupId, composition_label: 'Lower third', src_in_us: 0, src_out_us: 1_000_000, scale_linked: true })
+  })
+
+  it('a Group entry carries its own timeline, label and duration', () => {
+    const { p, groupId, innerId, innerTrackId } = groupedProject()
+    p.compositions[groupId].label = 'Title card'
+    const s = buildProjectSummary(p, HISTORY, NEVER)
+    const g = s.compositions[groupId]!
+    expect(g).toMatchObject({ id: groupId, label: 'Title card', duration_us: 1_000_000, duration_pinned: false })
+    expect(g.tracks.map((t) => t.id)).toContain(innerTrackId)
+    expect(g.tracks.flatMap((t) => t.layers).map((l) => l.id)).toEqual([innerId])
+    // The root never lists the Group's layers, only the reference.
+    expect(s.compositions[s.root_id]!.tracks.flatMap((t) => t.layers).map((l) => l.id)).not.toContain(innerId)
+  })
+
+  it('track_count and layer_count span every composition', () => {
+    const { p, groupId } = groupedProject()
+    const s = buildProjectSummary(p, HISTORY, NEVER)
+    const perComp = Object.values(s.compositions)
+    expect(s.track_count).toBe(perComp.reduce((n, c) => n + c.tracks.length, 0))
+    expect(s.layer_count).toBe(perComp.reduce((n, c) => n + c.tracks.reduce((m, t) => m + t.layers.length, 0), 0))
+    // Root: A + B roll + the reference lane (1 layer); Group: A + B roll (1 layer).
+    expect(s.compositions[s.root_id]!.tracks.length + s.compositions[groupId]!.tracks.length).toBe(s.track_count)
+    expect(s.layer_count).toBe(2)
+  })
+
+  it('fps_locked is one project-wide answer repeated on every entry', () => {
+    const { p } = groupedProject()
+    const s = buildProjectSummary(p, { ...HISTORY, holds_layer_anywhere: true }, NEVER)
+    expect(Object.values(s.compositions).map((c) => c.fps_locked)).toEqual([true, true])
   })
 })

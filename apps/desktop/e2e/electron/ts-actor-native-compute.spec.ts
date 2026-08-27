@@ -41,8 +41,11 @@ const AUDIO_FIXTURE = path.resolve(MEDIA_DIR, 'test_tones_10s.m4a')
 // view is { kind: 'Audio', media_id, ... } (layerParamsView).
 interface Summary {
   media: Array<{ id: string; conform_path?: string | null }>
-  tracks: Array<{ id: string; layers: Array<{ id: string; params: { kind: string; media_id?: string } }> }>
+  root_id: string
+  compositions: Record<string, { tracks: Array<{ id: string; layers: Array<{ id: string; params: { kind: string; media_id?: string } }> }> }>
 }
+/// The root's timeline — where every channel driven here lands.
+const rootOf = (s: Summary) => s.compositions[s.root_id]!
 
 // The TS host returns PARSED values from handleInvoke (ts-actor-host.ts):
 // project_summary → a Summary object, add_media_layer → the new layer-id
@@ -100,7 +103,7 @@ test('TS actor native-compute: import_media hybrid + audio layer visible in TS-a
     // → trackId/mediaId/tStartUs) and the renderer's addMediaLayer invoke
     // (ipc/index.ts:454). A pure-Audio media item yields an Audio-kind layer with
     // no auto-pair (commands.ts prodMediaLayer).
-    const trackId = afterImport.tracks[0]?.id
+    const trackId = rootOf(afterImport).tracks[0]?.id
     expect(typeof trackId).toBe('string')
     const newLayerId = await invoke<string>(page, 'add_media_layer', {
       trackId,
@@ -115,7 +118,7 @@ test('TS actor native-compute: import_media hybrid + audio layer visible in TS-a
     // (export_project_audio_only / ensure_export_audio_conform) consult via the
     // injected project.
     const afterPlace = await invoke<Summary>(page, 'project_summary')
-    const audioLayers = afterPlace.tracks.flatMap((t) => t.layers).filter((l) => l.params.kind === 'Audio')
+    const audioLayers = rootOf(afterPlace).tracks.flatMap((t) => t.layers).filter((l) => l.params.kind === 'Audio')
     expect(audioLayers.length).toBeGreaterThan(0)
     expect(audioLayers.some((l) => l.params.media_id === mediaId)).toBe(true)
 

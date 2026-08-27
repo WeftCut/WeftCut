@@ -15,10 +15,10 @@
 // of those re-render App. Same rule `appCommands.ts` spells out for
 // `clearRange`.
 
-import { splitLayerLinked, type ProjectSummary } from "../ipc";
+import { splitLayerLinked, type CompositionSummary } from "../ipc";
 import { displayMode } from "../settings/appSettingsStore";
 import { playheadTimeUs } from "../state/playheadStore";
-import { useProjectStore } from "../state/projectStore";
+import { currentOpenComposition } from "../state/projectStore";
 import { useSelectionStore } from "../state/selectionStore";
 import { linkFanoutActive } from "../timeline/linkEligibility";
 
@@ -60,14 +60,14 @@ export interface SplitTarget {
  * because the split it gets sent is `escape_link: true` and cuts nothing else.
  */
 export function resolveSplitTargets(
-  summary: ProjectSummary,
+  composition: CompositionSummary,
   tUs: number,
   selected: ReadonlySet<string>,
   abRollFilter: boolean,
   linkFanout = true,
 ): SplitTarget[] {
   const linkOf = new Map<string, string>();
-  for (const link of summary.links) {
+  for (const link of composition.links) {
     for (const layerId of link.layer_ids) linkOf.set(layerId, link.id);
   }
 
@@ -80,7 +80,7 @@ export function resolveSplitTargets(
   ): SplitTarget[] => {
     const out: SplitTarget[] = [];
     const claimedLinks = new Set<string>();
-    for (const track of summary.tracks) {
+    for (const track of composition.tracks) {
       if (track.locked || !rowVisible(track.role === null)) continue;
       for (const layer of track.layers) {
         if (layer.locked) continue;
@@ -127,8 +127,10 @@ export function resolveSplitTargets(
  * common case at N = 1.
  */
 export async function splitAtPlayhead(): Promise<void> {
-  const summary = useProjectStore.getState().summary;
-  if (!summary) return;
+  // The OPEN composition: the playhead runs on its axis and the selection is
+  // one of its layers.
+  const composition = currentOpenComposition();
+  if (!composition) return;
   // Read ONCE: the playhead moves under playback, and resolving the targets
   // against one instant and cutting at another would send a time that no
   // longer falls inside the clip the resolve picked.
@@ -136,7 +138,7 @@ export async function splitAtPlayhead(): Promise<void> {
   // Read once too, so the target list and the escape flag agree.
   const fanout = linkFanoutActive();
   const targets = resolveSplitTargets(
-    summary,
+    composition,
     tUs,
     useSelectionStore.getState().selectedLayerIds,
     displayMode() === "AbRoll",

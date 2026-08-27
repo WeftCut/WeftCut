@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver'
+import { invokeCmd, launchApp, newProject, tmpDir, rootSummary } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // A still image is ready the moment it is in the pool — no proxy, so the card is
@@ -19,7 +19,7 @@ interface StripSummary {
   media: Array<{ id: string }>
 }
 
-const stripSummary = (page: Page) => invokeCmd<StripSummary>(page, 'project_summary', {})
+const stripSummary = (page: Page) => rootSummary<StripSummary>(page)
 
 /// Drive the media pool → timeline HTML5 drag the way the app's own handlers see
 /// it. Not `locator.dragTo`: the two ends live in different dock panels, and the

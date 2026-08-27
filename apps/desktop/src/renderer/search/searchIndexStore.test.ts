@@ -4,18 +4,14 @@ import i18n from "../i18n";
 import type { ProjectSummary } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
 import { useSearchIndexStore, wireSearchIndex } from "./searchIndexStore";
+import { summaryFixture } from "../testing/summaryFixture";
 
 // Same fixture shape as buildEntries.test.ts — copied in (one media m1, one
 // track t1 with clip l1). Varies media label per test via a parameter.
 function fixtureSummary(label = "beach.mp4"): ProjectSummary {
-  return {
+  return summaryFixture({
     project_id: "p1",
     name: "fixture",
-    composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false },
-    track_count: 1,
-    layer_count: 1,
-    duration_us: 10_000_000,
-    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
     media: [
       {
         id: "m1", label, path: `C:/x/${label}`, kind: "Video",
@@ -24,7 +20,17 @@ function fixtureSummary(label = "beach.mp4"): ProjectSummary {
         codec: "h264", pix_fmt: "yuv420p",
       },
     ],
-    tracks: [
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
+    audio_roles: [],
+    root: {
+      width: 1920,
+      height: 1080,
+      fps_num: 30,
+      fps_den: 1,
+      duration_pinned: false,
+      fps_locked: false,
+      duration_us: 10_000_000,
+      tracks: [
       {
         id: "t1", kind: "Video", label: "A-Roll", enabled: true, locked: false,
         muted: false, solo: false, role: "a-roll", transient: false,
@@ -48,10 +54,10 @@ function fixtureSummary(label = "beach.mp4"): ProjectSummary {
         ],
       },
     ],
-    markers: [],
-    links: [],
-    audio_roles: [],
-  };
+      markers: [],
+      links: [],
+    },
+  });
 }
 
 let teardown: (() => void) | null = null;
