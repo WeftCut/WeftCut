@@ -293,6 +293,23 @@ pub enum CommandError {
     LinkCreateNeedsTwoLayers { got: usize },
     #[error("layer {layer} is not a member of link {link}")]
     LayerNotInLink { link: LinkId, layer: LayerId },
+    /// Pre-compose met a locked member; it takes every selected layer or none.
+    #[error("layer {layer} is locked; pre-compose moves every selected layer or none")]
+    GroupLockedMember { layer: LayerId },
+    /// Ungroup on a Group layer whose transform / opacity / effects are not the
+    /// identity — expanding would discard them silently.
+    #[error("Group layer {layer} is not plain: ungroup would discard its {reason}")]
+    GroupNotPlain {
+        layer: LayerId,
+        reason: GroupNotPlainReason,
+    },
+    #[error("composition {composition} is referenced by {ref_count} Group layer(s)")]
+    CompositionInUse {
+        composition: CompositionId,
+        ref_count: usize,
+    },
+    #[error("composition {composition} is the root; it is never renamed or deleted")]
+    RootComposition { composition: CompositionId },
     #[error("nothing to undo")]
     NothingToUndo,
     #[error("nothing to redo")]
@@ -319,6 +336,29 @@ pub enum CommandError {
     /// from validation failures; MCP maps it to `internal_error`.
     #[error("{0}")]
     Backend(String),
+}
+
+/// The first non-plain field `groups_ungroup` found on a Group layer; wire
+/// spelling is the TS union's lowercase literal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GroupNotPlainReason {
+    Transform,
+    Opacity,
+    Effects,
+    #[serde(rename = "blend_mode")]
+    BlendMode,
+}
+
+impl std::fmt::Display for GroupNotPlainReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Transform => "transform",
+            Self::Opacity => "opacity",
+            Self::Effects => "effects",
+            Self::BlendMode => "blend_mode",
+        })
+    }
 }
 
 impl From<ValidationError> for CommandError {

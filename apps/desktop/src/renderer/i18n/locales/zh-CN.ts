@@ -1413,6 +1413,12 @@ const zhCN: Resources = {
       remove_members: "移除链接成员",
       rename: "重命名链接",
     },
+    group: {
+      create: "编组 {{count}} 个图层",
+      ungroup: "解组",
+      rename: "重命名组",
+    },
+    composition: { delete: "删除合成" },
     caption: { restyle: "修改字幕样式" },
     media: { remove_cascade: "删除素材 {{media}} 及其 {{count}} 个引用图层" },
     audio: { set_role_gain: "设置{{role}}角色增益" },

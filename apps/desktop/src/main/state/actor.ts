@@ -4,7 +4,7 @@ import type { Animated, AudioRole, Composition, Interpolation, LayerParams, Moti
 import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
-import { HISTORY_SUMMARY, layersEnabledSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
+import { HISTORY_SUMMARY, groupCreateSummary, layersEnabledSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileTransitions, type DroppedTransition } from './validate'
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
@@ -16,6 +16,7 @@ import { applyDeleteLayer } from './mutations/delete'
 import { applyDuplicateLayer, applyPasteLayer, applyPasteLayers, pasteLayerInterval } from './mutations/duplicate'
 import { applySplitLayer } from './mutations/split'
 import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, applyLinksRename } from './mutations/links'
+import { applyCompositionsDelete, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, type GroupCreateResult } from './mutations/groups'
 import { applySetLayersEnabled, applyUpdateLayer, type LayerPatch } from './mutations/update'
 import { applyFitComposition } from './mutations/composition'
 import { applyDurationAutofit, compositionOf, locateLayer, locateTrack, requireLayer, requireSameComposition, scopeComposition } from './mutations/helpers'
@@ -270,6 +271,14 @@ export function createActor(opts: ActorOptions): ActorHandle {
       if (g) return layerRefs(g.members)
     }
     return []
+  }
+  /** Every Group layer referencing a composition — a composition has no
+   *  `EntityRef` of its own, so a rename row points at the clips it names. */
+  function compositionRefLayers(compositionId: Uuid): EntityRef[] {
+    const ids: Uuid[] = []
+    for (const { layer } of eachLayer(current()))
+      if (layer.params.kind === 'CompositionRef' && layer.params.composition === compositionId) ids.push(layer.id)
+    return layerRefs(ids)
   }
   /** Optional `composition_id` arg → the composition, CompositionNotFound for an
    *  unknown id; absent/null → undefined (the callee defaults to the root). */
@@ -893,6 +902,19 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'links_add_members': commit(HISTORY_SUMMARY.linkAddMembers, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksAddMembers(d, a.link as Uuid, a.layers as Uuid[], (a.reassign as boolean) ?? false)); return { ok: true, value: null }
         case 'links_remove_members': commit(HISTORY_SUMMARY.linkRemoveMembers, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksRemoveMembers(d, a.link as Uuid, a.layers as Uuid[])); return { ok: true, value: null }
         case 'links_rename': commit(HISTORY_SUMMARY.linkRename, linkMemberRefs(a.link as Uuid), { kind: 'Coarse' }, (d) => applyLinksRename(d, a.link as Uuid, (a.label as string) ?? null)); return { ok: true, value: null }
+        // Groups (ADR 0052) — one commit each; the row points at the Group layer.
+        // The result is ONE object shape always (not the branch-dependent shape
+        // add_video_layer has), so a caller never sniffs it.
+        case 'groups_create': {
+          const layers = [...new Set((a.layers as Uuid[]) ?? [])]
+          const r = commit(groupCreateSummary(layers.length), (g: GroupCreateResult) => layerRef(g.layerId), { kind: 'Coarse' },
+            (d) => applyGroupsCreate(d, idGen, layers, (a.label as string | null) ?? null))
+          return { ok: true, value: { composition_id: r.compositionId, layer_id: r.layerId } }
+        }
+        case 'groups_ungroup': commit(HISTORY_SUMMARY.groupUngroup, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyGroupsUngroup(d, idGen, a.layer as Uuid)); return { ok: true, value: null }
+        case 'groups_rename': commit(HISTORY_SUMMARY.groupRename, compositionRefLayers(a.composition as Uuid), { kind: 'Coarse' }, (d) => applyGroupsRename(d, a.composition as Uuid, (a.label as string | null) ?? null)); return { ok: true, value: null }
+        // Nothing references a deletable composition, so there is no layer to name.
+        case 'compositions_delete': commit(HISTORY_SUMMARY.compositionDelete, [], { kind: 'Coarse' }, (d) => applyCompositionsDelete(d, a.composition as Uuid)); return { ok: true, value: null }
         case 'update_layer': commit(HISTORY_SUMMARY.layerUpdate, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayer(d, a.layer as Uuid, a.patch as LayerPatch)); return { ok: true, value: null }
         // The four commands below end with the scale-link invariant check
         // (mutations/scaleLink.ts): result-based, so it runs once per COMMIT —

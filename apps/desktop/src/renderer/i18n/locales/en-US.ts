@@ -1508,6 +1508,12 @@ const enUS = {
       remove_members: "Removed link members",
       rename: "Renamed link",
     },
+    group: {
+      create: "Grouped {{count}} layers",
+      ungroup: "Ungrouped",
+      rename: "Renamed Group",
+    },
+    composition: { delete: "Deleted composition" },
     caption: { restyle: "Restyled captions" },
     media: {
       remove_cascade:

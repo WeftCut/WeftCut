@@ -15,14 +15,17 @@ import { root } from './fixtures/project'
 // If this fails, a channel was added or removed unintentionally — do NOT
 // silently update the expected list; investigate first.
 describe('PRODUCTION_OPS', () => {
-  it('contains exactly the 53 in-scope renderer channels', () => {
+  it('contains exactly the 57 in-scope renderer channels', () => {
     const expected = [
       'add_color_layer', 'add_demo_color_layer', 'add_demo_text_layer', 'add_effect',
       // Markers (marker-authoring ticket 01) — the renderer's first marker channels.
       'add_marker',
       'add_media_layer', 'add_motif', 'add_text_layer', 'add_track', 'add_transition',
+      // Groups (ADR 0052): pre-compose / ungroup / rename, and the orphan delete.
+      'compositions_delete',
       'delete_layer', 'delete_layers', 'duplicate_layer',
-      'fit_composition_to_layers', 'links_create', 'links_dissolve', 'links_rename', 'move_effect',
+      'fit_composition_to_layers', 'groups_create', 'groups_rename', 'groups_ungroup',
+      'links_create', 'links_dissolve', 'links_rename', 'move_effect',
       'move_layer', 'move_layers_to_new_track', 'paste_layer',
       // Link fan-out batches: the whole-link duplicate and the enabled toggle.
       'paste_layers', 'set_layers_enabled',

@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import en from '../../renderer/i18n/locales/en-US'
 import zh from '../../renderer/i18n/locales/zh-CN'
-import { ENTITY_LABEL_KEYS, HISTORY_SUMMARY, HISTORY_SUMMARY_KEYS, layersEnabledSummary, pastedLayersSummary,
+import { ENTITY_LABEL_KEYS, HISTORY_SUMMARY, HISTORY_SUMMARY_KEYS, groupCreateSummary, layersEnabledSummary, pastedLayersSummary,
   removedMediaSummary, resolveEntityLabels, restoredCheckpointSummary, roleGainSummary,
   type EntityLabel, type HistorySummary } from './history-labels'
 import type { EntityRef } from './history'
@@ -26,7 +26,7 @@ const placeholders = (s: string): string[] => [...s.matchAll(/\{\{(\w+)\}\}/g)].
  *  which args each supplies. Both `enabled` directions: they are two keys. */
 const TEMPLATED: HistorySummary[] = [
   removedMediaSummary('m-1', 2), roleGainSummary('music'), restoredCheckpointSummary('cp'),
-  pastedLayersSummary(3), layersEnabledSummary(true, 2), layersEnabledSummary(false, 2),
+  pastedLayersSummary(3), layersEnabledSummary(true, 2), layersEnabledSummary(false, 2), groupCreateSummary(2),
 ]
 
 // The drift guard. `summary` → i18n-key lookups keyed on English prose are

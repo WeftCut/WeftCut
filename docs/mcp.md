@@ -290,6 +290,13 @@ Links (see [features.md §Links](features.md#links)):
 - `links_rename { link_id, label? }`
 - Reads: there is no `links_list`/`links_get` tool — link membership is carried on the `project://current` resource as `links: [{ id, label, layer_ids }]`.
 
+Groups (see [features.md §Groups](features.md#groups)):
+- `groups_create { layer_ids, label? }` → `{ composition_id, layer_id }` — pre-compose: the layers (one or more, all in one composition) move into a new composition, placed back as one Group layer at their earliest start on the top-most lane they occupied. Never partial: a locked member refuses the whole set (`GroupLockedMember`), so does a locked track (`TrackLocked`); a set spanning two compositions is `CrossCompositionSet`. Links fully inside move with the set, a straddling link loses its inside members; transitions between two members move, a straddling one is dropped and logged; markers stay.
+- `groups_ungroup { layer_id }` — expand a Group layer in place. Refuses unless the layer is plain — identity transform, static opacity 1, no effects — with `GroupNotPlain { reason: "transform" | "opacity" | "effects" }`, because expanding would discard those silently. Members outside the layer's `[src_in_us, src_out_us)` window are dropped, straddling ones trimmed with their source window following. The composition is removed when nothing else references it.
+- `groups_rename { composition_id, label? }` — `null` / blank clears the name; the root refuses (`RootComposition`).
+- `compositions_delete { composition_id }` — an orphan only: `CompositionInUse { ref_count }` while any Group layer references it, `RootComposition` for the root.
+- Reads: `project://compositions` lists every composition with its `ref_count`; a Group layer's `params.composition` names its composition.
+
 Markers + composition:
 - `add_marker { t_us, label, color, end_t_us?, composition_id? }` → `MarkerId` — markers are per composition; `update_marker` / `remove_marker` find theirs by id
 - `update_marker { marker_id, patch }` / `remove_marker { marker_id }`

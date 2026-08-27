@@ -336,6 +336,70 @@ fan-out enforcement in `move.ts` / `trim.ts` / `split.ts`. MCP tools
 ops) and the read surface (`links` on `project://current`; there is no
 `links_list` tool): [mcp.md](mcp.md). Wire shape: [data-model.md](data-model.md).
 
+## Groups
+
+A *Group* is a composition placed as one layer — After Effects' precomp,
+Premiere's nest ([CONTEXT.md](../CONTEXT.md#links-and-groups), ADR 0052). The
+Group layer's params are a `CompositionRef`: a source window
+`[src_in_us, src_out_us)` into the composition's own time, plus the transform,
+opacity and blend mode every visual layer carries. Parent time `t` is
+composition time `t − t_start_us + src_in_us`; nested Groups compose the
+mapping. Two structural operations create and dissolve one, and each is a
+single history entry.
+
+**Pre-compose** (`groups_create`) turns a set of layers — one or more, all in
+one composition — into a Group in place. The set's earliest start `t0` becomes
+the new composition's zero: every member shifts by `−t0` on its own lattice,
+and its keyframes, being layer-local, do not move. The composition copies the
+parent's settings and carries the reserved A roll / B roll, so "no tracks" is
+never a state; the parent tracks that held members map bottom-up onto A roll,
+B roll, then fresh transient lanes, which preserves relative z-order. Links
+fully inside the set move with it, ids intact; a link straddling the boundary
+loses its inside members and dissolves below two. Transitions between two
+members move; a straddling one is dropped by reconcile and logged. Markers
+stay in the parent. The Group layer lands at `t0` on the top-most former lane,
+windowed over the whole composition; if that span is now taken it takes the
+drop strip's route — the nearest free lane above, else a lane spawned on top.
+Emptied transient lanes are pruned. The operation is all-or-nothing: a locked
+member (`GroupLockedMember`) or a locked track (`TrackLocked`) refuses the
+whole set before anything moves, so a Group never holds half a selection.
+
+**Ungroup** (`groups_ungroup`) is Resolve's *Decompose in Place*: the members
+come back into the parent at the same on-screen time. It is allowed only when
+the Group layer is **plain** — identity transform (including the linked-scale
+default), static opacity 1, no effects. A transform, an opacity or an effect
+chain on the Group applies to the composite and has no per-member equivalent,
+so expanding would discard it silently — the outcome ADR 0048 and the
+prevent-at-the-gesture rule for refusals both forbid — and the refusal names
+the field instead (`GroupNotPlain { reason }`). Every member intersecting the
+window is copied in at `t + t_start_us − src_in_us`, trimmed to the window with
+its source window and keyframes following (trim's content-glue rule); members
+wholly outside are dropped. The composition's tracks become fresh transient
+lanes at the Group layer's z position — empty ones are not created — and links
+and transitions inside carry over under fresh ids. The Group layer goes, its
+lane is pruned, and the composition is removed when nothing else references
+it; a second Group layer pointing at it keeps it.
+
+**Overhang.** A Group layer's window may extend past its composition's
+duration: validation puts no upper bound on `src_out_us`, a trim gesture clamps
+to the duration, and past the end the Group renders nothing (ADR 0052 §6). The
+rule exists so that a delete *inside* a Group — which shrinks the composition —
+is never refused on account of a parent's window. Duration autofit is per
+composition: a composition growing inside does not extend the Group layers
+that show it.
+
+**Single lattice.** Every composition's `fps`, `sample_rate` and `channels`
+equal the root's — a Group on another rate would put its window on a different
+grid from the parent's timeline, which is time-remapping. Width and height may
+differ per composition.
+
+Naming and removal: `groups_rename` sets or clears a composition's label (the
+root has none — it is the timeline); `compositions_delete` removes a
+composition nothing references (`CompositionInUse` otherwise). Orphans are
+legal: deleting a Group layer leaves its composition behind. Mutations live in
+`apps/desktop/src/main/state/mutations/groups.ts`; tools and wire shapes:
+[mcp.md](mcp.md), [data-model.md](data-model.md).
+
 ## Split at the playhead
 
 `Mod+B` cuts every clip the playhead is inside. It is the Blade tool's

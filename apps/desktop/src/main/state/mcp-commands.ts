@@ -473,6 +473,12 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
       error: 'TransitionUnsupportedLayerKind', layer: e.layer, kind: e.kind,
     } }
   }
+  // ── Groups (ADR 0052). Each message says what was refused AND why, because the
+  // client drops `data` and the fix differs per cause. ──
+  if (e.error === 'GroupLockedMember') return { code: 'invalid_params', message: `layer ${e.layer} is locked: pre-compose moves every selected layer or none. Unlock it (update_layer { patch: { locked: false } }) or leave it out of layer_ids` }
+  if (e.error === 'GroupNotPlain') return { code: 'invalid_params', message: `Group layer ${e.layer} is not plain: its ${e.reason} is not the identity and ungroup would discard it silently. Reset the ${e.reason} on the Group layer first (update_layer_params / remove_effect), or keep the Group` }
+  if (e.error === 'CompositionInUse') return { code: 'invalid_params', message: `composition ${e.composition} is still referenced by ${e.ref_count} Group layer(s); delete or ungroup them first (project://compositions lists ref_count)` }
+  if (e.error === 'RootComposition') return { code: 'invalid_params', message: `composition ${e.composition} is the root: it has no name and export renders it, so it is never renamed or deleted` }
   return { code: 'invalid_params', message: e.error }
 }
 
@@ -717,6 +723,27 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Update a link's label. Pass `label: null` to clear it.",
     inputSchema: { type: 'object', properties: { link_id: { type: 'string' }, label: { type: ['string', 'null'] } }, required: ['link_id'] },
     parseArgs: (a) => ({ op: 'links_rename', args: { link: parseUuid(a.link_id, 'link_id'), label: parseStrOpt(a.label, 'label') } }) },
+  // ── table-exec: groups (ADR 0052; docs/features.md#groups) ──────────────
+  { name: 'groups_create', exec: 'table',
+    description: "Pre-compose: move one or more layers (all in ONE composition) into a NEW composition and place it back as a single Group layer — a `CompositionRef` — at the set's earliest start, on the top-most track the set occupied (or the nearest free lane above if that span is now taken). The new composition copies the parent's settings and carries the reserved A roll / B roll; the members' tracks map onto A roll, B roll, then fresh tracks bottom-up, so their z-order survives, and every member's time is rebased so the earliest starts at 0. Refuses, never partially: any member on a locked track (`TrackLocked`) or itself locked (`GroupLockedMember`) rejects the whole set; a set spanning two compositions rejects (`CrossCompositionSet`). Links fully inside the set move with it; a link straddling the boundary loses its inside members (and dissolves below 2). Transitions between two members move; a transition straddling the boundary is dropped and logged. Markers stay in the parent. Returns `{ composition_id, layer_id }` — one undo restores everything. The Group renders and exports exactly as the members did (identity transform, opacity 1).",
+    inputSchema: { type: 'object', properties: {
+      layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to pre-compose; at least one, all in one composition.' },
+      label: { type: ['string', 'null'], description: 'Optional name for the new composition. Omit and the UI derives one.' },
+    }, required: ['layer_ids'] },
+    parseArgs: (a) => ({ op: 'groups_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label') } }),
+    shapeResult: (v) => toolJson(v) },
+  { name: 'groups_ungroup', exec: 'table',
+    description: "Ungroup: expand a Group layer back into its composition's members, in place. Refuses unless the Group layer is PLAIN — identity transform, static opacity 1, no effects, Normal blend mode (`GroupNotPlain { reason: 'transform' | 'opacity' | 'effects' | 'blend_mode' }`): those apply to the composite and have no per-member equivalent, so expanding would discard them silently; reset them first or keep the Group. Every member intersecting the Group's window `[src_in_us, src_out_us)` is copied into the parent at the same on-screen time, trimmed to the window with its own source window following; members wholly outside the window are dropped. The composition's tracks become fresh tracks at the Group layer's z position; links and transitions inside carry over. The Group layer is removed, and the composition too when nothing else references it (a second Group layer keeps it). One undo restores the Group.",
+    inputSchema: { type: 'object', properties: { layer_id: { type: 'string', description: 'The Group layer (its params.kind is CompositionRef).' } }, required: ['layer_id'] },
+    parseArgs: (a) => ({ op: 'groups_ungroup', args: { layer: parseUuid(a.layer_id, 'layer_id') } }) },
+  { name: 'groups_rename', exec: 'table',
+    description: "Name a Group's composition (`label: null` or blank clears it back to the derived name). Recorded, so undo reverts it. The root composition refuses (`RootComposition`): it has no name — it is the timeline. Composition ids: `project://compositions`.",
+    inputSchema: { type: 'object', properties: { composition_id: { type: 'string' }, label: { type: ['string', 'null'] } }, required: ['composition_id'] },
+    parseArgs: (a) => ({ op: 'groups_rename', args: { composition: parseUuid(a.composition_id, 'composition_id'), label: parseStrOpt(a.label, 'label') } }) },
+  { name: 'compositions_delete', exec: 'table',
+    description: "Delete a composition nothing references — an orphan left behind when its Group layers were deleted (ungroup removes its composition itself). Refuses while any Group layer still points at it (`CompositionInUse { ref_count }`; `project://compositions` shows the count — ungroup or delete those layers first) and refuses the root (`RootComposition`). Recorded: undo brings the composition back.",
+    inputSchema: { type: 'object', properties: { composition_id: { type: 'string' } }, required: ['composition_id'] },
+    parseArgs: (a) => ({ op: 'compositions_delete', args: { composition: parseUuid(a.composition_id, 'composition_id') } }) },
   // ── table-exec: effects ──────────────────────────────────────────────────
   { name: 'add_effect', exec: 'table',
     description: 'Add an effect to a layer\'s chain (appended to the end of the chain, applied last). `kind` is the catalog key ("blur", "chromakey", "brightness", "contrast", "saturation", "sharpen"). The three colour entries each take one param `amount`, a percentage offset from neutral in [-100, 100] with 0 = no change (so `amount: 20` is "+20 %"); "sharpen" takes `amount` too, but in [0, 100] with 0 = no change — it has no negative side, because that would be a blur. Returns the new effect id. The effect is created with no params set; use update_effect to set a static value first, then set_keyframe to keyframe it.',

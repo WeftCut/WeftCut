@@ -77,6 +77,11 @@ export const HISTORY_SUMMARY = {
   linkRemoveMembers: { key: 'history.link.remove_members', text: 'Removed link members' },
   linkRename: { key: 'history.link.rename', text: 'Renamed link' },
 
+  // Groups (ADR 0052). `groupCreate` is templated — see groupCreateSummary.
+  groupUngroup: { key: 'history.group.ungroup', text: 'Ungrouped' },
+  groupRename: { key: 'history.group.rename', text: 'Renamed Group' },
+  compositionDelete: { key: 'history.composition.delete', text: 'Deleted composition' },
+
   captionRestyle: { key: 'history.caption.restyle', text: 'Restyled captions' },
 } satisfies Record<string, HistorySummary>
 
@@ -103,6 +108,10 @@ export function restoredCheckpointSummary(label: string): HistorySummary {
 export function pastedLayersSummary(count: number): HistorySummary {
   return { key: 'history.layer.paste_multi', text: `Duplicated ${count} layers`, label_args: { count } }
 }
+/** `groups_create` — the summary counts the members that went into the Group. */
+export function groupCreateSummary(count: number): HistorySummary {
+  return { key: 'history.group.create', text: `Grouped ${count} layers`, label_args: { count } }
+}
 /** `set_layers_enabled` — one key per direction rather than a `{{state}}`
  *  placeholder, so each locale conjugates the verb natively. */
 export function layersEnabledSummary(enabled: boolean, count: number): HistorySummary {
@@ -120,6 +129,7 @@ export const HISTORY_SUMMARY_KEYS: readonly string[] = [
   roleGainSummary('').key,
   restoredCheckpointSummary('').key,
   pastedLayersSummary(0).key,
+  groupCreateSummary(0).key,
   layersEnabledSummary(true, 0).key,
   layersEnabledSummary(false, 0).key,
 ]
