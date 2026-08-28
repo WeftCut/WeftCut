@@ -77,9 +77,23 @@ const openComposition = (page: Page): Promise<{ id: string } | null> =>
 /// Park the playhead on `us` and wait for the store to agree — every sample
 /// below re-composites at the engine's position, so the position has to have
 /// landed before the pixels mean anything.
+///
+/// The seek is re-issued every round rather than sent once and waited on. The
+/// hook exists from bootstrap, but it routes through the playback store's
+/// transport, which `PixiPreview` registers only after its async Application
+/// init — and unlike `weftcutSeekUs`, which throws until its bridge is up,
+/// `transportSeek` on a null transport is a SILENT no-op. Retrying is therefore
+/// the readiness wait, and it also covers the gap around a re-registration.
 async function seekAndSettle(page: Page, us: number): Promise<void> {
-  await seek(page, us);
-  await expect.poll(() => playheadUs(page)).toBe(us);
+  await expect
+    .poll(
+      async () => {
+        await seek(page, us);
+        return playheadUs(page);
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(us);
 }
 
 /// Static scalar tracks for one layer's transform — the same channels every
