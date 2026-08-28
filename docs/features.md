@@ -447,6 +447,19 @@ activating it opens that Group first, then selects. Undoing a pre-compose while
 standing inside the Group it created returns the view to the root — the open
 composition no longer exists — with the grouped layers selected again.
 
+**Reuse, and where an orphan lives.** The media pool's Groups section lists
+every composition with its name, duration and reference count, and dragging a
+row places another instance (`add_group_layer`) — the second way a Group reaches
+a timeline, and the reason a composition is an entity at all. Two placements of
+one composition are two instances at their own offsets, so at one playhead they
+show different frames of the same content. A composition may be placed inside
+another Group, but never inside itself or one of its ancestors: the drop target
+greys out rather than letting the release be refused. A composition nothing
+references any more — an orphan — keeps its row, dimmed and tagged unused, where
+it can be opened, renamed, or deleted; that row is the only surface able to
+remove it. Selecting it puts the composition in the inspector, so an orphan can
+be read and named with no clip anywhere.
+
 Mutations live in `apps/desktop/src/main/state/mutations/groups.ts`; tools and
 wire shapes: [mcp.md](mcp.md), [data-model.md](data-model.md).
 
