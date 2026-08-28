@@ -67,6 +67,7 @@ export function TrackLane({
   onChipResize,
   onCommitLabel,
   onCommitLinkLabel,
+  onCommitGroupLabel,
   onCommitParamTrack,
   isRoleSectionStart,
   isRevealed,
@@ -133,6 +134,7 @@ export function TrackLane({
   onChipResize: (args: TransitionResizeArgs) => void;
   onCommitLabel: (layerId: string, label: string) => void;
   onCommitLinkLabel: (linkId: string, label: string | null) => void;
+  onCommitGroupLabel: (compositionId: string, label: string | null) => void;
   onCommitParamTrack: (layerId: string, paramKey: string, track: AnimTrack<number>) => void;
   isRoleSectionStart: boolean;
   /// Inline-reveal flag. The lane renders with extra chrome
@@ -541,6 +543,7 @@ export function TrackLane({
             onContextMenu={onContextMenu}
             onCommitLabel={onCommitLabel}
             onCommitLinkLabel={onCommitLinkLabel}
+            onCommitGroupLabel={onCommitGroupLabel}
             onCommitParamTrack={onCommitParamTrack}
             fpsNum={fpsNum}
             fpsDen={fpsDen}
@@ -573,6 +576,7 @@ export function TrackLane({
               onContextMenu={onContextMenu}
               onCommitLabel={onCommitLabel}
               onCommitLinkLabel={onCommitLinkLabel}
+              onCommitGroupLabel={onCommitGroupLabel}
               onCommitParamTrack={onCommitParamTrack}
               fpsNum={fpsNum}
               fpsDen={fpsDen}

@@ -63,6 +63,10 @@ export function animatableParams(kind: string, scaleLinked = false): ParamDescri
     case "Motif":
     case "ImageOverlay":
     case "Text":
+    // A Group carries the media-bearing transform set and nothing else: no
+    // crop, no speed, no flip (ADR 0052 §4 leaves time-remapping out of v1), so
+    // it lands on exactly the same rows as a video clip minus those.
+    case "CompositionRef":
       return scaleLinked
         ? [X, Y, SCALE, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY]
         : [X, Y, SCALE_X, SCALE_Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY];

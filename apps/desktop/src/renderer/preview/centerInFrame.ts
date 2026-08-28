@@ -21,11 +21,16 @@ import { quadAabb } from "./previewSnap";
 
 /// The kinds that carry a transform at all. `Color` fills the composition, so it
 /// is already centred by construction, and `Audio` has no footprint.
+///
+/// A Group is in: its footprint is its composition's frame size, which is a real
+/// rectangle the gizmo can box and "Center horizontally" can move — the same
+/// rectangle a video clip's coded size gives (ADR 0052 §4).
 export const TRANSFORMABLE_KINDS: ReadonlySet<string> = new Set([
   "VideoClip",
   "ImageOverlay",
   "Text",
   "Motif",
+  "CompositionRef",
 ]);
 
 /// docs/data-model.md#transform: only Text stores the anchor point as `x`/`y`.

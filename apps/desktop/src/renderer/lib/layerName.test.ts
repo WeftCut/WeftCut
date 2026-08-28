@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { layerDisplayName } from "./layerName";
+import { groupDisplayName, groupOrdinals, layerDisplayName } from "./layerName";
 import { TEXT_NAME_MAX } from "../../shared/textSnippet";
 import en from "../i18n/locales/en-US";
 import zh from "../i18n/locales/zh-CN";
-import type { AnimTrack, LayerSummary, Rgba } from "../ipc";
+import type {
+  AnimTrack,
+  CompositionSummary,
+  LayerSummary,
+  Rgba,
+} from "../ipc";
 
 const num = (value: number): AnimTrack<number> => ({ mode: "Static", value });
 const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
@@ -107,6 +112,101 @@ function videoLayer(
   };
 }
 
+function groupLayer(
+  compositionId: string,
+  compositionLabel: string | null,
+  label: string | null = null,
+): LayerSummary {
+  return {
+    id: `L-${compositionId}`,
+    label,
+    t_start_us: 0,
+    t_end_us: 1_000_000,
+    kind: "CompositionRef",
+    color_hint: "#8a94a0",
+    enabled: true,
+    locked: false,
+    params: {
+      kind: "CompositionRef",
+      composition_id: compositionId,
+      composition_label: compositionLabel,
+      src_in_us: 0,
+      src_out_us: 1_000_000,
+      x: num(0),
+      y: num(0),
+      scale_x: num(1),
+      scale_y: num(1),
+      scale_linked: true,
+      rotation_deg: num(0),
+      anchor_x: num(0.5),
+      anchor_y: num(0.5),
+      opacity: num(1),
+    },
+    effects: [],
+  };
+}
+
+/// Only the two fields the ordinals read; the key ORDER is what carries
+/// creation order, so these literals are written in the order main would.
+const comps = (
+  ...entries: Array<[string, string | null]>
+): Record<string, Pick<CompositionSummary, "id" | "label">> =>
+  Object.fromEntries(entries.map(([id, label]) => [id, { id, label }]));
+
+describe("groupOrdinals", () => {
+  it("numbers the unlabelled compositions in creation order, root excluded", () => {
+    const ordinals = groupOrdinals(
+      comps(["root", null], ["g-a", null], ["g-b", null]),
+      "root",
+    );
+    expect(ordinals.get("root")).toBeUndefined();
+    expect(ordinals.get("g-a")).toBe(1);
+    expect(ordinals.get("g-b")).toBe(2);
+  });
+
+  // A labelled Group has a name of its own, so it takes no number — and,
+  // crucially, does not push its neighbours along. Naming one Group must not
+  // renumber another.
+  it("skips labelled compositions rather than counting them", () => {
+    const ordinals = groupOrdinals(
+      comps(["root", null], ["g-a", "Lower third"], ["g-b", null]),
+      "root",
+    );
+    expect(ordinals.has("g-a")).toBe(false);
+    expect(ordinals.get("g-b")).toBe(1);
+  });
+
+  // A blank label is absent everywhere else in the naming chain; it has to be
+  // absent here too, or a Group whose name was cleared would be nameless
+  // instead of numbered.
+  it("treats a blank label as no label", () => {
+    const ordinals = groupOrdinals(comps(["root", null], ["g-a", "   "]), "root");
+    expect(ordinals.get("g-a")).toBe(1);
+  });
+});
+
+describe("groupDisplayName", () => {
+  it("prefers the composition's stored label", () => {
+    expect(groupDisplayName("g-a", "Lower third", new Map(), tEn)).toBe(
+      "Lower third",
+    );
+  });
+
+  it("derives a localised number from the ordinals", () => {
+    const ordinals = new Map([["g-a", 2]]);
+    expect(groupDisplayName("g-a", null, ordinals, tEn)).toBe("Group 2");
+    expect(groupDisplayName("g-a", null, ordinals, tZh)).toBe("组 2");
+  });
+
+  // An ordinal map built from an older summary knows nothing about a Group
+  // created since. The bare kind word is the honest answer — a wrong number
+  // would name it after some other Group.
+  it("falls back to the kind word with no ordinal to spend", () => {
+    expect(groupDisplayName("g-new", null, new Map(), tEn)).toBe("Group");
+    expect(groupDisplayName("g-new", null, undefined, tZh)).toBe("组");
+  });
+});
+
 describe("layerDisplayName", () => {
   it("prefers the layer's own label over every derived rung", () => {
     expect(layerDisplayName(videoLayer("beach.mp4", "Opening shot"), tEn)).toBe(
@@ -166,6 +266,23 @@ describe("layerDisplayName", () => {
       expect(layerDisplayName(textLayer(blank), tEn)).toBe("Text");
       expect(layerDisplayName(textLayer(blank), tZh)).toBe("文本");
     }
+  });
+
+  // The Group rung is the media rung for a kind whose source is a composition:
+  // without it every Group clip in the project reads "Group".
+  it("names a Group layer after the composition it shows", () => {
+    const ordinals = new Map([["g-a", 1]]);
+    expect(layerDisplayName(groupLayer("g-a", null), tEn, ordinals)).toBe(
+      "Group 1",
+    );
+    expect(layerDisplayName(groupLayer("g-a", "Intro build"), tEn, ordinals)).toBe(
+      "Intro build",
+    );
+    // The layer's own label still outranks the composition's, exactly as it
+    // outranks a video clip's file name.
+    expect(
+      layerDisplayName(groupLayer("g-a", "Intro build", "Take 2"), tEn, ordinals),
+    ).toBe("Take 2");
   });
 
   it("never returns the uuid", () => {

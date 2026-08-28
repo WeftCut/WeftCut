@@ -396,9 +396,58 @@ differ per composition.
 Naming and removal: `groups_rename` sets or clears a composition's label (the
 root has none — it is the timeline); `compositions_delete` removes a
 composition nothing references (`CompositionInUse` otherwise). Orphans are
-legal: deleting a Group layer leaves its composition behind. Mutations live in
-`apps/desktop/src/main/state/mutations/groups.ts`; tools and wire shapes:
-[mcp.md](mcp.md), [data-model.md](data-model.md).
+legal: deleting a Group layer leaves its composition behind.
+
+**UI.** A Group clip wears lucide's `Group` glyph and a neutral slate surface —
+the one kind with no medium of its own, since it holds every other kind — and
+names itself after its composition: its stored label, else the derived
+`Group N`, numbered by creation order among the unnamed compositions and
+localised in the renderer (the `Track N` rule). The clip's own `label` still
+outranks that, as a renamed video clip's does over its file name. Its thumbnail
+is a still of the earliest video inside the composition, or inside a Group
+nested in it; with no video at all the glyph stands alone. It is an ordinary
+picture layer everywhere else — the overlap classes, the Playhead panel's video
+bucket, the effect chain, the transform gizmo — and it keyframes `transform` and
+`opacity`, the media-bearing set minus what ADR 0052 leaves out of v1.
+
+The two source-window affordances live at its right edge. A **hatched tail**
+covers the part of the clip past the composition's duration: source ran out,
+nothing renders there. A **2 px tick** appears when the window is shorter than
+the composition: there is content to trim out to. A trim drag clamps `src_out_us`
+to the duration, so the out edge stops there rather than being refused.
+
+`Ctrl+G` pre-composes the selection and selects the Group clip it makes;
+`Ctrl+Shift+G` ungroups the one selected Group layer. Two commands rather than
+one toggle — unlike `Ctrl+L`, their preconditions are not inverses: one takes
+any number of layers, the other exactly one Group. Each greys out with the reason
+in its tooltip: nothing selected, a locked member, or the field that blocks the
+expansion (`Reset the group's opacity to 1 first…`). Both sit in the Edit menu,
+in the Quick Actions strip's `edit` section as Group / Ungroup, and in the
+search palette; `Open group` and `Leave group` are commands too, shipped
+UNBOUND — their home is the pointer, and no shipping NLE has a key for either
+to copy.
+
+**Entering and leaving.** Double-click a Group clip to open its composition, or
+use `Open group` from its context menu; that gesture is spent on navigation, so
+renaming happens through the menu's two rows instead — `Rename` for the clip's
+own label, `Rename group…` for the composition's name (which every clip placing
+it then shows). A **breadcrumb** appears above the timeline the moment you are
+inside something: `‹project› › Group A › Group B`, each crumb a button that
+leaves back to it, hidden entirely at the root. The timeline's empty space is
+tinted one step per level so depth is visible even when the breadcrumb is
+scrolled past — Resolve does the same for a compound clip. On a switch the
+selection, the marked range and any inline reveal are dropped and the playhead
+returns to where it was last left in the target; the display mode is not touched.
+The inspector's Group section carries the composition's name, its frame size, its
+duration and the same two buttons.
+
+A clip inside a Group is findable in the search palette like any other, and
+activating it opens that Group first, then selects. Undoing a pre-compose while
+standing inside the Group it created returns the view to the root — the open
+composition no longer exists — with the grouped layers selected again.
+
+Mutations live in `apps/desktop/src/main/state/mutations/groups.ts`; tools and
+wire shapes: [mcp.md](mcp.md), [data-model.md](data-model.md).
 
 ## Split at the playhead
 

@@ -15,6 +15,7 @@ import {
   linksCreate,
   linksDissolve,
   linksRename,
+  groupsRename,
   moveLayer,
   removeTransition,
   separateAudioToNewTrack,
@@ -100,10 +101,12 @@ import {
   KeyframeLaneHeaders,
   type RegisterSubLaneEl,
 } from "./KeyframeLane";
+import { useCrumbs } from "../state/compositionScopeStore";
+import { CompositionBreadcrumb } from "./CompositionBreadcrumb";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { MarqueeOverlay } from "./MarqueeOverlay";
 import { LinkHull } from "./LinkHull";
-import { beginLayerRename, beginLinkRename } from "./renameStore";
+import { beginGroupRename, beginLayerRename, beginLinkRename } from "./renameStore";
 import {
   MarqueeAnchorContext,
   beginMarquee,
@@ -219,6 +222,13 @@ interface TimelineProps {
 
 
 const EMPTY_TRANSITIONS: TransitionSummary[] = [];
+
+/// How far off the panel surface one level of nesting moves the timeline's empty
+/// space, and how many levels are worth showing. Capped because the tint has to
+/// stay quieter than the clips drawn on it — past three steps it starts reading
+/// as a selected region rather than as a place.
+const GROUP_TINT_STEP_PCT = 6;
+const MAX_GROUP_TINT_STEPS = 3;
 
 export function Timeline({
   tracks,
@@ -1027,6 +1037,20 @@ export function Timeline({
     [onMutated],
   );
 
+  /// A Group's COMPOSITION name, from the clip's inline editor. Blank clears it
+  /// back to the derived `Group N`, which is a Group's ordinary unnamed state.
+  const onCommitGroupLabel = useCallback(
+    async (compositionId: string, label: string | null) => {
+      try {
+        await groupsRename(compositionId, label);
+        await onMutated();
+      } catch (e) {
+        logMutationFailure(e, "Rename group");
+      }
+    },
+    [onMutated],
+  );
+
   const onCommitParamTrack = useCallback(
     async (layerId: string, paramKey: string, track: AnimTrack<number>) => {
       try {
@@ -1122,6 +1146,24 @@ export function Timeline({
     setContextMenu(null);
     beginLinkRename(linkId);
   }, []);
+
+  /// The Group clip's OTHER rename: the composition's name rather than this
+  /// clip's label. Resolved from the live snapshot because the menu carries only
+  /// the layer's id and kind, and the target is the composition behind it.
+  const onRenameGroup = useCallback(
+    (layerId: string) => {
+      setContextMenu(null);
+      for (const track of tracks) {
+        for (const layer of track.layers) {
+          if (layer.id !== layerId) continue;
+          if (layer.params.kind !== "CompositionRef") return;
+          beginGroupRename(layer.params.composition_id);
+          return;
+        }
+      }
+    },
+    [tracks],
+  );
 
   /// The menu hands over the resolved set — the link's members, or the clicked
   /// layer alone when escaped — and `set_layers_enabled` records it as ONE
@@ -1446,6 +1488,16 @@ export function Timeline({
     clearLayerSelection();
   }, []);
 
+  // How deep the open composition sits, and the background that says so. Read
+  // here rather than in a child because the tint belongs to the timeline's own
+  // empty space — the band below the last lane included, which is part of this
+  // scroll container.
+  const crumbDepth = useCrumbs().length;
+  const insideGroup = crumbDepth > 0;
+  const tintPct =
+    GROUP_TINT_STEP_PCT * Math.min(crumbDepth, MAX_GROUP_TINT_STEPS);
+  const groupDepthTint = `color-mix(in srgb, var(--card) ${100 - tintPct}%, var(--foreground))`;
+
   // Memoized: the provider hands this to every anchor surface, so a fresh
   // object would re-render all four on every Timeline render.
   const marqueeAnchor = useMemo<MarqueeAnchor>(
@@ -1462,11 +1514,21 @@ export function Timeline({
   return (
     <MarqueeAnchorContext.Provider value={marqueeAnchor}>
     <KeyframeBatchContext.Provider value={commitKeyframeBatch}>
+    {/* The path to the open composition, above the scroll container and hidden
+        at the root. `.timeline` is a flex column, so the row simply takes its
+        own height and the scroll body keeps the rest. */}
+    <CompositionBreadcrumb />
     <div
       ref={rootRef}
-      className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto bg-card ${
-        drag ? "cursor-grabbing select-none" : ""
-      } ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "timeline-root-blade" : ""}`}
+      className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto ${
+        insideGroup ? "" : "bg-card"
+      } ${drag ? "cursor-grabbing select-none" : ""} ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "timeline-root-blade" : ""}`}
+      // One step off the panel surface for every depth below the root, capped so
+      // a deep nest cannot walk the background into the foreground. Resolve tints
+      // a compound clip's timeline the same way, and it is the one signal that
+      // survives being scrolled: the breadcrumb can be scrolled past, the empty
+      // space cannot.
+      style={insideGroup ? { backgroundColor: groupDepthTint } : undefined}
     >
       {/* `min-h-full` so the lanes' container fills the panel even on a short
           project: the leftover band below the last track then belongs to the
@@ -1602,6 +1664,7 @@ export function Timeline({
                 onChipResize={(args) => void onChipResize(args)}
                 onCommitLabel={onCommitLabel}
                 onCommitLinkLabel={onCommitLinkLabel}
+                onCommitGroupLabel={onCommitGroupLabel}
                 onCommitParamTrack={onCommitParamTrack}
                 onMediaDrop={onMediaDrop}
                 isRoleSectionStart={isRoleSectionStart}
@@ -1666,6 +1729,7 @@ export function Timeline({
         onClose={() => setContextMenu(null)}
         onRename={onRename}
         onRenameLink={onRenameLink}
+        onRenameGroup={onRenameGroup}
         onToggleEnabled={onToggleEnabled}
         onSeparateAudio={onSeparateAudio}
         onPrebakeNow={onPrebakeNow}

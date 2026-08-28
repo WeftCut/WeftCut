@@ -16,6 +16,7 @@ import {
   layerOverlapClass,
   layerSliceRect,
   playheadFrameShadowPx,
+  sourceWindowTail,
   trackHeaderControls,
   trackIdAtClientY,
   trackKeyframeProperties,
@@ -558,5 +559,57 @@ describe("trackIdAtClientY", () => {
     expect(trackIdAtClientY(unmeasured, 0)).toBeNull();
     expect(trackIdAtClientY(unmeasured, 30)).toBeNull();
     expect(trackIdAtClientY([], 30)).toBeNull();
+  });
+});
+
+// A Group clip's two right-edge affordances (ADR 0052 §6). Overhang is legal in
+// state, so the block has to be able to DRAW it — which is the only reason this
+// arithmetic exists outside the mutation layer.
+describe("sourceWindowTail", () => {
+  it("draws nothing when the window exactly fills the source", () => {
+    expect(
+      sourceWindowTail({ srcInUs: 0, srcOutUs: 2_000_000, sourceDurationUs: 2_000_000 }),
+    ).toEqual({ overhangFromFraction: null, hasUnusedTail: false });
+  });
+
+  it("marks an unused tail when the source runs longer than the window", () => {
+    expect(
+      sourceWindowTail({ srcInUs: 0, srcOutUs: 1_000_000, sourceDurationUs: 2_000_000 }),
+    ).toEqual({ overhangFromFraction: null, hasUnusedTail: true });
+  });
+
+  // The window maps 1:1 onto the clip, so the hatch starts where the source
+  // ends as a fraction of the WINDOW, not of the source.
+  it("puts the hatch where the source runs out", () => {
+    expect(
+      sourceWindowTail({ srcInUs: 0, srcOutUs: 4_000_000, sourceDurationUs: 3_000_000 }),
+    ).toEqual({ overhangFromFraction: 0.75, hasUnusedTail: false });
+    // A trimmed-in window measures the fraction from its own start.
+    expect(
+      sourceWindowTail({ srcInUs: 1_000_000, srcOutUs: 5_000_000, sourceDurationUs: 3_000_000 }),
+    ).toEqual({ overhangFromFraction: 0.5, hasUnusedTail: false });
+  });
+
+  // Delete enough inside a Group and its duration falls behind the window's
+  // own start. Nothing renders anywhere on the clip, and a negative fraction
+  // would place the hatch off the left edge.
+  it("hatches the whole clip once the window starts past the end", () => {
+    expect(
+      sourceWindowTail({ srcInUs: 4_000_000, srcOutUs: 6_000_000, sourceDurationUs: 1_000_000 }),
+    ).toEqual({ overhangFromFraction: 0, hasUnusedTail: false });
+  });
+
+  // A guessed affordance is worse than none: hatching an unprobed clip would
+  // claim it renders nothing.
+  it("draws neither affordance for an unknown source length", () => {
+    expect(
+      sourceWindowTail({ srcInUs: 0, srcOutUs: 1_000_000, sourceDurationUs: null }),
+    ).toEqual({ overhangFromFraction: null, hasUnusedTail: false });
+  });
+
+  it("draws neither affordance for a degenerate window", () => {
+    expect(
+      sourceWindowTail({ srcInUs: 500, srcOutUs: 500, sourceDurationUs: 1_000_000 }),
+    ).toEqual({ overhangFromFraction: null, hasUnusedTail: false });
   });
 });

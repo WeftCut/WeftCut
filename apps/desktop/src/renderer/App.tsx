@@ -88,6 +88,12 @@ import {
   toggleMarkersVisible,
 } from "./settings/appSettingsStore";
 import { toggleLinkOverride } from "./state/linkOverrideStore";
+import {
+  groupSelected,
+  leaveOpenGroup,
+  openSelectedGroup,
+  ungroupSelected,
+} from "./commands/groupCommands";
 import { setTool } from "./state/toolStore";
 import { logEmit } from "./ipc";
 import { logMutationFailure, tryMutate } from "./errors/tryMutate";
@@ -644,6 +650,14 @@ export function App({ onCloseProject }: AppProps) {
     },
     // Session switch, no IPC and no history row (`linkOverrideStore.ts`).
     toggleLinkOverride,
+    // The Group quartet. Self-contained like `splitAtPlayhead` above — each
+    // reads the selection and scope stores and commits through IPC — so App
+    // lends them a slot and nothing else, and being in App's HandlerMap is what
+    // puts them in the catalogue and the Edit menu (`commands/groupCommands.ts`).
+    groupSelected: () => void groupSelected(),
+    ungroupSelected: () => void ungroupSelected(),
+    openGroup: openSelectedGroup,
+    leaveGroup: leaveOpenGroup,
     focusNextPanel: () => workspaceController?.focusNextPanel(),
     focusPreviousPanel: () => workspaceController?.focusPreviousPanel(),
     toggleMaximizePanel: () => workspaceController?.toggleMaximize(),

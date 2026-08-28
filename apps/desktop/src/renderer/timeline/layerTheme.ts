@@ -15,7 +15,9 @@ const THEMES: Record<
   Text: { surface: "#2a251b", accent: "#d2a65d" },
   Motif: { surface: "#28202e", accent: "#b17bc1" },
   // A Group (a placed composition): neutral slate, the one kind with no media
-  // hue of its own — it holds every other kind. Placeholder until the Group UI.
+  // hue of its own — it holds every other kind, so borrowing any one of their
+  // hues would claim it is that kind. The Group glyph on the block is what
+  // names it; the surface only has to read as "not one of the five".
   CompositionRef: { surface: "#22262b", accent: "#8a94a0" },
 };
 

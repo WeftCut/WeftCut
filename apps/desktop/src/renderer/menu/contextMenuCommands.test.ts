@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import { buildAppCommands } from "../commands/appCommands";
 import { ACTION_DEFS, type ActionId } from "../shortcuts/defs";
 import type { HandlerMap } from "../shortcuts/useShortcuts";
-import { LAYER_MENU_COMMAND_IDS } from "../timeline/LayerContextMenu";
+import {
+  GROUP_MENU_COMMAND_IDS,
+  LAYER_MENU_COMMAND_IDS,
+} from "../timeline/LayerContextMenu";
 import { RULER_MENU_COMMAND_IDS } from "../timeline/RulerContextMenu";
 import en from "../i18n/locales/en-US";
 
@@ -59,6 +62,9 @@ function resolveKey(obj: unknown, dotted: string): unknown {
 
 const MENUS = {
   "layer context menu": LAYER_MENU_COMMAND_IDS,
+  // The kind-gated Group tier of the same popup. Swept separately because it is
+  // a separate list, not because it is a separate menu.
+  "layer context menu (Group tier)": GROUP_MENU_COMMAND_IDS,
   "ruler context menu": RULER_MENU_COMMAND_IDS,
 } as const;
 

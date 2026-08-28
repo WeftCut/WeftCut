@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
-/// Which ONE thing is being renamed inline — a layer block, a lane header, or a
-/// link's label tab.
+/// Which ONE thing is being renamed inline — a layer block, a lane header, a
+/// link's label tab, or a Group clip's composition name.
 ///
 /// One slot rather than a field per kind: the edits are the same gesture a few
 /// pixels apart, and only one input can hold the caret, so a shape that could
@@ -12,7 +12,13 @@ import { create } from "zustand";
 /// the trigger through TrackLane / the header column. Atomic selectors only —
 /// never select `editing` itself (feedback_zustand_composite_selector).
 export interface RenameTarget {
-  kind: "layer" | "track" | "link";
+  /// `group`'s `id` is a COMPOSITION id, not a layer id: a Group's name belongs
+  /// to the composition, so renaming through one Group clip renames it under
+  /// every clip that places the same composition. That is the point — a Group is
+  /// one thing however many times it is placed — and it is why the target cannot
+  /// simply be `kind: "layer"` on the Group clip, which would write the LAYER's
+  /// own label instead.
+  kind: "layer" | "track" | "link" | "group";
   id: string;
 }
 
@@ -34,6 +40,8 @@ const editingTrack = (s: RenameState): string | null =>
   s.editing?.kind === "track" ? s.editing.id : null;
 const editingLink = (s: RenameState): string | null =>
   s.editing?.kind === "link" ? s.editing.id : null;
+const editingGroup = (s: RenameState): string | null =>
+  s.editing?.kind === "group" ? s.editing.id : null;
 
 export const useEditingLayerId = (): string | null =>
   useRenameStore(editingLayer);
@@ -54,5 +62,13 @@ export const beginTrackRename = (trackId: string): void =>
 
 export const beginLinkRename = (linkId: string): void =>
   useRenameStore.getState().begin({ kind: "link", id: linkId });
+
+/// The composition whose name holds the editor. Every Group clip placing it
+/// shows the field, which is honest: they all show the one name.
+export const useEditingGroupId = (): string | null =>
+  useRenameStore(editingGroup);
+
+export const beginGroupRename = (compositionId: string): void =>
+  useRenameStore.getState().begin({ kind: "group", id: compositionId });
 
 export const endRename = (): void => useRenameStore.getState().end();

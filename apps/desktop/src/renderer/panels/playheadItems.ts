@@ -302,7 +302,11 @@ export const PLAYHEAD_CATEGORY_ORDER: PlayheadCategory[] = ["video", "audio", "t
 export function playheadCategory(layerKind: string): PlayheadCategory {
   if (layerKind === "Audio") return "audio";
   if (layerKind === "Text") return "text";
-  // VideoClip | ImageOverlay | Color | Motif
+  // VideoClip | ImageOverlay | Color | Motif | CompositionRef. A Group is an
+  // ordinary picture layer in this panel, whatever it holds inside: the panel
+  // reports the stack being composited at the playhead, and a Group composites
+  // as one picture. Its row's reveal enters nothing — revealing a lane is not
+  // opening a composition.
   return "video";
 }
 

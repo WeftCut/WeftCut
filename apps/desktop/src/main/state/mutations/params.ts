@@ -1,4 +1,4 @@
-import type { Animated, AudioParams, AudioRole, ColorParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextParams, Uuid, VAlign, VideoClipParams } from '../model'
+import type { Animated, AudioParams, AudioRole, BlendMode, ColorParams, CompositionRefParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextParams, Uuid, VAlign, VideoClipParams } from '../model'
 import { CommandFailure } from '../errors'
 import { snapFrameFloor, snapFrameCeil, gridForLayerKind, snapOnGrid } from '../snap'
 import { authoredExtentPx, authoredValue, quantizeTrack } from '../quantize'
@@ -21,6 +21,18 @@ export type LayerParamsPatch =
   | { kind: 'Motif'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; src_in_us?: number; motif_id?: string; motif_version?: number; props?: Record<string, unknown> }
   | { kind: 'Color'; color?: Rgba; width?: number; height?: number }
   | { kind: 'Audio'; src_in_us?: number; src_out_us?: number; gain_db?: number; pan?: number; fade_in_us?: number; fade_out_us?: number; mute?: boolean; role?: AudioRole }
+  /** A Group layer (ADR 0052 §4). The media-bearing set minus what v1 leaves
+   *  out: no `speed` (AE's time-remap), no `crop`, no `flip_*`, no ref-level
+   *  audio gain. `src_in_us`/`src_out_us` take NO upper bound here — overhang
+   *  past the composition's duration is legal in state and clamped at the
+   *  gesture (ADR 0052 §6), so this path can set the window a trim drag would
+   *  not.
+   *
+   *  `blend_mode` is the ONE patchable blend field in this table, and only
+   *  because the Ungroup gate names it: `groupNotPlainReason` refuses a
+   *  non-Normal blend, and a reason no command can reach is a dead branch.
+   *  Every other kind stores `blend_mode` and no surface writes it yet. */
+  | { kind: 'CompositionRef'; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; blend_mode?: BlendMode }
 
 const stat = <T>(value: T): Animated<T> => ({ mode: 'Static', value })
 
@@ -74,6 +86,10 @@ function authoredTransform(patch: {
  *  this is the only site that needs them as data. */
 const TEXT_ALIGNS: readonly TextAlign[] = ['Left', 'Center', 'Right']
 const VALIGNS: readonly VAlign[] = ['Top', 'Middle', 'Bottom']
+/** `BlendMode`'s variants as values, for the same reason: MCP hands this arm
+ *  untyped JSON, and an unrecognised mode reaches the renderer's blend table as
+ *  `undefined`, i.e. a layer composited by no rule at all. */
+const BLEND_MODES: readonly BlendMode[] = ['Normal', 'Multiply', 'Screen', 'Overlay', 'Darken', 'Lighten', 'Add', 'Difference']
 
 /** apply_params_patch — kind-matched field merge; a discriminant
  *  mismatch is the only error. Animated fields collapse to Static(v) (MVP: this
@@ -222,6 +238,25 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (patch.props !== undefined) for (const k of Object.keys(patch.props)) m.props[k] = patch.props[k]
       return
     }
+    case 'CompositionRef': {
+      const g = p as CompositionRefParams
+      const a = authoredTransform(patch)
+      // Checked before the first write, like the Text arm's enums and for the
+      // same reason: a refused patch must leave the project byte-identical.
+      if (patch.blend_mode !== undefined && !BLEND_MODES.includes(patch.blend_mode)) {
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'blend_mode',
+          detail: `blend_mode must be one of ${BLEND_MODES.join(' | ')}` })
+      }
+      if (patch.src_in_us !== undefined) g.src_in_us = patch.src_in_us
+      if (patch.src_out_us !== undefined) g.src_out_us = patch.src_out_us
+      if (a.x !== undefined) g.transform.x = stat(a.x)
+      if (a.y !== undefined) g.transform.y = stat(a.y)
+      if (a.scale_x !== undefined) g.transform.scale_x = stat(a.scale_x)
+      if (a.scale_y !== undefined) g.transform.scale_y = stat(a.scale_y)
+      if (a.opacity !== undefined) g.opacity = stat(a.opacity)
+      if (patch.blend_mode !== undefined) g.blend_mode = patch.blend_mode
+      return
+    }
     case 'Color': {
       const c = p as ColorParams
       // The same whole-pixel extent the text box is: a Color layer is rasterized
@@ -339,7 +374,9 @@ function f64Lens(layer: Layer, key: string): { set(v: Animated<number>): void } 
     if (key === 'pan') return { set: (v) => { p.pan = v } }
     return null
   }
-  // VideoClip | ImageOverlay | Text | Motif — transform + opacity
+  // VideoClip | ImageOverlay | Text | Motif | CompositionRef — transform +
+  // opacity. A Group joins by having exactly that pair and nothing else
+  // animatable (ADR 0052 §4), so it needs no arm of its own here.
   if (key === 'opacity') return { set: (v) => { p.opacity = v } }
   if (TRANSFORM_F64_KEYS.includes(key)) return { set: (v) => { (p.transform as unknown as Record<string, Animated<number>>)[key] = v } }
   return null
@@ -362,7 +399,8 @@ export function resolveAnimatedF64(layer: Layer, key: string): Animated<number> 
     if (key === 'pan') return p.pan
     return null
   }
-  // VideoClip | ImageOverlay | Text | Motif — transform + opacity
+  // VideoClip | ImageOverlay | Text | Motif | CompositionRef — transform +
+  // opacity, the read sibling of `f64Lens`' one arm for all five.
   if (key === 'opacity') return p.opacity
   if (TRANSFORM_F64_KEYS.includes(key)) return (p.transform as unknown as Record<string, Animated<number>>)[key] ?? null
   return null

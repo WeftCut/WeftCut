@@ -55,6 +55,7 @@ import {
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { resolveAccelerator } from "../shortcuts/match";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
+import { useGroupOrdinals } from "../state/projectStore";
 import { useCloseOnAnchorMove } from "../timeline/contextMenuAnchor";
 import { linkHue } from "../timeline/geometry";
 import { MediaThumbnail } from "./MediaThumbnail";
@@ -87,9 +88,12 @@ const NO_CATEGORY_FILTER: ReadonlySet<PlayheadCategory> = new Set();
 function rowLabel(
   item: PlayheadItem,
   t: (key: string, values: Record<string, unknown>) => string,
+  /// `groupOrdinals` over the live summary — a Group row is named after its
+  /// composition, and the derived `Group N` needs the whole set to count over.
+  groupOrdinals: ReadonlyMap<string, number>,
 ): string {
   if (item.linkMembers.length > 0 && item.linkLabel !== null) return item.linkLabel;
-  return layerDisplayName(item.layer, t);
+  return layerDisplayName(item.layer, t, groupOrdinals);
 }
 
 /// The link accent, in the hue every member wears on the timeline
@@ -290,6 +294,7 @@ export function PlayheadPanel({
   // to scrolls out from under it (the media pool's convention) — measured on the
   // row, not inferred from a `scroll` event, which the popup's own opening fires
   // with nothing having moved. See `useCloseOnAnchorMove`.
+  const groupOrdinals = useGroupOrdinals();
   const closeRowMenu = useCallback(() => setRowMenu(null), []);
   useCloseOnAnchorMove(
     rowMenu ? (rowEls.current.get(rowMenu.layerId) ?? null) : null,
@@ -316,7 +321,7 @@ export function PlayheadPanel({
       x,
       y,
       layerId: item.layer.id,
-      label: rowLabel(item, t),
+      label: rowLabel(item, t, groupOrdinals),
       targets: inStack && onRestack ? restackMenuTargets(visualRows, stackIndex) : null,
       link,
     });
@@ -694,6 +699,7 @@ function PlayheadRow({
   // the playhead relation as a phrase carrying unit letters, the length as the
   // media pool's MM:SS. Neither prints a field name, and the shapes are
   // different enough that neither needs one.
+  const groupOrdinals = useGroupOrdinals();
   const delta = playheadDeltaLabels(item, fpsNum, fpsDen, t);
   const durationLabel = formatMediaDuration(durationUs);
   const durationAria = t("playhead_panel.duration_aria", { value: durationLabel });
@@ -703,7 +709,7 @@ function PlayheadRow({
   const thumbSources = (folded ? item.linkMembers : [item])
     .filter((source) => thumbMediaIdOf(source) !== null)
     .slice(0, STACKED_THUMBS_MAX);
-  const primaryLabel = rowLabel(item, t);
+  const primaryLabel = rowLabel(item, t, groupOrdinals);
   const accent = item.linkId !== null ? linkAccent(item.linkId) : null;
 
   // Inline rename. Enter commits, Escape cancels, click-away commits — all

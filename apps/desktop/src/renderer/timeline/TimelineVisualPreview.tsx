@@ -4,7 +4,11 @@ import { LAYER_PREVIEW_MIN_PX } from "./geometry";
 import { TimelineFilmstrip } from "./TimelineFilmstrip";
 import { TimelineWaveform } from "./TimelineWaveform";
 import { trackStatic, type LayerSummary, type Rgba } from "../ipc";
-import { useMediaById } from "../state/projectStore";
+import { useMediaPosterSrc } from "../panels/MediaThumbnail";
+import {
+  useFirstVideoMediaIdIn,
+  useMediaById,
+} from "../state/projectStore";
 import { timelineLayerTheme } from "./layerTheme";
 
 function clamp01(value: number): number {
@@ -122,6 +126,15 @@ export function TimelineVisualPreview({
   const videoMedia = useMediaById(
     layer.params.kind === "VideoClip" ? layer.params.media_id : null,
   );
+  // A Group's poster is the earliest video INSIDE the composition it shows — a
+  // still, not a filmstrip: the strip would have to map the Group's window onto
+  // one inner clip's own window, and there is no such mapping when the
+  // composition holds more than one clip. One frame says "this is that shot"
+  // without claiming anything about the rest of the span.
+  const groupPosterMediaId = useFirstVideoMediaIdIn(
+    layer.params.kind === "CompositionRef" ? layer.params.composition_id : null,
+  );
+  const groupPosterSrc = useMediaPosterSrc(groupPosterMediaId, "video");
   if (!canRenderPreview) return null;
   const layerTheme = timelineLayerTheme(layer.params.kind, layer.color_hint);
 
@@ -186,6 +199,21 @@ export function TimelineVisualPreview({
         return fallbackFill(layerTheme.surface);
       case "Motif":
         return fallbackFill(layerTheme.surface, "motif");
+      // No poster (a Group of titles, a thumbnail job still running) falls back
+      // to the plain fill, and the block's `Group` glyph is then what names the
+      // clip — the same division every other kind uses when its resource is not
+      // there yet.
+      case "CompositionRef":
+        return resourceEnabled && groupPosterSrc !== null ? (
+          <img
+            className="h-full w-full object-cover"
+            src={groupPosterSrc}
+            alt=""
+            draggable={false}
+          />
+        ) : (
+          fallbackFill(layerTheme.surface)
+        );
     }
   })();
 

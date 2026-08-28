@@ -11,10 +11,12 @@ import {
   type RoleMixView,
 } from "../ipc";
 import { compositionOrRoot, rootCompositionOf } from "../ipc/compositions";
+import { groupOrdinals } from "../lib/layerName";
 import {
   reconcileCompositionScope,
   useCompositionScopeStore,
 } from "./compositionScopeStore";
+import { restorePrecomposeSelection } from "./precomposeSelection";
 import {
   retainLayerSelection,
   retainTransitionSelection,
@@ -48,6 +50,11 @@ export interface ProjectStoreState {
   /// before the scope store can open that Group.
   compositionIdByLayerId: Map<string, string>;
   compositionIdByTrackId: Map<string, string>;
+  /// `composition_id → N` for the derived `Group N` name (`lib/layerName.ts`).
+  /// Built once per summary rather than per naming call: every Group clip, every
+  /// breadcrumb crumb and every search entry asks the same question, and the
+  /// answer depends on the WHOLE composition set, not on the layer asking.
+  groupOrdinals: ReadonlyMap<string, number>;
   /// True after the initial `project_summary` fetch + subscription is
   /// wired. Distinguishes "no project loaded" (`summary === null`,
   /// `ready === true`) from "haven't fetched yet"
@@ -62,19 +69,34 @@ interface ProjectStoreActions {
   apply: (summary: ProjectSummary | null) => void;
 }
 
+/// Declared HERE, not with the other empty sentinels at the foot of the file:
+/// the store initializer below runs at module evaluation, and a `const` further
+/// down would still be in its temporal dead zone.
+const EMPTY_ORDINALS: ReadonlyMap<string, number> = new Map();
+
 function buildIndices(summary: ProjectSummary | null): {
   mediaById: Map<string, MediaSummary>;
   layerById: Map<string, LayerSummary>;
   trackIdByLayerId: Map<string, string>;
   compositionIdByLayerId: Map<string, string>;
   compositionIdByTrackId: Map<string, string>;
+  groupOrdinals: ReadonlyMap<string, number>;
 } {
   const mediaById = new Map<string, MediaSummary>();
   const layerById = new Map<string, LayerSummary>();
   const trackIdByLayerId = new Map<string, string>();
   const compositionIdByLayerId = new Map<string, string>();
   const compositionIdByTrackId = new Map<string, string>();
-  const indices = { mediaById, layerById, trackIdByLayerId, compositionIdByLayerId, compositionIdByTrackId };
+  const indices = {
+    mediaById,
+    layerById,
+    trackIdByLayerId,
+    compositionIdByLayerId,
+    compositionIdByTrackId,
+    groupOrdinals: summary
+      ? groupOrdinals(summary.compositions, summary.root_id)
+      : EMPTY_ORDINALS,
+  };
   if (!summary) return indices;
   for (const m of summary.media) mediaById.set(m.id, m);
   for (const c of Object.values(summary.compositions)) {
@@ -99,6 +121,7 @@ export const useProjectStore = create<
   trackIdByLayerId: new Map(),
   compositionIdByLayerId: new Map(),
   compositionIdByTrackId: new Map(),
+  groupOrdinals: EMPTY_ORDINALS,
   ready: false,
 
   apply: (summary) => {
@@ -117,6 +140,10 @@ export const useProjectStore = create<
     // After the indices and the retained selections: the fallback switch this
     // may run clears the selection, and reads the summary just published.
     reconcileCompositionScope(summary);
+    // After the switch, for the same reason: undoing a pre-compose from inside
+    // the Group it created lands here having just cleared the selection, and
+    // this is what puts the grouped layers back in it.
+    restorePrecomposeSelection(summary);
   },
 }));
 
@@ -206,6 +233,74 @@ export const useOpenComposition = (): CompositionSummary | null => {
 /// only changes when a `summary` apply runs.
 export const useMediaById = (id: string | null | undefined): MediaSummary | undefined =>
   useProjectStore((s) => (id ? s.mediaById.get(id) : undefined));
+
+/// The derived-`Group N` ordinals, for `layerDisplayName` / `groupDisplayName`.
+/// One Map reference per summary, so a subscriber bails out on every unrelated
+/// store tick.
+export const useGroupOrdinals = (): ReadonlyMap<string, number> =>
+  useProjectStore((s) => s.groupOrdinals);
+
+/// Imperative twin, for the event-time callers (a context-menu row's label, a
+/// command's status-log line).
+export function currentGroupOrdinals(): ReadonlyMap<string, number> {
+  return useProjectStore.getState().groupOrdinals;
+}
+
+/// A Group's SOURCE length: the referenced composition's `duration_us`, or null
+/// when the summary does not carry it (a composition removed under a stale
+/// clip). The bound trim clamps against and the clip's overhang hatch measures
+/// from — `sourceWindowTail` reads "unknown" as "draw nothing".
+export const useCompositionDurationUs = (
+  compositionId: string | null,
+): number | null =>
+  useProjectStore((s) =>
+    compositionId ? (s.summary?.compositions[compositionId]?.duration_us ?? null) : null,
+  );
+
+/// The media whose thumbnail stands in for a Group clip: the earliest-starting
+/// video clip inside the composition, or inside a Group nested in it. Null when
+/// the Group holds no video at all, which is when the clip falls back to its
+/// kind glyph.
+///
+/// Recursive because a Group of Groups is the case where the answer is most
+/// wanted and least reachable — and `seen`-guarded because a reference cycle is
+/// a validated impossibility, not a structural one (`CompositionCycle`), and an
+/// infinite walk here would hang the timeline rather than fail a commit.
+function firstVideoMediaIdIn(
+  summary: ProjectSummary | null,
+  compositionId: string,
+  seen: Set<string> = new Set(),
+): string | null {
+  if (!summary || seen.has(compositionId)) return null;
+  seen.add(compositionId);
+  const comp = summary.compositions[compositionId];
+  if (!comp) return null;
+  let earliest: { mediaId: string; tStartUs: number } | null = null;
+  for (const track of comp.tracks) {
+    for (const layer of track.layers) {
+      if (layer.params.kind !== "VideoClip") continue;
+      if (earliest === null || layer.t_start_us < earliest.tStartUs) {
+        earliest = { mediaId: layer.params.media_id, tStartUs: layer.t_start_us };
+      }
+    }
+  }
+  if (earliest !== null) return earliest.mediaId;
+  for (const track of comp.tracks) {
+    for (const layer of track.layers) {
+      if (layer.params.kind !== "CompositionRef") continue;
+      const nested = firstVideoMediaIdIn(summary, layer.params.composition_id, seen);
+      if (nested !== null) return nested;
+    }
+  }
+  return null;
+}
+
+export const useFirstVideoMediaIdIn = (
+  compositionId: string | null,
+): string | null =>
+  useProjectStore((s) =>
+    compositionId ? firstVideoMediaIdIn(s.summary, compositionId) : null,
+  );
 
 // Reused empty sentinels so `?? []` doesn't allocate a fresh array on
 // every render (which would defeat referential-equality short-circuits

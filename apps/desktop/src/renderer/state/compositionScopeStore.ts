@@ -2,12 +2,11 @@
 //
 // The summary carries every composition (`ProjectSummary.compositions`); this
 // store names the one the timeline, the inspector, the Playhead panel and the
-// ruler show. It is After Effects' model, as spec § Navigation and scope puts
-// it: opening a Group swaps the timeline for the Group's own, the preview
-// follows the open composition (slice 14 — today `Compositor.setProject` still
-// draws the root), and EXPORT ALWAYS RENDERS THE ROOT — a Group is a source,
-// and rendering one on its own would produce a file no user asked for. That is
-// why export code reads `rootCompositionOf(summary)` and never this store.
+// ruler show. It is After Effects' model: opening a Group swaps the timeline for
+// the Group's own, the preview follows the open composition, and EXPORT ALWAYS
+// RENDERS THE ROOT — a Group is a source, and rendering one on its own would
+// produce a file no user asked for. That is why export code reads
+// `rootCompositionOf(summary)` and never this store.
 //
 // Session state, like the playhead and the range: where you are in a work
 // session, not a property of the project. A module-level store rather than App

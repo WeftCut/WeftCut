@@ -449,8 +449,9 @@ export interface E2EHook {
   /// the hidden-member badge's reveal must not select.
   getSelectedLayerIds(): string[];
   /// Open a composition by id — the scope store's `openComposition` with no
-  /// entry layer, exactly what a spec needs before the breadcrumb and the
-  /// double-click exist (slice 15). False when the summary does not carry it.
+  /// entry layer, for a spec that needs to stand INSIDE a composition without
+  /// walking the pointer gestures that get there. False when the summary does
+  /// not carry it.
   setOpenComposition(compositionId: string): boolean;
   /// The open composition's id and the path it was entered through; the id is
   /// the root's while nothing is open. Null before a project is loaded.

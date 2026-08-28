@@ -59,13 +59,21 @@ async function installJobListenerOnce() {
   );
 }
 
-export function MediaThumbnail({
-  mediaId,
-  mediaKind,
-}: {
-  mediaId: string;
-  mediaKind: string;
-}) {
+/// The `src` a poster image for `mediaId` should use, or null while none exists
+/// — a generated data URL for video, the file itself for an image.
+///
+/// Extracted from the component below because the timeline draws the same poster
+/// on a Group clip (`TimelineVisualPreview`) and must not inherit the media
+/// pool's `.media-thumbnail` sizing to get it. The module-level cache, the
+/// in-flight de-duplication and the `media:job_complete` re-fetch are all shared
+/// by having ONE hook: two independent fetch paths would race the same job.
+///
+/// `mediaId` null asks for nothing and subscribes to nothing, which is what lets
+/// a caller hold the hook unconditionally for a layer that has no media.
+export function useMediaPosterSrc(
+  mediaId: string | null,
+  mediaKind: string,
+): string | null {
   const [, setTick] = useState(0);
   const media = useMediaById(mediaId);
   const resolvedKind = (media?.kind ?? mediaKind).toLowerCase();
@@ -73,7 +81,7 @@ export function MediaThumbnail({
   useEffect(() => {
     // Only videos produce generated thumbnails; image media display the
     // original file directly.
-    if (resolvedKind !== "video") return;
+    if (mediaId === null || resolvedKind !== "video") return;
     const listener = () => setTick((t) => t + 1);
     let listeners = thumbListeners.get(mediaId);
     if (!listeners) {
@@ -88,30 +96,23 @@ export function MediaThumbnail({
     };
   }, [mediaId, resolvedKind]);
 
-  if (resolvedKind === "image" && media?.available) {
-    return (
-      <img
-        className="media-thumbnail"
-        src={convertFileSrc(media.path)}
-        alt=""
-        draggable={false}
-      />
-    );
+  if (mediaId === null) return null;
+  if (resolvedKind === "image") {
+    return media?.available ? convertFileSrc(media.path) : null;
   }
-
-  if (resolvedKind !== "video") {
-    return <div className="media-thumbnail is-placeholder" />;
-  }
+  if (resolvedKind !== "video") return null;
   const entry = thumbCache.get(mediaId);
-  if (entry?.state === "ready") {
-    return (
-      <img
-        className="media-thumbnail"
-        src={entry.dataUrl}
-        alt=""
-        draggable={false}
-      />
-    );
-  }
-  return <div className="media-thumbnail is-placeholder" />;
+  return entry?.state === "ready" ? entry.dataUrl : null;
+}
+
+export function MediaThumbnail({
+  mediaId,
+  mediaKind,
+}: {
+  mediaId: string;
+  mediaKind: string;
+}) {
+  const src = useMediaPosterSrc(mediaId, mediaKind);
+  if (src === null) return <div className="media-thumbnail is-placeholder" />;
+  return <img className="media-thumbnail" src={src} alt="" draggable={false} />;
 }

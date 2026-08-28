@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
-import { blankProject, type Layer, type LayerParams, type MotifParams, type Project, type TextParams } from '../model'
+import { blankProject, type BlendMode, type Layer, type LayerParams, type MotifParams, type Project, type TextParams } from '../model'
 import { applyAddLayer, colorParams, textParamsDefault } from './add'
 import { videoClipParams, audioParams } from './media'
 import { isCommandFailure } from '../errors'
@@ -518,5 +518,69 @@ describe('param updates inside a Group', () => {
     applyUpdateLayerParams(p, innerId, { kind: 'Color', width: 640 }, new MotifCatalog())
     expect((group(p, groupId).tracks[0].layers[0].params as Extract<Layer['params'], { kind: 'Color' }>).width).toBe(640)
     expect(root(p)).toEqual(rootBefore)
+  })
+})
+
+describe('applyUpdateLayerParams — a Group layer', () => {
+  const refOf = (p: Project, id: string) =>
+    layerOf(p, id).params as Extract<Layer['params'], { kind: 'CompositionRef' }>
+
+  it('sets the transform, opacity and source window', () => {
+    const { p, refLayerId } = groupedProject()
+    applyUpdateLayerParams(p, refLayerId, { kind: 'CompositionRef', x: 12, scale_x: 2, opacity: 0.25, src_in_us: 100_000 }, new MotifCatalog())
+    const g = refOf(p, refLayerId)
+    expect([g.transform.x, g.transform.scale_x, g.opacity, g.src_in_us]).toEqual([
+      { mode: 'Static', value: 12 }, { mode: 'Static', value: 2 }, { mode: 'Static', value: 0.25 }, 100_000,
+    ])
+  })
+
+  it('takes a window past the composition duration — this path has no upper bound', () => {
+    const { p, groupId, refLayerId } = groupedProject()
+    const beyond = group(p, groupId).duration_us + 5_000_000
+    applyUpdateLayerParams(p, refLayerId, { kind: 'CompositionRef', src_out_us: beyond }, new MotifCatalog())
+    expect(refOf(p, refLayerId).src_out_us).toBe(beyond)
+    // Overhang is legal in state and clamped at the gesture (ADR 0052 §6), so
+    // the validator must accept what this patch just wrote.
+    expect(() => validate(p)).not.toThrow()
+  })
+
+  it('accepts every blend mode the model defines', () => {
+    // The Record type forces this literal to name every variant, so adding one
+    // to `BlendMode` breaks this file until it is listed here — and the loop
+    // then proves the arm's own list accepts it instead of refusing it as
+    // unknown, which a subset list would do silently.
+    const ALL: Record<BlendMode, true> = {
+      Normal: true, Multiply: true, Screen: true, Overlay: true,
+      Darken: true, Lighten: true, Add: true, Difference: true,
+    }
+    for (const mode of Object.keys(ALL) as BlendMode[]) {
+      const { p, refLayerId } = groupedProject()
+      applyUpdateLayerParams(p, refLayerId, { kind: 'CompositionRef', blend_mode: mode }, new MotifCatalog())
+      expect(refOf(p, refLayerId).blend_mode).toBe(mode)
+    }
+  })
+
+  it('refuses an unrecognised blend mode and leaves the layer untouched', () => {
+    const { p, refLayerId } = groupedProject()
+    const before = structuredClone(layerOf(p, refLayerId))
+    expectCmd(() => applyUpdateLayerParams(p, refLayerId, { kind: 'CompositionRef', blend_mode: 'Fancy' as BlendMode, x: 99 }, new MotifCatalog()), 'InvalidArgument')
+    expect(layerOf(p, refLayerId)).toEqual(before)
+  })
+
+  it('keyframes opacity and transform through the lens every visual kind shares', () => {
+    const { p, refLayerId } = groupedProject()
+    const track = { mode: 'Keyframed' as const, value: [
+      { id: '00000000-0000-0000-0000-0000000000e1', t_us: 0, value: 0, interp: { kind: 'Linear' as const } },
+      { id: '00000000-0000-0000-0000-0000000000e2', t_us: 1_000_000, value: 1, interp: { kind: 'Linear' as const } },
+    ] }
+    applyUpdateLayerParamTrack(p, refLayerId, 'opacity', track)
+    applyUpdateLayerParamTrack(p, refLayerId, 'scale_y', track)
+    expect(refOf(p, refLayerId).opacity.mode).toBe('Keyframed')
+    expect(resolveAnimatedF64(layerOf(p, refLayerId), 'scale_y')?.mode).toBe('Keyframed')
+  })
+
+  it('rejects a patch aimed at the wrong kind', () => {
+    const { p, innerId } = groupedProject()
+    expectCmd(() => applyUpdateLayerParams(p, innerId, { kind: 'CompositionRef', x: 1 }, new MotifCatalog()), 'LayerParamsKindMismatch')
   })
 })

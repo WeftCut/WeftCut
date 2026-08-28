@@ -35,6 +35,10 @@ export type ActionId =
   | "focusPreviousPanel"
   | "toggleMaximizePanel"
   | "restoreMaximizedPanel"
+  | "groupSelected"
+  | "ungroupSelected"
+  | "openGroup"
+  | "leaveGroup"
   | "toggleLinkSelected"
   | "toggleLinkOverride"
   | "nudgeAudioSampleBack"
@@ -223,6 +227,26 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
     fireWhenEditing: false,
     suppressInTransientWidget: true,
   },
+  // `docs/features.md#groups` — pre-compose and its inverse, at the keys AE
+  // (`Mod+Shift+C` for precompose) declined to standardise and Premiere,
+  // Resolve and every other layer-based tool did: `Mod+G` groups, `Mod+Shift+G`
+  // ungroups. Two commands and not one toggle for the reason
+  // `timeline/groupEligibility.ts` gives: their preconditions are not inverses.
+  //
+  // NOT `fireWhenEditing: false`, unlike the clipboard chords: no platform or
+  // editor meaning is attached to Ctrl+G in a text field here, and the scope
+  // gate below already stands the pair down everywhere but the timeline.
+  groupSelected:          { defaultKeys: ["Mod+G"],        labelKey: "actions.group_selected", scope: TIMELINE_SELECTION },
+  ungroupSelected:        { defaultKeys: ["Mod+Shift+G"],  labelKey: "actions.ungroup_selected", scope: TIMELINE_SELECTION },
+  // Entering and leaving a Group ship UNBOUND. Their home is the pointer — a
+  // double-click on the clip, a crumb in the breadcrumb — and no shipping NLE
+  // has a key for either to copy, so spending one from the budget would be
+  // inventing a convention. They are catalogued anyway, which is what puts them
+  // in the palette, in the Edit menu and in Settings → Keyboard for a user who
+  // wants to bind them; `resolveEntries` simply emits no chord for an empty
+  // `defaultKeys`.
+  openGroup:              { defaultKeys: [],               labelKey: "actions.open_group", scope: TIMELINE_SELECTION },
+  leaveGroup:             { defaultKeys: [],               labelKey: "actions.leave_group", scope: TIMELINE_SELECTION },
   // `docs/features.md#links` — Ctrl/Cmd+L toggles the link on the current
   // selection, Premiere's Link: two or more unlinked layers link, a selection
   // inside one link unlinks it (`timeline/linkEligibility.ts` decides).

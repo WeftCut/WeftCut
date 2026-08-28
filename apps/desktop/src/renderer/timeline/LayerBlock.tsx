@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   AudioWaveform,
   Film,
+  Group as GroupIcon,
   Image as ImageIcon,
   Link2,
   Palette,
@@ -11,7 +12,7 @@ import {
 } from "lucide-react";
 import { TEXT_NAME_MAX, textSnippet } from "../../shared/textSnippet";
 import { adjacentFrameBoundaryUs, formatTimecode } from "../frames";
-import { layerDisplayName } from "../lib/layerName";
+import { groupDisplayName, layerDisplayName } from "../lib/layerName";
 import { AppInput } from "../components/AppInput";
 import {
   HEADER_COL_PX,
@@ -21,6 +22,7 @@ import {
   keyframeHitTest,
   keyframeXWithinClip,
   layerSliceRect,
+  sourceWindowTail,
   type LayerSlice,
   type LinkTab as LinkTabInfo,
 } from "./geometry";
@@ -30,6 +32,7 @@ import { formatSyncOffset } from "./audioSlip";
 import { useAudioSyncOffset } from "./audioSyncOffsetStore";
 import type { AnimTrack, LayerSummary } from "../ipc";
 import {
+  useEditingGroupId,
   useEditingLayerId,
   useEditingLinkId,
   beginLayerRename,
@@ -37,7 +40,12 @@ import {
 } from "./renameStore";
 import { hoverLink, unhoverLink } from "./linkHoverStore";
 import { useLinkOverride } from "../state/linkOverrideStore";
+import { openComposition } from "../state/compositionScopeStore";
 import { revealTrackWithoutSelection } from "../state/navigation";
+import {
+  useCompositionDurationUs,
+  useGroupOrdinals,
+} from "../state/projectStore";
 import { useSelectionStore } from "../state/selectionStore";
 import { useFocusedParamFor } from "../keyframe/focusStore";
 import { readParamTrack } from "../keyframe/descriptors";
@@ -286,6 +294,14 @@ function LinkTab({
   );
 }
 
+/// The stored composition name of a Group clip, or null for every other kind —
+/// the primitive the rename editor seeds from and compares against.
+function groupLabel(layer: LayerSummary): string | null {
+  return layer.params.kind === "CompositionRef"
+    ? layer.params.composition_label
+    : null;
+}
+
 function shortLayerLabel(label: string): string {
   const clean = label.trim();
   if (clean.length <= 12) return clean;
@@ -306,6 +322,11 @@ function LayerKindIcon({ kind }: { kind: LayerSummary["params"]["kind"] }) {
       return <Sparkles {...LAYER_ICON_PROPS} />;
     case "Color":
       return <Palette {...LAYER_ICON_PROPS} />;
+    // The one glyph that names a container rather than a medium — the same
+    // `Group` lucide gives the strip's Group button, so the button and the clip
+    // it makes carry one mark.
+    case "CompositionRef":
+      return <GroupIcon {...LAYER_ICON_PROPS} />;
   }
 }
 
@@ -333,6 +354,7 @@ export function LayerBlock({
   onContextMenu,
   onCommitLabel,
   onCommitLinkLabel,
+  onCommitGroupLabel,
   onCommitParamTrack,
   fpsNum,
   fpsDen,
@@ -391,6 +413,12 @@ export function LayerBlock({
   /// Persist a link's label from the tab editor; `null` clears it, which is a
   /// link's ordinary unlabelled state. Wired by Timeline to `linksRename`.
   onCommitLinkLabel: (linkId: string, label: string | null) => void;
+  /// Persist a Group's COMPOSITION name from the clip's inline editor; `null`
+  /// clears it back to the derived `Group N`. Wired by Timeline to
+  /// `groupsRename`. Separate from `onCommitLabel` because the two write
+  /// different things: that one is this clip's own label, this one is the name
+  /// every clip placing the composition shows.
+  onCommitGroupLabel: (compositionId: string, label: string | null) => void;
   /// Persist a keyframe track edit — a diamond retime. Wired by Timeline to
   /// `updateLayerParamTrack + onMutated`. The multi-key operations do NOT come
   /// through here: they commit the whole selection at once (`keyframeBatch.ts`).
@@ -418,12 +446,24 @@ export function LayerBlock({
         : null;
 
   const editingLayerId = useEditingLayerId();
-  const isEditing = editingLayerId === layer.id;
+  const groupCompositionId =
+    layer.params.kind === "CompositionRef" ? layer.params.composition_id : null;
+  const editingGroupId = useEditingGroupId();
+  // The composition-name editor uses the same slot as the layer-label one: only
+  // one input can hold the caret (`renameStore.ts`), and putting them in one
+  // place is what keeps the block's sticky-label geometry to a single branch.
+  const isEditingGroupName =
+    groupCompositionId !== null && editingGroupId === groupCompositionId;
+  const isEditing = editingLayerId === layer.id || isEditingGroupName;
   const editingLinkId = useEditingLinkId();
   const linksOff = useLinkOverride();
   const isEditingLinkTab =
     linkTab !== null && editingLinkId === linkTab.linkId;
   const focusedParam = useFocusedParamFor(layer.id);
+  const groupOrdinals = useGroupOrdinals();
+  // Null for every other kind, and for a Group whose composition the summary no
+  // longer carries — `sourceWindowTail` reads that as "draw neither affordance".
+  const groupSourceDurationUs = useCompositionDurationUs(groupCompositionId);
   const [draft, setDraft] = useState("");
   // Which of THIS layer+param's keyframes are selected. Reads the shared
   // selection store so the chip diamonds and the sub-lane ones agree.
@@ -434,13 +474,20 @@ export function LayerBlock({
   const dragTUsRef = useRef<number | null>(null);
   useEffect(() => {
     if (isEditing) {
-      setDraft(layer.label ?? "");
+      setDraft(
+        (isEditingGroupName && layer.params.kind === "CompositionRef"
+          ? layer.params.composition_label
+          : layer.label) ?? "",
+      );
       // preventScroll: the timeline is a scroll container, so a plain
       // focus() would scroll the block into view and jolt the timeline.
       inputRef.current?.focus({ preventScroll: true });
       inputRef.current?.select();
     }
-  }, [isEditing, layer.id, layer.label]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- seeded from
+    // whichever name is being edited; `layer.params` is not a stable dep and the
+    // two label primitives below are the only content that can change it.
+  }, [isEditing, isEditingGroupName, layer.id, layer.label, groupLabel(layer)]);
 
   // Drop the diamond selection when this layer is no longer the primary
   // selection, so the Timeline's capture-phase keyframe Delete can't stay armed
@@ -451,7 +498,16 @@ export function LayerBlock({
 
   const commitRename = () => {
     const next = draft.trim();
-    if (next !== (layer.label ?? "")) onCommitLabel(layer.id, next);
+    if (isEditingGroupName && groupCompositionId !== null) {
+      // Blank clears the name, which is a Group's ordinary unnamed state (the
+      // derived `Group N` takes over) — unlike a layer label, where the actor
+      // stores the empty string and the naming chain reads it as absent.
+      if (next !== (groupLabel(layer) ?? "")) {
+        onCommitGroupLabel(groupCompositionId, next || null);
+      }
+    } else if (next !== (layer.label ?? "")) {
+      onCommitLabel(layer.id, next);
+    }
     endRename();
   };
   let liveStart = isPendingPlacement
@@ -499,7 +555,7 @@ export function LayerBlock({
 
   const left = (Math.max(0, liveStart) / 1_000_000) * pxPerSec;
   const width = ((liveEnd - liveStart) / 1_000_000) * pxPerSec;
-  const label = layerDisplayName(layer, t);
+  const label = layerDisplayName(layer, t, groupOrdinals);
 
   // Source copies are normally filtered out for cross-track drag/pending
   // states. If one still renders during a transitional frame, keep it
@@ -619,6 +675,31 @@ export function LayerBlock({
     });
   };
 
+  // A Group's source length is its composition's duration, so the two right-edge
+  // affordances below follow the composition rather than any media (ADR 0052
+  // §6). Only a Group draws either today — every other kind hands in a null
+  // source length and gets nothing back — but the arithmetic is the source
+  // window's, not the Group's, so it is asked kind-agnostically: a media clip
+  // whose file was replaced by a shorter one is the same picture.
+  const sourceTail = sourceWindowTail({
+    srcInUs: "src_in_us" in layer.params ? layer.params.src_in_us : 0,
+    srcOutUs: "src_out_us" in layer.params ? layer.params.src_out_us : 0,
+    sourceDurationUs: groupSourceDurationUs,
+  });
+
+  // The name in the two tail tooltips: the SOURCE's name, which for a Group is
+  // its composition's rather than this clip's own label — the sentence is about
+  // what ran out, not about the clip that shows it.
+  const sourceName =
+    layer.params.kind === "CompositionRef"
+      ? groupDisplayName(
+          layer.params.composition_id,
+          layer.params.composition_label,
+          groupOrdinals,
+          t,
+        )
+      : label;
+
   const layerWidthPx = Math.max(width, 4);
   const showLabel = layerWidthPx >= LAYER_LABEL_MIN_PX;
   const showFullAffordances = layerWidthPx > LAYER_FULL_LABEL_MIN_PX;
@@ -701,6 +782,10 @@ export function LayerBlock({
         isDragging && dragState?.kind === "move" ? dragValidity : undefined
       }
       data-duplicate-preview={previewOnly || undefined}
+      // Absent on an in-flight duplicate ghost, which draws its SOURCE layer:
+      // the attribute is a unique handle onto one clip, and a second element
+      // carrying the same id would break every locator built on it.
+      data-layer-id={previewOnly ? undefined : layer.id}
       data-link-id={linkId ?? undefined}
       aria-invalid={dragIsInvalid || undefined}
       className={[
@@ -768,6 +853,15 @@ export function LayerBlock({
       onDoubleClick={(e) => {
         if (layer.locked || trackLocked || bladeMode) return;
         e.stopPropagation();
+        // A Group clip's double-click ENTERS it (AE, Premiere and Resolve all
+        // open a nest this way), so the gesture that renames every other clip
+        // is spent here on navigation. Renaming a Group is still reachable —
+        // `Rename` for the clip's own label, `Rename group…` for the
+        // composition's, both on the context menu.
+        if (groupCompositionId !== null) {
+          openComposition(groupCompositionId, layer.id);
+          return;
+        }
         beginLayerRename(layer.id);
       }}
       onPointerDown={onLayerPointerDown}
@@ -826,6 +920,36 @@ export function LayerBlock({
           aria-hidden="true"
         />
       )}
+      {/* Where the source ran out. Hatched rather than dimmed, because dimming
+          is what a disabled layer already looks like, and a diagonal hatch is
+          the mark every NLE uses for "no media here". Drawn under the label's
+          scrim (`z-[1]`) so a long name stays readable across it. */}
+      {sourceTail.overhangFromFraction !== null && (
+        <span
+          data-testid="layer-overhang-tail"
+          className="pointer-events-none absolute inset-y-0 right-0 z-[1] rounded-r"
+          style={{
+            left: `${sourceTail.overhangFromFraction * 100}%`,
+            backgroundImage:
+              "repeating-linear-gradient(135deg, rgba(0,0,0,0.42) 0 3px, rgba(255,255,255,0.10) 3px 6px)",
+          }}
+          title={t("timeline.group_overhang", { label: sourceName })}
+          aria-hidden="true"
+        />
+      )}
+      {/* The opposite case: there is content past the out edge, so the edge can
+          be dragged out. A 2 px tick and nothing more — it is an affordance the
+          user needs only while reaching for that edge, and anything larger would
+          read as a lane the editor wants managed. */}
+      {sourceTail.hasUnusedTail && (
+        <span
+          data-testid="layer-source-tail-tick"
+          className="pointer-events-none absolute inset-y-1 right-0 z-[1] w-0.5 rounded-full opacity-70"
+          style={{ backgroundColor: layerTheme.accent }}
+          title={t("timeline.group_more_content", { label: sourceName })}
+          aria-hidden="true"
+        />
+      )}
       {showLinkGlyph && (
         <span
           data-testid="link-glyph"
@@ -858,6 +982,10 @@ export function LayerBlock({
           className="sticky z-[2]"
           style={{ left: HEADER_COL_PX + 4, width: "10rem", maxWidth: "100%" }}
           value={draft}
+          // Named only when it is the composition-name editor: the two editors
+          // share this slot, and "Group name" on a clip's own label field would
+          // be a lie about what the field writes.
+          {...(isEditingGroupName ? { ariaLabel: t("timeline.group_label") } : {})}
           onValueChange={setDraft}
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}

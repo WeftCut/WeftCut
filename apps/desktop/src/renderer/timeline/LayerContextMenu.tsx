@@ -41,7 +41,19 @@ export const LAYER_MENU_COMMAND_IDS = [
   "---",
   "splitAtPlayhead",
   "moveToNewTrack",
+  "groupSelected",
 ] as const;
+
+/// The rows only a Group clip gets, appended when the right-clicked layer is
+/// one. Registry-driven like the tier above and swept by the same test, and they
+/// act on the SELECTION for the same reason the others do — a right-click selects
+/// the clip first (`Timeline.tsx`'s `onContextMenu`), so "the selection" and "the
+/// clip you clicked" are the same thing here.
+///
+/// `groupSelected` sits in the always-present tier instead, beside the other
+/// structural edits: pre-composing is offered on ANY clip, which is the whole
+/// point of it.
+export const GROUP_MENU_COMMAND_IDS = ["openGroup", "ungroupSelected"] as const;
 
 /// Floating context menu (Base UI Menu) anchored to a zero-size virtual
 /// element at the right-click coordinates. The popup machinery (portal,
@@ -51,7 +63,9 @@ export const LAYER_MENU_COMMAND_IDS = [
 ///   1. `LAYER_MENU_COMMAND_IDS` — registry commands on the selection, which
 ///      carry their own labels, enabled state and accelerators.
 ///   2. Layer-scoped actions taking an explicit `layerId`, some of them gated
-///      on the right-clicked layer's KIND.
+///      on the right-clicked layer's KIND — including the Group tier, which
+///      mixes registry rows (`GROUP_MENU_COMMAND_IDS`) with the one
+///      composition-scoped rename that has no command form.
 ///   3. The transition section, appended only when the right-click landed
 ///      within the click-tolerance band of a cut between same-track adjacent
 ///      visual layers (`transitionCut` non-null).
@@ -76,6 +90,7 @@ export function LayerContextMenu({
   onClose,
   onRename,
   onRenameLink,
+  onRenameGroup,
   onToggleEnabled,
   onSeparateAudio,
   onPrebakeNow,
@@ -99,6 +114,10 @@ export function LayerContextMenu({
   onRename: (id: string) => void;
   /// Opens the inline editor on the link's label tab (`renameStore`).
   onRenameLink: (linkId: string) => void;
+  /// Opens the inline editor on the Group clip for its COMPOSITION's name.
+  /// Distinct from `onRename`, which edits this clip's own label: a Group has
+  /// both, and the two rows say which one they write.
+  onRenameGroup: (layerId: string) => void;
   /// The set is resolved HERE and handed over whole — `set_layers_enabled`
   /// expands nothing, and one call is one undo step however many it names.
   onToggleEnabled: (layerIds: string[], enabled: boolean) => void;
@@ -193,6 +212,20 @@ export function LayerContextMenu({
                     defaultValue: "Separate audio to new track",
                   })}
                   onSelect={() => onSeparateAudio(layerId)}
+                />
+              </>
+            )}
+            {layerKind === "CompositionRef" && (
+              <>
+                <MenuSeparator />
+                {GROUP_MENU_COMMAND_IDS.map((id) => (
+                  <CommandContextItem key={id} id={id} onRun={onClose} />
+                ))}
+                <MenuItem
+                  label={t("timeline.rename_group", {
+                    defaultValue: "Rename group…",
+                  })}
+                  onSelect={() => onRenameGroup(layerId)}
                 />
               </>
             )}

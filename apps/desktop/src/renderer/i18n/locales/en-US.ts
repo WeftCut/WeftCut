@@ -248,6 +248,21 @@ const enUS = {
     unlink_selected: "Unlink selected layers",
     link_needs_two: "Select two or more unlinked clips to link them",
     link_mixed_selection: "Select clips that are all unlinked, or all in one link",
+    // Group / Ungroup, same rule: a greyed button names the precondition. The
+    // three not-plain reasons are separate strings because each names a
+    // different field to reset (`timeline/groupEligibility.ts`).
+    group_selected: "Group selected layers",
+    group_needs_selection: "Select one or more clips to group them",
+    group_locked: "Unlock the selected clips to group them",
+    ungroup_selected: "Ungroup — put the group's layers back",
+    ungroup_needs_one_group: "Select exactly one group clip to ungroup it",
+    ungroup_locked: "Unlock the group clip to ungroup it",
+    ungroup_not_plain_transform:
+      "Reset the group's transform first — ungrouping cannot carry it onto the layers inside",
+    ungroup_not_plain_opacity:
+      "Reset the group's opacity to 1 first — ungrouping cannot carry it onto the layers inside",
+    ungroup_not_plain_effects:
+      "Remove the group's effects first — ungrouping cannot carry them onto the layers inside",
   },
   dock_workspace: {
     editing_label: "Editing workspace",
@@ -375,6 +390,10 @@ const enUS = {
     focus_previous_panel: "Focus previous Panel",
     toggle_maximize_panel: "Maximize / restore Panel",
     restore_maximized_panel: "Restore maximized Panel",
+    group_selected: "Group selected layers",
+    ungroup_selected: "Ungroup",
+    open_group: "Open group",
+    leave_group: "Leave group",
     toggle_link_selected: "Link / Unlink selected layers",
     toggle_link_override: "Toggle link override",
     nudge_audio_sample_back: "Nudge audio 1 sample earlier",
@@ -489,6 +508,24 @@ const enUS = {
     prebake_now: "Pre-bake now",
     rename: "Rename",
     rename_link: "Rename link…",
+    // The Group rows, gated on the right-clicked clip's kind.
+    open_group: "Open group",
+    rename_group: "Rename group…",
+    // Accessible name for the Group clip's inline composition-name editor.
+    group_label: "Group name",
+    // A Group with no stored name. The number is its creation order among the
+    // unnamed ones (`lib/layerName.ts`), which is what makes two unnamed
+    // Groups tellable apart on the timeline.
+    group_derived_name: "Group {{n}}",
+    // The path from the project down to the open composition. Every crumb is a
+    // button that leaves back to it; hidden entirely at the root.
+    breadcrumb: "Open composition",
+    breadcrumb_leave: "Back to {{label}}",
+    // The two source-window affordances on a Group clip. Hatched tail: the
+    // composition is shorter than the window, so the clip's end shows nothing.
+    // Tick: the composition is longer, so there is content to trim out to.
+    group_overhang: "Past the end of {{label}} — nothing renders here",
+    group_more_content: "{{label}} runs longer — drag this edge out for more",
     // Accessible name for the label tab's inline editor.
     link_label: "Link name",
     // Tooltip of the `+N` badge on a link whose members sit on filtered lanes.
@@ -1249,6 +1286,14 @@ const enUS = {
     link_of_one: "Link of {{count}} layer",
     link_of_other: "Link of {{count}} layers",
     link_rename: "Rename link",
+    // The Group section: the composition's own name, its frame size and length
+    // (both read-only here — a Group's size is copied at pre-compose), and the
+    // two navigation/structure buttons.
+    group: "Group",
+    group_name: "Name",
+    group_size: "Composition size",
+    group_open: "Open group",
+    group_ungroup: "Ungroup",
     locked: "Locked",
     duration: "Duration",
     multi_primary: "Editing primary layer “{{label}}” — {{count}} layers selected; changes apply only to this layer.",
@@ -1600,6 +1645,7 @@ const enUS = {
     text: "Text",
     motif: "Motif",
     color: "Color",
+    compositionref: "Group",
     // Markers have no kind discriminant; the history panel's entity-label chain
     // uses this as their last rung so a blank-labelled marker never renders as a
     // raw uuid (main/state/history-labels.ts).

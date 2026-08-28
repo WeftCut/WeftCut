@@ -1,6 +1,6 @@
 import { formatTimecode } from "../frames";
 import type { ProjectSummary } from "../ipc";
-import { layerDisplayName } from "../lib/layerName";
+import { groupOrdinals, layerDisplayName } from "../lib/layerName";
 import { trackDisplayName } from "../lib/trackName";
 import type { ActionId } from "../shortcuts/defs";
 import { pinyinHaystacks } from "./pinyin";
@@ -66,6 +66,10 @@ export function buildEntries(
   // on the root, and activating it opens the Group first (navigation.ts). One
   // fps lattice for the whole project, so the root's rate formats every time.
   const compositions = Object.values(summary.compositions);
+  // Derived here rather than taken from the project store: this function is the
+  // Worker seam and must stay a pure function of its arguments, and the ordinals
+  // are a pure function of the summary it already has.
+  const ordinals = groupOrdinals(summary.compositions, summary.root_id);
   const root = summary.compositions[summary.root_id];
   const fpsNum = root?.fps_num ?? 30;
   const fpsDen = root?.fps_den ?? 1;
@@ -146,8 +150,8 @@ export function buildEntries(
         // Same name the timeline block and the inspector show, so a hit reads as
         // the clip the user can see. Only the kind fallback is locale-dependent,
         // which is why the en-US pass can differ and earn a second haystack.
-        const clipLabel = layerDisplayName(layer, locale.t);
-        const enClipLabel = layerDisplayName(layer, locale.tEn);
+        const clipLabel = layerDisplayName(layer, locale.t, ordinals);
+        const enClipLabel = layerDisplayName(layer, locale.tEn, ordinals);
         entries.push({
           key: `clip:${layer.id}`,
           type: "clip",

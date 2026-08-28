@@ -17,6 +17,7 @@ import {
   Bookmark,
   BookmarkPlus,
   FoldVertical,
+  Group,
   Link,
   Link2Off,
   Magnet,
@@ -25,6 +26,7 @@ import {
   SquareDashed,
   SquareSplitHorizontal,
   UnfoldVertical,
+  Ungroup,
   Unlink,
   type LucideProps,
 } from "lucide-react";
@@ -32,6 +34,7 @@ import type { ComponentType } from "react";
 
 import type { AppSettings, DisplayMode } from "../ipc";
 import type { LinkToggleState } from "../timeline/linkEligibility";
+import type { GroupState, UngroupState } from "../timeline/groupEligibility";
 import type { Tool } from "../state/toolStore";
 import { FollowPlayheadIcon } from "./FollowPlayheadIcon";
 import { ClearRangeIcon, MarkInIcon, MarkOutIcon } from "./MarkRangeIcon";
@@ -82,6 +85,12 @@ export interface QuickActionState {
   /// Whether the link override is on (`linkOverrideStore.ts`): links are
   /// not in force, every edit acts on single layers.
   linkOverride: boolean;
+  /// Whether the selection can be pre-composed, or why not
+  /// (`useGroupState`). A string selector for the `linkToggle` reason.
+  groupSelection: GroupState;
+  /// Whether the selection can be ungrouped, or which condition failed
+  /// (`useUngroupState`).
+  ungroupSelection: UngroupState;
 }
 
 export interface QuickActionItem {
@@ -127,6 +136,25 @@ const LINK_TOGGLE_HINT: Record<LinkToggleState, string> = {
   unlink: "quick_actions.unlink_selected",
   needs_two: "quick_actions.link_needs_two",
   mixed: "quick_actions.link_mixed_selection",
+};
+
+/// Tooltip per Group state, and per Ungroup state. Two total `Record`s for the
+/// `RESOLUTION_HINTS` reason: a new state must not compile until someone has
+/// written the sentence that tells the user what to do about it — which is the
+/// whole job of a disabled button's tooltip.
+const GROUP_HINT: Record<GroupState, string> = {
+  group: "quick_actions.group_selected",
+  needs_selection: "quick_actions.group_needs_selection",
+  locked: "quick_actions.group_locked",
+};
+
+const UNGROUP_HINT: Record<UngroupState, string> = {
+  ungroup: "quick_actions.ungroup_selected",
+  needs_one_group: "quick_actions.ungroup_needs_one_group",
+  locked: "quick_actions.ungroup_locked",
+  not_plain_transform: "quick_actions.ungroup_not_plain_transform",
+  not_plain_opacity: "quick_actions.ungroup_not_plain_opacity",
+  not_plain_effects: "quick_actions.ungroup_not_plain_effects",
 };
 
 export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
@@ -265,6 +293,22 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
         // applies the hint names the precondition instead of restating a
         // label that cannot be used.
         hint: (s) => LINK_TOGGLE_HINT[s.linkToggle],
+      },
+      // TWO buttons for Group / Ungroup where Link / Unlink is one, because the
+      // key is two keys: the two directions are not inverses over one selection
+      // (`timeline/groupEligibility.ts`), so a single button would have to grey
+      // itself out in states where the OTHER direction is live. The glyphs are
+      // lucide's own Group / Ungroup — the same `Group` glyph the timeline draws
+      // on a Group clip, so the button and the thing it makes read as one idea.
+      {
+        id: "groupSelected",
+        icon: Group,
+        hint: (s) => GROUP_HINT[s.groupSelection],
+      },
+      {
+        id: "ungroupSelected",
+        icon: Ungroup,
+        hint: (s) => UNGROUP_HINT[s.ungroupSelection],
       },
     ],
   },

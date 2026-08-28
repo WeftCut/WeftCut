@@ -59,6 +59,8 @@ function state(over: Partial<QuickActionState> = {}): QuickActionState {
     playbackResolution: "full",
     linkToggle: "needs_two",
     linkOverride: false,
+    groupSelection: "needs_selection",
+    ungroupSelection: "needs_one_group",
     ...over,
   };
 }

@@ -17,6 +17,7 @@ import { useActiveTool } from "../state/toolStore";
 import { useLinkOverride } from "../state/linkOverrideStore";
 import { useHasMarkedRange } from "../state/rangeStore";
 import { useLinkToggleState } from "../timeline/linkEligibility";
+import { useGroupState, useUngroupState } from "../timeline/groupEligibility";
 import {
   QUICK_ACTION_SECTIONS,
   resolveIcon,
@@ -260,6 +261,11 @@ export function QuickActionsPanel({
   const linkToggle = useLinkToggleState();
   // The override's pressed state; a boolean selector like the settings toggles.
   const linkOverride = useLinkOverride();
+  // The Group pair's two states, subscribed for the `linkToggle` reason: their
+  // `enabled` predicates are evaluated during THIS render, and both tooltips
+  // name a precondition that changes with the selection.
+  const groupSelection = useGroupState();
+  const ungroupSelection = useUngroupState();
   const orientation = useStripOrientation(geometry, docked);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useHorizontalWheel(scrollRef, orientation === "horizontal");
@@ -290,6 +296,8 @@ export function QuickActionsPanel({
     playbackResolution,
     linkToggle,
     linkOverride,
+    groupSelection,
+    ungroupSelection,
   };
 
   // Buttons resolve against the command registry, so a command whose provider

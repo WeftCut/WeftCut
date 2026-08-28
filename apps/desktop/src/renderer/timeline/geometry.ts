@@ -80,14 +80,65 @@ export interface VisualTrack {
   isRoleSectionStart: boolean;
 }
 
-/// Layer-overlap class. Visual-class layers (VideoClip,
-/// ImageOverlay, Color, Motif, Text) can't overlap each other on a
-/// track; Audio can't overlap Audio. Visual + Audio CAN coexist at
-/// the same time — that's the AE-style "combined row" trigger.
+/// Layer-overlap class. Visual-class layers (VideoClip, ImageOverlay, Color,
+/// Motif, Text, CompositionRef) can't overlap each other on a track; Audio
+/// can't overlap Audio. Visual + Audio CAN coexist at the same time — that's
+/// the AE-style "combined row" trigger.
+///
+/// Stated as "everything that is not Audio" rather than as an allowlist of
+/// visual kinds, so a Group — a composition placed as one layer, which may hold
+/// audio INSIDE it and still composites as a picture — falls on the visual side
+/// by construction (ADR 0052 §4).
 export type LayerOverlapClass = "visual" | "audio";
 
 export function layerOverlapClass(layer: LayerSummary): LayerOverlapClass {
   return layer.params.kind === "Audio" ? "audio" : "visual";
+}
+
+/// The two source-window affordances a media-bearing clip can carry at its
+/// right edge, as fractions of the clip's own width.
+///
+/// `overhangFromFraction` is where the source runs out: the clip is windowed
+/// `[src_in, src_out)` 1:1 onto `[t_start, t_end)`, so content stops at
+/// `(sourceDuration − src_in) / (src_out − src_in)` of the way across. Non-null
+/// only when the window actually overhangs. `hasUnusedTail` is the opposite
+/// case — the source runs longer than the window, so the out edge can still be
+/// dragged out.
+///
+/// Both exist for Groups in particular (ADR 0052 §6: overhang is tolerated in
+/// state and clamped at the gesture, because deleting a layer INSIDE a Group
+/// shrinks its composition and must not be refused on account of a parent's
+/// window). Written kind-agnostically because the arithmetic is the source
+/// window's, not the Group's: a media clip whose file was replaced by a shorter
+/// one is the same picture.
+export interface SourceWindowTail {
+  overhangFromFraction: number | null;
+  hasUnusedTail: boolean;
+}
+
+export function sourceWindowTail({
+  srcInUs,
+  srcOutUs,
+  sourceDurationUs,
+}: {
+  srcInUs: number;
+  srcOutUs: number;
+  /// The source's own length, or null when it is unknown (an unprobed media, a
+  /// composition the summary has not delivered). Unknown draws NEITHER
+  /// affordance: a guessed hatch would claim the clip renders nothing.
+  sourceDurationUs: number | null;
+}): SourceWindowTail {
+  const span = srcOutUs - srcInUs;
+  if (sourceDurationUs === null || span <= 0) {
+    return { overhangFromFraction: null, hasUnusedTail: false };
+  }
+  if (srcOutUs <= sourceDurationUs) {
+    return { overhangFromFraction: null, hasUnusedTail: srcOutUs < sourceDurationUs };
+  }
+  // Clamped at 0 for a window that starts past the end already — the whole clip
+  // is then hatched, which is what "nothing renders here" looks like.
+  const fraction = Math.max(0, (sourceDurationUs - srcInUs) / span);
+  return { overhangFromFraction: fraction, hasUnusedTail: false };
 }
 
 /// Which header controls a track shows, derived from its content. The header

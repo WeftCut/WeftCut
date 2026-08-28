@@ -75,6 +75,17 @@ export const EDIT_MENU: MenuSection = {
     // there is no clip menu, and a new section would pull in `AppMenuBar` and
     // the native-menu path for one item.
     "moveToNewTrack",
+    "---",
+    // The Group section (`docs/features.md#groups`). Its own group of rows
+    // rather than beside the tools above, because the pair is structural — it
+    // changes what the timeline CONTAINS — while Blade and Split change where a
+    // clip is cut. Enter and Leave sit under them as the navigation half, and
+    // they are here rather than only on the clip's context menu because both
+    // ship unbound: the menu is the discoverable path to them.
+    "groupSelected",
+    "ungroupSelected",
+    "openGroup",
+    "leaveGroup",
   ],
 };
 

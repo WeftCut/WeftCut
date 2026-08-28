@@ -7,8 +7,10 @@
 // around it is assembled here. When the wire changes again, it changes here.
 
 import type {
+  AnimTrack,
   CompositionSummary,
   HistoryView,
+  LayerSummary,
   MediaSummary,
   ProjectSummary,
   RoleMixView,
@@ -80,4 +82,80 @@ export function rootOf(summary: ProjectSummary): CompositionSummary {
   const root = summary.compositions[summary.root_id];
   if (!root) throw new Error("fixture summary has no root composition");
   return root;
+}
+
+/// A Group layer (`CompositionRef`) with an identity transform — the shape the
+/// Ungroup gate calls PLAIN. One place for the param shape, so a test that cares
+/// about one field (a non-identity scale, an overhanging window) names that
+/// field and nothing else.
+export function groupLayerFixture({
+  id = "layer-group",
+  compositionId = "comp-group",
+  compositionLabel = null,
+  tStartUs = 0,
+  tEndUs = 2_000_000,
+  srcInUs = 0,
+  srcOutUs = 2_000_000,
+  ...over
+}: {
+  id?: string;
+  compositionId?: string;
+  compositionLabel?: string | null;
+  tStartUs?: number;
+  tEndUs?: number;
+  srcInUs?: number;
+  srcOutUs?: number;
+} & Partial<Omit<LayerSummary, "params">> &
+  Partial<{
+    x: AnimTrack<number>;
+    y: AnimTrack<number>;
+    scale_x: AnimTrack<number>;
+    scale_y: AnimTrack<number>;
+    scale_linked: boolean;
+    rotation_deg: AnimTrack<number>;
+    anchor_x: AnimTrack<number>;
+    anchor_y: AnimTrack<number>;
+    opacity: AnimTrack<number>;
+  }> = {}): LayerSummary {
+  const num = (value: number): AnimTrack<number> => ({ mode: "Static", value });
+  const {
+    x = num(0),
+    y = num(0),
+    scale_x = num(1),
+    scale_y = num(1),
+    scale_linked = true,
+    rotation_deg = num(0),
+    anchor_x = num(0.5),
+    anchor_y = num(0.5),
+    opacity = num(1),
+    ...envelope
+  } = over;
+  return {
+    id,
+    label: null,
+    t_start_us: tStartUs,
+    t_end_us: tEndUs,
+    kind: "CompositionRef",
+    color_hint: "#8a94a0",
+    enabled: true,
+    locked: false,
+    effects: [],
+    ...envelope,
+    params: {
+      kind: "CompositionRef",
+      composition_id: compositionId,
+      composition_label: compositionLabel,
+      src_in_us: srcInUs,
+      src_out_us: srcOutUs,
+      x,
+      y,
+      scale_x,
+      scale_y,
+      scale_linked,
+      rotation_deg,
+      anchor_x,
+      anchor_y,
+      opacity,
+    },
+  };
 }

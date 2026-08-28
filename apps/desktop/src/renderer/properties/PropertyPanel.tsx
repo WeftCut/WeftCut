@@ -17,6 +17,8 @@ import { AppSwitch } from "../components/AppSwitch";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
+  groupsRename,
+  groupsUngroup,
   updateLayer,
   updateLayerParams,
   moveLayer,
@@ -37,11 +39,16 @@ import {
   trackStatic,
 } from "../ipc";
 import { X, Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, GAIN_DB, PAN } from "../keyframe/descriptors";
-import { layerDisplayName } from "../lib/layerName";
+import { groupDisplayName, layerDisplayName } from "../lib/layerName";
 import { trackDisplayName } from "../lib/trackName";
 import { refusalText, tryMutate } from "../errors/tryMutate";
 import { getGizmoProbe } from "../preview/gizmoProbeRegistry";
 import { linkFanoutActive } from "../timeline/linkEligibility";
+import {
+  groupNotPlainReason,
+  type GroupNotPlainReason,
+} from "../timeline/groupEligibility";
+import { openComposition } from "../state/compositionScopeStore";
 import { isShrunk, TEXT_BOX_MIN_PX } from "../render/textBox";
 import { InspectorAnimField } from "./InspectorAnimField";
 import { LinkLabelField } from "./LinkLabelField";
@@ -55,7 +62,11 @@ import { useTextFit } from "./useTextFit";
 const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
 const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
 import { getMotif, subscribeMotifCatalog, motifCatalogRevision } from "../render/motifs/catalog";
-import { useOpenComposition, useProjectStore } from "../state/projectStore";
+import {
+  useGroupOrdinals,
+  useOpenComposition,
+  useProjectStore,
+} from "../state/projectStore";
 import { useSelectedLayerIds, useSelectedTransitionId } from "../state/selectionStore";
 import { TransitionFields } from "./TransitionFields";
 import { Field } from "./Field";
@@ -171,6 +182,7 @@ function LayerPanel({
 }) {
   const { t } = useTranslation();
   const comp = useOpenComposition();
+  const groupOrdinals = useGroupOrdinals();
   const selectionCount = useSelectedLayerIds().size;
   const link = comp?.links.find((g) => g.layer_ids.includes(layer.id)) ?? null;
   const env = useEnvelope({ layer, track, link, onMutated, fpsNum, fpsDen });
@@ -201,7 +213,10 @@ function LayerPanel({
       </div>
       {selectionCount > 1 ? (
         <p className="prop-primary-note">
-          {t("property_panel.multi_primary", { label: layerDisplayName(layer, t), count: selectionCount })}
+          {t("property_panel.multi_primary", {
+            label: layerDisplayName(layer, t, groupOrdinals),
+            count: selectionCount,
+          })}
         </p>
       ) : null}
       <PropSection layerKind={layer.kind} sectionId="envelope" title={t("property_panel.envelope")}>
@@ -467,6 +482,13 @@ function KindFields({
       return <AudioFields layer={layer} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
     case "Motif":
       return <MotifFields layer={layer} v={layer.params} commit={commit} onMutated={onMutated} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} />;
+    case "CompositionRef":
+      return (
+        <>
+          <GroupFields layer={layer} v={layer.params} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} />
+          <TransformSection layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+        </>
+      );
   }
 }
 
@@ -1389,6 +1411,118 @@ function MotifSourcePanel({ motifId }: { motifId: string }) {
       </Button>
       {err && <p className="settings-error">{err}</p>}
     </div>
+  );
+}
+
+/// A Group's own section: what composition this clip shows, how big it is, how
+/// long it is, and the two things you can do to it from here.
+///
+/// The name field writes the COMPOSITION (`groups_rename`), not the layer — the
+/// layer's own label is the envelope section's `Label` row above, and a Group has
+/// both because it is one composition placed possibly several times. Size and
+/// duration are read-only: a composition's frame size is copied at pre-compose
+/// and not editable in v1 (ADR 0052), and its duration is autofit from what is
+/// inside it, so a field here would be a control that fights the contents.
+///
+/// Ungroup is offered as a BUTTON with a reason rather than silently refused,
+/// which is the same choice the strip and the context menu make: the three
+/// blocking fields are all things the user authored, and a command that greys out
+/// naming the field is how they find out which one.
+function GroupFields({
+  layer,
+  v,
+  onMutated,
+  fpsNum,
+  fpsDen,
+}: {
+  layer: LayerSummary;
+  v: Extract<LayerSummary["params"], { kind: "CompositionRef" }>;
+  onMutated: () => Promise<void>;
+  fpsNum: number;
+  fpsDen: number;
+}) {
+  const { t } = useTranslation();
+  const groupOrdinals = useGroupOrdinals();
+  const composition = useProjectStore(
+    (s) => s.summary?.compositions[v.composition_id],
+  );
+  const derivedName = groupDisplayName(
+    v.composition_id,
+    v.composition_label,
+    groupOrdinals,
+    t,
+  );
+  const [name, setName] = useState(v.composition_label ?? "");
+  // Resync from the authoritative snapshot on every committed change — own round
+  // trip, a rename through the clip's inline editor, undo. Primitive deps, so an
+  // unrelated project refresh cannot clobber the field mid-typing (the
+  // `useEnvelope` rule).
+  useEffect(() => {
+    setName(v.composition_label ?? "");
+  }, [v.composition_id, v.composition_label]);
+
+  const commitName = async () => {
+    const next = name.trim();
+    // Blank clears the name back to the derived `Group N`; unchanged is an
+    // actor-level no-op with no history row.
+    if (next === (v.composition_label ?? "")) return;
+    if (await tryMutate(() => groupsRename(v.composition_id, next || null), "groups_rename")) {
+      await onMutated();
+    }
+  };
+
+  const notPlain: GroupNotPlainReason | null = groupNotPlainReason(layer);
+  const ungroupHint =
+    notPlain === null
+      ? undefined
+      : t(`quick_actions.ungroup_not_plain_${notPlain}`);
+
+  return (
+    <PropSection layerKind={layer.kind} sectionId="group" title={t("property_panel.group")}>
+      <Field label={t("property_panel.group_name")}>
+        <AppInput
+          value={name}
+          placeholder={derivedName}
+          ariaLabel={t("property_panel.group_name")}
+          onValueChange={setName}
+          onBlur={() => void commitName()}
+        />
+      </Field>
+      <Field label={t("property_panel.group_size")}>
+        <span className="text-xs text-muted-foreground">
+          {composition ? `${composition.width} × ${composition.height}` : "—"}
+        </span>
+      </Field>
+      {/* The COMPOSITION's length, not the clip's — the envelope section above
+          owns the clip's duration. The two differ exactly when the window
+          overhangs or falls short, which is what the clip's hatched tail and
+          right-edge tick say on the timeline. */}
+      <Field label={t("property_panel.duration")}>
+        <span className="font-mono text-xs text-muted-foreground">
+          {composition
+            ? formatTimecode(composition.duration_us, fpsNum, fpsDen)
+            : "—"}
+        </span>
+      </Field>
+      <div className="prop-field-pair">
+        <Button
+          size="sm"
+          className="flex-1"
+          onClick={() => openComposition(v.composition_id, layer.id)}
+        >
+          {t("property_panel.group_open")}
+        </Button>
+        <Button
+          size="sm"
+          className="flex-1"
+          disabled={notPlain !== null}
+          title={ungroupHint}
+          onClick={() => void tryMutate(() => groupsUngroup(layer.id), "groups_ungroup")}
+        >
+          {t("property_panel.group_ungroup")}
+        </Button>
+      </div>
+    </PropSection>
   );
 }
 
