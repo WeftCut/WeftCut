@@ -9,6 +9,7 @@ import {
   noteTabZoom,
   noteTrackExpanded,
   noteTrackHeights,
+  notePreviewRenderTarget,
   publishCompositionTabs,
   resetViewState,
   retainTrackViewState,
@@ -106,6 +107,7 @@ describe("view-state owner", () => {
         tab(G1, { anchor_layer_id: "ref-g1", px_per_sec: 40, scroll_left_px: 640 }),
       ],
       active_composition_id: G1,
+      preview_render_target_id: null,
       track_heights: { "t-root": 96 },
       expanded_tracks: ["t-g1"],
     });
@@ -259,5 +261,28 @@ describe("view-state owner", () => {
 
     expect(ipc.viewStateSet).not.toHaveBeenCalled();
     expect(compositionTabIntent()).toEqual([]);
+  });
+
+  // The preview's lock is not a property of any tab: it can name a composition
+  // no tab is open on, and it survives every tab publication.
+  it("records the preview's lock beside the tabs, and records releasing it", async () => {
+    await open({ composition_tabs: [tab(ROOT)] });
+    notePreviewRenderTarget(G2);
+    publishCompositionTabs([{ compositionId: ROOT, anchorLayerId: null }], alive(ROOT, G2), ROOT);
+    vi.advanceTimersByTime(VIEW_SAVE_DEBOUNCE_MS);
+    expect(written()?.preview_render_target_id).toBe(G2);
+
+    notePreviewRenderTarget(null);
+    vi.advanceTimersByTime(VIEW_SAVE_DEBOUNCE_MS);
+    expect(written()?.preview_render_target_id).toBeNull();
+  });
+
+  it("adopts the stored lock, so re-choosing it is not a write", async () => {
+    notePreviewRenderTarget(G1); // inert: the document has not been read yet
+    await open({ preview_render_target_id: G2 });
+
+    notePreviewRenderTarget(G2);
+    vi.advanceTimersByTime(VIEW_SAVE_DEBOUNCE_MS);
+    expect(ipc.viewStateSet).not.toHaveBeenCalled();
   });
 });

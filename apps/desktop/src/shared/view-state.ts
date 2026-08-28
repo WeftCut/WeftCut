@@ -40,6 +40,11 @@ export interface ViewState {
   /// The tab that last held the keyboard. Null before any Panel has taken it,
   /// which reads as "the root".
   active_composition_id: string | null;
+  /// The composition the preview is LOCKED to, or null for "follow focus" (the
+  /// default). Not a property of any tab — the target may name a composition
+  /// with no timeline open at all (ADR 0053 decision 3) — and a target the
+  /// project no longer carries falls back to following focus.
+  preview_render_target_id: string | null;
   /// Track id (UUID string) → row height in px. Tracks absent from the map
   /// fall back to the frontend default. Keyed project-wide rather than per
   /// tab: a track id names its composition, so open timelines never collide.
@@ -56,6 +61,7 @@ export function viewStateDefaults(): ViewState {
   return {
     composition_tabs: [],
     active_composition_id: null,
+    preview_render_target_id: null,
     track_heights: {},
     expanded_tracks: [],
   };

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   PauseIcon,
@@ -9,17 +9,33 @@ import {
 
 import { type ProjectSummary } from "../ipc";
 import { formatTimecode } from "../frames";
-import { useOpenComposition } from "../state/projectStore";
 import {
-  focusedPlayheadUs,
-  focusedRootUs,
+  setPreviewRenderTarget,
+  usePreviewRenderTargetId,
+  usePreviewTargetChoice,
+} from "../state/compositionAnchorStore";
+import {
+  useComposition,
+  useCompositionRefCounts,
+  useGroupOrdinals,
+  useProjectSummary,
+} from "../state/projectStore";
+import {
+  previewClockUs,
+  seekPreviewLocalUs,
   setPlayheadFromPreview,
 } from "../state/playheadProjection";
+import { AppSelect } from "../components/AppSelect";
 import { AppTimecodeField } from "../components/AppTimecodeField";
 import {
   PreviewSurface,
   type PreviewSurfaceHandle,
 } from "../preview/PreviewSurface";
+import {
+  previewTargetOptions,
+  targetOptionChoice,
+  targetOptionValue,
+} from "../preview/previewTargetOptions";
 import { PlayheadTimecode } from "../preview/PlayheadTimecode";
 import { DroppedFramesIndicator } from "../preview/DroppedFramesIndicator";
 
@@ -28,15 +44,14 @@ interface PreviewSectionProps {
   summary: ProjectSummary | null;
   paused: boolean;
   onPausedChange: (paused: boolean) => void;
-  onSeek: (tUs: number) => void;          // App's seekTo, in ROOT time
   onTogglePlay: () => void;
   previewDecodableOf: (id: string) => boolean;
   visible: boolean;
 }
 
-/// The preview quadrant: `PreviewSurface` plus the transport strip
-/// (editable timecode, skip/play buttons, canvas + duration meta).
-/// Owns the timecode-edit state — purely local to this transport UI.
+/// The preview quadrant: the render-target control, `PreviewSurface`, and the
+/// transport strip (editable timecode, skip/play buttons, canvas + duration
+/// meta). Owns the timecode-edit state — purely local to this transport UI.
 /// `paused` stays App state (AgentMode also writes it) and arrives as
 /// a prop with `onPausedChange` forwarded back up.
 export function PreviewSection({
@@ -44,7 +59,6 @@ export function PreviewSection({
   summary,
   paused,
   onPausedChange,
-  onSeek,
   onTogglePlay,
   previewDecodableOf,
   visible,
@@ -54,11 +68,12 @@ export function PreviewSection({
   // playhead at the moment editing opens (instead of live-updating the field
   // from a React-subscribed time) keeps the edit box stable during playback.
   const [tcEditUs, setTcEditUs] = useState<number | null>(null);
-  // The transport and the meta line describe the OPEN composition — which is
-  // also what the preview draws, so every time on this strip is that
-  // composition's own clock and reaches the root-time seek through
-  // `focusedRootUs`. `summary` stays for the project-wide bits.
-  const comp = useOpenComposition();
+  // The transport and the meta line describe what is ON THE CANVAS — the render
+  // target, which is the composition being edited only while the preview
+  // follows focus. Every time on this strip is therefore that composition's own
+  // clock, and reaches the one moment through `seekPreviewLocalUs`. `summary`
+  // stays for the project-wide bits.
+  const comp = useComposition(usePreviewRenderTargetId());
 
   const fpsLabel =
     comp &&
@@ -70,6 +85,10 @@ export function PreviewSection({
 
   return (
     <section className="preview">
+      {/* A toolbar row, not a header bar — the Panel's title is its dock tab. */}
+      <div className="preview-target-bar">
+        <RenderTargetControl />
+      </div>
       <div id="video-surface" className="video-surface">
         <PreviewSurface
           ref={previewRef}
@@ -91,7 +110,7 @@ export function PreviewSection({
             ariaLabel={t("transport.timecode_label")}
             onCommit={(us) => {
               setTcEditUs(null);
-              void onSeek(focusedRootUs(us));
+              seekPreviewLocalUs(us);
             }}
             onCancel={() => setTcEditUs(null)}
           />
@@ -101,13 +120,13 @@ export function PreviewSection({
             fpsDen={comp?.fps_den ?? 1}
             visible={visible}
             editHint={t("transport.timecode_edit_hint")}
-            onActivate={() => setTcEditUs(focusedPlayheadUs())}
+            onActivate={() => setTcEditUs(previewClockUs())}
           />
         )}
         <div className="transport-buttons">
           <button
             type="button"
-            onClick={() => onSeek(focusedRootUs(0))}
+            onClick={() => seekPreviewLocalUs(0)}
             title={t("transport.to_start_hint")}
             aria-label={t("transport.to_start_hint")}
           >
@@ -128,7 +147,7 @@ export function PreviewSection({
           </button>
           <button
             type="button"
-            onClick={() => onSeek(focusedRootUs(comp?.duration_us ?? 0))}
+            onClick={() => seekPreviewLocalUs(comp?.duration_us ?? 0)}
             title={t("transport.to_end_hint")}
             aria-label={t("transport.to_end_hint")}
             disabled={!comp || comp.duration_us === 0}
@@ -156,5 +175,49 @@ export function PreviewSection({
         </span>
       </div>
     </section>
+  );
+}
+
+/// What the preview renders: *follow focus*, or one named composition it holds
+/// on to while the keyboard edits somewhere else (ADR 0053 decision 3).
+///
+/// Shows the raw CHOICE rather than the resolved target, so following reads as
+/// following rather than as whichever composition happens to have focus.
+function RenderTargetControl() {
+  const { t } = useTranslation();
+  const summary = useProjectSummary();
+  const ordinals = useGroupOrdinals();
+  const refCounts = useCompositionRefCounts();
+  const choice = usePreviewTargetChoice();
+  const panelTitle = t("dock_workspace.panels.timeline");
+  const options = useMemo(
+    () => previewTargetOptions(summary, ordinals, refCounts, panelTitle, t),
+    [summary, ordinals, refCounts, panelTitle, t],
+  );
+  return (
+    <AppSelect
+      className="preview-target-select"
+      ariaLabel={t("preview.target_label")}
+      value={targetOptionValue(choice)}
+      onValueChange={(value) => setPreviewRenderTarget(targetOptionChoice(value))}
+      options={options.map((option) => ({
+        value: targetOptionValue(option.compositionId),
+        label: option.unused ? (
+          // The media pool's own treatment of an orphan, down to the word: a
+          // dimmed row carrying an `unused` badge.
+          <span className="flex min-w-0 items-center gap-2 opacity-55">
+            <span className="min-w-0 truncate">{option.label}</span>
+            <span
+              data-testid="preview-target-unused"
+              className="shrink-0 rounded bg-amber-500/20 px-1 text-[9px] font-semibold uppercase text-amber-200"
+            >
+              {t("media_pool.groups_unused")}
+            </span>
+          </span>
+        ) : (
+          option.label
+        ),
+      }))}
+    />
   );
 }

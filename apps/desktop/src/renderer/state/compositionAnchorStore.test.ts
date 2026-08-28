@@ -8,8 +8,11 @@ import {
   focusComposition,
   focusedCompositionId,
   openComposition,
+  pathToComposition,
+  previewRenderTargetId,
   restoreCompositionTabs,
   setOrphanPlayheadUs,
+  setPreviewRenderTarget,
   switchAnchor,
   syncOpenCompositions,
   useCompositionAnchorStore,
@@ -540,5 +543,85 @@ describe("restoreCompositionTabs", () => {
 
     expect(panels.open).not.toHaveBeenCalledWith(G1);
     expect(anchors().focusedId).toBe(ROOT_ID);
+  });
+});
+
+/// The preview names its own render target (ADR 0053 decision 3) — the whole
+/// point being that it need not be the composition the keyboard is editing.
+describe("the preview's render target", () => {
+  it("follows focus until a composition is named", () => {
+    expect(previewRenderTargetId()).toBe(ROOT_ID);
+    openComposition(G1, "ref-g1");
+    expect(previewRenderTargetId()).toBe(G1);
+  });
+
+  it("holds the film while the keyboard goes into a Group", () => {
+    setPreviewRenderTarget(ROOT_ID);
+    openComposition(G1, "ref-g1");
+
+    expect(focusedCompositionId()).toBe(G1);
+    expect(previewRenderTargetId()).toBe(ROOT_ID);
+  });
+
+  // The screen can hold one Group's timeline and another composition's picture,
+  // so a lock creates no tab and needs no anchor of its own.
+  it("locks onto a composition with no timeline open at all", () => {
+    setPreviewRenderTarget(G2);
+
+    expect(previewRenderTargetId()).toBe(G2);
+    expect(panels.open).not.toHaveBeenCalledWith(G2);
+    expect(anchorPath(G2)).toBeNull();
+    expect(pathToComposition(G2)).toEqual([
+      { layerId: "ref-g1", compositionId: G1 },
+      { layerId: "ref-g2", compositionId: G2 },
+    ]);
+  });
+
+  it("reads an OPEN target through the anchor its own Panel holds", () => {
+    openComposition(G2, "ref-g2");
+    setPreviewRenderTarget(G2);
+
+    expect(pathToComposition(G2)).toEqual(anchorPath(G2));
+  });
+
+  it("releases the lock when the composition it names disappears", () => {
+    setPreviewRenderTarget(G2);
+    useProjectStore.getState().apply(withoutG2());
+
+    expect(anchors().previewTargetId).toBeNull();
+    expect(previewRenderTargetId()).toBe(anchors().focusedId);
+  });
+
+  it("carries no lock across a project change", () => {
+    setPreviewRenderTarget(G1);
+    useProjectStore.getState().apply(summaryFixture({ project_id: "p-other" }));
+
+    expect(anchors().previewTargetId).toBeNull();
+  });
+
+  it("restores the stored lock, and leaves it alone on a later replay", async () => {
+    ipcMocks.viewStateGet.mockResolvedValue({
+      ...viewStateDefaults(),
+      preview_render_target_id: G1,
+    });
+
+    await restoreCompositionTabs();
+    expect(anchors().previewTargetId).toBe(G1);
+
+    setPreviewRenderTarget(null);
+    await restoreCompositionTabs();
+    expect(anchors().previewTargetId).toBeNull();
+  });
+
+  it("reads a stored lock the project no longer carries as follow focus", async () => {
+    ipcMocks.viewStateGet.mockResolvedValue({
+      ...viewStateDefaults(),
+      preview_render_target_id: "comp-gone",
+    });
+
+    await restoreCompositionTabs();
+
+    expect(anchors().previewTargetId).toBeNull();
+    expect(previewRenderTargetId()).toBe(ROOT_ID);
   });
 });

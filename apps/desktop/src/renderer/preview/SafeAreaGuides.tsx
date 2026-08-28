@@ -16,7 +16,8 @@ import { useEffect, useRef } from "react";
 
 import type { CompositionSummary } from "../ipc";
 import { useSafeAreaGuidesVisible } from "../settings/appSettingsStore";
-import { compositionOrRoot, useProjectStore } from "../state/projectStore";
+import { usePreviewRenderTargetId } from "../state/compositionAnchorStore";
+import { useComposition } from "../state/projectStore";
 import { compToClient, containFit } from "./gizmoGeometry";
 import { getGizmoProbe } from "./gizmoProbeRegistry";
 
@@ -58,8 +59,10 @@ const SAFE_AREA_UNDER_WIDTH_PX = 3;
 /// selection nor playhead: a safe area does not move.
 export function SafeAreaGuidesHost() {
   const visible = useSafeAreaGuidesVisible();
-  // The ROOT — the frame the preview draws (see PreviewSurface).
-  const composition = useProjectStore((s) => compositionOrRoot(s.summary, null));
+  // The preview's RENDER TARGET: a safe area is a property of the frame on
+  // screen, and the frame on screen is whatever the preview was pointed at
+  // (ADR 0053 decision 3), which may not be the film.
+  const composition = useComposition(usePreviewRenderTargetId());
   if (!visible || !composition) return null;
   return <SafeAreaGuides composition={composition} />;
 }

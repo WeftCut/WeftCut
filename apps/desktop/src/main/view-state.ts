@@ -85,6 +85,10 @@ export function createViewStateStore(deps: { fs: ViewStateFs; join: (...parts: s
         composition_tabs: compositionTabsIn(parsed.composition_tabs, d.composition_tabs),
         active_composition_id:
           typeof parsed.active_composition_id === 'string' ? parsed.active_composition_id : d.active_composition_id,
+        preview_render_target_id:
+          typeof parsed.preview_render_target_id === 'string'
+            ? parsed.preview_render_target_id
+            : d.preview_render_target_id,
         track_heights: isRecord(th) ? (th as Record<string, number>) : d.track_heights,
         expanded_tracks: Array.isArray(parsed.expanded_tracks) ? parsed.expanded_tracks.filter((x): x is string => typeof x === 'string') : d.expanded_tracks,
       }

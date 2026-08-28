@@ -522,6 +522,10 @@ const enUS = {
   preview: {
     empty_hint: "Add a layer to start the preview",
     preparing: "Preparing preview…",
+    // What the preview renders. The list names the timeline and every Group;
+    // the default follows whichever timeline holds the keyboard.
+    target_label: "What the preview shows",
+    target_follow_focus: "Follow focus",
   },
   timeline: {
     empty_placeholder: "timeline (import a clip or pick a motif to populate)",

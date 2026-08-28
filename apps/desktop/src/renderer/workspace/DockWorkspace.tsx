@@ -248,7 +248,6 @@ function PreviewDockPanel() {
       summary={contracts.summary}
       paused={contracts.paused}
       onPausedChange={contracts.onPausedChange}
-      onSeek={contracts.onSeek}
       onTogglePlay={contracts.onTogglePlay}
       previewDecodableOf={contracts.previewDecodableOf}
       visible={runtime.isVisible}

@@ -44,6 +44,7 @@ import {
   transformOverrideFor,
   type TransformDelta,
 } from "../render/transformOverrides";
+import { usePreviewRenderTargetId } from "../state/compositionAnchorStore";
 import { useOpenComposition } from "../state/projectStore";
 import { focusedPlayheadUs } from "../state/playheadProjection";
 import { usePrimaryLayerId } from "../state/selectionStore";
@@ -266,10 +267,21 @@ function otherLayerBoxes(
 
 export function TransformGizmoHost() {
   const primaryLayerId = usePrimaryLayerId();
-  // The OPEN composition: the selection is one of its layers, and its canvas is
-  // the space the box is drawn in.
+  // The FOCUSED composition: the selection is one of its layers, and the
+  // inspector stays with the keyboard even when the preview is pointed
+  // elsewhere (ADR 0053 decision 3).
   const composition = useOpenComposition();
+  // ...but the overlay is SCREEN space over whatever the preview draws, and its
+  // whole geometry — `containFit` against the composition's size, a client
+  // delta divided back into composition pixels — assumes the canvas IS this
+  // composition's frame. While the preview is locked to another composition
+  // that assumption is false: the layer is drawn through its Group's placement,
+  // at that placement's position, scale and rotation. A box in the wrong space
+  // would lie about where the layer is, exactly as a clamped playhead would lie
+  // about where the film is, so nothing is drawn until the two agree again.
+  const renderTargetId = usePreviewRenderTargetId();
   if (!primaryLayerId || !composition) return null;
+  if (renderTargetId !== composition.id) return null;
   let found: LayerSummary | null = null;
   for (const track of composition.tracks) {
     for (const layer of track.layers) {

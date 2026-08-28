@@ -1,11 +1,11 @@
 import { useEffect, useRef } from "react";
 
 import { formatTimecode } from "../frames";
-import { useFocusedCompositionId } from "../state/compositionAnchorStore";
+import { usePreviewRenderTargetId } from "../state/compositionAnchorStore";
 import {
-  playheadLocalUs,
+  localPlayheadIn,
   subscribeLocalPlayhead,
-  useAnchorFrame,
+  usePreviewTargetFrame,
 } from "../state/playheadProjection";
 
 /// Transport-bar timecode readout. Frame-rate text via a TRANSIENT
@@ -31,10 +31,10 @@ export function PlayheadTimecode({
   onActivate: () => void;
 }) {
   const ref = useRef<HTMLButtonElement | null>(null);
-  const compositionId = useFocusedCompositionId();
-  // Hoisted out of the per-frame callback: an anchor frame is a walk of the
-  // summary and moves only when the project or the anchor does.
-  const frame = useAnchorFrame(compositionId);
+  const compositionId = usePreviewRenderTargetId();
+  // Hoisted out of the per-frame callback: the target's frame is a walk of the
+  // summary and moves only when the project, the lock or an anchor does.
+  const frame = usePreviewTargetFrame();
   useEffect(() => {
     if (!visible) return;
     return subscribeLocalPlayhead(compositionId, frame, (localUs) => {
@@ -50,7 +50,7 @@ export function PlayheadTimecode({
       title={editHint}
       onClick={onActivate}
     >
-      {timecodeOf(playheadLocalUs(compositionId), fpsNum, fpsDen)}
+      {timecodeOf(localPlayheadIn(compositionId, frame), fpsNum, fpsDen)}
     </button>
   );
 }

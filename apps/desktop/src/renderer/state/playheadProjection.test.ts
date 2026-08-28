@@ -5,7 +5,10 @@ import { compositionFixture, ROOT_ID, summaryFixture } from "../testing/summaryF
 import {
   openComposition,
   orphanPlayheadUs,
+  previewRenderTargetId,
+  setPreviewRenderTarget,
   switchAnchor,
+  syncOpenCompositions,
   useCompositionAnchorStore,
 } from "./compositionAnchorStore";
 import {
@@ -13,8 +16,10 @@ import {
   focusedRootUs,
   playheadClockUs,
   playheadLocalUs,
+  previewClockUs,
   previewLocalUs,
   seekLocalUs,
+  seekPreviewLocalUs,
   setPlayheadFromPreview,
 } from "./playheadProjection";
 import { playheadTimeUs, setPlayheadTimeUs } from "./playheadStore";
@@ -241,6 +246,112 @@ describe("the preview's clock", () => {
     setPlayheadFromPreview(4 * S);
     expect(playheadTimeUs()).toBe(4 * S);
     expect(previewLocalUs(4 * S)).toBe(4 * S);
+  });
+});
+
+/// The pain this feature answers: edit inside a Group and watch the film.
+describe("a locked render target", () => {
+  it("scrubs the film with a drag on the Group's own playhead", () => {
+    setPreviewRenderTarget(ROOT_ID);
+    openComposition(G1, "late");
+
+    seekLocalUs(G1, 1 * S);
+
+    expect(playheadTimeUs()).toBe(13 * S);
+    expect(previewLocalUs(playheadTimeUs())).toBe(13 * S);
+  });
+
+  // A lock is not a tab, so closing the film's own timeline leaves it standing.
+  it("still draws the film once the root's own tab is closed", () => {
+    setPreviewRenderTarget(ROOT_ID);
+    openComposition(G1, "late");
+    syncOpenCompositions([G1]);
+    setPlayheadTimeUs(13 * S);
+
+    expect(previewRenderTargetId()).toBe(ROOT_ID);
+    expect(previewLocalUs(13 * S)).toBe(13 * S);
+  });
+
+  // A lock opens no tab, so the target has no anchor to read: its path comes
+  // from the project instead, which is the shortest one from the root.
+  it("reads a Group with no timeline open through its own path from the root", () => {
+    setPreviewRenderTarget(G1);
+    setPlayheadTimeUs(3 * S);
+
+    expect(previewLocalUs(3 * S)).toBe(1 * S);
+    expect(previewClockUs()).toBe(1 * S);
+  });
+
+  it("runs on the target's own clock past the placement that shows it", () => {
+    setPreviewRenderTarget(G1);
+    // The early placement covers root [2 s, 6 s); 8 s reads as 6 s on a
+    // composition only 5 s long, which is a moment it has nothing to draw at.
+    expect(previewLocalUs(8 * S)).toBe(6 * S);
+  });
+
+  it("lifts the target's emit into root time, whichever timeline has the keyboard", () => {
+    setPreviewRenderTarget(G1);
+
+    setPlayheadFromPreview(1 * S);
+
+    expect(useCompositionAnchorStore.getState().focusedId).toBe(ROOT_ID);
+    expect(playheadTimeUs()).toBe(3 * S);
+  });
+
+  it("takes the preview transport's own seeks on the target's clock", () => {
+    setPreviewRenderTarget(G1);
+
+    seekPreviewLocalUs(1 * S);
+
+    expect(playheadTimeUs()).toBe(3 * S);
+  });
+
+  // An orphan runs on an axis of its own, so nothing it does reaches the film —
+  // and a target locked elsewhere simply holds at the last root moment.
+  it("holds where it is while an orphan's Panel scrubs", () => {
+    setPreviewRenderTarget(ROOT_ID);
+    openComposition(ORPHAN, null);
+    setPlayheadTimeUs(5 * S);
+
+    seekLocalUs(ORPHAN, 1 * S);
+
+    expect(playheadTimeUs()).toBe(5 * S);
+    expect(previewLocalUs(playheadTimeUs())).toBe(5 * S);
+  });
+
+  // The engine's clock floors at zero and then emits the floor back; taken for
+  // the film's own moment it would make everything before the target
+  // unreachable while the lock stands.
+  it("does not let the engine's zero floor pull the film to the target's start", () => {
+    setPreviewRenderTarget(G1);
+    setPlayheadTimeUs(0);
+
+    // What the transport hands the engine for a moment before the placement...
+    expect(previewLocalUs(0)).toBe(-2 * S);
+    // ...and what the engine emits back once its clock has floored it.
+    setPlayheadFromPreview(0);
+
+    expect(playheadTimeUs()).toBe(0);
+  });
+
+  it("still writes the film's moment when the target genuinely reads zero", () => {
+    setPreviewRenderTarget(G1);
+    setPlayheadTimeUs(2 * S);
+
+    setPlayheadFromPreview(0);
+
+    expect(playheadTimeUs()).toBe(2 * S);
+  });
+
+  it("parks an ORPHAN target on its own axis instead of moving the film", () => {
+    setPreviewRenderTarget(ORPHAN);
+    setPlayheadTimeUs(2 * S);
+
+    setPlayheadFromPreview(500_000);
+
+    expect(playheadTimeUs()).toBe(2 * S);
+    expect(orphanPlayheadUs(ORPHAN)).toBe(500_000);
+    expect(previewLocalUs(playheadTimeUs())).toBe(500_000);
   });
 });
 

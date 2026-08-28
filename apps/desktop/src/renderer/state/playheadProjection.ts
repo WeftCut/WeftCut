@@ -1,8 +1,9 @@
 // The one moment, read and written in a composition's own coordinates.
 //
 // `playheadStore` holds a single time in ROOT time (ADR 0053 decision 2). This
-// module is where that number meets the anchor a Panel was entered through:
-// every surface that speaks a composition's own clock — a ruler line, a
+// module is where that number meets the path a surface reads it through — the
+// anchor a Panel was entered through, or the preview's own route to its render
+// target. Every surface that speaks a composition's own clock — a ruler line, a
 // timecode, a snap target, an edit "at the playhead" — reads through here, and
 // every scrub writes back through here. Nothing else may translate on its own;
 // a second copy of this arithmetic is how two Panels start disagreeing about
@@ -32,11 +33,14 @@ import {
 import {
   anchorPath,
   orphanPlayheadUs,
+  pathToComposition,
+  previewRenderTargetId,
   type CompositionCrumb,
   setOrphanPlayheadUs,
   useAnchorPath,
   useCompositionAnchorStore,
   useFocusedCompositionId,
+  usePreviewRenderTargetId,
 } from "./compositionAnchorStore";
 import { seekToClamped } from "./navigation";
 import {
@@ -175,7 +179,17 @@ export function focusedRootUs(localUs: number): number {
 /// the film stays where it is. That is not a degraded seek: nothing places the
 /// composition, so there is no moment of the film its position could name.
 export function seekLocalUs(compositionId: string | null, localUs: number): void {
-  const frame = anchorFrameOf(compositionId);
+  seekIn(compositionId, anchorFrameOf(compositionId), localUs);
+}
+
+/// The write half, given an already-resolved frame — shared with the preview's
+/// own transport, whose frame comes from the render target rather than from any
+/// Panel's anchor.
+function seekIn(
+  compositionId: string | null,
+  frame: AnchorFrame | null,
+  localUs: number,
+): void {
   if (frame === null) {
     if (compositionId === null) return;
     setOrphanPlayheadUs(compositionId, clampOrphanUs(compositionId, localUs));
@@ -197,22 +211,105 @@ function clampOrphanUs(compositionId: string, localUs: number): number {
 
 // ===== The preview's clock ==================================================
 //
-// The preview draws the FOCUSED composition (`render/PixiPreview.tsx`), so the
-// PlaybackEngine's one number is that composition's local time, not the root's.
-// These two are the whole of the conversion, and every root-time caller of the
-// transport goes through them — an unconverted `transportSeek` puts the monitor
-// on the wrong frame the moment a Group is being edited, and silently agrees
-// with itself at the root.
+// The preview draws its RENDER TARGET (`compositionAnchorStore.ts`) — the
+// composition it is locked to, or the editing target while it follows focus —
+// so the PlaybackEngine's one number is that composition's local time, not the
+// root's. Every root-time caller of the transport goes through the conversions
+// below; an unconverted `transportSeek` puts the monitor on the wrong frame the
+// moment the target is anything but the root, and silently agrees with itself
+// there.
+//
+// The target's frame does NOT come from an anchor. An anchor belongs to a
+// Panel, and a locked target may have no Panel at all — that is the whole point
+// of locking one — so `pathToComposition` supplies the path instead.
 
-/// The preview engine's own clock for a root moment.
-export function previewLocalUs(rootUs: number): number {
-  return localClockUsOf(focusedId(), rootUs);
+function previewFrameOf(targetId: string | null): AnchorFrame | null {
+  const summary = useProjectStore.getState().summary;
+  return frameFor(
+    summary,
+    targetId,
+    targetId === null ? null : pathToComposition(targetId),
+  );
 }
 
-/// Wired as the engine's `onTimeUpdate`: the per-frame emit, lifted into root
-/// time so the one store keeps holding one moment.
+/// The preview engine's own clock for a root moment.
+///
+/// The target's CLOCK, not its drawn read-out: a composition keeps running
+/// whether or not its placement shows it there (`localClockUs`), and a moment
+/// the placement does not reach lands outside the target's own timeline, where
+/// it has nothing to draw. An ORPHAN target has no reading of a root moment at
+/// all, so it holds at the position its own Panel parked it on and the film
+/// moving past leaves it alone.
+export function previewLocalUs(rootUs: number): number {
+  const targetId = previewRenderTargetId();
+  const frame = previewFrameOf(targetId);
+  if (frame === null) return targetId === null ? rootUs : orphanPlayheadUs(targetId);
+  return localClockUs(frame, rootUs);
+}
+
+/// Wired as the engine's `onTimeUpdate`: the per-frame emit, lifted out of the
+/// target's clock so the one store keeps holding one moment. Playing an ORPHAN
+/// target writes its own axis instead — it has no root time, and dragging the
+/// film along with it would be the second playhead ADR 0053 refuses.
 export function setPlayheadFromPreview(localUs: number): void {
-  setPlayheadTimeUs(focusedRootUs(localUs));
+  const targetId = previewRenderTargetId();
+  const frame = previewFrameOf(targetId);
+  if (frame === null) {
+    if (targetId !== null) setOrphanPlayheadUs(targetId, localUs);
+    return;
+  }
+  if (isClockFloorEcho(frame, localUs)) return;
+  setPlayheadTimeUs(localToRootIn(frame, localUs));
+}
+
+/// LANDMINE: the engine's clock has a floor at zero, so a moment BEFORE the
+/// target's own `t = 0` reaches the engine as that floor rather than as itself,
+/// and the engine then emits the floor back. Taken for the film's own moment it
+/// would pull the playhead forward to where the target starts — and, since
+/// every seek re-projects, would make every moment before that unreachable
+/// while the lock stands. So the floor is not allowed to speak for the film:
+/// the target simply sits at its first frame until the moment reaches it.
+///
+/// Only the emit that IS the floor is dropped. A running target keeps writing,
+/// which is what makes playing a locked composition move the film with it.
+function isClockFloorEcho(frame: AnchorFrame, localUs: number): boolean {
+  return localUs === 0 && localClockUs(frame, playheadTimeUs()) < 0;
+}
+
+/// The render target's reading of the one moment — what the preview's own
+/// timecode field opens on, on the clock the canvas is showing. The same
+/// number the engine is running at, which is what makes the field's commit a
+/// no-op when nothing is typed.
+export function previewClockUs(): number {
+  return previewLocalUs(playheadTimeUs());
+}
+
+/// Move the one moment so the RENDER TARGET reads `localUs` — the preview
+/// transport's seeks (its timecode field, its skip buttons), which speak the
+/// clock of the picture rather than of the timeline holding the keyboard.
+export function seekPreviewLocalUs(localUs: number): void {
+  const targetId = previewRenderTargetId();
+  seekIn(targetId, previewFrameOf(targetId), localUs);
+}
+
+/// The render target's frame for React — the dep a per-frame subscription on
+/// the preview's clock re-registers on (`PlayheadTimecode`). Recomputed only
+/// when the project, the lock or the anchors move, never per frame.
+export function usePreviewTargetFrame(): AnchorFrame | null {
+  const summary = useProjectStore((s) => s.summary);
+  const targetId = usePreviewRenderTargetId();
+  const anchors = useCompositionAnchorStore((s) => s.anchors);
+  return useMemo(
+    () =>
+      frameFor(
+        summary,
+        targetId,
+        targetId === null ? null : pathToComposition(targetId),
+      ),
+    // `anchors` is read through `pathToComposition`, not passed: a Panel
+    // opening on the target re-anchors it, and the frame has to follow.
+    [summary, targetId, anchors],
+  );
 }
 
 // ===== React readers ========================================================

@@ -36,6 +36,7 @@ describe('view-state store', () => {
         tab('comp-g1', { anchor_layer_id: 'ref-g1', px_per_sec: 40 }),
       ],
       active_composition_id: 'comp-g1',
+      preview_render_target_id: 'comp-root',
       track_heights: { t1: 64, t2: 96 },
       expanded_tracks: ['t1'],
     })
@@ -45,6 +46,7 @@ describe('view-state store', () => {
       tab('comp-g1', { anchor_layer_id: 'ref-g1', px_per_sec: 40 }),
     ])
     expect(got.active_composition_id).toBe('comp-g1')
+    expect(got.preview_render_target_id).toBe('comp-root')
     expect(got.track_heights.t1).toBe(64)
     expect(got.track_heights.t2).toBe(96)
     expect(got.expanded_tracks).toEqual(['t1'])
@@ -91,5 +93,10 @@ describe('view-state store', () => {
   it('reads a non-string active tab as none', () => {
     const got = store({ [FILE]: JSON.stringify({ active_composition_id: 42 }) }).load(WS)
     expect(got.active_composition_id).toBeNull()
+  })
+
+  it('reads a non-string preview render target as follow-focus', () => {
+    const got = store({ [FILE]: JSON.stringify({ preview_render_target_id: 42 }) }).load(WS)
+    expect(got.preview_render_target_id).toBeNull()
   })
 })

@@ -1,6 +1,7 @@
 // The project's `view.json` while the app is running: the tab intent every
-// timeline Panel is derived from, each tab's zoom and scroll, and the
-// project-wide track heights — held once, and written once.
+// timeline Panel is derived from, each tab's zoom and scroll, the composition
+// the preview is locked to, and the project-wide track heights — held once, and
+// written once.
 //
 // ONE owner, not one per Panel. Several timeline Panels can stand open (ADR
 // 0053) and they share a single file, so N debounced writers would each save
@@ -49,6 +50,7 @@ let pending: Promise<ViewState> | null = null;
 
 let tabs: CompositionTabView[] = [];
 let activeCompositionId: string | null = null;
+let previewRenderTargetId: string | null = null;
 let trackHeights: Record<string, number> = {};
 let expandedTracks = new Set<string>();
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -58,6 +60,7 @@ function flush(): void {
   viewStateSet({
     composition_tabs: tabs.map((tab) => ({ ...tab })),
     active_composition_id: activeCompositionId,
+    preview_render_target_id: previewRenderTargetId,
     track_heights: { ...trackHeights },
     expanded_tracks: [...expandedTracks],
   }).catch((e) => console.warn("view_state save failed:", e));
@@ -104,6 +107,7 @@ export function loadViewState(): Promise<ViewState> {
       if (pending !== request) return state;
       tabs = state.composition_tabs.map((tab) => ({ ...tab }));
       activeCompositionId = state.active_composition_id;
+      previewRenderTargetId = state.preview_render_target_id;
       trackHeights = { ...state.track_heights };
       expandedTracks = new Set(state.expanded_tracks);
       loaded = true;
@@ -124,6 +128,7 @@ export function resetViewState(): void {
   pending = null;
   tabs = [];
   activeCompositionId = null;
+  previewRenderTargetId = null;
   trackHeights = {};
   expandedTracks = new Set();
 }
@@ -186,6 +191,17 @@ export function publishCompositionTabs(
   if (activeCompositionId === activeId && sameTabs(tabs, next)) return;
   tabs = next;
   activeCompositionId = activeId;
+  markDirty();
+}
+
+/// Lock the preview to `compositionId`, or release it back to following focus
+/// with null. A single-field patch rather than part of the tab publication:
+/// the target is not a property of any tab — it may name a composition with no
+/// timeline open at all (ADR 0053 decision 3).
+export function notePreviewRenderTarget(compositionId: string | null): void {
+  if (!loaded) return;
+  if (previewRenderTargetId === compositionId) return;
+  previewRenderTargetId = compositionId;
   markDirty();
 }
 

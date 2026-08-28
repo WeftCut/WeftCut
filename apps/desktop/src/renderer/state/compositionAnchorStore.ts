@@ -1,12 +1,14 @@
-// Which composition each open timeline Panel shows, and how it got there.
+// Which composition each surface of the editor shows, and how it got there.
 //
 // A timeline Panel is one composition (ADR 0053), so "where the editor is
-// looking" is two facts, not one. The ANCHOR is per composition: the path of
+// looking" is three facts, not one. The ANCHOR is per composition: the path of
 // `CompositionRef` layers a Panel was entered through, root excluded — the
 // direction root-to-local is unambiguous, local-to-root is not, and the anchor
 // is what resolves it. The FOCUSED composition is the one whose Panel last held
 // the keyboard, and it is the editing target: the inspector, the Playhead
-// Panel, the creation channels and every timeline-scoped command read it.
+// Panel, the creation channels and every timeline-scoped command read it. The
+// preview's RENDER TARGET is separate from both, because the workflow this
+// exists for is editing one composition while watching another.
 //
 // EXPORT ALWAYS RENDERS THE ROOT — a Group is a source, and rendering one on
 // its own would produce a file no user asked for. That is why export code reads
@@ -22,6 +24,7 @@
 
 import { create } from "zustand";
 import type { ProjectSummary } from "../ipc";
+import { compositionOrRoot } from "../ipc/compositions";
 import {
   closeTimelinePanel,
   openTimelinePanel,
@@ -33,6 +36,7 @@ import { clearLayerSelection } from "./selectionStore";
 import {
   compositionTabIntent,
   loadViewState,
+  notePreviewRenderTarget,
   publishCompositionTabs,
   resetViewState,
   type OpenTabIntent,
@@ -63,6 +67,11 @@ interface State {
   /// before the first summary arrives — `compositionOrRoot` treats null as
   /// "the root".
   focusedId: string | null;
+  /// The composition the preview is LOCKED to, or null for "follow focus" —
+  /// the default, and where a target the summary has lost falls back to. Not
+  /// derived from the anchors: a locked target may have no timeline open at
+  /// all, which is the point of it (ADR 0053 decision 3).
+  previewTargetId: string | null;
   /// The local moment an ORPHAN composition's Panel is parked at. There is one
   /// playhead and it is a ROOT time (ADR 0053), so a composition with no path to
   /// the root has no reading of it at all — its Panel scrubs on an axis of its
@@ -76,6 +85,7 @@ const INITIAL: State = {
   projectId: null,
   anchors: new Map(),
   focusedId: null,
+  previewTargetId: null,
   orphanPlayheads: new Map(),
 };
 
@@ -255,6 +265,19 @@ export function focusComposition(compositionId: string): void {
   focusOn(compositionId);
 }
 
+/// Lock the preview to one composition, or release it with null so it follows
+/// focus again. The Preview Panel's own control is the only gesture that calls
+/// this; the reconcile below calls it to release a lock the project has lost.
+///
+/// No anchor is created for the target. A locked composition is being WATCHED,
+/// not entered, and giving it one would put a path in the store that no Panel
+/// walked — the projection reads `pathToComposition` instead.
+export function setPreviewRenderTarget(compositionId: string | null): void {
+  if (useCompositionAnchorStore.getState().previewTargetId === compositionId) return;
+  useCompositionAnchorStore.setState({ previewTargetId: compositionId });
+  notePreviewRenderTarget(compositionId);
+}
+
 /// Reconcile the anchors with the Panels the Dock actually holds — the Workspace
 /// calls this on every layout change, so closing a tab, dragging one out and
 /// undoing a Panel open all land here.
@@ -310,6 +333,7 @@ export function reconcileCompositionAnchors(summary: ProjectSummary | null): voi
       projectId: summary.project_id,
       anchors: new Map([[summary.root_id, NO_CRUMBS]]),
       focusedId: summary.root_id,
+      previewTargetId: null,
       orphanPlayheads: new Map(),
     });
     return;
@@ -321,6 +345,12 @@ export function reconcileCompositionAnchors(summary: ProjectSummary | null): voi
     anchors.delete(id);
     closeTimelinePanel(id);
     changed = true;
+  }
+  // A lock on a composition the project no longer carries releases back to
+  // following focus. There is nothing left to name, and holding the dead id
+  // would leave the preview showing whatever it last drew.
+  if (s.previewTargetId !== null && !summary.compositions[s.previewTargetId]) {
+    setPreviewRenderTarget(null);
   }
   // Open tabs are DERIVED: the intent `view.json` holds, intersected with the
   // compositions this summary carries (ADR 0053). The loop above is one half of
@@ -378,13 +408,16 @@ export async function restoreCompositionTabs(): Promise<void> {
     setAnchor(id, resolveAnchor(summary, id, tab.anchor_layer_id));
     openTimelinePanel(id);
   }
-  // The stored focus is a fresh session's opening position, not something to
-  // re-apply on a later geometry restore: moving the editing target then would
-  // be a switch nobody asked for.
+  // The stored focus and the stored preview lock are a fresh session's opening
+  // position, not something to re-apply on a later geometry restore: `state` is
+  // the document as it was READ, so replaying it would undo whatever the user
+  // has changed since.
   if (intentAppliedForProjectId === projectId) return;
   intentAppliedForProjectId = projectId;
   const active = state.active_composition_id;
   if (active !== null && summary.compositions[active]) focusOn(active);
+  const target = state.preview_render_target_id;
+  if (target !== null && summary.compositions[target]) setPreviewRenderTarget(target);
 }
 
 // ===== Readers ==============================================================
@@ -402,6 +435,64 @@ export function anchorPath(
   compositionId: string,
 ): readonly CompositionCrumb[] | null {
   return useCompositionAnchorStore.getState().anchors.get(compositionId) ?? null;
+}
+
+/// Where `compositionId` sits, for a surface that has no Panel to read an
+/// anchor from: the anchor when a Panel already holds one, so the preview and
+/// that Panel agree about which placement is being watched, and the shortest
+/// path from the root otherwise. Null for a composition the root does not reach
+/// — an orphan, which has no root time at all.
+///
+/// The preview's render target is the caller: it may name a composition with no
+/// timeline open at all (ADR 0053 decision 3).
+export function pathToComposition(
+  compositionId: string,
+): readonly CompositionCrumb[] | null {
+  const summary = useProjectStore.getState().summary;
+  if (!summary) return null;
+  if (compositionId === summary.root_id) return NO_CRUMBS;
+  return anchorPath(compositionId) ?? searchPathFromRoot(summary, compositionId);
+}
+
+/// One-entry memo over `pathFromRoot`, keyed on the summary's IDENTITY so any
+/// project change invalidates it. The preview asks this question on every
+/// engine emit while it is locked to a composition no Panel has anchored, and
+/// the search is a walk of the whole reference graph that allocates a crumb
+/// array per Group clip it passes — per-frame work `playheadStore.ts`'s tiers
+/// do not allow.
+let pathSearchMemo: {
+  summary: ProjectSummary;
+  compositionId: string;
+  path: CompositionCrumb[] | null;
+} | null = null;
+
+function searchPathFromRoot(
+  summary: ProjectSummary,
+  compositionId: string,
+): CompositionCrumb[] | null {
+  if (
+    pathSearchMemo !== null &&
+    pathSearchMemo.summary === summary &&
+    pathSearchMemo.compositionId === compositionId
+  ) {
+    return pathSearchMemo.path;
+  }
+  const path = pathFromRoot(summary, compositionId);
+  pathSearchMemo = { summary, compositionId, path };
+  return path;
+}
+
+/// The composition the preview DRAWS: the locked one while the project still
+/// carries it, and the editing target otherwise. Every surface that describes
+/// what is on the canvas — its size, its clock, its transport — reads this, and
+/// nothing else resolves the pair on its own.
+export function previewRenderTargetId(): string | null {
+  const { summary } = useProjectStore.getState();
+  const { previewTargetId, focusedId } = useCompositionAnchorStore.getState();
+  if (previewTargetId !== null && summary?.compositions[previewTargetId]) {
+    return previewTargetId;
+  }
+  return compositionOrRoot(summary, focusedId)?.id ?? null;
 }
 
 /// Where an ORPHAN composition's Panel is parked, on its own clock. 0 until it
@@ -496,3 +587,23 @@ export const useAnchorPath = (
   useCompositionAnchorStore(
     (s) => (compositionId === null ? undefined : s.anchors.get(compositionId)) ?? NO_CRUMBS,
   );
+
+/// What the preview's control SHOWS: the locked composition, or null for
+/// "follow focus". The raw choice, not the resolved target — the control has to
+/// be able to say that it is following.
+export const usePreviewTargetChoice = (): string | null =>
+  useCompositionAnchorStore((s) => s.previewTargetId);
+
+/// The composition the preview draws, for React — `previewRenderTargetId` with
+/// a subscription. Three ATOMIC selectors rather than one composite: each
+/// yields a primitive, so an unrelated tick in either store bails out instead
+/// of re-rendering the canvas host.
+export const usePreviewRenderTargetId = (): string | null => {
+  const previewTargetId = useCompositionAnchorStore((s) => s.previewTargetId);
+  const focusedId = useCompositionAnchorStore((s) => s.focusedId);
+  return useProjectStore((s) =>
+    previewTargetId !== null && s.summary?.compositions[previewTargetId]
+      ? previewTargetId
+      : (compositionOrRoot(s.summary, focusedId)?.id ?? null),
+  );
+};

@@ -473,6 +473,8 @@ const zhCN: Resources = {
   preview: {
     empty_hint: "添加图层后预览将自动启动",
     preparing: "正在准备预览…",
+    target_label: "预览内容",
+    target_follow_focus: "跟随焦点",
   },
   timeline: {
     empty_placeholder: "时间线（导入片段或选择 Motif 开始）",
