@@ -4,7 +4,7 @@ import type { Animated, AudioRole, Composition, Interpolation, LayerParams, Moti
 import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
-import { HISTORY_SUMMARY, groupCreateSummary, layersEnabledSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
+import { HISTORY_SUMMARY, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileTransitions, type DroppedTransition } from './validate'
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
@@ -16,7 +16,7 @@ import { applyDeleteLayer } from './mutations/delete'
 import { applyDuplicateLayer, applyPasteLayer, applyPasteLayers, pasteLayerInterval } from './mutations/duplicate'
 import { applySplitLayer } from './mutations/split'
 import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, applyLinksRename } from './mutations/links'
-import { applyCompositionsDelete, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, type GroupCreateResult } from './mutations/groups'
+import { applyCompositionsDelete, applyGroupsAddMembers, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, type GroupCreateResult } from './mutations/groups'
 import { applySetLayersEnabled, applyUpdateLayer, type LayerPatch } from './mutations/update'
 import { applyFitComposition } from './mutations/composition'
 import { applyDurationAutofit, compositionOf, locateLayer, locateTrack, requireLayer, requireSameComposition, requireTrack, scopeComposition } from './mutations/helpers'
@@ -906,14 +906,22 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'links_add_members': commit(HISTORY_SUMMARY.linkAddMembers, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksAddMembers(d, a.link as Uuid, a.layers as Uuid[], (a.reassign as boolean) ?? false)); return { ok: true, value: null }
         case 'links_remove_members': commit(HISTORY_SUMMARY.linkRemoveMembers, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksRemoveMembers(d, a.link as Uuid, a.layers as Uuid[])); return { ok: true, value: null }
         case 'links_rename': commit(HISTORY_SUMMARY.linkRename, linkMemberRefs(a.link as Uuid), { kind: 'Coarse' }, (d) => applyLinksRename(d, a.link as Uuid, (a.label as string) ?? null)); return { ok: true, value: null }
-        // Groups (ADR 0052) — one commit each; the row points at the Group layer.
-        // The result is ONE object shape always (not the branch-dependent shape
-        // add_video_layer has), so a caller never sniffs it.
+        // Groups (ADR 0052) — one commit each; the row points at the Group layer,
+        // and at the members too where the op has a set of them. The result is
+        // ONE shape always (not the branch-dependent shape add_video_layer has),
+        // so a caller never sniffs it.
         case 'groups_create': {
           const layers = [...new Set((a.layers as Uuid[]) ?? [])]
           const r = commit(groupCreateSummary(layers.length), (g: GroupCreateResult) => layerRef(g.layerId), { kind: 'Coarse' },
             (d) => applyGroupsCreate(d, idGen, layers, (a.label as string | null) ?? null))
           return { ok: true, value: { composition_id: r.compositionId, layer_id: r.layerId } }
+        }
+        case 'groups_add_members': {
+          const layers = [...new Set((a.layers as Uuid[]) ?? [])]
+          const groupLayer = a.group_layer as Uuid
+          commit(groupAddMembersSummary(layers.length), layerRefs([...layers, groupLayer]), { kind: 'Coarse' },
+            (d) => applyGroupsAddMembers(d, idGen, layers, groupLayer))
+          return { ok: true, value: null }
         }
         // Placing an existing composition: a creation op, so it carries a scope —
         // but `track` already fixes the composition, which makes `composition_id`

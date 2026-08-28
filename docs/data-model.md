@@ -1093,7 +1093,8 @@ track, a restack's anchor, a paste's target lane) is refused with
 straddle two compositions (`delete_layers`, `set_layers_enabled`,
 `paste_layers`, `move_layers_to_new_track`, `links_create`,
 `links_add_members`) with `CrossCompositionSet { layer, composition,
-expected }`. A layer changes composition only through pre-compose / ungroup.
+expected }`. A layer changes composition only through pre-compose, adding it to an
+existing Group, or ungroup.
 
 The MCP surface mirrors this 1:1 (same names, schemars-derived schemas);
 the UI uses the same actor via backend commands.

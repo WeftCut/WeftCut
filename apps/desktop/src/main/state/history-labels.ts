@@ -112,6 +112,10 @@ export function pastedLayersSummary(count: number): HistorySummary {
 export function groupCreateSummary(count: number): HistorySummary {
   return { key: 'history.group.create', text: `Grouped ${count} layers`, label_args: { count } }
 }
+/** `groups_add_members` — the summary counts the members that joined it. */
+export function groupAddMembersSummary(count: number): HistorySummary {
+  return { key: 'history.group.add_members', text: `Added ${count} layers to Group`, label_args: { count } }
+}
 /** `set_layers_enabled` — one key per direction rather than a `{{state}}`
  *  placeholder, so each locale conjugates the verb natively. */
 export function layersEnabledSummary(enabled: boolean, count: number): HistorySummary {
@@ -130,6 +134,7 @@ export const HISTORY_SUMMARY_KEYS: readonly string[] = [
   restoredCheckpointSummary('').key,
   pastedLayersSummary(0).key,
   groupCreateSummary(0).key,
+  groupAddMembersSummary(0).key,
   layersEnabledSummary(true, 0).key,
   layersEnabledSummary(false, 0).key,
 ]

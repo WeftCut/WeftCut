@@ -80,8 +80,13 @@ export function applyAddLayer(p: Project, idGen: IdGen, trackId: Uuid, params: L
 
 /** The reference chain from `from` to `target` — `[from, …, target]`, or `[from]`
  *  when they are the same composition — else null when `from` cannot reach it.
- *  Breadth-first, so the loop a refusal reports is the shortest one. */
-function compositionRefPath(p: Project, from: Uuid, target: Uuid): Uuid[] | null {
+ *  Breadth-first, so the loop a refusal reports is the shortest one.
+ *
+ *  Exported because every op that can make a composition contain itself has to
+ *  ask the same question — placing a Group (here) and moving one into a Group
+ *  (`applyGroupsAddMembers`) — and a second reachability walk would be a second
+ *  answer. */
+export function compositionRefPath(p: Project, from: Uuid, target: Uuid): Uuid[] | null {
   const queue: Uuid[][] = [[from]]
   const seen = new Set<Uuid>([from])
   while (queue.length > 0) {

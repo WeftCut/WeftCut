@@ -50,6 +50,39 @@ describe('groups — actor dispatch', () => {
     expect(groupsIn(actor)).toEqual([])
   })
 
+  it('groups_add_members is one row naming the members and the Group clip, and one undo restores their lanes, their times and a straddling link', () => {
+    const { actor, aRoll, v, w } = pairActor()
+    const made = actor.dispatch('groups_create', { layers: [v, w], label: null })
+    if (!made.ok) throw new Error('fixture')
+    const { composition_id, layer_id } = made.value as { composition_id: Uuid; layer_id: Uuid }
+    // Two clips on the now-empty A roll, and a link from the first to the Group
+    // clip — which straddles the move, so it dissolves and undo must bring it back.
+    const z1 = actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 6 * S, t_end_us: 7 * S })
+    const z2 = actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 7 * S, t_end_us: 8 * S })
+    if (!z1.ok || !z2.ok) throw new Error('fixture')
+    const link = actor.dispatch('links_create', { layers: [z1.value, layer_id], label: null, reassign: false })
+    if (!link.ok) throw new Error('fixture')
+
+    const before = actor.snapshot()
+    const len = actor.historyStatus().len
+    expect(actor.dispatch('groups_add_members', { layers: [z1.value, z2.value], group_layer: layer_id })).toEqual({ ok: true, value: null })
+    expect(actor.historyStatus().len).toBe(len + 1)
+    expect(actor.historyView(1).ops[0]).toMatchObject({
+      summary: 'Added 2 layers to Group', label_key: 'history.group.add_members', label_args: { count: 2 },
+      affected: [{ kind: 'Layer', id: z1.value }, { kind: 'Layer', id: z2.value }, { kind: 'Layer', id: layer_id }],
+    })
+    // The Group clip starts at 2 s over `src_in_us` 0, so both land 2 s earlier.
+    const inside = actor.snapshot().compositions[composition_id]
+    expect(inside.tracks.flatMap((t) => t.layers).filter((l) => l.id === z1.value || l.id === z2.value).map((l) => l.t_start_us).sort())
+      .toEqual([4 * S, 5 * S])
+    expect(root(actor.snapshot()).links).toEqual([]) // the straddling link fell below two
+
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(actor.snapshot()).toEqual(before)
+    expect(root(actor.snapshot()).tracks.find((t) => t.id === aRoll)!.layers.map((l) => l.id)).toEqual([z1.value, z2.value])
+    expect(root(actor.snapshot()).links).toEqual([{ id: link.value, members: [z1.value, layer_id].sort() }])
+  })
+
   it('groups_ungroup, groups_rename and compositions_delete each record one row; refusals record nothing', () => {
     const { actor, v, w } = pairActor()
     const r = actor.dispatch('groups_create', { layers: [v, w], label: null })
@@ -118,6 +151,25 @@ describe('groups — MCP tools', () => {
     expect(actor.snapshot().compositions[value.composition_id].label).toBeNull()
     expect(actor.mcpCall('groups_ungroup', JSON.stringify({ layer_id: value.layer_id }))).toEqual({ ok: true, result: { content: [] } })
     expect(groupsIn(actor)).toEqual([])
+  })
+
+  it('groups_add_members moves the set and returns an empty result; a member that cannot land says where it would have to start', () => {
+    const { actor, v, w } = pairActor()
+    const made = actor.mcpCall('groups_create', JSON.stringify({ layer_ids: [v, w] }))
+    if (!made.ok) throw new Error('fixture')
+    const { composition_id, layer_id } = JSON.parse(made.result.content[0].text) as { composition_id: Uuid; layer_id: Uuid }
+    const aRoll = root(actor.snapshot()).tracks[0].id // emptied by the pre-compose
+    const z = actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 6 * S, t_end_us: 7 * S })
+    if (!z.ok) throw new Error('fixture')
+    expect(actor.mcpCall('groups_add_members', JSON.stringify({ layer_ids: [z.value], group_layer_id: layer_id })))
+      .toEqual({ ok: true, result: { content: [] } })
+    expect(actor.snapshot().compositions[composition_id].tracks.flatMap((t) => t.layers).map((l) => l.id)).toContain(z.value)
+
+    const early = actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 0, t_end_us: S })
+    if (!early.ok) throw new Error('fixture')
+    const refused = actor.mcpCall('groups_add_members', JSON.stringify({ layer_ids: [early.value], group_layer_id: layer_id }))
+    expect(refused.ok).toBe(false)
+    if (!refused.ok) expect(refused.error.message).toMatch(/would land at .*before its start/)
   })
 
   it('refusals arrive as invalid_params with a message that says what and why', () => {
