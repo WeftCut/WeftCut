@@ -150,9 +150,10 @@ export function TrackLane({
   fpsNum: number;
   fpsDen: number;
   mediaDropSnap: Omit<MediaDropSnapOptions, "currentTimeUs">;
-  /// The composition this lane belongs to. Only the snap needs it: the playhead
-  /// is one of the boundaries a drop snaps to, and it has to be offered on this
-  /// Panel's own axis (`state/playheadProjection.ts`).
+  /// The composition this lane belongs to — this Panel's own, whichever tab
+  /// holds the keyboard. It offers the playhead as a snap boundary on this
+  /// Panel's own axis (`state/playheadProjection.ts`) and answers the cycle gate
+  /// for a Group released here.
   compositionId: string | null;
 }) {
   const { t } = useTranslation();
@@ -280,6 +281,7 @@ export function TrackLane({
       if (activeMediaDrag === null) return;
       const rect = e.currentTarget.getBoundingClientRect();
       const plan = planMediaDrop({
+        compositionId,
         track,
         media: activeMediaDrag,
         pointerXPx: e.clientX - rect.left,
@@ -353,6 +355,7 @@ export function TrackLane({
       const rect = e.currentTarget.getBoundingClientRect();
       const plan = payload
         ? planMediaDrop({
+            compositionId,
             track,
             media: payload,
             pointerXPx: e.clientX - rect.left,

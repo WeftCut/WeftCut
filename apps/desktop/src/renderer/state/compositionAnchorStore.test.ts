@@ -16,7 +16,7 @@ import {
   switchAnchor,
   syncOpenCompositions,
   useCompositionAnchorStore,
-  wouldCycleInOpenComposition,
+  wouldCycleIn,
 } from "./compositionAnchorStore";
 import { compositionTabIntent, loadViewState, noteTabZoom } from "./viewState";
 
@@ -31,7 +31,7 @@ vi.mock("../ipc", async (importOriginal) => ({
   viewStateGet: ipcMocks.viewStateGet,
   viewStateSet: ipcMocks.viewStateSet,
 }));
-import { registerRevealCollapse } from "./navigation";
+import { jumpToLayer, registerRevealCollapse } from "./navigation";
 import { playheadTimeUs, setPlayheadTimeUs } from "./playheadStore";
 import { compositionOrRoot, currentOpenComposition, useProjectStore } from "./projectStore";
 import { clearRange, setRangeIn, useRangeStore } from "./rangeStore";
@@ -391,18 +391,33 @@ describe("switchAnchor", () => {
   });
 });
 
-describe("wouldCycleInOpenComposition", () => {
-  it("refuses the focused composition and every composition it sits inside", () => {
+describe("wouldCycleIn", () => {
+  it("refuses the host composition and every composition it sits inside", () => {
     openComposition(G2, null);
-    expect(wouldCycleInOpenComposition(G2)).toBe(true);
-    expect(wouldCycleInOpenComposition(G1)).toBe(true);
-    expect(wouldCycleInOpenComposition("comp-elsewhere")).toBe(false);
+    expect(wouldCycleIn(G2, G2)).toBe(true);
+    expect(wouldCycleIn(G2, G1)).toBe(true);
+    expect(wouldCycleIn(G2, "comp-elsewhere")).toBe(false);
   });
 
-  it("reads the FOCUSED Panel's path, not whichever tab was opened last", () => {
+  it("reads the HOST Panel's path, not the focused Panel's", () => {
+    // Both tabs are open and the keyboard is in the deep one; a drop over the
+    // root's timeline is still judged against the root.
     openComposition(G2, null);
     focusComposition(ROOT_ID);
-    expect(wouldCycleInOpenComposition(G1)).toBe(false);
+    expect(wouldCycleIn(G2, G1)).toBe(true);
+    expect(wouldCycleIn(ROOT_ID, G1)).toBe(false);
+  });
+});
+
+// The search palette's contract: a hit is opened before it is selected. Focus
+// clears the selection, so the reverse order would leave nothing selected —
+// which is what the surviving selection here proves.
+describe("a hit that lives inside a Group", () => {
+  it("opens the Group's Panel and hands it the keyboard, then selects in it", () => {
+    expect(jumpToLayer("inner-g1")).toBe(true);
+    expect(panels.open).toHaveBeenCalledWith(G1);
+    expect(anchors().focusedId).toBe(G1);
+    expect(useSelectionStore.getState().primaryLayerId).toBe("inner-g1");
   });
 });
 

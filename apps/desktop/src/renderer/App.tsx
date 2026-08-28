@@ -108,9 +108,9 @@ import {
 } from "./state/projectStore";
 import { useFocusedCompositionId } from "./state/compositionAnchorStore";
 import {
-  addColorLayerInOpenComposition,
-  addMarkerAtInOpenComposition,
-  addTextLayerInOpenComposition,
+  addColorLayerIn,
+  addMarkerAtIn,
+  addTextLayerIn,
 } from "./ipc/compositionScoped";
 import { markerStartingInFrame } from "./timeline/markerAtFrame";
 import { MarkerRenameDialog } from "./timeline/MarkerRenameDialog";
@@ -766,29 +766,31 @@ export function App({ onCloseProject }: AppProps) {
     // dead key (the documented Premiere confusion), an invisible rename as
     // editing blind. The layer toggle exists to silence agent sweeps, not this.
     addMarkerAtPlayhead: () => {
-      if (!comp) return;
+      // Live store read, not the render-captured summary — same reason the
+      // raise-selection handler reads its stores at press time, and the reason
+      // the marker lands on the timeline that holds the keyboard NOW rather
+      // than the one App last rendered against.
+      const open = currentOpenComposition();
+      if (!open) return;
       // Projected: a marker belongs to one composition's timeline, so the
       // frame it lands on is that timeline's.
       const frameUs = displayedFrameStartUs(
         focusedPlayheadUs(),
-        comp.fps_num,
-        comp.fps_den,
+        open.fps_num,
+        open.fps_den,
       );
-      // Live store read, not the render-captured summary — same reason the
-      // raise-selection handler reads its stores at press time.
-      const markers = currentOpenComposition()?.markers ?? [];
       const existing = markerStartingInFrame(
-        markers,
+        open.markers,
         frameUs,
-        comp.fps_num,
-        comp.fps_den,
+        open.fps_num,
+        open.fps_den,
       );
       if (!markersVisible()) void setAppSettings({ markers_visible: true });
       if (existing) {
         openMarkerRenamePrompt(existing.id);
         return;
       }
-      void tryMutate(() => addMarkerAtInOpenComposition(frameUs), "add_marker");
+      void tryMutate(() => addMarkerAtIn(open.id, frameUs), "add_marker");
     },
     clearRange: () => clearMarkedRange(),
     openSearchPalette: () => {
@@ -818,15 +820,23 @@ export function App({ onCloseProject }: AppProps) {
   useNativeMenu({ handlers: shortcutHandlers, overrides: shortcutOverrides });
 
   // Shared by the Insert menu and the search palette — one implementation,
-  // two entry points.
+  // two entry points. Both name the FOCUSED composition at event time: a menu
+  // item means "the timeline I am editing in", and which one that is may have
+  // changed since App last rendered.
   const handleAddColorLayer = useCallback(async () => {
-    const layerId = await addColorLayerInOpenComposition({ tStartUs: focusedPlayheadUs() });
+    const layerId = await addColorLayerIn({
+      compositionId: currentOpenComposition()?.id ?? null,
+      tStartUs: focusedPlayheadUs(),
+    });
     setPendingRevealLayerId(layerId);
     await refresh();
   }, [refresh]);
 
   const handleAddTextLayer = useCallback(async () => {
-    const layerId = await addTextLayerInOpenComposition({ tStartUs: focusedPlayheadUs() });
+    const layerId = await addTextLayerIn({
+      compositionId: currentOpenComposition()?.id ?? null,
+      tStartUs: focusedPlayheadUs(),
+    });
     setPendingRevealLayerId(layerId);
     await refresh();
   }, [refresh]);
@@ -1115,6 +1125,7 @@ export function App({ onCloseProject }: AppProps) {
           onAdded={refresh}
           onDraftPlaced={setPendingRevealLayerId}
           currentTimeUs={focusedPlayheadUs()}
+          compositionId={comp?.id ?? null}
           tracks={comp?.tracks ?? []}
           fpsNum={comp?.fps_num ?? 30}
           fpsDen={comp?.fps_den ?? 1}

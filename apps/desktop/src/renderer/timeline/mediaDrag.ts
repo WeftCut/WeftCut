@@ -7,7 +7,7 @@ import type {
   MediaSummary,
   TrackSummary,
 } from "../ipc";
-import { wouldCycleInOpenComposition } from "../state/compositionAnchorStore";
+import { wouldCycleIn } from "../state/compositionAnchorStore";
 import type { LayerOverlapClass } from "./geometry";
 import {
   evaluateTimelinePlacements,
@@ -268,6 +268,7 @@ function dragOverlapClass(payload: MediaDragPayload): LayerOverlapClass {
 }
 
 export function planMediaDrop({
+  compositionId,
   track,
   media,
   pointerXPx,
@@ -276,6 +277,10 @@ export function planMediaDrop({
   fpsDen,
   snap,
 }: {
+  /// The composition of the Panel the drag is over — the one that would
+  /// RECEIVE the drop, which with several timelines open is not necessarily the
+  /// one holding the keyboard. Null is the unbound timeline row, i.e. the root.
+  compositionId: string | null;
   /// The destination lane, or null for the drop strip — no lane exists there
   /// yet, so the placement is evaluated against `SPAWN_TRACK_ID` and answers
   /// `"spawn"`. Everything else about the plan (start time, snapping, ghost
@@ -340,11 +345,10 @@ export function planMediaDrop({
   const overlapClass = dragOverlapClass(media);
   // The cycle gate out-ranks the lane: a composition that would contain itself
   // is refused wherever it is released, so no lane, and no free interval on one,
-  // can make it droppable. Read from the scope store here rather than threaded in
-  // by each drop surface, because the answer depends only on WHAT is being
-  // dragged and WHERE the editor is looking — not on the lane under the pointer,
-  // which is all a drop surface knows.
-  if (media.source === "composition" && wouldCycleInOpenComposition(media.compositionId)) {
+  // can make it droppable. Asked of the RECEIVING composition rather than the
+  // focused one — a drop into a background timeline is a local act, and the loop
+  // it could close is the one through that timeline's own anchor.
+  if (media.source === "composition" && wouldCycleIn(compositionId, media.compositionId)) {
     return {
       rawStartUs,
       tStartUs,

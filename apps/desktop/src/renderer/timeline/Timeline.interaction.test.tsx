@@ -22,6 +22,7 @@ import { Timeline } from "./Timeline";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
   MEDIA_DRAG_TYPE,
+  compositionDragPayload,
   mediaDragPayload,
   useMediaDragStore,
 } from "./mediaDrag";
@@ -32,7 +33,11 @@ import {
   setTransitionSelection,
   useSelectionStore,
 } from "../state/selectionStore";
-import { openComposition } from "../state/compositionAnchorStore";
+import {
+  openComposition,
+  useCompositionAnchorStore,
+} from "../state/compositionAnchorStore";
+import { registerTimelineSurface } from "./timelineSurfaces";
 import {
   clearKeyframeSelection,
   getSelectedKeyframes,
@@ -118,8 +123,8 @@ vi.mock("../ipc", async (importOriginal) => {
 // The drop's lane spawn and its Group-placement sibling both go through the
 // composition-scoped wrappers.
 vi.mock("../ipc/compositionScoped", () => ({
-  addTrackInOpenComposition: ipcMocks.addTrack,
-  addGroupLayerInOpenComposition: ipcMocks.addGroupLayer,
+  addTrackIn: ipcMocks.addTrack,
+  addGroupLayerIn: ipcMocks.addGroupLayer,
 }));
 
 const staticNum = (value: number) => ({ mode: "Static" as const, value });
@@ -223,6 +228,9 @@ const sourceMedia: MediaSummary = {
 };
 
 function renderTimeline(overrides: {
+  /// The Panel's own composition. Null — the unbound row — unless a case is
+  /// about which composition a gesture reaches.
+  compositionId?: string | null;
   selectedLayerId?: string | null;
   onSeek?: () => void;
   bladeMode?: boolean;
@@ -239,7 +247,7 @@ function renderTimeline(overrides: {
   setLayerSelection(selectedLayerId, selectedLayerId ? [selectedLayerId] : []);
   return render(
     <Timeline
-      compositionId={null}
+      compositionId={overrides.compositionId ?? null}
       tracks={overrides.tracks ?? [track]}
       links={overrides.links ?? []}
       durationUs={overrides.durationUs ?? 5_000_000}
@@ -3388,5 +3396,145 @@ describe("Timeline playhead projection", () => {
     fireEvent.pointerUp(window, { clientX: PX_PER_SEC });
 
     expect(onSeek).toHaveBeenCalledWith(13_000_000);
+  });
+});
+
+// A Panel is one composition (ADR 0053), so every gesture that reaches the
+// backend has to name THIS Panel's — not whichever tab holds the keyboard, and
+// not the one the pointer wandered into.
+describe("a gesture names the Panel it happened in", () => {
+  const GROUP = "comp-group";
+  const ROOT = "comp-root";
+
+  beforeEach(() => {
+    clearLayerSelection();
+    setActiveRegion(null);
+    setPlayheadTimeUs(0);
+    ipcMocks.addTrack.mockClear();
+    ipcMocks.addGroupLayer.mockClear();
+    ipcMocks.addMediaLayer.mockClear();
+    ipcMocks.moveLayer.mockClear();
+    ipcMocks.logEmit.mockClear();
+    // The keyboard is in the root while every drop below lands in the Group.
+    useCompositionAnchorStore.setState({
+      anchors: new Map([
+        [ROOT, []],
+        [GROUP, [{ layerId: "ref-group", compositionId: GROUP }]],
+      ]),
+      focusedId: ROOT,
+    });
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, display_mode: "AllTracks" },
+    }));
+  });
+  afterEach(() => {
+    useMediaDragStore.getState().end();
+    cleanup();
+  });
+
+  /// The strip laid out the way it renders, since jsdom lays nothing out. The
+  /// strip is the drop that spawns a lane, which is the only media drop whose
+  /// composition is visible over IPC — a lane drop names a track, and a track id
+  /// already fixes the composition.
+  const stripOf = (container: HTMLElement): HTMLElement => {
+    const strip = container.querySelector(
+      '[data-testid="timeline-drop-strip"]',
+    ) as HTMLElement;
+    vi.spyOn(strip, "getBoundingClientRect").mockReturnValue({
+      left: 0, right: 1040, top: 0, bottom: 14,
+      width: 1040, height: 14, x: 0, y: 0, toJSON: () => ({}),
+    } as DOMRect);
+    return strip;
+  };
+
+  const dropOnStrip = (strip: HTMLElement, payload: unknown) => {
+    const dataTransfer = {
+      types: [MEDIA_DRAG_TYPE],
+      dropEffect: "none",
+      getData: () => JSON.stringify(payload),
+    };
+    const drop = createEvent.drop(strip, { dataTransfer });
+    Object.defineProperty(drop, "clientX", {
+      value: MEDIA_DRAG_CURSOR_OFFSET_PX + 240,
+    });
+    fireEvent(strip, drop);
+  };
+
+  it("spawns the dropped clip's lane in this Panel, leaving the keyboard where it was", async () => {
+    const payload = mediaDragPayload(sourceMedia);
+    useMediaDragStore.getState().begin(payload);
+    const { container } = renderTimeline({
+      compositionId: GROUP,
+      media: [sourceMedia],
+    });
+    dropOnStrip(stripOf(container), payload);
+
+    await waitFor(() => expect(ipcMocks.addTrack).toHaveBeenCalledWith(GROUP));
+    // A drop is a local act: taking the keyboard would take the inspector and
+    // the picture with it, which is the opposite of what dropping into a
+    // background timeline is for.
+    expect(useCompositionAnchorStore.getState().focusedId).toBe(ROOT);
+  });
+
+  it("places a dropped Group in this Panel, so the actor's cross-check agrees", async () => {
+    const payload = compositionDragPayload(
+      { id: "comp-inner", duration_us: 2_000_000 },
+      "Lower third",
+    );
+    useMediaDragStore.getState().begin(payload);
+    const { container } = renderTimeline({ compositionId: GROUP });
+    dropOnStrip(stripOf(container), payload);
+
+    await waitFor(() =>
+      expect(ipcMocks.addGroupLayer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          compositionId: GROUP,
+          sourceCompositionId: "comp-inner",
+          trackId: "spawned-track",
+        }),
+      ),
+    );
+    expect(useCompositionAnchorStore.getState().focusedId).toBe(ROOT);
+  });
+
+  it("refuses a clip dragged onto another Panel, and says so on the status bar", () => {
+    const { container, getByText } = renderTimeline({
+      compositionId: ROOT,
+      selectedLayerId: layer.id,
+    });
+    const lane = container.querySelector(
+      '[data-testid="track-lane"]',
+    ) as HTMLElement;
+    vi.spyOn(lane, "getBoundingClientRect").mockReturnValue({
+      left: 0, right: 480, top: 14, bottom: 70,
+      width: 480, height: 56, x: 0, y: 14, toJSON: () => ({}),
+    } as DOMRect);
+    // The Group's Panel, side by side with this one: same rows, different
+    // composition. Its band overlaps this timeline's in y, which is the whole
+    // reason the lane hit-test cannot answer this on its own.
+    const neighbour = document.createElement("div");
+    document.body.appendChild(neighbour);
+    vi.spyOn(neighbour, "getBoundingClientRect").mockReturnValue({
+      left: 500, right: 1000, top: 0, bottom: 200,
+      width: 500, height: 200, x: 500, y: 0, toJSON: () => ({}),
+    } as DOMRect);
+    const unregister = registerTimelineSurface(GROUP, neighbour);
+
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 40 });
+    fireEvent.pointerMove(window, { clientX: 700, clientY: 40 });
+
+    expect(ipcMocks.logEmit).toHaveBeenCalledWith(
+      expect.objectContaining({ i18n_key: "log.cross_composition_move" }),
+    );
+    // One line for the crossing, not one per pointer event.
+    fireEvent.pointerMove(window, { clientX: 720, clientY: 40 });
+    expect(ipcMocks.logEmit).toHaveBeenCalledTimes(1);
+
+    fireEvent.pointerUp(window, { clientX: 720, clientY: 40 });
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+
+    unregister();
+    neighbour.remove();
   });
 });

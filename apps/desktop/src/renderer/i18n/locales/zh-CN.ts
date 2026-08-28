@@ -1401,6 +1401,7 @@ const zhCN: Resources = {
     export_cancelled: "已取消导出",
     cleared: "已清空日志",
     center_layer_unstaged: "预览尚未装载该图层，无法居中——其尺寸未知",
+    cross_composition_move: "片段属于它自己的合成——请拖回原时间线，或从菜单将其加入该组",
   },
   history: {
     initial: "初始状态",

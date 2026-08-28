@@ -58,9 +58,11 @@ export function DropStrip({
   fpsNum: number;
   fpsDen: number;
   mediaDropSnap: Omit<MediaDropSnapOptions, "currentTimeUs">;
-  /// The composition this strip spawns into. Only the snap needs it: the
-  /// playhead is one of the boundaries a drop snaps to, and it has to be offered
-  /// on this Panel's own axis (`state/playheadProjection.ts`).
+  /// The composition this strip spawns into — this Panel's own, whichever tab
+  /// holds the keyboard, so a drop here is a local act on a background timeline
+  /// too. It routes the drop, offers the playhead as a snap boundary on this
+  /// Panel's own axis (`state/playheadProjection.ts`), and answers the cycle
+  /// gate for a Group released here.
   compositionId: string | null;
   /// The live pointer-driven move drag, or null when none is in flight.
   layerDrag: {
@@ -103,6 +105,7 @@ export function DropStrip({
   const planFor = useCallback(
     (media: MediaDragPayload, pointerXPx: number) =>
       planMediaDrop({
+        compositionId,
         track: null,
         media,
         pointerXPx,

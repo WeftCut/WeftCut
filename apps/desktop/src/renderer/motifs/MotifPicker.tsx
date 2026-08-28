@@ -18,7 +18,7 @@ import {
   type MotifSummary,
   type TrackSummary,
 } from "../ipc";
-import { addMotifInOpenComposition } from "../ipc/compositionScoped";
+import { addMotifIn } from "../ipc/compositionScoped";
 import { trackDisplayName } from "../lib/trackName";
 import { MotifPropField } from "../properties/MotifPropFields";
 import { captureMotifFramePngBlob } from "../render/motifs/host";
@@ -34,6 +34,11 @@ interface Props {
   /// panel's source editor — the draft's real editing home (docs/motifs.md
   /// canvas-context editing).
   onDraftPlaced: (layerId: string) => void;
+  /// The composition the picker is adding to — the timeline that holds the
+  /// keyboard, resolved by the App when the dialog opens. The picker's tracks,
+  /// canvas and clock are all read off it, so the layer has to be committed to
+  /// the same one (ADR 0053 decision 4).
+  compositionId: string | null;
   /// Current playhead position in microseconds. Used as the default
   /// "insert at" time so the motif lands wherever the user is
   /// actively looking, matching AE/Premiere behavior.
@@ -60,6 +65,7 @@ export function MotifPicker({
   onClose,
   onAdded,
   onDraftPlaced,
+  compositionId,
   currentTimeUs,
   tracks,
   fpsNum,
@@ -145,7 +151,8 @@ export function MotifPicker({
       // Straight into the editing surface: place the draft at the playhead
       // (default props/duration, fresh overlay track), hand the new layer to
       // the App for select + reveal, and close the picker.
-      const layerId = await addMotifInOpenComposition({
+      const layerId = await addMotifIn({
+        compositionId,
         motifId: draftId,
         tStartUs: currentTimeUs,
       });
@@ -276,7 +283,8 @@ export function MotifPicker({
                   onSubmit={async ({ tStartUs, props, trackId }) => {
                     setError(null);
                     try {
-                      await addMotifInOpenComposition({
+                      await addMotifIn({
+                        compositionId,
                         motifId: selected.id,
                         tStartUs,
                         props,

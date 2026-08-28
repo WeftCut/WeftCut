@@ -513,20 +513,26 @@ export function setOrphanPlayheadUs(compositionId: string, localUs: number): voi
   useCompositionAnchorStore.setState({ orphanPlayheads });
 }
 
-/// Whether placing `compositionId` in the FOCUSED composition would make it
-/// contain itself. Every step of that Panel's anchor names a composition the
-/// focused one sits inside, so a composition on that path — or the focused one
-/// itself — is exactly the set the pool's drag has to refuse, and the root
-/// (never a pool row) is never on it.
+/// Whether placing `compositionId` in `hostId` would make it contain itself.
+/// Every step of the host Panel's anchor names a composition the host sits
+/// inside, so a composition on that path — or the host itself — is exactly the
+/// set the pool's drag has to refuse, and the root (never a pool row) is never
+/// on it.
+///
+/// The HOST is the Panel the drag is over, not the focused one: with several
+/// timelines open a drop lands where it was released, so asking the question of
+/// the keyboard's timeline would grey out the wrong rows in both directions.
 ///
 /// The commit refuses the same placement anyway (`CompositionCycle`, over the
 /// whole reference graph), which is what catches a loop that closes off this
 /// path. This is the half that refuses it BEFORE release, because a gesture the
 /// user has already completed is the wrong place to learn it was impossible.
-export function wouldCycleInOpenComposition(compositionId: string): boolean {
-  const { focusedId } = useCompositionAnchorStore.getState();
-  if (focusedId === compositionId) return true;
-  return (anchorPath(focusedId ?? "") ?? NO_CRUMBS).some(
+export function wouldCycleIn(
+  hostId: string | null,
+  compositionId: string,
+): boolean {
+  if (hostId === compositionId) return true;
+  return (anchorPath(hostId ?? "") ?? NO_CRUMBS).some(
     (c) => c.compositionId === compositionId,
   );
 }

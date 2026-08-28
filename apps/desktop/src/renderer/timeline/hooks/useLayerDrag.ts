@@ -30,6 +30,8 @@ import {
   type PendingLayerPlacement,
 } from "../LayerBlock";
 import { snapDragDeltaToTimelineBoundary } from "../snapping";
+import { refuseCrossCompositionMove } from "../crossCompositionRefusal";
+import { foreignCompositionAtPoint } from "../timelineSurfaces";
 import { playheadTimeUs } from "../../state/playheadStore";
 import {
   playheadClockUs,
@@ -75,6 +77,10 @@ interface PointerDragEvaluation {
   hasEditIntent: boolean;
   hasCommitChange: boolean;
   moveProjection: LayerMoveProjection | null;
+  /// The composition of the timeline Panel under the pointer when that Panel is
+  /// not this one, else null. Every destination is withheld while it is set and
+  /// the release commits nothing.
+  foreignCompositionId: string | null;
 }
 
 /// Layer drag state machine (move / trim-start / trim-end): ghost
@@ -257,6 +263,7 @@ export function useLayerDrag(opts: {
 
   const setDrag = useCallback(
     (seed: DragSeed | null) => {
+      announcedForeignRef.current = null;
       if (!seed) {
         setGesture(null);
         return;
@@ -569,8 +576,18 @@ export function useLayerDrag(opts: {
       // a selected clip (arm delay 0) commits a cross-track move. Skipping
       // the measurement on horizontal-only drags is a free side benefit.
       const movedVertically = Math.abs(clientY - state.startY) >= 1;
+      // A layer never changes composition by moving (ADR 0053 decision 8), so a
+      // pointer over another timeline Panel names no destination at all. The
+      // lane hit-test below could not tell on its own: it bands `clientY`, and a
+      // Panel side by side with this one shares every band, so a clip carried
+      // sideways into the neighbour would otherwise resolve to a lane at home
+      // and commit a move the user never saw.
+      const foreignCompositionId =
+        state.kind === "move"
+          ? foreignCompositionAtPoint(compositionId, clientX, clientY)
+          : null;
       const hitTrackId =
-        state.kind === "move" && movedVertically
+        state.kind === "move" && movedVertically && foreignCompositionId === null
           ? destinationUnderPointer(clientY)
           : null;
       // Alt+drag lowers to `pasteLayers`, which needs a lane that already exists,
@@ -603,8 +620,14 @@ export function useLayerDrag(opts: {
       // strip preserves it too, whatever the pointer did horizontally: the commit
       // carries times verbatim, so a ghost that slid would promise an edit
       // `move_layers_to_new_track` cannot make.
+      // Over another Panel the ghost freezes where the clip already is, which is
+      // the visible half of the refusal: it goes nowhere, so it promises
+      // nothing. Dragging back into this Panel picks the delta up again — the
+      // whole gesture is recomputed from the pointer each event.
       const deltaUs =
-        timeChanged && destinationTrackId !== SPAWN_TRACK_ID
+        timeChanged &&
+        destinationTrackId !== SPAWN_TRACK_ID &&
+        foreignCompositionId === null
           ? snapDeltaToTimelineBoundary(state, frameDeltaUs)
           : 0;
       const moveProjection =
@@ -627,10 +650,12 @@ export function useLayerDrag(opts: {
         hasEditIntent,
         hasCommitChange,
         moveProjection,
+        foreignCompositionId,
       };
     },
     [
       buildMoveProjection,
+      compositionId,
       constrainedAnchorUs,
       fpsDen,
       fpsNum,
@@ -641,6 +666,21 @@ export function useLayerDrag(opts: {
     ],
   );
 
+  /// The foreign composition already announced for the gesture in flight, so
+  /// the crossing is reported once and not once per `pointermove`. Cleared when
+  /// the pointer comes back, which re-arms it for a second crossing — and, being
+  /// a latch, it also absorbs the repeat call a re-invoked state updater makes.
+  const announcedForeignRef = useRef<string | null>(null);
+  const announceForeignComposition = useCallback(
+    (foreignCompositionId: string | null) => {
+      if (announcedForeignRef.current === foreignCompositionId) return;
+      announcedForeignRef.current = foreignCompositionId;
+      if (foreignCompositionId === null || compositionId === null) return;
+      refuseCrossCompositionMove(compositionId, foreignCompositionId);
+    },
+    [compositionId],
+  );
+
   const handlePointerMove = useCallback(
     (e: PointerEvent) => {
       const clientX = e.clientX;
@@ -648,6 +688,7 @@ export function useLayerDrag(opts: {
       setGesture((current) => {
         if (!current) return null;
         const evaluation = evaluatePointer(current.state, clientX, clientY);
+        announceForeignComposition(evaluation.foreignCompositionId);
         const next = {
           ...current,
           lastClientX: clientX,
@@ -666,7 +707,7 @@ export function useLayerDrag(opts: {
         return { ...next, state: evaluation.state };
       });
     },
-    [evaluatePointer],
+    [announceForeignComposition, evaluatePointer],
   );
 
   const handlePointerUp = useCallback(
@@ -680,7 +721,12 @@ export function useLayerDrag(opts: {
       const temporalArmReached =
         gesture.phase === "dragging" || Date.now() >= gesture.armAtMs;
       setGesture(null);
+      // Released over another timeline: nothing is sent. The frozen ghost has
+      // already emptied the commit, and this states the rule rather than
+      // relying on that.
+      announceForeignComposition(evaluation.foreignCompositionId);
       if (
+        evaluation.foreignCompositionId !== null ||
         !temporalArmReached ||
         !evaluation.hasEditIntent ||
         !evaluation.hasCommitChange
@@ -798,6 +844,7 @@ export function useLayerDrag(opts: {
       }
     },
     [
+      announceForeignComposition,
       constrainedAnchorUs,
       evaluatePointer,
       gesture,

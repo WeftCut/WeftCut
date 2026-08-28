@@ -92,6 +92,7 @@ import {
 import type { MarqueeBox, MarqueeKind } from "./marqueeStore";
 import { DropStrip } from "./DropStrip";
 import { SPAWN_TRACK_ID } from "./placement";
+import { registerTimelineSurface } from "./timelineSurfaces";
 import { TimelineRuler } from "./TimelineRuler";
 import { TrackHeader } from "./TrackHeader";
 import { TrackLane } from "./TrackLane";
@@ -137,10 +138,7 @@ import {
   revealTrackWithoutSelection,
 } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
-import {
-  addGroupLayerInOpenComposition,
-  addTrackInOpenComposition,
-} from "../ipc/compositionScoped";
+import { addGroupLayerIn, addTrackIn } from "../ipc/compositionScoped";
 import {
   clearLayerSelection,
   clearTransitionSelection,
@@ -311,6 +309,16 @@ export function Timeline({
     viewportWidthPx,
     zoomBySteps,
   } = useTimelineView({ compositionId, rootRef, tracks, durationUs });
+
+  // Publish this Panel's surface so a clip drag that wanders out of it can name
+  // the composition it wandered into (`timelineSurfaces.ts`). Only while on
+  // screen: a tab behind another still holds a rect, and one that overlapped a
+  // visible neighbour would make an ordinary in-Panel drag look like a crossing.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (compositionId === null || !visible || el === null) return;
+    return registerTimelineSurface(compositionId, el);
+  }, [compositionId, visible]);
 
   // The unmodified wheel's axis. Separate from `useTimelineView`'s listener on
   // the same node because the two gestures are separate concerns and neither
@@ -819,6 +827,10 @@ export function Timeline({
 
   // -------- Media drop, seek, render --------
 
+  // Every commit here names THIS Panel's composition, so the clip lands in the
+  // timeline it was released on. Nothing focuses that timeline: the drop is a
+  // local act, and stealing the keyboard would take the inspector and — while
+  // the preview follows focus — the picture along with it (ADR 0053 decision 4).
   const onMediaDrop = useCallback(
     async (
       // null = the drop strip: no lane exists yet, so one is created first.
@@ -838,8 +850,9 @@ export function Timeline({
       if (payload.source === "composition") {
         try {
           const trackId =
-            track !== null ? track.id : await addTrackInOpenComposition();
-          await addGroupLayerInOpenComposition({
+            track !== null ? track.id : await addTrackIn(compositionId);
+          await addGroupLayerIn({
+            compositionId,
             sourceCompositionId: payload.compositionId,
             trackId,
             tStartUs: plan.rawStartUs,
@@ -879,7 +892,7 @@ export function Timeline({
         // a lane that no longer belongs to it. A fresh import empties nothing, so
         // the first undo removes the layer and the second removes the lane —
         // each step reversing exactly what it did.
-        const trackId = track !== null ? track.id : await addTrackInOpenComposition();
+        const trackId = track !== null ? track.id : await addTrackIn(compositionId);
         await addMediaLayer(trackId, payload.mediaId, plan.rawStartUs);
         if (track === null) revealSpawnedTrack(trackId);
         await onMutated();
@@ -888,6 +901,7 @@ export function Timeline({
       }
     },
     [
+      compositionId,
       importing,
       media,
       onMutated,

@@ -135,6 +135,7 @@ describe("media drag placement", () => {
   it("places the pointer a fixed distance inside the ghost", () => {
     const payload = mediaDragPayload(media());
     const plan = planMediaDrop({
+      compositionId: null,
       track: track([]),
       media: payload,
       pointerXPx: MEDIA_DRAG_CURSOR_OFFSET_PX + 80,
@@ -153,6 +154,7 @@ describe("media drag placement", () => {
     const payload = mediaDragPayload(media());
     const targetTrack = track([visualLayer("previous", 0, 2_000_000)]);
     const plan = planMediaDrop({
+      compositionId: null,
       track: targetTrack,
       media: payload,
       // Raw start=1.9s. At 100px/s and strength=20px, the existing 2s
@@ -182,6 +184,7 @@ describe("media drag placement", () => {
     const payload = mediaDragPayload(media());
     const targetTrack = track([visualLayer("previous", 0, 2_000_000)]);
     const plan = planMediaDrop({
+      compositionId: null,
       track: targetTrack,
       media: payload,
       pointerXPx: MEDIA_DRAG_CURSOR_OFFSET_PX + 210,
@@ -206,6 +209,7 @@ describe("media drag placement", () => {
     const payload = mediaDragPayload(media());
     const targetTrack = track([visualLayer("next", 5_000_000, 6_000_000)]);
     const plan = planMediaDrop({
+      compositionId: null,
       track: targetTrack,
       media: payload,
       // Raw [1.9s,4.9s); its tail is within 100ms of the next clip's 5s edge.
@@ -231,6 +235,7 @@ describe("media drag placement", () => {
   it("reports same-class overlap as a collision but allows a shared AV row", () => {
     const payload = mediaDragPayload(media());
     const collision = planMediaDrop({
+      compositionId: null,
       track: track([visualLayer("video", 0, 2_000_000)]),
       media: payload,
       pointerXPx: MEDIA_DRAG_CURSOR_OFFSET_PX + 80,
@@ -239,6 +244,7 @@ describe("media drag placement", () => {
       fpsDen: 1,
     });
     const shared = planMediaDrop({
+      compositionId: null,
       track: track([audioLayer("audio", 0, 2_000_000)]),
       media: payload,
       pointerXPx: MEDIA_DRAG_CURSOR_OFFSET_PX + 80,
@@ -256,6 +262,7 @@ describe("media drag placement", () => {
   it("treats touching half-open intervals as valid and reports locked tracks", () => {
     const payload = mediaDragPayload(media());
     const adjacent = planMediaDrop({
+      compositionId: null,
       track: track([visualLayer("video", 0, 1_000_000)]),
       media: payload,
       pointerXPx: MEDIA_DRAG_CURSOR_OFFSET_PX + 80,
@@ -264,6 +271,7 @@ describe("media drag placement", () => {
       fpsDen: 1,
     });
     const locked = planMediaDrop({
+      compositionId: null,
       track: track([], true),
       media: payload,
       pointerXPx: MEDIA_DRAG_CURSOR_OFFSET_PX + 80,
@@ -280,6 +288,7 @@ describe("media drag placement", () => {
     const payload = mediaDragPayload(media());
     const occupied = track([visualLayer("video", 0, 10_000_000)]);
     const args = {
+      compositionId: null,
       media: payload,
       pointerXPx: MEDIA_DRAG_CURSOR_OFFSET_PX + 80,
       pxPerSec: 80,
@@ -352,7 +361,11 @@ describe("media drag target ownership", () => {
 // structural rather than geometric, so it is decided before any lane is asked.
 describe("composition drag placement", () => {
   const GROUP = { id: "comp-group", duration_us: 4_000_000 };
+  const ROOT = "comp-root";
   const args = {
+    /// The Panel the drag is over — the root unless a test names another, so a
+    /// Group is placeable by default.
+    compositionId: ROOT,
     pointerXPx: MEDIA_DRAG_CURSOR_OFFSET_PX + 80,
     pxPerSec: 80,
     fpsNum: 30,
@@ -381,15 +394,15 @@ describe("composition drag placement", () => {
     expect(plan.overlapClass).toBe("visual");
   });
 
-  it("refuses the composition the editor is standing inside", () => {
+  it("refuses the composition whose own timeline the drop is over", () => {
     useCompositionAnchorStore.setState({
       anchors: new Map([
         [GROUP.id, [{ layerId: "layer-group", compositionId: GROUP.id }]],
       ]),
-      focusedId: GROUP.id,
     });
     const plan = planMediaDrop({
       ...args,
+      compositionId: GROUP.id,
       track: track([]),
       media: compositionDragPayload(GROUP, "Group 1"),
     });
@@ -399,9 +412,9 @@ describe("composition drag placement", () => {
     expect(plan.conflictingLayerIds).toEqual([]);
   });
 
-  it("refuses an ANCESTOR of the open composition, on a lane and on the strip alike", () => {
-    // Standing two deep: root › outer › inner. Placing `outer` here would make
-    // it contain itself through `inner`.
+  it("refuses an ANCESTOR of the receiving composition, on a lane and on the strip alike", () => {
+    // The Panel under the drag is two deep: root › outer › inner. Placing
+    // `outer` there would make it contain itself through `inner`.
     const outer = { id: "comp-outer", duration_us: 2_000_000 };
     useCompositionAnchorStore.setState({
       anchors: new Map([
@@ -413,17 +426,37 @@ describe("composition drag placement", () => {
           ],
         ],
       ]),
-      focusedId: "comp-inner",
     });
+    const inner = { ...args, compositionId: "comp-inner" };
     const payload = compositionDragPayload(outer, "Group 1");
-    expect(planMediaDrop({ ...args, track: track([]), media: payload }).validity).toBe("cycle");
+    expect(planMediaDrop({ ...inner, track: track([]), media: payload }).validity).toBe("cycle");
     // The strip spawns a lane, and a fresh lane does not break the loop either.
-    expect(planMediaDrop({ ...args, track: null, media: payload }).validity).toBe("cycle");
+    expect(planMediaDrop({ ...inner, track: null, media: payload }).validity).toBe("cycle");
     // A DESCENDANT is fine: nesting deeper closes no loop.
     const other = { id: "comp-other", duration_us: 2_000_000 };
     expect(
-      planMediaDrop({ ...args, track: track([]), media: compositionDragPayload(other, "Group 2") })
+      planMediaDrop({ ...inner, track: track([]), media: compositionDragPayload(other, "Group 2") })
         .validity,
+    ).toBe("valid");
+  });
+
+  it("asks the Panel the drop is over, not the one holding the keyboard", () => {
+    // The keyboard is inside the Group; the pointer is over the root's
+    // timeline, where placing that Group closes no loop at all.
+    useCompositionAnchorStore.setState({
+      anchors: new Map([
+        [ROOT, []],
+        [GROUP.id, [{ layerId: "layer-group", compositionId: GROUP.id }]],
+      ]),
+      focusedId: GROUP.id,
+    });
+    expect(
+      planMediaDrop({
+        ...args,
+        compositionId: ROOT,
+        track: track([]),
+        media: compositionDragPayload(GROUP, "Group 1"),
+      }).validity,
     ).toBe("valid");
   });
 

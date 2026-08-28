@@ -1523,6 +1523,8 @@ const enUS = {
     cleared: "Log cleared",
     center_layer_unstaged:
       "Cannot center a layer the preview has not staged yet — its size is unknown",
+    cross_composition_move:
+      "A clip belongs to its own composition — drag it back, or add it to the Group from its menu",
   },
   // Edit-stack row labels — one per `HISTORY_SUMMARY` entry in
   // main/state/history-labels.ts, which owns the English source text. The three
