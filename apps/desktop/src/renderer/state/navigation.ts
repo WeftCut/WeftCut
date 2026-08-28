@@ -267,9 +267,27 @@ export function revealLayerWithoutSeek(layerId: string): boolean {
   return selectLayer(layerId);
 }
 
-/// Reveal + scroll a Track, selecting nothing and seeking nowhere. Returns
-/// false when the Track is gone from the live summary, or when no reveal
-/// handle is mounted (nothing observable would happen).
+/// Reveal a Track where it already is, without navigating to it: no
+/// composition switch, no selection, no seek. A reveal is keyed by track id,
+/// which names its composition project-wide, so a Panel showing that
+/// composition picks it up whether or not it holds the keyboard.
+///
+/// This is the half a Panel asks for about its OWN rows — a lane that spawned
+/// under a drop, which the A/B Roll filter would otherwise hide. Taking the
+/// keyboard for that would make a drop into a background timeline a
+/// navigation, and a drop is a destination (ADR 0053 decision 4).
+export function revealTrackInPlace(trackId: string): boolean {
+  if (!useProjectStore.getState().compositionIdByTrackId.has(trackId)) return false;
+  if (!revealTrackFn) return false;
+  revealTrackFn(trackId, null);
+  return true;
+}
+
+/// Reveal + scroll a Track, selecting nothing and seeking nowhere, ENTERING its
+/// composition first — the jump from somewhere else (the History Panel, a
+/// search hit), where the whole point is to be taken there. Returns false when
+/// the Track is gone from the live summary, or when no reveal handle is mounted
+/// (nothing observable would happen).
 export function revealTrackWithoutSelection(trackId: string): boolean {
   const compositionId = useProjectStore.getState().compositionIdByTrackId.get(trackId);
   if (compositionId === undefined) return false;

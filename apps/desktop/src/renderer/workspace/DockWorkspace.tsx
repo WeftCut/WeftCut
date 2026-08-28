@@ -78,6 +78,7 @@ import {
 } from "../state/projectStore";
 import {
   compositionPlacements,
+  focusComposition,
   restoreCompositionTabs,
   switchAnchor,
   syncOpenCompositions,
@@ -1481,9 +1482,32 @@ export function DockWorkspace({
     // stack two listeners.
     openTimelinesRef.current?.();
     const bound = adapter;
-    openTimelinesRef.current = bound.subscribe(() =>
-      syncOpenCompositions(bound.openTimelineCompositions()),
-    );
+    // The Panel that was active last time the Dock said anything. Activating a
+    // timeline tab IS entering that composition — without it the tab strip
+    // would only change which timeline is on SCREEN, leaving the editing
+    // target (the inspector, a follow-focus preview, every timeline-scoped
+    // key) pointed at the tab the user just left.
+    //
+    // Edge-triggered, and that is the whole subtlety: the Dock reports every
+    // layout change through the same channel, so reading the active Panel on
+    // each one would re-enter whichever timeline is active whenever anything
+    // moved — and a drop into a background timeline, which must NOT take the
+    // keyboard, moves something every time.
+    let lastActive = bound.getSnapshot().activePanel;
+    openTimelinesRef.current = bound.subscribe(() => {
+      syncOpenCompositions(bound.openTimelineCompositions());
+      const active = bound.getSnapshot().activePanel;
+      if (active === lastActive) return;
+      lastActive = active;
+      // Only when the newly active Panel is a timeline: activating the
+      // inspector or the media pool must leave the last focused timeline
+      // exactly where it was, which is what `scope: "timeline"` resolves
+      // against (ADR 0041).
+      const parsed = parsePanelId(active);
+      if (parsed?.kind === "timeline" && parsed.instance !== null) {
+        focusComposition(parsed.instance);
+      }
+    });
     // Read live rather than from the render above: the Dock is ready before
     // this component's own effects run, and the baseline layout it is about to
     // build should be bound straight away wherever the summary already exists.

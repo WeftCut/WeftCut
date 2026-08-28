@@ -96,7 +96,11 @@ test('a press on preview content releases the field and commits the edit', async
     // A plain click on the preview surface — non-focusable content. Before
     // regions existed this left focus parked on the rename box and the typed
     // label was never committed.
-    await page.locator('[data-focus-region="preview"]').click({ position: { x: 20, y: 20 } })
+    //
+    // The picture itself, not an offset into the Panel: the Preview Panel
+    // carries chrome above the surface (the render-target control), and a
+    // corner offset lands on whatever chrome happens to be there.
+    await page.locator('.preview-video').click()
 
     await expect.poll(() => focusedRegion(page)).toBe('preview')
     await expect(page.locator('.timeline-layer').first()).toContainText('renamed')

@@ -228,7 +228,17 @@ test.describe("Group on the timeline", () => {
       );
       // Double-clicking the same clip again activates the tab it already has:
       // one Panel per composition, never two.
+      //
+      // Back to the root's tab first, because the Group clip lives on the ROOT
+      // timeline and a background tab is still MOUNTED (`renderer: "always"`).
+      // Its clip therefore still has a layout box, and a click aimed at it
+      // lands on whatever the active tab is drawing over it — here, the pair
+      // inside the Group, whose own double-click opens a rename box. The next
+      // `Ctrl+Z` would then go to the text field, exactly as it should.
+      await timelineTab(page, rootId).click();
+      await expect.poll(() => openComposition(page)).toMatchObject({ id: rootId });
       await doubleClickCentre(page, groupClip);
+      await expect.poll(() => openComposition(page)).toMatchObject({ id: groupId });
       await expect.poll(() => timelineTabIds(page)).toEqual([rootId, groupId].sort());
 
       // ── Ctrl+Z from inside: back to the root, with the pair selected ─────

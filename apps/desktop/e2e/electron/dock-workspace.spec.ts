@@ -372,17 +372,20 @@ test("the Quick Actions bar's thickness resists the splitter beside it", async (
 });
 
 /**
- * Tab chrome is deliberately bare. A Panel tab carries NO close button and no
- * right-click menu: the workspace passes no `getTabContextMenuItems`, so
- * Dockview's own Close / Close All / Close Others menu never renders
+ * Tab chrome is deliberately bare. A Panel tab carries NO close button, and
+ * DOCKVIEW's own Close / Close All / Close Others menu never renders on any of
+ * them: the workspace passes no `getTabContextMenuItems`
  * (`DockWorkspace.test.tsx` asserts the prop stays undefined). Closing goes
  * through View > Close Active Panel, or — for the tabless Quick Actions strip —
  * the grip's own menu.
  *
- * Both halves are here because both are upgrade-fragile: a dockview release that
- * starts rendering its default tab actions would silently put close buttons back
- * on every tab, and the grip menu is the strip's ONLY in-place dismissal (it has
- * no tab to close from).
+ * Two tabs do carry a menu of OUR own, and each is the exception that proves
+ * where the line is: the Quick Actions strip has no tab to close from, and a
+ * timeline tab names a composition, which is a thing to say something about.
+ * Every tab that is only its kind stays bare.
+ *
+ * All of it is upgrade-fragile: a dockview release that starts rendering its
+ * default tab actions would silently put close buttons back on every tab.
  */
 test("tabs carry no close chrome, and the Quick Actions grip closes its strip", async () => {
   const { app, page } = await launchApp();
@@ -401,15 +404,26 @@ test("tabs carry no close chrome, and the Quick Actions grip closes its strip", 
     await expect(page.locator(".dv-tab button")).toHaveCount(0);
     await expect(page.locator(".dv-default-tab-action")).toHaveCount(0);
 
-    // Right-clicking a tab opens nothing at all — neither Dockview's menu nor
-    // one of ours. Checked on a solo tab and on a tab inside a shared group —
-    // the solo and grouped tab shapes. (Timeline is the solo one: Media Pool
-    // stopped qualifying when Transitions joined its group.)
+    // Dockview's own menu never renders, on any tab shape — the solo one and
+    // one inside a shared group. (Timeline is the solo one: Media Pool stopped
+    // qualifying when Transitions joined its group.)
     for (const kind of ["timeline", "attribute"]) {
       await dockTab(page, kind).click({ button: "right" });
       await expect(page.locator(".dv-context-menu-item")).toHaveCount(0);
-      await expect(page.locator(".app-menu-list")).toHaveCount(0);
+      await page.keyboard.press("Escape");
     }
+
+    // A tab that is only its kind has nothing of ours either.
+    await dockTab(page, "attribute").click({ button: "right" });
+    await expect(page.locator(".app-menu-list")).toHaveCount(0);
+
+    // A timeline tab does: it names a composition, so it can offer to close
+    // that Panel — and, where the composition is placed more than once, to say
+    // which placement its times are read against.
+    await dockTab(page, "timeline").click({ button: "right" });
+    await expect(page.locator(".app-menu-list")).toHaveCount(1);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".app-menu-list")).toHaveCount(0);
 
     // The grip DOES have a menu, holding exactly one item, and it closes the
     // strip. Every other Panel is left alone.

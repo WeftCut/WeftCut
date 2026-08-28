@@ -138,7 +138,7 @@ import {
 import { setTimelineScrollLeftPx } from "../state/timelineScrollStore";
 import {
   registerScrollToTime,
-  revealTrackWithoutSelection,
+  revealTrackInPlace,
 } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
 import { addGroupLayerIn, addTrackIn } from "../ipc/compositionScoped";
@@ -813,7 +813,7 @@ export function Timeline({
     const trackId = spawnRevealTrackId;
     if (trackId === null) return;
     const attempt = () => {
-      if (!revealTrackWithoutSelection(trackId)) return false;
+      if (!revealTrackInPlace(trackId)) return false;
       setSpawnRevealTrackId(null);
       return true;
     };
