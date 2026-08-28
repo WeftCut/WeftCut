@@ -19,7 +19,7 @@ import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksR
 import { applyCompositionsDelete, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, type GroupCreateResult } from './mutations/groups'
 import { applySetLayersEnabled, applyUpdateLayer, type LayerPatch } from './mutations/update'
 import { applyFitComposition } from './mutations/composition'
-import { applyDurationAutofit, compositionOf, locateLayer, locateTrack, requireLayer, requireSameComposition, scopeComposition } from './mutations/helpers'
+import { applyDurationAutofit, compositionOf, locateLayer, locateTrack, requireLayer, requireSameComposition, requireTrack, scopeComposition } from './mutations/helpers'
 import { applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
 import { applyDeleteTrack, applyMoveTrack, applyRenameTrack } from './mutations/tracks'
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, type EffectPatch } from './mutations/effects'
@@ -708,9 +708,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'add_layer': {
           const kind = a.kind as string
           let params: LayerParams
+          // Size-dependent defaults read the composition the TRACK lives in,
+          // never the root: a Group carries its own canvas, so centring a text
+          // layer on the root frame would place it outside a smaller one.
+          const into = () => requireTrack(current(), a.track as Uuid).comp
           switch (kind) {
-            case 'text': params = textParamsDefault('hello', rootComposition(current())); break
-            case 'color': params = colorParams({ r: 255, g: 0, b: 0, a: 255 }, 1920, 1080); break
+            case 'text': params = textParamsDefault('hello', into()); break
+            case 'color': { const c = into(); params = colorParams({ r: 255, g: 0, b: 0, a: 255 }, c.width, c.height); break }
             case 'video': params = videoClipParams(a.media as Uuid, parseNum(a.src_in_us, 'src_in_us'), parseNum(a.src_out_us, 'src_out_us')); break
             // Optional `role` override (default 'music'): mirrors the add-layer-site
             // role stamp at actor.ts add_media_layer auto-pair (role:'dialogue') and the

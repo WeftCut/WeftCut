@@ -5,7 +5,7 @@ import { blankProject } from './model'
 import type { Project } from './model'
 import { colorParams } from './mutations/add'
 import { createActor, type DispatchResult } from './actor'
-import { root } from './__tests__/fixtures/project'
+import { group, groupedProject, root } from './__tests__/fixtures/project'
 
 function fresh() {
   const idGen = seededGen()
@@ -1767,5 +1767,56 @@ describe('dispatch: set_layers_enabled', () => {
     const bad = actor.mcpCall('set_layers_enabled', JSON.stringify({ layer_ids: [v], enabled: 'no' }))
     expect(bad.ok).toBe(false)
     if (!bad.ok) expect(bad.error.code).toBe('invalid_params')
+  })
+})
+
+describe('creation defaults follow the target composition', () => {
+  // The single-lattice invariant pins fps, sample rate and channels across every
+  // composition but NOT the canvas, so a Group is free to be a different size.
+  // A default derived from the root is therefore only coincidentally right, and
+  // wrong the moment the target track lives inside a smaller Group.
+  function inGroup() {
+    const idGen = seededGen()
+    const { p, groupId, innerTrackId } = groupedProject(idGen, 'scoped')
+    group(p, groupId).width = 640
+    group(p, groupId).height = 360
+    const actor = createActor({ initial: p, idGen, clock: () => '<TS>' })
+    return { actor, groupId, innerTrackId, rootTrackId: root(p).tracks[0].id }
+  }
+
+  it('centres a text layer on the Group frame, not the root frame', () => {
+    const { actor, groupId, innerTrackId } = inGroup()
+    const r = actor.dispatch('add_layer', { track: innerTrackId, kind: 'text', t_start_us: 2_000_000, t_end_us: 3_000_000 })
+    expect(r.ok).toBe(true)
+    const added = group(actor.snapshot(), groupId).tracks[0].layers.at(-1)!
+    expect(added.params.kind).toBe('Text')
+    if (added.params.kind !== 'Text') return
+    expect([added.params.transform.x, added.params.transform.y]).toEqual([
+      { mode: 'Static', value: 320 },
+      { mode: 'Static', value: 180 },
+    ])
+  })
+
+  it('sizes a color layer to the Group frame', () => {
+    const { actor, groupId, innerTrackId } = inGroup()
+    actor.dispatch('add_layer', { track: innerTrackId, kind: 'color', t_start_us: 2_000_000, t_end_us: 3_000_000 })
+    const added = group(actor.snapshot(), groupId).tracks[0].layers.at(-1)!
+    if (added.params.kind !== 'Color') throw new Error('expected a Color layer')
+    expect([added.params.width, added.params.height]).toEqual([640, 360])
+  })
+
+  it('still reads the root frame for a root track', () => {
+    const { actor, rootTrackId } = inGroup()
+    actor.dispatch('add_layer', { track: rootTrackId, kind: 'text', t_start_us: 2_000_000, t_end_us: 3_000_000 })
+    const added = root(actor.snapshot()).tracks[0].layers.at(-1)!
+    if (added.params.kind !== 'Text') throw new Error('expected a Text layer')
+    expect(added.params.transform.x).toEqual({ mode: 'Static', value: 960 })
+  })
+
+  it('reports the unknown track rather than sizing against a guess', () => {
+    const { actor } = inGroup()
+    const r = actor.dispatch('add_layer', { track: 'ghost', kind: 'text', t_start_us: 0, t_end_us: 1_000_000 })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.error).toBe('TrackNotFound')
   })
 })
