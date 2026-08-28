@@ -158,6 +158,118 @@ describe("normalizeLayout", () => {
     expect(normalizeLayout(nonEmpty({ type: "branch", data: [] }))).toBeNull();
   });
 
+  // A snapshot addresses the timeline row by the bare kind, never by a
+  // composition (ADR 0053), so this is the shape every stored layout has and
+  // the one restore has to put back untouched.
+  it("keeps a stored timeline slot in its own cell at its own size", () => {
+    const result = normalizeLayout({
+      version: WEFTCUT_LAYOUT_VERSION,
+      empty: false,
+      dockview: {
+        grid: {
+          orientation: "HORIZONTAL",
+          width: 1_000,
+          height: 720,
+          root: {
+            type: "branch",
+            size: 720,
+            data: [
+              {
+                type: "leaf",
+                size: 496,
+                data: {
+                  id: "editing-preview",
+                  views: ["preview"],
+                  activeView: "preview",
+                },
+              },
+              {
+                type: "leaf",
+                size: 224,
+                data: {
+                  id: "editing-timeline",
+                  views: ["timeline"],
+                  activeView: "timeline",
+                },
+              },
+            ],
+          },
+        },
+        panels: {},
+      },
+      placements: { timeline: { siblings: ["timeline"], index: 0 } },
+    });
+    const dockview = result!.dockview as unknown as {
+      grid: { root: { data: unknown[] } };
+      panels: Record<string, { params: unknown }>;
+    };
+    expect(dockview.grid.root.data[1]).toEqual({
+      type: "leaf",
+      size: 224,
+      data: {
+        id: "editing-timeline",
+        views: ["timeline"],
+        activeView: "timeline",
+      },
+    });
+    expect(dockview.panels.timeline).toMatchObject({
+      params: { kind: "timeline", instance: null },
+    });
+    expect(result!.placements).toEqual({
+      timeline: { siblings: ["timeline"], index: 0 },
+    });
+  });
+
+  it("binds the timeline slot to a composition, and folds it back", () => {
+    const stored = {
+      version: WEFTCUT_LAYOUT_VERSION,
+      empty: false,
+      dockview: {
+        grid: {
+          orientation: "HORIZONTAL",
+          width: 1_000,
+          height: 720,
+          root: leaf(["timeline", "media"]),
+        },
+        panels: {},
+      },
+      placements: { timeline: { siblings: ["timeline", "media"], index: 0 } },
+    };
+    const bound = normalizeLayout(stored, { timelineInstance: "comp-7" });
+    const boundGrid = bound!.dockview as unknown as {
+      grid: { root: { data: { views: string[]; activeView: string } } };
+      panels: Record<string, { params: unknown }>;
+    };
+    expect(boundGrid.grid.root.data.views).toEqual(["timeline:comp-7", "media"]);
+    expect(boundGrid.grid.root.data.activeView).toBe("timeline:comp-7");
+    expect(boundGrid.panels["timeline:comp-7"]).toMatchObject({
+      params: { kind: "timeline", instance: "comp-7" },
+    });
+    expect(bound!.placements).toEqual({
+      "timeline:comp-7": { siblings: ["timeline:comp-7", "media"], index: 0 },
+    });
+
+    const folded = normalizeLayout(bound, { timelineInstance: null });
+    expect(folded).toEqual(normalizeLayout(stored));
+  });
+
+  it("collapses a slot and a bound Panel for the same row into one", () => {
+    const result = normalizeLayout(
+      nonEmpty({
+        type: "branch",
+        data: [leaf(["timeline"]), leaf(["timeline:comp-7", "media"])],
+      }),
+      { timelineInstance: "comp-7" },
+    );
+    const dockview = result!.dockview as unknown as {
+      grid: { root: { data: Array<{ data: { views: string[] } }> } };
+    };
+    expect(dockview.grid.root.data.map((node) => node.data.views)).toEqual([
+      ["timeline:comp-7"],
+      ["media"],
+    ]);
+  });
+
   it("rejects a structurally broken tree", () => {
     expect(normalizeLayout({ version: WEFTCUT_LAYOUT_VERSION, empty: false, dockview: {} })).toBeNull();
     expect(

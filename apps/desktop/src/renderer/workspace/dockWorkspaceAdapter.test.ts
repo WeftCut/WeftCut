@@ -1035,6 +1035,70 @@ describe("DockWorkspaceAdapter", () => {
     });
   });
 
+  it("binds the timeline Panel to the composition it shows", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.setTimelineInstance("comp-7");
+    adapter.initializeEditingLayout();
+
+    expect(dock.panels.has("timeline:comp-7")).toBe(true);
+    expect(adapter.getSnapshot().openPanels.has("timeline:comp-7")).toBe(true);
+    expect(adapter.getSnapshot().openKinds.has("timeline")).toBe(true);
+    // The catalogue's half of the address still drives the View menu and the
+    // shortcut scopes, so opening "Timeline" reaches the Panel that is open.
+    adapter.openPanel("timeline");
+    expect(dock.panels.get("timeline:comp-7")?.api.setActive).toHaveBeenCalledOnce();
+    expect(dock.added.filter((panel) => panel.id === "timeline:comp-7")).toHaveLength(1);
+
+    // The code-owned Editing baseline carries the folded slot like any other
+    // snapshot, so Reset rebuilds a bound timeline rather than a spare one.
+    adapter.resetWorkspace();
+    expect(adapter.getSnapshot().openPanels.has("timeline:comp-7")).toBe(true);
+    expect(dock.panels.has("timeline")).toBe(false);
+  });
+
+  it("keeps a composition out of a saved layout, and puts it back on restore", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.setTimelineInstance("comp-7");
+    adapter.initializeEditingLayout();
+
+    // A Workspace document spans every project and every saved profile, so the
+    // snapshot carries the folded slot and no composition id at all.
+    const snapshot = adapter.serialize();
+    expect(JSON.stringify(snapshot)).not.toContain("comp-7");
+    expect(Object.keys((snapshot.dockview as { panels: object }).panels)).toContain(
+      "timeline",
+    );
+
+    expect(adapter.restore(snapshot)).toBe(true);
+    expect(adapter.getSnapshot().openPanels.has("timeline:comp-7")).toBe(true);
+
+    // A different project restoring the same profile gets its own root.
+    const other = new DockWorkspaceAdapter(dock.api);
+    other.setTimelineInstance("comp-other");
+    expect(other.restore(snapshot)).toBe(true);
+    expect(other.getSnapshot().openPanels.has("timeline:comp-other")).toBe(true);
+  });
+
+  it("re-addresses an unbound timeline in place once the root composition names itself", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    // The summary lands after the Dock has already built its first layout.
+    adapter.initializeEditingLayout();
+    const unboundGroup = dock.panels.get("timeline")?.group;
+    const openBefore = adapter.getSnapshot().openPanels.size;
+
+    adapter.setTimelineInstance("comp-7");
+
+    expect(dock.panels.has("timeline")).toBe(false);
+    expect(dock.panels.get("timeline:comp-7")?.group).toBe(unboundGroup);
+    expect(unboundGroup?.panels.map((panel) => panel.id)).toEqual(["timeline:comp-7"]);
+    expect(adapter.getSnapshot().openPanels.size).toBe(openBefore);
+    // The Group survived the swap, so no cell collapsed and nothing was resized.
+    expect(dock.groups).toContain(unboundGroup);
+  });
+
   it("suppresses Dock overlays for Files and business MIME without consuming panel drags", () => {
     const dock = fakeDockview();
     const adapter = new DockWorkspaceAdapter(dock.api);

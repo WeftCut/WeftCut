@@ -116,6 +116,7 @@ describe("ViewMenu workspace controls", () => {
         workspaceProfiles={null}
         workspaceSnapshot={{
           openPanels: new Set(["preview", "timeline"]),
+          openKinds: new Set(["preview", "timeline"]),
           activePanel: "preview",
           maximizedPanel: null,
           empty: false,

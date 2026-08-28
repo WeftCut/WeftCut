@@ -69,7 +69,7 @@ import { type ProxyState } from "../panels/mediaReadiness";
 import { type OptimizeInfo } from "../panels/importOptimize";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
-import { useOpenComposition } from "../state/projectStore";
+import { useOpenComposition, useProjectStore } from "../state/projectStore";
 import { jumpToTimeUs } from "../state/navigation";
 import { setTool, useActiveTool } from "../state/toolStore";
 import { Menu, MenuItem } from "../menu/Menu";
@@ -85,6 +85,10 @@ import {
   PANEL_REGISTRY,
   STRIP_THICKNESS,
   isPanelKind,
+  panelIdOf,
+  parsePanelId,
+  type DockPanelParams,
+  type PanelId,
   type PanelKind,
 } from "./panelRegistry";
 
@@ -109,14 +113,14 @@ export interface DockPanelContracts {
   onRevealTrack: (trackId: string, layerId: string) => void;
 }
 
-interface DockPanelParams extends Record<string, unknown> {
-  kind: PanelKind;
-}
-
 const ContractsContext = createContext<DockPanelContracts | null>(null);
 
 export interface DockPanelRuntimeContract {
   kind: PanelKind;
+  /** This Panel's Dock address, and the instance behind it — the composition a
+   *  timeline Panel is bound to, null for a Panel that is its kind. */
+  id: PanelId;
+  instance: string | null;
   isVisible: boolean;
   /** This Panel's own Dockview api. Exposed so a Panel that must react to its
    *  OWN geometry (the Quick Actions strip flipping axis) can subscribe for
@@ -134,10 +138,13 @@ const DockPanelRuntimeContext = createContext<DockPanelRuntimeContract | null>(
   null,
 );
 
+/** What a Panel's own chrome — its tab, its grip menu, its hover surface — can
+ *  ask of the Workspace. Addressed by id, since the caller is one Panel acting
+ *  on itself; `openPanel` is the exception because a menu names a kind. */
 interface WorkspaceChromeCommands {
-  closePanel(kind: PanelKind): void;
-  setHoveredPanel(kind: PanelKind | null): void;
-  toggleMaximize(kind?: PanelKind): void;
+  closePanel(id: PanelId): void;
+  setHoveredPanel(id: PanelId | null): void;
+  toggleMaximize(id?: PanelId): void;
   openPanel(kind: PanelKind): void;
   resetWorkspace(): void;
 }
@@ -493,9 +500,17 @@ export function WeftCutPanelRenderer({
   const Component = PANEL_COMPONENTS[params.kind];
   const chrome = useWorkspaceChrome();
   const isVisible = useDockviewPanelVisibility(api);
+  const instance = params.instance;
   const runtime = useMemo<DockPanelRuntimeContract>(
-    () => ({ kind: params.kind, isVisible, api, containerApi }),
-    [api, containerApi, isVisible, params.kind],
+    () => ({
+      kind: params.kind,
+      id: panelIdOf(params.kind, instance),
+      instance,
+      isVisible,
+      api,
+      containerApi,
+    }),
+    [api, containerApi, instance, isVisible, params.kind],
   );
   return (
     <DockPanelRuntimeContext.Provider value={runtime}>
@@ -512,7 +527,7 @@ export function WeftCutPanelRenderer({
         tabIndex={-1}
         data-focus-region={params.kind}
         data-panel-visible={isVisible ? "true" : "false"}
-        onPointerEnter={() => chrome.setHoveredPanel(params.kind)}
+        onPointerEnter={() => chrome.setHoveredPanel(runtime.id)}
         onPointerLeave={() => chrome.setHoveredPanel(null)}
       >
         <Component />
@@ -789,10 +804,12 @@ function useFixedStripThickness(
  */
 function DockGripTab({
   kind,
+  id,
   api,
   containerApi,
 }: {
   kind: PanelKind;
+  id: PanelId;
   api: IDockviewPanelHeaderProps<DockPanelParams>["api"];
   containerApi: IDockviewPanelHeaderProps<DockPanelParams>["containerApi"];
 }) {
@@ -838,7 +855,7 @@ function DockGripTab({
           onClose={() => setMenuAt(null)}
           onClosePanel={() => {
             setMenuAt(null);
-            chrome.closePanel(kind);
+            chrome.closePanel(id);
           }}
         />
       ) : null}
@@ -911,19 +928,27 @@ function GripContextMenu({
 
 /** The standard Panel tab: label, selection marker, hover tracking, and
  *  double-click-to-maximize. */
-function DockPanelTab({ kind, title }: { kind: PanelKind | null; title: string }) {
+function DockPanelTab({
+  kind,
+  id,
+  title,
+}: {
+  kind: PanelKind | null;
+  id: PanelId | null;
+  title: string;
+}) {
   const chrome = useWorkspaceChrome();
   return (
     <div
       className="weft-dock-tab"
       data-panel-kind={kind ?? undefined}
-      onPointerEnter={() => chrome.setHoveredPanel(kind)}
+      onPointerEnter={() => chrome.setHoveredPanel(id)}
       onPointerLeave={() => chrome.setHoveredPanel(null)}
       onDoubleClick={(event) => {
-        if (!kind) return;
+        if (!id) return;
         event.preventDefault();
         event.stopPropagation();
-        chrome.toggleMaximize(kind);
+        chrome.toggleMaximize(id);
       }}
     >
       {/* Selection marker: CSS shows it (and the bottom accent) only on
@@ -947,20 +972,22 @@ function DockPanelTab({ kind, title }: { kind: PanelKind | null; title: string }
  */
 function QuickActionsDockTab({
   kind,
+  id,
   title,
   api,
   containerApi,
 }: {
   kind: PanelKind;
+  id: PanelId;
   title: string;
   api: IDockviewPanelHeaderProps<DockPanelParams>["api"];
   containerApi: IDockviewPanelHeaderProps<DockPanelParams>["containerApi"];
 }) {
   const sole = useIsSoleGroupPanel(api, containerApi);
   return sole ? (
-    <DockGripTab kind={kind} api={api} containerApi={containerApi} />
+    <DockGripTab kind={kind} id={id} api={api} containerApi={containerApi} />
   ) : (
-    <DockPanelTab kind={kind} title={title} />
+    <DockPanelTab kind={kind} id={id} title={title} />
   );
 }
 
@@ -970,13 +997,19 @@ export function WeftCutDockTab({
   tabLocation,
 }: IDockviewPanelHeaderProps<DockPanelParams>) {
   const { t } = useTranslation();
-  const kind = isPanelKind(api.id) ? api.id : null;
+  // The tab renderer is handed a raw Dockview id, so it reads the address
+  // rather than being told it. A tab on a panel this catalogue cannot resolve
+  // still renders, under whatever title Dockview kept.
+  const parsed = parsePanelId(api.id);
+  const kind = parsed?.kind ?? null;
+  const id = parsed ? panelIdOf(parsed.kind, parsed.instance) : null;
   const title = kind ? t(PANEL_REGISTRY[kind].titleKey) : (api.title ?? api.id);
 
-  if (kind === "quick-actions" && tabLocation === "header") {
+  if (parsed && id && parsed.kind === "quick-actions" && tabLocation === "header") {
     return (
       <QuickActionsDockTab
-        kind={kind}
+        kind={parsed.kind}
+        id={id}
         title={title}
         api={api}
         containerApi={containerApi}
@@ -984,7 +1017,7 @@ export function WeftCutDockTab({
     );
   }
 
-  return <DockPanelTab kind={kind} title={title} />;
+  return <DockPanelTab kind={kind} id={id} title={title} />;
 }
 
 export function EmptyWorkspaceRecovery() {
@@ -1211,9 +1244,9 @@ export function DockWorkspace({
 
   const chrome = useMemo<WorkspaceChromeCommands>(
     () => ({
-      closePanel: (kind) => adapterRef.current?.closePanel(kind),
-      setHoveredPanel: (kind) => adapterRef.current?.setHoveredPanel(kind),
-      toggleMaximize: (kind) => adapterRef.current?.toggleMaximize(kind),
+      closePanel: (id) => adapterRef.current?.closePanel(id),
+      setHoveredPanel: (id) => adapterRef.current?.setHoveredPanel(id),
+      toggleMaximize: (id) => adapterRef.current?.toggleMaximize(id),
       openPanel: (kind) => adapterRef.current?.openPanel(kind),
       resetWorkspace: () => {
         if (onResetWorkspace) onResetWorkspace();
@@ -1223,6 +1256,11 @@ export function DockWorkspace({
     [onResetWorkspace],
   );
 
+  // The composition a timeline Panel is one of (ADR 0053). Read here, at the
+  // seam that composes Panels, so neither the catalogue nor the layout schema
+  // has to know a project exists.
+  const rootCompositionId = useProjectStore((s) => s.summary?.root_id ?? null);
+
   const onReady = useCallback(({ api }: DockviewReadyEvent) => {
     let adapter = adapterRef.current;
     if (!adapter?.belongsTo(api)) {
@@ -1230,9 +1268,21 @@ export function DockWorkspace({
       adapter = new DockWorkspaceAdapter(api, sectionRef.current ?? undefined);
       adapterRef.current = adapter;
     }
+    // Read live rather than from the render above: the Dock is ready before
+    // this component's own effects run, and the baseline layout it is about to
+    // build should be bound straight away wherever the summary already exists.
+    adapter.setTimelineInstance(
+      useProjectStore.getState().summary?.root_id ?? null,
+    );
     adapter.initializeEditingLayout();
     onControllerReady?.(adapter);
   }, [onControllerReady]);
+
+  // The first summary of a session lands after the Dock has built its layout,
+  // so the timeline row is bound when the root composition finally names itself.
+  useEffect(() => {
+    adapterRef.current?.setTimelineInstance(rootCompositionId);
+  }, [rootCompositionId]);
 
   useEffect(() => {
     adapterRef.current?.refreshPanelTitles();

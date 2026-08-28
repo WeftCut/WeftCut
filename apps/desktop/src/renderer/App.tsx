@@ -120,6 +120,7 @@ import {
   type DockWorkspaceController,
   type DockWorkspaceSnapshot,
 } from "./workspace/dockWorkspaceAdapter";
+import { parsePanelId, type PanelId } from "./workspace/panelRegistry";
 import { useWorkspacePersistence } from "./workspace/useWorkspacePersistence";
 import {
   WorkspaceNameDialog,
@@ -532,10 +533,15 @@ export function App({ onCloseProject }: AppProps) {
       installDockWorkspaceProbe(() => {
         const snapshot = workspaceController?.getSnapshot();
         if (!snapshot) return null;
+        // Reported by kind, not by Dock address: a spec names the Panel it
+        // means, and a timeline Panel's address carries a composition id no
+        // spec can know in advance.
+        const kindOf = (id: PanelId | null) =>
+          id === null ? null : parsePanelId(id).kind;
         return {
-          openPanels: [...snapshot.openPanels].sort(),
-          activePanel: snapshot.activePanel,
-          maximizedPanel: snapshot.maximizedPanel,
+          openPanels: [...snapshot.openKinds].sort(),
+          activePanel: kindOf(snapshot.activePanel),
+          maximizedPanel: kindOf(snapshot.maximizedPanel),
           empty: snapshot.empty,
         };
       }),

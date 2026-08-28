@@ -77,11 +77,14 @@ export function ViewMenu({
       <MenuHeading
         label={t("view.panels_heading", { defaultValue: "Panels" })}
       />
+      {/* One entry per kind, checked when a Panel of it stands open — the menu
+          names Panels, and "Timeline" is one row whatever composition the open
+          timeline Panel is bound to. */}
       {PANEL_KINDS.map((kind) => (
         <MenuItem
           key={kind}
           label={t(PANEL_REGISTRY[kind].titleKey)}
-          checked={workspaceSnapshot.openPanels.has(kind)}
+          checked={workspaceSnapshot.openKinds.has(kind)}
           disabled={!workspaceController}
           onSelect={() => workspaceController?.openPanel(kind)}
         />

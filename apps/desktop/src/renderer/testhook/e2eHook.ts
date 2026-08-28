@@ -502,8 +502,10 @@ export interface E2EHook {
   stageProfilingSnapshot(): StageSnapshot;
 }
 
-/// JSON-serializable projection of DockWorkspaceSnapshot (its `openPanels` Set
-/// becomes a sorted string[] so it survives the page.evaluate boundary).
+/// JSON-serializable projection of DockWorkspaceSnapshot: Panels named by kind
+/// rather than by Dock address (a spec cannot know the composition id a
+/// timeline Panel is bound to), and the open set flattened to a sorted string[]
+/// so it survives the page.evaluate boundary.
 export interface DockWorkspaceProbe {
   openPanels: string[];
   activePanel: string | null;

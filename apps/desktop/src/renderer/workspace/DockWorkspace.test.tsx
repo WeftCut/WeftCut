@@ -13,6 +13,7 @@ const dockHarness = vi.hoisted(() => ({
   headerApi: null as unknown,
   contentApi: null as unknown,
   contentKind: null as string | null,
+  contentInstance: null as string | null,
 }));
 
 const previewHarness = vi.hoisted(() => ({
@@ -57,7 +58,7 @@ vi.mock("dockview-react", async () => {
             ComponentType<{
               api: unknown;
               containerApi: unknown;
-              params: { kind: string };
+              params: { kind: string; instance: string | null };
             }>
           >
         | undefined;
@@ -76,7 +77,10 @@ vi.mock("dockview-react", async () => {
             <Content
               api={dockHarness.contentApi}
               containerApi={dockHarness.api}
-              params={{ kind: dockHarness.contentKind }}
+              params={{
+                kind: dockHarness.contentKind,
+                instance: dockHarness.contentInstance,
+              }}
             />
           ) : null}
         </div>
@@ -372,6 +376,7 @@ beforeEach(() => {
   dockHarness.headerApi = null;
   dockHarness.contentApi = null;
   dockHarness.contentKind = null;
+  dockHarness.contentInstance = null;
   previewHarness.sequence = 0;
   previewHarness.mounts = 0;
   previewHarness.unmounts = 0;
@@ -491,6 +496,36 @@ describe("DockWorkspace React integration", () => {
       document.querySelector('.weft-dock-tab[data-panel-kind="effect"]')!,
     );
     expect(effect?.api.maximize).toHaveBeenCalledOnce();
+  });
+
+  // A bound timeline Panel is addressed by its composition, but everything the
+  // user and the stylesheet see is the kind — the tab title, the panel marker
+  // and the focus region an ADR 0041 scope is matched against.
+  it("marks a bound timeline Panel and its tab by kind", () => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+    dockHarness.headerApi = {
+      id: "timeline:comp-7",
+      title: "Timeline",
+      group: { panels: [{ id: "timeline:comp-7" }] },
+    };
+    dockHarness.contentApi = {
+      id: "timeline:comp-7",
+      isVisible: true,
+      onDidVisibilityChange: () => ({ dispose: vi.fn() }),
+    };
+    dockHarness.contentKind = "timeline";
+    dockHarness.contentInstance = "comp-7";
+
+    render(<DockWorkspace contracts={contracts} />);
+
+    expect(
+      document.querySelector('.weft-dock-tab[data-panel-kind="timeline"]'),
+    ).not.toBeNull();
+    const panel = document.querySelector<HTMLElement>(
+      '.weft-dock-panel[data-panel-kind="timeline"]',
+    );
+    expect(panel?.dataset.focusRegion).toBe("timeline");
   });
 
   // The strip's grip IS this tab, repositioned by CSS onto the button row. The
