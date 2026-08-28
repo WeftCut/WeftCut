@@ -293,6 +293,160 @@ test.describe('export range + audio settings (Electron)', () => {
     expect(dominantToneIn(pcm, audioStartS + 1.05, audioStartS + 1.95, cands)).toBe(toneHz(1))
   })
 
+  // ── Audio through a Group (ADR 0052) ────────────────────────────────────────
+  // The slipped pair above, pre-composed. A Group is a composition placed as one
+  // layer, and the mix is rendered by the Rust mixer walking the project
+  // (`audio/mix.rs`) — so a Group is a second place that walk can stop, and the
+  // two ways it fails are silence (never reached the layer) and a shift (reached
+  // it without the ref's time offset). Both exports here are AUDIO-ONLY, which
+  // is not a shortcut: the full export's audio stage IS this call
+  // (`useExportFlow` runs the same Rust audio-only export and stream-copies the
+  // result into the container), so the path under test is the shipping one, minus
+  // an encode that has nothing to do with the mix.
+  //
+  // The slip rides along because it is the most fragile geometry available: a
+  // sub-frame start survives pre-compose only if the member's own 48 kHz lattice
+  // is what it is re-based on. Like the test above, the sub-frame OFFSET itself
+  // is not asserted — AAC priming is 1024-2048 samples and swamps a <= 16.7 ms
+  // signal. What is asserted instead is stronger than an envelope: the two
+  // exports' decoded PCM is compared sample for sample as a signal-to-residual
+  // ratio, CALIBRATED against a deliberately misplaced control (the same file
+  // against itself, offset by one AAC frame — which scores about -3 dB, i.e.
+  // worse than silence).
+  //
+  // Measured runs come out sample-IDENTICAL (infinite ratio). The assertion is
+  // still a floor, for two reasons: there is no lossless audio target to export
+  // to — the codec set is AAC and Opus (`exportSettings.ts`) — so both legs are
+  // lossy encodes, and two independent encodes are only bit-identical while the
+  // encoder is deterministic, which is a property of a build rather than a
+  // contract. A floor forty-odd dB clear of the control is the strongest claim
+  // that stays true if that ever stops holding.
+  const AUDIO_ONLY = { includeVideo: false, includeAudio: true }
+
+  /// Signal-to-residual ratio in dB between two decodes, `b` read `shift`
+  /// samples late. Infinite when the two are bit-identical.
+  const residualSnrDb = (a: Float32Array, b: Float32Array, shift = 0): number => {
+    const n = Math.min(a.length, b.length - shift)
+    let signal = 0
+    let error = 0
+    for (let i = 0; i < n; i++) {
+      const x = a[i]!
+      const d = x - b[i + shift]!
+      signal += x * x
+      error += d * d
+    }
+    return error === 0 ? Infinity : 10 * Math.log10(signal / error)
+  }
+
+  const peakOf = (pcm: Float32Array): number => {
+    let peak = 0
+    for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]!))
+    return peak
+  }
+
+  test('pre-composing a slipped A/V pair exports the same audio', async () => {
+    test.setTimeout(300000)
+    // 350_000 µs is exactly sample 16800 and exactly frame 10.5 — the sub-frame
+    // geometry of the test above, minus the link move it already covers.
+    const SLIP_US = 350_000
+    const outDir = tmpDir('weftcut-e2e-group-audio-')
+    const flatOut = path.join(outDir, 'flat.m4a')
+    const groupedOut = path.join(outDir, 'grouped.m4a')
+
+    await bootProject('e2e-group-audio-')
+    const { layerId: videoLayer } = await importAndPlaceMedia(page, { mediaAbsPath: SOURCE })
+    const s0 = await summary(page)
+    const audioLayer = s0.tracks
+      .flatMap((t) => t.layers)
+      .find((l) => l.params.kind === 'Audio')?.id
+    expect(audioLayer, 'the AV source should have auto-paired an Audio layer').toBeTruthy()
+    await invokeCmd(page, 'move_layer', {
+      layerId: audioLayer,
+      newTrackId: s0.tracks.find((t) => t.layers.some((l) => l.id === audioLayer))!.id,
+      newTStartUs: SLIP_US,
+      escapeLink: true,
+    })
+
+    const flat = await driveExport(
+      page,
+      { outputAbsPath: flatOut, settings: AUDIO_ONLY },
+      { hook: 'exportTimeline' },
+    )
+    if (!flat.done.ok) throw new Error(`un-grouped audio export failed: ${flat.done.error}`)
+
+    // Pre-compose the pair. The earliest start is the video's 0, so nothing
+    // re-bases and the audio keeps its 350 ms start INSIDE the composition; the
+    // Group layer is windowed over the whole thing from 0, so the mix has to come
+    // out where it did before.
+    const group = await invokeCmd<{ composition_id: string; layer_id: string }>(
+      page,
+      'groups_create',
+      { layerIds: [videoLayer, audioLayer] },
+    )
+    const wire = await invokeCmd<{
+      root_id: string
+      compositions: Record<string, {
+        duration_us: number
+        tracks: Array<{ layers: Array<{ id: string; t_start_us: number; params: { kind: string; src_in_us?: number } }> }>
+      }>
+    }>(page, 'project_summary', {})
+    const layersIn = (id: string) => wire.compositions[id]!.tracks.flatMap((t) => t.layers)
+    expect(Object.keys(wire.compositions)).toHaveLength(2)
+    expect(layersIn(wire.root_id).map((l) => l.params.kind)).toEqual(['CompositionRef'])
+    expect(layersIn(wire.root_id)[0]!.t_start_us).toBe(0)
+    expect(layersIn(wire.root_id)[0]!.params.src_in_us).toBe(0)
+    const inside = layersIn(group.composition_id).find((l) => l.id === audioLayer)
+    expect(inside?.t_start_us, 'pre-compose must re-base the audio on its OWN lattice').toBe(SLIP_US)
+
+    const grouped = await driveExport(
+      page,
+      { outputAbsPath: groupedOut, settings: AUDIO_ONLY },
+      { hook: 'exportTimeline' },
+    )
+    if (!grouped.done.ok) throw new Error(`grouped audio export failed: ${grouped.done.error}`)
+    expect(existsSync(flatOut) && existsSync(groupedOut)).toBe(true)
+
+    const flatPcm = extractPcm(flatOut)
+    const groupedPcm = extractPcm(groupedOut)
+    const cands = [toneHz(0), toneHz(1), toneHz(2), toneHz(3), toneHz(4)]
+    // The audio starts at 0.35 s in both legs, so source second k occupies
+    // output [0.35 + k, 1.35 + k); windows are inset 50 ms from each boundary so
+    // each reads ONE tone rather than a blend (the helper's contract above).
+    const audioStartS = SLIP_US / 1_000_000
+    for (let k = 0; k < 4; k++) {
+      expect(
+        dominantToneIn(groupedPcm, audioStartS + k + 0.05, audioStartS + k + 0.95, cands),
+        `output second ${k} of the GROUPED export must carry source second ${k}`,
+      ).toBe(toneHz(k))
+      expect(dominantToneIn(flatPcm, audioStartS + k + 0.05, audioStartS + k + 0.95, cands)).toBe(
+        toneHz(k),
+      )
+    }
+
+    // One AAC frame late is the smallest misplacement a broken offset could
+    // produce, so its score is the bar the real comparison has to clear by a
+    // wide margin — which is what makes the floor below a measurement rather
+    // than a guess.
+    const snr = residualSnrDb(flatPcm, groupedPcm)
+    const control = residualSnrDb(flatPcm, flatPcm, 1024)
+    console.log(
+      `[e2e] group audio residual: snr=${snr.toFixed(1)} dB, one-AAC-frame control=${control.toFixed(1)} dB, ` +
+        `len ${flatPcm.length} vs ${groupedPcm.length}, peak ${peakOf(flatPcm).toFixed(4)} vs ${peakOf(groupedPcm).toFixed(4)}`,
+    )
+    expect(
+      Math.abs(flatPcm.length - groupedPcm.length) / 48000,
+      'the two exports must be the same length',
+    ).toBeLessThan(0.05)
+    expect(Math.abs(peakOf(groupedPcm) - peakOf(flatPcm))).toBeLessThan(0.01)
+    expect(
+      snr,
+      `the audio inside the Group is not the audio outside it (residual ${snr.toFixed(1)} dB; ` +
+        `one AAC frame of misplacement scores ${control.toFixed(1)} dB). The mixer walks the ` +
+        `project itself — check that it recurses through CompositionRef layers with the ref's offset.`,
+    ).toBeGreaterThan(40)
+    expect(snr - control, 'the residual must clear a one-frame misplacement by a wide margin').toBeGreaterThan(20)
+  })
+
   test('Opus-in-MKV export is produced and stays audio-faithful', async () => {
     test.setTimeout(240000)
     // Whole-clip export to MKV with Opus: exercises libopus encode -> .mka ->
