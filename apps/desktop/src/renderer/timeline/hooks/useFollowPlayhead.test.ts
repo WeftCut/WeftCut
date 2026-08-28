@@ -17,12 +17,23 @@ function root(): { current: HTMLDivElement | null; el: { scrollLeft: number } } 
   return { current: el as unknown as HTMLDivElement, el };
 }
 
+/// The root's own anchor: offset 0, on screen at every moment, so the Panel's
+/// reading of the one moment is the moment itself.
+const ROOT_FRAME = {
+  offsetUs: 0,
+  windowStartUs: Number.NEGATIVE_INFINITY,
+  windowEndUs: Number.POSITIVE_INFINITY,
+  fpsNum: 30,
+  fpsDen: 1,
+};
+
 /// 100 px/s over a 1000 px viewport: one screenful is 10 s of content.
 const VIEW = {
   pxPerSec: 100,
   viewportWidthPx: 1000,
   contentWidthPx: 10_000,
   enabled: true,
+  anchorFrame: ROOT_FRAME,
 };
 
 describe("useFollowPlayhead", () => {

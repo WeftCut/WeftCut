@@ -1,7 +1,12 @@
 import { lastFrameAnchorUs } from "../frames";
 import { openComposition, useCompositionAnchorStore } from "./compositionAnchorStore";
 import { transportSeek } from "./playbackStore";
-import { playheadTimeUs, setPlayheadTimeUs } from "./playheadStore";
+import {
+  focusedPlayheadUs,
+  focusedRootUs,
+  previewLocalUs,
+} from "./playheadProjection";
+import { setPlayheadTimeUs } from "./playheadStore";
 import { currentOpenComposition, useProjectStore } from "./projectStore";
 import { setLayerSelection } from "./selectionStore";
 
@@ -87,14 +92,17 @@ export function registerOpenMediaPoolPanel(
   };
 }
 
-/// Clamp a target playhead time to [0, lastFrameAnchorUs] against the OPEN
-/// composition — the same rule App.tsx's seekTo applies (Q5 of the
-/// frame-anchor spec). The playhead lives on the open timeline's axis.
+/// Clamp a target playhead time to [0, lastFrameAnchorUs] against the ROOT
+/// composition (Q5 of the frame-anchor spec). The ROOT and not the focused
+/// timeline: the playhead is one moment in root time (ADR 0053 decision 2), so
+/// the film's own length is the only bound that means anything — clamping to a
+/// Group's would refuse moments of the film that lie outside it.
 export function clampSeekUs(tUs: number): number {
-  const comp = currentOpenComposition();
-  const fpsNum = comp?.fps_num ?? 30;
-  const fpsDen = comp?.fps_den ?? 1;
-  const upper = lastFrameAnchorUs(comp?.duration_us ?? 0, fpsNum, fpsDen);
+  const summary = useProjectStore.getState().summary;
+  const root = summary ? summary.compositions[summary.root_id] : undefined;
+  const fpsNum = root?.fps_num ?? 30;
+  const fpsDen = root?.fps_den ?? 1;
+  const upper = lastFrameAnchorUs(root?.duration_us ?? 0, fpsNum, fpsDen);
   return Math.max(0, Math.min(tUs, upper));
 }
 
@@ -103,25 +111,38 @@ export function clampSeekUs(tUs: number): number {
 /// seekTo). Play state is untouched — seek-while-playing keeps playing
 /// (NLE norm). `clampedUs` must already be clamped — callers go through
 /// `seekToClamped` or `jumpToTimeUs`, both of which clamp exactly once.
+///
+/// ROOT time into the store, the PREVIEW'S clock into the transport: the engine
+/// draws one composition and reads one number, and only the store's number is
+/// the film's (`playheadProjection.ts`).
 function seekExact(clampedUs: number): void {
   setPlayheadTimeUs(clampedUs);
-  transportSeek(clampedUs);
+  transportSeek(previewLocalUs(clampedUs));
 }
 
-/// Clamped seek through the module-level transport.
+/// Clamped seek through the module-level transport. `tUs` is ROOT time — a
+/// caller holding a composition's own clock projects first
+/// (`state/playheadProjection.ts`).
 export function seekToClamped(tUs: number): void {
   seekExact(clampSeekUs(tUs));
 }
 
+/// ROOT time, and it scrolls the timeline it lands in to match.
 export function jumpToTimeUs(tUs: number): void {
   const clamped = clampSeekUs(tUs);
   seekExact(clamped);
   scrollToTimeFn?.(clamped);
 }
 
-/// Canonical edit points of the OPEN composition: every layer boundary on
-/// every track, plus 0. All tracks participate — navigation is timeline
-/// geometry, not audibility, and there is no track targeting to scope it.
+/// Canonical edit points of the FOCUSED composition, on that composition's own
+/// clock: every layer boundary on every track, plus 0. All tracks participate —
+/// navigation is timeline geometry, not audibility, and there is no track
+/// targeting to scope it.
+///
+/// Local, because a cut is a fact about the timeline being edited: stepping
+/// through a Group's cuts means ITS boundaries, not the root's. The projection
+/// happens at the two callers, which is also where the answer has to become a
+/// root-time seek again.
 function editPointsUs(): number[] {
   const comp = currentOpenComposition();
   const points = new Set<number>([0]);
@@ -141,20 +162,20 @@ function editPointsUs(): number[] {
 /// the last frame anchor like every other seek, so "next" at the tail is a
 /// safe no-op rather than a black frame.
 export function seekToPrevEdit(): void {
-  const current = playheadTimeUs();
+  const current = focusedPlayheadUs();
   let best: number | null = null;
   for (const p of editPointsUs()) {
     if (p >= current) break;
     best = p;
   }
-  if (best !== null) seekToClamped(best);
+  if (best !== null) seekToClamped(focusedRootUs(best));
 }
 
 export function seekToNextEdit(): void {
-  const current = playheadTimeUs();
+  const current = focusedPlayheadUs();
   for (const p of editPointsUs()) {
     if (p > current) {
-      seekToClamped(p);
+      seekToClamped(focusedRootUs(p));
       return;
     }
   }
@@ -213,7 +234,10 @@ export function jumpToLayer(layerId: string): boolean {
     // layer; revealing an already-visible track is harmless.
     revealTrackFn(trackId, layerId);
   }
-  jumpToTimeUs(layer.t_start_us);
+  // The layer's start is on ITS composition's clock, and the composition it
+  // sits in is open by now — so the moment to park the film on is that start
+  // projected up through the anchor the open just gave it.
+  jumpToTimeUs(focusedRootUs(layer.t_start_us));
   return true;
 }
 

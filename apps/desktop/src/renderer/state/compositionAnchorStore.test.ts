@@ -9,6 +9,7 @@ import {
   focusedCompositionId,
   openComposition,
   restoreCompositionTabs,
+  setOrphanPlayheadUs,
   switchAnchor,
   syncOpenCompositions,
   useCompositionAnchorStore,
@@ -124,7 +125,7 @@ describe("compositionAnchorStore", () => {
   it("focuses the root when a project arrives, anchored at the root itself", () => {
     expect(anchors().focusedId).toBe(ROOT_ID);
     expect(anchorPath(ROOT_ID)).toEqual([]);
-    expect(anchors().playheads.size).toBe(0);
+    expect(anchors().orphanPlayheads.size).toBe(0);
     expect(focusedCompositionId()).toBe(ROOT_ID);
   });
 
@@ -143,43 +144,27 @@ describe("compositionAnchorStore", () => {
     expect([...anchors().anchors.keys()]).toEqual([ROOT_ID, G1]);
   });
 
-  it("a switch of focus clears the selection and the range and starts the Group at 0", () => {
+  it("a switch of focus clears the selection and the range", () => {
     setLayerSelection("root-color", ["root-color"]);
     setRangeIn(1_000_000);
-    setPlayheadTimeUs(3_000_000);
 
     openComposition(G1, "ref-g1");
 
     expect(useSelectionStore.getState().primaryLayerId).toBeNull();
     expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
     expect(useRangeStore.getState()).toEqual({ inUs: null, outUs: null });
-    expect(playheadTimeUs()).toBe(0);
   });
 
-  it("remembers the playhead per composition and restores it on return", () => {
+  it("leaves the one moment where it is through every switch of focus", () => {
+    // There is one playhead and it is the film's (ADR 0053): activating another
+    // tab changes what the keyboard edits, never what frame is on screen.
     setPlayheadTimeUs(3_000_000);
-    openComposition(G1, "ref-g1");
-    setPlayheadTimeUs(500_000);
 
-    focusComposition(ROOT_ID);
-    expect(anchors().focusedId).toBe(ROOT_ID);
+    openComposition(G1, "ref-g1");
     expect(playheadTimeUs()).toBe(3_000_000);
 
-    focusComposition(G1);
-    expect(playheadTimeUs()).toBe(500_000);
-  });
-
-  it("clamps a remembered playhead to the composition it returns to", () => {
-    // Remembered inside g1 at 500 ms; g1 then shrinks to 200 ms.
-    openComposition(G1, "ref-g1");
-    setPlayheadTimeUs(500_000);
     focusComposition(ROOT_ID);
-    const shrunk = nested();
-    shrunk.compositions[G1]!.duration_us = 200_000;
-    useProjectStore.getState().apply(shrunk);
-    focusComposition(G1);
-    // 200 ms @ 30 fps → last frame anchor is frame 5 at 166 667 µs.
-    expect(playheadTimeUs()).toBe(166_667);
+    expect(playheadTimeUs()).toBe(3_000_000);
   });
 
   it("opening by id anchors on the shortest path from the root", () => {
@@ -260,16 +245,13 @@ describe("compositionAnchorStore", () => {
 
   it("resets to the new root when the project changes", () => {
     openComposition(G1, "ref-g1");
-    setPlayheadTimeUs(500_000);
-    focusComposition(ROOT_ID);
-    // Both the root's and g1's positions are on file by now.
-    expect(anchors().playheads.size).toBe(2);
+    setOrphanPlayheadUs(G1, 500_000);
 
     useProjectStore.getState().apply(summaryFixture({ project_id: "p-other" }));
 
     expect(anchors().focusedId).toBe(ROOT_ID);
     expect([...anchors().anchors.keys()]).toEqual([ROOT_ID]);
-    expect(anchors().playheads.size).toBe(0);
+    expect(anchors().orphanPlayheads.size).toBe(0);
   });
 
   it("clears entirely when the project closes", () => {

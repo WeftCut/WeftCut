@@ -1,6 +1,11 @@
 // Timeline in/out points — the range the user marks on the timeline and the
 // export then runs over.
 //
+// ROOT time. There is one range, and export renders the root, so the film's
+// clock is the only one the two ends can both mean something on; a ruler inside
+// a Group projects them for drawing (`state/playheadProjection.ts`) and shows
+// no cap where the projection has none.
+//
 // Session state, deliberately NOT persisted, for the same reason the playhead
 // isn't: a range is where you are in a work session, not a property of the
 // project. Persisting it would cost a schema version, a `parseProject`

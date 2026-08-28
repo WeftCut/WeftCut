@@ -54,11 +54,15 @@ interface TransformFields {
   anchor_y?: AnimTrack<number>;
 }
 
-/// A layer's transform frame at an ABSOLUTE time, given the untransformed
-/// content size the compositor reports for it (`GizmoProbe.naturalSizeOf`) — for
-/// a Text layer that is its box when one is set and its measured glyph bounds
-/// when not (ADR 0049), which is why the size is a parameter and not something
-/// this module could read off the params.
+/// A layer's transform frame at an ABSOLUTE time on the LAYER'S OWN
+/// composition's clock — the projection of the one moment
+/// (`state/playheadProjection.ts`), never the root's raw playhead, which reads
+/// as a different instant inside every Group.
+///
+/// Given the untransformed content size the compositor reports for it
+/// (`GizmoProbe.naturalSizeOf`) — for a Text layer that is its box when one is
+/// set and its measured glyph bounds when not (ADR 0049), which is why the size
+/// is a parameter and not something this module could read off the params.
 ///
 /// `DEFAULT_ANCHOR` and nothing else for the anchor fallback — the same constant
 /// the renderer resolves through, so this frame and the picture cannot pivot

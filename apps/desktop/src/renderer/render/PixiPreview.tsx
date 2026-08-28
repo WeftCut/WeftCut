@@ -24,6 +24,7 @@ import {
   releaseTransport,
   setTransportPlaying,
 } from "../state/playbackStore";
+import { previewLocalUs } from "../state/playheadProjection";
 import { playheadTimeUs } from "../state/playheadStore";
 import { compositionOrRoot, rootCompositionOf, useProjectStore } from "../state/projectStore";
 import {
@@ -201,6 +202,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   // same id. Export is unaffected: it always renders the root.
   const focusedId = useFocusedCompositionId();
   const composition = compositionOrRoot(summary, focusedId) ?? undefined;
+  /// The composition the engine's clock is currently running on. Seeded on the
+  /// first pass so the re-base below fires only on a real change of target.
+  const previewTargetRef = useRef<string | null | undefined>(undefined);
   const decodeEngine = useDecodeEngine();
   const decodeComponentAvailable = useDecodeComponentAvailable();
 
@@ -362,7 +366,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // never heard them. Its first tick emits ITS position over the store
       // (`lastEmittedUs` starts unset), so without the seed a playhead parked
       // during init — or across any preview remount — teleports back to 0.
-      const restoreUs = playheadTimeUs();
+      // The store is ROOT time and the engine's clock is the composition it
+      // draws, so the seed is projected on the way in.
+      const restoreUs = previewLocalUs(playheadTimeUs());
       if (restoreUs !== 0) engine.seek(restoreUs);
       if (onTimeUpdate) engine.onTimeUpdate(onTimeUpdate);
       if (onPausedChange) engine.onPlayStateChange((p) => onPausedChange(!p));
@@ -739,6 +745,20 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       composition?.fps_num ?? 30,
       composition?.fps_den ?? 1,
     );
+    // A change of TARGET re-bases the engine's clock. It reads and emits one
+    // number and that number is the composition it draws, so without this the
+    // next emit would be read as the new composition's while still naming the
+    // old one's, and the playhead would jump by the offset between them. Guarded
+    // on the id alone: a summary update leaves the engine's position meaning
+    // exactly what it meant before.
+    //
+    // The engine clamps to what it draws, so entering a Group the film is parked
+    // outside of lands on the nearest moment that Group can show. That is the
+    // preview's own limit, not the playhead's — it draws one composition.
+    if (previewTargetRef.current !== focusedId) {
+      previewTargetRef.current = focusedId;
+      engineRef.current?.seek(previewLocalUs(playheadTimeUs()));
+    }
     const t = engineRef.current?.positionUs() ?? 0;
     compositorRef.current.setAnchorTime(t);
     compositorRef.current.compositeFrame(t);

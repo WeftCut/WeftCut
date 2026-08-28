@@ -32,6 +32,7 @@ import {
   setTransitionSelection,
   useSelectionStore,
 } from "../state/selectionStore";
+import { openComposition } from "../state/compositionAnchorStore";
 import {
   clearKeyframeSelection,
   getSelectedKeyframes,
@@ -3240,5 +3241,152 @@ describe("Timeline link chrome", () => {
     );
     // The editor opens on the anchor member's tab even for an unlabelled link.
     expect(screen.queryByTestId("link-tab-anchor")).not.toBeNull();
+  });
+});
+
+/// One moment, read in this Panel's coordinates (ADR 0053 decision 2). The
+/// projection itself is unit-tested (`render/timeProjection.test.ts`,
+/// `state/playheadProjection.test.ts`); what only shows up here is whether the
+/// Panel draws through it — and stops drawing when its Group is off screen.
+describe("Timeline playhead projection", () => {
+  const G1 = "comp-g1";
+  /// 80 px/s from the mocked view state, so one second of this Group's own
+  /// clock is 80 px along its ruler.
+  const PX_PER_SEC = 80;
+
+  const g1Layer: LayerSummary = {
+    ...layer,
+    id: "inner-g1",
+    label: "Inside",
+    t_end_us: 5_000_000,
+  };
+  const g1Track: TrackSummary = { ...track, id: "t-g1", layers: [g1Layer] };
+
+  /// A 4 s placement of the 5 s Group at root 12 s, so root 13 s is the Group's
+  /// own 1 s and root 3 s is nowhere on it.
+  const groupClip: LayerSummary = {
+    ...layer,
+    id: "ref-g1",
+    label: "Group 1",
+    kind: "CompositionRef",
+    t_start_us: 12_000_000,
+    t_end_us: 16_000_000,
+    params: {
+      kind: "CompositionRef",
+      composition_id: G1,
+      composition_label: null,
+      src_in_us: 0,
+      src_out_us: 4_000_000,
+      x: staticNum(0),
+      y: staticNum(0),
+      scale_x: staticNum(1),
+      scale_y: staticNum(1),
+      scale_linked: true,
+      rotation_deg: staticNum(0),
+      opacity: staticNum(1),
+      anchor_x: staticNum(0.5),
+      anchor_y: staticNum(0.5),
+    },
+  };
+
+  function renderGroupTimeline(onSeek: (tUs: number) => void) {
+    useProjectStore.getState().apply(
+      summaryFixture({
+        project_id: "p-projection",
+        root: {
+          duration_us: 60_000_000,
+          tracks: [{ ...track, id: "t-root", layers: [groupClip] }],
+        },
+        groups: [
+          {
+            id: G1,
+            label: "Lower third",
+            width: 1920,
+            height: 1080,
+            fps_num: 30,
+            fps_den: 1,
+            duration_us: 5_000_000,
+            duration_pinned: false,
+            fps_locked: false,
+            tracks: [g1Track],
+            markers: [],
+            transitions: [],
+            links: [],
+          },
+        ],
+      }),
+    );
+    openComposition(G1, "ref-g1");
+    return render(
+      <Timeline
+        compositionId={G1}
+        tracks={[g1Track]}
+        links={[]}
+        durationUs={5_000_000}
+        keybindings={{}}
+        fpsNum={30}
+        fpsDen={1}
+        bladeMode={false}
+        media={[]}
+        importing={new Set()}
+        proxyState={new Map()}
+        previewDecodable={new Set()}
+        onExitBlade={vi.fn()}
+        onSeek={onSeek}
+        onMutated={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+  }
+
+  beforeEach(() => {
+    clearLayerSelection();
+    setActiveRegion(null);
+    setPlayheadTimeUs(0);
+    setTimelineScrollLeftPx(G1, 0);
+  });
+  afterEach(() => {
+    cleanup();
+    useProjectStore.getState().apply(null);
+  });
+
+  it("draws the moment at the offset its anchor gives it, and tracks it there", () => {
+    const { container } = renderGroupTimeline(vi.fn());
+    const playhead = container.querySelector<HTMLElement>(
+      '[data-testid="timeline-playhead"]',
+    )!;
+
+    act(() => setPlayheadTimeUs(13_000_000));
+    expect(playhead.style.left).toBe(`${PX_PER_SEC}px`);
+    expect(playhead.style.display).toBe("block");
+
+    act(() => setPlayheadTimeUs(14_000_000));
+    expect(playhead.style.left).toBe(`${2 * PX_PER_SEC}px`);
+  });
+
+  it("draws nothing at a moment its placement does not reach", () => {
+    const { container } = renderGroupTimeline(vi.fn());
+    const playhead = container.querySelector<HTMLElement>(
+      '[data-testid="timeline-playhead"]',
+    )!;
+
+    act(() => setPlayheadTimeUs(13_000_000));
+    expect(playhead.style.display).toBe("block");
+
+    // Past the Group clip's end: the Group is off screen, so it has no position
+    // and a line would have to invent one.
+    act(() => setPlayheadTimeUs(17_000_000));
+    expect(playhead.style.display).toBe("none");
+  });
+
+  it("scrubs the film, not a second playhead of its own", () => {
+    const onSeek = vi.fn();
+    const { container } = renderGroupTimeline(onSeek);
+    const ruler = container.querySelector('[data-testid="timeline-ruler"]')!;
+
+    // 80 px along this Group's ruler is its own 1 s, which is root 13 s.
+    fireEvent.pointerDown(ruler, { button: 0, clientX: PX_PER_SEC });
+    fireEvent.pointerUp(window, { clientX: PX_PER_SEC });
+
+    expect(onSeek).toHaveBeenCalledWith(13_000_000);
   });
 });

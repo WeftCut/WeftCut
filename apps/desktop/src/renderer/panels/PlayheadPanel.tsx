@@ -54,7 +54,7 @@ import {
 } from "../settings/appSettingsStore";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { resolveAccelerator } from "../shortcuts/match";
-import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
+import { useFocusedPlayheadUsThrottled } from "../state/playheadProjection";
 import { useGroupOrdinals } from "../state/projectStore";
 import { useCloseOnAnchorMove } from "../timeline/contextMenuAnchor";
 import { linkHue } from "../timeline/geometry";
@@ -153,7 +153,10 @@ export function PlayheadPanel({
   const { t } = useTranslation();
   const displayMode = useDisplayMode();
   const deltaWindowUs = useDeltaWindowUs();
-  const currentTimeUs = usePlayheadTimeUsThrottled(100, visible);
+  // Panel-rate (tier 3, playheadStore.ts) and PROJECTED: the rows are the
+  // editing target's own layers, so what "at the playhead" means here is that
+  // composition's reading of the moment.
+  const currentTimeUs = useFocusedPlayheadUsThrottled(100, visible);
   // Checked categories, empty = unfiltered (see `splitPlayheadSections`). Session
   // state, not a persisted preference: it answers "what am I looking for right
   // now", which is not a fact about the user that should outlive the question.

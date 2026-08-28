@@ -26,8 +26,7 @@ import {
   closeTimelinePanel,
   openTimelinePanel,
 } from "../workspace/timelinePanels";
-import { seekToClamped, collapseReveal } from "./navigation";
-import { playheadTimeUs } from "./playheadStore";
+import { collapseReveal } from "./navigation";
 import { useProjectStore } from "./projectStore";
 import { clearRange } from "./rangeStore";
 import { clearLayerSelection } from "./selectionStore";
@@ -64,38 +63,38 @@ interface State {
   /// before the first summary arrives — `compositionOrRoot` treats null as
   /// "the root".
   focusedId: string | null;
-  /// Where the playhead was when each composition was last focused. A Group has
-  /// its own time axis, so returning to it at the frame the user was looking at
-  /// is what makes the round trip feel like one timeline per composition rather
-  /// than one playhead dragged across all of them. Never persisted.
-  playheads: ReadonlyMap<string, number>;
+  /// The local moment an ORPHAN composition's Panel is parked at. There is one
+  /// playhead and it is a ROOT time (ADR 0053), so a composition with no path to
+  /// the root has no reading of it at all — its Panel scrubs on an axis of its
+  /// own, kept here, and those scrubs leave the film alone. A composition that
+  /// IS placed never has an entry: its position is a projection, not a second
+  /// number. Never persisted.
+  orphanPlayheads: ReadonlyMap<string, number>;
 }
 
 const INITIAL: State = {
   projectId: null,
   anchors: new Map(),
   focusedId: null,
-  playheads: new Map(),
+  orphanPlayheads: new Map(),
 };
 
 export const useCompositionAnchorStore = create<State>(() => INITIAL);
 
 /// Move the keyboard's editing target. Everything that is "where the user is in
-/// THIS timeline" resets — selection, range, reveal — and the playhead is
-/// restored to where it was last left in the target (0 the first time), clamped
-/// to the target's own last frame in case it shrank meanwhile. `displayMode` is
-/// left alone: A/B Roll vs All Tracks is a preference about how to look, not
-/// what to look at.
+/// THIS timeline" resets — selection, range, reveal. The PLAYHEAD does not: it
+/// is one moment in root time and every Panel draws its own projection of it
+/// (ADR 0053 decision 2), so activating another tab changes which timeline the
+/// keyboard edits, never which frame the film is parked on. `displayMode` is
+/// left alone for a nearer reason — A/B Roll vs All Tracks is a preference about
+/// how to look, not about what to look at.
 function focusOn(nextId: string): void {
   const s = useCompositionAnchorStore.getState();
   if (s.focusedId === nextId) return;
-  const playheads = new Map(s.playheads);
-  if (s.focusedId !== null) playheads.set(s.focusedId, playheadTimeUs());
-  useCompositionAnchorStore.setState({ focusedId: nextId, playheads });
+  useCompositionAnchorStore.setState({ focusedId: nextId });
   clearLayerSelection();
   clearRange();
   collapseReveal();
-  seekToClamped(playheads.get(nextId) ?? 0);
   publishIntent();
 }
 
@@ -311,7 +310,7 @@ export function reconcileCompositionAnchors(summary: ProjectSummary | null): voi
       projectId: summary.project_id,
       anchors: new Map([[summary.root_id, NO_CRUMBS]]),
       focusedId: summary.root_id,
-      playheads: new Map(),
+      orphanPlayheads: new Map(),
     });
     return;
   }
@@ -403,6 +402,24 @@ export function anchorPath(
   compositionId: string,
 ): readonly CompositionCrumb[] | null {
   return useCompositionAnchorStore.getState().anchors.get(compositionId) ?? null;
+}
+
+/// Where an ORPHAN composition's Panel is parked, on its own clock. 0 until it
+/// is scrubbed — an axis nothing places has no other opening position.
+export function orphanPlayheadUs(compositionId: string): number {
+  return useCompositionAnchorStore.getState().orphanPlayheads.get(compositionId) ?? 0;
+}
+
+/// Park an orphan's Panel. Only `state/playheadProjection.ts` calls this, and
+/// only after it has established that the composition has no root time —
+/// writing here for a placed composition would be the second playhead ADR 0053
+/// refuses.
+export function setOrphanPlayheadUs(compositionId: string, localUs: number): void {
+  const s = useCompositionAnchorStore.getState();
+  if (s.orphanPlayheads.get(compositionId) === localUs) return;
+  const orphanPlayheads = new Map(s.orphanPlayheads);
+  orphanPlayheads.set(compositionId, localUs);
+  useCompositionAnchorStore.setState({ orphanPlayheads });
 }
 
 /// Whether placing `compositionId` in the FOCUSED composition would make it

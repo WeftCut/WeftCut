@@ -442,8 +442,9 @@ more than once, the tab's context menu offers `Switch anchor` to say which
 placement its times are read against. The timeline's empty space is tinted one
 step per level so depth reads without looking at the tab — Resolve does the
 same for a compound clip. Moving between tabs drops the selection, the marked
-range and any inline reveal, and the playhead returns to where it was last left
-in the target; the display mode is not touched. The inspector's Group section
+range and any inline reveal; the moment is not touched, because every tab reads
+the same one in its own coordinates, and the display mode is not touched
+either. The inspector's Group section
 carries the composition's name, its frame size, its duration and the same two
 buttons.
 

@@ -11,6 +11,7 @@ import { logEmit } from "../ipc";
 import { resolveAccelerator } from "../shortcuts/match";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { jumpToLayer, jumpToTimeUs, revealInMediaPool } from "../state/navigation";
+import { focusedRootUs } from "../state/playheadProjection";
 import { useOpenComposition } from "../state/projectStore";
 import { openComposition, focusedCompositionId } from "../state/compositionAnchorStore";
 import { GROUP_ORDER, rankEntries, type RankedResult } from "./matcher";
@@ -146,7 +147,10 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
           onClose();
           return;
         }
-        jumpToTimeUs(p.tUs);
+        // The marker's time is on ITS composition's clock, and that
+        // composition is open by now — so the moment to park the film on is
+        // that time projected up through the anchor the open gave it.
+        jumpToTimeUs(focusedRootUs(p.tUs));
         onClose();
         return;
     }

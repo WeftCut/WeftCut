@@ -121,10 +121,14 @@ test('the timeline, the ruler and the Insert menu follow the open composition', 
       expect(rootTrackIds).not.toContain(id)
     }
 
-    // The switch started the Group at 0; its ruler runs to ITS end.
-    expect(await playheadUs(page)).toBe(0)
+    // One moment, read on the Group's clock (ADR 0053): the switch leaves the
+    // film where it is, and Home/End move to the ends of the GROUP — which are
+    // the moments its placement [3 s, 5 s) sits at on the film.
+    expect(await playheadUs(page)).toBe(4_966_667)
+    await page.keyboard.press('Home')
+    await expect.poll(() => playheadUs(page)).toBe(3_000_000)
     await page.keyboard.press('End')
-    await expect.poll(() => playheadUs(page)).toBe(1_966_667)
+    await expect.poll(() => playheadUs(page)).toBe(4_966_667)
 
     // ── Insert → Color layer lands INSIDE the Group ───────────────────────
     const rootLayersBefore = layerIdsOf(root)
@@ -158,7 +162,7 @@ test('the timeline, the ruler and the Insert menu follow the open composition', 
       await client.close()
     }
 
-    // ── Back to the root: its lanes again, and its remembered playhead ───
+    // ── Back to the root: its lanes again, and the same moment ──────────
     expect(
       await page.evaluate((id) => (window as any).__weftcutTest.setOpenComposition(id), rootId),
     ).toBe(true)

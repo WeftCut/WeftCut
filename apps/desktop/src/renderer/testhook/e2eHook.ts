@@ -639,6 +639,8 @@ export function installBootstrapHook(
     enterEditor();
     await editorCommitted();
   };
+  // ROOT time — the one moment, unprojected. A spec standing inside a Group
+  // that wants that Group's reading projects it itself.
   hookSlot().getPlayheadUs = () => playheadTimeUs();
   hookSlot().getSelectedLayerId = () =>
     useSelectionStore.getState().primaryLayerId;

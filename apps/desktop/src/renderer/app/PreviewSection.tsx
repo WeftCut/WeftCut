@@ -11,9 +11,10 @@ import { type ProjectSummary } from "../ipc";
 import { formatTimecode } from "../frames";
 import { useOpenComposition } from "../state/projectStore";
 import {
-  playheadTimeUs,
-  setPlayheadTimeUs,
-} from "../state/playheadStore";
+  focusedPlayheadUs,
+  focusedRootUs,
+  setPlayheadFromPreview,
+} from "../state/playheadProjection";
 import { AppTimecodeField } from "../components/AppTimecodeField";
 import {
   PreviewSurface,
@@ -27,7 +28,7 @@ interface PreviewSectionProps {
   summary: ProjectSummary | null;
   paused: boolean;
   onPausedChange: (paused: boolean) => void;
-  onSeek: (tUs: number) => void;          // App's seekTo
+  onSeek: (tUs: number) => void;          // App's seekTo, in ROOT time
   onTogglePlay: () => void;
   previewDecodableOf: (id: string) => boolean;
   visible: boolean;
@@ -53,8 +54,10 @@ export function PreviewSection({
   // playhead at the moment editing opens (instead of live-updating the field
   // from a React-subscribed time) keeps the edit box stable during playback.
   const [tcEditUs, setTcEditUs] = useState<number | null>(null);
-  // The transport and the meta line describe the OPEN composition — the
-  // timeline the playhead runs on. `summary` stays for the project-wide bits.
+  // The transport and the meta line describe the OPEN composition — which is
+  // also what the preview draws, so every time on this strip is that
+  // composition's own clock and reaches the root-time seek through
+  // `focusedRootUs`. `summary` stays for the project-wide bits.
   const comp = useOpenComposition();
 
   const fpsLabel =
@@ -71,7 +74,7 @@ export function PreviewSection({
         <PreviewSurface
           ref={previewRef}
           hasContent={(summary?.layer_count ?? 0) > 0}
-          onTimeUpdate={setPlayheadTimeUs}
+          onTimeUpdate={setPlayheadFromPreview}
           onPausedChange={onPausedChange}
           previewDecodableOf={previewDecodableOf}
           visible={visible}
@@ -88,7 +91,7 @@ export function PreviewSection({
             ariaLabel={t("transport.timecode_label")}
             onCommit={(us) => {
               setTcEditUs(null);
-              void onSeek(us);
+              void onSeek(focusedRootUs(us));
             }}
             onCancel={() => setTcEditUs(null)}
           />
@@ -98,13 +101,13 @@ export function PreviewSection({
             fpsDen={comp?.fps_den ?? 1}
             visible={visible}
             editHint={t("transport.timecode_edit_hint")}
-            onActivate={() => setTcEditUs(playheadTimeUs())}
+            onActivate={() => setTcEditUs(focusedPlayheadUs())}
           />
         )}
         <div className="transport-buttons">
           <button
             type="button"
-            onClick={() => onSeek(0)}
+            onClick={() => onSeek(focusedRootUs(0))}
             title={t("transport.to_start_hint")}
             aria-label={t("transport.to_start_hint")}
           >
@@ -125,7 +128,7 @@ export function PreviewSection({
           </button>
           <button
             type="button"
-            onClick={() => onSeek(comp?.duration_us ?? 0)}
+            onClick={() => onSeek(focusedRootUs(comp?.duration_us ?? 0))}
             title={t("transport.to_end_hint")}
             aria-label={t("transport.to_end_hint")}
             disabled={!comp || comp.duration_us === 0}

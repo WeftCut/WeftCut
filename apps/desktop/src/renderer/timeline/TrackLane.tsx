@@ -26,7 +26,7 @@ import type {
   TrackSummary,
   TransitionSummary,
 } from "../ipc";
-import { playheadTimeUs } from "../state/playheadStore";
+import { playheadClockUs } from "../state/playheadProjection";
 import { useMarqueeAnchor } from "./hooks/useMarqueeAnchor";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
@@ -77,6 +77,7 @@ export function TrackLane({
   fpsNum,
   fpsDen,
   mediaDropSnap,
+  compositionId,
 }: {
   track: TrackSummary;
   /// Publishes this lane's DOM node to the Timeline's lane registry, which is
@@ -149,6 +150,10 @@ export function TrackLane({
   fpsNum: number;
   fpsDen: number;
   mediaDropSnap: Omit<MediaDropSnapOptions, "currentTimeUs">;
+  /// The composition this lane belongs to. Only the snap needs it: the playhead
+  /// is one of the boundaries a drop snaps to, and it has to be offered on this
+  /// Panel's own axis (`state/playheadProjection.ts`).
+  compositionId: string | null;
 }) {
   const { t } = useTranslation();
   const activeMediaDrag = useMediaDragStore((s) => s.active);
@@ -281,7 +286,7 @@ export function TrackLane({
         pxPerSec,
         fpsNum,
         fpsDen,
-        snap: { ...mediaDropSnap, currentTimeUs: playheadTimeUs() },
+        snap: { ...mediaDropSnap, currentTimeUs: playheadClockUs(compositionId) },
       });
       e.dataTransfer.dropEffect = plan.validity === "valid" ? "copy" : "none";
       const slot = mediaDropGhostSlot(height, plan);
@@ -307,6 +312,7 @@ export function TrackLane({
     [
       activeMediaDrag,
       claimDropTarget,
+      compositionId,
       fpsDen,
       fpsNum,
       height,
@@ -353,7 +359,7 @@ export function TrackLane({
             pxPerSec,
             fpsNum,
             fpsDen,
-            snap: { ...mediaDropSnap, currentTimeUs: playheadTimeUs() },
+            snap: { ...mediaDropSnap, currentTimeUs: playheadClockUs(compositionId) },
           })
         : null;
       setDropPreview(null);
@@ -368,6 +374,7 @@ export function TrackLane({
       onMediaDrop(track, payload, plan);
     },
     [
+      compositionId,
       endMediaDrag,
       fpsDen,
       fpsNum,

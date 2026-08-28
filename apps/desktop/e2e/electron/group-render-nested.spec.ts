@@ -74,9 +74,13 @@ const playheadUs = (page: Page): Promise<number> =>
 const openComposition = (page: Page): Promise<{ id: string } | null> =>
   page.evaluate(() => (window as any).__weftcutTest.getOpenComposition());
 
-/// Park the playhead on `us` and wait for the store to agree — every sample
-/// below re-composites at the engine's position, so the position has to have
-/// landed before the pixels mean anything.
+/// Park the preview on `us` — the ENGINE's clock, which is the composition it
+/// draws — and wait for the store to agree. Every sample below re-composites at
+/// the engine's position, so the position has to have landed before the pixels
+/// mean anything. The store holds the same moment in ROOT time (ADR 0053), so
+/// `expectRootUs` is where that seek lands on the film: the two agree while the
+/// root is what the preview draws, and differ by the anchor's offset inside a
+/// Group.
 ///
 /// The seek is re-issued every round rather than sent once and waited on. The
 /// hook exists from bootstrap, but it routes through the playback store's
@@ -84,7 +88,11 @@ const openComposition = (page: Page): Promise<{ id: string } | null> =>
 /// init — and unlike `weftcutSeekUs`, which throws until its bridge is up,
 /// `transportSeek` on a null transport is a SILENT no-op. Retrying is therefore
 /// the readiness wait, and it also covers the gap around a re-registration.
-async function seekAndSettle(page: Page, us: number): Promise<void> {
+async function seekAndSettle(
+  page: Page,
+  us: number,
+  expectRootUs: number = us,
+): Promise<void> {
   await expect
     .poll(
       async () => {
@@ -93,7 +101,7 @@ async function seekAndSettle(page: Page, us: number): Promise<void> {
       },
       { timeout: 20_000 },
     )
-    .toBe(us);
+    .toBe(expectRootUs);
 }
 
 /// Static scalar tracks for one layer's transform — the same channels every
@@ -264,15 +272,17 @@ test("a Group composites its own timeline: twice over, nested, and as the open c
       await page.evaluate((id) => (window as any).__weftcutTest.setOpenComposition(id), groupId),
     ).toBe(true);
     await expect.poll(() => openComposition(page)).toMatchObject({ id: groupId });
-    // The switch restarts the Group at its own 0 (compositionAnchorStore).
-    await expect.poll(() => playheadUs(page)).toBe(0);
+    // One moment (ADR 0053): the switch leaves the film at 1.2 s. Opening by id
+    // anchors on the shortest path from the root, which is placement B at 1 s,
+    // so the Group reads that moment as its own 0.2 s — still before its cut.
+    await expect.poll(() => playheadUs(page)).toBe(1_200_000);
 
     await expect
       .poll(async () => (await sample(page, GROUP_W / 2, GROUP_H / 2)).w, { timeout: 20_000 })
       .toBe(GROUP_W);
     const opened = await sample(page, GROUP_W / 2, GROUP_H / 2);
     expect(opened.h).toBe(GROUP_H);
-    expectPrimary(opened, "red", "the open Group at its own frame 0");
+    expectPrimary(opened, "red", "the open Group before its own cut");
     // Unscaled: the content reaches the far corner of the Group's own frame,
     // where the placed picture on the root covered a quarter box.
     expectPrimary(
@@ -281,8 +291,9 @@ test("a Group composites its own timeline: twice over, nested, and as the open c
       "the open Group's far corner",
     );
 
-    // Its own clock, too: past the Group's cut the frame is GREEN.
-    await seekAndSettle(page, 1_200_000);
+    // Its own clock, too: past the Group's cut the frame is GREEN — and that
+    // moment sits a placement-offset later on the film.
+    await seekAndSettle(page, 1_200_000, 2_200_000);
     await expect
       .poll(async () => (await sample(page, GROUP_W / 2, GROUP_H / 2)).g, { timeout: 20_000 })
       .toBeGreaterThan(200);

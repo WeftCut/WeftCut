@@ -364,7 +364,7 @@ describe("composition drag placement", () => {
       projectId: "p",
       anchors: new Map([["comp-root", []]]),
       focusedId: "comp-root",
-      playheads: new Map(),
+      orphanPlayheads: new Map(),
     }),
   );
 

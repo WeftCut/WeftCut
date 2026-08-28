@@ -32,6 +32,10 @@ import {
 import { snapDragDeltaToTimelineBoundary } from "../snapping";
 import { playheadTimeUs } from "../../state/playheadStore";
 import {
+  playheadClockUs,
+  previewLocalUs,
+} from "../../state/playheadProjection";
+import {
   evaluateTimelinePlacements,
   SPAWN_TRACK_ID,
   type PlacementValidity,
@@ -78,6 +82,9 @@ interface PointerDragEvaluation {
 /// and the commit-on-pointerup switch that lowers to
 /// `moveLayer`/`moveLayersToNewTrack`/`pasteLayers`/`trimLayer`.
 export function useLayerDrag(opts: {
+  /// The composition being dragged in — the Panel's own, which is the axis
+  /// every time in this gesture is expressed on.
+  compositionId: string | null;
   tracks: TrackSummary[];
   links: LinkSummary[];
   linkByLayerId: Map<string, string>;
@@ -108,6 +115,7 @@ export function useLayerDrag(opts: {
   dragLayerById: ReadonlyMap<string, LayerSummary>;
 } {
   const {
+    compositionId,
     tracks,
     links,
     linkByLayerId,
@@ -397,6 +405,9 @@ export function useLayerDrag(opts: {
   useEffect(() => {
     if (trimPreviewUs === null) return;
     if (trimRestoreUsRef.current === null) {
+      // ROOT time, because that is what goes back into the store below; the
+      // preview seek beneath it is the trim boundary on the composition's own
+      // clock, which is already the clock the engine runs on.
       trimRestoreUsRef.current = playheadTimeUs();
       // Trimming while playing would fight the running transport for the
       // monitor — park it first (Premiere stops playback on a trim drag too).
@@ -417,7 +428,7 @@ export function useLayerDrag(opts: {
       // state/navigation.ts): engine emits during the preview may have moved
       // the playhead line, so put both the line and the monitor back.
       setPlayheadTimeUs(restoreUs);
-      transportSeek(restoreUs);
+      transportSeek(previewLocalUs(restoreUs));
     };
   }, [trimPreviewActive]);
 
@@ -436,8 +447,9 @@ export function useLayerDrag(opts: {
         links,
         linkByLayerId,
         // Event-time read (drag pointermove): the playhead is a snap target;
-        // its value at the event is what snapping should use.
-        currentTimeUs: playheadTimeUs(),
+        // its value at the event is what snapping should use. Projected, because
+        // it is offered alongside layer boundaries on this Panel's own axis.
+        currentTimeUs: playheadClockUs(compositionId),
         fpsNum,
         fpsDen,
         pxPerSec,
@@ -446,6 +458,7 @@ export function useLayerDrag(opts: {
       });
     },
     [
+      compositionId,
       fpsNum,
       fpsDen,
       linkByLayerId,

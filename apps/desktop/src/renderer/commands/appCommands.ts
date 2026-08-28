@@ -27,7 +27,7 @@ import {
   toggleTailSnap,
 } from "../settings/appSettingsStore";
 import { linkOverrideOn } from "../state/linkOverrideStore";
-import { playheadTimeUs } from "../state/playheadStore";
+import { focusedPlayheadUs } from "../state/playheadProjection";
 import { hasMarkedRange } from "../state/rangeStore";
 import { hasTransitionCut } from "../timeline/applyTransition";
 import {
@@ -266,8 +266,10 @@ async function centerPrimaryLayer(axis: "x" | "y"): Promise<void> {
   const { layer, compW, compH } = target;
   const size = getGizmoProbe()?.naturalSizeOf(layer.id);
   if (!size || size.w <= 0 || size.h <= 0) return refuseUnstaged(layer.id, axis);
+  // Projected: the layer's start is on the editing target's clock, so the
+  // moment subtracted from it has to be the same clock's reading.
   const tInLayerUs = snapFrameRound(
-    playheadTimeUs() - layer.t_start_us,
+    focusedPlayheadUs() - layer.t_start_us,
     target.fpsNum,
     target.fpsDen,
   );

@@ -24,6 +24,11 @@ import {
   setRangeOut,
 } from "./state/rangeStore";
 import {
+  focusedPlayheadUs,
+  focusedRootUs,
+  previewLocalUs,
+} from "./state/playheadProjection";
+import {
   playheadTimeUs,
   setPlayheadTimeUs,
 } from "./state/playheadStore";
@@ -256,12 +261,16 @@ export function App({ onCloseProject }: AppProps) {
   // the upper bound is enforced once. Lower bound at 0; upper at
   // `lastFrameAnchorUs` so the playhead can never sit on the
   // post-last-frame slot.
+  //
+  // `tUs` is ROOT time. A caller holding a composition's own clock projects
+  // first (`focusedRootUs`); the preview gets the projection back down, because
+  // it draws one composition and reads one number.
   const seekTo = useCallback((tUs: number) => {
     const clamped = clampSeekUs(tUs);
     // Optimistic store write: with no preview mounted (empty composition)
     // there is no engine emit, yet the playhead UI must still move.
     setPlayheadTimeUs(clamped);
-    previewRef.current?.seekTo(clamped);
+    previewRef.current?.seekTo(previewLocalUs(clamped));
   }, []);
 
   // R.7: click on a Playhead Panel row → reveal that hidden track inline at its
@@ -582,7 +591,9 @@ export function App({ onCloseProject }: AppProps) {
     const sourceLayerId = copiedLayerIdRef.current;
     if (!sourceLayerId) return;
     try {
-      const pastedLayerId = await pasteLayer(sourceLayerId, playheadTimeUs());
+      // Projected: the paste lands in the timeline holding the keyboard, on
+      // that timeline's own clock.
+      const pastedLayerId = await pasteLayer(sourceLayerId, focusedPlayheadUs());
       setPendingRevealLayerId(pastedLayerId);
       await refresh();
     } catch (err) {
@@ -680,6 +691,8 @@ export function App({ onCloseProject }: AppProps) {
     // trim also uses), so N steps land on frame N exactly. Adding a rounded
     // frame duration instead would land off-grid at fractional rates and only
     // look right because the snap corrects it.
+    // Root time in, root time out: one lattice project-wide (ADR 0052 §5), so
+    // stepping a frame on the film's clock steps a frame on every composition's.
     seekFrameBack: () => {
       const fps = comp;
       void seekTo(
@@ -702,6 +715,7 @@ export function App({ onCloseProject }: AppProps) {
         ),
       );
     },
+    // A second is a second on every clock — root time throughout.
     seekSecondBack: () => {
       void seekTo(playheadTimeUs() - 1_000_000);
     },
@@ -716,11 +730,13 @@ export function App({ onCloseProject }: AppProps) {
     seekNextEdit: () => {
       seekToNextEdit();
     },
+    // The ends of the timeline the keyboard is IN, projected up: standing in a
+    // Group, Home is that Group's first frame, not the film's.
     seekStart: () => {
-      void seekTo(0);
+      void seekTo(focusedRootUs(0));
     },
     seekEnd: () => {
-      void seekTo(comp?.duration_us ?? 0);
+      void seekTo(focusedRootUs(comp?.duration_us ?? 0));
     },
     // In/out marking bridges the playhead's frame-ANCHOR convention to the
     // range's start-inclusive / end-EXCLUSIVE one. Both translations go
@@ -728,6 +744,8 @@ export function App({ onCloseProject }: AppProps) {
     // as an out point would drop the frame the user is looking at, and — since
     // the playhead can't pass the last frame's start — make the final frame
     // unreachable. See `docs/data-model.md` (boundary semantics).
+    // ROOT time, unprojected: one range, and export runs the root
+    // (`state/rangeStore.ts`). Each ruler projects it for drawing.
     markIn: () => {
       if (!comp) return;
       setRangeIn(
@@ -749,8 +767,10 @@ export function App({ onCloseProject }: AppProps) {
     // editing blind. The layer toggle exists to silence agent sweeps, not this.
     addMarkerAtPlayhead: () => {
       if (!comp) return;
+      // Projected: a marker belongs to one composition's timeline, so the
+      // frame it lands on is that timeline's.
       const frameUs = displayedFrameStartUs(
-        playheadTimeUs(),
+        focusedPlayheadUs(),
         comp.fps_num,
         comp.fps_den,
       );
@@ -800,13 +820,13 @@ export function App({ onCloseProject }: AppProps) {
   // Shared by the Insert menu and the search palette — one implementation,
   // two entry points.
   const handleAddColorLayer = useCallback(async () => {
-    const layerId = await addColorLayerInOpenComposition({ tStartUs: playheadTimeUs() });
+    const layerId = await addColorLayerInOpenComposition({ tStartUs: focusedPlayheadUs() });
     setPendingRevealLayerId(layerId);
     await refresh();
   }, [refresh]);
 
   const handleAddTextLayer = useCallback(async () => {
-    const layerId = await addTextLayerInOpenComposition({ tStartUs: playheadTimeUs() });
+    const layerId = await addTextLayerInOpenComposition({ tStartUs: focusedPlayheadUs() });
     setPendingRevealLayerId(layerId);
     await refresh();
   }, [refresh]);
@@ -1094,7 +1114,7 @@ export function App({ onCloseProject }: AppProps) {
           onClose={() => setMotifPickerOpen(false)}
           onAdded={refresh}
           onDraftPlaced={setPendingRevealLayerId}
-          currentTimeUs={playheadTimeUs()}
+          currentTimeUs={focusedPlayheadUs()}
           tracks={comp?.tracks ?? []}
           fpsNum={comp?.fps_num ?? 30}
           fpsDen={comp?.fps_den ?? 1}

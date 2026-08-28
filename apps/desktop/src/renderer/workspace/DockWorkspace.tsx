@@ -68,7 +68,7 @@ import {
 import { type ProxyState } from "../panels/mediaReadiness";
 import { type OptimizeInfo } from "../panels/importOptimize";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
-import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
+import { useFocusedPlayheadUsThrottled } from "../state/playheadProjection";
 import {
   useComposition,
   useCompositionRefCounts,
@@ -353,7 +353,9 @@ function QuickActionsDockPanel() {
 function AttributeDockPanel() {
   const contracts = useContracts();
   const runtime = useDockPanelRuntime();
-  const currentTimeUs = usePlayheadTimeUsThrottled(100, runtime.isVisible);
+  // Panel-rate (tier 3) and PROJECTED: the rows read parameter values off the
+  // editing target's layers, so the moment is taken on that composition's clock.
+  const currentTimeUs = useFocusedPlayheadUsThrottled(100, runtime.isVisible);
   const comp = useOpenComposition();
   return (
     <div className="weft-dock-panel-scroll">
@@ -372,7 +374,7 @@ function AttributeDockPanel() {
 function EffectDockPanel() {
   const contracts = useContracts();
   const runtime = useDockPanelRuntime();
-  const currentTimeUs = usePlayheadTimeUsThrottled(100, runtime.isVisible);
+  const currentTimeUs = useFocusedPlayheadUsThrottled(100, runtime.isVisible);
   const comp = useOpenComposition();
   return (
     <div className="weft-dock-panel-scroll">

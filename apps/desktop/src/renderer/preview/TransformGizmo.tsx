@@ -45,7 +45,7 @@ import {
   type TransformDelta,
 } from "../render/transformOverrides";
 import { useOpenComposition } from "../state/projectStore";
-import { playheadTimeUs } from "../state/playheadStore";
+import { focusedPlayheadUs } from "../state/playheadProjection";
 import { usePrimaryLayerId } from "../state/selectionStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { layerFrameAt, TRANSFORMABLE_KINDS } from "./centerInFrame";
@@ -747,7 +747,7 @@ function TransformGizmo({
     // measured at. On a KEYFRAMED track during playback the carry then ages
     // between pointermoves — the same freeze-at-grab limit the gesture's own
     // arithmetic already accepts.
-    const merged = mergedDelta(commitBase(), d, playheadTimeUs() - l.t_start_us);
+    const merged = mergedDelta(commitBase(), d, focusedPlayheadUs() - l.t_start_us);
     if (isNoDelta(merged)) clearTransformOverride(l.id);
     else setTransformOverride(l.id, merged);
   };
@@ -899,7 +899,7 @@ function TransformGizmo({
       if (!probe) return hide();
       const l = layerRef.current;
       const comp = compRef.current;
-      const tUs = playheadTimeUs();
+      const tUs = focusedPlayheadUs();
       if (tUs < l.t_start_us || tUs >= l.t_end_us) return hide();
       const rect = probe.canvasRect();
       // For Text this is the BOX when one is set and the measured glyph bounds
@@ -1033,7 +1033,7 @@ function TransformGizmo({
   const grabTimeUs = (): number => {
     const l = layerRef.current;
     const comp = compRef.current;
-    return snapFrameRound(playheadTimeUs() - l.t_start_us, comp.fps_num, comp.fps_den);
+    return snapFrameRound(focusedPlayheadUs() - l.t_start_us, comp.fps_num, comp.fps_den);
   };
 
   /// The snap target set for a gesture starting now, frozen here and nowhere
@@ -1053,7 +1053,7 @@ function TransformGizmo({
     const others = otherLayerBoxes(
       compositionRef.current,
       layerRef.current.id,
-      playheadTimeUs(),
+      focusedPlayheadUs(),
       probe,
     );
     return {
