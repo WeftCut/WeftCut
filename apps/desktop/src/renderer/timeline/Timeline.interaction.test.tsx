@@ -60,6 +60,7 @@ import { DEFAULT_TRACK_HEIGHT, HEADER_COL_PX } from "./geometry";
 const ipcMocks = vi.hoisted(() => ({
   addMediaLayer: vi.fn().mockResolvedValue(undefined),
   addTrack: vi.fn().mockResolvedValue("spawned-track"),
+  addGroupLayer: vi.fn().mockResolvedValue("placed-group-layer"),
   moveLayer: vi.fn().mockResolvedValue(undefined),
   moveLayersToNewTrack: vi.fn().mockResolvedValue("raised-track"),
   // Answers with one clone per id it was handed, so the pending-ghost swap
@@ -111,9 +112,11 @@ vi.mock("../ipc", async (importOriginal) => {
     viewStateSet: ipcMocks.viewStateSet,
   };
 });
-// The drop's lane spawn goes through the composition-scoped wrapper.
+// The drop's lane spawn and its Group-placement sibling both go through the
+// composition-scoped wrappers.
 vi.mock("../ipc/compositionScoped", () => ({
   addTrackInOpenComposition: ipcMocks.addTrack,
+  addGroupLayerInOpenComposition: ipcMocks.addGroupLayer,
 }));
 
 const staticNum = (value: number) => ({ mode: "Static" as const, value });

@@ -121,6 +121,12 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
         setSub({ label: r.entry.label, mediaId: p.mediaId, usages: p.usages });
         setActive(0);
         return;
+      case "group":
+        // Enter it. Reuse — placing a second instance — is a drag from the pool,
+        // so the palette's one keyboard answer for a Group is the useful one.
+        if (!openComposition(p.compositionId, null)) logStaleTarget();
+        onClose();
+        return;
       case "track":
         if (p.firstLayerId && !jumpToLayer(p.firstLayerId)) logStaleTarget();
         onClose();
@@ -307,7 +313,11 @@ function ResultRow({
   // and would carry a stale answer. Without it the palette lists a toggle
   // without saying which way selecting it would flip it.
   const checked = command?.checked?.();
-  const unused = p.type === "media" && p.usages.length === 0;
+  // "Nothing places this" — a media item on no track, or a composition no Group
+  // clip shows. One note, because it is one fact about a source.
+  const unused =
+    (p.type === "media" && p.usages.length === 0) ||
+    (p.type === "group" && p.refCount === 0);
   return (
     <div
       role="option"

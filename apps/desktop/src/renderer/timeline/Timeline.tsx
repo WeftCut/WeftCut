@@ -130,7 +130,10 @@ import {
   revealTrackWithoutSelection,
 } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
-import { addTrackInOpenComposition } from "../ipc/compositionScoped";
+import {
+  addGroupLayerInOpenComposition,
+  addTrackInOpenComposition,
+} from "../ipc/compositionScoped";
 import {
   clearLayerSelection,
   clearTransitionSelection,
@@ -797,6 +800,27 @@ export function Timeline({
       // track and nothing is auto-routed elsewhere. Overlap is the main-process
       // state layer's rule (`main/state/validate.ts`), pre-checked for the ghost
       // by the placement policy.
+      //
+      // A composition drop takes the same route with no readiness gate: what it
+      // places is already in the project, so there is no import to wait for and
+      // nothing to be missing. The one thing it can be refused for — containing
+      // itself — the drop target has already greyed out.
+      if (payload.source === "composition") {
+        try {
+          const trackId =
+            track !== null ? track.id : await addTrackInOpenComposition();
+          await addGroupLayerInOpenComposition({
+            sourceCompositionId: payload.compositionId,
+            trackId,
+            tStartUs: plan.rawStartUs,
+          });
+          if (track === null) revealSpawnedTrack(trackId);
+          await onMutated();
+        } catch (err) {
+          logMutationFailure(err, "Group drop");
+        }
+        return;
+      }
       const m = media.find((mm) => mm.id === payload.mediaId);
       if (!m) {
         console.warn(

@@ -64,6 +64,26 @@ export async function addTextLayerInOpenComposition(opts: {
   });
 }
 
+/// `add_group_layer`: place an existing composition on `trackId` as one Group
+/// clip, windowed over the whole composition. The track already fixes which
+/// composition receives it — the open id rides along as the cross-check that
+/// catches a lane resolved before the user left for another timeline.
+///
+/// Refused with `CompositionCycle` when the composition would contain itself;
+/// the drop target greys the same case out first (`mediaDrag.ts`).
+export async function addGroupLayerInOpenComposition(args: {
+  sourceCompositionId: string;
+  trackId: string;
+  tStartUs: number;
+}): Promise<string> {
+  return invoke<string>("add_group_layer", {
+    sourceCompositionId: args.sourceCompositionId,
+    trackId: args.trackId,
+    tStartUs: args.tStartUs,
+    compositionId: openCompositionId(),
+  });
+}
+
 /// `add_motif` with the auto-spawned track (no `trackId`) opening in the open
 /// composition. With a `trackId` the track fixes the composition and the id is
 /// a cross-check the actor performs.

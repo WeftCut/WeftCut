@@ -173,6 +173,21 @@ export function openCompositionId(): string | undefined {
   return useCompositionScopeStore.getState().openId ?? undefined;
 }
 
+/// Whether placing `compositionId` in the OPEN composition would make it contain
+/// itself. Every crumb names a composition the open one sits inside — the last
+/// crumb IS the open one — so a composition on that path is exactly the set the
+/// pool's drag has to refuse, and the root (never a pool row) is never on it.
+///
+/// The commit refuses the same placement anyway (`CompositionCycle`, over the
+/// whole reference graph), which is what catches a loop that closes off this
+/// path. This is the half that refuses it BEFORE release, because a gesture the
+/// user has already completed is the wrong place to learn it was impossible.
+export function wouldCycleInOpenComposition(compositionId: string): boolean {
+  return useCompositionScopeStore
+    .getState()
+    .crumbs.some((c) => c.compositionId === compositionId);
+}
+
 export const useOpenCompositionId = (): string | null =>
   useCompositionScopeStore((s) => s.openId);
 

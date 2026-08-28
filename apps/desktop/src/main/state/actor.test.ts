@@ -1820,3 +1820,83 @@ describe('creation defaults follow the target composition', () => {
     if (!r.ok) expect(r.error.error).toBe('TrackNotFound')
   })
 })
+
+// The media pool's Group drop at all three surfaces — dispatch, the renderer
+// channel, the MCP tool — because this is the one creation op whose scope
+// argument is a cross-check AND whose subject is a composition too (ADR 0052).
+describe('dispatch: add_group_layer', () => {
+  function withOneGroup() {
+    const idGen = seededGen()
+    const { p, groupId, innerTrackId } = groupedProject(idGen, 'place')
+    const actor = createActor({ initial: p, idGen, clock: () => '<TS>' })
+    return { actor, groupId, innerTrackId, rootTrackId: root(p).tracks[0].id }
+  }
+  const placedIn = (actor: ReturnType<typeof withOneGroup>['actor'], trackId: string) =>
+    root(actor.snapshot()).tracks.find((t) => t.id === trackId)!.layers
+
+  it('records one layer-add row, and one undo takes the instance without the composition', () => {
+    const { actor, groupId, rootTrackId } = withOneGroup()
+    const compositions = Object.keys(actor.snapshot().compositions).length
+    const len = actor.historyStatus().len
+    const r = actor.dispatch('add_group_layer', { source_composition: groupId, track: rootTrackId, t_start_us: 2_000_000 })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(actor.historyStatus().len).toBe(len + 1)
+    expect(actor.historyView(1).ops[0]).toMatchObject({
+      summary: 'Added layer', label_key: 'history.layer.add', affected: [{ kind: 'Layer', id: r.value as string }],
+    })
+    expect(placedIn(actor, rootTrackId).map((l) => l.id)).toEqual([r.value])
+
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(placedIn(actor, rootTrackId)).toEqual([])
+    // The composition outlives the instance: it was never this op's to create.
+    expect(Object.keys(actor.snapshot().compositions)).toHaveLength(compositions)
+  })
+
+  it('takes the scope as a cross-check: the matching id passes, another composition names the mismatch', () => {
+    const { actor, groupId, rootTrackId, innerTrackId } = withOneGroup()
+    const rootId = actor.snapshot().root_id
+    expect(actor.dispatch('add_group_layer', { source_composition: groupId, track: rootTrackId, t_start_us: 2_000_000, composition_id: rootId }).ok).toBe(true)
+
+    const before = actor.snapshot()
+    const mismatch = actor.dispatch('add_group_layer', { source_composition: groupId, track: rootTrackId, t_start_us: 6_000_000, composition_id: groupId })
+    expect(mismatch.ok).toBe(false)
+    if (!mismatch.ok) expect(mismatch.error).toMatchObject({ error: 'InvalidArgument', field: 'track_id' })
+    const absent = '00000000-0000-7000-8000-0000000000ff'
+    expect(actor.dispatch('add_group_layer', { source_composition: groupId, track: innerTrackId, t_start_us: 6_000_000, composition_id: absent }))
+      .toEqual({ ok: false, error: { error: 'CompositionNotFound', composition: absent } })
+    expect(actor.snapshot()).toEqual(before)
+  })
+
+  it('refuses a composition that would contain itself, recording nothing', () => {
+    const { actor, groupId, innerTrackId } = withOneGroup()
+    const before = actor.snapshot()
+    const len = actor.historyStatus().len
+    const r = actor.dispatch('add_group_layer', { source_composition: groupId, track: innerTrackId, t_start_us: 2_000_000 })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toEqual({ error: 'ValidationFailed', detail: { rule: 'CompositionCycle', path: [groupId, groupId] } })
+    expect(actor.snapshot()).toEqual(before)
+    expect(actor.historyStatus().len).toBe(len)
+  })
+
+  it('routes the renderer channel and the MCP tool onto the same arm', () => {
+    const { actor, groupId, rootTrackId } = withOneGroup()
+    const viaChannel = actor.command('add_group_layer', {
+      sourceCompositionId: groupId, trackId: rootTrackId, tStartUs: 2_000_000, compositionId: actor.snapshot().root_id,
+    })
+    expect(viaChannel.ok).toBe(true)
+
+    const viaMcp = actor.mcpCall('add_group_layer', JSON.stringify({
+      source_composition_id: groupId, track_id: rootTrackId, t_start_us: 6_000_000,
+    }))
+    expect(viaMcp.ok).toBe(true)
+    if (!viaMcp.ok) return
+    const layerId = viaMcp.result.content[0]!.text
+    expect(placedIn(actor, rootTrackId).map((l) => l.id)).toEqual([viaChannel.ok ? viaChannel.value : null, layerId])
+    // Both instances point at the one composition.
+    for (const l of placedIn(actor, rootTrackId)) {
+      if (l.params.kind !== 'CompositionRef') throw new Error('expected a Group layer')
+      expect(l.params.composition).toBe(groupId)
+    }
+  })
+})

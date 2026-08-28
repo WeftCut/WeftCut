@@ -2,7 +2,7 @@ import type { Layer, LayerParams, Marker, Project, Rgba, TextParams, TrackRole, 
 import type { IdGen } from '../ids'
 import { gridForLayerKind, snapOnGrid } from '../snap'
 import { authoredExtentPx } from '../quantize'
-import { applyDurationAutofit, locateTrack, scopeComposition } from './helpers'
+import { applyDurationAutofit, compositionOf, locateTrack, scopeComposition } from './helpers'
 import { snapMarkerTimes } from './markers'
 import { CommandFailure } from '../errors'
 import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
@@ -76,6 +76,62 @@ export function applyAddLayer(p: Project, idGen: IdGen, trackId: Uuid, params: L
   track.layers.splice(at < 0 ? track.layers.length : at, 0, layer)
   applyDurationAutofit(c)
   return layerId
+}
+
+/** The reference chain from `from` to `target` — `[from, …, target]`, or `[from]`
+ *  when they are the same composition — else null when `from` cannot reach it.
+ *  Breadth-first, so the loop a refusal reports is the shortest one. */
+function compositionRefPath(p: Project, from: Uuid, target: Uuid): Uuid[] | null {
+  const queue: Uuid[][] = [[from]]
+  const seen = new Set<Uuid>([from])
+  while (queue.length > 0) {
+    const path = queue.shift()!
+    const here = path[path.length - 1]
+    if (here === target) return path
+    for (const t of p.compositions[here]?.tracks ?? [])
+      for (const l of t.layers) {
+        if (l.params.kind !== 'CompositionRef') continue
+        if (seen.has(l.params.composition)) continue
+        seen.add(l.params.composition)
+        queue.push([...path, l.params.composition])
+      }
+  }
+  return null
+}
+
+/** Place an EXISTING composition as one Group layer on `trackId` at `tStartUs`,
+ *  windowed over the whole composition with an identity transform — the media
+ *  pool's drop, and the second way a Group reaches a timeline (pre-compose is the
+ *  first, and it is the only one that also creates the composition).
+ *
+ *  The destination is the TRACK's composition, like every other layer add, so the
+ *  lane names the scope. Every refusal is decided before the first write, so a
+ *  refused placement leaves the project byte-identical and burns no layer id:
+ *
+ *  - an unknown source → `CompositionNotFound`; the root → `RootComposition`,
+ *    because nothing may contain the timeline export renders;
+ *  - a source that already reaches the destination — itself included, which is
+ *    the drag-into-yourself case → `CompositionCycle` naming the loop. Validate
+ *    would catch it on commit, but the renderer greys the drop target on the same
+ *    rule and this is what makes the two agree;
+ *  - a source with nothing inside it → `InvalidArgument`: its `duration_us` is 0,
+ *    so the only window available would be an empty one.
+ */
+export function applyAddGroupLayer(p: Project, idGen: IdGen, sourceCompositionId: Uuid, trackId: Uuid, tStartUs: number): Uuid {
+  const source = compositionOf(p, sourceCompositionId)
+  if (source.id === p.root_id) throw new CommandFailure({ error: 'RootComposition', composition: source.id })
+  const dest = locateTrack(p, trackId)
+  if (!dest) throw new CommandFailure({ error: 'TrackNotFound', track: trackId })
+  const reached = compositionRefPath(p, source.id, dest.comp.id)
+  if (reached !== null)
+    throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'CompositionCycle', path: [dest.comp.id, ...reached] } })
+  if (source.duration_us <= 0)
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'source_composition_id', detail: `composition ${source.id} holds no content` })
+  const params: LayerParams = {
+    kind: 'CompositionRef', composition: source.id, src_in_us: 0, src_out_us: source.duration_us,
+    transform: defaultTransform(), opacity: { mode: 'Static', value: 1 }, blend_mode: 'Normal',
+  }
+  return applyAddLayer(p, idGen, trackId, params, tStartUs, tStartUs + source.duration_us)
 }
 
 /** Insert a new track with Track::new() defaults at `position` (default: end).

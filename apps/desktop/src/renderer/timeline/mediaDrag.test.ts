@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { LayerSummary, MediaSummary, TrackSummary } from "../ipc";
+import { useCompositionScopeStore } from "../state/compositionScopeStore";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
+  compositionDragPayload,
   mediaDragPayload,
+  mediaDropInvalid,
   mediaPlacementDurationUs,
+  parseMediaDrag,
   planMediaDrop,
   useMediaDragStore,
 } from "./mediaDrag";
@@ -341,5 +345,91 @@ describe("media drag target ownership", () => {
 
     drag.releaseDropTarget("a-roll");
     expect(useMediaDragStore.getState().absorptionTarget).toBeNull();
+  });
+});
+
+// The drag from the media pool's Groups section. Its one extra refusal is
+// structural rather than geometric, so it is decided before any lane is asked.
+describe("composition drag placement", () => {
+  const GROUP = { id: "comp-group", duration_us: 4_000_000 };
+  const args = {
+    pointerXPx: MEDIA_DRAG_CURSOR_OFFSET_PX + 80,
+    pxPerSec: 80,
+    fpsNum: 30,
+    fpsDen: 1,
+  };
+
+  afterEach(() =>
+    useCompositionScopeStore.setState({
+      projectId: "p",
+      openId: "comp-root",
+      crumbs: [],
+      playheads: new Map(),
+    }),
+  );
+
+  it("spans the composition's own duration, on the visual lane", () => {
+    const plan = planMediaDrop({
+      ...args,
+      track: track([]),
+      media: compositionDragPayload(GROUP, "Group 1"),
+    });
+    expect(plan.validity).toBe("valid");
+    expect(plan.tEndUs - plan.tStartUs).toBe(GROUP.duration_us);
+    // A Group clip composites, so it collides with a visual clip and shares a
+    // lane with audio — exactly what a video drop does.
+    expect(plan.overlapClass).toBe("visual");
+  });
+
+  it("refuses the composition the editor is standing inside", () => {
+    useCompositionScopeStore.setState({
+      openId: GROUP.id,
+      crumbs: [{ layerId: "layer-group", compositionId: GROUP.id }],
+    });
+    const plan = planMediaDrop({
+      ...args,
+      track: track([]),
+      media: compositionDragPayload(GROUP, "Group 1"),
+    });
+    expect(plan.validity).toBe("cycle");
+    expect(mediaDropInvalid(plan.validity)).toBe(true);
+    // No lane is named, because no lane could have made it droppable.
+    expect(plan.conflictingLayerIds).toEqual([]);
+  });
+
+  it("refuses an ANCESTOR of the open composition, on a lane and on the strip alike", () => {
+    // Standing two deep: root › outer › inner. Placing `outer` here would make
+    // it contain itself through `inner`.
+    const outer = { id: "comp-outer", duration_us: 2_000_000 };
+    useCompositionScopeStore.setState({
+      openId: "comp-inner",
+      crumbs: [
+        { layerId: "layer-outer", compositionId: outer.id },
+        { layerId: "layer-inner", compositionId: "comp-inner" },
+      ],
+    });
+    const payload = compositionDragPayload(outer, "Group 1");
+    expect(planMediaDrop({ ...args, track: track([]), media: payload }).validity).toBe("cycle");
+    // The strip spawns a lane, and a fresh lane does not break the loop either.
+    expect(planMediaDrop({ ...args, track: null, media: payload }).validity).toBe("cycle");
+    // A DESCENDANT is fine: nesting deeper closes no loop.
+    const other = { id: "comp-other", duration_us: 2_000_000 };
+    expect(
+      planMediaDrop({ ...args, track: track([]), media: compositionDragPayload(other, "Group 2") })
+        .validity,
+    ).toBe("valid");
+  });
+
+  it("round-trips through the dataTransfer payload both sources use", () => {
+    const payload = compositionDragPayload(GROUP, "Intro");
+    const raw = JSON.stringify(payload);
+    const parsed = parseMediaDrag({
+      dataTransfer: { getData: () => raw },
+    } as unknown as React.DragEvent);
+    expect(parsed).toEqual(payload);
+    const mediaParsed = parseMediaDrag({
+      dataTransfer: { getData: () => JSON.stringify(mediaDragPayload(media())) },
+    } as unknown as React.DragEvent);
+    expect(mediaParsed).toMatchObject({ source: "media", mediaId: "media-1" });
   });
 });

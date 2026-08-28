@@ -1,6 +1,7 @@
 import { formatTimecode } from "../frames";
 import type { ProjectSummary } from "../ipc";
-import { groupOrdinals, layerDisplayName } from "../lib/layerName";
+import { compositionRefCounts } from "../lib/compositionRefs";
+import { groupDisplayName, groupOrdinals, layerDisplayName } from "../lib/layerName";
 import { trackDisplayName } from "../lib/trackName";
 import type { ActionId } from "../shortcuts/defs";
 import { pinyinHaystacks } from "./pinyin";
@@ -110,6 +111,28 @@ export function buildEntries(
         available: m.available,
         usages: usagesByMedia.get(m.id) ?? [],
       },
+    });
+  }
+
+  // Every non-root composition is a result of its own: a Group is something you
+  // reuse, so it has to be reachable by name whether or not a clip currently
+  // shows it — an orphan is exactly the case with no clip to find. Derived here,
+  // like the ordinals, because this function is the Worker seam.
+  const refCounts = compositionRefCounts(summary.compositions);
+  for (const comp of compositions) {
+    if (comp.id === summary.root_id) continue;
+    const refCount = refCounts.get(comp.id) ?? 0;
+    // Same name the pool row and the Group clip show; only the derived
+    // `Group N` is locale-dependent, which is what earns the en-US haystack.
+    const label = groupDisplayName(comp.id, comp.label, ordinals, locale.t);
+    const enLabel = groupDisplayName(comp.id, comp.label, ordinals, locale.tEn);
+    entries.push({
+      key: `group:${comp.id}`,
+      type: "group",
+      label,
+      context: locale.t("media_pool.groups_refs", { count: refCount }),
+      haystacks: withPinyin(label === enLabel ? [label] : [label, enLabel]),
+      payload: { type: "group", compositionId: comp.id, refCount },
     });
   }
 

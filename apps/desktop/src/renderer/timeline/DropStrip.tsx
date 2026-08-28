@@ -9,6 +9,7 @@ import { useMarqueeAnchor } from "./hooks/useMarqueeAnchor";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
   MEDIA_DRAG_TYPE,
+  mediaDropInvalid,
   parseMediaDrag,
   planMediaDrop,
   useMediaDragStore,
@@ -28,7 +29,10 @@ import {
 /// and a lane without a second mechanism deciding who is lit.
 ///
 /// A drop here is never a collision: the lane it lands on does not exist yet, so
-/// `planMediaDrop` with no track answers `"spawn"` (see `placement.ts`).
+/// `planMediaDrop` with no track answers `"spawn"` (see `placement.ts`). It CAN
+/// still be refused — a composition that would contain itself is refused wherever
+/// it is released, and a fresh lane does not change that — so the strip carries
+/// the same red chrome and the same release guard a lane does.
 ///
 /// Two genuinely different event models reach this one row. The media-pool drag
 /// is HTML5 drag-and-drop and lands in the handlers below; the existing-clip drag
@@ -112,7 +116,7 @@ export function DropStrip({
       if (activeMediaDrag === null) return;
       const rect = e.currentTarget.getBoundingClientRect();
       const plan = planFor(activeMediaDrag, e.clientX - rect.left);
-      e.dataTransfer.dropEffect = "copy";
+      e.dataTransfer.dropEffect = mediaDropInvalid(plan.validity) ? "none" : "copy";
       // Collapse the floating media card into a chip inside the strip, the same
       // way a lane absorbs it. Not cosmetic here: at full size the card covers
       // the whole row, so without this the highlight and the hint that say what
@@ -166,7 +170,9 @@ export function DropStrip({
       e.preventDefault();
       endMediaDrag();
       const rect = e.currentTarget.getBoundingClientRect();
-      onMediaDrop(null, payload, planFor(payload, e.clientX - rect.left));
+      const plan = planFor(payload, e.clientX - rect.left);
+      if (mediaDropInvalid(plan.validity)) return;
+      onMediaDrop(null, payload, plan);
     },
     [endMediaDrag, onMediaDrop, planFor],
   );
@@ -175,6 +181,8 @@ export function DropStrip({
   // whichever one currently owns the strip lights it.
   const armed = activeMediaDrag !== null || layerDrag !== null;
   const lit = visibleDropPreview !== null || layerDrag?.overStrip === true;
+  const refused =
+    visibleDropPreview !== null && mediaDropInvalid(visibleDropPreview.plan.validity);
   const ghostLeftPx =
     visibleDropPreview !== null
       ? (visibleDropPreview.plan.tStartUs / 1_000_000) * pxPerSec
@@ -198,11 +206,13 @@ export function DropStrip({
       data-armed={armed ? "true" : "false"}
       data-lit={lit ? "true" : "false"}
       className={`relative ${
-        lit
-          ? "bg-blue-500/25 outline outline-1 outline-dashed -outline-offset-1 outline-blue-300/80"
-          : armed
-            ? "bg-blue-400/10"
-            : ""
+        refused
+          ? "bg-red-500/25 outline outline-1 outline-dashed -outline-offset-1 outline-red-400/80"
+          : lit
+            ? "bg-blue-500/25 outline outline-1 outline-dashed -outline-offset-1 outline-blue-300/80"
+            : armed
+              ? "bg-blue-400/10"
+              : ""
       }`}
       style={{ height: DROP_STRIP_HEIGHT_PX }}
       onPointerDown={onMarqueeDown}
@@ -216,7 +226,9 @@ export function DropStrip({
           data-validity={visibleDropPreview.plan.validity}
           data-start-us={visibleDropPreview.plan.tStartUs}
           data-end-us={visibleDropPreview.plan.tEndUs}
-          className="pointer-events-none absolute inset-y-0 z-[5] rounded-sm border border-blue-200 bg-blue-500/45"
+          className={`pointer-events-none absolute inset-y-0 z-[5] rounded-sm border ${
+            refused ? "border-red-300 bg-red-500/55" : "border-blue-200 bg-blue-500/45"
+          }`}
           style={{
             left: ghostLeftPx,
             width: Math.max(
@@ -238,9 +250,11 @@ export function DropStrip({
           className="pointer-events-none absolute inset-y-0 z-[6] whitespace-nowrap rounded-sm bg-blue-950/85 px-1.5 text-[9px] font-semibold leading-[14px] text-blue-50"
           style={{ left: hintLeftPx }}
         >
-          {t("timeline.drop_spawn_hint", {
-            defaultValue: "Release to create a track",
-          })}
+          {refused
+            ? t("timeline.drop_cycle")
+            : t("timeline.drop_spawn_hint", {
+                defaultValue: "Release to create a track",
+              })}
         </div>
       )}
     </div>

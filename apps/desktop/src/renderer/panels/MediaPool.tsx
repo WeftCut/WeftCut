@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
   FolderInputIcon,
+  Group as GroupIcon,
   LayoutGridIcon,
   ListIcon,
   RectangleHorizontalIcon,
@@ -15,9 +16,12 @@ import {
 import { MediaThumbnail } from "./MediaThumbnail";
 import { mediaReadiness, type ProxyState } from "./mediaReadiness";
 import { isOptimizing, type OptimizeInfo } from "./importOptimize";
+import { GroupPoolSection } from "./GroupPoolSection";
 import {
   MEDIA_DRAG_TYPE,
+  hideNativeDragPreview,
   mediaDragPayload,
+  poolDragVisual,
   useMediaDragStore,
 } from "../timeline/mediaDrag";
 import { AppDialog } from "../components/AppDialog";
@@ -38,13 +42,12 @@ import { registerRevealMedia } from "../state/navigation";
 import { tryMutate } from "../errors/tryMutate";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
 import { setAppSettings, useMediaPoolLayout } from "../settings/appSettingsStore";
+import { useGroupCount } from "../state/projectStore";
 import { quickProxyPath } from "../render/decodeRoute";
 
 function isFileDrag(e: React.DragEvent): boolean {
   return Array.from(e.dataTransfer.types).includes("Files");
 }
-
-const MAX_DRAG_PREVIEW_WIDTH_PX = 220;
 
 /// Card arrangement options for the pool, persisted app-wide as
 /// app_settings.media_pool_layout. `large` is the legacy one-card-per-row
@@ -152,36 +155,6 @@ function parseMediaInUseLayerIds(error: unknown): string[] | null {
     : [];
 }
 
-function mediaDragVisual(
-  element: HTMLElement,
-  clientX: number,
-  clientY: number,
-) {
-  const rect = element.getBoundingClientRect();
-  const scale = Math.min(1, MAX_DRAG_PREVIEW_WIDTH_PX / rect.width);
-  return {
-    clientX,
-    clientY,
-    width: rect.width * scale,
-    height: rect.height * scale,
-    pointerOffsetX: (clientX - rect.left) * scale,
-    pointerOffsetY: (clientY - rect.top) * scale,
-  };
-}
-
-/// Chromium's native drag image is a frozen translucent snapshot and cannot
-/// animate into the timeline ghost. Replace it with a transparent pixel; the
-/// app-owned MediaDragPreview below provides the visible, animatable surface.
-function hideNativeDragPreview(dataTransfer: DataTransfer) {
-  if (typeof dataTransfer.setDragImage !== "function") return;
-  const pixel = document.createElement("div");
-  pixel.style.cssText =
-    "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none";
-  document.body.appendChild(pixel);
-  dataTransfer.setDragImage(pixel, 0, 0);
-  window.setTimeout(() => pixel.remove(), 0);
-}
-
 function MediaDragPreview() {
   const active = useMediaDragStore((s) => s.active);
   const visual = useMediaDragStore((s) => s.visual);
@@ -227,7 +200,13 @@ function MediaDragPreview() {
       aria-hidden="true"
     >
       <div className="media-drag-preview-thumb">
-        <MediaThumbnail mediaId={active.mediaId} mediaKind={active.kind} />
+        {/* A composition has no frame to show until it is staged, so the Group
+            clip's own glyph stands where a media thumbnail stands. */}
+        {active.source === "media" ? (
+          <MediaThumbnail mediaId={active.mediaId} mediaKind={active.kind} />
+        ) : (
+          <GroupIcon size={16} aria-hidden />
+        )}
       </div>
       <span className="media-drag-preview-name">{active.label}</span>
     </div>,
@@ -322,6 +301,10 @@ export function MediaPool({
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const layout = useMediaPoolLayout();
+  // The Groups section is the pool's second half and lives on the whole
+  // composition set, not on the media list this Panel is handed — so the count
+  // that decides whether the drawer is truly empty comes from the store.
+  const groupCount = useGroupCount();
   const beginMediaDrag = useMediaDragStore((s) => s.begin);
   const endMediaDrag = useMediaDragStore((s) => s.end);
   const proxyOverrides = useProxyPrefStore((s) => s.overrides);
@@ -370,7 +353,7 @@ export function MediaPool({
     return () => window.removeEventListener("scroll", close, true);
   }, [contextMenu]);
 
-  if (media.length === 0) {
+  if (media.length === 0 && groupCount === 0) {
     return (
       <div className="media-pool-inner media-pool-inner--empty">
         <p className="placeholder">{t("media_pool.empty")}</p>
@@ -535,7 +518,9 @@ export function MediaPool({
       <div className="media-pool-inner">
         {filtered.length === 0 ? (
           <p className="placeholder">
-            {t("media_pool.no_matches", { query: trimmed })}
+            {media.length === 0
+              ? t("media_pool.empty")
+              : t("media_pool.no_matches", { query: trimmed })}
           </p>
         ) : (
           <ul
@@ -611,7 +596,7 @@ export function MediaPool({
                     const payload = mediaDragPayload(m);
                     beginMediaDrag(
                       payload,
-                      mediaDragVisual(e.currentTarget, e.clientX, e.clientY),
+                      poolDragVisual(e.currentTarget, e.clientX, e.clientY),
                     );
                     e.dataTransfer.setData(
                       MEDIA_DRAG_TYPE,
@@ -743,6 +728,7 @@ export function MediaPool({
             })}
           </ul>
         )}
+        <GroupPoolSection query={query} onMutated={onMutated} />
       </div>
     </>
   );

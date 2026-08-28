@@ -8,7 +8,7 @@ import { HISTORY_SUMMARY, groupCreateSummary, layersEnabledSummary, pastedLayers
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileTransitions, type DroppedTransition } from './validate'
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
-import { applyAddLayer, applyAddMarker, applyAddTrack, colorParams, defaultTransform, textParamsDefault } from './mutations/add'
+import { applyAddGroupLayer, applyAddLayer, applyAddMarker, applyAddTrack, colorParams, defaultTransform, textParamsDefault } from './mutations/add'
 import { applyMoveLayer, applyMoveLayersToNewTrack } from './mutations/move'
 import { applyRestackLayer, type RestackPosition } from './mutations/restack'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
@@ -914,6 +914,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const r = commit(groupCreateSummary(layers.length), (g: GroupCreateResult) => layerRef(g.layerId), { kind: 'Coarse' },
             (d) => applyGroupsCreate(d, idGen, layers, (a.label as string | null) ?? null))
           return { ok: true, value: { composition_id: r.compositionId, layer_id: r.layerId } }
+        }
+        // Placing an existing composition: a creation op, so it carries a scope —
+        // but `track` already fixes the composition, which makes `composition_id`
+        // the cross-check add_video_layer's is. The row is a plain layer add,
+        // because that is what this does: pre-compose is the op that makes a Group.
+        case 'add_group_layer': {
+          const track = parseUuid(a.track, 'track')
+          checkTrackInComposition(track, compositionArg(a) ?? null)
+          const source = parseUuid(a.source_composition, 'source_composition')
+          const t0 = parseNum(a.t_start_us, 't_start_us')
+          return { ok: true, value: commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddGroupLayer(d, idGen, source, track, t0)) }
         }
         case 'groups_ungroup': commit(HISTORY_SUMMARY.groupUngroup, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyGroupsUngroup(d, idGen, a.layer as Uuid)); return { ok: true, value: null }
         case 'groups_rename': commit(HISTORY_SUMMARY.groupRename, compositionRefLayers(a.composition as Uuid), { kind: 'Coarse' }, (d) => applyGroupsRename(d, a.composition as Uuid, (a.label as string | null) ?? null)); return { ok: true, value: null }

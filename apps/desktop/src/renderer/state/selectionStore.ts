@@ -10,6 +10,12 @@ export interface LayerSelectionState {
   primaryLayerId: string | null;
   selectedLayerIds: ReadonlySet<string>;
   selectedTransitionId: string | null;
+  /// The composition selected in the media pool's Groups section — the one
+  /// selectable entity with no presence on a timeline, which is what makes a
+  /// composition inspectable while nothing references it. Mutually exclusive
+  /// with the two above for the same reason they are with each other: the
+  /// inspector shows one thing.
+  selectedCompositionId: string | null;
 }
 
 const EMPTY_SELECTED_LAYER_IDS: ReadonlySet<string> = new Set();
@@ -18,6 +24,7 @@ export const useSelectionStore = create<LayerSelectionState>(() => ({
   primaryLayerId: null,
   selectedLayerIds: EMPTY_SELECTED_LAYER_IDS,
   selectedTransitionId: null,
+  selectedCompositionId: null,
 }));
 
 function equalIds(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
@@ -32,6 +39,7 @@ function commitSelection(
   requestedPrimaryId: string | null,
   requestedIds: Iterable<string>,
   requestedTransitionId: string | null,
+  requestedCompositionId: string | null = null,
 ): void {
   const nextIds = new Set(requestedIds);
   if (requestedPrimaryId !== null) nextIds.add(requestedPrimaryId);
@@ -43,12 +51,15 @@ function commitSelection(
         ? requestedPrimaryId
         : (nextIds.values().next().value ?? null);
   // Mutual exclusion: a non-empty layer selection always evicts the
-  // transition chip selection, whatever the caller passed.
+  // transition chip and the pool's composition, whatever the caller passed.
   const nextTransitionId = nextIds.size > 0 ? null : requestedTransitionId;
+  const nextCompositionId =
+    nextIds.size > 0 || nextTransitionId !== null ? null : requestedCompositionId;
   const current = useSelectionStore.getState();
   if (
     current.primaryLayerId === nextPrimaryId &&
     current.selectedTransitionId === nextTransitionId &&
+    current.selectedCompositionId === nextCompositionId &&
     equalIds(current.selectedLayerIds, nextIds)
   ) {
     return;
@@ -59,6 +70,7 @@ function commitSelection(
     selectedLayerIds:
       nextIds.size === 0 ? EMPTY_SELECTED_LAYER_IDS : nextIds,
     selectedTransitionId: nextTransitionId,
+    selectedCompositionId: nextCompositionId,
   });
 }
 
@@ -114,10 +126,17 @@ export function toggleLayerSelection(
   return true;
 }
 
-/// Deselect everything — layers AND the transition chip (background-click /
-/// project-switch semantics).
+/// Deselect everything — layers, the transition chip AND the pool's composition
+/// (background-click / project-switch semantics).
 export function clearLayerSelection(): void {
-  commitSelection(null, EMPTY_SELECTED_LAYER_IDS, null);
+  commitSelection(null, EMPTY_SELECTED_LAYER_IDS, null, null);
+}
+
+/// Select a composition from the media pool's Groups section. Deselects layers
+/// and the transition chip in the same store update — one selected entity kind
+/// at a time.
+export function setCompositionSelection(compositionId: string): void {
+  commitSelection(null, EMPTY_SELECTED_LAYER_IDS, null, compositionId);
 }
 
 /// Select a transition chip. Deselects all layers in the same store update
@@ -128,7 +147,7 @@ export function setTransitionSelection(transitionId: string): void {
 
 export function clearTransitionSelection(): void {
   const current = useSelectionStore.getState();
-  commitSelection(current.primaryLayerId, current.selectedLayerIds, null);
+  commitSelection(current.primaryLayerId, current.selectedLayerIds, null, current.selectedCompositionId);
 }
 
 /// Drop selections that no longer resolve in the current Project snapshot.
@@ -146,7 +165,21 @@ export function retainLayerSelection(validLayerIds: Iterable<string>): void {
     current.primaryLayerId !== null && retained.has(current.primaryLayerId)
       ? current.primaryLayerId
       : null;
-  commitSelection(retainedPrimary, retained, current.selectedTransitionId);
+  commitSelection(retainedPrimary, retained, current.selectedTransitionId, current.selectedCompositionId);
+}
+
+/// Drop a pool composition selection whose composition left the project — the
+/// Delete the pool's own menu just ran, or an undo that took it away. Without
+/// this the inspector would hold a composition nothing can resolve.
+export function retainCompositionSelection(
+  validCompositionIds: Iterable<string>,
+): void {
+  const current = useSelectionStore.getState();
+  if (current.selectedCompositionId === null) return;
+  for (const id of validCompositionIds) {
+    if (id === current.selectedCompositionId) return;
+  }
+  commitSelection(null, EMPTY_SELECTED_LAYER_IDS, null, null);
 }
 
 /// Drop a transition selection whose id vanished from the snapshot (removed,
@@ -170,3 +203,6 @@ export const useSelectedLayerIds = (): ReadonlySet<string> =>
 
 export const useSelectedTransitionId = (): string | null =>
   useSelectionStore((state) => state.selectedTransitionId);
+
+export const useSelectedCompositionId = (): string | null =>
+  useSelectionStore((state) => state.selectedCompositionId);

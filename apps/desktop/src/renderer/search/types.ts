@@ -3,6 +3,7 @@ import type { ActionId } from "../shortcuts/defs";
 export type SearchEntryType =
   | "command"
   | "media"
+  | "group"
   | "track"
   | "clip"
   | "caption"
@@ -21,6 +22,10 @@ export interface MediaUsage {
 export type SearchPayload =
   | { type: "command"; commandId: string; actionId?: ActionId }
   | { type: "media"; mediaId: string; available: boolean; usages: MediaUsage[] }
+  /// A composition, findable whether or not anything places it. `refCount` is
+  /// what lets the row say "not on the timeline" for an orphan, the same note a
+  /// media item with no usages carries.
+  | { type: "group"; compositionId: string; refCount: number }
   | { type: "track"; trackId: string; firstLayerId: string | null }
   | { type: "clip"; layerId: string; tStartUs: number }
   | { type: "caption"; layerId: string; tStartUs: number }

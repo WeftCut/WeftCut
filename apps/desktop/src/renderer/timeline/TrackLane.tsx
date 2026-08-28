@@ -31,6 +31,7 @@ import { useMarqueeAnchor } from "./hooks/useMarqueeAnchor";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
   MEDIA_DRAG_TYPE,
+  mediaDropInvalid,
   parseMediaDrag,
   planMediaDrop,
   useMediaDragStore,
@@ -395,7 +396,7 @@ export function TrackLane({
         : "";
 
   const dropTargetClass =
-    visibleDropPreview?.plan.validity === "collision"
+    visibleDropPreview !== null && mediaDropInvalid(visibleDropPreview.plan.validity)
       ? "bg-red-500/10 outline outline-1 outline-dashed -outline-offset-1 outline-red-400/80"
       : visibleDropPreview?.plan.validity === "locked"
         ? "bg-amber-500/10 outline outline-1 outline-dashed -outline-offset-1 outline-amber-400/80"
@@ -455,7 +456,7 @@ export function TrackLane({
           data-start-us={visibleDropPreview.plan.tStartUs}
           data-end-us={visibleDropPreview.plan.tEndUs}
           className={`media-drop-ghost pointer-events-none absolute z-[5] flex min-w-1 items-center gap-1 overflow-hidden rounded border px-2 text-[10px] font-semibold text-white shadow-[0_3px_10px_rgba(0,0,0,0.4)] ${
-            visibleDropPreview.plan.validity === "collision"
+            mediaDropInvalid(visibleDropPreview.plan.validity)
               ? "border-red-300 bg-red-500/55"
               : visibleDropPreview.plan.validity === "locked"
                 ? "border-amber-300 bg-amber-500/55"
@@ -491,9 +492,11 @@ export function TrackLane({
           </span>
           {visibleDropPreview.plan.validity !== "valid" && (
             <span className="ml-auto shrink-0 rounded bg-black/35 px-1 py-0.5">
-              {visibleDropPreview.plan.validity === "collision"
-                ? t("timeline.drop_collision", { defaultValue: "Overlap" })
-                : t("timeline.drop_locked", { defaultValue: "Locked" })}
+              {visibleDropPreview.plan.validity === "cycle"
+                ? t("timeline.drop_cycle")
+                : visibleDropPreview.plan.validity === "locked"
+                  ? t("timeline.drop_locked", { defaultValue: "Locked" })
+                  : t("timeline.drop_collision", { defaultValue: "Overlap" })}
             </span>
           )}
         </div>

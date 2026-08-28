@@ -485,6 +485,27 @@ const enUS = {
     remove_force_confirm_other: "Remove media + {{count}} layers",
     removing: "Removing…",
     remove_failed: "Could not remove media: {{detail}}",
+    // The Groups section — one row per composition placed as a layer somewhere,
+    // plus the orphans nothing places any more.
+    groups_heading: "Groups",
+    groups_no_matches: "No Groups match “{{query}}”.",
+    // A composition whose last inner layer was deleted. It has no window to
+    // place, so the row is not draggable — the hint is what says why.
+    groups_empty_hint: "This Group is empty. Open it and add a layer first.",
+    groups_row_hint:
+      "Drag onto a track to place another instance · double-click to open · right-click for Group actions",
+    // A composition no Group clip references. It still renders nothing and costs
+    // nothing; the tag is there so it reads as available rather than as missing.
+    groups_unused: "unused",
+    groups_refs_one: "{{count}} ref",
+    groups_refs_other: "{{count}} refs",
+    groups_actions_for: "Group actions for {{label}}",
+    groups_delete: "Delete Group",
+    groups_delete_hint: "Remove this composition from the project",
+    groups_delete_in_use:
+      "Still shown by a Group clip. Delete those clips, or ungroup them, first.",
+    groups_rename_title: "Rename Group",
+    groups_rename_confirm: "Rename",
   },
   preview: {
     empty_hint: "Add a layer to start the preview",
@@ -499,6 +520,8 @@ const enUS = {
     track_lock_hint: "Lock this track against edits",
     drop_collision: "Overlaps existing media",
     drop_locked: "Track is locked",
+    // A Group released inside itself, or inside a Group it already contains.
+    drop_cycle: "A Group cannot contain itself",
     drop_spawn_hint: "Release to create a track",
     toggle_keyframe_lanes: "Expand keyframe lanes",
     mode_ab_roll_hint: "A/B Roll, other tracks hidden. Click to show all.",
@@ -1292,6 +1315,7 @@ const enUS = {
     group: "Group",
     group_name: "Name",
     group_size: "Composition size",
+    group_refs: "References",
     group_open: "Open group",
     group_ungroup: "Ungroup",
     locked: "Locked",
@@ -1656,6 +1680,7 @@ const enUS = {
     no_results: "No results for “{{query}}”",
     group_command: "Commands",
     group_media: "Media",
+    group_group: "Groups",
     group_track: "Tracks",
     group_clip: "Clips",
     group_caption: "Captions",

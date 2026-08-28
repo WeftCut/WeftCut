@@ -31,6 +31,7 @@ import {
   createEditDraft,
   AUDIO_ROLES,
   type AudioRole,
+  type CompositionSummary,
   type LayerParamsPatch,
   type LayerSummary,
   type LinkSummary,
@@ -63,11 +64,16 @@ const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
 const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
 import { getMotif, subscribeMotifCatalog, motifCatalogRevision } from "../render/motifs/catalog";
 import {
+  useCompositionRefCounts,
   useGroupOrdinals,
   useOpenComposition,
   useProjectStore,
 } from "../state/projectStore";
-import { useSelectedLayerIds, useSelectedTransitionId } from "../state/selectionStore";
+import {
+  useSelectedCompositionId,
+  useSelectedLayerIds,
+  useSelectedTransitionId,
+} from "../state/selectionStore";
 import { TransitionFields } from "./TransitionFields";
 import { Field } from "./Field";
 import { MotifParamsFrame } from "./MotifParamsFrame";
@@ -122,6 +128,14 @@ export function AttributePanel({
     [selectedTransitionId, compForTransition],
   );
 
+  // Mutually exclusive with both branches above by the same store invariant.
+  const poolCompositionId = useSelectedCompositionId();
+  const poolComposition = useProjectStore((s) =>
+    poolCompositionId === null
+      ? null
+      : (s.summary?.compositions[poolCompositionId] ?? null),
+  );
+
   if (transition) {
     return (
       <aside
@@ -130,6 +144,25 @@ export function AttributePanel({
       >
         <TransitionFields
           transition={transition}
+          fpsNum={fpsNum}
+          fpsDen={fpsDen}
+          onMutated={onMutated}
+        />
+      </aside>
+    );
+  }
+
+  // A composition picked in the media pool's Groups section. It has no layer and
+  // no track — that is the point: a Group is reusable, so it must be inspectable
+  // and nameable while nothing references it, which is exactly an orphan's state.
+  if (poolComposition) {
+    return (
+      <aside
+        className="property-panel attribute-panel"
+        aria-label={t("property_panel.heading")}
+      >
+        <CompositionPanel
+          composition={poolComposition}
           fpsNum={fpsNum}
           fpsDen={fpsDen}
           onMutated={onMutated}
@@ -156,6 +189,96 @@ export function AttributePanel({
     >
       <LayerPanel layer={layer} track={track} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} currentTimeUs={currentTimeUs} />
     </aside>
+  );
+}
+
+/// The composition branch: what a Group IS, with no clip in the way — its name,
+/// its frame size, its length, and how many Group clips show it.
+///
+/// Reached only from the media pool's Groups section, and it is the surface that
+/// makes an orphan actionable: a composition nothing references has no clip to
+/// select, so without this the only way to name or read one would be to place it
+/// first. Size and duration are read-only for the same reasons they are on a
+/// Group clip (`GroupFields`): the frame size is copied at pre-compose and not
+/// editable in v1, and the duration autofits from the contents.
+///
+/// `sectionId` is shared with `GroupFields`' section on purpose — collapse state
+/// is per (kind, section), and a Group read from the pool and the same Group read
+/// from its clip are one thing to the user.
+function CompositionPanel({
+  composition,
+  fpsNum,
+  fpsDen,
+  onMutated,
+}: {
+  composition: CompositionSummary;
+  fpsNum: number;
+  fpsDen: number;
+  onMutated: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const groupOrdinals = useGroupOrdinals();
+  const refCount = useCompositionRefCounts().get(composition.id) ?? 0;
+  const derivedName = groupDisplayName(
+    composition.id,
+    composition.label,
+    groupOrdinals,
+    t,
+  );
+  const [name, setName] = useState(composition.label ?? "");
+  // Resync from the authoritative snapshot on every committed change (own round
+  // trip, a rename from the pool's dialog, undo). Primitive deps, so an unrelated
+  // refresh cannot clobber the field mid-typing — the `useEnvelope` rule.
+  useEffect(() => {
+    setName(composition.label ?? "");
+  }, [composition.id, composition.label]);
+
+  const commitName = async () => {
+    const next = name.trim();
+    if (next === (composition.label ?? "")) return;
+    if (await tryMutate(() => groupsRename(composition.id, next || null), "groups_rename")) {
+      await onMutated();
+    }
+  };
+
+  return (
+    <>
+      <div className="prop-identity">
+        <p className="prop-identity-title">{derivedName}</p>
+        <p className="prop-identity-meta">{t("property_panel.group")}</p>
+      </div>
+      <PropSection layerKind="CompositionRef" sectionId="group" title={t("property_panel.group")}>
+        <Field label={t("property_panel.group_name")}>
+          <AppInput
+            value={name}
+            placeholder={derivedName}
+            ariaLabel={t("property_panel.group_name")}
+            onValueChange={setName}
+            onBlur={() => void commitName()}
+          />
+        </Field>
+        <Field label={t("property_panel.group_size")}>
+          <span className="text-xs text-muted-foreground">
+            {`${composition.width} × ${composition.height}`}
+          </span>
+        </Field>
+        <Field label={t("property_panel.duration")}>
+          <span className="font-mono text-xs text-muted-foreground">
+            {formatTimecode(composition.duration_us, fpsNum, fpsDen)}
+          </span>
+        </Field>
+        {/* The count is what tells an orphan from a reused Group, and it is the
+            same number the pool row shows and the Delete gate reads. */}
+        <Field label={t("property_panel.group_refs")}>
+          <span className="text-xs text-muted-foreground">
+            {t("media_pool.groups_refs", { count: refCount })}
+          </span>
+        </Field>
+        <Button size="sm" onClick={() => openComposition(composition.id, null)}>
+          {t("property_panel.group_open")}
+        </Button>
+      </PropSection>
+    </>
   );
 }
 

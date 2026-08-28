@@ -11,6 +11,7 @@ import {
   type RoleMixView,
 } from "../ipc";
 import { compositionOrRoot, rootCompositionOf } from "../ipc/compositions";
+import { compositionRefCounts } from "../lib/compositionRefs";
 import { groupOrdinals } from "../lib/layerName";
 import {
   reconcileCompositionScope,
@@ -18,6 +19,7 @@ import {
 } from "./compositionScopeStore";
 import { restorePrecomposeSelection } from "./precomposeSelection";
 import {
+  retainCompositionSelection,
   retainLayerSelection,
   retainTransitionSelection,
 } from "./selectionStore";
@@ -55,6 +57,12 @@ export interface ProjectStoreState {
   /// breadcrumb crumb and every search entry asks the same question, and the
   /// answer depends on the WHOLE composition set, not on the layer asking.
   groupOrdinals: ReadonlyMap<string, number>;
+  /// `composition_id → ref_count` (`lib/compositionRefs.ts`). Indexed here for
+  /// the same reason the ordinals are: the media pool's Groups section, the
+  /// inspector and the Delete gate all ask it, the answer spans every
+  /// composition, and a Map rebuilt per render would be a fresh reference on
+  /// every store tick.
+  compositionRefCounts: ReadonlyMap<string, number>;
   /// True after the initial `project_summary` fetch + subscription is
   /// wired. Distinguishes "no project loaded" (`summary === null`,
   /// `ready === true`) from "haven't fetched yet"
@@ -73,6 +81,7 @@ interface ProjectStoreActions {
 /// the store initializer below runs at module evaluation, and a `const` further
 /// down would still be in its temporal dead zone.
 const EMPTY_ORDINALS: ReadonlyMap<string, number> = new Map();
+const EMPTY_REF_COUNTS: ReadonlyMap<string, number> = new Map();
 
 function buildIndices(summary: ProjectSummary | null): {
   mediaById: Map<string, MediaSummary>;
@@ -81,6 +90,7 @@ function buildIndices(summary: ProjectSummary | null): {
   compositionIdByLayerId: Map<string, string>;
   compositionIdByTrackId: Map<string, string>;
   groupOrdinals: ReadonlyMap<string, number>;
+  compositionRefCounts: ReadonlyMap<string, number>;
 } {
   const mediaById = new Map<string, MediaSummary>();
   const layerById = new Map<string, LayerSummary>();
@@ -96,6 +106,9 @@ function buildIndices(summary: ProjectSummary | null): {
     groupOrdinals: summary
       ? groupOrdinals(summary.compositions, summary.root_id)
       : EMPTY_ORDINALS,
+    compositionRefCounts: summary
+      ? compositionRefCounts(summary.compositions)
+      : EMPTY_REF_COUNTS,
   };
   if (!summary) return indices;
   for (const m of summary.media) mediaById.set(m.id, m);
@@ -122,6 +135,7 @@ export const useProjectStore = create<
   compositionIdByLayerId: new Map(),
   compositionIdByTrackId: new Map(),
   groupOrdinals: EMPTY_ORDINALS,
+  compositionRefCounts: EMPTY_REF_COUNTS,
   ready: false,
 
   apply: (summary) => {
@@ -137,6 +151,7 @@ export const useProjectStore = create<
         ? Object.values(summary.compositions).flatMap((c) => c.transitions.map((tr) => tr.id))
         : [],
     );
+    retainCompositionSelection(summary ? Object.keys(summary.compositions) : []);
     // After the indices and the retained selections: the fallback switch this
     // may run clears the selection, and reads the summary just published.
     reconcileCompositionScope(summary);
@@ -245,6 +260,18 @@ export const useGroupOrdinals = (): ReadonlyMap<string, number> =>
 export function currentGroupOrdinals(): ReadonlyMap<string, number> {
   return useProjectStore.getState().groupOrdinals;
 }
+
+/// How many Groups the project holds — every composition but the root. A count,
+/// not a list, so a subscriber re-renders only when one arrives or leaves.
+export const useGroupCount = (): number =>
+  useProjectStore((s) =>
+    s.summary ? Object.keys(s.summary.compositions).length - 1 : 0,
+  );
+
+/// Reference counts per composition, for React. One Map reference per summary,
+/// like the ordinals. `get(id) ?? 0` — an orphan has no entry.
+export const useCompositionRefCounts = (): ReadonlyMap<string, number> =>
+  useProjectStore((s) => s.compositionRefCounts);
 
 /// A Group's SOURCE length: the referenced composition's `duration_us`, or null
 /// when the summary does not carry it (a composition removed under a stale

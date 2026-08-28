@@ -14,6 +14,8 @@ export interface RankedResult {
 export const GROUP_ORDER: SearchEntryType[] = [
   "command",
   "media",
+  // Beside media, because a Group is the other thing you place rather than edit.
+  "group",
   "track",
   "clip",
   "caption",

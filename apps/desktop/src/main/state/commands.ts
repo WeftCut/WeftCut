@@ -132,6 +132,11 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // Groups (ADR 0052): pre-compose takes the selection; the other three are
   // addressed by the Group layer / its composition. Pure renaming.
   groups_create: (a) => ({ op: 'groups_create', args: { layers: a.layerIds, label: a.label ?? null } }),
+  // The media pool's Group drop. Two composition ids on one channel:
+  // `sourceCompositionId` is the composition being PLACED, `compositionId` the
+  // one the drop lands in — the open one, riding along as the cross-check every
+  // creation channel stamps.
+  add_group_layer: (a) => ({ op: 'add_group_layer', args: { source_composition: a.sourceCompositionId, track: a.trackId, t_start_us: a.tStartUs, composition_id: a.compositionId ?? null } }),
   groups_ungroup: (a) => ({ op: 'groups_ungroup', args: { layer: a.layerId } }),
   groups_rename: (a) => ({ op: 'groups_rename', args: { composition: a.compositionId, label: a.label ?? null } }),
   compositions_delete: (a) => ({ op: 'compositions_delete', args: { composition: a.compositionId } }),
@@ -197,7 +202,7 @@ export const PRODUCTION_OPS = new Set<string>([
   // Remaining mechanical + meta channels
   'move_layer', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layer', 'delete_layers', 'remove_media', 'duplicate_layer', 'paste_layers', 'set_layers_enabled', 'split_layer_linked',
   'links_create', 'links_dissolve', 'links_rename',
-  'groups_create', 'groups_ungroup', 'groups_rename', 'compositions_delete',
+  'groups_create', 'groups_ungroup', 'groups_rename', 'compositions_delete', 'add_group_layer',
   'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks', 'update_param_tracks_multi', 'set_scale_linked',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'set_composition', 'fit_composition_to_layers',

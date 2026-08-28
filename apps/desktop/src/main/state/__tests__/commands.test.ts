@@ -15,9 +15,11 @@ import { root } from './fixtures/project'
 // If this fails, a channel was added or removed unintentionally — do NOT
 // silently update the expected list; investigate first.
 describe('PRODUCTION_OPS', () => {
-  it('contains exactly the 57 in-scope renderer channels', () => {
+  it('contains exactly the 58 in-scope renderer channels', () => {
     const expected = [
       'add_color_layer', 'add_demo_color_layer', 'add_demo_text_layer', 'add_effect',
+      // The media pool's Group drop: an existing composition placed as one layer.
+      'add_group_layer',
       // Markers (marker-authoring ticket 01) — the renderer's first marker channels.
       'add_marker',
       'add_media_layer', 'add_motif', 'add_text_layer', 'add_track', 'add_transition',
