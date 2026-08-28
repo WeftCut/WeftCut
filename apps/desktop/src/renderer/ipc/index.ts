@@ -1361,6 +1361,22 @@ export async function groupsUngroup(layerId: string): Promise<void> {
   return invoke<void>("groups_ungroup", { layerId });
 }
 
+/// Move existing layers INTO the composition a Group layer references — the
+/// third and last op that crosses compositions, beside pre-compose and ungroup.
+/// Members land at `t_start_us - group.t_start_us + group.src_in_us`, so they
+/// keep the screen position they had. Refuses whole, before any write, on: a
+/// set spanning two compositions, a Group clip that is not in the members'
+/// composition, a locked member or lane, a member that would land before
+/// composition time 0, and a member whose own composition already reaches the
+/// destination (`CompositionCycle`). The Group's window is never rewritten, so
+/// a destination that grows shows as overhang (ADR 0052 §6).
+export async function groupsAddMembers(
+  layerIds: string[],
+  groupLayerId: string,
+): Promise<void> {
+  return invoke<void>("groups_add_members", { layerIds, groupLayerId });
+}
+
 /// Set or clear (`null` / blank) a Group's composition name. The root refuses.
 export async function groupsRename(
   compositionId: string,

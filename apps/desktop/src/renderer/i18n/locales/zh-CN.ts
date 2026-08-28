@@ -250,6 +250,13 @@ const zhCN: Resources = {
       "先将组的不透明度恢复为 1——解组无法将它传给组内图层",
     ungroup_not_plain_effects:
       "先移除组上的效果——解组无法将它们传给组内图层",
+    // 加入组。只有片段右键菜单会显示这几条，但它们和上面是同一类句子，分开放就会漂移。
+    // 与解组不同，这里的选择失败不合并成一条：目标组和要加入的片段是两件要分别去选的事。
+    add_to_group_needs_selection: "选中要加入的片段，以及要加入的那个组片段",
+    add_to_group_needs_one_group: "只选中一个组片段才能加入",
+    add_to_group_needs_member: "除了组片段，还要选中要加入的片段",
+    add_to_group_locked: "先解锁要加入的那些片段",
+    add_to_group_starts_before_group: "该片段比组开始得更早——先把它往后移",
   },
   dock_workspace: {
     editing_label: "编辑工作区",
@@ -372,6 +379,10 @@ const zhCN: Resources = {
     group_selected: "给所选图层编组",
     ungroup_selected: "解组",
     open_group: "打开组",
+    add_to_group: "加入组",
+    // 右键菜单专用：它知道自己是在哪个组上打开的。一次性构建的菜单——编辑菜单、
+    // 原生菜单栏、搜索面板——沿用上面的通用标签（原因见 menu/CommandContextItem.tsx）。
+    add_to_group_named: "加入“{{name}}”",
     toggle_link_selected: "链接 / 取消链接所选图层",
     toggle_link_override: "切换忽略链接",
     nudge_audio_sample_back: "音频前移 1 个采样",
@@ -1464,6 +1475,7 @@ const zhCN: Resources = {
     },
     group: {
       create: "编组 {{count}} 个图层",
+      add_members: "已把 {{count}} 个图层加入组",
       ungroup: "解组",
       rename: "重命名组",
     },

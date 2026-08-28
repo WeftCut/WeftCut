@@ -6,10 +6,17 @@ import {
   commandRegistryVersion,
   subscribeCommandRegistry,
 } from "../commands/registry";
+import { groupDisplayName } from "../lib/layerName";
 import { CommandContextItem } from "../menu/CommandContextItem";
 import { MenuItem, MenuSeparator } from "../menu/Menu";
 import { useLinkOverride } from "../state/linkOverrideStore";
+import { useGroupOrdinals } from "../state/projectStore";
 import { useCursorAnchor } from "./contextMenuAnchor";
+import {
+  addToGroupTarget,
+  useAddToGroupState,
+  type AddToGroupState,
+} from "./groupEligibility";
 import { linkFanoutActive } from "./linkEligibility";
 import {
   TRANSITION_DIRECTIONS,
@@ -52,8 +59,38 @@ export const LAYER_MENU_COMMAND_IDS = [
 ///
 /// `groupSelected` sits in the always-present tier instead, beside the other
 /// structural edits: pre-composing is offered on ANY clip, which is the whole
-/// point of it.
-export const GROUP_MENU_COMMAND_IDS = ["openGroup", "ungroupSelected"] as const;
+/// point of it. `addToGroup` is here rather than there because the Group clip is
+/// its DESTINATION — the row is only meaningful over the thing being added to.
+///
+/// Still one list even though `addToGroup` is the one row that cannot render
+/// from the id alone (it names its destination and its refusal): the render
+/// below branches inside the `map` rather than lifting the row out beside it,
+/// so the list stays the single statement of what this tier holds and the
+/// sweep in `menu/contextMenuCommands.test.ts` keeps covering every row.
+export const GROUP_MENU_COMMAND_IDS = [
+  "openGroup",
+  "ungroupSelected",
+  "addToGroup",
+] as const;
+
+/// Why a greyed *Add to Group* row is greyed, one sentence per state, in the
+/// `quick_actions` namespace the strip's disabled-button reasons already live
+/// in — this row is the only surface that shows them, but they are the same
+/// kind of sentence and belong in the same block.
+///
+/// The live state is absent on purpose: the row already reads "Add to X", and a
+/// tooltip restating an enabled row's own label earns nothing. A `Record` over
+/// the remaining states so a new one cannot compile until someone has written
+/// the instruction that tells the user what to do about it — the rule
+/// `panels/quickActions.ts` states for its own two.
+const ADD_TO_GROUP_REASON: Record<Exclude<AddToGroupState, "add_to_group">, string> =
+  {
+    needs_selection: "quick_actions.add_to_group_needs_selection",
+    needs_one_group: "quick_actions.add_to_group_needs_one_group",
+    needs_member: "quick_actions.add_to_group_needs_member",
+    locked: "quick_actions.add_to_group_locked",
+    starts_before_group: "quick_actions.add_to_group_starts_before_group",
+  };
 
 /// Floating context menu (Base UI Menu) anchored to a zero-size virtual
 /// element at the right-click coordinates. The popup machinery (portal,
@@ -159,6 +196,31 @@ export function LayerContextMenu({
       : layerEnabled
         ? t("timeline.disable_layer", { defaultValue: "Disable layer" })
         : t("timeline.enable_layer", { defaultValue: "Enable layer" });
+  // The *Add to Group* row's label and tooltip. `useAddToGroupState` is the
+  // subscription that keeps both live under an open popup; `addToGroupTarget`
+  // reads the same two stores imperatively and is therefore re-read by the very
+  // re-render that subscription causes.
+  const addToGroup = useAddToGroupState();
+  const groupOrdinals = useGroupOrdinals();
+  const addToGroupDestination = addToGroupTarget();
+  const addToGroupParams =
+    addToGroupDestination?.params.kind === "CompositionRef"
+      ? addToGroupDestination.params
+      : null;
+  // Named only when the selection names exactly one destination; the plain
+  // label stands otherwise, since there is no Group to name.
+  const addToGroupLabel = addToGroupParams
+    ? t("actions.add_to_group_named", {
+        name: groupDisplayName(
+          addToGroupParams.composition_id,
+          addToGroupParams.composition_label,
+          groupOrdinals,
+          t,
+        ),
+      })
+    : undefined;
+  const addToGroupHint =
+    addToGroup === "add_to_group" ? undefined : t(ADD_TO_GROUP_REASON[addToGroup]);
   const directionLabel = (d: TransitionDirection) =>
     t(`transitions.direction_${d}`, { defaultValue: d });
   return (
@@ -218,9 +280,19 @@ export function LayerContextMenu({
             {layerKind === "CompositionRef" && (
               <>
                 <MenuSeparator />
-                {GROUP_MENU_COMMAND_IDS.map((id) => (
-                  <CommandContextItem key={id} id={id} onRun={onClose} />
-                ))}
+                {GROUP_MENU_COMMAND_IDS.map((id) =>
+                  id === "addToGroup" ? (
+                    <CommandContextItem
+                      key={id}
+                      id={id}
+                      onRun={onClose}
+                      {...(addToGroupLabel ? { label: addToGroupLabel } : {})}
+                      {...(addToGroupHint ? { hint: addToGroupHint } : {})}
+                    />
+                  ) : (
+                    <CommandContextItem key={id} id={id} onRun={onClose} />
+                  ),
+                )}
                 <MenuItem
                   label={t("timeline.rename_group", {
                     defaultValue: "Rename group…",

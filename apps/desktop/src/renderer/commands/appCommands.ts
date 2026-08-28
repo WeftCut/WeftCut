@@ -31,6 +31,7 @@ import { focusedPlayheadUs } from "../state/playheadProjection";
 import { hasMarkedRange } from "../state/rangeStore";
 import { hasTransitionCut } from "../timeline/applyTransition";
 import {
+  canAddToGroupSelection,
   canGroupSelection,
   canUngroupSelection,
 } from "../timeline/groupEligibility";
@@ -354,14 +355,16 @@ export function buildAppCommands(
     // so the flag would go stale the moment the user pressed `I`. This
     // predicate is evaluated inside `listCommands()`, so it always reads live.
     clearRange: () => hasMarkedRange(),
-    // The Group trio, live-read for the same reason and through the one
+    // The Group quartet, live-read for the same reason and through the one
     // predicate every surface shares (`timeline/groupEligibility.ts`), so the
-    // Edit menu row, the strip button and the palette entry cannot disagree
-    // about whether the selection can be grouped. The two disabled-reason
-    // strings live with the strip, which is the only surface that can show one.
+    // Edit menu row, the strip button, the palette entry and the clip's context
+    // menu cannot disagree about whether the selection can be grouped. The
+    // disabled-reason strings live with the surfaces that can show one — the
+    // strip for the first two, the clip menu for `addToGroup`.
     groupSelected: canGroupSelection,
     ungroupSelected: canUngroupSelection,
     openGroup: canOpenSelectedGroup,
+    addToGroup: canAddToGroupSelection,
   };
 
   // The armed modal tool, read straight from `toolStore` for the same

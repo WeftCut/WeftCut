@@ -77,13 +77,16 @@ export const EDIT_MENU: MenuSection = {
     "moveToNewTrack",
     "---",
     // The Group section (`docs/features.md#groups`). Its own group of rows
-    // rather than beside the tools above, because the pair is structural — it
-    // changes what the timeline CONTAINS — while Blade and Split change where a
-    // clip is cut. Enter sits under them as the navigation half, and it is here
-    // rather than only on the clip's context menu because it ships unbound: the
-    // menu is the discoverable path to it.
+    // rather than beside the tools above, because these are structural — they
+    // change what the timeline CONTAINS — while Blade and Split change where a
+    // clip is cut. Make one, dissolve one, add to one: the three edits in that
+    // order, then Enter under them as the navigation half. Add to Group and
+    // Enter both ship unbound, which is exactly why they are here and not only
+    // on the clip's context menu — the menu is the discoverable path to a
+    // gesture no key reaches.
     "groupSelected",
     "ungroupSelected",
+    "addToGroup",
     "openGroup",
   ],
 };

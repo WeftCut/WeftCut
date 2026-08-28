@@ -24,9 +24,25 @@ import { MenuItem } from "./Menu";
 ///   exactly as it does inside a dropdown.
 export function CommandContextItem({
   id,
+  label,
+  hint,
   onRun,
 }: {
   id: string;
+  /// Overrides the command's own label, so a row can name the thing it was
+  /// opened over — `Add to “Lower third”` rather than `Add to Group`.
+  ///
+  /// The override lives at the CALL SITE and not on `CommandDef` because only a
+  /// context menu can honour it: it mounts fresh on every right-click, over a
+  /// known target. The Edit menu and the native menu are built once, and the
+  /// search palette's index is snapshotted on registry change rather than on
+  /// selection change — a target-naming label in any of them would go stale
+  /// while still on screen. They keep the plain label deliberately.
+  label?: string;
+  /// Tooltip (`MenuItem` renders it as `title`). The way a greyed row names
+  /// WHICH condition failed, matching how the Quick Actions strip explains its
+  /// own disabled buttons.
+  hint?: string;
   /// Fires before the command, for the menu to close itself. Base UI closes on
   /// activation anyway, but the menus here own their own open state.
   onRun?: () => void;
@@ -39,7 +55,8 @@ export function CommandContextItem({
   if (!command) return null;
   return (
     <MenuItem
-      label={t(command.labelKey)}
+      label={label ?? t(command.labelKey)}
+      {...(hint ? { hint } : {})}
       // Evaluated here, in the row's own render: Base UI mounts the popup on
       // open, so every open re-reads the predicates.
       disabled={command.enabled ? !command.enabled() : false}
