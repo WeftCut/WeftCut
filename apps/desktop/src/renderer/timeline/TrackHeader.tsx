@@ -5,7 +5,7 @@ import { ChevronDown, ChevronRight, Eye, EyeOff, Lock, LockOpen, Music } from "l
 import { renameTrack, updateTrackFlags, type TrackSummary } from "../ipc";
 import { AppInput } from "../components/AppInput";
 import { trackDisplayName } from "../lib/trackName";
-import { useOpenComposition } from "../state/projectStore";
+import { useComposition } from "../state/projectStore";
 import { trackHeaderControls } from "./geometry";
 import { beginTrackRename, endRename, useEditingTrackId } from "./renameStore";
 import { TrackContextMenu } from "./TrackContextMenu";
@@ -39,7 +39,11 @@ function FlagButton({ active, activeClass, label, onToggle, children }: {
 /// `rename_track`, so one undo can revert a name without touching a control the
 /// editor set (ADR 0042); `onMutated` re-fetches the summary.
 /// pointerdown must not bubble into the timeline root's seek path.
-export function TrackHeader({ track, height, isRevealed, isRoleSectionStart, isExpanded, hasKeyframes, onToggleExpand, onMutated }: {
+export function TrackHeader({ compositionId, track, height, isRevealed, isRoleSectionStart, isExpanded, hasKeyframes, onToggleExpand, onMutated }: {
+  /// The composition this header's timeline shows, from the Panel that renders
+  /// it — a lane's number counts within its own timeline, and two timelines can
+  /// stand open at once.
+  compositionId: string | null;
   track: TrackSummary;
   height: number;
   isRevealed: boolean;
@@ -55,12 +59,11 @@ export function TrackHeader({ track, height, isRevealed, isRoleSectionStart, isE
 }) {
   const { t } = useTranslation();
   // The name a lane's positional number counts against is its slot in the
-  // PROJECT's track vector, read from the mirror rather than from the rows this
-  // header renders beside: the timeline's row list is filtered in A/B Roll, so
-  // numbering off it would renumber every lane when the user toggles the filter.
-  // The OPEN composition's vector: a lane's number counts within its own
-  // timeline.
-  const tracks = useOpenComposition()?.tracks;
+  // COMPOSITION's own track vector, read from the mirror rather than from the
+  // rows this header renders beside: the timeline's row list is filtered in
+  // A/B Roll, so numbering off it would renumber every lane when the user
+  // toggles the filter.
+  const tracks = useComposition(compositionId)?.tracks;
   const name = trackDisplayName(track, tracks ?? [], t);
   const toggle = (patch: Parameters<typeof updateTrackFlags>[1]) => async () => {
     if (await tryMutate(() => updateTrackFlags(track.id, patch), "Update track flag")) {

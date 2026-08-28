@@ -44,7 +44,7 @@ afterEach(cleanup);
 // All three stores are renderer-global; reset them so each case starts at the
 // row head with no marks and no markers, regardless of order.
 beforeEach(() => {
-  setTimelineScrollLeftPx(0);
+  setTimelineScrollLeftPx(null, 0);
   useRangeStore.setState({ inUs: null, outUs: null });
   useProjectStore.setState({ summary: null });
 });
@@ -60,6 +60,7 @@ function renderWholeRow(props: {
   const widthPx = props.totalSec * props.pxPerSec;
   return render(
     <TimelineRuler
+      compositionId={null}
       pxPerSec={props.pxPerSec}
       totalSec={props.totalSec}
       widthPx={widthPx}
@@ -141,6 +142,7 @@ describe("<TimelineRuler>", () => {
     // The row is 7.2 M px wide, so the node set must stay viewport-sized.
     const { container } = render(
       <TimelineRuler
+        compositionId={null}
         pxPerSec={2000}
         totalSec={3600}
         widthPx={7_200_000}
@@ -222,6 +224,7 @@ describe("markers", () => {
     const widthPx = 4 * pxPerSec;
     return render(
       <TimelineRuler
+        compositionId={null}
         pxPerSec={pxPerSec}
         totalSec={4}
         widthPx={widthPx}
@@ -688,6 +691,7 @@ describe("scroll subscription", () => {
       counter.renders++;
       return (
         <TimelineRuler
+          compositionId={null}
           pxPerSec={2000}
           totalSec={3600}
           widthPx={7_200_000}
@@ -707,13 +711,13 @@ describe("scroll subscription", () => {
     const firstTickX = () => ticks(container)[0]!.style.left;
     const headX = firstTickX();
 
-    act(() => setTimelineScrollLeftPx(40_000));
+    act(() => setTimelineScrollLeftPx(null, 40_000));
     expect(firstTickX()).not.toBe(headX);
     expect(counter.renders).toBe(before);
 
     // Every scroll event of a wheel gesture, not just the last one.
     for (let px = 40_000; px < 60_000; px += 250) {
-      act(() => setTimelineScrollLeftPx(px));
+      act(() => setTimelineScrollLeftPx(null, px));
     }
     expect(counter.renders).toBe(before);
   });
@@ -721,21 +725,21 @@ describe("scroll subscription", () => {
   it("does not recompute inside a scroll quantum", () => {
     const { container } = renderWithParentCounter();
     // Start at a block boundary, then move within it.
-    act(() => setTimelineScrollLeftPx(40_000));
+    act(() => setTimelineScrollLeftPx(null, 40_000));
     const windowStart = ticks(container)[0]!.style.left;
 
-    act(() => setTimelineScrollLeftPx(40_000 + RULER_SCROLL_QUANTUM_PX - 1));
+    act(() => setTimelineScrollLeftPx(null, 40_000 + RULER_SCROLL_QUANTUM_PX - 1));
     expect(ticks(container)[0]!.style.left).toBe(windowStart);
 
-    act(() => setTimelineScrollLeftPx(40_000 + RULER_SCROLL_QUANTUM_PX));
+    act(() => setTimelineScrollLeftPx(null, 40_000 + RULER_SCROLL_QUANTUM_PX));
     expect(ticks(container)[0]!.style.left).not.toBe(windowStart);
   });
 
   it("seeds its window from the store on mount", () => {
     // A remount (dock panel switch) with the store already scrolled must not
     // paint the row head.
-    setTimelineScrollLeftPx(40_000);
-    expect(timelineScrollLeftPx()).toBe(40_000);
+    setTimelineScrollLeftPx(null, 40_000);
+    expect(timelineScrollLeftPx(null)).toBe(40_000);
     const { container } = renderWithParentCounter();
     const left = Number.parseFloat(ticks(container)[0]!.style.left);
     expect(left).toBeGreaterThan(39_000);

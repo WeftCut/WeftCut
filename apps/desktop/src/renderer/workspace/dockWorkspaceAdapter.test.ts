@@ -1081,6 +1081,61 @@ describe("DockWorkspaceAdapter", () => {
     expect(other.getSnapshot().openPanels.has("timeline:comp-other")).toBe(true);
   });
 
+  it("opens a second timeline as a TAB beside the one it was asked from", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.setTimelineInstance("comp-root");
+    adapter.initializeEditingLayout();
+    const rootGroup = dock.panels.get("timeline:comp-root")?.group;
+
+    adapter.openTimelinePanel("comp-group");
+
+    // `within` the Group the root's timeline occupies — a tab, never a split.
+    // Pulling the two apart is then one tab drag, which is the user's call.
+    expect(dock.added.at(-1)).toMatchObject({
+      id: "timeline:comp-group",
+      position: { referencePanel: "timeline:comp-root", direction: "within" },
+    });
+    expect(dock.panels.get("timeline:comp-group")?.group).toBe(rootGroup);
+    expect(adapter.openTimelineCompositions()).toEqual([
+      "comp-root",
+      "comp-group",
+    ]);
+    expect(
+      dock.panels.get("timeline:comp-group")?.api.setActive,
+    ).toHaveBeenCalled();
+  });
+
+  it("activates the tab a composition already has instead of making a second", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.setTimelineInstance("comp-root");
+    adapter.initializeEditingLayout();
+    adapter.openTimelinePanel("comp-group");
+    dock.added.length = 0;
+
+    adapter.openTimelinePanel("comp-group");
+
+    expect(dock.added).toHaveLength(0);
+    expect(adapter.openTimelineCompositions()).toHaveLength(2);
+
+    adapter.closeTimelinePanel("comp-group");
+    expect(adapter.openTimelineCompositions()).toEqual(["comp-root"]);
+  });
+
+  it("retires every timeline of the project being left when the root changes", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.setTimelineInstance("comp-root");
+    adapter.initializeEditingLayout();
+    adapter.openTimelinePanel("comp-group");
+
+    // A different project's root: none of the open compositions exist in it.
+    adapter.setTimelineInstance("comp-other-root");
+
+    expect(adapter.openTimelineCompositions()).toEqual(["comp-other-root"]);
+  });
+
   it("re-addresses an unbound timeline in place once the root composition names itself", () => {
     const dock = fakeDockview();
     const adapter = new DockWorkspaceAdapter(dock.api);

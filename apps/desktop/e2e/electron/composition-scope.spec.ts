@@ -18,8 +18,8 @@ import {
  * The editor opens ONE composition at a time (spec § Navigation and scope):
  * the timeline shows its lanes, the ruler runs to its duration, and the Insert
  * menu lands new layers inside it. Nothing here draws a Group clip or a
- * breadcrumb — the switch is driven through the e2e hook, which is the same
- * `openComposition` the double-click and the breadcrumb will call (slice 15).
+ * tab strip — the switch is driven through the e2e hook, which is the same
+ * `openComposition` a double-click on a Group clip calls.
  *
  * The two-composition fixture (`fixtures/projects/v1.json`) is opened as a
  * workspace: a 5 s root with four lanes, holding a 2 s Group with the reserved
@@ -33,10 +33,14 @@ const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
 
 const wire = (page: Page) => invokeCmd<ProjectSummaryWire>(page, 'project_summary', {})
 
-/// The lanes the timeline currently draws, by track id.
+/// The lanes the ACTIVE timeline Panel draws, by track id. Scoped to the
+/// visible Panel because several timelines can stand open at once (ADR 0053) —
+/// a background tab keeps its own lanes mounted behind this one.
 const laneIds = (page: Page): Promise<string[]> =>
   page
-    .locator('[data-testid="track-lane"]')
+    .locator(
+      '.weft-dock-panel[data-panel-kind="timeline"][data-panel-visible="true"] [data-testid="track-lane"]',
+    )
     .evaluateAll((els) => els.map((e) => e.getAttribute('data-track-id') ?? ''))
 
 const openComposition = (page: Page): Promise<{ id: string; crumbs: unknown[] } | null> =>

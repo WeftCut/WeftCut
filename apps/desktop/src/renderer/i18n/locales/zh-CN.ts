@@ -263,6 +263,11 @@ const zhCN: Resources = {
       start: "显示前面的面板标签",
       end: "显示后面的面板标签",
     },
+    timeline_tab: {
+      project: "项目",
+      switch_anchor: "切换锚点",
+      anchor_entry: "{{path}} · {{time}}",
+    },
     panels: {
       media: "素材库",
       transitions: "转场",
@@ -367,7 +372,6 @@ const zhCN: Resources = {
     group_selected: "给所选图层编组",
     ungroup_selected: "解组",
     open_group: "打开组",
-    leave_group: "退出组",
     toggle_link_selected: "链接 / 取消链接所选图层",
     toggle_link_override: "切换忽略链接",
     nudge_audio_sample_back: "音频前移 1 个采样",
@@ -492,8 +496,6 @@ const zhCN: Resources = {
     rename_group: "重命名组…",
     group_label: "组名称",
     group_derived_name: "组 {{n}}",
-    breadcrumb: "当前合成",
-    breadcrumb_leave: "返回 {{label}}",
     group_overhang: "已超出 {{label}} 的末尾——此处不渲染内容",
     group_more_content: "{{label}} 更长——向外拖动此边缘可展开更多",
     link_label: "链接名称",

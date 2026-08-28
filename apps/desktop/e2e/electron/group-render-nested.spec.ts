@@ -264,7 +264,7 @@ test("a Group composites its own timeline: twice over, nested, and as the open c
       await page.evaluate((id) => (window as any).__weftcutTest.setOpenComposition(id), groupId),
     ).toBe(true);
     await expect.poll(() => openComposition(page)).toMatchObject({ id: groupId });
-    // The switch restarts the Group at its own 0 (compositionScopeStore).
+    // The switch restarts the Group at its own 0 (compositionAnchorStore).
     await expect.poll(() => playheadUs(page)).toBe(0);
 
     await expect

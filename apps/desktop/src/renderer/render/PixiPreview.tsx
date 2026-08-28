@@ -27,9 +27,9 @@ import {
 import { playheadTimeUs } from "../state/playheadStore";
 import { compositionOrRoot, rootCompositionOf, useProjectStore } from "../state/projectStore";
 import {
-  openCompositionId,
-  useOpenCompositionId,
-} from "../state/compositionScopeStore";
+  focusedCompositionId,
+  useFocusedCompositionId,
+} from "../state/compositionAnchorStore";
 import { useAppSettingsStore, useDecodeEngine } from "../settings/appSettingsStore";
 import {
   useDecodeComponentAvailable,
@@ -178,7 +178,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         const t = engine?.positionUs() ?? 0;
         compositor.setProject(
           useProjectStore.getState().summary,
-          openCompositionId() ?? null,
+          focusedCompositionId() ?? null,
         );
         compositor.setAnchorTime(t);
         compositor.compositeFrame(t);
@@ -195,12 +195,12 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   );
   const summary = useProjectStore((s) => s.summary);
   const mediaById = useProjectStore((s) => s.mediaById);
-  // The preview draws the OPEN composition (AE; compositionScopeStore.ts) —
-  // opening a Group shows its content at its own size, on its own clock. Size
+  // The preview draws the FOCUSED composition (AE; compositionAnchorStore.ts) —
+  // entering a Group shows its content at its own size, on its own clock. Size
   // and fps here must describe what the Compositor draws, so both follow the
   // same id. Export is unaffected: it always renders the root.
-  const openId = useOpenCompositionId();
-  const composition = compositionOrRoot(summary, openId) ?? undefined;
+  const focusedId = useFocusedCompositionId();
+  const composition = compositionOrRoot(summary, focusedId) ?? undefined;
   const decodeEngine = useDecodeEngine();
   const decodeComponentAvailable = useDecodeComponentAvailable();
 
@@ -344,7 +344,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // Read imperatively: Application init is async, so the open id at mount
       // time is whatever the store holds NOW, not what the render that started
       // the init closed over. The effect below re-targets on every later change.
-      const initialOpenId = openCompositionId() ?? null;
+      const initialOpenId = focusedCompositionId() ?? null;
       compositor.setProject(initialSummary, initialOpenId);
 
       const engine = new PlaybackEngine({ compositor, ticker: app.ticker });
@@ -734,7 +734,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   // time the node is built against it.
   useEffect(() => {
     if (!compositorRef.current) return;
-    compositorRef.current.setProject(summary, openId);
+    compositorRef.current.setProject(summary, focusedId);
     engineRef.current?.bindFps(
       composition?.fps_num ?? 30,
       composition?.fps_den ?? 1,
@@ -742,7 +742,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     const t = engineRef.current?.positionUs() ?? 0;
     compositorRef.current.setAnchorTime(t);
     compositorRef.current.compositeFrame(t);
-  }, [summary, openId, composition, mediaById]);
+  }, [summary, focusedId, composition, mediaById]);
 
   // A draft edit / install / delete updates the runtime Motif catalog (via the
   // async motifs:changed → syncUserMotifsFromBackend → setUserMotifs chain). We
@@ -954,7 +954,7 @@ async function handlePixiExport(
     const t = engine?.positionUs() ?? 0;
     compositor?.setProject(
       useProjectStore.getState().summary,
-      openCompositionId() ?? null,
+      focusedCompositionId() ?? null,
     );
     compositor?.setAnchorTime(t);
     compositor?.compositeFrame(t);

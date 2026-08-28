@@ -235,6 +235,7 @@ function renderTimeline(overrides: {
   setLayerSelection(selectedLayerId, selectedLayerId ? [selectedLayerId] : []);
   return render(
     <Timeline
+      compositionId={null}
       tracks={overrides.tracks ?? [track]}
       links={overrides.links ?? []}
       durationUs={overrides.durationUs ?? 5_000_000}
@@ -2235,7 +2236,7 @@ describe("Timeline follow-playhead", () => {
     clearLayerSelection();
     setActiveRegion(null);
     setPlayheadTimeUs(0);
-    setTimelineScrollLeftPx(0);
+    setTimelineScrollLeftPx(null, 0);
     clientWidth = vi
       .spyOn(HTMLElement.prototype, "clientWidth", "get")
       .mockReturnValue(LANE_VIEWPORT_PX + HEADER_COL_PX);
@@ -2257,10 +2258,10 @@ describe("Timeline follow-playhead", () => {
     renderTimeline(LONG);
 
     act(() => setPlayheadTimeUs(5_000_000)); // 400 px — inside the window
-    expect(timelineScrollLeftPx()).toBe(0);
+    expect(timelineScrollLeftPx(null)).toBe(0);
 
     act(() => setPlayheadTimeUs(13_000_000)); // 1040 px — past it
-    expect(timelineScrollLeftPx()).toBe(960);
+    expect(timelineScrollLeftPx(null)).toBe(960);
   });
 
   it("holds the view still across a ruler scrub drag", () => {
@@ -2269,11 +2270,11 @@ describe("Timeline follow-playhead", () => {
 
     fireEvent.pointerDown(ruler, { button: 0, clientX: 200 });
     act(() => setPlayheadTimeUs(13_000_000));
-    expect(timelineScrollLeftPx()).toBe(0);
+    expect(timelineScrollLeftPx(null)).toBe(0);
 
     fireEvent.pointerUp(window, { clientX: 200 });
     act(() => setPlayheadTimeUs(13_100_000));
-    expect(timelineScrollLeftPx()).toBe(968);
+    expect(timelineScrollLeftPx(null)).toBe(968);
   });
 
   it("leaves the view alone when the pref is off", () => {
@@ -2283,7 +2284,7 @@ describe("Timeline follow-playhead", () => {
     renderTimeline(LONG);
 
     act(() => setPlayheadTimeUs(13_000_000));
-    expect(timelineScrollLeftPx()).toBe(0);
+    expect(timelineScrollLeftPx(null)).toBe(0);
   });
 });
 
@@ -2302,7 +2303,7 @@ describe("Timeline keyboard zoom", () => {
     // with no panel owning the focused region.
     setActiveRegion(null);
     setPlayheadTimeUs(0);
-    setTimelineScrollLeftPx(0);
+    setTimelineScrollLeftPx(null, 0);
     clientWidth = vi
       .spyOn(HTMLElement.prototype, "clientWidth", "get")
       .mockReturnValue(LANE_VIEWPORT_PX + HEADER_COL_PX);

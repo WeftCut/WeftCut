@@ -19,6 +19,9 @@ import { followPageScrollLeft } from "../followPlayhead";
 /// off the node: a per-frame `clientWidth` read would force a synchronous
 /// layout right after the playhead component dirtied `style.left`.
 export function useFollowPlayhead(opts: {
+  /// The composition this timeline shows — the key its scroll offset is
+  /// published under, so paging one Panel never moves another's ruler.
+  compositionId: string | null;
   rootRef: React.RefObject<HTMLDivElement | null>;
   pxPerSec: number;
   /// Visible lane width, header column already subtracted.
@@ -32,7 +35,8 @@ export function useFollowPlayhead(opts: {
   /// looking at — paging out from under that pointer fights the gesture.
   setScrubbing: (active: boolean) => void;
 } {
-  const { rootRef, pxPerSec, viewportWidthPx, contentWidthPx, enabled } = opts;
+  const { compositionId, rootRef, pxPerSec, viewportWidthPx, contentWidthPx, enabled } =
+    opts;
   const scrubbingRef = useRef(false);
 
   // Latest geometry, so the subscription below registers once per enable rather
@@ -55,7 +59,7 @@ export function useFollowPlayhead(opts: {
         // The store, not `root.scrollLeft` — see the layout-read note above. It
         // tracks the node because the scroll event publishes to it and because
         // this hook publishes its own writes below.
-        scrollLeftPx: timelineScrollLeftPx(),
+        scrollLeftPx: timelineScrollLeftPx(compositionId),
         viewportPx: geom.viewportWidthPx,
         maxScrollLeftPx: geom.contentWidthPx - geom.viewportWidthPx,
       });
@@ -65,9 +69,9 @@ export function useFollowPlayhead(opts: {
       // tick window is a subscriber, and one frame of the pre-jump region under
       // a post-jump playhead reads as a glitch. The event still fires and
       // reconciles against whatever the DOM actually clamped to.
-      setTimelineScrollLeftPx(target);
+      setTimelineScrollLeftPx(compositionId, target);
     },
-    [rootRef],
+    [compositionId, rootRef],
   );
 
   // Whether there is a lane to page at all. A mount's first commit has no

@@ -11,8 +11,8 @@ import {
 } from "./helpers/driver";
 
 /**
- * A Group on the timeline: the clip, the two keys, the breadcrumb (spec § Group
- * semantics / § Navigation and scope, ADR 0052).
+ * A Group on the timeline: the clip, the two keys, the tab it opens (spec
+ * § Group semantics / § Navigation and scope, ADR 0052 and ADR 0053).
  *
  * Driven entirely through the real UI — pointer, `Ctrl+G`, `Ctrl+Shift+G`,
  * `Ctrl+Z` — with the state read back off the live `project_summary`, so no id
@@ -88,10 +88,19 @@ const selectedLayerIds = async (page: Page): Promise<string[]> => {
 const openComposition = (page: Page): Promise<{ id: string } | null> =>
   page.evaluate(() => (window as any).__weftcutTest.getOpenComposition());
 
-const crumbs = (page: Page): Promise<string[]> =>
+/// The composition tabs the Dock is showing, in strip order — the navigation
+/// the breadcrumb used to be (ADR 0053). The root's tab prints the Panel kind's
+/// own title, because the root has no name of its own.
+const timelineTabs = (page: Page): Promise<string[]> =>
   page
-    .locator('[data-testid="timeline-crumb"]')
+    .locator('.weft-dock-tab[data-panel-kind="timeline"] .weft-dock-tab-label')
     .evaluateAll((els) => els.map((e) => e.textContent?.trim() ?? ""));
+
+/// The route each of those tabs prints in its tooltip.
+const timelineTabPaths = (page: Page): Promise<string[]> =>
+  page
+    .locator('.weft-dock-tab[data-panel-kind="timeline"]')
+    .evaluateAll((els) => els.map((e) => e.getAttribute("title") ?? ""));
 
 // Raw pointer at the centre rather than `locator.click()`: that scrolls the
 // target into view first, and a clip at t = 0 sits at the scroll origin, where
@@ -194,12 +203,18 @@ test.describe("Group on the timeline", () => {
       await expect(groupClip.locator('[data-testid="layer-overhang-tail"]')).toHaveCount(0);
       await expect(groupClip.locator('[data-testid="layer-source-tail-tick"]')).toHaveCount(0);
 
-      // ── Double-click enters; the breadcrumb reads the path ───────────────
-      // Hidden at the root, so its appearance is itself the signal.
-      await expect(page.locator('[data-testid="timeline-breadcrumb"]')).toHaveCount(0);
+      // ── Double-click enters; a second tab appears beside the first ───────
+      await expect.poll(() => timelineTabs(page)).toEqual(["Timeline"]);
       await doubleClickCentre(page, groupClip);
       await expect.poll(() => openComposition(page)).toMatchObject({ id: groupId });
-      await expect.poll(() => crumbs(page)).toEqual([PROJECT_NAME, "Group 1"]);
+      await expect.poll(() => timelineTabs(page)).toEqual(["Timeline", "Group 1"]);
+      await expect.poll(() => timelineTabPaths(page)).toEqual([
+        PROJECT_NAME,
+        `${PROJECT_NAME} › Group 1`,
+      ]);
+      // Double-clicking the same clip again activates the tab it already has.
+      await doubleClickCentre(page, groupClip);
+      await expect.poll(() => timelineTabs(page)).toEqual(["Timeline", "Group 1"]);
 
       // ── Ctrl+Z from inside: back to the root, with the pair selected ─────
       // Undoing the pre-compose destroys the open composition, so the scope
@@ -207,7 +222,8 @@ test.describe("Group on the timeline", () => {
       // because the layers the user asked for are the ones they had.
       await page.keyboard.press(`${MOD}+Z`);
       await expect.poll(() => openComposition(page)).toMatchObject({ id: s2.root_id });
-      await expect.poll(() => crumbs(page)).toEqual([]);
+      // The composition is gone, so its tab goes with it.
+      await expect.poll(() => timelineTabs(page)).toEqual(["Timeline"]);
       await expect.poll(() => selectedLayerIds(page)).toEqual(pair);
       expect(groupIdsOf(await wire(page))).toHaveLength(0);
 

@@ -619,7 +619,7 @@ export class Compositor {
   }
 
   /// Replace the project snapshot and name the composition to draw: `openId`
-  /// (the preview's open composition — compositionScopeStore.ts), the root
+  /// (the preview's render target — compositionAnchorStore.ts), the root
   /// when omitted or unknown. Export always omits it: a Group is a source, and
   /// a file of one alone is a file nobody asked for. A change of composition
   /// rebuilds the node — every sprite, mixer and decode session goes, since

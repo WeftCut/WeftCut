@@ -90,7 +90,6 @@ import {
 import { toggleLinkOverride } from "./state/linkOverrideStore";
 import {
   groupSelected,
-  leaveOpenGroup,
   openSelectedGroup,
   ungroupSelected,
 } from "./commands/groupCommands";
@@ -102,7 +101,7 @@ import {
   currentOpenComposition,
   rootCompositionOf,
 } from "./state/projectStore";
-import { useOpenCompositionId } from "./state/compositionScopeStore";
+import { useFocusedCompositionId } from "./state/compositionAnchorStore";
 import {
   addColorLayerInOpenComposition,
   addMarkerAtInOpenComposition,
@@ -145,9 +144,9 @@ export function App({ onCloseProject }: AppProps) {
   }
   const summaryRequests = summaryRequestsRef.current;
   // The timeline the panels, the shortcuts and the Insert menu act on. Export
-  // reads the root below regardless (compositionScopeStore.ts says why).
-  const openId = useOpenCompositionId();
-  const comp = compositionOrRoot(summary, openId);
+  // reads the root below regardless (compositionAnchorStore.ts says why).
+  const focusedId = useFocusedCompositionId();
+  const comp = compositionOrRoot(summary, focusedId);
   const [busy, setBusy] = useState(false);
   // Write-only: error text is surfaced through the status bar / log (see the
   // setError call sites), not rendered here, so we keep only the setter.
@@ -663,7 +662,6 @@ export function App({ onCloseProject }: AppProps) {
     groupSelected: () => void groupSelected(),
     ungroupSelected: () => void ungroupSelected(),
     openGroup: openSelectedGroup,
-    leaveGroup: leaveOpenGroup,
     focusNextPanel: () => workspaceController?.focusNextPanel(),
     focusPreviousPanel: () => workspaceController?.focusPreviousPanel(),
     toggleMaximizePanel: () => workspaceController?.toggleMaximize(),

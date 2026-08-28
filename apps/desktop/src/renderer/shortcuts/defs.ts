@@ -38,7 +38,6 @@ export type ActionId =
   | "groupSelected"
   | "ungroupSelected"
   | "openGroup"
-  | "leaveGroup"
   | "toggleLinkSelected"
   | "toggleLinkOverride"
   | "nudgeAudioSampleBack"
@@ -238,15 +237,17 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // gate below already stands the pair down everywhere but the timeline.
   groupSelected:          { defaultKeys: ["Mod+G"],        labelKey: "actions.group_selected", scope: TIMELINE_SELECTION },
   ungroupSelected:        { defaultKeys: ["Mod+Shift+G"],  labelKey: "actions.ungroup_selected", scope: TIMELINE_SELECTION },
-  // Entering and leaving a Group ship UNBOUND. Their home is the pointer — a
-  // double-click on the clip, a crumb in the breadcrumb — and no shipping NLE
-  // has a key for either to copy, so spending one from the budget would be
-  // inventing a convention. They are catalogued anyway, which is what puts them
-  // in the palette, in the Edit menu and in Settings → Keyboard for a user who
-  // wants to bind them; `resolveEntries` simply emits no chord for an empty
-  // `defaultKeys`.
+  // Entering a Group ships UNBOUND. Its home is the pointer — a double-click on
+  // the clip, a tab in the Dock's strip — and no shipping NLE has a key for it
+  // to copy, so spending one from the budget would be inventing a convention.
+  // It is catalogued anyway, which is what puts it in the palette, in the Edit
+  // menu and in Settings → Keyboard for a user who wants to bind it;
+  // `resolveEntries` simply emits no chord for an empty `defaultKeys`.
+  //
+  // There is no leaving half: a timeline Panel is one composition (ADR 0053),
+  // so leaving is closing its tab or activating another — the Dock's own
+  // gestures, which need no action of ours.
   openGroup:              { defaultKeys: [],               labelKey: "actions.open_group", scope: TIMELINE_SELECTION },
-  leaveGroup:             { defaultKeys: [],               labelKey: "actions.leave_group", scope: TIMELINE_SELECTION },
   // `docs/features.md#links` — Ctrl/Cmd+L toggles the link on the current
   // selection, Premiere's Link: two or more unlinked layers link, a selection
   // inside one link unlinks it (`timeline/linkEligibility.ts` decides).

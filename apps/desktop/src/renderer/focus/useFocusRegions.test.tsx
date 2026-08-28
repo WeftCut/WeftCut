@@ -11,6 +11,16 @@ import { useRef, useState } from "react";
 import { useFocusRegions } from "./useFocusRegions";
 import { activeRegion, setActiveRegion } from "./focusRegionStore";
 import { AppInput } from "../components/AppInput";
+import { focusedCompositionId } from "../state/compositionAnchorStore";
+import { useProjectStore } from "../state/projectStore";
+import { compositionFixture, ROOT_ID, summaryFixture } from "../testing/summaryFixture";
+
+const GROUP_ID = "comp-group";
+
+/// A project with one Group, so the two timeline regions below both name a
+/// composition the summary carries.
+const twoCompositions = () =>
+  summaryFixture({ groups: [compositionFixture({ id: GROUP_ID })] });
 
 // jsdom does not implement PointerEvent; alias it to MouseEvent so
 // fireEvent.pointerDown carries a usable .button (same shim as
@@ -21,6 +31,9 @@ if (typeof window !== "undefined" && !window.PointerEvent) {
 
 afterEach(cleanup);
 afterEach(() => setActiveRegion(null));
+// The anchor store is module-global: a project left loaded would hand the next
+// test an editing target it never set.
+afterEach(() => useProjectStore.getState().apply(null));
 
 function Harness({ onCommit }: { onCommit: (v: string) => void }) {
   useFocusRegions();
@@ -59,6 +72,20 @@ function Harness({ onCommit }: { onCommit: (v: string) => void }) {
           onPointerDown={(e) => e.preventDefault()}
         />
       </div>
+      {/* Two timeline Panels, each one region bound to its own composition —
+          the shape ADR 0053 makes possible. */}
+      <div
+        tabIndex={-1}
+        data-focus-region="timeline"
+        data-focus-region-instance={ROOT_ID}
+        data-testid="timeline-root"
+      />
+      <div
+        tabIndex={-1}
+        data-focus-region="timeline"
+        data-focus-region-instance={GROUP_ID}
+        data-testid="timeline-group"
+      />
       <button data-testid="chrome">chrome</button>
     </>
   );
@@ -120,5 +147,35 @@ describe("useFocusRegions", () => {
 
     getByTestId("chrome").focus();
     expect(activeRegion()).toBeNull();
+  });
+
+  // ADR 0041 under ADR 0053: the region a timeline-scoped action is gated on is
+  // still the kind, but WHICH timeline it acts on is the Panel that last held
+  // focus. Both facts are read here, at the one site that narrows a region name.
+  describe("with two timeline Panels open", () => {
+    it("hands the editing target to whichever timeline Panel is focused", () => {
+      useProjectStore.getState().apply(twoCompositions());
+      const { getByTestId } = render(<Harness onCommit={vi.fn()} />);
+
+      getByTestId("timeline-group").focus();
+      expect(activeRegion()).toBe("timeline");
+      expect(focusedCompositionId()).toBe(GROUP_ID);
+
+      getByTestId("timeline-root").focus();
+      expect(focusedCompositionId()).toBe(ROOT_ID);
+    });
+
+    it("leaves the editing target where it was when focus goes elsewhere", () => {
+      useProjectStore.getState().apply(twoCompositions());
+      const { getByTestId } = render(<Harness onCommit={vi.fn()} />);
+
+      getByTestId("timeline-group").focus();
+      getByTestId("chrome").focus();
+
+      // The scope gate sees "no region", so no timeline-scoped key fires — but
+      // the inspector still has a composition to inspect.
+      expect(activeRegion()).toBeNull();
+      expect(focusedCompositionId()).toBe(GROUP_ID);
+    });
   });
 });

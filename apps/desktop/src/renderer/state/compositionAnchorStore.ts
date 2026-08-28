@@ -1,0 +1,374 @@
+// Which composition each open timeline Panel shows, and how it got there.
+//
+// A timeline Panel is one composition (ADR 0053), so "where the editor is
+// looking" is two facts, not one. The ANCHOR is per composition: the path of
+// `CompositionRef` layers a Panel was entered through, root excluded — the
+// direction root-to-local is unambiguous, local-to-root is not, and the anchor
+// is what resolves it. The FOCUSED composition is the one whose Panel last held
+// the keyboard, and it is the editing target: the inspector, the Playhead
+// Panel, the creation channels and every timeline-scoped command read it.
+//
+// EXPORT ALWAYS RENDERS THE ROOT — a Group is a source, and rendering one on
+// its own would produce a file no user asked for. That is why export code reads
+// `rootCompositionOf(summary)` and never this store.
+//
+// Session state, like the playhead and the range: where you are in a work
+// session, not a property of the project. A module-level store rather than App
+// state because the readers sit off App's props chain (Dock Panels, imperative
+// command handlers, the search palette), and because a switch has to reach the
+// selection, range and playhead stores in one place.
+//
+// React subscribers use the ATOMIC hooks below (`feedback_zustand_composite_selector`).
+
+import { create } from "zustand";
+import type { ProjectSummary } from "../ipc";
+import {
+  closeTimelinePanel,
+  openTimelinePanel,
+} from "../workspace/timelinePanels";
+import { seekToClamped, collapseReveal } from "./navigation";
+import { playheadTimeUs } from "./playheadStore";
+import { useProjectStore } from "./projectStore";
+import { clearRange } from "./rangeStore";
+import { clearLayerSelection } from "./selectionStore";
+
+/// One step of an anchor path, root excluded: `layerId` is the Group layer that
+/// was entered (null when the composition was opened by id — a search hit, the
+/// media pool, the e2e hook — and no reference to it was found),
+/// `compositionId` the composition it opens onto. The last step's
+/// `compositionId` is the anchored composition itself.
+export interface CompositionCrumb {
+  layerId: string | null;
+  compositionId: string;
+}
+
+/// Stable empty reference, so a Panel with no anchor of its own (the root's)
+/// does not re-render on every unrelated store tick.
+const NO_CRUMBS: readonly CompositionCrumb[] = [];
+
+interface State {
+  /// The project these anchors belong to; a different `project_id` on the next
+  /// summary resets everything to that project's root.
+  projectId: string | null;
+  /// `composition_id → the path it was entered through`. One entry per open
+  /// timeline Panel, plus the root's, which is always anchored at the root.
+  anchors: ReadonlyMap<string, readonly CompositionCrumb[]>;
+  /// The composition of the timeline Panel that last held focus. Null only
+  /// before the first summary arrives — `compositionOrRoot` treats null as
+  /// "the root".
+  focusedId: string | null;
+  /// Where the playhead was when each composition was last focused. A Group has
+  /// its own time axis, so returning to it at the frame the user was looking at
+  /// is what makes the round trip feel like one timeline per composition rather
+  /// than one playhead dragged across all of them. Never persisted.
+  playheads: ReadonlyMap<string, number>;
+}
+
+const INITIAL: State = {
+  projectId: null,
+  anchors: new Map(),
+  focusedId: null,
+  playheads: new Map(),
+};
+
+export const useCompositionAnchorStore = create<State>(() => INITIAL);
+
+/// Move the keyboard's editing target. Everything that is "where the user is in
+/// THIS timeline" resets — selection, range, reveal — and the playhead is
+/// restored to where it was last left in the target (0 the first time), clamped
+/// to the target's own last frame in case it shrank meanwhile. `displayMode` is
+/// left alone: A/B Roll vs All Tracks is a preference about how to look, not
+/// what to look at.
+function focusOn(nextId: string): void {
+  const s = useCompositionAnchorStore.getState();
+  if (s.focusedId === nextId) return;
+  const playheads = new Map(s.playheads);
+  if (s.focusedId !== null) playheads.set(s.focusedId, playheadTimeUs());
+  useCompositionAnchorStore.setState({ focusedId: nextId, playheads });
+  clearLayerSelection();
+  clearRange();
+  collapseReveal();
+  seekToClamped(playheads.get(nextId) ?? 0);
+}
+
+function setAnchor(
+  compositionId: string,
+  crumbs: readonly CompositionCrumb[],
+): void {
+  const anchors = new Map(useCompositionAnchorStore.getState().anchors);
+  anchors.set(compositionId, crumbs);
+  useCompositionAnchorStore.setState({ anchors });
+}
+
+/// The path from the root to `target` through Group layers, root excluded, or
+/// null when no composition references it. Breadth-first so the shortest path
+/// wins when a Group is placed more than once — the anchor a Panel opened by id
+/// gets, since there is no gesture to read one off.
+function pathFromRoot(
+  summary: ProjectSummary,
+  target: string,
+): CompositionCrumb[] | null {
+  const queue: Array<{ id: string; crumbs: CompositionCrumb[] }> = [{ id: summary.root_id, crumbs: [] }];
+  const seen = new Set<string>([summary.root_id]);
+  while (queue.length > 0) {
+    const { id, crumbs } = queue.shift()!;
+    const comp = summary.compositions[id];
+    if (!comp) continue;
+    for (const track of comp.tracks) {
+      for (const layer of track.layers) {
+        if (layer.params.kind !== "CompositionRef") continue;
+        const child = layer.params.composition_id;
+        const next = [...crumbs, { layerId: layer.id, compositionId: child }];
+        if (child === target) return next;
+        if (seen.has(child)) continue;
+        seen.add(child);
+        queue.push({ id: child, crumbs: next });
+      }
+    }
+  }
+  return null;
+}
+
+/// The anchor to give `compositionId`, entered through `viaLayerId` (a
+/// double-click, `Open group`) or by id (null).
+///
+/// A gesture's own path wins over a search of the project: the Group layer
+/// names its parent, and the parent's anchor is already the path the user
+/// walked, so a composition placed twice is anchored at the placement that was
+/// actually clicked rather than at whichever one the walk reaches first.
+function resolveAnchor(
+  summary: ProjectSummary,
+  compositionId: string,
+  viaLayerId: string | null,
+): readonly CompositionCrumb[] {
+  if (compositionId === summary.root_id) return NO_CRUMBS;
+  if (viaLayerId === null) {
+    return pathFromRoot(summary, compositionId) ?? [{ layerId: null, compositionId }];
+  }
+  const parent = useProjectStore.getState().compositionIdByLayerId.get(viaLayerId);
+  const parentPath =
+    parent === undefined || parent === summary.root_id
+      ? NO_CRUMBS
+      : anchorPath(parent) ?? pathFromRoot(summary, parent) ?? NO_CRUMBS;
+  return [...parentPath, { layerId: viaLayerId, compositionId }];
+}
+
+/// Anchor + focus + Panel, the three halves of "the editor is looking at this
+/// composition now". Focus lands before the Panel opens so the reset a switch
+/// owes (selection, range, playhead) is done by the time the new Panel paints.
+function enter(
+  compositionId: string,
+  crumbs: readonly CompositionCrumb[],
+): void {
+  setAnchor(compositionId, crumbs);
+  focusOn(compositionId);
+  openTimelinePanel(compositionId);
+}
+
+/// Open `compositionId` in a timeline Panel of its own: ensure the Panel
+/// exists, activate it, and make it the editing target. `viaLayerId` is the
+/// Group layer it was entered through; null means "by id", which takes the
+/// shortest path from the root as its anchor. Returns false, changing nothing,
+/// for an id the summary does not carry (a stale search entry, a typo in the
+/// e2e hook).
+export function openComposition(
+  compositionId: string,
+  viaLayerId: string | null,
+): boolean {
+  const summary = useProjectStore.getState().summary;
+  if (!summary || !summary.compositions[compositionId]) return false;
+  enter(compositionId, resolveAnchor(summary, compositionId, viaLayerId));
+  return true;
+}
+
+/// Re-anchor an already open composition on a different placement of it — the
+/// tab's `Switch anchor` menu. Only the anchor moves: the Panel, its scroll and
+/// its selection all stand, because the composition being shown has not
+/// changed, only the account of where it sits in the film. False when the layer
+/// is not a Group clip pointing at `compositionId`.
+export function switchAnchor(compositionId: string, viaLayerId: string): boolean {
+  const summary = useProjectStore.getState().summary;
+  if (!summary) return false;
+  const layer = useProjectStore.getState().layerById.get(viaLayerId);
+  if (layer?.params.kind !== "CompositionRef") return false;
+  if (layer.params.composition_id !== compositionId) return false;
+  setAnchor(compositionId, resolveAnchor(summary, compositionId, viaLayerId));
+  return true;
+}
+
+/// The keyboard landed in a timeline Panel — `useFocusRegions` is the only
+/// caller, and it is where a region name is narrowed (see the LANDMINE in
+/// `focus/focusRegion.ts`). A Panel bound to a composition the summary no
+/// longer carries is ignored: the reconcile below is what retires it.
+export function focusComposition(compositionId: string): void {
+  const summary = useProjectStore.getState().summary;
+  if (!summary || !summary.compositions[compositionId]) return;
+  if (!useCompositionAnchorStore.getState().anchors.has(compositionId)) {
+    setAnchor(compositionId, resolveAnchor(summary, compositionId, null));
+  }
+  focusOn(compositionId);
+}
+
+/// Reconcile the anchors with the Panels the Dock actually holds — the Workspace
+/// calls this on every layout change, so closing a tab, dragging one out and
+/// undoing a Panel open all land here.
+///
+/// An empty list is NOT "nothing is open": the Dock reports it while the
+/// baseline layout is still being built and while the timeline row is unbound,
+/// and dropping the editing target then would clear a selection no gesture
+/// touched.
+export function syncOpenCompositions(compositionIds: readonly string[]): void {
+  if (compositionIds.length === 0) return;
+  const open = new Set(compositionIds);
+  const s = useCompositionAnchorStore.getState();
+  // An unchanged tab set must not be a store write. EVERY Dock layout change
+  // arrives here, a splitter drag frame included, and the anchors feed each
+  // Panel's depth tint and its tab — republishing them per frame would re-render
+  // both for the length of the drag.
+  const changed =
+    open.size !== s.anchors.size ||
+    compositionIds.some((id) => !s.anchors.has(id));
+  if (changed) {
+    const anchors = new Map<string, readonly CompositionCrumb[]>();
+    for (const id of compositionIds) {
+      anchors.set(id, s.anchors.get(id) ?? NO_CRUMBS);
+    }
+    useCompositionAnchorStore.setState({ anchors });
+  }
+  // Closing the tab you were editing in IS leaving it; the leftmost surviving
+  // timeline takes over, which is where the eye goes next anyway.
+  if (s.focusedId === null || !open.has(s.focusedId)) focusOn(compositionIds[0]!);
+}
+
+/// Called by `projectStore.apply` on every summary. Two jobs: a new project
+/// starts at its root with nothing remembered, and a composition the summary no
+/// longer carries — undoing the pre-compose that created it — loses its Panel.
+/// A dead FOCUSED composition falls back to the nearest surviving step of its
+/// own anchor, then the root; falling back rather than holding the dead id is
+/// what keeps every consumer's "focused composition" a real timeline, and the
+/// anchor-first rule keeps the user as close as possible to where they were.
+export function reconcileCompositionAnchors(summary: ProjectSummary | null): void {
+  if (!summary) {
+    useCompositionAnchorStore.setState(INITIAL);
+    return;
+  }
+  const s = useCompositionAnchorStore.getState();
+  if (s.projectId !== summary.project_id) {
+    useCompositionAnchorStore.setState({
+      projectId: summary.project_id,
+      anchors: new Map([[summary.root_id, NO_CRUMBS]]),
+      focusedId: summary.root_id,
+      playheads: new Map(),
+    });
+    return;
+  }
+  const anchors = new Map(s.anchors);
+  for (const id of s.anchors.keys()) {
+    if (summary.compositions[id]) continue;
+    anchors.delete(id);
+    closeTimelinePanel(id);
+  }
+  if (anchors.size !== s.anchors.size) {
+    useCompositionAnchorStore.setState({ anchors });
+  }
+  if (s.focusedId !== null && summary.compositions[s.focusedId]) return;
+  const dead = s.anchors.get(s.focusedId ?? "") ?? NO_CRUMBS;
+  let i = dead.length - 1;
+  while (i >= 0 && !summary.compositions[dead[i]!.compositionId]) i--;
+  enter(
+    i >= 0 ? dead[i]!.compositionId : summary.root_id,
+    i >= 0 ? dead.slice(0, i + 1) : NO_CRUMBS,
+  );
+}
+
+// ===== Readers ==============================================================
+
+/// Imperative read for event-time callers (creation channels stamp the focused
+/// composition on their args; `undefined` when no project is loaded, which the
+/// main side reads as the root).
+export function focusedCompositionId(): string | undefined {
+  return useCompositionAnchorStore.getState().focusedId ?? undefined;
+}
+
+/// The path `compositionId` was entered through, or null when it has none —
+/// nothing has opened it, so nothing has decided where it sits.
+export function anchorPath(
+  compositionId: string,
+): readonly CompositionCrumb[] | null {
+  return useCompositionAnchorStore.getState().anchors.get(compositionId) ?? null;
+}
+
+/// Whether placing `compositionId` in the FOCUSED composition would make it
+/// contain itself. Every step of that Panel's anchor names a composition the
+/// focused one sits inside, so a composition on that path — or the focused one
+/// itself — is exactly the set the pool's drag has to refuse, and the root
+/// (never a pool row) is never on it.
+///
+/// The commit refuses the same placement anyway (`CompositionCycle`, over the
+/// whole reference graph), which is what catches a loop that closes off this
+/// path. This is the half that refuses it BEFORE release, because a gesture the
+/// user has already completed is the wrong place to learn it was impossible.
+export function wouldCycleInOpenComposition(compositionId: string): boolean {
+  const { focusedId } = useCompositionAnchorStore.getState();
+  if (focusedId === compositionId) return true;
+  return (anchorPath(focusedId ?? "") ?? NO_CRUMBS).some(
+    (c) => c.compositionId === compositionId,
+  );
+}
+
+/// Every placement of `compositionId` in the project — one entry per Group clip
+/// pointing at it, each with the anchor that placement would give and where it
+/// starts in ROOT time. The tab's `Switch anchor` menu is the only caller, and
+/// it offers the list only when there is more than one.
+export interface CompositionPlacement {
+  /// The Group layer this placement is.
+  layerId: string;
+  crumbs: readonly CompositionCrumb[];
+  /// Where the placement's own start sits on the root's clock.
+  rootStartUs: number;
+}
+
+export function compositionPlacements(
+  summary: ProjectSummary,
+  compositionId: string,
+): CompositionPlacement[] {
+  const out: CompositionPlacement[] = [];
+  const walk = (
+    hostId: string,
+    crumbs: readonly CompositionCrumb[],
+    offsetUs: number,
+    seen: ReadonlySet<string>,
+  ): void => {
+    const host = summary.compositions[hostId];
+    if (!host) return;
+    for (const track of host.tracks) {
+      for (const layer of track.layers) {
+        if (layer.params.kind !== "CompositionRef") continue;
+        const child = layer.params.composition_id;
+        const next = [...crumbs, { layerId: layer.id, compositionId: child }];
+        const rootStartUs = offsetUs + layer.t_start_us;
+        if (child === compositionId) {
+          out.push({ layerId: layer.id, crumbs: next, rootStartUs });
+        }
+        if (seen.has(child)) continue;
+        // A composition's own `t = 0` in root time — `childFrame`'s offset,
+        // which is where a nested placement's start has to be measured from.
+        walk(child, next, rootStartUs - layer.params.src_in_us, new Set(seen).add(child));
+      }
+    }
+  };
+  walk(summary.root_id, NO_CRUMBS, 0, new Set([summary.root_id]));
+  return out;
+}
+
+export const useFocusedCompositionId = (): string | null =>
+  useCompositionAnchorStore((s) => s.focusedId);
+
+/// The anchor path of one composition, for React. Empty for the root and for a
+/// composition nothing has opened.
+export const useAnchorPath = (
+  compositionId: string | null,
+): readonly CompositionCrumb[] =>
+  useCompositionAnchorStore(
+    (s) => (compositionId === null ? undefined : s.anchors.get(compositionId)) ?? NO_CRUMBS,
+  );

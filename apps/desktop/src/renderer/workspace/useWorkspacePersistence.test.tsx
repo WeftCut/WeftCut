@@ -100,6 +100,9 @@ function fakeController() {
       };
     },
     openPanel: () => {},
+    openTimelinePanel: () => {},
+    closeTimelinePanel: () => {},
+    openTimelineCompositions: () => [],
     closePanel: () => {},
     closeActivePanel: () => {},
     focusNextPanel: () => {},

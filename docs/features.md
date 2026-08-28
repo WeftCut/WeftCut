@@ -424,28 +424,34 @@ any number of layers, the other exactly one Group. Each greys out with the reaso
 in its tooltip: nothing selected, a locked member, or the field that blocks the
 expansion (`Reset the group's opacity to 1 first…`). Both sit in the Edit menu,
 in the Quick Actions strip's `edit` section as Group / Ungroup, and in the
-search palette; `Open group` and `Leave group` are commands too, shipped
-UNBOUND — their home is the pointer, and no shipping NLE has a key for either
-to copy.
+search palette; `Open group` is a command too, shipped UNBOUND — its home is
+the pointer, and no shipping NLE has a key for it to copy. There is no leaving
+half: under a tab strip, leaving is closing a tab or activating another.
 
-**Entering and leaving.** Double-click a Group clip to open its composition, or
-use `Open group` from its context menu; that gesture is spent on navigation, so
+**Entering.** Double-click a Group clip to open its composition, or use
+`Open group` from its context menu; that gesture is spent on navigation, so
 renaming happens through the menu's two rows instead — `Rename` for the clip's
 own label, `Rename group…` for the composition's name (which every clip placing
-it then shows). A **breadcrumb** appears above the timeline the moment you are
-inside something: `‹project› › Group A › Group B`, each crumb a button that
-leaves back to it, hidden entirely at the root. The timeline's empty space is
-tinted one step per level so depth is visible even when the breadcrumb is
-scrolled past — Resolve does the same for a compound clip. On a switch the
-selection, the marked range and any inline reveal are dropped and the playhead
-returns to where it was last left in the target; the display mode is not touched.
-The inspector's Group section carries the composition's name, its frame size, its
-duration and the same two buttons.
+it then shows). The composition opens in a **timeline Panel of its own**, as a
+tab beside the timeline it was entered from: one Panel per composition, so
+opening the same Group twice activates the tab it already has (ADR 0053). The
+tab prints the composition's name and its tooltip the route to it —
+`‹project› › Group A › Group B`; drag the tab out and the two timelines stand
+side by side, each scrolling and zooming on its own. Where a Group is placed
+more than once, the tab's context menu offers `Switch anchor` to say which
+placement its times are read against. The timeline's empty space is tinted one
+step per level so depth reads without looking at the tab — Resolve does the
+same for a compound clip. Moving between tabs drops the selection, the marked
+range and any inline reveal, and the playhead returns to where it was last left
+in the target; the display mode is not touched. The inspector's Group section
+carries the composition's name, its frame size, its duration and the same two
+buttons.
 
 A clip inside a Group is findable in the search palette like any other, and
 activating it opens that Group first, then selects. Undoing a pre-compose while
-standing inside the Group it created returns the view to the root — the open
-composition no longer exists — with the grouped layers selected again.
+standing inside the Group it created closes that tab — the composition no
+longer exists — and hands the keyboard back to the timeline it came from, with
+the grouped layers selected again.
 
 **Reuse, and where an orphan lives.** The media pool's Groups section lists
 every composition with its name, duration and reference count, and dragging a

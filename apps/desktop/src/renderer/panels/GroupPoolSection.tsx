@@ -10,7 +10,7 @@ import { Button } from "../components/ui/button";
 import { formatMediaDuration } from "../frames";
 import { compositionsDelete, groupsRename } from "../ipc";
 import { tryMutate } from "../errors/tryMutate";
-import { openComposition } from "../state/compositionScopeStore";
+import { openComposition } from "../state/compositionAnchorStore";
 import {
   useCompositionRefCounts,
   useGroupOrdinals,

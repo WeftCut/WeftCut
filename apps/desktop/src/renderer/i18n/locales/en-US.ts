@@ -276,6 +276,19 @@ const enUS = {
       start: "Show earlier Panel tabs",
       end: "Show later Panel tabs",
     },
+    // A timeline Panel's own tab: it names the composition it shows, and its
+    // tooltip prints the route the Panel was opened along.
+    timeline_tab: {
+      // The first step of that route. The root composition is never named in
+      // the UI — it IS the timeline — so a path starts at the project, and this
+      // stands in for a project saved under no name yet.
+      project: "Project",
+      // Offered only where a Group is placed more than once: two placements are
+      // two different answers to "where on the film's clock does this sit", and
+      // the tab has to say which one it reads its times against.
+      switch_anchor: "Switch anchor",
+      anchor_entry: "{{path}} · {{time}}",
+    },
     panels: {
       media: "Media Pool",
       transitions: "Transitions",
@@ -393,7 +406,6 @@ const enUS = {
     group_selected: "Group selected layers",
     ungroup_selected: "Ungroup",
     open_group: "Open group",
-    leave_group: "Leave group",
     toggle_link_selected: "Link / Unlink selected layers",
     toggle_link_override: "Toggle link override",
     nudge_audio_sample_back: "Nudge audio 1 sample earlier",
@@ -540,10 +552,6 @@ const enUS = {
     // unnamed ones (`lib/layerName.ts`), which is what makes two unnamed
     // Groups tellable apart on the timeline.
     group_derived_name: "Group {{n}}",
-    // The path from the project down to the open composition. Every crumb is a
-    // button that leaves back to it; hidden entirely at the root.
-    breadcrumb: "Open composition",
-    breadcrumb_leave: "Back to {{label}}",
     // The two source-window affordances on a Group clip. Hatched tail: the
     // composition is shorter than the window, so the clip's end shows nothing.
     // Tick: the composition is longer, so there is content to trim out to.

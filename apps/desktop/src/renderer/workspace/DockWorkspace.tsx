@@ -69,10 +69,30 @@ import { type ProxyState } from "../panels/mediaReadiness";
 import { type OptimizeInfo } from "../panels/importOptimize";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
-import { useOpenComposition, useProjectStore } from "../state/projectStore";
+import {
+  useComposition,
+  useCompositionRefCounts,
+  useGroupOrdinals,
+  useOpenComposition,
+  useProjectStore,
+} from "../state/projectStore";
+import {
+  compositionPlacements,
+  switchAnchor,
+  syncOpenCompositions,
+  useAnchorPath,
+} from "../state/compositionAnchorStore";
 import { jumpToTimeUs } from "../state/navigation";
 import { setTool, useActiveTool } from "../state/toolStore";
-import { Menu, MenuItem } from "../menu/Menu";
+import { useCursorAnchor } from "../timeline/contextMenuAnchor";
+import { Menu, MenuItem, SubMenu } from "../menu/Menu";
+import { FOCUS_REGION_INSTANCE_ATTR } from "../focus/focusRegion";
+import {
+  anchorEntryLabel,
+  compositionPathText,
+  timelineTabLabel,
+} from "./timelineTabName";
+import { registerTimelinePanels } from "./timelinePanels";
 import {
   DockWorkspaceAdapter,
   EDGE_DOCK_FRACTION,
@@ -191,9 +211,11 @@ function useWorkspaceChrome(): WorkspaceChromeCommands {
 function MediaDockPanel() {
   const contracts = useContracts();
   const summary = contracts.summary;
-  // Every Panel below shows the OPEN composition (compositionScopeStore.ts):
-  // its tracks, links, transitions and duration. The summary itself still
-  // supplies what is project-wide — media, history.
+  // Every Panel below shows the FOCUSED composition — the one whose timeline
+  // Panel last held the keyboard (`compositionAnchorStore.ts`): its tracks,
+  // links, transitions and duration. The summary itself still supplies what is
+  // project-wide — media, history. The timeline Panel is the one exception; it
+  // shows the composition its own address names.
   const comp = useOpenComposition();
   return (
     <MediaDropZone>
@@ -243,10 +265,15 @@ function TimelineDockPanel() {
   // `bladeMode` boolean prop — it fans out to a dozen call sites in
   // LayerBlock/TrackLane and none of them need to know about tools.
   const bladeMode = useActiveTool() === "blade";
-  const comp = useOpenComposition();
+  // This Panel's OWN composition, not the focused one (ADR 0053): a timeline
+  // renders the composition its address names, whichever tab has the keyboard.
+  // The instance is null only for the unbound row the Dock builds before the
+  // first summary names a root, which `compositionOrRoot` reads as the root.
+  const comp = useComposition(runtime.instance);
   return (
     <section className="timeline">
       <Timeline
+        compositionId={runtime.instance}
         tracks={comp?.tracks ?? []}
         links={comp?.links ?? []}
         transitions={comp?.transitions ?? []}
@@ -526,6 +553,11 @@ export function WeftCutPanelRenderer({
         // renderers, which are chrome, not regions.
         tabIndex={-1}
         data-focus-region={params.kind}
+        // A SECOND attribute, never a richer value in the first one:
+        // `data-focus-region` is a `PanelKind` and `ActionDef.scope` is a list
+        // of them, so widening it would put an instance where the shortcut
+        // catalogue reads a kind. `useFocusRegions` is what pairs the two.
+        {...(instance === null ? {} : { [FOCUS_REGION_INSTANCE_ATTR]: instance })}
         data-panel-visible={isVisible ? "true" : "false"}
         onPointerEnter={() => chrome.setHoveredPanel(runtime.id)}
         onPointerLeave={() => chrome.setHoveredPanel(null)}
@@ -961,6 +993,158 @@ function DockPanelTab({
 }
 
 /**
+ * A timeline Panel's tab: the composition it shows, and the route it was
+ * opened along.
+ *
+ * This tab strip IS the navigation a breadcrumb row used to be (ADR 0053) —
+ * which is why the route lives in the tooltip rather than in a row of its own:
+ * a Panel whose title is its dock tab must not grow a second title inside
+ * itself, and the Dock already gives switching, reordering and pulling apart
+ * for free.
+ */
+function TimelineDockTab({
+  id,
+  compositionId,
+  panelTitle,
+}: {
+  id: PanelId;
+  compositionId: string;
+  /// The kind's own title, which a Panel showing the root prints unchanged.
+  panelTitle: string;
+}) {
+  const { t } = useTranslation();
+  const chrome = useWorkspaceChrome();
+  const summary = useProjectStore((s) => s.summary);
+  const ordinals = useGroupOrdinals();
+  const crumbs = useAnchorPath(compositionId);
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+  return (
+    <>
+      <div
+        className="weft-dock-tab"
+        data-panel-kind="timeline"
+        title={compositionPathText(summary, crumbs, ordinals, t)}
+        onPointerEnter={() => chrome.setHoveredPanel(id)}
+        onPointerLeave={() => chrome.setHoveredPanel(null)}
+        onDoubleClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          chrome.toggleMaximize(id);
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setMenuAt({ x: event.clientX, y: event.clientY });
+        }}
+      >
+        <span className="weft-dock-tab-label">
+          {timelineTabLabel(summary, compositionId, ordinals, panelTitle, t)}
+        </span>
+        <TextAlignStartIcon size={12} className="weft-dock-tab-active-icon" aria-hidden="true" />
+      </div>
+      {menuAt ? (
+        <TimelineTabContextMenu
+          x={menuAt.x}
+          y={menuAt.y}
+          compositionId={compositionId}
+          onClose={() => setMenuAt(null)}
+          onClosePanel={() => {
+            setMenuAt(null);
+            chrome.closePanel(id);
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The timeline tab's right-click menu, whose one non-obvious row is
+ * `Switch anchor`.
+ *
+ * Root-to-local projection is unambiguous, local-to-root is not, so a Group
+ * placed more than once needs the tab to say WHICH placement its times are
+ * read against (ADR 0053 §5). Offered only where that ambiguity exists: with a
+ * single placement there is nothing to choose, and a submenu holding one
+ * checked row would be a question with one answer.
+ *
+ * Every row is a `MenuItem` — the rule the layer menu states — but the anchor
+ * rows carry no command form: an entry names one Group CLIP in one project, so
+ * there is no id a catalogue could hold, the same reason the layer menu renders
+ * its composition-scoped rename as a plain item.
+ */
+function TimelineTabContextMenu({
+  x,
+  y,
+  compositionId,
+  onClose,
+  onClosePanel,
+}: {
+  x: number;
+  y: number;
+  compositionId: string;
+  onClose: () => void;
+  onClosePanel: () => void;
+}) {
+  const { t } = useTranslation();
+  const summary = useProjectStore((s) => s.summary);
+  const ordinals = useGroupOrdinals();
+  const refCounts = useCompositionRefCounts();
+  const crumbs = useAnchorPath(compositionId);
+  const anchor = useCursorAnchor(x, y);
+  // Enumerated only where the ref count already says there is a choice, so the
+  // common single-placement tab pays nothing for a walk of the whole project.
+  const placements = useMemo(
+    () =>
+      summary && (refCounts.get(compositionId) ?? 0) > 1
+        ? compositionPlacements(summary, compositionId)
+        : [],
+    [compositionId, refCounts, summary],
+  );
+  const anchoredOn = crumbs.at(-1)?.layerId ?? null;
+  return (
+    <MenuPrimitive.Root
+      open
+      modal={false}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <MenuPrimitive.Portal>
+        <MenuPrimitive.Positioner
+          anchor={anchor}
+          side="bottom"
+          align="start"
+          sideOffset={0}
+          className="app-popup-positioner"
+        >
+          <MenuPrimitive.Popup className="app-menu-list">
+            {placements.length > 1 ? (
+              <SubMenu label={t("dock_workspace.timeline_tab.switch_anchor")}>
+                {placements.map((placement) => (
+                  <MenuItem
+                    key={placement.layerId}
+                    label={anchorEntryLabel(summary, placement, ordinals, t)}
+                    checked={placement.layerId === anchoredOn}
+                    onSelect={() => {
+                      onClose();
+                      switchAnchor(compositionId, placement.layerId);
+                    }}
+                  />
+                ))}
+              </SubMenu>
+            ) : null}
+            <MenuItem
+              label={t("dock_workspace.close_panel")}
+              onSelect={onClosePanel}
+            />
+          </MenuPrimitive.Popup>
+        </MenuPrimitive.Positioner>
+      </MenuPrimitive.Portal>
+    </MenuPrimitive.Root>
+  );
+}
+
+/**
  * Quick Actions' header tab, which has two forms.
  *
  * Alone in its Group it is the six-dot drag grip and nothing else. Tabbed in
@@ -1013,6 +1197,18 @@ export function WeftCutDockTab({
         title={title}
         api={api}
         containerApi={containerApi}
+      />
+    );
+  }
+
+  // Only a BOUND timeline gets the composition tab; the unbound row the Dock
+  // builds before the first summary has no composition to name yet.
+  if (parsed && id && parsed.kind === "timeline" && parsed.instance !== null) {
+    return (
+      <TimelineDockTab
+        id={id}
+        compositionId={parsed.instance}
+        panelTitle={title}
       />
     );
   }
@@ -1261,6 +1457,8 @@ export function DockWorkspace({
   // has to know a project exists.
   const rootCompositionId = useProjectStore((s) => s.summary?.root_id ?? null);
 
+  const openTimelinesRef = useRef<(() => void) | null>(null);
+
   const onReady = useCallback(({ api }: DockviewReadyEvent) => {
     let adapter = adapterRef.current;
     if (!adapter?.belongsTo(api)) {
@@ -1268,6 +1466,16 @@ export function DockWorkspace({
       adapter = new DockWorkspaceAdapter(api, sectionRef.current ?? undefined);
       adapterRef.current = adapter;
     }
+    // Which compositions have a Panel is a fact only the Dock holds, and the
+    // anchor store is what has to act on it — a tab dragged out, closed or
+    // never restored leaves an anchor with nothing to anchor. Re-subscribed
+    // rather than added to, so a StrictMode replay over one adapter does not
+    // stack two listeners.
+    openTimelinesRef.current?.();
+    const bound = adapter;
+    openTimelinesRef.current = bound.subscribe(() =>
+      syncOpenCompositions(bound.openTimelineCompositions()),
+    );
     // Read live rather than from the render above: the Dock is ready before
     // this component's own effects run, and the baseline layout it is about to
     // build should be bound straight away wherever the summary already exists.
@@ -1288,8 +1496,24 @@ export function DockWorkspace({
     adapterRef.current?.refreshPanelTitles();
   }, [i18n.resolvedLanguage]);
 
+  // "Open a timeline for THIS composition" reaches the Dock from the anchor
+  // store and the navigation verbs, which name a composition and know nothing
+  // of Panels; this is the whole of the wire between them.
+  useEffect(
+    () =>
+      registerTimelinePanels({
+        open: (compositionId) =>
+          adapterRef.current?.openTimelinePanel(compositionId),
+        close: (compositionId) =>
+          adapterRef.current?.closeTimelinePanel(compositionId),
+      }),
+    [],
+  );
+
   useEffect(
     () => () => {
+      openTimelinesRef.current?.();
+      openTimelinesRef.current = null;
       adapterRef.current?.dispose();
       adapterRef.current = null;
       onControllerReady?.(null);

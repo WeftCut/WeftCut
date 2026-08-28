@@ -15,6 +15,7 @@ import {
   zoomedScrollLeft,
 } from "../zoom";
 import { wheelPixels } from "../wheelScroll";
+import { useProjectStore } from "../../state/projectStore";
 
 /// The lane's visible width — `clientWidth` minus the sticky header column,
 /// which overlays the left edge and hides content under it. Read off the node
@@ -131,7 +132,15 @@ export function useTimelineView(opts: {
       // Prune dead track ids on save so view.json doesn't accumulate
       // entries for tracks the user has deleted (the state map keeps
       // stale keys until we filter on the way out).
+      //
+      // Every track the PROJECT still has, not just the rows this timeline
+      // draws: several timeline Panels can stand open (ADR 0053), each holding
+      // the whole map it loaded and each saving all of it, so pruning to one
+      // Panel's own composition would delete every other Panel's heights.
       const live = new Set(tracks.map((t) => t.id));
+      for (const id of useProjectStore.getState().compositionIdByTrackId.keys()) {
+        live.add(id);
+      }
       const pruned: Record<string, number> = {};
       for (const [id, h] of Object.entries(trackHeightsRef.current)) {
         if (live.has(id)) pruned[id] = h;

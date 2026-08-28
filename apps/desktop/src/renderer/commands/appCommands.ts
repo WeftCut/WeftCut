@@ -35,7 +35,6 @@ import {
   canUngroupSelection,
 } from "../timeline/groupEligibility";
 import { canOpenSelectedGroup } from "./groupCommands";
-import { useCompositionScopeStore } from "../state/compositionScopeStore";
 import { currentOpenComposition } from "../state/projectStore";
 import { useSelectionStore } from "../state/selectionStore";
 import { activeTool } from "../state/toolStore";
@@ -353,7 +352,7 @@ export function buildAppCommands(
     // so the flag would go stale the moment the user pressed `I`. This
     // predicate is evaluated inside `listCommands()`, so it always reads live.
     clearRange: () => hasMarkedRange(),
-    // The Group quartet, live-read for the same reason and through the one
+    // The Group trio, live-read for the same reason and through the one
     // predicate every surface shares (`timeline/groupEligibility.ts`), so the
     // Edit menu row, the strip button and the palette entry cannot disagree
     // about whether the selection can be grouped. The two disabled-reason
@@ -361,9 +360,6 @@ export function buildAppCommands(
     groupSelected: canGroupSelection,
     ungroupSelected: canUngroupSelection,
     openGroup: canOpenSelectedGroup,
-    // Leaving needs somewhere to go back to — depth 0 is the root, and the
-    // command would have nothing to do there.
-    leaveGroup: () => useCompositionScopeStore.getState().crumbs.length > 0,
   };
 
   // The armed modal tool, read straight from `toolStore` for the same

@@ -1,5 +1,5 @@
 import { lastFrameAnchorUs } from "../frames";
-import { openComposition, useCompositionScopeStore } from "./compositionScopeStore";
+import { openComposition, useCompositionAnchorStore } from "./compositionAnchorStore";
 import { transportSeek } from "./playbackStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "./playheadStore";
 import { currentOpenComposition, useProjectStore } from "./projectStore";
@@ -193,7 +193,7 @@ export function selectLayer(layerId: string): boolean {
 function openCompositionOfLayer(layerId: string): boolean {
   const compositionId = useProjectStore.getState().compositionIdByLayerId.get(layerId);
   if (compositionId === undefined) return false;
-  if (useCompositionScopeStore.getState().openId === compositionId) return true;
+  if (useCompositionAnchorStore.getState().focusedId === compositionId) return true;
   return openComposition(compositionId, null);
 }
 
@@ -251,7 +251,7 @@ export function revealTrackWithoutSelection(trackId: string): boolean {
   if (compositionId === undefined) return false;
   if (!revealTrackFn) return false;
   if (
-    useCompositionScopeStore.getState().openId !== compositionId &&
+    useCompositionAnchorStore.getState().focusedId !== compositionId &&
     !openComposition(compositionId, null)
   ) {
     return false;

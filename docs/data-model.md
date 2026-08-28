@@ -931,15 +931,19 @@ Every composition is projected, keyed by id; the projection of one is a pure
 function of that composition (plus the media pool, and the label lookup a
 `CompositionRef` layer's view carries as `composition_label`). Timeline fields
 live only on the entries — there is no flat `tracks` on the project — so a
-consumer names the composition it reads. The renderer keeps that name in one
-place, `state/compositionScopeStore.ts`: the timeline, the inspector, the
-Playhead panel, the ruler and every creation channel (`add_track`,
-`add_marker`, `add_color_layer`, …, stamped with `compositionId`) follow the
-OPEN composition, while export and, until the preview learns to enter a Group,
-the compositor read `compositions[root_id]`. Should the open composition
-vanish from a summary — undoing the pre-compose that created it while standing
-inside it — the store falls back to the nearest crumb it was entered through,
-then the root.
+consumer names the composition it reads. A timeline Panel names its own
+(ADR 0053): its Dock address is `timeline:<composition_id>`, so several can
+stand open at once, each drawing one composition. Everything else follows the
+FOCUSED one — `state/compositionAnchorStore.ts` — which is the composition of
+the timeline Panel that last held the keyboard: the inspector, the Playhead
+panel and every creation channel (`add_track`, `add_marker`,
+`add_color_layer`, …, stamped with `compositionId`). Export and, until the
+preview learns to name its own target, the compositor read
+`compositions[root_id]`. That store also holds each Panel's ANCHOR, the path
+of `CompositionRef` layers it was entered through; should a composition vanish
+from a summary — undoing the pre-compose that created it while standing inside
+it — its Panel closes and the focus falls back to the nearest surviving step of
+that path, then the root.
 
 `TrackSummary.kind` is a derived class label (Video / Audio), never a name:
 `renderer/lib/trackName.ts` is the single answer to what a lane is called

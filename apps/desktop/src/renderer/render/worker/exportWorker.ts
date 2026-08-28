@@ -243,7 +243,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     },
   });
   // No open id: export renders the ROOT whatever composition the editor has
-  // open (compositionScopeStore.ts). A Group is a source, and a file of one
+  // open (compositionAnchorStore.ts). A Group is a source, and a file of one
   // alone is a file nobody asked for.
   compositor.setProject(req.project.summary as ProjectSummary, null);
   // Inject the main-thread-baked Motif frames (layerId → comp-frame-indexed

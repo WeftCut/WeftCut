@@ -5,12 +5,13 @@ import { tryMutate } from "../errors/tryMutate";
 import { formatTimecode } from "../frames";
 import { removeMarker } from "../ipc";
 import { useMarkersVisible } from "../settings/appSettingsStore";
-import { useProjectMarkers } from "../state/projectStore";
+import { useCompositionMarkers } from "../state/projectStore";
 import { MarkerContextMenu } from "./MarkerContextMenu";
 import { RulerContextMenu } from "./RulerContextMenu";
 import { openMarkerRenamePrompt } from "./markerRenamePrompt";
 import { useRangeInUs, useRangeOutUs } from "../state/rangeStore";
 import {
+  timelineScrollKey,
   timelineScrollLeftPx,
   useTimelineScrollStore,
 } from "../state/timelineScrollStore";
@@ -42,9 +43,9 @@ const quantizeScroll = (px: number): number =>
 /// block of scrolling, not once per event, and the window built from a lagging
 /// offset still covers the viewport because the overscan is at least one quantum
 /// wide (see `RULER_OVERSCAN_PX`).
-function useRulerScrollBlockPx(): number {
+function useRulerScrollBlockPx(compositionId: string | null): number {
   const [blockPx, setBlockPx] = useState(() =>
-    quantizeScroll(timelineScrollLeftPx()),
+    quantizeScroll(timelineScrollLeftPx(compositionId)),
   );
   // The committed block, read from the subscription — `setBlockPx` is called
   // only when the block actually changes, so intra-block scrolling costs zero
@@ -59,9 +60,11 @@ function useRulerScrollBlockPx(): number {
     };
     // Re-sync on mount: the store may have moved while the timeline was
     // unmounted (dock panel switch), with no future event to correct it.
-    apply(timelineScrollLeftPx());
-    return useTimelineScrollStore.subscribe((s) => apply(s.scrollLeftPx));
-  }, []);
+    apply(timelineScrollLeftPx(compositionId));
+    return useTimelineScrollStore.subscribe((s) =>
+      apply(s.scrollLeftPx[timelineScrollKey(compositionId)] ?? 0),
+    );
+  }, [compositionId]);
   return blockPx;
 }
 
@@ -227,6 +230,7 @@ function MarkerGlyph({
 }
 
 export function TimelineRuler({
+  compositionId,
   pxPerSec,
   totalSec,
   widthPx,
@@ -235,6 +239,9 @@ export function TimelineRuler({
   fpsDen,
   onScrub,
 }: {
+  /// The composition this ruler belongs to, from the Panel that renders it: its
+  /// markers, and its own scroll offset.
+  compositionId: string | null;
   pxPerSec: number;
   totalSec: number;
   widthPx: number;
@@ -248,7 +255,7 @@ export function TimelineRuler({
   /// loop via this callback.
   onScrub: (clientX: number) => void;
 }) {
-  const scrollLeftPx = useRulerScrollBlockPx();
+  const scrollLeftPx = useRulerScrollBlockPx(compositionId);
   // The marker context menu, owned HERE like everything else the ruler paints
   // (the timeline's prop surface does not change). The popup itself portals to
   // the body, so an open menu adds zero direct children to the strip — the RTL
@@ -289,7 +296,7 @@ export function TimelineRuler({
   // paints markers and the only one the flag governs, so neither belongs on the
   // timeline's prop surface. The array changes once per project mutation, not
   // once per frame.
-  const markers = useProjectMarkers();
+  const markers = useCompositionMarkers(compositionId);
   const markersVisible = useMarkersVisible();
   const { t } = useTranslation();
   const { ticks } = useMemo(

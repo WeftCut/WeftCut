@@ -13,11 +13,11 @@
 
 import { invoke } from "@/bridge/ipc";
 import type { CompositionPatchPartial, Rgba } from "./index";
-import { openCompositionId } from "../state/compositionScopeStore";
+import { focusedCompositionId } from "../state/compositionAnchorStore";
 
 /// `add_track` in the open composition. Tracks are kind-agnostic.
 export async function addTrackInOpenComposition(): Promise<string> {
-  return invoke<string>("add_track", { compositionId: openCompositionId() });
+  return invoke<string>("add_track", { compositionId: focusedCompositionId() });
 }
 
 /// `add_marker` at `tUs` on the open composition's timeline; the label is
@@ -26,7 +26,7 @@ export async function addMarkerAtInOpenComposition(tUs: number): Promise<string>
   return invoke<string>("add_marker", {
     tUs,
     label: "",
-    compositionId: openCompositionId(),
+    compositionId: focusedCompositionId(),
   });
 }
 
@@ -45,7 +45,7 @@ export async function addColorLayerInOpenComposition(opts: {
     height: opts.height,
     tStartUs: opts.tStartUs,
     durationUs: opts.durationUs,
-    compositionId: openCompositionId(),
+    compositionId: focusedCompositionId(),
   });
 }
 
@@ -60,7 +60,7 @@ export async function addTextLayerInOpenComposition(opts: {
     content: opts.content,
     tStartUs: opts.tStartUs,
     durationUs: opts.durationUs,
-    compositionId: openCompositionId(),
+    compositionId: focusedCompositionId(),
   });
 }
 
@@ -80,7 +80,7 @@ export async function addGroupLayerInOpenComposition(args: {
     sourceCompositionId: args.sourceCompositionId,
     trackId: args.trackId,
     tStartUs: args.tStartUs,
-    compositionId: openCompositionId(),
+    compositionId: focusedCompositionId(),
   });
 }
 
@@ -100,7 +100,7 @@ export async function addMotifInOpenComposition(args: {
     tEndUs: args.tEndUs,
     trackId: args.trackId,
     props: args.props,
-    compositionId: openCompositionId(),
+    compositionId: focusedCompositionId(),
   });
 }
 

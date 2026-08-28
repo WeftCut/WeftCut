@@ -166,10 +166,11 @@ a different node ([ADR 0052](adr/0052-link-propagates-group-composes.md)).
   its root-time interval, clipped to the Group's window, and reads its source
   `headUs` in — so the mixers need no notion of Groups. `enabled = false` on
   the Group layer silences everything below it that same frame.
-- **Preview draws the OPEN composition** (`state/compositionScopeStore.ts`);
-  the frame size, the fps binding and the playhead's bound follow it, so
-  opening a Group shows its content unscaled at its own size, on its own
-  clock. **Export always draws the root**, whatever is open: a Group is a
+- **Preview draws the FOCUSED composition** (`state/compositionAnchorStore.ts`)
+  — the one whose timeline Panel last held the keyboard; the frame size, the
+  fps binding and the playhead's bound follow it, so entering a Group shows its
+  content unscaled at its own size, on its own clock. **Export always draws the
+  root**, whatever has focus: a Group is a
   source, and a file of one alone is a file nobody asked for.
 - **Every flat `tracks[].layers[]` walk that has to see inside a Group** goes
   through `compositionWalk.ts` — the export decode set and the emptiness gate

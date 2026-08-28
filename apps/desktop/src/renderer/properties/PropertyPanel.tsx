@@ -49,7 +49,7 @@ import {
   groupNotPlainReason,
   type GroupNotPlainReason,
 } from "../timeline/groupEligibility";
-import { openComposition } from "../state/compositionScopeStore";
+import { openComposition } from "../state/compositionAnchorStore";
 import { isShrunk, TEXT_BOX_MIN_PX } from "../render/textBox";
 import { InspectorAnimField } from "./InspectorAnimField";
 import { LinkLabelField } from "./LinkLabelField";

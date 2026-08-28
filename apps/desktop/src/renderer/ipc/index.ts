@@ -440,11 +440,11 @@ export interface TrackSummary {
 export interface ProjectSummary {
   project_id: string;
   name: string;
-  /// `compositions[root_id]` is what export renders and what the scope store
-  /// opens by default (`state/compositionScopeStore.ts`).
+  /// `compositions[root_id]` is what export renders and what a fresh session's
+  /// timeline Panel opens on (`state/compositionAnchorStore.ts`).
   root_id: string;
   compositions: Record<string, CompositionSummary>;
-  /// Counted over EVERY composition, not the open one.
+  /// Counted over EVERY composition, not the focused one.
   track_count: number;
   layer_count: number;
   history: HistoryView;

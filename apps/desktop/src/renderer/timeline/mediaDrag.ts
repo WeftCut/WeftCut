@@ -7,7 +7,7 @@ import type {
   MediaSummary,
   TrackSummary,
 } from "../ipc";
-import { wouldCycleInOpenComposition } from "../state/compositionScopeStore";
+import { wouldCycleInOpenComposition } from "../state/compositionAnchorStore";
 import type { LayerOverlapClass } from "./geometry";
 import {
   evaluateTimelinePlacements,

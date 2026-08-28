@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { LayerSummary, MediaSummary, TrackSummary } from "../ipc";
-import { useCompositionScopeStore } from "../state/compositionScopeStore";
+import { useCompositionAnchorStore } from "../state/compositionAnchorStore";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
   compositionDragPayload,
@@ -360,10 +360,10 @@ describe("composition drag placement", () => {
   };
 
   afterEach(() =>
-    useCompositionScopeStore.setState({
+    useCompositionAnchorStore.setState({
       projectId: "p",
-      openId: "comp-root",
-      crumbs: [],
+      anchors: new Map([["comp-root", []]]),
+      focusedId: "comp-root",
       playheads: new Map(),
     }),
   );
@@ -382,9 +382,11 @@ describe("composition drag placement", () => {
   });
 
   it("refuses the composition the editor is standing inside", () => {
-    useCompositionScopeStore.setState({
-      openId: GROUP.id,
-      crumbs: [{ layerId: "layer-group", compositionId: GROUP.id }],
+    useCompositionAnchorStore.setState({
+      anchors: new Map([
+        [GROUP.id, [{ layerId: "layer-group", compositionId: GROUP.id }]],
+      ]),
+      focusedId: GROUP.id,
     });
     const plan = planMediaDrop({
       ...args,
@@ -401,12 +403,17 @@ describe("composition drag placement", () => {
     // Standing two deep: root › outer › inner. Placing `outer` here would make
     // it contain itself through `inner`.
     const outer = { id: "comp-outer", duration_us: 2_000_000 };
-    useCompositionScopeStore.setState({
-      openId: "comp-inner",
-      crumbs: [
-        { layerId: "layer-outer", compositionId: outer.id },
-        { layerId: "layer-inner", compositionId: "comp-inner" },
-      ],
+    useCompositionAnchorStore.setState({
+      anchors: new Map([
+        [
+          "comp-inner",
+          [
+            { layerId: "layer-outer", compositionId: outer.id },
+            { layerId: "layer-inner", compositionId: "comp-inner" },
+          ],
+        ],
+      ]),
+      focusedId: "comp-inner",
     });
     const payload = compositionDragPayload(outer, "Group 1");
     expect(planMediaDrop({ ...args, track: track([]), media: payload }).validity).toBe("cycle");

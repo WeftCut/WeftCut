@@ -101,8 +101,7 @@ import {
   KeyframeLaneHeaders,
   type RegisterSubLaneEl,
 } from "./KeyframeLane";
-import { useCrumbs } from "../state/compositionScopeStore";
-import { CompositionBreadcrumb } from "./CompositionBreadcrumb";
+import { useAnchorPath } from "../state/compositionAnchorStore";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { MarqueeOverlay } from "./MarqueeOverlay";
 import { beginGroupRename, beginLayerRename, beginLinkRename } from "./renameStore";
@@ -174,6 +173,10 @@ import {
 import { TransitionChipMenu } from "./TransitionChipMenu";
 
 interface TimelineProps {
+  /// The composition this timeline renders — its Panel's own instance, never
+  /// the focused one (ADR 0053). `null` is the unbound row the Dock builds
+  /// before the first summary names a root, and reads as the root.
+  compositionId: string | null;
   tracks: TrackSummary[];
   /// `docs/features.md#links`. Empty array when no links exist.
   links: LinkSummary[];
@@ -233,6 +236,7 @@ const GROUP_TINT_STEP_PCT = 6;
 const MAX_GROUP_TINT_STEPS = 3;
 
 export function Timeline({
+  compositionId,
   tracks,
   links,
   transitions = EMPTY_TRANSITIONS,
@@ -321,9 +325,9 @@ export function Timeline({
         root.scrollLeft = Math.max(0, x - viewport / 2);
         // Publish now rather than waiting for the scroll event's rAF, so the
         // ruler's tick window lands with the jump instead of one frame later.
-        setTimelineScrollLeftPx(root.scrollLeft);
+        setTimelineScrollLeftPx(compositionId, root.scrollLeft);
       }),
-    [],
+    [compositionId],
   );
 
   // Publish horizontal scroll for the ruler's tick window. Deliberately NOT
@@ -337,20 +341,20 @@ export function Timeline({
     let raf = 0;
     const publish = () => {
       raf = 0;
-      setTimelineScrollLeftPx(root.scrollLeft);
+      setTimelineScrollLeftPx(compositionId, root.scrollLeft);
     };
     const onScroll = () => {
       if (raf === 0) raf = requestAnimationFrame(publish);
     };
     // Seed: a remount (dock panel switch) starts at scrollLeft 0 without
     // firing a scroll event.
-    setTimelineScrollLeftPx(root.scrollLeft);
+    setTimelineScrollLeftPx(compositionId, root.scrollLeft);
     root.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       if (raf !== 0) cancelAnimationFrame(raf);
       root.removeEventListener("scroll", onScroll);
     };
-  }, []);
+  }, [compositionId]);
 
   // Cursor-anchored zoom re-writes `scrollLeft` in a layout effect inside
   // `useTimelineView`, which is registered BEFORE this one — so by the time this
@@ -358,8 +362,10 @@ export function Timeline({
   // waiting for the scroll event's rAF) is what keeps the ruler's window from
   // painting the pre-zoom region for one frame.
   useLayoutEffect(() => {
-    if (rootRef.current) setTimelineScrollLeftPx(rootRef.current.scrollLeft);
-  }, [pxPerSec]);
+    if (rootRef.current) {
+      setTimelineScrollLeftPx(compositionId, rootRef.current.scrollLeft);
+    }
+  }, [compositionId, pxPerSec]);
 
   const { totalSec, widthPx } = computeTimelineExtent({
     durationUs,
@@ -372,6 +378,7 @@ export function Timeline({
   // another dock tab has nothing to keep in view.
   const followEnabled = useFollowPlayheadEnabled();
   const { setScrubbing: setFollowScrubbing } = useFollowPlayhead({
+    compositionId,
     rootRef,
     pxPerSec,
     viewportWidthPx,
@@ -1511,14 +1518,13 @@ export function Timeline({
     clearLayerSelection();
   }, []);
 
-  // How deep the open composition sits, and the background that says so. Read
-  // here rather than in a child because the tint belongs to the timeline's own
-  // empty space — the band below the last lane included, which is part of this
-  // scroll container.
-  const crumbDepth = useCrumbs().length;
-  const insideGroup = crumbDepth > 0;
-  const tintPct =
-    GROUP_TINT_STEP_PCT * Math.min(crumbDepth, MAX_GROUP_TINT_STEPS);
+  // How deep THIS Panel's composition sits, and the background that says so.
+  // Read here rather than in a child because the tint belongs to the timeline's
+  // own empty space — the band below the last lane included, which is part of
+  // this scroll container.
+  const depth = useAnchorPath(compositionId).length;
+  const insideGroup = depth > 0;
+  const tintPct = GROUP_TINT_STEP_PCT * Math.min(depth, MAX_GROUP_TINT_STEPS);
   const groupDepthTint = `color-mix(in srgb, var(--card) ${100 - tintPct}%, var(--foreground))`;
 
   // Memoized: the provider hands this to every anchor surface, so a fresh
@@ -1537,10 +1543,6 @@ export function Timeline({
   return (
     <MarqueeAnchorContext.Provider value={marqueeAnchor}>
     <KeyframeBatchContext.Provider value={commitKeyframeBatch}>
-    {/* The path to the open composition, above the scroll container and hidden
-        at the root. `.timeline` is a flex column, so the row simply takes its
-        own height and the scroll body keeps the rest. */}
-    <CompositionBreadcrumb />
     <div
       ref={rootRef}
       className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto ${
@@ -1549,8 +1551,8 @@ export function Timeline({
       // One step off the panel surface for every depth below the root, capped so
       // a deep nest cannot walk the background into the foreground. Resolve tints
       // a compound clip's timeline the same way, and it is the one signal that
-      // survives being scrolled: the breadcrumb can be scrolled past, the empty
-      // space cannot.
+      // reads without leaving the timeline: the tab says which composition this
+      // is, the tint says how deep it sits, and neither can be scrolled past.
       style={insideGroup ? { backgroundColor: groupDepthTint } : undefined}
     >
       {/* `min-h-full` so the lanes' container fills the panel even on a short
@@ -1582,6 +1584,7 @@ export function Timeline({
           {orderedTracks.map(({ track, isRoleSectionStart }) => (
             <Fragment key={track.id}>
               <TrackHeader
+                compositionId={compositionId}
                 track={track}
                 height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
                 isRevealed={track.id === (revealedTrackId ?? null)}
@@ -1613,6 +1616,7 @@ export function Timeline({
           onPointerDown={(e) => beginMarquee(marqueeAnchor, "clip", e)}
         >
           <TimelineRuler
+            compositionId={compositionId}
             pxPerSec={pxPerSec}
             totalSec={totalSec}
             widthPx={widthPx}

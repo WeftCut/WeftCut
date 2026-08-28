@@ -22,6 +22,12 @@ const previewHarness = vi.hoisted(() => ({
   unmounts: 0,
 }));
 
+/// The last props the Timeline was handed, so a test can prove WHICH
+/// composition a Panel rendered without mounting the real timeline tree.
+const timelineHarness = vi.hoisted(() => ({
+  props: null as { compositionId: string | null; tracks: { id: string }[] } | null,
+}));
+
 vi.mock("dockview-react", async () => {
   const React = await import("react");
   return {
@@ -95,7 +101,12 @@ vi.mock("dockview-react", async () => {
 });
 
 vi.mock("../ipc", () => ({ importCancel: vi.fn() }));
-vi.mock("../timeline/Timeline", () => ({ Timeline: () => null }));
+vi.mock("../timeline/Timeline", () => ({
+  Timeline: (props: { compositionId: string | null; tracks: { id: string }[] }) => {
+    timelineHarness.props = props;
+    return null;
+  },
+}));
 vi.mock("../app/PreviewSection", async () => {
   const React = await import("react");
   return {
@@ -129,7 +140,11 @@ vi.mock("../panels/CaptionPanel", () => ({ CaptionPanel: () => null }));
 vi.mock("../panels/EffectPanel", () => ({ EffectPanel: () => null }));
 vi.mock("../panels/PlayheadPanel", () => ({ PlayheadPanel: () => null }));
 vi.mock("../panels/RoleMixerPanel", () => ({ RoleMixerPanel: () => null }));
-vi.mock("../state/playheadStore", () => ({
+// Only the throttled hook is stubbed — its timer would keep the inspector
+// Panels re-rendering through a test. The rest of the store is real: the anchor
+// store reads the playhead when the editing target changes.
+vi.mock("../state/playheadStore", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../state/playheadStore")>()),
   usePlayheadTimeUsThrottled: () => 0,
 }));
 
@@ -138,6 +153,16 @@ import {
   type DockPanelContracts,
 } from "./DockWorkspace";
 import { DOCK_COMPONENT_ID, DOCK_TAB_COMPONENT_ID } from "./panelRegistry";
+import {
+  focusedCompositionId,
+  openComposition,
+} from "../state/compositionAnchorStore";
+import { useProjectStore } from "../state/projectStore";
+import {
+  compositionFixture,
+  groupLayerFixture,
+  summaryFixture,
+} from "../testing/summaryFixture";
 
 afterEach(() => cleanup());
 
@@ -369,7 +394,53 @@ const contracts: DockPanelContracts = {
   onRevealTrack: vi.fn(),
 };
 
+/// A project whose one Group sits on the root's timeline — placed once, then
+/// twice, for the tab's anchor menu.
+const GROUP_ID = "comp-lower-third";
+
+function rootWithRefs(...starts: number[]) {
+  return summaryFixture({
+    root: {
+      duration_us: 10_000_000,
+      tracks: [
+        {
+          id: "t-root",
+          kind: "Video",
+          label: null,
+          enabled: true,
+          locked: false,
+          muted: false,
+          solo: false,
+          role: null,
+          transient: true,
+          layers: starts.map((tStartUs, index) =>
+            groupLayerFixture({
+              id: `ref-${"ab"[index]}`,
+              compositionId: GROUP_ID,
+              compositionLabel: "Lower third",
+              tStartUs,
+              tEndUs: tStartUs + 2_000_000,
+            }),
+          ),
+        },
+      ],
+    },
+    groups: [
+      compositionFixture({
+        id: GROUP_ID,
+        label: "Lower third",
+        duration_us: 2_000_000,
+      }),
+    ],
+  });
+}
+
+const placedOnce = () => rootWithRefs(0);
+const placedTwice = () => rootWithRefs(0, 2_000_000);
+
 beforeEach(() => {
+  useProjectStore.getState().apply(null);
+  timelineHarness.props = null;
   dockHarness.captures.length = 0;
   dockHarness.readyCalls = 0;
   dockHarness.renderWatermark = false;
@@ -526,6 +597,88 @@ describe("DockWorkspace React integration", () => {
       '.weft-dock-panel[data-panel-kind="timeline"]',
     );
     expect(panel?.dataset.focusRegion).toBe("timeline");
+  });
+
+  // The heart of ADR 0053: a timeline Panel renders the composition its own
+  // address names. Two of them can therefore stand open showing different
+  // timelines, whichever one the keyboard happens to be in.
+  it("renders the composition its address names, not the focused one", () => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+    dockHarness.contentApi = {
+      id: `timeline:${GROUP_ID}`,
+      isVisible: true,
+      onDidVisibilityChange: () => ({ dispose: vi.fn() }),
+    };
+    dockHarness.contentKind = "timeline";
+    dockHarness.contentInstance = GROUP_ID;
+    useProjectStore.getState().apply(placedOnce());
+
+    render(<DockWorkspace contracts={contracts} />);
+
+    // The root has focus — nothing opened the Group — and the Panel still draws
+    // the Group's own (empty) track list rather than the root's.
+    expect(focusedCompositionId()).toBe(placedOnce().root_id);
+    expect(timelineHarness.props?.compositionId).toBe(GROUP_ID);
+    expect(timelineHarness.props?.tracks).toEqual([]);
+  });
+
+  // The tab strip IS the navigation the breadcrumb was (ADR 0053), so the two
+  // things a crumb row used to say have to be on the tab: which composition
+  // this is, and how the Panel got there.
+  it("names a Group's tab after its composition and prints the route in the tooltip", () => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+    dockHarness.headerApi = {
+      id: `timeline:${GROUP_ID}`,
+      title: "Timeline",
+      group: { panels: [{ id: `timeline:${GROUP_ID}` }] },
+    };
+    useProjectStore.getState().apply(placedOnce());
+
+    render(<DockWorkspace contracts={contracts} />);
+    act(() => {
+      openComposition(GROUP_ID, "ref-a");
+    });
+
+    const tab = document.querySelector<HTMLElement>(
+      '.weft-dock-tab[data-panel-kind="timeline"]',
+    );
+    expect(tab?.querySelector(".weft-dock-tab-label")?.textContent).toBe(
+      "Lower third",
+    );
+    expect(tab?.title).toBe("fixture › Lower third");
+  });
+
+  it("offers every placement of a Group placed twice, and none of a Group placed once", async () => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+    dockHarness.headerApi = {
+      id: `timeline:${GROUP_ID}`,
+      title: "Timeline",
+      group: { panels: [{ id: `timeline:${GROUP_ID}` }] },
+    };
+    useProjectStore.getState().apply(placedOnce());
+
+    render(<DockWorkspace contracts={contracts} />);
+    act(() => {
+      openComposition(GROUP_ID, "ref-a");
+    });
+    const tab = document.querySelector('.weft-dock-tab[data-panel-kind="timeline"]')!;
+
+    // One placement is not a choice, so the submenu is not offered at all.
+    fireEvent.contextMenu(tab);
+    expect(await screen.findByText("Close Panel")).toBeTruthy();
+    expect(screen.queryByText("Switch anchor")).toBeNull();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+
+    act(() => {
+      useProjectStore.getState().apply(placedTwice());
+    });
+    fireEvent.contextMenu(tab);
+    // The rows themselves are `anchorEntryLabel`'s, covered in
+    // `timelineTabName.test.ts`; what the tab decides is whether to offer them.
+    expect(await screen.findByText("Switch anchor")).toBeTruthy();
   });
 
   // The strip's grip IS this tab, repositioned by CSS onto the button row. The

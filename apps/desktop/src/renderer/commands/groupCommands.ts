@@ -1,10 +1,11 @@
-// The four Group gestures as commands: make one, dissolve one, enter one, leave
-// one.
+// The three Group gestures as commands: make one, dissolve one, enter one.
+// There is no fourth — under a tab strip, leaving a Group is closing its tab or
+// activating another (ADR 0053).
 //
 // Self-contained — each reads the stores it needs and commits through IPC — so
 // App lends them a `HandlerMap` slot and nothing else. That is what puts them in
 // App's catalogue rather than Timeline's provider: a command registered by
-// Timeline vanishes with the Timeline Panel, and these four belong in the Edit
+// Timeline vanishes with the Timeline Panel, and these three belong in the Edit
 // menu, which must not lose rows when a Panel is closed
 // (`menu/contextMenuCommands.test.ts` states the rule).
 //
@@ -13,10 +14,7 @@
 
 import { groupsCreate, groupsUngroup } from "../ipc";
 import { logMutationFailure } from "../errors/tryMutate";
-import {
-  leaveComposition,
-  openComposition,
-} from "../state/compositionScopeStore";
+import { openComposition } from "../state/compositionAnchorStore";
 import { rememberPrecompose } from "../state/precomposeSelection";
 import { setLayerSelection, useSelectionStore } from "../state/selectionStore";
 import {
@@ -63,28 +61,21 @@ export async function ungroupSelected(): Promise<void> {
   }
 }
 
-/// Enter the selected Group — the keyboard/palette half of the double-click.
-/// Carries the Group LAYER through, so the breadcrumb reads as the path the user
-/// walked rather than a path reconstructed from the root.
+/// Enter the selected Group — the keyboard/palette half of the double-click:
+/// ensure the Group has a timeline Panel of its own, and make it the one the
+/// keyboard acts on. Carries the Group LAYER through, so the Panel is anchored
+/// on the placement the user reached it by rather than on a path reconstructed
+/// from the root.
 export function openSelectedGroup(): void {
   const layer = selectedGroupLayer();
   if (!layer || layer.params.kind !== "CompositionRef") return;
   openComposition(layer.params.composition_id, layer.id);
 }
 
-/// Leave the open composition for the one it was entered from. No default
-/// binding: no NLE has one to copy, and the gesture's home is the breadcrumb —
-/// this exists so it is reachable from the keyboard once a user binds it, and
-/// from the palette.
-export function leaveOpenGroup(): void {
-  leaveComposition();
-}
-
 export { canGroupSelection, canUngroupSelection };
 
-/// `openGroup` and `leaveGroup` are enabled by what is reachable, not by what is
-/// selected: entering needs a Group under the cursor's selection, leaving needs
-/// somewhere to go back to.
+/// `openGroup` is enabled by what is reachable, not by what is selected:
+/// entering needs a Group under the cursor's selection.
 export function canOpenSelectedGroup(): boolean {
   return selectedGroupLayer() !== null;
 }

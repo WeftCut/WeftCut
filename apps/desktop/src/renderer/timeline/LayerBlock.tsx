@@ -39,7 +39,7 @@ import {
   endRename,
 } from "./renameStore";
 import { useLinkOverride } from "../state/linkOverrideStore";
-import { openComposition } from "../state/compositionScopeStore";
+import { openComposition } from "../state/compositionAnchorStore";
 import { revealTrackWithoutSelection } from "../state/navigation";
 import {
   useCompositionDurationUs,
@@ -849,9 +849,12 @@ export function LayerBlock({
         e.stopPropagation();
         // A Group clip's double-click ENTERS it (AE, Premiere and Resolve all
         // open a nest this way), so the gesture that renames every other clip
-        // is spent here on navigation. Renaming a Group is still reachable —
-        // `Rename` for the clip's own label, `Rename group…` for the
-        // composition's, both on the context menu.
+        // is spent here on navigation — the same `openGroup` the Edit menu and
+        // the clip's own context menu run, which under ADR 0053 means "give
+        // this composition a timeline Panel beside this one, and activate it".
+        // Renaming a Group is still reachable — `Rename` for the clip's own
+        // label, `Rename group…` for the composition's, both on the context
+        // menu.
         if (groupCompositionId !== null) {
           openComposition(groupCompositionId, layer.id);
           return;

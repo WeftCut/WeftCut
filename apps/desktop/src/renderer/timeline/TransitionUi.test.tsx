@@ -114,6 +114,7 @@ function renderTimeline(overrides: {
 }) {
   return render(
     <Timeline
+      compositionId={null}
       tracks={overrides.tracks ?? [makeTrack([layerA, layerB])]}
       links={[]}
       {...(overrides.transitions ? { transitions: overrides.transitions } : {})}
@@ -405,6 +406,7 @@ describe("chip two-edge drag (spec D6)", () => {
   it("blade mode makes the whole chip — zones included — transparent to pointer events", () => {
     const { container } = render(
       <Timeline
+        compositionId={null}
         tracks={[makeTrack([extendedA, layerB])]}
         links={[]}
         transitions={[transition]}

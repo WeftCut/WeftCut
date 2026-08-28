@@ -85,6 +85,14 @@ export interface DockWorkspaceController {
    *  id: the caller is a menu entry or a command, which names the Panel it
    *  wants and has no instance to name. */
   openPanel(kind: PanelKind): void;
+  /** Ensure the timeline Panel showing `compositionId` is open and active. The
+   *  sibling of `openPanel` for the one kind that instantiates: "a timeline"
+   *  and "the timeline for THIS composition" are different requests, and only
+   *  the second one can create a second Panel. */
+  openTimelinePanel(compositionId: string): void;
+  closeTimelinePanel(compositionId: string): void;
+  /** Every composition a timeline Panel currently shows, in tab order. */
+  openTimelineCompositions(): string[];
   closePanel(id: PanelId): void;
   closeActivePanel(): void;
   focusNextPanel(): void;
@@ -401,8 +409,15 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     // Close only against a Panel that actually arrived: the Workspace must
     // never be left without the row the user was looking at.
     if (!bound) return;
-    this.closePanel(stale);
-    this.lastPlacements.delete(stale);
+    // Every OTHER timeline shows a composition of the project being left, so
+    // its tab is stale in the same way the row above was: a different root
+    // means a different set of compositions, and nothing carries across.
+    for (const open of this.openTimelinePanelIds()) {
+      if (open !== wanted) {
+        this.closePanel(open);
+        this.lastPlacements.delete(open);
+      }
+    }
     this.captureOpenPlacements();
     this.emitChange();
   }
@@ -433,6 +448,53 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     }
     this.captureOpenPlacements();
     this.emitChange();
+  }
+
+  /**
+   * A composition's own timeline Panel: activate the one that exists, or make
+   * one beside the timeline the request came from.
+   *
+   * `within` the active timeline's Dock Group, never a split — a Group opened
+   * from a clip becomes a TAB next to the timeline it was opened from, which is
+   * the tab strip ADR 0053 puts in the breadcrumb's place. Pulling the two
+   * apart is then one tab drag, and that is the user's call to make, not this
+   * method's.
+   */
+  openTimelinePanel(compositionId: string): void {
+    const id = panelIdOf("timeline", compositionId);
+    const open = this.api.getPanel(id);
+    if (open) {
+      open.api.setActive();
+      this.emitChange();
+      return;
+    }
+    const reference =
+      this.activeTimelinePanelId() ?? this.openTimelinePanelIds()[0];
+    if (reference) {
+      this.addPanel(
+        "timeline",
+        { position: { referencePanel: reference, direction: "within" } },
+        compositionId,
+      );
+    } else {
+      this.addPanelAtSemanticFallback("timeline", compositionId);
+    }
+    this.api.getPanel(id)?.api.setActive();
+    this.captureOpenPlacements();
+    this.emitChange();
+  }
+
+  closeTimelinePanel(compositionId: string): void {
+    this.closePanel(panelIdOf("timeline", compositionId));
+  }
+
+  openTimelineCompositions(): string[] {
+    const out: string[] = [];
+    for (const id of this.openTimelinePanelIds()) {
+      const { instance } = parsePanelId(id);
+      if (instance !== null) out.push(instance);
+    }
+    return out;
   }
 
   hasPanel(id: PanelId): boolean {
@@ -788,7 +850,27 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     return undefined;
   }
 
-  private addPanelAtSemanticFallback(kind: PanelKind): void {
+  /** Every open timeline Panel, in the Dock's own order. */
+  private openTimelinePanelIds(): PanelId[] {
+    const out: PanelId[] = [];
+    for (const panel of this.api.panels) {
+      if (isPanelId(panel.id) && parsePanelId(panel.id).kind === "timeline") {
+        out.push(panel.id);
+      }
+    }
+    return out;
+  }
+
+  /** The timeline Panel the user is in, or undefined when the active Panel is
+   *  something else entirely (the inspector, the media pool). */
+  private activeTimelinePanelId(): PanelId | undefined {
+    const active = this.api.activePanel?.id;
+    return isPanelId(active) && parsePanelId(active).kind === "timeline"
+      ? active
+      : undefined;
+  }
+
+  private addPanelAtSemanticFallback(kind: PanelKind, instance?: string): void {
     // Reference lists below are kinds — "beside whatever Preview is open" —
     // and resolve here to the address the open Panel of that kind actually has.
     const firstOpen = (...kinds: PanelKind[]): PanelId | undefined => {
@@ -828,7 +910,8 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
       );
       this.addPanel(kind, reference
         ? { position: { referencePanel: reference, direction: "below" } }
-        : {});
+        : {},
+        instance);
       return;
     }
     if (kind === "quick-actions") {
@@ -881,8 +964,12 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
       initialHeight?: number;
       inactive?: boolean;
     } = {},
+    /** Which instance of an instancing kind to create. Omitted means "this
+     *  adapter's own" — the composition every timeline Panel it builds on its
+     *  own behalf (the baseline layout, a restore, `openPanel`) is bound to. */
+    instance: string | null = this.timelineInstance,
   ): IDockviewPanel | undefined {
-    const id = this.idOf(kind);
+    const id = panelIdOf(kind, instance);
     if (this.api.getPanel(id)) return undefined;
     const definition = PANEL_REGISTRY[kind];
     const params: DockPanelParams = { kind, instance: parsePanelId(id).instance };

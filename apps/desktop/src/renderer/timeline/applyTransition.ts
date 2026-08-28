@@ -11,7 +11,7 @@
 import { addTransition, type TransitionDirection } from "../ipc";
 import { logMutationFailure } from "../errors/tryMutate";
 import { playheadTimeUs } from "../state/playheadStore";
-import { useCompositionScopeStore } from "../state/compositionScopeStore";
+import { useCompositionAnchorStore } from "../state/compositionAnchorStore";
 import {
   compositionOrRoot,
   currentOpenComposition,
@@ -65,9 +65,9 @@ export function hasTransitionCut(): boolean {
 /// re-renders the subscriber only when cut-existence flips, not on every
 /// summary refresh.
 export const useHasTransitionCut = (): boolean => {
-  const openId = useCompositionScopeStore((s) => s.openId);
+  const focusedId = useCompositionAnchorStore((s) => s.focusedId);
   return useProjectStore((s) => {
-    const comp = compositionOrRoot(s.summary, openId);
+    const comp = compositionOrRoot(s.summary, focusedId);
     return (
       comp !== null &&
       findNearestCut(

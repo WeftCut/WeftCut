@@ -38,7 +38,7 @@ export function selectActiveVideoLayers(
   bUs: number,
 ): ActiveVideoLayer[] {
   const out: ActiveVideoLayer[] = [];
-  // Export renders the ROOT (compositionScopeStore.ts); the walk descends from
+  // Export renders the ROOT (compositionAnchorStore.ts); the walk descends from
   // there through every Group placed on it. `bUs` is inclusive and the walk's
   // range half-open, hence the +1.
   forEachLayerInTime(summary, summary.root_id, aUs, bUs + 1, 0, (placed) => {
