@@ -78,6 +78,7 @@ import {
 } from "../state/projectStore";
 import {
   compositionPlacements,
+  restoreCompositionTabs,
   switchAnchor,
   syncOpenCompositions,
   useAnchorPath,
@@ -1488,8 +1489,12 @@ export function DockWorkspace({
 
   // The first summary of a session lands after the Dock has built its layout,
   // so the timeline row is bound when the root composition finally names itself.
+  // Binding it is also the moment the rest of that project's tabs can be
+  // unfolded out of its `view.json`: the row they are added beside now exists,
+  // and the stale ones the binding closed are gone.
   useEffect(() => {
     adapterRef.current?.setTimelineInstance(rootCompositionId);
+    void restoreCompositionTabs();
   }, [rootCompositionId]);
 
   useEffect(() => {

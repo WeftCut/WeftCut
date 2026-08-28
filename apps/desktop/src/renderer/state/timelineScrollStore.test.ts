@@ -6,7 +6,13 @@ import {
   useTimelineScrollStore,
 } from "./timelineScrollStore";
 
-beforeEach(() => useTimelineScrollStore.setState({ scrollLeftPx: {} }));
+const owner = vi.hoisted(() => ({ noteTabScroll: vi.fn() }));
+vi.mock("./viewState", () => owner);
+
+beforeEach(() => {
+  owner.noteTabScroll.mockClear();
+  useTimelineScrollStore.setState({ scrollLeftPx: {} });
+});
 
 describe("timelineScrollStore", () => {
   // Two timeline Panels scroll independently (ADR 0053), and each one's ruler
@@ -35,6 +41,18 @@ describe("timelineScrollStore", () => {
     expect(timelineScrollLeftPx("comp-root")).toBe(0);
     setTimelineScrollLeftPx("comp-root", Number.NaN);
     expect(timelineScrollLeftPx("comp-root")).toBe(0);
+  });
+
+  // Where the tab was left is also what `view.json` restores it to next
+  // session, so the one publisher tells the owner too — and the guard below
+  // covers both: a repeated offset is neither a store write nor a disk write.
+  it("hands each new offset to the view-state owner", () => {
+    setTimelineScrollLeftPx("comp-g1", 640);
+    expect(owner.noteTabScroll).toHaveBeenCalledWith("comp-g1", 640);
+
+    owner.noteTabScroll.mockClear();
+    setTimelineScrollLeftPx("comp-g1", 640);
+    expect(owner.noteTabScroll).not.toHaveBeenCalled();
   });
 
   it("is not a store write when the offset has not moved", () => {

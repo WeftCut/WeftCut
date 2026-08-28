@@ -298,7 +298,7 @@ export function Timeline({
     toggleExpanded,
     viewportWidthPx,
     zoomBySteps,
-  } = useTimelineView({ rootRef, tracks, durationUs });
+  } = useTimelineView({ compositionId, rootRef, tracks, durationUs });
 
   // The unmodified wheel's axis. Separate from `useTimelineView`'s listener on
   // the same node because the two gestures are separate concerns and neither

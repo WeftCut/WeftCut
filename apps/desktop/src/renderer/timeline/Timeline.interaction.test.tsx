@@ -75,9 +75,12 @@ const ipcMocks = vi.hoisted(() => ({
   updateLayerParamTrack: vi.fn().mockResolvedValue(undefined),
   updateParamTracksMulti: vi.fn().mockResolvedValue(undefined),
   logEmit: vi.fn().mockResolvedValue(undefined),
-  viewStateGet: vi
-    .fn()
-    .mockResolvedValue({ timeline_px_per_sec: 80, track_heights: {}, expanded_tracks: [] }),
+  viewStateGet: vi.fn().mockResolvedValue({
+    composition_tabs: [],
+    active_composition_id: null,
+    track_heights: {},
+    expanded_tracks: [],
+  }),
   viewStateSet: vi.fn().mockResolvedValue(undefined),
 }));
 

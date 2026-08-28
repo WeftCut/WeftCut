@@ -100,7 +100,18 @@ vi.mock("dockview-react", async () => {
   };
 });
 
-vi.mock("../ipc", () => ({ importCancel: vi.fn() }));
+// The Workspace reads `view.json` to unfold this project's timeline tabs after
+// every layout apply; an empty document leaves the root's row standing alone.
+vi.mock("../ipc", () => ({
+  importCancel: vi.fn(),
+  viewStateGet: vi.fn().mockResolvedValue({
+    composition_tabs: [],
+    active_composition_id: null,
+    track_heights: {},
+    expanded_tracks: [],
+  }),
+  viewStateSet: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("../timeline/Timeline", () => ({
   Timeline: (props: { compositionId: string | null; tracks: { id: string }[] }) => {
     timelineHarness.props = props;

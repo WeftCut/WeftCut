@@ -15,6 +15,8 @@
 
 import { create } from "zustand";
 
+import { noteTabScroll } from "./viewState";
+
 interface State {
   /// `composition → row-local px offset of the visible lane area's left edge`,
   /// i.e. that timeline's scroll root's `scrollLeft`. A composition with no
@@ -36,6 +38,11 @@ export function timelineScrollKey(compositionId: string | null): string {
 /// Publish one timeline's scroll offset. Guarded so a repeated value (a scroll
 /// event that only moved vertically, a remount seeding the same offset) is not
 /// a store write, and so a subscriber never has to defend against NaN.
+///
+/// The offset is also where the tab is left, so the same call tells the
+/// `view.json` owner to remember it (`viewState.ts`). Persisting it from here
+/// rather than from each publishing site is what keeps the two facts — "the
+/// ruler needs this now" and "restore to this next time" — from drifting apart.
 export function setTimelineScrollLeftPx(
   compositionId: string | null,
   px: number,
@@ -45,6 +52,7 @@ export function setTimelineScrollLeftPx(
   const current = useTimelineScrollStore.getState().scrollLeftPx;
   if (current[key] === next) return;
   useTimelineScrollStore.setState({ scrollLeftPx: { ...current, [key]: next } });
+  noteTabScroll(compositionId, next);
 }
 
 /// Imperative read, for mount-time seeding and event-time consumers.

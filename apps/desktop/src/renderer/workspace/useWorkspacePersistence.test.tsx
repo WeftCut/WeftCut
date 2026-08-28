@@ -46,6 +46,15 @@ vi.mock("../ipc", () => ({
   workspaceDeleteProfile: async (id: string) => holder.store!.deleteProfile(id),
 }));
 
+// A layout snapshot names one folded `timeline` slot, so anything this hook
+// applies comes back holding the root's timeline alone. The unfold that puts
+// the project's other tabs back is the anchor store's, and this asserts only
+// that it is asked for — what it then does is that module's own suite.
+const tabs = vi.hoisted(() => ({ restore: vi.fn(async () => {}) }));
+vi.mock("../state/compositionAnchorStore", () => ({
+  restoreCompositionTabs: tabs.restore,
+}));
+
 const WEFTCUT_LAYOUT_VERSION = 1;
 
 /** A layout snapshot whose one open Panel is `kind` — normalizes cleanly and is
@@ -187,6 +196,7 @@ describe("useWorkspacePersistence", () => {
   beforeEach(() => {
     holder.store = seedStore();
     holder.getWorkspace = null;
+    tabs.restore.mockClear();
   });
 
   it("subscribes once when StrictMode replays an in-flight restore", async () => {
@@ -311,6 +321,19 @@ describe("useWorkspacePersistence", () => {
 
     act(() => result.current!.reset());
     await waitFor(() => expect(fake.liveKind()).toBe("media"));
+  });
+
+  it("unfolds the project's timeline tabs after every layout it applies", async () => {
+    holder.store!.createProfile("Cutting", leaf("media"));
+    holder.store!.setCurrent(leaf("media"));
+    holder.store!.saveBaseline();
+    const fake = fakeController();
+
+    const { result } = renderHook(() => useWorkspacePersistence(fake.controller));
+    await waitFor(() => expect(tabs.restore).toHaveBeenCalledTimes(1));
+
+    act(() => result.current!.reset());
+    await waitFor(() => expect(tabs.restore).toHaveBeenCalledTimes(2));
   });
 
   it("Reset on the built-in Editing profile falls back to the code baseline", async () => {

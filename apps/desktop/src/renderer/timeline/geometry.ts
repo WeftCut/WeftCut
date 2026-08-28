@@ -1,3 +1,4 @@
+import { DEFAULT_TIMELINE_PX_PER_SEC } from "../../shared/view-state";
 import type { LinkSummary, LayerSummary, TrackSummary } from "../ipc";
 import { displayedFrameStartUs, inclusiveOutBoundaryUs } from "../frames";
 import {
@@ -7,14 +8,15 @@ import {
   type ParamDescriptor,
 } from "../keyframe/descriptors";
 
-// Zoom + height bounds. DEFAULT_PX_PER_SEC is the fallback for projects with
-// no `view.json`.
+// Zoom + height bounds. DEFAULT_PX_PER_SEC is the fallback for a timeline
+// `view.json` remembers nothing about — the persisted document's own default,
+// re-exported so the timeline reads one name for it.
 // The lower bound is computed dynamically as `viewport / totalSec` so
 // the zoom wheel can always zoom out far enough to fit the entire timeline
 // in view, regardless of how long it is. `MIN_PX_PER_SEC_FLOOR` is a
 // tiny absolute floor that keeps the math sane in pathological cases
 // (zero-width viewport, zero-duration project).
-export const DEFAULT_PX_PER_SEC = 80;
+export const DEFAULT_PX_PER_SEC = DEFAULT_TIMELINE_PX_PER_SEC;
 export const MIN_PX_PER_SEC_FLOOR = 0.05;
 // 2000 px/s exceeds the waveform's stored finest LOD (1000 peaks/s): past
 // ~1500 px/s the envelope stretches instead of gaining detail — accepted;
@@ -33,11 +35,6 @@ export const MIN_TIMELINE_END_PADDING_PX = 240;
 export const DEFAULT_TRACK_HEIGHT = 56;
 export const MIN_TRACK_HEIGHT = 24;
 export const MAX_TRACK_HEIGHT = 200;
-// Debounce window after the last zoom/height edit before we hit disk.
-// Resize-drag tends to fire ~60×/sec; 200ms keeps the file write off the
-// critical drag path while still landing within a beat of the user
-// releasing the handle.
-export const VIEW_SAVE_DEBOUNCE_MS = 200;
 
 export const LAYER_PREVIEW_MIN_PX = 16;
 export const LAYER_LABEL_MIN_PX = 48;

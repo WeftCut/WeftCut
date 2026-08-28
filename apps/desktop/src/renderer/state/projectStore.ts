@@ -24,6 +24,7 @@ import {
   retainTransitionSelection,
 } from "./selectionStore";
 import { LatestRequestCoordinator } from "./latestRequest";
+import { retainTrackViewState } from "./viewState";
 
 /// Frontend mirror of the main-process TS state actor's project, kept in sync
 /// via `project:changed` backend events. The PixiJS preview consumes this
@@ -155,6 +156,10 @@ export const useProjectStore = create<
     // After the indices and the retained selections: the fallback switch this
     // may run clears the selection, and reads the summary just published.
     reconcileCompositionAnchors(summary);
+    // After the reconcile, which is where a project change drops the outgoing
+    // project's view state entirely — pruning it against the incoming
+    // project's tracks would delete a document that is no longer ours.
+    retainTrackViewState(indices.compositionIdByTrackId.keys());
     // After the switch, for the same reason: undoing a pre-compose from inside
     // the Group it created lands here having just cleared the selection, and
     // this is what puts the grouped layers back in it.

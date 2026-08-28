@@ -1081,6 +1081,31 @@ describe("DockWorkspaceAdapter", () => {
     expect(other.getSnapshot().openPanels.has("timeline:comp-other")).toBe(true);
   });
 
+  // What a saved Workspace profile can promise: where the timeline row sits and
+  // how large it is. The tabs in it belong to one project and resolve to
+  // nothing in the next, so the whole strip folds to the one slot.
+  it("folds a strip of timeline tabs back to one slot, uuid-free", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.setTimelineInstance("comp-root");
+    adapter.initializeEditingLayout();
+    adapter.openTimelinePanel("comp-g1");
+    adapter.openTimelinePanel("comp-g2");
+
+    const snapshot = adapter.serialize();
+
+    const serialized = JSON.stringify(snapshot);
+    for (const id of ["comp-root", "comp-g1", "comp-g2"]) {
+      expect(serialized).not.toContain(id);
+    }
+    expect(Object.keys((snapshot.dockview as { panels: object }).panels).filter(
+      (id) => id.startsWith("timeline"),
+    )).toEqual(["timeline"]);
+    expect(Object.keys(snapshot.placements).filter((id) => id.startsWith("timeline"))).toEqual([
+      "timeline",
+    ]);
+  });
+
   it("opens a second timeline as a TAB beside the one it was asked from", () => {
     const dock = fakeDockview();
     const adapter = new DockWorkspaceAdapter(dock.api);

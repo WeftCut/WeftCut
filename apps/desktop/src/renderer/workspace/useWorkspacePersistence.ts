@@ -23,6 +23,7 @@ import {
   type WorkspaceDocument,
   type WorkspaceProfile,
 } from "../../shared/workspace";
+import { restoreCompositionTabs } from "../state/compositionAnchorStore";
 
 /** Menu-facing view of one Workspace profile. */
 export interface WorkspaceProfileInfo {
@@ -126,6 +127,11 @@ export function useWorkspacePersistence(
       } finally {
         applyingRef.current = false;
       }
+      // A layout snapshot names one folded `timeline` slot and nothing else, so
+      // whatever it just applied is holding the root's timeline alone. The
+      // project's own tabs come back from `view.json`, which is where they were
+      // recorded (ADR 0053).
+      void restoreCompositionTabs();
     },
     [restoreProfile],
   );
@@ -291,6 +297,7 @@ export function useWorkspacePersistence(
         console.warn("[dock-workspace] reset failed:", error);
       } finally {
         applyingRef.current = false;
+        void restoreCompositionTabs();
       }
     })();
   }, []);

@@ -31,6 +31,13 @@ import { playheadTimeUs } from "./playheadStore";
 import { useProjectStore } from "./projectStore";
 import { clearRange } from "./rangeStore";
 import { clearLayerSelection } from "./selectionStore";
+import {
+  compositionTabIntent,
+  loadViewState,
+  publishCompositionTabs,
+  resetViewState,
+  type OpenTabIntent,
+} from "./viewState";
 
 /// One step of an anchor path, root excluded: `layerId` is the Group layer that
 /// was entered (null when the composition was opened by id — a search hit, the
@@ -89,6 +96,7 @@ function focusOn(nextId: string): void {
   clearRange();
   collapseReveal();
   seekToClamped(playheads.get(nextId) ?? 0);
+  publishIntent();
 }
 
 function setAnchor(
@@ -98,6 +106,45 @@ function setAnchor(
   const anchors = new Map(useCompositionAnchorStore.getState().anchors);
   anchors.set(compositionId, crumbs);
   useCompositionAnchorStore.setState({ anchors });
+  publishIntent();
+}
+
+/// Hand the tab intent to the `view.json` owner (`viewState.ts`): which
+/// compositions have a Panel, in tab order, each with the Group clip it was
+/// entered through, and which one holds the keyboard. Those two facts ARE the
+/// intent, so this runs after every change to either — the owner drops a
+/// publication that says nothing new, which is what makes it safe on the
+/// per-frame path `syncOpenCompositions` sits on.
+function publishIntent(): void {
+  const summary = useProjectStore.getState().summary;
+  if (!summary) return;
+  const { anchors, focusedId } = useCompositionAnchorStore.getState();
+  const open: OpenTabIntent[] = [];
+  for (const [compositionId, crumbs] of anchors) {
+    open.push({
+      compositionId,
+      anchorLayerId: crumbs[crumbs.length - 1]?.layerId ?? null,
+    });
+  }
+  publishCompositionTabs(
+    open,
+    new Set(Object.keys(summary.compositions)),
+    focusedId,
+  );
+}
+
+/// The project this session has already applied the stored ACTIVE tab for. The
+/// tab set is replayed as often as the Dock rebuilds its tree, and only the
+/// first of those replays is the fresh session the stored focus belongs to.
+let intentAppliedForProjectId: string | null = null;
+
+/// Drop everything remembered about the project being left. Its `view.json` is
+/// a different file from the incoming project's, and the owner writes to
+/// whichever workspace directory is open when the write lands, so the outgoing
+/// document has to be forgotten before the incoming one is read.
+function forgetProjectView(): void {
+  resetViewState();
+  intentAppliedForProjectId = null;
 }
 
 /// The path from the root to `target` through Group layers, root excluded, or
@@ -238,11 +285,15 @@ export function syncOpenCompositions(compositionIds: readonly string[]): void {
   // Closing the tab you were editing in IS leaving it; the leftmost surviving
   // timeline takes over, which is where the eye goes next anyway.
   if (s.focusedId === null || !open.has(s.focusedId)) focusOn(compositionIds[0]!);
+  else if (changed) publishIntent();
 }
 
-/// Called by `projectStore.apply` on every summary. Two jobs: a new project
-/// starts at its root with nothing remembered, and a composition the summary no
-/// longer carries — undoing the pre-compose that created it — loses its Panel.
+/// Called by `projectStore.apply` on every summary, and the whole of "which
+/// timelines exist now". A new project starts at its root with nothing
+/// remembered; otherwise the open tabs are re-derived as the stored intent
+/// intersected with the compositions this summary carries, so a Group that was
+/// undone away loses its Panel and one that came back gets it again.
+///
 /// A dead FOCUSED composition falls back to the nearest surviving step of its
 /// own anchor, then the root; falling back rather than holding the dead id is
 /// what keeps every consumer's "focused composition" a real timeline, and the
@@ -250,10 +301,12 @@ export function syncOpenCompositions(compositionIds: readonly string[]): void {
 export function reconcileCompositionAnchors(summary: ProjectSummary | null): void {
   if (!summary) {
     useCompositionAnchorStore.setState(INITIAL);
+    forgetProjectView();
     return;
   }
   const s = useCompositionAnchorStore.getState();
   if (s.projectId !== summary.project_id) {
+    forgetProjectView();
     useCompositionAnchorStore.setState({
       projectId: summary.project_id,
       anchors: new Map([[summary.root_id, NO_CRUMBS]]),
@@ -263,15 +316,34 @@ export function reconcileCompositionAnchors(summary: ProjectSummary | null): voi
     return;
   }
   const anchors = new Map(s.anchors);
+  let changed = false;
   for (const id of s.anchors.keys()) {
     if (summary.compositions[id]) continue;
     anchors.delete(id);
     closeTimelinePanel(id);
+    changed = true;
   }
-  if (anchors.size !== s.anchors.size) {
-    useCompositionAnchorStore.setState({ anchors });
+  // Open tabs are DERIVED: the intent `view.json` holds, intersected with the
+  // compositions this summary carries (ADR 0053). The loop above is one half of
+  // that intersection — undoing the pre-compose that made a Group retires its
+  // Panel and LEAVES its intent entry — and this is the other: the redo puts
+  // the same uuid back in the summary, so the tab returns with the zoom, scroll
+  // and anchor still recorded against it.
+  const reopened: string[] = [];
+  for (const tab of compositionTabIntent()) {
+    const id = tab.composition_id;
+    if (id === summary.root_id || anchors.has(id)) continue;
+    if (!summary.compositions[id]) continue;
+    anchors.set(id, resolveAnchor(summary, id, tab.anchor_layer_id));
+    reopened.push(id);
+    changed = true;
   }
-  if (s.focusedId !== null && summary.compositions[s.focusedId]) return;
+  if (changed) useCompositionAnchorStore.setState({ anchors });
+  for (const id of reopened) openTimelinePanel(id);
+  if (s.focusedId !== null && summary.compositions[s.focusedId]) {
+    if (changed) publishIntent();
+    return;
+  }
   const dead = s.anchors.get(s.focusedId ?? "") ?? NO_CRUMBS;
   let i = dead.length - 1;
   while (i >= 0 && !summary.compositions[dead[i]!.compositionId]) i--;
@@ -279,6 +351,41 @@ export function reconcileCompositionAnchors(summary: ProjectSummary | null): voi
     i >= 0 ? dead[i]!.compositionId : summary.root_id,
     i >= 0 ? dead.slice(0, i + 1) : NO_CRUMBS,
   );
+}
+
+/// Bring this project's remembered tabs back: read `view.json`, open a Panel
+/// for every entry the summary still carries, and hand the keyboard to the one
+/// that had it.
+///
+/// Idempotent, and it has to be. A layout snapshot names one folded `timeline`
+/// slot — no composition uuid may enter the app-level document (ADR 0053) — so
+/// every Dock rebuild, a Workspace restore or a profile switch included, comes
+/// back holding the root's timeline alone. This runs after each of those and
+/// re-adds only what is missing, which is the unfold that pairs with the fold
+/// on serialize.
+export async function restoreCompositionTabs(): Promise<void> {
+  const opening = useProjectStore.getState().summary;
+  if (!opening) return;
+  const projectId = opening.project_id;
+  const state = await loadViewState();
+  const summary = useProjectStore.getState().summary;
+  if (!summary || summary.project_id !== projectId) return;
+  // Snapshotted: opening a Panel republishes the intent, which replaces the
+  // array this is walking.
+  for (const tab of [...compositionTabIntent()]) {
+    const id = tab.composition_id;
+    if (id === summary.root_id || !summary.compositions[id]) continue;
+    if (useCompositionAnchorStore.getState().anchors.has(id)) continue;
+    setAnchor(id, resolveAnchor(summary, id, tab.anchor_layer_id));
+    openTimelinePanel(id);
+  }
+  // The stored focus is a fresh session's opening position, not something to
+  // re-apply on a later geometry restore: moving the editing target then would
+  // be a switch nobody asked for.
+  if (intentAppliedForProjectId === projectId) return;
+  intentAppliedForProjectId = projectId;
+  const active = state.active_composition_id;
+  if (active !== null && summary.compositions[active]) focusOn(active);
 }
 
 // ===== Readers ==============================================================

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CompositionSummary, LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
+import { viewStateDefaults, type ViewState } from "../../shared/view-state";
 import { compositionFixture, ROOT_ID, summaryFixture } from "../testing/summaryFixture";
 import {
   anchorPath,
@@ -7,11 +8,25 @@ import {
   focusComposition,
   focusedCompositionId,
   openComposition,
+  restoreCompositionTabs,
   switchAnchor,
   syncOpenCompositions,
   useCompositionAnchorStore,
   wouldCycleInOpenComposition,
 } from "./compositionAnchorStore";
+import { compositionTabIntent, loadViewState, noteTabZoom } from "./viewState";
+
+/// The tab intent is read off `view.json` and written back to it, so the two
+/// IPC calls that reach that file are the seam these tests drive.
+const ipcMocks = vi.hoisted(() => ({
+  viewStateGet: vi.fn<() => Promise<ViewState>>(),
+  viewStateSet: vi.fn<(state: ViewState) => Promise<void>>(),
+}));
+vi.mock("../ipc", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ipc")>()),
+  viewStateGet: ipcMocks.viewStateGet,
+  viewStateSet: ipcMocks.viewStateSet,
+}));
 import { registerRevealCollapse } from "./navigation";
 import { playheadTimeUs, setPlayheadTimeUs } from "./playheadStore";
 import { compositionOrRoot, currentOpenComposition, useProjectStore } from "./projectStore";
@@ -90,6 +105,8 @@ let releasePanels: (() => void) | null = null;
 beforeEach(() => {
   panels.open.mockClear();
   panels.close.mockClear();
+  ipcMocks.viewStateGet.mockReset().mockResolvedValue(viewStateDefaults());
+  ipcMocks.viewStateSet.mockReset().mockResolvedValue(undefined);
   releasePanels = registerTimelinePanels(panels);
   useProjectStore.getState().apply(null);
   setPlayheadTimeUs(0);
@@ -415,5 +432,131 @@ describe("compositionOrRoot", () => {
     const s = nested();
     expect(compositionOrRoot(s, "comp-nowhere")).toBe(s.compositions[ROOT_ID]);
     expect(compositionOrRoot(null, G1)).toBeNull();
+  });
+});
+
+/// A stored tab, as `view.json` carries it.
+const storedTab = (
+  composition_id: string,
+  anchor_layer_id: string | null = null,
+  px_per_sec = 80,
+) => ({ composition_id, anchor_layer_id, px_per_sec, scroll_left_px: 0 });
+
+/// The intent is what `view.json` records; the Panels that exist are that
+/// intersected with the compositions the summary carries (ADR 0053).
+describe("tab intent", () => {
+  it("records every open tab, in order, with the clip it was entered through", async () => {
+    await loadViewState();
+    openComposition(G1, "ref-g1");
+
+    expect(compositionTabIntent()).toEqual([
+      storedTab(ROOT_ID),
+      storedTab(G1, "ref-g1"),
+    ]);
+  });
+
+  it("re-points an entry when the tab switches to another placement", async () => {
+    await loadViewState();
+    const twice = nested();
+    twice.compositions[ROOT_ID]!.tracks[0]!.layers.push(refLayer("ref-g1b", G1, 3_000_000));
+    useProjectStore.getState().apply(twice);
+    openComposition(G1, "ref-g1");
+
+    switchAnchor(G1, "ref-g1b");
+
+    expect(compositionTabIntent()).toContainEqual(storedTab(G1, "ref-g1b"));
+  });
+
+  it("drops the entry of a tab the user closed", async () => {
+    await loadViewState();
+    openComposition(G1, "ref-g1");
+
+    syncOpenCompositions([ROOT_ID]);
+
+    expect(compositionTabIntent()).toEqual([storedTab(ROOT_ID)]);
+  });
+
+  // Undo takes the composition, not the intent: the same uuid coming back is
+  // the redo, and the tab has to come back with it.
+  it("keeps the entry through an undo and reopens the Panel, at its zoom, on redo", async () => {
+    await loadViewState();
+    openComposition(G1, "ref-g1");
+    openComposition(G2, "ref-g2");
+    noteTabZoom(G2, 400);
+
+    useProjectStore.getState().apply(withoutG2());
+    expect(compositionTabIntent()).toContainEqual(storedTab(G2, "ref-g2", 400));
+    expect(anchors().anchors.has(G2)).toBe(false);
+
+    panels.open.mockClear();
+    useProjectStore.getState().apply(nested());
+
+    expect(panels.open).toHaveBeenCalledWith(G2);
+    expect(anchorPath(G2)).toEqual([
+      { layerId: "ref-g1", compositionId: G1 },
+      { layerId: "ref-g2", compositionId: G2 },
+    ]);
+    expect(compositionTabIntent()).toContainEqual(storedTab(G2, "ref-g2", 400));
+  });
+});
+
+/// The unfold that pairs with the fold on serialize: a layout snapshot names
+/// one folded `timeline` slot, so every other tab comes back from `view.json`.
+describe("restoreCompositionTabs", () => {
+  const stored = (over: Partial<ViewState>): void => {
+    ipcMocks.viewStateGet.mockResolvedValue({ ...viewStateDefaults(), ...over });
+  };
+
+  it("opens every remembered tab the project still carries", async () => {
+    stored({
+      composition_tabs: [storedTab(ROOT_ID), storedTab(G1, "ref-g1"), storedTab("comp-gone")],
+      active_composition_id: G1,
+    });
+
+    await restoreCompositionTabs();
+
+    expect(panels.open).toHaveBeenCalledWith(G1);
+    expect(panels.open).not.toHaveBeenCalledWith("comp-gone");
+    // The root's Panel comes from the layout snapshot, so its entry is a zoom
+    // to restore, never a Panel to open.
+    expect(panels.open).not.toHaveBeenCalledWith(ROOT_ID);
+    expect(anchorPath(G1)).toEqual([{ layerId: "ref-g1", compositionId: G1 }]);
+    expect(anchors().focusedId).toBe(G1);
+  });
+
+  it("anchors a tab stored without a clip from the root", async () => {
+    stored({ composition_tabs: [storedTab(G2)] });
+
+    await restoreCompositionTabs();
+
+    expect(anchorPath(G2)).toEqual([
+      { layerId: "ref-g1", compositionId: G1 },
+      { layerId: "ref-g2", compositionId: G2 },
+    ]);
+  });
+
+  // Every Dock rebuild replays this, and only the first is the fresh session
+  // the stored focus belongs to.
+  it("leaves the editing target alone on a later replay", async () => {
+    stored({ composition_tabs: [storedTab(G1, "ref-g1")], active_composition_id: G1 });
+    await restoreCompositionTabs();
+    focusComposition(ROOT_ID);
+    panels.open.mockClear();
+
+    await restoreCompositionTabs();
+
+    expect(anchors().focusedId).toBe(ROOT_ID);
+    expect(panels.open).not.toHaveBeenCalled();
+  });
+
+  it("carries nothing across when the project changed while the read was in flight", async () => {
+    stored({ composition_tabs: [storedTab(G1, "ref-g1")], active_composition_id: G1 });
+    const restoring = restoreCompositionTabs();
+    useProjectStore.getState().apply(summaryFixture({ project_id: "p-other" }));
+
+    await restoring;
+
+    expect(panels.open).not.toHaveBeenCalledWith(G1);
+    expect(anchors().focusedId).toBe(ROOT_ID);
   });
 });
