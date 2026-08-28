@@ -3537,4 +3537,34 @@ describe("a gesture names the Panel it happened in", () => {
     unregister();
     neighbour.remove();
   });
+
+  // One `window` keydown listener per mounted Panel, and `scope: "timeline"`
+  // is a KIND — so every open timeline passes the same region test. Only the
+  // focused Panel may answer, or a two-tab workspace runs each handler twice:
+  // both would zoom, and a toggle would undo itself.
+  describe("a timeline-scoped shortcut answers only in the focused Panel", () => {
+    beforeEach(() => {
+      setActiveRegion("timeline");
+    });
+
+    it("stays silent in a Panel the keyboard is not in", () => {
+      renderTimeline({ compositionId: GROUP, tracks: [linkedTrack] });
+
+      fireEvent.keyDown(window, { key: "a", code: "KeyA", ctrlKey: true });
+
+      expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
+        new Set(),
+      );
+    });
+
+    it("answers in the Panel that holds the keyboard", () => {
+      renderTimeline({ compositionId: ROOT, tracks: [linkedTrack] });
+
+      fireEvent.keyDown(window, { key: "a", code: "KeyA", ctrlKey: true });
+
+      expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
+        new Set([layer.id, linkedLayer.id]),
+      );
+    });
+  });
 });

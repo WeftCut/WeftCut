@@ -102,7 +102,10 @@ import {
   KeyframeLaneHeaders,
   type RegisterSubLaneEl,
 } from "./KeyframeLane";
-import { useAnchorPath } from "../state/compositionAnchorStore";
+import {
+  useAnchorPath,
+  useFocusedCompositionId,
+} from "../state/compositionAnchorStore";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { MarqueeOverlay } from "./MarqueeOverlay";
 import { beginGroupRename, beginLayerRename, beginLinkRename } from "./renameStore";
@@ -649,7 +652,26 @@ export function Timeline({
     [compositionId, zoomBySteps],
   );
 
+  // `useShortcuts` binds one `window` listener per instance, so N mounted
+  // timeline Panels are N listeners that all pass the same
+  // `scope: "timeline"` test — the region name is a kind, and every timeline
+  // Panel is that kind. Unscoped, the handlers below would each run once per
+  // open Panel: both timelines would zoom, and `toggleLinkSelected` would fire
+  // twice and undo itself. Only the Panel holding the keyboard answers, which
+  // is what ADR 0041's `scope` means once a kind instantiates (ADR 0053).
+  //
+  // `disabled` is read at dispatch time, so this gate costs a re-render per
+  // focus change — a user gesture — and nothing per keystroke.
+  const focusedCompositionId = useFocusedCompositionId();
+  const rootCompositionId = useProjectStore((s) => s.summary?.root_id ?? null);
+  // The unbound row the Dock builds before a summary names a root shows the
+  // root, the same reading `compositionOrRoot` gives it.
+  const isFocusedTimeline =
+    (compositionId ?? rootCompositionId) ===
+    (focusedCompositionId ?? rootCompositionId);
+
   useShortcuts({
+    disabled: !isFocusedTimeline,
     overrides: shortcutOverrides,
     handlers: {
       selectAll: handleSelectAll,

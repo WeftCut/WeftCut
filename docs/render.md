@@ -166,12 +166,16 @@ a different node ([ADR 0052](adr/0052-link-propagates-group-composes.md)).
   its root-time interval, clipped to the Group's window, and reads its source
   `headUs` in — so the mixers need no notion of Groups. `enabled = false` on
   the Group layer silences everything below it that same frame.
-- **Preview draws the FOCUSED composition** (`state/compositionAnchorStore.ts`)
-  — the one whose timeline Panel last held the keyboard; the frame size, the
-  fps binding and the playhead's bound follow it, so entering a Group shows its
-  content unscaled at its own size, on its own clock. **Export always draws the
-  root**, whatever has focus: a Group is a
-  source, and a file of one alone is a file nobody asked for.
+- **Preview draws its RENDER TARGET** (`state/compositionAnchorStore.ts`) — the
+  composition it is locked to, or the focused one while it follows focus (the
+  default). The frame size, the fps binding and the engine's clock all follow
+  the target, so entering a Group shows its content unscaled at its own size,
+  while a lock on the root keeps the whole film on screen while a Group's
+  timeline is edited. A locked target may have no timeline Panel at all — that
+  is what locking is for — so its route to the root comes from
+  `pathToComposition` rather than from any Panel's anchor. **Export always draws
+  the root**, whatever has focus and whatever the preview was pointed at: a
+  Group is a source, and a file of one alone is a file nobody asked for.
 - **Every flat `tracks[].layers[]` walk that has to see inside a Group** goes
   through `compositionWalk.ts` — the export decode set and the emptiness gate
   (`activeVideoLayers.ts`), the Motif pre-bake (`exportBake.ts`), font
@@ -383,6 +387,27 @@ App-level state re-renders the entire tree 30–60×/s while playing, which
 is a straight CPU tax in production and, under the React development
 build, additionally ratchets renderer memory (native-side, GC-immune)
 for as long as playback runs.
+
+**One moment, many coordinate systems.** The store holds a single time and it
+is ROOT time (ADR 0053). The engine's own clock is the render target's, and a
+timeline Panel's read-out is its composition's, so both ends convert — and both
+convert in exactly one place, `state/playheadProjection.ts`, over the pure
+arithmetic in `render/timeProjection.ts`. That arithmetic is
+`compositionWalk.ts`'s and is not restated: `childFrame` says where a child
+composition's `t = 0` sits in root time and how the placement narrows the
+window, `compositionLocalUs` puts the result back on the shared lattice.
+Reusing them is what keeps a Panel's read-out and the Compositor's own
+recursion in agreement. Two readings exist and the difference matters: an edit
+"at the playhead" takes the composition's CLOCK, which runs whether or not the
+placement shows it there, while a drawn playhead takes the windowed reading and
+is simply absent at a moment its Group is not on screen — a mark that claimed a
+position the Panel is not showing would be a lie. A scrub travels the same road
+backwards, through the anchor the tab was entered by.
+
+Resolving an anchor walks the summary, so nothing on the per-frame path may do
+it: a subscriber hoists a frame with `useAnchorFrame` and subscribes through
+`subscribeLocalPlayhead`. N open timelines multiply every per-frame subscriber,
+which is why the tiers below are a budget rather than a preference.
 
 Consumers pick the cheapest tier that fits (rules and examples in the
 store's header):

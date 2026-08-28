@@ -100,9 +100,12 @@ composition, since two placements sit at different offsets and so show
 different frames of the same content — and renders it to a texture the parent
 stages like any other picture, which is what makes nested transforms,
 opacity, effects and transitions compose for free. The two ends differ only
-in where they enter it: the preview draws the composition the editor has
-OPEN, at its own frame size and on its own clock, while export always draws
-the root, because a Group is a source and a file of one alone is a file
+in where they enter it: the preview draws its **render target** — the
+composition it is locked to, or the one holding the keyboard while it follows
+focus — at that composition's own frame size and on its own clock, which is
+what lets a Group be edited while the whole film stays on screen
+([ADR 0053](adr/0053-a-timeline-panel-is-one-composition.md)). Export always
+draws the root, because a Group is a source and a file of one alone is a file
 nobody asked for.
 
 The deterministic "what-you-see/hear" MATH both the renderer and Rust's
@@ -287,7 +290,9 @@ weftcut/
                               ←   API keys, data location, …)
         logs/                 ← status bar + log console
         keyframe/             ← keyframe authoring + curve editing
-        menu/ shortcuts/ agent/ hooks/ ipc/ i18n/ state/
+        workspace/          ← Dock Workspace: the Panel catalogue, the
+                              ←   Dockview adapter, layout persistence
+        menu/ shortcuts/ focus/ agent/ hooks/ ipc/ i18n/ state/
     electron.vite.config.ts   ← main / preload / renderer build config
     electron-builder.yml      ← packaging + per-OS installers
 ```
@@ -343,6 +348,37 @@ The rules a day-to-day change must respect:
 | If a layout relied on a UA default that preflight resets, pin the value explicitly in `styles.css` (`line-height` is the canonical case). | Preflight only leaks through UA-default reliance. |
 | Tokens live in `src/renderer/app.css` (`.dark` block, shadcn naming + a dark-NLE semantic role layer on top — full reference: [ui-tokens.md](ui-tokens.md)); the app is dark-only via the hardwired `html.dark`. | Single palette source; the `var(--*)` sweep is done, with semantic roles layered above. |
 | Icons come from [lucide](https://lucide.dev/icons) via `lucide-react` named imports (`size` explicit, `aria-hidden`, color via `currentColor`) — no inline `<svg>`, no Unicode glyphs. [ADR 0020](adr/0020-ui-icons-from-lucide-react.md); `WindowControls` and CSS cursors are the documented exceptions. | One drawing style; glyph rendering no longer font-dependent. |
+
+## Panels and the Dock
+
+The editor's surfaces are Dockview Panels, catalogued once in
+`renderer/workspace/panelRegistry.ts` by **kind** — the title, the size
+minimums, and whether the Editing baseline opens it. Kind is what a View-menu
+row, a shortcut's scope and a command all address a Panel by.
+
+**Kind is not identity.** A Panel's Dockview address is a `PanelId`, and
+`timeline` is the one kind that *instantiates*: a timeline Panel is one
+composition, addressed `timeline:<compositionId>`, so several stand open at once
+and each draws the composition its own id names. At most one Panel per
+composition — a second would show byte-identical lanes, since a composition has
+one set of tracks. Every other kind exists once per app, so its kind is its
+whole address. See
+[ADR 0053](adr/0053-a-timeline-panel-is-one-composition.md); `panelIdOf` and
+`parsePanelId` are the only two functions that know the spelling.
+
+A Panel is also the unit of keyboard focus
+([ADR 0041](adr/0041-focus-regions-are-panels-and-scope-the-keyboard.md)): its
+root element carries the kind as its focus region and, for the one kind that
+instantiates, the composition beside it as a separate attribute — a region name
+stays a kind, because an action's `scope` is a list of kinds. `scope: "timeline"`
+therefore resolves against the timeline Panel that last held the keyboard.
+
+Persistence splits along the same seam. Dock **geometry** lives app-wide in
+`<userData>/workspaces.json`, which spans every project and holds reusable
+profiles, so every `timeline:*` folds back to the bare `timeline` slot on the way
+out and no project's composition ids ever enter it. Which compositions are open,
+and each one's zoom, is the project's own `view.json` — see
+[data-model.md](data-model.md).
 
 ## Internationalization (UI)
 

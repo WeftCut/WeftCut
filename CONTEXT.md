@@ -293,16 +293,19 @@ may hold more than two)
 **Group**:
 A composition placed as one layer in another composition — After Effects'
 precomp, Premiere's nest, Resolve's compound clip. It says "this is one
-thing": it has bounds, a timeline and a duration of its own, and it renders.
-The word is reserved for exactly this and is never a synonym for a link.
-UI word: Group / 组.
+thing": it has bounds, a duration and a timeline Panel of its own — entering it
+opens a tab beside the film's timeline rather than replacing it — and it
+renders. The word is reserved for exactly this and is never a synonym for a
+link. UI word: Group / 组.
 _Avoid_: group for the propagation relationship (that is a link); nest,
 compound, precomp in UI copy
 
 **Composition**:
 A timeline — settings, tracks, markers, transitions and links. The root is
 one and every Group is one, with the same shape: there is no "sub" type,
-so every walk, mutation and validator has one path. UI word: Composition /
+so every walk, mutation and validator has one path. Opened, it takes a timeline
+Panel of its own, addressed by its id, so several stand open at once and the
+editor is never looking at exactly one. UI word: Composition /
 合成, never shown as a noun for the root — that is "the timeline".
 _Avoid_: sub-composition (as a data-model term), sequence, nested timeline
 
@@ -342,6 +345,32 @@ remove it, which is what keeps state from holding something no UI can reach
 reference it at all. UI word: unused / 未使用.
 _Avoid_: dangling composition, leaked comp, garbage, unused Group (the row is
 dimmed, the Group is not a different kind of thing)
+
+**Render target**:
+The composition the Preview Panel draws: *follow focus* — the timeline holding
+the keyboard, and the default — or one composition it is fixed on while the
+keyboard edits somewhere else. The preview's own choice, never a property of a
+tab, so the target may be a composition with no timeline open at all; that is
+the whole point of fixing one. Export has no target to name: it renders the
+root. UI word: What the preview shows / 预览内容.
+_Avoid_: pinned comp, locked preview (that is the state, not the thing), active
+composition
+
+**Anchor**:
+The `CompositionRef` a timeline tab was entered through — the Group clip that
+fixes where this timeline's moment sits in the film. Root-to-local needs none;
+local-to-root does, and that is the direction a scrub inside a Group travels.
+Where a Group is placed more than once the two placements are two answers, and
+the tab says which one it is reading against. UI word: Switch anchor / 切换锚点.
+_Avoid_: path, breadcrumb, parent
+
+**Moment**:
+The single time the whole editor is at, held in root time and read in each
+composition's own coordinates. One number, read many ways: a Group's read-out is
+a projection of it, which is why scrubbing inside a Group moves the film, and
+why a Group not on screen at the moment draws nothing to scrub. Session state,
+never in the project. UI word: Current time / 当前时间.
+_Avoid_: playhead (that is the line drawn for it), global time, sequence time
 
 **Link override**:
 A session toggle under which every gesture behaves as if `escape_link` were

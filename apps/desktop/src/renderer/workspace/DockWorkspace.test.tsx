@@ -661,6 +661,27 @@ describe("DockWorkspace React integration", () => {
     expect(tab?.title).toBe("fixture › Lower third");
   });
 
+  // Kind alone stops identifying a timeline tab as soon as a second composition
+  // is open, and the only other thing a tab strip offers is order — which every
+  // drag changes. So the tab carries the composition half of its Panel id.
+  it("carries the composition its Panel id names on the tab", () => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+    dockHarness.headerApi = {
+      id: `timeline:${GROUP_ID}`,
+      title: "Timeline",
+      group: { panels: [{ id: `timeline:${GROUP_ID}` }] },
+    };
+    useProjectStore.getState().apply(placedOnce());
+
+    render(<DockWorkspace contracts={contracts} />);
+
+    const tab = document.querySelector<HTMLElement>(
+      '.weft-dock-tab[data-panel-kind="timeline"]',
+    );
+    expect(tab?.dataset.panelInstance).toBe(GROUP_ID);
+  });
+
   it("offers every placement of a Group placed twice, and none of a Group placed once", async () => {
     const dock = strictModeApi();
     dockHarness.api = dock.api;

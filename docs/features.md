@@ -448,6 +448,36 @@ either. The inspector's Group section
 carries the composition's name, its frame size, its duration and the same two
 buttons.
 
+**One moment.** There is a single playhead in the editor and it is a time on the
+FILM's clock. A Group's timeline draws its own reading of that same moment,
+shifted by where its clip sits, so scrubbing inside a Group moves the film and
+stepping the film moves the Group's line — one number, read twice. `Home` and
+`End` inside a Group therefore go to the ends of the *Group*, which are moments
+of the film. A Group whose clip is not on screen at the current moment draws no
+playhead at all, because it has no position then; an edit *at* the playhead
+still works there, since a composition's clock runs whether or not its placement
+shows it. A composition nothing places — an orphan — has no reading of the
+film's moment at all, so its timeline scrubs on an axis of its own and leaves
+the film where it is.
+
+**Watching the film while editing a Group.** The Preview Panel names what it
+draws: *Follow focus* — the default, the timeline holding the keyboard — or a
+fixed composition, chosen from the film and every Group. Locked to the film,
+entering a Group stops taking the picture off screen: the timeline shows the
+Group, the canvas shows what the film looks like at the moment being scrubbed,
+and a lower third can be built against the shot under it without leaving once
+per adjustment. The target can be a composition with no timeline open at all,
+which is what makes it a lock rather than a property of a tab; a target the
+project loses — ungrouped, or its composition deleted — releases back to
+following focus. Export is never affected: it renders the root, whatever the
+preview was pointed at.
+
+Which timelines are open, each one's zoom and scroll, the anchor each was
+entered through, and the preview's lock are remembered **per project** and come
+back when it is reopened. The Dock's own geometry is remembered app-wide
+instead, so a reopened project comes back with its tabs but in whatever
+arrangement the workspace is currently in.
+
 A clip inside a Group is findable in the search palette like any other, and
 activating it opens that Group first, then selects. Undoing a pre-compose while
 standing inside the Group it created closes that tab — the composition no

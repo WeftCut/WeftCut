@@ -1025,6 +1025,12 @@ function TimelineDockTab({
       <div
         className="weft-dock-tab"
         data-panel-kind="timeline"
+        // The other half of this tab's Panel id. Kind alone stops identifying a
+        // timeline tab the moment a second composition is open, and tab ORDER
+        // is not an identity — it changes with every drag. Paired with
+        // `data-panel-kind` for the same reason the Panel body splits its
+        // region name from its instance: one attribute stays a `PanelKind`.
+        data-panel-instance={compositionId}
         title={compositionPathText(summary, crumbs, ordinals, t)}
         onPointerEnter={() => chrome.setHoveredPanel(id)}
         onPointerLeave={() => chrome.setHoveredPanel(null)}
