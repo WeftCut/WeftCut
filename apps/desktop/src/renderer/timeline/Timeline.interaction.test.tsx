@@ -54,7 +54,6 @@ import { registerTransport, releaseTransport } from "../state/playbackStore";
 import { registerRevealTrack } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
 import { summaryFixture } from "../testing/summaryFixture";
-import { resetLinkHover } from "./linkHoverStore";
 import { DEFAULT_TRACK_HEIGHT, HEADER_COL_PX } from "./geometry";
 
 const ipcMocks = vi.hoisted(() => ({
@@ -3126,14 +3125,12 @@ describe("Timeline link chrome", () => {
   beforeEach(() => {
     clearLayerSelection();
     setActiveRegion(null);
-    resetLinkHover();
     useAppSettingsStore.setState((s) => ({
       settings: { ...s.settings, display_mode: "AllTracks", tail_snap_enabled: false },
     }));
   });
   afterEach(() => {
     cleanup();
-    resetLinkHover();
     vi.useRealTimers();
   });
 
@@ -3226,49 +3223,6 @@ describe("Timeline link chrome", () => {
     expect(block.style.left).toBe("80px");
     expect(block.getAttribute("data-drag-validity")).toBe("valid");
     expect(block.querySelector('[data-testid="link-hidden-badge"]')?.textContent).toBe("+1");
-    fireEvent.pointerUp(window, { clientX: 160, clientY: 30 });
-  });
-
-  it("resting on a member draws one hull that survives crossing to a sibling and clears a frame after leaving", () => {
-    vi.useFakeTimers();
-    renderTimeline({ tracks: [linkedTrack], links: [link] });
-    const first = blockOf("Clip A");
-    const second = blockOf("Clip B");
-    expect(screen.queryByTestId("link-hull")).toBeNull();
-
-    fireEvent.pointerOver(first);
-    expect(screen.getAllByTestId("link-hull")).toHaveLength(1);
-    expect(screen.getByTestId("link-hull").getAttribute("data-link-id")).toBe(link.id);
-
-    fireEvent.pointerOut(first);
-    fireEvent.pointerOver(second);
-    act(() => void vi.advanceTimersByTime(40));
-    expect(screen.getAllByTestId("link-hull")).toHaveLength(1);
-
-    fireEvent.pointerOut(second);
-    expect(screen.getAllByTestId("link-hull")).toHaveLength(1);
-    act(() => void vi.advanceTimersByTime(40));
-    expect(screen.queryByTestId("link-hull")).toBeNull();
-  });
-
-  it("selecting the whole link draws the hull; a single-member selection does not", () => {
-    renderTimeline({ tracks: [linkedTrack], links: [link] });
-    act(() => setLayerSelection(layer.id, [layer.id, linkedLayer.id]));
-    expect(screen.getAllByTestId("link-hull")).toHaveLength(1);
-    act(() => setLayerSelection(linkedLayer.id, [linkedLayer.id]));
-    expect(screen.queryByTestId("link-hull")).toBeNull();
-  });
-
-  it("no hull is drawn during a drag", () => {
-    vi.useFakeTimers();
-    renderTimeline({ tracks: [linkedTrack], links: [link], selectedLayerId: layer.id });
-    act(() => setLayerSelection(layer.id, [layer.id, linkedLayer.id]));
-    expect(screen.getAllByTestId("link-hull")).toHaveLength(1);
-    const block = blockOf("Clip A");
-    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 30 });
-    fireEvent.pointerMove(window, { clientX: 160, clientY: 30 });
-    expect(block.getAttribute("data-drag-validity")).toBe("valid");
-    expect(screen.queryByTestId("link-hull")).toBeNull();
     fireEvent.pointerUp(window, { clientX: 160, clientY: 30 });
   });
 

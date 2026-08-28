@@ -105,7 +105,6 @@ import { useCrumbs } from "../state/compositionScopeStore";
 import { CompositionBreadcrumb } from "./CompositionBreadcrumb";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { MarqueeOverlay } from "./MarqueeOverlay";
-import { LinkHull } from "./LinkHull";
 import { beginGroupRename, beginLayerRename, beginLinkRename } from "./renameStore";
 import {
   MarqueeAnchorContext,
@@ -1717,14 +1716,6 @@ export function Timeline({
               />
             )}
             <OutOfRangeDim pxPerSec={pxPerSec} />
-            <LinkHull
-              links={links}
-              tracks={tracks}
-              selectedLayerIds={selectedLayerIds}
-              suppressed={drag !== null}
-              measureRows={measureMarqueeRows}
-              pxPerSec={pxPerSec}
-            />
             <MarqueeOverlay />
           </div>
           <TimelinePlayhead

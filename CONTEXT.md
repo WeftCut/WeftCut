@@ -350,12 +350,6 @@ set, so a linked clip edits alone without the link being dissolved — Reaper's
 Link override / 链接覆盖.
 _Avoid_: unlink mode, solo edit, temporary unlink
 
-**Hull**:
-The hover / selection outline drawn around every member of one link across
-lanes — one rectangle from the earliest start to the latest end, top-most to
-bottom-most visible member. Renderer-only; nothing in the data model knows it.
-_Avoid_: group outline, bounding box, selection frame
-
 ## Motifs
 
 **Motif**:

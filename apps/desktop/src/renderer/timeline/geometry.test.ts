@@ -9,7 +9,6 @@ import {
   linkHue,
   indexLinks,
   indexLinkTabs,
-  linkHullRect,
   keyframeAbsoluteX,
   keyframeHitTest,
   keyframeXWithinClip,
@@ -301,52 +300,6 @@ describe("indexLinkTabs", () => {
       [bottom],
     );
     expect(tabs.get("V")?.hidden).toEqual([]);
-  });
-});
-
-describe("linkHullRect", () => {
-  const rows = [
-    { trackId: "top", top: 0, bottom: 56 },
-    // A 72 px sub-lane strip sits between `top` and `low`: measured, not
-    // tabulated, so the hull's bottom edge lands on `low` itself.
-    { trackId: "low", top: 128, bottom: 184 },
-  ];
-  // Exactly representable, so the products can be compared with `toEqual`.
-  const pxPerUs = 0.5;
-
-  it("spans min start to max end and top-most to bottom-most rendered lane", () => {
-    const rect = linkHullRect(
-      [
-        { tStartUs: 100, tEndUs: 300, trackId: "top" },
-        { tStartUs: 200, tEndUs: 400, trackId: "low" },
-      ],
-      rows,
-      pxPerUs,
-    );
-    expect(rect).toEqual({ x: 50, width: 150, top: 0, bottom: 184 });
-  });
-
-  it("collapses to one row when only one member's lane is rendered, keeping the whole time span", () => {
-    const rect = linkHullRect(
-      [
-        { tStartUs: 100, tEndUs: 300, trackId: "top" },
-        { tStartUs: 0, tEndUs: 500, trackId: "filtered-out" },
-      ],
-      rows,
-      pxPerUs,
-    );
-    expect(rect).toEqual({ x: 0, width: 250, top: 0, bottom: 56 });
-  });
-
-  it("is null with no rendered member lane, and with no members", () => {
-    expect(
-      linkHullRect(
-        [{ tStartUs: 0, tEndUs: 1, trackId: "filtered-out" }],
-        rows,
-        pxPerUs,
-      ),
-    ).toBeNull();
-    expect(linkHullRect([], rows, pxPerUs)).toBeNull();
   });
 });
 

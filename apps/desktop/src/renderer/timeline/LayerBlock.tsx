@@ -38,7 +38,6 @@ import {
   beginLayerRename,
   endRename,
 } from "./renameStore";
-import { hoverLink, unhoverLink } from "./linkHoverStore";
 import { useLinkOverride } from "../state/linkOverrideStore";
 import { openComposition } from "../state/compositionScopeStore";
 import { revealTrackWithoutSelection } from "../state/navigation";
@@ -614,11 +613,6 @@ export function LayerBlock({
   const onPointerLeaveHover = () => {
     if (bladeMode) onBladePreview(null);
     if (edgeHover !== null) setEdgeHover(null);
-    if (linkId !== null) unhoverLink(linkId);
-  };
-
-  const onPointerEnterHover = () => {
-    if (linkId !== null && !previewOnly) hoverLink(linkId);
   };
 
   const onLayerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -719,7 +713,7 @@ export function LayerBlock({
   const linkHueValue = linkId !== null ? linkHue(linkId) : null;
   const showLinkGlyph = linkHueValue !== null && showFullAffordances;
   // Dimmed to 40 % under the link override (`linkOverrideStore.ts`), so the
-  // canvas itself says links are not in force; `LinkHull` dims the same way.
+  // canvas itself says links are not in force.
   const linkAccentAlpha = linksOff ? 0.4 : 1;
   const linkStyle: React.CSSProperties = {};
   if (linkHueValue !== null) {
@@ -865,7 +859,6 @@ export function LayerBlock({
         beginLayerRename(layer.id);
       }}
       onPointerDown={onLayerPointerDown}
-      onPointerEnter={onPointerEnterHover}
       onPointerMove={onPointerMoveHover}
       onPointerLeave={onPointerLeaveHover}
       onContextMenu={(e) => {

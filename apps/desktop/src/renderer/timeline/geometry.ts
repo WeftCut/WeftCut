@@ -437,55 +437,6 @@ export function indexLinkTabs(
   return out;
 }
 
-/// The hull's canvas-relative box. `x`/`width` span the whole link in time,
-/// `top`/`bottom` the rendered member lanes only.
-export interface LinkHullRect {
-  x: number;
-  width: number;
-  top: number;
-  bottom: number;
-}
-
-/// One rectangle around a link: `min t_start → max t_end` over EVERY member —
-/// hidden ones included, so the rails say how far the link reaches even when a
-/// lane is filtered out — and top-most → bottom-most rendered member lane.
-///
-/// `laneRects` are MEASURED (`getBoundingClientRect`, canvas-relative), never
-/// an arithmetic table of track heights — `trackIdAtClientY`'s LANDMINE applies
-/// verbatim: an expanded track's keyframe sub-lanes sit between its lane and
-/// the next, so a table puts the hull's bottom edge a row above the member it
-/// should enclose. A lane a member sits on but that was not measured is not
-/// rendered and contributes nothing; with one rendered member the hull
-/// collapses to that member's row and still draws. Null when no member lane
-/// is rendered.
-export function linkHullRect(
-  members: readonly { tStartUs: number; tEndUs: number; trackId: string }[],
-  laneRects: readonly MeasuredTrackRow[],
-  pxPerUs: number,
-): LinkHullRect | null {
-  if (members.length === 0) return null;
-  const rowByTrackId = new Map(laneRects.map((row) => [row.trackId, row]));
-  let top = Infinity;
-  let bottom = -Infinity;
-  let startUs = Infinity;
-  let endUs = -Infinity;
-  for (const member of members) {
-    startUs = Math.min(startUs, member.tStartUs);
-    endUs = Math.max(endUs, member.tEndUs);
-    const row = rowByTrackId.get(member.trackId);
-    if (row === undefined) continue;
-    top = Math.min(top, row.top);
-    bottom = Math.max(bottom, row.bottom);
-  }
-  if (!Number.isFinite(top)) return null;
-  return {
-    x: startUs * pxPerUs,
-    width: Math.max(0, (endUs - startUs) * pxPerUs),
-    top,
-    bottom,
-  };
-}
-
 /// Map a layer-local keyframe time (µs) to an x offset (px) within a clip
 /// chip of `clipDurationUs` rendered `clipWidthPx` wide. Clamps out-of-range
 /// keyframes (kept in data after trims) to the clip bounds.

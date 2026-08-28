@@ -115,9 +115,9 @@ a Group into a refusal about its parent.
 ## Consequences
 
 - Two words, two features, each spelled the way the industry spells it. A
-  link has one job and gains the identity the A/B Roll problem needs — accent,
-  hull, hidden-member badge all hang off a relationship that now has a name of
-  its own.
+  link has one job and gains the identity the A/B Roll problem needs: the
+  accent and the hidden-member badge both hang off a relationship that now has
+  a name of its own.
 - Every `.vproj` on disk today fails to open with a parse error rather than a
   clean refusal: the file still says `schema_version: 1`, passes the version
   gate, and the parser finds no `links`. Accepted — those files live on
