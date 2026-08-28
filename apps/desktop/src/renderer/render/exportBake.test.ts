@@ -72,32 +72,67 @@ function motifLayer(
   return { id, t_start_us: tStartUs, t_end_us: tEndUs, params };
 }
 
-/// Minimal ProjectSummary whose ROOT carries one track of the given layers.
-/// Only the fields `motifLayersToBake` reads are populated; the rest is cast.
+interface BakeTestLayer {
+  id: string;
+  t_start_us: number;
+  t_end_us: number;
+  params: LayerParamsView;
+  enabled?: boolean;
+}
+
+/// A Group layer placing `compositionId` at `tStartUs`, opening its window
+/// `srcInUs` into it.
+function refLayer(
+  id: string,
+  compositionId: string,
+  tStartUs: number,
+  tEndUs: number,
+  srcInUs = 0,
+): BakeTestLayer {
+  return {
+    id,
+    t_start_us: tStartUs,
+    t_end_us: tEndUs,
+    params: {
+      kind: "CompositionRef",
+      composition_id: compositionId,
+      composition_label: null,
+      src_in_us: srcInUs,
+      src_out_us: srcInUs + (tEndUs - tStartUs),
+      x: stat(0),
+      y: stat(0),
+      scale_x: stat(1),
+      scale_y: stat(1),
+      scale_linked: true,
+      rotation_deg: stat(0),
+      anchor_x: stat(0.5),
+      anchor_y: stat(0.5),
+      opacity: stat(1),
+    },
+  };
+}
+
+/// Minimal ProjectSummary whose ROOT carries one track of the given layers,
+/// plus a track per further composition in `groups` (keyed by its id). Only
+/// the fields `motifLayersToBake` reads are populated; the rest is cast.
 function summaryWith(
-  layers: Array<{
-    id: string;
-    t_start_us: number;
-    t_end_us: number;
-    params: LayerParamsView;
-    enabled?: boolean;
-  }>,
+  layers: BakeTestLayer[],
   trackEnabled = true,
+  groups: Record<string, BakeTestLayer[]> = {},
 ): ProjectSummary {
+  const oneTrack = (ls: BakeTestLayer[]) => ({
+    tracks: [
+      {
+        enabled: trackEnabled,
+        layers: ls.map((l) => ({ enabled: l.enabled ?? true, ...l })),
+      },
+    ],
+  });
   return {
     root_id: "root",
     compositions: {
-      root: {
-        tracks: [
-          {
-            enabled: trackEnabled,
-            layers: layers.map((l) => ({
-              enabled: l.enabled ?? true,
-              ...l,
-            })),
-          },
-        ],
-      },
+      root: oneTrack(layers),
+      ...Object.fromEntries(Object.entries(groups).map(([id, ls]) => [id, oneTrack(ls)])),
     },
   } as unknown as ProjectSummary;
 }
@@ -184,6 +219,52 @@ describe("motifLayersToBake", () => {
 
   test("no Motif layers → empty result", () => {
     const summary = summaryWith([]);
+    expect(motifLayersToBake(summary, 0, 5_000_000, 30, 1)).toEqual([]);
+  });
+
+  test("a Motif inside a Group bakes its OWN frame range, keyed by the ref path", () => {
+    // The Group sits at 2 s on the root reading its composition from 0 s, so
+    // the composition's own 0 is at root 2 s. A 1 s Motif at 0 inside it is
+    // live over root [2 s, 3 s) and animates from ITS frame 0 — layer-local,
+    // exactly as the Worker's nested `MotifSprite` indexes it.
+    const summary = summaryWith(
+      [refLayer("G", "g", 2_000_000, 4_000_000)],
+      true,
+      { g: [motifLayer("inner", 0, 1_000_000)] },
+    );
+    const specs = motifLayersToBake(summary, 0, 5_000_000, 30, 1);
+    expect(specs).toHaveLength(1);
+    const s = specs[0]!;
+    // The key the Worker asks `motifFrames` for is the layer's PER-INSTANCE
+    // identity; the bare id would collide between two placements of one Group.
+    expect(s.layerId).toBe("G/inner");
+    expect(s.tStartUs).toBe(0);
+    expect(s.firstFrame).toBe(0);
+    expect(s.lastFrame).toBe(s.durationFrames - 1);
+    expect(s.durationFrames).toBe(motifDurationFrames(1_000_000, 30, 1));
+  });
+
+  test("two placements of one Group bake separately, each over its own range", () => {
+    // Instance A shows the composition's first half second, instance B opens
+    // half a second in — so they need different frames of the same Motif layer
+    // and cannot share one array.
+    const summary = summaryWith(
+      [
+        refLayer("A", "g", 0, 500_000),
+        refLayer("B", "g", 4_000_000, 4_500_000, 500_000),
+      ],
+      true,
+      { g: [motifLayer("inner", 0, 1_000_000)] },
+    );
+    const specs = motifLayersToBake(summary, 0, 5_000_000, 30, 1);
+    expect(specs.map((s) => s.layerId)).toEqual(["A/inner", "B/inner"]);
+    // 30 fps, half a second each: A covers frames 0–14, B 15–29.
+    expect([specs[0]!.firstFrame, specs[0]!.lastFrame]).toEqual([0, 14]);
+    expect([specs[1]!.firstFrame, specs[1]!.lastFrame]).toEqual([15, 29]);
+  });
+
+  test("a Group the summary cannot resolve bakes nothing", () => {
+    const summary = summaryWith([refLayer("G", "missing", 0, 2_000_000)]);
     expect(motifLayersToBake(summary, 0, 5_000_000, 30, 1)).toEqual([]);
   });
 

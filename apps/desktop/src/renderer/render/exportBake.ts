@@ -24,7 +24,7 @@
 
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import type { ProjectSummary, MotifView } from "../ipc";
-import { rootCompositionOf } from "../ipc/compositions";
+import { compositionLocalUs, forEachLayerInTime, instanceKey } from "./compositionWalk";
 import { getMotif, resolveMotifContentDurationUs, type Motif } from "./motifs/catalog";
 import { canonicalizeProps } from "./motifs/Rasterizer";
 import { bakeMotifFrame } from "./motifs/motifRaster";
@@ -85,6 +85,10 @@ export function bakeContentFrameFor(
 /// range) so the per-frame index math matches `MotifSprite.update` exactly —
 /// a partial export range only narrows WHICH of those frames we actually bake.
 export interface MotifBakeSpec {
+  /// Per-instance identity (`instanceKey`) — the key the Worker's
+  /// `CompositionNode` asks `motifFrames` for. The bare layer id at the root;
+  /// path-prefixed inside a Group, because two placements of one Group reach
+  /// different frames of the same Motif layer and each needs its own array.
   layerId: string;
   motif: Motif;
   view: MotifView;
@@ -116,72 +120,73 @@ export function motifLayersToBake(
   fpsDen: number,
 ): MotifBakeSpec[] {
   const out: MotifBakeSpec[] = [];
-  // The ROOT's motifs — what export renders (slice 14 recurses into Groups).
-  for (const track of rootCompositionOf(summary).tracks) {
-    if (!track.enabled) continue;
-    for (const layer of track.layers) {
-      if (!layer.enabled) continue;
-      if (layer.params.kind !== "Motif") continue;
-      // Overlap test against the half-open export range. `t_end_us` is the
-      // exclusive boundary, so a layer ending exactly at `startUs` doesn't
-      // overlap.
-      if (layer.t_end_us <= startUs) continue;
-      if (layer.t_start_us >= endUs) continue;
+  // The ROOT and every Group placed on it — what export renders. The walk
+  // hands each Motif layer its ROOT-time placement (`tStartUs`/`tEndUs`,
+  // already clipped by every enclosing Group's window) plus the `offsetUs` of
+  // the composition it sits in, which is all the frame math below needs.
+  forEachLayerInTime(summary, summary.root_id, startUs, endUs, 0, (placed) => {
+    const { layer } = placed;
+    if (layer.params.kind !== "Motif") return;
 
-      const view = layer.params;
-      const motif = getMotif(view.motif_id);
-      if (!motif) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[weftcut/export] bake: unknown motif "${view.motif_id}" ` +
-            `(layer ${layer.id}) — skipping`,
-        );
-        continue;
-      }
-
-      const durationUs = layer.t_end_us - layer.t_start_us;
-      const durationFrames = motifDurationFrames(durationUs, fpsNum, fpsDen);
-
-      // Comp-frame indices of the export-range overlap, expressed layer-local
-      // (motifs have no source-in offset, so layer-local time = comp time −
-      // t_start_us). Mirrors `MotifSprite.update`'s
-      // `frameIndexInLayer(tInLayerUs, ...)` + the `min(durationFrames - 1, …)`
-      // clamp. We bake only the frames the export can reach; a frame the
-      // playhead never visits would be wasted raster work.
-      const overlapStartUs = Math.max(layer.t_start_us, startUs);
-      // The last instant the layer is visible inside the range is the smaller
-      // of the layer's last displayable µs and the range's. `endUs` is
-      // exclusive, so subtract 1 µs before mapping to a frame index.
-      const overlapEndUs = Math.min(layer.t_end_us, endUs) - 1;
-      // Snap both bounds to the composition-frame grid BEFORE computing the
-      // frame index. The export Worker's Compositor snaps `tUs` via
-      // `snapFrameFloor` in `compositeFrame` before passing `tUsSnapped -
-      // t_start_us` to `MotifSprite.update` → `frameIndexInLayer`. When
-      // `startUs` is not on the grid (e.g. the playhead was set to a raw time
-      // via "set range to playhead"), the raw `overlapStartUs` maps to a
-      // higher frame index than the snapped value, so `injectedFrames[0]`
-      // would be `undefined` and the leading exported frame would show a blank.
-      const firstFrame = Math.min(
-        durationFrames - 1,
-        frameIndexInLayer(snapFrameFloor(overlapStartUs, fpsNum, fpsDen) - layer.t_start_us, fpsNum, fpsDen),
+    const view = layer.params;
+    const motif = getMotif(view.motif_id);
+    if (!motif) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[weftcut/export] bake: unknown motif "${view.motif_id}" ` +
+          `(layer ${layer.id}) — skipping`,
       );
-      const lastFrame = Math.min(
-        durationFrames - 1,
-        frameIndexInLayer(snapFrameFloor(overlapEndUs, fpsNum, fpsDen) - layer.t_start_us, fpsNum, fpsDen),
-      );
-
-      out.push({
-        layerId: layer.id,
-        motif,
-        view,
-        durationUs,
-        durationFrames,
-        firstFrame,
-        lastFrame,
-        tStartUs: layer.t_start_us,
-      });
+      return;
     }
-  }
+
+    const durationUs = layer.t_end_us - layer.t_start_us;
+    const durationFrames = motifDurationFrames(durationUs, fpsNum, fpsDen);
+
+    // Comp-frame indices of the export-range overlap, expressed layer-local
+    // (motifs have no source-in offset, so layer-local time = the OWN
+    // composition's time − t_start_us). Mirrors `MotifSprite.update`'s
+    // `frameIndexInLayer(tInLayerUs, ...)` + the `min(durationFrames - 1, …)`
+    // clamp. We bake only the frames the export can reach; a frame the
+    // playhead never visits would be wasted raster work.
+    const overlapStartUs = Math.max(placed.tStartUs, startUs);
+    // The last instant the layer is visible inside the range is the smaller
+    // of the layer's last displayable µs and the range's. `endUs` is
+    // exclusive, so subtract 1 µs before mapping to a frame index.
+    const overlapEndUs = Math.min(placed.tEndUs, endUs) - 1;
+    // Snap the ROOT bound to the composition-frame grid, then map it down to
+    // this layer's own composition exactly as the Worker's nested
+    // `CompositionNode` does (`compositionLocalUs`) — both sides therefore
+    // reach one frame index, and at the root (offset 0) the mapping is the
+    // identity the flat path always had. The snap comes first because the
+    // Worker's Compositor snaps `tUs` in `compositeFrame` before any of this:
+    // when `startUs` is off-grid (the playhead set to a raw time via "set
+    // range to playhead") the raw bound maps one frame HIGHER than the snapped
+    // one, so `injectedFrames[first]` would be `undefined` and the leading
+    // exported frame would show a blank.
+    const localFrame = (tRootUs: number): number =>
+      frameIndexInLayer(
+        compositionLocalUs(
+          snapFrameFloor(tRootUs, fpsNum, fpsDen) - placed.offsetUs,
+          fpsNum,
+          fpsDen,
+        ) - layer.t_start_us,
+        fpsNum,
+        fpsDen,
+      );
+    const firstFrame = Math.min(durationFrames - 1, localFrame(overlapStartUs));
+    const lastFrame = Math.min(durationFrames - 1, localFrame(overlapEndUs));
+
+    out.push({
+      layerId: instanceKey(placed.path, layer.id),
+      motif,
+      view,
+      durationUs,
+      durationFrames,
+      firstFrame,
+      lastFrame,
+      tStartUs: layer.t_start_us,
+    });
+  });
   return out;
 }
 

@@ -39,6 +39,7 @@ export const VISUAL_LAYER_KINDS: ReadonlySet<string> = new Set([
   "Color",
   "Text",
   "Motif",
+  "CompositionRef",
 ]);
 
 export function transitionProgress(

@@ -24,6 +24,7 @@ import {
 import { type ProxyState } from "../panels/mediaReadiness";
 import { classifyWebcodecsDecodability } from "../render/decoder/probeSourceDecodable";
 import { hasVisibleContent, referencedVideoMediaIds } from "../render/activeVideoLayers";
+import { forEachLayer } from "../render/compositionWalk";
 import {
   type ExportSettings,
   type WebCodecsCodecId,
@@ -513,14 +514,14 @@ export function useExportFlow(deps: {
     // which the Worker handles via the time grid.
     let motifFrames: Record<string, ImageBitmap[]> = {};
     try {
+      // Every Motif the bake will reach, Groups included — the labels have to
+      // name what the "preparing" step is actually rastering. Same walk
+      // `motifLayersToBake` runs, so the two can't disagree about which
+      // motifs are in the export.
       const motifIds = new Set<string>();
-      for (const tr of comp.tracks) {
-        for (const l of tr.layers) {
-          if (l.enabled && l.params.kind === "Motif") {
-            motifIds.add(l.params.motif_id);
-          }
-        }
-      }
+      forEachLayer(summary, comp.id, ({ layer }) => {
+        if (layer.params.kind === "Motif") motifIds.add(layer.params.motif_id);
+      });
       if (motifIds.size > 0) {
         const labels = [...motifIds].map(
           (id) => getMotif(id)?.manifest.name ?? id,

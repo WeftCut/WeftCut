@@ -5,41 +5,28 @@
 // the Application. The Compositor receives an already-initialized
 // `Application` reference at construction.
 //
+// The Compositor draws ONE composition — the open one in preview, the root
+// in export — through a `CompositionNode` staged into `stage`; that node's
+// sweep recurses into Group layers through `CompositionRefSprite`s, each
+// with a node of its own. What lives here is what every node shares: the
+// decoder pool, the ingest shaders, the audio bus, the motif planners,
+// underrun and presentation state.
+//
 // Plan: docs/render.md
 
-import { Application, Container, Texture } from "pixi.js";
+import { Application, Container } from "pixi.js";
 
 import { lastFrameAnchorUs as computeLastFrameStartUs, snapFrameFloor } from "../frames";
 import type { CompositionSummary, LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
-import { EMPTY_COMPOSITION, rootCompositionOf } from "../ipc/compositions";
-import { anchorPivot } from "./anchorPivot";
-import { withTextBoxOverride, withTransformOverride } from "./transformOverrides";
+import { compositionOrRoot, EMPTY_COMPOSITION } from "../ipc/compositions";
 import { AudioGraph } from "./audio/AudioGraph";
-import { AudioMixer } from "./audio/AudioMixer";
-import { anyRoleSolo, auditionedRoleGainLinear, roleAudible } from "./audio/roleGate";
 import type { ClockAnchor } from "./audio/chunkSchedule";
-import {
-  resolveColorView,
-  resolveImageOverlayView,
-  resolveMotifView,
-  resolveTextView,
-  resolveVideoClipView,
-} from "./resolveView";
-import { SourceDecoderPool, SourceHandle } from "./decoder/SourceDecoderPool";
-import type { DecodeSession, DecoderPool } from "./decoder/session";
+import { SourceDecoderPool } from "./decoder/SourceDecoderPool";
+import type { DecoderPool } from "./decoder/session";
 import {
   planPreviewDecodePriority,
   type PreviewDecodePriorityPlan,
 } from "./decoder/previewDecodePriority";
-import type { HandoffTimingSummary } from "./decoder/transports/handoffTimings";
-import { FfmpegSource } from "./decoder/FfmpegSource";
-import { markFfmpegUnusable } from "./decoder/ffmpegCapability";
-import { exportHandleKey } from "./decoder/ExportDecoderPool";
-import { ColorSprite } from "./sprite/ColorSprite";
-import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
-import { MotifSprite } from "./sprite/MotifSprite";
-import { TextSprite } from "./sprite/TextSprite";
-import { VideoClipSprite } from "./sprite/VideoClipSprite";
 import { getMotif } from "./motifs/catalog";
 import { MotifPrewarmer, type PrewarmContentSpec } from "./motifs/MotifPrewarmer";
 import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
@@ -58,26 +45,28 @@ import {
   type LayerBakeStatus,
 } from "../timeline/motifBakeStatusStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
-import { swapKeys } from "./swapKeys";
-import { isNativeNv12Frame, isTenBitFrame } from "./decoder/decodedFrame";
 import { Nv12Ingest } from "./nv12/Nv12Ingest";
 import { TenBitIngest } from "./tenbit/TenBitIngest";
 import { loadBundledFontBytes } from "./fonts/registry";
 import { loadFontsIntoFaceSet } from "./fonts/loadFontsIntoFaceSet";
 import { installCjkLineBreaking } from "./fonts/lineBreak";
 import type { TextFit } from "./textBox";
-import { EffectChain } from "./effects/EffectChain";
-import type { StageableSprite } from "./sprite/StageableSprite";
-import { effectsFor } from "./effects/effectsFor";
-import { selectActiveTransitions } from "./transitions/activeTransitions";
-import { TransitionNodeManager } from "./transitions/TransitionNodes";
 import { STAGE, stageAdd, stageNow, stageRecord } from "./perf/stageTimers";
 import {
-  judgeFrameSelection,
   UnderrunTracker,
   type UnderrunSessionSummary,
   type UnderrunSnapshot,
 } from "./underrunTracker";
+import {
+  CompositionNode,
+  type ActiveClipProbe,
+  type ClipPerfRow,
+  type CompositionNodeHost,
+  type ResolvedRendererSource,
+} from "./CompositionNode";
+import { compositionLocalUs, forEachLayer } from "./compositionWalk";
+
+export type { ActiveClipProbe, ResolvedRendererSource } from "./CompositionNode";
 
 /// Match the preview ring's default lookahead window
 /// (`FrameRing.DEFAULT_LOOKAHEAD_US`). We only use this to warm the next clip
@@ -95,63 +84,21 @@ export interface CompositorPerfSnapshot {
   /// Last preview-only upcoming-clip prewarm attempt. Null before
   /// the first `setAnchorTime()` tick or in export mode.
   upcomingPrewarm: UpcomingClipPrewarmSnapshot | null;
-  /// Number of in-flight no-flash source swaps (bridge→proxy). Non-zero
-  /// during the overlap window when a clip is being repointed to a
-  /// freshly-built proxy; explains transient extra decode cost.
+  /// Number of in-flight no-flash source swaps (bridge→proxy), every node
+  /// counted. Non-zero during the overlap window when a clip is being
+  /// repointed to a freshly-built proxy; explains transient extra decode cost.
   swapsInFlight: number;
   /// Playback underrun state (dropped-frame indicator's ground truth).
   underrun: UnderrunSnapshot;
-  /// Transition node + RT-pool accounting; null until the first active
-  /// window. `rt.created` staying flat across a played transition is the
-  /// "no per-frame RT allocation" memory-ratchet probe.
+  /// Transition node + RT-pool accounting for the OPEN composition's node;
+  /// null until its first active window. `rt.created` staying flat across a
+  /// played transition is the "no per-frame RT allocation" memory-ratchet probe.
   transitions: {
     nodes: number;
     rt: { free: number; outstanding: number; created: number; destroyed: number };
   } | null;
-  clips: Array<{
-    layerId: string;
-    mediaId: string;
-    /// `VideoDecoder.decodeQueueSize` at sample time.
-    decodeQueueSize: number;
-    /// Number of frames currently cached in the per-clip ring.
-    ringSize: number;
-    /// PTS of the ring's earliest cached frame; null if the ring is empty.
-    ringFirstPtsUs: number | null;
-    /// PTS of the ring's latest frame; null if the ring is empty.
-    ringLastPtsUs: number | null;
-    /// Cumulative frames decoded for this clip; the HUD diffs it into fps.
-    decodedFrameCount: number;
-    /// Which decode path actually backs this clip right now — the same
-    /// discriminator `activeClipProbe` reports. NOT derivable from
-    /// `downgraded`: a clip that STARTED on software (10-bit, ProRes, DNx —
-    /// anything off the HW allow-list) never downgraded, so reading
-    /// `downgraded` as a lane prints "hardware" for the whole software lane.
-    sourceKind: ActiveClipProbe["sourceKind"];
-    /// True only if this handle STARTED on hardware and fell back at runtime
-    /// (device loss, decode error, HW-session budget). Orthogonal to
-    /// `sourceKind`: it is the transition, not the current state.
-    downgraded: boolean;
-    /// Hardware lane only: the preload's per-frame handoff cost, whose
-    /// `barrier` component is the synchronous GPU drain each session pays
-    /// before its slot recycles. Null on every other path.
-    handoff: HandoffTimingSummary | null;
-    /// True when the ring's lookahead window is satisfied (decoder not
-    /// running behind the playhead).
-    lookaheadFull: boolean;
-    /// Where this clip's decoded frames went — see `FrameRingFate`. Null on the
-    /// export store, which has no retention window to lose one to.
-    ///
-    /// This is the counter set that separates "never decoded" from "decoded and
-    /// thrown away": `decodedFrameCount` is incremented by BOTH engines before
-    /// they call `ring.push`, so a frame the ring then rejects as stale is
-    /// counted as delivered and never held. Diff two snapshots for rates; read
-    /// `serveRepeat` absolutely, since a held frame is a judder event the
-    /// dropped-frame counter is blind to.
-    ringFate: import("./decoder/FrameRing").FrameRingFate | null;
-    /// WebCodecs only: decoder outputs awaiting `createImageBitmap`, each
-    /// pinning a hardware decode-pool slot (ADR 0004). Null on every other lane.
-    conversionBacklog: { inFlight: number; peak: number } | null;
-  }>;
+  /// Every live clip, Groups' included.
+  clips: ClipPerfRow[];
 }
 
 export interface UpcomingClipPrewarmSnapshot {
@@ -172,128 +119,6 @@ export interface UpcomingClipPrewarmSnapshot {
     ringSize: number;
     ringLastPtsUs: number | null;
   }>;
-}
-
-/// A bound texture's natural extent, or null while the sprite still holds the
-/// EMPTY placeholder (nothing decoded yet — the gizmo shows no box rather than
-/// a 1×1 one).
-function textureSize(texture: Texture): { w: number; h: number } | null {
-  if (texture === Texture.EMPTY) return null;
-  const { width: w, height: h } = texture.orig;
-  return w > 0 && h > 0 ? { w, h } : null;
-}
-
-/// THE one place decode-path identity is derived, shared by `activeClipProbe`
-/// (E2E) and `getPerfSnapshot` (PerfHUD) so the two can never disagree about
-/// which lane a clip is on. Discriminated by `instanceof` + `currentLane()`,
-/// NOT `constructor.name` — the minified E2E renderer build mangles it.
-function sourceKindOf(source: DecodeSession): ActiveClipProbe["sourceKind"] {
-  if (source instanceof FfmpegSource) {
-    return source.currentLane() === "software" ? "sw" : "native-gpu";
-  }
-  return source instanceof SourceHandle ? "webcodecs" : "unknown";
-}
-
-/// E2E-only diagnostic snapshot of ONE active VideoClip's decode source plus
-/// its bound sprite. The preview-sw conformance spec reads this to prove the
-/// runtime path (import → native-sw route → `resolveSource` resolves the
-/// ffmpeg engine → acquire) ends in a real `FfmpegSource` on its software lane
-/// AND that a decoded frame reached the sprite — the single runtime fact no
-/// other surface exposes. All fields are plain numbers/strings/booleans so
-/// the whole thing survives the `page.evaluate` boundary.
-export interface ActiveClipProbe {
-  layerId: string;
-  mediaId: string;
-  /// Which concrete decode handle/lane backs `ActiveClip.source`, derived by
-  /// `sourceKindOf`. `"sw"` is the ffmpeg software-decode lane, `"native-gpu"`
-  /// its hardware lane.
-  sourceKind: "webcodecs" | "native-gpu" | "sw" | "unknown";
-  /// Derived from `sourceKind === "sw"`: whether the active handle is the native
-  /// software-decode path. Kept as a distinct field so the spec can assert the
-  /// software tier explicitly.
-  isSoftware: boolean;
-  /// True once the pool's idle sweeper has reclaimed this handle.
-  sourceDisposed: boolean;
-  /// Decoded frames currently buffered in the handle's ring. For the SW lane a
-  /// non-zero value means `FfmpegSource`'s `SwTransport` converted NV12 →
-  /// VideoFrame → ImageBitmap and pushed it — i.e. the native decoder produced
-  /// real output.
-  ringSize: number;
-  /// PTS (µs) of the earliest / latest frame buffered in the ring, or null when
-  /// empty. The spec waits for `ringLastPtsUs >= target` so it captures the
-  /// seeked frame rather than an earlier one the ring surfaced while catching up.
-  ringFirstPtsUs: number | null;
-  ringLastPtsUs: number | null;
-  /// Where this clip's decoded frames went (see `FrameRingFate`), null on a
-  /// store without a retention window. Carried here as well as on
-  /// `CompositorPerfSnapshot` because the playback bench reads the two probes at
-  /// different points — the perf snapshot brackets the measured window, while
-  /// this one is also sampled during the pre-window route verification, where a
-  /// clip already churning before the window opens is worth seeing.
-  ringFate: import("./decoder/FrameRing").FrameRingFate | null;
-  /// True once a real (non-EMPTY) texture is bound to the sprite. A VideoClip
-  /// snapshots the ring's ImageBitmap into its own canvas, so "the bitmap
-  /// reached the sprite" shows up as a bound, correctly-sized texture rather
-  /// than a live ImageBitmap resource.
-  spriteBound: boolean;
-  spriteWidth: number;
-  spriteHeight: number;
-  /// Identity of the frame currently held by the sprite. Unlike the ring
-  /// bounds, these values change only after `updateClip` successfully binds a
-  /// selected frame; on a decode miss they keep describing the held frame.
-  boundFramePtsUs: number | null;
-  boundFrameDurationUs: number | null;
-  boundFrameSourceKey: string | null;
-  /// Which ingest path produced the bound pixels — `"p10"` (TenBitIngest),
-  /// `"nv12"` (Nv12Ingest), `"browser"` (snapshot of a decoder-produced
-  /// frame), or null before the first bind. The 10-bit VideoToolbox
-  /// conformance variants assert `"p10"` to prove the frame rode the ten-bit
-  /// ingest.
-  boundFrameKind: "p10" | "nv12" | "browser" | null;
-  /// The resolved HW lane (`nvdec`|`vaapi`|`videotoolbox`|`d3d11va`) when the
-  /// active clip's source is a `FfmpegSource` on its hardware lane, else null
-  /// (software lane, a WebCodecs source, or no matching clip). The
-  /// lane-parameterized preview-hw conformance spec asserts this to prove WHICH
-  /// HW lane engaged.
-  hwLane: string | null;
-  /// The resolver IDENTITY (`${engine}:${source}:${target}`) the active clip's
-  /// source was built from — see `ActiveClip.builtFromKey`. Lets the decode-
-  /// engine e2e spec assert the resolved ENGINE/SOURCE (the two
-  /// leading segments) rather than inferring it from `sourceKind` alone, which
-  /// can't distinguish webcodecs-original from webcodecs-proxy — both decode
-  /// through the WebCodecs pool and surface as `sourceKind: "webcodecs"`. Null
-  /// only when `activeClipProbe` itself returns null (no matching clip).
-  builtFromKey: string | null;
-}
-
-/// Preview mode's resolved decode source for one media, produced by the injected
-/// `resolveSource` (PixiPreview gathers the store inputs and runs the pure
-/// `resolveDecodeEngine`). `target` is the decode target: for `engine: "ffmpeg"`
-/// it's the original file PATH (the pool decodes it directly, ignoring
-/// `proxyAssetUrl`); for `engine: "webcodecs"` it's ALREADY `convertFileSrc`'d.
-/// `status: "unsupported"` means no decodable target exists for this media at
-/// all (surfaced via `CompositorInit.onUnsupported`); `"pending"` means the
-/// resolver expects one soon (proxy building, decodability untested) and
-/// `target` is null. `key` = `${engine}:${source}:${target}` is the swap
-/// IDENTITY: it changes only when the resolved engine, source, or decode
-/// target changes, so a landed proxy can never displace an already-decoding
-/// original (feedback_native_nle_conventions).
-export interface ResolvedRendererSource {
-  engine: import("./decoder/decodeEngine").DecodeEngine;
-  source: import("./decoder/decodeEngine").DecodeSource;
-  status: "ok" | "pending" | "unsupported";
-  target: string | null;
-  key: string | null;
-}
-
-/// Export mode has exactly one source (the proxy/master, decoded via
-/// WebCodecs). Wrap its asset URL in the `ResolvedRendererSource` shape so
-/// `ensureClip` runs ONE acquire path across preview + export; preview injects
-/// the real engine resolver instead.
-function rsFromExportProxy(url: string | null): ResolvedRendererSource | null {
-  return url
-    ? { engine: "webcodecs", source: "proxy", status: "ok", target: url, key: `webcodecs:proxy:${url}` }
-    : null;
 }
 
 export interface CompositorInit {
@@ -359,98 +184,6 @@ export interface CompositorInit {
   pool?: DecoderPool;
 }
 
-interface ActiveClip {
-  layerId: string;
-  mediaId: string;
-  source: DecodeSession;
-  sprite: VideoClipSprite;
-  effects: EffectChain;
-  /// The resolver IDENTITY (`${engine}:${source}:${target}`) the current
-  /// `source` was built from. When the resolver later returns a different key
-  /// for this media, `ensureClip` starts a no-flash overlap-swap to the new
-  /// source. Key semantics: see `ResolvedRendererSource`.
-  builtFromKey: string;
-  /// Presentation identity of the pixels currently held by `sprite`. Kept
-  /// independently from the ring because a frameAt miss deliberately holds
-  /// the previous image, and independently from builtFromKey because a
-  /// no-flash source swap keeps the old pixels until the new source binds.
-  boundFramePtsUs: number | null;
-  boundFrameDurationUs: number | null;
-  boundFrameSourceKey: string | null;
-  /// Which ingest path produced the pixels currently bound to `sprite` —
-  /// `"p10"` (TenBitIngest), `"nv12"` (Nv12Ingest) or `"browser"` (the
-  /// snapshot path for decoder-produced frames). E2E-observable via
-  /// `activeClipProbe`, so the 10-bit conformance variants can assert the
-  /// frame actually rode the ten-bit ingest rather than inferring it.
-  boundFrameKind: "p10" | "nv12" | "browser" | null;
-  /// Diagnostic edge-trigger: true if the last `updateClip` call
-  /// found `ring.selectFrame(srcTUs)` returned null. Used so the
-  /// null-selection log fires once per transition rather than
-  /// every rAF tick during the null window.
-  loggedNull: boolean;
-}
-
-/// An in-flight no-flash source-swap (preview only). Holds a SECOND decoder
-/// handle on the new URL until its ring has the current visible frame, then
-/// atomically repoints `ActiveClip.source` to it and releases the original.
-/// Keyed in `Compositor.swaps` by the clip's real layerId.
-interface SwapState {
-  handle: DecodeSession;
-  /// Pool key of the synthetic swap handle (`${layerId}#swap`).
-  swapLayerId: string;
-  /// The resolver IDENTITY (`${engine}:${source}:${target}`) the swap handle
-  /// is decoding toward. Becomes the clip's `builtFromKey` on completion; the
-  /// in-flight dedupe compares it against the freshly-resolved key.
-  key: string;
-  /// Bounded poll driving the swap to completion (cleared on done/abandon).
-  timer: ReturnType<typeof setInterval> | null;
-  /// Safety deadline: abandon the swap if it never produces the frame.
-  deadline: ReturnType<typeof setTimeout> | null;
-}
-
-interface ActiveImage {
-  layerId: string;
-  mediaId: string;
-  sprite: ImageOverlaySprite;
-  effects: EffectChain;
-}
-
-interface ActiveColor {
-  layerId: string;
-  sprite: ColorSprite;
-  effects: EffectChain;
-}
-
-interface ActiveText {
-  layerId: string;
-  sprite: TextSprite;
-  effects: EffectChain;
-}
-
-interface ActiveMotif {
-  layerId: string;
-  motifId: string;
-  sprite: MotifSprite;
-  effects: EffectChain;
-}
-
-interface ActiveAudio {
-  layerId: string;
-  mediaId: string;
-  mixer: AudioMixer;
-  /// Change detection for `updateView`: the params object reference is
-  /// stable between `setProject` calls, so per-tick comparison is one
-  /// identity check; on a new summary the JSON guard avoids tearing down
-  /// the mixer's schedule when nothing audio-relevant actually changed.
-  lastParamsRef: unknown;
-  lastParamsJson: string;
-  /// Last role-bus linear gain folded into the mixer. A role-gain change
-  /// (or role mute/solo flip changing audibility) must re-derive the mixer
-  /// even when `layer.params` is reference-stable, so it joins the
-  /// change-detection guard. Sentinel `NaN` forces the first `updateView`.
-  lastRoleGain: number;
-}
-
 /// Schedule `cb` for an idle slice: `requestIdleCallback` when available
 /// (with a 200ms timeout floor so the prewarm can't starve indefinitely),
 /// else a short `setTimeout`. Returns a cancel token for `cancelIdle`.
@@ -476,51 +209,27 @@ export class Compositor {
   readonly app: Application;
   readonly stage: Container;
   readonly pool: DecoderPool;
-  private clips = new Map<string, ActiveClip>();
+  /// The node that draws the open composition, staged into `stage`. Rebuilt —
+  /// every sprite and session torn down — when the open composition changes;
+  /// a new snapshot of the same composition only reconciles it.
+  private root: CompositionNode;
+  /// What every node reads of this Compositor (CompositionNode.ts).
+  private readonly host: CompositionNodeHost;
   /// On-screen media reported `status: "unsupported"` by `resolveSource`
   /// AT THE CURRENT COMPOSITE. Ownership split: `compositeFrame` resets the
   /// set at the start of its layer sweep and fires `onUnsupported` on
-  /// membership change at the end; `ensureClip`'s unsupported branch only
-  /// ADDS. A clip the playhead scrolled off of (or a disabled layer) is never
-  /// visited by the sweep, so it drops out instead of lingering.
+  /// membership change at the end; the nodes' `ensureClip` unsupported branch
+  /// only ADDS. A clip the playhead scrolled off of (or a disabled layer) is
+  /// never visited by the sweep, so it drops out instead of lingering.
   private unsupportedMedia = new Set<string>();
-  private images = new Map<string, ActiveImage>();
-  /// In-flight loadFromAsset promises, keyed by layerId. Used by `preloadImages`
-  /// so the export Worker can await all image loads before the frame loop.
-  private imageLoadPromises = new Map<string, Promise<void>>();
-  private colors = new Map<string, ActiveColor>();
-  private texts = new Map<string, ActiveText>();
-  private activeMotifs = new Map<string, ActiveMotif>();
   /// Export-only: pre-rasterized Motif-layer frames injected by the export
-  /// Worker (`layerId → ImageBitmap[]`, indexed by comp-frame). See
+  /// Worker (`instanceKey → ImageBitmap[]`, indexed by comp-frame). See
   /// `setMotifFrames`; empty in preview mode.
   private motifFrames = new Map<string, readonly ImageBitmap[]>();
-  private audios = new Map<string, ActiveAudio>();
-  /// In-flight no-flash source-swaps, keyed by the clip's real layerId.
-  /// Preview-only; empty in export mode (export URLs are fixed per run).
-  private swaps = new Map<string, SwapState>();
   /// Preview or export. Gates audio setup, decode-source resolution
   /// (`resolveSource` vs `proxyAssetUrl`), and the upcoming-clip prewarm.
   private mode: "preview" | "export";
   private projectSummary: ProjectSummary | null = null;
-  /// The composition this Compositor draws: the ROOT of `projectSummary`.
-  /// Export always renders the root; the preview does too until slice 14 hands
-  /// `setProject` the open composition's id (compositionScopeStore.ts). The
-  /// empty sentinel while no project is loaded keeps every walk a plain loop.
-  private composition: CompositionSummary = EMPTY_COMPOSITION;
-  /// O(1) layer lookup by id. Rebuilt in `setProject` whenever the
-  /// project snapshot changes; read on every tick from `setAnchorTime`
-  /// and `hasLookaheadAt`. Without this map those would be O(layers)
-  /// per active clip per tick — quadratic for long timelines.
-  private layerById = new Map<string, LayerSummary>();
-  /// layerId → owning track's `enabled`, maintained alongside `layerById`;
-  /// feeds the per-frame active-transition selection without re-walking
-  /// tracks.
-  private trackEnabledByLayer = new Map<string, boolean>();
-  /// Two-input transition node (transitions/TransitionNodes.ts). Lazily
-  /// built on the first active window so transition-free projects (and
-  /// mock-App unit tests) never touch the renderer for it.
-  private transitionNodes: TransitionNodeManager | null = null;
   private proxyAssetUrl: (mediaId: string) => string | null;
   private resolveSource: (mediaId: string) => ResolvedRendererSource | null;
   /// Preview-only unsupported-format notification (see `CompositorInit`).
@@ -532,9 +241,6 @@ export class Compositor {
   private conformAssetUrl: (mediaId: string) => string | null;
   /// Master audio bus (preview mode only; null in the export Worker).
   private audioGraph: AudioGraph | null = null;
-  /// Media ids already warned about a missing conform (once per media,
-  /// cleared when the conform shows up).
-  private conformWarned = new Set<string>();
   /// The engine's clock anchor, forwarded each tick (null while paused
   /// or while the AudioContext is suspended). Consumed by the audio pass.
   private clockAnchor: ClockAnchor | null = null;
@@ -658,9 +364,9 @@ export class Compositor {
   } | null = null;
   /// Underrun accounting — dropped frames and late composite ticks
   /// (preview only; inert in export mode where `playing` never goes true).
-  /// Sweep verdicts come from `updateClip` via `sweepLateLayers`; session
-  /// lifecycle from `setMasterPlayState`; the tick interval is read off
-  /// the tracker's own clock.
+  /// Sweep verdicts come from the nodes' `updateClip` via `sweepLateLayers`;
+  /// session lifecycle from `setMasterPlayState`; the tick interval is read
+  /// off the tracker's own clock.
   private underrun: UnderrunTracker;
   /// Visible VideoClip layers judged late during the CURRENT composite
   /// sweep. Reset before the layer loop, read after it — same
@@ -685,6 +391,39 @@ export class Compositor {
     this.conformAssetUrl = init.conformAssetUrl ?? ((): string | null => null);
     this.underrun = new UnderrunTracker({ onChange: init.onUnderrun });
     this.app.stage.addChild(this.stage);
+    this.host = {
+      renderer: this.app.renderer,
+      pool: this.pool,
+      mode: this.mode,
+      fpsNum: () => this.fpsNum,
+      fpsDen: () => this.fpsDen,
+      playing: () => this.playing,
+      scrubbing: () => this.scrubbing,
+      clockAnchor: () => this.clockAnchor,
+      audioGraph: () => this.audioGraph,
+      audioRoles: () => this.projectSummary?.audio_roles ?? [],
+      resolveSource: (id) => this.resolveSource(id),
+      proxyAssetUrl: (id) => this.proxyAssetUrl(id),
+      originalAssetUrl: (id) => this.originalAssetUrl(id),
+      sourceColor: (id) => this.sourceColor(id),
+      mediaById: (id) => this.mediaById(id),
+      conformAssetUrl: (id) => this.conformAssetUrl(id),
+      motifFrames: (key) => this.motifFrames.get(key),
+      ensureTenBitIngest: () => this.ensureTenBitIngest(),
+      ensureNv12Ingest: () => this.ensureNv12Ingest(),
+      releaseIngest: (key) => {
+        this.tenBitIngest?.release(key);
+        this.nv12Ingest?.release(key);
+      },
+      scheduleRepaint: () => this.scheduleRepaint(),
+      noteUnsupported: (mediaId) => {
+        this.unsupportedMedia.add(mediaId);
+      },
+      noteLateLayer: () => {
+        this.sweepLateLayers += 1;
+      },
+    };
+    this.root = this.buildRoot(EMPTY_COMPOSITION, null);
     // THE install site for the CJK break rule, and the reason one site is
     // enough: `canBreakWords` is a class static, so it must be set in every
     // realm that rasterizes text — and every such realm builds a Compositor
@@ -708,6 +447,30 @@ export class Compositor {
       );
       this.audioGraph = new AudioGraph();
     }
+  }
+
+  /// The open composition's node, lent to it: `stage` is its container. Root
+  /// in root time — offset 0, no window — whatever composition is open, so an
+  /// opened Group plays on its own clock.
+  private buildRoot(composition: CompositionSummary, summary: ProjectSummary | null): CompositionNode {
+    return new CompositionNode({
+      host: this.host,
+      composition,
+      summary,
+      width: this.compositionWidth,
+      height: this.compositionHeight,
+      path: "",
+      depth: 0,
+      offsetUs: 0,
+      windowStartUs: Number.NEGATIVE_INFINITY,
+      windowEndUs: Number.POSITIVE_INFINITY,
+      container: this.stage,
+    });
+  }
+
+  /// The node drawing the open composition — for tests and diagnostics.
+  rootNode(): CompositionNode {
+    return this.root;
   }
 
   /// The preview master audio bus, for the dev PerfHUD meter row and the
@@ -744,29 +507,14 @@ export class Compositor {
     this.pool.setPlaybackScaleDiv?.(div);
   }
 
-  /// Adopt a new composition size mid-session.
-  ///
-  /// Two things are sized against the composition and neither self-corrects:
-  /// the transition RT pool (it re-sizes only when told) and every already-built
-  /// `ImageOverlaySprite` (it bakes `maxWidth`/`maxHeight` into its
-  /// animated-image cache key at construction, and the per-frame image sweep
-  /// only rebuilds a sprite whose LAYER went away). Both are handled here.
+  /// Adopt a new composition size mid-session — the open composition's. Child
+  /// nodes are sized by their own compositions and are not touched. What the
+  /// size drives and why it has to be told: `CompositionNode.setSize`.
   setCompositionSize(width: number, height: number): void {
     if (width === this.compositionWidth && height === this.compositionHeight) return;
     this.compositionWidth = width;
     this.compositionHeight = height;
-    // Stale-size RTs are destroyed as they come back (see TransitionRtPool).
-    this.transitionNodes?.setSize(width, height);
-    // Evict image sprites so the next composite re-creates them at the new
-    // cap; same dispose pair the per-frame sweep uses. The load reservation
-    // goes with the sprite it belongs to — a survivor here would let a stale
-    // completion delete the re-created sprite's entry (see ensureImage).
-    for (const [layerId, i] of this.images) {
-      i.sprite.dispose();
-      i.effects.dispose();
-      this.images.delete(layerId);
-      this.imageLoadPromises.delete(layerId);
-    }
+    this.root.setSize(width, height);
     this.scheduleRepaint();
   }
 
@@ -833,15 +581,16 @@ export class Compositor {
   }
 
   /// Export-only: install the pre-rasterized Motif-layer frames the export
-  /// Worker baked on the main thread (`layerId → ImageBitmap[]`, comp-frame
-  /// indexed). `updateMotif` forwards a layer's array to its
+  /// Worker baked on the main thread (`instanceKey → ImageBitmap[]`, comp-frame
+  /// indexed; a Motif inside a Group is keyed by its ref path — exportBake.ts).
+  /// A node's `updateMotif` forwards a layer's array to its
   /// `MotifSprite.update`, which binds by index synchronously instead of
   /// running the DOM capture harness (absent in the Worker). Passing an empty
   /// map (or never calling this) leaves preview's harness/cache path untouched.
   setMotifFrames(map: Record<string, readonly ImageBitmap[]>): void {
     this.motifFrames.clear();
-    for (const [layerId, frames] of Object.entries(map)) {
-      this.motifFrames.set(layerId, frames);
+    for (const [key, frames] of Object.entries(map)) {
+      this.motifFrames.set(key, frames);
     }
   }
 
@@ -860,42 +609,43 @@ export class Compositor {
     if (this.suspended === s) return;
     this.suspended = s;
     if (s) {
-      for (const c of this.clips.values()) c.sprite.dispose();
-      this.clips.clear();
+      this.root.suspend();
       this.tenBitIngest?.dispose();
       this.tenBitIngest = null;
       this.nv12Ingest?.dispose();
       this.nv12Ingest = null;
-      for (const a of this.audios.values()) a.mixer.dispose();
-      this.audios.clear();
-      this.stage.removeChildren();
-      this.cancelAllSwaps();
-      this.transitionNodes?.reset();
       this.pool.dispose();
     }
   }
 
-  /// Replace the project snapshot. Sprites for layers that have
-  /// disappeared get evicted; new layers will appear on the next
-  /// `compositeFrame()` if active.
-  setProject(summary: ProjectSummary | null): void {
+  /// Replace the project snapshot and name the composition to draw: `openId`
+  /// (the preview's open composition — compositionScopeStore.ts), the root
+  /// when omitted or unknown. Export always omits it: a Group is a source, and
+  /// a file of one alone is a file nobody asked for. A change of composition
+  /// rebuilds the node — every sprite, mixer and decode session goes, since
+  /// none of them belongs to the new timeline; a new snapshot of the same
+  /// composition only evicts the layers that disappeared.
+  setProject(summary: ProjectSummary | null, openId: string | null = null): void {
     this.decodePriorityPlanCache = null;
+    const prevProjectId = this.projectSummary?.project_id ?? null;
     this.projectSummary = summary;
-    this.composition = summary ? rootCompositionOf(summary) : EMPTY_COMPOSITION;
-    this.layerById.clear();
-    this.trackEnabledByLayer.clear();
+    const composition = compositionOrRoot(summary, openId) ?? EMPTY_COMPOSITION;
+    const sameNode =
+      composition.id === this.root.composition.id &&
+      (summary?.project_id ?? null) === prevProjectId;
+    if (!sameNode) {
+      this.root.dispose();
+      this.root = this.buildRoot(composition, summary);
+    } else {
+      this.root.setComposition(composition, summary);
+    }
     if (!summary) {
-      for (const c of this.clips.values()) c.sprite.dispose();
-      this.clips.clear();
       // No `unsupportedMedia` bookkeeping: `compositeFrame` short-circuits
       // while the summary is null, and its next real sweep resets the set.
       this.tenBitIngest?.dispose();
       this.tenBitIngest = null;
       this.nv12Ingest?.dispose();
       this.nv12Ingest = null;
-      // Transition nodes hold pooled RTs; compositeFrame's per-frame release
-      // never runs again while the summary is null, so free them here.
-      this.transitionNodes?.reset();
       this.baker?.setTargets([]);
       this.manualPrebakeLayers.clear();
       sharedBakedKeyIndex.clear();
@@ -906,87 +656,14 @@ export class Compositor {
     }
     // Recompute the frame-snap fps state whenever the project changes
     // (composition fps could differ between projects).
-    const c = this.composition;
-    if (c.fps_num > 0 && c.fps_den > 0) {
-      this.fpsNum = c.fps_num;
-      this.fpsDen = c.fps_den;
+    if (composition.fps_num > 0 && composition.fps_den > 0) {
+      this.fpsNum = composition.fps_num;
+      this.fpsDen = composition.fps_den;
       // Same fps drives the underrun tracker's late-tick threshold.
       this.underrun.bindFrameBudgetMs((1_000 * this.fpsDen) / this.fpsNum);
     }
-    const livingLayerIds = new Set<string>();
-    for (const t of this.composition.tracks) {
-      for (const l of t.layers) {
-        livingLayerIds.add(l.id);
-        this.layerById.set(l.id, l);
-        this.trackEnabledByLayer.set(l.id, t.enabled);
-      }
-    }
     // No `unsupportedMedia` reconciliation: the next `compositeFrame` sweep
     // rebuilds the set from this project's layers and fires on any change.
-    for (const [layerId, c] of this.clips) {
-      if (!livingLayerIds.has(layerId)) {
-        this.abandonSwap(layerId);
-        this.tenBitIngest?.release(layerId);
-        this.nv12Ingest?.release(layerId);
-        // Release the decode session too, not just the sprite. Without this the
-        // pool holds the handle — and on the ffmpeg hardware lane its GPU
-        // session — until the idle sweep notices seconds later, so a clip
-        // resolving in that window is measured against layers the user already
-        // deleted and can lose a session/area reservation to a ghost. That
-        // loss is permanent: the lane is picked once per source
-        // (docs/preview.md).
-        // It costs the idle sweep's undo grace, which is the better trade — a
-        // warm re-decode is a second, a phantom downgrade lasts the session.
-        // LANDMINE: release BOTH pool keys. `abandonSwap` above covers a swap
-        // still in flight, but a COMPLETED one left `clip.source` under
-        // `${layerId}#swap` with the base key already released, so asking only
-        // for `layerId` would leak the handle that is actually decoding.
-        // `release` no-ops on a miss, so asking for both is safe in either state.
-        this.pool.release(layerId);
-        this.pool.release(swapKeys(layerId, c.mediaId).swapLayerId);
-        c.sprite.dispose();
-        c.effects.dispose();
-        this.clips.delete(layerId);
-      }
-    }
-    for (const [layerId, i] of this.images) {
-      if (!livingLayerIds.has(layerId)) {
-        i.sprite.dispose();
-        i.effects.dispose();
-        this.images.delete(layerId);
-        // Delete + undo restores the same layer id; a reservation left behind
-        // here is exactly the stale completion ensureImage's identity check
-        // defends against — clean it at the source too.
-        this.imageLoadPromises.delete(layerId);
-      }
-    }
-    for (const [layerId, c] of this.colors) {
-      if (!livingLayerIds.has(layerId)) {
-        c.sprite.dispose();
-        c.effects.dispose();
-        this.colors.delete(layerId);
-      }
-    }
-    for (const [layerId, t] of this.texts) {
-      if (!livingLayerIds.has(layerId)) {
-        t.sprite.dispose();
-        t.effects.dispose();
-        this.texts.delete(layerId);
-      }
-    }
-    for (const [layerId, t] of this.activeMotifs) {
-      if (!livingLayerIds.has(layerId)) {
-        t.sprite.dispose();
-        t.effects.dispose();
-        this.activeMotifs.delete(layerId);
-      }
-    }
-    for (const [layerId, a] of this.audios) {
-      if (!livingLayerIds.has(layerId)) {
-        a.mixer.dispose();
-        this.audios.delete(layerId);
-      }
-    }
     // Subscribe to the timeline's "Pre-bake now" bus exactly once (DOM-gated
     // by `this.baker`). A request records the layer and refreshes bake targets
     // so it bakes even when the global setting is off.
@@ -1005,44 +682,6 @@ export class Compositor {
     // Hydrate the on-disk baked-key index + GC orphaned hash dirs against the
     // new project's live keys. Fire-and-forget — never blocks load.
     void this.hydrateBakedIndexAndGc();
-  }
-
-  /// Per-frame "filter + addChild" tail for every visual layer kind. Applies
-  /// the layer's resolved effect filters, then stages the node once it's ready.
-  /// All five visual kinds — including Motif — carry an EffectChain; `effects`
-  /// stays optional only as a defensive no-op (a chain-less caller would stage
-  /// unfiltered).
-  private stageVisual(
-    sprite: StageableSprite,
-    effects: EffectChain | undefined,
-    layer: LayerSummary,
-    tInLayerUs: number,
-    effectOpts: { previewEffectsEnabled: boolean },
-  ): void {
-    if (effects) {
-      const tEffects = stageNow();
-      sprite.displayObject.filters = effectsFor(effects, layer, tInLayerUs, effectOpts);
-      stageAdd(STAGE.Effects, tEffects);
-    }
-    // Transition divert: a participant's finished node — transform, opacity,
-    // and filters exactly as the normal path would stage them — goes into its
-    // side's offscreen container (baked to an RT in `finishFrame`) instead of
-    // the stage; the two-input quad stands in at the FIRST participant's
-    // stage position. See transitions/TransitionNodes.ts.
-    const side = this.transitionNodes?.sideFor(layer.id);
-    if (side) {
-      if (sprite.stageReady) side.addChild(sprite.displayObject);
-      const quad = this.transitionNodes!.takeQuadToStage(layer.id);
-      if (quad) this.stage.addChild(quad);
-      return;
-    }
-    // Skip not-yet-ready sprites. Sprite-backed kinds report stageReady false
-    // while their texture is still the EMPTY placeholder — PixiJS v8's batched
-    // renderer crashes on that placeholder in some Chromium configs. Once the
-    // first frame lands, the texture swaps and the sprite stages.
-    if (sprite.stageReady) {
-      this.stage.addChild(sprite.displayObject);
-    }
   }
 
   /// Composite one frame at composition-time `tUs`.
@@ -1075,83 +714,12 @@ export class Compositor {
     this.updateDecodePriorities(tUsSnapped);
 
     const prevChildCount = this.stage.children.length;
-    const tRebuild = stageNow();
-    this.stage.removeChildren();
-    stageAdd(STAGE.SceneRebuild, tRebuild);
 
-    // First pass: ensure audio mixers for every Audio layer. Skipped
-    // entirely in export mode — export audio mixes in Rust
-    // (`audio::mix`, docs/audio.md).
-    //
-    // VideoClip layers are NOT eligible. Mirrors `audio::mix`'s canonical
-    // export routing: only Audio layers are audible; VideoClips are
-    // video-only. Import's `auto_pair_audio_on_import` (default-on)
-    // places a sibling Audio layer on the same media for the audio
-    // track. Treating the VideoClip as also audio-bearing here would
-    // play the same audio twice — the audible doubling bug.
+    // First pass: the audio mixers, every node's. Skipped entirely in export
+    // mode — export audio mixes in Rust (`audio::mix`, docs/audio.md).
     if (this.audioGraph !== null) {
       const tAudio = stageNow();
-      // Audio gates — mirror audio/mix.rs audible_audio_layers semantics:
-      // whole-track disable still gates, but audio mute/solo now lives on
-      // ROLES (mute wins over solo; an absent role defaults audible iff no
-      // role is soloed). Gated-out layers are skipped here, then swept below
-      // with a pause-shaped tick so their pre-scheduled chunks stop
-      // immediately. (Preview ignores `locked`, matching the live behavior.)
-      const roles = this.projectSummary.audio_roles ?? [];
-      const anySolo = anyRoleSolo(roles);
-      const tickedAudio = new Set<string>();
-      for (const track of this.composition.tracks) {
-        if (!track.enabled) continue; // whole-track disable still gates
-        for (const layer of track.layers) {
-          if (!layer.enabled) continue;
-          if (layer.params.kind === "Audio") {
-            if (!roleAudible(layer.params.role, roles, anySolo)) continue;
-            const audio = this.ensureAudio(layer);
-            if (audio) {
-              // Audition override (live fader drag) folds in place of the
-              // committed Role gain; equal to `roleGainLinear` when idle.
-              const rGain = auditionedRoleGainLinear(layer.params.role, roles);
-              if (
-                audio.lastParamsRef !== layer.params ||
-                audio.lastRoleGain !== rGain
-              ) {
-                const json =
-                  JSON.stringify(layer.params) +
-                  `|${layer.t_start_us}|${layer.t_end_us}|${rGain}`;
-                if (json !== audio.lastParamsJson) {
-                  audio.mixer.updateView(
-                    layer.params,
-                    layer.t_start_us,
-                    layer.t_end_us,
-                    rGain,
-                  );
-                  audio.lastParamsJson = json;
-                }
-                audio.lastParamsRef = layer.params;
-                audio.lastRoleGain = rGain;
-              }
-              tickedAudio.add(layer.id);
-              audio.mixer.tick(
-                tUsSnapped,
-                this.playing,
-                layer.t_end_us,
-                this.clockAnchor,
-              );
-            }
-          }
-        }
-      }
-      // Mixers gated out above (track mute/solo/disable, layer disable)
-      // would otherwise never tick again, leaving their pre-scheduled
-      // chunks (≤ LOOKAHEAD_S ≈ 3 s) audible after the gate flips. Tick
-      // them with pause semantics (playing=false, null anchor — the exact
-      // branch a transport pause exercises) so the mixer's own teardown
-      // stops every live node this frame.
-      for (const [layerId, audio] of this.audios) {
-        if (tickedAudio.has(layerId)) continue;
-        const layer = this.layerById.get(layerId);
-        audio.mixer.tick(tUsSnapped, false, layer?.t_end_us ?? 0, null);
-      }
+      this.root.compositeAudio(tUsSnapped);
       stageAdd(STAGE.Audio, tAudio);
     }
 
@@ -1184,78 +752,17 @@ export class Compositor {
       this.mode === "export"
         ? true
         : useAppSettingsStore.getState().settings.preview_effects_enabled;
-    const effectOpts = { previewEffectsEnabled };
 
     // Fresh per-composite unsupported-media set — the reset half of the
-    // ownership split documented on `unsupportedMedia`; `ensureClip` only
-    // ADDS during the sweep below.
+    // ownership split documented on `unsupportedMedia`; the nodes only ADD
+    // during the sweep below.
     const prevUnsupported = this.unsupportedMedia;
     this.unsupportedMedia = new Set<string>();
     // Same reset half for the underrun sweep; `updateClip` only ADDS.
     this.sweepLateLayers = 0;
 
-    // Two-input transition node: pick this frame's active windows, then let
-    // the sweep divert participants through `stageVisual`. beginFrame also
-    // runs when the active set is empty but nodes linger, so a just-finished
-    // window returns its RTs to the pool that same frame.
-    const activeTransitions = selectActiveTransitions(
-      this.composition.transitions,
-      tUsSnapped,
-      (id) => this.layerById.get(id),
-      (id) => this.trackEnabledByLayer.get(id) ?? false,
-    );
-    if (activeTransitions.length > 0 || this.transitionNodes?.hasNodes()) {
-      (this.transitionNodes ??= new TransitionNodeManager(
-        this.app.renderer,
-        this.compositionWidth,
-        this.compositionHeight,
-      )).beginFrame(activeTransitions);
-    }
+    this.root.compositeVisual(tUsSnapped, { previewEffectsEnabled });
 
-    let z = 0;
-    const tSweep = stageNow();
-    for (const track of this.composition.tracks) {
-      if (!track.enabled) continue;
-      for (const layer of track.layers) {
-        if (!layer.enabled) continue;
-        if (tUsSnapped < layer.t_start_us || tUsSnapped >= layer.t_end_us)
-          continue;
-
-        const kind = layer.params.kind;
-        const tInLayerUs = tUsSnapped - layer.t_start_us;
-        if (kind === "VideoClip") {
-          const clip = this.ensureClip(layer);
-          if (!clip) continue;
-          this.updateClip(clip, layer, tUsSnapped, z++);
-          this.stageVisual(clip.sprite, clip.effects, layer, tInLayerUs, effectOpts);
-        } else if (kind === "ImageOverlay") {
-          const image = this.ensureImage(layer);
-          if (!image) continue;
-          this.updateImage(image, layer, tUsSnapped, z++);
-          this.stageVisual(image.sprite, image.effects, layer, tInLayerUs, effectOpts);
-        } else if (kind === "Color") {
-          const color = this.ensureColor(layer);
-          if (!color) continue;
-          this.updateColor(color, layer, z++, tInLayerUs);
-          this.stageVisual(color.sprite, color.effects, layer, tInLayerUs, effectOpts);
-        } else if (kind === "Text") {
-          const text = this.ensureText(layer);
-          if (!text) continue;
-          this.updateText(text, layer, z++, tUsSnapped);
-          this.stageVisual(text.sprite, text.effects, layer, tInLayerUs, effectOpts);
-        } else if (kind === "Motif") {
-          const tmpl = this.ensureMotif(layer);
-          if (!tmpl) continue;
-          this.updateMotif(tmpl, layer, z++, tUsSnapped);
-          this.stageVisual(tmpl.sprite, tmpl.effects, layer, tInLayerUs, effectOpts);
-        }
-      }
-    }
-    stageAdd(STAGE.LayerSweep, tSweep);
-    // Bake diverted sides into their RTs + publish progress, after the sweep
-    // (so any branch's staging is caught) and before the ticker's stage
-    // render (so the quad samples THIS frame's pixels).
-    this.transitionNodes?.finishFrame();
     // Fire `onUnsupported` ONLY on membership change — size first (cheap),
     // then an early-exit membership scan. An unconditional fire would drive
     // React `setState` per frame — the whole-tree re-render memory ratchet
@@ -1333,13 +840,13 @@ export class Compositor {
     stageRecord(STAGE.Composite, this.compositeMsLast);
   }
 
-  /// Authored composition duration, in microseconds, from the current
-  /// project snapshot. Returns 0 when no project is loaded. Used by
-  /// PlaybackEngine to auto-pause once the playhead crosses the end —
-  /// the alternative is letting the clock run past the last layer into
-  /// the empty black region forever, which is never the user's intent.
+  /// Authored duration of the composition being drawn, in microseconds.
+  /// Returns 0 when no project is loaded. Used by PlaybackEngine to
+  /// auto-pause once the playhead crosses the end — the alternative is
+  /// letting the clock run past the last layer into the empty black region
+  /// forever, which is never the user's intent.
   compositionDurationUs(): number {
-    return this.composition.duration_us;
+    return this.root.durationUs();
   }
 
   /// Exact-rational "last frame start" for an exclusive `endUs` boundary,
@@ -1351,9 +858,9 @@ export class Compositor {
     return computeLastFrameStartUs(endUs, this.fpsNum, this.fpsDen);
   }
 
-  /// End of the last piece of *playable material* — the maximum
-  /// `t_end_us` across enabled layers in enabled tracks. Returns 0
-  /// when no enabled layer exists.
+  /// End of the last piece of *playable material* in the composition being
+  /// drawn — the maximum `t_end_us` across enabled layers in enabled tracks.
+  /// Returns 0 when no enabled layer exists.
   ///
   /// Distinct from `compositionDurationUs()` only when the user pins
   /// composition duration past the last visible frame (`set_composition
@@ -1364,20 +871,13 @@ export class Compositor {
   /// into a black tail.
   playableEndUs(): number {
     if (!this.projectSummary) return 0;
-    let end = 0;
-    for (const t of this.composition.tracks) {
-      if (!t.enabled) continue;
-      for (const l of t.layers) {
-        if (!l.enabled) continue;
-        if (l.t_end_us > end) end = l.t_end_us;
-      }
-    }
-    return end;
+    return this.root.playableEndUs();
   }
 
-  /// True if every active VideoClip layer at composition time `tUs`
-  /// has a decoded frame at its source-time mapping AND at least
-  /// `minLookaheadUs` of additional ring contents past it.
+  /// True if every active VideoClip layer at composition time `tUs` —
+  /// inside Groups under the playhead too — has a decoded frame at its
+  /// source-time mapping AND at least `minLookaheadUs` of additional ring
+  /// contents past it.
   ///
   /// Used by `PlaybackEngine.play()` to defer the clock start until
   /// the decoder pipeline has produced enough output to absorb its
@@ -1390,18 +890,7 @@ export class Compositor {
   /// playhead is over an empty region, or only non-decoded layers).
   hasLookaheadAt(tUs: number, minLookaheadUs: number): boolean {
     if (!this.projectSummary) return true;
-    for (const c of this.clips.values()) {
-      const layer = this.layerById.get(c.layerId);
-      if (!layer || layer.params.kind !== "VideoClip") continue;
-      if (tUs < layer.t_start_us || tUs >= layer.t_end_us) continue;
-      const layerLocalUs = tUs - layer.t_start_us;
-      const srcTUs = layer.params.src_in_us + layerLocalUs;
-      const ring = c.source.ring;
-      if (!ring.containsPts(srcTUs)) return false;
-      const last = ring.lastPtsUs();
-      if (last === null || last < srcTUs + minLookaheadUs) return false;
-    }
-    return true;
+    return this.root.hasLookaheadAt(tUs, minLookaheadUs);
   }
 
   /// Tell the decoder pool which time we're at so it can manage
@@ -1424,24 +913,7 @@ export class Compositor {
     // for why the pre-rounded `approxFrameDurUs` is not safe here.
     const tUsSnapped = snapFrameFloor(tUs, this.fpsNum, this.fpsDen);
     this.updateDecodePriorities(tUsSnapped);
-    for (const c of this.clips.values()) {
-      const layer = this.layerById.get(c.layerId);
-      if (!layer || layer.params.kind !== "VideoClip") continue;
-      // Mirror compositeFrame's window check. `this.clips` retains every
-      // clip that's ever been active (pruned only in `setProject` on layer
-      // delete); without this filter every accumulated entry would fire
-      // `requestFrameAt` each tick for time-regions the user isn't viewing,
-      // churning the decoder + ring.
-      if (tUsSnapped < layer.t_start_us || tUsSnapped >= layer.t_end_us) continue;
-      // Stale handle (pool reclaimed during idle): skip this tick.
-      // The next `compositeFrame` runs immediately after this and its
-      // `ensureClip` swaps in a fresh source; the tick after that
-      // will see the revived handle here.
-      if (c.source.disposed) continue;
-      const layerLocalUs = tUsSnapped - layer.t_start_us;
-      const srcTUs = layer.params.src_in_us + layerLocalUs;
-      void c.source.requestFrameAt(srcTUs);
-    }
+    this.root.anchor(tUsSnapped);
     if (this.mode === "preview") {
       this.prewarmUpcomingClipBoundary(tUsSnapped);
     }
@@ -1453,33 +925,15 @@ export class Compositor {
   /// to active (non-disposed) handles only, so a recently-swept entry
   /// doesn't appear with bogus zeros.
   getPerfSnapshot(): CompositorPerfSnapshot {
-    const clips: CompositorPerfSnapshot["clips"] = [];
-    for (const c of this.clips.values()) {
-      if (c.source.disposed) continue;
-      const ring = c.source.ring;
-      clips.push({
-        layerId: c.layerId,
-        mediaId: c.mediaId,
-        decodeQueueSize: c.source.decodeQueueSize?.() ?? 0,
-        ringSize: ring.size(),
-        ringFirstPtsUs: ring.firstPtsUs(),
-        ringLastPtsUs: ring.lastPtsUs(),
-        decodedFrameCount: c.source.decodedFrameCount?.() ?? 0,
-        sourceKind: sourceKindOf(c.source),
-        downgraded: c.source.isDowngraded?.() ?? false,
-        handoff: c.source.handoffTimings?.() ?? null,
-        lookaheadFull: c.source.isLookaheadFull?.() ?? false,
-        ringFate: ring.fate ?? null,
-        conversionBacklog: c.source.conversionBacklog?.() ?? null,
-      });
-    }
+    const clips: ClipPerfRow[] = [];
+    this.root.clipPerfRows(clips);
     return {
       compositeMsLast: this.compositeMsLast,
       compositeMsMax: this.compositeMsMax,
       upcomingPrewarm: this.upcomingPrewarm,
-      swapsInFlight: this.swaps.size,
+      swapsInFlight: this.root.swapsInFlight(),
       underrun: this.underrun.snapshot(),
-      transitions: this.transitionNodes?.stats() ?? null,
+      transitions: this.root.transitionStats(),
       clips,
     };
   }
@@ -1491,86 +945,27 @@ export class Compositor {
     this.compositeMsMax = 0;
   }
 
-  /// The untransformed content size of a live layer, in composition pixels —
-  /// what the on-canvas gizmo builds its box from. Null when the layer has no
-  /// staged sprite yet (off-playhead, or still decoding its first frame).
-  /// Read-only.
-  ///
-  /// Per-kind source, and why it is not one uniform `getBounds()` call: a
-  /// VideoClip's scale is source-corrected (`media/texture`, so proxies preview
-  /// at original size), which makes the MEDIA dimensions its natural size;
-  /// Image/Motif scale their decoded raster directly; Text has no intrinsic
-  /// size at all, so `TextSprite.naturalSize` answers with its layout box when
-  /// one is set and the measured glyph bounds otherwise — the sprite owns that
-  /// choice so the rectangle drawn is the rectangle being dragged.
-  /// `getBounds()` would also fold in filter padding and draw an oversized box
-  /// on a blurred layer.
+  /// The untransformed content size of a live layer of the OPEN composition,
+  /// in composition pixels — what the on-canvas gizmo builds its box from.
+  /// Null when the layer has no staged sprite yet (off-playhead, or still
+  /// decoding its first frame). Read-only. Per-kind rules:
+  /// `CompositionNode.naturalSizeOf`.
   naturalSizeOf(layerId: string): { w: number; h: number } | null {
-    const clip = this.clips.get(layerId);
-    if (clip) {
-      const media = this.mediaById(clip.mediaId);
-      if (media?.width && media.height) return { w: media.width, h: media.height };
-      return textureSize(clip.sprite.sprite.texture);
-    }
-    const image = this.images.get(layerId);
-    if (image) return textureSize(image.sprite.sprite.texture);
-    const motif = this.activeMotifs.get(layerId);
-    if (motif) return textureSize(motif.sprite.sprite.texture);
-    const text = this.texts.get(layerId);
-    if (text) return text.sprite.naturalSize();
-    return null;
+    return this.root.naturalSizeOf(layerId);
   }
 
   /// What the staged Text sprite did with its font size (`GizmoProbe.textFitOf`).
-  /// Null for every other kind and for a Text layer not currently staged — the
-  /// shrink factor is derived per-render and there is nothing to report about a
-  /// layer that has not rendered.
+  /// Null for every other kind and for a Text layer not currently staged.
   textFitOf(layerId: string): TextFit | null {
-    return this.texts.get(layerId)?.sprite.fit() ?? null;
+    return this.root.textFitOf(layerId);
   }
 
   /// E2E-only (preview-sw conformance): snapshot the decode source + bound
   /// sprite of the active VideoClip named by `layerId` (or the first live
-  /// clip when omitted). Returns null when no matching clip is active.
-  /// `sourceKind` comes from `sourceKindOf`. Read-only — never mutates
-  /// compositor state.
+  /// clip when omitted), Groups' clips included. Returns null when no
+  /// matching clip is active. Read-only — never mutates compositor state.
   activeClipProbe(layerId?: string): ActiveClipProbe | null {
-    let clip: ActiveClip | undefined;
-    if (layerId != null) {
-      clip = this.clips.get(layerId);
-    } else {
-      for (const c of this.clips.values()) {
-        if (!c.source.disposed) {
-          clip = c;
-          break;
-        }
-      }
-    }
-    if (!clip) return null;
-    const s = clip.source;
-    const sourceKind = sourceKindOf(s);
-    const tex = clip.sprite.sprite.texture;
-    const isEmpty = tex === Texture.EMPTY;
-    return {
-      layerId: clip.layerId,
-      mediaId: clip.mediaId,
-      sourceKind,
-      isSoftware: sourceKind === "sw",
-      sourceDisposed: s.disposed,
-      ringSize: s.ring.size(),
-      ringFirstPtsUs: s.ring.firstPtsUs(),
-      ringLastPtsUs: s.ring.lastPtsUs(),
-      ringFate: s.ring.fate ?? null,
-      spriteBound: !isEmpty,
-      spriteWidth: isEmpty ? 0 : tex.orig.width,
-      spriteHeight: isEmpty ? 0 : tex.orig.height,
-      boundFramePtsUs: clip.boundFramePtsUs,
-      boundFrameDurationUs: clip.boundFrameDurationUs,
-      boundFrameSourceKey: clip.boundFrameSourceKey,
-      boundFrameKind: clip.boundFrameKind,
-      hwLane: s instanceof FfmpegSource ? s.currentHwLane() : null,
-      builtFromKey: clip.builtFromKey,
-    };
+    return this.root.activeClipProbe(layerId);
   }
 
   /// Release every sprite + decoder + the stage container. Does NOT
@@ -1581,17 +976,7 @@ export class Compositor {
     // No final `onUnsupported` fire: the host's listener dies with this
     // Compositor and `compositeFrame` is now a no-op.
     this.unsupportedMedia.clear();
-    for (const c of this.clips.values()) { c.sprite.dispose(); c.effects.dispose(); }
-    this.clips.clear();
-    for (const i of this.images.values()) { i.sprite.dispose(); i.effects.dispose(); }
-    this.images.clear();
-    this.imageLoadPromises.clear();
-    for (const c of this.colors.values()) { c.sprite.dispose(); c.effects.dispose(); }
-    this.colors.clear();
-    for (const t of this.texts.values()) { t.sprite.dispose(); t.effects.dispose(); }
-    this.texts.clear();
-    for (const t of this.activeMotifs.values()) { t.sprite.dispose(); t.effects.dispose(); }
-    this.activeMotifs.clear();
+    this.root.dispose();
     this.prewarmer?.dispose();
     this.prewarmer = null;
     this.baker?.dispose();
@@ -1608,17 +993,12 @@ export class Compositor {
     // `setMotifFrames`, which clears without closing — so we clear (no
     // `.close()`) to avoid double-freeing the caller's bitmaps.
     this.motifFrames.clear();
-    for (const a of this.audios.values()) a.mixer.dispose();
-    this.audios.clear();
     this.audioGraph?.dispose();
     this.audioGraph = null;
-    this.cancelAllSwaps();
     this.tenBitIngest?.dispose();
     this.tenBitIngest = null;
     this.nv12Ingest?.dispose();
     this.nv12Ingest = null;
-    this.transitionNodes?.dispose();
-    this.transitionNodes = null;
     this.pool.dispose();
     try {
       this.app.stage.removeChild(this.stage);
@@ -1626,6 +1006,24 @@ export class Compositor {
     } catch {
       // App may already be destroyed by the host; ignore.
     }
+  }
+
+  /// Pre-trigger image loading for every ImageOverlay layer in the drawn
+  /// composition, Groups' included, and resolve once ALL are loaded. Called by
+  /// the export Worker before the frame loop (`CompositionNode.preloadImages`).
+  async preloadImages(): Promise<void> {
+    if (!this.projectSummary) return;
+    await this.root.preloadImages();
+  }
+
+  /// Refresh every live Motif sprite against the current runtime catalog and
+  /// schedule a repaint. Called when `motifs:changed` fires (a draft edit /
+  /// install / delete) so an edited draft's preview re-captures. Cheap +
+  /// user-paced; no sprite is recreated (refreshMotif keeps the last bitmap
+  /// until the fresh capture lands).
+  refreshMotifs(): void {
+    this.root.refreshMotifs();
+    this.scheduleRepaint();
   }
 
   // ============================================================
@@ -1658,6 +1056,8 @@ export class Compositor {
   /// window. This keeps normal playback's current-frame pump unchanged
   /// while giving the next clip's decoder a chance to parse, configure,
   /// and fill its first-frame ring before the playhead reaches it.
+  /// Boundaries are the open composition's own; a Group's inner cuts warm
+  /// when its node reaches them.
   private prewarmUpcomingClipBoundary(tUs: number): void {
     if (!this.projectSummary) return;
     // Re-plan here as well as in the owner paths above: this method is the
@@ -1666,7 +1066,7 @@ export class Compositor {
     // caller invokes prewarm from a different tick path.
     const plan = this.updateDecodePriorities(tUs)
       ?? planPreviewDecodePriority(
-        this.composition,
+        this.root.composition,
         tUs,
         UPCOMING_CLIP_PREWARM_US,
       );
@@ -1678,8 +1078,8 @@ export class Compositor {
       // narrowing is lost through the `LayerSummary[]` array type — re-narrow
       // so `layer.params` exposes the VideoClip fields (media_id, src_in_us).
       if (layer.params.kind !== "VideoClip") continue;
-      const clip = this.ensureClip(layer);
-      if (!clip || clip.source.disposed) {
+      const source = this.root.prewarmClip(layer);
+      if (!source) {
         clips.push({
           layerId: layer.id,
           mediaId: layer.params.media_id,
@@ -1691,14 +1091,14 @@ export class Compositor {
         continue;
       }
       const srcTUs = layer.params.src_in_us;
-      void clip.source.requestFrameAt(srcTUs);
+      void source.requestFrameAt(srcTUs);
       clips.push({
         layerId: layer.id,
         mediaId: layer.params.media_id,
         requested: true,
-        decodeQueueSize: clip.source.decodeQueueSize?.() ?? 0,
-        ringSize: clip.source.ring.size(),
-        ringLastPtsUs: clip.source.ring.lastPtsUs(),
+        decodeQueueSize: source.decodeQueueSize?.() ?? 0,
+        ringSize: source.ring.size(),
+        ringLastPtsUs: source.ring.lastPtsUs(),
       });
     }
     this.upcomingPrewarm = {
@@ -1720,7 +1120,7 @@ export class Compositor {
       return cached.plan;
     }
     const plan = planPreviewDecodePriority(
-      this.composition,
+      this.root.composition,
       tUs,
       UPCOMING_CLIP_PREWARM_US,
     );
@@ -1747,6 +1147,26 @@ export class Compositor {
     return plan;
   }
 
+  /// Every enabled Motif layer reachable from the drawn composition, Groups'
+  /// included, with the LOCAL time `tUs` maps to inside it — the motif
+  /// planners' one walk.
+  private forEachMotifLayer(
+    tUs: number,
+    f: (layer: LayerSummary & { params: { kind: "Motif" } }, tInLayerUs: number) => void,
+  ): void {
+    if (!this.projectSummary) return;
+    forEachLayer(this.projectSummary, this.root.composition.id, ({ layer, offsetUs }) => {
+      if (layer.params.kind !== "Motif") return;
+      // `compositionLocalUs`, not a bare subtraction: the descriptor's
+      // `contentFrame` becomes a cache key, and the frame the SPRITE ends up
+      // asking for is derived through the same re-snap on its way down the
+      // nodes. A µs of lattice residual between the two would warm a key
+      // nothing ever reads.
+      const tLocalUs = compositionLocalUs(tUs - offsetUs, this.fpsNum, this.fpsDen);
+      f(layer as LayerSummary & { params: { kind: "Motif" } }, tLocalUs - layer.t_start_us);
+    });
+  }
+
   /// Map the active motif layers at composition-time `tUs` to prewarm specs
   /// (deduped by cacheKey inside the planner) and hand them to the prewarmer.
   /// Runs whether playing or paused (compositeFrame fires on seek/scrub too), so
@@ -1754,43 +1174,38 @@ export class Compositor {
   private updatePrewarmTargets(tUs: number): void {
     if (!this.prewarmer || !this.projectSummary) return;
     const specs: PrewarmContentSpec[] = [];
-    for (const track of this.composition.tracks) {
-      if (!track.enabled) continue;
-      for (const layer of track.layers) {
-        if (!layer.enabled || layer.params.kind !== "Motif") continue;
-        const motif = getMotif(layer.params.motif_id);
-        if (!motif) continue;
-        const tInLayerUs = tUs - layer.t_start_us;
-        const durationUs = layer.t_end_us - layer.t_start_us;
-        const view = layer.params;
-        const desc = motifFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, motif);
-        if (!desc) continue;
-        // Capture the plan-time inputs in locals so the async render closure
-        // binds the values that produced THIS cacheKey, not whatever `this.fps*`
-        // is at raster time (which could drift if the project fps changes).
-        const fpsNum = this.fpsNum;
-        const fpsDen = this.fpsDen;
-        const canonicalProps = desc.canonicalProps;
-        const durationSec = desc.durationSec;
-        specs.push({
-          cacheKey: desc.cacheKey,
-          contentFrame: desc.contentFrame,
-          contentDurationFrames: desc.contentDurationFrames,
-          // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
-          // Disk-first: prefer a baked PNG over a live raster, falling through
-          // to `rasterMotifFrame` (CDP) inside the resolver on miss / fs hiccup.
-          render: (frame: number) =>
-            resolveMotifFrame(
-              motif,
-              desc.cacheKey,
-              frame,
-              (frame * fpsDen) / fpsNum,
-              durationSec,
-              canonicalProps,
-            ),
-        });
-      }
-    }
+    this.forEachMotifLayer(tUs, (layer, tInLayerUs) => {
+      const motif = getMotif(layer.params.motif_id);
+      if (!motif) return;
+      const durationUs = layer.t_end_us - layer.t_start_us;
+      const view = layer.params;
+      const desc = motifFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, motif);
+      if (!desc) return;
+      // Capture the plan-time inputs in locals so the async render closure
+      // binds the values that produced THIS cacheKey, not whatever `this.fps*`
+      // is at raster time (which could drift if the project fps changes).
+      const fpsNum = this.fpsNum;
+      const fpsDen = this.fpsDen;
+      const canonicalProps = desc.canonicalProps;
+      const durationSec = desc.durationSec;
+      specs.push({
+        cacheKey: desc.cacheKey,
+        contentFrame: desc.contentFrame,
+        contentDurationFrames: desc.contentDurationFrames,
+        // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
+        // Disk-first: prefer a baked PNG over a live raster, falling through
+        // to `rasterMotifFrame` (CDP) inside the resolver on miss / fs hiccup.
+        render: (frame: number) =>
+          resolveMotifFrame(
+            motif,
+            desc.cacheKey,
+            frame,
+            (frame * fpsDen) / fpsNum,
+            durationSec,
+            canonicalProps,
+          ),
+      });
+    });
     this.prewarmer.setTargets(specs);
   }
 
@@ -1804,33 +1219,28 @@ export class Compositor {
     if (!this.baker || !this.projectSummary) return;
     const globalOn = useAppSettingsStore.getState().settings.prebake_motifs;
     const specs: BakeContentSpec[] = [];
-    for (const track of this.composition.tracks) {
-      if (!track.enabled) continue;
-      for (const layer of track.layers) {
-        if (!layer.enabled || layer.params.kind !== "Motif") continue;
-        const wanted = globalOn || this.manualPrebakeLayers.has(layer.id);
-        if (!wanted) continue;
-        const motif = getMotif(layer.params.motif_id);
-        if (!motif) continue;
-        const tInLayerUs = tUs - layer.t_start_us;
-        const durationUs = layer.t_end_us - layer.t_start_us;
-        const view = layer.params;
-        const desc = motifFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, motif);
-        if (!desc) continue;
-        // Plan-time fps in locals — same closure-capture rationale as
-        // `updatePrewarmTargets`.
-        const fpsNum = this.fpsNum;
-        const fpsDen = this.fpsDen;
-        const canonicalProps = desc.canonicalProps;
-        specs.push({
-          cacheKey: desc.cacheKey,
-          contentFrame: desc.contentFrame,
-          contentDurationFrames: desc.contentDurationFrames,
-          // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
-          render: (frame: number) => bakeMotifFrame(motif, frame, fpsNum, fpsDen, canonicalProps),
-        });
-      }
-    }
+    this.forEachMotifLayer(tUs, (layer, tInLayerUs) => {
+      const wanted = globalOn || this.manualPrebakeLayers.has(layer.id);
+      if (!wanted) return;
+      const motif = getMotif(layer.params.motif_id);
+      if (!motif) return;
+      const durationUs = layer.t_end_us - layer.t_start_us;
+      const view = layer.params;
+      const desc = motifFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, motif);
+      if (!desc) return;
+      // Plan-time fps in locals — same closure-capture rationale as
+      // `updatePrewarmTargets`.
+      const fpsNum = this.fpsNum;
+      const fpsDen = this.fpsDen;
+      const canonicalProps = desc.canonicalProps;
+      specs.push({
+        cacheKey: desc.cacheKey,
+        contentFrame: desc.contentFrame,
+        contentDurationFrames: desc.contentDurationFrames,
+        // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
+        render: (frame: number) => bakeMotifFrame(motif, frame, fpsNum, fpsDen, canonicalProps),
+      });
+    });
     this.baker.setTargets(specs);
     this.recomputeBakeStatuses();
   }
@@ -1842,26 +1252,20 @@ export class Compositor {
   private async hydrateBakedIndexAndGc(): Promise<void> {
     if (!this.projectSummary) return;
     const activeKeys: string[] = [];
-    for (const track of this.composition.tracks) {
-      for (const layer of track.layers) {
-        if (layer.params.kind !== "Motif") continue;
+    // The cacheKey is window/time-independent (it folds props, dims, fps and
+    // content-duration, not the playhead), so the time handed in is
+    // irrelevant here: only `desc.cacheKey` is read. Every composition's
+    // motifs count, not just the drawn one's — a key is live while any
+    // timeline in the project holds it.
+    for (const compId of Object.keys(this.projectSummary.compositions)) {
+      forEachLayer(this.projectSummary, compId, ({ layer }) => {
+        if (layer.params.kind !== "Motif") return;
         const motif = getMotif(layer.params.motif_id);
-        if (!motif) continue;
-        // The cacheKey is window/time-independent (it folds props, dims, fps and
-        // content-duration, not the playhead), so tInLayerUs = 0 is fine here:
-        // we only read `desc.cacheKey`. durationUs is the layer width, mirroring
-        // `updatePrewarmTargets`.
+        if (!motif) return;
         const durationUs = layer.t_end_us - layer.t_start_us;
-        const desc = motifFrameDescriptor(
-          layer.params,
-          0,
-          durationUs,
-          this.fpsNum,
-          this.fpsDen,
-          motif,
-        );
+        const desc = motifFrameDescriptor(layer.params, 0, durationUs, this.fpsNum, this.fpsDen, motif);
         if (desc) activeKeys.push(desc.cacheKey);
-      }
+      });
     }
     sharedBakedKeyIndex.setLiveCandidates(activeKeys);
     try {
@@ -1887,726 +1291,32 @@ export class Compositor {
       return;
     }
     const byLayer: Record<string, LayerBakeStatus> = {};
-    for (const track of this.composition.tracks) {
-      for (const layer of track.layers) {
-        if (layer.params.kind !== "Motif") continue;
-        const motif = getMotif(layer.params.motif_id);
-        if (!motif) continue;
-        const durationUs = layer.t_end_us - layer.t_start_us;
-        const view = layer.params;
-        const desc = motifFrameDescriptor(view, 0, durationUs, this.fpsNum, this.fpsDen, motif);
-        if (!desc) continue;
-        const live = this.bakeStatusByCacheKey.get(desc.cacheKey);
-        // L0 coverage of this layer's content frames (cheap Map lookups; the
-        // cache `hasFrame` doesn't touch recency). This is the "is preview warm"
-        // signal that drives the green bar.
-        let covered = 0;
-        for (let f = 0; f < desc.contentDurationFrames; f++) {
-          if (sharedMotifFrameCache.hasFrame(desc.cacheKey, f)) covered++;
-        }
-        const status = motifWarmPhase(
-          live ?? null,
-          covered,
-          desc.contentDurationFrames,
-          sharedBakedKeyIndex.has(desc.cacheKey),
-        );
-        if (status) byLayer[layer.id] = status;
+    this.forEachMotifLayer(0, (layer) => {
+      const motif = getMotif(layer.params.motif_id);
+      if (!motif) return;
+      const durationUs = layer.t_end_us - layer.t_start_us;
+      const view = layer.params;
+      const desc = motifFrameDescriptor(view, 0, durationUs, this.fpsNum, this.fpsDen, motif);
+      if (!desc) return;
+      const live = this.bakeStatusByCacheKey.get(desc.cacheKey);
+      // L0 coverage of this layer's content frames (cheap Map lookups; the
+      // cache `hasFrame` doesn't touch recency). This is the "is preview warm"
+      // signal that drives the green bar.
+      let covered = 0;
+      for (let f = 0; f < desc.contentDurationFrames; f++) {
+        if (sharedMotifFrameCache.hasFrame(desc.cacheKey, f)) covered++;
       }
-    }
+      const status = motifWarmPhase(
+        live ?? null,
+        covered,
+        desc.contentDurationFrames,
+        sharedBakedKeyIndex.has(desc.cacheKey),
+      );
+      if (status) byLayer[layer.id] = status;
+    });
     const sig = JSON.stringify(byLayer);
     if (sig === this.lastBakeStatusSig) return;
     this.lastBakeStatusSig = sig;
     setLayerBakeStatuses(byLayer);
-  }
-
-  private ensureClip(layer: LayerSummary): ActiveClip | null {
-    if (layer.params.kind !== "VideoClip") return null;
-    const existing = this.clips.get(layer.id);
-    // The cached `source` may be a disposed handle — the pool's idle sweep
-    // reclaims any clip the playhead isn't feeding (see `SourceDecoderPool`).
-    // Fall through and re-acquire when it is.
-    if (existing && !existing.source.disposed) {
-      // No-flash re-resolution: when the resolver's IDENTITY for this media
-      // changes (a proxy landed, the engine flipped, or a runtime ffmpeg
-      // failure), begin an overlap-swap; keep returning the existing clip so
-      // the current frame stays on screen until the new handle holds the
-      // visible frame (key semantics: `ResolvedRendererSource`). Only a fully
-      // resolved ("ok") result is swap-worthy; a still-"pending" re-resolve
-      // leaves the existing clip alone.
-      if (this.mode === "preview") {
-        const rs = this.resolveSource(layer.params.media_id);
-        if (rs?.status === "unsupported") {
-          // The resolved engine flipped to one that CANNOT decode this original
-          // (e.g. decode_engine → Lite/webcodecs on a ProRes clip already built
-          // under ffmpeg, once the sticky WebCodecs-unusable mark lands). Tear
-          // the stale clip down and record the media so `compositeFrame` fires
-          // `onUnsupported` and the UnsupportedClipCard surfaces — otherwise the
-          // clip would sit on screen forever with no card. Mirrors the fresh-
-          // acquire unsupported path (and the teardown in `setProject`).
-          this.abandonSwap(layer.id);
-          this.tenBitIngest?.release(layer.id);
-          this.nv12Ingest?.release(layer.id);
-          // Same release the `setProject` teardown does, for the same reason —
-          // the orphaned handle can be holding a scarce GPU session.
-          this.pool.release(layer.id);
-          this.pool.release(swapKeys(layer.id, existing.mediaId).swapLayerId);
-          existing.sprite.dispose();
-          existing.effects.dispose();
-          this.clips.delete(layer.id);
-          this.unsupportedMedia.add(layer.params.media_id);
-          return null;
-        }
-        if (rs?.status === "ok" && rs.key !== null && rs.key !== existing.builtFromKey) {
-          this.beginSwap(existing, layer, rs);
-        }
-      }
-      return existing;
-    }
-    const mediaId = layer.params.media_id;
-    // Preview resolves the decode engine once here (ffmpeg vs webcodecs ×
-    // original vs proxy); export keeps its single proxy path, wrapped by
-    // `rsFromExportProxy` in the same shape so this acquire path is shared.
-    const rs =
-      this.mode === "preview"
-        ? this.resolveSource(mediaId)
-        : rsFromExportProxy(this.proxyAssetUrl(mediaId));
-    if (!rs) {
-      // eslint-disable-next-line no-console
-      console.warn(`[weftcut/pixi] no decode source for media ${mediaId} (clip ${layer.id})`);
-      return null;
-    }
-    if (rs.status === "unsupported") {
-      // No engine can decode this media — record it and skip the clip. Only
-      // ADD here; reset + fire are `compositeFrame`'s job (see
-      // `unsupportedMedia`). Export never wires `onUnsupported`, so the add
-      // is inert there.
-      this.unsupportedMedia.add(mediaId);
-      return null;
-    }
-    if (rs.status !== "ok" || rs.target === null) {
-      // Pending: proxy still building, or webcodecs decodability untested.
-      // The next resolution (probe settling / proxy landing) will retry.
-      return null;
-    }
-    // Color tags apply to ANY decode target for this media — a proxy
-    // preserves the source's colorimetry (see `CompositorInit.sourceColor`).
-    const sourceColor = this.sourceColor(mediaId);
-    const sourceStartPtsUs = this.mediaById(mediaId)?.video_start_pts_us ?? this.mediaById(mediaId)?.start_pts_us ?? null;
-    // Swap/revival identity (engine + source + decode target). Non-null: the
-    // guard above returned unless status is "ok" with a non-null target, and
-    // the resolver only nulls `key` when `target` is null.
-    const builtFromKey = rs.key!;
-    const m = this.mediaById(mediaId);
-    const source = this.pool.acquire({
-      layerId: layer.id,
-      mediaId,
-      // Export pool keying: must match the Worker's per-(media, phase)
-      // grouping so this sprite reads the ring the Worker is filling.
-      // Preview keys by layerId and ignores handleKey.
-      ...(this.mode === "export"
-        ? { handleKey: exportHandleKey(mediaId, layer.params.src_in_us, layer.t_start_us) }
-        : {}),
-      sourceColor,
-      sourceStartPtsUs,
-      engine: rs.engine,
-      // WebCodecs decodes this URL; ffmpeg ignores it and decodes
-      // `sourcePath` directly (spread below).
-      proxyAssetUrl: rs.engine === "webcodecs" ? rs.target! : "",
-      ...(rs.engine === "ffmpeg"
-        ? {
-            sourcePath: rs.target!,
-            codec: m?.codec ?? null,
-            pixFmt: m?.pix_fmt ?? null,
-            width: m?.width ?? null,
-            height: m?.height ?? null,
-            // Always true here: the resolver only returns engine "ffmpeg" +
-            // status "ok" when the ffmpeg component is loaded (see
-            // `resolveDecodeEngine`'s "ffmpeg" and "auto" branches).
-            componentAvailable: true,
-          }
-        : {}),
-    });
-    // Subscribe to the first-frame notification BEFORE kicking off
-    // ensureReady so we don't miss the synchronous-fire case if the
-    // source happened to be pre-warmed by another clip referencing
-    // the same media.
-    source.onFirstFrame(() => {
-      this.scheduleRepaint();
-    });
-    // Sticky runtime failure: an ffmpeg-engine handle that dies at runtime
-    // (GPU decode error, device loss, session crash, budget-rejected open)
-    // fires `onFatalError`. Mark the engine unusable for this media (sticky
-    // this session — `isFfmpegUnusable`) and repaint: the next `ensureClip`
-    // re-resolves, so "auto" falls through to webcodecs and a pinned "ffmpeg"
-    // resolves "unsupported". Either way the key changes and the no-flash
-    // swap rebuilds onto the new source. WebCodecs' `SourceHandle` has no
-    // `onFatalError` (it downgrades to software internally) — no-op there.
-    if (source.onFatalError) {
-      source.onFatalError((reason) => {
-        markFfmpegUnusable(mediaId, reason);
-        this.scheduleRepaint();
-      });
-    }
-    // Kick off the async ensureReady. After it resolves, the next
-    // setAnchorTime() tick (or first decoded frame's onFirstFrame
-    // callback) will paint.
-    void source.ensureReady().catch((e: unknown) => {
-      // eslint-disable-next-line no-console
-      console.error(`[weftcut/pixi] ensureReady ${mediaId} failed`, e);
-    });
-    if (existing) {
-      // Revival path: keep the sprite (the bound texture from the
-      // last paint is still visible on the canvas, so the user sees
-      // a held frame rather than a flash to EMPTY while the new
-      // decoder warms up), just swap in the fresh source.
-      existing.source = source;
-      existing.builtFromKey = builtFromKey;
-      existing.loggedNull = false;
-      return existing;
-    }
-    const sprite = new VideoClipSprite({ layerId: layer.id, mediaId });
-    const clip: ActiveClip = {
-      layerId: layer.id,
-      mediaId,
-      source,
-      sprite,
-      effects: new EffectChain(),
-      builtFromKey,
-      boundFramePtsUs: null,
-      boundFrameDurationUs: null,
-      boundFrameSourceKey: null,
-      boundFrameKind: null,
-      loggedNull: false,
-    };
-    this.clips.set(layer.id, clip);
-    // eslint-disable-next-line no-console
-    console.log(`[weftcut/pixi] clip ${layer.id} → media ${mediaId} attached`);
-    return clip;
-  }
-
-  /// Begin a no-flash overlap-swap of `clip` to a second handle decoding the
-  /// freshly-resolved source `rs`. The original stays referenced by
-  /// `clip.source` (so the preview never blanks) until `pollSwap` confirms the
-  /// new handle's ring holds the visible frame, at which point `completeSwap`
-  /// repoints atomically. `rs` may resolve to either engine — an ffmpeg
-  /// `sourcePath` or a WebCodecs URL — so a runtime ffmpeg failure
-  /// (`markFfmpegUnusable`) rides this same path.
-  private beginSwap(clip: ActiveClip, layer: LayerSummary, rs: ResolvedRendererSource): void {
-    if (layer.params.kind !== "VideoClip") return;
-    if (!rs.key) return;
-    const inflight = this.swaps.get(clip.layerId);
-    if (inflight) {
-      // Already swapping to this identity → leave it. Otherwise the target
-      // changed (or the handle died) → abandon and restart toward `rs`.
-      if (!inflight.handle.disposed && inflight.key === rs.key) return;
-      this.abandonSwap(clip.layerId);
-    }
-    const { swapLayerId, swapMediaId } = swapKeys(clip.layerId, clip.mediaId);
-    // Resolve color/start/codec facts against the REAL media (`clip.mediaId`)
-    // even though the handle is acquired under the synthetic `swapMediaId`
-    // (a proxy preserves source color — `CompositorInit.sourceColor`).
-    const sourceColor = this.sourceColor(clip.mediaId);
-    const m = this.mediaById(clip.mediaId);
-    const sourceStartPtsUs = m?.video_start_pts_us ?? m?.start_pts_us ?? null;
-    const handle = this.pool.acquire({
-      layerId: swapLayerId,
-      mediaId: swapMediaId,
-      sourceColor,
-      sourceStartPtsUs,
-      engine: rs.engine,
-      proxyAssetUrl: rs.engine === "webcodecs" ? rs.target! : "",
-      ...(rs.engine === "ffmpeg"
-        ? {
-            sourcePath: rs.target!,
-            codec: m?.codec ?? null,
-            pixFmt: m?.pix_fmt ?? null,
-            width: m?.width ?? null,
-            height: m?.height ?? null,
-            componentAvailable: true,
-          }
-        : {}),
-    });
-    const state: SwapState = { handle, swapLayerId, key: rs.key, timer: null, deadline: null };
-    this.swaps.set(clip.layerId, state);
-    void handle.ensureReady().catch(() => {
-      this.abandonSwap(clip.layerId);
-    });
-    // `onFirstFrame` is one-shot and usually fires on the GOP key (before the
-    // target frame), so it can't carry the swap to completion alone. Drive it
-    // with a bounded poll that also keeps the swap handle warm against the
-    // idle sweeper; a deadline abandons a swap that never produces the frame.
-    const poll = () => this.pollSwap(clip.layerId);
-    handle.onFirstFrame(poll);
-    state.timer = setInterval(poll, 120);
-    state.deadline = setTimeout(() => this.abandonSwap(clip.layerId), 8000);
-    // eslint-disable-next-line no-console
-    console.log(`[weftcut/pixi] begin source-swap ${clip.layerId} → ${rs.key}`);
-  }
-
-  /// Poll an in-flight swap: nudge the new handle toward the current frame and
-  /// complete once that frame is decoded. No-op once the swap is gone.
-  private pollSwap(layerId: string): void {
-    const state = this.swaps.get(layerId);
-    if (!state) return;
-    const clip = this.clips.get(layerId);
-    const layer = this.layerById.get(layerId);
-    if (!clip || !layer || layer.params.kind !== "VideoClip" || state.handle.disposed) {
-      this.abandonSwap(layerId);
-      return;
-    }
-    const tUsSnapped = snapFrameFloor(this.lastTUs, this.fpsNum, this.fpsDen);
-    // Playhead off this clip → can't prove the proxy has the visible frame
-    // yet; keep the original and retry on a later tick.
-    if (tUsSnapped < layer.t_start_us || tUsSnapped >= layer.t_end_us) return;
-    const srcTUs = layer.params.src_in_us + (tUsSnapped - layer.t_start_us);
-    void state.handle.requestFrameAt(srcTUs);
-    if (state.handle.ring.frameAt(srcTUs) != null) {
-      this.completeSwap(layerId, srcTUs);
-    }
-  }
-
-  /// Atomically repoint `clip.source` to the swap handle (whose ring now holds
-  /// the frame at `srcTUs`) and release the original. Never swaps to an empty
-  /// ring — that black frame is exactly what this avoids.
-  private completeSwap(layerId: string, srcTUs: number): void {
-    const state = this.swaps.get(layerId);
-    const clip = this.clips.get(layerId);
-    if (!state) return;
-    if (!clip) {
-      this.abandonSwap(layerId);
-      return;
-    }
-    if (state.handle.ring.frameAt(srcTUs) == null) return; // lost the frame; wait
-    const old = clip.source;
-    clip.source = state.handle;
-    clip.builtFromKey = state.key;
-    this.clearSwapTimers(state);
-    this.swaps.delete(layerId);
-    // Release the ORIGINAL handle by its pool key (the clip's real layerId).
-    // The swap handle now lives under `${layerId}#swap`, referenced by
-    // `clip.source` and kept warm by `setAnchorTime`'s per-tick requests.
-    if (!old.disposed) this.pool.release(layerId);
-    this.scheduleRepaint();
-    // eslint-disable-next-line no-console
-    console.log(`[weftcut/pixi] completed source-swap ${layerId} → ${state.key}`);
-  }
-
-  /// Tear down an in-flight swap without repointing: clear its timers and
-  /// release the synthetic swap handle. The clip keeps its original source.
-  private abandonSwap(layerId: string): void {
-    const state = this.swaps.get(layerId);
-    if (!state) return;
-    this.clearSwapTimers(state);
-    this.swaps.delete(layerId);
-    this.pool.release(state.swapLayerId);
-  }
-
-  private clearSwapTimers(state: SwapState): void {
-    if (state.timer !== null) {
-      clearInterval(state.timer);
-      state.timer = null;
-    }
-    if (state.deadline !== null) {
-      clearTimeout(state.deadline);
-      state.deadline = null;
-    }
-  }
-
-  /// Clear every in-flight swap's timers and forget them. Used by
-  /// suspend/dispose, where the pool is disposed wholesale so the synthetic
-  /// handles don't need a per-key release.
-  private cancelAllSwaps(): void {
-    for (const s of this.swaps.values()) this.clearSwapTimers(s);
-    this.swaps.clear();
-  }
-
-  private updateClip(clip: ActiveClip, layer: LayerSummary, tUs: number, z: number): void {
-    if (layer.params.kind !== "VideoClip") return;
-
-    const layerLocalUs = tUs - layer.t_start_us;
-    // Per-frame keyframe resolution: AnimTrack views -> scalars at the
-    // layer-local time. Identical in preview and the export Worker.
-    const params = withTransformOverride(
-      layer.id,
-      resolveVideoClipView(layer.params, layerLocalUs),
-    );
-    const srcTUs = params.src_in_us + layerLocalUs;
-
-    const media = this.mediaById(params.media_id);
-
-    // Upload the current frame BEFORE adjusting transforms so the
-    // sprite's natural size reflects the real texture dimensions.
-    const tRing = stageNow();
-    const selected = clip.source.ring.selectFrame(srcTUs);
-    stageAdd(STAGE.RingLookup, tRing);
-    const frame = selected?.frame ?? null;
-
-    // Underrun accounting: while the master clock runs, a stale or
-    // missing frame here is a dropped frame the free-running playhead
-    // glossed over. Swap-in-flight clips are exempt — the no-flash
-    // source swap deliberately holds the old pixels while the new
-    // source's ring fills (see `SwapState`).
-    if (
-      this.mode === "preview" &&
-      this.playing &&
-      !this.scrubbing &&
-      !this.swaps.has(clip.layerId)
-    ) {
-      const verdict = judgeFrameSelection({
-        selectedPtsUs: selected?.ptsUs ?? null,
-        selectedDurationUs: selected?.durationUs ?? 0,
-        srcTUs,
-        mediaDurationUs: media?.duration_us ?? null,
-      });
-      if (verdict === "late") this.sweepLateLayers += 1;
-    }
-    if (frame && selected) {
-      if (isTenBitFrame(frame)) {
-        const tTenBit = stageNow();
-        const texture = this.ensureTenBitIngest().textureFor(clip.layerId, frame);
-        stageAdd(STAGE.TenBitIngest, tTenBit);
-        clip.sprite.bindExternalTexture(texture);
-        clip.boundFrameKind = "p10";
-      } else if (isNativeNv12Frame(frame)) {
-        // Native 8-bit CPU-plane frames (export relay AND the SW preview
-        // lane) convert in OUR shader — Chromium's software conversion of
-        // buffer-defined NV12 VideoFrames applies BT.601 regardless of the
-        // stamped colorSpace (see nv12Frame.ts).
-        const tNv12 = stageNow();
-        const texture = this.ensureNv12Ingest().textureFor(clip.layerId, frame);
-        stageAdd(STAGE.Nv12Ingest, tNv12);
-        clip.sprite.bindExternalTexture(texture);
-        clip.boundFrameKind = "nv12";
-      } else {
-        const tUpload = stageNow();
-        clip.sprite.updateFrame(frame);
-        stageAdd(STAGE.BitmapUpload, tUpload);
-        clip.boundFrameKind = "browser";
-      }
-      clip.boundFramePtsUs = selected.ptsUs;
-      clip.boundFrameDurationUs = selected.durationUs;
-      clip.boundFrameSourceKey = clip.builtFromKey;
-    } else {
-      // Diagnostic: log when `selectFrame` returns null (painter holds
-      // previous frame). Throttled to "only when this clip's state
-      // transitions from has-frame to null" to avoid spamming during
-      // a long null window.
-      if (clip.sprite.sprite.texture !== Texture.EMPTY && !clip.loggedNull) {
-        clip.loggedNull = true;
-        // eslint-disable-next-line no-console
-        console.log(
-          `[weftcut/pixi] frameAt(${srcTUs}) → null for ${clip.layerId} ` +
-            `(ringFirst=${clip.source.ring.firstPtsUs()} ` +
-            `ringLast=${clip.source.ring.lastPtsUs()})`,
-        );
-      }
-    }
-    if (frame) clip.loggedNull = false;
-
-    // Keep transform semantics tied to the original media dimensions, not
-    // the currently decoded proxy dimensions. Quick proxies may be 540p and
-    // full proxies are capped at 1080p; both should preview at the same size
-    // as the source would. Avoid Pixi's width/height setters because they
-    // derive scale from `Texture.EMPTY` before the first frame lands.
-    const tex = clip.sprite.sprite.texture;
-    const textureW = tex === Texture.EMPTY ? null : tex.orig.width;
-    const textureH = tex === Texture.EMPTY ? null : tex.orig.height;
-    const sourceScaleX =
-      media?.width && textureW && textureW > 0 ? media.width / textureW : 1;
-    const sourceScaleY =
-      media?.height && textureH && textureH > 0 ? media.height / textureH : 1;
-    const effScaleX = params.scale_x * sourceScaleX;
-    const effScaleY = params.scale_y * sourceScaleY;
-    clip.sprite.sprite.scale.set(
-      effScaleX * (params.flip_h ? -1 : 1),
-      effScaleY * (params.flip_v ? -1 : 1),
-    );
-    // Anchor is the pivot: rotation and flip turn around it while `x`/`y` keep
-    // meaning the unrotated top-left (anchorPivot.ts). The pivot is in TEXTURE
-    // space, so it must use the decoded dimensions while the position
-    // compensation uses the effective (source-corrected) scale.
-    const pivot = anchorPivot({
-      x: params.x,
-      y: params.y,
-      anchorX: params.anchor_x,
-      anchorY: params.anchor_y,
-      texW: textureW,
-      texH: textureH,
-      effScaleX,
-      effScaleY,
-    });
-    clip.sprite.sprite.pivot.set(pivot.pivotX, pivot.pivotY);
-    clip.sprite.sprite.position.set(pivot.posX, pivot.posY);
-    clip.sprite.sprite.angle = params.rotation_deg;
-    clip.sprite.sprite.alpha = params.opacity;
-    clip.sprite.sprite.zIndex = z;
-  }
-
-  // ============================================================
-  // ImageOverlay
-  // ============================================================
-
-  private ensureImage(layer: LayerSummary): ActiveImage | null {
-    if (layer.params.kind !== "ImageOverlay") return null;
-    const existing = this.images.get(layer.id);
-    if (existing) return existing;
-    const mediaId = layer.params.media_id;
-    const url = this.originalAssetUrl(mediaId);
-    if (!url) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[weftcut/pixi] no asset URL for media ${mediaId} (image ${layer.id})`,
-      );
-      return null;
-    }
-    const sprite = new ImageOverlaySprite({
-      layerId: layer.id,
-      mediaId,
-      maxWidth: this.compositionWidth,
-      maxHeight: this.compositionHeight,
-    });
-    const loadPromise = sprite.loadFromAsset(url).then(() => {
-      // Trigger a repaint once the bitmap lands.
-      this.scheduleRepaint();
-      // Identity-checked, never key-only: a stale completion (this sprite was
-      // evicted and the layer re-ensured while the load was in flight) must
-      // not delete the NEW sprite's reservation — `preloadImages` would then
-      // see nothing pending and the export frame loop would race the
-      // still-loading bitmap into a transparent image layer. Same ABA the
-      // AudioMixer's identity-owned chunk slots close.
-      if (this.imageLoadPromises.get(layer.id) === loadPromise) {
-        this.imageLoadPromises.delete(layer.id);
-      }
-    });
-    this.imageLoadPromises.set(layer.id, loadPromise);
-    void loadPromise;
-    const image: ActiveImage = { layerId: layer.id, mediaId, sprite, effects: new EffectChain() };
-    this.images.set(layer.id, image);
-    // eslint-disable-next-line no-console
-    console.log(
-      `[weftcut/pixi] image ${layer.id} → media ${mediaId} attached`,
-    );
-    return image;
-  }
-
-  /// Pre-trigger image loading for every ImageOverlay layer in the current
-  /// project and return a promise that resolves once ALL are loaded. Called by
-  /// the export Worker before the frame loop so that animated GIF frames are
-  /// available before compositing begins (ensureImage fires loadFromAsset as
-  /// fire-and-forget; without this wait the decoder races the frame loop and
-  /// all frames composite as transparent).
-  async preloadImages(): Promise<void> {
-    if (!this.projectSummary) return;
-    const imageLayerIds: string[] = [];
-    for (const track of this.composition.tracks) {
-      for (const layer of track.layers) {
-        if (layer.params.kind === "ImageOverlay") imageLayerIds.push(layer.id);
-      }
-    }
-    // Force-create sprites for any not yet ensured (compositeFrame would do
-    // this lazily, but we want the load promises in flight immediately).
-    for (const layerId of imageLayerIds) {
-      const layer = this.layerById.get(layerId);
-      if (layer) this.ensureImage(layer);
-    }
-    const pending = imageLayerIds
-      .map((id) => this.imageLoadPromises.get(id))
-      .filter((p): p is Promise<void> => p !== undefined);
-    if (pending.length > 0) await Promise.all(pending);
-  }
-
-  private updateImage(
-    image: ActiveImage,
-    layer: LayerSummary,
-    tUs: number,
-    z: number,
-  ): void {
-    if (layer.params.kind !== "ImageOverlay") return;
-    const tInLayerUs = tUs - layer.t_start_us;
-    const durationUs = layer.t_end_us - layer.t_start_us;
-    const params = withTransformOverride(
-      layer.id,
-      resolveImageOverlayView(layer.params, tInLayerUs),
-    );
-    image.sprite.update(params, tInLayerUs, durationUs);
-    image.sprite.sprite.zIndex = z;
-  }
-
-  // ============================================================
-  // Color
-  // ============================================================
-
-  private ensureColor(layer: LayerSummary): ActiveColor | null {
-    if (layer.params.kind !== "Color") return null;
-    const existing = this.colors.get(layer.id);
-    if (existing) return existing;
-    const sprite = new ColorSprite({ layerId: layer.id });
-    const color: ActiveColor = { layerId: layer.id, sprite, effects: new EffectChain() };
-    this.colors.set(layer.id, color);
-    // eslint-disable-next-line no-console
-    console.log(`[weftcut/pixi] color ${layer.id} attached`);
-    return color;
-  }
-
-  private updateColor(color: ActiveColor, layer: LayerSummary, z: number, tInLayerUs: number): void {
-    if (layer.params.kind !== "Color") return;
-    color.sprite.update(resolveColorView(layer.params, tInLayerUs));
-    color.sprite.graphics.zIndex = z;
-  }
-
-  // ============================================================
-  // Text
-  // ============================================================
-
-  private ensureText(layer: LayerSummary): ActiveText | null {
-    if (layer.params.kind !== "Text") return null;
-    const existing = this.texts.get(layer.id);
-    if (existing) return existing;
-    const sprite = new TextSprite({ layerId: layer.id });
-    const text: ActiveText = { layerId: layer.id, sprite, effects: new EffectChain() };
-    this.texts.set(layer.id, text);
-    // eslint-disable-next-line no-console
-    console.log(`[weftcut/pixi] text ${layer.id} attached`);
-    return text;
-  }
-
-  private updateText(text: ActiveText, layer: LayerSummary, z: number, tUs: number): void {
-    if (layer.params.kind !== "Text") return;
-    const tInLayerUs = tUs - layer.t_start_us;
-    // Two overrides, one map: the transform channels compose additively with the
-    // tracks, while the layout box replaces them outright because it has no track
-    // to compose with (ADR 0049). Both are read here so an in-flight gizmo
-    // gesture lands every field it touches on the same frame.
-    text.sprite.update(
-      withTextBoxOverride(
-        layer.id,
-        withTransformOverride(layer.id, resolveTextView(layer.params, tInLayerUs)),
-      ),
-    );
-    text.sprite.text.zIndex = z;
-  }
-
-  // ============================================================
-  // Motif
-  // ============================================================
-
-  private ensureMotif(layer: LayerSummary): ActiveMotif | null {
-    if (layer.params.kind !== "Motif") return null;
-    const motifId = layer.params.motif_id;
-    const existing = this.activeMotifs.get(layer.id);
-    if (existing) {
-      if (existing.motifId === motifId) return existing;
-      // The layer was retargeted to a different Motif (Edit-swap / Discard /
-      // Update rebind) — dispose the stale sprite so a fresh one re-fetches
-      // getMotif(motifId) and re-captures. Keyed by layer.id, so the map slot
-      // is replaced below.
-      existing.sprite.dispose();
-      existing.effects.dispose();
-      this.activeMotifs.delete(layer.id);
-    }
-    const sprite = new MotifSprite({
-      layerId: layer.id,
-      motifId,
-      fpsNum: this.fpsNum,
-      fpsDen: this.fpsDen,
-      onLoaded: () => this.scheduleRepaint(),
-    });
-    const tmpl: ActiveMotif = { layerId: layer.id, motifId, sprite, effects: new EffectChain() };
-    this.activeMotifs.set(layer.id, tmpl);
-    // eslint-disable-next-line no-console
-    console.log(
-      `[weftcut/pixi] motif ${layer.id} → ${motifId} attached`,
-    );
-    return tmpl;
-  }
-
-  private updateMotif(
-    tmpl: ActiveMotif,
-    layer: LayerSummary,
-    z: number,
-    tUs: number,
-  ): void {
-    if (layer.params.kind !== "Motif") return;
-    // Layer-relative time, mirroring `updateImage`. Motifs have no
-    // source-in offset, so this resets to 0 at `t_start` — the intended
-    // semantic (a motif animates over its own placed duration).
-    const tInLayerUs = tUs - layer.t_start_us;
-    const durationUs = layer.t_end_us - layer.t_start_us;
-    // Export mode's pre-baked frames for this layer (see `setMotifFrames`).
-    // Undefined in preview, or when this layer wasn't baked.
-    const injected = this.motifFrames.get(layer.id);
-    tmpl.sprite.update(
-      withTransformOverride(layer.id, resolveMotifView(layer.params, tInLayerUs)),
-      tInLayerUs,
-      durationUs,
-      injected,
-    );
-    tmpl.sprite.sprite.zIndex = z;
-  }
-
-  /// Refresh every live Motif sprite against the current runtime catalog and
-  /// schedule a repaint. Called when `motifs:changed` fires (a draft edit /
-  /// install / delete) so an edited draft's preview re-captures. Cheap +
-  /// user-paced; no sprite is recreated (refreshMotif keeps the last bitmap
-  /// until the fresh capture lands).
-  refreshMotifs(): void {
-    for (const { sprite } of this.activeMotifs.values()) {
-      sprite.refreshMotif();
-    }
-    this.scheduleRepaint();
-  }
-
-  // ============================================================
-  // Audio
-  // ============================================================
-
-  private ensureAudio(layer: LayerSummary): ActiveAudio | null {
-    if (layer.params.kind !== "Audio") return null;
-    const graph = this.audioGraph;
-    if (graph === null) return null;
-    const existing = this.audios.get(layer.id);
-    if (existing) return existing;
-    const mediaId = layer.params.media_id;
-    // The mixer Range-reads the media's conform PCM — no decode in the
-    // renderer. `null` until the conform job lands: the layer stays
-    // silent and we retry on a later tick (the media summary updates
-    // when the job completes).
-    const url = this.conformAssetUrl(mediaId);
-    if (!url) {
-      if (!this.conformWarned.has(mediaId)) {
-        this.conformWarned.add(mediaId);
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[weftcut/pixi] no conform PCM yet for media ${mediaId} (layer ${layer.id}); audio silent until the conform job completes`,
-        );
-      }
-      return null;
-    }
-    this.conformWarned.delete(mediaId);
-    const mixer = new AudioMixer(
-      {
-        layerId: layer.id,
-        conformUrl: url,
-        view: layer.params,
-        layerTStartUs: layer.t_start_us,
-        layerTEndUs: layer.t_end_us,
-      },
-      graph,
-    );
-    const audio: ActiveAudio = {
-      layerId: layer.id,
-      mediaId,
-      mixer,
-      lastParamsRef: layer.params,
-      lastParamsJson:
-        JSON.stringify(layer.params) + `|${layer.t_start_us}|${layer.t_end_us}`,
-      // Sentinel: the constructor derived the mixer at unity role gain, so
-      // the first selection-loop pass must re-derive with the real role gain.
-      lastRoleGain: NaN,
-    };
-    this.audios.set(layer.id, audio);
-    // eslint-disable-next-line no-console
-    console.log(`[weftcut/pixi] audio ${layer.id} → media ${mediaId} attached`);
-    return audio;
   }
 }

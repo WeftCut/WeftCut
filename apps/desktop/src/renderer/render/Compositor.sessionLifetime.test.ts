@@ -69,12 +69,24 @@ function summaryWith(layers: LayerSummary[]): ProjectSummary {
 /// A clip is only ever built by `ensureClip`, which needs a resolver, a live
 /// pool and a GL-backed sprite — none of which exist in the node environment.
 /// The teardown contract under test doesn't depend on any of that, so the clip
-/// is injected with just the surface `setProject`'s eviction loop touches.
+/// is injected with just the surface the eviction loop touches.
+///
+/// Sprites and decode sessions belong to the `CompositionNode` drawing the
+/// composition; the Compositor holds the pool the node releases into. `key` is
+/// the node's pool key for the layer — `instanceKey`, which is the bare layer
+/// id at the root.
 function injectClip(compositor: Compositor, layerId: string, mediaId: string) {
   const sprite = { dispose: vi.fn() };
   const effects = { dispose: vi.fn() };
-  const clips = (compositor as unknown as { clips: Map<string, unknown> }).clips;
-  clips.set(layerId, { layerId, mediaId, sprite, effects, source: { disposed: false } });
+  const clips = (compositor.rootNode() as unknown as { clips: Map<string, unknown> }).clips;
+  clips.set(layerId, {
+    layerId,
+    key: layerId,
+    mediaId,
+    sprite,
+    effects,
+    source: { disposed: false },
+  });
   return { sprite, effects };
 }
 

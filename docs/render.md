@@ -31,7 +31,9 @@ final mux see [`export.md`](export.md).
 
 ```
 apps/desktop/src/renderer/render/
-  Compositor.ts              — PixiJS Application owner; per-frame composite
+  Compositor.ts              — PixiJS Application owner; shared services; per-frame composite
+  CompositionNode.ts         — one composition INSTANCE's sprites, mixers and Container; the two sweeps
+  compositionWalk.ts         — THE recursive walk over a project's layers (offset + window + per-instance key)
   clock.ts                   — audio-master clock (anchor-derived; wall fallback)
   PlaybackEngine.ts          — transport (play/pause/seek/scrub)
   decoder/
@@ -42,6 +44,7 @@ apps/desktop/src/renderer/render/
     FrameRing.ts             — 1 s lookahead / 0.5 s lookbehind per clip; stores ImageBitmap snapshots
     scrub.ts                 — debounced scrub coalescer (decode-during-drag)
   sprite/
+    CompositionRefSprite.ts  — a Group layer's picture: a child CompositionNode rendered to a RenderTexture
     VideoClipSprite.ts
     ImageOverlaySprite.ts
     TextSprite.ts
@@ -76,19 +79,26 @@ in the export Worker). Its public surface:
 
 ```ts
 class Compositor {
-  setProject(summary: ProjectSummary): void;
+  // `openId` names the composition to draw; omitted / unknown ⇒ the root.
+  setProject(summary: ProjectSummary, openId?: string | null): void;
   setMediaSources(urls: Record<MediaId, string>): void;
   render(tUs: number): void;          // composite one frame at this time
 }
 ```
 
-Each call to `setProject` updates the sprite tree by diffing the
-incoming layer set against the mounted sprites. New layers spawn a
-Sprite of the right kind; removed layers dispose; surviving layers
-get their `LayerSummary` patched in place. Z-order follows the
-track + within-track index that the project summary already carries.
+The Compositor draws ONE composition through a `CompositionNode`, and holds
+what every node shares: the decoder pool, the ingest shaders, the audio bus,
+the Motif prewarm/bake planners, underrun accounting, presentation state.
 
-`render(tUs)` walks the mounted sprites in z-order. For each layer the
+Each call to `setProject` hands the node a new snapshot: layers that
+disappeared dispose their sprites, new layers spawn a Sprite of the right
+kind on the next sweep, survivors get their `LayerSummary` patched in place.
+Z-order follows the track + within-track index the project summary already
+carries. A `setProject` naming a DIFFERENT composition rebuilds the node
+instead — every sprite, mixer and decode session belonged to the timeline
+being left.
+
+`render(tUs)` walks the node's layers in z-order. For each layer the
 Compositor first resolves the view's `AnimTrack<T>` properties at the
 layer-local time via `render/resolveView.ts` — numeric tracks through
 `render/animated.ts`'s `resolveAnimated`, color tracks through its
@@ -120,6 +130,58 @@ native export still evaluates every keyframe, so the two would diverge;
 `loadTrack` (`MAX_KEYFRAMES`) emits a one-time `console.warn` if a property ever
 exceeds it. Revisit (an upstream per-property cap, or a linear-memory upload
 path) only if dense/programmatic keyframes are ever generated.
+
+### Compositions: the recursive composite
+
+A **Group** is a composition placed as one media-bearing layer
+(`CompositionRef`) in another; the root and every Group share one shape
+(`Project.compositions` + `root_id`), so there is one drawing path, entered at
+a different node ([ADR 0052](adr/0052-link-propagates-group-composes.md)).
+
+- **One `CompositionNode` per Group LAYER**, not per composition. Two
+  placements of one composition sit at different offsets, so at a single
+  playhead they show two different frames of the same content — two decode
+  positions, two rings, two sets of sprites. Anything a node hands to a shared
+  service is keyed per instance: `instanceKey(path, layerId)`, which is the
+  bare layer id at the root, so a flat project's pool and bake keys are
+  unchanged.
+- **Render to texture.** `CompositionRefSprite` composites its child node into
+  a `RenderTexture` of the composition's own `width × height` and shows it in
+  one `Sprite`, which the parent stages through the same `stageVisual` every
+  other visual kind goes through — so transform, opacity, blend, the effect
+  chain and the transition divert apply to one flat image, and a Group's own
+  transitions resolve inside its frame before the parent sees it. Nesting
+  therefore composes transforms by construction. The target is 8-bit
+  (`bgra8unorm` on WebGPU — the same pipeline constraint the transition node
+  hits), so the 10-bit lane quantizes through a Group.
+- **Time.** Parent `t` ↔ child `t − t_start + src_in`, re-snapped to the
+  shared lattice on the way down (`compositionLocalUs`): grid anchors are
+  `round(frame × 1e6 × den / num)`, so an offset that is itself a difference
+  of anchors lands a µs off the child's own grid, and a child layer starting
+  there would read as not yet active for exactly one frame. Past the
+  composition's `duration_us` the node composites nothing and the texture
+  clears to transparent — overhang is tolerated in state and rendered as
+  nothing.
+- **Audio** runs in the same recursion: a layer inside a Group is placed at
+  its root-time interval, clipped to the Group's window, and reads its source
+  `headUs` in — so the mixers need no notion of Groups. `enabled = false` on
+  the Group layer silences everything below it that same frame.
+- **Preview draws the OPEN composition** (`state/compositionScopeStore.ts`);
+  the frame size, the fps binding and the playhead's bound follow it, so
+  opening a Group shows its content unscaled at its own size, on its own
+  clock. **Export always draws the root**, whatever is open: a Group is a
+  source, and a file of one alone is a file nobody asked for.
+- **Every flat `tracks[].layers[]` walk that has to see inside a Group** goes
+  through `compositionWalk.ts` — the export decode set and the emptiness gate
+  (`activeVideoLayers.ts`), the Motif pre-bake (`exportBake.ts`), font
+  collection (`worker/runExport.ts`), the Motif prewarm/bake planners. It
+  reports each leaf at its ROOT-time placement, clipped to the intersection of
+  the entered Groups' windows, with what the clipping cut off the head and
+  tail; a consumer turns that into a source trim. The Compositor's own sweep
+  does not use it: a node walks its one composition and recurses through its
+  child nodes, because it owns sprites per instance. Twin:
+  `native/src/audio/mix.rs` `for_each_audio_layer` — same offset and window
+  convention, same depth cap (`MAX_COMPOSITION_DEPTH`).
 
 ### Keyframe easing authoring
 
@@ -347,6 +409,13 @@ playback against a synthesized no-media fixture and fails when the
 post-GC memory floor rises ≥ 30 MB. Run it after touching the playback
 loop, the playhead store, or anything that subscribes per frame.
 
+It takes a scenario argument, each guarding a different per-frame allocation
+class: `text` (the React-subscription ratchet above), `transitions` (the
+two-input node's RenderTexture pool), `text-box` (the shrink-to-fit search
+re-measuring), `groups` (a composition placed twice and once more through a
+nesting Group — three `CompositionNode`s, three render targets). Run the one
+whose class your change touches.
+
 ## Sprite kinds
 
 | Sprite | Source | Notes |
@@ -542,9 +611,10 @@ and the raster cache.
   `defaultEncoderConfig(width, height)` on the main thread).
 - A time range `[startUs, endUs)`.
 
-The Worker mounts a `Compositor` against the OffscreenCanvas, walks
-the output frame grid for that half-open range, calls `render(tUs)` for
-each frame, and captures each output `VideoFrame` with
+The Worker mounts a `Compositor` against the OffscreenCanvas, points it at the
+project's ROOT composition (never the editor's open one), walks the output
+frame grid for that half-open range, calls `render(tUs)` for each frame, and
+captures each output `VideoFrame` with
 `timestamp = tUs - startUs` so the encoded video starts at zero. The
 grid uses the exact rational output fps (`frameGrid.ts`), not
 `i * round(1e6 / fps)`, so trim tails and 29.97/59.94-style rates do

@@ -13,7 +13,7 @@ import { dbToLinear } from "./envelope";
 import { roleAudible as wasmRoleAudible } from "../../eval";
 import { roleGainOverrideDb } from "./roleGainOverrides";
 
-export function anyRoleSolo(roles: RoleMixView[]): boolean {
+export function anyRoleSolo(roles: readonly RoleMixView[]): boolean {
   return roles.some((r) => r.solo);
 }
 
@@ -22,7 +22,7 @@ export function anyRoleSolo(roles: RoleMixView[]): boolean {
 /// unmuted) iff no solo set exists, mirroring the Rust `role_mix` default.
 export function roleAudible(
   role: AudioRole,
-  roles: RoleMixView[],
+  roles: readonly RoleMixView[],
   anySolo: boolean,
 ): boolean {
   const r = roles.find((x) => x.role === role);
@@ -30,7 +30,7 @@ export function roleAudible(
   return wasmRoleAudible(r.muted, r.solo, anySolo);
 }
 
-export function roleGainLinear(role: AudioRole, roles: RoleMixView[]): number {
+export function roleGainLinear(role: AudioRole, roles: readonly RoleMixView[]): number {
   const r = roles.find((x) => x.role === role);
   return dbToLinear(r ? r.gain_db : 0);
 }
@@ -41,7 +41,7 @@ export function roleGainLinear(role: AudioRole, roles: RoleMixView[]): number {
 /// `roleGainLinear`. Preview-only — the export mixer folds the committed gain.
 export function auditionedRoleGainLinear(
   role: AudioRole,
-  roles: RoleMixView[],
+  roles: readonly RoleMixView[],
 ): number {
   const overrideDb = roleGainOverrideDb(role);
   if (overrideDb !== undefined) return dbToLinear(overrideDb);

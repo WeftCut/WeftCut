@@ -91,6 +91,20 @@ Preview pixels equal export pixels by construction; there's no
 "preview engine" to drift from export. See [`render.md`](render.md) for
 the renderer architecture.
 
+That one pipeline is recursive, because a project is a tree of
+compositions rather than one timeline: the root and every Group share one
+shape, and a Group is a composition placed as a single layer in another
+([ADR 0052](adr/0052-link-propagates-group-composes.md)). One
+`CompositionNode` draws one composition INSTANCE — per Group *layer*, not per
+composition, since two placements sit at different offsets and so show
+different frames of the same content — and renders it to a texture the parent
+stages like any other picture, which is what makes nested transforms,
+opacity, effects and transitions compose for free. The two ends differ only
+in where they enter it: the preview draws the composition the editor has
+OPEN, at its own frame size and on its own clock, while export always draws
+the root, because a Group is a source and a file of one alone is a file
+nobody asked for.
+
 The deterministic "what-you-see/hear" MATH both the renderer and Rust's
 compute/export paths need — frame snap, keyframe interpolation, the audio
 envelope curve, the role mute/solo gate — lives once in the `weftcut-eval`

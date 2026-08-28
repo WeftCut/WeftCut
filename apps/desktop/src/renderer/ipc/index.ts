@@ -243,7 +243,8 @@ export type LayerParamsView =
   | ({ kind: "CompositionRef" } & CompositionRefView);
 
 /// A Group layer: its source is another composition (ADR 0052 §4) — the entry
-/// `ProjectSummary.compositions[composition_id]`. Nothing renders it yet.
+/// `ProjectSummary.compositions[composition_id]`. Drawn by one `CompositionNode`
+/// per placement, into a texture (`render/sprite/CompositionRefSprite.ts`).
 export interface CompositionRefView {
   composition_id: string;
   /// The referenced composition's own label; null → derive "Group N".

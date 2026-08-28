@@ -5,15 +5,26 @@
 // MUST stay in lockstep: if the gate selects a different set than the Worker
 // decodes, an undecodable source either reaches the Worker un-gated (the scary
 // failure returns) or the export hangs on a proxy it never needed.
+//
+// The selection recurses into Groups (`compositionWalk.ts`), so a clip inside
+// one is reported at its MAPPED root time and with the source trim its Group's
+// window implies — which is what lets the Worker and the export-mode
+// Compositor derive the same `exportHandleKey` for it.
 
 import type { ProjectSummary } from "../ipc";
-import { rootCompositionOf } from "../ipc/compositions";
+import { forEachLayerInTime, instanceKey } from "./compositionWalk";
 
 export interface ActiveVideoLayer {
+  /// Per-instance identity: the bare layer id at the root, path-prefixed
+  /// inside a Group (`instanceKey`), so two placements of one Group are two
+  /// decode positions rather than one contested key.
   layerId: string;
   mediaId: string;
+  /// ROOT-time placement, clipped by every enclosing Group's window.
   tStartUs: number;
   tEndUs: number;
+  /// Source-in for THAT placement: the authored `src_in_us` advanced by
+  /// whatever the clipping cut off the head.
   srcInUs: number;
 }
 
@@ -27,24 +38,20 @@ export function selectActiveVideoLayers(
   bUs: number,
 ): ActiveVideoLayer[] {
   const out: ActiveVideoLayer[] = [];
-  // Export renders the ROOT (compositionScopeStore.ts). A Group's clips join
-  // this walk when it learns to recurse through CompositionRef layers (slice 14).
-  for (const track of rootCompositionOf(summary).tracks) {
-    if (!track.enabled) continue;
-    for (const layer of track.layers) {
-      if (!layer.enabled) continue;
-      if (layer.params.kind !== "VideoClip") continue;
-      if (layer.t_end_us <= aUs) continue;
-      if (layer.t_start_us > bUs) continue;
-      out.push({
-        layerId: layer.id,
-        mediaId: layer.params.media_id,
-        tStartUs: layer.t_start_us,
-        tEndUs: layer.t_end_us,
-        srcInUs: layer.params.src_in_us,
-      });
-    }
-  }
+  // Export renders the ROOT (compositionScopeStore.ts); the walk descends from
+  // there through every Group placed on it. `bUs` is inclusive and the walk's
+  // range half-open, hence the +1.
+  forEachLayerInTime(summary, summary.root_id, aUs, bUs + 1, 0, (placed) => {
+    const { layer } = placed;
+    if (layer.params.kind !== "VideoClip") return;
+    out.push({
+      layerId: instanceKey(placed.path, layer.id),
+      mediaId: layer.params.media_id,
+      tStartUs: placed.tStartUs,
+      tEndUs: placed.tEndUs,
+      srcInUs: layer.params.src_in_us + placed.headUs,
+    });
+  });
   return out;
 }
 
@@ -67,21 +74,19 @@ export function referencedVideoMediaIds(
 /// visible would emit pure black; the caller rejects that as "no video
 /// material" instead. (Audio emptiness is judged Rust-side — a video clip's
 /// audio stream isn't visible from a ProjectSummary.)
+///
+/// A Group layer is not itself content: the walk reports what is INSIDE it, so
+/// a Group over an empty composition contributes nothing and a range holding
+/// only such Groups is correctly empty. The walk has no early exit, so this
+/// visits every reachable layer; the callback is a kind test.
 export function hasVisibleContent(
   summary: ProjectSummary,
   startUs: number,
   endUs: number,
 ): boolean {
-  for (const track of rootCompositionOf(summary).tracks) {
-    if (!track.enabled) continue;
-    for (const layer of track.layers) {
-      if (!layer.enabled) continue;
-      if (layer.params.kind === "Audio") continue;
-      // Half-open overlap with [startUs, endUs).
-      if (layer.t_end_us <= startUs) continue;
-      if (layer.t_start_us >= endUs) continue;
-      return true;
-    }
-  }
-  return false;
+  let visible = false;
+  forEachLayerInTime(summary, summary.root_id, startUs, endUs, 0, ({ layer }) => {
+    if (layer.params.kind !== "Audio") visible = true;
+  });
+  return visible;
 }

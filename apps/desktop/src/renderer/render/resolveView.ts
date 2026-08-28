@@ -9,6 +9,7 @@
 // scale/opacity -> 1, text WHITE, color BLACK).
 import type {
   ColorView,
+  CompositionRefView,
   ImageOverlayView,
   MotifView,
   Rgba,
@@ -67,6 +68,11 @@ export interface ResolvedColorView extends Omit<ColorView, "color"> {
 export interface ResolvedMotifView
   extends Omit<MotifView, TransformTrackKey | "scale_linked">,
     ResolvedTransform {}
+/// A Group layer's view: the source window stays as authored, the transform
+/// resolves like every other visual kind's — the composite is one picture.
+export interface ResolvedCompositionRefView
+  extends Omit<CompositionRefView, TransformTrackKey | "scale_linked">,
+    ResolvedTransform {}
 
 const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
 const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
@@ -114,5 +120,12 @@ export function resolveColorView(v: ColorView, tInLayerUs: number): ResolvedColo
 }
 
 export function resolveMotifView(v: MotifView, tInLayerUs: number): ResolvedMotifView {
+  return { ...v, ...resolveTransform(v, tInLayerUs) };
+}
+
+export function resolveCompositionRefView(
+  v: CompositionRefView,
+  tInLayerUs: number,
+): ResolvedCompositionRefView {
   return { ...v, ...resolveTransform(v, tInLayerUs) };
 }

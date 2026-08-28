@@ -16,6 +16,7 @@ import type { MediaSummary, ProjectSummary } from "../../ipc";
 import { rendererOS } from "../../platform";
 import { resolveDecode } from "../decodeRoute";
 import { referencedVideoMediaIds } from "../activeVideoLayers";
+import { forEachLayer } from "../compositionWalk";
 import { rootCompositionOf } from "../../ipc/compositions";
 import { ffprobeColorToWebCodecs } from "../decoder/ffprobeColorSpace";
 import { hwExportDecodeAllowed, type ExportDecodeRouting } from "../exportDecodeRouting";
@@ -102,7 +103,8 @@ function defaultEncoderConfig(
 export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   const summary = init.summary;
   // Export renders the ROOT, whatever composition the editor has open
-  // (compositionScopeStore.ts). Groups enter through the recursive walk (14).
+  // (compositionScopeStore.ts); the Groups placed on it enter through the
+  // recursive walk (`render/compositionWalk.ts`), not through this id.
   const comp = rootCompositionOf(summary);
   const fpsNum = comp.fps_num;
   const fpsDen = comp.fps_den;
@@ -460,17 +462,17 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   });
 }
 
-/// Collect distinct font_family strings from all Text layers in the project.
-/// Feeds `resolveFontsForFamilies` so the export Worker receives any
-/// user-chosen OS fonts pre-resolved as bytes (main-thread IPC only).
+/// Collect distinct font_family strings from every Text layer the export can
+/// reach — the root's and every Group's. Feeds `resolveFontsForFamilies` so the
+/// export Worker receives any user-chosen OS fonts pre-resolved as bytes
+/// (main-thread IPC only). A layer the walk gates out (disabled, or on a
+/// disabled track) draws no glyphs, so its family is not needed.
 function collectTextFontFamilies(summary: ProjectSummary): string[] {
   const families: string[] = [];
-  for (const track of rootCompositionOf(summary).tracks) {
-    for (const layer of track.layers) {
-      if (layer.params.kind === "Text" && layer.params.font_family) {
-        families.push(layer.params.font_family);
-      }
+  forEachLayer(summary, summary.root_id, ({ layer }) => {
+    if (layer.params.kind === "Text" && layer.params.font_family) {
+      families.push(layer.params.font_family);
     }
-  }
+  });
   return [...new Set(families)];
 }

@@ -26,6 +26,10 @@ import {
 } from "../state/playbackStore";
 import { playheadTimeUs } from "../state/playheadStore";
 import { compositionOrRoot, rootCompositionOf, useProjectStore } from "../state/projectStore";
+import {
+  openCompositionId,
+  useOpenCompositionId,
+} from "../state/compositionScopeStore";
 import { useAppSettingsStore, useDecodeEngine } from "../settings/appSettingsStore";
 import {
   useDecodeComponentAvailable,
@@ -172,7 +176,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         const engine = engineRef.current;
         if (!compositor) return;
         const t = engine?.positionUs() ?? 0;
-        compositor.setProject(useProjectStore.getState().summary);
+        compositor.setProject(
+          useProjectStore.getState().summary,
+          openCompositionId() ?? null,
+        );
         compositor.setAnchorTime(t);
         compositor.compositeFrame(t);
       },
@@ -188,9 +195,12 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   );
   const summary = useProjectStore((s) => s.summary);
   const mediaById = useProjectStore((s) => s.mediaById);
-  // The ROOT: the Compositor renders it until slice 14 hands it the open id
-  // (compositionScopeStore.ts). Size and fps here must describe what it draws.
-  const composition = compositionOrRoot(summary, null) ?? undefined;
+  // The preview draws the OPEN composition (AE; compositionScopeStore.ts) —
+  // opening a Group shows its content at its own size, on its own clock. Size
+  // and fps here must describe what the Compositor draws, so both follow the
+  // same id. Export is unaffected: it always renders the root.
+  const openId = useOpenCompositionId();
+  const composition = compositionOrRoot(summary, openId) ?? undefined;
   const decodeEngine = useDecodeEngine();
   const decodeComponentAvailable = useDecodeComponentAvailable();
 
@@ -331,11 +341,15 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       installTimedPresent(app);
       setPixiPresentationVisible(app, visibleRef.current);
       const initialSummary = useProjectStore.getState().summary;
-      compositor.setProject(initialSummary);
+      // Read imperatively: Application init is async, so the open id at mount
+      // time is whatever the store holds NOW, not what the render that started
+      // the init closed over. The effect below re-targets on every later change.
+      const initialOpenId = openCompositionId() ?? null;
+      compositor.setProject(initialSummary, initialOpenId);
 
       const engine = new PlaybackEngine({ compositor, ticker: app.ticker });
       const resourceGeneration = ++previewResourceSequence;
-      const initialComposition = compositionOrRoot(initialSummary, null);
+      const initialComposition = compositionOrRoot(initialSummary, initialOpenId);
       engine.bindFps(
         initialComposition?.fps_num ?? 30,
         initialComposition?.fps_den ?? 1,
@@ -712,11 +726,15 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     compositorRef.current?.setCompositionSize(compositionWidth, compositionHeight);
   }, [compositionWidth, compositionHeight]);
 
-  // Forward summary updates to the Compositor without remounting the
-  // Application.
+  // Forward summary updates — and a change of OPEN composition — to the
+  // Compositor without remounting the Application. `setProject` rebuilds the
+  // node from scratch when the id changes: every sprite, mixer and decode
+  // session belonged to the composition being left. The size effect above is
+  // declared first, so the Compositor already knows the new frame size by the
+  // time the node is built against it.
   useEffect(() => {
     if (!compositorRef.current) return;
-    compositorRef.current.setProject(summary);
+    compositorRef.current.setProject(summary, openId);
     engineRef.current?.bindFps(
       composition?.fps_num ?? 30,
       composition?.fps_den ?? 1,
@@ -724,7 +742,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     const t = engineRef.current?.positionUs() ?? 0;
     compositorRef.current.setAnchorTime(t);
     compositorRef.current.compositeFrame(t);
-  }, [summary, composition, mediaById]);
+  }, [summary, openId, composition, mediaById]);
 
   // A draft edit / install / delete updates the runtime Motif catalog (via the
   // async motifs:changed → syncUserMotifsFromBackend → setUserMotifs chain). We
@@ -934,7 +952,10 @@ async function handlePixiExport(
     // via ensureClip on its next tick, but kick the compositor once
     // here so the canvas isn't blank for a frame.
     const t = engine?.positionUs() ?? 0;
-    compositor?.setProject(useProjectStore.getState().summary);
+    compositor?.setProject(
+      useProjectStore.getState().summary,
+      openCompositionId() ?? null,
+    );
     compositor?.setAnchorTime(t);
     compositor?.compositeFrame(t);
     if (wasPlaying) engine?.play();

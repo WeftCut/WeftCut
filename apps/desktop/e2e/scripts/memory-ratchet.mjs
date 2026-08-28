@@ -21,6 +21,16 @@
 //                 pool (TransitionRtPool) acquires/releases every cycle — a
 //                 per-frame or per-window RT leak ratchets straight past the
 //                 red line. Scenario shape: see `transitionsLayers` below.
+//   groups      — the per-INSTANCE scene-graph class: one Group composition
+//                 placed twice on the root, once directly and once through a
+//                 second Group, so three `CompositionNode`s and three
+//                 render-to-texture targets are live for the whole pass. Each
+//                 node owns its own sprite maps and rebuilds its container every
+//                 frame, and the leaf composition cuts every 4 s so the sprites
+//                 actually churn. A `RenderTexture` re-created per frame (or per
+//                 cut) instead of held for the node's life, or a child node the
+//                 parent never disposes, ratchets straight past the red line.
+//                 Scenario shape: see `groupsCompositions` below.
 //   text-box    — the per-frame TEXT MEASUREMENT class: four boxed Text layers,
 //                 two of them Fixed, so shrink-to-fit's bisection is in play for
 //                 the whole pass. That search is the first thing in `TextSprite`
@@ -50,7 +60,7 @@ import { electronBinPath } from '../lib/electron-bin.mjs';
 const THRESHOLD_MB = 30;
 const PLAY_SECONDS = 90;
 
-const SCENARIOS = ['text', 'transitions', 'text-box'];
+const SCENARIOS = ['text', 'transitions', 'text-box', 'groups'];
 const SCENARIO = process.argv[2] ?? 'text';
 if (!SCENARIOS.includes(SCENARIO)) {
   console.error(`[memory-ratchet] unknown scenario '${SCENARIO}' — use ${SCENARIOS.join(' / ')}.`);
@@ -199,21 +209,102 @@ const transitionsList = () => Array.from({ length: SEGMENTS - 1 }, (_, i) => ({
   kind: TRANSITION_KINDS[i % TRANSITION_KINDS.length],
 }));
 
-const layersFor = { text: textLayers, transitions: transitionsLayers, 'text-box': textBoxLayers };
+// Scenario `groups`: the leaf Group composition alternates full-frame RED/BLUE
+// Colors every 4 s for the whole 120 s (no transitions — that class has its own
+// scenario); the root places it twice, once directly and once through a second
+// Group that only nests it. Both placements are half-scale and offset so
+// neither is a no-op the compositor could cull, and both span the whole
+// timeline so every node stays live for the pass.
+//
+// What this shape is for: two placements of ONE composition are two nodes, and
+// nesting adds a third — each with its own sprite map, its own decode positions
+// and its own RenderTexture. Sizing that texture per frame, or leaving a child
+// node behind on a cut, is invisible in a flat project and unbounded here.
+const GROUP_COMP_ID = fixtureId(0x4001);
+const NEST_COMP_ID = fixtureId(0x4002);
+const refTransform = (x, y) => ({
+  x: staticNum(x), y: staticNum(y), scale_x: staticNum(0.5), scale_y: staticNum(0.5),
+  rotation_deg: staticNum(0), anchor_x: staticNum(0), anchor_y: staticNum(0),
+  scale_linked: true,
+});
+const refLayer = (id, compositionId, x, y) => ({
+  id, label: null, t_start_us: 0, t_end_us: DURATION_US,
+  enabled: true, locked: false, metadata: {},
+  params: {
+    kind: 'CompositionRef', composition: compositionId,
+    src_in_us: 0, src_out_us: DURATION_US,
+    transform: refTransform(x, y), opacity: staticNum(1), blend_mode: 'Normal',
+  },
+  effects: [],
+});
+// The root's two placements: the leaf Group directly, and the nesting Group
+// that reaches it one level down.
+const groupsLayers = () => [
+  refLayer(fixtureId(0x4100), GROUP_COMP_ID, 0, 0),
+  refLayer(fixtureId(0x4101), NEST_COMP_ID, 960, 540),
+];
+// The leaf's content: the same alternating Colors the `transitions` scenario
+// cuts between, without the overlap tails a transition needs — there are none
+// here, and butt-jointed segments keep one lane legal.
+const groupsLeafLayers = () => Array.from({ length: SEGMENTS }, (_, i) => ({
+  id: fixtureId(0x4200 + i),
+  label: null, t_start_us: i * SEG_US, t_end_us: (i + 1) * SEG_US,
+  enabled: true, locked: false, metadata: {},
+  params: {
+    kind: 'Color',
+    color: { mode: 'Static', value: i % 2 === 0 ? { r: 255, g: 0, b: 0, a: 255 } : { r: 0, g: 0, b: 255, a: 255 } },
+    width: 1920, height: 1080,
+  },
+  effects: [],
+}));
+// The two further compositions, keyed by id — the single-lattice fields
+// (fps, sample_rate, channels) MUST equal the root's or the project fails
+// validate and never opens.
+const groupsCompositions = () => ({
+  [GROUP_COMP_ID]: composition(GROUP_COMP_ID, 'Ratchet group', [
+    track(fixtureId(0x4300), groupsLeafLayers()),
+  ]),
+  [NEST_COMP_ID]: composition(NEST_COMP_ID, 'Ratchet nest', [
+    track(fixtureId(0x4301), [refLayer(fixtureId(0x4102), GROUP_COMP_ID, 0, 0)]),
+  ]),
+});
+
+const layersFor = {
+  text: textLayers,
+  transitions: transitionsLayers,
+  'text-box': textBoxLayers,
+  groups: groupsLayers,
+};
 const layers = layersFor[SCENARIO]();
 const transitions = SCENARIO === 'transitions' ? transitionsList() : [];
 const track = (id, layers) => ({
   id, label: 'Overlay', enabled: true, locked: false, muted: false, solo: false,
   removable: true, role: null, transient: false, height_px: 64, layers,
 });
+const composition = (id, label, tracks) => ({
+  id, label,
+  width: 1920, height: 1080, fps: { num: 30, den: 1 },
+  duration_us: DURATION_US, duration_pinned: true,
+  sample_rate: 48000, channels: 2, color_space: 'Bt709',
+  background: { r: 0, g: 0, b: 0, a: 255 },
+  tracks, markers: [], transitions: [], links: [],
+});
 // One track per layer for `text-box`, one shared track otherwise: those four
 // layers all span the WHOLE timeline so every sprite stays staged for the whole
 // pass, and same-track layers may not overlap — the project would fail validate
 // and never open. The other two scenarios' layers are sequential.
+//
+// `groups` also gets a track per layer: its two placements both span the whole
+// timeline, and one lane may not hold two overlapping layers.
 const tracks = SCENARIO === 'text-box'
   ? layers.map((l, i) => track(fixtureId(0x3100 + i), [l]))
-  : [track('019f0000-0000-7000-8000-0000000000aa', layers)];
-log(`scenario: ${SCENARIO} (${layers.length} layers on ${tracks.length} tracks, ${transitions.length} transitions)`);
+  : SCENARIO === 'groups'
+    ? layers.map((l, i) => track(fixtureId(0x4400 + i), [l]))
+    : [track('019f0000-0000-7000-8000-0000000000aa', layers)];
+// Further compositions the root's Group layers point at; empty for every
+// scenario whose project is one composition.
+const extraCompositions = SCENARIO === 'groups' ? groupsCompositions() : {};
+log(`scenario: ${SCENARIO} (${layers.length} layers on ${tracks.length} tracks, ${transitions.length} transitions, ${Object.keys(extraCompositions).length} groups)`);
 
 const ROOT_ID = '019f0000-0000-7000-8000-00000000c0df';
 fs.writeFileSync(path.join(project, 'project.json'), JSON.stringify({
@@ -234,6 +325,7 @@ fs.writeFileSync(path.join(project, 'project.json'), JSON.stringify({
       background: { r: 0, g: 0, b: 0, a: 255 },
       tracks, markers: [], transitions, links: [],
     },
+    ...extraCompositions,
   },
   root_id: ROOT_ID,
   media_pool: {}, audio_roles: {},
@@ -311,6 +403,8 @@ try {
     exitCode = 0;
   } else if (SCENARIO === 'transitions') {
     log(`FAIL [transitions] (>= ${THRESHOLD_MB} MB) — likely a transition RT-pool leak (per-frame/per-window RenderTexture allocation); see src/renderer/render/transitions/TransitionRtPool.ts`);
+  } else if (SCENARIO === 'groups') {
+    log(`FAIL [groups] (>= ${THRESHOLD_MB} MB) — a per-instance CompositionNode is likely allocating per frame: check that each node's RenderTexture is created once and that a child node is disposed with its Group layer; see src/renderer/render/sprite/CompositionRefSprite.ts`);
   } else if (SCENARIO === 'text-box') {
     log(`FAIL [text-box] (>= ${THRESHOLD_MB} MB) — a boxed Text layer is likely re-measuring per frame: check that every input to the shrink search is still in TextSprite's appliedSig; see src/renderer/render/sprite/TextSprite.ts`);
   } else {

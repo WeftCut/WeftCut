@@ -116,14 +116,19 @@ describe("Compositor presentation gate", () => {
     expect(snap.dirty).toBe(true);
   });
 
-  it("does not stage visuals for hidden frames", () => {
+  it("does not run the visual sweep for hidden frames", () => {
     compositor.compositeFrame(0);
-    const staged = compositor.stage.children.length;
-    expect(staged).toBeGreaterThan(0);
+    expect(compositor.stage.children.length).toBeGreaterThan(0);
 
+    // The sweep is where every sprite is ensured, updated and staged, so a
+    // sweep that never runs is the whole of "a hidden frame costs the audio
+    // pass and nothing else". The last presented picture stays on the stage
+    // until the catch-up repaint on re-show replaces it — frozen output, which
+    // is the gate's contract, not a blanked canvas.
+    const sweep = vi.spyOn(compositor.rootNode(), "compositeVisual");
     compositor.setPresentationVisible(false);
     compositor.compositeFrame(33_333);
-    expect(compositor.stage.children.length).toBe(0);
+    expect(sweep).not.toHaveBeenCalled();
   });
 
   it("schedules exactly one catch-up repaint on re-show and resumes presentation", () => {
