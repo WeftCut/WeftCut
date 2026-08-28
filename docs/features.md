@@ -367,8 +367,9 @@ whole set before anything moves, so a Group never holds half a selection.
 **Ungroup** (`groups_ungroup`) is Resolve's *Decompose in Place*: the members
 come back into the parent at the same on-screen time. It is allowed only when
 the Group layer is **plain** — identity transform (including the linked-scale
-default), static opacity 1, no effects. A transform, an opacity or an effect
-chain on the Group applies to the composite and has no per-member equivalent,
+default), static opacity 1, no effects, Normal blend. A transform, an opacity,
+an effect chain or a blend mode on the Group applies to the composite and has
+no per-member equivalent,
 so expanding would discard it silently — the outcome ADR 0048 and the
 prevent-at-the-gesture rule for refusals both forbid — and the refusal names
 the field instead (`GroupNotPlain { reason }`). Every member intersecting the
