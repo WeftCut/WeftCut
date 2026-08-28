@@ -17,12 +17,23 @@ function root(): { current: HTMLDivElement | null; el: { scrollLeft: number } } 
   return { current: el as unknown as HTMLDivElement, el };
 }
 
+/// The root's own anchor: offset 0, on screen at every moment, so the Panel's
+/// reading of the one moment is the moment itself.
+const ROOT_FRAME = {
+  offsetUs: 0,
+  windowStartUs: Number.NEGATIVE_INFINITY,
+  windowEndUs: Number.POSITIVE_INFINITY,
+  fpsNum: 30,
+  fpsDen: 1,
+};
+
 /// 100 px/s over a 1000 px viewport: one screenful is 10 s of content.
 const VIEW = {
   pxPerSec: 100,
   viewportWidthPx: 1000,
   contentWidthPx: 10_000,
   enabled: true,
+  anchorFrame: ROOT_FRAME,
 };
 
 describe("useFollowPlayhead", () => {
@@ -31,13 +42,13 @@ describe("useFollowPlayhead", () => {
   // view. Reset the state, drop the subscribers.
   beforeEach(() => {
     usePlayheadStore.setState({ timeUs: 0 });
-    setTimelineScrollLeftPx(0);
+    setTimelineScrollLeftPx(null, 0);
   });
   afterEach(cleanup);
 
   it("pages the view when playback walks the playhead off the right edge", () => {
     const rootRef = root();
-    renderHook(() => useFollowPlayhead({ rootRef, ...VIEW }));
+    renderHook(() => useFollowPlayhead({ compositionId: null, rootRef, ...VIEW }));
 
     act(() => setPlayheadTimeUs(5_000_000)); // 500 px — still in view
     expect(rootRef.el.scrollLeft).toBe(0);
@@ -46,13 +57,13 @@ describe("useFollowPlayhead", () => {
     expect(rootRef.el.scrollLeft).toBe(920);
     // Published eagerly so the ruler's tick window lands with the jump rather
     // than one frame later.
-    expect(timelineScrollLeftPx()).toBe(920);
+    expect(timelineScrollLeftPx(null)).toBe(920);
   });
 
   it("brings the playhead back after a backward jump", () => {
     const rootRef = root();
-    setTimelineScrollLeftPx(5000);
-    renderHook(() => useFollowPlayhead({ rootRef, ...VIEW }));
+    setTimelineScrollLeftPx(null, 5000);
+    renderHook(() => useFollowPlayhead({ compositionId: null, rootRef, ...VIEW }));
 
     act(() => setPlayheadTimeUs(2_000_000)); // 200 px, far left of the window
     expect(rootRef.el.scrollLeft).toBe(0);
@@ -60,12 +71,12 @@ describe("useFollowPlayhead", () => {
 
   it("holds the view still while the ruler is being scrubbed", () => {
     const rootRef = root();
-    const { result } = renderHook(() => useFollowPlayhead({ rootRef, ...VIEW }));
+    const { result } = renderHook(() => useFollowPlayhead({ compositionId: null, rootRef, ...VIEW }));
 
     act(() => result.current.setScrubbing(true));
     act(() => setPlayheadTimeUs(30_000_000));
     expect(rootRef.el.scrollLeft).toBe(0);
-    expect(timelineScrollLeftPx()).toBe(0);
+    expect(timelineScrollLeftPx(null)).toBe(0);
 
     // Released: the next playhead move follows again.
     act(() => result.current.setScrubbing(false));
@@ -77,7 +88,7 @@ describe("useFollowPlayhead", () => {
     const rootRef = root();
     const { rerender } = renderHook(
       (props: { enabled: boolean }) =>
-        useFollowPlayhead({ rootRef, ...VIEW, enabled: props.enabled }),
+        useFollowPlayhead({ compositionId: null, rootRef, ...VIEW, enabled: props.enabled }),
       { initialProps: { enabled: false } },
     );
 
@@ -94,7 +105,7 @@ describe("useFollowPlayhead", () => {
     const rootRef = root();
     const { rerender } = renderHook(
       (props: { pxPerSec: number }) =>
-        useFollowPlayhead({ rootRef, ...VIEW, pxPerSec: props.pxPerSec }),
+        useFollowPlayhead({ compositionId: null, rootRef, ...VIEW, pxPerSec: props.pxPerSec }),
       { initialProps: { pxPerSec: 100 } },
     );
 
@@ -114,11 +125,11 @@ describe("useFollowPlayhead", () => {
   // has not run yet), so the catch-up has to survive until one lands.
   it("catches up when the viewport is first measured", () => {
     const rootRef = root();
-    setTimelineScrollLeftPx(0);
+    setTimelineScrollLeftPx(null, 0);
     usePlayheadStore.setState({ timeUs: 40_000_000 });
     const { rerender } = renderHook(
       (props: { viewportWidthPx: number }) =>
-        useFollowPlayhead({ rootRef, ...VIEW, ...props }),
+        useFollowPlayhead({ compositionId: null, rootRef, ...VIEW, ...props }),
       { initialProps: { viewportWidthPx: 0 } },
     );
     expect(rootRef.el.scrollLeft).toBe(0);
@@ -129,7 +140,7 @@ describe("useFollowPlayhead", () => {
 
   it("stops following once unmounted", () => {
     const rootRef = root();
-    const { unmount } = renderHook(() => useFollowPlayhead({ rootRef, ...VIEW }));
+    const { unmount } = renderHook(() => useFollowPlayhead({ compositionId: null, rootRef, ...VIEW }));
     unmount();
 
     act(() => setPlayheadTimeUs(50_000_000));

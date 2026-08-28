@@ -9,9 +9,11 @@ import {
   DOCK_TAB_COMPONENT_ID,
   PANEL_REGISTRY,
   STRIP_THICKNESS,
-  isPanelKind,
+  panelIdOf,
   panelTitle,
-  type PanelKind,
+  parsePanelId,
+  type DockPanelParams,
+  type PanelId,
 } from "./panelRegistry";
 
 /** Schema version of a WeftCut layout snapshot. Bump on any incompatible change
@@ -20,14 +22,14 @@ import {
 export const WEFTCUT_LAYOUT_VERSION = 1;
 
 /** Recovery metadata for reopening a Panel: the Dock Group it last lived in
- *  (as sibling kinds) and its tab index there. Mirrors the adapter's in-memory
+ *  (as sibling ids) and its tab index there. Mirrors the adapter's in-memory
  *  placement map so a closed Panel reopens at its remembered spot after restart. */
 export interface PanelPlacement {
-  siblings: PanelKind[];
+  siblings: PanelId[];
   index: number;
 }
 
-export type PanelPlacements = Partial<Record<PanelKind, PanelPlacement>>;
+export type PanelPlacements = Partial<Record<PanelId, PanelPlacement>>;
 
 /** A validated, versioned Dock arrangement. Opaque to everyone but the adapter
  *  (which restores it) and this module (which produces/validates it). The `empty`
@@ -53,7 +55,7 @@ export interface WorkspaceLayoutCandidate {
 
 interface NormalizedLeaf {
   type: "leaf";
-  data: { views: PanelKind[]; activeView: PanelKind; id: string };
+  data: { views: PanelId[]; activeView: PanelId; id: string };
   size?: number;
   visible?: boolean;
 }
@@ -71,33 +73,53 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Regenerate a Panel definition from its kind. Panel identity is fully
- *  determined by kind (title, components, params, constraints), so the persisted
- *  `panels` record is derived here rather than trusted — a corrupt or stale
- *  entry can never carry a wrong component id or params into fromJSON. */
-function synthesizePanel(kind: PanelKind) {
+/** Regenerate a Panel definition from its id. Everything about a Panel but its
+ *  address (title, components, params, constraints) follows from its kind, so
+ *  the persisted `panels` record is derived here rather than trusted — a corrupt
+ *  or stale entry can never carry a wrong component id or params into fromJSON. */
+function synthesizePanel(id: PanelId) {
+  const { kind, instance } = parsePanelId(id);
   const definition = PANEL_REGISTRY[kind];
+  const params: DockPanelParams = { kind, instance };
   return {
-    id: kind,
+    id,
     contentComponent: DOCK_COMPONENT_ID,
     tabComponent: DOCK_TAB_COMPONENT_ID,
     title: panelTitle(kind),
     renderer: "always" as const,
-    params: { kind },
+    params,
     minimumWidth: definition.minimumWidth,
     minimumHeight: definition.minimumHeight,
   };
 }
 
+/** Re-address one Panel id on the way through a normalization pass. */
+type Readdress = (id: PanelId) => PanelId;
+
+/** This pass's re-addressing rule, from `NormalizeLayoutOptions.timelineInstance`. */
+function readdressor(instance: string | null | undefined): Readdress {
+  if (instance === undefined) return (id) => id;
+  const timeline = panelIdOf("timeline", instance);
+  return (id) => (parsePanelId(id).kind === "timeline" ? timeline : id);
+}
+
+/** An untrusted id as the address this pass will use it under, or null when the
+ *  catalogue cannot resolve it. */
+function panelIdIn(value: unknown, readdress: Readdress): PanelId | null {
+  const parsed = parsePanelId(value);
+  return parsed ? readdress(panelIdOf(parsed.kind, parsed.instance)) : null;
+}
+
 /**
- * Normalize one grid node. `seen` carries the kinds already claimed by earlier
+ * Normalize one grid node. `seen` carries the ids already claimed by earlier
  * leaves so a duplicated singleton is reduced to its first placement. Returns
  * null for a node that contributes nothing (empty leaf / empty branch) so the
  * parent can prune it.
  */
 function normalizeNode(
   node: unknown,
-  seen: Set<PanelKind>,
+  seen: Set<PanelId>,
+  readdress: Readdress,
 ): NormalizedNode | null {
   if (!isRecord(node)) return null;
 
@@ -107,7 +129,7 @@ function normalizeNode(
     if (!Array.isArray(node.data)) return null;
     const children: NormalizedNode[] = [];
     for (const child of node.data) {
-      const normalized = normalizeNode(child, seen);
+      const normalized = normalizeNode(child, seen, readdress);
       if (normalized) children.push(normalized);
     }
     if (children.length === 0) return null;
@@ -125,18 +147,20 @@ function normalizeNode(
   const data = node.data;
   if (!isRecord(data)) return null;
   const rawViews = Array.isArray(data.views) ? data.views : [];
-  const views: PanelKind[] = [];
+  const views: PanelId[] = [];
   for (const view of rawViews) {
-    if (isPanelKind(view) && !seen.has(view)) {
-      views.push(view);
-      seen.add(view);
+    const id = panelIdIn(view, readdress);
+    if (id !== null && !seen.has(id)) {
+      views.push(id);
+      seen.add(id);
     }
   }
   const first = views[0];
   if (first === undefined) return null;
+  const requestedActive = panelIdIn(data.activeView, readdress);
   const activeView =
-    isPanelKind(data.activeView) && views.includes(data.activeView)
-      ? data.activeView
+    requestedActive !== null && views.includes(requestedActive)
+      ? requestedActive
       : first;
   const id = typeof data.id === "string" && data.id ? data.id : `group-${first}`;
   return {
@@ -153,20 +177,23 @@ function sizeOf(value: unknown): number | undefined {
     : undefined;
 }
 
-function normalizeDockview(raw: unknown): SerializedDockview | null {
+function normalizeDockview(
+  raw: unknown,
+  readdress: Readdress,
+): SerializedDockview | null {
   if (!isRecord(raw)) return null;
   const grid = raw.grid;
   if (!isRecord(grid)) return null;
 
-  const seen = new Set<PanelKind>();
-  const root = normalizeNode(grid.root, seen);
+  const seen = new Set<PanelId>();
+  const root = normalizeNode(grid.root, seen, readdress);
   // A layout that claimed to be non-empty but lost every Panel to
   // unknown-kind/duplicate pruning is corrupt, not intentionally empty — reject
   // it so the caller falls through to the next fallback level.
   if (!root || seen.size === 0) return null;
 
   const panels: Record<string, ReturnType<typeof synthesizePanel>> = {};
-  for (const kind of seen) panels[kind] = synthesizePanel(kind);
+  for (const id of seen) panels[id] = synthesizePanel(id);
 
   const orientation = grid.orientation === "VERTICAL" ? "VERTICAL" : "HORIZONTAL";
   const width = sizeOf(grid.width) ?? 1_000;
@@ -178,36 +205,59 @@ function normalizeDockview(raw: unknown): SerializedDockview | null {
   return normalized as unknown as SerializedDockview;
 }
 
-function normalizePlacements(raw: unknown): PanelPlacements {
+function normalizePlacements(
+  raw: unknown,
+  readdress: Readdress,
+): PanelPlacements {
   const out: PanelPlacements = {};
   if (!isRecord(raw)) return out;
-  for (const [kind, value] of Object.entries(raw)) {
-    if (!isPanelKind(kind) || !isRecord(value)) continue;
+  for (const [key, value] of Object.entries(raw)) {
+    const id = panelIdIn(key, readdress);
+    if (id === null || !isRecord(value)) continue;
     const siblings = Array.isArray(value.siblings)
-      ? value.siblings.filter(isPanelKind)
+      ? value.siblings.flatMap((sibling) => {
+          const resolved = panelIdIn(sibling, readdress);
+          return resolved === null ? [] : [resolved];
+        })
       : [];
     if (siblings.length === 0) continue;
     const index =
       typeof value.index === "number" && value.index >= 0
         ? Math.floor(value.index)
         : 0;
-    out[kind] = { siblings, index };
+    out[id] = { siblings, index };
   }
   return out;
+}
+
+export interface NormalizeLayoutOptions {
+  /**
+   * Re-address every timeline Panel found, whatever address it arrived under: a
+   * composition id binds the row to that composition, `null` folds it back to
+   * the single `timeline` slot a snapshot stores (ADR 0053). Omitting the field
+   * — which is not the same as passing `null` — leaves each id exactly as found,
+   * which is what a caller with no opinion wants: the persistence layer
+   * validating a document off disk has no composition to name.
+   */
+  timelineInstance?: string | null;
 }
 
 /**
  * Validate + normalize an untrusted persisted layout value. Returns a canonical
  * WeftCutLayout, or null when the value is missing/corrupt/unrecoverable.
  */
-export function normalizeLayout(raw: unknown): WeftCutLayout | null {
+export function normalizeLayout(
+  raw: unknown,
+  options: NormalizeLayoutOptions = {},
+): WeftCutLayout | null {
   if (!isRecord(raw)) return null;
   if (raw.version !== WEFTCUT_LAYOUT_VERSION) return null;
-  const placements = normalizePlacements(raw.placements);
+  const readdress = readdressor(options.timelineInstance);
+  const placements = normalizePlacements(raw.placements, readdress);
   if (raw.empty === true) {
     return { version: WEFTCUT_LAYOUT_VERSION, empty: true, dockview: null, placements };
   }
-  const dockview = normalizeDockview(raw.dockview);
+  const dockview = normalizeDockview(raw.dockview, readdress);
   if (!dockview) return null;
   return { version: WEFTCUT_LAYOUT_VERSION, empty: false, dockview, placements };
 }
@@ -223,8 +273,8 @@ export function createEditingLayout(
 ): WeftCutLayout {
   const width = sizeOf(viewport.width) ?? 1_000;
   const height = sizeOf(viewport.height) ?? 720;
-  const contextual: PanelKind[] = ["attribute", "effect"];
-  const library: PanelKind[] = ["media", "transitions"];
+  const contextual: PanelId[] = ["attribute", "effect"];
+  const library: PanelId[] = ["media", "transitions"];
   const placements: PanelPlacements = {
     "quick-actions": { siblings: ["quick-actions"], index: 0 },
     media: { siblings: library, index: 0 },

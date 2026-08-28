@@ -5,7 +5,7 @@ import { groupDisplayName } from "../lib/layerName";
 export interface GroupPoolRow {
   compositionId: string;
   /// The name the row shows. The SAME `groupDisplayName` the timeline clip and
-  /// the breadcrumb use, not a second derivation — a pool row and the clip it
+  /// the tab use, not a second derivation — a pool row and the clip it
   /// places have to read as one thing, and "Group 2" in the pool beside "Group 3"
   /// on the timeline is the failure that makes reuse unusable.
   name: string;

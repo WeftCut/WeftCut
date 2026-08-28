@@ -1,22 +1,35 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { viewStateDefaults, type ViewState } from "../../../shared/view-state";
+import { resetViewState } from "../../state/viewState";
 import { DEFAULT_PX_PER_SEC, HEADER_COL_PX, MAX_PX_PER_SEC } from "../geometry";
 import { useTimelineView } from "./useTimelineView";
 
-// The view-state load is the hook's one side effect on mount. Left permanently
-// pending here: the zoom under test is then the DEFAULT (no loaded value to
-// reason about), no state lands outside `act`, and — because `viewLoadedRef`
-// never flips — the debounced save never arms either.
-vi.mock("../../ipc", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../ipc")>();
-  return {
-    ...actual,
-    viewStateGet: vi.fn(() => new Promise(() => {})),
-    viewStateSet: vi.fn().mockResolvedValue(undefined),
-  };
+// The view-state read is the hook's one side effect on mount. Left permanently
+// pending by default: the zoom under test is then the DEFAULT (no loaded value
+// to reason about), no state lands outside `act`, and — because the owner arms
+// its writer only once the read lands — nothing reaches disk either. The
+// restore cases below serve a document instead.
+const ipcMocks = vi.hoisted(() => ({
+  viewStateGet: vi.fn<() => Promise<ViewState>>(),
+  viewStateSet: vi.fn<(state: ViewState) => Promise<void>>(),
+}));
+vi.mock("../../ipc", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ipc")>()),
+  viewStateGet: ipcMocks.viewStateGet,
+  viewStateSet: ipcMocks.viewStateSet,
+}));
+
+// The owner memoizes one read per project, so each case starts from an unread
+// document of its own.
+beforeEach(() => {
+  resetViewState();
+  ipcMocks.viewStateGet.mockReset().mockReturnValue(new Promise<ViewState>(() => {}));
+  ipcMocks.viewStateSet.mockReset().mockResolvedValue(undefined);
 });
+afterEach(() => resetViewState());
 
 /// A stand-in scroll root. jsdom lays nothing out, so a real element would
 /// report `clientWidth` 0 and swallow every `scrollLeft` write; the hook only
@@ -51,7 +64,7 @@ function root(laneWidthPx = 1000): {
 /// A 60 s project: at the mocked-away default of 80 px/s that is a 4800 px
 /// canvas, so the 1000 px lane is a small window onto it and the fit-to-project
 /// zoom-out stop sits at 1000/60 px/s.
-const LONG = { tracks: [], durationUs: 60_000_000 };
+const LONG = { compositionId: "comp-root", tracks: [], durationUs: 60_000_000 };
 
 /// The time showing at `anchorX` in the lane — the quantity a zoom must not
 /// change.
@@ -193,5 +206,60 @@ describe("useTimelineView wheel zoom", () => {
 
     expect(result.current.pxPerSec).toBe(DEFAULT_PX_PER_SEC);
     expect(preventDefault).not.toHaveBeenCalled();
+  });
+});
+
+/// One Panel reads one tab's entry and no more — several timeline Panels stand
+/// open over one `view.json` (ADR 0053).
+describe("useTimelineView restore", () => {
+  afterEach(cleanup);
+
+  const stored = (tabs: ViewState["composition_tabs"]): void => {
+    ipcMocks.viewStateGet.mockResolvedValue({ ...viewStateDefaults(), composition_tabs: tabs });
+  };
+
+  /// Mount and let the read land.
+  async function mounted(compositionId: string | null) {
+    const { ref, el } = root();
+    const rendered = renderHook(() =>
+      useTimelineView({ ...LONG, compositionId, rootRef: ref }),
+    );
+    await act(async () => {});
+    return { ...rendered, el };
+  }
+
+  it("opens at its OWN tab's zoom and scroll", async () => {
+    stored([
+      { composition_id: "comp-root", anchor_layer_id: null, px_per_sec: 320, scroll_left_px: 4000 },
+      { composition_id: "comp-g1", anchor_layer_id: "ref-g1", px_per_sec: 160, scroll_left_px: 500 },
+    ]);
+
+    const { result, el } = await mounted("comp-g1");
+
+    expect(result.current.pxPerSec).toBe(160);
+    expect(el.scrollLeft).toBe(500);
+  });
+
+  // A project whose `view.json` predates the tab list has no entry for any
+  // composition: the timeline must open at the default rather than at
+  // `undefined`, which is a blank screen.
+  it("opens at the default when the document remembers nothing about it", async () => {
+    stored([]);
+
+    const { result, el } = await mounted("comp-root");
+
+    expect(result.current.pxPerSec).toBe(DEFAULT_PX_PER_SEC);
+    expect(el.scrollLeft).toBe(0);
+  });
+
+  it("remembers nothing for the unbound row the Dock builds before a root is named", async () => {
+    stored([
+      { composition_id: "comp-root", anchor_layer_id: null, px_per_sec: 320, scroll_left_px: 4000 },
+    ]);
+
+    const { result, el } = await mounted(null);
+
+    expect(result.current.pxPerSec).toBe(DEFAULT_PX_PER_SEC);
+    expect(el.scrollLeft).toBe(0);
   });
 });

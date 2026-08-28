@@ -27,7 +27,7 @@ import {
   toggleTailSnap,
 } from "../settings/appSettingsStore";
 import { linkOverrideOn } from "../state/linkOverrideStore";
-import { playheadTimeUs } from "../state/playheadStore";
+import { focusedPlayheadUs } from "../state/playheadProjection";
 import { hasMarkedRange } from "../state/rangeStore";
 import { hasTransitionCut } from "../timeline/applyTransition";
 import {
@@ -35,7 +35,6 @@ import {
   canUngroupSelection,
 } from "../timeline/groupEligibility";
 import { canOpenSelectedGroup } from "./groupCommands";
-import { useCompositionScopeStore } from "../state/compositionScopeStore";
 import { currentOpenComposition } from "../state/projectStore";
 import { useSelectionStore } from "../state/selectionStore";
 import { activeTool } from "../state/toolStore";
@@ -267,8 +266,10 @@ async function centerPrimaryLayer(axis: "x" | "y"): Promise<void> {
   const { layer, compW, compH } = target;
   const size = getGizmoProbe()?.naturalSizeOf(layer.id);
   if (!size || size.w <= 0 || size.h <= 0) return refuseUnstaged(layer.id, axis);
+  // Projected: the layer's start is on the editing target's clock, so the
+  // moment subtracted from it has to be the same clock's reading.
   const tInLayerUs = snapFrameRound(
-    playheadTimeUs() - layer.t_start_us,
+    focusedPlayheadUs() - layer.t_start_us,
     target.fpsNum,
     target.fpsDen,
   );
@@ -353,7 +354,7 @@ export function buildAppCommands(
     // so the flag would go stale the moment the user pressed `I`. This
     // predicate is evaluated inside `listCommands()`, so it always reads live.
     clearRange: () => hasMarkedRange(),
-    // The Group quartet, live-read for the same reason and through the one
+    // The Group trio, live-read for the same reason and through the one
     // predicate every surface shares (`timeline/groupEligibility.ts`), so the
     // Edit menu row, the strip button and the palette entry cannot disagree
     // about whether the selection can be grouped. The two disabled-reason
@@ -361,9 +362,6 @@ export function buildAppCommands(
     groupSelected: canGroupSelection,
     ungroupSelected: canUngroupSelection,
     openGroup: canOpenSelectedGroup,
-    // Leaving needs somewhere to go back to — depth 0 is the root, and the
-    // command would have nothing to do there.
-    leaveGroup: () => useCompositionScopeStore.getState().crumbs.length > 0,
   };
 
   // The armed modal tool, read straight from `toolStore` for the same

@@ -5,12 +5,15 @@ import { tryMutate } from "../errors/tryMutate";
 import { formatTimecode } from "../frames";
 import { removeMarker } from "../ipc";
 import { useMarkersVisible } from "../settings/appSettingsStore";
-import { useProjectMarkers } from "../state/projectStore";
+import { useCompositionMarkers } from "../state/projectStore";
 import { MarkerContextMenu } from "./MarkerContextMenu";
 import { RulerContextMenu } from "./RulerContextMenu";
 import { openMarkerRenamePrompt } from "./markerRenamePrompt";
 import { useRangeInUs, useRangeOutUs } from "../state/rangeStore";
+import { useAnchorFrame } from "../state/playheadProjection";
+import { rootToLocalIn, type AnchorFrame } from "../render/timeProjection";
 import {
+  timelineScrollKey,
   timelineScrollLeftPx,
   useTimelineScrollStore,
 } from "../state/timelineScrollStore";
@@ -28,6 +31,10 @@ import {
 /// exist, where, and how wide all live there, bounded by the viewport rather
 /// than by project length. It adds one thing the model cannot own — marker
 /// hover text, which needs a locale.
+///
+/// Every x on this strip is a position on THIS composition's own clock: the
+/// ticks and the markers are already local, and the in/out caps — which are
+/// root times, because export runs the root — are projected here.
 
 const quantizeScroll = (px: number): number =>
   Math.floor(Math.max(0, px) / RULER_SCROLL_QUANTUM_PX) *
@@ -42,9 +49,9 @@ const quantizeScroll = (px: number): number =>
 /// block of scrolling, not once per event, and the window built from a lagging
 /// offset still covers the viewport because the overscan is at least one quantum
 /// wide (see `RULER_OVERSCAN_PX`).
-function useRulerScrollBlockPx(): number {
+function useRulerScrollBlockPx(compositionId: string | null): number {
   const [blockPx, setBlockPx] = useState(() =>
-    quantizeScroll(timelineScrollLeftPx()),
+    quantizeScroll(timelineScrollLeftPx(compositionId)),
   );
   // The committed block, read from the subscription — `setBlockPx` is called
   // only when the block actually changes, so intra-block scrolling costs zero
@@ -59,10 +66,25 @@ function useRulerScrollBlockPx(): number {
     };
     // Re-sync on mount: the store may have moved while the timeline was
     // unmounted (dock panel switch), with no future event to correct it.
-    apply(timelineScrollLeftPx());
-    return useTimelineScrollStore.subscribe((s) => apply(s.scrollLeftPx));
-  }, []);
+    apply(timelineScrollLeftPx(compositionId));
+    return useTimelineScrollStore.subscribe((s) =>
+      apply(s.scrollLeftPx[timelineScrollKey(compositionId)] ?? 0),
+    );
+  }, [compositionId]);
   return blockPx;
+}
+
+/// One in/out cap's x on this ruler, or null when the mark falls where this
+/// composition is not on screen. Drawing a clamped cap would put a standing
+/// user mark on a frame the user never marked.
+function capXPx(
+  rootUs: number | null,
+  frame: AnchorFrame | null,
+  pxPerSec: number,
+): number | null {
+  if (rootUs === null || frame === null) return null;
+  const localUs = rootToLocalIn(frame, rootUs);
+  return localUs === null ? null : (localUs / 1_000_000) * pxPerSec;
 }
 
 /// Cyan, because every other timeline accent is already spoken for: red is the
@@ -227,6 +249,7 @@ function MarkerGlyph({
 }
 
 export function TimelineRuler({
+  compositionId,
   pxPerSec,
   totalSec,
   widthPx,
@@ -235,6 +258,9 @@ export function TimelineRuler({
   fpsDen,
   onScrub,
 }: {
+  /// The composition this ruler belongs to, from the Panel that renders it: its
+  /// markers, and its own scroll offset.
+  compositionId: string | null;
   pxPerSec: number;
   totalSec: number;
   widthPx: number;
@@ -248,7 +274,7 @@ export function TimelineRuler({
   /// loop via this callback.
   onScrub: (clientX: number) => void;
 }) {
-  const scrollLeftPx = useRulerScrollBlockPx();
+  const scrollLeftPx = useRulerScrollBlockPx(compositionId);
   // The marker context menu, owned HERE like everything else the ruler paints
   // (the timeline's prop surface does not change). The popup itself portals to
   // the body, so an open menu adds zero direct children to the strip — the RTL
@@ -284,12 +310,18 @@ export function TimelineRuler({
   // selectors per `feedback_zustand_composite_selector`.
   const rangeInUs = useRangeInUs();
   const rangeOutUs = useRangeOutUs();
+  // A React subscription, not the playhead's transient pattern, for the same
+  // reason the marks themselves are: an anchor moves when the project or the
+  // tab's anchor does, never once per composition frame.
+  const anchorFrame = useAnchorFrame(compositionId);
+  const rangeInPx = capXPx(rangeInUs, anchorFrame, pxPerSec);
+  const rangeOutPx = capXPx(rangeOutUs, anchorFrame, pxPerSec);
   // Both read here rather than threaded down from the timeline, for the same
   // reason the range and scroll stores are: the ruler is the only surface that
   // paints markers and the only one the flag governs, so neither belongs on the
   // timeline's prop surface. The array changes once per project mutation, not
   // once per frame.
-  const markers = useProjectMarkers();
+  const markers = useCompositionMarkers(compositionId);
   const markersVisible = useMarkersVisible();
   const { t } = useTranslation();
   const { ticks } = useMemo(
@@ -423,12 +455,8 @@ export function TimelineRuler({
           user is actively placing wins. Two nodes at most, positioned in the
           same row coordinates the ticks use, and clipped by this strip's
           `overflow-hidden` when the range is scrolled out of view. */}
-      {rangeInUs !== null && (
-        <RangeCap xPx={(rangeInUs / 1_000_000) * pxPerSec} side="in" />
-      )}
-      {rangeOutUs !== null && (
-        <RangeCap xPx={(rangeOutUs / 1_000_000) * pxPerSec} side="out" />
-      )}
+      {rangeInPx !== null && <RangeCap xPx={rangeInPx} side="in" />}
+      {rangeOutPx !== null && <RangeCap xPx={rangeOutPx} side="out" />}
     </div>
     {/* Outside the strip div (the Timeline.tsx placement), not inside it:
         whatever Base UI renders inline must never count as a strip child — see

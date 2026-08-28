@@ -53,8 +53,14 @@ const STRIP_MINIMUM = {
 } as const;
 
 /**
- * The complete Panel catalogue. Panel identity is the semantic kind: no
- * second instance id exists anywhere above the Dockview adapter boundary.
+ * The complete Panel catalogue, keyed by kind. A kind is what every Panel of it
+ * shares — title, size minimums, whether the Editing baseline opens it — and it
+ * is what a menu entry, a shortcut scope and a command all address a Panel by.
+ *
+ * Kind is not identity. The Dockview address is a `PanelId`, and `timeline` is
+ * the only kind that instantiates: one Panel per composition, never two, since
+ * a composition has one set of tracks and a second Panel on it would draw
+ * byte-identical rows. See ADR 0053.
  */
 export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
   media: {
@@ -154,4 +160,67 @@ export function isPanelKind(value: unknown): value is PanelKind {
     typeof value === "string" &&
     (PANEL_KINDS as readonly string[]).includes(value)
   );
+}
+
+/** The kinds that exist once per composition rather than once per app. */
+const INSTANCING_PANEL_KINDS = ["timeline"] as const;
+
+type InstancingPanelKind = (typeof INSTANCING_PANEL_KINDS)[number];
+
+/**
+ * A Panel's Dockview address. Most kinds are addressed by the kind alone; a
+ * timeline Panel names the composition it shows, so it is `timeline:<id>`.
+ *
+ * The bare `timeline` form is the unbound one, and it is load-bearing twice
+ * over: a layout snapshot stores it — `workspaces.json` spans every project and
+ * every saved profile, so no composition uuid may enter it (ADR 0053) — and the
+ * live Dock carries it for as long as no project summary has named a root.
+ */
+export type PanelId = PanelKind | `${InstancingPanelKind}:${string}`;
+
+/** Splits a Panel id's kind from its instance. Spelled here and nowhere else:
+ *  `panelIdOf` and `parsePanelId` are the whole vocabulary. */
+const PANEL_ID_SEPARATOR = ":";
+
+export interface ParsedPanelId {
+  kind: PanelKind;
+  /** The composition a timeline Panel shows; null for an id that is a bare kind. */
+  instance: string | null;
+}
+
+function isInstancingPanelKind(value: string): value is InstancingPanelKind {
+  return (INSTANCING_PANEL_KINDS as readonly string[]).includes(value);
+}
+
+/** Compose a Panel's address. An instance on a kind that does not instantiate
+ *  is dropped — the catalogue could not resolve the id it would produce. */
+export function panelIdOf(kind: PanelKind, instance?: string | null): PanelId {
+  return instance && isInstancingPanelKind(kind)
+    ? `${kind}${PANEL_ID_SEPARATOR}${instance}`
+    : kind;
+}
+
+/** Read a Panel address back into the catalogue key and the instance behind it.
+ *  Anything the catalogue cannot resolve — a foreign Dockview panel, a kind a
+ *  stale snapshot still names, an instance on a kind that has none — is
+ *  rejected rather than guessed at. */
+export function parsePanelId(value: PanelId): ParsedPanelId;
+export function parsePanelId(value: unknown): ParsedPanelId | null;
+export function parsePanelId(value: unknown): ParsedPanelId | null {
+  if (typeof value !== "string") return null;
+  const separator = value.indexOf(PANEL_ID_SEPARATOR);
+  if (separator === -1) {
+    return isPanelKind(value) ? { kind: value, instance: null } : null;
+  }
+  const kind = value.slice(0, separator);
+  const instance = value.slice(separator + 1);
+  if (!isInstancingPanelKind(kind) || !instance) return null;
+  return { kind, instance };
+}
+
+/** What a WeftCut Panel carries in its Dockview `params`: both halves of its
+ *  own address, so a Panel never parses the id it was mounted under. */
+export interface DockPanelParams extends Record<string, unknown> {
+  kind: PanelKind;
+  instance: string | null;
 }

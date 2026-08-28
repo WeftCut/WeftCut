@@ -103,7 +103,7 @@ function defaultEncoderConfig(
 export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   const summary = init.summary;
   // Export renders the ROOT, whatever composition the editor has open
-  // (compositionScopeStore.ts); the Groups placed on it enter through the
+  // (compositionAnchorStore.ts); the Groups placed on it enter through the
   // recursive walk (`render/compositionWalk.ts`), not through this id.
   const comp = rootCompositionOf(summary);
   const fpsNum = comp.fps_num;

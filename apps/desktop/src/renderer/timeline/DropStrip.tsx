@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { formatTimecode } from "../frames";
 import { DROP_STRIP_HEIGHT_PX } from "./geometry";
 import { SPAWN_TRACK_ID } from "./placement";
-import { playheadTimeUs } from "../state/playheadStore";
+import { playheadClockUs } from "../state/playheadProjection";
 import { useMarqueeAnchor } from "./hooks/useMarqueeAnchor";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
@@ -47,6 +47,7 @@ export function DropStrip({
   fpsNum,
   fpsDen,
   mediaDropSnap,
+  compositionId,
   layerDrag,
   onMediaDrop,
 }: {
@@ -57,6 +58,12 @@ export function DropStrip({
   fpsNum: number;
   fpsDen: number;
   mediaDropSnap: Omit<MediaDropSnapOptions, "currentTimeUs">;
+  /// The composition this strip spawns into — this Panel's own, whichever tab
+  /// holds the keyboard, so a drop here is a local act on a background timeline
+  /// too. It routes the drop, offers the playhead as a snap boundary on this
+  /// Panel's own axis (`state/playheadProjection.ts`), and answers the cycle
+  /// gate for a Group released here.
+  compositionId: string | null;
   /// The live pointer-driven move drag, or null when none is in flight.
   layerDrag: {
     /// Whether the drag's resolved destination is this strip.
@@ -98,15 +105,16 @@ export function DropStrip({
   const planFor = useCallback(
     (media: MediaDragPayload, pointerXPx: number) =>
       planMediaDrop({
+        compositionId,
         track: null,
         media,
         pointerXPx,
         pxPerSec,
         fpsNum,
         fpsDen,
-        snap: { ...mediaDropSnap, currentTimeUs: playheadTimeUs() },
+        snap: { ...mediaDropSnap, currentTimeUs: playheadClockUs(compositionId) },
       }),
-    [fpsDen, fpsNum, mediaDropSnap, pxPerSec],
+    [compositionId, fpsDen, fpsNum, mediaDropSnap, pxPerSec],
   );
 
   const onDragOver = useCallback(

@@ -20,7 +20,7 @@
 // instructions, and a single "can't group that" would send the user looking.
 
 import type { AnimTrack, LayerSummary, TrackSummary } from "../ipc";
-import { useCompositionScopeStore } from "../state/compositionScopeStore";
+import { useCompositionAnchorStore } from "../state/compositionAnchorStore";
 import {
   compositionOrRoot,
   currentOpenComposition,
@@ -186,16 +186,16 @@ export function selectedGroupLayer(): LayerSummary | null {
  */
 export const useGroupState = (): GroupState => {
   const selected = useSelectionStore((s) => s.selectedLayerIds);
-  const openId = useCompositionScopeStore((s) => s.openId);
+  const focusedId = useCompositionAnchorStore((s) => s.focusedId);
   return useProjectStore((s) =>
-    groupState(selected, compositionOrRoot(s.summary, openId)?.tracks ?? NO_TRACKS),
+    groupState(selected, compositionOrRoot(s.summary, focusedId)?.tracks ?? NO_TRACKS),
   );
 };
 
 export const useUngroupState = (): UngroupState => {
   const selected = useSelectionStore((s) => s.selectedLayerIds);
-  const openId = useCompositionScopeStore((s) => s.openId);
+  const focusedId = useCompositionAnchorStore((s) => s.focusedId);
   return useProjectStore((s) =>
-    ungroupState(selected, compositionOrRoot(s.summary, openId)?.tracks ?? NO_TRACKS),
+    ungroupState(selected, compositionOrRoot(s.summary, focusedId)?.tracks ?? NO_TRACKS),
   );
 };

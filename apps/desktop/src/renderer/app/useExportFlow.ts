@@ -247,7 +247,7 @@ export function useExportFlow(deps: {
       const proj = await projectSummary().catch(() => useProjectStore.getState().summary);
       if (proj) {
         const sUs = range?.startUs ?? 0;
-        // Export renders the ROOT, whatever composition is open (compositionScopeStore.ts).
+        // Export renders the ROOT, whatever composition is open (compositionAnchorStore.ts).
         const eUs = range?.endUs ?? rootCompositionOf(proj).duration_us;
         if (!hasVisibleContent(proj, sUs, eUs)) {
           setExportState({ kind: "error", detail: t("export.no_video_material") });

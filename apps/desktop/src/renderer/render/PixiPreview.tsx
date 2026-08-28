@@ -24,12 +24,13 @@ import {
   releaseTransport,
   setTransportPlaying,
 } from "../state/playbackStore";
+import { previewLocalUs } from "../state/playheadProjection";
 import { playheadTimeUs } from "../state/playheadStore";
 import { compositionOrRoot, rootCompositionOf, useProjectStore } from "../state/projectStore";
 import {
-  openCompositionId,
-  useOpenCompositionId,
-} from "../state/compositionScopeStore";
+  previewRenderTargetId,
+  usePreviewRenderTargetId,
+} from "../state/compositionAnchorStore";
 import { useAppSettingsStore, useDecodeEngine } from "../settings/appSettingsStore";
 import {
   useDecodeComponentAvailable,
@@ -178,7 +179,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         const t = engine?.positionUs() ?? 0;
         compositor.setProject(
           useProjectStore.getState().summary,
-          openCompositionId() ?? null,
+          previewRenderTargetId(),
         );
         compositor.setAnchorTime(t);
         compositor.compositeFrame(t);
@@ -195,12 +196,18 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   );
   const summary = useProjectStore((s) => s.summary);
   const mediaById = useProjectStore((s) => s.mediaById);
-  // The preview draws the OPEN composition (AE; compositionScopeStore.ts) —
-  // opening a Group shows its content at its own size, on its own clock. Size
-  // and fps here must describe what the Compositor draws, so both follow the
-  // same id. Export is unaffected: it always renders the root.
-  const openId = useOpenCompositionId();
-  const composition = compositionOrRoot(summary, openId) ?? undefined;
+  // The preview draws its RENDER TARGET (ADR 0053 decision 3;
+  // compositionAnchorStore.ts) — the composition it is locked to, or the
+  // editing target while it follows focus. Size and fps here must describe what
+  // the Compositor draws, so both follow the same id. Nothing on the rendering
+  // side has to change with it: a Group already composites into a texture of
+  // its own for its parent to stage, so drawing the film while a Group is
+  // edited is a change of argument. Export is unaffected: it renders the root.
+  const targetId = usePreviewRenderTargetId();
+  const composition = compositionOrRoot(summary, targetId) ?? undefined;
+  /// The composition the engine's clock is currently running on. Seeded on the
+  /// first pass so the re-base below fires only on a real change of target.
+  const previewTargetRef = useRef<string | null | undefined>(undefined);
   const decodeEngine = useDecodeEngine();
   const decodeComponentAvailable = useDecodeComponentAvailable();
 
@@ -341,15 +348,15 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       installTimedPresent(app);
       setPixiPresentationVisible(app, visibleRef.current);
       const initialSummary = useProjectStore.getState().summary;
-      // Read imperatively: Application init is async, so the open id at mount
+      // Read imperatively: Application init is async, so the target at mount
       // time is whatever the store holds NOW, not what the render that started
       // the init closed over. The effect below re-targets on every later change.
-      const initialOpenId = openCompositionId() ?? null;
-      compositor.setProject(initialSummary, initialOpenId);
+      const initialTargetId = previewRenderTargetId();
+      compositor.setProject(initialSummary, initialTargetId);
 
       const engine = new PlaybackEngine({ compositor, ticker: app.ticker });
       const resourceGeneration = ++previewResourceSequence;
-      const initialComposition = compositionOrRoot(initialSummary, initialOpenId);
+      const initialComposition = compositionOrRoot(initialSummary, initialTargetId);
       engine.bindFps(
         initialComposition?.fps_num ?? 30,
         initialComposition?.fps_den ?? 1,
@@ -362,7 +369,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // never heard them. Its first tick emits ITS position over the store
       // (`lastEmittedUs` starts unset), so without the seed a playhead parked
       // during init — or across any preview remount — teleports back to 0.
-      const restoreUs = playheadTimeUs();
+      // The store is ROOT time and the engine's clock is the composition it
+      // draws, so the seed is projected on the way in.
+      const restoreUs = previewLocalUs(playheadTimeUs());
       if (restoreUs !== 0) engine.seek(restoreUs);
       if (onTimeUpdate) engine.onTimeUpdate(onTimeUpdate);
       if (onPausedChange) engine.onPlayStateChange((p) => onPausedChange(!p));
@@ -726,7 +735,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     compositorRef.current?.setCompositionSize(compositionWidth, compositionHeight);
   }, [compositionWidth, compositionHeight]);
 
-  // Forward summary updates — and a change of OPEN composition — to the
+  // Forward summary updates — and a change of RENDER TARGET — to the
   // Compositor without remounting the Application. `setProject` rebuilds the
   // node from scratch when the id changes: every sprite, mixer and decode
   // session belonged to the composition being left. The size effect above is
@@ -734,15 +743,31 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   // time the node is built against it.
   useEffect(() => {
     if (!compositorRef.current) return;
-    compositorRef.current.setProject(summary, openId);
+    compositorRef.current.setProject(summary, targetId);
     engineRef.current?.bindFps(
       composition?.fps_num ?? 30,
       composition?.fps_den ?? 1,
     );
+    // A change of TARGET re-bases the engine's clock. It reads and emits one
+    // number and that number is the composition it draws, so without this the
+    // next emit would be read as the new composition's while still naming the
+    // old one's, and the playhead would jump by the offset between them. Guarded
+    // on the id alone: a summary update leaves the engine's position meaning
+    // exactly what it meant before.
+    //
+    // A target whose own `t = 0` is later than the moment re-bases to a negative
+    // time, which the engine's clock floors at zero — so it sits at its first
+    // frame until the film reaches it. The film is NOT dragged there:
+    // `setPlayheadFromPreview` drops that floor rather than reading it as the
+    // one moment.
+    if (previewTargetRef.current !== targetId) {
+      previewTargetRef.current = targetId;
+      engineRef.current?.seek(previewLocalUs(playheadTimeUs()));
+    }
     const t = engineRef.current?.positionUs() ?? 0;
     compositorRef.current.setAnchorTime(t);
     compositorRef.current.compositeFrame(t);
-  }, [summary, openId, composition, mediaById]);
+  }, [summary, targetId, composition, mediaById]);
 
   // A draft edit / install / delete updates the runtime Motif catalog (via the
   // async motifs:changed → syncUserMotifsFromBackend → setUserMotifs chain). We
@@ -954,7 +979,7 @@ async function handlePixiExport(
     const t = engine?.positionUs() ?? 0;
     compositor?.setProject(
       useProjectStore.getState().summary,
-      openCompositionId() ?? null,
+      previewRenderTargetId(),
     );
     compositor?.setAnchorTime(t);
     compositor?.compositeFrame(t);

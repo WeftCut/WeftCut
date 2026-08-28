@@ -17,6 +17,10 @@ interface TimelineSnapOptions {
   visibleTracks: readonly TrackSummary[];
   links: readonly LinkSummary[];
   linkByLayerId: ReadonlyMap<string, string>;
+  /// The playhead as a snap target, on the SAME clock as `visibleTracks`'
+  /// layer boundaries — the Panel's own composition
+  /// (`state/playheadProjection.ts`). Handing the root's raw playhead in would
+  /// offer a target one Group-offset away from where the line is drawn.
   currentTimeUs: number;
   fpsNum: number;
   fpsDen: number;

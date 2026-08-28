@@ -440,11 +440,11 @@ export interface TrackSummary {
 export interface ProjectSummary {
   project_id: string;
   name: string;
-  /// `compositions[root_id]` is what export renders and what the scope store
-  /// opens by default (`state/compositionScopeStore.ts`).
+  /// `compositions[root_id]` is what export renders and what a fresh session's
+  /// timeline Panel opens on (`state/compositionAnchorStore.ts`).
   root_id: string;
   compositions: Record<string, CompositionSummary>;
-  /// Counted over EVERY composition, not the open one.
+  /// Counted over EVERY composition, not the focused one.
   track_count: number;
   layer_count: number;
   history: HistoryView;
@@ -803,10 +803,11 @@ export async function keybindingsImport(src: string): Promise<KeybindingsMap> {
 }
 
 // ============================================================
-// Per-workspace view state (timeline zoom + per-track heights).
-// Lives at `<workspace>/view.json`. Frontend reads on mount, writes
-// debounced 200 ms after the last edit. Pre-workspace, get returns
-// defaults and set silently no-ops.
+// Per-workspace view state: the timeline tab intent, each tab's zoom and
+// scroll, and the project's track heights. Lives at `<workspace>/view.json`.
+// `renderer/state/viewState.ts` is the renderer's only caller — one read per
+// project, one debounced write — because several timeline Panels share this
+// one document. Pre-workspace, get returns defaults and set silently no-ops.
 // ============================================================
 
 // Single-sourced in src/shared/view-state.ts; re-export convention in the file header.

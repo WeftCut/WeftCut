@@ -35,9 +35,9 @@ import { playheadTimeUs } from "../state/playheadStore";
 import { rootCompositionOf, useProjectStore } from "../state/projectStore";
 import {
   openComposition,
-  useCompositionScopeStore,
+  useCompositionAnchorStore,
   type CompositionCrumb,
-} from "../state/compositionScopeStore";
+} from "../state/compositionAnchorStore";
 import { useSelectionStore } from "../state/selectionStore";
 import {
   setPreferProxies,
@@ -448,13 +448,14 @@ export interface E2EHook {
   /// The whole selection set, for a spec proving a gesture LEFT it alone —
   /// the hidden-member badge's reveal must not select.
   getSelectedLayerIds(): string[];
-  /// Open a composition by id — the scope store's `openComposition` with no
+  /// Open a composition by id — the anchor store's `openComposition` with no
   /// entry layer, for a spec that needs to stand INSIDE a composition without
   /// walking the pointer gestures that get there. False when the summary does
   /// not carry it.
   setOpenComposition(compositionId: string): boolean;
-  /// The open composition's id and the path it was entered through; the id is
-  /// the root's while nothing is open. Null before a project is loaded.
+  /// The FOCUSED composition's id and the anchor path its Panel was opened
+  /// along; the id is the root's while nothing else has focus. Null before a
+  /// project is loaded.
   getOpenComposition(): { id: string; crumbs: CompositionCrumb[] } | null;
   /// What the renderer DID with a Text layer's box, straight off the live
   /// `GizmoProbe`. Null before a preview registers one.
@@ -502,8 +503,10 @@ export interface E2EHook {
   stageProfilingSnapshot(): StageSnapshot;
 }
 
-/// JSON-serializable projection of DockWorkspaceSnapshot (its `openPanels` Set
-/// becomes a sorted string[] so it survives the page.evaluate boundary).
+/// JSON-serializable projection of DockWorkspaceSnapshot: Panels named by kind
+/// rather than by Dock address (a spec cannot know the composition id a
+/// timeline Panel is bound to), and the open set flattened to a sorted string[]
+/// so it survives the page.evaluate boundary.
 export interface DockWorkspaceProbe {
   openPanels: string[];
   activePanel: string | null;
@@ -636,6 +639,8 @@ export function installBootstrapHook(
     enterEditor();
     await editorCommitted();
   };
+  // ROOT time — the one moment, unprojected. A spec standing inside a Group
+  // that wants that Group's reading projects it itself.
   hookSlot().getPlayheadUs = () => playheadTimeUs();
   hookSlot().getSelectedLayerId = () =>
     useSelectionStore.getState().primaryLayerId;
@@ -643,8 +648,9 @@ export function installBootstrapHook(
     Array.from(useSelectionStore.getState().selectedLayerIds);
   hookSlot().setOpenComposition = (compositionId) => openComposition(compositionId, null);
   hookSlot().getOpenComposition = () => {
-    const { openId, crumbs } = useCompositionScopeStore.getState();
-    return openId === null ? null : { id: openId, crumbs: [...crumbs] };
+    const { focusedId, anchors } = useCompositionAnchorStore.getState();
+    if (focusedId === null) return null;
+    return { id: focusedId, crumbs: [...(anchors.get(focusedId) ?? [])] };
   };
   // Read through the registry on every call rather than capturing the probe:
   // PixiPreview registers on mount and clears on unmount, and this hook is

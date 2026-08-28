@@ -28,9 +28,12 @@ const ipcMocks = vi.hoisted(() => ({
   trimLayer: vi.fn().mockResolvedValue(undefined),
   getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
   logEmit: vi.fn().mockResolvedValue(undefined),
-  viewStateGet: vi
-    .fn()
-    .mockResolvedValue({ timeline_px_per_sec: 80, track_heights: {}, expanded_tracks: [] }),
+  viewStateGet: vi.fn().mockResolvedValue({
+    composition_tabs: [],
+    active_composition_id: null,
+    track_heights: {},
+    expanded_tracks: [],
+  }),
   viewStateSet: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -114,6 +117,7 @@ function renderTimeline(overrides: {
 }) {
   return render(
     <Timeline
+      compositionId={null}
       tracks={overrides.tracks ?? [makeTrack([layerA, layerB])]}
       links={[]}
       {...(overrides.transitions ? { transitions: overrides.transitions } : {})}
@@ -405,6 +409,7 @@ describe("chip two-edge drag (spec D6)", () => {
   it("blade mode makes the whole chip — zones included — transparent to pointer events", () => {
     const { container } = render(
       <Timeline
+        compositionId={null}
         tracks={[makeTrack([extendedA, layerB])]}
         links={[]}
         transitions={[transition]}

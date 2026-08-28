@@ -931,15 +931,21 @@ Every composition is projected, keyed by id; the projection of one is a pure
 function of that composition (plus the media pool, and the label lookup a
 `CompositionRef` layer's view carries as `composition_label`). Timeline fields
 live only on the entries — there is no flat `tracks` on the project — so a
-consumer names the composition it reads. The renderer keeps that name in one
-place, `state/compositionScopeStore.ts`: the timeline, the inspector, the
-Playhead panel, the ruler and every creation channel (`add_track`,
-`add_marker`, `add_color_layer`, …, stamped with `compositionId`) follow the
-OPEN composition, while export and, until the preview learns to enter a Group,
-the compositor read `compositions[root_id]`. Should the open composition
-vanish from a summary — undoing the pre-compose that created it while standing
-inside it — the store falls back to the nearest crumb it was entered through,
-then the root.
+consumer names the composition it reads. A timeline Panel names its own
+(ADR 0053): its Dock address is `timeline:<composition_id>`, so several can
+stand open at once, each drawing one composition. Everything that follows the
+keyboard follows the FOCUSED one — `state/compositionAnchorStore.ts`, the
+composition of the timeline Panel that last held it: the inspector, the
+Playhead panel and every creation channel (`add_track`, `add_marker`,
+`add_color_layer`, …, each stamped with the `compositionId` of the Panel that
+caused it). The preview is the one surface that does not: it names its own
+RENDER TARGET, which is a composition it is locked to or, by default, the
+focused one. Export alone is fixed — it reads `compositions[root_id]` and
+nothing else, because a Group is a source. That store also holds each Panel's
+ANCHOR, the path of `CompositionRef` layers it was entered through; should a
+composition vanish from a summary — undoing the pre-compose that created it
+while standing inside it — its Panel closes and the focus falls back to the
+nearest surviving step of that path, then the root.
 
 `TrackSummary.kind` is a derived class label (Video / Audio), never a name:
 `renderer/lib/trackName.ts` is the single answer to what a lane is called
@@ -1156,6 +1162,7 @@ The workspace folder *is* the project. Opening a workspace folder = opening the 
 ```
 <workspace>/
 ├── project.json              ← canonical state, auto-saved 500ms-debounced
+├── view.json                 ← UI-only view state for THIS project (below)
 ├── Media/                    ← imported originals (workspace owns the bytes)
 │   ├── interview.mov
 │   └── b-roll-001.mp4
@@ -1177,6 +1184,46 @@ The workspace folder *is* the project. Opening a workspace folder = opening the 
 
 `Backups/` rolls every 50 commits or 5 minutes (whichever first), retains the 20 most recent. `project_save_as` is gone in favor of the auto-save subscriber; Cmd-S is a force-flush hook reserved for future UI. The save model is "the folder is the truth" — closing the app loses nothing.
 
+### `view.json`: how this project was last looked at
+
+Sitting beside `project.json` and deliberately **not** part of it: zooming a
+timeline must not dirty the document, push an undo entry, or appear on the MCP
+tool surface. One definition, `src/shared/view-state.ts`, shared by the main
+process (which owns the file) and the renderer (which owns the live copy).
+
+```ts
+interface ViewState {
+  composition_tabs: CompositionTabView[]   // tab ORDER is this array's order
+  active_composition_id: string | null     // the tab that last held the keyboard
+  preview_render_target_id: string | null  // null = follow focus
+  track_heights: Record<TrackId, number>   // project-wide: a track id names its composition
+  expanded_tracks: TrackId[]               // keyframe sub-lanes; absent ⇒ collapsed
+}
+
+interface CompositionTabView {
+  composition_id: string
+  anchor_layer_id: string | null   // the Group clip this tab was entered through
+  px_per_sec: number               // this composition's own zoom
+  scroll_left_px: number
+}
+```
+
+`composition_tabs` is an **intent**, not the Panel list: the timeline Panels
+that exist are this list intersected with the compositions the summary carries
+(ADR 0053). An entry therefore outlives the undo that removed its composition,
+and the redo brings the tab back with its zoom, scroll and anchor intact. Only
+the last step of an anchor is stored — the rest of the path follows from the
+project — and `null` means the tab was opened by id and takes the shortest path
+from the root.
+
+`viewStateDefaults()` is the SINGLE place a missing field gets a value. A field
+added here and left `undefined` reaches the renderer as a blank screen, so every
+reader goes through the defaults rather than through a local `?? …`.
+
+The Dock's own geometry is not here. It is app-level
+([below](#app-level-storage-the-data-root)), and the seam between the two
+documents is what keeps a composition id out of a file that spans every project.
+
 ## App-level storage: the data root
 
 Everything above is **per-project** — it lives inside the workspace folder and
@@ -1191,6 +1238,17 @@ data dir), each an atomically-written JSON owned by the TS main process:
 (plus the OS keyring). These are tiny and their location is fixed — the data
 root's own path has to live somewhere the resolver can read before anything
 else, so it cannot itself live under the data root (bootstrap chicken-and-egg).
+
+`workspaces.json` holds Dock layouts: the current arrangement plus every saved
+profile. **No composition id may ever be written into it** — it spans every
+project, so a profile carrying one project's uuids would make "reset to my
+layout" mean different things in different projects. A timeline Panel is
+addressed `timeline:<compositionId>` while it is live, and every one of them
+folds back to the bare `timeline` slot on serialization, which records where the
+timeline row sits and how large it is and nothing else. Restore runs in that
+order: geometry first, the root's timeline in the slot, then the remaining tabs
+from the project's `view.json` (ADR 0053). The fold is also why no layout
+snapshot version moves for this: the persisted shape is unchanged.
 
 **Large, app-managed, relocatable content lives under a single user-configurable
 DATA ROOT**, default `<userData>/data/`, with a fixed internal layout WeftCut

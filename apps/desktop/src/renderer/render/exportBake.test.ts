@@ -10,7 +10,7 @@
 // here = export binds the wrong (or an out-of-range) frame. The first test
 // pins exactly that: the full-range bake covers `[0, motifDurationFrames-1]`.
 
-import { describe, expect, it, test, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, test, vi, beforeEach } from "vitest";
 
 // Mock the CDP producer so the bake loop is Node-testable (no host/DOM).
 vi.mock("./motifs/motifRaster", () => ({
@@ -39,6 +39,11 @@ vi.mock("./motifs/motifRasterCache", async (importOriginal) => {
 import type { AnimTrack, LayerParamsView, ProjectSummary, MotifView } from "../ipc";
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import { bakeContentFrameFor, motifLayersToBake, exportBakeMotifs } from "./exportBake";
+import {
+  previewRenderTargetId,
+  setPreviewRenderTarget,
+} from "../state/compositionAnchorStore";
+import { useProjectStore } from "../state/projectStore";
 import { motifContentFrame, motifDurationFrames } from "./motifs/motifFrames";
 import { bakeMotifFrame } from "./motifs/motifRaster";
 import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./motifs/motifRasterCache";
@@ -114,26 +119,39 @@ function refLayer(
 
 /// Minimal ProjectSummary whose ROOT carries one track of the given layers,
 /// plus a track per further composition in `groups` (keyed by its id). Only
-/// the fields `motifLayersToBake` reads are populated; the rest is cast.
+/// the fields `motifLayersToBake` reads carry real values; the empty
+/// collections around them are what the project store's own indexing walks, so
+/// a test can hand the SAME summary to both. The rest is cast.
 function summaryWith(
   layers: BakeTestLayer[],
   trackEnabled = true,
   groups: Record<string, BakeTestLayer[]> = {},
 ): ProjectSummary {
-  const oneTrack = (ls: BakeTestLayer[]) => ({
+  const oneTrack = (id: string, ls: BakeTestLayer[]) => ({
+    id,
     tracks: [
       {
+        id: `${id}-track`,
         enabled: trackEnabled,
         layers: ls.map((l) => ({ enabled: l.enabled ?? true, ...l })),
       },
     ],
+    transitions: [],
+    markers: [],
+    links: [],
   });
   return {
+    project_id: "p-bake",
     root_id: "root",
     compositions: {
-      root: oneTrack(layers),
-      ...Object.fromEntries(Object.entries(groups).map(([id, ls]) => [id, oneTrack(ls)])),
+      root: oneTrack("root", layers),
+      ...Object.fromEntries(
+        Object.entries(groups).map(([id, ls]) => [id, oneTrack(id, ls)]),
+      ),
     },
+    media: [],
+    audio_roles: [],
+    history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
   } as unknown as ProjectSummary;
 }
 
@@ -485,5 +503,33 @@ describe("exportBakeMotifs → L2 disk fast path", () => {
     expect(out["L1"]!.length).toBe(60);
     expect((out["L1"]![0] as unknown as { tag: string }).tag).toBe("countdown#0");
     expect(bakeMotifFrame).toHaveBeenCalledTimes(60);
+  });
+});
+
+/// Export renders the ROOT, and it has to keep doing so now that the preview
+/// can be pointed anywhere (ADR 0053 decision 3). Asserted here rather than
+/// trusted at the call site: a preview that names a composition is exactly the
+/// change that invites wiring export to it.
+describe("what export renders", () => {
+  afterEach(() => {
+    useProjectStore.getState().apply(null);
+  });
+
+  it("bakes the film from the root, with the Group in it, while the preview is locked to that Group", () => {
+    const summary = summaryWith(
+      [motifLayer("film", 0, 1_000_000), refLayer("G", "g", 2_000_000, 3_000_000)],
+      true,
+      { g: [motifLayer("inner", 0, 1_000_000)] },
+    );
+    useProjectStore.getState().apply(summary);
+    setPreviewRenderTarget("g");
+    expect(previewRenderTargetId()).toBe("g");
+
+    // The film's own Motif is the half a walk re-pointed at the preview would
+    // lose; the Group's is the half that proves it is still composited in.
+    expect(motifLayersToBake(summary, 0, 5_000_000, 30, 1).map((s) => s.layerId)).toEqual([
+      "film",
+      "G/inner",
+    ]);
   });
 });

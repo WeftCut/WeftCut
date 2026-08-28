@@ -13,10 +13,12 @@
 import { useEffect } from "react";
 
 import { isEditableTarget, isInTransientWidget } from "../shortcuts/match";
+import { focusComposition } from "../state/compositionAnchorStore";
 import { isPanelKind } from "../workspace/panelRegistry";
 import {
   focusGroupOf,
   pressMovesFocus,
+  regionInstanceOf,
   regionNameOf,
   regionRootOf,
 } from "./focusRegion";
@@ -82,8 +84,17 @@ export function useFocusRegions(): void {
     const onFocusIn = (e: FocusEvent): void => {
       // Narrowed here rather than in `focusRegion.ts`, which must stay free of
       // the panel registry — see the LANDMINE there.
-      const name = regionNameOf(e.target as Node | null);
-      setActiveRegion(isPanelKind(name) ? name : null);
+      const target = e.target as Node | null;
+      const name = regionNameOf(target);
+      const region = isPanelKind(name) ? name : null;
+      setActiveRegion(region);
+      // ADR 0041 under ADR 0053: `scope: "timeline"` resolves against the LAST
+      // FOCUSED timeline Panel, so which composition that is gets recorded at
+      // the same narrowing site — never by teaching the region primitives what
+      // a Panel catalogue is.
+      if (region !== "timeline") return;
+      const instance = regionInstanceOf(target);
+      if (instance !== null) focusComposition(instance);
     };
 
     window.addEventListener("pointerdown", onPointerDownCapture, true);

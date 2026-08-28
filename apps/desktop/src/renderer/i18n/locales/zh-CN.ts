@@ -263,6 +263,11 @@ const zhCN: Resources = {
       start: "显示前面的面板标签",
       end: "显示后面的面板标签",
     },
+    timeline_tab: {
+      project: "项目",
+      switch_anchor: "切换锚点",
+      anchor_entry: "{{path}} · {{time}}",
+    },
     panels: {
       media: "素材库",
       transitions: "转场",
@@ -367,7 +372,6 @@ const zhCN: Resources = {
     group_selected: "给所选图层编组",
     ungroup_selected: "解组",
     open_group: "打开组",
-    leave_group: "退出组",
     toggle_link_selected: "链接 / 取消链接所选图层",
     toggle_link_override: "切换忽略链接",
     nudge_audio_sample_back: "音频前移 1 个采样",
@@ -469,6 +473,8 @@ const zhCN: Resources = {
   preview: {
     empty_hint: "添加图层后预览将自动启动",
     preparing: "正在准备预览…",
+    target_label: "预览内容",
+    target_follow_focus: "跟随焦点",
   },
   timeline: {
     empty_placeholder: "时间线（导入片段或选择 Motif 开始）",
@@ -492,8 +498,6 @@ const zhCN: Resources = {
     rename_group: "重命名组…",
     group_label: "组名称",
     group_derived_name: "组 {{n}}",
-    breadcrumb: "当前合成",
-    breadcrumb_leave: "返回 {{label}}",
     group_overhang: "已超出 {{label}} 的末尾——此处不渲染内容",
     group_more_content: "{{label}} 更长——向外拖动此边缘可展开更多",
     link_label: "链接名称",
@@ -1397,6 +1401,7 @@ const zhCN: Resources = {
     export_cancelled: "已取消导出",
     cleared: "已清空日志",
     center_layer_unstaged: "预览尚未装载该图层，无法居中——其尺寸未知",
+    cross_composition_move: "片段属于它自己的合成——请拖回原时间线，或从菜单将其加入该组",
   },
   history: {
     initial: "初始状态",

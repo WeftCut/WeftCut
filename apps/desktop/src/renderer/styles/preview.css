@@ -13,6 +13,24 @@
   min-height: 0;
 }
 
+/* The render-target control sits over the picture it names. A toolbar row, not
+   a header bar: the Panel's title is its dock tab. */
+.preview-target-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border-soft);
+  flex: 0 0 auto;
+}
+
+.preview-target-select {
+  max-width: 280px;
+  padding: 2px 6px;
+  font-size: var(--font-size-caption);
+}
+
 .video-surface {
   flex: 1;
   position: relative;

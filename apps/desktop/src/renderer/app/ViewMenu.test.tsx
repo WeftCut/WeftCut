@@ -65,6 +65,9 @@ function controller(): DockWorkspaceController {
     getSnapshot: vi.fn(() => EMPTY_DOCK_WORKSPACE_SNAPSHOT),
     subscribe: vi.fn(() => () => {}),
     openPanel: vi.fn(),
+    openTimelinePanel: vi.fn(),
+    closeTimelinePanel: vi.fn(),
+    openTimelineCompositions: vi.fn(() => []),
     closePanel: vi.fn(),
     closeActivePanel: vi.fn(),
     focusNextPanel: vi.fn(),
@@ -116,6 +119,7 @@ describe("ViewMenu workspace controls", () => {
         workspaceProfiles={null}
         workspaceSnapshot={{
           openPanels: new Set(["preview", "timeline"]),
+          openKinds: new Set(["preview", "timeline"]),
           activePanel: "preview",
           maximizedPanel: null,
           empty: false,

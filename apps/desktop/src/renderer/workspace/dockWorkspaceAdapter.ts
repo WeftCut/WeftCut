@@ -11,7 +11,11 @@ import {
   DOCK_TAB_COMPONENT_ID,
   PANEL_REGISTRY,
   STRIP_THICKNESS,
+  panelIdOf,
   panelTitle,
+  parsePanelId,
+  type DockPanelParams,
+  type PanelId,
   type PanelKind,
 } from "./panelRegistry";
 import {
@@ -45,10 +49,6 @@ interface Disposable {
   dispose(): void;
 }
 
-interface DockPanelParams {
-  kind: PanelKind;
-}
-
 /** Geometry captured just before a split drop lands, used to undo Dockview's
  *  sibling-equalizing relayout. */
 interface PendingSplitDropFix {
@@ -66,9 +66,13 @@ interface PendingSplitDropFix {
 }
 
 export interface DockWorkspaceSnapshot {
-  openPanels: ReadonlySet<PanelKind>;
-  activePanel: PanelKind | null;
-  maximizedPanel: PanelKind | null;
+  openPanels: ReadonlySet<PanelId>;
+  /** The kinds those Panels are of. Menus, commands and the search palette
+   *  address a Panel by kind — "Timeline" is one entry, however many timeline
+   *  Panels stand open — so they read this rather than parse `openPanels`. */
+  openKinds: ReadonlySet<PanelKind>;
+  activePanel: PanelId | null;
+  maximizedPanel: PanelId | null;
   empty: boolean;
 }
 
@@ -77,13 +81,24 @@ export interface DockWorkspaceSnapshot {
 export interface DockWorkspaceController {
   getSnapshot(): DockWorkspaceSnapshot;
   subscribe(listener: () => void): () => void;
+  /** Ensure a Panel of this kind is open and active. Addressed by kind, not by
+   *  id: the caller is a menu entry or a command, which names the Panel it
+   *  wants and has no instance to name. */
   openPanel(kind: PanelKind): void;
-  closePanel(kind: PanelKind): void;
+  /** Ensure the timeline Panel showing `compositionId` is open and active. The
+   *  sibling of `openPanel` for the one kind that instantiates: "a timeline"
+   *  and "the timeline for THIS composition" are different requests, and only
+   *  the second one can create a second Panel. */
+  openTimelinePanel(compositionId: string): void;
+  closeTimelinePanel(compositionId: string): void;
+  /** Every composition a timeline Panel currently shows, in tab order. */
+  openTimelineCompositions(): string[];
+  closePanel(id: PanelId): void;
   closeActivePanel(): void;
   focusNextPanel(): void;
   focusPreviousPanel(): void;
-  setHoveredPanel(kind: PanelKind | null): void;
-  toggleMaximize(kind?: PanelKind): void;
+  setHoveredPanel(id: PanelId | null): void;
+  toggleMaximize(id?: PanelId): void;
   restoreMaximizedPanel(): void;
   resetWorkspace(): void;
   /** Capture the live Dock Tree as a validated, versioned WeftCut layout
@@ -98,6 +113,7 @@ export interface DockWorkspaceController {
 
 export const EMPTY_DOCK_WORKSPACE_SNAPSHOT: DockWorkspaceSnapshot = {
   openPanels: new Set(),
+  openKinds: new Set(),
   activePanel: null,
   maximizedPanel: null,
   empty: true,
@@ -188,8 +204,9 @@ function constrainedDropSize(
   if (isSoleStripGroup(group)) return STRIP_THICKNESS;
   let minimum = 0;
   for (const panel of group.panels) {
-    if (!isPanelId(panel.id)) continue;
-    const definition = PANEL_REGISTRY[panel.id];
+    const parsed = parsePanelId(panel.id);
+    if (!parsed) continue;
+    const definition = PANEL_REGISTRY[parsed.kind];
     minimum = Math.max(
       minimum,
       axis === "width" ? definition.minimumWidth : definition.minimumHeight,
@@ -199,14 +216,18 @@ function constrainedDropSize(
 }
 
 /**
- * Dockview is deliberately contained here. Callers deal only in PanelKind.
+ * Dockview is deliberately contained here. Callers deal in Panel kinds and
+ * Panel ids; no Dockview object crosses this boundary.
  */
 export class DockWorkspaceAdapter implements DockWorkspaceController {
   private readonly disposables: Disposable[] = [];
   private readonly listeners = new Set<() => void>();
-  private readonly lastPlacements = new Map<PanelKind, PanelPlacement>();
-  private hoveredPanel: PanelKind | null = null;
+  private readonly lastPlacements = new Map<PanelId, PanelPlacement>();
+  private hoveredPanel: PanelId | null = null;
   private pendingSplitDropFix: PendingSplitDropFix | null = null;
+  /** The composition every timeline Panel here is addressed by — see
+   *  `setTimelineInstance`. */
+  private timelineInstance: string | null = null;
 
   constructor(
     private readonly api: DockviewApi,
@@ -360,17 +381,59 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     return true;
   }
 
+  /**
+   * Name the composition this adapter's timeline Panels are addressed by, and
+   * re-address the open one to match.
+   *
+   * The project summary arrives after the Dock has already built its first
+   * layout, so the timeline row starts on the unbound `timeline` address and is
+   * bound here the moment a root composition is known. Dockview cannot rename a
+   * Panel, so the swap adds the new address into the old one's tab slot and
+   * closes the old one afterwards: emptying a Dock Group of its last Panel
+   * destroys the Group, and with it the cell and the size the row had.
+   */
+  setTimelineInstance(instance: string | null): void {
+    if (instance === this.timelineInstance) return;
+    this.timelineInstance = instance;
+    const stale = this.firstOpenOfKind("timeline");
+    const wanted = this.idOf("timeline");
+    if (!stale || stale === wanted) return;
+    const placement = this.lastPlacements.get(stale);
+    const bound = this.addPanel("timeline", {
+      position: {
+        referencePanel: stale,
+        direction: "within",
+        ...(placement ? { index: placement.index } : {}),
+      },
+    });
+    // Close only against a Panel that actually arrived: the Workspace must
+    // never be left without the row the user was looking at.
+    if (!bound) return;
+    // Every OTHER timeline shows a composition of the project being left, so
+    // its tab is stale in the same way the row above was: a different root
+    // means a different set of compositions, and nothing carries across.
+    for (const open of this.openTimelinePanelIds()) {
+      if (open !== wanted) {
+        this.closePanel(open);
+        this.lastPlacements.delete(open);
+      }
+    }
+    this.captureOpenPlacements();
+    this.emitChange();
+  }
+
   openPanel(kind: PanelKind): void {
-    const existing = this.api.getPanel(kind);
-    if (existing) {
-      existing.api.setActive();
+    const open = this.firstOpenOfKind(kind);
+    if (open) {
+      this.api.getPanel(open)?.api.setActive();
       this.emitChange();
       return;
     }
 
-    const previous = this.lastPlacements.get(kind);
+    const id = this.idOf(kind);
+    const previous = this.lastPlacements.get(id);
     const reference = previous?.siblings.find(
-      (sibling) => sibling !== kind && this.api.getPanel(sibling),
+      (sibling) => sibling !== id && this.api.getPanel(sibling),
     );
     if (reference) {
       this.addPanel(kind, {
@@ -387,14 +450,64 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     this.emitChange();
   }
 
-  hasPanel(kind: PanelKind): boolean {
-    return this.api.getPanel(kind) !== undefined;
+  /**
+   * A composition's own timeline Panel: activate the one that exists, or make
+   * one beside the timeline the request came from.
+   *
+   * `within` the active timeline's Dock Group, never a split — a Group opened
+   * from a clip becomes a TAB next to the timeline it was opened from, which is
+   * the tab strip ADR 0053 puts in the breadcrumb's place. Pulling the two
+   * apart is then one tab drag, and that is the user's call to make, not this
+   * method's.
+   */
+  openTimelinePanel(compositionId: string): void {
+    const id = panelIdOf("timeline", compositionId);
+    const open = this.api.getPanel(id);
+    if (open) {
+      open.api.setActive();
+      this.emitChange();
+      return;
+    }
+    const reference =
+      this.activeTimelinePanelId() ?? this.openTimelinePanelIds()[0];
+    if (reference) {
+      this.addPanel(
+        "timeline",
+        { position: { referencePanel: reference, direction: "within" } },
+        compositionId,
+      );
+    } else {
+      this.addPanelAtSemanticFallback("timeline", compositionId);
+    }
+    this.api.getPanel(id)?.api.setActive();
+    this.captureOpenPlacements();
+    this.emitChange();
+  }
+
+  closeTimelinePanel(compositionId: string): void {
+    this.closePanel(panelIdOf("timeline", compositionId));
+  }
+
+  openTimelineCompositions(): string[] {
+    const out: string[] = [];
+    for (const id of this.openTimelinePanelIds()) {
+      const { instance } = parsePanelId(id);
+      if (instance !== null) out.push(instance);
+    }
+    return out;
+  }
+
+  hasPanel(id: PanelId): boolean {
+    return this.api.getPanel(id) !== undefined;
   }
 
   getSnapshot(): DockWorkspaceSnapshot {
-    const openPanels = new Set<PanelKind>();
+    const openPanels = new Set<PanelId>();
+    const openKinds = new Set<PanelKind>();
     for (const panel of this.api.panels) {
-      if (isPanelId(panel.id)) openPanels.add(panel.id);
+      if (!isPanelId(panel.id)) continue;
+      openPanels.add(panel.id);
+      openKinds.add(parsePanelId(panel.id).kind);
     }
     const activePanel = isPanelId(this.api.activePanel?.id)
       ? this.api.activePanel.id
@@ -405,6 +518,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     const maximizedPanel = isPanelId(maximized?.id) ? maximized.id : null;
     return {
       openPanels,
+      openKinds,
       activePanel,
       maximizedPanel,
       empty: openPanels.size === 0,
@@ -416,12 +530,12 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     return () => this.listeners.delete(listener);
   }
 
-  closePanel(kind: PanelKind): void {
-    const panel = this.api.getPanel(kind);
+  closePanel(id: PanelId): void {
+    const panel = this.api.getPanel(id);
     if (!panel) return;
     this.capturePlacement(panel);
     panel.api.close();
-    if (this.hoveredPanel === kind) this.hoveredPanel = null;
+    if (this.hoveredPanel === id) this.hoveredPanel = null;
     this.emitChange();
   }
 
@@ -442,19 +556,19 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     this.emitChange();
   }
 
-  setHoveredPanel(kind: PanelKind | null): void {
-    this.hoveredPanel = kind;
+  setHoveredPanel(id: PanelId | null): void {
+    this.hoveredPanel = id;
   }
 
-  toggleMaximize(kind?: PanelKind): void {
+  toggleMaximize(id?: PanelId): void {
     if (this.api.hasMaximizedGroup()) {
       this.api.exitMaximizedGroup();
       this.emitChange();
       return;
     }
-    const targetKind = kind ?? this.hoveredPanel;
-    const target = targetKind
-      ? this.api.getPanel(targetKind)
+    const targetId = id ?? this.hoveredPanel;
+    const target = targetId
+      ? this.api.getPanel(targetId)
       : this.api.activePanel;
     if (!target) return;
     target.api.maximize();
@@ -469,7 +583,8 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
 
   refreshPanelTitles(): void {
     for (const panel of this.api.panels) {
-      if (isPanelId(panel.id)) panel.api.setTitle(panelTitle(panel.id));
+      const parsed = parsePanelId(panel.id);
+      if (parsed) panel.api.setTitle(panelTitle(parsed.kind));
     }
   }
 
@@ -499,19 +614,23 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
   }
 
   serialize(): WeftCutLayout {
-    const placements = this.serializePlacements();
     // An intentionally empty Workspace is a first-class, valid snapshot —
     // distinct from missing (null) or corrupt data on the persistence side. Its
     // placements still carry the closed Panels' remembered spots.
-    if (this.api.totalPanels === 0) {
-      return { version: WEFTCUT_LAYOUT_VERSION, empty: true, dockview: null, placements };
-    }
-    const normalized = normalizeLayout({
-      version: WEFTCUT_LAYOUT_VERSION,
-      empty: false,
-      dockview: this.api.toJSON(),
-      placements,
-    });
+    const empty = this.api.totalPanels === 0;
+    // Folded, never bound: this snapshot goes to a document that spans every
+    // project and every saved profile, so a composition id must not enter it
+    // (ADR 0053). The `timeline` slot it leaves behind records where the row
+    // sits and how large it is, which is all a profile can promise.
+    const normalized = normalizeLayout(
+      {
+        version: WEFTCUT_LAYOUT_VERSION,
+        empty,
+        dockview: empty ? null : this.api.toJSON(),
+        placements: this.serializePlacements(),
+      },
+      { timelineInstance: null },
+    );
     if (!normalized) {
       throw new Error("Dockview produced an invalid live layout");
     }
@@ -529,18 +648,29 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
   }
 
   private applyLayout(layout: WeftCutLayout): void {
+    // A snapshot carries the folded `timeline` slot, so restoring one means
+    // binding that slot to the composition this adapter names. Re-normalizing
+    // an already valid layout does nothing but re-address it; a null here would
+    // mean the layout the caller handed over was never valid.
+    const bound = normalizeLayout(layout, {
+      timelineInstance: this.timelineInstance,
+    });
+    if (!bound) throw new Error("Dock layout could not be bound to a composition");
     if (this.api.hasMaximizedGroup()) this.api.exitMaximizedGroup();
     // Seed the recovery map from persisted placements first; captureOpenPlacements
     // then refreshes the entries for Panels the restored tree actually opens,
     // leaving closed Panels' remembered spots intact.
     this.lastPlacements.clear();
-    for (const [kind, placement] of Object.entries(layout.placements)) {
-      if (placement) this.lastPlacements.set(kind as PanelKind, placement);
+    for (const [id, placement] of Object.entries(bound.placements)) {
+      const parsed = parsePanelId(id);
+      if (parsed && placement) {
+        this.lastPlacements.set(panelIdOf(parsed.kind, parsed.instance), placement);
+      }
     }
-    if (layout.empty || !layout.dockview) {
+    if (bound.empty || !bound.dockview) {
       this.api.clear();
     } else {
-      this.api.fromJSON(layout.dockview, { reuseExistingPanels: true });
+      this.api.fromJSON(bound.dockview, { reuseExistingPanels: true });
     }
     this.hoveredPanel = null;
     this.captureOpenPlacements();
@@ -549,8 +679,8 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
 
   private serializePlacements(): PanelPlacements {
     const placements: PanelPlacements = {};
-    for (const [kind, placement] of this.lastPlacements) {
-      placements[kind] = { siblings: [...placement.siblings], index: placement.index };
+    for (const [id, placement] of this.lastPlacements) {
+      placements[id] = { siblings: [...placement.siblings], index: placement.index };
     }
     return placements;
   }
@@ -704,9 +834,52 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     });
   }
 
-  private addPanelAtSemanticFallback(kind: PanelKind): void {
-    const firstOpen = (...kinds: PanelKind[]) =>
-      kinds.find((candidate) => this.api.getPanel(candidate));
+  /** This adapter's address for a Panel of `kind` — where an instancing kind
+   *  picks up the composition it is bound to. */
+  private idOf(kind: PanelKind): PanelId {
+    return panelIdOf(kind, this.timelineInstance);
+  }
+
+  /** The open Panel of `kind`, whichever instance it is. */
+  private firstOpenOfKind(kind: PanelKind): PanelId | undefined {
+    for (const panel of this.api.panels) {
+      if (isPanelId(panel.id) && parsePanelId(panel.id).kind === kind) {
+        return panel.id;
+      }
+    }
+    return undefined;
+  }
+
+  /** Every open timeline Panel, in the Dock's own order. */
+  private openTimelinePanelIds(): PanelId[] {
+    const out: PanelId[] = [];
+    for (const panel of this.api.panels) {
+      if (isPanelId(panel.id) && parsePanelId(panel.id).kind === "timeline") {
+        out.push(panel.id);
+      }
+    }
+    return out;
+  }
+
+  /** The timeline Panel the user is in, or undefined when the active Panel is
+   *  something else entirely (the inspector, the media pool). */
+  private activeTimelinePanelId(): PanelId | undefined {
+    const active = this.api.activePanel?.id;
+    return isPanelId(active) && parsePanelId(active).kind === "timeline"
+      ? active
+      : undefined;
+  }
+
+  private addPanelAtSemanticFallback(kind: PanelKind, instance?: string): void {
+    // Reference lists below are kinds — "beside whatever Preview is open" —
+    // and resolve here to the address the open Panel of that kind actually has.
+    const firstOpen = (...kinds: PanelKind[]): PanelId | undefined => {
+      for (const candidate of kinds) {
+        const open = this.firstOpenOfKind(candidate);
+        if (open) return open;
+      }
+      return undefined;
+    };
     if (kind === "media") {
       const reference = firstOpen(
         "preview", "attribute", "effect", "playhead", "caption", "role-mixer", "timeline",
@@ -737,7 +910,8 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
       );
       this.addPanel(kind, reference
         ? { position: { referencePanel: reference, direction: "below" } }
-        : {});
+        : {},
+        instance);
       return;
     }
     if (kind === "quick-actions") {
@@ -790,12 +964,17 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
       initialHeight?: number;
       inactive?: boolean;
     } = {},
+    /** Which instance of an instancing kind to create. Omitted means "this
+     *  adapter's own" — the composition every timeline Panel it builds on its
+     *  own behalf (the baseline layout, a restore, `openPanel`) is bound to. */
+    instance: string | null = this.timelineInstance,
   ): IDockviewPanel | undefined {
-    if (this.api.getPanel(kind)) return undefined;
+    const id = panelIdOf(kind, instance);
+    if (this.api.getPanel(id)) return undefined;
     const definition = PANEL_REGISTRY[kind];
-    const params: DockPanelParams = { kind };
+    const params: DockPanelParams = { kind, instance: parsePanelId(id).instance };
     return this.api.addPanel({
-      id: kind,
+      id,
       title: panelTitle(kind),
       component: DOCK_COMPONENT_ID,
       tabComponent: DOCK_TAB_COMPONENT_ID,
@@ -808,6 +987,9 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
   }
 }
 
-function isPanelId(value: unknown): value is PanelKind {
-  return typeof value === "string" && value in PANEL_REGISTRY;
+/** Narrow an untrusted Dockview id to an address this catalogue resolves. It
+ *  parses rather than membership-tests: a foreign panel, a kind the catalogue
+ *  no longer carries, and an instance on a kind that has none all fail here. */
+function isPanelId(value: unknown): value is PanelId {
+  return parsePanelId(value) !== null;
 }

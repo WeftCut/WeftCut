@@ -24,6 +24,11 @@ import {
   setRangeOut,
 } from "./state/rangeStore";
 import {
+  focusedPlayheadUs,
+  focusedRootUs,
+  previewLocalUs,
+} from "./state/playheadProjection";
+import {
   playheadTimeUs,
   setPlayheadTimeUs,
 } from "./state/playheadStore";
@@ -90,7 +95,6 @@ import {
 import { toggleLinkOverride } from "./state/linkOverrideStore";
 import {
   groupSelected,
-  leaveOpenGroup,
   openSelectedGroup,
   ungroupSelected,
 } from "./commands/groupCommands";
@@ -102,11 +106,11 @@ import {
   currentOpenComposition,
   rootCompositionOf,
 } from "./state/projectStore";
-import { useOpenCompositionId } from "./state/compositionScopeStore";
+import { useFocusedCompositionId } from "./state/compositionAnchorStore";
 import {
-  addColorLayerInOpenComposition,
-  addMarkerAtInOpenComposition,
-  addTextLayerInOpenComposition,
+  addColorLayerIn,
+  addMarkerAtIn,
+  addTextLayerIn,
 } from "./ipc/compositionScoped";
 import { markerStartingInFrame } from "./timeline/markerAtFrame";
 import { MarkerRenameDialog } from "./timeline/MarkerRenameDialog";
@@ -120,6 +124,7 @@ import {
   type DockWorkspaceController,
   type DockWorkspaceSnapshot,
 } from "./workspace/dockWorkspaceAdapter";
+import { parsePanelId, type PanelId } from "./workspace/panelRegistry";
 import { useWorkspacePersistence } from "./workspace/useWorkspacePersistence";
 import {
   WorkspaceNameDialog,
@@ -144,9 +149,9 @@ export function App({ onCloseProject }: AppProps) {
   }
   const summaryRequests = summaryRequestsRef.current;
   // The timeline the panels, the shortcuts and the Insert menu act on. Export
-  // reads the root below regardless (compositionScopeStore.ts says why).
-  const openId = useOpenCompositionId();
-  const comp = compositionOrRoot(summary, openId);
+  // reads the root below regardless (compositionAnchorStore.ts says why).
+  const focusedId = useFocusedCompositionId();
+  const comp = compositionOrRoot(summary, focusedId);
   const [busy, setBusy] = useState(false);
   // Write-only: error text is surfaced through the status bar / log (see the
   // setError call sites), not rendered here, so we keep only the setter.
@@ -256,12 +261,16 @@ export function App({ onCloseProject }: AppProps) {
   // the upper bound is enforced once. Lower bound at 0; upper at
   // `lastFrameAnchorUs` so the playhead can never sit on the
   // post-last-frame slot.
+  //
+  // `tUs` is ROOT time. A caller holding a composition's own clock projects
+  // first (`focusedRootUs`); the preview gets the projection back down, because
+  // it draws one composition and reads one number.
   const seekTo = useCallback((tUs: number) => {
     const clamped = clampSeekUs(tUs);
     // Optimistic store write: with no preview mounted (empty composition)
     // there is no engine emit, yet the playhead UI must still move.
     setPlayheadTimeUs(clamped);
-    previewRef.current?.seekTo(clamped);
+    previewRef.current?.seekTo(previewLocalUs(clamped));
   }, []);
 
   // R.7: click on a Playhead Panel row → reveal that hidden track inline at its
@@ -532,10 +541,15 @@ export function App({ onCloseProject }: AppProps) {
       installDockWorkspaceProbe(() => {
         const snapshot = workspaceController?.getSnapshot();
         if (!snapshot) return null;
+        // Reported by kind, not by Dock address: a spec names the Panel it
+        // means, and a timeline Panel's address carries a composition id no
+        // spec can know in advance.
+        const kindOf = (id: PanelId | null) =>
+          id === null ? null : parsePanelId(id).kind;
         return {
-          openPanels: [...snapshot.openPanels].sort(),
-          activePanel: snapshot.activePanel,
-          maximizedPanel: snapshot.maximizedPanel,
+          openPanels: [...snapshot.openKinds].sort(),
+          activePanel: kindOf(snapshot.activePanel),
+          maximizedPanel: kindOf(snapshot.maximizedPanel),
           empty: snapshot.empty,
         };
       }),
@@ -577,7 +591,9 @@ export function App({ onCloseProject }: AppProps) {
     const sourceLayerId = copiedLayerIdRef.current;
     if (!sourceLayerId) return;
     try {
-      const pastedLayerId = await pasteLayer(sourceLayerId, playheadTimeUs());
+      // Projected: the paste lands in the timeline holding the keyboard, on
+      // that timeline's own clock.
+      const pastedLayerId = await pasteLayer(sourceLayerId, focusedPlayheadUs());
       setPendingRevealLayerId(pastedLayerId);
       await refresh();
     } catch (err) {
@@ -657,7 +673,6 @@ export function App({ onCloseProject }: AppProps) {
     groupSelected: () => void groupSelected(),
     ungroupSelected: () => void ungroupSelected(),
     openGroup: openSelectedGroup,
-    leaveGroup: leaveOpenGroup,
     focusNextPanel: () => workspaceController?.focusNextPanel(),
     focusPreviousPanel: () => workspaceController?.focusPreviousPanel(),
     toggleMaximizePanel: () => workspaceController?.toggleMaximize(),
@@ -676,6 +691,8 @@ export function App({ onCloseProject }: AppProps) {
     // trim also uses), so N steps land on frame N exactly. Adding a rounded
     // frame duration instead would land off-grid at fractional rates and only
     // look right because the snap corrects it.
+    // Root time in, root time out: one lattice project-wide (ADR 0052 §5), so
+    // stepping a frame on the film's clock steps a frame on every composition's.
     seekFrameBack: () => {
       const fps = comp;
       void seekTo(
@@ -698,6 +715,7 @@ export function App({ onCloseProject }: AppProps) {
         ),
       );
     },
+    // A second is a second on every clock — root time throughout.
     seekSecondBack: () => {
       void seekTo(playheadTimeUs() - 1_000_000);
     },
@@ -712,11 +730,13 @@ export function App({ onCloseProject }: AppProps) {
     seekNextEdit: () => {
       seekToNextEdit();
     },
+    // The ends of the timeline the keyboard is IN, projected up: standing in a
+    // Group, Home is that Group's first frame, not the film's.
     seekStart: () => {
-      void seekTo(0);
+      void seekTo(focusedRootUs(0));
     },
     seekEnd: () => {
-      void seekTo(comp?.duration_us ?? 0);
+      void seekTo(focusedRootUs(comp?.duration_us ?? 0));
     },
     // In/out marking bridges the playhead's frame-ANCHOR convention to the
     // range's start-inclusive / end-EXCLUSIVE one. Both translations go
@@ -724,6 +744,8 @@ export function App({ onCloseProject }: AppProps) {
     // as an out point would drop the frame the user is looking at, and — since
     // the playhead can't pass the last frame's start — make the final frame
     // unreachable. See `docs/data-model.md` (boundary semantics).
+    // ROOT time, unprojected: one range, and export runs the root
+    // (`state/rangeStore.ts`). Each ruler projects it for drawing.
     markIn: () => {
       if (!comp) return;
       setRangeIn(
@@ -744,27 +766,31 @@ export function App({ onCloseProject }: AppProps) {
     // dead key (the documented Premiere confusion), an invisible rename as
     // editing blind. The layer toggle exists to silence agent sweeps, not this.
     addMarkerAtPlayhead: () => {
-      if (!comp) return;
-      const frameUs = displayedFrameStartUs(
-        playheadTimeUs(),
-        comp.fps_num,
-        comp.fps_den,
-      );
       // Live store read, not the render-captured summary — same reason the
-      // raise-selection handler reads its stores at press time.
-      const markers = currentOpenComposition()?.markers ?? [];
+      // raise-selection handler reads its stores at press time, and the reason
+      // the marker lands on the timeline that holds the keyboard NOW rather
+      // than the one App last rendered against.
+      const open = currentOpenComposition();
+      if (!open) return;
+      // Projected: a marker belongs to one composition's timeline, so the
+      // frame it lands on is that timeline's.
+      const frameUs = displayedFrameStartUs(
+        focusedPlayheadUs(),
+        open.fps_num,
+        open.fps_den,
+      );
       const existing = markerStartingInFrame(
-        markers,
+        open.markers,
         frameUs,
-        comp.fps_num,
-        comp.fps_den,
+        open.fps_num,
+        open.fps_den,
       );
       if (!markersVisible()) void setAppSettings({ markers_visible: true });
       if (existing) {
         openMarkerRenamePrompt(existing.id);
         return;
       }
-      void tryMutate(() => addMarkerAtInOpenComposition(frameUs), "add_marker");
+      void tryMutate(() => addMarkerAtIn(open.id, frameUs), "add_marker");
     },
     clearRange: () => clearMarkedRange(),
     openSearchPalette: () => {
@@ -794,15 +820,23 @@ export function App({ onCloseProject }: AppProps) {
   useNativeMenu({ handlers: shortcutHandlers, overrides: shortcutOverrides });
 
   // Shared by the Insert menu and the search palette — one implementation,
-  // two entry points.
+  // two entry points. Both name the FOCUSED composition at event time: a menu
+  // item means "the timeline I am editing in", and which one that is may have
+  // changed since App last rendered.
   const handleAddColorLayer = useCallback(async () => {
-    const layerId = await addColorLayerInOpenComposition({ tStartUs: playheadTimeUs() });
+    const layerId = await addColorLayerIn({
+      compositionId: currentOpenComposition()?.id ?? null,
+      tStartUs: focusedPlayheadUs(),
+    });
     setPendingRevealLayerId(layerId);
     await refresh();
   }, [refresh]);
 
   const handleAddTextLayer = useCallback(async () => {
-    const layerId = await addTextLayerInOpenComposition({ tStartUs: playheadTimeUs() });
+    const layerId = await addTextLayerIn({
+      compositionId: currentOpenComposition()?.id ?? null,
+      tStartUs: focusedPlayheadUs(),
+    });
     setPendingRevealLayerId(layerId);
     await refresh();
   }, [refresh]);
@@ -1090,7 +1124,8 @@ export function App({ onCloseProject }: AppProps) {
           onClose={() => setMotifPickerOpen(false)}
           onAdded={refresh}
           onDraftPlaced={setPendingRevealLayerId}
-          currentTimeUs={playheadTimeUs()}
+          currentTimeUs={focusedPlayheadUs()}
+          compositionId={comp?.id ?? null}
           tracks={comp?.tracks ?? []}
           fpsNum={comp?.fps_num ?? 30}
           fpsDen={comp?.fps_den ?? 1}

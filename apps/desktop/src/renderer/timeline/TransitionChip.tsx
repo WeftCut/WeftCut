@@ -4,6 +4,7 @@ import { ArrowLeftRight } from "lucide-react";
 import { boundaryDisplayFrameUs, formatTimecode } from "../frames";
 import { setTransitionSelection } from "../state/selectionStore";
 import { transportPause, transportSeek } from "../state/playbackStore";
+import { previewLocalUs } from "../state/playheadProjection";
 import { playheadTimeUs, setPlayheadTimeUs } from "../state/playheadStore";
 import { useMediaById } from "../state/projectStore";
 import { layerSliceRect, type LayerSlice } from "./geometry";
@@ -157,7 +158,10 @@ export function TransitionChip({
         lastUs = nextUs;
         if (restoreUs === null) {
           // First effective move: park the transport and remember where the
-          // user left the playhead — the gesture must not relocate it.
+          // user left the playhead — the gesture must not relocate it. ROOT
+          // time, because that is what goes back into the store below; the
+          // preview seek beneath it is the chip's edge on the composition's own
+          // clock, which is already the clock the engine runs on.
           restoreUs = playheadTimeUs();
           transportPause();
         }
@@ -186,7 +190,7 @@ export function TransitionChip({
           // Optimistic store write + transport seek (the seekExact pattern):
           // put both the playhead line and the monitor back.
           setPlayheadTimeUs(restoreUs);
-          transportSeek(restoreUs);
+          transportSeek(previewLocalUs(restoreUs));
         }
         // A stationary pointer never commits.
         if (lastUs === initialUs) return;

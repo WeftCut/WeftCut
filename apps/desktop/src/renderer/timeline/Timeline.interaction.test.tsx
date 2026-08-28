@@ -22,6 +22,7 @@ import { Timeline } from "./Timeline";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
   MEDIA_DRAG_TYPE,
+  compositionDragPayload,
   mediaDragPayload,
   useMediaDragStore,
 } from "./mediaDrag";
@@ -32,6 +33,11 @@ import {
   setTransitionSelection,
   useSelectionStore,
 } from "../state/selectionStore";
+import {
+  openComposition,
+  useCompositionAnchorStore,
+} from "../state/compositionAnchorStore";
+import { registerTimelineSurface } from "./timelineSurfaces";
 import {
   clearKeyframeSelection,
   getSelectedKeyframes,
@@ -75,9 +81,12 @@ const ipcMocks = vi.hoisted(() => ({
   updateLayerParamTrack: vi.fn().mockResolvedValue(undefined),
   updateParamTracksMulti: vi.fn().mockResolvedValue(undefined),
   logEmit: vi.fn().mockResolvedValue(undefined),
-  viewStateGet: vi
-    .fn()
-    .mockResolvedValue({ timeline_px_per_sec: 80, track_heights: {}, expanded_tracks: [] }),
+  viewStateGet: vi.fn().mockResolvedValue({
+    composition_tabs: [],
+    active_composition_id: null,
+    track_heights: {},
+    expanded_tracks: [],
+  }),
   viewStateSet: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -114,8 +123,8 @@ vi.mock("../ipc", async (importOriginal) => {
 // The drop's lane spawn and its Group-placement sibling both go through the
 // composition-scoped wrappers.
 vi.mock("../ipc/compositionScoped", () => ({
-  addTrackInOpenComposition: ipcMocks.addTrack,
-  addGroupLayerInOpenComposition: ipcMocks.addGroupLayer,
+  addTrackIn: ipcMocks.addTrack,
+  addGroupLayerIn: ipcMocks.addGroupLayer,
 }));
 
 const staticNum = (value: number) => ({ mode: "Static" as const, value });
@@ -219,6 +228,9 @@ const sourceMedia: MediaSummary = {
 };
 
 function renderTimeline(overrides: {
+  /// The Panel's own composition. Null — the unbound row — unless a case is
+  /// about which composition a gesture reaches.
+  compositionId?: string | null;
   selectedLayerId?: string | null;
   onSeek?: () => void;
   bladeMode?: boolean;
@@ -235,6 +247,7 @@ function renderTimeline(overrides: {
   setLayerSelection(selectedLayerId, selectedLayerId ? [selectedLayerId] : []);
   return render(
     <Timeline
+      compositionId={overrides.compositionId ?? null}
       tracks={overrides.tracks ?? [track]}
       links={overrides.links ?? []}
       durationUs={overrides.durationUs ?? 5_000_000}
@@ -2235,7 +2248,7 @@ describe("Timeline follow-playhead", () => {
     clearLayerSelection();
     setActiveRegion(null);
     setPlayheadTimeUs(0);
-    setTimelineScrollLeftPx(0);
+    setTimelineScrollLeftPx(null, 0);
     clientWidth = vi
       .spyOn(HTMLElement.prototype, "clientWidth", "get")
       .mockReturnValue(LANE_VIEWPORT_PX + HEADER_COL_PX);
@@ -2257,10 +2270,10 @@ describe("Timeline follow-playhead", () => {
     renderTimeline(LONG);
 
     act(() => setPlayheadTimeUs(5_000_000)); // 400 px — inside the window
-    expect(timelineScrollLeftPx()).toBe(0);
+    expect(timelineScrollLeftPx(null)).toBe(0);
 
     act(() => setPlayheadTimeUs(13_000_000)); // 1040 px — past it
-    expect(timelineScrollLeftPx()).toBe(960);
+    expect(timelineScrollLeftPx(null)).toBe(960);
   });
 
   it("holds the view still across a ruler scrub drag", () => {
@@ -2269,11 +2282,11 @@ describe("Timeline follow-playhead", () => {
 
     fireEvent.pointerDown(ruler, { button: 0, clientX: 200 });
     act(() => setPlayheadTimeUs(13_000_000));
-    expect(timelineScrollLeftPx()).toBe(0);
+    expect(timelineScrollLeftPx(null)).toBe(0);
 
     fireEvent.pointerUp(window, { clientX: 200 });
     act(() => setPlayheadTimeUs(13_100_000));
-    expect(timelineScrollLeftPx()).toBe(968);
+    expect(timelineScrollLeftPx(null)).toBe(968);
   });
 
   it("leaves the view alone when the pref is off", () => {
@@ -2283,7 +2296,7 @@ describe("Timeline follow-playhead", () => {
     renderTimeline(LONG);
 
     act(() => setPlayheadTimeUs(13_000_000));
-    expect(timelineScrollLeftPx()).toBe(0);
+    expect(timelineScrollLeftPx(null)).toBe(0);
   });
 });
 
@@ -2302,7 +2315,7 @@ describe("Timeline keyboard zoom", () => {
     // with no panel owning the focused region.
     setActiveRegion(null);
     setPlayheadTimeUs(0);
-    setTimelineScrollLeftPx(0);
+    setTimelineScrollLeftPx(null, 0);
     clientWidth = vi
       .spyOn(HTMLElement.prototype, "clientWidth", "get")
       .mockReturnValue(LANE_VIEWPORT_PX + HEADER_COL_PX);
@@ -3236,5 +3249,322 @@ describe("Timeline link chrome", () => {
     );
     // The editor opens on the anchor member's tab even for an unlabelled link.
     expect(screen.queryByTestId("link-tab-anchor")).not.toBeNull();
+  });
+});
+
+/// One moment, read in this Panel's coordinates (ADR 0053 decision 2). The
+/// projection itself is unit-tested (`render/timeProjection.test.ts`,
+/// `state/playheadProjection.test.ts`); what only shows up here is whether the
+/// Panel draws through it — and stops drawing when its Group is off screen.
+describe("Timeline playhead projection", () => {
+  const G1 = "comp-g1";
+  /// 80 px/s from the mocked view state, so one second of this Group's own
+  /// clock is 80 px along its ruler.
+  const PX_PER_SEC = 80;
+
+  const g1Layer: LayerSummary = {
+    ...layer,
+    id: "inner-g1",
+    label: "Inside",
+    t_end_us: 5_000_000,
+  };
+  const g1Track: TrackSummary = { ...track, id: "t-g1", layers: [g1Layer] };
+
+  /// A 4 s placement of the 5 s Group at root 12 s, so root 13 s is the Group's
+  /// own 1 s and root 3 s is nowhere on it.
+  const groupClip: LayerSummary = {
+    ...layer,
+    id: "ref-g1",
+    label: "Group 1",
+    kind: "CompositionRef",
+    t_start_us: 12_000_000,
+    t_end_us: 16_000_000,
+    params: {
+      kind: "CompositionRef",
+      composition_id: G1,
+      composition_label: null,
+      src_in_us: 0,
+      src_out_us: 4_000_000,
+      x: staticNum(0),
+      y: staticNum(0),
+      scale_x: staticNum(1),
+      scale_y: staticNum(1),
+      scale_linked: true,
+      rotation_deg: staticNum(0),
+      opacity: staticNum(1),
+      anchor_x: staticNum(0.5),
+      anchor_y: staticNum(0.5),
+    },
+  };
+
+  function renderGroupTimeline(onSeek: (tUs: number) => void) {
+    useProjectStore.getState().apply(
+      summaryFixture({
+        project_id: "p-projection",
+        root: {
+          duration_us: 60_000_000,
+          tracks: [{ ...track, id: "t-root", layers: [groupClip] }],
+        },
+        groups: [
+          {
+            id: G1,
+            label: "Lower third",
+            width: 1920,
+            height: 1080,
+            fps_num: 30,
+            fps_den: 1,
+            duration_us: 5_000_000,
+            duration_pinned: false,
+            fps_locked: false,
+            tracks: [g1Track],
+            markers: [],
+            transitions: [],
+            links: [],
+          },
+        ],
+      }),
+    );
+    openComposition(G1, "ref-g1");
+    return render(
+      <Timeline
+        compositionId={G1}
+        tracks={[g1Track]}
+        links={[]}
+        durationUs={5_000_000}
+        keybindings={{}}
+        fpsNum={30}
+        fpsDen={1}
+        bladeMode={false}
+        media={[]}
+        importing={new Set()}
+        proxyState={new Map()}
+        previewDecodable={new Set()}
+        onExitBlade={vi.fn()}
+        onSeek={onSeek}
+        onMutated={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+  }
+
+  beforeEach(() => {
+    clearLayerSelection();
+    setActiveRegion(null);
+    setPlayheadTimeUs(0);
+    setTimelineScrollLeftPx(G1, 0);
+  });
+  afterEach(() => {
+    cleanup();
+    useProjectStore.getState().apply(null);
+  });
+
+  it("draws the moment at the offset its anchor gives it, and tracks it there", () => {
+    const { container } = renderGroupTimeline(vi.fn());
+    const playhead = container.querySelector<HTMLElement>(
+      '[data-testid="timeline-playhead"]',
+    )!;
+
+    act(() => setPlayheadTimeUs(13_000_000));
+    expect(playhead.style.left).toBe(`${PX_PER_SEC}px`);
+    expect(playhead.style.display).toBe("block");
+
+    act(() => setPlayheadTimeUs(14_000_000));
+    expect(playhead.style.left).toBe(`${2 * PX_PER_SEC}px`);
+  });
+
+  it("draws nothing at a moment its placement does not reach", () => {
+    const { container } = renderGroupTimeline(vi.fn());
+    const playhead = container.querySelector<HTMLElement>(
+      '[data-testid="timeline-playhead"]',
+    )!;
+
+    act(() => setPlayheadTimeUs(13_000_000));
+    expect(playhead.style.display).toBe("block");
+
+    // Past the Group clip's end: the Group is off screen, so it has no position
+    // and a line would have to invent one.
+    act(() => setPlayheadTimeUs(17_000_000));
+    expect(playhead.style.display).toBe("none");
+  });
+
+  it("scrubs the film, not a second playhead of its own", () => {
+    const onSeek = vi.fn();
+    const { container } = renderGroupTimeline(onSeek);
+    const ruler = container.querySelector('[data-testid="timeline-ruler"]')!;
+
+    // 80 px along this Group's ruler is its own 1 s, which is root 13 s.
+    fireEvent.pointerDown(ruler, { button: 0, clientX: PX_PER_SEC });
+    fireEvent.pointerUp(window, { clientX: PX_PER_SEC });
+
+    expect(onSeek).toHaveBeenCalledWith(13_000_000);
+  });
+});
+
+// A Panel is one composition (ADR 0053), so every gesture that reaches the
+// backend has to name THIS Panel's — not whichever tab holds the keyboard, and
+// not the one the pointer wandered into.
+describe("a gesture names the Panel it happened in", () => {
+  const GROUP = "comp-group";
+  const ROOT = "comp-root";
+
+  beforeEach(() => {
+    clearLayerSelection();
+    setActiveRegion(null);
+    setPlayheadTimeUs(0);
+    ipcMocks.addTrack.mockClear();
+    ipcMocks.addGroupLayer.mockClear();
+    ipcMocks.addMediaLayer.mockClear();
+    ipcMocks.moveLayer.mockClear();
+    ipcMocks.logEmit.mockClear();
+    // The keyboard is in the root while every drop below lands in the Group.
+    useCompositionAnchorStore.setState({
+      anchors: new Map([
+        [ROOT, []],
+        [GROUP, [{ layerId: "ref-group", compositionId: GROUP }]],
+      ]),
+      focusedId: ROOT,
+    });
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, display_mode: "AllTracks" },
+    }));
+  });
+  afterEach(() => {
+    useMediaDragStore.getState().end();
+    cleanup();
+  });
+
+  /// The strip laid out the way it renders, since jsdom lays nothing out. The
+  /// strip is the drop that spawns a lane, which is the only media drop whose
+  /// composition is visible over IPC — a lane drop names a track, and a track id
+  /// already fixes the composition.
+  const stripOf = (container: HTMLElement): HTMLElement => {
+    const strip = container.querySelector(
+      '[data-testid="timeline-drop-strip"]',
+    ) as HTMLElement;
+    vi.spyOn(strip, "getBoundingClientRect").mockReturnValue({
+      left: 0, right: 1040, top: 0, bottom: 14,
+      width: 1040, height: 14, x: 0, y: 0, toJSON: () => ({}),
+    } as DOMRect);
+    return strip;
+  };
+
+  const dropOnStrip = (strip: HTMLElement, payload: unknown) => {
+    const dataTransfer = {
+      types: [MEDIA_DRAG_TYPE],
+      dropEffect: "none",
+      getData: () => JSON.stringify(payload),
+    };
+    const drop = createEvent.drop(strip, { dataTransfer });
+    Object.defineProperty(drop, "clientX", {
+      value: MEDIA_DRAG_CURSOR_OFFSET_PX + 240,
+    });
+    fireEvent(strip, drop);
+  };
+
+  it("spawns the dropped clip's lane in this Panel, leaving the keyboard where it was", async () => {
+    const payload = mediaDragPayload(sourceMedia);
+    useMediaDragStore.getState().begin(payload);
+    const { container } = renderTimeline({
+      compositionId: GROUP,
+      media: [sourceMedia],
+    });
+    dropOnStrip(stripOf(container), payload);
+
+    await waitFor(() => expect(ipcMocks.addTrack).toHaveBeenCalledWith(GROUP));
+    // A drop is a local act: taking the keyboard would take the inspector and
+    // the picture with it, which is the opposite of what dropping into a
+    // background timeline is for.
+    expect(useCompositionAnchorStore.getState().focusedId).toBe(ROOT);
+  });
+
+  it("places a dropped Group in this Panel, so the actor's cross-check agrees", async () => {
+    const payload = compositionDragPayload(
+      { id: "comp-inner", duration_us: 2_000_000 },
+      "Lower third",
+    );
+    useMediaDragStore.getState().begin(payload);
+    const { container } = renderTimeline({ compositionId: GROUP });
+    dropOnStrip(stripOf(container), payload);
+
+    await waitFor(() =>
+      expect(ipcMocks.addGroupLayer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          compositionId: GROUP,
+          sourceCompositionId: "comp-inner",
+          trackId: "spawned-track",
+        }),
+      ),
+    );
+    expect(useCompositionAnchorStore.getState().focusedId).toBe(ROOT);
+  });
+
+  it("refuses a clip dragged onto another Panel, and says so on the status bar", () => {
+    const { container, getByText } = renderTimeline({
+      compositionId: ROOT,
+      selectedLayerId: layer.id,
+    });
+    const lane = container.querySelector(
+      '[data-testid="track-lane"]',
+    ) as HTMLElement;
+    vi.spyOn(lane, "getBoundingClientRect").mockReturnValue({
+      left: 0, right: 480, top: 14, bottom: 70,
+      width: 480, height: 56, x: 0, y: 14, toJSON: () => ({}),
+    } as DOMRect);
+    // The Group's Panel, side by side with this one: same rows, different
+    // composition. Its band overlaps this timeline's in y, which is the whole
+    // reason the lane hit-test cannot answer this on its own.
+    const neighbour = document.createElement("div");
+    document.body.appendChild(neighbour);
+    vi.spyOn(neighbour, "getBoundingClientRect").mockReturnValue({
+      left: 500, right: 1000, top: 0, bottom: 200,
+      width: 500, height: 200, x: 500, y: 0, toJSON: () => ({}),
+    } as DOMRect);
+    const unregister = registerTimelineSurface(GROUP, neighbour);
+
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 40 });
+    fireEvent.pointerMove(window, { clientX: 700, clientY: 40 });
+
+    expect(ipcMocks.logEmit).toHaveBeenCalledWith(
+      expect.objectContaining({ i18n_key: "log.cross_composition_move" }),
+    );
+    // One line for the crossing, not one per pointer event.
+    fireEvent.pointerMove(window, { clientX: 720, clientY: 40 });
+    expect(ipcMocks.logEmit).toHaveBeenCalledTimes(1);
+
+    fireEvent.pointerUp(window, { clientX: 720, clientY: 40 });
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+
+    unregister();
+    neighbour.remove();
+  });
+
+  // One `window` keydown listener per mounted Panel, and `scope: "timeline"`
+  // is a KIND — so every open timeline passes the same region test. Only the
+  // focused Panel may answer, or a two-tab workspace runs each handler twice:
+  // both would zoom, and a toggle would undo itself.
+  describe("a timeline-scoped shortcut answers only in the focused Panel", () => {
+    beforeEach(() => {
+      setActiveRegion("timeline");
+    });
+
+    it("stays silent in a Panel the keyboard is not in", () => {
+      renderTimeline({ compositionId: GROUP, tracks: [linkedTrack] });
+
+      fireEvent.keyDown(window, { key: "a", code: "KeyA", ctrlKey: true });
+
+      expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
+        new Set(),
+      );
+    });
+
+    it("answers in the Panel that holds the keyboard", () => {
+      renderTimeline({ compositionId: ROOT, tracks: [linkedTrack] });
+
+      fireEvent.keyDown(window, { key: "a", code: "KeyA", ctrlKey: true });
+
+      expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
+        new Set([layer.id, linkedLayer.id]),
+      );
+    });
   });
 });

@@ -10,8 +10,8 @@
 
 import { addTransition, type TransitionDirection } from "../ipc";
 import { logMutationFailure } from "../errors/tryMutate";
-import { playheadTimeUs } from "../state/playheadStore";
-import { useCompositionScopeStore } from "../state/compositionScopeStore";
+import { focusedPlayheadUs } from "../state/playheadProjection";
+import { useCompositionAnchorStore } from "../state/compositionAnchorStore";
 import {
   compositionOrRoot,
   currentOpenComposition,
@@ -37,9 +37,10 @@ import {
 export function transitionTargetCut(): TransitionCut | null {
   const comp = currentOpenComposition();
   if (!comp) return null;
+  // Projected: the cut is looked for among the editing target's own layers.
   return findNearestCut(
     comp.tracks,
-    playheadTimeUs(),
+    focusedPlayheadUs(),
     defaultTransitionDurationUs(comp.fps_num, comp.fps_den),
     useSelectionStore.getState().selectedLayerIds,
   );
@@ -65,9 +66,9 @@ export function hasTransitionCut(): boolean {
 /// re-renders the subscriber only when cut-existence flips, not on every
 /// summary refresh.
 export const useHasTransitionCut = (): boolean => {
-  const openId = useCompositionScopeStore((s) => s.openId);
+  const focusedId = useCompositionAnchorStore((s) => s.focusedId);
   return useProjectStore((s) => {
-    const comp = compositionOrRoot(s.summary, openId);
+    const comp = compositionOrRoot(s.summary, focusedId);
     return (
       comp !== null &&
       findNearestCut(

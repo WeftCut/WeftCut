@@ -37,6 +37,7 @@ function track(partial: Partial<TrackSummary> = {}): TrackSummary {
 function renderHeader(t: TrackSummary, onMutated = vi.fn().mockResolvedValue(undefined)) {
   const view = render(
     <TrackHeader
+      compositionId={null}
       track={t}
       height={56}
       isRevealed={false}

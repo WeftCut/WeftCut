@@ -68,11 +68,33 @@ import {
 import { type ProxyState } from "../panels/mediaReadiness";
 import { type OptimizeInfo } from "../panels/importOptimize";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
-import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
-import { useOpenComposition } from "../state/projectStore";
+import { useFocusedPlayheadUsThrottled } from "../state/playheadProjection";
+import {
+  useComposition,
+  useCompositionRefCounts,
+  useGroupOrdinals,
+  useOpenComposition,
+  useProjectStore,
+} from "../state/projectStore";
+import {
+  compositionPlacements,
+  focusComposition,
+  restoreCompositionTabs,
+  switchAnchor,
+  syncOpenCompositions,
+  useAnchorPath,
+} from "../state/compositionAnchorStore";
 import { jumpToTimeUs } from "../state/navigation";
 import { setTool, useActiveTool } from "../state/toolStore";
-import { Menu, MenuItem } from "../menu/Menu";
+import { useCursorAnchor } from "../timeline/contextMenuAnchor";
+import { Menu, MenuItem, SubMenu } from "../menu/Menu";
+import { FOCUS_REGION_INSTANCE_ATTR } from "../focus/focusRegion";
+import {
+  anchorEntryLabel,
+  compositionPathText,
+  timelineTabLabel,
+} from "./timelineTabName";
+import { registerTimelinePanels } from "./timelinePanels";
 import {
   DockWorkspaceAdapter,
   EDGE_DOCK_FRACTION,
@@ -85,6 +107,10 @@ import {
   PANEL_REGISTRY,
   STRIP_THICKNESS,
   isPanelKind,
+  panelIdOf,
+  parsePanelId,
+  type DockPanelParams,
+  type PanelId,
   type PanelKind,
 } from "./panelRegistry";
 
@@ -109,14 +135,14 @@ export interface DockPanelContracts {
   onRevealTrack: (trackId: string, layerId: string) => void;
 }
 
-interface DockPanelParams extends Record<string, unknown> {
-  kind: PanelKind;
-}
-
 const ContractsContext = createContext<DockPanelContracts | null>(null);
 
 export interface DockPanelRuntimeContract {
   kind: PanelKind;
+  /** This Panel's Dock address, and the instance behind it — the composition a
+   *  timeline Panel is bound to, null for a Panel that is its kind. */
+  id: PanelId;
+  instance: string | null;
   isVisible: boolean;
   /** This Panel's own Dockview api. Exposed so a Panel that must react to its
    *  OWN geometry (the Quick Actions strip flipping axis) can subscribe for
@@ -134,10 +160,13 @@ const DockPanelRuntimeContext = createContext<DockPanelRuntimeContract | null>(
   null,
 );
 
+/** What a Panel's own chrome — its tab, its grip menu, its hover surface — can
+ *  ask of the Workspace. Addressed by id, since the caller is one Panel acting
+ *  on itself; `openPanel` is the exception because a menu names a kind. */
 interface WorkspaceChromeCommands {
-  closePanel(kind: PanelKind): void;
-  setHoveredPanel(kind: PanelKind | null): void;
-  toggleMaximize(kind?: PanelKind): void;
+  closePanel(id: PanelId): void;
+  setHoveredPanel(id: PanelId | null): void;
+  toggleMaximize(id?: PanelId): void;
   openPanel(kind: PanelKind): void;
   resetWorkspace(): void;
 }
@@ -184,9 +213,11 @@ function useWorkspaceChrome(): WorkspaceChromeCommands {
 function MediaDockPanel() {
   const contracts = useContracts();
   const summary = contracts.summary;
-  // Every Panel below shows the OPEN composition (compositionScopeStore.ts):
-  // its tracks, links, transitions and duration. The summary itself still
-  // supplies what is project-wide — media, history.
+  // Every Panel below shows the FOCUSED composition — the one whose timeline
+  // Panel last held the keyboard (`compositionAnchorStore.ts`): its tracks,
+  // links, transitions and duration. The summary itself still supplies what is
+  // project-wide — media, history. The timeline Panel is the one exception; it
+  // shows the composition its own address names.
   const comp = useOpenComposition();
   return (
     <MediaDropZone>
@@ -218,7 +249,6 @@ function PreviewDockPanel() {
       summary={contracts.summary}
       paused={contracts.paused}
       onPausedChange={contracts.onPausedChange}
-      onSeek={contracts.onSeek}
       onTogglePlay={contracts.onTogglePlay}
       previewDecodableOf={contracts.previewDecodableOf}
       visible={runtime.isVisible}
@@ -236,10 +266,15 @@ function TimelineDockPanel() {
   // `bladeMode` boolean prop — it fans out to a dozen call sites in
   // LayerBlock/TrackLane and none of them need to know about tools.
   const bladeMode = useActiveTool() === "blade";
-  const comp = useOpenComposition();
+  // This Panel's OWN composition, not the focused one (ADR 0053): a timeline
+  // renders the composition its address names, whichever tab has the keyboard.
+  // The instance is null only for the unbound row the Dock builds before the
+  // first summary names a root, which `compositionOrRoot` reads as the root.
+  const comp = useComposition(runtime.instance);
   return (
     <section className="timeline">
       <Timeline
+        compositionId={runtime.instance}
         tracks={comp?.tracks ?? []}
         links={comp?.links ?? []}
         transitions={comp?.transitions ?? []}
@@ -318,7 +353,9 @@ function QuickActionsDockPanel() {
 function AttributeDockPanel() {
   const contracts = useContracts();
   const runtime = useDockPanelRuntime();
-  const currentTimeUs = usePlayheadTimeUsThrottled(100, runtime.isVisible);
+  // Panel-rate (tier 3) and PROJECTED: the rows read parameter values off the
+  // editing target's layers, so the moment is taken on that composition's clock.
+  const currentTimeUs = useFocusedPlayheadUsThrottled(100, runtime.isVisible);
   const comp = useOpenComposition();
   return (
     <div className="weft-dock-panel-scroll">
@@ -337,7 +374,7 @@ function AttributeDockPanel() {
 function EffectDockPanel() {
   const contracts = useContracts();
   const runtime = useDockPanelRuntime();
-  const currentTimeUs = usePlayheadTimeUsThrottled(100, runtime.isVisible);
+  const currentTimeUs = useFocusedPlayheadUsThrottled(100, runtime.isVisible);
   const comp = useOpenComposition();
   return (
     <div className="weft-dock-panel-scroll">
@@ -493,9 +530,17 @@ export function WeftCutPanelRenderer({
   const Component = PANEL_COMPONENTS[params.kind];
   const chrome = useWorkspaceChrome();
   const isVisible = useDockviewPanelVisibility(api);
+  const instance = params.instance;
   const runtime = useMemo<DockPanelRuntimeContract>(
-    () => ({ kind: params.kind, isVisible, api, containerApi }),
-    [api, containerApi, isVisible, params.kind],
+    () => ({
+      kind: params.kind,
+      id: panelIdOf(params.kind, instance),
+      instance,
+      isVisible,
+      api,
+      containerApi,
+    }),
+    [api, containerApi, instance, isVisible, params.kind],
   );
   return (
     <DockPanelRuntimeContext.Provider value={runtime}>
@@ -511,8 +556,13 @@ export function WeftCutPanelRenderer({
         // renderers, which are chrome, not regions.
         tabIndex={-1}
         data-focus-region={params.kind}
+        // A SECOND attribute, never a richer value in the first one:
+        // `data-focus-region` is a `PanelKind` and `ActionDef.scope` is a list
+        // of them, so widening it would put an instance where the shortcut
+        // catalogue reads a kind. `useFocusRegions` is what pairs the two.
+        {...(instance === null ? {} : { [FOCUS_REGION_INSTANCE_ATTR]: instance })}
         data-panel-visible={isVisible ? "true" : "false"}
-        onPointerEnter={() => chrome.setHoveredPanel(params.kind)}
+        onPointerEnter={() => chrome.setHoveredPanel(runtime.id)}
         onPointerLeave={() => chrome.setHoveredPanel(null)}
       >
         <Component />
@@ -789,10 +839,12 @@ function useFixedStripThickness(
  */
 function DockGripTab({
   kind,
+  id,
   api,
   containerApi,
 }: {
   kind: PanelKind;
+  id: PanelId;
   api: IDockviewPanelHeaderProps<DockPanelParams>["api"];
   containerApi: IDockviewPanelHeaderProps<DockPanelParams>["containerApi"];
 }) {
@@ -838,7 +890,7 @@ function DockGripTab({
           onClose={() => setMenuAt(null)}
           onClosePanel={() => {
             setMenuAt(null);
-            chrome.closePanel(kind);
+            chrome.closePanel(id);
           }}
         />
       ) : null}
@@ -911,19 +963,27 @@ function GripContextMenu({
 
 /** The standard Panel tab: label, selection marker, hover tracking, and
  *  double-click-to-maximize. */
-function DockPanelTab({ kind, title }: { kind: PanelKind | null; title: string }) {
+function DockPanelTab({
+  kind,
+  id,
+  title,
+}: {
+  kind: PanelKind | null;
+  id: PanelId | null;
+  title: string;
+}) {
   const chrome = useWorkspaceChrome();
   return (
     <div
       className="weft-dock-tab"
       data-panel-kind={kind ?? undefined}
-      onPointerEnter={() => chrome.setHoveredPanel(kind)}
+      onPointerEnter={() => chrome.setHoveredPanel(id)}
       onPointerLeave={() => chrome.setHoveredPanel(null)}
       onDoubleClick={(event) => {
-        if (!kind) return;
+        if (!id) return;
         event.preventDefault();
         event.stopPropagation();
-        chrome.toggleMaximize(kind);
+        chrome.toggleMaximize(id);
       }}
     >
       {/* Selection marker: CSS shows it (and the bottom accent) only on
@@ -932,6 +992,164 @@ function DockPanelTab({ kind, title }: { kind: PanelKind | null; title: string }
       <span className="weft-dock-tab-label">{title}</span>
       <TextAlignStartIcon size={12} className="weft-dock-tab-active-icon" aria-hidden="true" />
     </div>
+  );
+}
+
+/**
+ * A timeline Panel's tab: the composition it shows, and the route it was
+ * opened along.
+ *
+ * This tab strip IS the navigation a breadcrumb row used to be (ADR 0053) —
+ * which is why the route lives in the tooltip rather than in a row of its own:
+ * a Panel whose title is its dock tab must not grow a second title inside
+ * itself, and the Dock already gives switching, reordering and pulling apart
+ * for free.
+ */
+function TimelineDockTab({
+  id,
+  compositionId,
+  panelTitle,
+}: {
+  id: PanelId;
+  compositionId: string;
+  /// The kind's own title, which a Panel showing the root prints unchanged.
+  panelTitle: string;
+}) {
+  const { t } = useTranslation();
+  const chrome = useWorkspaceChrome();
+  const summary = useProjectStore((s) => s.summary);
+  const ordinals = useGroupOrdinals();
+  const crumbs = useAnchorPath(compositionId);
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+  return (
+    <>
+      <div
+        className="weft-dock-tab"
+        data-panel-kind="timeline"
+        // The other half of this tab's Panel id. Kind alone stops identifying a
+        // timeline tab the moment a second composition is open, and tab ORDER
+        // is not an identity — it changes with every drag. Paired with
+        // `data-panel-kind` for the same reason the Panel body splits its
+        // region name from its instance: one attribute stays a `PanelKind`.
+        data-panel-instance={compositionId}
+        title={compositionPathText(summary, crumbs, ordinals, t)}
+        onPointerEnter={() => chrome.setHoveredPanel(id)}
+        onPointerLeave={() => chrome.setHoveredPanel(null)}
+        onDoubleClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          chrome.toggleMaximize(id);
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setMenuAt({ x: event.clientX, y: event.clientY });
+        }}
+      >
+        <span className="weft-dock-tab-label">
+          {timelineTabLabel(summary, compositionId, ordinals, panelTitle, t)}
+        </span>
+        <TextAlignStartIcon size={12} className="weft-dock-tab-active-icon" aria-hidden="true" />
+      </div>
+      {menuAt ? (
+        <TimelineTabContextMenu
+          x={menuAt.x}
+          y={menuAt.y}
+          compositionId={compositionId}
+          onClose={() => setMenuAt(null)}
+          onClosePanel={() => {
+            setMenuAt(null);
+            chrome.closePanel(id);
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The timeline tab's right-click menu, whose one non-obvious row is
+ * `Switch anchor`.
+ *
+ * Root-to-local projection is unambiguous, local-to-root is not, so a Group
+ * placed more than once needs the tab to say WHICH placement its times are
+ * read against (ADR 0053 §5). Offered only where that ambiguity exists: with a
+ * single placement there is nothing to choose, and a submenu holding one
+ * checked row would be a question with one answer.
+ *
+ * Every row is a `MenuItem` — the rule the layer menu states — but the anchor
+ * rows carry no command form: an entry names one Group CLIP in one project, so
+ * there is no id a catalogue could hold, the same reason the layer menu renders
+ * its composition-scoped rename as a plain item.
+ */
+function TimelineTabContextMenu({
+  x,
+  y,
+  compositionId,
+  onClose,
+  onClosePanel,
+}: {
+  x: number;
+  y: number;
+  compositionId: string;
+  onClose: () => void;
+  onClosePanel: () => void;
+}) {
+  const { t } = useTranslation();
+  const summary = useProjectStore((s) => s.summary);
+  const ordinals = useGroupOrdinals();
+  const refCounts = useCompositionRefCounts();
+  const crumbs = useAnchorPath(compositionId);
+  const anchor = useCursorAnchor(x, y);
+  // Enumerated only where the ref count already says there is a choice, so the
+  // common single-placement tab pays nothing for a walk of the whole project.
+  const placements = useMemo(
+    () =>
+      summary && (refCounts.get(compositionId) ?? 0) > 1
+        ? compositionPlacements(summary, compositionId)
+        : [],
+    [compositionId, refCounts, summary],
+  );
+  const anchoredOn = crumbs.at(-1)?.layerId ?? null;
+  return (
+    <MenuPrimitive.Root
+      open
+      modal={false}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <MenuPrimitive.Portal>
+        <MenuPrimitive.Positioner
+          anchor={anchor}
+          side="bottom"
+          align="start"
+          sideOffset={0}
+          className="app-popup-positioner"
+        >
+          <MenuPrimitive.Popup className="app-menu-list">
+            {placements.length > 1 ? (
+              <SubMenu label={t("dock_workspace.timeline_tab.switch_anchor")}>
+                {placements.map((placement) => (
+                  <MenuItem
+                    key={placement.layerId}
+                    label={anchorEntryLabel(summary, placement, ordinals, t)}
+                    checked={placement.layerId === anchoredOn}
+                    onSelect={() => {
+                      onClose();
+                      switchAnchor(compositionId, placement.layerId);
+                    }}
+                  />
+                ))}
+              </SubMenu>
+            ) : null}
+            <MenuItem
+              label={t("dock_workspace.close_panel")}
+              onSelect={onClosePanel}
+            />
+          </MenuPrimitive.Popup>
+        </MenuPrimitive.Positioner>
+      </MenuPrimitive.Portal>
+    </MenuPrimitive.Root>
   );
 }
 
@@ -947,20 +1165,22 @@ function DockPanelTab({ kind, title }: { kind: PanelKind | null; title: string }
  */
 function QuickActionsDockTab({
   kind,
+  id,
   title,
   api,
   containerApi,
 }: {
   kind: PanelKind;
+  id: PanelId;
   title: string;
   api: IDockviewPanelHeaderProps<DockPanelParams>["api"];
   containerApi: IDockviewPanelHeaderProps<DockPanelParams>["containerApi"];
 }) {
   const sole = useIsSoleGroupPanel(api, containerApi);
   return sole ? (
-    <DockGripTab kind={kind} api={api} containerApi={containerApi} />
+    <DockGripTab kind={kind} id={id} api={api} containerApi={containerApi} />
   ) : (
-    <DockPanelTab kind={kind} title={title} />
+    <DockPanelTab kind={kind} id={id} title={title} />
   );
 }
 
@@ -970,13 +1190,19 @@ export function WeftCutDockTab({
   tabLocation,
 }: IDockviewPanelHeaderProps<DockPanelParams>) {
   const { t } = useTranslation();
-  const kind = isPanelKind(api.id) ? api.id : null;
+  // The tab renderer is handed a raw Dockview id, so it reads the address
+  // rather than being told it. A tab on a panel this catalogue cannot resolve
+  // still renders, under whatever title Dockview kept.
+  const parsed = parsePanelId(api.id);
+  const kind = parsed?.kind ?? null;
+  const id = parsed ? panelIdOf(parsed.kind, parsed.instance) : null;
   const title = kind ? t(PANEL_REGISTRY[kind].titleKey) : (api.title ?? api.id);
 
-  if (kind === "quick-actions" && tabLocation === "header") {
+  if (parsed && id && parsed.kind === "quick-actions" && tabLocation === "header") {
     return (
       <QuickActionsDockTab
-        kind={kind}
+        kind={parsed.kind}
+        id={id}
         title={title}
         api={api}
         containerApi={containerApi}
@@ -984,7 +1210,19 @@ export function WeftCutDockTab({
     );
   }
 
-  return <DockPanelTab kind={kind} title={title} />;
+  // Only a BOUND timeline gets the composition tab; the unbound row the Dock
+  // builds before the first summary has no composition to name yet.
+  if (parsed && id && parsed.kind === "timeline" && parsed.instance !== null) {
+    return (
+      <TimelineDockTab
+        id={id}
+        compositionId={parsed.instance}
+        panelTitle={title}
+      />
+    );
+  }
+
+  return <DockPanelTab kind={kind} id={id} title={title} />;
 }
 
 export function EmptyWorkspaceRecovery() {
@@ -1211,9 +1449,9 @@ export function DockWorkspace({
 
   const chrome = useMemo<WorkspaceChromeCommands>(
     () => ({
-      closePanel: (kind) => adapterRef.current?.closePanel(kind),
-      setHoveredPanel: (kind) => adapterRef.current?.setHoveredPanel(kind),
-      toggleMaximize: (kind) => adapterRef.current?.toggleMaximize(kind),
+      closePanel: (id) => adapterRef.current?.closePanel(id),
+      setHoveredPanel: (id) => adapterRef.current?.setHoveredPanel(id),
+      toggleMaximize: (id) => adapterRef.current?.toggleMaximize(id),
       openPanel: (kind) => adapterRef.current?.openPanel(kind),
       resetWorkspace: () => {
         if (onResetWorkspace) onResetWorkspace();
@@ -1223,6 +1461,13 @@ export function DockWorkspace({
     [onResetWorkspace],
   );
 
+  // The composition a timeline Panel is one of (ADR 0053). Read here, at the
+  // seam that composes Panels, so neither the catalogue nor the layout schema
+  // has to know a project exists.
+  const rootCompositionId = useProjectStore((s) => s.summary?.root_id ?? null);
+
+  const openTimelinesRef = useRef<(() => void) | null>(null);
+
   const onReady = useCallback(({ api }: DockviewReadyEvent) => {
     let adapter = adapterRef.current;
     if (!adapter?.belongsTo(api)) {
@@ -1230,16 +1475,81 @@ export function DockWorkspace({
       adapter = new DockWorkspaceAdapter(api, sectionRef.current ?? undefined);
       adapterRef.current = adapter;
     }
+    // Which compositions have a Panel is a fact only the Dock holds, and the
+    // anchor store is what has to act on it — a tab dragged out, closed or
+    // never restored leaves an anchor with nothing to anchor. Re-subscribed
+    // rather than added to, so a StrictMode replay over one adapter does not
+    // stack two listeners.
+    openTimelinesRef.current?.();
+    const bound = adapter;
+    // The Panel that was active last time the Dock said anything. Activating a
+    // timeline tab IS entering that composition — without it the tab strip
+    // would only change which timeline is on SCREEN, leaving the editing
+    // target (the inspector, a follow-focus preview, every timeline-scoped
+    // key) pointed at the tab the user just left.
+    //
+    // Edge-triggered, and that is the whole subtlety: the Dock reports every
+    // layout change through the same channel, so reading the active Panel on
+    // each one would re-enter whichever timeline is active whenever anything
+    // moved — and a drop into a background timeline, which must NOT take the
+    // keyboard, moves something every time.
+    let lastActive = bound.getSnapshot().activePanel;
+    openTimelinesRef.current = bound.subscribe(() => {
+      syncOpenCompositions(bound.openTimelineCompositions());
+      const active = bound.getSnapshot().activePanel;
+      if (active === lastActive) return;
+      lastActive = active;
+      // Only when the newly active Panel is a timeline: activating the
+      // inspector or the media pool must leave the last focused timeline
+      // exactly where it was, which is what `scope: "timeline"` resolves
+      // against (ADR 0041).
+      const parsed = parsePanelId(active);
+      if (parsed?.kind === "timeline" && parsed.instance !== null) {
+        focusComposition(parsed.instance);
+      }
+    });
+    // Read live rather than from the render above: the Dock is ready before
+    // this component's own effects run, and the baseline layout it is about to
+    // build should be bound straight away wherever the summary already exists.
+    adapter.setTimelineInstance(
+      useProjectStore.getState().summary?.root_id ?? null,
+    );
     adapter.initializeEditingLayout();
     onControllerReady?.(adapter);
   }, [onControllerReady]);
+
+  // The first summary of a session lands after the Dock has built its layout,
+  // so the timeline row is bound when the root composition finally names itself.
+  // Binding it is also the moment the rest of that project's tabs can be
+  // unfolded out of its `view.json`: the row they are added beside now exists,
+  // and the stale ones the binding closed are gone.
+  useEffect(() => {
+    adapterRef.current?.setTimelineInstance(rootCompositionId);
+    void restoreCompositionTabs();
+  }, [rootCompositionId]);
 
   useEffect(() => {
     adapterRef.current?.refreshPanelTitles();
   }, [i18n.resolvedLanguage]);
 
+  // "Open a timeline for THIS composition" reaches the Dock from the anchor
+  // store and the navigation verbs, which name a composition and know nothing
+  // of Panels; this is the whole of the wire between them.
+  useEffect(
+    () =>
+      registerTimelinePanels({
+        open: (compositionId) =>
+          adapterRef.current?.openTimelinePanel(compositionId),
+        close: (compositionId) =>
+          adapterRef.current?.closeTimelinePanel(compositionId),
+      }),
+    [],
+  );
+
   useEffect(
     () => () => {
+      openTimelinesRef.current?.();
+      openTimelinesRef.current = null;
       adapterRef.current?.dispose();
       adapterRef.current = null;
       onControllerReady?.(null);

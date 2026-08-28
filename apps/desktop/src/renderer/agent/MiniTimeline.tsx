@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import { formatTimecode } from "../frames";
 import type { MarkerSummary } from "../ipc";
-import { usePlayheadTimeUs } from "../state/playheadStore";
+import { useFocusedPlayheadUs } from "../state/playheadProjection";
 
 /// Agent-mode mini timeline. Strip with click/drag-to-seek + a tick
 /// row + project marker pips + timecode readout. No track lanes — the
@@ -70,8 +70,10 @@ export function MiniTimeline({
   const { t } = useTranslation();
   // Frame-rate playhead subscription (tier 4, playheadStore.ts): the
   // agent-mode progress strip is a tiny leaf subtree, so per-frame React
-  // updates here are cheap and keep the playhead butter-smooth.
-  const currentTimeUs = usePlayheadTimeUs();
+  // updates here are cheap and keep the playhead butter-smooth. Projected —
+  // the strip's ticks are the open composition's own, so the moment has to be
+  // read on that composition's clock.
+  const currentTimeUs = useFocusedPlayheadUs();
   const stripRef = useRef<HTMLDivElement | null>(null);
   // Strip width drives tick density. ResizeObserver writes into
   // state so the next render picks up the new tick set; the setter

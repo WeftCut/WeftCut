@@ -14,9 +14,9 @@ import { compositionOrRoot, rootCompositionOf } from "../ipc/compositions";
 import { compositionRefCounts } from "../lib/compositionRefs";
 import { groupOrdinals } from "../lib/layerName";
 import {
-  reconcileCompositionScope,
-  useCompositionScopeStore,
-} from "./compositionScopeStore";
+  reconcileCompositionAnchors,
+  useCompositionAnchorStore,
+} from "./compositionAnchorStore";
 import { restorePrecomposeSelection } from "./precomposeSelection";
 import {
   retainCompositionSelection,
@@ -24,6 +24,7 @@ import {
   retainTransitionSelection,
 } from "./selectionStore";
 import { LatestRequestCoordinator } from "./latestRequest";
+import { retainTrackViewState } from "./viewState";
 
 /// Frontend mirror of the main-process TS state actor's project, kept in sync
 /// via `project:changed` backend events. The PixiJS preview consumes this
@@ -54,7 +55,7 @@ export interface ProjectStoreState {
   compositionIdByTrackId: Map<string, string>;
   /// `composition_id → N` for the derived `Group N` name (`lib/layerName.ts`).
   /// Built once per summary rather than per naming call: every Group clip, every
-  /// breadcrumb crumb and every search entry asks the same question, and the
+  /// timeline tab and every search entry asks the same question, and the
   /// answer depends on the WHOLE composition set, not on the layer asking.
   groupOrdinals: ReadonlyMap<string, number>;
   /// `composition_id → ref_count` (`lib/compositionRefs.ts`). Indexed here for
@@ -154,7 +155,11 @@ export const useProjectStore = create<
     retainCompositionSelection(summary ? Object.keys(summary.compositions) : []);
     // After the indices and the retained selections: the fallback switch this
     // may run clears the selection, and reads the summary just published.
-    reconcileCompositionScope(summary);
+    reconcileCompositionAnchors(summary);
+    // After the reconcile, which is where a project change drops the outgoing
+    // project's view state entirely — pruning it against the incoming
+    // project's tracks would delete a document that is no longer ours.
+    retainTrackViewState(indices.compositionIdByTrackId.keys());
     // After the switch, for the same reason: undoing a pre-compose from inside
     // the Group it created lands here having just cleared the selection, and
     // this is what puts the grouped layers back in it.
@@ -216,32 +221,47 @@ export const useProjectSummary = (): ProjectSummary | null =>
 export const useAudioRoles = (): RoleMixView[] =>
   useProjectStore((s) => s.summary?.audio_roles ?? EMPTY_ROLES);
 
-/// The OPEN composition's markers — the ruler paints one timeline's markers.
-/// Reads through the empty sentinel pre-workspace.
-export const useProjectMarkers = (): MarkerSummary[] =>
-  useOpenComposition()?.markers ?? EMPTY_MARKERS;
+/// One composition's markers — a ruler paints the markers of the timeline it
+/// belongs to, not of whichever timeline has focus. Reads through the empty
+/// sentinel pre-workspace.
+export const useCompositionMarkers = (
+  compositionId: string | null,
+): MarkerSummary[] => useComposition(compositionId)?.markers ?? EMPTY_MARKERS;
 
 // ===== Compositions =========================================================
 
 export { compositionOrRoot, rootCompositionOf };
 
-/// Imperative read of the open composition for event-time callers (shortcut
+/// Imperative read of the FOCUSED composition for event-time callers (shortcut
 /// handlers, command predicates) — the non-hook twin of `useOpenComposition`.
 export function currentOpenComposition(): CompositionSummary | null {
   return compositionOrRoot(
     useProjectStore.getState().summary,
-    useCompositionScopeStore.getState().openId,
+    useCompositionAnchorStore.getState().focusedId,
   );
 }
 
-/// The open composition, for React. Two atomic subscriptions rather than one
-/// composite selector: each yields a stable reference (the id is a string, the
-/// composition a sub-object of the summary), so an unrelated store tick bails
-/// out instead of re-rendering.
+/// The FOCUSED composition — the one whose timeline Panel last held the
+/// keyboard (`compositionAnchorStore.ts`), which is what the inspector, the
+/// Playhead Panel and every timeline-scoped command act on. A timeline Panel
+/// reads `useComposition` with its OWN id instead: it renders the composition
+/// it is bound to whether or not it has focus.
+///
+/// Two atomic subscriptions rather than one composite selector: each yields a
+/// stable reference (the id is a string, the composition a sub-object of the
+/// summary), so an unrelated store tick bails out instead of re-rendering.
 export const useOpenComposition = (): CompositionSummary | null => {
-  const openId = useCompositionScopeStore((s) => s.openId);
-  return useProjectStore((s) => compositionOrRoot(s.summary, openId));
+  const focusedId = useCompositionAnchorStore((s) => s.focusedId);
+  return useProjectStore((s) => compositionOrRoot(s.summary, focusedId));
 };
+
+/// One NAMED composition, for the Panels that carry their own id. `null` — the
+/// timeline row the Dock builds before a summary names a root — reads as the
+/// root, which is `compositionOrRoot`'s rule everywhere else too.
+export const useComposition = (
+  compositionId: string | null,
+): CompositionSummary | null =>
+  useProjectStore((s) => compositionOrRoot(s.summary, compositionId));
 
 /// Resolve a media item by id without forcing the caller to subscribe
 /// to the whole media array. The selector reads from `mediaById`, which

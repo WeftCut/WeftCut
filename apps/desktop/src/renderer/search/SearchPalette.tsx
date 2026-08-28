@@ -11,8 +11,9 @@ import { logEmit } from "../ipc";
 import { resolveAccelerator } from "../shortcuts/match";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { jumpToLayer, jumpToTimeUs, revealInMediaPool } from "../state/navigation";
+import { focusedRootUs } from "../state/playheadProjection";
 import { useOpenComposition } from "../state/projectStore";
-import { openComposition, openCompositionId } from "../state/compositionScopeStore";
+import { openComposition, focusedCompositionId } from "../state/compositionAnchorStore";
 import { GROUP_ORDER, rankEntries, type RankedResult } from "./matcher";
 import { useSearchEntries } from "./searchIndexStore";
 import type { MediaUsage, SearchEntryType } from "./types";
@@ -139,14 +140,17 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
       case "marker":
         // The marker's timeline first — a seek means nothing on another one.
         if (
-          p.compositionId !== openCompositionId() &&
+          p.compositionId !== focusedCompositionId() &&
           !openComposition(p.compositionId, null)
         ) {
           logStaleTarget();
           onClose();
           return;
         }
-        jumpToTimeUs(p.tUs);
+        // The marker's time is on ITS composition's clock, and that
+        // composition is open by now — so the moment to park the film on is
+        // that time projected up through the anchor the open gave it.
+        jumpToTimeUs(focusedRootUs(p.tUs));
         onClose();
         return;
     }

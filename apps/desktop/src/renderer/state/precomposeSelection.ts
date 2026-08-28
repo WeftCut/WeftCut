@@ -5,7 +5,7 @@
 // that leaves the user worse off than a plain undo does. Pre-compose is the only
 // edit that can pull the view into a different composition: enter the Group,
 // press Ctrl+Z, and the scope store falls back to the root (its
-// `reconcileCompositionScope` — the open composition no longer exists) with the
+// `reconcileCompositionAnchors` — the open composition no longer exists) with the
 // selection cleared, which is what every switch does. So the user asks for their
 // layers back and lands on a timeline with nothing selected, unable to press
 // Ctrl+G again without re-picking the clips.

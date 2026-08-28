@@ -27,7 +27,7 @@ vi.mock("../ipc", async (importActual) => {
 // The picker adds through the composition-scoped wrapper; the same mock
 // stands in so the assertions below read the args it was handed.
 vi.mock("../ipc/compositionScoped", () => ({
-  addMotifInOpenComposition: ipcMocks.addMotif,
+  addMotifIn: ipcMocks.addMotif,
 }));
 vi.mock("@/bridge/events", () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
@@ -77,6 +77,7 @@ async function renderPicker() {
       onClose={onClose}
       onAdded={onAdded}
       onDraftPlaced={vi.fn()}
+      compositionId="comp-focused"
       currentTimeUs={1_000_000}
       tracks={[]}
       fpsNum={30}
@@ -127,6 +128,9 @@ describe("MotifPicker prop form", () => {
     // Whole-object semantics: every schema key rides along, edited or not —
     // including the untouched translucent default with its alpha intact.
     expect(ipcMocks.addMotif).toHaveBeenCalledWith({
+      // The composition the picker was opened against — the auto-track path
+      // has no track id to route by, so the add has to be told.
+      compositionId: "comp-focused",
       motifId: "badge",
       tStartUs: 1_000_000,
       trackId: undefined,

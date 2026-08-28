@@ -92,6 +92,7 @@ import {
 import type { MarqueeBox, MarqueeKind } from "./marqueeStore";
 import { DropStrip } from "./DropStrip";
 import { SPAWN_TRACK_ID } from "./placement";
+import { registerTimelineSurface } from "./timelineSurfaces";
 import { TimelineRuler } from "./TimelineRuler";
 import { TrackHeader } from "./TrackHeader";
 import { TrackLane } from "./TrackLane";
@@ -101,8 +102,10 @@ import {
   KeyframeLaneHeaders,
   type RegisterSubLaneEl,
 } from "./KeyframeLane";
-import { useCrumbs } from "../state/compositionScopeStore";
-import { CompositionBreadcrumb } from "./CompositionBreadcrumb";
+import {
+  useAnchorPath,
+  useFocusedCompositionId,
+} from "../state/compositionAnchorStore";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { MarqueeOverlay } from "./MarqueeOverlay";
 import { beginGroupRename, beginLayerRename, beginLinkRename } from "./renameStore";
@@ -117,7 +120,16 @@ import { useWheelScroll } from "./hooks/useWheelScroll";
 import { useHeightDrag } from "./hooks/useHeightDrag";
 import { useLayerDrag } from "./hooks/useLayerDrag";
 import { snapTimeToTimelineBoundary } from "./snapping";
-import { playheadTimeUs, usePlayheadStore } from "../state/playheadStore";
+import {
+  localClockUsOf,
+  localPlayheadIn,
+  playheadClockUs,
+  rootUsOf,
+  seekLocalUs,
+  subscribeLocalPlayhead,
+  useAnchorFrame,
+} from "../state/playheadProjection";
+import type { AnchorFrame } from "../render/timeProjection";
 import {
   useRangeInUs,
   useRangeOutUs,
@@ -126,13 +138,10 @@ import {
 import { setTimelineScrollLeftPx } from "../state/timelineScrollStore";
 import {
   registerScrollToTime,
-  revealTrackWithoutSelection,
+  revealTrackInPlace,
 } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
-import {
-  addGroupLayerInOpenComposition,
-  addTrackInOpenComposition,
-} from "../ipc/compositionScoped";
+import { addGroupLayerIn, addTrackIn } from "../ipc/compositionScoped";
 import {
   clearLayerSelection,
   clearTransitionSelection,
@@ -174,6 +183,10 @@ import {
 import { TransitionChipMenu } from "./TransitionChipMenu";
 
 interface TimelineProps {
+  /// The composition this timeline renders — its Panel's own instance, never
+  /// the focused one (ADR 0053). `null` is the unbound row the Dock builds
+  /// before the first summary names a root, and reads as the root.
+  compositionId: string | null;
   tracks: TrackSummary[];
   /// `docs/features.md#links`. Empty array when no links exist.
   links: LinkSummary[];
@@ -218,6 +231,9 @@ interface TimelineProps {
   previewDecodable: ReadonlySet<string>;
   visible?: boolean;
   onExitBlade: () => void;
+  /// Park the film at this ROOT moment. A Panel scrubs on its own clock, so it
+  /// projects up before calling (`state/playheadProjection.ts`); a composition
+  /// with no root time never reaches here at all.
   onSeek: (tUs: number) => void;
   onMutated: () => Promise<void>;
 }
@@ -233,6 +249,7 @@ const GROUP_TINT_STEP_PCT = 6;
 const MAX_GROUP_TINT_STEPS = 3;
 
 export function Timeline({
+  compositionId,
   tracks,
   links,
   transitions = EMPTY_TRANSITIONS,
@@ -294,7 +311,17 @@ export function Timeline({
     toggleExpanded,
     viewportWidthPx,
     zoomBySteps,
-  } = useTimelineView({ rootRef, tracks, durationUs });
+  } = useTimelineView({ compositionId, rootRef, tracks, durationUs });
+
+  // Publish this Panel's surface so a clip drag that wanders out of it can name
+  // the composition it wandered into (`timelineSurfaces.ts`). Only while on
+  // screen: a tab behind another still holds a rect, and one that overlapped a
+  // visible neighbour would make an ordinary in-Panel drag look like a crossing.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (compositionId === null || !visible || el === null) return;
+    return registerTimelineSurface(compositionId, el);
+  }, [compositionId, visible]);
 
   // The unmodified wheel's axis. Separate from `useTimelineView`'s listener on
   // the same node because the two gestures are separate concerns and neither
@@ -314,16 +341,20 @@ export function Timeline({
       registerScrollToTime((tUs) => {
         const root = rootRef.current;
         if (!root) return;
-        const x = (tUs / 1_000_000) * pxPerSecForScrollRef.current;
+        // ROOT time in: the caller parks the film, and this Panel scrolls to
+        // wherever that moment sits on its own axis.
+        const x =
+          (localClockUsOf(compositionId, tUs) / 1_000_000) *
+          pxPerSecForScrollRef.current;
         const viewport = root.clientWidth - HEADER_COL_PX;
         // Center the target time in the lane area (the first HEADER_COL_PX
         // of the viewport is the sticky track-header column).
         root.scrollLeft = Math.max(0, x - viewport / 2);
         // Publish now rather than waiting for the scroll event's rAF, so the
         // ruler's tick window lands with the jump instead of one frame later.
-        setTimelineScrollLeftPx(root.scrollLeft);
+        setTimelineScrollLeftPx(compositionId, root.scrollLeft);
       }),
-    [],
+    [compositionId],
   );
 
   // Publish horizontal scroll for the ruler's tick window. Deliberately NOT
@@ -337,20 +368,20 @@ export function Timeline({
     let raf = 0;
     const publish = () => {
       raf = 0;
-      setTimelineScrollLeftPx(root.scrollLeft);
+      setTimelineScrollLeftPx(compositionId, root.scrollLeft);
     };
     const onScroll = () => {
       if (raf === 0) raf = requestAnimationFrame(publish);
     };
     // Seed: a remount (dock panel switch) starts at scrollLeft 0 without
     // firing a scroll event.
-    setTimelineScrollLeftPx(root.scrollLeft);
+    setTimelineScrollLeftPx(compositionId, root.scrollLeft);
     root.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       if (raf !== 0) cancelAnimationFrame(raf);
       root.removeEventListener("scroll", onScroll);
     };
-  }, []);
+  }, [compositionId]);
 
   // Cursor-anchored zoom re-writes `scrollLeft` in a layout effect inside
   // `useTimelineView`, which is registered BEFORE this one — so by the time this
@@ -358,8 +389,10 @@ export function Timeline({
   // waiting for the scroll event's rAF) is what keeps the ruler's window from
   // painting the pre-zoom region for one frame.
   useLayoutEffect(() => {
-    if (rootRef.current) setTimelineScrollLeftPx(rootRef.current.scrollLeft);
-  }, [pxPerSec]);
+    if (rootRef.current) {
+      setTimelineScrollLeftPx(compositionId, rootRef.current.scrollLeft);
+    }
+  }, [compositionId, pxPerSec]);
 
   const { totalSec, widthPx } = computeTimelineExtent({
     durationUs,
@@ -371,7 +404,13 @@ export function Timeline({
   // Also gated on `visible`, like the playhead line itself: a timeline behind
   // another dock tab has nothing to keep in view.
   const followEnabled = useFollowPlayheadEnabled();
+  // Resolved once here and handed to every per-frame reader below: resolving an
+  // anchor frame walks the summary, which is exactly what must not happen once
+  // per composition frame, once per open Panel.
+  const anchorFrame = useAnchorFrame(compositionId);
   const { setScrubbing: setFollowScrubbing } = useFollowPlayhead({
+    compositionId,
+    anchorFrame,
     rootRef,
     pxPerSec,
     viewportWidthPx,
@@ -602,16 +641,37 @@ export function Timeline({
   // subscription here would re-render all of it during playback (the regression
   // `state/timelineScrollStore.ts` guards). A one-off read is also the only
   // correct one — the anchor is where the playhead is when the key goes down.
+  // Projected: the anchor is a position on THIS Panel's axis, so it is the
+  // moment as this composition reads it, not as the film does.
   const handleZoomTimelineIn = useCallback(
-    () => zoomBySteps(1, playheadTimeUs()),
-    [zoomBySteps],
+    () => zoomBySteps(1, playheadClockUs(compositionId)),
+    [compositionId, zoomBySteps],
   );
   const handleZoomTimelineOut = useCallback(
-    () => zoomBySteps(-1, playheadTimeUs()),
-    [zoomBySteps],
+    () => zoomBySteps(-1, playheadClockUs(compositionId)),
+    [compositionId, zoomBySteps],
   );
 
+  // `useShortcuts` binds one `window` listener per instance, so N mounted
+  // timeline Panels are N listeners that all pass the same
+  // `scope: "timeline"` test — the region name is a kind, and every timeline
+  // Panel is that kind. Unscoped, the handlers below would each run once per
+  // open Panel: both timelines would zoom, and `toggleLinkSelected` would fire
+  // twice and undo itself. Only the Panel holding the keyboard answers, which
+  // is what ADR 0041's `scope` means once a kind instantiates (ADR 0053).
+  //
+  // `disabled` is read at dispatch time, so this gate costs a re-render per
+  // focus change — a user gesture — and nothing per keystroke.
+  const focusedCompositionId = useFocusedCompositionId();
+  const rootCompositionId = useProjectStore((s) => s.summary?.root_id ?? null);
+  // The unbound row the Dock builds before a summary names a root shows the
+  // root, the same reading `compositionOrRoot` gives it.
+  const isFocusedTimeline =
+    (compositionId ?? rootCompositionId) ===
+    (focusedCompositionId ?? rootCompositionId);
+
   useShortcuts({
+    disabled: !isFocusedTimeline,
     overrides: shortcutOverrides,
     handlers: {
       selectAll: handleSelectAll,
@@ -753,7 +813,7 @@ export function Timeline({
     const trackId = spawnRevealTrackId;
     if (trackId === null) return;
     const attempt = () => {
-      if (!revealTrackWithoutSelection(trackId)) return false;
+      if (!revealTrackInPlace(trackId)) return false;
       setSpawnRevealTrackId(null);
       return true;
     };
@@ -771,6 +831,7 @@ export function Timeline({
 
   const { drag, setDrag, pendingPlacements, pendingLayerById, dragLayerById } =
     useLayerDrag({
+      compositionId,
       tracks,
       links,
       linkByLayerId,
@@ -788,6 +849,10 @@ export function Timeline({
 
   // -------- Media drop, seek, render --------
 
+  // Every commit here names THIS Panel's composition, so the clip lands in the
+  // timeline it was released on. Nothing focuses that timeline: the drop is a
+  // local act, and stealing the keyboard would take the inspector and — while
+  // the preview follows focus — the picture along with it (ADR 0053 decision 4).
   const onMediaDrop = useCallback(
     async (
       // null = the drop strip: no lane exists yet, so one is created first.
@@ -807,8 +872,9 @@ export function Timeline({
       if (payload.source === "composition") {
         try {
           const trackId =
-            track !== null ? track.id : await addTrackInOpenComposition();
-          await addGroupLayerInOpenComposition({
+            track !== null ? track.id : await addTrackIn(compositionId);
+          await addGroupLayerIn({
+            compositionId,
             sourceCompositionId: payload.compositionId,
             trackId,
             tStartUs: plan.rawStartUs,
@@ -848,7 +914,7 @@ export function Timeline({
         // a lane that no longer belongs to it. A fresh import empties nothing, so
         // the first undo removes the layer and the second removes the lane —
         // each step reversing exactly what it did.
-        const trackId = track !== null ? track.id : await addTrackInOpenComposition();
+        const trackId = track !== null ? track.id : await addTrackIn(compositionId);
         await addMediaLayer(trackId, payload.mediaId, plan.rawStartUs);
         if (track === null) revealSpawnedTrack(trackId);
         await onMutated();
@@ -857,6 +923,7 @@ export function Timeline({
       }
     },
     [
+      compositionId,
       importing,
       media,
       onMutated,
@@ -1236,15 +1303,25 @@ export function Timeline({
     requestPrebake(layerId);
   }, []);
 
+  /// A scrub reads px on THIS Panel's axis, so the time it produces is this
+  /// composition's and is reverse-projected into the one moment before it
+  /// leaves. A composition with no root time has nothing to project into: its
+  /// Panel parks on an axis of its own and the film stays where it is.
   const seekFromClientX = useCallback(
     (clientX: number) => {
       if (!canvasRef.current) return;
       const rect = canvasRef.current.getBoundingClientRect();
       const x = clientX - rect.left;
       const rawUs = Math.max(0, Math.round((x / pxPerSec) * 1_000_000));
-      onSeek(snapFrameRound(rawUs, fpsNum, fpsDen));
+      const localUs = snapFrameRound(rawUs, fpsNum, fpsDen);
+      const rootUs = rootUsOf(compositionId, localUs);
+      if (rootUs === null) {
+        seekLocalUs(compositionId, localUs);
+        return;
+      }
+      onSeek(rootUs);
     },
-    [onSeek, pxPerSec, fpsNum, fpsDen],
+    [compositionId, onSeek, pxPerSec, fpsNum, fpsDen],
   );
 
   const bladeCutTimeFromClientX = useCallback(
@@ -1265,8 +1342,9 @@ export function Timeline({
         linkByLayerId,
         // Event-time read: the playhead is a snap TARGET here, so the value
         // at the moment of the mouse event is the correct one — no reactive
-        // subscription needed.
-        currentTimeUs: playheadTimeUs(),
+        // subscription needed. Projected, because it is offered alongside layer
+        // boundaries on this Panel's own axis.
+        currentTimeUs: playheadClockUs(compositionId),
         fpsNum,
         fpsDen,
         pxPerSec,
@@ -1278,6 +1356,7 @@ export function Timeline({
       return atUs > layer.t_start_us && atUs < layer.t_end_us ? atUs : null;
     },
     [
+      compositionId,
       fpsNum,
       fpsDen,
       linkByLayerId,
@@ -1511,14 +1590,13 @@ export function Timeline({
     clearLayerSelection();
   }, []);
 
-  // How deep the open composition sits, and the background that says so. Read
-  // here rather than in a child because the tint belongs to the timeline's own
-  // empty space — the band below the last lane included, which is part of this
-  // scroll container.
-  const crumbDepth = useCrumbs().length;
-  const insideGroup = crumbDepth > 0;
-  const tintPct =
-    GROUP_TINT_STEP_PCT * Math.min(crumbDepth, MAX_GROUP_TINT_STEPS);
+  // How deep THIS Panel's composition sits, and the background that says so.
+  // Read here rather than in a child because the tint belongs to the timeline's
+  // own empty space — the band below the last lane included, which is part of
+  // this scroll container.
+  const depth = useAnchorPath(compositionId).length;
+  const insideGroup = depth > 0;
+  const tintPct = GROUP_TINT_STEP_PCT * Math.min(depth, MAX_GROUP_TINT_STEPS);
   const groupDepthTint = `color-mix(in srgb, var(--card) ${100 - tintPct}%, var(--foreground))`;
 
   // Memoized: the provider hands this to every anchor surface, so a fresh
@@ -1537,10 +1615,6 @@ export function Timeline({
   return (
     <MarqueeAnchorContext.Provider value={marqueeAnchor}>
     <KeyframeBatchContext.Provider value={commitKeyframeBatch}>
-    {/* The path to the open composition, above the scroll container and hidden
-        at the root. `.timeline` is a flex column, so the row simply takes its
-        own height and the scroll body keeps the rest. */}
-    <CompositionBreadcrumb />
     <div
       ref={rootRef}
       className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto ${
@@ -1549,8 +1623,8 @@ export function Timeline({
       // One step off the panel surface for every depth below the root, capped so
       // a deep nest cannot walk the background into the foreground. Resolve tints
       // a compound clip's timeline the same way, and it is the one signal that
-      // survives being scrolled: the breadcrumb can be scrolled past, the empty
-      // space cannot.
+      // reads without leaving the timeline: the tab says which composition this
+      // is, the tint says how deep it sits, and neither can be scrolled past.
       style={insideGroup ? { backgroundColor: groupDepthTint } : undefined}
     >
       {/* `min-h-full` so the lanes' container fills the panel even on a short
@@ -1582,6 +1656,7 @@ export function Timeline({
           {orderedTracks.map(({ track, isRoleSectionStart }) => (
             <Fragment key={track.id}>
               <TrackHeader
+                compositionId={compositionId}
                 track={track}
                 height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
                 isRevealed={track.id === (revealedTrackId ?? null)}
@@ -1594,6 +1669,7 @@ export function Timeline({
               {expandedTracks.has(track.id) && (
                 <KeyframeLaneHeaders
                   track={track}
+                  compositionId={compositionId}
                   fpsNum={fpsNum}
                   fpsDen={fpsDen}
                   visible={visible}
@@ -1613,6 +1689,7 @@ export function Timeline({
           onPointerDown={(e) => beginMarquee(marqueeAnchor, "clip", e)}
         >
           <TimelineRuler
+            compositionId={compositionId}
             pxPerSec={pxPerSec}
             totalSec={totalSec}
             widthPx={widthPx}
@@ -1629,6 +1706,7 @@ export function Timeline({
           >
             <DropStrip
               elRef={dropStripElRef}
+              compositionId={compositionId}
               pxPerSec={pxPerSec}
               fpsNum={fpsNum}
               fpsDen={fpsDen}
@@ -1663,6 +1741,7 @@ export function Timeline({
               <Fragment key={track.id}>
               <TrackLane
                 track={track}
+                compositionId={compositionId}
                 registerLaneEl={registerLaneEl}
                 pxPerSec={pxPerSec}
                 height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
@@ -1719,6 +1798,8 @@ export function Timeline({
             <MarqueeOverlay />
           </div>
           <TimelinePlayhead
+            compositionId={compositionId}
+            anchorFrame={anchorFrame}
             pxPerSec={pxPerSec}
             fpsNum={fpsNum}
             fpsDen={fpsDen}
@@ -1827,16 +1908,28 @@ function OutOfRangeDim({ pxPerSec }: { pxPerSec: number }) {
 /// Here the subscription mutates `style.left` on the ref'd node directly —
 /// zero React commits while playing.
 ///
+/// PROJECTED (ADR 0053 decision 2): what is drawn is THIS composition's reading
+/// of the one moment. A moment its placement does not reach draws nothing — a
+/// Group that is off screen has no position, and a line clamped to the nearest
+/// edge would claim the film is somewhere it is not.
+///
+/// `anchorFrame` arrives already resolved because resolving one walks the
+/// summary, and this callback runs once per composition frame per open Panel.
+///
 /// The one-frame-wide shadow (child node) makes the display convention
 /// visible at frame-level zoom: the playhead shows the frame to its RIGHT
 /// (half-open intervals — see docs/data-model.md, boundary semantics). Same
 /// transient subscription, same zero-commit rule.
 function TimelinePlayhead({
+  compositionId,
+  anchorFrame,
   pxPerSec,
   fpsNum,
   fpsDen,
   visible,
 }: {
+  compositionId: string | null;
+  anchorFrame: AnchorFrame | null;
   pxPerSec: number;
   fpsNum: number;
   fpsDen: number;
@@ -1846,7 +1939,9 @@ function TimelinePlayhead({
   const shadowRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!visible) return;
-    const apply = (tUs: number) => {
+    const apply = (tUs: number | null) => {
+      if (ref.current) ref.current.style.display = tUs === null ? "none" : "block";
+      if (tUs === null) return;
       const leftPx = (tUs / 1_000_000) * pxPerSec;
       if (ref.current) ref.current.style.left = `${leftPx}px`;
       if (shadowRef.current) {
@@ -1861,15 +1956,19 @@ function TimelinePlayhead({
         }
       }
     };
-    apply(playheadTimeUs());
-    return usePlayheadStore.subscribe((s) => apply(s.timeUs));
-  }, [pxPerSec, fpsNum, fpsDen, visible]);
+    return subscribeLocalPlayhead(compositionId, anchorFrame, apply);
+  }, [anchorFrame, compositionId, pxPerSec, fpsNum, fpsDen, visible]);
+  // The frame is already in hand, so the first paint costs no second walk.
+  const firstPaintUs = localPlayheadIn(compositionId, anchorFrame);
   return (
     <div
       ref={ref}
       data-testid="timeline-playhead"
       className="pointer-events-none absolute bottom-0 top-0 z-[4] w-0.5 rounded-[1px] bg-gradient-to-b from-red-300 via-red-500 to-red-500 shadow-[0_0_0_0.5px_rgba(0,0,0,0.55),0_0_6px_rgba(239,68,68,0.35)]"
-      style={{ left: (playheadTimeUs() / 1_000_000) * pxPerSec }}
+      style={{
+        left: ((firstPaintUs ?? 0) / 1_000_000) * pxPerSec,
+        display: firstPaintUs === null ? "none" : undefined,
+      }}
     >
       <div
         ref={shadowRef}

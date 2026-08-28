@@ -1,4 +1,15 @@
-// Global playhead-time store. The PlaybackEngine emits a time update once per
+// Global playhead-time store: ONE moment, held in ROOT time.
+//
+// Root time, and every consumer has to say which side of that it is on. A
+// timeline Panel showing a Group reads its own projection of this number
+// (`playheadProjection.ts`), and a scrub in that Panel projects back up into
+// it — there is no second playhead (ADR 0053 decision 2). Taking the value here
+// for a local time is the failure this store invites, and it is silent: at the
+// root the two agree exactly, so the bug only appears once someone opens a
+// Group. Anything that means "where this composition is" goes through
+// `playheadProjection.ts`; anything that means "where the film is" reads here.
+//
+// The PlaybackEngine emits a time update once per
 // COMPOSITION FRAME during playback (PlaybackEngine.emitTime → onTimeUpdate).
 // Holding that value in React state at the App root re-rendered the entire
 // tree 30–60×/s while playing — a pure CPU tax in production, and in dev the
@@ -18,13 +29,19 @@
 //      the final value after the last change (pause/seek lands exactly).
 //   4. Tiny leaf components where per-frame React commits are acceptable
 //      (agent-mode MiniTimeline): `usePlayheadTimeUs()`.
+//
+// N timelines can stand open at once, so every subscriber here is multiplied by
+// the number of Panels. A projection on a per-frame path hoists its anchor
+// frame once (`useAnchorFrame`) rather than walking the summary per emit.
 
 import { create } from "zustand";
 import { useEffect, useState } from "react";
 
 interface State {
-  /// Frame-quantized playhead position, µs. Written once per composition
-  /// frame during playback and on every seek.
+  /// Frame-quantized playhead position in ROOT time, µs. Written once per
+  /// composition frame during playback and on every seek. Clamped against the
+  /// ROOT composition's last frame anchor (`state/navigation.ts`), because that
+  /// is the timeline this number is on whichever one the user is editing.
   timeUs: number;
 }
 

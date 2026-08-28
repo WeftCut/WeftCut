@@ -19,7 +19,7 @@
 
 import type { LinkSummary } from "../ipc";
 import { linkOverrideOn } from "../state/linkOverrideStore";
-import { useCompositionScopeStore } from "../state/compositionScopeStore";
+import { useCompositionAnchorStore } from "../state/compositionAnchorStore";
 import {
   compositionOrRoot,
   currentOpenComposition,
@@ -117,8 +117,8 @@ export function canToggleLinkSelection(): boolean {
  */
 export const useLinkToggleState = (): LinkToggleState => {
   const selected = useSelectionStore((s) => s.selectedLayerIds);
-  const openId = useCompositionScopeStore((s) => s.openId);
+  const focusedId = useCompositionAnchorStore((s) => s.focusedId);
   return useProjectStore((s) =>
-    linkToggleState(selected, compositionOrRoot(s.summary, openId)?.links ?? NO_LINKS),
+    linkToggleState(selected, compositionOrRoot(s.summary, focusedId)?.links ?? NO_LINKS),
   );
 };

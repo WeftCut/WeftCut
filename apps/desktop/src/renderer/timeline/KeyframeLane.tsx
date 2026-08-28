@@ -21,7 +21,7 @@ import {
 import { retimeKeyframe, setKeyframeInterp } from "../keyframe/edits";
 import { useKeyframeBatchCommit } from "./keyframeBatch";
 import { transportSeek } from "../state/playbackStore";
-import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
+import { useLocalPlayheadUsThrottled } from "../state/playheadProjection";
 import {
   setKeyframeFocus,
   useFocusedParamKeyForTrackLayers,
@@ -60,12 +60,16 @@ type OpenInterpMenu = (
 /// by sharing trackKeyframeProperties + KF_SUBLANE_H.
 export function KeyframeLaneHeaders({
   track,
+  compositionId,
   fpsNum,
   fpsDen,
   visible,
   onCommitParamTrack,
 }: {
   track: TrackSummary;
+  /// The composition these lanes belong to — a keyframe sits on ITS clock, so
+  /// the navigator and the value readout need the moment projected onto it.
+  compositionId: string | null;
   fpsNum: number;
   fpsDen: number;
   visible: boolean;
@@ -74,7 +78,8 @@ export function KeyframeLaneHeaders({
   const { t } = useTranslation();
   // Panel-rate playhead subscription (tier 3, playheadStore.ts): navigator
   // arrows + value readouts follow playback without per-frame re-renders.
-  const currentTimeUs = usePlayheadTimeUsThrottled(100, visible);
+  // Projected onto this composition's clock, which is where its keys live.
+  const currentTimeUs = useLocalPlayheadUsThrottled(compositionId, 100, visible);
   const props = trackKeyframeProperties(track);
   const layerIds = useMemo(() => new Set(track.layers.map((l) => l.id)), [track.layers]);
   const focusedParamKey = useFocusedParamKeyForTrackLayers(layerIds);

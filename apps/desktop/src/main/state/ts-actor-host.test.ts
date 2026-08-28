@@ -6,6 +6,7 @@ import { mapChangeEvent, createTsActorHost } from './ts-actor-host'
 import { UserMotifStore } from '../motif/store'
 import { createAppSettingsStore } from '../app-settings'
 import { createViewStateStore } from '../view-state'
+import { viewStateDefaults, type ViewState } from '../../shared/view-state'
 import { createExportSettingsStore } from '../export-settings'
 import { createKeybindingsStore } from '../keybindings'
 import { createRecentsStore } from '../recents'
@@ -371,10 +372,12 @@ describe('createTsActorHost — persistence-route integration', () => {
     const host = createTsActorHost(deps)
     host.start()
     await host.handleInvoke('project_new_workspace', { parentFolder: '/projects', name: 'vs', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 })
-    await host.handleInvoke('view_state_set', { state: { timeline_px_per_sec: 200, track_heights: { t1: 64 }, expanded_tracks: ['t1'] } })
+    const tabs = [{ composition_id: 'comp-g1', anchor_layer_id: 'ref-g1', px_per_sec: 200, scroll_left_px: 320 }]
+    await host.handleInvoke('view_state_set', { state: { composition_tabs: tabs, active_composition_id: 'comp-g1', track_heights: { t1: 64 }, expanded_tracks: ['t1'] } })
     expect(vfs['/projects/vs/view.json']).toBeDefined()
-    const got = await host.handleInvoke('view_state_get', {}) as { timeline_px_per_sec: number; track_heights: Record<string, number>; expanded_tracks: string[] }
-    expect(got.timeline_px_per_sec).toBe(200)
+    const got = await host.handleInvoke('view_state_get', {}) as ViewState
+    expect(got.composition_tabs).toEqual(tabs)
+    expect(got.active_composition_id).toBe('comp-g1')
     expect(got.track_heights.t1).toBe(64)
     expect(got.expanded_tracks).toEqual(['t1'])
     host.stop()
@@ -384,9 +387,9 @@ describe('createTsActorHost — persistence-route integration', () => {
     const { deps, vfs } = makeInMemoryDeps()
     const host = createTsActorHost(deps)
     host.start()
-    const got = await host.handleInvoke('view_state_get', {}) as { timeline_px_per_sec: number }
-    expect(got.timeline_px_per_sec).toBe(80)
-    await host.handleInvoke('view_state_set', { state: { timeline_px_per_sec: 999, track_heights: {}, expanded_tracks: [] } })
+    const got = await host.handleInvoke('view_state_get', {}) as ViewState
+    expect(got).toEqual(viewStateDefaults())
+    await host.handleInvoke('view_state_set', { state: { ...viewStateDefaults(), active_composition_id: 'comp-g1' } })
     expect(Object.keys(vfs).some((k) => k.endsWith('view.json'))).toBe(false)
     host.stop()
   })

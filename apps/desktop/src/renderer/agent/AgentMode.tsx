@@ -19,7 +19,7 @@ import {
 } from "../preview/PreviewSurface";
 import { MiniTimeline } from "./MiniTimeline";
 import { AgentPanel } from "./AgentPanel";
-import { setPlayheadTimeUs } from "../state/playheadStore";
+import { setPlayheadFromPreview } from "../state/playheadProjection";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
 
@@ -140,7 +140,7 @@ export const AgentMode = forwardRef(function AgentMode(
           <PreviewSurface
             ref={previewRef}
             hasContent={(summary?.layer_count ?? 0) > 0}
-            onTimeUpdate={setPlayheadTimeUs}
+            onTimeUpdate={setPlayheadFromPreview}
             onPausedChange={onPausedChange}
           />
         </div>

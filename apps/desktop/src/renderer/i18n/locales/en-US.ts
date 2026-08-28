@@ -276,6 +276,19 @@ const enUS = {
       start: "Show earlier Panel tabs",
       end: "Show later Panel tabs",
     },
+    // A timeline Panel's own tab: it names the composition it shows, and its
+    // tooltip prints the route the Panel was opened along.
+    timeline_tab: {
+      // The first step of that route. The root composition is never named in
+      // the UI — it IS the timeline — so a path starts at the project, and this
+      // stands in for a project saved under no name yet.
+      project: "Project",
+      // Offered only where a Group is placed more than once: two placements are
+      // two different answers to "where on the film's clock does this sit", and
+      // the tab has to say which one it reads its times against.
+      switch_anchor: "Switch anchor",
+      anchor_entry: "{{path}} · {{time}}",
+    },
     panels: {
       media: "Media Pool",
       transitions: "Transitions",
@@ -393,7 +406,6 @@ const enUS = {
     group_selected: "Group selected layers",
     ungroup_selected: "Ungroup",
     open_group: "Open group",
-    leave_group: "Leave group",
     toggle_link_selected: "Link / Unlink selected layers",
     toggle_link_override: "Toggle link override",
     nudge_audio_sample_back: "Nudge audio 1 sample earlier",
@@ -510,6 +522,10 @@ const enUS = {
   preview: {
     empty_hint: "Add a layer to start the preview",
     preparing: "Preparing preview…",
+    // What the preview renders. The list names the timeline and every Group;
+    // the default follows whichever timeline holds the keyboard.
+    target_label: "What the preview shows",
+    target_follow_focus: "Follow focus",
   },
   timeline: {
     empty_placeholder: "timeline (import a clip or pick a motif to populate)",
@@ -540,10 +556,6 @@ const enUS = {
     // unnamed ones (`lib/layerName.ts`), which is what makes two unnamed
     // Groups tellable apart on the timeline.
     group_derived_name: "Group {{n}}",
-    // The path from the project down to the open composition. Every crumb is a
-    // button that leaves back to it; hidden entirely at the root.
-    breadcrumb: "Open composition",
-    breadcrumb_leave: "Back to {{label}}",
     // The two source-window affordances on a Group clip. Hatched tail: the
     // composition is shorter than the window, so the clip's end shows nothing.
     // Tick: the composition is longer, so there is content to trim out to.
@@ -1511,6 +1523,8 @@ const enUS = {
     cleared: "Log cleared",
     center_layer_unstaged:
       "Cannot center a layer the preview has not staged yet — its size is unknown",
+    cross_composition_move:
+      "A clip belongs to its own composition — drag it back, or add it to the Group from its menu",
   },
   // Edit-stack row labels — one per `HISTORY_SUMMARY` entry in
   // main/state/history-labels.ts, which owns the English source text. The three

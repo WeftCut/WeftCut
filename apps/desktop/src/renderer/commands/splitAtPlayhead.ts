@@ -17,7 +17,7 @@
 
 import { splitLayerLinked, type CompositionSummary } from "../ipc";
 import { displayMode } from "../settings/appSettingsStore";
-import { playheadTimeUs } from "../state/playheadStore";
+import { focusedPlayheadUs } from "../state/playheadProjection";
 import { currentOpenComposition } from "../state/projectStore";
 import { useSelectionStore } from "../state/selectionStore";
 import { linkFanoutActive } from "../timeline/linkEligibility";
@@ -134,7 +134,9 @@ export async function splitAtPlayhead(): Promise<void> {
   // Read ONCE: the playhead moves under playback, and resolving the targets
   // against one instant and cutting at another would send a time that no
   // longer falls inside the clip the resolve picked.
-  const tUs = playheadTimeUs();
+  // Projected: a split lands on a layer of the editing target, so the cut
+  // point is that composition's reading of the moment.
+  const tUs = focusedPlayheadUs();
   // Read once too, so the target list and the escape flag agree.
   const fanout = linkFanoutActive();
   const targets = resolveSplitTargets(

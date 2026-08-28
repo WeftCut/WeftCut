@@ -74,8 +74,9 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
     forwardedRef,
   ) {
     const { t } = useTranslation();
-    // The ROOT: it is what the Compositor draws today (slice 14 hands it the
-    // open composition — compositionScopeStore.ts).
+    // Any composition will do — this decides only whether there is a project to
+    // draw at all. WHICH composition is drawn is the preview's render target,
+    // resolved inside `PixiPreview` (compositionAnchorStore.ts).
     const composition = useProjectStore((s) => compositionOrRoot(s.summary, null));
 
     const pixiRef = useRef<PixiPreviewHandle | null>(null);

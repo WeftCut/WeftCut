@@ -31,8 +31,8 @@ export function groupOrdinals(
   return out;
 }
 
-/// The one name a Group is shown under — the clip on the timeline, the
-/// breadcrumb crumb, the inspector's Group section: its composition's label,
+/// The one name a Group is shown under — the clip on the timeline, its
+/// timeline Panel's tab, the inspector's Group section: its composition's label,
 /// else the derived `Group N`.
 ///
 /// `ordinals` comes from `groupOrdinals`; a composition missing from it (an

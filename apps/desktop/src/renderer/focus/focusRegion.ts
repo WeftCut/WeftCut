@@ -13,9 +13,16 @@
 // consumer and broke suites that partially mock `react-i18next`. Region
 // strings leave here raw; `useFocusRegions` narrows them to `PanelKind`.
 
-/// Marks a focus-region root. Its value is the `PanelKind`, so region identity
-/// needs no second attribute.
+/// Marks a focus-region root. Its value is the `PanelKind` and nothing else:
+/// `ActionDef.scope` is a list of kinds, so a region name that carried an
+/// instance too would be read as a kind the catalogue does not have.
 export const FOCUS_REGION_ATTR = "data-focus-region";
+
+/// The instance behind the region on the same root, for the one kind that
+/// instantiates: the composition a timeline Panel shows (ADR 0053). Absent on
+/// every other Panel. Split from the name above rather than folded into it for
+/// the reason that comment gives.
+export const FOCUS_REGION_INSTANCE_ATTR = "data-focus-region-instance";
 
 /// Marks a composite field whose satellite controls belong to the focused
 /// input: a NumberField's stepper pair, a clearable input's ✕, the sibling
@@ -46,6 +53,11 @@ export function regionRootOf(node: Node | null): HTMLElement | null {
 /// see the LANDMINE above.
 export function regionNameOf(node: Node | null): string | null {
   return regionRootOf(node)?.getAttribute(FOCUS_REGION_ATTR) ?? null;
+}
+
+/// The instance on that same root, or null where the region has none.
+export function regionInstanceOf(node: Node | null): string | null {
+  return regionRootOf(node)?.getAttribute(FOCUS_REGION_INSTANCE_ATTR) ?? null;
 }
 
 export function focusGroupOf(node: Node | null): HTMLElement | null {

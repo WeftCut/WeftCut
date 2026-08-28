@@ -26,7 +26,7 @@ import type {
   TrackSummary,
   TransitionSummary,
 } from "../ipc";
-import { playheadTimeUs } from "../state/playheadStore";
+import { playheadClockUs } from "../state/playheadProjection";
 import { useMarqueeAnchor } from "./hooks/useMarqueeAnchor";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
@@ -77,6 +77,7 @@ export function TrackLane({
   fpsNum,
   fpsDen,
   mediaDropSnap,
+  compositionId,
 }: {
   track: TrackSummary;
   /// Publishes this lane's DOM node to the Timeline's lane registry, which is
@@ -149,6 +150,11 @@ export function TrackLane({
   fpsNum: number;
   fpsDen: number;
   mediaDropSnap: Omit<MediaDropSnapOptions, "currentTimeUs">;
+  /// The composition this lane belongs to — this Panel's own, whichever tab
+  /// holds the keyboard. It offers the playhead as a snap boundary on this
+  /// Panel's own axis (`state/playheadProjection.ts`) and answers the cycle gate
+  /// for a Group released here.
+  compositionId: string | null;
 }) {
   const { t } = useTranslation();
   const activeMediaDrag = useMediaDragStore((s) => s.active);
@@ -275,13 +281,14 @@ export function TrackLane({
       if (activeMediaDrag === null) return;
       const rect = e.currentTarget.getBoundingClientRect();
       const plan = planMediaDrop({
+        compositionId,
         track,
         media: activeMediaDrag,
         pointerXPx: e.clientX - rect.left,
         pxPerSec,
         fpsNum,
         fpsDen,
-        snap: { ...mediaDropSnap, currentTimeUs: playheadTimeUs() },
+        snap: { ...mediaDropSnap, currentTimeUs: playheadClockUs(compositionId) },
       });
       e.dataTransfer.dropEffect = plan.validity === "valid" ? "copy" : "none";
       const slot = mediaDropGhostSlot(height, plan);
@@ -307,6 +314,7 @@ export function TrackLane({
     [
       activeMediaDrag,
       claimDropTarget,
+      compositionId,
       fpsDen,
       fpsNum,
       height,
@@ -347,13 +355,14 @@ export function TrackLane({
       const rect = e.currentTarget.getBoundingClientRect();
       const plan = payload
         ? planMediaDrop({
+            compositionId,
             track,
             media: payload,
             pointerXPx: e.clientX - rect.left,
             pxPerSec,
             fpsNum,
             fpsDen,
-            snap: { ...mediaDropSnap, currentTimeUs: playheadTimeUs() },
+            snap: { ...mediaDropSnap, currentTimeUs: playheadClockUs(compositionId) },
           })
         : null;
       setDropPreview(null);
@@ -368,6 +377,7 @@ export function TrackLane({
       onMediaDrop(track, payload, plan);
     },
     [
+      compositionId,
       endMediaDrag,
       fpsDen,
       fpsNum,
