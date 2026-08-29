@@ -3317,6 +3317,7 @@ describe("Timeline playhead projection", () => {
           {
             id: G1,
             label: "Lower third",
+            ordinal: 1,
             width: 1920,
             height: 1080,
             fps_num: 30,

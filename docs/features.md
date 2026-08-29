@@ -521,9 +521,10 @@ legal: deleting a Group layer leaves its composition behind.
 
 **UI.** A Group clip wears lucide's `Group` glyph and a neutral slate surface —
 the one kind with no medium of its own, since it holds every other kind — and
-names itself after its composition: its stored label, else the derived
-`Group N`, numbered by creation order among the unnamed compositions and
-localised in the renderer (the `Track N` rule). The clip's own `label` still
+names itself after its composition: its stored label, else `Group N`, where `N`
+is the composition's stored `ordinal` (docs/data-model.md) — localised in the
+renderer, as `Track N` is. Naming one Group renumbers no other, and clearing a
+name gives back the number that Group always had. The clip's own `label` still
 outranks that, as a renamed video clip's does over its file name. Its thumbnail
 is a still of the earliest video inside the composition, or inside a Group
 nested in it; with no video at all the glyph stands alone. It is an ordinary

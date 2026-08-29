@@ -22,6 +22,12 @@ export interface CompositionSummary {
   /// The composition's own label; null on the root and on an unnamed Group
   /// (the UI derives "Group N").
   label: string | null;
+  /// The stored number behind the derived "Group N" — assigned at creation from
+  /// a monotonic project counter and never rewritten, so naming one Group
+  /// renumbers no other and clearing a label restores the original number.
+  /// Present on every composition, labelled or not; `0` on the root, which is
+  /// never shown as a Group. `lib/layerName.ts` reads it.
+  ordinal: number;
   width: number;
   height: number;
   fps_num: number;

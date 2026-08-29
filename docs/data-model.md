@@ -248,6 +248,7 @@ struct Project {
     metadata: ProjectMetadata,
     compositions: imbl::OrdMap<CompositionId, Composition>,  // keyed by Composition.id; the root and every Group
     root_id: CompositionId,                       // compositions[root_id] is what export renders
+    next_group_ordinal: u32,                      // monotonic: the number the next Group takes; never reused
     media_pool: imbl::HashMap<MediaId, MediaItem>,
     audio_roles: imbl::HashMap<AudioRole, RoleMixSettings>,  // per-role mix buses
     settings: ProjectSettings,                    // proxy res, autosave, etc.
@@ -278,6 +279,7 @@ is described in [docs/audio.md](audio.md) and [ADR 0023](adr/0023-audio-mixes-by
 struct Composition {
     id: CompositionId,
     label: Option<String>,    // None on the root and on an unnamed Group (the UI derives "Group N"); always written, `null` on the wire
+    ordinal: u32,             // the N in "Group N", assigned at creation and never rewritten; 0 on the root
     width: u32,
     height: u32,
     fps: Rational,            // (num, den) — handles 23.976, 29.97 cleanly
@@ -311,6 +313,19 @@ rate would put its `src_*` window on a different grid from the parent's
 editable in v1).
 
 `fps` MUST be rational. `30000/1001 ≠ 29.97`, and ffmpeg cares.
+
+**Group numbering is stored, not counted.** A Group with no `label` is shown as
+`Group N`, and `N` is this composition's `ordinal` — taken from
+`Project.next_group_ordinal` when the composition is created and never rewritten.
+The counter is monotonic and a number is never reused: delete Group 3, make
+another, and the list reads 1, 2, 4. Both halves are load-bearing. Numbering off
+the live list instead would renumber every Group below the one you just named or
+deleted; reusing a freed number would let undo restore a deleted Group next to
+the new one wearing its name. The ordinal is held independently of `label`, so
+clearing a name falls back to the number the Group always had, and the root
+takes the reserved `0` — it is never shown as a Group. The renderer reads it
+through `renderer/lib/layerName.ts`, which owns the one name a Group appears
+under; main stores no localized string.
 
 `duration_us` follows `max(layer.t_end_us)` bidirectionally — growing on adds, shrinking on deletes / inward trims — until the user pins it by calling `set_composition { duration_us }`. While pinned, only an overflow guard moves the value (a new layer extending past the pinned duration still bumps it up; the pin stays set). `fit_composition_to_layers` clears the pin and snaps duration to the live high-water mark. See ADR 0005.
 
@@ -920,6 +935,7 @@ interface ProjectSummary {
 
 interface CompositionSummary {
   id: CompositionId; label: string | null
+  ordinal: number                                  // the N in a derived "Group N"; carried even on a labelled Group
   width: number; height: number; fps_num: number; fps_den: number
   duration_us: number; duration_pinned: boolean
   fps_locked: boolean                              // history-scoped, so project-wide — repeated on every entry

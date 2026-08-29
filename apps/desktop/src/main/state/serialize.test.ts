@@ -303,6 +303,79 @@ describe('parseProject text box defaults', () => {
   })
 })
 
+// ── Composition ordinals: additive-field backfill ────────────────────────────
+// A project written before the ordinals existed has to open under the numbering
+// it always showed, and one that already carries them has to come back byte-for
+// -byte — the fixture round-trip depends on the second half.
+describe('parseProject ordinal backfill', () => {
+  /** Root plus two Groups, with `ordinal` and `next_group_ordinal` stripped —
+   *  the shape of every project saved before the pair existed. */
+  function ordinallessWire(): Wire & { next_group_ordinal?: number } {
+    const g = seededGen()
+    let p = blankProject(g, 'legacy')
+    p = withGroup(p, g).p
+    p = withGroup(p, g).p
+    const wire = JSON.parse(JSON.stringify(serializeProject(p))) as Wire & { next_group_ordinal?: number }
+    for (const c of Object.values(wire.compositions)) delete c.ordinal
+    delete wire.next_group_ordinal
+    return wire
+  }
+
+  it('numbers the Groups 1..N in key order, reserves 0 for the root, and parks the counter above them', () => {
+    const wire = ordinallessWire()
+    const [rootId, a, b] = Object.keys(wire.compositions)
+    const p = parseProject(wire, silent)
+    expect(p.compositions[rootId].ordinal).toBe(0)
+    expect([p.compositions[a].ordinal, p.compositions[b].ordinal]).toEqual([1, 2])
+    expect(p.next_group_ordinal).toBe(3)
+    expect(() => validate(p)).not.toThrow()
+  })
+
+  it('leaves a project that already carries them exactly as written', () => {
+    const g = seededGen()
+    const { p } = withGroup(blankProject(g, 'current'), g)
+    const wire = serializeProject(p)
+    expect(canonicalString(serializeProject(parseProject(JSON.parse(JSON.stringify(wire)), silent)))).toBe(canonicalString(wire))
+  })
+
+  // Only a dev machine can hold a half-ordinalled project, but the pass has to
+  // survive one: assigning from `max(existing) + 1` is what keeps two Groups
+  // from coming out under the same name.
+  it('fills only what is missing, from above every number already stored', () => {
+    const wire = ordinallessWire()
+    const [, a, b] = Object.keys(wire.compositions)
+    wire.compositions[b].ordinal = 7
+    const p = parseProject(wire, silent)
+    expect(p.compositions[b].ordinal).toBe(7)
+    expect(p.compositions[a].ordinal).toBe(8)
+    expect(p.next_group_ordinal).toBe(9)
+  })
+
+  // A counter at or below a live ordinal is a counter that would mint a
+  // duplicate on the next pre-compose — the same class of contradiction
+  // `normalizeScaleLinked` repairs rather than trusts.
+  it('lifts a stored counter that no longer clears the Groups it describes', () => {
+    const wire = ordinallessWire()
+    const [, a, b] = Object.keys(wire.compositions)
+    wire.compositions[a].ordinal = 4
+    wire.compositions[b].ordinal = 5
+    wire.next_group_ordinal = 2
+    expect(parseProject(wire, silent).next_group_ordinal).toBe(6)
+  })
+
+  // The scan that feeds the counter counts Groups only, so a number sitting on
+  // the root is one the counter never saw — leave it and a Group can be handed
+  // the same one. Nothing reads the root's, so overwriting is free.
+  it('overwrites a number found on the root rather than preserving it', () => {
+    const wire = ordinallessWire()
+    const [rootId, a] = Object.keys(wire.compositions)
+    wire.compositions[rootId].ordinal = 1
+    const p = parseProject(wire, silent)
+    expect(p.compositions[rootId].ordinal).toBe(0)
+    expect(p.compositions[a].ordinal).toBe(1)
+  })
+})
+
 describe('parseProject over two compositions', () => {
   it('repairs a Group\'s own grid-bound fields and names the Group on the Composition row', () => {
     const g = seededGen()

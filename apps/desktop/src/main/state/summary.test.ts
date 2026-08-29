@@ -238,6 +238,9 @@ describe('buildProjectSummary carries every composition', () => {
     const s = buildProjectSummary(p, HISTORY, NEVER)
     const g = s.compositions[groupId]!
     expect(g).toMatchObject({ id: groupId, label: 'Title card', duration_us: 1_000_000, duration_pinned: false })
+    // The ordinal rides along even on a LABELLED Group: it is what the renderer
+    // falls back to the moment the label is cleared.
+    expect([g.ordinal, s.compositions[s.root_id]!.ordinal]).toEqual([1, 0])
     expect(g.tracks.map((t) => t.id)).toContain(innerTrackId)
     expect(g.tracks.flatMap((t) => t.layers).map((l) => l.id)).toEqual([innerId])
     // The root never lists the Group's layers, only the reference.

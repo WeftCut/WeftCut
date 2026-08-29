@@ -149,6 +149,14 @@ export interface Link { id: Uuid; label?: string; members: Uuid[] }
  *  `Option<String>`. */
 export interface Composition {
   id: Uuid; label: string | null
+  /** The `N` a Group with no label is shown under — drawn from
+   *  `Project.next_group_ordinal` at creation and never rewritten, so naming
+   *  one Group renumbers no other and clearing a label gives a Group its
+   *  original number back. Held INDEPENDENTLY of `label`, because a number
+   *  derived from which compositions are unlabelled moves for every Group
+   *  below the one being named.
+   *  0 on the root, which is never shown as a Group; Groups are 1-based. */
+  ordinal: number
   width: number; height: number; fps: Rational; duration_us: TimeUs; duration_pinned: boolean
   sample_rate: number; channels: number; color_space: ColorSpace; background: Rgba
   tracks: Track[]; markers: Marker[]; transitions: Transition[]; links: Link[]
@@ -202,6 +210,14 @@ export interface Project {
    *  is an `OrdMap` for its own reasons. The root is `compositions[root_id]`;
    *  a Group is another entry, referenced by a `CompositionRef` layer. */
   compositions: Record<Uuid, Composition>; root_id: Uuid
+  /** The `ordinal` the next Group created in this project takes, then advanced.
+   *  MONOTONIC — a number is never reused, so deleting Group 3 and creating
+   *  another gives Group 4 and the list reads 1, 2, 4. Reuse (`max + 1`, or the
+   *  lowest free slot) is rejected on correctness, not tidiness: delete the
+   *  highest Group, create one, undo the delete, and two compositions carry the
+   *  same number. Undo restores this counter with the rest of the snapshot, so
+   *  a resurrected Group keeps the number it was born with. */
+  next_group_ordinal: number
   media_pool: Record<string, MediaItem>; audio_roles: Record<string, RoleMixSettings>
   settings: ProjectSettings
 }
@@ -221,11 +237,15 @@ export function defaultCompositionSettings(): CompositionSettings {
  *  two track ids (A roll, then B roll); the caller mints `id` itself so it can
  *  choose where the composition id falls in the det-id order (see blankProject).
  *  Pre-compose builds here; blankProject inlines the same skeleton because its
- *  det-id order puts project_id between the two track ids and the root id. */
-export function newComposition(id: Uuid, idGen: IdGen, label: string | null, settings: CompositionSettings): Composition {
+ *  det-id order puts project_id between the two track ids and the root id.
+ *
+ *  `ordinal` is passed in rather than read off a project, because a composition
+ *  is built before it joins one — the caller takes it from
+ *  `Project.next_group_ordinal` and advances that counter. */
+export function newComposition(id: Uuid, idGen: IdGen, label: string | null, ordinal: number, settings: CompositionSettings): Composition {
   const aRoll = newTrack(idGen(), 'ARoll')
   const bRoll = newTrack(idGen(), 'BRoll')
-  return { id, label, ...settings, duration_us: 0, duration_pinned: false,
+  return { id, label, ordinal, ...settings, duration_us: 0, duration_pinned: false,
     tracks: [aRoll, bRoll], markers: [], transitions: [], links: [] }
 }
 /** `compositions[root_id]` — validate guarantees it resolves (RootMissing). */
@@ -252,7 +272,9 @@ export function blankProject(idGen: IdGen, name: string): Project {
   const bRoll = newTrack(idGen(), 'BRoll')
   const projectId = idGen()
   const rootId = idGen()
-  const root: Composition = { id: rootId, label: null, ...defaultCompositionSettings(), duration_us: 0,
+  // `ordinal: 0` is the root's reserved value — `groupOrdinals` skips the root,
+  // and Groups count up from 1, so nothing the user sees can ever collide with it.
+  const root: Composition = { id: rootId, label: null, ordinal: 0, ...defaultCompositionSettings(), duration_us: 0,
     duration_pinned: false, tracks: [aRoll, bRoll], markers: [], transitions: [], links: [] }
   // LANDMINE: real RFC3339 timestamps, NOT the '<TS>' sentinel. canonicalize()
   // normalizes these away for differential comparison, so a sentinel would pass
@@ -264,7 +286,7 @@ export function blankProject(idGen: IdGen, name: string): Project {
   return {
     schema_version: SCHEMA_VERSION, project_id: projectId,
     metadata: { name, created_at: now, modified_at: now, description: null },
-    compositions: { [rootId]: root }, root_id: rootId,
+    compositions: { [rootId]: root }, root_id: rootId, next_group_ordinal: 1,
     media_pool: {}, audio_roles: {}, settings: defaultSettings(),
   }
 }

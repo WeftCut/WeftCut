@@ -211,6 +211,8 @@ mod tests {
             imbl::vector![group_track],
         );
         group.duration_us = 2_000_000;
+        // `from_skeleton` mints the root's reserved 0; a Group is 1-based.
+        group.ordinal = 1;
 
         let mut root = Composition::from_skeleton(root_id, None, imbl::vector![track]);
         root.duration_us = 7_000_000;
@@ -258,6 +260,7 @@ mod tests {
             },
             compositions: imbl::ordmap! { root_id => root, group_id => group },
             root_id,
+            next_group_ordinal: 2,
             media_pool: imbl::HashMap::unit(media_id, media),
             audio_roles: imbl::HashMap::new(),
             settings: ProjectSettings::default(),

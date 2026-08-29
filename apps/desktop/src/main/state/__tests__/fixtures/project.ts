@@ -24,10 +24,12 @@ export function withRoot(p: Project, patch: Partial<Composition>): Project {
   return { ...p, compositions: { ...p.compositions, [r.id]: { ...r, ...patch } } }
 }
 
-/** A skeleton composition that copies the default settings. */
+/** A skeleton composition that copies the default settings. Takes ordinal 1 —
+ *  it belongs to no project, so no counter can hand it one; override it when a
+ *  test puts two of these in the same project and cares about the numbering. */
 export function mkComposition(idGen: IdGen, over: Partial<Composition> = {}): Composition {
   const id = idGen()
-  return { ...newComposition(id, idGen, null, defaultCompositionSettings()), ...over, id: over.id ?? id }
+  return { ...newComposition(id, idGen, null, 1, defaultCompositionSettings()), ...over, id: over.id ?? id }
 }
 
 /** A view of `p` that CONTAINS `c` (and has it as root, which no mutation reads
@@ -47,7 +49,7 @@ export function withGroup(p: Project, idGen: IdGen, build?: (g: Composition, vie
   const next = structuredClone(p)
   const r = rootComposition(next)
   const { width, height, fps, sample_rate, channels, color_space, background } = r
-  const g = newComposition(idGen(), idGen, null, { width, height, fps, sample_rate, channels, color_space, background })
+  const g = newComposition(idGen(), idGen, null, next.next_group_ordinal++, { width, height, fps, sample_rate, channels, color_space, background })
   build?.(g, asRoot(next, g))
   applyDurationAutofit(g)
   next.compositions[g.id] = g

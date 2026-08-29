@@ -35,6 +35,13 @@ pub struct Project {
     /// Key of the root composition in `compositions`. TS validates that it
     /// resolves (`ValidationError::RootMissing`); `root()` trusts it.
     pub root_id: CompositionId,
+    /// The `Composition::ordinal` the next Group takes. **TS owns it** — Rust
+    /// neither advances nor reads it. Declared anyway because serde drops what
+    /// no field names, and this one sits OUTSIDE the `compositions` subtree the
+    /// fixture round-trip compares, so a drop here would surface nowhere.
+    /// `#[serde(default)]`: TS always writes it.
+    #[serde(default)]
+    pub next_group_ordinal: u32,
     pub media_pool: imbl::HashMap<MediaId, MediaItem>,
     /// Per-role mix-bus settings (`docs/audio.md`). Absent keys resolve to
     /// `RoleMixSettings::default()` via `role_mix`. `#[serde(default)]`
@@ -65,6 +72,7 @@ impl Project {
             },
             compositions: imbl::OrdMap::unit(root_id, root),
             root_id,
+            next_group_ordinal: 1,
             media_pool: imbl::HashMap::new(),
             audio_roles: imbl::HashMap::new(),
             settings: ProjectSettings::default(),

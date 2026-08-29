@@ -563,6 +563,46 @@ describe('applyGroupsUngroup', () => {
   })
 })
 
+// The ordinal is the number a Group with no label is shown under. Stored, not
+// counted, so nothing about the LIST can move it — see model.ts `Composition`.
+describe('composition ordinals', () => {
+  it('hands each new Group the next number and never reuses one', () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 't')
+    const a = applyAddLayer(p, gen, root(p).tracks[0].id, color(), 0, S)
+    const b = applyAddLayer(p, gen, root(p).tracks[0].id, color(), 2 * S, 3 * S)
+    const c = applyAddLayer(p, gen, root(p).tracks[0].id, color(), 4 * S, 5 * S)
+    const g1 = applyGroupsCreate(p, gen, [a], null)
+    const g2 = applyGroupsCreate(p, gen, [b], null)
+    expect([group(p, g1.compositionId).ordinal, group(p, g2.compositionId).ordinal]).toEqual([1, 2])
+    expect(p.next_group_ordinal).toBe(3)
+
+    // Delete Group 2 and the number goes with it: the next Group is 3, and the
+    // project reads 1, 3. Reuse would let undo resurrect a second "Group 2".
+    applyDeleteLayer(p, g2.layerId)
+    applyCompositionsDelete(p, g2.compositionId)
+    const g3 = applyGroupsCreate(p, gen, [c], null)
+    expect(group(p, g3.compositionId).ordinal).toBe(3)
+    expect(() => validate(p)).not.toThrow()
+  })
+
+  it('keeps the number across a rename in both directions', () => {
+    const { p, gen, v } = pair()
+    const r = applyGroupsCreate(p, gen, [v], null)
+    applyGroupsRename(p, r.compositionId, 'Intro')
+    expect(group(p, r.compositionId).ordinal).toBe(1)
+    applyGroupsRename(p, r.compositionId, null)
+    expect(group(p, r.compositionId).ordinal).toBe(1)
+  })
+
+  it('burns no number on a refused create', () => {
+    const { p, gen, v, w } = pair()
+    root(p).tracks[0].locked = true
+    expectCmd(() => applyGroupsCreate(p, gen, [v, w], null))
+    expect(p.next_group_ordinal).toBe(1)
+  })
+})
+
 describe('applyGroupsRename / applyCompositionsDelete', () => {
   it('rename sets, trims and clears the label; the root and an unknown id refuse', () => {
     const { p, gen, v } = pair()

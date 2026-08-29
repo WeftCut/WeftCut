@@ -126,6 +126,33 @@ describe('groups — actor dispatch', () => {
     expect(groupsIn(actor)).toEqual([orphan.composition_id])
   })
 
+  // Why the ordinal counter is monotonic rather than `max + 1`: undo of a
+  // delete puts a composition back, and a reusing counter would by then have
+  // handed its number to someone else.
+  it('a deleted Group comes back from undo under its original number', () => {
+    const { actor, v, w } = pairActor()
+    const first = actor.dispatch('groups_create', { layers: [v, w], label: null })
+    if (!first.ok) throw new Error('fixture')
+    const g1 = (first.value as { composition_id: Uuid; layer_id: Uuid })
+    expect(actor.snapshot().compositions[g1.composition_id].ordinal).toBe(1)
+    expect(actor.dispatch('delete_layer', { layer: g1.layer_id }).ok).toBe(true)
+    expect(actor.dispatch('compositions_delete', { composition: g1.composition_id }).ok).toBe(true)
+
+    // A second Group made while the first is gone takes 2, not 1.
+    const z = actor.dispatch('add_layer', { track: root(actor.snapshot()).tracks[0].id, kind: 'color', t_start_us: 0, t_end_us: S })
+    if (!z.ok) throw new Error('fixture')
+    const second = actor.dispatch('groups_create', { layers: [z.value as Uuid], label: null })
+    if (!second.ok) throw new Error('fixture')
+    const g2 = (second.value as { composition_id: Uuid })
+    expect(actor.snapshot().compositions[g2.composition_id].ordinal).toBe(2)
+
+    // Undo back past the delete: both exist, still 1 and 2.
+    for (let i = 0; i < 3; i++) expect(actor.dispatch('undo', {}).ok).toBe(true)
+    const back = actor.snapshot()
+    expect(back.compositions[g1.composition_id].ordinal).toBe(1)
+    expect(back.compositions[g2.composition_id]).toBeUndefined()
+  })
+
   it('a locked member refuses the whole set and records nothing', () => {
     const { actor, v, w } = pairActor()
     expect(actor.dispatch('update_layer', { layer: w, patch: { locked: true } }).ok).toBe(true)

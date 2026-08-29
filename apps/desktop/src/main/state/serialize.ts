@@ -276,6 +276,54 @@ function normalizeTextParams(o: Record<string, unknown>): void {
   })
 }
 
+/** `Composition.ordinal` and `Project.next_group_ordinal` (additive, no schema
+ *  bump): materialize the pair on a project written before they existed, and
+ *  leave a project that already carries them exactly as found.
+ *
+ *  Missing ordinals are handed out from `max(existing) + 1` upward in
+ *  `Object.keys` order — i.e. insertion order, the order the compositions were
+ *  created in — so a project carrying none gets 1..N in creation order.
+ *  Starting ABOVE every stored ordinal rather than at 1 is what makes a
+ *  half-ordinalled project (only reachable on a dev machine) come out with no
+ *  two Groups sharing a number.
+ *
+ *  The root is forced to the reserved 0 rather than merely defaulted to it: the
+ *  scan above counts only Groups, so a root carrying a number would be a number
+ *  the counter never saw. Never displayed, so overwriting it costs nothing.
+ *
+ *  `next_group_ordinal` is floored at `max + 1` rather than merely defaulted:
+ *  a stored counter at or below a live ordinal is a counter that contradicts
+ *  the data it describes, and the next pre-compose would mint a duplicate. On a
+ *  well-formed project the floor is already satisfied and the stored value
+ *  stands, which is what keeps the pass idempotent and the round-trip exact. */
+function normalizeOrdinals(o: Record<string, unknown>): void {
+  const rootId = o.root_id
+  const comps = o.compositions
+  if (comps === null || typeof comps !== 'object' || Array.isArray(comps)) return
+  const entries = Object.entries(comps as Record<string, unknown>)
+    .filter((e): e is [string, Record<string, unknown>] => e[1] !== null && typeof e[1] === 'object' && !Array.isArray(e[1]))
+  // Anything a Group cannot legally hold — a non-integer, a negative, or the
+  // root's reserved 0 — counts as absent, so it is reassigned rather than
+  // propagated into the counter.
+  const stored = (c: Record<string, unknown>): number | null =>
+    typeof c.ordinal === 'number' && Number.isInteger(c.ordinal) && c.ordinal >= 1 ? c.ordinal : null
+  let next = 1
+  for (const [id, c] of entries) {
+    if (id === rootId) continue
+    const cur = stored(c)
+    if (cur !== null && cur >= next) next = cur + 1
+  }
+  for (const [id, c] of entries) {
+    // The root's is OVERWRITTEN, not defaulted: a stored value there is one the
+    // pass above did not count towards the counter, so leaving it could hand
+    // the same number to a Group. Nothing reads it, so 0 costs nothing.
+    if (id === rootId) { c.ordinal = 0; continue }
+    if (stored(c) === null) c.ordinal = next++
+  }
+  const counter = o.next_group_ordinal
+  o.next_group_ordinal = typeof counter === 'number' && Number.isInteger(counter) && counter > next - 1 ? counter : next
+}
+
 /** The object values of `o.compositions` on the WIRE shape — root and Groups
  *  alike. Non-object entries are skipped here and rejected by parseProject's
  *  shape check, so the repair passes never coerce one. */
@@ -366,6 +414,10 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   // get_project_settings → the renderer proxy store) hands `undefined` downstream
   // and a `settings.proxy_overrides[id]` read throws mid-render. Existing keys win.
   o.settings = { ...defaultSettings(), ...(o.settings as Record<string, unknown>) }
+  // `Composition.ordinal` / `Project.next_group_ordinal`: absent → creation-order
+  // numbers and a counter above them, so a project written before the pair
+  // existed opens under the numbering it always showed — see the function.
+  normalizeOrdinals(o)
   // `scale_linked`: absent → false (a default), and a claimed link the tracks
   // contradict → false (a repair). Never inferred from the tracks — see the
   // function.

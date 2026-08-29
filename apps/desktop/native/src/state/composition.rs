@@ -23,6 +23,15 @@ pub struct Composition {
     /// no `skip_serializing_if`, unlike `Link.label`, because TS writes
     /// `label: null` and the fixture round-trip compares whole values.
     pub label: Option<String>,
+    /// The `N` behind the UI's derived "Group N", drawn from
+    /// `Project::next_group_ordinal` when the composition is created. Rust
+    /// neither assigns nor reads it — TS owns every ordinal — but the field
+    /// must be declared: serde silently DROPS what no field names, and
+    /// `ts_fixture_v1_deserialises_and_round_trips` compares the whole
+    /// `compositions` subtree. `#[serde(default)]` for the same leniency
+    /// `duration_pinned` carries.
+    #[serde(default)]
+    pub ordinal: u32,
     pub width: u32,
     pub height: u32,
     /// Equal to the root's in every composition (single lattice, ADR 0052 §5).
@@ -117,6 +126,9 @@ impl Composition {
         Self {
             id,
             label,
+            // The root's reserved ordinal (TS `blankProject`): this constructor
+            // only ever builds a root here — Groups are made TS-side.
+            ordinal: 0,
             width: 1920,
             height: 1080,
             fps: Rational::FPS_30,

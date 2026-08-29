@@ -1,32 +1,30 @@
 import { TEXT_NAME_MAX, textSnippet } from "../../shared/textSnippet";
 import type { CompositionSummary, LayerSummary } from "../ipc";
 
-/// 1-based creation order among the compositions with NO label, root excluded —
-/// the `N` in a derived `Group N`.
+/// The `N` in a derived `Group N`, per composition, root excluded — the stored
+/// `Composition.ordinal` lifted into the map shape the naming chain takes.
 ///
-/// Deriving the number here rather than storing one on the composition is the
-/// same decision `trackName.ts` makes for `Track N`: a stored number would have
-/// to be renumbered on every ungroup, and main holds no locale bundle, so a name
-/// computed there would ship one language into every UI. Labelled compositions
-/// are skipped rather than counted, so naming one does not renumber its
-/// neighbours — a labelled Group has a name of its own, and the numbers are only
-/// there to tell the unnamed ones apart.
+/// The number is READ, never derived, and that is the whole point: it is state
+/// the actor assigns once from a monotonic counter (model.ts `Composition`), so
+/// naming one Group renumbers no other, clearing a label gives a Group its
+/// original number back, and a deleted Group that undo brings back returns as
+/// itself. A count computed over the live list could do none of those — every
+/// one of them changes the list.
 ///
-/// The order is the summary's own key order, which is main's insertion order
-/// (`buildProjectSummary` walks `Object.values(p.compositions)`), i.e. the order
-/// the Groups were created in. It renumbers when an unlabelled Group is
-/// ungrouped, exactly as a lane renumbers when a track is pruned.
+/// A LABELLED Group is in the map too — the number is independent of the name.
+/// `groupDisplayName` prefers the label, so the number surfaces only when the
+/// label is cleared, and then it is the Group's own.
+///
+/// Numbers therefore have gaps (delete Group 3 and the list reads 1, 2, 4) and
+/// need not be in list order. Nothing may treat them as an index.
 export function groupOrdinals(
-  compositions: Readonly<Record<string, Pick<CompositionSummary, "id" | "label">>>,
+  compositions: Readonly<Record<string, Pick<CompositionSummary, "id" | "ordinal">>>,
   rootId: string,
 ): ReadonlyMap<string, number> {
   const out = new Map<string, number>();
-  let n = 0;
-  for (const id of Object.keys(compositions)) {
+  for (const [id, composition] of Object.entries(compositions)) {
     if (id === rootId) continue;
-    if (compositions[id]?.label?.trim()) continue;
-    n += 1;
-    out.set(id, n);
+    out.set(id, composition.ordinal);
   }
   return out;
 }

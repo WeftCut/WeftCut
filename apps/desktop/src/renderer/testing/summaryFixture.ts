@@ -21,13 +21,16 @@ import type {
 export const ROOT_ID = "comp-root";
 
 /// A composition with defaults for everything not given. 1920×1080 @ 30 fps,
-/// empty timeline, 0 duration — a blank root.
+/// empty timeline, 0 duration — a blank root, hence `ordinal: 0` (the value the
+/// actor reserves for the root). A composition handed to `summaryFixture` as a
+/// GROUP is numbered there instead; override `ordinal` to pin a specific one.
 export function compositionFixture(
   over: Partial<CompositionSummary> = {},
 ): CompositionSummary {
   return {
     id: ROOT_ID,
     label: null,
+    ordinal: 0,
     width: 1920,
     height: 1080,
     fps_num: 30,
@@ -48,7 +51,10 @@ export interface SummaryFixtureOptions {
   name?: string;
   /// Fields of the ROOT composition; its id is `ROOT_ID` unless overridden.
   root?: Partial<CompositionSummary>;
-  /// Further compositions (Groups), keyed by their own `id`.
+  /// Further compositions (Groups), keyed by their own `id`. Each is numbered
+  /// 1, 2, 3 … in the order given — what the actor's monotonic counter would
+  /// have handed out had they been pre-composed in this order — unless it
+  /// already carries a non-zero `ordinal`, which then stands.
   groups?: CompositionSummary[];
   media?: MediaSummary[];
   history?: HistoryView;
@@ -58,7 +64,11 @@ export interface SummaryFixtureOptions {
 export function summaryFixture(opts: SummaryFixtureOptions = {}): ProjectSummary {
   const root = compositionFixture(opts.root);
   const compositions: Record<string, CompositionSummary> = { [root.id]: root };
-  for (const g of opts.groups ?? []) compositions[g.id] = g;
+  let ordinal = 0;
+  for (const g of opts.groups ?? []) {
+    ordinal += 1;
+    compositions[g.id] = g.ordinal === 0 ? { ...g, ordinal } : g;
+  }
   const all = Object.values(compositions);
   return {
     project_id: opts.project_id ?? "project-1",

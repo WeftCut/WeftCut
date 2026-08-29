@@ -32,8 +32,8 @@ function project(name = "My film") {
       compositionFixture({ id: G2, label: "Titles" }),
     ],
   });
-  // `groupOrdinals` numbers the unlabelled compositions in key order, root
-  // excluded — `comp-g1` is the only one, so it is Group 1.
+  // Only the number `comp-g1` shows: `comp-g2` carries a label, which outranks
+  // its own ordinal everywhere the tab is drawn.
   return { summary, ordinals: new Map([[G1, 1]]) };
 }
 

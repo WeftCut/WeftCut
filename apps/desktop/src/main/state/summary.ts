@@ -188,6 +188,11 @@ export interface CompositionSummary {
   /** The composition's own label; null on the root and on an unnamed Group
    *  (the renderer derives "Group N"). */
   label: string | null
+  /** The stored `N` behind a derived "Group N" — see model.ts `Composition`.
+   *  Projected verbatim, and carried even on a LABELLED Group: the label is
+   *  what the UI shows, the ordinal is what it falls back to when the label is
+   *  cleared. */
+  ordinal: number
   width: number; height: number; fps_num: number; fps_den: number
   /** EXCLUSIVE end boundary of the timeline `[0, duration_us)`, never a frame anchor. */
   duration_us: number
@@ -304,7 +309,7 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
   media.sort((x, y) => (x.id < y.id ? 1 : x.id > y.id ? -1 : 0)) // b.id.cmp(&a.id) — descending
 
   const compositionSummary = (c: Composition): CompositionSummary => ({
-    id: c.id, label: c.label, width: c.width, height: c.height, fps_num: c.fps.num, fps_den: c.fps.den,
+    id: c.id, label: c.label, ordinal: c.ordinal, width: c.width, height: c.height, fps_num: c.fps.num, fps_den: c.fps.den,
     duration_us: c.duration_us, duration_pinned: c.duration_pinned, fps_locked: history.holds_layer_anywhere,
     tracks: c.tracks.map((t: Track): TrackSummary => ({
       id: t.id, kind: deriveTrackKindLabel(t), label: t.label, enabled: t.enabled, locked: t.locked,

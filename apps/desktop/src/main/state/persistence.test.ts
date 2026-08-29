@@ -97,10 +97,10 @@ function withMedia(items: MediaItem[]): Project {
   return {
     schema_version: SCHEMA_VERSION, project_id: 'p', metadata: { name: 'm', created_at: '<TS>', modified_at: '<TS>', description: null },
     compositions: { root: {
-      id: 'root', label: null, width: 1920, height: 1080, fps: { num: 30, den: 1 }, duration_us: 0, duration_pinned: false,
+      id: 'root', label: null, ordinal: 0, width: 1920, height: 1080, fps: { num: 30, den: 1 }, duration_us: 0, duration_pinned: false,
       sample_rate: 48000, channels: 2, color_space: 'Bt709', background: { r: 0, g: 0, b: 0, a: 255 },
       tracks: [], markers: [], transitions: [], links: [],
-    } }, root_id: 'root',
+    } }, root_id: 'root', next_group_ordinal: 1,
     media_pool: Object.fromEntries(items.map((i) => [i.id, i])), audio_roles: {},
     settings: { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60, history_capacity: 200, auto_pair_audio_on_import: true, prefer_proxies: false, proxy_overrides: {} },
   }

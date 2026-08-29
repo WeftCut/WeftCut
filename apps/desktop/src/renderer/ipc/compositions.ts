@@ -40,6 +40,7 @@ export function rootCompositionOf(summary: ProjectSummary): CompositionSummary {
 export const EMPTY_COMPOSITION: CompositionSummary = Object.freeze({
   id: "",
   label: null,
+  ordinal: 0,
   width: 1920,
   height: 1080,
   fps_num: 30,

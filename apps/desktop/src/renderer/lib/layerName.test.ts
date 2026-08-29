@@ -146,17 +146,17 @@ function groupLayer(
   };
 }
 
-/// Only the two fields the ordinals read; the key ORDER is what carries
-/// creation order, so these literals are written in the order main would.
+/// Only the field the ordinals read. Key order is deliberately NOT meaningful
+/// here — the number comes off the composition, not off its position.
 const comps = (
-  ...entries: Array<[string, string | null]>
-): Record<string, Pick<CompositionSummary, "id" | "label">> =>
-  Object.fromEntries(entries.map(([id, label]) => [id, { id, label }]));
+  ...entries: Array<[string, number]>
+): Record<string, Pick<CompositionSummary, "id" | "ordinal">> =>
+  Object.fromEntries(entries.map(([id, ordinal]) => [id, { id, ordinal }]));
 
 describe("groupOrdinals", () => {
-  it("numbers the unlabelled compositions in creation order, root excluded", () => {
+  it("reads the stored number off each composition, root excluded", () => {
     const ordinals = groupOrdinals(
-      comps(["root", null], ["g-a", null], ["g-b", null]),
+      comps(["root", 0], ["g-a", 1], ["g-b", 2]),
       "root",
     );
     expect(ordinals.get("root")).toBeUndefined();
@@ -164,24 +164,23 @@ describe("groupOrdinals", () => {
     expect(ordinals.get("g-b")).toBe(2);
   });
 
-  // A labelled Group has a name of its own, so it takes no number — and,
-  // crucially, does not push its neighbours along. Naming one Group must not
-  // renumber another.
-  it("skips labelled compositions rather than counting them", () => {
-    const ordinals = groupOrdinals(
-      comps(["root", null], ["g-a", "Lower third"], ["g-b", null]),
-      "root",
-    );
-    expect(ordinals.has("g-a")).toBe(false);
-    expect(ordinals.get("g-b")).toBe(1);
+  // The counter is monotonic, so deleting a Group leaves a hole rather than
+  // pulling its successors down. A number is a name, not an index.
+  it("keeps the gaps a deleted Group leaves behind", () => {
+    const ordinals = groupOrdinals(comps(["root", 0], ["g-a", 1], ["g-c", 3]), "root");
+    expect(ordinals.get("g-a")).toBe(1);
+    expect(ordinals.get("g-c")).toBe(3);
   });
 
-  // A blank label is absent everywhere else in the naming chain; it has to be
-  // absent here too, or a Group whose name was cleared would be nameless
-  // instead of numbered.
-  it("treats a blank label as no label", () => {
-    const ordinals = groupOrdinals(comps(["root", null], ["g-a", "   "]), "root");
-    expect(ordinals.get("g-a")).toBe(1);
+  // The number is independent of the label, which is what makes naming one
+  // Group leave every other Group's displayed name alone — and what lets a
+  // cleared label fall back to the number the Group always had.
+  it("numbers a labelled Group too", () => {
+    const ordinals = groupOrdinals(comps(["root", 0], ["g-a", 1], ["g-b", 2]), "root");
+    expect(groupDisplayName("g-a", "Lower third", ordinals, tEn)).toBe("Lower third");
+    expect(groupDisplayName("g-b", null, ordinals, tEn)).toBe("Group 2");
+    // Clearing g-a's label restores its own number, not g-b's.
+    expect(groupDisplayName("g-a", null, ordinals, tEn)).toBe("Group 1");
   });
 });
 

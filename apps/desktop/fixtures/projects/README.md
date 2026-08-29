@@ -14,8 +14,12 @@ deliberately **no generator script** in the repo for these — if a fixture look
 wrong, that is either a real migration bug or a deliberate follow-up step, never
 a reason to rewrite the file.
 
-Hand-editing one is allowed for exactly one reason: the version it declares must
-match its filename.
+Hand-editing one is allowed for two reasons, both mechanical: the version it
+declares must match its filename, and an **additive** field is written in by
+hand at the key position the in-memory object carries it — re-driving the actor
+would re-mint every uuid and timestamp for no gain, and the three pinned fields
+below cannot come from the actor at all. The byte-identity check in
+`migrate.completeness.test.ts` is what proves the position right.
 
 Until first release the rule has nothing to guard: `STEPS` is empty, so there is
 no step to test against a past shape, and an incompatible shape change instead

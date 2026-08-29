@@ -67,7 +67,12 @@ export function applyGroupsCreate(p: Project, idGen: IdGen, layerIds: readonly U
   const topFormerId = formerTrackIds[formerTrackIds.length - 1]
 
   const { width, height, fps, sample_rate, channels, color_space, background } = parent
-  const child = newComposition(idGen(), idGen, normalizeLabel(label), { width, height, fps, sample_rate, channels, color_space, background })
+  // The one consumer of the ordinal counter — pre-compose is the only way a
+  // composition beyond the root comes into being. Taken after the refusals
+  // above, on the same discipline as `idGen()`: a refused op burns neither.
+  const ordinal = p.next_group_ordinal
+  p.next_group_ordinal = ordinal + 1
+  const child = newComposition(idGen(), idGen, normalizeLabel(label), ordinal, { width, height, fps, sample_rate, channels, color_space, background })
   p.compositions[child.id] = child
   const skeleton = child.tracks.map((t) => t.id) // A roll, B roll
   const laneOf = new Map<Uuid, Uuid>()

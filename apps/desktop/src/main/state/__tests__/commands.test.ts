@@ -225,7 +225,7 @@ describe('demoColor', () => {
 function makeProject(overrides?: Partial<Project> & { tracks?: Composition['tracks'] }): Project {
   const { tracks, ...projectOverrides } = overrides ?? {}
   const rootComp: Composition = {
-    id: 'root', label: null, width: 1920, height: 1080, fps: { num: 30, den: 1 }, duration_us: 0,
+    id: 'root', label: null, ordinal: 0, width: 1920, height: 1080, fps: { num: 30, den: 1 }, duration_us: 0,
     duration_pinned: false, sample_rate: 48000, channels: 2, color_space: 'Bt709',
     background: { r: 0, g: 0, b: 0, a: 255 },
     tracks: tracks ?? [], markers: [], transitions: [], links: [],
@@ -233,7 +233,7 @@ function makeProject(overrides?: Partial<Project> & { tracks?: Composition['trac
   const base: Project = {
     schema_version: SCHEMA_VERSION, project_id: 'proj',
     metadata: { name: 'test', created_at: '', modified_at: '', description: null },
-    compositions: { root: rootComp }, root_id: 'root',
+    compositions: { root: rootComp }, root_id: 'root', next_group_ordinal: 1,
     media_pool: {}, audio_roles: {},
     settings: { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
       history_capacity: 200, auto_pair_audio_on_import: true,

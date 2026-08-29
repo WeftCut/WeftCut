@@ -600,6 +600,7 @@ mod tests {
             },
             compositions: compositions.into_iter().map(|c| (c.id, c)).collect(),
             root_id,
+            next_group_ordinal: 1,
             media_pool: media.into_iter().map(|m| (m.id, m)).collect(),
             audio_roles: imbl::HashMap::new(),
             settings: ProjectSettings::default(),

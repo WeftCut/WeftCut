@@ -132,9 +132,10 @@ describe("group pool rows", () => {
       "Group 1",
       "Intro",
     ]);
-    // A labelled composition is skipped by the ordinals, so naming one does not
-    // renumber its neighbours.
-    expect(ordinals.get("comp-named")).toBeUndefined();
+    // A labelled composition keeps a number of its own — it is stored, not
+    // counted — so naming one renumbers no neighbour and clearing the name
+    // gives it back.
+    expect(ordinals.get("comp-named")).toBe(2);
   });
 
   it("filters on the displayed name, case-insensitively", () => {
