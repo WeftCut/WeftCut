@@ -257,6 +257,14 @@ const zhCN: Resources = {
     add_to_group_needs_member: "除了组片段，还要选中要加入的片段",
     add_to_group_locked: "先解锁要加入的那些片段",
     add_to_group_starts_before_group: "该片段比组开始得更早——先把它往后移",
+    // 移动到合成。前三条解释变灰的子菜单入口——要去修的是选区；
+    // 后面几条解释某一个变灰的目标行——要换一个目标去选。
+    move_to_composition_needs_selection: "选中要移动到其他合成的片段",
+    move_to_composition_locked: "先解锁要移动的那些片段",
+    move_to_composition_no_destination: "没有其他合成可以放这些片段",
+    move_to_composition_already_there: "这些片段已经在这里了",
+    move_to_composition_cycle: "所选的组里已经包含这个合成，它不能再放进自己里面",
+    move_to_composition_offscreen: "播放头处看不到这个合成——片段会落在它的开头",
   },
   dock_workspace: {
     editing_label: "编辑工作区",
@@ -383,6 +391,9 @@ const zhCN: Resources = {
     // 右键菜单专用：它知道自己是在哪个组上打开的。一次性构建的菜单——编辑菜单、
     // 原生菜单栏、搜索面板——沿用上面的通用标签（原因见 menu/CommandContextItem.tsx）。
     add_to_group_named: "加入“{{name}}”",
+    // 尾部的箭头是子菜单自带的，不属于名字本身：编辑菜单和搜索面板用同一条标签，
+    // 后面并没有列表（那两种形态做什么，见 shortcuts/defs.ts）。
+    move_to_composition: "移动到合成",
     toggle_link_selected: "链接 / 取消链接所选图层",
     toggle_link_override: "切换忽略链接",
     nudge_audio_sample_back: "音频前移 1 个采样",

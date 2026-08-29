@@ -1379,6 +1379,36 @@ export async function groupsAddMembers(
   return invoke<void>("groups_add_members", { layerIds, groupLayerId });
 }
 
+/// Move layers into a composition named DIRECTLY, at a landing time the caller
+/// resolves — the crossing `groupsAddMembers` reaches by pointing at a Group
+/// clip instead, and delegates to.
+/// `anchorLayerId` is the member `anchorTStartUs` positions; every other member
+/// keeps its phase relative to it, which is what carries a transition between
+/// two moved members across. `toTrackId` is the caller's lane opinion: `null`
+/// bounces to a free lane (a menu has no ghost to make a lie of), a lane id
+/// refuses an occupied or locked one, `"spawn"` mints a fresh one.
+/// Both endpoints re-snap on the DESTINATION's grid, so two compositions at
+/// different rates do not round trip (ADR 0037, ADR 0038). Refuses whole,
+/// before any write, on: a set spanning two compositions, a destination that is
+/// the set's own composition, a locked member or lane, a member landing before
+/// composition time 0, and a member whose own composition already reaches the
+/// destination (`CompositionCycle`). The ROOT is an ordinary destination.
+export async function moveLayersToComposition(
+  layerIds: string[],
+  toCompositionId: string,
+  anchorLayerId: string,
+  anchorTStartUs: number,
+  toTrackId: string | "spawn" | null = null,
+): Promise<void> {
+  return invoke<void>("move_layers_to_composition", {
+    layerIds,
+    toCompositionId,
+    anchorLayerId,
+    anchorTStartUs,
+    toTrackId,
+  });
+}
+
 /// Set or clear (`null` / blank) a Group's composition name. The root refuses.
 export async function groupsRename(
   compositionId: string,

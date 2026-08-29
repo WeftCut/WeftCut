@@ -39,6 +39,7 @@ export type ActionId =
   | "ungroupSelected"
   | "openGroup"
   | "addToGroup"
+  | "moveToComposition"
   | "toggleLinkSelected"
   | "toggleLinkOverride"
   | "nudgeAudioSampleBack"
@@ -255,6 +256,13 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // (`menu/CommandContextItem.tsx` owns that split). Catalogued anyway, so the
   // Edit menu, the palette and Settings → Keyboard all carry it.
   addToGroup:             { defaultKeys: [],               labelKey: "actions.add_to_group", scope: TIMELINE_SELECTION },
+  // The crossing addressed by NAMING a composition, unbound for the same reason
+  // and one more: the act is incomplete without a destination, and a key can
+  // carry none. Its home is the clip menu's submenu, where every composition is
+  // a row; the catalogued form here means the ROOT — the one destination a
+  // surface with no list can name unambiguously — and greys where the selection
+  // is already there (`timeline/moveToCompositionEligibility.ts`).
+  moveToComposition:      { defaultKeys: [],               labelKey: "actions.move_to_composition", scope: TIMELINE_SELECTION },
   // `docs/features.md#links` — Ctrl/Cmd+L toggles the link on the current
   // selection, Premiere's Link: two or more unlinked layers link, a selection
   // inside one link unlinks it (`timeline/linkEligibility.ts` decides).

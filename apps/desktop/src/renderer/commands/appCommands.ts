@@ -35,6 +35,7 @@ import {
   canGroupSelection,
   canUngroupSelection,
 } from "../timeline/groupEligibility";
+import { canMoveSelectionToRoot } from "../timeline/moveToCompositionEligibility";
 import { canOpenSelectedGroup } from "./groupCommands";
 import { currentOpenComposition } from "../state/projectStore";
 import { useSelectionStore } from "../state/selectionStore";
@@ -355,16 +356,18 @@ export function buildAppCommands(
     // so the flag would go stale the moment the user pressed `I`. This
     // predicate is evaluated inside `listCommands()`, so it always reads live.
     clearRange: () => hasMarkedRange(),
-    // The Group quartet, live-read for the same reason and through the one
-    // predicate every surface shares (`timeline/groupEligibility.ts`), so the
-    // Edit menu row, the strip button, the palette entry and the clip's context
-    // menu cannot disagree about whether the selection can be grouped. The
-    // disabled-reason strings live with the surfaces that can show one — the
-    // strip for the first two, the clip menu for `addToGroup`.
+    // The Group commands, live-read for the same reason and through the one
+    // predicate every surface shares (`timeline/groupEligibility.ts`,
+    // `timeline/moveToCompositionEligibility.ts`), so the Edit menu row, the
+    // strip button, the palette entry and the clip's context menu cannot
+    // disagree about whether the selection can be grouped. The disabled-reason
+    // strings live with the surfaces that can show one — the strip for the
+    // first two, the clip menu for `addToGroup` and `moveToComposition`.
     groupSelected: canGroupSelection,
     ungroupSelected: canUngroupSelection,
     openGroup: canOpenSelectedGroup,
     addToGroup: canAddToGroupSelection,
+    moveToComposition: canMoveSelectionToRoot,
   };
 
   // The armed modal tool, read straight from `toolStore` for the same

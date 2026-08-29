@@ -79,14 +79,21 @@ export const EDIT_MENU: MenuSection = {
     // The Group section (`docs/features.md#groups`). Its own group of rows
     // rather than beside the tools above, because these are structural — they
     // change what the timeline CONTAINS — while Blade and Split change where a
-    // clip is cut. Make one, dissolve one, add to one: the three edits in that
-    // order, then Enter under them as the navigation half. Add to Group and
-    // Enter both ship unbound, which is exactly why they are here and not only
-    // on the clip's context menu — the menu is the discoverable path to a
+    // clip is cut. Make one, dissolve one, add to one, move out of one: the
+    // four edits in that order, then Enter under them as the navigation half.
+    // The last three ship unbound, which is exactly why they are here and not
+    // only on the clip's context menu — the menu is the discoverable path to a
     // gesture no key reaches.
+    //
+    // Move to composition follows Add to Group because the two are one act seen
+    // from either end — point at the destination, or name it — and the pointed
+    // one is what a user finds first. This row carries no destination list, so
+    // it means the root: "put these back into the film", greyed once they are
+    // (`commands/groupCommands.ts`). The clip menu's submenu has the full list.
     "groupSelected",
     "ungroupSelected",
     "addToGroup",
+    "moveToComposition",
     "openGroup",
   ],
 };

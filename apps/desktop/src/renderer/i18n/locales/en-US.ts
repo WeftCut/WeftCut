@@ -275,6 +275,19 @@ const enUS = {
     add_to_group_locked: "Unlock the clips you are adding to the group",
     add_to_group_starts_before_group:
       "This clip starts before the group does — move it later first",
+    // Move to composition. The first three explain the greyed submenu TRIGGER
+    // — what to go and fix about the selection — and the rest explain one
+    // greyed destination row, where the answer is to pick a different one.
+    move_to_composition_needs_selection:
+      "Select the clips to move to another composition",
+    move_to_composition_locked: "Unlock the clips you are moving",
+    move_to_composition_no_destination:
+      "There is no other composition these clips can go to",
+    move_to_composition_already_there: "These clips are already here",
+    move_to_composition_cycle:
+      "A selected group already contains this composition — it cannot also sit inside it",
+    move_to_composition_offscreen:
+      "This composition is not on screen at the playhead — the clips land at its start",
   },
   dock_workspace: {
     editing_label: "Editing workspace",
@@ -423,6 +436,10 @@ const enUS = {
     // menus built once — Edit, the native bar, the search palette — keep the
     // plain label above (`menu/CommandContextItem.tsx` says why).
     add_to_group_named: "Add to “{{name}}”",
+    // The trailing chevron is the submenu's own affordance, not part of the
+    // name: the Edit menu and the palette carry the same label with no list
+    // behind it (`shortcuts/defs.ts` says what those forms do).
+    move_to_composition: "Move to composition",
     toggle_link_selected: "Link / Unlink selected layers",
     toggle_link_override: "Toggle link override",
     nudge_audio_sample_back: "Nudge audio 1 sample earlier",

@@ -103,9 +103,13 @@ export function groupNotPlainReason(
   return null;
 }
 
-/// Every selected layer with the lane that holds it — the pair both predicates
-/// need, since a lock lives on either.
-function selectedWithTracks(
+/// Every selected layer with the lane that holds it — the pair every predicate
+/// here needs, since a lock lives on either.
+///
+/// Exported for `moveToCompositionEligibility.ts`, which is not a Group gate but
+/// enforces the same "all in one composition" rule the same structural way: the
+/// walk is the rule, so a second copy of it would be a second rule.
+export function selectedWithTracks(
   selected: ReadonlySet<string>,
   tracks: readonly TrackSummary[],
 ): Array<{ layer: LayerSummary; track: TrackSummary }> {
@@ -172,7 +176,10 @@ export function ungroupState(
 /// Group clip that points at the root. That is the prevent-at-the-gesture /
 /// refuse-in-state split this file already states for `blend_mode`. Loosening
 /// exactly-one — nesting one Group inside another — is what would make a cycle
-/// state necessary.
+/// state necessary. The gesture that DOES name its destination rather than
+/// spending the selection's Group clip on being it can have a Group as a
+/// member, so it answers the cycle per destination
+/// (`moveToCompositionEligibility.ts`).
 export function addToGroupState(
   selected: ReadonlySet<string>,
   tracks: readonly TrackSummary[],

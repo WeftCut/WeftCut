@@ -2,13 +2,20 @@ import { useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import type { TransitionDirection } from "../ipc";
+import { moveSelectionToComposition } from "../commands/groupCommands";
 import {
   commandRegistryVersion,
+  getCommand,
   subscribeCommandRegistry,
 } from "../commands/registry";
 import { groupDisplayName } from "../lib/layerName";
 import { CommandContextItem } from "../menu/CommandContextItem";
-import { MenuItem, MenuSeparator } from "../menu/Menu";
+import {
+  closeContextMenuOn,
+  MenuItem,
+  MenuSeparator,
+  SubMenu,
+} from "../menu/Menu";
 import { useLinkOverride } from "../state/linkOverrideStore";
 import { useGroupOrdinals } from "../state/projectStore";
 import { useCursorAnchor } from "./contextMenuAnchor";
@@ -18,6 +25,13 @@ import {
   type AddToGroupState,
 } from "./groupEligibility";
 import { linkFanoutActive } from "./linkEligibility";
+import {
+  moveDestinations,
+  useMoveToCompositionState,
+  type DestinationState,
+  type MoveDestination,
+  type MoveToCompositionState,
+} from "./moveToCompositionEligibility";
 import {
   TRANSITION_DIRECTIONS,
   type TransitionCut,
@@ -41,6 +55,13 @@ import {
 /// you pointed is the Blade tool's whole job, and it is one key (`C`) and one
 /// strip button away. Resolve makes the same split — its clip menu's "Split
 /// Clip" cuts at the playhead too.
+///
+/// `moveToComposition` sits in this always-present tier and NOT in the Group
+/// tier below, for `groupSelected`'s reason: what it acts on is the selection,
+/// whatever the selection is made of. Its most common use is a clip that is not
+/// a Group at all — two ordinary clips inside one, carried back out into the
+/// film — and a kind gate would put the row exactly where that selection can
+/// never see it.
 export const LAYER_MENU_COMMAND_IDS = [
   "copySelected",
   "pasteAtPlayhead",
@@ -49,6 +70,7 @@ export const LAYER_MENU_COMMAND_IDS = [
   "splitAtPlayhead",
   "moveToNewTrack",
   "groupSelected",
+  "moveToComposition",
 ] as const;
 
 /// The rows only a Group clip gets, appended when the right-clicked layer is
@@ -92,6 +114,25 @@ const ADD_TO_GROUP_REASON: Record<Exclude<AddToGroupState, "add_to_group">, stri
     starts_before_group: "quick_actions.add_to_group_starts_before_group",
   };
 
+/// Why a greyed *Move to composition ›* trigger is greyed. Same block and same
+/// `Record`-over-the-remaining-states rule as `ADD_TO_GROUP_REASON` above.
+const MOVE_TO_COMPOSITION_REASON: Record<
+  Exclude<MoveToCompositionState, "move_to_composition">,
+  string
+> = {
+  needs_selection: "quick_actions.move_to_composition_needs_selection",
+  locked: "quick_actions.move_to_composition_locked",
+  no_destination: "quick_actions.move_to_composition_no_destination",
+};
+
+/// Why a greyed DESTINATION row is greyed. A separate table because these
+/// explain the row rather than the gesture: the answer is which composition to
+/// pick instead, not what to go and fix about the selection.
+const DESTINATION_REASON: Record<Exclude<DestinationState, "eligible">, string> = {
+  already_there: "quick_actions.move_to_composition_already_there",
+  cycle: "quick_actions.move_to_composition_cycle",
+};
+
 /// Floating context menu (Base UI Menu) anchored to a zero-size virtual
 /// element at the right-click coordinates. The popup machinery (portal,
 /// outside-press + Escape close, arrow-key nav) comes from the library.
@@ -113,7 +154,9 @@ const ADD_TO_GROUP_REASON: Record<Exclude<AddToGroupState, "add_to_group">, stri
 /// reaches `MenuItem` via `CommandContextItem`) and the tiers under it used
 /// to sit on two different left edges inside the one popup.
 ///
-/// Flat, like every menu here except the transition chip's — no submenus.
+/// Flat but for one row: *Move to composition ›*, whose destinations are a list
+/// only the project can enumerate. Every other row is a single act, and a
+/// submenu around one act is a click spent on nothing.
 export function LayerContextMenu({
   x,
   y,
@@ -221,6 +264,41 @@ export function LayerContextMenu({
     : undefined;
   const addToGroupHint =
     addToGroup === "add_to_group" ? undefined : t(ADD_TO_GROUP_REASON[addToGroup]);
+  // The *Move to composition ›* trigger. Live it is a submenu — a destination
+  // is the content of the gesture, and only a list can carry one — and greyed
+  // it falls back to the flat registry row, which is what can show WHY. The
+  // command is read from the registry so the trigger's label has the one home
+  // its accelerator and its `enabled` already have, and so an unregistered
+  // provider drops this row exactly as `CommandContextItem` drops the others.
+  const moveToComposition = useMoveToCompositionState();
+  const moveToCompositionCommand = getCommand("moveToComposition");
+  const moveToCompositionHint =
+    moveToComposition === "move_to_composition"
+      ? undefined
+      : t(MOVE_TO_COMPOSITION_REASON[moveToComposition]);
+  // Resolved per right-click, never subscribed: the rows are an array, so a
+  // selector over them would be a fresh reference every store tick
+  // (`feedback_zustand_composite_selector`). The popup mounts on open, which is
+  // what makes one read enough.
+  //
+  // Built for `no_destination` as well as for the live state, and that is the
+  // point of the submenu: a destination refused on the cycle rule is a row
+  // saying so, where a greyed trigger would leave the user guessing which
+  // composition it meant. Only a selection with nothing to move — or nothing
+  // movable — falls back to the flat row.
+  const destinations =
+    moveToComposition === "needs_selection" || moveToComposition === "locked"
+      ? []
+      : moveDestinations(t);
+  // A live row explains itself only when the landing is not where the user
+  // would guess — the destination shows nothing at this moment, so the clips go
+  // to its start instead.
+  const destinationHint = (d: MoveDestination): string | undefined =>
+    d.state === "eligible"
+      ? d.offScreen
+        ? t("quick_actions.move_to_composition_offscreen")
+        : undefined
+      : t(DESTINATION_REASON[d.state]);
   const directionLabel = (d: TransitionDirection) =>
     t(`transitions.direction_${d}`, { defaultValue: d });
   return (
@@ -229,9 +307,7 @@ export function LayerContextMenu({
       // Non-modal: no scroll lock — the scroll-close effect in Timeline
       // handles the anchored-to-stale-coordinates case instead.
       modal={false}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
+      onOpenChange={closeContextMenuOn(onClose)}
     >
       <MenuPrimitive.Portal>
         <MenuPrimitive.Positioner
@@ -247,6 +323,38 @@ export function LayerContextMenu({
                 // Position-keyed: separators have no identity, and the list is
                 // static.
                 <MenuSeparator key={`sep-${i}`} />
+              ) : id === "moveToComposition" ? (
+                moveToCompositionCommand && destinations.length > 0 ? (
+                  <SubMenu key={id} label={t(moveToCompositionCommand.labelKey)}>
+                    {destinations.map((d) => {
+                      const hint = destinationHint(d);
+                      return (
+                        <MenuItem
+                          key={d.compositionId}
+                          label={d.name}
+                          disabled={d.state !== "eligible"}
+                          {...(hint ? { hint } : {})}
+                          // The landing is NOT taken from the row: it is
+                          // resolved again at commit, because an open popup
+                          // does not re-render while the film plays under it.
+                          onSelect={() => {
+                            onClose();
+                            return moveSelectionToComposition(d.compositionId);
+                          }}
+                        />
+                      );
+                    })}
+                  </SubMenu>
+                ) : (
+                  <CommandContextItem
+                    key={id}
+                    id={id}
+                    onRun={onClose}
+                    {...(moveToCompositionHint
+                      ? { hint: moveToCompositionHint }
+                      : {})}
+                  />
+                )
               ) : (
                 <CommandContextItem key={id} id={id} onRun={onClose} />
               ),
