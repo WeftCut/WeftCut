@@ -14,15 +14,35 @@
 // `hooks/useLayerDrag.ts`; this is where their result is published.
 
 import { create } from "zustand";
+import type { LayerParamsView } from "../ipc";
 import { SPAWN_TRACK_ID, type PlacementValidity } from "./placement";
 
 export type DragKind = "move" | "trim-start" | "trim-end";
 
+/// One clip the gesture carries — a DESCRIPTION of it, never a mirror. The two
+/// display fields are here because a Panel showing ANOTHER composition can draw
+/// a preview of this drop and has no summary to look them up in; nothing else
+/// follows them across, so a keyframe track or an effect chain never rides a
+/// pointermove.
 export interface DragSubject {
   layerId: string;
   trackId: string;
   originalTStart: number;
   originalTEnd: number;
+  /// Decides the overlap class (`overlapClassForKind`) and the type colour
+  /// (`timelineLayerTheme`) of a preview drawn outside this layer's own Panel.
+  kind: LayerParamsView["kind"];
+  /// The clip's display name, resolved by `lib/layerName.ts` where the layer
+  /// still is — the same string its own block shows.
+  name: string;
+  /// The layer's own lock, or its lane's. A scalar rather than a mirror, and it
+  /// has to travel: the seed can never be locked (a locked block refuses
+  /// `pointerdown`), but a LINK MEMBER dragged along with it can be, and a
+  /// Panel the layer does not live in has no summary to discover that in. The
+  /// in-composition projection reads the same pair to refuse
+  /// (`buildMoveProjection`), so without this the same set would preview green
+  /// next door and amber at home.
+  locked: boolean;
 }
 
 export interface DragSeed {
@@ -78,6 +98,25 @@ export interface DragState extends DragSeed {
   hiddenSubjectCount: number;
 }
 
+/// What a Panel the gesture did NOT start in has resolved the drop to, in its
+/// OWN units — its zoom, its frame grid, its lanes, its snapping targets. Only
+/// that Panel can compute it (ADR 0053), which is why the answer is published
+/// here instead of being recomputed by whoever wants it: no other party to the
+/// gesture shares the axis it is expressed on.
+export interface ForeignDropClaim {
+  /// The claiming Panel's composition — the destination, and the axis
+  /// `anchorTStartUs` belongs to.
+  compositionId: string;
+  /// A lane id, `SPAWN_TRACK_ID` for the drop strip, or null when the pointer
+  /// is inside the Panel but over no row at all (its ruler, or the band below
+  /// the last lane).
+  trackId: string | null;
+  /// Where the gesture's ANCHOR subject's head lands. Every other subject holds
+  /// its phase to it, so this one number positions the whole set.
+  anchorTStartUs: number;
+  validity: PlacementValidity;
+}
+
 interface LayerDragStore {
   /// The ARMED gesture, or null. A gesture still inside its temporal arm delay,
   /// or one that has not yet caused a frame or track change, is not here —
@@ -88,9 +127,16 @@ interface LayerDragStore {
   /// composition's axis: a Panel that did not start the drag can still turn it
   /// into a time on its own grid.
   pointer: { clientX: number; clientY: number } | null;
+  /// The destination Panel's resolved landing, while the pointer is over one.
+  /// Written by `ForeignDragGhost.tsx` — the only party that can resolve it —
+  /// and read by nobody yet: it is the seam the drop commits through, and it
+  /// lives here because the value exists nowhere else.
+  claim: ForeignDropClaim | null;
   begin: (state: DragState, clientX: number, clientY: number) => void;
   publish: (state: DragState) => void;
   moveVisual: (clientX: number, clientY: number) => void;
+  claimDropTarget: (claim: ForeignDropClaim) => void;
+  releaseDropTarget: (compositionId: string) => void;
   end: () => void;
 }
 
@@ -114,9 +160,19 @@ function sameDragValue(a: DragState, b: DragState): boolean {
   return true;
 }
 
+function sameClaimValue(a: ForeignDropClaim, b: ForeignDropClaim): boolean {
+  return (
+    a.compositionId === b.compositionId &&
+    a.trackId === b.trackId &&
+    a.anchorTStartUs === b.anchorTStartUs &&
+    a.validity === b.validity
+  );
+}
+
 export const useLayerDragStore = create<LayerDragStore>((set) => ({
   drag: null,
   pointer: null,
+  claim: null,
   /// The gesture arms: this is the first frame anything is drawn for it.
   begin: (drag, clientX, clientY) => set({ drag, pointer: { clientX, clientY } }),
   /// Every subsequent pointermove. Guarded on VALUE, not identity, the way
@@ -132,11 +188,23 @@ export const useLayerDragStore = create<LayerDragStore>((set) => ({
         ? s
         : { pointer: { clientX, clientY } },
     ),
+  /// Value-guarded like `publish`: the claimant re-resolves the landing on
+  /// every pointermove, and a pointer that wiggled inside one frame lands on
+  /// the same lane at the same time.
+  claimDropTarget: (claim) =>
+    set((s) => (s.claim !== null && sameClaimValue(s.claim, claim) ? s : { claim })),
+  /// Identity-guarded, the `useMediaDragStore` rule: only the current claimant
+  /// may let go. Without it a Panel processing the pointer's departure would
+  /// clear the claim the Panel it arrived at has already made.
+  releaseDropTarget: (compositionId) =>
+    set((s) => (s.claim?.compositionId === compositionId ? { claim: null } : s)),
   /// Release, Escape, or a gesture whose host Panel went away. Safe to call on
   /// a gesture that never armed; that is a no-op, not a write.
   end: () =>
     set((s) =>
-      s.drag === null && s.pointer === null ? s : { drag: null, pointer: null },
+      s.drag === null && s.pointer === null && s.claim === null
+        ? s
+        : { drag: null, pointer: null, claim: null },
     ),
 }));
 

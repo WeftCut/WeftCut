@@ -1,0 +1,443 @@
+// @vitest-environment jsdom
+import { act, cleanup, render } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import "../i18n"; // the refusal badge reads t(...)
+import type { LayerSummary, TrackSummary } from "../ipc";
+import { ForeignDragGhost } from "./ForeignDragGhost";
+import {
+  useLayerDragFor,
+  useLayerDragForTrack,
+  useLayerDragStore,
+  useIsLayerMoveDragging,
+  useLayerDragStripAnchorUs,
+  useLayerMoveDragSubjects,
+  type DragState,
+  type DragSubject,
+} from "./layerDragStore";
+import { SPAWN_TRACK_ID } from "./placement";
+import { registerTimelineSurface } from "./timelineSurfaces";
+
+const SRC = "comp-source";
+const DEST = "comp-dest";
+
+// The destination Panel's zoom. The source Panel is at 25 px/s — a quarter of
+// this — and that number never reaches the component, which is the property
+// under test: a clip's on-screen length is the destination's business.
+const DEST_PX_PER_SEC = 100;
+
+// jsdom lays nothing out, so every box the resolution measures is given one.
+// Side by side, sharing every row: the arrangement that makes a lane hit-test's
+// `clientY` band unable to tell the two Panels apart.
+const SRC_SURFACE = { left: 0, right: 500, top: 0, bottom: 300 };
+const DEST_SURFACE = { left: 600, right: 1100, top: 0, bottom: 300 };
+// The canvas starts below the destination's ruler; times are measured from its
+// left edge, so `clientX 733` is 133 px = 1.33 s into this composition.
+const DEST_CANVAS = { left: 600, right: 1100, top: 20, bottom: 300 };
+const DEST_STRIP = { left: 600, right: 1100, top: 20, bottom: 34 };
+const DEST_LANE_1 = { left: 600, right: 1100, top: 34, bottom: 90 };
+const DEST_LANE_2 = { left: 600, right: 1100, top: 90, bottom: 146 };
+
+const OVER_LANE_1 = { clientX: 733, clientY: 60 };
+const OVER_LANE_2 = { clientX: 733, clientY: 120 };
+const OVER_STRIP = { clientX: 733, clientY: 26 };
+const OVER_SOURCE = { clientX: 200, clientY: 60 };
+
+// 1.33 s rounded onto the destination's own grid: 25 fps, so 40 000 µs a frame.
+const LANDING_AT_25FPS = 1_320_000;
+// The same pointer on a 30 fps destination — a different lattice, a different
+// answer. Neither composition round-trips into the other (ADR 0037).
+const LANDING_AT_30FPS = 1_333_333;
+
+const releases: Array<() => void> = [];
+const detach: HTMLElement[] = [];
+
+afterEach(() => {
+  cleanup();
+  useLayerDragStore.getState().end();
+  while (releases.length > 0) releases.pop()!();
+  while (detach.length > 0) detach.pop()!.remove();
+  vi.restoreAllMocks();
+});
+
+function boxed(box: { left: number; right: number; top: number; bottom: number }) {
+  const el = document.createElement("div");
+  vi.spyOn(el, "getBoundingClientRect").mockReturnValue({
+    ...box,
+    width: box.right - box.left,
+    height: box.bottom - box.top,
+    x: box.left,
+    y: box.top,
+    toJSON: () => ({}),
+  } as DOMRect);
+  return el;
+}
+
+function layer(
+  id: string,
+  tStartUs: number,
+  tEndUs: number,
+  kind: "Color" | "Audio" = "Color",
+): LayerSummary {
+  return {
+    id,
+    kind,
+    label: id,
+    t_start_us: tStartUs,
+    t_end_us: tEndUs,
+    enabled: true,
+    locked: false,
+    color_hint: "#888",
+    params: { kind } as LayerSummary["params"],
+    effects: [],
+  };
+}
+
+function track(id: string, layers: LayerSummary[], locked = false): TrackSummary {
+  return {
+    id,
+    kind: "Video",
+    label: id,
+    enabled: true,
+    locked,
+    muted: false,
+    solo: false,
+    role: null,
+    transient: false,
+    layers,
+  };
+}
+
+/// The dragged clip: 1 s → 3 s in the SOURCE composition, so 2 s long wherever
+/// it is drawn.
+const ANCHOR: DragSubject = {
+  layerId: "src-a",
+  trackId: "s-1",
+  originalTStart: 1_000_000,
+  originalTEnd: 3_000_000,
+  kind: "VideoClip",
+  name: "Beach",
+  locked: false,
+};
+/// Its linked partner, half a second behind it and half a second long.
+const PARTNER: DragSubject = {
+  layerId: "src-b",
+  trackId: "s-2",
+  originalTStart: 3_500_000,
+  originalTEnd: 4_000_000,
+  kind: "Audio",
+  name: "Beach audio",
+  locked: false,
+};
+
+function dragState(over: Partial<DragState> = {}): DragState {
+  return {
+    kind: "move",
+    compositionId: SRC,
+    layerId: ANCHOR.layerId,
+    trackId: ANCHOR.trackId,
+    trackKind: "Video",
+    startX: 200,
+    startY: 60,
+    originalTStart: ANCHOR.originalTStart,
+    originalTEnd: ANCHOR.originalTEnd,
+    deltaUs: 0,
+    overTrackId: null,
+    duplicate: false,
+    escapeLink: false,
+    wasSelectedAtPointerDown: true,
+    selectedAtPointerDown: new Set<string>(),
+    subjects: [ANCHOR],
+    validity: "valid",
+    conflictingLayerIds: [],
+    hiddenSubjectCount: 0,
+    ...over,
+  };
+}
+
+function mountGhost(
+  opts: {
+    fpsNum?: number;
+    tracks?: TrackSummary[];
+    pointer?: { clientX: number; clientY: number };
+    drag?: Partial<DragState>;
+    tailSnap?: boolean;
+    /// Rendered beside the ghost, subscribing the way this Panel's lanes and
+    /// blocks do. Used by the render-set check.
+    probe?: React.ReactNode;
+  } = {},
+) {
+  const canvas = boxed(DEST_CANVAS);
+  const strip = boxed(DEST_STRIP);
+  const lanes = new Map<string, HTMLElement>([
+    ["d-1", boxed(DEST_LANE_1)],
+    ["d-2", boxed(DEST_LANE_2)],
+  ]);
+  document.body.appendChild(canvas);
+  detach.push(canvas);
+
+  const srcSurface = boxed(SRC_SURFACE);
+  const destSurface = boxed(DEST_SURFACE);
+  releases.push(registerTimelineSurface(SRC, srcSurface));
+  releases.push(registerTimelineSurface(DEST, destSurface));
+
+  const tracks = opts.tracks ?? [track("d-1", []), track("d-2", [])];
+  const pointer = opts.pointer ?? OVER_LANE_1;
+  // Published BEFORE the mount, so the first render already has a gesture to
+  // resolve — a drag is always in flight by the time the pointer arrives here.
+  useLayerDragStore.getState().begin(
+    dragState(opts.drag),
+    pointer.clientX,
+    pointer.clientY,
+  );
+
+  render(
+    <>
+      <ForeignDragGhost
+        compositionId={DEST}
+        tracks={tracks}
+        orderedTracks={tracks.map((t) => ({ track: t, isRoleSectionStart: false }))}
+        laneEls={{ current: lanes }}
+        dropStripEl={{ current: strip }}
+        canvasRef={{ current: canvas }}
+        pxPerSec={DEST_PX_PER_SEC}
+        fpsNum={opts.fpsNum ?? 25}
+        fpsDen={1}
+        snapTracks={tracks}
+        links={[]}
+        linkByLayerId={new Map()}
+        // Off unless a test is about the boundary snap, so the grid's answer
+        // stands alone. On, the 8 px pull is 80 000 µs wide at this zoom.
+        tailSnapEnabled={opts.tailSnap ?? false}
+        tailSnapStrengthPx={8}
+      />
+      {opts.probe}
+    </>,
+    { container: canvas },
+  );
+
+  const ghosts = () =>
+    Array.from(
+      canvas.querySelectorAll<HTMLElement>(
+        '[data-testid="timeline-foreign-ghost"]',
+      ),
+    );
+  return {
+    ghosts,
+    only: () => {
+      const found = ghosts();
+      expect(found).toHaveLength(1);
+      return found[0]!;
+    },
+    move: (to: { clientX: number; clientY: number }) =>
+      act(() => {
+        useLayerDragStore.getState().moveVisual(to.clientX, to.clientY);
+      }),
+    claim: () => useLayerDragStore.getState().claim,
+  };
+}
+
+describe("ForeignDragGhost", () => {
+  it("draws the clip at the DESTINATION's zoom, not the Panel it came from", () => {
+    const ghost = mountGhost().only();
+
+    // 2 s at 100 px/s. The source Panel is at 25 px/s, where the same clip is
+    // 50 px — the number this would show if the width rode across.
+    expect(ghost.style.width).toBe("200px");
+    expect(ghost.style.left).toBe(`${(LANDING_AT_25FPS / 1_000_000) * 100}px`);
+    expect(ghost.textContent).toContain("Beach");
+  });
+
+  it("snaps the landing on the DESTINATION's frame grid", () => {
+    expect(mountGhost({ fpsNum: 25 }).only().dataset.startUs).toBe(
+      String(LANDING_AT_25FPS),
+    );
+    cleanup();
+    useLayerDragStore.getState().end();
+
+    // Same pointer, same zoom, a different rate: the answer moves with the
+    // destination's lattice and nothing else.
+    expect(mountGhost({ fpsNum: 30 }).only().dataset.startUs).toBe(
+      String(LANDING_AT_30FPS),
+    );
+    expect(LANDING_AT_30FPS % 40_000).not.toBe(0);
+  });
+
+  it("reads an occupied span as a collision", () => {
+    const view = mountGhost({
+      tracks: [
+        track("d-1", [layer("dest-standing", 2_000_000, 4_000_000)]),
+        track("d-2", []),
+      ],
+    });
+
+    expect(view.only().dataset.validity).toBe("collision");
+    // The verdict travels to the claim, not only to the chrome.
+    expect(view.claim()?.validity).toBe("collision");
+  });
+
+  it("reads a locked destination lane as locked", () => {
+    const view = mountGhost({
+      tracks: [track("d-1", []), track("d-2", [], true)],
+      pointer: OVER_LANE_2,
+    });
+
+    expect(view.only().dataset.validity).toBe("locked");
+    expect(view.claim()?.trackId).toBe("d-2");
+  });
+
+  it("reads the drop strip as a lane being spawned", () => {
+    const view = mountGhost({ pointer: OVER_STRIP });
+
+    const ghost = view.only();
+    expect(ghost.dataset.validity).toBe("spawn");
+    expect(ghost.dataset.trackId).toBe(SPAWN_TRACK_ID);
+    // A destination being created, not a refusal — no red, no badge.
+    expect(ghost.style.outline).toBe("");
+    expect(ghost.textContent).not.toContain("Overlap");
+    expect(view.claim()?.trackId).toBe(SPAWN_TRACK_ID);
+  });
+
+  it("lands every member on the one hit lane, holding its phase to the anchor", () => {
+    const view = mountGhost({
+      drag: { subjects: [ANCHOR, PARTNER] },
+      pointer: OVER_LANE_2,
+    });
+
+    const [first, second] = view.ghosts();
+    expect(view.ghosts()).toHaveLength(2);
+    expect(first!.dataset.startUs).toBe(String(LANDING_AT_25FPS));
+    // 2.5 s behind the anchor in the source, 2.5 s behind it here.
+    expect(second!.dataset.startUs).toBe(String(LANDING_AT_25FPS + 2_500_000));
+    // Both on the row the pointer picked: the primitive puts every source block
+    // on a named destination lane, whatever lane it came from.
+    expect(first!.dataset.trackId).toBe("d-2");
+    expect(second!.dataset.trackId).toBe("d-2");
+    expect(second!.style.width).toBe("50px");
+  });
+
+  it("reads a locked MEMBER of the dragged link as locked", () => {
+    // The seed can never be locked — a locked block refuses `pointerdown` — so
+    // the only way a lock reaches this Panel is on a link member dragged along
+    // with it, and this Panel holds no summary to discover it in. The
+    // in-composition projection refuses the same set, so a green ghost here
+    // would be the two halves of one gesture disagreeing.
+    const view = mountGhost({
+      drag: { subjects: [ANCHOR, { ...PARTNER, locked: true }] },
+    });
+
+    expect(view.ghosts()).toHaveLength(2);
+    // The whole set wears the refusal: a lock refuses the move outright rather
+    // than moving the unlocked half.
+    for (const ghost of view.ghosts()) {
+      expect(ghost.dataset.validity).toBe("locked");
+    }
+  });
+
+  it("stops the set as one body at zero, rather than clamping each member", () => {
+    // A member that starts BEFORE the anchor, which is what makes the two
+    // behaviours differ: dragged far enough left, it is the one that runs out
+    // of room first.
+    const early: DragSubject = {
+      ...PARTNER,
+      originalTStart: 500_000,
+      originalTEnd: 900_000,
+    };
+    const view = mountGhost({
+      drag: { subjects: [ANCHOR, early] },
+      // The canvas's own left edge — time zero in this composition.
+      pointer: { clientX: DEST_CANVAS.left, clientY: 60 },
+    });
+
+    const [first, second] = view.ghosts();
+    // Clamping per member would put BOTH at zero and flatten the 500 ms
+    // between them. Worse, it would draw a landing the commit refuses:
+    // `applyMoveLayersToComposition` refuses a member before zero outright and
+    // never clamps, so the ghost has to stop where the command still accepts.
+    expect(second!.dataset.startUs).toBe("0");
+    expect(first!.dataset.startUs).toBe("500000");
+  });
+
+  it("snaps to a boundary THIS composition owns", () => {
+    // A clip in the destination whose head sits one frame off the grid answer,
+    // inside the pull. Nothing in the source composition is a target here — the
+    // targets are read from this Panel's own lanes.
+    const view = mountGhost({
+      tracks: [
+        track("d-1", [layer("dest-neighbour", 1_280_000, 1_600_000)]),
+        track("d-2", []),
+      ],
+      pointer: OVER_LANE_2,
+      tailSnap: true,
+    });
+
+    expect(view.only().dataset.startUs).toBe("1280000");
+    // Proof it is the boundary and not the grid: the grid alone answers a frame
+    // later.
+    expect(LANDING_AT_25FPS).toBe(1_320_000);
+  });
+
+  it("draws nothing while Alt is held, and claims nothing", () => {
+    const view = mountGhost({ drag: { duplicate: true } });
+
+    // A copy across compositions is a different mutation, not a parameter of
+    // this one, so there is nothing truthful to preview.
+    expect(view.ghosts()).toHaveLength(0);
+    expect(view.claim()).toBeNull();
+  });
+
+  it("stays out of a gesture that belongs to this composition", () => {
+    const view = mountGhost({ drag: { compositionId: DEST } });
+
+    // The in-composition ghost owns that drag; a second one here would double it.
+    expect(view.ghosts()).toHaveLength(0);
+    expect(view.claim()).toBeNull();
+  });
+
+  it("draws nothing while the pointer is still over the Panel it came from", () => {
+    const view = mountGhost({ pointer: OVER_SOURCE });
+
+    expect(view.ghosts()).toHaveLength(0);
+    expect(view.claim()).toBeNull();
+
+    view.move(OVER_LANE_1);
+    expect(view.ghosts()).toHaveLength(1);
+    expect(view.claim()).toEqual({
+      compositionId: DEST,
+      trackId: "d-1",
+      anchorTStartUs: LANDING_AT_25FPS,
+      validity: "valid",
+    });
+
+    // And lets go again on the way out — the claim is the pointer's location,
+    // not a latch.
+    view.move(OVER_SOURCE);
+    expect(view.claim()).toBeNull();
+  });
+
+  it("wakes only itself: a foreign pointermove renders no lane, block or strip", () => {
+    let probeRenders = 0;
+    /// Every store subscription this Panel's own lanes, blocks and drop strip
+    /// make, keyed on ids of ITS composition.
+    function PanelProbe(): null {
+      useLayerDragForTrack("d-1");
+      useLayerDragFor("dest-standing");
+      useIsLayerMoveDragging(DEST);
+      useLayerDragStripAnchorUs(DEST);
+      useLayerMoveDragSubjects();
+      probeRenders += 1;
+      return null;
+    }
+    const view = mountGhost({ probe: <PanelProbe /> });
+
+    expect(probeRenders).toBe(1);
+    const before = view.only().dataset.startUs;
+
+    view.move({ clientX: 833, clientY: 60 });
+    view.move({ clientX: 933, clientY: 60 });
+
+    // The ghost followed the pointer; nothing else in the Panel heard about it.
+    expect(view.only().dataset.startUs).not.toBe(before);
+    expect(probeRenders).toBe(1);
+  });
+});

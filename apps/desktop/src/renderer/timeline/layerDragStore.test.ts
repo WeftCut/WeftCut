@@ -19,8 +19,24 @@ afterEach(() => {
 });
 
 const subjects: DragSubject[] = [
-  { layerId: "a", trackId: "t1", originalTStart: 0, originalTEnd: 1_000_000 },
-  { layerId: "b", trackId: "t2", originalTStart: 0, originalTEnd: 1_000_000 },
+  {
+    layerId: "a",
+    trackId: "t1",
+    originalTStart: 0,
+    originalTEnd: 1_000_000,
+    kind: "VideoClip",
+    name: "Clip A",
+    locked: false,
+  },
+  {
+    layerId: "b",
+    trackId: "t2",
+    originalTStart: 0,
+    originalTEnd: 1_000_000,
+    kind: "Audio",
+    name: "Clip B",
+    locked: false,
+  },
 ];
 
 /// One pointermove's worth of gesture. Mirrors `evaluatePointer`: the seed's

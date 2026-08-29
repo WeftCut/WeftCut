@@ -5,10 +5,14 @@ import {
   pasteLayers,
   trimLayer,
   type LinkSummary,
+  type LayerParamsView,
   type LayerSummary,
   type TrackSummary,
 } from "../../ipc";
 import { linkFanoutActive } from "../linkEligibility";
+import i18n from "../../i18n";
+import { layerDisplayName } from "../../lib/layerName";
+import { currentGroupOrdinals } from "../../state/projectStore";
 import { adjacentFrameBoundaryUs, snapFrameRound } from "../../frames";
 import { logMutationFailure } from "../../errors/tryMutate";
 import {
@@ -265,6 +269,15 @@ export function useLayerDrag(opts: {
             ? seed.originalTEnd
             : null;
 
+      // Named once per gesture, at pointerdown, through the imperative bundle
+      // — the same event-time read `search/searchIndexStore.ts` makes. A
+      // subject's name is the string its own block shows, resolved where the
+      // layer lives, because the Panel that may have to draw it does not hold
+      // the layer or the ordinals a Group's name is derived from.
+      const ordinals = currentGroupOrdinals();
+      const nameOf = (layer: LayerSummary): string =>
+        layerDisplayName(layer, (key, values) => i18n.t(key, values), ordinals);
+
       const subjects: DragSubject[] = [];
       for (const layerId of candidateIds) {
         const entry = layerEntryById.get(layerId);
@@ -280,14 +293,31 @@ export function useLayerDrag(opts: {
           trackId: entry.trackId,
           originalTStart: layer.t_start_us,
           originalTEnd: layer.t_end_us,
+          kind: layer.params.kind,
+          name: nameOf(layer),
+          locked: layer.locked || entry.trackLocked,
         });
       }
       if (!subjects.some((subject) => subject.layerId === seed.layerId)) {
+        // Reached only when the summary no longer holds the layer the seed
+        // names — the case where nothing about the clip can be read. The lane's
+        // own dominant class stands in, because it preserves the one
+        // distinction a kind is consulted for downstream (Audio vs everything
+        // else), and the name ends on the rung `layerDisplayName` ends on.
+        const fallbackKind: LayerParamsView["kind"] =
+          seed.trackKind === "Audio" ? "Audio" : "VideoClip";
         subjects.unshift({
           layerId: seed.layerId,
           trackId: seed.trackId,
           originalTStart: seed.originalTStart,
           originalTEnd: seed.originalTEnd,
+          kind: fallbackKind,
+          name: i18n.t(`kinds.${fallbackKind.toLowerCase()}`, {
+            defaultValue: fallbackKind,
+          }),
+          // A locked block refuses `pointerdown`, so a seed that armed a drag
+          // was not locked whatever the summary has since lost.
+          locked: false,
         });
       }
       return subjects;

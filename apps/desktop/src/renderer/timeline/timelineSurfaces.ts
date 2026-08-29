@@ -1,20 +1,25 @@
 // Which timeline Panel the pointer is over.
 //
 // A clip drag is pointer-driven and window-global: once armed it follows the
-// pointer anywhere, a second timeline showing another composition included. A
-// layer never changes composition by moving (ADR 0053 decision 8), so that
-// gesture has to be refused where the user can see it — and the one fact the
-// dragging Panel cannot answer on its own is which composition sits under the
-// pointer now. Its own lane hit-test is a band test on `clientY` alone, so a
-// Panel beside it shares every band and would otherwise read as a lane at home.
+// pointer anywhere, a second timeline showing another composition included. The
+// dragging Panel cannot answer this for itself — its own lane hit-test is a band
+// test on `clientY` alone, so a Panel beside it shares every band and a clip
+// carried sideways would read as a lane at home.
+//
+// One question, asked by both parties to a crossing. The HOST asks "is another
+// Panel under the pointer" and withholds every destination of its own while the
+// answer is yes (`hooks/useLayerDrag.ts`). The DESTINATION asks "is it me" and,
+// when it is, resolves the drop on its own axis and draws the ghost
+// (`ForeignDragGhost.tsx`). Two callers, one seam, so the two can never disagree
+// about where the pointer is.
 //
 // Rects rather than `document.elementFromPoint`: the drag already measures its
 // lanes once per pointer event, so this is the same question asked the same
 // way, and it is unaffected by the overlay layer Dockview paints Panel content
 // into (`renderer: "always"`), which owns the topmost element at any point.
 //
-// This module owns no drag state and no refusal: `hooks/useLayerDrag.ts` asks,
-// and decides.
+// This module owns no drag state, no refusal and no claim: it answers, and the
+// callers decide.
 
 /// `composition_id → that Panel's scroll root`. Only Panels currently on screen
 /// are entered, so a tab hidden behind another cannot claim a point that is
@@ -37,8 +42,17 @@ export function registerTimelineSurface(
 /// The composition of the timeline Panel under the point when that Panel is not
 /// `hostCompositionId`'s — null for a point over the host itself, over no
 /// timeline at all, or whenever a second timeline cannot exist to be crossed
-/// into. That last case is the common one and is answered without measuring
-/// anything, which is what keeps this affordable on a drag's `pointermove`.
+/// into.
+///
+/// The host reads that answer as "somebody else's"; a candidate destination
+/// reads it as "mine" by comparing it with its own composition. Both ask per
+/// `pointermove`, and what keeps that affordable is the `surfaces.size < 2` fast
+/// path: a lone timeline is the ordinary arrangement, and it costs a map-size
+/// read rather than a forced reflow per event.
+///
+/// Only visible Panels are registered, so a tab hidden behind another can
+/// neither be crossed into nor claim a drop — one rule, honoured at both call
+/// sites with no code at either.
 export function foreignCompositionAtPoint(
   hostCompositionId: string | null,
   clientX: number,

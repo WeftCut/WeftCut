@@ -1,5 +1,10 @@
 import { DEFAULT_TIMELINE_PX_PER_SEC } from "../../shared/view-state";
-import type { LinkSummary, LayerSummary, TrackSummary } from "../ipc";
+import type {
+  LinkSummary,
+  LayerParamsView,
+  LayerSummary,
+  TrackSummary,
+} from "../ipc";
 import { displayedFrameStartUs, inclusiveOutBoundaryUs } from "../frames";
 import {
   animatableParams,
@@ -81,15 +86,25 @@ export interface VisualTrack {
 /// Motif, Text, CompositionRef) can't overlap each other on a track; Audio
 /// can't overlap Audio. Visual + Audio CAN coexist at the same time — that's
 /// the AE-style "combined row" trigger.
-///
-/// Stated as "everything that is not Audio" rather than as an allowlist of
-/// visual kinds, so a Group — a composition placed as one layer, which may hold
-/// audio INSIDE it and still composites as a picture — falls on the visual side
-/// by construction (ADR 0052 §4).
 export type LayerOverlapClass = "visual" | "audio";
 
+/// The rule itself, keyed on nothing but the kind: everything that is not Audio
+/// is visual. Stated that way rather than as an allowlist of visual kinds, so a
+/// Group — a composition placed as one layer, which may hold audio INSIDE it and
+/// still composites as a picture — falls on the visual side by construction
+/// (ADR 0052 §4).
+///
+/// Split out from `layerOverlapClass` for the one caller that has no layer to
+/// hand it: a Panel previewing a drop from ANOTHER composition holds no summary
+/// for the clips being carried, only their kinds (`layerDragStore.ts`).
+export function overlapClassForKind(
+  kind: LayerParamsView["kind"],
+): LayerOverlapClass {
+  return kind === "Audio" ? "audio" : "visual";
+}
+
 export function layerOverlapClass(layer: LayerSummary): LayerOverlapClass {
-  return layer.params.kind === "Audio" ? "audio" : "visual";
+  return overlapClassForKind(layer.params.kind);
 }
 
 /// The two source-window affordances a media-bearing clip can carry at its

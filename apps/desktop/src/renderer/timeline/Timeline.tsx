@@ -106,6 +106,7 @@ import {
   useFocusedCompositionId,
 } from "../state/compositionAnchorStore";
 import { LayerContextMenu } from "./LayerContextMenu";
+import { ForeignDragGhost } from "./ForeignDragGhost";
 import { MarqueeOverlay } from "./MarqueeOverlay";
 import { beginGroupRename, beginLayerRename, beginLinkRename } from "./renameStore";
 import {
@@ -1791,6 +1792,25 @@ export function Timeline({
               />
             )}
             <OutOfRangeDim pxPerSec={pxPerSec} />
+            {/* Draws only while a clip from ANOTHER Panel is over this one.
+                A leaf, so following the pointer costs this Panel one render
+                and nothing below it. */}
+            <ForeignDragGhost
+              compositionId={compositionId}
+              tracks={tracks}
+              orderedTracks={orderedTracks}
+              laneEls={laneElsRef}
+              dropStripEl={dropStripElRef}
+              canvasRef={canvasRef}
+              pxPerSec={pxPerSec}
+              fpsNum={fpsNum}
+              fpsDen={fpsDen}
+              snapTracks={visibleSnapTracks}
+              links={links}
+              linkByLayerId={linkByLayerId}
+              tailSnapEnabled={tailSnapEnabled}
+              tailSnapStrengthPx={tailSnapStrengthPx}
+            />
             <MarqueeOverlay />
           </div>
           <TimelinePlayhead
