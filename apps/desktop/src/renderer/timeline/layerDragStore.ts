@@ -129,8 +129,12 @@ interface LayerDragStore {
   pointer: { clientX: number; clientY: number } | null;
   /// The destination Panel's resolved landing, while the pointer is over one.
   /// Written by `ForeignDragGhost.tsx` — the only party that can resolve it —
-  /// and read by nobody yet: it is the seam the drop commits through, and it
-  /// lives here because the value exists nowhere else.
+  /// and read by the destination's own drop strip, which arms on it because a
+  /// release there really does spawn a lane in THIS composition.
+  ///
+  /// LANDMINE: not what the release commits through. `end()` clears this before
+  /// the destination's `pointerup` listener runs (see the ref in
+  /// `ForeignDragGhost.tsx`), so anything read here at release time is gone.
   claim: ForeignDropClaim | null;
   begin: (state: DragState, clientX: number, clientY: number) => void;
   publish: (state: DragState) => void;
@@ -230,10 +234,11 @@ export const useLayerDragStore = create<LayerDragStore>((set) => ({
 // none of which a pointermove can change — which is the point: a `useState` up
 // there would re-render all of the above regardless of what these return.
 //
-// A second Panel showing another composition renders nothing at all for a
-// gesture that is not its own: its lanes and blocks cannot match a foreign id,
-// and the three hooks that would otherwise match anything are gated on
-// `DragState.compositionId`.
+// A second Panel showing another composition renders two things for a gesture
+// that is not its own, and only two: `ForeignDragGhost`, which follows the
+// pointer because it is the preview, and the drop strip it claims a landing on.
+// Its lanes and blocks cannot match a foreign id, and the hooks that would
+// otherwise match anything are gated on `DragState.compositionId`.
 
 /// Whether a lane is one this gesture concerns. A lane the pointer merely
 /// passed over stops matching the moment it leaves, which is what limits the
@@ -290,6 +295,34 @@ export const useLayerMoveDragSubjects = (): DragSubject[] | null =>
 export const useIsLayerMoveDragging = (compositionId: string | null): boolean =>
   useLayerDragStore(
     (s) => s.drag?.kind === "move" && s.drag.compositionId === compositionId,
+  );
+
+/// Whether a clip carried in from ANOTHER Panel has resolved a landing here —
+/// the drop strip's second arming condition, and the one the hook above cannot
+/// answer: the gesture belongs to a composition this Panel must not arm for
+/// (see the LANDMINE on `DragState.compositionId`), so the claim is the only
+/// evidence that a release here would land. A boolean, so the per-event churn
+/// of the claim's time does not reach the strip.
+export const useIsForeignDropClaimed = (
+  compositionId: string | null,
+): boolean =>
+  useLayerDragStore(
+    (s) => compositionId !== null && s.claim?.compositionId === compositionId,
+  );
+
+/// The foreign clip's head, in this composition's µs, while its claim names the
+/// drop strip — the sibling of `useLayerDragStripAnchorUs` for a gesture that
+/// started next door. Null over a lane, so the strip re-renders per pointer
+/// event only while the pointer is actually on it.
+export const useForeignDropStripAnchorUs = (
+  compositionId: string | null,
+): number | null =>
+  useLayerDragStore((s) =>
+    s.claim !== null &&
+    s.claim.compositionId === compositionId &&
+    s.claim.trackId === SPAWN_TRACK_ID
+      ? s.claim.anchorTStartUs
+      : null,
   );
 
 /// The dragged clip's head, in this composition's µs, while the drop strip is

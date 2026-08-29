@@ -18,6 +18,8 @@ import {
   type MediaDropSnapOptions,
 } from "./mediaDrag";
 import {
+  useForeignDropStripAnchorUs,
+  useIsForeignDropClaimed,
   useIsLayerMoveDragging,
   useLayerDragStripAnchorUs,
 } from "./layerDragStore";
@@ -45,6 +47,12 @@ import {
 /// `layerDragStore.ts` — and both then feed the SINGLE armed/lit pair at the
 /// bottom, because the failure mode here is one mechanism lighting the strip
 /// while the other silently does nothing.
+///
+/// A clip dragged in from ANOTHER Panel is the second gesture the clip drag
+/// arrives as, and it is read from the CLAIM rather than from the drag: the
+/// gesture belongs to a composition this Panel must not arm for, and the claim
+/// is the destination's own statement that a release here would land
+/// (`ForeignDragGhost.tsx` resolves it, and commits it).
 export function DropStrip({
   elRef,
   pxPerSec,
@@ -81,6 +89,8 @@ export function DropStrip({
   // Non-null exactly while a clip drag names this strip, and equal to the head
   // it will land on — so it answers both halves of the strip's feedback.
   const layerDragAnchorUs = useLayerDragStripAnchorUs(compositionId);
+  const foreignDropArmed = useIsForeignDropClaimed(compositionId);
+  const foreignStripAnchorUs = useForeignDropStripAnchorUs(compositionId);
   const activeMediaDrag = useMediaDragStore((s) => s.active);
   const dropTargetTrackId = useMediaDragStore((s) => s.dropTargetTrackId);
   const claimDropTarget = useMediaDragStore((s) => s.claimDropTarget);
@@ -183,10 +193,15 @@ export function DropStrip({
     [endMediaDrag, onMediaDrop, planFor],
   );
 
-  // One armed/lit pair, fed by both event models. Either drag arms the row;
+  // A clip drag names this strip from either side of the gesture: this Panel's
+  // own, or a neighbour's whose claim landed here. Both are this composition's
+  // µs — the local one by its composition gate, the foreign one because the
+  // claim was resolved on this Panel's axis in the first place.
+  const clipDragAnchorUs = layerDragAnchorUs ?? foreignStripAnchorUs;
+  // One armed/lit pair, fed by every event model. Any drag arms the row;
   // whichever one currently owns the strip lights it.
-  const armed = activeMediaDrag !== null || layerMoveArmed;
-  const lit = visibleDropPreview !== null || layerDragAnchorUs !== null;
+  const armed = activeMediaDrag !== null || layerMoveArmed || foreignDropArmed;
+  const lit = visibleDropPreview !== null || clipDragAnchorUs !== null;
   const refused =
     visibleDropPreview !== null && mediaDropInvalid(visibleDropPreview.plan.validity);
   const ghostLeftPx =
@@ -197,12 +212,13 @@ export function DropStrip({
   // beside the pointer at any scroll offset. For a media drag that is the ghost's
   // head, offset far enough to clear the absorbed media chip (which reaches at
   // most MEDIA_DRAG_CURSOR_OFFSET_PX + 18 px past it); for a clip drag it is the
-  // clip's own head, which nothing covers — the clip keeps its chip in the lane
-  // it came from rather than bringing a ghost into the strip.
+  // clip's own head — a local clip keeps its chip in the lane it came from
+  // rather than bringing a ghost into the strip, and a foreign one draws its
+  // ghost here but under this hint's z tier.
   const hintLeftPx =
     visibleDropPreview !== null
       ? ghostLeftPx + MEDIA_DRAG_CURSOR_OFFSET_PX + 24
-      : ((layerDragAnchorUs ?? 0) / 1_000_000) * pxPerSec;
+      : ((clipDragAnchorUs ?? 0) / 1_000_000) * pxPerSec;
   // The strip is a clip surface for selection too: a sweep may start on the
   // reserved row and reach down into the lanes.
   const { onPointerDown: onMarqueeDown } = useMarqueeAnchor({ kind: "clip" });

@@ -30,7 +30,7 @@ import {
   type DragSubject,
 } from "../layerDragStore";
 import { snapDragDeltaToTimelineBoundary } from "../snapping";
-import { refuseCrossCompositionMove } from "../crossCompositionRefusal";
+import { refuseCrossCompositionCopy } from "../crossCompositionRefusal";
 import { foreignCompositionAtPoint } from "../timelineSurfaces";
 import { playheadClockUs } from "../../state/playheadProjection";
 import {
@@ -103,7 +103,8 @@ interface PointerDragEvaluation {
   moveProjection: LayerMoveProjection | null;
   /// The composition of the timeline Panel under the pointer when that Panel is
   /// not this one, else null. Every destination is withheld while it is set and
-  /// the release commits nothing.
+  /// THIS Panel's release commits nothing — the crossing is the destination
+  /// Panel's own commit (`ForeignDragGhost.tsx`).
   foreignCompositionId: string | null;
 }
 
@@ -580,8 +581,9 @@ export function useLayerDrag(opts: {
       // a selected clip (arm delay 0) commits a cross-track move. Skipping
       // the measurement on horizontal-only drags is a free side benefit.
       const movedVertically = Math.abs(clientY - state.startY) >= 1;
-      // A layer never changes composition by moving (ADR 0053 decision 8), so a
-      // pointer over another timeline Panel names no destination at all. The
+      // A pointer over another timeline Panel names no destination THIS Panel
+      // can express: zoom, grid and lanes are all per Panel (ADR 0053), so only
+      // the one under the pointer can turn it into a landing, and it does. The
       // lane hit-test below could not tell on its own: it bands `clientY`, and a
       // Panel side by side with this one shares every band, so a clip carried
       // sideways into the neighbour would otherwise resolve to a lane at home
@@ -624,10 +626,11 @@ export function useLayerDrag(opts: {
       // strip preserves it too, whatever the pointer did horizontally: the commit
       // carries times verbatim, so a ghost that slid would promise an edit
       // `move_layers_to_new_track` cannot make.
-      // Over another Panel the ghost freezes where the clip already is, which is
-      // the visible half of the refusal: it goes nowhere, so it promises
-      // nothing. Dragging back into this Panel picks the delta up again — the
-      // whole gesture is recomputed from the pointer each event.
+      // Over another Panel the ghost freezes where the clip already is: this
+      // Panel has no reading of a pointer outside it, and the DESTINATION draws
+      // the preview that does (`ForeignDragGhost.tsx`). Dragging back into this
+      // Panel picks the delta up again — the whole gesture is recomputed from
+      // the pointer each event.
       const deltaUs =
         timeChanged &&
         destinationTrackId !== SPAWN_TRACK_ID &&
@@ -672,13 +675,20 @@ export function useLayerDrag(opts: {
   /// The foreign composition already announced for the gesture in flight, so
   /// the crossing is reported once and not once per `pointermove`. Cleared when
   /// the pointer comes back, which re-arms it for a second crossing.
+  ///
+  /// Only a DUPLICATE has anything to announce. A plain move across Panels
+  /// lands — the destination resolves it and commits it (`ForeignDragGhost.tsx`)
+  /// — so a line saying it cannot would contradict what the user just watched
+  /// happen. The gate is here rather than in `crossCompositionRefusal.ts`
+  /// because it is about which gesture is in flight, which only this hook knows.
   const announcedForeignRef = useRef<string | null>(null);
   const announceForeignComposition = useCallback(
-    (foreignCompositionId: string | null) => {
+    (foreignCompositionId: string | null, duplicate: boolean) => {
       if (announcedForeignRef.current === foreignCompositionId) return;
       announcedForeignRef.current = foreignCompositionId;
       if (foreignCompositionId === null || compositionId === null) return;
-      refuseCrossCompositionMove(compositionId, foreignCompositionId);
+      if (!duplicate) return;
+      refuseCrossCompositionCopy(compositionId, foreignCompositionId);
     },
     [compositionId],
   );
@@ -690,7 +700,10 @@ export function useLayerDrag(opts: {
       const clientX = e.clientX;
       const clientY = e.clientY;
       const evaluation = evaluatePointer(current.state, clientX, clientY);
-      announceForeignComposition(evaluation.foreignCompositionId);
+      announceForeignComposition(
+        evaluation.foreignCompositionId,
+        current.state.duplicate,
+      );
       const next: LayerDragGesture = {
         ...current,
         lastClientX: clientX,
@@ -731,10 +744,22 @@ export function useLayerDrag(opts: {
       gestureRef.current = null;
       setGestureActive(false);
       useLayerDragStore.getState().end();
-      // Released over another timeline: nothing is sent. The frozen ghost has
-      // already emptied the commit, and this states the rule rather than
-      // relying on that.
-      announceForeignComposition(evaluation.foreignCompositionId);
+      // Released over another timeline: this Panel sends nothing. The
+      // DESTINATION commits the move, off its own claim and its own axis
+      // (`ForeignDragGhost.tsx`) — the only party that can, since the landing is
+      // expressed in units this Panel does not share. A duplicate lands
+      // nowhere, and this is where it says so.
+      //
+      // LANDMINE: `end()` above has already cleared `drag`, `pointer` and
+      // `claim`, and this handler runs FIRST — it was registered when the
+      // gesture armed. The destination therefore cannot read the store at
+      // release, and does not; do not "fix" it by moving `end()` later, which
+      // would leave a live gesture behind whenever the destination's listener
+      // never runs.
+      announceForeignComposition(
+        evaluation.foreignCompositionId,
+        current.state.duplicate,
+      );
       if (
         evaluation.foreignCompositionId !== null ||
         !temporalArmReached ||

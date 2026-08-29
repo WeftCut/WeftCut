@@ -1,6 +1,7 @@
 // The destination half of a cross-Panel clip drag: one per timeline Panel, it
 // hit-tests the pointer against itself, resolves the landing in THIS
-// composition's units, publishes the claim, and draws the preview.
+// composition's units, publishes the claim, draws the preview, and — on
+// release — commits it.
 //
 // A leaf subscriber of `layerDragStore.ts`, for the reason
 // `LayerDragTrimMonitor` is one: a pointermove has to re-render whatever follows
@@ -19,13 +20,22 @@
 // borrowed them would be re-implementing them at a distance, and the two copies
 // would drift.
 //
-// What this does NOT own: the gesture, its refusal, and the commit. The host
-// keeps freezing its own ghost and saying why (`crossCompositionRefusal.ts`),
-// and releasing over this Panel still sends nothing.
+// What this does NOT own: the gesture. The host arms it, tracks it, freezes its
+// own ghost while the pointer is away and refuses a COPY across compositions
+// (`crossCompositionRefusal.ts`). Release is this Panel's, because the landing
+// is: only the composition under the pointer can name a lane and a time on its
+// own axis, so it is the one that sends `move_layers_to_composition`.
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import type { LinkSummary, TrackSummary } from "../ipc";
+import {
+  moveLayersToComposition,
+  type LinkSummary,
+  type TrackSummary,
+} from "../ipc";
+import { logMutationFailure } from "../errors/tryMutate";
+import { focusComposition } from "../state/compositionAnchorStore";
+import { setLayerSelection } from "../state/selectionStore";
 import { snapFrameRound } from "../frames";
 import { playheadClockUs } from "../state/playheadProjection";
 import {
@@ -114,6 +124,22 @@ interface GhostBlock {
   tEndUs: number;
 }
 
+/// Everything `move_layers_to_composition` needs, resolved while the gesture is
+/// still live so that release has nothing left to work out. Only a landing the
+/// command would ACCEPT becomes one of these — see `committableDrop`.
+interface ResolvedDrop {
+  layerIds: string[];
+  /// The composition the gesture started in — kept so the release can re-ask
+  /// `foreignCompositionAtPoint` from the RELEASE's own coordinates.
+  fromCompositionId: string | null;
+  toCompositionId: string;
+  anchorLayerId: string;
+  anchorTStartUs: number;
+  /// `"spawn"` is the COMMAND's word for the drop strip; `SPAWN_TRACK_ID` is the
+  /// hit-test's. Sending the sentinel gets `TrackNotFound`.
+  toTrackId: string | "spawn";
+}
+
 interface ForeignLanding {
   trackId: string | null;
   anchorTStartUs: number;
@@ -123,6 +149,73 @@ interface ForeignLanding {
   /// is empty — there is no lane to draw in.
   band: { top: number; height: number } | null;
   blocks: GhostBlock[];
+  /// What releasing here would send, or null when it would send nothing.
+  drop: ResolvedDrop | null;
+}
+
+/// The commit a release on this landing would make, or null when the landing
+/// refuses it.
+///
+/// ONE comparison, the same one `useLayerDrag`'s move commit makes: `"spawn"`
+/// over the strip (a lane that does not exist yet is never `"valid"`),
+/// `"valid"` over a real lane. Collision and lock out-rank both words, so this
+/// is also the refusal and the locked case needs no branch of its own.
+///
+/// The anchor is the ghost's own, handed in rather than re-picked: the landing
+/// time positions THAT subject, so a commit that named a different one would
+/// place the set somewhere the preview never drew.
+function committableDrop(
+  drag: DragState,
+  anchor: DragSubject,
+  toCompositionId: string,
+  trackId: string,
+  anchorTStartUs: number,
+  validity: PlacementValidity,
+): ResolvedDrop | null {
+  const spawning = trackId === SPAWN_TRACK_ID;
+  if (validity !== (spawning ? "spawn" : "valid")) return null;
+  return {
+    layerIds: drag.subjects.map((subject) => subject.layerId),
+    fromCompositionId: drag.compositionId,
+    toCompositionId,
+    anchorLayerId: anchor.layerId,
+    anchorTStartUs,
+    toTrackId: spawning ? "spawn" : trackId,
+  };
+}
+
+/// Send the drop, then let the selection and the keyboard follow it.
+///
+/// The selection and the focus BOTH move, where the *Move to composition ›*
+/// menu clears the selection and stays where it was
+/// (`commands/groupCommands.ts`). The difference is the pointer: a gesture that
+/// named a place may move the view there, and the clips are visible at the
+/// place it named; a menu item, which never left the Panel it was opened in,
+/// may not.
+///
+/// No refresh call — the `project:changed` subscription refreshes every view.
+async function commitForeignDrop(drop: ResolvedDrop): Promise<void> {
+  try {
+    await moveLayersToComposition(
+      drop.layerIds,
+      drop.toCompositionId,
+      drop.anchorLayerId,
+      drop.anchorTStartUs,
+      drop.toTrackId,
+    );
+  } catch (err) {
+    // A green ghost is a reading, not a promise: the project can change under
+    // the gesture, and the refusal then belongs on the status bar rather than
+    // in devtools. The in-composition drag's existing property, not a new one.
+    logMutationFailure(err, "move_layers_to_composition");
+    return;
+  }
+  // Focus BEFORE the selection, and not the other way round: `focusComposition`
+  // CLEARS the selection whenever it actually moves the editing target
+  // (`state/compositionAnchorStore.ts`), so the reverse order would hand the
+  // inspector an empty selection.
+  focusComposition(drop.toCompositionId);
+  setLayerSelection(drop.anchorLayerId, drop.layerIds);
 }
 
 /// Turn the live gesture and the pointer into this composition's landing, or
@@ -231,17 +324,25 @@ function resolveForeignDrop(
 
   if (trackId === null) {
     // Inside the Panel, over no row — its ruler, or the band under the last
-    // lane. There is no geometry to draw in and nothing to validate against, but
-    // the time is resolved and real, so the claim still carries it. `"valid"`
-    // is honest for a lane-less destination: with no lane named, the move's
-    // lane policy bounces onto a free one rather than refusing, so there is
-    // nothing here for a verdict to refuse.
+    // lane. There is no geometry to draw in and no lane to validate against,
+    // but the time is resolved and real, so the claim still carries it and the
+    // drop strip stays armed while the pointer wanders across the Panel.
+    //
+    // A REFUSAL rather than `"valid"`, and so a release here sends nothing:
+    // the ghost drew nothing at this point, and "a refused preview sends
+    // nothing" is the same rule as "no preview, no commit". The command's
+    // lane-less policy BOUNCES onto a free lane, which is honest for the menu
+    // that has no ghost and a lie for a gesture that showed the user nothing.
+    // `PlacementValidity` has no word for "no row at all", so this takes the
+    // one that means a release places nothing; no chrome reads it, there being
+    // no band to draw.
     return {
       trackId: null,
       anchorTStartUs,
-      validity: "valid",
+      validity: "collision",
       band: null,
       blocks: [],
+      drop: null,
     };
   }
 
@@ -292,11 +393,26 @@ function resolveForeignDrop(
       height: slice.height,
     };
   }
-  return { trackId, anchorTStartUs, validity: evaluation.validity, band, blocks };
+  return {
+    trackId,
+    anchorTStartUs,
+    validity: evaluation.validity,
+    band,
+    blocks,
+    drop: committableDrop(
+      drag,
+      anchor,
+      compositionId,
+      trackId,
+      anchorTStartUs,
+      evaluation.validity,
+    ),
+  };
 }
 
 /**
- * Draws the incoming clips where they would land, and claims the drop.
+ * Draws the incoming clips where they would land, claims the drop, and commits
+ * it on release.
  *
  * Mounted inside `timeline-canvas` beside `MarqueeOverlay`, so it scrolls with
  * the content it is positioned against and inherits that container's z tier.
@@ -349,6 +465,49 @@ export function ForeignDragGhost(props: ForeignDragGhostProps): React.ReactNode 
     if (compositionId === null) return;
     return () => useLayerDragStore.getState().releaseDropTarget(compositionId);
   }, [compositionId]);
+
+  const drop = landing?.drop ?? null;
+  // LANDMINE: the release below reads THIS ref and never the store.
+  //
+  // Both Panels listen for `pointerup` on `window`, and the HOST's listener was
+  // registered when the gesture armed, so it runs first — and the first thing
+  // it does is `end()`, which clears `drag`, `pointer` AND `claim`. A handler
+  // that read the store instead would find nothing, commit nothing, and say
+  // nothing: every ghost would still look right and no test would look wrong.
+  // Keep the resolved drop here, where the release cannot lose it.
+  const dropRef = useRef<ResolvedDrop | null>(null);
+  useEffect(() => {
+    dropRef.current = drop;
+  });
+
+  // Always mounted, never gated on holding a landing. Gating it would be the
+  // tidier shape, but it would make the commit depend on React NOT running this
+  // effect's cleanup between the host's `end()` and this listener firing — both
+  // happen inside one event dispatch, and a scheduling detail is a poor thing
+  // for a commit to rest on. `dropRef` already carries the whole refusal: a
+  // collision, a locked lane and a pointer over no row all leave it null, so
+  // "a refused preview sends nothing" stays structural either way.
+  useEffect(() => {
+    const release = (e: PointerEvent): void => {
+      const pending = dropRef.current;
+      if (pending === null) return;
+      // Re-asked from the RELEASE's own coordinates, not the last pointermove's.
+      // The host decides with the same function on the same event, so exactly
+      // one Panel acts: a pointer that left for somewhere else between the last
+      // move and the lift would otherwise be committed BY BOTH — this Panel
+      // against a position the pointer no longer holds, and the host as an
+      // ordinary in-composition move.
+      const under = foreignCompositionAtPoint(
+        pending.fromCompositionId,
+        e.clientX,
+        e.clientY,
+      );
+      if (under !== pending.toCompositionId) return;
+      void commitForeignDrop(pending);
+    };
+    window.addEventListener("pointerup", release);
+    return () => window.removeEventListener("pointerup", release);
+  }, []);
 
   if (landing === null || landing.band === null) return null;
   const band = landing.band;

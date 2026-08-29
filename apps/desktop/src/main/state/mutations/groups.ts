@@ -112,10 +112,11 @@ export function applyGroupsCreate(p: Project, idGen: IdGen, layerIds: readonly U
  *  composition the Group layer `groupLayerId` shows. A separate op rather than a
  *  move onto a foreign track, so that the four `CrossCompositionMove` /
  *  `CrossCompositionSet` refusals stay untouched: a move never crosses
- *  composition, and crossing has one name. It is the mutation ADR 0053
- *  decision 8 reserves — the decision that keeps a drag between two timeline
- *  Panels refused says in the same breath that the gap it leaves is filled by
- *  an op of its own, reached by pointing at the Group you mean.
+ *  composition, and crossing has a name of its own. It is the mutation ADR 0053
+ *  decision 8 reserves, and the one reached by pointing at the Group clip you
+ *  can SEE — where `move_layers_to_composition`, which this delegates to, is
+ *  reached by naming a composition and a time, or by carrying a clip into
+ *  another timeline Panel.
  *
  *  The Group LAYER names the destination, not the composition id — it is what
  *  the user pointed at, and it fixes which placement the landing is measured

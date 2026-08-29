@@ -252,10 +252,16 @@ export function switchAnchor(compositionId: string, viaLayerId: string): boolean
   return true;
 }
 
-/// The keyboard landed in a timeline Panel — `useFocusRegions` is the only
-/// caller, and it is where a region name is narrowed (see the LANDMINE in
-/// `focus/focusRegion.ts`). A Panel bound to a composition the summary no
-/// longer carries is ignored: the reconcile below is what retires it.
+/// The keyboard landed in one timeline Panel, naming WHICH — the region store
+/// only knows that a timeline holds focus, never which of them (see the
+/// LANDMINE in `focus/focusRegion.ts`). Call it wherever a gesture decides that
+/// question: focus arriving in a Panel, a Panel being activated, or a drop that
+/// carried clips into one.
+///
+/// It CLEARS the layer selection whenever the target actually changes, so a
+/// caller that also wants a selection must set that afterwards. A Panel bound
+/// to a composition the summary no longer carries is ignored: the reconcile
+/// below is what retires it.
 export function focusComposition(compositionId: string): void {
   const summary = useProjectStore.getState().summary;
   if (!summary || !summary.compositions[compositionId]) return;

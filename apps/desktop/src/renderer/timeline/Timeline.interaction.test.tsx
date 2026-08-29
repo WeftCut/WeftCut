@@ -3421,6 +3421,7 @@ describe("a gesture names the Panel it happened in", () => {
     ipcMocks.addGroupLayer.mockClear();
     ipcMocks.addMediaLayer.mockClear();
     ipcMocks.moveLayer.mockClear();
+    ipcMocks.pasteLayers.mockClear();
     ipcMocks.logEmit.mockClear();
     // The keyboard is in the root while every drop below lands in the Group.
     useCompositionAnchorStore.setState({
@@ -3504,7 +3505,7 @@ describe("a gesture names the Panel it happened in", () => {
     expect(useCompositionAnchorStore.getState().focusedId).toBe(ROOT);
   });
 
-  it("refuses a clip dragged onto another Panel, and says so on the status bar", () => {
+  it("stands down for a clip dragged onto another Panel, and refuses a COPY there", () => {
     const { container, getByText } = renderTimeline({
       compositionId: ROOT,
       selectedLayerId: layer.id,
@@ -3530,16 +3531,36 @@ describe("a gesture names the Panel it happened in", () => {
     const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
     fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 40 });
     fireEvent.pointerMove(window, { clientX: 700, clientY: 40 });
+    fireEvent.pointerUp(window, { clientX: 720, clientY: 40 });
+
+    // A plain move over the neighbour: this Panel sends nothing and says
+    // nothing. The crossing is the DESTINATION Panel's commit, off its own
+    // claim (`ForeignDragGhost.tsx`) — none is mounted here — so a line saying
+    // a clip cannot cross would contradict what the user is about to watch
+    // happen.
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+    expect(ipcMocks.logEmit).not.toHaveBeenCalled();
+
+    // Alt held is a different gesture: a copy mints ids, which is a second
+    // mutation rather than a parameter of the move, so it is refused at the
+    // gesture and explained on the status bar.
+    fireEvent.pointerDown(block, {
+      button: 0,
+      clientX: 80,
+      clientY: 40,
+      altKey: true,
+    });
+    fireEvent.pointerMove(window, { clientX: 700, clientY: 40 });
 
     expect(ipcMocks.logEmit).toHaveBeenCalledWith(
-      expect.objectContaining({ i18n_key: "log.cross_composition_move" }),
+      expect.objectContaining({ i18n_key: "log.cross_composition_copy" }),
     );
     // One line for the crossing, not one per pointer event.
     fireEvent.pointerMove(window, { clientX: 720, clientY: 40 });
     expect(ipcMocks.logEmit).toHaveBeenCalledTimes(1);
 
     fireEvent.pointerUp(window, { clientX: 720, clientY: 40 });
-    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+    expect(ipcMocks.pasteLayers).not.toHaveBeenCalled();
 
     unregister();
     neighbour.remove();

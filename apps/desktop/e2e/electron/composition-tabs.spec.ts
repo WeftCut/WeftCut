@@ -38,6 +38,9 @@ import {
  * Every Panel is addressed by the composition its Panel id names, never by a
  * position in the tab strip: the strip's order is a user's arrangement and
  * changes with each drag.
+ *
+ * A second flow follows it, on the same split-Panel arrangement and with a
+ * fixture of its own: carrying a clip BETWEEN the two timelines by hand.
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -693,6 +696,354 @@ test.describe("many compositions, one moment", () => {
       expect(tabZoom(readViewDoc(workspaceDir), rootId)).toBe(rootZoomPxPerSec);
     } finally {
       await second.app.close();
+    }
+  });
+});
+
+// ── A clip carried from one Panel into the other ────────────────────────────
+//
+// The gesture the side-by-side arrangement invites, and the one direction no op
+// could express before `move_layers_to_composition`: OUT of a Group and back
+// into the film. The destination Panel owns the whole answer — it resolves the
+// landing on its own zoom and its own grid, draws the preview, and commits it —
+// so every assertion below is read from the Panel it is about.
+
+/// Where the traveller starts on the film: clear of the Group clip, on the
+/// other roll, and far enough along that a landing which ignored the pointer
+/// could not accidentally match it.
+const TRAVELLER_START_US = 5_000_000;
+
+/// One Panel's lane, named by both ids. With two timelines open a bare
+/// `[data-track-id]` is ambiguous — the id is unique, but a locator that does
+/// not say which Panel it means invites the next reader to reuse it for one
+/// that is not.
+const laneOf = (page: Page, compositionId: string, trackId: string): Locator =>
+  timelinePanel(page, compositionId).locator(
+    `[data-testid="track-lane"][data-track-id="${trackId}"]`,
+  );
+
+/// One Panel's chip for one layer. Scoped for the same reason, and because a
+/// clip that has just crossed exists in exactly one of the two Panels — asking
+/// the wrong one is how a cross-Panel test passes while nothing moved.
+const clipOf = (page: Page, compositionId: string, layerId: string): Locator =>
+  timelinePanel(page, compositionId).locator(
+    `.timeline-layer[data-layer-id="${layerId}"]`,
+  );
+
+/// The preview one Panel draws for a clip carried in from the other.
+const foreignGhostOf = (page: Page, compositionId: string): Locator =>
+  timelinePanel(page, compositionId).locator(
+    '[data-testid="timeline-foreign-ghost"]',
+  );
+
+const layerById = (c: WireComposition, id: string): WireLayer => {
+  const layer = layersOf(c).find((l) => l.id === id);
+  if (!layer) throw new Error(`composition ${c.id} holds no layer ${id}`);
+  return layer;
+};
+
+const trackHolding = (c: WireComposition, layerId: string): string | null =>
+  c.tracks.find((t) => t.layers.some((l) => l.id === layerId))?.id ?? null;
+
+const layerIdsOf = (c: WireComposition): string[] =>
+  layersOf(c)
+    .map((l) => l.id)
+    .sort();
+
+const selectedLayerIds = async (page: Page): Promise<string[]> => {
+  const ids = (await page.evaluate(() =>
+    (window as any).__weftcutTest.getSelectedLayerIds(),
+  )) as string[];
+  return ids.slice().sort();
+};
+
+/// Every translation key the status log holds. The copy refusal is a log line
+/// and not a toast — this app prevents rather than interrupts — so this is
+/// where a refused gesture is observable at all.
+const logKeys = async (page: Page): Promise<string[]> => {
+  const entries = await invokeCmd<Array<{ i18n_key?: string | null }>>(
+    page,
+    "log_list",
+    {},
+  );
+  return entries.map((e) => e.i18n_key ?? "");
+};
+
+/// Take hold of a clip and carry it to a point, leaving the button DOWN: what
+/// the destination draws before release is half of what is under test.
+///
+/// The click first is not ceremony — an unselected clip body serves a short arm
+/// delay, and a drag that outran it would arrive as a plain selection click.
+/// One event per protocol round trip, as `timeline-raise-to-strip.spec.ts`
+/// does: fired inside one page task, React would still be uncommitted from the
+/// pointerdown when the move arrived.
+async function grabClipTo(
+  page: Page,
+  clip: Locator,
+  to: { x: number; y: number },
+  opts: { alt?: boolean } = {},
+): Promise<void> {
+  await expect(clip).toBeVisible();
+  const box = await clip.boundingBox();
+  if (!box) throw new Error("the dragged clip has no layout box");
+  const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  // Alt goes down AFTER the selecting click: held through it, the click would
+  // be the link-escape select instead, and the drag's own Alt is what makes it
+  // a duplicate.
+  await page.mouse.click(from.x, from.y);
+  if (opts.alt) await page.keyboard.down("Alt");
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y);
+}
+
+async function releaseDrag(
+  page: Page,
+  opts: { alt?: boolean } = {},
+): Promise<void> {
+  await page.mouse.up();
+  if (opts.alt) await page.keyboard.up("Alt");
+}
+
+test.describe("a clip crosses between two timeline Panels", () => {
+  test("a drag into the other Panel lands where the pointer said, one undo takes it back, and a refused preview sends nothing", async () => {
+    test.setTimeout(300_000);
+    const { app, page } = await launchApp();
+    try {
+      await newProject(page, {
+        parentFolder: tmpDir("weftcut-e2e-cross-panel-"),
+        name: "e2e-cross-panel-drop",
+        canvas: CANVAS,
+      });
+      // REQUIRED before any pointer gesture: the launch splash is a full-window
+      // overlay that outlives the first timeline render.
+      await expect(page.locator(".splash-screen")).toHaveCount(0, {
+        timeout: 15_000,
+      });
+      await waitForHook(page, "getOpenComposition");
+      await waitForHook(page, "getSelectedLayerIds");
+
+      // ── Fixture: a pre-composed pair, and one clip left outside it ───────
+      // Colour layers only: where a clip lands and what an undo restores is the
+      // whole subject, and nothing here waits on media.
+      const s0 = await wire(page);
+      const rootId = s0.root_id;
+      const aRoll = trackWithRole(rootOf(s0), "a-roll");
+      const bRoll = trackWithRole(rootOf(s0), "b-roll");
+      const colour = (over: Record<string, unknown>) =>
+        invokeCmd<string>(page, "add_color_layer", {
+          durationUs: CUT_US,
+          width: CANVAS.width,
+          height: CANVAS.height,
+          compositionId: rootId,
+          ...over,
+        });
+      const redId = await colour({
+        trackId: aRoll,
+        tStartUs: GROUP_START_US,
+        color: RED,
+      });
+      const greenId = await colour({
+        trackId: aRoll,
+        tStartUs: GROUP_START_US + CUT_US,
+        color: GREEN,
+      });
+      await expect
+        .poll(async () => layersOf(rootOf(await wire(page))).length)
+        .toBe(2);
+
+      // The ruler press lands focus on the timeline, which both chords need.
+      await timelinePanel(page, rootId)
+        .locator('[data-testid="timeline-ruler"]')
+        .click({ position: { x: 120, y: 10 } });
+      await page.keyboard.press(`${MOD}+A`);
+      await page.keyboard.press(`${MOD}+G`);
+      await expect.poll(async () => groupIdsOf(await wire(page)).length).toBe(1);
+
+      const s1 = await wire(page);
+      const groupId = groupIdsOf(s1)[0]!;
+      const groupLayerId = layersOf(rootOf(s1))[0]!.id;
+      // Read, never assumed: pre-compose maps each former lane onto one of the
+      // new composition's own, and which one is not this spec's business.
+      const innerTrackId = trackHolding(s1.compositions[groupId]!, redId)!;
+
+      // The traveller, added AFTER the pre-compose so the Select All above
+      // could not have swept it in.
+      const travellerId = await colour({
+        trackId: bRoll,
+        tStartUs: TRAVELLER_START_US,
+        color: BLUE,
+      });
+
+      // ── Two timelines, side by side ─────────────────────────────────────
+      const groupClip = clipOf(page, rootId, groupLayerId);
+      await expect(groupClip).toBeVisible();
+      const groupClipBox = await groupClip.boundingBox();
+      if (!groupClipBox) throw new Error("the Group clip has no layout box");
+      await page.mouse.dblclick(
+        groupClipBox.x + groupClipBox.width / 2,
+        groupClipBox.y + groupClipBox.height / 2,
+      );
+      await expect.poll(() => openCompositionId(page)).toBe(groupId);
+      await dragDockTab(
+        page,
+        timelineDvTab(page, groupId),
+        dockPanel(page, "preview"),
+        "bottom",
+      );
+      await expect
+        .poll(() => visibleTimelinePanelIds(page))
+        .toEqual([rootId, groupId].sort());
+      await expect(laneOf(page, groupId, innerTrackId)).toBeVisible();
+
+      // ── Down: the film's clip into the Group ────────────────────────────
+      const redClip = clipOf(page, groupId, redId);
+      await expect(redClip).toBeVisible();
+      const redBox = await redClip.boundingBox();
+      if (!redBox) throw new Error("the Group's first clip has no layout box");
+      // RED starts at the Group's own zero and lasts exactly one CUT, so its box
+      // IS this Panel's origin and its seconds-to-pixels. Read rather than
+      // assumed: each Panel owns its zoom (ADR 0053), and the two here differ.
+      const groupPxPerCut = redBox.width;
+      const freeInGroup = {
+        x: redBox.x + 3 * groupPxPerCut,
+        y: redBox.y + redBox.height / 2,
+      };
+
+      await grabClipTo(page, clipOf(page, rootId, travellerId), freeInGroup);
+      const ghost = foreignGhostOf(page, groupId);
+      await expect(ghost).toBeVisible();
+      await expect(ghost).toHaveAttribute("data-validity", "valid");
+      await expect(ghost).toHaveAttribute("data-track-id", innerTrackId);
+      // The DESTINATION's own reading of the pointer, on its own grid. The
+      // commit is asserted against this number rather than against arithmetic
+      // the spec would have to repeat — and that the two agree IS the subject.
+      const landingUs = Number(await ghost.getAttribute("data-start-us"));
+      expect(landingUs).toBeGreaterThan(2 * CUT_US);
+      await releaseDrag(page);
+
+      await expect
+        .poll(
+          async () => layersOf((await wire(page)).compositions[groupId]!).length,
+          { timeout: 30_000 },
+        )
+        .toBe(3);
+      const s2 = await wire(page);
+      const inner2 = s2.compositions[groupId]!;
+      expect(layerById(inner2, travellerId).t_start_us).toBe(landingUs);
+      expect(trackHolding(inner2, travellerId)).toBe(innerTrackId);
+      // And it left the film: the Group clip is all that is left up there.
+      expect(layerIdsOf(rootOf(s2))).toEqual([groupLayerId]);
+      // Selection and focus followed it. That is what separates a gesture which
+      // NAMED the destination from the menu, which clears and stays put.
+      expect(await selectedLayerIds(page)).toEqual([travellerId]);
+      await expect.poll(() => openCompositionId(page)).toBe(groupId);
+
+      // ── One undo puts it back on its lane, at its time ──────────────────
+      await page.keyboard.press(`${MOD}+Z`);
+      await expect
+        .poll(async () => layersOf(rootOf(await wire(page))).length, {
+          timeout: 30_000,
+        })
+        .toBe(2);
+      const s3 = await wire(page);
+      expect(layerById(rootOf(s3), travellerId).t_start_us).toBe(
+        TRAVELLER_START_US,
+      );
+      expect(trackHolding(rootOf(s3), travellerId)).toBe(bRoll);
+      expect(layerIdsOf(s3.compositions[groupId]!)).toEqual(
+        [redId, greenId].sort(),
+      );
+
+      // ── Up: a Group member back out into the film ───────────────────────
+      // The direction no op could express before this feature — `groups_ungroup`
+      // dissolved the Group and replaced every id, and no move could cross.
+      const travellerClip = clipOf(page, rootId, travellerId);
+      await expect(travellerClip).toBeVisible();
+      const travellerBox = await travellerClip.boundingBox();
+      if (!travellerBox) throw new Error("the traveller has no layout box");
+      // The root Panel's own seconds-to-pixels, read the same way — two CUTs
+      // past the traveller's head is free lane on the roll it sits on.
+      const freeInRoot = {
+        x: travellerBox.x + 2 * travellerBox.width,
+        y: travellerBox.y + travellerBox.height / 2,
+      };
+      await grabClipTo(page, clipOf(page, groupId, redId), freeInRoot);
+      const rootGhost = foreignGhostOf(page, rootId);
+      await expect(rootGhost).toBeVisible();
+      await expect(rootGhost).toHaveAttribute("data-validity", "valid");
+      await expect(rootGhost).toHaveAttribute("data-track-id", bRoll);
+      const upLandingUs = Number(await rootGhost.getAttribute("data-start-us"));
+      await releaseDrag(page);
+
+      await expect
+        .poll(async () => layersOf(rootOf(await wire(page))).length, {
+          timeout: 30_000,
+        })
+        .toBe(3);
+      const s4 = await wire(page);
+      expect(layerById(rootOf(s4), redId).t_start_us).toBe(upLandingUs);
+      expect(trackHolding(rootOf(s4), redId)).toBe(bRoll);
+      expect(layerIdsOf(s4.compositions[groupId]!)).toEqual([greenId]);
+      await expect.poll(() => openCompositionId(page)).toBe(rootId);
+
+      await page.keyboard.press(`${MOD}+Z`);
+      await expect
+        .poll(async () => layerIdsOf((await wire(page)).compositions[groupId]!), {
+          timeout: 30_000,
+        })
+        .toEqual([redId, greenId].sort());
+
+      // ── A drop on an occupied span does nothing ─────────────────────────
+      const redAgain = clipOf(page, groupId, redId);
+      await expect(redAgain).toBeVisible();
+      const redBoxAgain = await redAgain.boundingBox();
+      if (!redBoxAgain) throw new Error("the restored clip has no layout box");
+      const ontoRed = {
+        x: redBoxAgain.x + redBoxAgain.width / 2,
+        y: redBoxAgain.y + redBoxAgain.height / 2,
+      };
+      await grabClipTo(page, clipOf(page, rootId, travellerId), ontoRed);
+      await expect(foreignGhostOf(page, groupId)).toHaveAttribute(
+        "data-validity",
+        "collision",
+      );
+      await releaseDrag(page);
+
+      // The red ghost is the whole explanation, and a refused preview sends
+      // nothing — so there is not even an undo to make.
+      const s5 = await wire(page);
+      expect(trackHolding(rootOf(s5), travellerId)).toBe(bRoll);
+      expect(layerById(rootOf(s5), travellerId).t_start_us).toBe(
+        TRAVELLER_START_US,
+      );
+      expect(layerIdsOf(s5.compositions[groupId]!)).toEqual(
+        [redId, greenId].sort(),
+      );
+
+      // ── Alt across Panels is refused, and says why ──────────────────────
+      const freeAgain = {
+        x: redBoxAgain.x + 3 * redBoxAgain.width,
+        y: redBoxAgain.y + redBoxAgain.height / 2,
+      };
+      await grabClipTo(page, clipOf(page, rootId, travellerId), freeAgain, {
+        alt: true,
+      });
+      // No preview at all: a copy across compositions mints ids and is a
+      // mutation of its own, so there is no landing to draw truthfully.
+      await expect(foreignGhostOf(page, groupId)).toHaveCount(0);
+      await releaseDrag(page, { alt: true });
+
+      await expect
+        .poll(() => logKeys(page), { timeout: 30_000 })
+        .toContain("log.cross_composition_copy");
+      const s6 = await wire(page);
+      expect(trackHolding(rootOf(s6), travellerId)).toBe(bRoll);
+      expect(layerIdsOf(s6.compositions[groupId]!)).toEqual(
+        [redId, greenId].sort(),
+      );
+    } finally {
+      await app.close();
     }
   });
 });

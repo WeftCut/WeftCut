@@ -5,6 +5,8 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  useForeignDropStripAnchorUs,
+  useIsForeignDropClaimed,
   useIsLayerDragging,
   useIsLayerMoveDragging,
   useLayerDragStore,
@@ -154,5 +156,40 @@ describe("layerDragStore", () => {
     // read null rather than a time it would place on its own grid.
     expect(renderHook(() => useLayerDragStripAnchorUs("comp-a")).result.current).toBe(0);
     expect(renderHook(() => useLayerDragStripAnchorUs("comp-b")).result.current).toBeNull();
+  });
+
+  // The drop strip's OTHER arming condition. The gate above is what keeps a
+  // Panel from arming for its neighbour's gesture, so the destination needs a
+  // second reason to arm at all — the CLAIM, which is its own statement that a
+  // release here would land, and the only evidence of the crossing it may read.
+  it("arms the Panel that claimed the drop, and no other", () => {
+    useLayerDragStore.getState().begin(stateAt(0, null, [], "comp-a"), 120, 60);
+    useLayerDragStore.getState().claimDropTarget({
+      compositionId: "comp-b",
+      trackId: SPAWN_TRACK_ID,
+      anchorTStartUs: 500_000,
+      validity: "spawn",
+    });
+
+    expect(renderHook(() => useIsForeignDropClaimed("comp-b")).result.current).toBe(true);
+    // Not the Panel the gesture belongs to: its own strip answers to the
+    // gesture, and a Panel is never a destination for itself.
+    expect(renderHook(() => useIsForeignDropClaimed("comp-a")).result.current).toBe(false);
+    expect(
+      renderHook(() => useForeignDropStripAnchorUs("comp-b")).result.current,
+    ).toBe(500_000);
+
+    // Over a lane the strip stays armed but unlit: the head named there belongs
+    // to a row the strip does not own.
+    useLayerDragStore.getState().claimDropTarget({
+      compositionId: "comp-b",
+      trackId: "t9",
+      anchorTStartUs: 500_000,
+      validity: "valid",
+    });
+    expect(renderHook(() => useIsForeignDropClaimed("comp-b")).result.current).toBe(true);
+    expect(
+      renderHook(() => useForeignDropStripAnchorUs("comp-b")).result.current,
+    ).toBeNull();
   });
 });

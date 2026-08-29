@@ -1,9 +1,22 @@
 // @vitest-environment jsdom
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  moveLayersToComposition: vi.fn(),
+}));
+
+vi.mock("../ipc", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ipc")>();
+  return { ...actual, moveLayersToComposition: mocks.moveLayersToComposition };
+});
 
 import "../i18n"; // the refusal badge reads t(...)
 import type { LayerSummary, TrackSummary } from "../ipc";
+import { useCompositionAnchorStore } from "../state/compositionAnchorStore";
+import { useProjectStore } from "../state/projectStore";
+import { useSelectionStore } from "../state/selectionStore";
+import { compositionFixture, summaryFixture } from "../testing/summaryFixture";
 import { ForeignDragGhost } from "./ForeignDragGhost";
 import {
   useLayerDragFor,
@@ -57,6 +70,16 @@ afterEach(() => {
   useLayerDragStore.getState().end();
   while (releases.length > 0) releases.pop()!();
   while (detach.length > 0) detach.pop()!.remove();
+  // The commit reaches three module-level stores; a test that seeded them must
+  // not decide what the next one starts from.
+  useProjectStore.getState().apply(null);
+  useSelectionStore.setState({
+    primaryLayerId: null,
+    selectedLayerIds: new Set(),
+    selectedTransitionId: null,
+    selectedCompositionId: null,
+  });
+  mocks.moveLayersToComposition.mockReset();
   vi.restoreAllMocks();
 });
 
@@ -233,6 +256,21 @@ function mountGhost(
       act(() => {
         useLayerDragStore.getState().moveVisual(to.clientX, to.clientY);
       }),
+    /// The release, as the host performs it: `end()` first — that handler was
+    /// registered when the gesture armed, so it runs before this Panel's — and
+    /// the `pointerup` in the SAME task, before React has re-rendered either
+    /// Panel. Awaited, because the commit is async and the selection and focus
+    /// only follow once it resolves.
+    ///
+    /// Carries coordinates, because the release re-asks which Panel it is over
+    /// from the event rather than trusting the last pointermove. Defaults to
+    /// wherever this gesture was pointing.
+    release: async (at: { clientX: number; clientY: number } = pointer) => {
+      await act(async () => {
+        useLayerDragStore.getState().end();
+        fireEvent.pointerUp(window, { clientX: at.clientX, clientY: at.clientY });
+      });
+    },
     claim: () => useLayerDragStore.getState().claim,
   };
 }
@@ -413,6 +451,148 @@ describe("ForeignDragGhost", () => {
     // not a latch.
     view.move(OVER_SOURCE);
     expect(view.claim()).toBeNull();
+  });
+
+  it("commits the drop to THIS composition, at the landing the ghost drew", async () => {
+    const view = mountGhost({
+      drag: { subjects: [ANCHOR, PARTNER] },
+      pointer: OVER_LANE_2,
+    });
+    // The preview and the commit are one act: whatever the ghost's anchor block
+    // shows is the time the command is asked for.
+    expect(view.ghosts()[0]!.dataset.startUs).toBe(String(LANDING_AT_25FPS));
+
+    await view.release();
+
+    expect(mocks.moveLayersToComposition).toHaveBeenCalledTimes(1);
+    expect(mocks.moveLayersToComposition).toHaveBeenCalledWith(
+      // Every subject crosses — a move fans out across the whole link.
+      [ANCHOR.layerId, PARTNER.layerId],
+      DEST,
+      // The anchor the ghost positions from, so the landing and the anchor
+      // cannot disagree.
+      ANCHOR.layerId,
+      LANDING_AT_25FPS,
+      "d-2",
+    );
+  });
+
+  it("sends `spawn` for the drop strip, never the sentinel", async () => {
+    const view = mountGhost({ pointer: OVER_STRIP });
+    expect(view.only().dataset.trackId).toBe(SPAWN_TRACK_ID);
+
+    await view.release();
+
+    // `SPAWN_TRACK_ID` is the hit-test's word for a lane that does not exist
+    // yet; the command's is `"spawn"`, and the sentinel would be a
+    // `TrackNotFound`.
+    expect(mocks.moveLayersToComposition).toHaveBeenCalledWith(
+      [ANCHOR.layerId],
+      DEST,
+      ANCHOR.layerId,
+      LANDING_AT_25FPS,
+      "spawn",
+    );
+  });
+
+  it("sends nothing when the landing collides", async () => {
+    const view = mountGhost({
+      tracks: [
+        track("d-1", [layer("dest-standing", 2_000_000, 4_000_000)]),
+        track("d-2", []),
+      ],
+    });
+    expect(view.only().dataset.validity).toBe("collision");
+
+    await view.release();
+
+    // The red ghost is the whole explanation, exactly as in-composition.
+    expect(mocks.moveLayersToComposition).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing when the destination lane is locked", async () => {
+    const view = mountGhost({
+      tracks: [track("d-1", []), track("d-2", [], true)],
+      pointer: OVER_LANE_2,
+    });
+    expect(view.only().dataset.validity).toBe("locked");
+
+    await view.release();
+
+    expect(mocks.moveLayersToComposition).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing when the release lands over no row", async () => {
+    // Inside the Panel, below its last lane: the ghost drew nothing there, and
+    // no preview means no commit. Bouncing onto a free lane is what the command
+    // does for a MENU, which has no ghost to contradict.
+    const view = mountGhost({ pointer: { clientX: 733, clientY: 200 } });
+
+    expect(view.ghosts()).toHaveLength(0);
+    expect(view.claim()).toMatchObject({ trackId: null, validity: "collision" });
+
+    await view.release();
+
+    expect(mocks.moveLayersToComposition).not.toHaveBeenCalled();
+  });
+
+  it("commits from a store the host has already emptied", async () => {
+    // THE ordering guard. Both Panels listen for `pointerup` on `window`, and
+    // the host's listener — registered when the gesture armed — runs first and
+    // calls `end()`, which clears `drag`, `pointer` AND `claim`. A release that
+    // read the store would find nothing and commit nothing, silently, with the
+    // ghost still looking right up to the moment it vanished.
+    const view = mountGhost({ pointer: OVER_LANE_1 });
+
+    await view.release();
+
+    expect(useLayerDragStore.getState().drag).toBeNull();
+    expect(useLayerDragStore.getState().claim).toBeNull();
+    expect(mocks.moveLayersToComposition).toHaveBeenCalledWith(
+      [ANCHOR.layerId],
+      DEST,
+      ANCHOR.layerId,
+      LANDING_AT_25FPS,
+      "d-1",
+    );
+  });
+
+  it("sends nothing when the lift happens back over the Panel it came from", async () => {
+    // A pointer that leaves between the last `pointermove` and the lift. Both
+    // Panels decide from the SAME event, so exactly one may act — and over the
+    // host, the one that acts is the host, with an ordinary in-composition
+    // move. A release trusting its last resolved landing would commit here too,
+    // and the clip would be moved twice, by two ops, into two history rows.
+    const view = mountGhost({ pointer: OVER_LANE_1 });
+
+    await view.release(OVER_SOURCE);
+
+    expect(mocks.moveLayersToComposition).not.toHaveBeenCalled();
+  });
+
+  it("takes the selection and the keyboard to where the clips landed", async () => {
+    // A destination that is a real composition of a real project: focus refuses
+    // an id the summary does not carry.
+    useProjectStore.getState().apply(
+      summaryFixture({
+        root: { id: SRC },
+        groups: [compositionFixture({ id: DEST })],
+      }),
+    );
+    expect(useCompositionAnchorStore.getState().focusedId).toBe(SRC);
+
+    const view = mountGhost({ drag: { subjects: [ANCHOR, PARTNER] } });
+    await view.release();
+
+    // Both follow the drop, where the *Move to composition ›* menu clears the
+    // selection and stays put: the difference is that this gesture named the
+    // destination with the pointer.
+    expect(useCompositionAnchorStore.getState().focusedId).toBe(DEST);
+    const selection = useSelectionStore.getState();
+    expect(selection.primaryLayerId).toBe(ANCHOR.layerId);
+    expect([...selection.selectedLayerIds].sort()).toEqual(
+      [ANCHOR.layerId, PARTNER.layerId].sort(),
+    );
   });
 
   it("wakes only itself: a foreign pointermove renders no lane, block or strip", () => {
