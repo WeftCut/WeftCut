@@ -137,6 +137,14 @@ export function pruneEmptiedTrack(c: Composition, trackId: Uuid): Uuid | null {
   return trackId
 }
 
+/** Insert a layer keeping the track's layers ordered by `t_start_us` — the order
+ *  validate's overlap scan walks in, since it compares each layer only against
+ *  the previous one of its class. */
+export function insertSorted(track: Track, layer: Layer): void {
+  const at = track.layers.findIndex((l) => l.t_start_us > layer.t_start_us)
+  track.layers.splice(at < 0 ? track.layers.length : at, 0, layer)
+}
+
 /** Scan tracks in reverse for the first non-reserved, UNLOCKED track with no
  *  layer overlap in [t0, t1). Returns null if none found, which means the
  *  caller must spawn a track via `applyAddTrack`. This IS ADR 0042's bounce
@@ -169,6 +177,31 @@ export function dropLayerFromLinks(c: Composition, layerId: Uuid): void {
       g.members = g.members.filter((m) => m !== layerId)
       if (g.members.length < 2) { c.links.splice(i, 1); continue }
     }
+    i++
+  }
+}
+
+/** Links and transitions follow the SET across a composition boundary — the
+ *  half both crossing ops share. A link or transition whose every member is in
+ *  `memberSet` moves to `to` keeping its id; a link straddling the boundary
+ *  loses its inside members and dissolves below two; a straddling transition is
+ *  left in `from` for `reconcileTransitions` to drop and the actor to log — the
+ *  drop rule has one home, and the commit runs it anyway. Markers are never
+ *  touched: they mark a composition's own time, not the layers that left it. */
+export function moveLinksAndTransitions(from: Composition, to: Composition, memberSet: ReadonlySet<Uuid>): void {
+  for (let i = 0; i < from.links.length;) {
+    const link = from.links[i]
+    const inside = link.members.filter((m) => memberSet.has(m)).length
+    if (inside === link.members.length) { to.links.push(link); from.links.splice(i, 1); continue }
+    if (inside > 0) {
+      link.members = link.members.filter((m) => !memberSet.has(m))
+      if (link.members.length < 2) { from.links.splice(i, 1); continue }
+    }
+    i++
+  }
+  for (let i = 0; i < from.transitions.length;) {
+    const tr = from.transitions[i]
+    if (memberSet.has(tr.from_layer) && memberSet.has(tr.to_layer)) { to.transitions.push(tr); from.transitions.splice(i, 1); continue }
     i++
   }
 }
