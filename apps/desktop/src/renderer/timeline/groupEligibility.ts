@@ -49,6 +49,18 @@ export type UngroupState =
   | "not_plain_opacity"
   | "not_plain_effects";
 
+/// `add_to_group` is the live direction. Unlike Ungroup's `needs_one_group`,
+/// the shape failures do NOT collapse: "select a group clip to add to" and
+/// "select something to put in it" are two different things to go and do, and a
+/// selection that has one is usually one step from having both.
+export type AddToGroupState =
+  | "add_to_group"
+  | "needs_selection"
+  | "needs_one_group"
+  | "needs_member"
+  | "locked"
+  | "starts_before_group";
+
 /// The reasons a Group layer is not plain that the WIRE can answer.
 ///
 /// Twin of `main/state/mutations/groups.ts`'s `groupNotPlainReason`, minus its
@@ -141,6 +153,65 @@ export function ungroupState(
   return "ungroup";
 }
 
+/// Add to Group takes the ONE selected Group clip as the destination and
+/// everything else selected as the members. The order of the checks is the
+/// order the instructions get harder: select something, name a destination,
+/// give it something to carry, unlock what is moving, then move a clip the
+/// destination has no room for.
+///
+/// "All in one composition" — the actor's first refusal — is enforced
+/// STRUCTURALLY here, not checked. `selectedWithTracks` walks only the focused
+/// composition's tracks, so a layer selected in another composition is simply
+/// not found, exactly as `groupState` and `ungroupState` already behave. A
+/// check would have nothing left to read.
+///
+/// There is no `cycle` state, and that is a consequence of the exactly-one
+/// rule: the selection's only Group clip is spoken for as the destination, so
+/// no MEMBER can be a Group, and the actor's `CompositionCycle` is reachable
+/// only through MCP — as is its `RootComposition`, since no gesture makes a
+/// Group clip that points at the root. That is the prevent-at-the-gesture /
+/// refuse-in-state split this file already states for `blend_mode`. Loosening
+/// exactly-one — nesting one Group inside another — is what would make a cycle
+/// state necessary.
+export function addToGroupState(
+  selected: ReadonlySet<string>,
+  tracks: readonly TrackSummary[],
+): AddToGroupState {
+  const found = selectedWithTracks(selected, tracks);
+  if (found.length === 0) return "needs_selection";
+  // The destination's own zero, expressed on THIS composition's clock: the
+  // moment the Group clip's `src_in_us` points at. Computed inside the walk
+  // because that is where the `CompositionRef` params are narrowed.
+  let destination: { id: string; originUs: number } | null = null;
+  let groupCount = 0;
+  for (const { layer } of found) {
+    const p = layer.params;
+    if (p.kind !== "CompositionRef") continue;
+    groupCount += 1;
+    destination = { id: layer.id, originUs: layer.t_start_us - p.src_in_us };
+  }
+  // Zero, or two and more: with two, nothing in the selection says which is the
+  // destination and which is moving.
+  if (groupCount !== 1 || !destination) return "needs_one_group";
+  const target = destination;
+  const members = found.filter(({ layer }) => layer.id !== target.id);
+  if (members.length === 0) return "needs_member";
+  // MEMBERS only. The destination's own lock is deliberately not consulted —
+  // the actor does not consult it either, because this op never writes the
+  // Group clip, and a lock protects a layer from being edited, not the
+  // composition it happens to point at. Widening this to `found` would grey the
+  // row out on a gesture the actor would have accepted.
+  if (members.some(({ layer, track }) => layer.locked || track.locked)) {
+    return "locked";
+  }
+  // The gesture-side half of the actor's `InvalidArgument`: a member that would
+  // land before the destination's zero has nowhere in composition time to go.
+  if (members.some(({ layer }) => layer.t_start_us < target.originUs)) {
+    return "starts_before_group";
+  }
+  return "add_to_group";
+}
+
 function currentTracks(): readonly TrackSummary[] {
   return currentOpenComposition()?.tracks ?? NO_TRACKS;
 }
@@ -155,12 +226,23 @@ export function ungroupForSelection(): UngroupState {
   return ungroupState(useSelectionStore.getState().selectedLayerIds, currentTracks());
 }
 
+export function addToGroupForSelection(): AddToGroupState {
+  return addToGroupState(
+    useSelectionStore.getState().selectedLayerIds,
+    currentTracks(),
+  );
+}
+
 export function canGroupSelection(): boolean {
   return groupForSelection() === "group";
 }
 
 export function canUngroupSelection(): boolean {
   return ungroupForSelection() === "ungroup";
+}
+
+export function canAddToGroupSelection(): boolean {
+  return addToGroupForSelection() === "add_to_group";
 }
 
 /// The Group layer the selection is, or null — what `openGroup` acts on, and
@@ -172,6 +254,21 @@ export function selectedGroupLayer(): LayerSummary | null {
   const found = selectedWithTracks(selected, currentTracks());
   const only = found[0];
   return only && only.layer.params.kind === "CompositionRef" ? only.layer : null;
+}
+
+/// The Group clip the selection would add TO — its one `CompositionRef`, or
+/// null. Distinct from `selectedGroupLayer`, which insists the Group is the
+/// WHOLE selection: here the rest of the selection is exactly what moves, so it
+/// is the thing being tolerated rather than the thing ruling the answer.
+///
+/// Answers a destination even when the gesture is not live, so a greyed row can
+/// still name the Group it would have added to.
+export function addToGroupTarget(): LayerSummary | null {
+  const selected = useSelectionStore.getState().selectedLayerIds;
+  const groups = selectedWithTracks(selected, currentTracks()).filter(
+    ({ layer }) => layer.params.kind === "CompositionRef",
+  );
+  return groups.length === 1 ? groups[0]!.layer : null;
 }
 
 /**
@@ -197,5 +294,16 @@ export const useUngroupState = (): UngroupState => {
   const focusedId = useCompositionAnchorStore((s) => s.focusedId);
   return useProjectStore((s) =>
     ungroupState(selected, compositionOrRoot(s.summary, focusedId)?.tracks ?? NO_TRACKS),
+  );
+};
+
+export const useAddToGroupState = (): AddToGroupState => {
+  const selected = useSelectionStore((s) => s.selectedLayerIds);
+  const focusedId = useCompositionAnchorStore((s) => s.focusedId);
+  return useProjectStore((s) =>
+    addToGroupState(
+      selected,
+      compositionOrRoot(s.summary, focusedId)?.tracks ?? NO_TRACKS,
+    ),
   );
 };

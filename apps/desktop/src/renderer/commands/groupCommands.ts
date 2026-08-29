@@ -1,23 +1,25 @@
-// The three Group gestures as commands: make one, dissolve one, enter one.
-// There is no fourth — under a tab strip, leaving a Group is closing its tab or
-// activating another (ADR 0053).
+// The four Group gestures as commands: make one, dissolve one, enter one, add
+// to one. None of them LEAVES a Group — under a tab strip, leaving is closing
+// its tab or activating another (ADR 0053).
 //
 // Self-contained — each reads the stores it needs and commits through IPC — so
 // App lends them a `HandlerMap` slot and nothing else. That is what puts them in
 // App's catalogue rather than Timeline's provider: a command registered by
-// Timeline vanishes with the Timeline Panel, and these three belong in the Edit
+// Timeline vanishes with the Timeline Panel, and these four belong in the Edit
 // menu, which must not lose rows when a Panel is closed
 // (`menu/contextMenuCommands.test.ts` states the rule).
 //
 // The `project:changed` subscription refreshes every view, so none of them needs
 // App's `refresh`.
 
-import { groupsCreate, groupsUngroup } from "../ipc";
+import { groupsAddMembers, groupsCreate, groupsUngroup } from "../ipc";
 import { logMutationFailure } from "../errors/tryMutate";
 import { openComposition } from "../state/compositionAnchorStore";
 import { rememberPrecompose } from "../state/precomposeSelection";
 import { setLayerSelection, useSelectionStore } from "../state/selectionStore";
 import {
+  addToGroupTarget,
+  canAddToGroupSelection,
   canGroupSelection,
   canUngroupSelection,
   selectedGroupLayer,
@@ -61,6 +63,37 @@ export async function ungroupSelected(): Promise<void> {
   }
 }
 
+/// Move the rest of the selection into the one selected Group's composition —
+/// the only way an existing layer joins an existing Group, and the only edit
+/// that crosses compositions without re-minting ids. The members keep their
+/// screen position; a destination that grows shows as overhang rather than
+/// rewriting the Group's window.
+///
+/// The selection is read from the store rather than captured, for the sibling's
+/// reason: App does not re-render on a multi-select change.
+///
+/// The Group clip becomes the selection afterwards BECAUSE the members have
+/// left this composition — the old selection cannot survive as-is, and the
+/// Group is what now represents them, sits under the cursor, and gives the
+/// inspector something to show.
+export async function addToGroupSelected(): Promise<void> {
+  const group = addToGroupTarget();
+  if (!group) return;
+  const layerIds = [...useSelectionStore.getState().selectedLayerIds].filter(
+    (id) => id !== group.id,
+  );
+  // Same honest no-target answer `groupSelected` gives: the command's `enabled`
+  // prevents this, but a menu row built before the selection changed can still
+  // reach here.
+  if (layerIds.length === 0) return;
+  try {
+    await groupsAddMembers(layerIds, group.id);
+    setLayerSelection(group.id, [group.id]);
+  } catch (err) {
+    logMutationFailure(err, "groups_add_members");
+  }
+}
+
 /// Enter the selected Group — the keyboard/palette half of the double-click:
 /// ensure the Group has a timeline Panel of its own, and make it the one the
 /// keyboard acts on. Carries the Group LAYER through, so the Panel is anchored
@@ -72,7 +105,7 @@ export function openSelectedGroup(): void {
   openComposition(layer.params.composition_id, layer.id);
 }
 
-export { canGroupSelection, canUngroupSelection };
+export { canAddToGroupSelection, canGroupSelection, canUngroupSelection };
 
 /// `openGroup` is enabled by what is reachable, not by what is selected:
 /// entering needs a Group under the cursor's selection.

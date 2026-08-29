@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  addToGroupForSelection,
+  addToGroupTarget,
+  canAddToGroupSelection,
   canGroupSelection,
   canUngroupSelection,
   groupForSelection,
@@ -11,7 +14,11 @@ import {
 import type { AnimTrack, LayerSummary, TrackSummary } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
 import { clearLayerSelection, setLayerSelection } from "../state/selectionStore";
-import { groupLayerFixture, summaryFixture } from "../testing/summaryFixture";
+import {
+  compositionFixture,
+  groupLayerFixture,
+  summaryFixture,
+} from "../testing/summaryFixture";
 
 const num = (value: number): AnimTrack<number> => ({ mode: "Static", value });
 
@@ -228,6 +235,152 @@ describe("ungroupForSelection", () => {
     ]);
     setLayerSelection("g", ["g"]);
     expect(ungroupForSelection()).toBe("not_plain_effects");
+  });
+});
+
+describe("addToGroupForSelection", () => {
+  it("adds every other selected layer to the one selected Group", () => {
+    seed([
+      track("t1", [
+        groupLayerFixture({ id: "g" }),
+        colorLayer("a"),
+        colorLayer("b"),
+      ]),
+    ]);
+    setLayerSelection("g", ["g", "a", "b"]);
+    expect(addToGroupForSelection()).toBe("add_to_group");
+    expect(canAddToGroupSelection()).toBe(true);
+  });
+
+  it("needs a selection at all", () => {
+    seed([track("t1", [groupLayerFixture({ id: "g" }), colorLayer("a")])]);
+    expect(addToGroupForSelection()).toBe("needs_selection");
+    expect(canAddToGroupSelection()).toBe(false);
+  });
+
+  // Zero and two-or-more are one state, unlike the member half: both are fixed
+  // by picking the destination. With two, nothing says which one it is.
+  it("needs exactly one Group clip, whether none or two are selected", () => {
+    seed([
+      track("t1", [
+        groupLayerFixture({ id: "g" }),
+        groupLayerFixture({ id: "g2", compositionId: "comp-two" }),
+        colorLayer("a"),
+      ]),
+    ]);
+    setLayerSelection("a", ["a"]);
+    expect(addToGroupForSelection()).toBe("needs_one_group");
+    setLayerSelection("g", ["g", "g2", "a"]);
+    expect(addToGroupForSelection()).toBe("needs_one_group");
+  });
+
+  // The other half of the shape, and its own state: the destination is there,
+  // the thing to put in it is not.
+  it("needs a member besides the Group itself", () => {
+    seed([track("t1", [groupLayerFixture({ id: "g" })])]);
+    setLayerSelection("g", ["g"]);
+    expect(addToGroupForSelection()).toBe("needs_member");
+  });
+
+  it("refuses when a member or its lane is locked", () => {
+    seed([
+      track("t1", [
+        groupLayerFixture({ id: "g" }),
+        colorLayer("a", { locked: true }),
+      ]),
+    ]);
+    setLayerSelection("g", ["g", "a"]);
+    expect(addToGroupForSelection()).toBe("locked");
+
+    seed([track("t1", [groupLayerFixture({ id: "g" }), colorLayer("a")], true)]);
+    setLayerSelection("g", ["g", "a"]);
+    expect(addToGroupForSelection()).toBe("locked");
+  });
+
+  // The destination is the one selected layer whose lock does NOT block the
+  // gesture, because the op never writes it. A gate stricter than the actor
+  // would grey out a move the actor accepts.
+  it("lets a locked Group clip take members", () => {
+    seed([
+      track("t1", [groupLayerFixture({ id: "g", locked: true }), colorLayer("a")]),
+    ]);
+    setLayerSelection("g", ["g", "a"]);
+    expect(addToGroupForSelection()).toBe("add_to_group");
+  });
+
+  // The gesture-side half of the actor's `InvalidArgument`. The destination's
+  // zero is `t_start - src_in`, so a trimmed-in Group answers differently from
+  // an untrimmed one at the same placement — which is exactly the case a single
+  // `t_start` comparison would get wrong.
+  it("refuses a member that would land before the destination's zero", () => {
+    seed([
+      track("t1", [
+        groupLayerFixture({ id: "g", tStartUs: 2_000_000, tEndUs: 4_000_000 }),
+        colorLayer("a", { t_start_us: 1_000_000, t_end_us: 1_500_000 }),
+      ]),
+    ]);
+    setLayerSelection("g", ["g", "a"]);
+    expect(addToGroupForSelection()).toBe("starts_before_group");
+    expect(canAddToGroupSelection()).toBe(false);
+
+    // Same placement, trimmed in by 1 s: the composition's 0 is now a second
+    // earlier on this clock, and the member fits.
+    seed([
+      track("t1", [
+        groupLayerFixture({
+          id: "g",
+          tStartUs: 2_000_000,
+          tEndUs: 4_000_000,
+          srcInUs: 1_000_000,
+          srcOutUs: 3_000_000,
+        }),
+        colorLayer("a", { t_start_us: 1_000_000, t_end_us: 1_500_000 }),
+      ]),
+    ]);
+    setLayerSelection("g", ["g", "a"]);
+    expect(addToGroupForSelection()).toBe("add_to_group");
+  });
+
+  // "All in one composition" is structural, not checked: `selectedWithTracks`
+  // walks the FOCUSED composition only, so a layer selected elsewhere is not
+  // found and the answer is the one the focused composition alone gives.
+  it("ignores a selected layer that lives in another composition", () => {
+    useProjectStore.getState().apply(
+      summaryFixture({
+        root: { tracks: [track("t1", [groupLayerFixture({ id: "g" }), colorLayer("a")])] },
+        groups: [
+          compositionFixture({
+            id: "comp-group",
+            tracks: [track("t2", [colorLayer("inner")])],
+          }),
+        ],
+      }),
+    );
+    setLayerSelection("g", ["g", "a", "inner"]);
+    expect(addToGroupForSelection()).toBe("add_to_group");
+  });
+});
+
+describe("addToGroupTarget", () => {
+  // Unlike `selectedGroupLayer`, the rest of the selection is tolerated — it is
+  // what would move — and a destination is named even when the gesture is not
+  // live, so a greyed row can still say which Group it meant.
+  it("answers the one selected Group whatever else is selected", () => {
+    seed([
+      track("t1", [
+        groupLayerFixture({ id: "g" }),
+        groupLayerFixture({ id: "g2", compositionId: "comp-two" }),
+        colorLayer("a", { locked: true }),
+      ]),
+    ]);
+    expect(addToGroupTarget()).toBeNull();
+    setLayerSelection("g", ["g", "a"]);
+    expect(addToGroupTarget()?.id).toBe("g");
+    // Named even though the gesture is refused — the locked member is what the
+    // greyed row would have to explain.
+    expect(addToGroupForSelection()).toBe("locked");
+    setLayerSelection("g", ["g", "g2", "a"]);
+    expect(addToGroupTarget()).toBeNull();
   });
 });
 

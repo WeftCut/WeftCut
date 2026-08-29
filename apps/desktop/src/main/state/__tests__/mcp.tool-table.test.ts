@@ -5,13 +5,13 @@ import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
 import { root } from './fixtures/project'
 
-const ALL_61_NAMES = new Set<string>([
-  // table-exec tools (40)
+const ALL_62_NAMES = new Set<string>([
+  // table-exec tools (41)
   'add_track', 'remove_track', 'rename_track', 'duplicate_layer', 'paste_layers', 'move_track',
   'update_layer', 'set_layers_enabled', 'update_layer_params', 'set_scale_linked',
   'move_layer', 'restack_layer', 'trim_layer', 'delete_layer',
   'links_create', 'links_dissolve', 'links_add_members', 'links_remove_members', 'links_rename',
-  'groups_create', 'add_group_layer', 'groups_ungroup', 'groups_rename', 'compositions_delete',
+  'groups_create', 'groups_add_members', 'add_group_layer', 'groups_ungroup', 'groups_rename', 'compositions_delete',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'add_transition', 'update_transition', 'remove_transition',
   'set_composition', 'fit_composition_to_layers',
@@ -31,8 +31,8 @@ const ALL_61_NAMES = new Set<string>([
 ])
 
 describe('MCP tool table projections', () => {
-  it('MCP_TOOLS contains exactly the 61 tool names', () => {
-    expect(MCP_TOOLS).toEqual(ALL_61_NAMES)
+  it('MCP_TOOLS contains exactly the 62 tool names', () => {
+    expect(MCP_TOOLS).toEqual(ALL_62_NAMES)
   })
 
   it('MCP_TOOLS equals the set of def names', () => {
@@ -72,7 +72,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(40)
+    expect(table.length).toBe(41)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }

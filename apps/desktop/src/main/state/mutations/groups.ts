@@ -1,15 +1,15 @@
 // apps/desktop/src/main/state/mutations/groups.ts
-// Pre-compose and ungroup — the only two mutations that move layers BETWEEN
-// compositions (every other op is scoped to one; ADR 0052, spec § Group
-// semantics) — plus the composition-envelope ops with no other home: rename and
-// delete. Rendering, navigation and the UI surface live elsewhere.
+// Pre-compose, add-to-Group and ungroup — the only three mutations that move
+// layers BETWEEN compositions (every other op is scoped to one; ADR 0052, spec
+// § Group semantics) — plus the composition-envelope ops with no other home:
+// rename and delete. Rendering, navigation and the UI surface live elsewhere.
 import type { Animated, Composition, CompositionRefParams, Layer, Project, Track, Transform, Uuid } from '../model'
 import { eachLayer, newComposition } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { frameGrid, gridForLayerKind, snapOnGrid } from '../snap'
 import { layerOverlapClass } from '../validate'
-import { applyAddTrack, defaultTransform } from './add'
+import { applyAddTrack, compositionRefPath, defaultTransform } from './add'
 import {
   applyDurationAutofit, cloneLayer, compositionOf, dropLayerFromLinks, hasSourceWindow, locateLayerIn,
   pickFreeOverlayTrack, pruneEmptiedTrack, requireLayer, requireSameComposition, shiftLayerKeyframes,
@@ -30,6 +30,31 @@ function insertSorted(track: Track, layer: Layer): void {
   track.layers.splice(at < 0 ? track.layers.length : at, 0, layer)
 }
 
+/** Links and transitions follow the SET across a composition boundary — the
+ *  half both crossing ops share. A link or transition whose every member is in
+ *  `memberSet` moves to `to` keeping its id; a link straddling the boundary
+ *  loses its inside members and dissolves below two; a straddling transition is
+ *  left in `from` for `reconcileTransitions` to drop and the actor to log — the
+ *  drop rule has one home, and the commit runs it anyway. Markers are never
+ *  touched: they mark a composition's own time, not the layers that left it. */
+function moveLinksAndTransitions(from: Composition, to: Composition, memberSet: ReadonlySet<Uuid>): void {
+  for (let i = 0; i < from.links.length;) {
+    const link = from.links[i]
+    const inside = link.members.filter((m) => memberSet.has(m)).length
+    if (inside === link.members.length) { to.links.push(link); from.links.splice(i, 1); continue }
+    if (inside > 0) {
+      link.members = link.members.filter((m) => !memberSet.has(m))
+      if (link.members.length < 2) { from.links.splice(i, 1); continue }
+    }
+    i++
+  }
+  for (let i = 0; i < from.transitions.length;) {
+    const tr = from.transitions[i]
+    if (memberSet.has(tr.from_layer) && memberSet.has(tr.to_layer)) { to.transitions.push(tr); from.transitions.splice(i, 1); continue }
+    i++
+  }
+}
+
 /** How many Group layers, in any composition, reference `compositionId`. */
 export function compositionRefCount(p: Project, compositionId: Uuid): number {
   let n = 0
@@ -45,11 +70,7 @@ export function compositionRefCount(p: Project, compositionId: Uuid): number {
  *  — same as `applyMoveLayer`). P's tracks that held members map bottom-up onto
  *  C's A roll, B roll, then fresh transient lanes, so relative z-order survives.
  *
- *  Links fully inside the set move to C with their ids; a straddling link loses
- *  its inside members and dissolves below two. Transitions between two members
- *  move; a straddling one is left in P for `reconcileTransitions` to drop and the
- *  actor to log — the drop rule has one home, and the commit runs it anyway.
- *  Markers stay in P.
+ *  Links and transitions follow the set — see `moveLinksAndTransitions`.
  *
  *  The Group layer lands on the top-most former track; if its span now collides
  *  there it takes the drop strip's route (`pickFreeOverlayTrack`, else a lane
@@ -93,21 +114,7 @@ export function applyGroupsCreate(p: Project, idGen: IdGen, layerIds: readonly U
     insertSorted(child.tracks.find((t) => t.id === laneOf.get(loc.track.id))!, layer)
   }
 
-  for (let i = 0; i < parent.links.length;) {
-    const link = parent.links[i]
-    const inside = link.members.filter((m) => memberSet.has(m)).length
-    if (inside === link.members.length) { child.links.push(link); parent.links.splice(i, 1); continue }
-    if (inside > 0) {
-      link.members = link.members.filter((m) => !memberSet.has(m))
-      if (link.members.length < 2) { parent.links.splice(i, 1); continue }
-    }
-    i++
-  }
-  for (let i = 0; i < parent.transitions.length;) {
-    const tr = parent.transitions[i]
-    if (memberSet.has(tr.from_layer) && memberSet.has(tr.to_layer)) { child.transitions.push(tr); parent.transitions.splice(i, 1); continue }
-    i++
-  }
+  moveLinksAndTransitions(parent, child, memberSet)
 
   applyDurationAutofit(child)
   const tEnd = snapOnGrid(t0 + child.duration_us, frameGrid(fps))
@@ -125,6 +132,144 @@ export function applyGroupsCreate(p: Project, idGen: IdGen, layerIds: readonly U
   for (const formerId of formerTrackIds) pruneEmptiedTrack(parent, formerId)
   applyDurationAutofit(parent)
   return { compositionId: child.id, layerId }
+}
+
+/** Add members to an existing Group (spec § Add members to an existing Group):
+ *  move `layerIds` — one or more layers of ONE composition P — into the
+ *  composition the Group layer `groupLayerId` shows. This is
+ *  `applyGroupsCreate`'s body with the destination SUPPLIED rather than minted,
+ *  and it is a separate op so that the four `CrossCompositionMove` /
+ *  `CrossCompositionSet` refusals stay untouched: a move never crosses
+ *  composition, and crossing has one name. It is the mutation ADR 0053
+ *  decision 8 reserves — the decision that keeps a drag between two timeline
+ *  Panels refused says in the same breath that the gap it leaves is filled by
+ *  an op of its own, reached by pointing at the Group you mean.
+ *
+ *  The Group LAYER names the destination, not the composition id — it is what
+ *  the user pointed at, and it fixes which placement the offset is measured
+ *  from. Members land at `t − group.t_start_us + group.src_in_us`, so they keep
+ *  the screen position they had: a clip visible under the Group clip stays
+ *  where it looked, and one outside its window arrives outside it, which is
+ *  overhang and tolerated in state (ADR 0052 §6). Chosen over landing the set at
+ *  the destination's playhead because this is a structural regrouping, not a
+ *  paste, and a regrouping that moves pictures is a surprise.
+ *
+ *  The Group layer is never written — not its `src_out_us`, not its `t_end_us`,
+ *  not its lane. Duration autofit is per composition (docs/features.md
+ *  § Groups), so a destination that grows changes the OVERHANG of every Group
+ *  clip that shows it, the pointed-at one included, and retrims none of them.
+ *
+ *  Links and transitions follow the set (`moveLinksAndTransitions`); keyframes
+ *  are layer-local, so the whole-layer shift leaves them alone. Emptied source
+ *  lanes are pruned and BOTH compositions autofit. Every refusal below is
+ *  decided before the first write, so a refused op leaves the project
+ *  byte-identical and burns no id. */
+export function applyGroupsAddMembers(p: Project, idGen: IdGen, layerIds: readonly Uuid[], groupLayerId: Uuid): void {
+  const ids = [...new Set(layerIds)]
+  const parent = requireSameComposition(p, ids) // InvalidArgument (empty) / LayerNotFound / CrossCompositionSet
+  const ref = requireLayer(p, groupLayerId)
+  // The set and the Group clip must be siblings, or "move into the Group I can
+  // see" stops being what the op means: a Group layer in another composition
+  // names a destination the caller is not looking at, and its placement — which
+  // is what the landing offset is measured from — is in another time base.
+  if (ref.comp !== parent)
+    throw new CommandFailure({ error: 'CrossCompositionSet', layer: groupLayerId, composition: ref.comp.id, expected: parent.id })
+  const gp = ref.layer.params
+  if (gp.kind !== 'CompositionRef') throw new CommandFailure({ error: 'WrongLayerKind', layer: groupLayerId, expected: 'CompositionRef' })
+  // Nothing may contain the timeline export renders. A `CompositionRef` at the
+  // root is already `RootReferenced`, so this is that wall said at the gesture.
+  const dest = compositionOf(p, gp.composition)
+  if (dest.id === p.root_id) throw new CommandFailure({ error: 'RootComposition', composition: dest.id })
+
+  const located = ids.map((id) => locateLayerIn(parent, id)!) // requireSameComposition located each
+  // Locks before any id is minted or layer moved, for pre-compose's reason
+  // above. The Group layer's OWN lock is not consulted: this op never writes it,
+  // and a lock protects a layer from being edited, not the composition it
+  // happens to point at — the same reason an edit INSIDE a Group is not refused
+  // by a locked Group clip in the parent.
+  for (const m of located) {
+    if (m.track.locked) throw new CommandFailure({ error: 'TrackLocked', track: m.track.id })
+    if (m.layer.locked) throw new CommandFailure({ error: 'GroupLockedMember', layer: m.layer.id })
+  }
+  // A member that is itself a Group whose composition already reaches `dest` —
+  // `dest` included — would make the destination contain itself. The same
+  // question `applyAddGroupLayer` asks, so the same walk answers it, and the
+  // degenerate "the Group layer is in its own member list" falls out for free:
+  // its composition IS `dest`, and a composition always reaches itself.
+  for (const m of located) {
+    if (m.layer.params.kind !== 'CompositionRef') continue
+    const reached = compositionRefPath(p, m.layer.params.composition, dest.id)
+    if (reached !== null)
+      throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'CompositionCycle', path: [dest.id, ...reached] } })
+  }
+
+  // `src_in − t_start` is the parent-to-destination time map. Both endpoints
+  // re-snap on the layer's OWN grid: the delta between two canonical times is
+  // not itself canonical at a fractional rate, which is why pre-compose re-snaps
+  // after its `-t0` too.
+  const offset = gp.src_in_us - ref.layer.t_start_us
+  // The landing can be NEGATIVE — the Group clip starts after a member, or its
+  // window is trimmed in — and composition time has no negative half
+  // (`NegativeLayerStart`). A move CLAMPS its set to 0; doing that here would
+  // slide the whole set off the picture it was placed against, so this refuses
+  // instead and names the earliest parent time that lands on 0.
+  const landing = new Map<Uuid, { t0: number; t1: number }>()
+  for (const m of located) {
+    const grid = gridForLayerKind(m.layer.params.kind, dest.fps)
+    const t0 = snapOnGrid(m.layer.t_start_us + offset, grid)
+    if (t0 < 0)
+      throw new CommandFailure({ error: 'InvalidArgument', field: 'layer_ids',
+        detail: `layer ${m.layer.id} would land at ${t0} µs inside composition ${dest.id}, before its start; move it to ${ref.layer.t_start_us - gp.src_in_us} µs or later first` })
+    landing.set(m.layer.id, { t0, t1: snapOnGrid(m.layer.t_end_us + offset, grid) })
+  }
+
+  // Lanes map per SOURCE TRACK, not per member. Members of one source track
+  // never overlap each other except by an authorized transition overlap, so
+  // moving a track's whole block onto ONE destination lane preserves their
+  // mutual geometry exactly — and that is what lets a transition between two
+  // moved members survive. Per-member placement could bounce one of a
+  // transition's two participants elsewhere, and `reconcileTransitions`, which
+  // runs project-wide inside every commit, would then silently drop it.
+  //
+  // The k-th source track bottom-up (P's index order IS z order, read before any
+  // splice) prefers the destination's k-th lane — pre-compose's A roll / B roll
+  // / fresh mapping, read off `dest` instead of a fresh skeleton. The lane ids
+  // are snapshotted first, so a lane this op spawns is never also a preference,
+  // and blocks are placed one at a time, so a later block's free-lane search
+  // sees the earlier placements.
+  const existingLanes = dest.tracks.map((t) => t.id)
+  const formerTrackIds = [...new Set(located.map((m) => m.trackIndex))].sort((a, b) => a - b).map((i) => parent.tracks[i].id)
+  formerTrackIds.forEach((formerId, k) => {
+    const block = located.filter((m) => m.track.id === formerId)
+    const spans = block.map((m) => landing.get(m.layer.id)!)
+    const preferred = k < existingLanes.length ? dest.tracks.find((t) => t.id === existingLanes[k])! : null
+    // A locked lane must not RECEIVE content any more than it may lose it
+    // (`pickFreeOverlayTrack`'s rule). The collision test is per overlap class:
+    // validate keeps a separate visual and audio chain on a lane, so picture and
+    // audio coexist there and a cross-class "collision" is not one.
+    const clear = preferred !== null && !preferred.locked && !block.some((m, i) =>
+      preferred.layers.some((l) => layerOverlapClass(l.params) === layerOverlapClass(m.layer.params)
+        && spans[i].t0 < l.t_end_us && l.t_start_us < spans[i].t1))
+    const laneId = preferred !== null && clear
+      ? preferred.id
+      : pickFreeOverlayTrack(dest, Math.min(...spans.map((s) => s.t0)), Math.max(...spans.map((s) => s.t1)))
+        ?? applyAddTrack(p, idGen, null, undefined, dest.id)
+    const lane = dest.tracks.find((t) => t.id === laneId)!
+    for (const m of block) {
+      // Re-locate: the splices shift `layerIndex` (helpers.ts LocatedLayer).
+      const loc = locateLayerIn(parent, m.layer.id)!
+      const layer = loc.track.layers.splice(loc.layerIndex, 1)[0]
+      const span = landing.get(m.layer.id)!
+      layer.t_start_us = span.t0
+      layer.t_end_us = span.t1
+      insertSorted(lane, layer)
+    }
+  })
+
+  moveLinksAndTransitions(parent, dest, new Set(ids))
+  for (const formerId of formerTrackIds) pruneEmptiedTrack(parent, formerId)
+  applyDurationAutofit(parent)
+  applyDurationAutofit(dest)
 }
 
 const ANIMATED_TRANSFORM_KEYS = ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y'] as const

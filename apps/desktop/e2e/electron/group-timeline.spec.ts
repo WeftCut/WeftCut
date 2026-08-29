@@ -121,6 +121,38 @@ const doubleClickCentre = async (page: Page, target: Locator) => {
   await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
 };
 
+/// Add a clip to the selection the way the user does — `Shift` toggles
+/// (`Timeline.tsx`'s `selectFromClick`). Held across the whole click, because
+/// the modifier is read on the pointer event itself.
+const shiftClickCentre = async (page: Page, target: Locator) => {
+  await page.keyboard.down("Shift");
+  try {
+    await clickCentre(page, target);
+  } finally {
+    await page.keyboard.up("Shift");
+  }
+};
+
+const rightClickCentre = async (page: Page, target: Locator) => {
+  const box = await target.boundingBox();
+  if (!box) throw new Error("target has no layout box");
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, {
+    button: "right",
+  });
+};
+
+const trackWithRole = (c: WireComposition, role: string): string => {
+  const track = c.tracks.find((t) => t.role === role);
+  if (!track) throw new Error(`the skeleton carries no ${role} lane`);
+  return track.id;
+};
+
+const layerById = (c: WireComposition, id: string): WireLayer => {
+  const layer = layersOf(c).find((l) => l.id === id);
+  if (!layer) throw new Error(`composition ${c.id} holds no layer ${id}`);
+  return layer;
+};
+
 /// Drag a clip's OUT edge by `dxPx`. The grab point is 2 px inside the right
 /// edge — inside `LayerBlock`'s 6 px trim zone, and inside the clip, so the
 /// press lands on the block rather than on the lane behind it.
@@ -371,6 +403,142 @@ test.describe("Group on the timeline", () => {
       // layer's window is independent of what its composition does.
       const s2 = await wire(page);
       expect(layersOf(rootOf(s2))[0]!.t_start_us).toBe(groupLayer.t_start_us);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+/// Its own block because it needs no media: colour layers say everything about
+/// where clips land, and a linked pair would only add a link to reason about.
+/// Under the describe above it would inherit that block's AV-fixture `skip` and
+/// report green on a machine where it never ran — the one failure mode a test
+/// cannot warn you about itself.
+test.describe("Add to Group", () => {
+  test("the clip menu adds the selection to the Group it names, and one undo takes it back", async () => {
+    test.setTimeout(180_000);
+    const { app, page } = await launchApp();
+    try {
+      await newProject(page, {
+        parentFolder: tmpDir("weftcut-e2e-group-add-"),
+        name: PROJECT_NAME,
+        canvas: CANVAS,
+      });
+      await expect(page.locator(".splash-screen")).toHaveCount(0, { timeout: 15_000 });
+
+      // The clip the Group is made FROM sits on the A roll at 2 s, so the Group
+      // clip has an origin of its own: a destination starting at 0 would let a
+      // broken offset pass unnoticed.
+      const s0 = await wire(page);
+      const aRoll = trackWithRole(rootOf(s0), "a-roll");
+      const bRoll = trackWithRole(rootOf(s0), "b-roll");
+      const seedId = await invokeCmd<string>(page, "add_color_layer", {
+        trackId: aRoll,
+        tStartUs: 2_000_000,
+        durationUs: 2_000_000,
+      });
+      // The two members, on the other lane so nothing overlaps: one inside the
+      // Group's window, one past its end.
+      const memberAId = await invokeCmd<string>(page, "add_color_layer", {
+        trackId: bRoll,
+        tStartUs: 3_000_000,
+        durationUs: 1_000_000,
+      });
+      const memberBId = await invokeCmd<string>(page, "add_color_layer", {
+        trackId: bRoll,
+        tStartUs: 5_000_000,
+        durationUs: 1_000_000,
+      });
+
+      const seedClip = page.locator(`.timeline-layer[data-layer-id="${seedId}"]`);
+      await expect(seedClip).toBeVisible();
+      await clickCentre(page, seedClip);
+      await page.keyboard.press(`${MOD}+G`);
+      await expect.poll(async () => groupIdsOf(await wire(page)).length).toBe(1);
+
+      const s1 = await wire(page);
+      const groupId = groupIdsOf(s1)[0]!;
+      const groupLayer = layersOf(rootOf(s1)).find(
+        (l) => l.params.kind === "CompositionRef",
+      )!;
+      // The parent-to-destination time map the members are about to travel
+      // along, read off the placement rather than assumed.
+      const offsetUs = groupLayer.params.src_in_us! - groupLayer.t_start_us;
+      expect(s1.compositions[groupId]!.duration_us).toBe(2_000_000);
+
+      // ── Select the two clips and the Group, then right-click the Group ───
+      const groupClip = page.locator(
+        `.timeline-layer[data-layer-id="${groupLayer.id}"]`,
+      );
+      const memberA = page.locator(`.timeline-layer[data-layer-id="${memberAId}"]`);
+      const memberB = page.locator(`.timeline-layer[data-layer-id="${memberBId}"]`);
+      await expect(memberA).toBeVisible();
+      await expect(memberB).toBeVisible();
+      await clickCentre(page, memberA);
+      await shiftClickCentre(page, memberB);
+      await shiftClickCentre(page, groupClip);
+      expect(await selectedLayerIds(page)).toEqual(
+        [memberAId, memberBId, groupLayer.id].sort(),
+      );
+
+      // A right-click inside the selection keeps it, which is what lets the row
+      // act on all three.
+      await rightClickCentre(page, groupClip);
+      // The row names the destination — the composition is unlabelled, so the
+      // derived `Group 1` stands in.
+      await page
+        .locator(".app-menu-item")
+        .filter({ hasText: /^Add to “Group 1”$/ })
+        .click();
+
+      // ── Both clips are inside, at the times that keep their position ─────
+      await expect
+        .poll(async () => layersOf((await wire(page)).compositions[groupId]!).length)
+        .toBe(3);
+      const s2 = await wire(page);
+      const inner = s2.compositions[groupId]!;
+      expect(layersOf(rootOf(s2)).map((l) => l.id)).toEqual([groupLayer.id]);
+      for (const [id, wasAtUs] of [
+        [memberAId, 3_000_000],
+        [memberBId, 5_000_000],
+      ] as const) {
+        const moved = layerById(inner, id);
+        expect(moved.t_start_us).toBe(wasAtUs + offsetUs);
+        // Same span, and the same moment on the film: local time read back
+        // through the Group clip's own placement lands where the clip was.
+        expect(moved.t_end_us - moved.t_start_us).toBe(1_000_000);
+        expect(
+          moved.t_start_us + groupLayer.t_start_us - groupLayer.params.src_in_us!,
+        ).toBe(wasAtUs);
+      }
+      // The destination autofits to the member that lands past its end; the
+      // Group clip's own window is untouched, so the growth shows as content to
+      // trim out to rather than as a moved clip (ADR 0052 §6).
+      expect(inner.duration_us).toBe(4_000_000);
+      const stillPlaced = layerById(rootOf(s2), groupLayer.id);
+      expect(stillPlaced.t_start_us).toBe(groupLayer.t_start_us);
+      expect(stillPlaced.params.src_out_us).toBe(groupLayer.params.src_out_us);
+
+      // The moved layers left this composition, so the Group clip — the thing
+      // that now represents them — is what stands selected.
+      expect(await selectedLayerIds(page)).toEqual([groupLayer.id]);
+
+      // ── One Ctrl+Z puts them back on their lane, at their own times ──────
+      await page.keyboard.press(`${MOD}+Z`);
+      await expect
+        .poll(async () => layersOf(rootOf(await wire(page))).length)
+        .toBe(3);
+      const s3 = await wire(page);
+      for (const [id, wasAtUs] of [
+        [memberAId, 3_000_000],
+        [memberBId, 5_000_000],
+      ] as const) {
+        const back = layerById(rootOf(s3), id);
+        expect(back.t_start_us).toBe(wasAtUs);
+        expect(trackHolding(rootOf(s3), id)).toBe(bRoll);
+      }
+      expect(layersOf(s3.compositions[groupId]!)).toHaveLength(1);
+      expect(s3.compositions[groupId]!.duration_us).toBe(2_000_000);
     } finally {
       await app.close();
     }

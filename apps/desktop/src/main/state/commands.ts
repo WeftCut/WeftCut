@@ -129,9 +129,11 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   links_create: (a) => ({ op: 'links_create', args: { layers: a.layerIds, label: a.label ?? null, reassign: a.reassign ?? false } }),
   links_dissolve: (a) => ({ op: 'links_dissolve', args: { link: a.linkId } }),
   links_rename: (a) => ({ op: 'links_rename', args: { link: a.linkId, label: a.label ?? null } }),
-  // Groups (ADR 0052): pre-compose takes the selection; the other three are
-  // addressed by the Group layer / its composition. Pure renaming.
+  // Groups (ADR 0052): pre-compose takes the selection, add-members takes it
+  // plus the Group clip it goes into; the other three are addressed by the
+  // Group layer / its composition. Pure renaming.
   groups_create: (a) => ({ op: 'groups_create', args: { layers: a.layerIds, label: a.label ?? null } }),
+  groups_add_members: (a) => ({ op: 'groups_add_members', args: { layers: a.layerIds, group_layer: a.groupLayerId } }),
   // The media pool's Group drop. Two composition ids on one channel:
   // `sourceCompositionId` is the composition being PLACED, `compositionId` the
   // one the drop lands in — the open one, riding along as the cross-check every
@@ -202,7 +204,7 @@ export const PRODUCTION_OPS = new Set<string>([
   // Remaining mechanical + meta channels
   'move_layer', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layer', 'delete_layers', 'remove_media', 'duplicate_layer', 'paste_layers', 'set_layers_enabled', 'split_layer_linked',
   'links_create', 'links_dissolve', 'links_rename',
-  'groups_create', 'groups_ungroup', 'groups_rename', 'compositions_delete', 'add_group_layer',
+  'groups_create', 'groups_add_members', 'groups_ungroup', 'groups_rename', 'compositions_delete', 'add_group_layer',
   'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks', 'update_param_tracks_multi', 'set_scale_linked',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'set_composition', 'fit_composition_to_layers',

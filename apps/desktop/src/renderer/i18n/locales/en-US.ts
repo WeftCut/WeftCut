@@ -263,6 +263,18 @@ const enUS = {
       "Reset the group's opacity to 1 first — ungrouping cannot carry it onto the layers inside",
     ungroup_not_plain_effects:
       "Remove the group's effects first — ungrouping cannot carry them onto the layers inside",
+    // Add to Group. Only the clip's context menu shows these, but they are the
+    // same kind of sentence as the two above and drift if kept apart. Its shape
+    // failures stay separate rather than collapsing the way Ungroup's do: the
+    // destination and the members are two different things to go and select.
+    add_to_group_needs_selection:
+      "Select the clips to add, and the group clip to add them to",
+    add_to_group_needs_one_group: "Select exactly one group clip to add to",
+    add_to_group_needs_member:
+      "Select the clips to add as well as the group clip",
+    add_to_group_locked: "Unlock the clips you are adding to the group",
+    add_to_group_starts_before_group:
+      "This clip starts before the group does — move it later first",
   },
   dock_workspace: {
     editing_label: "Editing workspace",
@@ -406,6 +418,11 @@ const enUS = {
     group_selected: "Group selected layers",
     ungroup_selected: "Ungroup",
     open_group: "Open group",
+    add_to_group: "Add to Group",
+    // The context menu's version, which knows the Group it was opened over. The
+    // menus built once — Edit, the native bar, the search palette — keep the
+    // plain label above (`menu/CommandContextItem.tsx` says why).
+    add_to_group_named: "Add to “{{name}}”",
     toggle_link_selected: "Link / Unlink selected layers",
     toggle_link_override: "Toggle link override",
     nudge_audio_sample_back: "Nudge audio 1 sample earlier",
@@ -1593,6 +1610,7 @@ const enUS = {
     },
     group: {
       create: "Grouped {{count}} layers",
+      add_members: "Added {{count}} layers to Group",
       ungroup: "Ungrouped",
       rename: "Renamed Group",
     },

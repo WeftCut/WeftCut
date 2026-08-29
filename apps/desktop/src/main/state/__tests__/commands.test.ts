@@ -15,7 +15,7 @@ import { root } from './fixtures/project'
 // If this fails, a channel was added or removed unintentionally — do NOT
 // silently update the expected list; investigate first.
 describe('PRODUCTION_OPS', () => {
-  it('contains exactly the 58 in-scope renderer channels', () => {
+  it('contains exactly the 59 in-scope renderer channels', () => {
     const expected = [
       'add_color_layer', 'add_demo_color_layer', 'add_demo_text_layer', 'add_effect',
       // The media pool's Group drop: an existing composition placed as one layer.
@@ -26,7 +26,7 @@ describe('PRODUCTION_OPS', () => {
       // Groups (ADR 0052): pre-compose / ungroup / rename, and the orphan delete.
       'compositions_delete',
       'delete_layer', 'delete_layers', 'duplicate_layer',
-      'fit_composition_to_layers', 'groups_create', 'groups_rename', 'groups_ungroup',
+      'fit_composition_to_layers', 'groups_add_members', 'groups_create', 'groups_rename', 'groups_ungroup',
       'links_create', 'links_dissolve', 'links_rename', 'move_effect',
       'move_layer', 'move_layers_to_new_track', 'paste_layer',
       // Link fan-out batches: the whole-link duplicate and the enabled toggle.

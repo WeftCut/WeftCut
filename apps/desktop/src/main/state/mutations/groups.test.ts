@@ -6,7 +6,7 @@ import { applyAddLayer, applyAddTrack, colorParams, defaultTransform } from './a
 import { applyLinksCreate } from './links'
 import { applyDeleteLayer } from './delete'
 import { applyDuplicateLayer } from './duplicate'
-import { applyCompositionsDelete, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, compositionRefCount } from './groups'
+import { applyCompositionsDelete, applyGroupsAddMembers, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, compositionRefCount } from './groups'
 import { reconcileTransitions, validate } from '../validate'
 import { isCommandFailure } from '../errors'
 import { group, root, withGroup } from '../__tests__/fixtures/project'
@@ -255,6 +255,195 @@ describe('applyGroupsCreate', () => {
     const { p, gen, v } = pair()
     const r = applyGroupsCreate(p, gen, [v], '   ')
     expect(group(p, r.compositionId).label).toBeNull()
+  })
+})
+
+/** A root holding a Group clip `[2 s, 3 s)` over a composition with one colour
+ *  layer at `[0, 1 s)`, plus two more colour layers at `[3 s, 4 s)` — one on
+ *  B roll, one on a transient lane — waiting to move in. The Group clip starts
+ *  at 2 s with `src_in_us` 0, so a member's landing time is its own minus 2 s. */
+function withDest(): { p: Project; gen: IdGen; comp: Uuid; g: Uuid; inner: Uuid; x: Uuid; y: Uuid; lane: Uuid } {
+  const gen = seededGen()
+  const p = blankProject(gen, 't')
+  const inner = applyAddLayer(p, gen, root(p).tracks[0].id, color(), 2 * S, 3 * S)
+  const r = applyGroupsCreate(p, gen, [inner], null)
+  const lane = applyAddTrack(p, gen, null)
+  const x = applyAddLayer(p, gen, root(p).tracks[1].id, color(), 3 * S, 4 * S)
+  const y = applyAddLayer(p, gen, lane, color(), 3 * S, 4 * S)
+  return { p, gen, comp: r.compositionId, g: r.layerId, inner, x, y, lane }
+}
+
+describe('applyGroupsAddMembers', () => {
+  it('moves the set into the Group composition keeping each member`s screen position, one destination lane per source track', () => {
+    const { p, gen, comp, g, inner, x, y } = withDest()
+    applyGroupsAddMembers(p, gen, [x, y], g)
+    const c = group(p, comp)
+    // 3 s in the parent is 1 s inside: the Group clip maps composition time back
+    // to `t + 2 s`, so both members render exactly where they rendered before.
+    expect(layerOf(c, x)).toMatchObject({ t_start_us: S, t_end_us: 2 * S })
+    expect(layerOf(c, y)).toMatchObject({ t_start_us: S, t_end_us: 2 * S })
+    expect(trackOf(c, inner)).toBe(0)
+    expect(trackOf(c, x)).toBe(0) // source B roll → the destination's first lane
+    expect(trackOf(c, y)).toBe(1) // source transient lane → its second
+    expect(c.duration_us).toBe(2 * S)
+    expect(() => validate(p)).not.toThrow()
+  })
+
+  it('leaves the Group layer alone — no retrim of its window, its end or its lane', () => {
+    const { p, gen, g, x, y } = withDest()
+    const before = structuredClone(layerOf(root(p), g))
+    applyGroupsAddMembers(p, gen, [x, y], g)
+    expect(layerOf(root(p), g)).toEqual(before)
+    expect(trackOf(root(p), g)).toBe(0)
+    expect(() => validate(p)).not.toThrow()
+  })
+
+  it('prunes the emptied transient source lane, keeps the emptied reserved one, and refits the source duration', () => {
+    const { p, gen, g, x, y, lane } = withDest()
+    expect(root(p).duration_us).toBe(4 * S)
+    applyGroupsAddMembers(p, gen, [x, y], g)
+    expect(root(p).tracks.map((t) => t.role)).toEqual(['ARoll', 'BRoll'])
+    expect(root(p).tracks.some((t) => t.id === lane)).toBe(false)
+    expect(root(p).duration_us).toBe(3 * S)
+    expect(() => validate(p)).not.toThrow()
+  })
+
+  it('a link fully inside the set travels with its id; a straddling one loses its inside members and dissolves below two', () => {
+    const { p, gen, comp, g, x, y } = withDest()
+    const link = applyLinksCreate(p, gen, [x, y], 'XY', false)
+    applyGroupsAddMembers(p, gen, [x, y], g)
+    expect(group(p, comp).links).toEqual([{ id: link, label: 'XY', members: [x, y].sort() }])
+    expect(root(p).links).toEqual([])
+    expect(() => validate(p)).not.toThrow()
+
+    const q = withDest()
+    const stays = applyAddLayer(q.p, q.gen, root(q.p).tracks[0].id, color(), 5 * S, 6 * S)
+    applyLinksCreate(q.p, q.gen, [q.x, q.y, stays], null, false)
+    applyGroupsAddMembers(q.p, q.gen, [q.x, q.y], q.g)
+    expect(group(q.p, q.comp).links).toEqual([])
+    expect(root(q.p).links).toEqual([]) // {stays} alone is below two
+    expect(() => validate(q.p)).not.toThrow()
+  })
+
+  it('a transition between two moved members travels; a straddling one is left for reconcile, which drops it and reports it', () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 't')
+    const inner = applyAddLayer(p, gen, root(p).tracks[0].id, color(), 2 * S, 3 * S)
+    const r = applyGroupsCreate(p, gen, [inner], null)
+    const lane = applyAddTrack(p, gen, null)
+    const a1 = applyAddLayer(p, gen, lane, color(), 3 * S, 5 * S)
+    const a2 = applyAddLayer(p, gen, lane, color(), 4_500_000, 6_500_000)
+    const a3 = applyAddLayer(p, gen, lane, color(), 7 * S, 8 * S)
+    const tr = gen()
+    root(p).transitions.push({ id: tr, from_layer: a1, to_layer: a2, duration_us: 500_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+    expect(() => validate(p)).not.toThrow()
+
+    const both = structuredClone(p)
+    applyGroupsAddMembers(both, gen, [a1, a2], r.layerId)
+    expect(group(both, r.compositionId).transitions).toEqual([{ id: tr, from_layer: a1, to_layer: a2, duration_us: 500_000, kind: { kind: 'Crossfade' }, extended_us: 0 }])
+    expect(root(both).transitions).toEqual([])
+    expect(reconcileTransitions(both)).toEqual([])
+    expect(() => validate(both)).not.toThrow()
+
+    const straddle = structuredClone(p)
+    applyGroupsAddMembers(straddle, gen, [a2, a3], r.layerId)
+    expect(reconcileTransitions(straddle).map((d) => d.id)).toEqual([tr])
+    expect(root(straddle).transitions).toEqual([])
+    expect(() => validate(straddle)).not.toThrow()
+  })
+
+  it('a block that collides on its preferred destination lane bounces WHOLE, so a transition between two of its members survives', () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 't')
+    const inner = applyAddLayer(p, gen, root(p).tracks[0].id, color(), 2 * S, 8 * S)
+    const r = applyGroupsCreate(p, gen, [inner], null)
+    const free = applyAddTrack(p, gen, null, undefined, r.compositionId) // a free lane inside the Group
+    const lane = applyAddTrack(p, gen, null)
+    const a1 = applyAddLayer(p, gen, lane, color(), 3 * S, 5 * S)
+    const a2 = applyAddLayer(p, gen, lane, color(), 4_500_000, 6_500_000)
+    const tr = gen()
+    root(p).transitions.push({ id: tr, from_layer: a1, to_layer: a2, duration_us: 500_000, kind: { kind: 'Crossfade' }, extended_us: 0 })
+
+    applyGroupsAddMembers(p, gen, [a1, a2], r.layerId)
+    const c = group(p, r.compositionId)
+    // The first destination lane holds `inner` across the whole window, so the
+    // pair bounced together — and their 0.5 s overlap, the transition's reason
+    // to exist, survived the bounce.
+    expect(c.tracks.find((t) => t.id === free)!.layers.map((l) => l.id)).toEqual([a1, a2])
+    expect(layerOf(c, a1)).toMatchObject({ t_start_us: S, t_end_us: 3 * S })
+    expect(layerOf(c, a2)).toMatchObject({ t_start_us: 2_500_000, t_end_us: 4_500_000 })
+    expect(c.transitions.map((t) => t.id)).toEqual([tr])
+    expect(reconcileTransitions(p)).toEqual([])
+    expect(() => validate(p)).not.toThrow()
+  })
+
+  it('is the new ripple: a second placement of the destination keeps its window when the move lengthens the composition', () => {
+    const { p, gen, comp, g, x, y } = withDest()
+    const twin = applyDuplicateLayer(p, gen, g, 5 * S)
+    const twinBefore = structuredClone(layerOf(root(p), twin))
+    const pinnedBefore = group(p, comp).duration_pinned
+    applyGroupsAddMembers(p, gen, [x, y], g)
+    expect(group(p, comp).duration_us).toBe(2 * S) // grew from 1 s under both placements
+    expect(layerOf(root(p), twin)).toEqual(twinBefore)
+    expect(refParams(root(p), twin).src_out_us).toBe(S) // overhang the other way: content to trim out to
+    expect(refParams(root(p), g).src_out_us).toBe(S)
+    expect(group(p, comp).duration_pinned).toBe(pinnedBefore)
+    expect(() => validate(p)).not.toThrow()
+  })
+
+  it('refuses a member that is a Group clip on the destination itself, writing nothing', () => {
+    const { p, gen, comp, g } = withDest()
+    const twin = applyDuplicateLayer(p, gen, g, 5 * S)
+    const before = structuredClone(p)
+    expect(expectCmd(() => applyGroupsAddMembers(p, gen, [twin], g)))
+      .toEqual({ error: 'ValidationFailed', detail: { rule: 'CompositionCycle', path: [comp, comp] } })
+    expect(p).toEqual(before)
+    // The degenerate case falls out of the same walk: a composition reaches itself.
+    expect(expectCmd(() => applyGroupsAddMembers(p, gen, [g], g)))
+      .toEqual({ error: 'ValidationFailed', detail: { rule: 'CompositionCycle', path: [comp, comp] } })
+    expect(p).toEqual(before)
+  })
+
+  it('refuses a locked member or a locked source lane, writing nothing and burning no id', () => {
+    const a = withDest()
+    const twin = withDest() // same seeded stream, so its generator is the control
+    layerOf(root(a.p), a.x).locked = true
+    const before = structuredClone(a.p)
+    expect(expectCmd(() => applyGroupsAddMembers(a.p, a.gen, [a.x, a.y], a.g))).toEqual({ error: 'GroupLockedMember', layer: a.x })
+    expect(a.p).toEqual(before)
+
+    layerOf(root(a.p), a.x).locked = false
+    root(a.p).tracks[1].locked = true
+    const before2 = structuredClone(a.p)
+    expect(expectCmd(() => applyGroupsAddMembers(a.p, a.gen, [a.x, a.y], a.g))).toEqual({ error: 'TrackLocked', track: root(a.p).tracks[1].id })
+    expect(a.p).toEqual(before2)
+    // Neither refusal drew from the id stream: the control generator, which has
+    // built the same fixture and nothing else, is still at the same value.
+    expect(a.gen()).toBe(twin.gen())
+  })
+
+  it('refuses a member that would land before composition time 0, naming the earliest source time that fits', () => {
+    const { p, gen, g } = withDest()
+    const early = applyAddLayer(p, gen, root(p).tracks[1].id, color(), 0, S)
+    const before = structuredClone(p)
+    const e = expectCmd(() => applyGroupsAddMembers(p, gen, [early], g))
+    expect(e).toMatchObject({ error: 'InvalidArgument', field: 'layer_ids' })
+    expect(e.detail).toContain(String(2 * S)) // the Group clip's start minus its src_in
+    expect(p).toEqual(before)
+  })
+
+  it('refuses an empty set, a non-Group target, a Group clip that is not a sibling, and a destination that is the root', () => {
+    const { p, gen, comp, g, inner, x } = withDest()
+    expect(expectCmd(() => applyGroupsAddMembers(p, gen, [], g))).toMatchObject({ error: 'InvalidArgument' })
+    expect(expectCmd(() => applyGroupsAddMembers(p, gen, [x, 'ghost'], g))).toEqual({ error: 'LayerNotFound', layer: 'ghost' })
+    expect(expectCmd(() => applyGroupsAddMembers(p, gen, [x], x))).toEqual({ error: 'WrongLayerKind', layer: x, expected: 'CompositionRef' })
+    // `inner` is already inside the Group, so it and the Group clip are not siblings.
+    expect(expectCmd(() => applyGroupsAddMembers(p, gen, [inner], g)))
+      .toEqual({ error: 'CrossCompositionSet', layer: g, composition: p.root_id, expected: comp })
+
+    const rooted = structuredClone(p)
+    ;(layerOf(root(rooted), g).params as CompositionRefParams).composition = rooted.root_id
+    expect(expectCmd(() => applyGroupsAddMembers(rooted, gen, [x], g))).toEqual({ error: 'RootComposition', composition: rooted.root_id })
   })
 })
 

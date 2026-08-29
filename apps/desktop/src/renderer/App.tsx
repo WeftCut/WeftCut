@@ -94,6 +94,7 @@ import {
 } from "./settings/appSettingsStore";
 import { toggleLinkOverride } from "./state/linkOverrideStore";
 import {
+  addToGroupSelected,
   groupSelected,
   openSelectedGroup,
   ungroupSelected,
@@ -673,6 +674,7 @@ export function App({ onCloseProject }: AppProps) {
     groupSelected: () => void groupSelected(),
     ungroupSelected: () => void ungroupSelected(),
     openGroup: openSelectedGroup,
+    addToGroup: () => void addToGroupSelected(),
     focusNextPanel: () => workspaceController?.focusNextPanel(),
     focusPreviousPanel: () => workspaceController?.focusPreviousPanel(),
     toggleMaximizePanel: () => workspaceController?.toggleMaximize(),

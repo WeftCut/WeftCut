@@ -38,6 +38,7 @@ export type ActionId =
   | "groupSelected"
   | "ungroupSelected"
   | "openGroup"
+  | "addToGroup"
   | "toggleLinkSelected"
   | "toggleLinkOverride"
   | "nudgeAudioSampleBack"
@@ -248,6 +249,12 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // so leaving is closing its tab or activating another — the Dock's own
   // gestures, which need no action of ours.
   openGroup:              { defaultKeys: [],               labelKey: "actions.open_group", scope: TIMELINE_SELECTION },
+  // Adding to a Group ships UNBOUND for `openGroup`'s reason: it is pointer
+  // first. You reach it by right-clicking the Group you mean, which is also the
+  // only surface that can name that Group in the row
+  // (`menu/CommandContextItem.tsx` owns that split). Catalogued anyway, so the
+  // Edit menu, the palette and Settings → Keyboard all carry it.
+  addToGroup:             { defaultKeys: [],               labelKey: "actions.add_to_group", scope: TIMELINE_SELECTION },
   // `docs/features.md#links` — Ctrl/Cmd+L toggles the link on the current
   // selection, Premiere's Link: two or more unlinked layers link, a selection
   // inside one link unlinks it (`timeline/linkEligibility.ts` decides).

@@ -344,8 +344,8 @@ Group layer's params are a `CompositionRef`: a source window
 `[src_in_us, src_out_us)` into the composition's own time, plus the transform,
 opacity and blend mode every visual layer carries. Parent time `t` is
 composition time `t − t_start_us + src_in_us`; nested Groups compose the
-mapping. Two structural operations create and dissolve one, and each is a
-single history entry.
+mapping. Three structural operations make one, move more layers into one, and
+dissolve one; each is a single history entry.
 
 **Pre-compose** (`groups_create`) turns a set of layers — one or more, all in
 one composition — into a Group in place. The set's earliest start `t0` becomes
@@ -381,13 +381,40 @@ and transitions inside carry over under fresh ids. The Group layer goes, its
 lane is pruned, and the composition is removed when nothing else references
 it; a second Group layer pointing at it keeps it.
 
+**Add to Group** (`groups_add_members`) moves layers that are already on a
+timeline into a Group that is already there. The set and the Group clip must be
+siblings in one composition: the clip is what the user pointed at, and its
+placement is what the arrival time is measured from. Each member lands at
+`t − t_start_us + src_in_us`, re-snapped on its own lattice, so it keeps the
+screen position it had; a member outside the Group clip's window arrives outside
+it and shows as overhang — preferred to landing the set at the destination's
+playhead, because this is a structural regrouping rather than a paste, and a
+regrouping that moves pictures is a surprise. Source tracks map bottom-up onto
+the destination's existing lanes, spawning one past the end, exactly as
+pre-compose maps onto A roll / B roll / fresh; a whole source track's members
+travel together onto one lane — which is what keeps a transition between two of
+them alive — and bounce as a block when that lane is locked or already occupied
+at those times. Links, transitions and markers follow pre-compose's rules. Both
+compositions autofit and no Group layer is retrimmed. All-or-nothing before
+anything moves: a set spanning two compositions or a Group clip outside it
+(`CrossCompositionSet`), a target that is not a Group layer (`WrongLayerKind`),
+a locked member (`GroupLockedMember`) or lane (`TrackLocked`), a member whose own
+composition already reaches the destination — the destination included, which is
+moving a Group clip into itself (`CompositionCycle`) — and a member that would
+land before composition time 0 (`InvalidArgument`, naming the earliest source
+time that fits).
+
 **Overhang.** A Group layer's window may extend past its composition's
 duration: validation puts no upper bound on `src_out_us`, a trim gesture clamps
 to the duration, and past the end the Group renders nothing (ADR 0052 §6). The
 rule exists so that a delete *inside* a Group — which shrinks the composition —
 is never refused on account of a parent's window. Duration autofit is per
 composition: a composition growing inside does not extend the Group layers
-that show it.
+that show it. Add to Group is the operation that grows one UNDER existing
+placements — the members it moves in can push the destination's duration out,
+and every Group clip showing that composition, the one they were added through
+included, keeps the window it had, so the new content reads as room to trim out
+to rather than as a silent retrim.
 
 **Single lattice.** Every composition's `fps`, `sample_rate` and `channels`
 equal the root's — a Group on another rate would put its window on a different
@@ -424,12 +451,19 @@ any number of layers, the other exactly one Group. Each greys out with the reaso
 in its tooltip: nothing selected, a locked member, or the field that blocks the
 expansion (`Reset the group's opacity to 1 first…`). Both sit in the Edit menu,
 in the Quick Actions strip's `edit` section as Group / Ungroup, and in the
-search palette; `Open group` is a command too, shipped UNBOUND — its home is
-the pointer, and no shipping NLE has a key for it to copy. There is no leaving
-half: under a tab strip, leaving is closing a tab or activating another.
+search palette; `Open group` and `Add to Group` are commands too, both shipped
+UNBOUND — their home is the pointer, and no shipping NLE has a key for either to
+copy. `Add to Group` needs the Group clip its members are going into, so the
+row that carries it is the one opened over that clip, and only there does it
+name the destination: `Add to “Lower third”`, against the plain label the
+once-built menus keep. It greys with its own reason — no group clip selected,
+two of them, nothing to put in, a locked member, or a clip that starts before
+the group does and so has nowhere in composition time to land. There is no
+leaving half: under a tab strip, leaving is closing a tab or activating another.
 
 **Entering.** Double-click a Group clip to open its composition, or use
-`Open group` from its context menu; that gesture is spent on navigation, so
+`Open group` from its context menu — the same kind-gated block that carries
+`Ungroup` and `Add to “…”`; that gesture is spent on navigation, so
 renaming happens through the menu's two rows instead — `Rename` for the clip's
 own label, `Rename group…` for the composition's name (which every clip placing
 it then shows). The composition opens in a **timeline Panel of its own**, as a
