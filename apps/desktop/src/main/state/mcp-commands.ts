@@ -431,7 +431,7 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
   // Scope refusals (ADR 0052): name BOTH compositions, because the fix is a
   // different destination or a narrower set, and the ids are what the agent
   // reads back from `project://compositions`.
-  if (e.error === 'CrossCompositionMove') return { code: 'invalid_params', message: `layer ${e.layer} lives in composition ${e.from}; the destination is in composition ${e.to}. A layer never changes composition by moving: pick a track / anchor inside ${e.from}, or cross deliberately with move_layers_to_composition (name ${e.to} and a landing time), groups_add_members (move into a Group clip you can see), groups_create (pre-compose) or groups_ungroup` }
+  if (e.error === 'CrossCompositionMove') return { code: 'invalid_params', message: `layer ${e.layer} lives in composition ${e.from}; the destination is in composition ${e.to}. A *move* never crosses a composition: pick a track / anchor inside ${e.from}, or cross deliberately with move_layers_to_composition (name ${e.to} and a landing time), groups_add_members (move into a Group clip you can see), groups_create (pre-compose) or groups_ungroup` }
   if (e.error === 'CrossCompositionSet') return { code: 'invalid_params', message: `layer ${e.layer} is in composition ${e.composition} but the set's first member is in ${e.expected}; a set operation addresses one composition, so split the set per composition` }
   if (e.error === 'ValidationFailed' && e.detail.rule === 'NegativeLayerStart') {
     const d = e.detail

@@ -182,7 +182,8 @@ export function dropLayerFromLinks(c: Composition, layerId: Uuid): void {
 }
 
 /** Links and transitions follow the SET across a composition boundary — the
- *  half both crossing ops share. A link or transition whose every member is in
+ *  half pre-compose and the crossing primitive share (ungroup CLONES instead,
+ *  so it has no use for this). A link or transition whose every member is in
  *  `memberSet` moves to `to` keeping its id; a link straddling the boundary
  *  loses its inside members and dissolves below two; a straddling transition is
  *  left in `from` for `reconcileTransitions` to drop and the actor to log — the

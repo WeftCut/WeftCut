@@ -344,8 +344,10 @@ Group layer's params are a `CompositionRef`: a source window
 `[src_in_us, src_out_us)` into the composition's own time, plus the transform,
 opacity and blend mode every visual layer carries. Parent time `t` is
 composition time `t − t_start_us + src_in_us`; nested Groups compose the
-mapping. Three structural operations make one, move more layers into one, and
-dissolve one; each is a single history entry.
+mapping. Four structural operations make one, move more layers into one,
+dissolve one, and carry layers into any composition by name; each is a single
+history entry, and those four are the only ops that cross a composition
+boundary at all.
 
 **Pre-compose** (`groups_create`) turns a set of layers — one or more, all in
 one composition — into a Group in place. The set's earliest start `t0` becomes
@@ -401,8 +403,99 @@ anything moves: a set spanning two compositions or a Group clip outside it
 a locked member (`GroupLockedMember`) or lane (`TrackLocked`), a member whose own
 composition already reaches the destination — the destination included, which is
 moving a Group clip into itself (`CompositionCycle`) — and a member that would
-land before composition time 0 (`InvalidArgument`, naming the earliest source
-time that fits).
+land before composition time 0 (`InvalidArgument`, naming the earliest landing
+the whole set clears — the bound belongs to the earliest member, not to
+whichever one the refusal happens to report, so retrying at it is not refused
+again).
+
+**Move to composition** (`move_layers_to_composition`) is the same crossing
+addressed by NAMING a destination instead of by pointing at a Group clip: a set
+of layers, one destination composition, and an ABSOLUTE landing time on that
+composition's clock. Add to Group is one of its callers — it reads the landing
+off the Group clip's placement and delegates — so everything below governs both,
+and the ROOT is an ordinary destination here rather than a special case: taking
+a clip out of a Group and back into the film *is* this operation, and it is one
+of the two directions it exists for. An anchor member is the one the landing
+time positions; every other member keeps its phase relative to it, which is what
+preserves the set's mutual geometry and keeps a transition between two moved
+members alive. Both endpoints re-snap on each member's own lattice at the
+DESTINATION's rate, so a landing is quantized where it arrives and two
+compositions on different rates do not round trip — A → B → A need not return a
+layer to the microsecond it left. Links and transitions follow the set, markers
+stay behind, emptied source lanes are pruned, both compositions autofit and no
+Group layer is retrimmed. It refuses whole before the first write, and the
+refusals are Add to Group's: a set spanning two compositions
+(`CrossCompositionSet`), a locked member (`GroupLockedMember`) or lane
+(`TrackLocked`), a member whose composition already reaches the destination —
+the destination included (`CompositionCycle`) — and a landing before composition
+time 0 (`InvalidArgument`, never a clamp: composition time has no negative half,
+and sliding the set onto zero would move it off the picture it was placed
+against), plus an unknown destination or lane (`CompositionNotFound`,
+`TrackNotFound`) and a destination that is the composition the set is already
+in, which is `move_layer`'s work rather than a crossing. Add to Group's other
+three are about the Group CLIP and stay with it: that it is a sibling of the
+set, that it is a Group at all, and that no Group clip may point at the root.
+The last of those reads like a rule against the root *receiving* layers and is
+not one — nothing may be placed as a Group of the film, and the film takes
+layers back like any other destination.
+
+**Which lane it lands on.** Destination lanes are assigned per SOURCE track,
+never per member — a whole source track's members travel together onto one lane,
+exactly as pre-compose and Add to Group map bottom-up — and what forks is the
+answer when the preferred lane is locked or already occupied at those times.
+A caller with no opinion **bounces**: the nearest free lane, else a fresh one.
+A caller that NAMES a lane is **refused** instead (`TrackLocked`,
+`LayerOverlap`), and one that names the destination's drop strip always takes a
+fresh lane at the top of its z-stack. The fork is about what the user was shown:
+a menu has no ghost, so bouncing is honest for it; a drag has one, and bouncing
+would make the ghost a lie.
+
+**Move to composition ›** on a clip's context menu is the submenu form. The
+film's own timeline sorts first — it is the answer to "get this back out of the
+Group", which is the commonest reason to open the row — then every Group by
+name. A destination that cannot take the selection is listed and greyed rather
+than dropped, because a missing row is a question and a greyed one is an answer:
+the composition the clips are already in says so, and one a selected Group clip
+already reaches says it cannot also sit inside itself. A live row whose
+composition has no reading of the current moment says that too — the clips land
+at its start. The trigger itself greys, falling back to a flat row that has
+somewhere to put the reason, when there is nothing selected or a member or its
+lane is locked; a project offering nowhere to go greys every row instead, which
+is the same information with the destination named. Each row's landing is that
+composition's own reading of the one moment, projected through the placement the
+user is looking at, and it is resolved again at the commit rather than read off
+the row — an open popup does not re-render while the film plays under it. A
+composition with no projection at this moment falls back to its own `t = 0`
+rather than refusing: the gesture named a composition, not a moment. The anchor
+is the earliest-starting member, so the set *starts* at that time and the
+negative-landing refusal is unreachable from here. Afterwards the selection
+clears and the view stays where it was: the menu never left the Panel it was
+opened in. The same command sits in the Edit menu, in the search palette and on
+any key someone binds it to — surfaces with no room for a list, so there it
+means the root, and greys once the selection is already in it rather than taking
+whichever Group happens to sort first.
+
+**Carrying a clip into another timeline Panel.** With two compositions open side
+by side, dragging a clip out of one timeline and into the other commits the same
+operation. The destination Panel owns the drop, because ownership follows the
+coordinate system: zoom, scroll, the frame grid, the snapping targets and the
+lane geometry are all per Panel, so only the composition under the pointer can
+turn that pointer into a lane and a time, and it is the Panel that sends the
+command. It draws its own ghost for a clip it holds no data for — the kind's
+colour, the clip's name, and the footprint recomputed at THIS Panel's zoom,
+since the source's width would be a lie about the duration here; no filmstrip,
+waveform, link chrome or transition chip, because none of them answers what the
+drop asks. The ghost refuses in place in the vocabulary the in-composition drag
+already uses: red over an overlap, amber over a locked lane, and a release there
+sends nothing. Over the destination's drop strip it spawns a lane. A drop that
+lands takes the keyboard and the selection with it, where the menu clears the
+selection and stays put — the difference is the pointer, which named a place the
+clips are now visible at. **Alt+drag across Panels is refused**, with the reason
+in the status bar rather than a dialog: a copy mints ids, and a paste links its
+clones to each other and never back to their sources, so copying into another
+composition is a second mutation and not a parameter of this one. The refusal
+names the way in as well as the wall — the same drag without Alt moves the clips
+there.
 
 **Overhang.** A Group layer's window may extend past its composition's
 duration: validation puts no upper bound on `src_out_us`, a trim gesture clamps
@@ -531,7 +624,8 @@ it can be opened, renamed, or deleted; that row is the only surface able to
 remove it. Selecting it puts the composition in the inspector, so an orphan can
 be read and named with no clip anywhere.
 
-Mutations live in `apps/desktop/src/main/state/mutations/groups.ts`; tools and
+Mutations live in `apps/desktop/src/main/state/mutations/groups.ts`, over the
+crossing primitive in `mutations/moveToComposition.ts` (ADR 0054); tools and
 wire shapes: [mcp.md](mcp.md), [data-model.md](data-model.md).
 
 ## Split at the playhead

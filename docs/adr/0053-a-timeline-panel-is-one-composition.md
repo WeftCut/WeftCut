@@ -101,6 +101,21 @@ adapter boundary."*
    first entry point ("add the selection to this Group") needs no second
    timeline.
 
+   > **Superseded (decision 8 only) by
+   > [ADR 0054](0054-crossing-a-composition-is-one-primitive.md).** Both halves
+   > of this decision are reversed: a layer DOES change composition by being
+   > carried from one timeline Panel into another, and that drop lands rather
+   > than being refused. What the decision was protecting is intact —
+   > `CrossCompositionMove` still refuses `move_layer`, `duplicate_layer`,
+   > `paste_layers` and `restack_layer`, so a *move* never crosses and crossing
+   > has a name of its own. What changed is that the cross-Panel drag no longer
+   > lowers to a move: it lowers to `move_layers_to_composition`, the mutation
+   > this decision reserved, whose first entry point still needs no second
+   > timeline. The refusal the drag keeps is narrower — Alt+drag, because a COPY
+   > across compositions mints ids and is a second mutation rather than a
+   > parameter of this one. Decisions 1–7 stand unchanged.
+   > Current contract: `docs/features.md#groups`.
+
 ## Considered options
 
 **A composition tab bar inside the Timeline Panel.** Rejected in the context: it
@@ -146,5 +161,6 @@ valid and nothing has to be read twice.
 - The word *workspace* now spans both halves of one feature — the Dock Workspace
   holds the geometry, the project workspace directory holds `view.json`.
 - The cross-composition gap stops being invisible. Two timelines side by side
-  invite the drag `CrossCompositionMove` refuses, which is what makes filling it
-  worth doing.
+  invite a drag the mutation surface had no way to express, which is what makes
+  filling it worth doing — and what
+  [ADR 0054](0054-crossing-a-composition-is-one-primitive.md) then does.

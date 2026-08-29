@@ -240,8 +240,10 @@ composition — `move_layer`'s `new_track_id`, `restack_layer`'s anchor,
 { layer, from, to }`; a set (`delete_layers`, `set_layers_enabled`,
 `paste_layers`, `links_create`, `links_add_members`) whose members straddle two
 compositions is refused with `CrossCompositionSet { layer, composition,
-expected }`. A layer changes composition only through pre-compose, adding it to
-an existing Group, or ungroup.
+expected }`. A layer changes composition only through the four ops that name a
+destination composition rather than inherit one — pre-compose, adding it to an
+existing Group, ungroup, and `move_layers_to_composition`. A *move* never
+crosses; crossing has its own op.
 - `apply_subtitles { body, format?, track_id?, t_start_us?, t_end_us? }` — SRT/VTT/ASS body inline; format sniffed when omitted. Builds a new caption-role track of editable `Text` layers (one per cue). `track_id`, `t_start_us`, and `t_end_us` are accepted for wire stability but ignored — cue timings come from the body. Returns the new caption track id.
 - `update_layer { layer_id, patch }` — envelope-only (label, time range, enabled, locked).
 - `update_layer_params { layer_id, patch }` — kind-specific params. On a scale-linked layer, a patch that leaves `scale_x ≠ scale_y` auto-clears the link in the same commit; patch both axes to the same value to keep it.

@@ -24,8 +24,9 @@ function earliestStart(c: Composition, targetStart: number, siblings: readonly U
 
 /** Move one layer (and its link siblings) within its composition. The target
  *  track names a composition too, and it must be the layer's own: a track in
- *  another composition is refused (CrossCompositionMove) — a layer changes
- *  composition only through pre-compose, add-to-Group or ungroup. */
+ *  another composition is refused (CrossCompositionMove) — a move never
+ *  crosses, and crossing has its own op (`moveToComposition.ts`, which
+ *  pre-compose, add-to-Group and ungroup stand beside). */
 export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStartUs: number, escapeLink: boolean): void {
   const src = requireLayer(p, id)
   const c = src.comp
