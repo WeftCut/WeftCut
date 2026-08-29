@@ -4,7 +4,7 @@ import type { Animated, AudioRole, Composition, Interpolation, LayerParams, Moti
 import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
-import { HISTORY_SUMMARY, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
+import { HISTORY_SUMMARY, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, moveToCompositionSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileTransitions, type DroppedTransition } from './validate'
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
@@ -17,6 +17,7 @@ import { applyDuplicateLayer, applyPasteLayer, applyPasteLayers, pasteLayerInter
 import { applySplitLayer } from './mutations/split'
 import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, applyLinksRename } from './mutations/links'
 import { applyCompositionsDelete, applyGroupsAddMembers, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, type GroupCreateResult } from './mutations/groups'
+import { applyMoveLayersToComposition } from './mutations/moveToComposition'
 import { applySetLayersEnabled, applyUpdateLayer, type LayerPatch } from './mutations/update'
 import { applyFitComposition } from './mutations/composition'
 import { applyDurationAutofit, compositionOf, locateLayer, locateTrack, requireLayer, requireSameComposition, requireTrack, scopeComposition } from './mutations/helpers'
@@ -921,6 +922,25 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const groupLayer = a.group_layer as Uuid
           commit(groupAddMembersSummary(layers.length), layerRefs([...layers, groupLayer]), { kind: 'Coarse' },
             (d) => applyGroupsAddMembers(d, idGen, layers, groupLayer))
+          return { ok: true, value: null }
+        }
+        // The same crossing named absolutely rather than measured off a Group
+        // clip (mutations/moveToComposition.ts). The row names the members
+        // ALONE — a composition has no `EntityRef`, and the destination need
+        // hold no clip to point at — so the destination's NAME rides in the
+        // summary instead, resolved out here where an unknown id still refuses
+        // before the draft is opened.
+        case 'move_layers_to_composition': {
+          const layers = [...new Set((a.layers as Uuid[]) ?? [])]
+          const anchor = parseUuid(a.anchor_layer, 'anchor_layer')
+          const anchorTStartUs = parseNum(a.anchor_t_start_us, 'anchor_t_start_us')
+          // `'spawn'` is a literal, so only the third shape is a uuid.
+          const toTrack: Uuid | 'spawn' | null = a.to_track === undefined || a.to_track === null
+            ? null
+            : a.to_track === 'spawn' ? 'spawn' : parseUuid(a.to_track, 'to_track')
+          const dest = compositionOf(current(), parseUuid(a.to_composition, 'to_composition'))
+          commit(moveToCompositionSummary(layers.length, dest.label), layerRefs(layers), { kind: 'Coarse' },
+            (d) => applyMoveLayersToComposition(d, idGen, layers, dest.id, anchor, anchorTStartUs, toTrack))
           return { ok: true, value: null }
         }
         // Placing an existing composition: a creation op, so it carries a scope —

@@ -134,6 +134,10 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // Group layer / its composition. Pure renaming.
   groups_create: (a) => ({ op: 'groups_create', args: { layers: a.layerIds, label: a.label ?? null } }),
   groups_add_members: (a) => ({ op: 'groups_add_members', args: { layers: a.layerIds, group_layer: a.groupLayerId } }),
+  // The crossing addressed by DESTINATION rather than by a Group clip. Pure
+  // renaming too; `toTrackId` is the caller's lane opinion and is absent when it
+  // has none.
+  move_layers_to_composition: (a) => ({ op: 'move_layers_to_composition', args: { layers: a.layerIds, to_composition: a.toCompositionId, anchor_layer: a.anchorLayerId, anchor_t_start_us: a.anchorTStartUs, to_track: a.toTrackId ?? null } }),
   // The media pool's Group drop. Two composition ids on one channel:
   // `sourceCompositionId` is the composition being PLACED, `compositionId` the
   // one the drop lands in — the open one, riding along as the cross-check every
@@ -204,7 +208,7 @@ export const PRODUCTION_OPS = new Set<string>([
   // Remaining mechanical + meta channels
   'move_layer', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layer', 'delete_layers', 'remove_media', 'duplicate_layer', 'paste_layers', 'set_layers_enabled', 'split_layer_linked',
   'links_create', 'links_dissolve', 'links_rename',
-  'groups_create', 'groups_add_members', 'groups_ungroup', 'groups_rename', 'compositions_delete', 'add_group_layer',
+  'groups_create', 'groups_add_members', 'move_layers_to_composition', 'groups_ungroup', 'groups_rename', 'compositions_delete', 'add_group_layer',
   'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks', 'update_param_tracks_multi', 'set_scale_linked',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'set_composition', 'fit_composition_to_layers',

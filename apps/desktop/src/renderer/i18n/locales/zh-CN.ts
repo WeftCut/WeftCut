@@ -1425,6 +1425,8 @@ const zhCN: Resources = {
       disabled_multi: "禁用 {{count}} 个图层",
       move: "移动图层",
       move_to_new_track: "移动到新轨道",
+      move_to_composition: "已把 {{count}} 个图层移动到{{composition}}",
+      move_to_composition_unnamed: "已把 {{count}} 个图层移动到另一个合成",
       restack: "重排图层层级",
       trim: "修剪",
       split: "分割图层",

@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
 import { formatCommandError } from "./formatCommandError";
+import i18n from "../i18n";
 import { useProjectStore } from "../state/projectStore";
+import type { CommandError } from "../../shared/commandErrors";
 import type { CompositionSummary, ProjectSummary } from "../ipc";
 import { summaryFixture } from "../testing/summaryFixture";
 
@@ -201,5 +203,48 @@ describe("formatCommandError — generic and suppressed tiers", () => {
     expect(out.message).toBe(
       "Validation failed: Invalid src range (layer l-x, src_in 5, src_out 3)",
     );
+  });
+});
+
+// The whole refusal set of the cross-composition move, in one place. Nothing in
+// the editor calls it yet, so only the two lane refusals a drop can hit are
+// curated and the rest stay plumbing — what this pins is that every one of them
+// still produces a line, and that a curated key resolves in BOTH locales rather
+// than reaching the panel as its own raw key.
+describe("formatCommandError — the cross-composition move's refusals", () => {
+  const REFUSALS: CommandError[] = [
+    { error: "InvalidArgument", field: "to_composition", detail: "the set is already in composition c-1" },
+    { error: "InvalidArgument", field: "anchor_layer_id", detail: "layer l-x is not in the moving set" },
+    { error: "InvalidArgument", field: "layer_ids", detail: "layer l-a would land at -500000 µs" },
+    { error: "LayerNotFound", layer: "l-x" },
+    { error: "CrossCompositionSet", layer: "l-a", composition: "c-1", expected: "c-2" },
+    { error: "CompositionNotFound", composition: "c-1" },
+    { error: "TrackNotFound", track: "t-9" },
+    { error: "TrackLocked", track: "t-2" },
+    { error: "GroupLockedMember", layer: "l-a" },
+    { error: "ValidationFailed", detail: { rule: "CompositionCycle", path: ["c-1", "c-1"] } },
+    {
+      error: "ValidationFailed",
+      detail: {
+        rule: "LayerOverlap", track: "t-1",
+        a: "l-a", a_start: 0, a_end: 2_000_000,
+        b: "l-b", b_start: 0, b_end: 1_000_000,
+      },
+    },
+  ];
+
+  it("renders every one of them, and each curated key resolves in both locales", () => {
+    seedStore();
+    for (const err of REFUSALS) {
+      const where = JSON.stringify(err);
+      const out = formatCommandError(err);
+      expect(out.level, where).toBe("error");
+      expect(out.message.length, where).toBeGreaterThan(0);
+      if (!out.i18n_key) continue;
+      for (const lng of ["en-US", "zh-CN"]) {
+        const t = i18n.getFixedT(lng);
+        expect(t(out.i18n_key, out.i18n_args ?? {}), `${lng} ${out.i18n_key}`).not.toBe(out.i18n_key);
+      }
+    }
   });
 });

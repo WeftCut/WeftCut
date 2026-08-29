@@ -116,6 +116,20 @@ export function groupCreateSummary(count: number): HistorySummary {
 export function groupAddMembersSummary(count: number): HistorySummary {
   return { key: 'history.group.add_members', text: `Added ${count} layers to Group`, label_args: { count } }
 }
+/** `move_layers_to_composition` — the summary names the DESTINATION, which is
+ *  the only thing that tells this row from an ordinary move.
+ *
+ *  Two keys rather than one `{{composition}}` that may be blank, the same shape
+ *  `layersEnabledSummary` uses: a composition with no stored label is named by a
+ *  DERIVED name only the renderer can build, and the root has no name at all —
+ *  it is the timeline — so the unnamed case is a phrase each locale writes for
+ *  itself rather than a hole main fills with a uuid. */
+export function moveToCompositionSummary(count: number, compositionName: string | null): HistorySummary {
+  const name = compositionName?.trim()
+  return name
+    ? { key: 'history.layer.move_to_composition', text: `Moved ${count} layers to ${name}`, label_args: { count, composition: name } }
+    : { key: 'history.layer.move_to_composition_unnamed', text: `Moved ${count} layers to another composition`, label_args: { count } }
+}
 /** `set_layers_enabled` — one key per direction rather than a `{{state}}`
  *  placeholder, so each locale conjugates the verb natively. */
 export function layersEnabledSummary(enabled: boolean, count: number): HistorySummary {
@@ -135,6 +149,8 @@ export const HISTORY_SUMMARY_KEYS: readonly string[] = [
   pastedLayersSummary(0).key,
   groupCreateSummary(0).key,
   groupAddMembersSummary(0).key,
+  moveToCompositionSummary(0, 'x').key,
+  moveToCompositionSummary(0, null).key,
   layersEnabledSummary(true, 0).key,
   layersEnabledSummary(false, 0).key,
 ]

@@ -133,8 +133,12 @@ export type CommandError =
   | { error: 'LinkCreateNeedsTwoLayers'; got: number }
   | { error: 'LayerNotInLink'; link: Uuid; layer: Uuid }
   // ── Groups (ADR 0052; spec § Group semantics) ──
-  // Pre-compose refuses on a locked member (a locked TRACK is the plain
-  // `TrackLocked`) and never takes the unlocked half of a selection.
+  // One locked layer refuses the WHOLE set — for pre-compose and for every op
+  // that carries a set into another composition. Never the unlocked half: that
+  // would leave a split set nobody asked for and a refusal the caller cannot act
+  // on. A locked TRACK is the plain `TrackLocked`. The name is Group-flavoured
+  // and the rule is not, and it stays that way: a wire error code is spelled in
+  // two locales and four files, and a reader gains nothing by the rename.
   | { error: 'GroupLockedMember'; layer: Uuid }
   // Ungroup refuses a Group layer whose transform / opacity / effects are not the
   // identity: expanding would discard them silently. `reason` names the first

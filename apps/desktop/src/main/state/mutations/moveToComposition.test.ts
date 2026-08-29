@@ -123,7 +123,7 @@ describe('applyMoveLayersToComposition', () => {
     applyLinksCreate(p, gen, [x, y], null, false)
     const before = structuredClone(p)
     const e = expectCmd(() => applyMoveLayersToComposition(p, gen, [x, y], p.root_id, x, 8 * S, null))
-    expect(e).toMatchObject({ error: 'InvalidArgument', field: 'to_composition' })
+    expect(e).toMatchObject({ error: 'InvalidArgument', field: 'to_composition_id' })
     expect(p).toEqual(before)
   })
 

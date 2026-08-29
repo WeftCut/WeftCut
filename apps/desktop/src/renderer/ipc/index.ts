@@ -1362,7 +1362,9 @@ export async function groupsUngroup(layerId: string): Promise<void> {
 }
 
 /// Move existing layers INTO the composition a Group layer references — the
-/// third and last op that crosses compositions, beside pre-compose and ungroup.
+/// crossing addressed by pointing at a Group clip, where the
+/// `move_layers_to_composition` op is the one addressed by naming a destination
+/// and a landing time.
 /// Members land at `t_start_us - group.t_start_us + group.src_in_us`, so they
 /// keep the screen position they had. Refuses whole, before any write, on: a
 /// set spanning two compositions, a Group clip that is not in the members'

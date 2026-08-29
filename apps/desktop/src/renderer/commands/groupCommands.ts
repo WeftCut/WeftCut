@@ -64,10 +64,10 @@ export async function ungroupSelected(): Promise<void> {
 }
 
 /// Move the rest of the selection into the one selected Group's composition —
-/// the only way an existing layer joins an existing Group, and the only edit
-/// that crosses compositions without re-minting ids. The members keep their
-/// screen position; a destination that grows shows as overhang rather than
-/// rewriting the Group's window.
+/// the crossing reached by pointing at the destination clip, where the
+/// `move_layers_to_composition` op is the one reached by naming a composition
+/// and a time. The members keep their screen position; a destination that grows
+/// shows as overhang rather than rewriting the Group's window.
 ///
 /// The selection is read from the store rather than captured, for the sibling's
 /// reason: App does not re-render on a multi-select change.

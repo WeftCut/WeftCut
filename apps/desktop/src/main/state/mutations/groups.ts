@@ -1,8 +1,9 @@
 // apps/desktop/src/main/state/mutations/groups.ts
-// Pre-compose, add-to-Group and ungroup — the only three mutations that move
+// Pre-compose, add-to-Group and ungroup — three of the four mutations that move
 // layers BETWEEN compositions (every other op is scoped to one; ADR 0052, spec
-// § Group semantics) — plus the composition-envelope ops with no other home:
-// rename and delete. Rendering, navigation and the UI surface live elsewhere.
+// § Group semantics), the fourth being `moveToComposition.ts`, which add-to-Group
+// delegates to — plus the composition-envelope ops with no other home: rename
+// and delete. Rendering, navigation and the UI surface live elsewhere.
 import type { Animated, Composition, CompositionRefParams, Layer, Project, Track, Transform, Uuid } from '../model'
 import { eachLayer, newComposition } from '../model'
 import type { IdGen } from '../ids'

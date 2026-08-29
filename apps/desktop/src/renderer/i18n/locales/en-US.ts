@@ -1560,6 +1560,11 @@ const enUS = {
       disabled_multi: "Disabled {{count}} layers",
       move: "Moved layer",
       move_to_new_track: "Moved to a new track",
+      // The named form wins whenever the destination carries a stored label;
+      // the unnamed one covers a derived `Group N` and the root, neither of
+      // which main can name.
+      move_to_composition: "Moved {{count}} layers to {{composition}}",
+      move_to_composition_unnamed: "Moved {{count}} layers to another composition",
       restack: "Restacked layer",
       trim: "Trimmed layer",
       split: "Split layer",

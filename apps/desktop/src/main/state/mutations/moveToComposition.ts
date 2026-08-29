@@ -60,11 +60,11 @@ import {
  *  Every refusal is decided before the first write, so a refused move leaves the
  *  project byte-identical and burns no id: an empty set, an `anchorLayerId`
  *  outside it, a destination that is the source composition, or a member landing
- *  before composition time 0 → `InvalidArgument`
- *  (composition time has no negative half, and a move CLAMPS its set to 0, which
- *  here would slide the whole set off the picture it was placed against); a
- *  member id that names no layer → `LayerNotFound`; a set spanning two compositions
- *  → `CrossCompositionSet`; an unknown destination → `CompositionNotFound`; a
+ *  before composition time 0 → `InvalidArgument` (composition time has no
+ *  negative half, and a move CLAMPS its set to 0, which here would slide the
+ *  whole set off the picture it was placed against); a member id that names no
+ *  layer → `LayerNotFound`; a set spanning two compositions →
+ *  `CrossCompositionSet`; an unknown destination → `CompositionNotFound`; a
  *  named lane that is not one of the destination's → `TrackNotFound`; a locked
  *  source lane or a locked named lane → `TrackLocked`; a locked member →
  *  `GroupLockedMember` (the name is Group-flavoured, the rule is not); a member
@@ -97,7 +97,7 @@ export function applyMoveLayersToComposition(
   // handing it one composition twice never terminates — the guard is what keeps
   // that unreachable, not an accident of who calls this.
   if (dest === parent)
-    throw new CommandFailure({ error: 'InvalidArgument', field: 'to_composition',
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'to_composition_id',
       detail: `the set is already in composition ${dest.id}; move within a composition with move_layer` })
 
   const located = ids.map((id) => locateLayerIn(parent, id)!) // requireSameComposition located each

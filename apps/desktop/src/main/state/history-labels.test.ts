@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import en from '../../renderer/i18n/locales/en-US'
 import zh from '../../renderer/i18n/locales/zh-CN'
-import { ENTITY_LABEL_KEYS, HISTORY_SUMMARY, HISTORY_SUMMARY_KEYS, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, pastedLayersSummary,
+import { ENTITY_LABEL_KEYS, HISTORY_SUMMARY, HISTORY_SUMMARY_KEYS, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, moveToCompositionSummary, pastedLayersSummary,
   removedMediaSummary, resolveEntityLabels, restoredCheckpointSummary, roleGainSummary,
   type EntityLabel, type HistorySummary } from './history-labels'
 import type { EntityRef } from './history'
@@ -23,11 +23,13 @@ const LOCALES = { 'en-US': en, 'zh-CN': zh }
 const at = (loc: unknown, dotted: string): unknown => dotted.split('.').reduce<any>((acc, k) => acc?.[k], loc)
 const placeholders = (s: string): string[] => [...s.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]).sort()
 /** Every templated summary, with throwaway values — what matters is the key +
- *  which args each supplies. Both `enabled` directions: they are two keys. */
+ *  which args each supplies. Both `enabled` directions and both destination
+ *  namings: each pair is two keys, and the unnamed one supplies fewer args. */
 const TEMPLATED: HistorySummary[] = [
   removedMediaSummary('m-1', 2), roleGainSummary('music'), restoredCheckpointSummary('cp'),
   pastedLayersSummary(3), layersEnabledSummary(true, 2), layersEnabledSummary(false, 2),
   groupCreateSummary(2), groupAddMembersSummary(2),
+  moveToCompositionSummary(2, 'Intro'), moveToCompositionSummary(2, null),
 ]
 
 // The drift guard. `summary` → i18n-key lookups keyed on English prose are
@@ -79,6 +81,14 @@ describe('history label keys', () => {
     for (const [name, loc] of Object.entries(LOCALES)) {
       expect(placeholders(at(loc, 'tracks.positional') as string), name).toEqual(['n'])
     }
+  })
+  // A destination main cannot name — a Group whose label is derived, or the
+  // root, which has none at all — takes the phrase key rather than leaving the
+  // panel a blank where the name should be.
+  it('sends an unnamed destination to its own key instead of an empty name', () => {
+    expect(moveToCompositionSummary(2, null).key).toBe('history.layer.move_to_composition_unnamed')
+    expect(moveToCompositionSummary(2, '   ').key).toBe('history.layer.move_to_composition_unnamed')
+    expect(moveToCompositionSummary(2, '  Intro  ').label_args).toEqual({ count: 2, composition: 'Intro' })
   })
 })
 
