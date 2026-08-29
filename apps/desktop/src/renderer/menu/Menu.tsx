@@ -105,6 +105,23 @@ export function MenuItem({
   );
 }
 
+/// The `onOpenChange` a menu that forces `open` and unmounts itself on close
+/// must use — every context menu here, since each is rendered by its owner only
+/// while it should be on screen.
+///
+/// LANDMINE: opening one of our own `SubMenu`s reports `sibling-open` to the
+/// PARENT Root. Treating that as a dismissal unmounts the tree in the same
+/// frame the submenu mounts, so the submenu flashes once, the whole menu
+/// vanishes, and focus is returned to the page. A menubar `Menu` never shows
+/// this because its Root is uncontrolled and owns its own open state.
+export function closeContextMenuOn(
+  onClose: () => void,
+): (open: boolean, details: { reason: string }) => void {
+  return (open, details) => {
+    if (!open && details.reason !== "sibling-open") onClose();
+  };
+}
+
 interface SubMenuProps {
   /// Label rendered on the trigger row.
   label: string;

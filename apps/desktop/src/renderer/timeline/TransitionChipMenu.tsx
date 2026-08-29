@@ -11,7 +11,12 @@
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import type { TransitionSummary } from "../ipc";
-import { MenuItem, MenuSeparator, SubMenu } from "../menu/Menu";
+import {
+  closeContextMenuOn,
+  MenuItem,
+  MenuSeparator,
+  SubMenu,
+} from "../menu/Menu";
 import { useCursorAnchor } from "./contextMenuAnchor";
 import {
   TRANSITION_DIRECTIONS,
@@ -61,9 +66,7 @@ export function TransitionChipMenu({
       // Non-modal for the LayerContextMenu reason: the Timeline's
       // scroll-close effect handles anchored-to-stale-coordinates.
       modal={false}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
+      onOpenChange={closeContextMenuOn(onClose)}
     >
       <MenuPrimitive.Portal>
         <MenuPrimitive.Positioner
