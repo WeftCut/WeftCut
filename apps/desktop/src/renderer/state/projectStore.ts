@@ -13,6 +13,7 @@ import {
 import { compositionOrRoot, rootCompositionOf } from "../ipc/compositions";
 import { compositionRefCounts } from "../lib/compositionRefs";
 import { groupOrdinals } from "../lib/layerName";
+import { mediaRefCounts } from "../lib/mediaRefs";
 import {
   reconcileCompositionAnchors,
   useCompositionAnchorStore,
@@ -60,11 +61,14 @@ export interface ProjectStoreState {
   /// answer depends on the WHOLE composition set, not on the layer asking.
   groupOrdinals: ReadonlyMap<string, number>;
   /// `composition_id → ref_count` (`lib/compositionRefs.ts`). Indexed here for
-  /// the same reason the ordinals are: the media pool's Groups section, the
+  /// the same reason the ordinals are: the media pool's cards, the
   /// inspector and the Delete gate all ask it, the answer spans every
   /// composition, and a Map rebuilt per render would be a fresh reference on
   /// every store tick.
   compositionRefCounts: ReadonlyMap<string, number>;
+  /// `media_id → ref_count` (`lib/mediaRefs.ts`) — the same index on the pool's
+  /// other kind, indexed here for the same reasons.
+  mediaRefCounts: ReadonlyMap<string, number>;
   /// True after the initial `project_summary` fetch + subscription is
   /// wired. Distinguishes "no project loaded" (`summary === null`,
   /// `ready === true`) from "haven't fetched yet"
@@ -93,6 +97,7 @@ function buildIndices(summary: ProjectSummary | null): {
   compositionIdByTrackId: Map<string, string>;
   groupOrdinals: ReadonlyMap<string, number>;
   compositionRefCounts: ReadonlyMap<string, number>;
+  mediaRefCounts: ReadonlyMap<string, number>;
 } {
   const mediaById = new Map<string, MediaSummary>();
   const layerById = new Map<string, LayerSummary>();
@@ -110,6 +115,9 @@ function buildIndices(summary: ProjectSummary | null): {
       : EMPTY_ORDINALS,
     compositionRefCounts: summary
       ? compositionRefCounts(summary.compositions)
+      : EMPTY_REF_COUNTS,
+    mediaRefCounts: summary
+      ? mediaRefCounts(summary.compositions)
       : EMPTY_REF_COUNTS,
   };
   if (!summary) return indices;
@@ -138,6 +146,7 @@ export const useProjectStore = create<
   compositionIdByTrackId: new Map(),
   groupOrdinals: EMPTY_ORDINALS,
   compositionRefCounts: EMPTY_REF_COUNTS,
+  mediaRefCounts: EMPTY_REF_COUNTS,
   ready: false,
 
   apply: (summary) => {
@@ -294,6 +303,12 @@ export const useGroupCount = (): number =>
 /// like the ordinals. `get(id) ?? 0` — an orphan has no entry.
 export const useCompositionRefCounts = (): ReadonlyMap<string, number> =>
   useProjectStore((s) => s.compositionRefCounts);
+
+/// Reference counts per media item, for React. One Map reference per summary,
+/// like the composition twin. `get(id) ?? 0` — an unplaced item has no entry,
+/// and that is the ordinary case, not a defect (`lib/mediaRefs.ts`).
+export const useMediaRefCounts = (): ReadonlyMap<string, number> =>
+  useProjectStore((s) => s.mediaRefCounts);
 
 /// A Group's SOURCE length: the referenced composition's `duration_us`, or null
 /// when the summary does not carry it (a composition removed under a stale

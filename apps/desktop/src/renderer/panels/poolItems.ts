@@ -114,3 +114,27 @@ export function filterPoolItems(
   if (!needle) return [...items];
   return items.filter((item) => item.name.toLowerCase().includes(needle));
 }
+
+/// The entries nothing in the project points at — one filter over both kinds.
+///
+/// The state means opposite things on either side (a Group with no reference is
+/// a remnant; a media item with no reference has merely never been placed), but
+/// the question asked of the pool is the same one — *what here is not carrying
+/// its weight* — so the answer is one list, and this is the surface ADR 0042
+/// requires an orphan Group to stay findable through once the merged list has
+/// scattered it by name.
+///
+/// Counts come from the project store's index rather than from the item,
+/// because an unused media card draws nothing to say so: giving
+/// `MediaPoolItem` a `refCount` would invite the badge the merged pool
+/// deliberately withholds.
+export function filterUnusedPoolItems(
+  items: readonly PoolItem[],
+  mediaRefCounts: ReadonlyMap<string, number>,
+): PoolItem[] {
+  return items.filter((item) =>
+    item.kind === "group"
+      ? item.refCount === 0
+      : (mediaRefCounts.get(item.id) ?? 0) === 0,
+  );
+}

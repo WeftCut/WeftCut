@@ -5,10 +5,13 @@
 // Delete its menu only offers when nothing references it, and the selection
 // that puts a composition in the inspector with no clip involved.
 //
+// The show-only-unused toggle is here too: it exists because the merged list
+// scattered the orphans the Groups section used to gather.
+//
 // Drives the real Panel against a seeded project store and the real `../i18n`,
 // so a missing translation surfaces as a raw `media_pool.*` key.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../i18n";
 
@@ -43,6 +46,7 @@ import {
   setLayerSelection,
 } from "../state/selectionStore";
 import { MEDIA_DRAG_TYPE, useMediaDragStore } from "../timeline/mediaDrag";
+import { revealInMediaPool } from "../state/navigation";
 import {
   compositionFixture,
   groupLayerFixture,
@@ -86,6 +90,33 @@ function mediaFixture(id: string, label: string): MediaSummary {
     decode_route: { route: "bypass" },
     codec: null,
     pix_fmt: null,
+  };
+}
+
+const stat = (value: number) => ({ mode: "Static" as const, value });
+
+/// A clip showing `mediaId` — what makes a media item "used".
+function clipFixture(id: string, mediaId: string): TrackSummary["layers"][number] {
+  return {
+    id,
+    label: null,
+    t_start_us: 0,
+    t_end_us: 1_000_000,
+    kind: "VideoClip",
+    color_hint: "#000000",
+    enabled: true,
+    locked: false,
+    effects: [],
+    params: {
+      kind: "VideoClip",
+      media_id: mediaId,
+      media_label: mediaId,
+      src_in_us: 0,
+      src_out_us: 1_000_000,
+      x: stat(0), y: stat(0), scale_x: stat(1), scale_y: stat(1), scale_linked: true,
+      rotation_deg: stat(0), opacity: stat(1), anchor_x: stat(0.5), anchor_y: stat(0.5),
+      speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0,
+    },
   };
 }
 
@@ -183,6 +214,114 @@ describe("one pool list", () => {
     renderPool();
     expect(screen.getByText("No media imported yet.")).toBeTruthy();
     expect(document.querySelector(".media-list")).toBeNull();
+  });
+});
+
+describe("the unused filter", () => {
+  const toggle = () => screen.getByRole("button", { name: "Show only unused" });
+
+  /// `comp-a` placed once and `comp-b` orphaned (as `seed`), plus `m-used` on a
+  /// clip and `m-idle` imported and never placed. The media list is BOTH the
+  /// store's and the Panel's, because reveal reads the store and the cards read
+  /// the prop.
+  function seedMixed(): MediaSummary[] {
+    const media = [mediaFixture("m-used", "used.mp4"), mediaFixture("m-idle", "idle.mp4")];
+    useProjectStore.getState().apply(
+      summaryFixture({
+        media,
+        root: {
+          tracks: [
+            trackWith("track-1", [
+              groupLayerFixture({ id: "ref-1", compositionId: "comp-a" }),
+              clipFixture("clip-1", "m-used"),
+            ]),
+          ],
+        },
+        groups: [
+          compositionFixture({ id: "comp-a", duration_us: 2_000_000 }),
+          compositionFixture({ id: "comp-b", duration_us: 5_000_000 }),
+        ],
+      }),
+    );
+    return media;
+  }
+
+  it("starts off, and hides what the project points at on both kinds at once", async () => {
+    renderPool(seedMixed());
+    // Off on mount — the session default, and the reason a restart resets it.
+    expect(toggle().getAttribute("aria-pressed")).toBe("false");
+    expect(cardIds()).toEqual(["comp-a", "comp-b", "m-idle", "m-used"]);
+    await userEvent.click(toggle());
+    // The orphaned composition and the never-placed import; not the Group with
+    // a clip, not the media with one.
+    expect(cardIds()).toEqual(["comp-b", "m-idle"]);
+    await userEvent.click(toggle());
+    expect(cardIds()).toEqual(["comp-a", "comp-b", "m-idle", "m-used"]);
+  });
+
+  it("counts a clip inside a Group, so media used only there is not offered", async () => {
+    const media = [mediaFixture("m-used", "used.mp4")];
+    useProjectStore.getState().apply(
+      summaryFixture({
+        media,
+        root: {
+          tracks: [
+            trackWith("track-1", [groupLayerFixture({ id: "ref-1", compositionId: "comp-a" })]),
+          ],
+        },
+        groups: [
+          compositionFixture({
+            id: "comp-a",
+            duration_us: 2_000_000,
+            tracks: [trackWith("track-2", [clipFixture("clip-1", "m-used")])],
+          }),
+        ],
+      }),
+    );
+    renderPool(media);
+    await userEvent.click(toggle());
+    expect(cardIds()).toEqual([]);
+  });
+
+  it("narrows further with the search box rather than replacing it", async () => {
+    renderPool(seedMixed());
+    await userEvent.click(toggle());
+    await search("group");
+    expect(cardIds()).toEqual(["comp-b"]);
+  });
+
+  it("says nothing is unused rather than claiming the pool is empty", async () => {
+    const media = [mediaFixture("m-used", "used.mp4")];
+    useProjectStore.getState().apply(
+      summaryFixture({
+        media,
+        root: { tracks: [trackWith("track-1", [clipFixture("clip-1", "m-used")])] },
+      }),
+    );
+    renderPool(media);
+    await userEvent.click(toggle());
+    expect(screen.getByText("Everything in the pool is used somewhere.")).toBeTruthy();
+    expect(screen.queryByText("No media imported yet.")).toBeNull();
+  });
+
+  it("leaves the media cards unmarked — only a Group wears the remnant tag", () => {
+    renderPool(seedMixed());
+    // Unused is the NORMAL state of a media item, so marking it would put a
+    // warning on every card of a fresh import and kill the tag that means
+    // something.
+    expect(document.querySelectorAll(".media-item-isolated-tag")).toHaveLength(1);
+    expect(card("comp-b").querySelector(".media-item-isolated-tag")).not.toBeNull();
+  });
+
+  it("is cleared by reveal, which would otherwise scroll to an unrendered card", async () => {
+    renderPool(seedMixed());
+    await userEvent.click(toggle());
+    expect(cardIds()).not.toContain("m-used");
+    act(() => {
+      expect(revealInMediaPool("m-used")).toBe(true);
+    });
+    await waitFor(() => expect(toggle().getAttribute("aria-pressed")).toBe("false"));
+    expect(cardIds()).toContain("m-used");
   });
 });
 

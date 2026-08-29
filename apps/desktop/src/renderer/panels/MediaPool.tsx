@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
+  FilterIcon,
   FolderInputIcon,
   Group as GroupIcon,
   LayoutGridIcon,
@@ -20,6 +21,7 @@ import { GroupPoolContextMenu } from "./GroupPoolContextMenu";
 import { RenameGroupDialog } from "./RenameGroupDialog";
 import {
   filterPoolItems,
+  filterUnusedPoolItems,
   poolCollator,
   poolItems,
   type GroupPoolItem,
@@ -60,6 +62,7 @@ import {
   useCompositionRefCounts,
   useGroupCount,
   useGroupOrdinals,
+  useMediaRefCounts,
   useProjectSummary,
 } from "../state/projectStore";
 import {
@@ -269,13 +272,19 @@ export function MediaPool({
   const summary = useProjectSummary();
   const ordinals = useGroupOrdinals();
   const refCounts = useCompositionRefCounts();
+  const mediaRefCounts = useMediaRefCounts();
+  // Deliberately NOT `app_settings`: the layout switch beside it is appearance
+  // and persists, but a filter that HIDES things and survives a restart is how
+  // a user concludes their media is gone. Session-scoped, like `query`.
+  const [unusedOnly, setUnusedOnly] = useState(false);
   const selectedMediaId = useSelectedMediaId();
   const beginMediaDrag = useMediaDragStore((s) => s.begin);
   const endMediaDrag = useMediaDragStore((s) => s.end);
   const proxyOverrides = useProxyPrefStore((s) => s.overrides);
 
-  // Palette "reveal in media pool": clear any filter (the target must be
-  // in the filtered list), then flash + scroll the row into view.
+  // Palette "reveal in media pool": clear EVERY filter, then flash + scroll the
+  // row into view. Both of them, not just the query: revealing a USED item with
+  // "show only unused" on would scroll to a card that is not rendered.
   const [flashId, setFlashId] = useState<string | null>(null);
   // The media id whose shot analysis is currently running. One at a time is
   // enough for a pool action; reopening its menu shows the pending label and
@@ -292,6 +301,7 @@ export function MediaPool({
     () =>
       registerRevealMedia((id) => {
         setQuery("");
+        setUnusedOnly(false);
         setFlashId(id);
       }),
     [],
@@ -328,7 +338,14 @@ export function MediaPool({
     () => poolItems(media, summary, ordinals, refCounts, t, collator),
     [media, summary, ordinals, refCounts, t, collator],
   );
-  const visible = useMemo(() => filterPoolItems(items, query), [items, query]);
+  // Unused first, then the query: the placeholder below has to tell "nothing
+  // here is unused" from "nothing matches", and only the intermediate list
+  // distinguishes them.
+  const unused = useMemo(
+    () => (unusedOnly ? filterUnusedPoolItems(items, mediaRefCounts) : items),
+    [items, unusedOnly, mediaRefCounts],
+  );
+  const visible = useMemo(() => filterPoolItems(unused, query), [unused, query]);
 
   if (media.length === 0 && groupCount === 0) {
     return (
@@ -511,6 +528,20 @@ export function MediaPool({
             }
           }}
         />
+        {/* The Groups section gathered orphans under a heading; the merged
+            list scatters them by name, and this toggle is what buys that job
+            back — the surface ADR 0042 requires a remnant to stay removable
+            through. */}
+        <button
+          type="button"
+          className={`media-filter-button${unusedOnly ? " is-active" : ""}`}
+          aria-pressed={unusedOnly}
+          title={t("media_pool.unused_filter")}
+          aria-label={t("media_pool.unused_filter")}
+          onClick={() => setUnusedOnly((on) => !on)}
+        >
+          <FilterIcon size={14} aria-hidden />
+        </button>
         <div
           className="media-layout-switch"
           role="group"
@@ -533,11 +564,15 @@ export function MediaPool({
       <div className="media-pool-inner">
         {visible.length === 0 ? (
           <p className="placeholder">
-            {/* Both kinds decide this: a project holding only Groups is not an
-                empty pool, whatever the media prop says. */}
+            {/* Both kinds decide the first: a project holding only Groups is
+                not an empty pool, whatever the media prop says. The filter's
+                own dead end earns the third — a pool whose every item is in
+                use must never answer that it holds nothing. */}
             {items.length === 0
               ? t("media_pool.empty")
-              : t("media_pool.no_matches", { query: trimmed })}
+              : unused.length === 0
+                ? t("media_pool.no_unused")
+                : t("media_pool.no_matches", { query: trimmed })}
           </p>
         ) : (
           <ul

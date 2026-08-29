@@ -145,6 +145,17 @@ describe("indices span every composition", () => {
     enabled: true, locked: false, effects: [],
     params: { kind: "Color", color: stat({ r: 0, g: 0, b: 0, a: 255 }), width: 16, height: 9 },
   });
+  const clip = (id: string, mediaId: string): LayerSummary => ({
+    id, label: null, t_start_us: 0, t_end_us: 1_000_000, kind: "VideoClip", color_hint: "#000000",
+    enabled: true, locked: false, effects: [],
+    params: {
+      kind: "VideoClip", media_id: mediaId, media_label: mediaId,
+      src_in_us: 0, src_out_us: 1_000_000,
+      x: stat(0), y: stat(0), scale_x: stat(1), scale_y: stat(1), scale_linked: true,
+      rotation_deg: stat(0), opacity: stat(1), anchor_x: stat(0.5), anchor_y: stat(0.5),
+      speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0,
+    },
+  });
   const track = (id: string, layers: LayerSummary[]): TrackSummary => ({
     id, kind: "Video", label: null, enabled: true, locked: false, muted: false, solo: false,
     role: null, transient: true, layers,
@@ -166,5 +177,33 @@ describe("indices span every composition", () => {
     expect(s.compositionIdByTrackId.get("t-root")).toBe(ROOT_ID);
     useProjectStore.getState().apply(null);
     expect(useProjectStore.getState().compositionIdByLayerId.size).toBe(0);
+  });
+
+  it("counts media references across compositions, one Map per summary", () => {
+    const seed = () =>
+      useProjectStore.getState().apply(
+        summaryFixture({
+          root: { tracks: [track("t-root", [clip("root-a", "m-1")])] },
+          groups: [
+            compositionFixture({
+              id: "comp-g1",
+              tracks: [track("t-g1", [clip("inner-a", "m-1"), clip("inner-b", "m-2")])],
+            }),
+          ],
+        }),
+      );
+    seed();
+    const counts = useProjectStore.getState().mediaRefCounts;
+    // A clip inside a Group is a reference: the pool spans the whole project,
+    // and an item used only inside a Group is not unused.
+    expect(counts.get("m-1")).toBe(2);
+    expect(counts.get("m-2")).toBe(1);
+    // One reference per summary, not per read — a Map rebuilt on the way out
+    // would be a fresh reference on every store tick and defeat the bail-out.
+    expect(useProjectStore.getState().mediaRefCounts).toBe(counts);
+    seed();
+    expect(useProjectStore.getState().mediaRefCounts).not.toBe(counts);
+    useProjectStore.getState().apply(null);
+    expect(useProjectStore.getState().mediaRefCounts.size).toBe(0);
   });
 });

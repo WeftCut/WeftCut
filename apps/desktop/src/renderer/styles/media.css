@@ -136,10 +136,12 @@
   background: var(--surface-sunken);
 }
 
-/* The pool's import action (leading edge of the search row) shares the
-   layout-switch buttons' chrome. */
+/* The pool's import action (leading edge of the search row) and the
+   show-only-unused toggle (beside the search field) share the layout-switch
+   buttons' chrome. */
 .media-layout-button,
-.media-import-button {
+.media-import-button,
+.media-filter-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -154,14 +156,22 @@
 }
 
 .media-layout-button:hover,
-.media-import-button:hover {
+.media-import-button:hover,
+.media-filter-button:hover {
   background: var(--hover-neutral);
   color: var(--foreground);
 }
 
-.media-layout-button.is-active {
+.media-layout-button.is-active,
+.media-filter-button.is-active {
   background: var(--active-neutral);
   color: var(--foreground);
+}
+
+/* The pool docks narrow. The toggle keeps its size there rather than being
+   squeezed by the search field, exactly as the layout switch does. */
+.media-filter-button {
+  flex: none;
 }
 
 /* Search field + its ✕ come from AppInput (.app-input / .app-input-clear). */

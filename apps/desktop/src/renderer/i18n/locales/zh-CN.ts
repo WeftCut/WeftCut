@@ -431,6 +431,8 @@ const zhCN: Resources = {
     search_placeholder: "搜索素材…",
     no_matches: "未找到与「{{query}}」匹配的素材。",
     clear_search: "清除搜索",
+    unused_filter: "只显示未使用项",
+    no_unused: "素材库中的每一项都已被使用。",
     layout_label: "布局",
     layout_large: "大图（每行一个）",
     layout_grid: "网格（固定大小卡片）",

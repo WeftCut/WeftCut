@@ -481,6 +481,13 @@ const enUS = {
     search_placeholder: "Search media…",
     no_matches: "No matches for “{{query}}”.",
     clear_search: "Clear search",
+    // The pool's session filter. Says "unused", not "isolated": on a Group the
+    // state is a remnant, on a media item it is merely never-placed, and the
+    // word that covers both is the neutral one.
+    unused_filter: "Show only unused",
+    // Its own dead end, kept apart from `empty` — a pool full of used media
+    // must never print "No media imported yet."
+    no_unused: "Everything in the pool is used somewhere.",
     layout_label: "Layout",
     layout_large: "Large cards (one per row)",
     layout_grid: "Grid (fixed-size cards)",

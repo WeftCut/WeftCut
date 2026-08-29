@@ -341,7 +341,10 @@ leak: Ungroup and deleting the last Group clip both leave the composition
 behind, so one undo brings the work back. Its card in the media pool is where
 it stays visible — dimmed, tagged isolated — and the only surface that can
 remove it, which is what keeps state from holding something no UI can reach
-(the failure ADR 0042 refused for tracks). The root is never one: nothing may
+(the failure ADR 0042 refused for tracks). The pool's *show only unused* filter
+is what finds that card once one name-sorted list has scattered it among the
+media; the filter asks both kinds a plain question — what does nothing point at
+— and is not a second name for this state. The root is never one: nothing may
 reference it at all. UI word: isolated / 已孤立.
 _Avoid_: dangling composition, leaked comp, garbage, unused Group (everything in
 the pool is unused until it is placed; this state is the opposite, and the card

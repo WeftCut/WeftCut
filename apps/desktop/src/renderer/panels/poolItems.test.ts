@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   filterPoolItems,
+  filterUnusedPoolItems,
   groupPoolItems,
   poolCollator,
   poolItems,
@@ -230,6 +231,34 @@ describe("pool items", () => {
     expect(listOf(media, summary).map((item) => item.id)).toEqual(
       listOf([...media].reverse(), summary).map((item) => item.id),
     );
+  });
+
+  it("shows only what nothing points at, asking each kind its own question", () => {
+    const items = listOf(
+      [mediaFixture("m-used", "used.mp4"), mediaFixture("m-idle", "idle.mp4")],
+      twoGroups(),
+    );
+    // `comp-a` is placed twice, `comp-b` never; `m-used` has a clip, `m-idle`
+    // was imported and never placed.
+    const mediaRefs = new Map([["m-used", 1]]);
+    expect(filterUnusedPoolItems(items, mediaRefs).map((i) => i.id)).toEqual([
+      "comp-b",
+      "m-idle",
+    ]);
+    // An empty media index is a project nothing has been placed in yet, not an
+    // error: every media item falls through, while a Group still answers from
+    // its own count.
+    expect(filterUnusedPoolItems(items, new Map()).map((i) => i.id)).toEqual([
+      "comp-b",
+      "m-idle",
+      "m-used",
+    ]);
+  });
+
+  it("composes with the search box rather than replacing it", () => {
+    const items = listOf([mediaFixture("m-idle", "Group notes.txt")], twoGroups());
+    const unused = filterUnusedPoolItems(items, new Map());
+    expect(filterPoolItems(unused, "group 2").map((i) => i.id)).toEqual(["comp-b"]);
   });
 
   it("filters both kinds on the displayed name, case-insensitively", () => {
