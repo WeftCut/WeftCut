@@ -122,13 +122,19 @@ export function applyMoveLayersToComposition(
 
   const anchor = located.find((m) => m.layer.id === anchorLayerId)!
   const offset = anchorTStartUs - anchor.layer.t_start_us
+  // The remedy the refusal offers is the SET's bound, not the reporting
+  // member's: the earliest member is the one that runs out of room first, and a
+  // bound read off whichever member happened to be checked first would be a
+  // number the caller can retry and be refused at again. Round-to-nearest never
+  // takes a non-negative time below zero, so this pre-snap arithmetic is exact.
+  const earliestStartUs = Math.min(...located.map((m) => m.layer.t_start_us))
   const landing = new Map<Uuid, { t0: number; t1: number }>()
   for (const m of located) {
     const grid = gridForLayerKind(m.layer.params.kind, dest.fps)
     const t0 = snapOnGrid(m.layer.t_start_us + offset, grid)
     if (t0 < 0)
       throw new CommandFailure({ error: 'InvalidArgument', field: 'layer_ids',
-        detail: `layer ${m.layer.id} would land at ${t0} µs in composition ${dest.id}, before its start; anchor the set at ${anchor.layer.t_start_us - m.layer.t_start_us} µs or later` })
+        detail: `layer ${m.layer.id} would land at ${t0} µs in composition ${dest.id}, before its start; anchor the set at ${anchor.layer.t_start_us - earliestStartUs} µs or later` })
     landing.set(m.layer.id, { t0, t1: snapOnGrid(m.layer.t_end_us + offset, grid) })
   }
 

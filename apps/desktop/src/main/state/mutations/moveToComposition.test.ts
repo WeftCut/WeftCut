@@ -127,6 +127,28 @@ describe('applyMoveLayersToComposition', () => {
     expect(p).toEqual(before)
   })
 
+  it('names an anchor time the WHOLE set clears, not one the reporting member clears', () => {
+    const { p, gen, comp, x, y } = crossing()
+    // A third source lane whose member starts EARLIEST while sorting last in the
+    // set. The refusal reports whichever member it reaches first, so a remedy
+    // read off that member would be a time the caller can retry and be refused
+    // at again — which is the whole failure this case exists to catch.
+    const z = applyAddLayer(p, gen, root(p).tracks[0].id, color(), S, 2 * S)
+    const before = structuredClone(p)
+    const e = expectCmd(() => applyMoveLayersToComposition(p, gen, [y, x, z], comp, y, S, null))
+    expect(e).toMatchObject({ error: 'InvalidArgument', field: 'layer_ids' })
+    expect(e.detail).toContain(x) // x is the member reported…
+    expect(e.detail).toContain('anchor the set at 4000000 µs or later') // …z is the member that binds
+    expect(p).toEqual(before)
+    // And the time it named fits: the earliest member lands exactly on zero.
+    applyMoveLayersToComposition(p, gen, [y, x, z], comp, y, 4 * S, null)
+    const c = group(p, comp)
+    expect(layerOf(c, z)).toMatchObject({ t_start_us: 0, t_end_us: S })
+    expect(layerOf(c, x)).toMatchObject({ t_start_us: 2 * S, t_end_us: 3 * S })
+    expect(layerOf(c, y)).toMatchObject({ t_start_us: 4 * S, t_end_us: 5 * S })
+    expect(() => validate(p)).not.toThrow()
+  })
+
   it("snaps both endpoints of every member on the DESTINATION's lattice, not the source's", () => {
     const { p, gen, comp, x } = crossing()
     // One project cannot really hold two rates — validate refuses that
