@@ -1087,14 +1087,17 @@ project-wide unique too). Only **creation** commands carry a scope:
 and the composition envelope (`set_composition`, `fit_composition_to_layers`)
 take `composition_id?`, defaulting to the root; a layer add that names a
 `track_id` needs none, because a track lives in exactly one composition.
-Nothing crosses compositions: a destination in another one (a move's target
-track, a restack's anchor, a paste's target lane) is refused with
-`CrossCompositionMove { layer, from, to }`, and a set command whose members
-straddle two compositions (`delete_layers`, `set_layers_enabled`,
-`paste_layers`, `move_layers_to_new_track`, `links_create`,
-`links_add_members`) with `CrossCompositionSet { layer, composition,
-expected }`. A layer changes composition only through pre-compose, adding it to an
-existing Group, or ungroup.
+No command that derives its scope crosses compositions: a destination in
+another one (a move's target track, a restack's anchor, a paste's target
+lane) is refused with `CrossCompositionMove { layer, from, to }`, and a set
+command whose members straddle two compositions (`delete_layers`,
+`set_layers_enabled`, `paste_layers`, `move_layers_to_new_track`,
+`links_create`, `links_add_members`) with `CrossCompositionSet { layer,
+composition, expected }`. A layer changes composition only through
+pre-compose, adding it to an existing Group, ungroup, or
+`move_layers_to_composition` — the four ops that name a destination
+composition rather than inherit one. Crossing has its own op; a *move* still
+never crosses.
 
 The MCP surface mirrors this 1:1 (same names, schemars-derived schemas);
 the UI uses the same actor via backend commands.
