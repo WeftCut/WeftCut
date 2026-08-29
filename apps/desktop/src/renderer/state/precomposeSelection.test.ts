@@ -5,7 +5,12 @@ import {
   rememberPrecompose,
   restorePrecomposeSelection,
 } from "./precomposeSelection";
-import { clearLayerSelection, useSelectionStore } from "./selectionStore";
+import {
+  clearLayerSelection,
+  currentSelection,
+  layerIdsOf,
+  primaryLayerIdOf,
+} from "./selectionStore";
 import type { LayerSummary, TrackSummary } from "../ipc";
 import {
   compositionFixture,
@@ -69,7 +74,7 @@ const ungrouped = () =>
   });
 
 const selected = (): string[] =>
-  [...useSelectionStore.getState().selectedLayerIds].sort();
+  [...layerIdsOf(currentSelection())].sort();
 
 afterEach(() => {
   clearPrecomposeMemory();
@@ -91,7 +96,7 @@ describe("restorePrecomposeSelection", () => {
     expect(selected()).toEqual([]);
     restorePrecomposeSelection(ungrouped());
     expect(selected()).toEqual(["a", "b"]);
-    expect(useSelectionStore.getState().primaryLayerId).toBe("a");
+    expect(primaryLayerIdOf(currentSelection())).toBe("a");
   });
 
   // Fires on the present → absent EDGE only. A later summary must not re-apply
@@ -132,7 +137,7 @@ describe("restorePrecomposeSelection", () => {
     rememberPrecompose("c", ["a", "b"], "some-other-layer");
     restorePrecomposeSelection(grouped());
     restorePrecomposeSelection(ungrouped());
-    expect(useSelectionStore.getState().primaryLayerId).toBe("a");
+    expect(primaryLayerIdOf(currentSelection())).toBe("a");
   });
 
   it("forgets the pre-compose when the project closes", () => {

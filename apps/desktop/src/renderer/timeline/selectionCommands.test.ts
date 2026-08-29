@@ -8,9 +8,13 @@ import {
 import { useProjectStore } from "../state/projectStore";
 import {
   clearLayerSelection,
+  currentSelection,
+  layerIdsOf,
+  primaryLayerIdOf,
+  setCompositionSelection,
   setLayerSelection,
   setTransitionSelection,
-  useSelectionStore,
+  transitionIdOf,
 } from "../state/selectionStore";
 import {
   canDeselectAll,
@@ -129,11 +133,11 @@ describe("selectAllLayers", () => {
       track({ id: "t2", locked: true, layers: [layer({ id: "c" })] }),
     ]);
 
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual([
       "a",
       "b",
     ]);
-    expect(useSelectionStore.getState().primaryLayerId).toBe("a");
+    expect(primaryLayerIdOf(currentSelection())).toBe("a");
   });
 
   // The Attribute panel follows the primary, so Select All must not move it off
@@ -145,8 +149,8 @@ describe("selectAllLayers", () => {
       track({ layers: [layer({ id: "a" }), layer({ id: "b" })] }),
     ]);
 
-    expect(useSelectionStore.getState().primaryLayerId).toBe("b");
-    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(2);
+    expect(primaryLayerIdOf(currentSelection())).toBe("b");
+    expect(layerIdsOf(currentSelection()).size).toBe(2);
   });
 
   it("promotes the first selectable layer when the old primary is gone", () => {
@@ -156,7 +160,7 @@ describe("selectAllLayers", () => {
       track({ layers: [layer({ id: "a" }), layer({ id: "b" })] }),
     ]);
 
-    expect(useSelectionStore.getState().primaryLayerId).toBe("a");
+    expect(primaryLayerIdOf(currentSelection())).toBe("a");
   });
 
   // Nothing selectable ⇒ nothing written, so an existing selection is not
@@ -166,7 +170,7 @@ describe("selectAllLayers", () => {
 
     selectAllLayers([track({ locked: true, layers: [layer({ id: "b" })] })]);
 
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual([
       "a",
     ]);
   });
@@ -176,7 +180,7 @@ describe("selectAllLayers", () => {
 
     selectAllLayers([track({ layers: [layer({ id: "a" })] })]);
 
-    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+    expect(transitionIdOf(currentSelection())).toBeNull();
   });
 });
 
@@ -189,13 +193,27 @@ describe("deselectAll", () => {
 
     deselectAll();
 
-    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(layerIdsOf(currentSelection()).size).toBe(0);
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
     expect(canDeselectAll()).toBe(false);
 
     setTransitionSelection("tr-1");
     deselectAll();
-    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+    expect(transitionIdOf(currentSelection())).toBeNull();
+  });
+
+  // The gate asks by absence, so it covers the kinds that never touch a
+  // timeline too — a pool selection is cleared by the same call, and a row
+  // greyed out beside a highlighted card is the visible form of the mismatch.
+  it("offers the row for a pool selection, and clears it", () => {
+    setCompositionSelection("c-1");
+
+    expect(canDeselectAll()).toBe(true);
+
+    deselectAll();
+
+    expect(currentSelection().kind).toBe("none");
+    expect(canDeselectAll()).toBe(false);
   });
 });
 

@@ -27,7 +27,12 @@ vi.mock("../ipc", async (importActual) => {
 import { compositionsDelete, groupsRename, type ProjectSummary, type TrackSummary } from "../ipc";
 import { GroupPoolSection } from "./GroupPoolSection";
 import { useProjectStore } from "../state/projectStore";
-import { clearLayerSelection, useSelectionStore } from "../state/selectionStore";
+import {
+  clearLayerSelection,
+  currentSelection,
+  setCompositionSelection,
+  setLayerSelection,
+} from "../state/selectionStore";
 import {
   compositionFixture,
   groupLayerFixture,
@@ -117,20 +122,15 @@ describe("group pool section", () => {
 
   it("selects the composition on click, evicting any layer selection", async () => {
     seed();
-    useSelectionStore.setState({
-      primaryLayerId: "ref-1",
-      selectedLayerIds: new Set(["ref-1"]),
-    });
+    setLayerSelection("ref-1", ["ref-1"]);
     renderSection();
     await userEvent.click(row("comp-b"));
-    expect(useSelectionStore.getState().selectedCompositionId).toBe("comp-b");
-    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(currentSelection()).toEqual({ kind: "group", id: "comp-b" });
   });
 
   it("drops the selection when the composition leaves the project", () => {
     seed();
-    useSelectionStore.setState({ selectedCompositionId: "comp-b" });
+    setCompositionSelection("comp-b");
     useProjectStore.getState().apply(
       summaryFixture({
         root: {
@@ -143,7 +143,7 @@ describe("group pool section", () => {
         groups: [compositionFixture({ id: "comp-a", duration_us: 2_000_000 })],
       }),
     );
-    expect(useSelectionStore.getState().selectedCompositionId).toBeNull();
+    expect(currentSelection()).toEqual({ kind: "none" });
   });
 
   it("offers Delete only on the orphan, and commits compositions_delete", async () => {

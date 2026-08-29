@@ -40,7 +40,11 @@ import { HistoryPanel } from "./HistoryPanel";
 import { registerRevealTrack } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "../state/playheadStore";
-import { clearLayerSelection, useSelectionStore } from "../state/selectionStore";
+import {
+  clearLayerSelection,
+  currentSelection,
+  primaryLayerIdOf,
+} from "../state/selectionStore";
 import { useHistoryStore } from "../state/historyStore";
 import { summaryFixture } from "../testing/summaryFixture";
 
@@ -532,7 +536,7 @@ describe("HistoryPanel jump + linkage", () => {
     // The cursor moved; the linkage is parked waiting for the refetch.
     expect(mocks.projectJumpTo).toHaveBeenCalledWith(1);
     expect(reveal).not.toHaveBeenCalled();
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
 
     // `project:changed` → `projectSummary()` lands; NOW `l9` is resolvable.
     await act(async () => {
@@ -566,7 +570,7 @@ describe("HistoryPanel jump + linkage", () => {
       await Promise.resolve();
     });
     expect(reveal).toHaveBeenCalledWith("t9", null);
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
     unregister();
   });
 

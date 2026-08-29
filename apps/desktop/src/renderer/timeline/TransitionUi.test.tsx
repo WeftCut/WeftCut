@@ -11,8 +11,11 @@ import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { Timeline } from "./Timeline";
 import {
   clearLayerSelection,
+  currentSelection,
+  layerIdsOf,
+  primaryLayerIdOf,
   setLayerSelection,
-  useSelectionStore,
+  transitionIdOf,
 } from "../state/selectionStore";
 import { setActiveRegion } from "../focus/focusRegionStore";
 import { registerTransport, releaseTransport } from "../state/playbackStore";
@@ -188,13 +191,13 @@ describe("transition chip", () => {
 
     fireEvent.pointerDown(chip, { button: 0 });
     fireEvent.click(chip);
-    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
-    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+    expect(transitionIdOf(currentSelection())).toBe("tr-1");
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
+    expect(layerIdsOf(currentSelection()).size).toBe(0);
 
     // Selecting a layer evicts the chip selection (mutual exclusion).
     setLayerSelection("layer-b", ["layer-b"]);
-    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+    expect(transitionIdOf(currentSelection())).toBeNull();
   });
 
   it("Delete key removes the selected chip via remove_transition", async () => {
@@ -212,14 +215,14 @@ describe("transition chip", () => {
       '[data-testid="transition-chip"]',
     ) as HTMLElement;
     fireEvent.pointerDown(chip, { button: 0 });
-    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
+    expect(transitionIdOf(currentSelection())).toBe("tr-1");
 
     fireEvent.keyDown(window, { key: "Delete" });
     await waitFor(() => {
       expect(ipcMocks.removeTransition).toHaveBeenCalledWith("tr-1");
       expect(onMutated).toHaveBeenCalled();
     });
-    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+    expect(transitionIdOf(currentSelection())).toBeNull();
   });
 
   it("Delete does nothing when no chip is selected", () => {
@@ -269,8 +272,8 @@ describe("chip two-edge drag (spec D6)", () => {
     });
     expect(ipcMocks.trimLayer).not.toHaveBeenCalled();
     expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
-    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(transitionIdOf(currentSelection())).toBe("tr-1");
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
   });
 
   it("right edge dragged right commits ONCE with the explicit borrow (R − B.start, R − S)", async () => {
@@ -368,8 +371,8 @@ describe("chip two-edge drag (spec D6)", () => {
     expect(ipcMocks.updateTransition).not.toHaveBeenCalled();
     expect(ipcMocks.trimLayer).not.toHaveBeenCalled();
     expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
-    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(transitionIdOf(currentSelection())).toBe("tr-1");
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
   });
 
   it("right edge drives the monitor to the LAST KEPT frame from the first effective move and restores on release", async () => {
@@ -559,7 +562,7 @@ describe("chip context menu", () => {
     openChipMenu(container);
 
     await screen.findByTestId("transition-chip-menu");
-    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
+    expect(transitionIdOf(currentSelection())).toBe("tr-1");
     // Swallowed before the layer surface underneath saw it.
     expect(screen.queryByText("Rename")).toBeNull();
     expect(screen.getByText("Kind")).toBeTruthy();
@@ -598,7 +601,7 @@ describe("chip context menu", () => {
       expect(ipcMocks.removeTransition).toHaveBeenCalledWith("tr-1");
       expect(onMutated).toHaveBeenCalled();
     });
-    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+    expect(transitionIdOf(currentSelection())).toBeNull();
   });
 
   it("the menu closes when the timeline scrolls under it", async () => {

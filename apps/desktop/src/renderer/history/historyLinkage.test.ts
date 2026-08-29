@@ -6,7 +6,8 @@ import { useProjectStore } from "../state/projectStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "../state/playheadStore";
 import {
   clearLayerSelection,
-  useSelectionStore,
+  currentSelection,
+  primaryLayerIdOf,
 } from "../state/selectionStore";
 import { afterNextProjectSummary, revealAffected } from "./historyLinkage";
 import { summaryFixture } from "../testing/summaryFixture";
@@ -118,13 +119,13 @@ describe("revealAffected", () => {
     const un = registerRevealTrack(reveal);
     expect(revealAffected([{ kind: "Track", id: "t2" }])).toBe(true);
     expect(reveal).toHaveBeenCalledWith("t2", null);
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
     un();
   });
 
   it("falls back to a plain selection when no reveal handle is mounted", () => {
     expect(revealAffected([{ kind: "Layer", id: "l1" }])).toBe(true);
-    expect(useSelectionStore.getState().primaryLayerId).toBe("l1");
+    expect(primaryLayerIdOf(currentSelection())).toBe("l1");
   });
 
   it("resolves nothing for stale refs, an empty array, or markers only", () => {

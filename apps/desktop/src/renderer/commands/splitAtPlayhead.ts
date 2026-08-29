@@ -19,7 +19,7 @@ import { splitLayerLinked, type CompositionSummary } from "../ipc";
 import { displayMode } from "../settings/appSettingsStore";
 import { focusedPlayheadUs } from "../state/playheadProjection";
 import { currentOpenComposition } from "../state/projectStore";
-import { useSelectionStore } from "../state/selectionStore";
+import { currentSelection, layerIdsOf } from "../state/selectionStore";
 import { linkFanoutActive } from "../timeline/linkEligibility";
 
 /// One layer a cut would land in, paired with the link the cut fans out to
@@ -142,7 +142,7 @@ export async function splitAtPlayhead(): Promise<void> {
   const targets = resolveSplitTargets(
     composition,
     tUs,
-    useSelectionStore.getState().selectedLayerIds,
+    layerIdsOf(currentSelection()),
     displayMode() === "AbRoll",
     fanout,
   );

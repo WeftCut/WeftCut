@@ -45,7 +45,7 @@ import {
   useCompositionDurationUs,
   useGroupOrdinals,
 } from "../state/projectStore";
-import { useSelectionStore } from "../state/selectionStore";
+import { currentSelection, layerIdsOf } from "../state/selectionStore";
 import { useFocusedParamFor } from "../keyframe/focusStore";
 import { readParamTrack } from "../keyframe/descriptors";
 import { interpGlyphClass } from "../keyframe/curve";
@@ -587,8 +587,7 @@ export function LayerBlock({
       zone === "left" ? "trim-start" : zone === "right" ? "trim-end" : "move";
     // Snapshotted BEFORE the click's selection applies — see
     // `DragSeed.selectedAtPointerDown`.
-    const selectedAtPointerDown =
-      useSelectionStore.getState().selectedLayerIds;
+    const selectedAtPointerDown = layerIdsOf(currentSelection());
     // `docs/features.md#links` — match click-selection semantics on
     // pointerdown so drag and click share the same link-aware path.
     const stillSelected = onSelectFromClick(layer.id, {

@@ -35,7 +35,12 @@ import { jumpToLayer, registerRevealCollapse } from "./navigation";
 import { playheadTimeUs, setPlayheadTimeUs } from "./playheadStore";
 import { compositionOrRoot, currentOpenComposition, useProjectStore } from "./projectStore";
 import { clearRange, setRangeIn, useRangeStore } from "./rangeStore";
-import { setLayerSelection, useSelectionStore } from "./selectionStore";
+import {
+  currentSelection,
+  layerIdsOf,
+  primaryLayerIdOf,
+  setLayerSelection,
+} from "./selectionStore";
 import { registerTimelinePanels } from "../workspace/timelinePanels";
 
 const stat = <T,>(value: T) => ({ mode: "Static" as const, value });
@@ -153,8 +158,8 @@ describe("compositionAnchorStore", () => {
 
     openComposition(G1, "ref-g1");
 
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
-    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
+    expect(layerIdsOf(currentSelection()).size).toBe(0);
     expect(useRangeStore.getState()).toEqual({ inUs: null, outUs: null });
   });
 
@@ -191,7 +196,7 @@ describe("compositionAnchorStore", () => {
     expect(openComposition("comp-nowhere", null)).toBe(false);
     expect(anchors().focusedId).toBe(ROOT_ID);
     expect(panels.open).not.toHaveBeenCalled();
-    expect(useSelectionStore.getState().primaryLayerId).toBe("root-color");
+    expect(primaryLayerIdOf(currentSelection())).toBe("root-color");
   });
 
   it("focus follows a Panel and ignores one bound to a dead composition", () => {
@@ -221,7 +226,7 @@ describe("compositionAnchorStore", () => {
       expect(panels.close).toHaveBeenCalledWith(G2);
       expect(anchors().focusedId).toBe(G1);
       expect(anchors().anchors.has(G2)).toBe(false);
-      expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+      expect(primaryLayerIdOf(currentSelection())).toBeNull();
     });
 
     it("falls back to the root when no step survives", () => {
@@ -242,7 +247,7 @@ describe("compositionAnchorStore", () => {
       setLayerSelection("inner-g1", ["inner-g1"]);
       useProjectStore.getState().apply(nested());
       expect(anchors().focusedId).toBe(G1);
-      expect(useSelectionStore.getState().primaryLayerId).toBe("inner-g1");
+      expect(primaryLayerIdOf(currentSelection())).toBe("inner-g1");
     });
   });
 
@@ -417,7 +422,7 @@ describe("a hit that lives inside a Group", () => {
     expect(jumpToLayer("inner-g1")).toBe(true);
     expect(panels.open).toHaveBeenCalledWith(G1);
     expect(anchors().focusedId).toBe(G1);
-    expect(useSelectionStore.getState().primaryLayerId).toBe("inner-g1");
+    expect(primaryLayerIdOf(currentSelection())).toBe("inner-g1");
   });
 });
 

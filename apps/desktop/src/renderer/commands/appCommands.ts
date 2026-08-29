@@ -38,7 +38,11 @@ import {
 import { canMoveSelectionToRoot } from "../timeline/moveToCompositionEligibility";
 import { canOpenSelectedGroup } from "./groupCommands";
 import { currentOpenComposition } from "../state/projectStore";
-import { useSelectionStore } from "../state/selectionStore";
+import {
+  currentSelection,
+  layerIdsOf,
+  primaryLayerIdOf,
+} from "../state/selectionStore";
 import { activeTool } from "../state/toolStore";
 import { layerOverlapClass } from "../timeline/geometry";
 import {
@@ -210,7 +214,7 @@ interface CenterTarget {
 /// Read live from both stores for the reason `canMoveSelectionToNewTrack`
 /// documents: this runs inside `listCommands()`, and App re-renders on neither.
 function centerTarget(): CenterTarget | null {
-  const layerId = useSelectionStore.getState().primaryLayerId;
+  const layerId = primaryLayerIdOf(currentSelection());
   const comp = currentOpenComposition();
   if (!layerId || !comp) return null;
   for (const track of comp.tracks) {
@@ -295,7 +299,7 @@ async function centerPrimaryLayer(axis: "x" | "y"): Promise<void> {
 /// refused afterwards.
 ///
 /// Both stores are read LIVE, for the reason `clearRange` reads `rangeStore`:
-/// App does not subscribe to `selectedLayerIds` (a multi-select change would
+/// App does not subscribe to the selection (a multi-select change would
 /// re-render the whole tree), so a flag captured at App render time would freeze
 /// the moment the user clicked a clip.
 ///
@@ -303,7 +307,7 @@ async function centerPrimaryLayer(axis: "x" | "y"): Promise<void> {
 /// selected layer onto `SPAWN_TRACK_ID` asks exactly "could one empty lane take
 /// them all", and `"collision"` is its answer for no.
 function canMoveSelectionToNewTrack(): boolean {
-  const selected = useSelectionStore.getState().selectedLayerIds;
+  const selected = layerIdsOf(currentSelection());
   if (selected.size === 0) return false;
   const tracks = currentOpenComposition()?.tracks ?? [];
   const placements: TimelinePlacement[] = [];

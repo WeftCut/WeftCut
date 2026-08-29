@@ -18,8 +18,9 @@ import {
   useProjectStore,
 } from "../state/projectStore";
 import {
+  currentSelection,
+  layerIdsOf,
   setTransitionSelection,
-  useSelectionStore,
 } from "../state/selectionStore";
 import {
   buildTransitionKindArgs,
@@ -42,7 +43,7 @@ export function transitionTargetCut(): TransitionCut | null {
     comp.tracks,
     focusedPlayheadUs(),
     defaultTransitionDurationUs(comp.fps_num, comp.fps_den),
-    useSelectionStore.getState().selectedLayerIds,
+    layerIdsOf(currentSelection()),
   );
 }
 

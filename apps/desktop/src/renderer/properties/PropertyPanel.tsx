@@ -112,10 +112,8 @@ export function AttributePanel({
     () => (layer ? tracks.find((tr) => tr.layers.some((l) => l.id === layer.id)) : undefined),
     [tracks, layer],
   );
-  // Selected transition chip — mutually exclusive with layer selection
-  // (selectionStore invariant), so this branch and the layer branch never
-  // compete. Resolved from the project store; the summary is the same
-  // snapshot the timeline chips render from.
+  // Selected transition chip, resolved from the project store: the summary is
+  // the same snapshot the timeline chips render from.
   const selectedTransitionId = useSelectedTransitionId();
   const compForTransition = useOpenComposition();
   const transition = useMemo(
@@ -128,7 +126,6 @@ export function AttributePanel({
     [selectedTransitionId, compForTransition],
   );
 
-  // Mutually exclusive with both branches above by the same store invariant.
   const poolCompositionId = useSelectedCompositionId();
   const poolComposition = useProjectStore((s) =>
     poolCompositionId === null

@@ -1,31 +1,67 @@
 import { create } from "zustand";
 
-/// Renderer-global Layer selection. `primaryLayerId` drives contextual tools;
-/// `selectedLayerIds` is the complete selection used by Timeline link
-/// operations and every other selection-aware surface.
-/// `selectedTransitionId` is the selected transition chip — mutually
-/// exclusive with layer selection (selecting either deselects the other),
-/// so Delete and the Attribute panel always have exactly one target.
-export interface LayerSelectionState {
-  primaryLayerId: string | null;
-  selectedLayerIds: ReadonlySet<string>;
-  selectedTransitionId: string | null;
-  /// The composition selected in the media pool's Groups section — the one
-  /// selectable entity with no presence on a timeline, which is what makes a
-  /// composition inspectable while nothing references it. Mutually exclusive
-  /// with the two above for the same reason they are with each other: the
-  /// inspector shows one thing.
-  selectedCompositionId: string | null;
+/// Renderer-global selection: what the Attribute panel inspects, what Delete
+/// acts on, what the on-canvas gizmo boxes.
+///
+/// Does not own the keyframe diamond selection (`keyframe/selectionStore.ts`)
+/// nor the marquee box in flight (`timeline/marqueeStore.ts`); both are
+/// separate stores with their own lifecycles.
+
+/// The one thing the renderer has selected. Kinds are branches, not parallel
+/// slots — "a Layer set and a transition chip are never both live" is what the
+/// union says, so no surface has to enforce it and no commit has to evict.
+///
+/// `layers` carries the whole set plus the PRIMARY that contextual tools follow.
+/// Only `layerSelection` builds it, and it guarantees both `ids.has(primary)`
+/// and a non-empty `ids` — an empty Layer selection is spelled `none`.
+///
+/// `media` and `group` are siblings rather than one `pool` branch: the inspector
+/// dispatches to a different component for each, so a shared tag would only be
+/// unwrapped again at every read.
+export type Selection =
+  | { kind: "none" }
+  | { kind: "layers"; primary: string; ids: ReadonlySet<string> }
+  | { kind: "transition"; id: string }
+  | { kind: "media"; id: string }
+  | { kind: "group"; id: string };
+
+export interface SelectionState {
+  selection: Selection;
 }
 
+const NONE: Selection = { kind: "none" };
+
+/// Shared so the derived reads below hand back ONE reference for every
+/// selection that holds no Layers. A fresh `new Set()` per call would spin
+/// `useSyncExternalStore` forever (`feedback_zustand_composite_selector`).
 const EMPTY_SELECTED_LAYER_IDS: ReadonlySet<string> = new Set();
 
-export const useSelectionStore = create<LayerSelectionState>(() => ({
-  primaryLayerId: null,
-  selectedLayerIds: EMPTY_SELECTED_LAYER_IDS,
-  selectedTransitionId: null,
-  selectedCompositionId: null,
+export const useSelectionStore = create<SelectionState>(() => ({
+  selection: NONE,
 }));
+
+/// Live read for the command gates and gesture handlers that run outside React
+/// — `CommandDef.enabled`, evaluated at palette render time; a pointerdown
+/// snapshot; an `App` key handler. A value closed over instead would answer for
+/// whichever selection was up when the closure was made.
+export function currentSelection(): Selection {
+  return useSelectionStore.getState().selection;
+}
+
+/// The Layers a selection holds — empty for every kind but `layers`.
+export function layerIdsOf(selection: Selection): ReadonlySet<string> {
+  return selection.kind === "layers" ? selection.ids : EMPTY_SELECTED_LAYER_IDS;
+}
+
+/// The Layer contextual tools act on — the Attribute panel's subject and the
+/// gizmo's box. Null unless a Layer selection is up.
+export function primaryLayerIdOf(selection: Selection): string | null {
+  return selection.kind === "layers" ? selection.primary : null;
+}
+
+export function transitionIdOf(selection: Selection): string | null {
+  return selection.kind === "transition" ? selection.id : null;
+}
 
 function equalIds(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   if (a.size !== b.size) return false;
@@ -35,55 +71,52 @@ function equalIds(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   return true;
 }
 
-function commitSelection(
-  requestedPrimaryId: string | null,
-  requestedIds: Iterable<string>,
-  requestedTransitionId: string | null,
-  requestedCompositionId: string | null = null,
-): void {
-  const nextIds = new Set(requestedIds);
-  if (requestedPrimaryId !== null) nextIds.add(requestedPrimaryId);
-
-  const nextPrimaryId =
-    nextIds.size === 0
-      ? null
-      : requestedPrimaryId !== null
-        ? requestedPrimaryId
-        : (nextIds.values().next().value ?? null);
-  // Mutual exclusion: a non-empty layer selection always evicts the
-  // transition chip and the pool's composition, whatever the caller passed.
-  const nextTransitionId = nextIds.size > 0 ? null : requestedTransitionId;
-  const nextCompositionId =
-    nextIds.size > 0 || nextTransitionId !== null ? null : requestedCompositionId;
-  const current = useSelectionStore.getState();
-  if (
-    current.primaryLayerId === nextPrimaryId &&
-    current.selectedTransitionId === nextTransitionId &&
-    current.selectedCompositionId === nextCompositionId &&
-    equalIds(current.selectedLayerIds, nextIds)
-  ) {
-    return;
+function sameSelection(a: Selection, b: Selection): boolean {
+  if (a.kind === "layers" || b.kind === "layers") {
+    return (
+      a.kind === "layers" &&
+      b.kind === "layers" &&
+      a.primary === b.primary &&
+      equalIds(a.ids, b.ids)
+    );
   }
-
-  useSelectionStore.setState({
-    primaryLayerId: nextPrimaryId,
-    selectedLayerIds:
-      nextIds.size === 0 ? EMPTY_SELECTED_LAYER_IDS : nextIds,
-    selectedTransitionId: nextTransitionId,
-    selectedCompositionId: nextCompositionId,
-  });
+  if (a.kind === "none" || b.kind === "none") return a.kind === b.kind;
+  return a.kind === b.kind && a.id === b.id;
 }
 
-/// Replace the complete selection atomically. A non-null requested primary is
-/// included automatically; a non-empty set without a requested primary uses
-/// its first Layer as primary. The resulting state therefore always satisfies
-/// `primary === null ⇔ selected.size === 0` and `selected.has(primary)`.
-/// Any transition chip selection is dropped (mutual exclusion).
+/// Publish `next`, unless it says the same thing the store already holds.
+///
+/// The equality check is load-bearing, not a micro-optimisation: the three
+/// `retain*` passes run on EVERY project summary, and a new state object per
+/// tick would re-render every selection-aware surface in the timeline.
+function commit(next: Selection): void {
+  if (sameSelection(currentSelection(), next)) return;
+  useSelectionStore.setState({ selection: next });
+}
+
+/// Build the `layers` branch from a caller's request, or `none` when nothing
+/// survives: a non-null requested primary joins the set, and a set without one
+/// takes its first Layer. The single construction site is what makes "a primary
+/// outside its set" and "an empty Layer selection" unrepresentable rather than
+/// merely maintained.
+function layerSelection(
+  requestedPrimaryId: string | null,
+  requestedIds: Iterable<string>,
+): Selection {
+  const ids = new Set(requestedIds);
+  if (requestedPrimaryId !== null) ids.add(requestedPrimaryId);
+  const primary = requestedPrimaryId ?? ids.values().next().value ?? null;
+  return primary === null ? NONE : { kind: "layers", primary, ids };
+}
+
+/// Replace the complete selection atomically. The request is normalized by
+/// `layerSelection`, so an empty one deselects rather than leaving an empty
+/// Layer selection behind.
 export function setLayerSelection(
   primaryLayerId: string | null,
   selectedLayerIds: Iterable<string>,
 ): void {
-  commitSelection(primaryLayerId, selectedLayerIds, null);
+  commit(layerSelection(primaryLayerId, selectedLayerIds));
 }
 
 /// Additive click: add `layerIds` and make `clickedLayerId` primary — or, when
@@ -103,69 +136,69 @@ export function toggleLayerSelection(
   clickedLayerId: string,
   layerIds: Iterable<string>,
 ): boolean {
-  const current = useSelectionStore.getState();
-  const nextIds = new Set(current.selectedLayerIds);
+  const current = currentSelection();
+  const nextIds = new Set(layerIdsOf(current));
   if (nextIds.has(clickedLayerId)) {
     for (const id of layerIds) nextIds.delete(id);
-    // Belt and braces, mirroring `commitSelection`'s forced ADD of the primary:
+    // Belt and braces, mirroring `layerSelection`'s forced ADD of the primary:
     // a caller whose `layerIds` omitted the clicked Layer would otherwise leave
     // it selected while this returns `false`.
     nextIds.delete(clickedLayerId);
-    // A removed primary cannot stay primary. `null` lets `commitSelection`
+    // A removed primary cannot stay primary. `null` lets `layerSelection`
     // promote the first survivor — the same rule `retainLayerSelection` applies
     // when an edit deletes the primary out from under the selection.
-    const survivingPrimary =
-      current.primaryLayerId !== null && nextIds.has(current.primaryLayerId)
-        ? current.primaryLayerId
-        : null;
-    commitSelection(survivingPrimary, nextIds, null);
+    const primary = primaryLayerIdOf(current);
+    commit(
+      layerSelection(
+        primary !== null && nextIds.has(primary) ? primary : null,
+        nextIds,
+      ),
+    );
     return false;
   }
   for (const id of layerIds) nextIds.add(id);
-  commitSelection(clickedLayerId, nextIds, null);
+  commit(layerSelection(clickedLayerId, nextIds));
   return true;
 }
 
-/// Deselect everything — layers, the transition chip AND the pool's composition
-/// (background-click / project-switch semantics).
+/// Deselect whatever is selected, of any kind (background-click /
+/// project-switch semantics).
 export function clearLayerSelection(): void {
-  commitSelection(null, EMPTY_SELECTED_LAYER_IDS, null, null);
+  commit(NONE);
 }
 
-/// Select a composition from the media pool's Groups section. Deselects layers
-/// and the transition chip in the same store update — one selected entity kind
-/// at a time.
+/// Select a composition from the media pool's Groups section — the one
+/// selectable entity with no presence on a timeline, which is what makes a
+/// composition inspectable while nothing references it.
 export function setCompositionSelection(compositionId: string): void {
-  commitSelection(null, EMPTY_SELECTED_LAYER_IDS, null, compositionId);
+  commit({ kind: "group", id: compositionId });
 }
 
-/// Select a transition chip. Deselects all layers in the same store update
-/// (the app's selection idiom: one selected entity kind at a time).
+/// Select a transition chip.
 export function setTransitionSelection(transitionId: string): void {
-  commitSelection(null, EMPTY_SELECTED_LAYER_IDS, transitionId);
+  commit({ kind: "transition", id: transitionId });
 }
 
+/// Drop the transition chip and nothing else — a selection of another kind was
+/// never the chip's to clear.
 export function clearTransitionSelection(): void {
-  const current = useSelectionStore.getState();
-  commitSelection(current.primaryLayerId, current.selectedLayerIds, null, current.selectedCompositionId);
+  if (currentSelection().kind === "transition") commit(NONE);
 }
 
-/// Drop selections that no longer resolve in the current Project snapshot.
-/// If the former primary disappeared while another selected Layer remains,
-/// the first surviving Layer becomes primary. The transition selection is
-/// preserved — `retainTransitionSelection` owns its lifecycle.
+/// Drop selected Layers that no longer resolve in the current Project snapshot.
+/// If the former primary disappeared while another selected Layer remains, the
+/// first survivor becomes primary. Other kinds are left to their own `retain*`
+/// below — a `layers` selection cannot be carrying one.
 export function retainLayerSelection(validLayerIds: Iterable<string>): void {
+  const current = currentSelection();
+  if (current.kind !== "layers") return;
   const valid = new Set(validLayerIds);
-  const current = useSelectionStore.getState();
   const retained = new Set<string>();
-  for (const id of current.selectedLayerIds) {
+  for (const id of current.ids) {
     if (valid.has(id)) retained.add(id);
   }
-  const retainedPrimary =
-    current.primaryLayerId !== null && retained.has(current.primaryLayerId)
-      ? current.primaryLayerId
-      : null;
-  commitSelection(retainedPrimary, retained, current.selectedTransitionId, current.selectedCompositionId);
+  const primary = retained.has(current.primary) ? current.primary : null;
+  commit(layerSelection(primary, retained));
 }
 
 /// Drop a pool composition selection whose composition left the project — the
@@ -174,12 +207,12 @@ export function retainLayerSelection(validLayerIds: Iterable<string>): void {
 export function retainCompositionSelection(
   validCompositionIds: Iterable<string>,
 ): void {
-  const current = useSelectionStore.getState();
-  if (current.selectedCompositionId === null) return;
+  const current = currentSelection();
+  if (current.kind !== "group") return;
   for (const id of validCompositionIds) {
-    if (id === current.selectedCompositionId) return;
+    if (id === current.id) return;
   }
-  commitSelection(null, EMPTY_SELECTED_LAYER_IDS, null, null);
+  commit(NONE);
 }
 
 /// Drop a transition selection whose id vanished from the snapshot (removed,
@@ -187,22 +220,30 @@ export function retainCompositionSelection(
 export function retainTransitionSelection(
   validTransitionIds: Iterable<string>,
 ): void {
-  const current = useSelectionStore.getState();
-  if (current.selectedTransitionId === null) return;
+  const current = currentSelection();
+  if (current.kind !== "transition") return;
   for (const id of validTransitionIds) {
-    if (id === current.selectedTransitionId) return;
+    if (id === current.id) return;
   }
-  clearTransitionSelection();
+  commit(NONE);
 }
 
+// ===== Atomic selector helpers ============================================
+// One derived value per hook, each backed by a reference that only changes when
+// the selection does — the rule `projectStore.ts` states for the same reason.
+
 export const usePrimaryLayerId = (): string | null =>
-  useSelectionStore((state) => state.primaryLayerId);
+  useSelectionStore((state) => primaryLayerIdOf(state.selection));
 
 export const useSelectedLayerIds = (): ReadonlySet<string> =>
-  useSelectionStore((state) => state.selectedLayerIds);
+  useSelectionStore((state) => layerIdsOf(state.selection));
 
 export const useSelectedTransitionId = (): string | null =>
-  useSelectionStore((state) => state.selectedTransitionId);
+  useSelectionStore((state) => transitionIdOf(state.selection));
 
+/// The Group picked in the media pool. "Composition" is the project's word for
+/// the entity the pool calls a Group; they are the same thing.
 export const useSelectedCompositionId = (): string | null =>
-  useSelectionStore((state) => state.selectedCompositionId);
+  useSelectionStore((state) =>
+    state.selection.kind === "group" ? state.selection.id : null,
+  );

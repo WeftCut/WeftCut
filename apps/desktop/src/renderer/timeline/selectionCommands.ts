@@ -15,8 +15,9 @@ import {
 import { currentOpenComposition } from "../state/projectStore";
 import {
   clearLayerSelection,
+  currentSelection,
+  primaryLayerIdOf,
   setLayerSelection,
-  useSelectionStore,
 } from "../state/selectionStore";
 
 /// Every Layer in `tracks` a click could select, in the order the tracks arrive
@@ -49,7 +50,7 @@ export function selectableLayerIds(tracks: readonly TrackSummary[]): string[] {
 export function selectAllLayers(tracks: readonly TrackSummary[]): void {
   const ids = selectableLayerIds(tracks);
   if (ids.length === 0) return;
-  const primary = useSelectionStore.getState().primaryLayerId;
+  const primary = primaryLayerIdOf(currentSelection());
   setLayerSelection(
     primary !== null && ids.includes(primary) ? primary : null,
     ids,
@@ -81,13 +82,13 @@ export function canSelectAll(): boolean {
   return selectableLayerIds(tracks).length > 0;
 }
 
-/// Live-read gate for Deselect All: is anything selected? Asks all three
-/// selections `deselectAll` clears, so the row is live exactly when it has work.
+/// Live-read gate for Deselect All: is anything selected?
+///
+/// Asks the selection by ABSENCE rather than by listing the kinds that count,
+/// because `deselectAll` clears the selection whatever kind it holds — a gate
+/// enumerating kinds greys the row out for every kind it forgets, and would
+/// have to be revisited each time a kind is added. Keyframes are a separate
+/// store, so they are still asked separately.
 export function canDeselectAll(): boolean {
-  const selection = useSelectionStore.getState();
-  return (
-    selection.selectedLayerIds.size > 0 ||
-    selection.selectedTransitionId !== null ||
-    hasKeyframeSelection()
-  );
+  return currentSelection().kind !== "none" || hasKeyframeSelection();
 }

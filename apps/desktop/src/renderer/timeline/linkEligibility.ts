@@ -25,7 +25,11 @@ import {
   currentOpenComposition,
   useProjectStore,
 } from "../state/projectStore";
-import { useSelectionStore } from "../state/selectionStore";
+import {
+  currentSelection,
+  layerIdsOf,
+  useSelectedLayerIds,
+} from "../state/selectionStore";
 
 /**
  * Whether an edit fans out across the link right now.
@@ -95,7 +99,7 @@ function currentLinks(): readonly LinkSummary[] {
 /// Imperative form, for `CommandDef.enabled` and the Timeline handler.
 export function linkToggleForSelection(): LinkToggleState {
   return linkToggleState(
-    useSelectionStore.getState().selectedLayerIds,
+    layerIdsOf(currentSelection()),
     currentLinks(),
   );
 }
@@ -116,7 +120,7 @@ export function canToggleLinkSelection(): boolean {
  * selector reading both stores — would subscribe to neither properly.
  */
 export const useLinkToggleState = (): LinkToggleState => {
-  const selected = useSelectionStore((s) => s.selectedLayerIds);
+  const selected = useSelectedLayerIds();
   const focusedId = useCompositionAnchorStore((s) => s.focusedId);
   return useProjectStore((s) =>
     linkToggleState(selected, compositionOrRoot(s.summary, focusedId)?.links ?? NO_LINKS),

@@ -24,8 +24,10 @@ import { openComposition } from "../state/compositionAnchorStore";
 import { rememberPrecompose } from "../state/precomposeSelection";
 import {
   clearLayerSelection,
+  currentSelection,
+  layerIdsOf,
+  primaryLayerIdOf,
   setLayerSelection,
-  useSelectionStore,
 } from "../state/selectionStore";
 import {
   addToGroupTarget,
@@ -50,15 +52,15 @@ import {
 /// (`groupEligibility.ts`) is evaluated live for the same reason, and App does
 /// not re-render on a multi-select change.
 export async function groupSelected(): Promise<void> {
-  const selection = useSelectionStore.getState();
-  const layerIds = [...selection.selectedLayerIds];
+  const selection = currentSelection();
+  const layerIds = [...layerIdsOf(selection)];
   // Prevented by the command's `enabled`; a strip button built before the
   // selection changed can still reach here, and doing nothing is the honest
   // answer to "no target".
   if (layerIds.length === 0) return;
   try {
     const { composition_id, layer_id } = await groupsCreate(layerIds);
-    rememberPrecompose(composition_id, layerIds, selection.primaryLayerId);
+    rememberPrecompose(composition_id, layerIds, primaryLayerIdOf(selection));
     setLayerSelection(layer_id, [layer_id]);
   } catch (err) {
     logMutationFailure(err, "groups_create");
@@ -95,7 +97,7 @@ export async function ungroupSelected(): Promise<void> {
 export async function addToGroupSelected(): Promise<void> {
   const group = addToGroupTarget();
   if (!group) return;
-  const layerIds = [...useSelectionStore.getState().selectedLayerIds].filter(
+  const layerIds = [...layerIdsOf(currentSelection())].filter(
     (id) => id !== group.id,
   );
   // Same honest no-target answer `groupSelected` gives: the command's `enabled`

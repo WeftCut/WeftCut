@@ -15,7 +15,12 @@ import "../i18n"; // the refusal badge reads t(...)
 import type { LayerSummary, TrackSummary } from "../ipc";
 import { useCompositionAnchorStore } from "../state/compositionAnchorStore";
 import { useProjectStore } from "../state/projectStore";
-import { useSelectionStore } from "../state/selectionStore";
+import {
+  clearLayerSelection,
+  currentSelection,
+  layerIdsOf,
+  primaryLayerIdOf,
+} from "../state/selectionStore";
 import { compositionFixture, summaryFixture } from "../testing/summaryFixture";
 import { ForeignDragGhost } from "./ForeignDragGhost";
 import {
@@ -73,12 +78,7 @@ afterEach(() => {
   // The commit reaches three module-level stores; a test that seeded them must
   // not decide what the next one starts from.
   useProjectStore.getState().apply(null);
-  useSelectionStore.setState({
-    primaryLayerId: null,
-    selectedLayerIds: new Set(),
-    selectedTransitionId: null,
-    selectedCompositionId: null,
-  });
+  clearLayerSelection();
   mocks.moveLayersToComposition.mockReset();
   vi.restoreAllMocks();
 });
@@ -588,9 +588,9 @@ describe("ForeignDragGhost", () => {
     // selection and stays put: the difference is that this gesture named the
     // destination with the pointer.
     expect(useCompositionAnchorStore.getState().focusedId).toBe(DEST);
-    const selection = useSelectionStore.getState();
-    expect(selection.primaryLayerId).toBe(ANCHOR.layerId);
-    expect([...selection.selectedLayerIds].sort()).toEqual(
+    const selection = currentSelection();
+    expect(primaryLayerIdOf(selection)).toBe(ANCHOR.layerId);
+    expect([...layerIdsOf(selection)].sort()).toEqual(
       [ANCHOR.layerId, PARTNER.layerId].sort(),
     );
   });

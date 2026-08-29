@@ -30,9 +30,12 @@ import { SPAWN_TRACK_ID } from "./placement";
 import { useLayerDragStore } from "./layerDragStore";
 import {
   clearLayerSelection,
+  currentSelection,
+  layerIdsOf,
+  primaryLayerIdOf,
   setLayerSelection,
   setTransitionSelection,
-  useSelectionStore,
+  transitionIdOf,
 } from "../state/selectionStore";
 import {
   openComposition,
@@ -314,8 +317,8 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerUp(window, { clientX: 200 });
     fireEvent.click(ruler);
     expect(onSeek).toHaveBeenCalled();
-    expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([layer.id]);
+    expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual([layer.id]);
   });
 
   it("clicking empty lane background deselects and does NOT seek", () => {
@@ -326,8 +329,8 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerUp(window, { clientX: 200 });
     fireEvent.click(lane);
     expect(onSeek).not.toHaveBeenCalled();
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
-    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
+    expect(layerIdsOf(currentSelection()).size).toBe(0);
   });
 
   it("clicking a clip selects it without seeking", () => {
@@ -337,8 +340,8 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerDown(block, { button: 0, clientX: 50 });
     fireEvent.pointerUp(window, { clientX: 50 });
     fireEvent.click(block);
-    expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([layer.id]);
+    expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual([layer.id]);
     expect(onSeek).not.toHaveBeenCalled();
   });
 
@@ -376,7 +379,7 @@ describe("Timeline seek/selection coupling", () => {
     expect(block.style.left).toBe("0px");
 
     fireEvent.pointerUp(window, { clientX: 83, clientY: 30 });
-    expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
+    expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
     expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
   });
 
@@ -731,8 +734,8 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerDown(preview, { button: 0, clientX: 50 });
     fireEvent.pointerUp(window, { clientX: 50 });
     fireEvent.click(preview);
-    expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([layer.id]);
+    expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual([layer.id]);
     expect(onSeek).not.toHaveBeenCalled();
   });
 
@@ -746,18 +749,18 @@ describe("Timeline seek/selection coupling", () => {
 
     fireEvent.pointerDown(first, { button: 0, clientX: 40 });
     fireEvent.pointerUp(window, { clientX: 40 });
-    expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([layer.id, linkedLayer.id]);
+    expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual([layer.id, linkedLayer.id]);
 
     fireEvent.pointerDown(second, { button: 0, clientX: 200, altKey: true });
     fireEvent.pointerUp(window, { clientX: 200, altKey: true });
-    expect(useSelectionStore.getState().primaryLayerId).toBe(linkedLayer.id);
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([linkedLayer.id]);
+    expect(primaryLayerIdOf(currentSelection())).toBe(linkedLayer.id);
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual([linkedLayer.id]);
 
     fireEvent.pointerDown(first, { button: 0, clientX: 40, shiftKey: true });
     fireEvent.pointerUp(window, { clientX: 40, shiftKey: true });
-    expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
-    expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
+    expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
+    expect(new Set(layerIdsOf(currentSelection()))).toEqual(
       new Set([layer.id, linkedLayer.id]),
     );
 
@@ -766,8 +769,8 @@ describe("Timeline seek/selection coupling", () => {
     // without starting over.
     fireEvent.pointerDown(first, { button: 0, clientX: 40, shiftKey: true });
     fireEvent.pointerUp(window, { clientX: 40, shiftKey: true });
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
-    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
+    expect(layerIdsOf(currentSelection()).size).toBe(0);
   });
 
   // A selected clip has a ZERO drag-arm delay, so without the deselect check in
@@ -796,7 +799,7 @@ describe("Timeline seek/selection coupling", () => {
 
     fireEvent.pointerUp(window, { clientX: 200, clientY: 30, shiftKey: true });
     expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
-    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+    expect(layerIdsOf(currentSelection()).size).toBe(0);
   });
 
   describe("select all / deselect all", () => {
@@ -815,10 +818,10 @@ describe("Timeline seek/selection coupling", () => {
 
       pressSelectAll();
 
-      expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
+      expect(new Set(layerIdsOf(currentSelection()))).toEqual(
         new Set([layer.id, linkedLayer.id]),
       );
-      expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
+      expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
     });
 
     // The A/B Roll filter hides role-less tracks from the view entirely. A
@@ -838,7 +841,7 @@ describe("Timeline seek/selection coupling", () => {
 
       pressSelectAll();
 
-      expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([
+      expect(Array.from(layerIdsOf(currentSelection()))).toEqual([
         layer.id,
       ]);
     });
@@ -857,7 +860,7 @@ describe("Timeline seek/selection coupling", () => {
 
       pressSelectAll();
 
-      expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([
+      expect(Array.from(layerIdsOf(currentSelection()))).toEqual([
         layer.id,
       ]);
     });
@@ -872,14 +875,14 @@ describe("Timeline seek/selection coupling", () => {
 
       pressSelectAll();
 
-      expect(useSelectionStore.getState().primaryLayerId).toBe(linkedLayer.id);
-      expect(useSelectionStore.getState().selectedLayerIds.size).toBe(2);
+      expect(primaryLayerIdOf(currentSelection())).toBe(linkedLayer.id);
+      expect(layerIdsOf(currentSelection()).size).toBe(2);
     });
 
     it("drops the whole selection on Ctrl+Shift+A", () => {
       renderTimeline({ tracks: [linkedTrack] });
       pressSelectAll();
-      expect(useSelectionStore.getState().selectedLayerIds.size).toBe(2);
+      expect(layerIdsOf(currentSelection()).size).toBe(2);
 
       fireEvent.keyDown(window, {
         key: "A",
@@ -888,8 +891,8 @@ describe("Timeline seek/selection coupling", () => {
         shiftKey: true,
       });
 
-      expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
-      expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+      expect(layerIdsOf(currentSelection()).size).toBe(0);
+      expect(primaryLayerIdOf(currentSelection())).toBeNull();
     });
   });
 
@@ -907,9 +910,9 @@ describe("Timeline seek/selection coupling", () => {
       const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
 
       fireEvent.contextMenu(first, { clientX: 40, clientY: 30 });
-      expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
+      expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
       expect(
-        Array.from(useSelectionStore.getState().selectedLayerIds),
+        Array.from(layerIdsOf(currentSelection())),
       ).toEqual([layer.id, linkedLayer.id]);
     });
 
@@ -922,7 +925,7 @@ describe("Timeline seek/selection coupling", () => {
 
       fireEvent.contextMenu(second, { clientX: 200, clientY: 30, altKey: true });
       expect(
-        Array.from(useSelectionStore.getState().selectedLayerIds),
+        Array.from(layerIdsOf(currentSelection())),
       ).toEqual([linkedLayer.id]);
     });
 
@@ -970,15 +973,10 @@ describe("Timeline seek/selection coupling", () => {
       const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
       fireEvent.pointerDown(first, { button: 0, clientX: 40, shiftKey: true });
       fireEvent.pointerUp(window, { clientX: 40, shiftKey: true });
-      const before = useSelectionStore.getState();
+      const before = currentSelection();
 
       fireEvent.contextMenu(second, { clientX: 200, clientY: 30 });
-      expect(useSelectionStore.getState().primaryLayerId).toBe(
-        before.primaryLayerId,
-      );
-      expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
-        new Set(before.selectedLayerIds),
-      );
+      expect(currentSelection()).toEqual(before);
     });
   });
 
@@ -1051,8 +1049,8 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerUp(window, { clientX: 300 });
     // pointerdown seeks once; the drag-scrub pointermove seeks again.
     expect(onSeek.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([layer.id]);
+    expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual([layer.id]);
   });
 
   it("pins the ruler and playhead head during vertical timeline scrolling", () => {
@@ -2603,8 +2601,11 @@ describe("Timeline marquee", () => {
     container.querySelector('[data-testid="timeline-marquee"]');
 
   const selection = () => {
-    const { primaryLayerId, selectedLayerIds } = useSelectionStore.getState();
-    return { primary: primaryLayerId, ids: [...selectedLayerIds].sort() };
+    const current = currentSelection();
+    return {
+      primary: primaryLayerIdOf(current),
+      ids: [...layerIdsOf(current)].sort(),
+    };
   };
 
   /// Press `el`, then travel. One move is enough: the arm gate is displacement
@@ -2913,10 +2914,10 @@ describe("Timeline marquee", () => {
     // The box evicts the chip on its way in: layer and transition selection are
     // mutually exclusive.
     sweep(lane, [250, 130], [300, 200]);
-    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+    expect(transitionIdOf(currentSelection())).toBeNull();
 
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(useSelectionStore.getState().selectedTransitionId).toBe(
+    expect(transitionIdOf(currentSelection())).toBe(
       "transition-1",
     );
   });
@@ -3216,8 +3217,8 @@ describe("Timeline link chrome", () => {
       fireEvent.click(screen.getByTestId("link-hidden-badge"));
       expect(reveal).toHaveBeenCalledTimes(1);
       expect(reveal).toHaveBeenCalledWith(hiddenTrack.id, null);
-      expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
-      expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
+      expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
+      expect(new Set(layerIdsOf(currentSelection()))).toEqual(
         new Set([layer.id, linkedLayer.id]),
       );
     } finally {
@@ -3580,7 +3581,7 @@ describe("a gesture names the Panel it happened in", () => {
 
       fireEvent.keyDown(window, { key: "a", code: "KeyA", ctrlKey: true });
 
-      expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
+      expect(new Set(layerIdsOf(currentSelection()))).toEqual(
         new Set(),
       );
     });
@@ -3590,7 +3591,7 @@ describe("a gesture names the Panel it happened in", () => {
 
       fireEvent.keyDown(window, { key: "a", code: "KeyA", ctrlKey: true });
 
-      expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
+      expect(new Set(layerIdsOf(currentSelection()))).toEqual(
         new Set([layer.id, linkedLayer.id]),
       );
     });

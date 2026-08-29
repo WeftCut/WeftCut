@@ -35,9 +35,10 @@ import {
 import { LatestRequestCoordinator } from "./state/latestRequest";
 import {
   clearLayerSelection,
+  currentSelection,
+  layerIdsOf,
   setLayerSelection,
   usePrimaryLayerId,
-  useSelectionStore,
 } from "./state/selectionStore";
 import {
   clampSeekUs,
@@ -574,7 +575,7 @@ export function App({ onCloseProject }: AppProps) {
   // carries the link, so a swept or clicked member already brought its
   // siblings along.
   const deleteSelected = useCallback(async () => {
-    const layerIds = [...useSelectionStore.getState().selectedLayerIds];
+    const layerIds = [...layerIdsOf(currentSelection())];
     if (layerIds.length === 0) return;
     try {
       await deleteLayers(layerIds);
@@ -855,7 +856,7 @@ export function App({ onCloseProject }: AppProps) {
   // visibility rule. `revealTrack(id, null)` disturbs no selection, and naming a
   // lane the summary has not delivered yet simply matches nothing until it does.
   const handleMoveToNewTrack = useCallback(async () => {
-    const layerIds = [...useSelectionStore.getState().selectedLayerIds];
+    const layerIds = [...layerIdsOf(currentSelection())];
     if (layerIds.length === 0) return;
     try {
       const trackId = await moveLayersToNewTrack(layerIds);

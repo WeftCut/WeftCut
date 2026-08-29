@@ -21,8 +21,10 @@ import { playheadTimeUs, setPlayheadTimeUs } from "./playheadStore";
 import { useProjectStore } from "./projectStore";
 import {
   clearLayerSelection,
+  currentSelection,
+  layerIdsOf,
+  primaryLayerIdOf,
   setLayerSelection,
-  useSelectionStore,
 } from "./selectionStore";
 import type { ProjectSummary } from "../ipc";
 import { rootOf, summaryFixture } from "../testing/summaryFixture";
@@ -181,8 +183,8 @@ describe("jumpToLayer", () => {
     const unScroll = registerScrollToTime(scroll);
     expect(jumpToLayer("l1")).toBe(true);
     expect(reveal).toHaveBeenCalledWith("t1", "l1");
-    expect(useSelectionStore.getState().primaryLayerId).toBe("l1");
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual(["l1"]);
+    expect(primaryLayerIdOf(currentSelection())).toBe("l1");
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual(["l1"]);
     expect(playheadTimeUs()).toBe(2_000_000);
     expect(scroll).toHaveBeenCalledWith(2_000_000);
     unReveal();
@@ -191,12 +193,12 @@ describe("jumpToLayer", () => {
 
   it("falls back to plain selection when no reveal handle is registered", () => {
     expect(jumpToLayer("l1")).toBe(true);
-    expect(useSelectionStore.getState().primaryLayerId).toBe("l1");
+    expect(primaryLayerIdOf(currentSelection())).toBe("l1");
   });
 
   it("returns false for a stale layer id and changes nothing", () => {
     expect(jumpToLayer("ghost")).toBe(false);
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
     expect(playheadTimeUs()).toBe(0);
   });
 });
@@ -222,12 +224,12 @@ describe("revealLayerWithoutSeek / revealTrackWithoutSelection", () => {
 
   it("falls back to a plain selection with no reveal handle mounted", () => {
     expect(revealLayerWithoutSeek("l2")).toBe(true);
-    expect(useSelectionStore.getState().primaryLayerId).toBe("l2");
+    expect(primaryLayerIdOf(currentSelection())).toBe("l2");
   });
 
   it("returns false for a stale layer id", () => {
     expect(revealLayerWithoutSeek("ghost")).toBe(false);
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
   });
 
   it("reveals a track with a NULL layer id — nothing to select", () => {
@@ -240,7 +242,7 @@ describe("revealLayerWithoutSeek / revealTrackWithoutSelection", () => {
     expect(revealTrackWithoutSelection("t1")).toBe(true);
     expect(reveal).toHaveBeenCalledWith("t1", null);
     // The existing selection is left alone rather than cleared.
-    expect(useSelectionStore.getState().primaryLayerId).toBe("l1");
+    expect(primaryLayerIdOf(currentSelection())).toBe("l1");
     expect(playheadTimeUs()).toBe(0);
     unReveal();
   });
@@ -258,12 +260,12 @@ describe("revealLayerWithoutSeek / revealTrackWithoutSelection", () => {
 describe("selectLayer / selectLayers", () => {
   it("selects one Layer or an exact complete set", () => {
     expect(selectLayer("l1")).toBe(true);
-    expect(useSelectionStore.getState().primaryLayerId).toBe("l1");
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual(["l1"]);
+    expect(primaryLayerIdOf(currentSelection())).toBe("l1");
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual(["l1"]);
 
     expect(selectLayers(["l1", "l2"], "l2")).toBe(true);
-    expect(useSelectionStore.getState().primaryLayerId).toBe("l2");
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual(["l1", "l2"]);
+    expect(primaryLayerIdOf(currentSelection())).toBe("l2");
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual(["l1", "l2"]);
   });
 
   it("rejects a stale Layer or invalid primary without a partial update", () => {
@@ -271,16 +273,16 @@ describe("selectLayer / selectLayers", () => {
 
     expect(selectLayers(["l2", "ghost"], "l2")).toBe(false);
     expect(selectLayers(["l1"], "l2")).toBe(false);
-    expect(useSelectionStore.getState().primaryLayerId).toBe("l1");
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual(["l1", "l2"]);
+    expect(primaryLayerIdOf(currentSelection())).toBe("l1");
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual(["l1", "l2"]);
   });
 
   it("clears the complete selection when the Project session resets", () => {
     setLayerSelection("l2", ["l1", "l2"]);
     useProjectStore.getState().apply(null);
 
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
-    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
+    expect(layerIdsOf(currentSelection()).size).toBe(0);
   });
 });
 

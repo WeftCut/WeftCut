@@ -9,7 +9,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import "../i18n"; // initialize i18next so t(key) resolves in chrome
 import type { LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
-import { useSelectionStore } from "../state/selectionStore";
+import { currentSelection, transitionIdOf } from "../state/selectionStore";
 import { setPlayheadTimeUs } from "../state/playheadStore";
 import { TransitionsPanel } from "./TransitionsPanel";
 import { summaryFixture } from "../testing/summaryFixture";
@@ -156,7 +156,7 @@ describe("TransitionsPanel", () => {
     await waitFor(() => expect(onMutated).toHaveBeenCalledTimes(1));
     // Selecting the result is the panel's only success feedback (no toasts):
     // the chip highlights and the inspector flips to the transition.
-    expect(useSelectionStore.getState().selectedTransitionId).toBe("new-transition");
+    expect(transitionIdOf(currentSelection())).toBe("new-transition");
   });
 
   it("the crossfade card omits direction from the wire args", async () => {

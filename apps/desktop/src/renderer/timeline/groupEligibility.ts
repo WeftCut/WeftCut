@@ -26,7 +26,11 @@ import {
   currentOpenComposition,
   useProjectStore,
 } from "../state/projectStore";
-import { useSelectionStore } from "../state/selectionStore";
+import {
+  currentSelection,
+  layerIdsOf,
+  useSelectedLayerIds,
+} from "../state/selectionStore";
 
 /// Stable empty reference — a fresh `[]` per selector call would defeat the
 /// reference-equality bail-out the hooks below rely on.
@@ -226,16 +230,16 @@ function currentTracks(): readonly TrackSummary[] {
 /// Imperative forms, for `CommandDef.enabled` and the App handlers — both run
 /// where there is no React.
 export function groupForSelection(): GroupState {
-  return groupState(useSelectionStore.getState().selectedLayerIds, currentTracks());
+  return groupState(layerIdsOf(currentSelection()), currentTracks());
 }
 
 export function ungroupForSelection(): UngroupState {
-  return ungroupState(useSelectionStore.getState().selectedLayerIds, currentTracks());
+  return ungroupState(layerIdsOf(currentSelection()), currentTracks());
 }
 
 export function addToGroupForSelection(): AddToGroupState {
   return addToGroupState(
-    useSelectionStore.getState().selectedLayerIds,
+    layerIdsOf(currentSelection()),
     currentTracks(),
   );
 }
@@ -256,7 +260,7 @@ export function canAddToGroupSelection(): boolean {
 /// the inspector's own answer to "is this clip a Group". Read imperatively for
 /// the same reason the predicates above are.
 export function selectedGroupLayer(): LayerSummary | null {
-  const selected = useSelectionStore.getState().selectedLayerIds;
+  const selected = layerIdsOf(currentSelection());
   if (selected.size !== 1) return null;
   const found = selectedWithTracks(selected, currentTracks());
   const only = found[0];
@@ -271,7 +275,7 @@ export function selectedGroupLayer(): LayerSummary | null {
 /// Answers a destination even when the gesture is not live, so a greyed row can
 /// still name the Group it would have added to.
 export function addToGroupTarget(): LayerSummary | null {
-  const selected = useSelectionStore.getState().selectedLayerIds;
+  const selected = layerIdsOf(currentSelection());
   const groups = selectedWithTracks(selected, currentTracks()).filter(
     ({ layer }) => layer.params.kind === "CompositionRef",
   );
@@ -289,7 +293,7 @@ export function addToGroupTarget(): LayerSummary | null {
  * bails out instead of re-rendering.
  */
 export const useGroupState = (): GroupState => {
-  const selected = useSelectionStore((s) => s.selectedLayerIds);
+  const selected = useSelectedLayerIds();
   const focusedId = useCompositionAnchorStore((s) => s.focusedId);
   return useProjectStore((s) =>
     groupState(selected, compositionOrRoot(s.summary, focusedId)?.tracks ?? NO_TRACKS),
@@ -297,7 +301,7 @@ export const useGroupState = (): GroupState => {
 };
 
 export const useUngroupState = (): UngroupState => {
-  const selected = useSelectionStore((s) => s.selectedLayerIds);
+  const selected = useSelectedLayerIds();
   const focusedId = useCompositionAnchorStore((s) => s.focusedId);
   return useProjectStore((s) =>
     ungroupState(selected, compositionOrRoot(s.summary, focusedId)?.tracks ?? NO_TRACKS),
@@ -305,7 +309,7 @@ export const useUngroupState = (): UngroupState => {
 };
 
 export const useAddToGroupState = (): AddToGroupState => {
-  const selected = useSelectionStore((s) => s.selectedLayerIds);
+  const selected = useSelectedLayerIds();
   const focusedId = useCompositionAnchorStore((s) => s.focusedId);
   return useProjectStore((s) =>
     addToGroupState(

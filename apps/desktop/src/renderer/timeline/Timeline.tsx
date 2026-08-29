@@ -147,13 +147,15 @@ import { addGroupLayerIn, addTrackIn } from "../ipc/compositionScoped";
 import {
   clearLayerSelection,
   clearTransitionSelection,
+  currentSelection,
+  layerIdsOf,
+  primaryLayerIdOf,
   setLayerSelection,
   setTransitionSelection,
   toggleLayerSelection,
   usePrimaryLayerId,
   useSelectedLayerIds,
   useSelectedTransitionId,
-  useSelectionStore,
 } from "../state/selectionStore";
 import {
   clearKeyframeSelection,
@@ -1457,21 +1459,17 @@ export function Timeline({
   // opaque restore thunk `takeMarqueeSnapshot` hands back.
   const marqueeSnapshotPrimaryRef = useRef<string | null>(null);
   const takeMarqueeSnapshot = useCallback((): (() => void) => {
-    const {
-      primaryLayerId: primary,
-      selectedLayerIds: ids,
-      selectedTransitionId,
-    } = useSelectionStore.getState();
+    const snapshot = currentSelection();
     const keyframes = getSelectedKeyframes();
+    const primary = primaryLayerIdOf(snapshot);
     marqueeSnapshotPrimaryRef.current = primary;
     return () => {
-      // Layer selection and the transition chip are mutually exclusive in
-      // `commitSelection`, so at most one of these two branches carries
-      // anything.
-      if (selectedTransitionId !== null) {
-        setTransitionSelection(selectedTransitionId);
+      // The timeline's own kinds only. A pool selection the box displaced is
+      // not put back — the marquee never reached into the pool to begin with.
+      if (snapshot.kind === "transition") {
+        setTransitionSelection(snapshot.id);
       } else {
-        setLayerSelection(primary, ids);
+        setLayerSelection(primary, layerIdsOf(snapshot));
       }
       // A non-empty clip box clears the keyframe selection below, so a cancel
       // that left it cleared would not be a cancel.

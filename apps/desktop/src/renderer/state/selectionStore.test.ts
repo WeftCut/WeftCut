@@ -2,11 +2,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearLayerSelection,
   clearTransitionSelection,
+  currentSelection,
+  layerIdsOf,
+  primaryLayerIdOf,
+  retainCompositionSelection,
   retainLayerSelection,
   retainTransitionSelection,
+  setCompositionSelection,
   setLayerSelection,
   setTransitionSelection,
   toggleLayerSelection,
+  transitionIdOf,
   useSelectionStore,
 } from "./selectionStore";
 
@@ -17,17 +23,20 @@ describe("selectionStore", () => {
     setLayerSelection("layer-1", ["layer-1", "layer-2"]);
     setLayerSelection("layer-3", ["layer-3"]);
 
-    expect(useSelectionStore.getState().primaryLayerId).toBe("layer-3");
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual(["layer-3"]);
+    expect(primaryLayerIdOf(currentSelection())).toBe("layer-3");
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual(["layer-3"]);
     clearLayerSelection();
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
-    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
+    expect(layerIdsOf(currentSelection()).size).toBe(0);
   });
 
   it("sets a complete range and its primary atomically", () => {
     const observed: Array<[string | null, string[]]> = [];
     const unsub = useSelectionStore.subscribe((state) => {
-      observed.push([state.primaryLayerId, Array.from(state.selectedLayerIds)]);
+      observed.push([
+        primaryLayerIdOf(state.selection),
+        Array.from(layerIdsOf(state.selection)),
+      ]);
     });
 
     setLayerSelection("layer-2", ["layer-1", "layer-2", "layer-3"]);
@@ -42,8 +51,8 @@ describe("selectionStore", () => {
     setLayerSelection("layer-1", ["layer-1"]);
     expect(toggleLayerSelection("layer-3", ["layer-2", "layer-3"])).toBe(true);
 
-    expect(useSelectionStore.getState().primaryLayerId).toBe("layer-3");
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([
+    expect(primaryLayerIdOf(currentSelection())).toBe("layer-3");
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual([
       "layer-1",
       "layer-2",
       "layer-3",
@@ -57,8 +66,8 @@ describe("selectionStore", () => {
     expect(toggleLayerSelection("layer-3", ["layer-2", "layer-3"])).toBe(false);
 
     // The primary went with them, so the surviving Layer inherits it.
-    expect(useSelectionStore.getState().primaryLayerId).toBe("layer-1");
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([
+    expect(primaryLayerIdOf(currentSelection())).toBe("layer-1");
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual([
       "layer-1",
     ]);
   });
@@ -68,8 +77,8 @@ describe("selectionStore", () => {
 
     toggleLayerSelection("layer-2", ["layer-2"]);
 
-    expect(useSelectionStore.getState().primaryLayerId).toBe("layer-1");
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([
+    expect(primaryLayerIdOf(currentSelection())).toBe("layer-1");
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual([
       "layer-1",
     ]);
   });
@@ -81,8 +90,8 @@ describe("selectionStore", () => {
 
     // Both are gone: an id excluded from the companion list must not survive a
     // click that reports the clicked Layer as deselected.
-    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(layerIdsOf(currentSelection()).size).toBe(0);
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
   });
 
   it("empties the selection when the last member is toggled off", () => {
@@ -90,21 +99,21 @@ describe("selectionStore", () => {
 
     expect(toggleLayerSelection("layer-1", ["layer-1"])).toBe(false);
 
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
-    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
+    expect(layerIdsOf(currentSelection()).size).toBe(0);
   });
 
   it("normalizes every write to the primary/set invariants", () => {
     setLayerSelection("primary", ["sibling"]);
-    expect(useSelectionStore.getState().selectedLayerIds.has("primary")).toBe(true);
+    expect(layerIdsOf(currentSelection()).has("primary")).toBe(true);
 
     setLayerSelection(null, ["survivor"]);
-    expect(useSelectionStore.getState().primaryLayerId).toBe("survivor");
-    expect(useSelectionStore.getState().selectedLayerIds.has("survivor")).toBe(true);
+    expect(primaryLayerIdOf(currentSelection())).toBe("survivor");
+    expect(layerIdsOf(currentSelection()).has("survivor")).toBe(true);
 
     clearLayerSelection();
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
-    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
+    expect(layerIdsOf(currentSelection()).size).toBe(0);
   });
 
   it("does not notify subscribers when primary and set membership are unchanged", () => {
@@ -122,12 +131,12 @@ describe("selectionStore", () => {
     setLayerSelection("layer-1", ["layer-1", "layer-2", "layer-3"]);
     retainLayerSelection(["layer-2", "layer-3"]);
 
-    expect(useSelectionStore.getState().primaryLayerId).toBe("layer-2");
-    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual(["layer-2", "layer-3"]);
+    expect(primaryLayerIdOf(currentSelection())).toBe("layer-2");
+    expect(Array.from(layerIdsOf(currentSelection()))).toEqual(["layer-2", "layer-3"]);
 
     retainLayerSelection([]);
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
-    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
+    expect(layerIdsOf(currentSelection()).size).toBe(0);
   });
 });
 
@@ -136,50 +145,50 @@ describe("transition selection (mutually exclusive with layer selection)", () =>
     setLayerSelection("layer-1", ["layer-1", "layer-2"]);
     setTransitionSelection("tr-1");
 
-    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
-    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
-    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+    expect(transitionIdOf(currentSelection())).toBe("tr-1");
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
+    expect(layerIdsOf(currentSelection()).size).toBe(0);
   });
 
   it("selecting layers deselects the transition", () => {
     setTransitionSelection("tr-1");
     setLayerSelection("layer-1", ["layer-1"]);
 
-    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
-    expect(useSelectionStore.getState().primaryLayerId).toBe("layer-1");
+    expect(transitionIdOf(currentSelection())).toBeNull();
+    expect(primaryLayerIdOf(currentSelection())).toBe("layer-1");
   });
 
   it("toggleLayerSelection also evicts the transition", () => {
     setTransitionSelection("tr-1");
     toggleLayerSelection("layer-1", ["layer-1"]);
-    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+    expect(transitionIdOf(currentSelection())).toBeNull();
   });
 
   it("clearLayerSelection clears the transition too (background-click semantics)", () => {
     setTransitionSelection("tr-1");
     clearLayerSelection();
-    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+    expect(transitionIdOf(currentSelection())).toBeNull();
   });
 
   it("clearTransitionSelection clears only the transition", () => {
     setTransitionSelection("tr-1");
     clearTransitionSelection();
-    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+    expect(transitionIdOf(currentSelection())).toBeNull();
   });
 
   it("retainTransitionSelection drops a vanished id and keeps a surviving one", () => {
     setTransitionSelection("tr-1");
     retainTransitionSelection(["tr-1", "tr-2"]);
-    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
+    expect(transitionIdOf(currentSelection())).toBe("tr-1");
 
     retainTransitionSelection(["tr-2"]);
-    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+    expect(transitionIdOf(currentSelection())).toBeNull();
   });
 
   it("retainLayerSelection preserves a selected transition (layers were empty by invariant)", () => {
     setTransitionSelection("tr-1");
     retainLayerSelection(["layer-1", "layer-2"]);
-    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
+    expect(transitionIdOf(currentSelection())).toBe("tr-1");
   });
 
   it("does not notify subscribers when the transition selection is unchanged", () => {
@@ -188,6 +197,54 @@ describe("transition selection (mutually exclusive with layer selection)", () =>
     const unsub = useSelectionStore.subscribe(spy);
 
     setTransitionSelection("tr-1");
+
+    expect(spy).not.toHaveBeenCalled();
+    unsub();
+  });
+});
+
+// The pool's kind is the one with no presence on a timeline, so nothing in the
+// timeline's own suites exercises its side of the exclusion.
+describe("pool selection (mutually exclusive with the timeline's kinds)", () => {
+  it("evicts layers and the transition chip, and is evicted by both", () => {
+    setLayerSelection("layer-1", ["layer-1", "layer-2"]);
+    setCompositionSelection("comp-1");
+    expect(currentSelection()).toEqual({ kind: "group", id: "comp-1" });
+
+    setTransitionSelection("tr-1");
+    expect(currentSelection().kind).toBe("transition");
+
+    setCompositionSelection("comp-1");
+    setLayerSelection("layer-1", ["layer-1"]);
+    expect(currentSelection().kind).toBe("layers");
+  });
+
+  // The retains run in sequence on EVERY summary, so each must ignore a
+  // selection of a kind it does not own rather than clearing it.
+  it("survives the retains that belong to the other kinds", () => {
+    setCompositionSelection("comp-1");
+
+    retainLayerSelection([]);
+    retainTransitionSelection([]);
+
+    expect(currentSelection()).toEqual({ kind: "group", id: "comp-1" });
+  });
+
+  it("drops a composition that left the project and keeps one that stayed", () => {
+    setCompositionSelection("comp-1");
+    retainCompositionSelection(["comp-1", "comp-2"]);
+    expect(currentSelection()).toEqual({ kind: "group", id: "comp-1" });
+
+    retainCompositionSelection(["comp-2"]);
+    expect(currentSelection().kind).toBe("none");
+  });
+
+  it("does not notify subscribers when the composition is unchanged", () => {
+    setCompositionSelection("comp-1");
+    const spy = vi.fn();
+    const unsub = useSelectionStore.subscribe(spy);
+
+    setCompositionSelection("comp-1");
 
     expect(spy).not.toHaveBeenCalled();
     unsub();

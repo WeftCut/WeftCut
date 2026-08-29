@@ -31,7 +31,11 @@ import {
   currentOpenComposition,
   useProjectStore,
 } from "../state/projectStore";
-import { useSelectionStore } from "../state/selectionStore";
+import {
+  currentSelection,
+  layerIdsOf,
+  useSelectedLayerIds,
+} from "../state/selectionStore";
 import { timelineTabLabel } from "../workspace/timelineTabName";
 import { selectedWithTracks } from "./groupEligibility";
 
@@ -214,7 +218,7 @@ export function moveDestinations(t: Translate): MoveDestination[] {
   const rows = moveDestinationStates(
     summary,
     source?.id ?? null,
-    useSelectionStore.getState().selectedLayerIds,
+    layerIdsOf(currentSelection()),
     source?.tracks ?? NO_TRACKS,
   ).map(({ compositionId, state }) => ({
     compositionId,
@@ -243,7 +247,7 @@ export function moveToCompositionSet(): {
   anchorLayerId: string;
 } | null {
   const found = selectedWithTracks(
-    useSelectionStore.getState().selectedLayerIds,
+    layerIdsOf(currentSelection()),
     currentOpenComposition()?.tracks ?? NO_TRACKS,
   );
   if (found.length === 0) return null;
@@ -262,7 +266,7 @@ export function moveToCompositionForSelection(): MoveToCompositionState {
   const summary = useProjectStore.getState().summary;
   const source = currentOpenComposition();
   return moveToCompositionState(
-    useSelectionStore.getState().selectedLayerIds,
+    layerIdsOf(currentSelection()),
     source?.tracks ?? NO_TRACKS,
     summary,
     source?.id ?? null,
@@ -279,7 +283,7 @@ function rootDestination(): { compositionId: string; state: DestinationState } |
     moveDestinationStates(
       summary,
       source?.id ?? null,
-      useSelectionStore.getState().selectedLayerIds,
+      layerIdsOf(currentSelection()),
       source?.tracks ?? NO_TRACKS,
     ).find((d) => d.compositionId === summary.root_id) ?? null
   );
@@ -314,7 +318,7 @@ export function moveToRootTarget(): string | null {
 /// selector is a fresh reference per call, so the menu subscribes to this
 /// string and reads `moveDestinations` in the render that answer causes.
 export const useMoveToCompositionState = (): MoveToCompositionState => {
-  const selected = useSelectionStore((s) => s.selectedLayerIds);
+  const selected = useSelectedLayerIds();
   const focusedId = useCompositionAnchorStore((s) => s.focusedId);
   return useProjectStore((s) => {
     const source = compositionOrRoot(s.summary, focusedId);

@@ -38,7 +38,11 @@ import {
   useCompositionAnchorStore,
   type CompositionCrumb,
 } from "../state/compositionAnchorStore";
-import { useSelectionStore } from "../state/selectionStore";
+import {
+  currentSelection,
+  layerIdsOf,
+  primaryLayerIdOf,
+} from "../state/selectionStore";
 import {
   setPreferProxies,
   setProxyOverride,
@@ -642,10 +646,9 @@ export function installBootstrapHook(
   // ROOT time — the one moment, unprojected. A spec standing inside a Group
   // that wants that Group's reading projects it itself.
   hookSlot().getPlayheadUs = () => playheadTimeUs();
-  hookSlot().getSelectedLayerId = () =>
-    useSelectionStore.getState().primaryLayerId;
+  hookSlot().getSelectedLayerId = () => primaryLayerIdOf(currentSelection());
   hookSlot().getSelectedLayerIds = () =>
-    Array.from(useSelectionStore.getState().selectedLayerIds);
+    Array.from(layerIdsOf(currentSelection()));
   hookSlot().setOpenComposition = (compositionId) => openComposition(compositionId, null);
   hookSlot().getOpenComposition = () => {
     const { focusedId, anchors } = useCompositionAnchorStore.getState();
