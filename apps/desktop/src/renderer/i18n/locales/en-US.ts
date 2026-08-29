@@ -523,8 +523,10 @@ const enUS = {
       "“{{label}}” is used by {{count}} timeline layers. Removing it will also remove:",
     remove_in_use_note:
       "This timeline change can be undone. The source file will stay on disk.",
-    remove_unknown_layer: "Layer {{id}}",
-    remove_unknown_track: "Unknown track",
+    // Last rungs of a reference row's naming chain, for a layer the renderer's
+    // snapshot cannot place (`panels/mediaReferences.ts`).
+    reference_unknown_layer: "Layer {{id}}",
+    reference_unknown_track: "Unknown track",
     remove_cancel: "Cancel",
     remove_confirm: "Remove",
     remove_force_confirm_one: "Remove media + {{count}} layer",
@@ -1363,6 +1365,24 @@ const enUS = {
     group_refs: "References",
     group_open: "Open group",
     group_ungroup: "Ungroup",
+    // The media branch: what an imported file IS. Read-only — the pool's
+    // context menu stays the one place its preview source is chosen.
+    media_resolution: "Resolution",
+    media_size: "File size",
+    media_location: "Location",
+    media_decode: "Decode",
+    media_codec: "Codec",
+    media_pix_fmt: "Pixel format",
+    media_color: "Color",
+    media_route_bypass: "Original",
+    media_route_direct_export: "Original, proxy for preview",
+    media_route_proxied: "Proxy",
+    media_route_native_sw: "Native software decode",
+    media_proxy_ready: "proxy ready",
+    media_proxy_pending: "proxy pending",
+    media_usage: "Used by",
+    media_unused: "Not used on any timeline.",
+    media_usage_go: "Go to this clip",
     locked: "Locked",
     duration: "Duration",
     multi_primary: "Editing primary layer “{{label}}” — {{count}} layers selected; changes apply only to this layer.",

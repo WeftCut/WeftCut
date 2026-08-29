@@ -174,6 +174,16 @@ export function setCompositionSelection(compositionId: string): void {
   commit({ kind: "group", id: compositionId });
 }
 
+/// Select a media item from the pool — the pool's other card, and the other
+/// entity that is inspectable while no timeline shows it.
+///
+/// One id, never a set: the inspector is this selection's only consumer and it
+/// can only have one subject (`.scratch/pool-unification/spec.md`, "Pool
+/// selection is single").
+export function setMediaSelection(mediaId: string): void {
+  commit({ kind: "media", id: mediaId });
+}
+
 /// Select a transition chip.
 export function setTransitionSelection(transitionId: string): void {
   commit({ kind: "transition", id: transitionId });
@@ -215,6 +225,18 @@ export function retainCompositionSelection(
   commit(NONE);
 }
 
+/// Drop a pool media selection whose item left the pool — Remove from media
+/// pool, or an undo/redo that takes it away. Without this the inspector would
+/// describe a media item nothing can resolve.
+export function retainMediaSelection(validMediaIds: Iterable<string>): void {
+  const current = currentSelection();
+  if (current.kind !== "media") return;
+  for (const id of validMediaIds) {
+    if (id === current.id) return;
+  }
+  commit(NONE);
+}
+
 /// Drop a transition selection whose id vanished from the snapshot (removed,
 /// reconcile-dropped, or undone away).
 export function retainTransitionSelection(
@@ -246,4 +268,10 @@ export const useSelectedTransitionId = (): string | null =>
 export const useSelectedCompositionId = (): string | null =>
   useSelectionStore((state) =>
     state.selection.kind === "group" ? state.selection.id : null,
+  );
+
+/// The media item picked in the media pool.
+export const useSelectedMediaId = (): string | null =>
+  useSelectionStore((state) =>
+    state.selection.kind === "media" ? state.selection.id : null,
   );

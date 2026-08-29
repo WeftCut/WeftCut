@@ -548,6 +548,61 @@
   min-width: 120px;
 }
 
+/* Where a media item is used. Every row is a button because navigating to the
+   clip is the point — the same list read-only inside the removal confirmation
+   (`.media-remove-reference-list`) is what the inspector's version replaces. */
+.prop-media-refs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: min(220px, 32vh);
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.prop-media-ref {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
+  background: var(--surface-sunken);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.prop-media-ref:hover {
+  border-color: var(--selection-border);
+  background: var(--surface-raised);
+}
+
+.prop-media-ref-name {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: var(--font-size-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prop-media-ref-meta {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Effect chain cards. The grip is a pointer-only reorder affordance; Dockview
    docking starts exclusively from the native tab chrome, so no style here may
    imply an HTML5 drag source. */

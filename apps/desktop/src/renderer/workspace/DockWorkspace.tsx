@@ -223,7 +223,6 @@ function MediaDockPanel() {
     <MediaDropZone>
       <MediaPool
         media={summary?.media ?? []}
-        tracks={comp?.tracks ?? []}
         importing={contracts.importingMediaIds}
         proxyState={contracts.proxyState}
         previewDecodable={contracts.previewDecodableMediaIds}

@@ -115,7 +115,6 @@ function renderPool(media: MediaSummary[] = []) {
     ...render(
       <MediaPool
         media={media}
-        tracks={[]}
         importing={new Set()}
         proxyState={new Map()}
         previewDecodable={new Set()}

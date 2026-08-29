@@ -7,9 +7,11 @@ import {
   primaryLayerIdOf,
   retainCompositionSelection,
   retainLayerSelection,
+  retainMediaSelection,
   retainTransitionSelection,
   setCompositionSelection,
   setLayerSelection,
+  setMediaSelection,
   setTransitionSelection,
   toggleLayerSelection,
   transitionIdOf,
@@ -245,6 +247,63 @@ describe("pool selection (mutually exclusive with the timeline's kinds)", () => 
     const unsub = useSelectionStore.subscribe(spy);
 
     setCompositionSelection("comp-1");
+
+    expect(spy).not.toHaveBeenCalled();
+    unsub();
+  });
+});
+
+describe("media selection", () => {
+  it("replaces every other kind, and every other kind replaces it", () => {
+    setLayerSelection("layer-1", ["layer-1", "layer-2"]);
+    setMediaSelection("m-1");
+    expect(currentSelection()).toEqual({ kind: "media", id: "m-1" });
+
+    setTransitionSelection("tr-1");
+    expect(currentSelection().kind).toBe("transition");
+
+    setMediaSelection("m-1");
+    setCompositionSelection("comp-1");
+    expect(currentSelection().kind).toBe("group");
+
+    setMediaSelection("m-1");
+    setLayerSelection("layer-1", ["layer-1"]);
+    expect(currentSelection().kind).toBe("layers");
+  });
+
+  // The retains run in sequence on EVERY summary, so each must ignore a
+  // selection of a kind it does not own rather than clearing it.
+  it("survives the retains that belong to the other kinds", () => {
+    setMediaSelection("m-1");
+
+    retainLayerSelection([]);
+    retainTransitionSelection([]);
+    retainCompositionSelection([]);
+
+    expect(currentSelection()).toEqual({ kind: "media", id: "m-1" });
+  });
+
+  it("drops a media item that left the pool and keeps one that stayed", () => {
+    setMediaSelection("m-1");
+    retainMediaSelection(["m-1", "m-2"]);
+    expect(currentSelection()).toEqual({ kind: "media", id: "m-1" });
+
+    retainMediaSelection(["m-2"]);
+    expect(currentSelection().kind).toBe("none");
+  });
+
+  it("leaves the other kinds alone when the pool empties", () => {
+    setCompositionSelection("comp-1");
+    retainMediaSelection([]);
+    expect(currentSelection()).toEqual({ kind: "group", id: "comp-1" });
+  });
+
+  it("does not notify subscribers when the media is unchanged", () => {
+    setMediaSelection("m-1");
+    const spy = vi.fn();
+    const unsub = useSelectionStore.subscribe(spy);
+
+    setMediaSelection("m-1");
 
     expect(spy).not.toHaveBeenCalled();
     unsub();

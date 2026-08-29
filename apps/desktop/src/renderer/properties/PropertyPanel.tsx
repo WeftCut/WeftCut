@@ -66,14 +66,17 @@ import { getMotif, subscribeMotifCatalog, motifCatalogRevision } from "../render
 import {
   useCompositionRefCounts,
   useGroupOrdinals,
+  useMediaById,
   useOpenComposition,
   useProjectStore,
 } from "../state/projectStore";
 import {
   useSelectedCompositionId,
   useSelectedLayerIds,
+  useSelectedMediaId,
   useSelectedTransitionId,
 } from "../state/selectionStore";
+import { MediaFields } from "./MediaFields";
 import { TransitionFields } from "./TransitionFields";
 import { Field } from "./Field";
 import { MotifParamsFrame } from "./MotifParamsFrame";
@@ -132,6 +135,7 @@ export function AttributePanel({
       ? null
       : (s.summary?.compositions[poolCompositionId] ?? null),
   );
+  const poolMedia = useMediaById(useSelectedMediaId());
 
   if (transition) {
     return (
@@ -164,6 +168,20 @@ export function AttributePanel({
           fpsDen={fpsDen}
           onMutated={onMutated}
         />
+      </aside>
+    );
+  }
+
+  // The pool's other card. Same reason it is a branch at all: an imported file
+  // is a project-level entity, so what it is and where it is used have to be
+  // readable without placing it first.
+  if (poolMedia) {
+    return (
+      <aside
+        className="property-panel attribute-panel"
+        aria-label={t("property_panel.heading")}
+      >
+        <MediaFields media={poolMedia} fpsNum={fpsNum} fpsDen={fpsDen} />
       </aside>
     );
   }

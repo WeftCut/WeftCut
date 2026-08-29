@@ -41,6 +41,13 @@ import {
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
 import { MediaDropZone, MediaPool } from "./MediaPool";
 import { type OptimizeInfo } from "./importOptimize";
+import { useProjectStore } from "../state/projectStore";
+import {
+  clearLayerSelection,
+  currentSelection,
+  setLayerSelection,
+} from "../state/selectionStore";
+import { summaryFixture } from "../testing/summaryFixture";
 import { MEDIA_DRAG_TYPE, useMediaDragStore } from "../timeline/mediaDrag";
 
 afterEach(() => {
@@ -48,6 +55,8 @@ afterEach(() => {
   vi.clearAllMocks();
   useProxyPrefStore.setState({ preferProxies: false, overrides: {} });
   useMediaDragStore.getState().end();
+  clearLayerSelection();
+  useProjectStore.getState().apply(null);
 });
 
 // Audio keeps most tests outside mediaReadiness's Video-only proxy-pending
@@ -71,7 +80,6 @@ function makeMedia(id: string, route: MediaSummary["decode_route"]): MediaSummar
 
 function renderPool(
   media: MediaSummary[],
-  tracks: TrackSummary[] = [],
   extra: Partial<React.ComponentProps<typeof MediaPool>> = {},
 ) {
   const onMutated = vi.fn().mockResolvedValue(undefined);
@@ -80,7 +88,6 @@ function renderPool(
     ...render(
       <MediaPool
         media={media}
-        tracks={tracks}
         importing={new Set()}
         proxyState={new Map()}
         previewDecodable={new Set()}
@@ -287,7 +294,7 @@ describe("MediaPool optimize badges", () => {
 
   it("marks a bridged clip with the corner dot and keeps it draggable", () => {
     const media = makeMedia("bridged-clip", { route: "bypass" });
-    const { container } = renderPool([media], [], {
+    const { container } = renderPool([media], {
       optimizeById: optimize("bridged-clip", "bridged"),
     });
 
@@ -310,7 +317,7 @@ describe("MediaPool optimize badges", () => {
       format_version: 0,
     });
     media.kind = "Video";
-    const { container } = renderPool([media], [], {
+    const { container } = renderPool([media], {
       optimizeById: optimize("waiting-clip", "transcoding"),
     });
 
@@ -321,7 +328,7 @@ describe("MediaPool optimize badges", () => {
 
   it("stays clean for a settled clip", () => {
     const media = makeMedia("settled-clip", { route: "bypass" });
-    const { container } = renderPool([media], [], {
+    const { container } = renderPool([media], {
       optimizeById: optimize("settled-clip", "direct"),
     });
 
@@ -363,10 +370,12 @@ describe("MediaPool removal", () => {
   it("lists timeline references before offering the explicit force path", async () => {
     const user = userEvent.setup();
     const media = makeMedia("used-media", { route: "bypass" });
-    const { onMutated } = renderPool(
-      [media],
-      [makeReferencingTrack(media.id)],
+    // References come off the project snapshot, not off a prop: the list spans
+    // every composition, exactly as the backend's own refusal does.
+    useProjectStore.getState().apply(
+      summaryFixture({ root: { tracks: [makeReferencingTrack(media.id)] } }),
     );
+    const { onMutated } = renderPool([media]);
 
     openMediaMenu("used-media");
     await user.click(
@@ -425,6 +434,56 @@ describe("MediaPool removal", () => {
       expect(removeMedia).toHaveBeenNthCalledWith(2, "raced-media", true);
       expect(onMutated).toHaveBeenCalledOnce();
     });
+  });
+});
+
+describe("MediaPool media selection", () => {
+  const card = (mediaId: string): HTMLElement => {
+    const el = document.querySelector(`[data-media-id="${mediaId}"]`);
+    if (!(el instanceof HTMLElement)) throw new Error(`no pool card for ${mediaId}`);
+    return el;
+  };
+
+  it("commits the media branch on click, evicting a layer selection", async () => {
+    const user = userEvent.setup();
+    setLayerSelection("layer-1", ["layer-1"]);
+    renderPool([makeMedia("m-pick", { route: "bypass" })]);
+
+    await user.click(card("m-pick"));
+
+    expect(currentSelection()).toEqual({ kind: "media", id: "m-pick" });
+  });
+
+  it("dresses the selected card the way a Group card is dressed", async () => {
+    const user = userEvent.setup();
+    renderPool([
+      makeMedia("m-one", { route: "bypass" }),
+      makeMedia("m-two", { route: "bypass" }),
+    ]);
+
+    await user.click(card("m-one"));
+
+    expect(card("m-one").classList.contains("is-selected")).toBe(true);
+    expect(card("m-one").getAttribute("aria-selected")).toBe("true");
+    expect(card("m-two").classList.contains("is-selected")).toBe(false);
+  });
+
+  it("selects on right-click, so the menu and the inspector name one card", () => {
+    renderPool([makeMedia("m-menu", { route: "bypass" })]);
+
+    openMediaMenu("m-menu");
+
+    expect(currentSelection()).toEqual({ kind: "media", id: "m-menu" });
+  });
+
+  it("drops the selection when the media leaves the pool", async () => {
+    const user = userEvent.setup();
+    renderPool([makeMedia("m-gone", { route: "bypass" })]);
+    await user.click(card("m-gone"));
+
+    useProjectStore.getState().apply(summaryFixture());
+
+    expect(currentSelection()).toEqual({ kind: "none" });
   });
 });
 

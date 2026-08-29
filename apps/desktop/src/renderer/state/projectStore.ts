@@ -21,6 +21,7 @@ import { restorePrecomposeSelection } from "./precomposeSelection";
 import {
   retainCompositionSelection,
   retainLayerSelection,
+  retainMediaSelection,
   retainTransitionSelection,
 } from "./selectionStore";
 import { LatestRequestCoordinator } from "./latestRequest";
@@ -153,6 +154,7 @@ export const useProjectStore = create<
         : [],
     );
     retainCompositionSelection(summary ? Object.keys(summary.compositions) : []);
+    retainMediaSelection(indices.mediaById.keys());
     // After the indices and the retained selections: the fallback switch this
     // may run clears the selection, and reads the summary just published.
     reconcileCompositionAnchors(summary);

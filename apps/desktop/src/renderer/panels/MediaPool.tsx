@@ -25,6 +25,11 @@ import {
   type GroupPoolItem,
 } from "./poolItems";
 import {
+  mediaReferenceMeta,
+  mediaReferencesFor,
+  type MediaReference,
+} from "./mediaReferences";
+import {
   MEDIA_DRAG_TYPE,
   compositionDragPayload,
   hideNativeDragPreview,
@@ -38,14 +43,13 @@ import { Button } from "../components/ui/button";
 import {
   type MediaPoolLayout,
   type MediaSummary,
-  type TrackSummary,
+  type ProjectSummary,
   compositionsDelete,
   generateQuickProxy,
   analyzeShots,
   removeMedia,
 } from "../ipc";
-import { formatMediaDuration, formatTimecode } from "../frames";
-import { trackDisplayName } from "../lib/trackName";
+import { formatMediaDuration } from "../frames";
 import { parseCommandError } from "../errors/parseCommandError";
 import { registerRevealMedia } from "../state/navigation";
 import { tryMutate } from "../errors/tryMutate";
@@ -60,7 +64,9 @@ import {
 } from "../state/projectStore";
 import {
   setCompositionSelection,
+  setMediaSelection,
   useSelectedCompositionId,
+  useSelectedMediaId,
 } from "../state/selectionStore";
 import { quickProxyPath } from "../render/decodeRoute";
 
@@ -81,18 +87,6 @@ const LAYOUT_MODES: ReadonlyArray<{
   { mode: "list", Icon: ListIcon },
 ];
 
-interface MediaReference {
-  layerId: string;
-  layerLabel: string | null;
-  layerKind: string | null;
-  /// The name the track's own header shows, already resolved. Null ONLY for a
-  /// layer the renderer's snapshot cannot place (see `mediaReferencesFor`) —
-  /// there is no positional number beside it, because the derived name already
-  /// carries the position.
-  trackName: string | null;
-  tStartUs: number | null;
-}
-
 interface MediaRemovalTarget {
   media: MediaSummary;
   references: MediaReference[];
@@ -112,66 +106,6 @@ interface GroupContextTarget {
   x: number;
   y: number;
   item: GroupPoolItem;
-}
-
-function layerMediaId(
-  layer: TrackSummary["layers"][number],
-): string | null {
-  switch (layer.params.kind) {
-    case "VideoClip":
-    case "ImageOverlay":
-    case "Audio":
-      return layer.params.media_id;
-    default:
-      return null;
-  }
-}
-
-/// Resolve backend layer ids to human-facing timeline context. With no
-/// `onlyLayerIds`, this derives the live references for a media item before
-/// opening the confirmation. With ids, it presents the authoritative
-/// `MediaInUse.referenced_by` result returned by the guarded remove call.
-function mediaReferencesFor(
-  mediaId: string,
-  tracks: readonly TrackSummary[],
-  t: (key: string, values: Record<string, unknown>) => string,
-  onlyLayerIds?: readonly string[],
-): MediaReference[] {
-  const requested = onlyLayerIds ? new Set(onlyLayerIds) : null;
-  const found = new Set<string>();
-  const references: MediaReference[] = [];
-
-  tracks.forEach((track) => {
-    track.layers.forEach((layer) => {
-      const matches = requested
-        ? requested.has(layer.id)
-        : layerMediaId(layer) === mediaId;
-      if (!matches || found.has(layer.id)) return;
-      found.add(layer.id);
-      references.push({
-        layerId: layer.id,
-        layerLabel: layer.label,
-        layerKind: layer.params.kind,
-        trackName: trackDisplayName(track, tracks, t),
-        tStartUs: layer.t_start_us,
-      });
-    });
-  });
-
-  // A project-change notification can race the command rejection. Keep every
-  // authoritative id visible even when the stale renderer snapshot cannot yet
-  // resolve its label/track.
-  for (const layerId of onlyLayerIds ?? []) {
-    if (found.has(layerId)) continue;
-    references.push({
-      layerId,
-      layerLabel: null,
-      layerKind: null,
-      trackName: null,
-      tStartUs: null,
-    });
-  }
-  return references;
 }
 
 /// `MediaInUse` refusal → the authoritative referencing-layer ids, via the
@@ -302,7 +236,6 @@ export function MediaDropZone({ children }: { children: React.ReactNode }) {
 
 export function MediaPool({
   media,
-  tracks,
   importing,
   proxyState,
   previewDecodable,
@@ -314,7 +247,6 @@ export function MediaPool({
   onImportMedia,
 }: {
   media: MediaSummary[];
-  tracks: TrackSummary[];
   importing: ReadonlySet<string>;
   proxyState: ReadonlyMap<string, ProxyState>;
   previewDecodable: ReadonlySet<string>;
@@ -337,6 +269,7 @@ export function MediaPool({
   const summary = useProjectSummary();
   const ordinals = useGroupOrdinals();
   const refCounts = useCompositionRefCounts();
+  const selectedMediaId = useSelectedMediaId();
   const beginMediaDrag = useMediaDragStore((s) => s.begin);
   const endMediaDrag = useMediaDragStore((s) => s.end);
   const proxyOverrides = useProxyPrefStore((s) => s.overrides);
@@ -488,7 +421,12 @@ export function MediaPool({
             setContextMenu(null);
             setRemovalTarget({
               media: contextMedia,
-              references: mediaReferencesFor(contextMedia.id, tracks, t),
+              references: mediaReferencesFor(
+                contextMedia.id,
+                summary,
+                ordinals,
+                t,
+              ),
             });
           }}
         />
@@ -533,7 +471,8 @@ export function MediaPool({
         <RemoveMediaDialog
           key={removalTarget.media.id}
           target={removalTarget}
-          tracks={tracks}
+          summary={summary}
+          ordinals={ordinals}
           fpsNum={fpsNum}
           fpsDen={fpsDen}
           onReferencesChanged={(references) =>
@@ -640,6 +579,10 @@ export function MediaPool({
                 optimizeReasonText ? `${hint}\n${optimizeReasonText}` : hint;
               const showOptimizingDot =
                 interactive && optimize != null && isOptimizing(optimize.status);
+              // Selectable whatever the readiness: an import in flight and a
+              // missing source are the two cases where reading the inspector's
+              // description matters most.
+              const selected = selectedMediaId === m.id;
               return (
                 <li
                   key={m.id}
@@ -655,6 +598,7 @@ export function MediaPool({
                     reason === "proxy_pending" ? "is-proxy-pending" : "",
                     reason === "proxy_failed" ? "is-proxy-failed" : "",
                     flashId === m.id ? "is-search-flash" : "",
+                    selected ? "is-selected" : "",
                   ]
                     .filter(Boolean)
                     .join(" ")}
@@ -662,9 +606,14 @@ export function MediaPool({
                   tabIndex={0}
                   aria-haspopup="menu"
                   aria-keyshortcuts="Shift+F10"
+                  aria-selected={selected}
+                  onClick={() => setMediaSelection(m.id)}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
+                    // Right-click selects, as it does on a Group card: the menu
+                    // acts on this card, so the inspector must be describing it.
+                    setMediaSelection(m.id);
                     setGroupMenu(null);
                     setContextMenu({
                       x: e.clientX,
@@ -685,6 +634,7 @@ export function MediaPool({
                     e.preventDefault();
                     e.stopPropagation();
                     const rect = e.currentTarget.getBoundingClientRect();
+                    setMediaSelection(m.id);
                     setGroupMenu(null);
                     setContextMenu({
                       x: rect.left + Math.min(32, rect.width / 2),
@@ -967,7 +917,8 @@ function GroupPoolCard({
 
 function RemoveMediaDialog({
   target,
-  tracks,
+  summary,
+  ordinals,
   fpsNum,
   fpsDen,
   onReferencesChanged,
@@ -975,7 +926,8 @@ function RemoveMediaDialog({
   onRemoved,
 }: {
   target: MediaRemovalTarget;
-  tracks: readonly TrackSummary[];
+  summary: ProjectSummary | null;
+  ordinals: ReadonlyMap<string, number>;
   fpsNum: number;
   fpsDen: number;
   onReferencesChanged: (references: MediaReference[]) => void;
@@ -996,7 +948,13 @@ function RemoveMediaDialog({
       const referencedBy = parseMediaInUseLayerIds(cause);
       if (referencedBy !== null && !force) {
         onReferencesChanged(
-          mediaReferencesFor(target.media.id, tracks, t, referencedBy),
+          mediaReferencesFor(
+            target.media.id,
+            summary,
+            ordinals,
+            t,
+            referencedBy,
+          ),
         );
       } else {
         setError(
@@ -1037,39 +995,16 @@ function RemoveMediaDialog({
                 })}
               </p>
               <ul className="media-remove-reference-list">
-                {target.references.map((reference) => {
-                  const kind = reference.layerKind
-                    ? t(`kinds.${reference.layerKind.toLowerCase()}`, {
-                        defaultValue: reference.layerKind,
-                      })
-                    : null;
-                  const layerName =
-                    reference.layerLabel?.trim() ||
-                    kind ||
-                    t("media_pool.remove_unknown_layer", {
-                      id: reference.layerId.slice(0, 8),
-                    });
-                  const trackName =
-                    reference.trackName ??
-                    t("media_pool.remove_unknown_track");
-                  return (
-                    <li key={reference.layerId} title={reference.layerId}>
-                      <span className="media-remove-reference-name">
-                        {layerName}
-                      </span>
-                      <span className="media-remove-reference-meta">
-                        {trackName}
-                        {reference.tStartUs !== null
-                          ? ` · ${formatTimecode(
-                              reference.tStartUs,
-                              fpsNum,
-                              fpsDen,
-                            )}`
-                          : ""}
-                      </span>
-                    </li>
-                  );
-                })}
+                {target.references.map((reference) => (
+                  <li key={reference.layerId} title={reference.layerId}>
+                    <span className="media-remove-reference-name">
+                      {reference.name}
+                    </span>
+                    <span className="media-remove-reference-meta">
+                      {mediaReferenceMeta(reference, fpsNum, fpsDen)}
+                    </span>
+                  </li>
+                ))}
               </ul>
               <p className="settings-warn media-remove-note">
                 {t("media_pool.remove_in_use_note")}
