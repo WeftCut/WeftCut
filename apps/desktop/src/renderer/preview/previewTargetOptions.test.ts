@@ -71,10 +71,10 @@ describe("preview target options", () => {
   it("offers follow focus, then the timeline, then every Group in creation order", () => {
     const summary = twoGroups();
     expect(optionsOf(summary)).toEqual([
-      { compositionId: null, label: "Follow focus", unused: false },
-      { compositionId: summary.root_id, label: TIMELINE, unused: false },
-      { compositionId: "comp-a", label: "Group 1", unused: false },
-      { compositionId: "comp-b", label: "Group 2", unused: true },
+      { compositionId: null, label: "Follow focus", isolated: false },
+      { compositionId: summary.root_id, label: TIMELINE, isolated: false },
+      { compositionId: "comp-a", label: "Group 1", isolated: false },
+      { compositionId: "comp-b", label: "Group 2", isolated: true },
     ]);
   });
 
@@ -94,9 +94,9 @@ describe("preview target options", () => {
     );
   });
 
-  it("keeps an orphan selectable and marks it unused, as the media pool does", () => {
+  it("keeps an orphan selectable and marks it isolated, as the media pool does", () => {
     const orphan = optionsOf(twoGroups()).find((o) => o.compositionId === "comp-b");
-    expect(orphan).toEqual({ compositionId: "comp-b", label: "Group 2", unused: true });
+    expect(orphan).toEqual({ compositionId: "comp-b", label: "Group 2", isolated: true });
   });
 
   it("names a Group exactly as its clip and its pool row do", () => {
@@ -123,7 +123,7 @@ describe("preview target options", () => {
 
   it("offers following alone before a project is loaded", () => {
     expect(optionsOf(null)).toEqual([
-      { compositionId: null, label: "Follow focus", unused: false },
+      { compositionId: null, label: "Follow focus", isolated: false },
     ]);
   });
 

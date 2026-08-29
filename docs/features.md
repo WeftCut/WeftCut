@@ -612,18 +612,19 @@ standing inside the Group it created closes that tab — the composition no
 longer exists — and hands the keyboard back to the timeline it came from, with
 the grouped layers selected again.
 
-**Reuse, and where an orphan lives.** The media pool's Groups section lists
-every composition with its name, duration and reference count, and dragging a
-row places another instance (`add_group_layer`) — the second way a Group reaches
-a timeline, and the reason a composition is an entity at all. Two placements of
-one composition are two instances at their own offsets, so at one playhead they
-show different frames of the same content. A composition may be placed inside
-another Group, but never inside itself or one of its ancestors: the drop target
-greys out rather than letting the release be refused. A composition nothing
-references any more — an orphan — keeps its row, dimmed and tagged unused, where
-it can be opened, renamed, or deleted; that row is the only surface able to
-remove it. Selecting it puts the composition in the inspector, so an orphan can
-be read and named with no clip anywhere.
+**Reuse, and where an orphan lives.** A composition is a card in the media pool
+beside the imported files — one list, both kinds, sorted by name — carrying a
+Group glyph where a thumbnail would be, its duration and its reference count.
+Dragging one places another instance (`add_group_layer`) — the second way a
+Group reaches a timeline, and the reason a composition is an entity at all. Two
+placements of one composition are two instances at their own offsets, so at one
+playhead they show different frames of the same content. A composition may be
+placed inside another Group, but never inside itself or one of its ancestors:
+the drop target greys out rather than letting the release be refused. A
+composition nothing references any more — an orphan — keeps its card, dimmed and
+tagged isolated, where it can be opened, renamed, or deleted; that card is the
+only surface able to remove it. Selecting it puts the composition in the
+inspector, so an orphan can be read and named with no clip anywhere.
 
 Mutations live in `apps/desktop/src/main/state/mutations/groups.ts`, over the
 crossing primitive in `mutations/moveToComposition.ts` (ADR 0054); tools and

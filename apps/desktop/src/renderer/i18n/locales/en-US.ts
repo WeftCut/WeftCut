@@ -531,18 +531,17 @@ const enUS = {
     remove_force_confirm_other: "Remove media + {{count}} layers",
     removing: "Removing…",
     remove_failed: "Could not remove media: {{detail}}",
-    // The Groups section — one row per composition placed as a layer somewhere,
-    // plus the orphans nothing places any more.
-    groups_heading: "Groups",
-    groups_no_matches: "No Groups match “{{query}}”.",
+    // Group cards, in the same pool list as the media ones.
     // A composition whose last inner layer was deleted. It has no window to
-    // place, so the row is not draggable — the hint is what says why.
+    // place, so the card is not draggable — the hint is what says why.
     groups_empty_hint: "This Group is empty. Open it and add a layer first.",
-    groups_row_hint:
+    groups_card_hint:
       "Drag onto a track to place another instance · double-click to open · right-click for Group actions",
-    // A composition no Group clip references. It still renders nothing and costs
-    // nothing; the tag is there so it reads as available rather than as missing.
-    groups_unused: "unused",
+    // A composition no Group clip references. Not "unused": everything in the
+    // pool is unused until it is placed, and this state means the opposite —
+    // it WAS placed, the last clip is gone, and the composition is now the only
+    // thing holding it.
+    groups_isolated: "isolated",
     groups_refs_one: "{{count}} ref",
     groups_refs_other: "{{count}} refs",
     groups_actions_for: "Group actions for {{label}}",

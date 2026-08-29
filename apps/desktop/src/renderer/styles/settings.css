@@ -4,6 +4,9 @@
 .kind-audio { background: var(--color-green-900); color: var(--color-green-300); }
 .kind-image { background: #581c87; color: var(--color-purple-300); }
 .kind-subtitle { background: #713f12; color: var(--color-amber-300); }
+/* No `.kind-group`, deliberately: a Group is the one kind with no medium of
+   its own, so it keeps `.media-kind`'s neutral slate rather than borrowing a
+   colour that would claim it holds one (docs/features.md). */
 
 .settings-panel {
   width: min(560px, calc(100vw - 32px));

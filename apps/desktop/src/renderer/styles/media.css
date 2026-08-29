@@ -324,6 +324,42 @@
   cursor: grabbing;
 }
 
+/* The pool's one selectable card. Stronger than the hover outline, because a
+   selection outlives the pointer and drives the inspector. */
+.media-item.is-selected {
+  outline-color: var(--primary);
+  background: var(--selection-bg);
+}
+
+/* A Group has no frame to show, ever (see panels/MediaPool.tsx's GroupPoolCard)
+   — the glyph in the sunken thumbnail frame IS what distinguishes the two kinds
+   of card, in every layout. Sized as a fraction of the frame so it reads at the
+   full width of a `large` card and still fits a 72px `list` row. */
+.media-group-glyph {
+  width: clamp(18px, 24%, 44px);
+  height: auto;
+  color: var(--muted-foreground);
+}
+
+/* A composition nothing references. It renders nothing and costs nothing, so
+   the card stays whole and draggable — dimmed and tagged, not withdrawn. */
+.media-item.is-isolated {
+  opacity: 0.55;
+}
+
+.media-item-isolated-tag {
+  display: inline-block;
+  padding: 0 4px;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--color-amber-500) 20%, transparent);
+  color: var(--color-amber-200);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: var(--line-height-tight);
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
+
 /* App-owned replacement for Chromium's frozen, translucent drag snapshot.
  * Its free state follows the pointer without positional easing; on entering a
  * timeline lane, all geometry eases into the ghost's cursor anchor and fades
@@ -448,13 +484,13 @@
  * Media-pool badges (see docs/data-model.md)
  * -------------------------------------------------------------------------- */
 
-/* Shared not-ready treatment — the card is visually inert and the
- * pointer reads as not-allowed. The cancel-import button overlay
- * re-enables its own cursor + pointer-events below. */
-.media-item.is-importing,
-.media-item.is-missing,
-.media-item.is-proxy-pending,
-.media-item.is-proxy-failed {
+/* One treatment for a card that cannot be dragged onto a timeline, whatever
+ * withdrew it — media still importing, missing, or waiting on a preview; a
+ * Group with no window to place. The card is visually inert and the pointer
+ * reads as not-allowed; each card keeps its own `title`, which is what says
+ * why. The cancel-import button overlay re-enables its own cursor +
+ * pointer-events below. */
+.media-item.is-not-placeable {
   opacity: 0.55;
   cursor: not-allowed;
 }

@@ -202,16 +202,16 @@ function RenderTargetControl() {
       onValueChange={(value) => setPreviewRenderTarget(targetOptionChoice(value))}
       options={options.map((option) => ({
         value: targetOptionValue(option.compositionId),
-        label: option.unused ? (
+        label: option.isolated ? (
           // The media pool's own treatment of an orphan, down to the word: a
-          // dimmed row carrying an `unused` badge.
+          // dimmed entry carrying an `isolated` badge.
           <span className="flex min-w-0 items-center gap-2 opacity-55">
             <span className="min-w-0 truncate">{option.label}</span>
             <span
-              data-testid="preview-target-unused"
+              data-testid="preview-target-isolated"
               className="shrink-0 rounded bg-amber-500/20 px-1 text-[9px] font-semibold uppercase text-amber-200"
             >
-              {t("media_pool.groups_unused")}
+              {t("media_pool.groups_isolated")}
             </span>
           </span>
         ) : (

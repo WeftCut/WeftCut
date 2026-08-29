@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -16,9 +16,17 @@ import {
 import { MediaThumbnail } from "./MediaThumbnail";
 import { mediaReadiness, type ProxyState } from "./mediaReadiness";
 import { isOptimizing, type OptimizeInfo } from "./importOptimize";
-import { GroupPoolSection } from "./GroupPoolSection";
+import { GroupPoolContextMenu } from "./GroupPoolContextMenu";
+import { RenameGroupDialog } from "./RenameGroupDialog";
+import {
+  filterPoolItems,
+  poolCollator,
+  poolItems,
+  type GroupPoolItem,
+} from "./poolItems";
 import {
   MEDIA_DRAG_TYPE,
+  compositionDragPayload,
   hideNativeDragPreview,
   mediaDragPayload,
   poolDragVisual,
@@ -31,6 +39,7 @@ import {
   type MediaPoolLayout,
   type MediaSummary,
   type TrackSummary,
+  compositionsDelete,
   generateQuickProxy,
   analyzeShots,
   removeMedia,
@@ -42,7 +51,17 @@ import { registerRevealMedia } from "../state/navigation";
 import { tryMutate } from "../errors/tryMutate";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
 import { setAppSettings, useMediaPoolLayout } from "../settings/appSettingsStore";
-import { useGroupCount } from "../state/projectStore";
+import { openComposition } from "../state/compositionAnchorStore";
+import {
+  useCompositionRefCounts,
+  useGroupCount,
+  useGroupOrdinals,
+  useProjectSummary,
+} from "../state/projectStore";
+import {
+  setCompositionSelection,
+  useSelectedCompositionId,
+} from "../state/selectionStore";
 import { quickProxyPath } from "../render/decodeRoute";
 
 function isFileDrag(e: React.DragEvent): boolean {
@@ -83,6 +102,16 @@ interface MediaContextTarget {
   x: number;
   y: number;
   mediaId: string;
+}
+
+/// The Group card whose menu is open, with the viewport point that anchors it.
+/// The item travels with the coordinates rather than an id: the menu's labels
+/// and its Delete gate are the card's own fields, and re-deriving them would be
+/// a second list walk per open.
+interface GroupContextTarget {
+  x: number;
+  y: number;
+  item: GroupPoolItem;
 }
 
 function layerMediaId(
@@ -298,13 +327,16 @@ export function MediaPool({
   onMutated: () => Promise<void>;
   onImportMedia: () => Promise<void>;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [query, setQuery] = useState("");
   const layout = useMediaPoolLayout();
-  // The Groups section is the pool's second half and lives on the whole
-  // composition set, not on the media list this Panel is handed — so the count
-  // that decides whether the drawer is truly empty comes from the store.
+  // Groups live on the whole composition set, not on the media list this Panel
+  // is handed — so the count that decides whether the pool is truly empty comes
+  // from the store, and so does the other half of the list below.
   const groupCount = useGroupCount();
+  const summary = useProjectSummary();
+  const ordinals = useGroupOrdinals();
+  const refCounts = useCompositionRefCounts();
   const beginMediaDrag = useMediaDragStore((s) => s.begin);
   const endMediaDrag = useMediaDragStore((s) => s.end);
   const proxyOverrides = useProxyPrefStore((s) => s.overrides);
@@ -319,6 +351,8 @@ export function MediaPool({
   const [contextMenu, setContextMenu] = useState<MediaContextTarget | null>(
     null,
   );
+  const [groupMenu, setGroupMenu] = useState<GroupContextTarget | null>(null);
+  const [renaming, setRenaming] = useState<GroupPoolItem | null>(null);
   const [removalTarget, setRemovalTarget] =
     useState<MediaRemovalTarget | null>(null);
   useEffect(
@@ -347,11 +381,21 @@ export function MediaPool({
   // Coordinates are viewport-fixed. Close when any ancestor scrolls so the
   // menu never floats detached from the card it belongs to.
   useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
+    if (!contextMenu && !groupMenu) return;
+    const close = () => {
+      setContextMenu(null);
+      setGroupMenu(null);
+    };
     window.addEventListener("scroll", close, true);
     return () => window.removeEventListener("scroll", close, true);
-  }, [contextMenu]);
+  }, [contextMenu, groupMenu]);
+
+  const collator = useMemo(() => poolCollator(i18n.language), [i18n.language]);
+  const items = useMemo(
+    () => poolItems(media, summary, ordinals, refCounts, t, collator),
+    [media, summary, ordinals, refCounts, t, collator],
+  );
+  const visible = useMemo(() => filterPoolItems(items, query), [items, query]);
 
   if (media.length === 0 && groupCount === 0) {
     return (
@@ -371,13 +415,9 @@ export function MediaPool({
     );
   }
 
-  // Case-insensitive substring match on the human-facing label. Trim
-  // so trailing whitespace from a paste doesn't kill all matches.
+  // Trimmed so trailing whitespace from a paste doesn't kill all matches, and
+  // so the no-matches line quotes what the user meant to type.
   const trimmed = query.trim();
-  const needle = trimmed.toLowerCase();
-  const filtered = needle
-    ? media.filter((m) => m.label.toLowerCase().includes(needle))
-    : media;
   const contextMedia = contextMenu
     ? (media.find((candidate) => candidate.id === contextMenu.mediaId) ?? null)
     : null;
@@ -453,6 +493,42 @@ export function MediaPool({
           }}
         />
       )}
+      {groupMenu && (
+        <GroupPoolContextMenu
+          key={`${groupMenu.item.id}:${groupMenu.x}:${groupMenu.y}`}
+          x={groupMenu.x}
+          y={groupMenu.y}
+          name={groupMenu.item.name}
+          canDelete={groupMenu.item.refCount === 0}
+          onClose={() => setGroupMenu(null)}
+          onOpen={() => {
+            setGroupMenu(null);
+            openComposition(groupMenu.item.id, null);
+          }}
+          onRename={() => {
+            setGroupMenu(null);
+            setRenaming(groupMenu.item);
+          }}
+          onDelete={() => {
+            const compositionId = groupMenu.item.id;
+            setGroupMenu(null);
+            void tryMutate(
+              () => compositionsDelete(compositionId),
+              "compositions_delete",
+            ).then((ok) => (ok ? onMutated() : undefined));
+          }}
+        />
+      )}
+      {renaming && (
+        <RenameGroupDialog
+          key={renaming.id}
+          compositionId={renaming.id}
+          displayName={renaming.name}
+          storedLabel={summary?.compositions[renaming.id]?.label ?? null}
+          onClose={() => setRenaming(null)}
+          onMutated={onMutated}
+        />
+      )}
       {removalTarget && (
         <RemoveMediaDialog
           key={removalTarget.media.id}
@@ -516,9 +592,11 @@ export function MediaPool({
         </div>
       </div>
       <div className="media-pool-inner">
-        {filtered.length === 0 ? (
+        {visible.length === 0 ? (
           <p className="placeholder">
-            {media.length === 0
+            {/* Both kinds decide this: a project holding only Groups is not an
+                empty pool, whatever the media prop says. */}
+            {items.length === 0
               ? t("media_pool.empty")
               : t("media_pool.no_matches", { query: trimmed })}
           </p>
@@ -526,7 +604,21 @@ export function MediaPool({
           <ul
             className={`media-list${layout !== "large" ? ` is-layout-${layout}` : ""}`}
           >
-            {filtered.map((m) => {
+            {visible.map((item) => {
+              if (item.kind === "group") {
+                return (
+                  <GroupPoolCard
+                    key={item.id}
+                    item={item}
+                    layout={layout}
+                    onMenu={(at) => {
+                      setContextMenu(null);
+                      setGroupMenu(at ? { ...at, item } : null);
+                    }}
+                  />
+                );
+              }
+              const m = item.media;
               const readiness = mediaReadiness(m, importing, proxyState, {
                 previewDecodable: previewDecodable.has(m.id),
               });
@@ -554,6 +646,10 @@ export function MediaPool({
                   data-media-id={m.id}
                   className={[
                     "media-item",
+                    // One disabled treatment, whatever withdrew the card — see
+                    // `.media-item.is-not-placeable`. The reason classes below
+                    // stay because each dresses its OWN badge.
+                    interactive ? "" : "is-not-placeable",
                     reason === "importing" ? "is-importing" : "",
                     reason === "missing" ? "is-missing" : "",
                     reason === "proxy_pending" ? "is-proxy-pending" : "",
@@ -569,12 +665,16 @@ export function MediaPool({
                   onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
+                    setGroupMenu(null);
                     setContextMenu({
                       x: e.clientX,
                       y: e.clientY,
                       mediaId: m.id,
                     });
                   }}
+                  // No Enter: a media item has nothing to open. The Group card's
+                  // Enter enters its composition; media has no such destination,
+                  // and the pool must not be where one gets invented.
                   onKeyDown={(e) => {
                     if (
                       e.key !== "ContextMenu" &&
@@ -585,6 +685,7 @@ export function MediaPool({
                     e.preventDefault();
                     e.stopPropagation();
                     const rect = e.currentTarget.getBoundingClientRect();
+                    setGroupMenu(null);
                     setContextMenu({
                       x: rect.left + Math.min(32, rect.width / 2),
                       y: rect.top + Math.min(32, rect.height / 2),
@@ -593,6 +694,7 @@ export function MediaPool({
                   }}
                   onDragStart={(e) => {
                     setContextMenu(null);
+                    setGroupMenu(null);
                     const payload = mediaDragPayload(m);
                     beginMediaDrag(
                       payload,
@@ -728,9 +830,138 @@ export function MediaPool({
             })}
           </ul>
         )}
-        <GroupPoolSection query={query} onMutated={onMutated} />
       </div>
     </>
+  );
+}
+
+/// A Group in the pool list, wearing the same `.media-item` card skin as an
+/// imported file — because to this Panel it is the same kind of thing, a source
+/// dragged onto a timeline.
+///
+/// The thumbnail frame holds a glyph and nothing else: **no thumbnail is ever
+/// rendered or fetched for a composition.** Its pixels change whenever a member
+/// is edited, so a real frame would need a derivative with its own invalidation
+/// model and job queue; the first member's thumbnail would show something that
+/// is not the Group. See `.scratch/pool-unification/spec.md`.
+///
+/// The menu state stays with the Panel — one scroll listener closes whichever
+/// menu is open — so this reports the anchor point and nothing more.
+function GroupPoolCard({
+  item,
+  layout,
+  onMenu,
+}: {
+  item: GroupPoolItem;
+  layout: MediaPoolLayout;
+  /// Viewport coordinates to open this card's menu at; `null` closes it.
+  onMenu: (at: { x: number; y: number } | null) => void;
+}) {
+  const { t } = useTranslation();
+  const selected = useSelectedCompositionId() === item.id;
+  const beginDrag = useMediaDragStore((s) => s.begin);
+  const endDrag = useMediaDragStore((s) => s.end);
+  // An empty composition has nothing to window, so placing it would be refused
+  // at the commit (`InvalidArgument`). Refusing the DRAG means the gesture never
+  // starts — the same prevention the card gives an unready import.
+  const placeable = item.durationUs > 0;
+  const isolated = item.refCount === 0;
+  const duration = formatMediaDuration(item.durationUs);
+  const refs = t("media_pool.groups_refs", { count: item.refCount });
+
+  const openMenuAt = (x: number, y: number) => {
+    setCompositionSelection(item.id);
+    onMenu({ x, y });
+  };
+
+  return (
+    <li
+      data-composition-id={item.id}
+      data-ref-count={item.refCount}
+      className={[
+        "media-item",
+        placeable ? "" : "is-not-placeable",
+        isolated ? "is-isolated" : "",
+        selected ? "is-selected" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      draggable={placeable}
+      tabIndex={0}
+      aria-haspopup="menu"
+      aria-keyshortcuts="Shift+F10"
+      aria-selected={selected}
+      title={
+        placeable
+          ? t("media_pool.groups_card_hint")
+          : t("media_pool.groups_empty_hint")
+      }
+      onClick={() => setCompositionSelection(item.id)}
+      onDoubleClick={() => openComposition(item.id, null)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openMenuAt(e.clientX, e.clientY);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          openComposition(item.id, null);
+          return;
+        }
+        if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = e.currentTarget.getBoundingClientRect();
+        openMenuAt(
+          rect.left + Math.min(32, rect.width / 2),
+          rect.top + Math.min(32, rect.height / 2),
+        );
+      }}
+      onDragStart={(e) => {
+        onMenu(null);
+        const payload = compositionDragPayload(
+          { id: item.id, duration_us: item.durationUs },
+          item.name,
+        );
+        beginDrag(payload, poolDragVisual(e.currentTarget, e.clientX, e.clientY));
+        e.dataTransfer.setData(MEDIA_DRAG_TYPE, JSON.stringify(payload));
+        e.dataTransfer.effectAllowed = "copy";
+        hideNativeDragPreview(e.dataTransfer);
+      }}
+      onDragEnd={endDrag}
+    >
+      <div className="media-item-thumb">
+        <GroupIcon className="media-group-glyph" aria-hidden />
+        <span className="media-kind kind-group">
+          {t("kinds.compositionref", { defaultValue: "Group" })}
+        </span>
+        <div className="media-item-metadata">
+          <span className="media-duration-badge">{duration}</span>
+          <span className="media-duration-badge">{refs}</span>
+        </div>
+      </div>
+      <span className="media-item-name" title={item.name}>
+        {isolated && (
+          <>
+            <span
+              data-testid="group-pool-isolated"
+              className="media-item-isolated-tag"
+            >
+              {t("media_pool.groups_isolated")}
+            </span>{" "}
+          </>
+        )}
+        {item.name}
+      </span>
+      {layout === "list" && (
+        // The hover-revealed metadata gradient is hidden on a compact row, so
+        // the same two facts run inline, like a file manager's details column.
+        <span className="media-item-meta-inline">
+          {duration} · {refs}
+        </span>
+      )}
+    </li>
   );
 }
 

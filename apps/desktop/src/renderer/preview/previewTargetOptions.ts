@@ -4,12 +4,12 @@
 // Pure — the control holds the subscriptions. The NAMING is not decided here:
 // the root prints the timeline Panel's own title (`workspace/timelineTabName.ts`
 // — the root is never a noun in the UI, it is the timeline) and a Group prints
-// the name its clip and its media-pool row already print
-// (`panels/groupPoolRows.ts`). A list where "Group 2" means a different
-// composition than the pool's "Group 2" is worse than no list.
+// the name its clip and its media-pool card already print
+// (`panels/poolItems.ts`). A list where "Group 2" means a different composition
+// than the pool's "Group 2" is worse than no list.
 
 import type { ProjectSummary } from "../ipc";
-import { groupPoolRows } from "../panels/groupPoolRows";
+import { groupPoolItems } from "../panels/poolItems";
 import { timelineTabLabel } from "../workspace/timelineTabName";
 
 /// The value the control carries for *follow focus*. Not a composition id, and
@@ -22,7 +22,7 @@ export interface PreviewTargetOption {
   label: string;
   /// A composition no Group clip references. Selectable — an orphan renders
   /// like any other composition — and marked, the way the media pool marks it.
-  unused: boolean;
+  isolated: boolean;
 }
 
 /// `ordinals` and `refCounts` are the project store's per-summary indices, and
@@ -38,7 +38,7 @@ export function previewTargetOptions(
   const followFocus: PreviewTargetOption = {
     compositionId: null,
     label: t("preview.target_follow_focus", {}),
-    unused: false,
+    isolated: false,
   };
   if (!summary) return [followFocus];
   return [
@@ -52,12 +52,12 @@ export function previewTargetOptions(
         timelinePanelTitle,
         t,
       ),
-      unused: false,
+      isolated: false,
     },
-    ...groupPoolRows(summary, ordinals, refCounts, t).map((row) => ({
-      compositionId: row.compositionId,
-      label: row.name,
-      unused: row.refCount === 0,
+    ...groupPoolItems(summary, ordinals, refCounts, t).map((item) => ({
+      compositionId: item.id,
+      label: item.name,
+      isolated: item.refCount === 0,
     })),
   ];
 }

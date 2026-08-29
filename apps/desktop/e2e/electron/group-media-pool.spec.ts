@@ -189,7 +189,7 @@ test.describe("Groups in the media pool", () => {
       await expect(row).toContainText("Group 1");
       await expect(row).toContainText("1 ref");
       await expect(row).toHaveAttribute("data-ref-count", "1");
-      await expect(row.locator('[data-testid="group-pool-unused"]')).toHaveCount(0);
+      await expect(row.locator('[data-testid="group-pool-isolated"]')).toHaveCount(0);
 
       // ── Drag it onto B roll: a second Group clip at its own offset ───────
       const dropX = await laneDropX(page, bRoll);
@@ -229,11 +229,11 @@ test.describe("Groups in the media pool", () => {
       await expect(row).toContainText("2 refs");
       await expect(row).toHaveAttribute("data-ref-count", "2");
 
-      // ── Delete both clips: the row dims and tags itself unused ───────────
+      // ── Delete both clips: the card dims and tags itself isolated ───────
       await invokeCmd(page, "delete_layers", { layerIds: clips.map((l) => l.id) });
       await expect(row).toHaveAttribute("data-ref-count", "0");
       await expect(row).toContainText("0 refs");
-      await expect(row.locator('[data-testid="group-pool-unused"]')).toHaveCount(1);
+      await expect(row.locator('[data-testid="group-pool-isolated"]')).toHaveCount(1);
       // The composition itself survives its last clip — that IS the orphan.
       expect(groupIdsOf(await wire(page))).toEqual([groupId]);
 

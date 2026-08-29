@@ -338,13 +338,14 @@ _Avoid_: unlink (that dissolves a link), decompose, flatten, un-nest
 **Orphan**:
 A composition no Group layer references (`ref_count === 0`). Legal, and not a
 leak: Ungroup and deleting the last Group clip both leave the composition
-behind, so one undo brings the work back. The media pool's Groups section is
-where it stays visible — dimmed, tagged unused — and the only surface that can
+behind, so one undo brings the work back. Its card in the media pool is where
+it stays visible — dimmed, tagged isolated — and the only surface that can
 remove it, which is what keeps state from holding something no UI can reach
 (the failure ADR 0042 refused for tracks). The root is never one: nothing may
-reference it at all. UI word: unused / 未使用.
-_Avoid_: dangling composition, leaked comp, garbage, unused Group (the row is
-dimmed, the Group is not a different kind of thing)
+reference it at all. UI word: isolated / 已孤立.
+_Avoid_: dangling composition, leaked comp, garbage, unused Group (everything in
+the pool is unused until it is placed; this state is the opposite, and the card
+is dimmed, not a different kind of thing)
 
 **Render target**:
 The composition the Preview Panel draws: *follow focus* — the timeline holding

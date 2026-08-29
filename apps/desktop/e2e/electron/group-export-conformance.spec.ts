@@ -169,6 +169,7 @@ interface ProjectJson {
     }
   >
   media_pool: Record<string, unknown>
+  next_group_ordinal: number
 }
 
 /// Every id pre-compose or ungroup RE-MINTS, mapped to a token derived from the
@@ -239,14 +240,20 @@ function normalizeProject(value: unknown, tokens: Map<string, string>): unknown 
 async function saveAndRead(
   page: Page,
   projectDir: string,
-): Promise<{ shape: unknown; mediaIds: string[] }> {
+): Promise<{ shape: unknown; mediaIds: string[]; nextGroupOrdinal: number }> {
   await invokeCmd(page, 'project_save')
   const file = path.join(projectDir, 'project.json')
   const raw = JSON.parse(readFileSync(file, 'utf8')) as ProjectJson
-  const { media_pool: mediaPool, ...timeline } = raw
+  // The ordinal counter is lifted OUT of the compared shape and returned beside
+  // it, not normalized away: it is monotonic, so a pre-compose spends a number
+  // the ungroup never refunds, and it is the one field a round trip legitimately
+  // moves. Returning it keeps the caller able to say by how much — a counter
+  // dropped here would be a counter this test could no longer see run away.
+  const { media_pool: mediaPool, next_group_ordinal: nextGroupOrdinal, ...timeline } = raw
   return {
     shape: normalizeProject(timeline, idTokens(raw)),
     mediaIds: Object.keys(mediaPool).sort(),
+    nextGroupOrdinal,
   }
 }
 
@@ -481,12 +488,20 @@ test('pre-composing an A/V pair, a lower third and a transition changes nothing 
       Object.keys(w3.compositions),
       'the child composition goes when its last reference does',
     ).toHaveLength(1)
-    const shapeAfter = await saveAndRead(page, projectDir)
+    const { nextGroupOrdinal: ordinalAfter, ...after } = await saveAndRead(page, projectDir)
+    const { nextGroupOrdinal: ordinalBefore, ...before } = shapeBefore
     expect(
-      shapeAfter,
+      after,
       'pre-compose then ungroup must be a round trip: the saved project differs by more than ' +
-        'the ids the two ops re-mint',
-    ).toEqual(shapeBefore)
+        'the ids the two ops re-mint and the one number the pre-compose spent',
+    ).toEqual(before)
+    // Spent, not refunded — by exactly the one composition pre-compose made.
+    // A counter that rewound here would let undo resurrect a Group wearing a
+    // live Group's number, which is the whole reason it is monotonic.
+    expect(
+      ordinalAfter,
+      'the ordinal counter must advance by one and never rewind',
+    ).toBe(ordinalBefore + 1)
   } finally {
     await app.close()
   }
