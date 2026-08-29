@@ -422,13 +422,17 @@ describe('applyGroupsAddMembers', () => {
     expect(a.gen()).toBe(twin.gen())
   })
 
-  it('refuses a member that would land before composition time 0, naming the earliest source time that fits', () => {
+  it('refuses a member that would land before composition time 0, naming the landing and a landing that fits', () => {
     const { p, gen, g } = withDest()
     const early = applyAddLayer(p, gen, root(p).tracks[1].id, color(), 0, S)
     const before = structuredClone(p)
     const e = expectCmd(() => applyGroupsAddMembers(p, gen, [early], g))
     expect(e).toMatchObject({ error: 'InvalidArgument', field: 'layer_ids' })
-    expect(e.detail).toContain(String(2 * S)) // the Group clip's start minus its src_in
+    // Both numbers are the DESTINATION's own time, which is the only base the
+    // primitive shares with its callers: the member lands 2 s before the
+    // composition starts, and an anchor at 0 is the earliest that fits.
+    expect(e.detail).toContain(String(-2 * S))
+    expect(e.detail).toContain('anchor the set at 0 µs')
     expect(p).toEqual(before)
   })
 
