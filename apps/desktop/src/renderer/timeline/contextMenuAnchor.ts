@@ -1,8 +1,8 @@
 import { useEffect, useMemo } from "react";
 
 /// A zero-size virtual element at the cursor, for a floating context menu's
-/// `anchor` (Base UI `Positioner`). Shared by the timeline's right-click menus
-/// so a second one cannot drift into different popup geometry from the first.
+/// `anchor` (Base UI `Positioner`). Shared by every right-click menu here so a
+/// second one cannot drift into different popup geometry from the first.
 export function useCursorAnchor(x: number, y: number) {
   return useMemo(
     () => ({

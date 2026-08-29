@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -11,13 +11,13 @@ import {
 } from "lucide-react";
 
 import {
-  MediaContextMenu,
+  PoolContextMenu,
   type MediaProxyMode,
-} from "./MediaContextMenu";
+  type PoolMenuTarget,
+} from "./PoolContextMenu";
 import { MediaThumbnail } from "./MediaThumbnail";
 import { mediaReadiness, type ProxyState } from "./mediaReadiness";
 import { isOptimizing, type OptimizeInfo } from "./importOptimize";
-import { GroupPoolContextMenu } from "./GroupPoolContextMenu";
 import { RenameGroupDialog } from "./RenameGroupDialog";
 import {
   filterPoolItems,
@@ -95,20 +95,20 @@ interface MediaRemovalTarget {
   references: MediaReference[];
 }
 
-interface MediaContextTarget {
+/// The card whose context menu is open, with the viewport point that anchors
+/// it. Both kinds share the one state, so opening either closes the other with
+/// no guard to forget.
+///
+/// A media card travels as an id — its row is re-read from the `media` prop, so
+/// an import that finishes under an open menu re-renders the rows it gates. A
+/// Group's item travels whole: the menu's label and its Delete gate are the
+/// card's own fields, and re-deriving them would be a second list walk per open.
+interface PoolMenuAnchor {
   x: number;
   y: number;
-  mediaId: string;
-}
-
-/// The Group card whose menu is open, with the viewport point that anchors it.
-/// The item travels with the coordinates rather than an id: the menu's labels
-/// and its Delete gate are the card's own fields, and re-deriving them would be
-/// a second list walk per open.
-interface GroupContextTarget {
-  x: number;
-  y: number;
-  item: GroupPoolItem;
+  target:
+    | { kind: "media"; mediaId: string }
+    | { kind: "group"; item: GroupPoolItem };
 }
 
 /// `MediaInUse` refusal → the authoritative referencing-layer ids, via the
@@ -290,10 +290,10 @@ export function MediaPool({
   // enough for a pool action; reopening its menu shows the pending label and
   // disables a second kick.
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<MediaContextTarget | null>(
-    null,
-  );
-  const [groupMenu, setGroupMenu] = useState<GroupContextTarget | null>(null);
+  const [menu, setMenu] = useState<PoolMenuAnchor | null>(null);
+  // Stable, so the menu's scroll-dismissal listener is registered once per open
+  // rather than re-bound by every re-render underneath it.
+  const closeMenu = useCallback(() => setMenu(null), []);
   const [renaming, setRenaming] = useState<GroupPoolItem | null>(null);
   const [removalTarget, setRemovalTarget] =
     useState<MediaRemovalTarget | null>(null);
@@ -321,17 +321,6 @@ export function MediaPool({
       clearTimeout(timer);
     };
   }, [flashId]);
-  // Coordinates are viewport-fixed. Close when any ancestor scrolls so the
-  // menu never floats detached from the card it belongs to.
-  useEffect(() => {
-    if (!contextMenu && !groupMenu) return;
-    const close = () => {
-      setContextMenu(null);
-      setGroupMenu(null);
-    };
-    window.addEventListener("scroll", close, true);
-    return () => window.removeEventListener("scroll", close, true);
-  }, [contextMenu, groupMenu]);
 
   const collator = useMemo(() => poolCollator(i18n.language), [i18n.language]);
   const items = useMemo(
@@ -368,8 +357,11 @@ export function MediaPool({
   // Trimmed so trailing whitespace from a paste doesn't kill all matches, and
   // so the no-matches line quotes what the user meant to type.
   const trimmed = query.trim();
-  const contextMedia = contextMenu
-    ? (media.find((candidate) => candidate.id === contextMenu.mediaId) ?? null)
+  const mediaTarget = menu?.target.kind === "media" ? menu.target : null;
+  const groupTarget = menu?.target.kind === "group" ? menu.target : null;
+  const menuCardId = mediaTarget?.mediaId ?? groupTarget?.item.id;
+  const contextMedia = mediaTarget
+    ? (media.find((candidate) => candidate.id === mediaTarget.mediaId) ?? null)
     : null;
   const contextReadiness = contextMedia
     ? mediaReadiness(contextMedia, importing, proxyState, {
@@ -392,86 +384,84 @@ export function MediaPool({
           ? "proxy"
           : "original";
 
+  // The open menu's subject and the actions its kind offers. Null while a media
+  // row is resolving to nothing — the item left the pool under the open menu —
+  // which takes the menu down with it.
+  let menuTarget: PoolMenuTarget | null = null;
+  if (groupTarget) {
+    const item = groupTarget.item;
+    menuTarget = {
+      kind: "group",
+      item,
+      onOpen: () => {
+        closeMenu();
+        openComposition(item.id, null);
+      },
+      onRename: () => {
+        closeMenu();
+        setRenaming(item);
+      },
+      onDelete: () => {
+        closeMenu();
+        void tryMutate(
+          () => compositionsDelete(item.id),
+          "compositions_delete",
+        ).then((ok) => (ok ? onMutated() : undefined));
+      },
+    };
+  } else if (contextMedia && contextReadiness) {
+    const m = contextMedia;
+    menuTarget = {
+      kind: "media",
+      media: m,
+      proxyMode: contextProxyMode,
+      canSetProxy: contextReason !== "importing",
+      canAnalyze: contextReadiness.ready,
+      analyzing: analyzingId === m.id,
+      canRemove: contextReason !== "importing",
+      onProxyModeChange: (mode) => {
+        closeMenu();
+        const next = mode === "auto" ? null : mode === "proxy" ? true : false;
+        if (next === true && quickProxyPath(m) === null) {
+          void generateQuickProxy(m.id);
+        }
+        // Persisted project-settings write: a rejection without this wrap
+        // is an unhandled promise rejection, not even a devtools warning.
+        void tryMutate(() => setProxyOverride(m.id, next), "Set proxy mode");
+      },
+      onAnalyze: () => {
+        closeMenu();
+        setAnalyzingId(m.id);
+        void analyzeShots(m.id)
+          .catch((error) => {
+            console.warn("analyze shots failed:", error);
+          })
+          .finally(() =>
+            setAnalyzingId((current) => (current === m.id ? null : current)),
+          );
+      },
+      onRemove: () => {
+        closeMenu();
+        setRemovalTarget({
+          media: m,
+          references: mediaReferencesFor(m.id, summary, ordinals, t),
+        });
+      },
+    };
+  }
+
   return (
     <>
       <MediaDragPreview />
-      {contextMenu && contextMedia && contextReadiness && (
-        <MediaContextMenu
-          key={`${contextMedia.id}:${contextMenu.x}:${contextMenu.y}`}
-          x={contextMenu.x}
-          y={contextMenu.y}
-          media={contextMedia}
-          proxyMode={contextProxyMode}
-          canSetProxy={contextReason !== "importing"}
-          canAnalyze={contextReadiness.ready}
-          analyzing={analyzingId === contextMedia.id}
-          canRemove={contextReason !== "importing"}
-          onClose={() => setContextMenu(null)}
-          onProxyModeChange={(mode) => {
-            setContextMenu(null);
-            const next =
-              mode === "auto" ? null : mode === "proxy" ? true : false;
-            if (next === true && quickProxyPath(contextMedia) === null) {
-              void generateQuickProxy(contextMedia.id);
-            }
-            // Persisted project-settings write: a rejection without this wrap
-            // is an unhandled promise rejection, not even a devtools warning.
-            void tryMutate(
-              () => setProxyOverride(contextMedia.id, next),
-              "Set proxy mode",
-            );
-          }}
-          onAnalyze={() => {
-            setContextMenu(null);
-            setAnalyzingId(contextMedia.id);
-            void analyzeShots(contextMedia.id)
-              .catch((error) => {
-                console.warn("analyze shots failed:", error);
-              })
-              .finally(() =>
-                setAnalyzingId((current) =>
-                  current === contextMedia.id ? null : current,
-                ),
-              );
-          }}
-          onRemove={() => {
-            setContextMenu(null);
-            setRemovalTarget({
-              media: contextMedia,
-              references: mediaReferencesFor(
-                contextMedia.id,
-                summary,
-                ordinals,
-                t,
-              ),
-            });
-          }}
-        />
-      )}
-      {groupMenu && (
-        <GroupPoolContextMenu
-          key={`${groupMenu.item.id}:${groupMenu.x}:${groupMenu.y}`}
-          x={groupMenu.x}
-          y={groupMenu.y}
-          name={groupMenu.item.name}
-          canDelete={groupMenu.item.refCount === 0}
-          onClose={() => setGroupMenu(null)}
-          onOpen={() => {
-            setGroupMenu(null);
-            openComposition(groupMenu.item.id, null);
-          }}
-          onRename={() => {
-            setGroupMenu(null);
-            setRenaming(groupMenu.item);
-          }}
-          onDelete={() => {
-            const compositionId = groupMenu.item.id;
-            setGroupMenu(null);
-            void tryMutate(
-              () => compositionsDelete(compositionId),
-              "compositions_delete",
-            ).then((ok) => (ok ? onMutated() : undefined));
-          }}
+      {menu && menuTarget && (
+        <PoolContextMenu
+          // Card AND point: reopening on the same card at a new place has to
+          // remount, or the popup keeps the position it first mounted at.
+          key={`${menuCardId}:${menu.x}:${menu.y}`}
+          x={menu.x}
+          y={menu.y}
+          target={menuTarget}
+          onClose={closeMenu}
         />
       )}
       {renaming && (
@@ -585,10 +575,11 @@ export function MediaPool({
                     key={item.id}
                     item={item}
                     layout={layout}
-                    onMenu={(at) => {
-                      setContextMenu(null);
-                      setGroupMenu(at ? { ...at, item } : null);
-                    }}
+                    onMenu={(at) =>
+                      setMenu(
+                        at ? { ...at, target: { kind: "group", item } } : null,
+                      )
+                    }
                   />
                 );
               }
@@ -649,11 +640,10 @@ export function MediaPool({
                     // Right-click selects, as it does on a Group card: the menu
                     // acts on this card, so the inspector must be describing it.
                     setMediaSelection(m.id);
-                    setGroupMenu(null);
-                    setContextMenu({
+                    setMenu({
                       x: e.clientX,
                       y: e.clientY,
-                      mediaId: m.id,
+                      target: { kind: "media", mediaId: m.id },
                     });
                   }}
                   // No Enter: a media item has nothing to open. The Group card's
@@ -670,16 +660,14 @@ export function MediaPool({
                     e.stopPropagation();
                     const rect = e.currentTarget.getBoundingClientRect();
                     setMediaSelection(m.id);
-                    setGroupMenu(null);
-                    setContextMenu({
+                    setMenu({
                       x: rect.left + Math.min(32, rect.width / 2),
                       y: rect.top + Math.min(32, rect.height / 2),
-                      mediaId: m.id,
+                      target: { kind: "media", mediaId: m.id },
                     });
                   }}
                   onDragStart={(e) => {
-                    setContextMenu(null);
-                    setGroupMenu(null);
+                    closeMenu();
                     const payload = mediaDragPayload(m);
                     beginMediaDrag(
                       payload,
@@ -830,8 +818,8 @@ export function MediaPool({
 /// model and job queue; the first member's thumbnail would show something that
 /// is not the Group. See `.scratch/pool-unification/spec.md`.
 ///
-/// The menu state stays with the Panel — one scroll listener closes whichever
-/// menu is open — so this reports the anchor point and nothing more.
+/// The menu state stays with the Panel — one state for both kinds of card — so
+/// this reports the anchor point and nothing more.
 function GroupPoolCard({
   item,
   layout,

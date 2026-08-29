@@ -64,6 +64,10 @@ interface MenuItemProps {
   /// When set, the item renders that action's accelerator right-aligned.
   /// Display-only — the handler still comes from `onSelect`.
   actionId?: ActionId;
+  /// Extra class beside `app-menu-item`, for a row whose own menu dresses it —
+  /// the destructive rows of the media pool's menu are the case. Not a place
+  /// to re-style the shared row.
+  className?: string;
 }
 
 export function MenuItem({
@@ -73,6 +77,7 @@ export function MenuItem({
   disabled,
   checked,
   actionId,
+  className,
 }: MenuItemProps) {
   // Show only the *first* effective binding for the action. The menu
   // has no room for multi-binding lists; the Settings → Keyboard panel
@@ -84,7 +89,7 @@ export function MenuItem({
   const accelerator = effective ? resolveAccelerator(effective) : "";
   return (
     <MenuPrimitive.Item
-      className="app-menu-item"
+      className={className ? `app-menu-item ${className}` : "app-menu-item"}
       title={hint}
       disabled={disabled ?? false}
       // Base UI closes the menu on activation before this runs, so an
