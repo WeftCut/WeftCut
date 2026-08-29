@@ -17,6 +17,10 @@ import {
   type MediaDropPlan,
   type MediaDropSnapOptions,
 } from "./mediaDrag";
+import {
+  useIsLayerMoveDragging,
+  useLayerDragStripAnchorUs,
+} from "./layerDragStore";
 
 /// The permanently reserved row above the topmost lane: releasing a drag here
 /// spawns a lane at the top of the z-stack and places the clip on it (ADR 0042).
@@ -36,11 +40,11 @@ import {
 ///
 /// Two genuinely different event models reach this one row. The media-pool drag
 /// is HTML5 drag-and-drop and lands in the handlers below; the existing-clip drag
-/// is pointer-driven, terminates in the timeline's own drag-commit path, and
-/// populates no store this component could read — so it arrives as `layerDrag`.
-/// Both then feed the SINGLE armed/lit pair at the bottom, because the failure
-/// mode here is one mechanism lighting the strip while the other silently does
-/// nothing.
+/// is pointer-driven and terminates in the timeline's own drag-commit path. Each
+/// publishes to a store this component subscribes to — `mediaDrag.ts` and
+/// `layerDragStore.ts` — and both then feed the SINGLE armed/lit pair at the
+/// bottom, because the failure mode here is one mechanism lighting the strip
+/// while the other silently does nothing.
 export function DropStrip({
   elRef,
   pxPerSec,
@@ -48,7 +52,6 @@ export function DropStrip({
   fpsDen,
   mediaDropSnap,
   compositionId,
-  layerDrag,
   onMediaDrop,
 }: {
   /// The row's element, which the layer drag's hit-test measures. A ref rather
@@ -64,15 +67,6 @@ export function DropStrip({
   /// Panel's own axis (`state/playheadProjection.ts`), and answers the cycle
   /// gate for a Group released here.
   compositionId: string | null;
-  /// The live pointer-driven move drag, or null when none is in flight.
-  layerDrag: {
-    /// Whether the drag's resolved destination is this strip.
-    overStrip: boolean;
-    /// x of the dragged clip's head, so the hint lands beside it. The clip keeps
-    /// its own chip in the lane it came from — unlike a media drag, which brings
-    /// a ghost into the strip — so there is no ghost head to borrow.
-    anchorLeftPx: number;
-  } | null;
   /// Commits the drop. A null track means "spawn one" — the Timeline owns the
   /// two-step commit because it also owns the readiness guards every media drop
   /// shares.
@@ -83,6 +77,10 @@ export function DropStrip({
   ) => void;
 }) {
   const { t } = useTranslation();
+  const layerMoveArmed = useIsLayerMoveDragging(compositionId);
+  // Non-null exactly while a clip drag names this strip, and equal to the head
+  // it will land on — so it answers both halves of the strip's feedback.
+  const layerDragAnchorUs = useLayerDragStripAnchorUs(compositionId);
   const activeMediaDrag = useMediaDragStore((s) => s.active);
   const dropTargetTrackId = useMediaDragStore((s) => s.dropTargetTrackId);
   const claimDropTarget = useMediaDragStore((s) => s.claimDropTarget);
@@ -187,8 +185,8 @@ export function DropStrip({
 
   // One armed/lit pair, fed by both event models. Either drag arms the row;
   // whichever one currently owns the strip lights it.
-  const armed = activeMediaDrag !== null || layerDrag !== null;
-  const lit = visibleDropPreview !== null || layerDrag?.overStrip === true;
+  const armed = activeMediaDrag !== null || layerMoveArmed;
+  const lit = visibleDropPreview !== null || layerDragAnchorUs !== null;
   const refused =
     visibleDropPreview !== null && mediaDropInvalid(visibleDropPreview.plan.validity);
   const ghostLeftPx =
@@ -199,11 +197,12 @@ export function DropStrip({
   // beside the pointer at any scroll offset. For a media drag that is the ghost's
   // head, offset far enough to clear the absorbed media chip (which reaches at
   // most MEDIA_DRAG_CURSOR_OFFSET_PX + 18 px past it); for a clip drag it is the
-  // clip's own head, which nothing covers.
+  // clip's own head, which nothing covers — the clip keeps its chip in the lane
+  // it came from rather than bringing a ghost into the strip.
   const hintLeftPx =
     visibleDropPreview !== null
       ? ghostLeftPx + MEDIA_DRAG_CURSOR_OFFSET_PX + 24
-      : (layerDrag?.anchorLeftPx ?? 0);
+      : ((layerDragAnchorUs ?? 0) / 1_000_000) * pxPerSec;
   // The strip is a clip surface for selection too: a sweep may start on the
   // reserved row and reach down into the lanes.
   const { onPointerDown: onMarqueeDown } = useMarqueeAnchor({ kind: "clip" });

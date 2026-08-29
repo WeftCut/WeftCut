@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { LayerBlock, type PendingLayerPlacement } from "./LayerBlock";
 import {
-  LayerBlock,
-  type DragState,
+  useLayerDragForTrack,
   type DragSeed,
   type DragSubject,
-  type PendingLayerPlacement,
-} from "./LayerBlock";
+} from "./layerDragStore";
 import {
   computeLayerSlices,
   layerSliceRect,
@@ -53,7 +52,6 @@ export function TrackLane({
   selectedTransitionId,
   linkByLayerId,
   linkTabByLayerId,
-  dragState,
   pendingPlacements,
   pendingLayerById,
   dragLayerById,
@@ -99,7 +97,6 @@ export function TrackLane({
   /// Each link's anchor member → its tab (`indexLinkTabs`); a layer absent
   /// from the map draws no link chrome beyond the accent.
   linkTabByLayerId: ReadonlyMap<string, LinkTab>;
-  dragState: DragState | null;
   pendingPlacements: PendingLayerPlacement[] | null;
   pendingLayerById: ReadonlyMap<string, LayerSummary>;
   dragLayerById: ReadonlyMap<string, LayerSummary>;
@@ -157,6 +154,10 @@ export function TrackLane({
   compositionId: string | null;
 }) {
   const { t } = useTranslation();
+  // Null unless this lane is one the gesture concerns — it holds a subject, or
+  // the pointer is over it. Every other lane sits out the pointermove entirely
+  // (`layerDragStore.ts`).
+  const dragState = useLayerDragForTrack(track.id);
   const activeMediaDrag = useMediaDragStore((s) => s.active);
   const dropTargetTrackId = useMediaDragStore((s) => s.dropTargetTrackId);
   const claimDropTarget = useMediaDragStore((s) => s.claimDropTarget);
@@ -539,12 +540,6 @@ export function TrackLane({
             isSelected={selectedLayerIds.has(layer.id)}
             linkId={linkByLayerId.get(layer.id) ?? null}
             linkTab={linkTabByLayerId.get(layer.id) ?? null}
-            dragState={
-              dragState?.duplicate &&
-              dragState.subjects.some((subject) => subject.layerId === layer.id)
-                ? null
-                : dragState
-            }
             pendingPlacement={
               pendingPlacements?.find((placement) => placement.layerId === layer.id) ?? null
             }
@@ -578,7 +573,6 @@ export function TrackLane({
               isSelected={false}
               linkId={null}
               linkTab={null}
-              dragState={dragState}
               pendingPlacement={null}
               previewOnly
               bladeMode={bladeMode}

@@ -9,34 +9,26 @@ import {
   type TrackSummary,
 } from "../../ipc";
 import { linkFanoutActive } from "../linkEligibility";
-import {
-  adjacentFrameBoundaryUs,
-  boundaryDisplayFrameUs,
-  snapFrameRound,
-} from "../../frames";
+import { adjacentFrameBoundaryUs, snapFrameRound } from "../../frames";
 import { logMutationFailure } from "../../errors/tryMutate";
-import { transportPause, transportSeek } from "../../state/playbackStore";
-import { setPlayheadTimeUs } from "../../state/playheadStore";
 import {
   layerOverlapClass,
   trackIdAtClientY,
   type MeasuredTrackRow,
   type VisualTrack,
 } from "../geometry";
+import { type PendingLayerPlacement } from "../LayerBlock";
 import {
+  useLayerDragStore,
+  useLayerMoveDragSubjects,
   type DragSeed,
   type DragState,
   type DragSubject,
-  type PendingLayerPlacement,
-} from "../LayerBlock";
+} from "../layerDragStore";
 import { snapDragDeltaToTimelineBoundary } from "../snapping";
 import { refuseCrossCompositionMove } from "../crossCompositionRefusal";
 import { foreignCompositionAtPoint } from "../timelineSurfaces";
-import { playheadTimeUs } from "../../state/playheadStore";
-import {
-  playheadClockUs,
-  previewLocalUs,
-} from "../../state/playheadProjection";
+import { playheadClockUs } from "../../state/playheadProjection";
 import {
   evaluateTimelinePlacements,
   SPAWN_TRACK_ID,
@@ -70,6 +62,34 @@ interface LayerDragGesture {
   armAtMs: number;
   lastClientX: number;
   lastClientY: number;
+}
+
+/// Where the dragged edge / clip-start actually lands, after the constraints the
+/// kind imposes: a move never starts before zero, and a trim never crosses its
+/// own opposite edge (one frame of clip always survives).
+export function constrainedAnchorUs(
+  state: DragState,
+  deltaUs: number,
+  fpsNum: number,
+  fpsDen: number,
+): number {
+  switch (state.kind) {
+    case "move":
+      return Math.max(0, state.originalTStart + deltaUs);
+    case "trim-start":
+      return Math.max(
+        0,
+        Math.min(
+          state.originalTStart + deltaUs,
+          adjacentFrameBoundaryUs(state.originalTEnd, -1, fpsNum, fpsDen),
+        ),
+      );
+    case "trim-end":
+      return Math.max(
+        adjacentFrameBoundaryUs(state.originalTStart, 1, fpsNum, fpsDen),
+        state.originalTEnd + deltaUs,
+      );
+  }
 }
 
 interface PointerDragEvaluation {
@@ -114,7 +134,6 @@ export function useLayerDrag(opts: {
   onLaneSpawned: (trackId: string) => void;
   onMutated: () => Promise<void>;
 }): {
-  drag: DragState | null;
   setDrag: (s: DragSeed | null) => void;
   pendingPlacements: PendingLayerPlacement[] | null;
   pendingLayerById: ReadonlyMap<string, LayerSummary>;
@@ -136,10 +155,19 @@ export function useLayerDrag(opts: {
     onLaneSpawned,
     onMutated,
   } = opts;
-  const [gesture, setGesture] = useState<LayerDragGesture | null>(null);
-  // Pending selection gestures stay private: callers render drag chrome only
-  // after the temporal arm and a real frame/track change have both happened.
-  const drag = gesture?.phase === "dragging" ? gesture.state : null;
+  // The whole gesture, armed or not. A ref, not state: a pending gesture must
+  // draw NOTHING until the temporal arm and a real frame/track change have both
+  // happened, and a value that cannot cause a render makes that structural
+  // rather than a condition every reader has to remember. Once it arms, the
+  // armed half — and only that half — is published to `layerDragStore`.
+  const gestureRef = useRef<LayerDragGesture | null>(null);
+  // Mounts the window listeners below, and nothing else. Flipped exactly twice
+  // per gesture, at pointerdown and at release, so it is not an event-rate
+  // write: the pointer handlers read the ref rather than closing over state.
+  const [gestureActive, setGestureActive] = useState(false);
+  // Local, not in the store: a placement is written once on commit and cleared
+  // once the refreshed project shows the layer where it was promised, never at
+  // event rate — so the rule the store exists to enforce does not reach it.
   const [pendingPlacements, setPendingPlacements] =
     useState<PendingLayerPlacement[] | null>(null);
 
@@ -171,15 +199,21 @@ export function useLayerDrag(opts: {
     return layersById;
   }, [layerEntryById, pendingPlacements]);
 
+  // LANDMINE: memoized on the SUBJECTS reference, never on the whole gesture.
+  // `subjects` is minted once in `setDrag` and every `{ ...state, … }` spread
+  // downstream preserves its identity, so this map keeps one identity for the
+  // length of a drag — which is what stops the lanes that receive it as a prop
+  // from re-rendering per pointermove. Widen the dep to the `DragState` and
+  // every lane wakes on every event again.
+  const dragSubjects = useLayerMoveDragSubjects();
   const dragLayerById = useMemo(() => {
     const layersById = new Map<string, LayerSummary>();
-    if (!drag || drag.kind !== "move") return layersById;
-    for (const subject of drag.subjects) {
+    for (const subject of dragSubjects ?? []) {
       const entry = layerEntryById.get(subject.layerId);
       if (entry) layersById.set(subject.layerId, entry.layer);
     }
     return layersById;
-  }, [drag, layerEntryById]);
+  }, [dragSubjects, layerEntryById]);
 
   useEffect(() => {
     if (!pendingPlacements) return;
@@ -265,7 +299,13 @@ export function useLayerDrag(opts: {
     (seed: DragSeed | null) => {
       announcedForeignRef.current = null;
       if (!seed) {
-        setGesture(null);
+        // Guarded on this Panel's OWN gesture: `end()` clears the one store
+        // every Panel shares, so abandoning a gesture this Panel never had
+        // would abandon the neighbour's instead.
+        if (gestureRef.current === null) return;
+        gestureRef.current = null;
+        setGestureActive(false);
+        useLayerDragStore.getState().end();
         return;
       }
       // The link override reaches this whole gesture through the seed's own
@@ -283,6 +323,11 @@ export function useLayerDrag(opts: {
       );
       const state: DragState = {
         ...seed,
+        // Stamped here rather than on the seed: this hook is the only party to
+        // the gesture that knows which composition's axis it is expressed on,
+        // and every subscriber that is not keyed on a project-unique id needs
+        // the answer (`layerDragStore.ts`).
+        compositionId,
         subjects,
         validity: "valid",
         conflictingLayerIds: [],
@@ -294,15 +339,28 @@ export function useLayerDrag(opts: {
         seed.kind === "move" && !seed.wasSelectedAtPointerDown
           ? UNSELECTED_CLIP_DRAG_ARM_MS
           : 0;
-      setGesture({
+      gestureRef.current = {
         state,
         phase: "pending",
         armAtMs: Date.now() + armDelayMs,
         lastClientX: seed.startX,
         lastClientY: seed.startY,
-      });
+      };
+      setGestureActive(true);
     },
-    [buildDragSubjects, orderedTracks],
+    [buildDragSubjects, compositionId, orderedTracks],
+  );
+
+  // Module state outlives this Panel. A Panel torn down mid-gesture would
+  // otherwise leave a drag published with nobody left to end it; the ref guard
+  // is what keeps a SECOND Panel's unmount from ending the first one's drag.
+  useEffect(
+    () => () => {
+      if (gestureRef.current === null) return;
+      gestureRef.current = null;
+      useLayerDragStore.getState().end();
+    },
+    [],
   );
 
   // -------- Layer drag (move / trim) --------
@@ -354,90 +412,6 @@ export function useLayerDrag(opts: {
     },
     [fpsNum, fpsDen],
   );
-
-  const constrainedAnchorUs = useCallback(
-    (state: DragState, deltaUs: number): number => {
-      switch (state.kind) {
-        case "move":
-          return Math.max(0, state.originalTStart + deltaUs);
-        case "trim-start":
-          return Math.max(
-            0,
-            Math.min(
-              state.originalTStart + deltaUs,
-              adjacentFrameBoundaryUs(
-                state.originalTEnd,
-                -1,
-                fpsNum,
-                fpsDen,
-              ),
-            ),
-          );
-        case "trim-end":
-          return Math.max(
-            adjacentFrameBoundaryUs(
-              state.originalTStart,
-              1,
-              fpsNum,
-              fpsDen,
-            ),
-            state.originalTEnd + deltaUs,
-          );
-      }
-    },
-    [fpsDen, fpsNum],
-  );
-
-  // -------- Trim monitor preview --------
-
-  // While a trim drag is live, the monitor shows the frame the dragged
-  // boundary KEEPS: the out side shows the last kept frame (the traditional
-  // NLE tail-trim display — never the frame past the cut), the in side the
-  // first. The playhead is not the preview cursor: its position is captured
-  // once at gesture start and restored when the gesture ends, so a trim
-  // never relocates the user's park position.
-  const trimPreviewUs = (() => {
-    if (!drag || drag.kind === "move") return null;
-    const boundaryUs = constrainedAnchorUs(drag, drag.deltaUs);
-    return boundaryDisplayFrameUs(
-      boundaryUs,
-      drag.kind === "trim-end" ? "out" : "in",
-      fpsNum,
-      fpsDen,
-    );
-  })();
-  const trimPreviewActive = trimPreviewUs !== null;
-  const trimRestoreUsRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (trimPreviewUs === null) return;
-    if (trimRestoreUsRef.current === null) {
-      // ROOT time, because that is what goes back into the store below; the
-      // preview seek beneath it is the trim boundary on the composition's own
-      // clock, which is already the clock the engine runs on.
-      trimRestoreUsRef.current = playheadTimeUs();
-      // Trimming while playing would fight the running transport for the
-      // monitor — park it first (Premiere stops playback on a trim drag too).
-      transportPause();
-    }
-    // Dedup is the effect dep itself: the value is frame-quantized upstream,
-    // so a pointer wiggle inside one frame never re-seeks.
-    transportSeek(trimPreviewUs);
-  }, [trimPreviewUs]);
-
-  useEffect(() => {
-    if (!trimPreviewActive) return;
-    return () => {
-      const restoreUs = trimRestoreUsRef.current;
-      trimRestoreUsRef.current = null;
-      if (restoreUs === null) return;
-      // Optimistic store write + transport seek (the seekExact pattern in
-      // state/navigation.ts): engine emits during the preview may have moved
-      // the playhead line, so put both the line and the monitor back.
-      setPlayheadTimeUs(restoreUs);
-      transportSeek(previewLocalUs(restoreUs));
-    };
-  }, [trimPreviewActive]);
 
   const snapDeltaToTimelineBoundary = useCallback(
     (
@@ -612,7 +586,7 @@ export function useLayerDrag(opts: {
 
       const timeChanged =
         requestedFrameChange &&
-        constrainedAnchorUs(state, frameDeltaUs) !== anchor;
+        constrainedAnchorUs(state, frameDeltaUs, fpsNum, fpsDen) !== anchor;
 
       const hasEditIntent = timeChanged || trackChanged;
       // A purely vertical move preserves time. In particular, do not let its
@@ -643,7 +617,7 @@ export function useLayerDrag(opts: {
       };
 
       const hasCommitChange =
-        constrainedAnchorUs(state, deltaUs) !== anchor || trackChanged;
+        constrainedAnchorUs(state, deltaUs, fpsNum, fpsDen) !== anchor || trackChanged;
 
       return {
         state: nextState,
@@ -656,7 +630,6 @@ export function useLayerDrag(opts: {
     [
       buildMoveProjection,
       compositionId,
-      constrainedAnchorUs,
       fpsDen,
       fpsNum,
       pxPerSec,
@@ -668,8 +641,7 @@ export function useLayerDrag(opts: {
 
   /// The foreign composition already announced for the gesture in flight, so
   /// the crossing is reported once and not once per `pointermove`. Cleared when
-  /// the pointer comes back, which re-arms it for a second crossing — and, being
-  /// a latch, it also absorbs the repeat call a re-invoked state updater makes.
+  /// the pointer comes back, which re-arms it for a second crossing.
   const announcedForeignRef = useRef<string | null>(null);
   const announceForeignComposition = useCallback(
     (foreignCompositionId: string | null) => {
@@ -683,44 +655,52 @@ export function useLayerDrag(opts: {
 
   const handlePointerMove = useCallback(
     (e: PointerEvent) => {
+      const current = gestureRef.current;
+      if (!current) return;
       const clientX = e.clientX;
       const clientY = e.clientY;
-      setGesture((current) => {
-        if (!current) return null;
-        const evaluation = evaluatePointer(current.state, clientX, clientY);
-        announceForeignComposition(evaluation.foreignCompositionId);
-        const next = {
-          ...current,
-          lastClientX: clientX,
-          lastClientY: clientY,
-        };
-        if (current.phase === "pending") {
-          if (Date.now() < current.armAtMs || !evaluation.hasEditIntent) {
-            return next;
-          }
-          return {
-            ...next,
-            phase: "dragging",
-            state: evaluation.state,
-          };
+      const evaluation = evaluatePointer(current.state, clientX, clientY);
+      announceForeignComposition(evaluation.foreignCompositionId);
+      const next: LayerDragGesture = {
+        ...current,
+        lastClientX: clientX,
+        lastClientY: clientY,
+      };
+      const store = useLayerDragStore.getState();
+      if (current.phase === "pending") {
+        if (Date.now() < current.armAtMs || !evaluation.hasEditIntent) {
+          gestureRef.current = next;
+          return;
         }
-        return { ...next, state: evaluation.state };
-      });
+        gestureRef.current = {
+          ...next,
+          phase: "dragging",
+          state: evaluation.state,
+        };
+        store.begin(evaluation.state, clientX, clientY);
+        return;
+      }
+      gestureRef.current = { ...next, state: evaluation.state };
+      store.publish(evaluation.state);
+      store.moveVisual(clientX, clientY);
     },
     [announceForeignComposition, evaluatePointer],
   );
 
   const handlePointerUp = useCallback(
     async (e: PointerEvent) => {
-      if (!gesture) return;
+      const current = gestureRef.current;
+      if (!current) return;
       const evaluation = evaluatePointer(
-        gesture.state,
+        current.state,
         e.clientX,
         e.clientY,
       );
       const temporalArmReached =
-        gesture.phase === "dragging" || Date.now() >= gesture.armAtMs;
-      setGesture(null);
+        current.phase === "dragging" || Date.now() >= current.armAtMs;
+      gestureRef.current = null;
+      setGestureActive(false);
+      useLayerDragStore.getState().end();
       // Released over another timeline: nothing is sent. The frozen ghost has
       // already emptied the commit, and this states the rule rather than
       // relying on that.
@@ -827,12 +807,12 @@ export function useLayerDrag(opts: {
             break;
           }
           case "trim-start": {
-            const newStart = constrainedAnchorUs(committed, deltaUs);
+            const newStart = constrainedAnchorUs(committed, deltaUs, fpsNum, fpsDen);
             await trimLayer(committed.layerId, "in", newStart, escape);
             break;
           }
           case "trim-end": {
-            const newEnd = constrainedAnchorUs(committed, deltaUs);
+            const newEnd = constrainedAnchorUs(committed, deltaUs, fpsNum, fpsDen);
             await trimLayer(committed.layerId, "out", newEnd, escape);
             break;
           }
@@ -845,9 +825,12 @@ export function useLayerDrag(opts: {
     },
     [
       announceForeignComposition,
-      constrainedAnchorUs,
       evaluatePointer,
-      gesture,
+      // The trim commits read the grid directly. `evaluatePointer` happens to
+      // change with them too, but leaning on that would make this handler's
+      // freshness someone else's dependency list.
+      fpsDen,
+      fpsNum,
       onLaneSpawned,
       onMutated,
     ],
@@ -858,37 +841,50 @@ export function useLayerDrag(opts: {
   // activation timer, not a pointermove debounce: continuous motion never
   // pushes the deadline farther away.
   useEffect(() => {
-    if (!gesture || gesture.phase !== "pending") return;
-    const delayMs = Math.max(0, gesture.armAtMs - Date.now());
-    const timer = window.setTimeout(() => {
-      setGesture((current) => {
-        if (!current || current.phase !== "pending") return current;
-        if (Date.now() < current.armAtMs) return current;
-        const evaluation = evaluatePointer(
-          current.state,
-          current.lastClientX,
-          current.lastClientY,
-        );
-        if (!evaluation.hasEditIntent) return current;
-        return {
-          ...current,
-          phase: "dragging",
-          state: evaluation.state,
-        };
-      });
-    }, delayMs);
+    if (!gestureActive) return;
+    let timer = 0;
+    const fire = () => {
+      const current = gestureRef.current;
+      if (!current || current.phase !== "pending") return;
+      // Re-read the deadline instead of trusting the one this effect was
+      // scheduled against: a fresh pointerdown replaces the gesture without
+      // flipping the boolean that mounts this effect, so it would be stale.
+      const remainingMs = current.armAtMs - Date.now();
+      if (remainingMs > 0) {
+        timer = window.setTimeout(fire, remainingMs);
+        return;
+      }
+      const evaluation = evaluatePointer(
+        current.state,
+        current.lastClientX,
+        current.lastClientY,
+      );
+      if (!evaluation.hasEditIntent) return;
+      gestureRef.current = {
+        ...current,
+        phase: "dragging",
+        state: evaluation.state,
+      };
+      useLayerDragStore
+        .getState()
+        .begin(evaluation.state, current.lastClientX, current.lastClientY);
+    };
+    timer = window.setTimeout(
+      fire,
+      Math.max(0, (gestureRef.current?.armAtMs ?? 0) - Date.now()),
+    );
     return () => window.clearTimeout(timer);
-  }, [evaluatePointer, gesture]);
+  }, [evaluatePointer, gestureActive]);
 
   useEffect(() => {
-    if (!gesture) return;
+    if (!gestureActive) return;
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [gesture, handlePointerMove, handlePointerUp]);
+  }, [gestureActive, handlePointerMove, handlePointerUp]);
 
-  return { drag, setDrag, pendingPlacements, pendingLayerById, dragLayerById };
+  return { setDrag, pendingPlacements, pendingLayerById, dragLayerById };
 }

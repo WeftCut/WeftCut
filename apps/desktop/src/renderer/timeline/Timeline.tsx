@@ -91,7 +91,6 @@ import {
 } from "./marquee";
 import type { MarqueeBox, MarqueeKind } from "./marqueeStore";
 import { DropStrip } from "./DropStrip";
-import { SPAWN_TRACK_ID } from "./placement";
 import { registerTimelineSurface } from "./timelineSurfaces";
 import { TimelineRuler } from "./TimelineRuler";
 import { TrackHeader } from "./TrackHeader";
@@ -119,6 +118,8 @@ import { useFollowPlayhead } from "./hooks/useFollowPlayhead";
 import { useWheelScroll } from "./hooks/useWheelScroll";
 import { useHeightDrag } from "./hooks/useHeightDrag";
 import { useLayerDrag } from "./hooks/useLayerDrag";
+import { LayerDragTrimMonitor } from "./LayerDragTrimMonitor";
+import { useIsLayerDragging } from "./layerDragStore";
 import { snapTimeToTimelineBoundary } from "./snapping";
 import {
   localClockUsOf,
@@ -829,7 +830,11 @@ export function Timeline({
     [displayMode],
   );
 
-  const { drag, setDrag, pendingPlacements, pendingLayerById, dragLayerById } =
+  // The gesture itself lives in `layerDragStore`, not here: one `useState` on
+  // this root would re-render every lane, sub-lane and chip per pointermove.
+  // This root subscribes to the one bit it draws.
+  const isLayerDragging = useIsLayerDragging(compositionId);
+  const { setDrag, pendingPlacements, pendingLayerById, dragLayerById } =
     useLayerDrag({
       compositionId,
       tracks,
@@ -1619,7 +1624,7 @@ export function Timeline({
       ref={rootRef}
       className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto ${
         insideGroup ? "" : "bg-card"
-      } ${drag ? "cursor-grabbing select-none" : ""} ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "timeline-root-blade" : ""}`}
+      } ${isLayerDragging ? "cursor-grabbing select-none" : ""} ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "timeline-root-blade" : ""}`}
       // One step off the panel surface for every depth below the root, capped so
       // a deep nest cannot walk the background into the foreground. Resolve tints
       // a compound clip's timeline the same way, and it is the one signal that
@@ -1627,6 +1632,13 @@ export function Timeline({
       // is, the tint says how deep it sits, and neither can be scrolled past.
       style={insideGroup ? { backgroundColor: groupDepthTint } : undefined}
     >
+      {/* Renders nothing. A leaf so the trim preview's per-frame seek stays a
+          leaf subscription — read here, it would re-render every lane. */}
+      <LayerDragTrimMonitor
+        compositionId={compositionId}
+        fpsNum={fpsNum}
+        fpsDen={fpsDen}
+      />
       {/* `min-h-full` so the lanes' container fills the panel even on a short
           project: the leftover band below the last track then belongs to the
           scrolling body, which makes it a `clip` anchor — click it to clear,
@@ -1711,21 +1723,6 @@ export function Timeline({
               fpsNum={fpsNum}
               fpsDen={fpsDen}
               mediaDropSnap={mediaDropSnap}
-              // The other event model's half of the strip's feedback: a pointer
-              // drag has no store to publish to, so its state is handed over.
-              // `deltaUs` is zero while the strip is the destination, which is
-              // why this head matches what the commit will keep.
-              layerDrag={
-                drag?.kind === "move"
-                  ? {
-                      overStrip: drag.overTrackId === SPAWN_TRACK_ID,
-                      anchorLeftPx:
-                        (Math.max(0, drag.originalTStart + drag.deltaUs) /
-                          1_000_000) *
-                        pxPerSec,
-                    }
-                  : null
-              }
               onMediaDrop={onMediaDrop}
             />
             {orderedTracks.length === 0 && <EmptyHint mode={displayMode} />}
@@ -1752,7 +1749,6 @@ export function Timeline({
                 selectedTransitionId={selectedTransitionId}
                 linkByLayerId={linkByLayerId}
                 linkTabByLayerId={linkTabByLayerId}
-                dragState={drag}
                 pendingPlacements={pendingPlacements}
                 pendingLayerById={pendingLayerById}
                 dragLayerById={dragLayerById}

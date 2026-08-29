@@ -27,6 +27,7 @@ import {
   useMediaDragStore,
 } from "./mediaDrag";
 import { SPAWN_TRACK_ID } from "./placement";
+import { useLayerDragStore } from "./layerDragStore";
 import {
   clearLayerSelection,
   setLayerSelection,
@@ -126,6 +127,12 @@ vi.mock("../ipc/compositionScoped", () => ({
   addTrackIn: ipcMocks.addTrack,
   addGroupLayerIn: ipcMocks.addGroupLayer,
 }));
+
+// The clip drag is module state (`layerDragStore.ts`), so a test that leaves a
+// gesture in flight would hand it to the next one.
+afterEach(() => {
+  useLayerDragStore.getState().end();
+});
 
 const staticNum = (value: number) => ({ mode: "Static" as const, value });
 

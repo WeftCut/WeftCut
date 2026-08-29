@@ -61,62 +61,8 @@ import {
   useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
 import { timelineLayerTheme } from "./layerTheme";
-import {
-  placementRefuses,
-  previewTrackId,
-  type PlacementValidity,
-} from "./placement";
-
-export type DragKind = "move" | "trim-start" | "trim-end";
-
-export interface DragSubject {
-  layerId: string;
-  trackId: string;
-  originalTStart: number;
-  originalTEnd: number;
-}
-
-export interface DragSeed {
-  kind: DragKind;
-  layerId: string;
-  trackId: string;
-  /// Originating track's kind. Not consulted when picking a drop target —
-  /// tracks are kind-agnostic (`trackAcceptsForLayer` accepts any track).
-  trackKind: string;
-  startX: number;
-  startY: number;
-  originalTStart: number;
-  originalTEnd: number;
-  deltaUs: number;
-  /// During cross-track drag, which track is the pointer currently over.
-  overTrackId: string | null;
-  /// Alt+body-drag duplicates the layer at the drop position. This is a fixed
-  /// timeline gesture rather than a configurable keyboard shortcut.
-  duplicate: boolean;
-  /// Link escape remains available to trim gestures. Body-drag reserves Alt
-  /// for duplicate, so ordinary moves continue to fan out across the link.
-  escapeLink: boolean;
-  /// Selection state before this pointerdown. An unselected clip body gets a
-  /// short temporal arm delay so a selection click cannot become a move;
-  /// selected clips and explicit trim handles respond immediately.
-  wasSelectedAtPointerDown: boolean;
-  /// The selection as it stood BEFORE this pointerdown's own click applied. A
-  /// duplicate's subject set reads it (`buildDragSubjects`): the whole link,
-  /// unless the user had already narrowed the selection to some of its members
-  /// — an `Alt`+click first. The selection is the escape, because `Alt` on the
-  /// body already means duplicate and the click itself always Alt-selects.
-  selectedAtPointerDown: ReadonlySet<string>;
-}
-
-export interface DragState extends DragSeed {
-  subjects: DragSubject[];
-  validity: PlacementValidity;
-  conflictingLayerIds: string[];
-  /// Subjects on lanes the display filter hides. A move fans out to them with
-  /// nothing on screen to show it, so the dragged member's ghost carries this
-  /// count as a badge for the duration of the gesture.
-  hiddenSubjectCount: number;
-}
+import { placementRefuses, previewTrackId } from "./placement";
+import { useLayerDragFor, type DragKind, type DragSeed } from "./layerDragStore";
 
 export interface PendingLayerPlacement {
   layerId: string;
@@ -342,7 +288,6 @@ export function LayerBlock({
   isSelected,
   linkId,
   linkTab,
-  dragState,
   pendingPlacement,
   previewOnly = false,
   bladeMode,
@@ -382,7 +327,6 @@ export function LayerBlock({
   /// Non-null only on the link's anchor member (`indexLinkTabs`): the label
   /// tab and hidden-member badge draw there and nowhere else.
   linkTab: LinkTabInfo | null;
-  dragState: DragState | null;
   pendingPlacement: PendingLayerPlacement | null;
   /// Non-interactive in-flight clone rendered for an Alt+drag duplicate.
   previewOnly?: boolean;
@@ -426,6 +370,13 @@ export function LayerBlock({
   fpsDen: number;
 }) {
   const { t } = useTranslation();
+  // Null for every block the gesture does not carry, so a pointermove renders
+  // the clips that move and nothing else (`layerDragStore.ts`).
+  const liveDrag = useLayerDragFor(layer.id);
+  // A duplicate leaves its sources where they are, so a source block draws as
+  // if nothing were happening; the in-flight clone — one `previewOnly` block
+  // per subject — is the only one that follows the pointer.
+  const dragState = !previewOnly && liveDrag?.duplicate === true ? null : liveDrag;
   const dragSubject =
     dragState?.subjects.find((subject) => subject.layerId === layer.id) ??
     null;

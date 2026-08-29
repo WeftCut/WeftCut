@@ -17,6 +17,7 @@ import {
 import { setActiveRegion } from "../focus/focusRegionStore";
 import { registerTransport, releaseTransport } from "../state/playbackStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "../state/playheadStore";
+import { useLayerDragStore } from "./layerDragStore";
 
 const ipcMocks = vi.hoisted(() => ({
   addTransition: vi.fn().mockResolvedValue("new-transition"),
@@ -152,7 +153,12 @@ beforeEach(() => {
     settings: { ...s.settings, display_mode: "AllTracks" },
   }));
 });
-afterEach(cleanup);
+afterEach(() => {
+  // The clip drag is module state (`layerDragStore.ts`): a gesture left in
+  // flight would be handed to the next test.
+  useLayerDragStore.getState().end();
+  cleanup();
+});
 
 describe("transition chip", () => {
   it("renders over the incoming layer's head: left at its start, width = duration", () => {
