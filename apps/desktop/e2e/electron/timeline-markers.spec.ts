@@ -28,12 +28,20 @@ import { invokeCmd, launchApp, newProject, tmpDir, waitForHook, rootSummary } fr
  * moves the PLAYHEAD is a question about two live surfaces sharing one window,
  * and the colocated suite renders the lane with no ruler beside it.
  *
+ * The fourth drives the marker KEYS, one layer up from the lane: the walk
+ * reads whichever composition holds the keyboard and writes the one playhead,
+ * so only a real window can say that a keystroke moves the film, lands on each
+ * mark in turn, and goes dead at the end of the list instead of wrapping.
+ *
  * Cross-restart persistence is deliberately NOT here — it is asserted in the
  * main-process app-settings suite, because every spec in this suite boots
  * Electron.
  */
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
+
+/// The `Mod` half of the walk's chord, as `shortcuts/match.ts` resolves it.
+const MOD = process.platform === 'darwin' ? 'Meta' : 'Control'
 
 /// An MCP client on this app's own loopback server, as an agent would connect.
 async function mcpClient(page: Page): Promise<Client> {
@@ -318,6 +326,69 @@ test('a marker moves by being dragged in its lane, and a drag that goes nowhere 
     // CREATION, not a no-op move standing in front of it.
     await invokeCmd(page, 'project_undo', {})
     await expect(marks).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
+})
+
+test('the marker keys walk the marks in order and go dead at each end of the list', async () => {
+  test.setTimeout(120_000)
+  const { app, page } = await launchApp()
+  try {
+    const parent = tmpDir('weftcut-marker-walk-')
+    await newProject(page, { parentFolder: parent, name: 'marker-walk', canvas: CANVAS })
+    await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
+
+    const marks = page.locator('[data-testid="timeline-marker"]')
+    const playheadUs = () =>
+      page.evaluate(() => (window as any).__weftcutTest.getPlayheadUs() as number)
+
+    // Same premise as the two specs above: real duration FIRST, or every seek
+    // here clamps to frame 0 over a timeline autofitted to nothing.
+    await invokeCmd(page, 'add_color_layer', { tStartUs: 0, durationUs: 10_000_000 })
+    // `invokeCmd` lowers straight onto the channel, whose args are camelCase
+    // (`main/state/commands.ts`) — a snake_case key here would arrive as
+    // `undefined` and the mark would land nowhere near the time it names.
+    for (const tUs of [1_000_000, 5_000_000, 9_000_000]) {
+      await invokeCmd(page, 'add_marker', { tUs })
+    }
+    await expect(marks).toHaveCount(3)
+
+    // The ruler click is what puts the keyboard in a timeline; the seek that
+    // follows is what makes the walk start from a known frame. `transportSeekUs`
+    // no-ops SILENTLY until the preview bridge registers, so the seek sits
+    // inside the poll rather than in front of it.
+    await waitForHook(page, 'getPlayheadUs')
+    await page.locator('[data-testid="timeline-ruler"]').click({ position: { x: 200, y: 10 } })
+    await waitForHook(page, 'transportSeekUs')
+    await expect
+      .poll(async () => {
+        await page.evaluate(() => (window as any).__weftcutTest.transportSeekUs(0))
+        return playheadUs()
+      })
+      .toBe(0)
+
+    // ── Shift+M walks forward, one mark per press ──────────────────────
+    await page.keyboard.press('Shift+M')
+    await expect.poll(playheadUs).toBe(1_000_000)
+    await page.keyboard.press('Shift+M')
+    await expect.poll(playheadUs).toBe(5_000_000)
+    await page.keyboard.press('Shift+M')
+    await expect.poll(playheadUs).toBe(9_000_000)
+    // Past the last mark the key is dead, not a jump back to the first. The
+    // count proves the other half: this key walks, it never authors, so the
+    // dead press did not drop a fourth mark under the playhead.
+    await page.keyboard.press('Shift+M')
+    expect(await playheadUs()).toBe(9_000_000)
+    await expect(marks).toHaveCount(3)
+
+    // ── …and Mod+Shift+M walks back the same way ──────────────────────
+    await page.keyboard.press(`${MOD}+Shift+M`)
+    await expect.poll(playheadUs).toBe(5_000_000)
+    await page.keyboard.press(`${MOD}+Shift+M`)
+    await expect.poll(playheadUs).toBe(1_000_000)
+    await page.keyboard.press(`${MOD}+Shift+M`)
+    expect(await playheadUs()).toBe(1_000_000)
   } finally {
     await app.close()
   }

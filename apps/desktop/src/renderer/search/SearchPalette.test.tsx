@@ -125,17 +125,17 @@ function fixtureSummary(): ProjectSummary {
       },
     ],
       markers: [
-      { id: "mk1", t_us: 5_000_000, end_t_us: null, label: "章节一", note: "", color_hint: "", anchor_layer: null, hibernating: false },
+      { id: "mk1", t_us: 5_000_000, end_t_us: null, label: "章节一", note: "", color_hint: "", anchor_layer: null, anchor_src_us: null, hibernating: false },
       // Notes whose words appear nowhere in their names: one long enough that
       // the row has to excerpt it, one pure CJK for the pinyin path.
       {
         id: "mk2", t_us: 7_000_000, end_t_us: null, label: "章节二",
         note: "the horizon is crooked in this shot, reshoot before the client review on Friday",
-        color_hint: "", anchor_layer: null, hibernating: false,
+        color_hint: "", anchor_layer: null, anchor_src_us: null, hibernating: false,
       },
       {
         id: "mk3", t_us: 8_000_000, end_t_us: null, label: "章节三",
-        note: NOTE_CJK, color_hint: "", anchor_layer: null, hibernating: false,
+        note: NOTE_CJK, color_hint: "", anchor_layer: null, anchor_src_us: null, hibernating: false,
       },
     ],
       links: [],
@@ -340,7 +340,7 @@ describe("SearchPalette", () => {
     );
     const summary = fixtureSummary();
     rootOf(summary).markers = [
-      { id: "mk1", t_us: 5_000_000, end_t_us: null, label: "save point", note: "", color_hint: "", anchor_layer: null, hibernating: false },
+      { id: "mk1", t_us: 5_000_000, end_t_us: null, label: "save point", note: "", color_hint: "", anchor_layer: null, anchor_src_us: null, hibernating: false },
     ];
     // The marker's composition has to be the open one for the seek to be
     // direct — a project is loaded whenever the palette can be opened.

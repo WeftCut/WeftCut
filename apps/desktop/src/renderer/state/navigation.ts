@@ -1,4 +1,5 @@
-import { lastFrameAnchorUs } from "../frames";
+import { displayedFrameStartUs, lastFrameAnchorUs } from "../frames";
+import type { MarkerSummary } from "../ipc";
 import { openComposition, useCompositionAnchorStore } from "./compositionAnchorStore";
 import { transportSeek } from "./playbackStore";
 import {
@@ -179,6 +180,80 @@ export function seekToNextEdit(): void {
       return;
     }
   }
+}
+
+/// One reading of the FOCUSED composition, on its own clock, for both verbs
+/// below.
+interface MarkerWalk {
+  /// The marks that can be landed on, in `t_us` order.
+  markers: MarkerSummary[];
+  /// Start of the frame the playhead is displaying — what each mark's own
+  /// frame is compared against.
+  frameUs: number;
+  fpsNum: number;
+  fpsDen: number;
+}
+
+/// Local for `editPointsUs`' reason — a mark is a fact about the timeline being
+/// edited, so standing in a Group walks ITS marks. Null when no composition is
+/// open.
+///
+/// HIBERNATING marks are dropped: the anchor has left its clip's source window,
+/// so the mark names no moment of this timeline to land on. Every other marker
+/// surface drops them for the same reason (`timeline/rulerModel.ts`, the search
+/// index, the Group badge).
+///
+/// Nothing is sorted. `t_us` order is a stored invariant (`sortMarkers`,
+/// main/state/validate.ts) that `markerStartingInFrame` and the actor's
+/// insertion scan already rely on, and a defensive re-sort here would only hide
+/// a break in it.
+function markerWalk(): MarkerWalk | null {
+  const comp = currentOpenComposition();
+  if (comp === null) return null;
+  return {
+    markers: comp.markers.filter((m) => !m.hibernating),
+    frameUs: displayedFrameStartUs(focusedPlayheadUs(), comp.fps_num, comp.fps_den),
+    fpsNum: comp.fps_num,
+    fpsDen: comp.fps_den,
+  };
+}
+
+/// Park the playhead on the nearest mark starting after / before the frame it
+/// is displaying. Local in, ROOT out, the way the edit-point pair above travels.
+///
+/// Where a mark BEGINS and never where it merely reaches: a region spanning the
+/// playhead is not a mark to be walked to — `markerStartingInFrame`'s rule for
+/// `M`, said about a neighbouring frame instead of the current one. A region is
+/// therefore reached at its start, its end being nothing to land on.
+///
+/// The comparison is by FRAME and not by microsecond, so a mark sharing the
+/// displayed frame counts as behind you in both directions — otherwise a mark
+/// whose `t_us` sits a hair past a playhead parked in its own frame would be
+/// walked "forward" onto the frame already on screen.
+///
+/// NO WRAP, in either direction. A walk that cycles turns the far end into a
+/// silent jump back to the near one and loses the place being walked from; the
+/// dead key at the end of the list IS the signal that the list has an end.
+export function seekToNextMarker(): void {
+  const walk = markerWalk();
+  if (walk === null) return;
+  for (const m of walk.markers) {
+    if (displayedFrameStartUs(m.t_us, walk.fpsNum, walk.fpsDen) > walk.frameUs) {
+      seekToClamped(focusedRootUs(m.t_us));
+      return;
+    }
+  }
+}
+
+export function seekToPrevMarker(): void {
+  const walk = markerWalk();
+  if (walk === null) return;
+  let best: MarkerSummary | null = null;
+  for (const m of walk.markers) {
+    if (displayedFrameStartUs(m.t_us, walk.fpsNum, walk.fpsDen) >= walk.frameUs) break;
+    best = m;
+  }
+  if (best !== null) seekToClamped(focusedRootUs(best.t_us));
 }
 
 /// Replace the global selection from an imperative navigation surface. Every

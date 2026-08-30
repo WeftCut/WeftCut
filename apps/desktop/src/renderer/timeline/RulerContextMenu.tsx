@@ -16,12 +16,19 @@ import { useCursorAnchor } from "./contextMenuAnchor";
 /// Two families, separated: the in/out range, then the markers. Both are
 /// playhead operations, which is why they share a menu at all; they are
 /// different objects, which is why they don't share a section.
+///
+/// The marker section runs author, walk, then display — the walk rows sit with
+/// the marks they move between rather than with the seeks, because this menu is
+/// where an editor discovers that markers can be walked at all, and the
+/// accelerator beside each row is what turns that into a keystroke.
 export const RULER_MENU_COMMAND_IDS = [
   "markIn",
   "markOut",
   "clearRange",
   "---",
   "addMarkerAtPlayhead",
+  "seekPrevMarker",
+  "seekNextMarker",
   "toggleMarkersVisible",
 ] as const;
 

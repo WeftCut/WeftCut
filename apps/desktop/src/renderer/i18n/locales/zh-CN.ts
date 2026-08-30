@@ -291,6 +291,7 @@ const zhCN: Resources = {
       "quick-actions": "快捷操作",
       attribute: "属性",
       caption: "字幕",
+      marker: "标记",
       "role-mixer": "角色混音",
       effect: "效果",
       playhead: "播放头",
@@ -331,6 +332,28 @@ const zhCN: Resources = {
     placeholder: "例如：修剪这段停顿",
     confirm: "重命名",
     cancel: "取消",
+  },
+  marker_panel: {
+    // 分区标题，同时就是折叠控件：合成的名字加它持有的标记数量。
+    // 一个标记也没有的合成同样有标题——「这里什么都没标」是一个答案，
+    // 而标题缺席不是。
+    section_heading: "{{name}}（{{count}}）",
+    // 存放那些片段已经不再显示其所指画面的标记。CONTEXT.md 的定名用词。
+    hibernating: "休眠中",
+    // 行内字段。这里刻意没有时间字段：标记的时间是空间性的，属于轨道上的拖拽
+    // （ADR 0056）——已锚定的标记上，下一次 reconcile 会覆盖这里输入的任何值。
+    label_field: "标记标签",
+    note_field: "标记备注",
+    color_field: "标记颜色",
+    // 跟随片段的标记，区别于自由标记。CONTEXT.md 的定名用词——绝不叫「片段标记」，
+    // 那会指向第二种实体。
+    anchored: "已锚定",
+    go_to: "跳到 {{timecode}}",
+    // 休眠行不跳时间：它所指的那一帧此刻不在任何时间线上，
+    // 唯一诚实的去处是它所锚定的片段。
+    reveal_clip: "位于素材的 {{timecode}} —— 显示锚定的片段",
+    // 退出休眠的唯一出口。CONTEXT.md 的定名用词。
+    detach: "解除锚定",
   },
   actions: {
     add_color_layer: "颜色层",
@@ -412,6 +435,10 @@ const zhCN: Resources = {
     mark_in: "设置入点",
     mark_out: "设置出点",
     add_marker_at_playhead: "在播放头处添加标记",
+    // 指标记通道上的标记点，不是上面两行的入出点：英文 mark / marker 同根，
+    // 在这里却是两种对象，译名必须分开。
+    seek_prev_marker: "跳到上一个标记",
+    seek_next_marker: "跳到下一个标记",
     clear_range: "清除入出点",
     open_search: "全局搜索…",
     search: "搜索",

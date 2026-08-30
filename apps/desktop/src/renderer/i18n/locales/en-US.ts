@@ -322,6 +322,7 @@ const enUS = {
       "quick-actions": "Quick Actions",
       attribute: "Attribute",
       caption: "Caption",
+      marker: "Markers",
       "role-mixer": "Role Mixer",
       effect: "Effect",
       playhead: "Playhead",
@@ -363,6 +364,30 @@ const enUS = {
     placeholder: "e.g. Trim this pause",
     confirm: "Rename",
     cancel: "Cancel",
+  },
+  marker_panel: {
+    // A section heading, and the whole disclosure control: the composition's
+    // name plus how many markers it holds. A composition with none still gets
+    // one — "nothing is marked here" is an answer, and a missing heading is not.
+    section_heading: "{{name}} ({{count}})",
+    // The section for markers whose clip no longer shows the frame they name.
+    // CONTEXT.md's pinned word.
+    hibernating: "Hibernating",
+    // Row fields. There is deliberately no time field: a marker's time is
+    // spatial and belongs to the lane's drag (ADR 0056) — on an anchored marker
+    // the next reconcile would overwrite anything typed here.
+    label_field: "Marker label",
+    note_field: "Marker note",
+    color_field: "Marker color",
+    // A marker that follows a clip, as against a free one. CONTEXT.md's pinned
+    // word — never "clip marker", which would name a second entity.
+    anchored: "Anchored",
+    go_to: "Go to {{timecode}}",
+    // A hibernating row seeks nowhere: the frame it names is on no timeline
+    // right now, so the only honest destination is the clip it is tied to.
+    reveal_clip: "In the footage at {{timecode}} — reveal the anchoring clip",
+    // The one exit from hibernation. CONTEXT.md's pinned word.
+    detach: "Detach",
   },
   actions: {
     add_color_layer: "Color layer",
@@ -458,6 +483,11 @@ const enUS = {
     mark_in: "Mark in point",
     mark_out: "Mark out point",
     add_marker_at_playhead: "Add marker at playhead",
+    // The named flags on the marker lane, NOT the in/out range two lines up:
+    // "mark" and "marker" share a root in English and name two different
+    // objects here, so a translation must keep them apart.
+    seek_prev_marker: "Go to previous marker",
+    seek_next_marker: "Go to next marker",
     clear_range: "Clear in/out points",
     open_search: "Search everything…",
     search: "Search",

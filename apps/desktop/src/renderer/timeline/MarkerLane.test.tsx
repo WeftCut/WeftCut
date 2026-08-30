@@ -188,6 +188,7 @@ const point = (over: Partial<MarkerSummary> = {}): MarkerSummary => ({
   note: "",
   color_hint: "#ff8800",
   anchor_layer: null,
+  anchor_src_us: null,
   hibernating: false,
   ...over,
 });
@@ -200,6 +201,7 @@ const region = (over: Partial<MarkerSummary> = {}): MarkerSummary => ({
   note: "",
   color_hint: "#22cc55",
   anchor_layer: null,
+  anchor_src_us: null,
   hibernating: false,
   ...over,
 });

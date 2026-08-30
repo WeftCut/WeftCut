@@ -34,6 +34,7 @@ function marker(tUs: number, endTUs: number | null = null): MarkerSummary {
     note: "",
     color_hint: "#0080ff",
     anchor_layer: null,
+    anchor_src_us: null,
     hibernating: false,
   };
 }

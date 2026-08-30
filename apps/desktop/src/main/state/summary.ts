@@ -258,6 +258,13 @@ export interface MarkerSummary {
    *  nested layer view: `tracks` already carries the layer, and a second copy
    *  here would be a second thing to keep in step. */
   anchor_layer: string | null
+  /** The instant the anchor names in that layer's SOURCE domain, null when the
+   *  marker is FREE. Projected rather than left to the renderer because it
+   *  cannot be recovered there: a HIBERNATING marker's `t_us` is frozen at a
+   *  moment whose window has since moved, so mapping it back would produce a
+   *  source time the marker never named. It is the only position such a marker
+   *  still has, and the marker Panel is the only surface that shows it. */
+  anchor_src_us: number | null
   /** Anchored at source material its layer no longer shows — see
    *  `markerHibernating`. Always false for a free marker. */
   hibernating: boolean
@@ -377,6 +384,7 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
       id: m.id, t_us: m.t_us, end_t_us: m.end_t_us, label: m.label, note: m.note,
       color_hint: markerColorHint(m.color),
       anchor_layer: m.anchor === null ? null : m.anchor.layer,
+      anchor_src_us: m.anchor === null ? null : m.anchor.src_us,
       hibernating: markerHibernating(c, m),
     })),
     transitions: c.transitions.map((t): TransitionView => ({

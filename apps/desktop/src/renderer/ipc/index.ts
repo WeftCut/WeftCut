@@ -503,6 +503,12 @@ export interface MarkerSummary {
   /// The layer this marker follows, or null when it is FREE. An id, not a
   /// nested layer view — `tracks` already carries the layer.
   anchor_layer: string | null;
+  /// The instant the anchor names in that layer's SOURCE domain, null when the
+  /// marker is FREE. The marker Panel's hibernating section shows it, because a
+  /// hibernating marker's frozen `t_us` names a moment nothing holds any more
+  /// and this is the only position it has left. Unrecoverable in the renderer —
+  /// the window `t_us` was derived through has moved.
+  anchor_src_us: number | null;
   /// Anchored at source material its layer no longer shows, so it is kept but
   /// not painted. Always false for a free marker. Derived per projection
   /// (`markerHibernating` in main/state/summary.ts), never stored.
@@ -1184,6 +1190,28 @@ export async function renameMarker(
   label: string,
 ): Promise<void> {
   return invoke<void>("update_marker", { markerId, patch: { label } });
+}
+
+/// Rewrite a marker's long text. RECORDED, one entry — the marker Panel's note
+/// field commits through here on blur/Enter, never per keystroke.
+export async function setMarkerNote(
+  markerId: string,
+  note: string,
+): Promise<void> {
+  return invoke<void>("update_marker", { markerId, patch: { note } });
+}
+
+/// Recolour a marker. RECORDED, one entry.
+///
+/// Alpha is the caller's to supply, and the marker Panel supplies 255: the wire
+/// carries the colour as `#rrggbb` (`markerColorHint`), so a swatch edit has no
+/// alpha to preserve and an opaque write matches what every marker surface
+/// paints.
+export async function setMarkerColor(
+  markerId: string,
+  color: Rgba,
+): Promise<void> {
+  return invoke<void>("update_marker", { markerId, patch: { color } });
 }
 
 /// Move a marker to `tUs` — the marker lane's drag, as ONE commit. RECORDED, so

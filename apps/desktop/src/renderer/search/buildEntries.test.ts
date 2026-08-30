@@ -134,27 +134,27 @@ function fixtureSummary(): ProjectSummary {
     ],
       markers: [
       {
-        id: "mk1", t_us: 5_000_000, end_t_us: null, label: "章节一", note: "", color_hint: "", anchor_layer: null, hibernating: false,
+        id: "mk1", t_us: 5_000_000, end_t_us: null, label: "章节一", note: "", color_hint: "", anchor_layer: null, anchor_src_us: null, hibernating: false,
       },
       {
-        id: "mk2", t_us: 6_000_000, end_t_us: null, label: "  ", note: "", color_hint: "", anchor_layer: null, hibernating: false,
+        id: "mk2", t_us: 6_000_000, end_t_us: null, label: "  ", note: "", color_hint: "", anchor_layer: null, anchor_src_us: null, hibernating: false,
       },
       // No name at all, only a note — and the note runs long enough that the
       // name it lends is a truncation of it, so the full text is still indexed.
       {
         id: "mk3", t_us: 7_000_000, end_t_us: null, label: "",
         note: "  reshoot this 广角 before the client review on Friday, the horizon is crooked  ",
-        color_hint: "", anchor_layer: null, hibernating: false,
+        color_hint: "", anchor_layer: null, anchor_src_us: null, hibernating: false,
       },
       // Named, and carrying a CJK note whose words appear nowhere in the name.
       {
         id: "mk4", t_us: 8_000_000, end_t_us: null, label: "章节二",
-        note: "换成无人机镜头", color_hint: "", anchor_layer: null, hibernating: false,
+        note: "换成无人机镜头", color_hint: "", anchor_layer: null, anchor_src_us: null, hibernating: false,
       },
       // Anchored at material l1 no longer shows: kept in state, not painted.
       {
         id: "mk5", t_us: 3_000_000, end_t_us: null, label: "dormant beat",
-        note: "dormant note", color_hint: "", anchor_layer: "l1", hibernating: true,
+        note: "dormant note", color_hint: "", anchor_layer: "l1", anchor_src_us: 12_000_000, hibernating: true,
       },
     ],
       links: [],
@@ -167,7 +167,7 @@ function fixtureSummary(): ProjectSummary {
         markers: [
           {
             id: "mkg", t_us: 5_000_000, end_t_us: null, label: "章节一", note: "",
-            color_hint: "", anchor_layer: null, hibernating: false,
+            color_hint: "", anchor_layer: null, anchor_src_us: null, hibernating: false,
           },
         ],
       }),

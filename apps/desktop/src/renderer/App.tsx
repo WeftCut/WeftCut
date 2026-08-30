@@ -47,7 +47,9 @@ import {
   registerRevealCollapse,
   registerRevealTrack,
   seekToNextEdit,
+  seekToNextMarker,
   seekToPrevEdit,
+  seekToPrevMarker,
 } from "./state/navigation";
 import { AgentMode } from "./agent/AgentMode";
 import { SettingsPanel } from "./settings/SettingsPanel";
@@ -738,6 +740,14 @@ export function App({ onCloseProject }: AppProps) {
     },
     seekNextEdit: () => {
       seekToNextEdit();
+    },
+    // Marker navigation, same home and same reason: one verb, shared by the
+    // key, the palette and the ruler menu.
+    seekPrevMarker: () => {
+      seekToPrevMarker();
+    },
+    seekNextMarker: () => {
+      seekToNextMarker();
     },
     // The ends of the timeline the keyboard is IN, projected up: standing in a
     // Group, Home is that Group's first frame, not the film's.

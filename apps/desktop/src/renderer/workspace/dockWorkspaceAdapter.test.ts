@@ -393,9 +393,9 @@ function fakeDockview(
 }
 
 describe("Dock Panel registry", () => {
-  it("registers exactly the twelve semantic singleton kinds", () => {
-    expect(PANEL_KINDS).toHaveLength(12);
-    expect(new Set(PANEL_KINDS).size).toBe(12);
+  it("registers exactly the thirteen semantic singleton kinds", () => {
+    expect(PANEL_KINDS).toHaveLength(13);
+    expect(new Set(PANEL_KINDS).size).toBe(13);
     expect(Object.keys(PANEL_REGISTRY)).toEqual([...PANEL_KINDS]);
     expect(EDITING_OPEN_PANEL_KINDS).toEqual([
       "media",
@@ -412,6 +412,14 @@ describe("Dock Panel registry", () => {
     expect(PANEL_REGISTRY.history).toMatchObject({
       kind: "history",
       titleKey: "dock_workspace.panels.history",
+      initiallyOpen: false,
+    });
+    // The Marker Panel is the only surface a hibernating marker appears on, and
+    // it is still on-demand: an unopened one costs nothing, and the baseline
+    // layout spends no screen on marks nobody has gone looking for.
+    expect(PANEL_REGISTRY.marker).toMatchObject({
+      kind: "marker",
+      titleKey: "dock_workspace.panels.marker",
       initiallyOpen: false,
     });
   });
