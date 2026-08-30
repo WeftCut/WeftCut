@@ -14,7 +14,12 @@ import {
   useSelectionStore,
 } from "../state/selectionStore";
 import { compositionFixture } from "../testing/summaryFixture";
-import { markerAnchorFor, markerStartingInFrame } from "./markerAtFrame";
+import {
+  clampMarkerTimeUs,
+  markerAnchorFor,
+  markerDragBoundsUs,
+  markerStartingInFrame,
+} from "./markerAtFrame";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -288,5 +293,83 @@ describe("the M key's anchor decision", () => {
       selection: { kind: "media", id: "media-1" },
     });
     expect(anchorForSelection(timelineOf(CLIP), 2_000_000)).toBeNull();
+  });
+});
+
+// ── where a drag may put a marker ───────────────────────────────────────────
+// The other renderer-side twin of the actor's marker refusals: `markerAnchorFor`
+// above answers what a tie MEANS, this pair answers where a tied mark may go.
+describe("markerDragBoundsUs", () => {
+  const anchored = (over: Partial<MarkerSummary> = {}): MarkerSummary =>
+    ({ ...marker(2_000_000), anchor_layer: "clip-1", ...over });
+
+  it("bounds a free marker below and nowhere else", () => {
+    // The composition's duration is a derived high-water mark of the LAYERS, so
+    // a ceiling taken from it would shrink when a clip is deleted and forbid a
+    // mark that was placed legally.
+    expect(markerDragBoundsUs(timelineOf(CLIP), marker(2_000_000))).toEqual({
+      minUs: 0,
+      maxUs: null,
+    });
+  });
+
+  // The clip's span is HALF-OPEN, so the last legal landing is the start of the
+  // last frame it shows — not its end boundary, which belongs to whatever comes
+  // next. Expressed in timeline space on purpose: the source-space reading of
+  // the same rule tops out at `src_out_us`, which is precisely the value that
+  // puts the mark to sleep and takes the glyph out from under the cursor.
+  it("bounds an anchored marker to the frames its clip actually shows", () => {
+    const bounds = markerDragBoundsUs(timelineOf(CLIP), anchored())!;
+    expect(bounds.minUs).toBe(CLIP.t_start_us);
+    expect(bounds.maxUs).toBe(2_966_667); // frame 89 at 30 fps
+    expect(bounds.maxUs!).toBeLessThan(CLIP.t_end_us);
+    // The upper bound is a time the actor still accepts, which is the whole
+    // point of stopping there rather than at the end boundary.
+    expect(markerAnchorFor(timelineOf(CLIP), "clip-1", bounds.maxUs!)).not.toBeNull();
+  });
+
+  it("refuses to move a marker whose anchor this composition cannot resolve", () => {
+    expect(markerDragBoundsUs(timelineOf(CLIP), anchored({ anchor_layer: "gone" }))).toBeNull();
+  });
+
+  it("refuses to move a marker anchored to a kind with no source window", () => {
+    const motif = clip({
+      id: "motif-1",
+      tStartUs: 1_000_000,
+      tEndUs: 3_000_000,
+      params: {
+        kind: "Motif",
+        motif_id: "lower-third",
+        x: staticNum(0),
+        y: staticNum(0),
+        scale_x: staticNum(1),
+        scale_y: staticNum(1),
+        scale_linked: true,
+        rotation_deg: staticNum(0),
+        anchor_x: staticNum(0.5),
+        anchor_y: staticNum(0.5),
+        opacity: staticNum(1),
+        src_in_us: 0,
+        props: {},
+      },
+    });
+    expect(
+      markerDragBoundsUs(timelineOf(motif), anchored({ anchor_layer: "motif-1" })),
+    ).toBeNull();
+  });
+});
+
+describe("clampMarkerTimeUs", () => {
+  it("stops at each bound and passes everything between through", () => {
+    const bounds = { minUs: 1_000_000, maxUs: 2_966_667 };
+    expect(clampMarkerTimeUs(0, bounds)).toBe(1_000_000);
+    expect(clampMarkerTimeUs(9_000_000, bounds)).toBe(2_966_667);
+    expect(clampMarkerTimeUs(2_000_000, bounds)).toBe(2_000_000);
+  });
+
+  it("lets a free marker run as far right as it likes, and never past zero", () => {
+    const bounds = { minUs: 0, maxUs: null };
+    expect(clampMarkerTimeUs(-5_000_000, bounds)).toBe(0);
+    expect(clampMarkerTimeUs(99_000_000, bounds)).toBe(99_000_000);
   });
 });

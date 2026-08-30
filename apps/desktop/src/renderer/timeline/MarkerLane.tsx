@@ -11,6 +11,7 @@ import {
   useMarkersVisible,
 } from "../settings/appSettingsStore";
 import { useCompositionMarkers } from "../state/projectStore";
+import { useMarkerDrag } from "./hooks/useMarkerDrag";
 import { MarkerContextMenu } from "./MarkerContextMenu";
 import { openMarkerRenamePrompt } from "./markerRenamePrompt";
 import {
@@ -35,7 +36,9 @@ import { computeLaneMarkers, type LaneMarker } from "./rulerModel";
 /// Not a scrub surface. The ruler is the sole one, and it stayed the sole one by
 /// giving markers up entirely: two hit regions for one object is what a press
 /// here would have to arbitrate, and there is nothing to arbitrate when the
-/// glyphs live on exactly one row.
+/// glyphs live on exactly one row. That is what pays for the DRAG
+/// (`hooks/useMarkerDrag.ts`) — a left-press on a glyph in the ruler would have
+/// contested the scrub head-on; here it has one meaning and no rival.
 
 /// Lane height for the current collapse state. One function so the header cell
 /// and the body lane cannot disagree — a row painted at two heights out of two
@@ -141,19 +144,26 @@ function markerTitle(
 /// clip may be several lanes away, so the line would cross the whole lane region
 /// to say one bit.
 ///
-/// The one pointer handler is `contextmenu`. preventDefault beats the prod-mode
-/// global context-menu suppressor (main.tsx); stopPropagation keeps any future
+/// Two pointer handlers, one per button, which is what "separate by input
+/// channel" buys once the glyphs are off the ruler: the LEFT press drags the
+/// mark, the RIGHT one opens its menu, and neither has to arbitrate against a
+/// scrub. `onContextMenu`'s preventDefault beats the prod-mode global
+/// context-menu suppressor (main.tsx); stopPropagation keeps any future
 /// lane-level menu from stacking.
 function MarkerGlyph({
   view,
   title,
   collapsed,
+  dragging,
   onOpenMenu,
+  onBeginDrag,
 }: {
   view: LaneMarker;
   title: string;
   collapsed: boolean;
+  dragging: boolean;
   onOpenMenu: (xPx: number, yPx: number, markerId: string) => void;
+  onBeginDrag: (e: React.PointerEvent) => void;
 }) {
   const state = collapsed ? "collapsed" : "expanded";
   const laneHeight = markerLaneHeightPx(collapsed);
@@ -173,11 +183,13 @@ function MarkerGlyph({
         data-marker-id={view.id}
         data-shape={view.shape}
         data-anchored={view.anchored ? "true" : "false"}
+        data-dragging={dragging ? "true" : undefined}
         title={title}
         onContextMenu={openMenu}
+        onPointerDown={onBeginDrag}
         className={`pointer-events-auto absolute overflow-hidden ${
-          isRegion ? "rounded-[2px]" : "rotate-45"
-        }`}
+          dragging ? "cursor-grabbing" : "cursor-grab"
+        } ${isRegion ? "rounded-[2px]" : "rotate-45"}`}
         style={{
           // `left` is the marker's exact START in every shape — never its
           // range's midpoint, never widened. How the glyph sits around that x is
@@ -208,14 +220,19 @@ function MarkerGlyph({
       </div>
       {/* A point has no body to write in, so its label runs right from the
           diamond, stopping where the next mark begins — past that it would read
-          as the neighbour's name. */}
+          as the neighbour's name. It carries the glyph's own two handlers: it is
+          the bigger target of the pair, and a name that opened the menu but
+          refused to drag would be a target for half the gestures. */}
       {!isRegion && !collapsed && label !== "" && (
         <span
           data-testid="timeline-marker-label"
           data-marker-id={view.id}
           title={title}
           onContextMenu={openMenu}
-          className="pointer-events-auto absolute overflow-hidden whitespace-nowrap text-[9px] font-medium leading-none text-foreground/85"
+          onPointerDown={onBeginDrag}
+          className={`pointer-events-auto absolute overflow-hidden whitespace-nowrap text-[9px] font-medium leading-none text-foreground/85 ${
+            dragging ? "cursor-grabbing" : "cursor-grab"
+          }`}
           style={{
             left: labelLeftPx(view, sizePx),
             top: (laneHeight - 9) / 2,
@@ -303,6 +320,30 @@ export function MarkerLane({
   // surface. The array changes once per project mutation, not once per frame.
   const markers = useCompositionMarkers(compositionId);
   const markersVisible = useMarkersVisible();
+  const { preview, beginMarkerDrag } = useMarkerDrag({ compositionId, pxPerSec });
+  // A dragged mark paints where the pointer has it, not where the project still
+  // has it. Substituted into the SOURCE list rather than into the computed view,
+  // so the window, the paint order and each label's room are all re-derived from
+  // the previewed time — a mark that slides past its neighbour has to take the
+  // room with it.
+  //
+  // A region drags WHOLE: its end travels the same delta, which is exactly what
+  // the commit's reconcile does to an anchored region's `end_t_us` and what the
+  // free one's patch carries explicitly. Edge resize is a gesture of its own and
+  // is not this one.
+  const previewedMarkers = useMemo(() => {
+    if (preview === null) return markers;
+    return markers.map((m) =>
+      m.id !== preview.markerId
+        ? m
+        : {
+            ...m,
+            t_us: preview.tUs,
+            end_t_us:
+              m.end_t_us === null ? null : m.end_t_us + (preview.tUs - m.t_us),
+          },
+    );
+  }, [markers, preview]);
   // The marker context menu, owned HERE with the glyphs it acts on. The popup
   // portals to the body, so an open menu adds no children to the lane.
   const [markerMenu, setMarkerMenu] = useState<{
@@ -332,7 +373,7 @@ export function MarkerLane({
     () =>
       markersVisible
         ? computeLaneMarkers({
-            markers,
+            markers: previewedMarkers,
             pxPerSec,
             scrollLeftPx,
             viewportWidthPx,
@@ -343,7 +384,7 @@ export function MarkerLane({
         : [],
     [
       markersVisible,
-      markers,
+      previewedMarkers,
       pxPerSec,
       scrollLeftPx,
       viewportWidthPx,
@@ -386,9 +427,11 @@ export function MarkerLane({
                 view={view}
                 title={title}
                 collapsed={collapsed}
+                dragging={preview?.markerId === view.id}
                 onOpenMenu={(x, y, markerId) =>
                   setMarkerMenu({ x, y, markerId })
                 }
+                onBeginDrag={beginMarkerDrag(view.id)}
               />
             ))}
           </div>

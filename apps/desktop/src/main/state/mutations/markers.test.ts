@@ -4,7 +4,9 @@ import { blankProject, type Project } from '../model'
 import { applyAddLayer, applyAddMarker, colorParams } from './add'
 import { mediaItemTemplate, videoClipParams } from './media'
 import { applyAttachMarker, applyDetachMarker, applyUpdateMarker, applyRemoveMarker } from './markers'
+import { applyMoveLayer } from './move'
 import { frameIndexRound, snapFrameRound, timeUsAtFrame } from '../snap'
+import { reconcileMarkers } from '../validate'
 import { isCommandFailure } from '../errors'
 import { parseMarkerPatch } from '../mcp-commands'
 import { group, groupedProject, root, withGroup } from '../__tests__/fixtures/project'
@@ -218,11 +220,13 @@ describe('applyAttachMarker', () => {
     expect(root(p).markers[0]).toMatchObject({ t_us: 2_000_000, anchor: { layer: clipId, src_us: 3_000_000 } })
   })
 
+  // Seeded already tied to the FIRST clip while sitting on the second's span —
+  // the state a mark reaches when its own clip is cut out from under it — so the
+  // case is a re-tie and not a first tie wearing one.
   it('re-ties an already anchored marker rather than refusing it', () => {
     const { p, gen, clipId, trackId } = withClip()
     const second = applyAddLayer(p, gen, trackId, videoClipParams(MEDIA, 0, 1_000_000), 3_000_000, 4_000_000)
-    const m = applyAddMarker(p, gen, 2_000_000, null, 'cut', BLUE, null, '', { layer: clipId, src_us: 3_000_000 })
-    applyUpdateMarker(p, m, { t_us: 3_500_000 })
+    const m = applyAddMarker(p, gen, 3_500_000, null, 'cut', BLUE, null, '', { layer: clipId, src_us: 3_000_000 })
     applyAttachMarker(p, m, second)
     expect(root(p).markers[0].anchor).toEqual({ layer: second, src_us: 500_000 })
   })
@@ -303,5 +307,123 @@ describe('applyDetachMarker', () => {
   it('throws MarkerNotFound for a missing marker', () => {
     const { p } = withClip()
     expectCmd(() => applyDetachMarker(p, 'ghost'), 'MarkerNotFound')
+  })
+})
+
+// ── moving an ANCHORED marker ───────────────────────────────────────────────
+// The lane drag's commit, and the fix to a wart: `t_us` on an anchored marker
+// is the CACHE, so patching it used to be a silent no-op — the reconcile in the
+// same commit derived it straight back off the untouched anchor. The patch now
+// names a TIME and the marker's own anchor decides what has to change for it to
+// read that.
+describe('applyUpdateMarker on an anchored marker', () => {
+  /** The `withClip` fixture with a mark at 2 s tied to the clip — timeline 2 s
+   *  is source 3 s, so no assertion below can pass by confusing the two. */
+  function withAnchoredMark(): { p: Project; gen: IdGen; clipId: string; m: string } {
+    const { p, gen, clipId } = withClip()
+    const m = applyAddMarker(p, gen, 2_000_000, null, 'cut', BLUE)
+    applyAttachMarker(p, m, clipId)
+    return { p, gen, clipId, m }
+  }
+
+  it('moves the ANCHOR and leaves the cached time to the reconcile', () => {
+    const { p, clipId, m } = withAnchoredMark()
+    applyUpdateMarker(p, m, { t_us: 2_500_000 })
+    expect(root(p).markers[0].anchor).toEqual({ layer: clipId, src_us: 3_500_000 })
+    expect(root(p).markers[0].t_us).toBe(2_000_000)
+  })
+
+  // The half of the rule that makes the move REAL rather than a stored lie: run
+  // the reconcile the actor runs in the same `produce()` and the mark is where
+  // it was asked to be — and sorted, which is why the op skips a sort of its own.
+  it('lands on the asked-for time once the commit reconciles, re-sorted', () => {
+    const { p, gen, m } = withAnchoredMark()
+    applyAddMarker(p, gen, 2_200_000, null, 'later', BLUE)
+    applyUpdateMarker(p, m, { t_us: 2_500_000 })
+    expect(reconcileMarkers(p)).toEqual([])
+    expect(root(p).markers.map((x) => [x.label, x.t_us])).toEqual([
+      ['later', 2_200_000], ['cut', 2_500_000],
+    ])
+  })
+
+  // The whole reason the move goes through the ANCHOR: the mark keeps FOLLOWING
+  // from where it was dropped. Writing `t_us` instead would leave the anchor
+  // where the drag found it, and the next clip move would snap the mark back.
+  it('keeps the new offset inside its clip when the clip is later moved', () => {
+    const { p, clipId, m } = withAnchoredMark()
+    applyUpdateMarker(p, m, { t_us: 2_500_000 })
+    reconcileMarkers(p)
+    expect(root(p).markers[0].t_us).toBe(2_500_000) // 1.5 s into a clip starting at 1 s
+    applyMoveLayer(p, clipId, root(p).tracks[0].id, 4_000_000, false)
+    reconcileMarkers(p)
+    expect(root(p).markers[0].t_us).toBe(5_500_000)
+  })
+
+  // The same half-open span `applyAttachMarker` refuses over, from the other
+  // side: a time the clip does not cover names no instant in it, and the end is
+  // EXCLUSIVE. The renderer's twin (`markerDragBoundsUs`) clamps at exactly
+  // these two, so a dragged glyph stops rather than reaching this.
+  it('refuses a time the anchoring clip does not cover, leaving the anchor alone', () => {
+    const { p, clipId, m } = withAnchoredMark()
+    expect(expectCmdErr(() => applyUpdateMarker(p, m, { t_us: 3_000_000 }))).toMatchObject({
+      error: 'InvalidArgument', field: 't_us',
+    })
+    expectCmd(() => applyUpdateMarker(p, m, { t_us: 500_000 }), 'InvalidArgument')
+    expect(root(p).markers[0].anchor).toEqual({ layer: clipId, src_us: 3_000_000 })
+    // The last frame the clip DOES show is inside it.
+    applyUpdateMarker(p, m, { t_us: 2_966_667 })
+    expect(root(p).markers[0].anchor).toEqual({ layer: clipId, src_us: 3_966_667 })
+  })
+
+  // The reconcile carries an anchored region's end by the frame delta the move
+  // produces, so a patch that named the new end as well would move it twice.
+  it('refuses moving and resizing an anchored region in one patch', () => {
+    const { p, gen, clipId } = withClip()
+    const m = applyAddMarker(p, gen, 1_500_000, 2_500_000, 'shot', BLUE)
+    applyAttachMarker(p, m, clipId)
+    expect(expectCmdErr(() => applyUpdateMarker(p, m, { t_us: 2_000_000, end_t_us: 2_800_000 }))).toMatchObject({
+      error: 'InvalidArgument', field: 'end_t_us',
+    })
+    expect(root(p).markers[0]).toMatchObject({ t_us: 1_500_000, end_t_us: 2_500_000 })
+    expect(root(p).markers[0].anchor).toEqual({ layer: clipId, src_us: 2_500_000 })
+  })
+
+  // A drag longer than the region itself. The end has not moved YET — the
+  // reconcile carries it later in the same commit — so judging the new start
+  // against it would refuse the move for overrunning an end that is about to
+  // follow. The anchored branch therefore snaps `t_us` alone and never runs
+  // `snapMarkerTimes`' merged-span check.
+  it('moves an anchored region further than its own length', () => {
+    const { p, gen, clipId } = withClip()
+    const m = applyAddMarker(p, gen, 1_500_000, 2_500_000, 'shot', BLUE)
+    applyAttachMarker(p, m, clipId)
+    applyUpdateMarker(p, m, { t_us: 2_600_000 })
+    reconcileMarkers(p)
+    expect(root(p).markers[0]).toMatchObject({ t_us: 2_600_000, end_t_us: 3_600_000 })
+  })
+
+  it('still resizes an anchored region from end_t_us alone', () => {
+    const { p, gen, clipId } = withClip()
+    const m = applyAddMarker(p, gen, 1_500_000, 2_500_000, 'shot', BLUE)
+    applyAttachMarker(p, m, clipId)
+    applyUpdateMarker(p, m, { end_t_us: 2_800_000 })
+    expect(root(p).markers[0].end_t_us).toBe(2_800_000)
+    expect(root(p).markers[0].anchor).toEqual({ layer: clipId, src_us: 2_500_000 })
+  })
+
+  it('leaves every other field of an anchored marker patchable as before', () => {
+    const { p, clipId, m } = withAnchoredMark()
+    applyUpdateMarker(p, m, { label: 'boom', note: 'dips in', color: { r: 9, g: 8, b: 7, a: 255 } })
+    expect(root(p).markers[0]).toMatchObject({ label: 'boom', note: 'dips in', t_us: 2_000_000 })
+    expect(root(p).markers[0].anchor).toEqual({ layer: clipId, src_us: 3_000_000 })
+  })
+
+  // Off-grid in, canonical out — the same snap the free branch takes, applied
+  // before the span check so a time half a frame outside the clip is judged on
+  // where it will actually land.
+  it('snaps the asked-for time to the frame grid before it names a source instant', () => {
+    const { p, clipId, m } = withAnchoredMark()
+    applyUpdateMarker(p, m, { t_us: 2_499_990 })
+    expect(root(p).markers[0].anchor).toEqual({ layer: clipId, src_us: 3_500_000 })
   })
 })

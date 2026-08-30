@@ -1186,6 +1186,31 @@ export async function renameMarker(
   return invoke<void>("update_marker", { markerId, patch: { label } });
 }
 
+/// Move a marker to `tUs` — the marker lane's drag, as ONE commit. RECORDED, so
+/// one undo puts the mark back where it was.
+///
+/// On an ANCHORED marker `t_us` names the time the mark should READ, and the
+/// actor moves the anchor to make it read that; the marker keeps following its
+/// clip from the new offset. Refused when the time falls outside the anchoring
+/// clip's half-open span — `markerDragBoundsUs` (timeline/markerAtFrame) answers
+/// that at the gesture, so a surface that clamps with it never reaches the
+/// refusal.
+///
+/// `endTUs` is a region's new end, and only a FREE region has one to send: an
+/// anchored marker's end is carried by its own anchor (the commit's reconcile
+/// shifts it by the same frame delta), so passing one there would move it twice
+/// and the actor refuses the pair outright.
+export async function moveMarker(
+  markerId: string,
+  tUs: number,
+  endTUs: number | null = null,
+): Promise<void> {
+  return invoke<void>("update_marker", {
+    markerId,
+    patch: endTUs === null ? { t_us: tUs } : { t_us: tUs, end_t_us: endTUs },
+  });
+}
+
 /// Remove a marker. RECORDED; deletion is one undo away, so no confirm dialog
 /// stands in front of it.
 export async function removeMarker(markerId: string): Promise<void> {

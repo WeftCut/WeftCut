@@ -23,6 +23,11 @@ import { invokeCmd, launchApp, newProject, tmpDir, waitForHook, rootSummary } fr
  * reads, so this can boot through `launchApp` like every other UI spec
  * instead of parsing the connect log.
  *
+ * The third test drives the lane's own gesture — the drag — which no unit test
+ * can reach the far side of: whether a press that travels across this row also
+ * moves the PLAYHEAD is a question about two live surfaces sharing one window,
+ * and the colocated suite renders the lane with no ruler beside it.
+ *
  * Cross-restart persistence is deliberately NOT here — it is asserted in the
  * main-process app-settings suite, because every spec in this suite boots
  * Electron.
@@ -243,6 +248,76 @@ test('markers are authorable from the keyboard and the lane — no MCP client an
     await page.keyboard.press('M')
     await expect(marks).toHaveCount(1)
     await expect(stripButton).toHaveAttribute('aria-pressed', 'true')
+  } finally {
+    await app.close()
+  }
+})
+
+test('a marker moves by being dragged in its lane, and a drag that goes nowhere records nothing', async () => {
+  test.setTimeout(120_000)
+  const { app, page } = await launchApp()
+  try {
+    const parent = tmpDir('weftcut-marker-drag-')
+    await newProject(page, { parentFolder: parent, name: 'marker-drag', canvas: CANVAS })
+    await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
+
+    const marks = page.locator('[data-testid="timeline-marker"]')
+    const markerTUs = async (): Promise<number> =>
+      (await rootSummary<{ markers: Array<{ t_us: number }> }>(page)).markers[0].t_us
+    const playheadUs = () =>
+      page.evaluate(() => (window as any).__weftcutTest.getPlayheadUs() as number)
+
+    // Same premise as the authoring spec above: real duration first, or the
+    // ruler seek clamps back to frame 0 over an autofitted-to-nothing timeline.
+    await invokeCmd(page, 'add_color_layer', { tStartUs: 0, durationUs: 5_000_000 })
+    await waitForHook(page, 'getPlayheadUs')
+    await page.locator('[data-testid="timeline-ruler"]').click({ position: { x: 200, y: 10 } })
+    await expect.poll(playheadUs).toBeGreaterThan(0)
+
+    await page.keyboard.press('M')
+    await expect(marks).toHaveCount(1)
+    const before = await markerTUs()
+    const parkedPlayheadUs = await playheadUs()
+
+    // ── Carry the mark down the lane ──────────────────────────────────────
+    // One event per protocol round trip, as every other drag spec does: fired
+    // inside one page task, React would still be uncommitted from the
+    // pointerdown when the move arrived.
+    const box = await marks.boundingBox()
+    if (!box) throw new Error('the marker glyph has no layout box')
+    const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    await page.mouse.move(from.x, from.y)
+    await page.mouse.down()
+    await page.mouse.move(from.x + 120, from.y)
+    await page.mouse.up()
+
+    await expect.poll(markerTUs).toBeGreaterThan(before)
+
+    // The gesture the ruler could never have hosted: this lane is not a scrub
+    // surface, so a press that travelled 120 px across it moved the mark and
+    // left the film exactly where it was.
+    expect(await playheadUs()).toBe(parkedPlayheadUs)
+    // Still a marker, still right-clickable — the drag did not swallow the
+    // menu the other two operations live in.
+    await marks.click({ button: 'right' })
+    await expect(page.locator('.app-menu-item', { hasText: 'Rename' })).toHaveCount(1)
+    await page.keyboard.press('Escape')
+
+    // ── ONE history entry for the whole drag ──────────────────────────────
+    await invokeCmd(page, 'project_undo', {})
+    await expect.poll(markerTUs).toBe(before)
+
+    // ── A drag that lands where it started is not an edit ──────────────────
+    const still = await marks.boundingBox()
+    if (!still) throw new Error('the marker glyph has no layout box')
+    await page.mouse.move(still.x + still.width / 2, still.y + still.height / 2)
+    await page.mouse.down()
+    await page.mouse.up()
+    expect(await markerTUs()).toBe(before)
+    // The proof that it recorded nothing: the next undo pops the mark's own
+    // CREATION, not a no-op move standing in front of it.
+    await invokeCmd(page, 'project_undo', {})
+    await expect(marks).toHaveCount(0)
   } finally {
     await app.close()
   }

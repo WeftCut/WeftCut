@@ -18,7 +18,15 @@ import type {
 } from "../ipc";
 import { summaryFixture } from "../testing/summaryFixture";
 
+// jsdom does not implement PointerEvent; alias it to MouseEvent so
+// fireEvent.pointerDown carries a usable .button / .clientX (the same shim
+// Timeline.interaction.test.tsx and TransformGizmo.test.tsx use).
+if (typeof window !== "undefined" && !window.PointerEvent) {
+  (window as unknown as Record<string, unknown>).PointerEvent = window.MouseEvent;
+}
+
 const ipcMocks = vi.hoisted(() => ({
+  moveMarker: vi.fn(),
   removeMarker: vi.fn(),
   attachMarker: vi.fn(),
   detachMarker: vi.fn(),
@@ -32,6 +40,7 @@ vi.mock("../ipc", async (importActual) => {
   const actual = await importActual<typeof import("../ipc")>();
   return {
     ...actual,
+    moveMarker: ipcMocks.moveMarker,
     removeMarker: ipcMocks.removeMarker,
     attachMarker: ipcMocks.attachMarker,
     detachMarker: ipcMocks.detachMarker,
@@ -800,6 +809,255 @@ describe("anchoring rows", () => {
     fireEvent.click(items[3]!);
     await waitFor(() =>
       expect(ipcMocks.detachMarker).toHaveBeenCalledExactlyOnceWith("point-1"),
+    );
+  });
+});
+
+// The last of the three operations the marker menu cut, and the one that could
+// only exist once the glyphs left the ruler: a left-press in this lane has no
+// scrub to contest, so it means exactly one thing.
+describe("dragging a marker", () => {
+  beforeEach(() => {
+    ipcMocks.moveMarker.mockReset().mockResolvedValue(undefined);
+    // Off by default here so a case states the frame grid without the snap
+    // targets also speaking; the one snapping case turns it back on.
+    setSettings({ tail_snap_enabled: false });
+  });
+
+  /// Press, travel and release over a mark, in row px. 2000 px/s, so 1000 px is
+  /// half a second.
+  const dragBy = (container: HTMLElement, id: string, dxPx: number) => {
+    fireEvent.pointerDown(markById(container, id), { button: 0, clientX: 0 });
+    fireEvent.pointerMove(window, { clientX: dxPx });
+    fireEvent.pointerUp(window, { clientX: dxPx });
+  };
+
+  it("commits the landing time as ONE patch at release", async () => {
+    seed([point({ t_us: 1_000_000 })]);
+    const { container } = renderLane();
+    dragBy(container, "point-1", 1000);
+    await waitFor(() =>
+      expect(ipcMocks.moveMarker).toHaveBeenCalledExactlyOnceWith(
+        "point-1",
+        1_500_000,
+        null,
+      ),
+    );
+  });
+
+  it("paints the mark where the pointer has it, before anything is committed", () => {
+    seed([point({ t_us: 1_000_000 })]);
+    const { container } = renderLane();
+    fireEvent.pointerDown(markById(container, "point-1"), {
+      button: 0,
+      clientX: 0,
+    });
+    fireEvent.pointerMove(window, { clientX: 1000 });
+    expect(markById(container, "point-1").style.left).toBe("3000px");
+    expect(markById(container, "point-1").dataset.dragging).toBe("true");
+    expect(ipcMocks.moveMarker).not.toHaveBeenCalled();
+  });
+
+  // Frame-quantised, so the glyph never sits where the commit cannot put it.
+  it("previews on the frame grid, never on the raw pixel", () => {
+    seed([point({ t_us: 1_000_000 })]);
+    const { container } = renderLane();
+    // 20 px is 10 ms — under half a frame at 30 fps, so the mark holds still.
+    fireEvent.pointerDown(markById(container, "point-1"), {
+      button: 0,
+      clientX: 0,
+    });
+    fireEvent.pointerMove(window, { clientX: 20 });
+    expect(markById(container, "point-1").style.left).toBe("2000px");
+    // 50 px is 25 ms, which rounds up to the next frame.
+    fireEvent.pointerMove(window, { clientX: 50 });
+    expect(markById(container, "point-1").style.left).toBe(
+      `${(1_033_333 / 1_000_000) * 2000}px`,
+    );
+  });
+
+  it("records nothing for a drag with no net movement", async () => {
+    seed([point({ t_us: 1_000_000 })]);
+    const { container } = renderLane();
+    dragBy(container, "point-1", 0);
+    // Out and back is the same non-edit: what counts is where it landed, so the
+    // ONE call below is the one real move that follows.
+    fireEvent.pointerDown(markById(container, "point-1"), {
+      button: 0,
+      clientX: 0,
+    });
+    fireEvent.pointerMove(window, { clientX: 1000 });
+    fireEvent.pointerUp(window, { clientX: 0 });
+    expect(ipcMocks.moveMarker).not.toHaveBeenCalled();
+    dragBy(container, "point-1", 1000);
+    await waitFor(() =>
+      expect(ipcMocks.moveMarker).toHaveBeenCalledExactlyOnceWith(
+        "point-1",
+        1_500_000,
+        null,
+      ),
+    );
+  });
+
+  // The gesture the whole lane exists to make possible, and the one the ruler
+  // could never host: the scrub surface is elsewhere and this press never
+  // reaches it.
+  it("scrubs nothing on the way", () => {
+    const escaped: string[] = [];
+    seed([point({ t_us: 1_000_000 })]);
+    const { container } = render(
+      <div onPointerDown={() => escaped.push("down")}>
+        <MarkerLane
+          compositionId={null}
+          pxPerSec={2000}
+          widthPx={8000}
+          viewportWidthPx={8000}
+          fpsNum={30}
+          fpsDen={1}
+        />
+      </div>,
+    );
+    dragBy(container, "point-1", 1000);
+    expect(escaped).toEqual([]);
+  });
+
+  it("leaves the right button to the menu", async () => {
+    seed([point({ t_us: 1_000_000 })]);
+    const { container } = renderLane();
+    fireEvent.pointerDown(markById(container, "point-1"), {
+      button: 2,
+      clientX: 0,
+    });
+    fireEvent.pointerMove(window, { clientX: 1000 });
+    fireEvent.pointerUp(window, { clientX: 1000 });
+    expect(markById(container, "point-1").style.left).toBe("2000px");
+    expect(ipcMocks.moveMarker).not.toHaveBeenCalled();
+    // And the menu the press was on its way to still opens.
+    fireEvent.contextMenu(markById(container, "point-1"), {
+      clientX: 80,
+      clientY: 12,
+    });
+    await waitFor(() =>
+      expect(
+        document.querySelectorAll<HTMLElement>(".app-menu-item").length,
+      ).toBeGreaterThan(0),
+    );
+  });
+
+  // The clamp is the renderer's half of the split: the gesture keeps the time
+  // legal and the actor refuses an illegal one, so a mark held against an edge
+  // STOPS there. It must not vanish — src_us at the clip's src_out is exactly
+  // what puts a marker to sleep, and a glyph that disappeared under the cursor
+  // is the worst answer a clamp can give.
+  it("stops an anchored mark at its clip's last frame, still painted", async () => {
+    seed([point({ t_us: 2_000_000, anchor_layer: "clip-1" })], [clipTrack()]);
+    const { container } = renderLane();
+    dragBy(container, "point-1", 6000);
+    expect(markById(container, "point-1")).not.toBeNull();
+    expect(markById(container, "point-1").style.left).toBe(
+      `${(2_966_667 / 1_000_000) * 2000}px`,
+    );
+    await waitFor(() =>
+      expect(ipcMocks.moveMarker).toHaveBeenCalledExactlyOnceWith(
+        "point-1",
+        2_966_667,
+        null,
+      ),
+    );
+  });
+
+  it("stops an anchored mark at its clip's start too", async () => {
+    seed([point({ t_us: 2_000_000, anchor_layer: "clip-1" })], [clipTrack()]);
+    const { container } = renderLane();
+    dragBy(container, "point-1", -6000);
+    await waitFor(() =>
+      expect(ipcMocks.moveMarker).toHaveBeenCalledExactlyOnceWith(
+        "point-1",
+        1_000_000,
+        null,
+      ),
+    );
+  });
+
+  it("never lets a free mark cross zero", async () => {
+    seed([point({ t_us: 1_000_000 })]);
+    const { container } = renderLane();
+    dragBy(container, "point-1", -6000);
+    await waitFor(() =>
+      expect(ipcMocks.moveMarker).toHaveBeenCalledExactlyOnceWith(
+        "point-1",
+        0,
+        null,
+      ),
+    );
+  });
+
+  // A region drags WHOLE. A FREE one has to carry its own end in the patch —
+  // nothing else would move it — where an anchored one's end is carried by its
+  // anchor and must NOT be sent, or the commit's reconcile would move it twice.
+  it("carries a free region's end with it", async () => {
+    seed([region({ t_us: 1_000_000, end_t_us: 2_000_000 })]);
+    const { container } = renderLane();
+    dragBy(container, "region-1", 1000);
+    await waitFor(() =>
+      expect(ipcMocks.moveMarker).toHaveBeenCalledExactlyOnceWith(
+        "region-1",
+        1_500_000,
+        2_500_000,
+      ),
+    );
+  });
+
+  it("leaves an anchored region's end to its anchor", async () => {
+    seed(
+      [region({ t_us: 1_500_000, end_t_us: 2_000_000, anchor_layer: "clip-1" })],
+      [clipTrack()],
+    );
+    const { container } = renderLane();
+    dragBy(container, "region-1", 400);
+    await waitFor(() =>
+      expect(ipcMocks.moveMarker).toHaveBeenCalledExactlyOnceWith(
+        "region-1",
+        1_700_000,
+        null,
+      ),
+    );
+  });
+
+  it("drags a point marker by its label, which is the bigger target", async () => {
+    seed([point({ t_us: 1_000_000, label: "cut here" })]);
+    const { container } = renderLane();
+    fireEvent.pointerDown(
+      container.querySelector('[data-testid="timeline-marker-label"]')!,
+      { button: 0, clientX: 0 },
+    );
+    fireEvent.pointerMove(window, { clientX: 1000 });
+    fireEvent.pointerUp(window, { clientX: 1000 });
+    await waitFor(() =>
+      expect(ipcMocks.moveMarker).toHaveBeenCalledExactlyOnceWith(
+        "point-1",
+        1_500_000,
+        null,
+      ),
+    );
+  });
+
+  // The preference the clip drag and the blade already obey; markers get no
+  // second flag of their own. At 10 px/s a frame is 0.33 px, so the 12 px
+  // strength reaches a clip edge from far outside the grid's own rounding.
+  it("snaps to a clip edge under the timeline's own snap preference", async () => {
+    setSettings({ tail_snap_enabled: true, tail_snap_strength_px: 12 });
+    seed([point({ t_us: 2_000_000 })], [clipTrack()]);
+    const { container } = renderLane({ pxPerSec: 10 });
+    // 2 px right of 2 s is 2.2 s — 0.8 s short of the clip's end boundary, and
+    // 8 px at this zoom.
+    dragBy(container, "point-1", 2);
+    await waitFor(() =>
+      expect(ipcMocks.moveMarker).toHaveBeenCalledExactlyOnceWith(
+        "point-1",
+        3_000_000,
+        null,
+      ),
     );
   });
 });

@@ -1,4 +1,4 @@
-import type { Composition, Marker, Project, Rgba, Uuid } from '../model'
+import type { Composition, Marker, MarkerAnchor, Project, Rgba, Uuid } from '../model'
 import { CommandFailure } from '../errors'
 import { snapFrameRound } from '../snap'
 import { hasSourceWindow, requireLayer } from './helpers'
@@ -46,8 +46,14 @@ function requireMarker(p: Project, id: Uuid): LocatedMarker {
  *  layer and derive `t_us` from it in the same commit. Reachable through a
  *  generic patch, it would let a caller name a layer in another composition, or
  *  move the anchor without moving the marker — an inconsistent pair the patch
- *  surface has no way to repair. The same reasoning keeps `t_us` patchable:
- *  that one IS the cache, and the next reconcile corrects it. */
+ *  surface has no way to repair.
+ *
+ *  `t_us` stays patchable, and on an anchored marker it names a TIME rather than
+ *  a field: the caller says where the mark should read, and the marker's own
+ *  anchor decides what has to change for it to read that (`retimeAnchor`). So
+ *  the patch surface still cannot name a layer or set a `src_us` — the one thing
+ *  it could do inconsistently — while "move this marker" stays one verb whatever
+ *  the marker is tied to. */
 export interface MarkerPatch {
   t_us?: number | null
   end_t_us?: number | null
@@ -56,21 +62,77 @@ export interface MarkerPatch {
   color?: Rgba | null
 }
 
-/** Patch a marker; only provided fields apply. Re-sorts by t_us (stable) when
- *  t_us changed, preserving the sorted-markers invariant. Times are snapped and
- *  the span checked against the MERGED marker, so moving t_us past an existing
- *  end_t_us fails the same way as patching a bad end_t_us. */
+/** Move an ANCHORED marker, by moving its ANCHOR. `t_us` on such a marker is the
+ *  cache, not the truth, so patching it directly is a silent no-op: the same
+ *  `produce()` runs `reconcileMarkers` afterwards and derives it straight back
+ *  off the untouched anchor. What has to change is the source instant behind it.
+ *
+ *  `t_us` is deliberately NOT written here either, for `applyAttachMarker`'s
+ *  reason: the reconcile derives it in this very commit, and two derivations of
+ *  one value are how the two drift. The reconcile re-sorts too, so the caller
+ *  skips its own sort on this branch.
+ *
+ *  `tUs` arrives already on the frame grid and is judged there, so a time half a
+ *  frame outside the clip is refused or accepted on where it will actually land.
+ *
+ *  Two refusals, both before the anchor is touched. A time outside the layer's
+ *  HALF-OPEN span is `InvalidArgument`, the same check over the same span
+ *  `applyAttachMarker` makes: a time the clip does not cover names no instant in
+ *  it. A simultaneous `end_t_us` is refused because the reconcile carries an
+ *  anchored region's end by the frame delta this move produces — writing the new
+ *  end as well would apply the move to it twice. Patch `t_us` alone to move an
+ *  anchored region, `end_t_us` alone to resize it.
+ *
+ *  The windowless-kind arm is what narrows `layer.params` to the arm carrying
+ *  the `src_in_us` the derivation reads; such an anchor never survives a commit
+ *  anyway (`MarkerAnchorLayerHasNoSourceWindow`). */
+function retimeAnchor(p: Project, m: Marker, anchor: MarkerAnchor, tUs: number, patchesEnd: boolean): void {
+  if (patchesEnd)
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'end_t_us',
+      detail: `marker ${m.id} is anchored, so its end follows its anchor: patch t_us alone to move it, end_t_us alone to resize it` })
+  const { layer } = requireLayer(p, anchor.layer)
+  if (!hasSourceWindow(layer.params))
+    throw new CommandFailure({ error: 'WrongLayerKind', layer: anchor.layer, expected: 'VideoClip | Audio | CompositionRef' })
+  if (tUs < layer.t_start_us || tUs >= layer.t_end_us)
+    throw new CommandFailure({ error: 'InvalidArgument', field: 't_us',
+      detail: `marker ${m.id} at t_us ${tUs} is outside its anchoring layer ${anchor.layer}'s span [${layer.t_start_us}, ${layer.t_end_us})` })
+  anchor.src_us = tUs - layer.t_start_us + layer.params.src_in_us
+}
+
+/** Patch a marker; only provided fields apply. Re-sorts by t_us (stable) when a
+ *  FREE marker's t_us changed, preserving the sorted-markers invariant.
+ *
+ *  Which field a `t_us` patch actually writes depends on the marker: a free one
+ *  keeps its own time, an anchored one keeps its anchor's (`retimeAnchor`). Every
+ *  refusal runs before the first write, so a rejected patch leaves the marker
+ *  exactly as it was.
+ *
+ *  The two branches snap differently, and the difference is load-bearing. A free
+ *  marker's times go through `snapMarkerTimes`, which checks the span of the
+ *  MERGED marker — so moving `t_us` past an existing `end_t_us` fails the same
+ *  way as patching a bad `end_t_us`, and the renderer always sends a free
+ *  region's new end alongside its new start. An ANCHORED marker's time is
+ *  snapped alone, because its end has not moved yet: `reconcileMarkers` carries
+ *  it by this move's frame delta later in the same commit. Checking the new
+ *  start against that stale end would refuse every drag longer than the region
+ *  itself, for overrunning an end that is about to follow. */
 export function applyUpdateMarker(p: Project, id: Uuid, patch: MarkerPatch): void {
   const { comp: c, marker: m } = requireMarker(p, id)
-  const needsResort = typeof patch.t_us === 'number'
-  const snapped = snapMarkerTimes(c, needsResort ? (patch.t_us as number) : m.t_us,
-    typeof patch.end_t_us === 'number' ? patch.end_t_us : m.end_t_us)
-  if (needsResort) m.t_us = snapped.tUs
-  if (typeof patch.end_t_us === 'number') m.end_t_us = snapped.endTUs
+  const movesTime = typeof patch.t_us === 'number'
+  const patchesEnd = typeof patch.end_t_us === 'number'
+  const anchor = movesTime ? m.anchor : null
+  if (anchor !== null) {
+    retimeAnchor(p, m, anchor, snapFrameRound(patch.t_us as number, c.fps.num, c.fps.den), patchesEnd)
+  } else {
+    const snapped = snapMarkerTimes(c, movesTime ? (patch.t_us as number) : m.t_us,
+      patchesEnd ? (patch.end_t_us as number) : m.end_t_us)
+    if (movesTime) m.t_us = snapped.tUs
+    if (patchesEnd) m.end_t_us = snapped.endTUs
+  }
   if (typeof patch.label === 'string') m.label = patch.label
   if (typeof patch.note === 'string') m.note = patch.note
   if (patch.color && typeof patch.color === 'object') m.color = patch.color
-  if (needsResort) c.markers.sort((a, b) => (a.t_us < b.t_us ? -1 : a.t_us > b.t_us ? 1 : 0))
+  if (movesTime && anchor === null) c.markers.sort((a, b) => (a.t_us < b.t_us ? -1 : a.t_us > b.t_us ? 1 : 0))
 }
 
 /** Remove a marker by id. */
