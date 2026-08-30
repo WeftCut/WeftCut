@@ -524,6 +524,10 @@ const zhCN: Resources = {
     group_derived_name: "组 {{n}}",
     group_overhang: "已超出 {{label}} 的末尾——此处不渲染内容",
     group_more_content: "{{label}} 更长——向外拖动此边缘可展开更多",
+    // 组片段上 `⚑N` 徽标的提示。计数会穿透其中层层嵌套的组，所以说“内含”而
+    // 不点名某一条时间线——这些标记本就不在同一条上。
+    group_marker_count_one: "内含 {{count}} 个标记——点击打开该组",
+    group_marker_count_other: "内含 {{count}} 个标记——点击打开该组",
     link_label: "链接名称",
     link_hidden_members_one: "{{count}} 个链接片段位于隐藏轨道——点击显示",
     link_hidden_members_other: "{{count}} 个链接片段位于隐藏轨道——点击显示下一个",

@@ -606,6 +606,12 @@ const enUS = {
     // Tick: the composition is longer, so there is content to trim out to.
     group_overhang: "Past the end of {{label}} — nothing renders here",
     group_more_content: "{{label}} runs longer — drag this edge out for more",
+    // Tooltip of the `⚑N` badge on a Group clip. The count reaches through
+    // every composition nested inside, so the sentence says "inside" rather
+    // than naming a timeline — the marks are not all on one.
+    group_marker_count_one: "{{count}} marker inside — click to open this group",
+    group_marker_count_other:
+      "{{count}} markers inside — click to open this group",
     // Accessible name for the label tab's inline editor.
     link_label: "Link name",
     // Tooltip of the `+N` badge on a link whose members sit on filtered lanes.
