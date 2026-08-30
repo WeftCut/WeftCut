@@ -2,10 +2,12 @@ import { describe, it, expect, vi } from 'vitest'
 import { createActor, type ActorHandle } from '../actor'
 import { seededGen } from '../ids'
 import { blankProject, type MediaItem } from '../model'
-import { mediaItemTemplate } from '../mutations/media'
+import { mediaItemTemplate, videoClipParams } from '../mutations/media'
+import { applyAddLayer } from '../mutations/add'
+import { markerHibernating } from '../summary'
 import { runHybrid, dropShotMarkers, type HybridDeps } from '../hybrids'
 import { applyWorkspacePathsEvent } from '../jobs-writeback'
-import { root } from './fixtures/project'
+import { root, withGroup } from './fixtures/project'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
 
@@ -399,15 +401,36 @@ function shotReport(boundariesUs: number[], endUs: number): string {
   return JSON.stringify({ shots, cut_scores: boundariesUs.map((t) => ({ t_us: t, score: 0.5 })) })
 }
 
-/** Fresh project with a full-window VideoClip layer on the A-roll track. */
-function withVideoLayer(durationUs = 6_000_000) {
+/** Fresh project with a VideoClip layer on the A-roll track: full-window at the
+ *  origin by default, or offset in BOTH source and timeline through `opts` —
+ *  the only shape in which a source time and a timeline time can be told apart. */
+function withVideoLayer(durationUs = 6_000_000, opts: { srcInUs?: number; srcOutUs?: number; tStartUs?: number } = {}) {
   const actor = freshActor()
   const track = root(actor.snapshot()).tracks[0].id
   const VID = '00000000-0000-0000-0000-0000000000cc'
   actor.dispatch('add_media', { id: VID, kind: 'Video', duration_us: durationUs })
-  const add = actor.dispatch('add_layer', { track, kind: 'video', media: VID, src_in_us: 0, src_out_us: durationUs, t_start_us: 0, t_end_us: durationUs })
+  const srcIn = opts.srcInUs ?? 0
+  const srcOut = opts.srcOutUs ?? durationUs
+  const tStart = opts.tStartUs ?? 0
+  const add = actor.dispatch('add_layer', { track, kind: 'video', media: VID, src_in_us: srcIn, src_out_us: srcOut, t_start_us: tStart, t_end_us: tStart + (srcOut - srcIn) })
   if (!add.ok) throw new Error(JSON.stringify(add.error))
   return { actor, track, mediaId: VID, layerId: add.value as string }
+}
+
+/** The same clip one composition deeper: a full-window VideoClip on a Group's A
+ *  roll, the root holding nothing but the CompositionRef. The smallest project
+ *  in which "the clip's composition" and "the root" differ. */
+function withVideoLayerInGroup(durationUs = 6_000_000) {
+  const idGen = seededGen()
+  const p = blankProject(idGen, 'hg')
+  const VID = '00000000-0000-0000-0000-0000000000cc'
+  p.media_pool[VID] = mediaItemTemplate(VID, 'Video', durationUs)
+  let layerId = ''
+  const { p: withComp, groupId } = withGroup(p, idGen, (g, view) => {
+    layerId = applyAddLayer(view, idGen, g.tracks[0].id, videoClipParams(VID, 0, durationUs), 0, durationUs)
+  })
+  const actor = createActor({ initial: withComp, idGen, clock: () => '<TS>' })
+  return { actor, groupId, layerId }
 }
 
 describe('runHybrid: auto_split_by_shot', () => {
@@ -539,6 +562,83 @@ describe('dropShotMarkers (human shot-marker surface)', () => {
   it('the hybrid arm rejects a missing layerId instead of silently marking nothing', async () => {
     const { actor } = withVideoLayer(6_000_000)
     await expect(runHybrid('drop_shot_markers', {}, makeDeps(actor))).rejects.toThrow(/layerId/)
+  })
+
+  it("marks the CLIP'S composition: a clip inside a Group marks the Group, and the root gains nothing", async () => {
+    const { actor, groupId, layerId } = withVideoLayerInGroup(6_000_000)
+    const deps = makeDeps(actor)
+    deps.compute.analyzeShots = vi.fn(async () => shotReport([2_000_000, 4_000_000], 6_000_000))
+    expect(await dropShotMarkers(layerId, deps)).toHaveLength(2)
+    const inner = actor.snapshot().compositions[groupId]
+    // The cut times were computed against the Group's fps and the clip's own
+    // t_start_us, so the Group is the only timeline they mean anything on.
+    expect(inner.markers.map((m) => m.t_us)).toEqual([2_000_000, 4_000_000])
+    expect(inner.markers.map((m) => m.anchor)).toEqual([
+      { layer: layerId, src_us: 2_000_000 }, { layer: layerId, src_us: 4_000_000 },
+    ])
+    expect(root(actor.snapshot()).markers).toEqual([])
+  })
+
+  it("anchors every mark to the clip, at its own cut's SOURCE time (not the timeline time it landed on)", async () => {
+    // Source window [1s, 7s) placed at 2s, so timeline = source + 1s: an anchor
+    // that merely copied t_us would be off by exactly that offset.
+    const { actor, layerId } = withVideoLayer(10_000_000, { srcInUs: 1_000_000, srcOutUs: 7_000_000, tStartUs: 2_000_000 })
+    const deps = makeDeps(actor)
+    deps.compute.analyzeShots = vi.fn(async () => shotReport([3_000_000, 5_000_000], 10_000_000))
+    expect(await dropShotMarkers(layerId, deps)).toHaveLength(2)
+    expect(root(actor.snapshot()).markers.map((m) => [m.t_us, m.anchor])).toEqual([
+      [4_000_000, { layer: layerId, src_us: 3_000_000 }],
+      [6_000_000, { layer: layerId, src_us: 5_000_000 }],
+    ])
+  })
+
+  it('a whole anchored set is ONE undo, restoring the project exactly', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    deps.compute.analyzeShots = vi.fn(async () => shotReport([2_000_000, 4_000_000], 6_000_000))
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    await dropShotMarkers(layerId, deps)
+    expect(actor.historyStatus().len - lenBefore).toBe(1)
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
+  it('shot marks travel with the clip when it moves', async () => {
+    const { actor, track, layerId } = withVideoLayer(10_000_000, { srcInUs: 1_000_000, srcOutUs: 7_000_000, tStartUs: 2_000_000 })
+    const deps = makeDeps(actor)
+    deps.compute.analyzeShots = vi.fn(async () => shotReport([3_000_000, 5_000_000], 10_000_000))
+    await dropShotMarkers(layerId, deps)
+    expect(actor.dispatch('move_layer', { layer: layerId, to_track: track, t_start_us: 5_000_000 }).ok).toBe(true)
+    expect(root(actor.snapshot()).markers.map((m) => m.t_us)).toEqual([7_000_000, 9_000_000])
+  })
+
+  it('trimming the out-point past a shot mark hibernates it; re-extending revives it on the same frame', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    deps.compute.analyzeShots = vi.fn(async () => shotReport([2_000_000, 4_000_000], 6_000_000))
+    await dropShotMarkers(layerId, deps)
+    expect(actor.dispatch('trim_layer', { layer: layerId, edge: 'out', new_t_us: 3_000_000 }).ok).toBe(true)
+    const trimmed = root(actor.snapshot())
+    // Hibernation is a KEPT marker the clip no longer shows — its time freezes
+    // rather than being re-derived, and nothing is deleted.
+    expect(trimmed.markers.map((m) => [m.t_us, markerHibernating(trimmed, m)])).toEqual([
+      [2_000_000, false], [4_000_000, true],
+    ])
+    expect(actor.dispatch('trim_layer', { layer: layerId, edge: 'out', new_t_us: 6_000_000 }).ok).toBe(true)
+    const restored = root(actor.snapshot())
+    expect(restored.markers.map((m) => [m.t_us, markerHibernating(restored, m)])).toEqual([
+      [2_000_000, false], [4_000_000, false],
+    ])
+  })
+
+  it('deleting the clip takes its shot marks with it', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    deps.compute.analyzeShots = vi.fn(async () => shotReport([2_000_000, 4_000_000], 6_000_000))
+    await dropShotMarkers(layerId, deps)
+    expect(actor.dispatch('delete_layer', { layer: layerId }).ok).toBe(true)
+    expect(root(actor.snapshot()).markers).toEqual([])
   })
 })
 

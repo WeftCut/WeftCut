@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
-import type { Animated, AudioRole, Composition, Interpolation, LayerParams, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid } from './model'
+import type { Animated, AudioRole, Composition, Interpolation, LayerParams, MarkerAnchor, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid } from './model'
 import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
@@ -928,11 +928,21 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // `markers` inside ONE commit so a whole boundary set is a single undo.
         // Each row reuses applyAddMarker (same as the add_marker arm); color/label
         // default to the shot-marker style. Returns the new marker ids in order.
+        //
+        // Scope and tie sit at DIFFERENT levels, and neither placement is
+        // arbitrary. `composition_id` is per BATCH because a marker's composition
+        // is the composition being marked — one dispatch marks one timeline, the
+        // same way add_marker does. `anchor` is per ROW because an anchor is a
+        // layer AND a source instant inside it: a shot set shares the layer but
+        // every row carries its own `src_us`, and hoisting the layer alone would
+        // split one indivisible tie across two levels. The caller owns deriving
+        // `t_us` from its own anchor (nothing here does); validate owns whether
+        // the layer named is in this composition and can carry an anchor at all.
         case 'add_markers': {
-          const rows = (a.markers as Array<{ t_us: number; end_t_us?: number | null; label?: string; color?: Rgba }>) ?? []
+          const rows = (a.markers as Array<{ t_us: number; end_t_us?: number | null; label?: string; color?: Rgba; anchor?: MarkerAnchor | null }>) ?? []
           const comp = compositionArg(a)
           return { ok: true, value: commit(HISTORY_SUMMARY.markerAddShots, markerRefs, { kind: 'Coarse' }, (d) =>
-            rows.map((m) => applyAddMarker(d, idGen, parseNum(m.t_us, 't_us'), m.end_t_us ?? null, m.label ?? 'Shot', m.color ?? { r: 0, g: 128, b: 255, a: 255 }, comp))) }
+            rows.map((m) => applyAddMarker(d, idGen, parseNum(m.t_us, 't_us'), m.end_t_us ?? null, m.label ?? 'Shot', m.color ?? { r: 0, g: 128, b: 255, a: 255 }, comp, undefined, m.anchor ?? null))) }
         }
         case 'links_create': return { ok: true, value: commit(HISTORY_SUMMARY.linkCreate, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksCreate(d, idGen, a.layers as Uuid[], (a.label as string) ?? null, (a.reassign as boolean) ?? false)) }
         case 'links_dissolve': commit(HISTORY_SUMMARY.linkDissolve, linkMemberRefs(a.link as Uuid), { kind: 'Coarse' }, (d) => applyLinksDissolve(d, a.link as Uuid)); return { ok: true, value: null }
