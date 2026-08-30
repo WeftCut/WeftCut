@@ -6,7 +6,7 @@ import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
 import { HISTORY_SUMMARY, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, moveToCompositionSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
-import { validate, reconcileTransitions, type DroppedTransition } from './validate'
+import { validate, reconcileMarkers, reconcileTransitions, type DroppedMarker, type DroppedTransition } from './validate'
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
 import { applyAddGroupLayer, applyAddLayer, applyAddMarker, applyAddTrack, colorParams, defaultTransform, textParamsDefault } from './mutations/add'
 import { applyMoveLayer, applyMoveLayersToNewTrack } from './mutations/move'
@@ -137,8 +137,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
     }
   }
 
-  /** Run a draft mutation, then reconcile transitions, then validate, record,
-   *  emit — validate FIRST, op_id AFTER validate.
+  /** Run a draft mutation, then reconcile transitions and markers, then
+   *  validate, record, emit — validate FIRST, op_id AFTER validate.
    *  Returns the recipe's value. Throws CommandFailure on a mutation error or a
    *  validation failure.
    *
@@ -150,6 +150,14 @@ export function createActor(opts: ActorOptions): ActorHandle {
    *  update/remove move the incoming layer through a FOLLOWING transition's
    *  geometry (B is also from_layer of some B→C), reconcile dropping that
    *  chained transition — with its status row — is the designed outcome.
+   *
+   *  `reconcileMarkers` rides the same slot for the same three reasons, one
+   *  step later: ordinary edits stay marker-blind, an anchored marker's follow
+   *  (or its drop, when the clip it named was deleted) lands in the same
+   *  snapshot as the edit that caused it, and both reconciles hand back
+   *  primitives rather than draft references. The two are independent — a
+   *  transition drop moves no layer and a marker follow reads no transition —
+   *  so the order between them is free.
    *
    *  `summary` is a `HistorySummary` (history-labels.ts), not a bare string: the
    *  entry records its `.text` verbatim AND its `.key`, so the panel can
@@ -166,17 +174,20 @@ export function createActor(opts: ActorOptions): ActorHandle {
   function commit<T>(summary: HistorySummary, affected: EntityRef[] | ((value: T) => EntityRef[]), diff: DiffHint, recipe: (draft: Project) => T): T {
     let value!: T
     let droppedTransitions: DroppedTransition[] = []
+    let droppedMarkers: DroppedMarker[] = []
     // produce: a throw inside the recipe aborts and discards the draft.
     const next = produce(current(), (draft) => {
       value = recipe(draft)
       droppedTransitions = reconcileTransitions(draft)
+      droppedMarkers = reconcileMarkers(draft)
     })
     // No-op guard: if the recipe left the draft unmodified, immer returns the
     // original object by reference. Recording an identical snapshot would waste
     // a history slot and an op_id, and would fool the undo-unwind property's
     // state-change detector (two entries with the same state look like "bottom").
     // Mirrors the intent of applyTrimLayer's requestedDelta===0 early return.
-    // (A no-op recipe can't dirty a transition, so reconcile never blocks this.)
+    // (A no-op recipe can't dirty a transition or an anchored marker, so
+    // neither reconcile blocks this.)
     if (next === current()) return value
     runValidate(next)
     const refs = typeof affected === 'function' ? affected(value) : affected
@@ -185,6 +196,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     history.record({ op_id: opId, actor, timestamp: ts, summary: summary.text, label_key: summary.key, label_args: summary.label_args, affected: refs, snapshot: next })
     emit({ op_id: opId, actor, timestamp: ts, summary: summary.text, affected: refs, new_snapshot: next, diff_hint: diff })
     logDroppedTransitions(droppedTransitions) // after record — a failed validate logs nothing
+    logDroppedMarkers(droppedMarkers)
     return value
   }
 
@@ -202,6 +214,26 @@ export function createActor(opts: ActorOptions): ActorHandle {
           details: { kind: 'TransitionReconcileDrop', transition: d.id, from_layer: d.from_layer, to_layer: d.to_layer, reason: d.reason },
         })
       } catch (err) { console.warn('[actor] emitLog failed (transition reconcile)', err) }
+    }
+  }
+
+  /** One status-log row per reconcile-dropped marker — the anchored markers
+   *  whose clip the edit deleted. Same seam and same best-effort discipline as
+   *  logDroppedTransitions, and deliberately NO toast: this app's house pattern
+   *  for a side effect the user did not ask for is prevention plus the status
+   *  bar (issue #18), never an interruption. */
+  function logDroppedMarkers(dropped: DroppedMarker[]): void {
+    if (dropped.length === 0 || !opts.emitLog) return
+    for (const d of dropped) {
+      try {
+        opts.emitLog({
+          level: 'info',
+          category: { kind: 'Project' },
+          source: actor.kind === 'Agent' ? { kind: 'Agent', client: actor.client } : { kind: 'User' },
+          message: `Marker removed: the clip it followed is gone (marker ${d.id}${d.label ? ` "${d.label}"` : ''}, layer ${d.layer})`,
+          details: { kind: 'MarkerReconcileDrop', marker: d.id, composition: d.composition, layer: d.layer, label: d.label },
+        })
+      } catch (err) { console.warn('[actor] emitLog failed (marker reconcile)', err) }
     }
   }
 

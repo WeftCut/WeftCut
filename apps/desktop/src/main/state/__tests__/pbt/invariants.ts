@@ -8,6 +8,7 @@
 // (see checkAllInvariants).
 import type { WireProject, WireLayer } from './harness'
 import { wireRoot } from './harness'
+import { snapFrameRound } from '../../snap'
 
 export class InvariantError extends Error {}
 function fail(msg: string): never { throw new InvariantError(msg) }
@@ -106,6 +107,48 @@ export function invTransitionsWellFormed(p: WireProject): void {
   }
 }
 
+/** Independently re-derived marker laws. `reconcileMarkers` runs inside EVERY
+ *  commit, so no command sequence may leave a marker anchored to a layer the
+ *  project no longer holds, nor an awake anchored marker whose `t_us` disagrees
+ *  with its own anchor.
+ *
+ *  Fresh statement of the domain rules, NOT a validate.ts import — but the
+ *  frame snap IS the shared wasm leaf, because a hand-rolled rounding here would
+ *  not be an independent witness, it would be a second snapping implementation
+ *  drifting from the one both realms share.
+ *
+ *  Project-wide rather than root-only, unlike the transition law: an anchor's
+ *  two failure modes are "the layer is gone" and "the layer is in another
+ *  composition", and neither is visible from one composition. */
+export function invMarkersWellFormed(p: WireProject): void {
+  const everywhere = new Set<string>()
+  for (const c of Object.values(p.compositions)) for (const t of c.tracks) for (const l of t.layers) everywhere.add(l.id)
+  const seen = new Set<string>()
+  for (const c of Object.values(p.compositions)) {
+    const here = new Map<string, WireLayer>()
+    for (const t of c.tracks) for (const l of t.layers) here.set(l.id, l)
+    let prev: number | null = null
+    for (const m of c.markers) {
+      if (seen.has(m.id)) fail(`duplicate marker id ${m.id}`)
+      seen.add(m.id)
+      if (prev !== null && m.t_us < prev) fail(`marker ${m.id} at ${m.t_us}µs breaks the sorted-by-t_us order (after ${prev}µs)`)
+      prev = m.t_us
+      const anchor = m.anchor
+      if (anchor === null || anchor === undefined) continue
+      if (!everywhere.has(anchor.layer)) fail(`marker ${m.id} anchors layer ${anchor.layer}, which is in no composition`)
+      const layer = here.get(anchor.layer)
+      if (layer === undefined) fail(`marker ${m.id} in composition ${c.id} anchors layer ${anchor.layer}, which lives in another composition`)
+      const { src_in_us: srcIn, src_out_us: srcOut } = layer.params
+      if (srcIn === undefined || srcOut === undefined) fail(`marker ${m.id} anchors ${anchor.layer}, a ${layer.params.kind} with no source window`)
+      // Hibernating: the mark points at source the layer no longer shows, so
+      // `t_us` is deliberately frozen and there is nothing to check against.
+      if (anchor.src_us < srcIn || anchor.src_us >= srcOut) continue
+      const want = snapFrameRound(layer.t_start_us + (anchor.src_us - srcIn), c.fps.num, c.fps.den)
+      if (m.t_us !== want) fail(`awake marker ${m.id} sits at ${m.t_us}µs, but its anchor derives ${want}µs`)
+    }
+  }
+}
+
 export function invLinksWellFormed(p: WireProject): void {
   const known = new Set<string>()
   for (const t of wireRoot(p).tracks) for (const l of t.layers) known.add(l.id)
@@ -133,4 +176,5 @@ export function checkAllInvariants(p: WireProject): void {
   // — so it is not checked here. See the update_layer intent example in
   // intent.examples.test.ts.
   invLinksWellFormed(p)
+  invMarkersWellFormed(p)
 }

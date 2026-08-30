@@ -1,8 +1,10 @@
 // apps/desktop/src/main/state/mutations/split.test.ts
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
-import { blankProject, type Layer, type LayerParams, type Project } from '../model'
+import { blankProject, type Layer, type LayerParams, type Marker, type Project } from '../model'
 import { applySplitLayer } from './split'
+import { videoClipParams } from './media'
+import { markerHibernating } from '../summary'
 import { applyLinksCreate } from './links'
 import { isCommandFailure } from '../errors'
 import { group, groupedProject, root } from '../__tests__/fixtures/project'
@@ -51,6 +53,20 @@ describe('applySplitLayer', () => {
     expect(rr.params.src_in_us).toBe(900_000)  // src_in(500k) + offset(400k)
     expect(rr.params.src_out_us).toBe(1_500_000)
   })
+  it('a mark whose source lands in the RIGHT half falls asleep: the anchor rides the left half, which no longer shows it', () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 't')
+    root(p).tracks[0].layers = [{ id: 'v', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false,
+      metadata: {}, params: videoClipParams('m', 500_000, 1_500_000), effects: [] }]
+    const mk: Marker = { id: 'mk', t_us: 700_000, end_t_us: null, label: 'cut', note: '',
+      color: { r: 0, g: 0, b: 0, a: 255 }, anchor: { layer: 'v', src_us: 1_200_000 } }
+    root(p).markers.push(mk)
+    expect(markerHibernating(root(p), mk)).toBe(false)
+    applySplitLayer(p, gen, 'v', 400_000, false)
+    expect(root(p).tracks[0].layers[0].id).toBe('v')     // the left half keeps the id the anchor names
+    expect(markerHibernating(root(p), mk)).toBe(true)    // …and its window is now [500 k, 900 k)
+  })
+
   it('link spanning split: both halves stay in the link; non-spanning members untouched', () => {
     const p = blankProject(seededGen(), 't')
     // a:[0,1s] and b:[0,1s] on track B linked; both span t=400k

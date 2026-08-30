@@ -278,6 +278,51 @@ collision, so a selection that would overlap itself on the one new track still
 refuses.
 _Avoid_: auto-create, insert track, overflow
 
+## Markers
+
+**Free marker**:
+A marker with no anchor (`anchor: null`). It marks a composition's own time and
+behaves in every respect as every marker did before anchoring existed: it stays
+where it was put, it stays in its composition when the clips under it move,
+leave or are deleted, and no edit re-times it. The default, and the right shape
+for a note about the film — a music change, a chapter start.
+_Avoid_: sequence marker, timeline marker (both name the composition, not this
+kind), unanchored, plain marker
+
+**Anchored marker**:
+A marker carrying `{ layer, src_us }` — a layer of its own composition plus a
+time in that layer's SOURCE domain. Its `t_us` is derived from that layer's
+source window on every commit, so it follows the clip through moves, trims,
+splits and a crossing into another composition; deleting the clip takes the
+marker with it. The anchor is truth and `t_us` is a stored cache of it, which is
+why every marker reader is unchanged. Not a second kind of marker — one field on
+the one marker. UI word: Anchored / 已锚定.
+_Avoid_: clip marker (implies a second entity beside this one — the thing this
+design exists to not build), source marker, attached marker, pinned marker; and
+do not read it as the tab **Anchor**, which is a different word for the
+`CompositionRef` a timeline was entered through
+
+**Hibernating**:
+An anchored marker whose `src_us` has fallen outside its layer's
+`[src_in_us, src_out_us)` window — the clip no longer shows the frame it names,
+usually because a trim or a split moved the window edge past it. Retained in
+state, not painted on the lane, and revived on the exact frame it always named
+the moment the window covers it again. A derived condition recomputed every
+commit, never a stored flag. UI word: Hibernating / 休眠中.
+_Avoid_: lost, deleted, orphaned, broken, dangling (it is none of these — it is
+asleep, and re-extending or undoing wakes it)
+
+**Detach / attach**:
+The explicit operations that clear and set a marker's anchor: detach turns an
+anchored marker into an ordinary free marker at the time it currently sits on;
+attach ties a free marker to the clip under it. Never implicit — no gesture,
+patch or edit silently changes an anchor, because a silently-changed anchor is a
+marker that means something other than what the user wrote. UI word: Attach to
+clip / 锚定到片段, Detach / 解除锚定.
+_Avoid_: orphan (a detached marker is an ordinary free marker, not a casualty);
+unlink, unpin, release; link (that is the propagation relationship between
+layers)
+
 ## Links and Groups
 
 **Link**:

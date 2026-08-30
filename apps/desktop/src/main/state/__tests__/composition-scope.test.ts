@@ -8,7 +8,8 @@ import { describe, it, expect } from 'vitest'
 import { createActor, type ActorHandle } from '../actor'
 import { seededGen } from '../ids'
 import { blankProject } from '../model'
-import { applyAddMarker } from '../mutations/add'
+import { applyAddLayer, applyAddMarker } from '../mutations/add'
+import { mediaItemTemplate, videoClipParams } from '../mutations/media'
 import { applyDeleteLayer } from '../mutations/delete'
 import { groupedProject, root, withGroup } from './fixtures/project'
 
@@ -138,5 +139,33 @@ describe('composition scope — renderer channels', () => {
     expect(groupOf(actor, groupId).tracks).toHaveLength(3)
     expect(groupOf(actor, groupId).markers).toHaveLength(1)
     expect(root(actor.snapshot()).markers).toHaveLength(0)
+  })
+})
+
+describe('composition scope — an anchored marker travels with its layer', () => {
+  const MEDIA_S = '00000000-0000-0000-0000-0000000000cc'
+
+  it('crossing a composition carries the markers anchored to the set and leaves the free ones behind', () => {
+    // A marker belongs to one composition, and the anchor is what decides which:
+    // it names a layer, and a move is not a delete, so it goes where the layer
+    // goes. A free marker marks the film's own time and stays.
+    const gen = seededGen()
+    const p = blankProject(gen, 'cross')
+    p.media_pool[MEDIA_S] = mediaItemTemplate(MEDIA_S, 'Video', 10_000_000)
+    const aRoll = root(p).tracks[0].id
+    const clip = applyAddLayer(p, gen, aRoll, videoClipParams(MEDIA_S, 2_000_000, 4_000_000), 1_000_000, 3_000_000)
+    const tied = applyAddMarker(p, gen, 2_000_000, null, 'tied', BLUE, null, '', { layer: clip, src_us: 3_000_000 })
+    const free = applyAddMarker(p, gen, 500_000, null, 'free', BLUE)
+    const { p: withComp, groupId } = withGroup(p, gen)
+    const actor = createActor({ initial: withComp, idGen: gen, clock: () => '<TS>' })
+    const r = actor.dispatch('move_layers_to_composition', {
+      layers: [clip], to_composition: groupId, anchor_layer: clip, anchor_t_start_us: 4_000_000, to_track: 'spawn',
+    })
+    expect(r.ok).toBe(true)
+    expect(root(actor.snapshot()).markers.map((m) => m.id)).toEqual([free])
+    const inner = groupOf(actor, groupId)
+    expect(inner.markers.map((m) => m.id)).toEqual([tied])
+    // Re-derived in its new home by the same commit: 4 s + (3 s − 2 s).
+    expect(inner.markers[0].t_us).toBe(5_000_000)
   })
 })

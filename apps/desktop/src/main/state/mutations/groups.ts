@@ -13,7 +13,7 @@ import { layerOverlapClass } from '../validate'
 import { applyAddTrack, defaultTransform } from './add'
 import {
   applyDurationAutofit, cloneLayer, compositionOf, dropLayerFromLinks, hasSourceWindow, insertSorted,
-  locateLayerIn, moveLinksAndTransitions, pickFreeOverlayTrack, pruneEmptiedTrack, requireLayer,
+  locateLayerIn, moveLinksTransitionsAndMarkers, pickFreeOverlayTrack, pruneEmptiedTrack, requireLayer,
   requireSameComposition, shiftLayerKeyframes,
 } from './helpers'
 import { applyMoveLayersToComposition } from './moveToComposition'
@@ -43,7 +43,8 @@ export function compositionRefCount(p: Project, compositionId: Uuid): number {
  *  — same as `applyMoveLayer`). P's tracks that held members map bottom-up onto
  *  C's A roll, B roll, then fresh transient lanes, so relative z-order survives.
  *
- *  Links and transitions follow the set — see `moveLinksAndTransitions`.
+ *  Links, transitions and the markers anchored to a member follow the set — see
+ *  `moveLinksTransitionsAndMarkers`. A free marker stays with the parent.
  *
  *  The Group layer lands on the top-most former track; if its span now collides
  *  there it takes the drop strip's route (`pickFreeOverlayTrack`, else a lane
@@ -92,7 +93,7 @@ export function applyGroupsCreate(p: Project, idGen: IdGen, layerIds: readonly U
     insertSorted(child.tracks.find((t) => t.id === laneOf.get(loc.track.id))!, layer)
   }
 
-  moveLinksAndTransitions(parent, child, memberSet)
+  moveLinksTransitionsAndMarkers(parent, child, memberSet)
 
   applyDurationAutofit(child)
   const tEnd = snapOnGrid(t0 + child.duration_us, frameGrid(fps))

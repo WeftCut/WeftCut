@@ -181,8 +181,10 @@ Panel claims instead.
   DESTINATION's grid, so A → B → A need not return a layer to the microsecond it
   left. This is the existing property of the frame grid (ADR 0037, ADR 0038)
   rather than a new defect, but it is now reachable by a gesture.
-- **Markers stay in the source composition.** They belong to a composition, not
-  to the layers under them.
+- **Free markers stay in the source composition.** They belong to a composition,
+  not to the layers under them. An ANCHORED marker names a layer and crosses
+  with it — ADR 0056 reverses this consequence for that kind, and states why a
+  move is not a delete.
 - **No Group clip is retrimmed.** A destination that grew changes the overhang of
   every Group clip showing it (ADR 0052 §6); widening a window stays the user's
   own act.

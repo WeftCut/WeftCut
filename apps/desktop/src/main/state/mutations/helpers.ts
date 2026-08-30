@@ -1,5 +1,5 @@
 import { current, isDraft } from 'immer'
-import type { Composition, Layer, LayerParams, Project, Track, Uuid } from '../model'
+import type { Composition, Layer, LayerParams, Marker, Project, Track, Uuid } from '../model'
 import { CommandFailure } from '../errors'
 import { frameGrid, snapUpOnGrid } from '../snap'
 import { forEachAnimatedF64, forEachAnimatedRgba, shiftKeyframes } from './animated'
@@ -181,15 +181,41 @@ export function dropLayerFromLinks(c: Composition, layerId: Uuid): void {
   }
 }
 
-/** Links and transitions follow the SET across a composition boundary — the
- *  half pre-compose and the crossing primitive share (ungroup CLONES instead,
- *  so it has no use for this). A link or transition whose every member is in
- *  `memberSet` moves to `to` keeping its id; a link straddling the boundary
- *  loses its inside members and dissolves below two; a straddling transition is
- *  left in `from` for `reconcileTransitions` to drop and the actor to log — the
- *  drop rule has one home, and the commit runs it anyway. Markers are never
- *  touched: they mark a composition's own time, not the layers that left it. */
-export function moveLinksAndTransitions(from: Composition, to: Composition, memberSet: ReadonlySet<Uuid>): void {
+/** Insert a marker keeping the composition's markers ordered by `t_us` — the
+ *  order the lane's frame lookup and `applyAddMarker`'s own insertion scan both
+ *  assume. The one call site is the cross-composition arrival below; every other
+ *  writer already maintains the order itself. */
+export function insertMarkerSorted(c: Composition, marker: Marker): void {
+  const at = c.markers.findIndex((m) => m.t_us > marker.t_us)
+  c.markers.splice(at < 0 ? c.markers.length : at, 0, marker)
+}
+
+/** Links, transitions and ANCHORED markers follow the SET across a composition
+ *  boundary — the half pre-compose and the crossing primitive share (ungroup
+ *  CLONES instead, minting fresh ids and rebuilding its own links and
+ *  transitions, so it has no use for this).
+ *
+ *  A link or transition whose every member is in `memberSet` moves to `to`
+ *  keeping its id; a link straddling the boundary loses its inside members and
+ *  dissolves below two; a straddling transition is left in `from` for
+ *  `reconcileTransitions` to drop and the actor to log — the drop rule has one
+ *  home, and the commit runs it anyway.
+ *
+ *  A marker travels iff it is ANCHORED to a departing layer. A FREE marker
+ *  stays, and for the reason that once covered all of them: it marks a
+ *  composition's own time, not the layers that left it. An anchored one names a
+ *  layer, and a move is not a delete — so it follows the set exactly as a link
+ *  or a transition does, or the commit it rides would end with an anchor
+ *  reaching across a boundary that no `t_us` can be derived over
+ *  (`MarkerAnchorNotInComposition`).
+ *
+ *  Only the marker OBJECT is relocated; its `t_us` is left alone. That is
+ *  correct rather than sloppy: this runs inside the mutation recipe, and the
+ *  very same `produce()` runs `reconcileMarkers` after the recipe returns, which
+ *  re-derives `t_us` from the anchor layer in its new home before validate ever
+ *  sees the draft. The insertion is still ordered, because that reconcile
+ *  re-sorts only a composition whose markers actually moved. */
+export function moveLinksTransitionsAndMarkers(from: Composition, to: Composition, memberSet: ReadonlySet<Uuid>): void {
   for (let i = 0; i < from.links.length;) {
     const link = from.links[i]
     const inside = link.members.filter((m) => memberSet.has(m)).length
@@ -203,6 +229,15 @@ export function moveLinksAndTransitions(from: Composition, to: Composition, memb
   for (let i = 0; i < from.transitions.length;) {
     const tr = from.transitions[i]
     if (memberSet.has(tr.from_layer) && memberSet.has(tr.to_layer)) { to.transitions.push(tr); from.transitions.splice(i, 1); continue }
+    i++
+  }
+  for (let i = 0; i < from.markers.length;) {
+    const m = from.markers[i]
+    if (m.anchor !== null && m.anchor !== undefined && memberSet.has(m.anchor.layer)) {
+      from.markers.splice(i, 1)
+      insertMarkerSorted(to, m)
+      continue
+    }
     i++
   }
 }

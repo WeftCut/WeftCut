@@ -115,9 +115,9 @@ describe('applyMoveLayersToComposition', () => {
     expect(p).toEqual(before)
   })
 
-  // Not merely undefined: `moveLinksAndTransitions` would splice and push one
-  // array and never terminate, wedging the main process on a synchronous loop no
-  // timeout can interrupt. The linked pair is what makes that reachable.
+  // Not merely undefined: `moveLinksTransitionsAndMarkers` would splice and push
+  // one array and never terminate, wedging the main process on a synchronous loop
+  // no timeout can interrupt. The linked pair is what makes that reachable.
   it('refuses a destination that is the composition the set is already in', () => {
     const { p, gen, x, y } = crossing()
     applyLinksCreate(p, gen, [x, y], null, false)
