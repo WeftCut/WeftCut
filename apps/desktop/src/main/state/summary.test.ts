@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import type { Animated, Layer, LayerParams, MediaItem, Rgba, Track } from './model'
+import type { Animated, Layer, LayerParams, Marker, MediaItem, Rgba, Track } from './model'
 import {
-  layerKind, deriveTrackKindLabel, layerColorHint, hslToHex, markerColorHint, mediaLabel, layerParamsView,
+  layerKind, deriveTrackKindLabel, layerColorHint, hslToHex, markerColorHint, markerHibernating, mediaLabel, layerParamsView,
   buildProjectSummary,
 } from './summary'
 import { seededGen } from './ids'
 import { blankProject } from './model'
 import { createActor } from './actor'
-import { root, withGroup, groupedProject } from './__tests__/fixtures/project'
+import { mkProject, root, withGroup, groupedProject } from './__tests__/fixtures/project'
 import { applyAddLayer, colorParams } from './mutations/add'
 
 const stat = <T>(value: T) => ({ mode: 'Static' as const, value })
@@ -65,6 +65,40 @@ describe('markerColorHint / mediaLabel', () => {
   })
   it('mediaLabel prefers an explicit label', () => {
     expect(mediaLabel({ path_abs: 'media/clip.bin', label: 'My Clip' } as MediaItem)).toBe('My Clip')
+  })
+})
+
+describe('markerHibernating', () => {
+  // A one-second window into the middle of a source, so a src_us can sit
+  // before it, inside it, on its exclusive end, and past it.
+  const clipParams = { kind: 'VideoClip', media: 'm', src_in_us: 1_000_000, src_out_us: 2_000_000,
+    transform: xf(), opacity: stat(1), speed: 1, flip_h: false, flip_v: false,
+    fade_in_us: 0, fade_out_us: 0, crop: null } as unknown as LayerParams
+  const comp = (layers: Layer[]) => ({ ...root(mkProject()), tracks: [track(layers)] })
+  const marker = (anchor: { layer: string; src_us: number } | null): Marker =>
+    ({ id: 'mk', t_us: 0, end_t_us: null, label: '', note: '', color: { r: 0, g: 0, b: 0, a: 255 }, anchor })
+
+  it('a free marker never hibernates', () => {
+    expect(markerHibernating(comp([layer('l', clipParams)]), marker(null))).toBe(false)
+  })
+  it('src_us inside the window is awake', () => {
+    expect(markerHibernating(comp([layer('l', clipParams)]), marker({ layer: 'l', src_us: 1_500_000 }))).toBe(false)
+  })
+  it('src_in_us itself is inside — the window is closed at its start', () => {
+    expect(markerHibernating(comp([layer('l', clipParams)]), marker({ layer: 'l', src_us: 1_000_000 }))).toBe(false)
+  })
+  it('src_out_us itself hibernates — the window is OPEN at its end', () => {
+    expect(markerHibernating(comp([layer('l', clipParams)]), marker({ layer: 'l', src_us: 2_000_000 }))).toBe(true)
+  })
+  it('src_us trimmed off the head hibernates', () => {
+    expect(markerHibernating(comp([layer('l', clipParams)]), marker({ layer: 'l', src_us: 500_000 }))).toBe(true)
+  })
+  it('an anchor naming no layer of this composition hibernates rather than reading free', () => {
+    expect(markerHibernating(comp([layer('l', clipParams)]), marker({ layer: 'gone', src_us: 1_500_000 }))).toBe(true)
+  })
+  it('an anchor on a kind with no source window hibernates', () => {
+    const colorLayer = colorParams({ r: 0, g: 0, b: 0, a: 255 }, 16, 16)
+    expect(markerHibernating(comp([layer('l', colorLayer)]), marker({ layer: 'l', src_us: 0 }))).toBe(true)
   })
 })
 

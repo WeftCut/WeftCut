@@ -495,8 +495,18 @@ export interface MarkerSummary {
   id: string;
   t_us: number;
   end_t_us: number | null;
+  /// The short name — marker lane text and the `Ctrl+K` result row.
   label: string;
+  /// The long text; the marker Panel's field and nothing else's.
+  note: string;
   color_hint: string;
+  /// The layer this marker follows, or null when it is FREE. An id, not a
+  /// nested layer view — `tracks` already carries the layer.
+  anchor_layer: string | null;
+  /// Anchored at source material its layer no longer shows, so it is kept but
+  /// not painted. Always false for a free marker. Derived per projection
+  /// (`markerHibernating` in main/state/summary.ts), never stored.
+  hibernating: boolean;
 }
 
 /// Motion direction, not reveal side — glossary semantics live with the

@@ -133,10 +133,10 @@ function fixtureSummary(): ProjectSummary {
     ],
       markers: [
       {
-        id: "mk1", t_us: 5_000_000, end_t_us: null, label: "章节一", color_hint: "",
+        id: "mk1", t_us: 5_000_000, end_t_us: null, label: "章节一", note: "", color_hint: "", anchor_layer: null, hibernating: false,
       },
       {
-        id: "mk2", t_us: 6_000_000, end_t_us: null, label: "  ", color_hint: "",
+        id: "mk2", t_us: 6_000_000, end_t_us: null, label: "  ", note: "", color_hint: "", anchor_layer: null, hibernating: false,
       },
     ],
       links: [],

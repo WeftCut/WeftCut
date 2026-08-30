@@ -1,6 +1,7 @@
 // apps/desktop/src/main/state/summary.ts
 import type { Animated, Composition, Effect, Link, Layer, LayerParams, Marker, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid, VAlign } from './model'
 import type { HistoryStatus } from './history'
+import { hasSourceWindow } from './mutations/helpers'
 import type { DecodeRoute } from '../../shared/decode-route'
 
 // ── per-kind view structs — the layer-params projection the renderer reads
@@ -110,6 +111,42 @@ export function layerColorHint(layer: Layer): string {
 /** A marker's color hint is plain `#rrggbb` — no alpha on the wire. */
 export function markerColorHint(c: Rgba): string { return rgbaHex(c) }
 
+/** Is this marker anchored to source material its layer no longer shows?
+ *
+ *  Such a marker HIBERNATES: kept in state, not painted on the timeline, and
+ *  revived the instant the trim is undone or the layer re-extended. That is the
+ *  point of storing the tie in SOURCE time — the exact frame comes back for
+ *  free, where burning the marker on a trim would throw it away. Hibernating is
+ *  therefore a legal state, not a defect: `validate.ts` deliberately does not
+ *  range-check `anchor.src_us`.
+ *
+ *  Half-open window on purpose. `src_out_us` is the EXCLUSIVE end — the source
+ *  time just past the last frame the layer shows — so a mark sitting exactly on
+ *  it is already outside, exactly as `t_end_us` is outside a layer's span.
+ *
+ *  A missing anchor layer, or one whose kind carries no source window, reads as
+ *  hibernating rather than free: the marker still claims a tie, and answering
+ *  "free" would have the lane paint it as an ordinary composition mark at a
+ *  `t_us` nothing is maintaining any more. Neither case survives `validate`
+ *  (`MarkerAnchorNotInComposition` / `MarkerAnchorLayerHasNoSourceWindow`), so
+ *  this arm covers the window between a mutation and the commit that rejects it.
+ *
+ *  ONE definition, and it is this one: `reconcileMarkers` decides what to
+ *  re-derive by asking the same question this projection answers, so the lane
+ *  can never disagree with the reconcile about which markers are asleep. */
+export function markerHibernating(c: Composition, m: Marker): boolean {
+  if (m.anchor === null) return false
+  const anchor = m.anchor
+  for (const track of c.tracks) {
+    for (const layer of track.layers) {
+      if (layer.id !== anchor.layer) continue
+      if (!hasSourceWindow(layer.params)) return true
+      return anchor.src_us < layer.params.src_in_us || anchor.src_us >= layer.params.src_out_us
+    }
+  }
+  return true
+}
+
 /** Explicit label, else path basename, else the whole path. */
 export function mediaLabel(item: MediaItem): string {
   if (item.label != null) return item.label
@@ -208,7 +245,23 @@ export interface CompositionSummary {
 export interface HistoryView { cursor: number; len: number; can_undo: boolean; can_redo: boolean; lock_reason?: string }
 export interface RoleMixView { role: string; gain_db: number; muted: boolean; solo: boolean }
 export interface LinkSummary { id: string; label: string | null; layer_ids: string[] }
-export interface MarkerSummary { id: string; t_us: number; end_t_us: number | null; label: string; color_hint: string }
+export interface MarkerSummary {
+  id: string; t_us: number; end_t_us: number | null
+  /** The short name — lane text and `Ctrl+K` row. */
+  label: string
+  /** The long text (model.ts `Marker.note`). Projected beside `label` rather
+   *  than fetched on demand: it is one string, and the Panel that edits it
+   *  reads the same rows the lane draws. */
+  note: string
+  color_hint: string
+  /** The layer this marker follows, or null when it is FREE. An id, not a
+   *  nested layer view: `tracks` already carries the layer, and a second copy
+   *  here would be a second thing to keep in step. */
+  anchor_layer: string | null
+  /** Anchored at source material its layer no longer shows — see
+   *  `markerHibernating`. Always false for a free marker. */
+  hibernating: boolean
+}
 /** Wire shape == model shape (model.ts `Transition`) — the compositor's
  *  two-input node consumes it verbatim in both realms (preview snapshot and
  *  the export Worker's structured-clone of this summary). */
@@ -321,7 +374,10 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
       })),
     })),
     markers: c.markers.map((m: Marker): MarkerSummary => ({
-      id: m.id, t_us: m.t_us, end_t_us: m.end_t_us, label: m.label, color_hint: markerColorHint(m.color),
+      id: m.id, t_us: m.t_us, end_t_us: m.end_t_us, label: m.label, note: m.note,
+      color_hint: markerColorHint(m.color),
+      anchor_layer: m.anchor === null ? null : m.anchor.layer,
+      hibernating: markerHibernating(c, m),
     })),
     transitions: c.transitions.map((t): TransitionView => ({
       id: t.id, from_layer: t.from_layer, to_layer: t.to_layer, duration_us: t.duration_us, kind: t.kind, extended_us: t.extended_us,

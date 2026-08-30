@@ -14,7 +14,10 @@ function marker(tUs: number, endTUs: number | null = null): MarkerSummary {
     t_us: tUs,
     end_t_us: endTUs,
     label: "",
+    note: "",
     color_hint: "#0080ff",
+    anchor_layer: null,
+    hibernating: false,
   };
 }
 

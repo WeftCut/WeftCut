@@ -180,7 +180,7 @@ describe('resolveEntityLabels', () => {
     }
   })
   const marker = (label: string) =>
-    ({ id: 'M', t_us: 0, end_t_us: null, label, color: { r: 0, g: 0, b: 0, a: 255 }, metadata: {} })
+    ({ id: 'M', t_us: 0, end_t_us: null, label, note: '', color: { r: 0, g: 0, b: 0, a: 255 }, anchor: null })
   it('names a marker by its label', () => {
     const p = fresh()
     expect(labels(withRoot(p, { markers: [marker('Shot 3')] }), [{ kind: 'Marker', id: 'M' }])).toEqual([{ text: 'Shot 3' }])

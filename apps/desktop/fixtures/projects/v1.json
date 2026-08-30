@@ -419,26 +419,28 @@
           "t_us": 1000000,
           "end_t_us": null,
           "label": "point",
+          "note": "",
           "color": {
             "r": 0,
             "g": 128,
             "b": 255,
             "a": 255
           },
-          "metadata": {}
+          "anchor": null
         },
         {
           "id": "00000000-0000-0000-0000-00000000001b",
           "t_us": 2000000,
           "end_t_us": 3000000,
           "label": "region",
+          "note": "",
           "color": {
             "r": 0,
             "g": 128,
             "b": 255,
             "a": 255
           },
-          "metadata": {}
+          "anchor": null
         }
       ],
       "transitions": [

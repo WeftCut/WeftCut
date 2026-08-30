@@ -5,6 +5,7 @@ import { applyAddMarker } from './add'
 import { applyUpdateMarker, applyRemoveMarker } from './markers'
 import { frameIndexRound, snapFrameRound, timeUsAtFrame } from '../snap'
 import { isCommandFailure } from '../errors'
+import { parseMarkerPatch } from '../mcp-commands'
 import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
 const BLUE = { r: 0, g: 128, b: 255, a: 255 }
@@ -53,6 +54,50 @@ describe('applyUpdateMarker', () => {
   it('throws MarkerNotFound for a missing marker', () => {
     const { p } = withMarkers([[1_000_000, null]])
     expectCmd(() => applyUpdateMarker(p, 'ghost', { label: 'x' }), 'MarkerNotFound')
+  })
+  // `note` is the long text the Panel edits; `label` is what the lane and the
+  // search palette show. Patching one must never move the other, or the two
+  // fields are one field wearing two names.
+  it('patches note independently of label', () => {
+    const { p, ids } = withMarkers([[1_000_000, null]])
+    applyUpdateMarker(p, ids[0], { note: 'reshoot the wide; the boom dips in at 00:04' })
+    expect(root(p).markers[0].note).toBe('reshoot the wide; the boom dips in at 00:04')
+    expect(root(p).markers[0].label).toBe('m')
+    applyUpdateMarker(p, ids[0], { label: 'boom' })
+    expect(root(p).markers[0].note).toBe('reshoot the wide; the boom dips in at 00:04')
+  })
+  it('a null note is "do not touch", so clearing takes an empty string', () => {
+    const { p, ids } = withMarkers([[1_000_000, null]])
+    applyUpdateMarker(p, ids[0], { note: 'keep me' })
+    applyUpdateMarker(p, ids[0], { note: null })
+    expect(root(p).markers[0].note).toBe('keep me')
+    applyUpdateMarker(p, ids[0], { note: '' })
+    expect(root(p).markers[0].note).toBe('')
+  })
+  it('a marker born free stays free through any patch', () => {
+    const { p, ids } = withMarkers([[1_000_000, null]])
+    applyUpdateMarker(p, ids[0], { t_us: 2_000_000, label: 'x', note: 'y', color: { r: 1, g: 2, b: 3, a: 4 } })
+    expect(root(p).markers[0].anchor).toBeNull()
+  })
+})
+
+// The patch surface is the ONLY generic writer of a marker, so what it refuses
+// is what cannot be built inconsistently. `anchor` is refused because setting it
+// without deriving `t_us` in the same commit is a lie the next reconcile would
+// have to guess at; `metadata` is refused because the field no longer exists.
+describe('parseMarkerPatch', () => {
+  it('accepts note beside the fields it always took', () => {
+    const patch = { t_us: 1, end_t_us: 2, label: 'x', note: 'long', color: { r: 0, g: 0, b: 0, a: 255 } }
+    expect(parseMarkerPatch(patch)).toEqual(patch)
+  })
+  it('rejects a non-string note rather than silently skipping it', () => {
+    expect(() => parseMarkerPatch({ note: 42 })).toThrow(/note must be a string/)
+  })
+  it('refuses anchor: an anchor is established only by attach/detach', () => {
+    expect(() => parseMarkerPatch({ anchor: { layer: 'l', src_us: 0 } })).toThrow(/unknown key 'anchor'/)
+  })
+  it('still refuses the deleted metadata map', () => {
+    expect(() => parseMarkerPatch({ metadata: {} })).toThrow(/unknown key 'metadata'/)
   })
 })
 

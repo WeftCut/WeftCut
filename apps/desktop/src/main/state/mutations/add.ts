@@ -1,4 +1,4 @@
-import type { Layer, LayerParams, Marker, Project, Rgba, TextParams, TrackRole, Uuid } from '../model'
+import type { Layer, LayerParams, Marker, MarkerAnchor, Project, Rgba, TextParams, TrackRole, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { gridForLayerKind, snapOnGrid } from '../snap'
 import { authoredExtentPx } from '../quantize'
@@ -153,15 +153,23 @@ export function applyAddTrack(p: Project, idGen: IdGen, label: string | null, po
   return id
 }
 
-/** Marker inserted t-sorted, empty metadata. Times land on the composition frame
- *  grid via `snapMarkerTimes`, which also rejects a collapsed region — before the
- *  id is minted, so a rejected marker burns none (id contract). Markers are
- *  per composition: `compositionId` names the one to mark, the root by default. */
-export function applyAddMarker(p: Project, idGen: IdGen, tUs: number, endTUs: number | null, label: string, color: Rgba, compositionId?: Uuid | null): Uuid {
+/** Marker inserted t-sorted. Times land on the composition frame grid via
+ *  `snapMarkerTimes`, which also rejects a collapsed region — before the id is
+ *  minted, so a rejected marker burns none (id contract). Markers are per
+ *  composition: `compositionId` names the one to mark, the root by default.
+ *
+ *  `note` and `anchor` come LAST and optional so every caller that only wants a
+ *  free, unannotated marker reads exactly as it did before anchoring existed;
+ *  the defaults (`''` / `null`) are the same values the load-path backfill
+ *  writes, so a marker born here and one read off disk are indistinguishable.
+ *  `anchor` is taken on trust here — `validate` owns whether the layer it names
+ *  is in this composition and carries a source window, and the caller is
+ *  responsible for having derived `tUs` from it (nothing here does). */
+export function applyAddMarker(p: Project, idGen: IdGen, tUs: number, endTUs: number | null, label: string, color: Rgba, compositionId?: Uuid | null, note?: string, anchor?: MarkerAnchor | null): Uuid {
   const c = scopeComposition(p, compositionId)
   const snapped = snapMarkerTimes(c, tUs, endTUs)
   const id = idGen()
-  const marker: Marker = { id, t_us: snapped.tUs, end_t_us: snapped.endTUs, label, color, metadata: {} }
+  const marker: Marker = { id, t_us: snapped.tUs, end_t_us: snapped.endTUs, label, note: note ?? '', color, anchor: anchor ?? null }
   const at = c.markers.findIndex((m) => m.t_us > snapped.tUs)
   c.markers.splice(at < 0 ? c.markers.length : at, 0, marker)
   return id

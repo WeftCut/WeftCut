@@ -119,7 +119,7 @@ function fixtureSummary(): ProjectSummary {
       },
     ],
       markers: [
-      { id: "mk1", t_us: 5_000_000, end_t_us: null, label: "章节一", color_hint: "" },
+      { id: "mk1", t_us: 5_000_000, end_t_us: null, label: "章节一", note: "", color_hint: "", anchor_layer: null, hibernating: false },
     ],
       links: [],
     },
@@ -288,7 +288,7 @@ describe("SearchPalette", () => {
     );
     const summary = fixtureSummary();
     rootOf(summary).markers = [
-      { id: "mk1", t_us: 5_000_000, end_t_us: null, label: "save point", color_hint: "" },
+      { id: "mk1", t_us: 5_000_000, end_t_us: null, label: "save point", note: "", color_hint: "", anchor_layer: null, hibernating: false },
     ];
     // The marker's composition has to be the open one for the seek to be
     // direct — a project is loaded whenever the palette can be opened.

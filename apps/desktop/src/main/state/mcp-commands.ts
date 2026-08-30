@@ -163,17 +163,24 @@ export function parseEffectPatch(v: unknown): EffectPatch {
 }
 
 /** Strict update_marker patch — same lie-prevention as parseEffectPatch.
- *  null = "don't touch" (end_t_us can be set, never cleared: remove+add). */
+ *  null = "don't touch" (end_t_us can be set, never cleared: remove+add).
+ *
+ *  `anchor` is absent from the accepted set on purpose and is rejected like any
+ *  other unknown key: an anchor is established only by the dedicated
+ *  attach/detach ops, which is what keeps the pair (`anchor`, `t_us`) from ever
+ *  being written apart (see `MarkerPatch`). */
 export function parseMarkerPatch(v: unknown): MarkerPatch {
   const o = parseObj(v, 'patch')
   for (const k of Object.keys(o)) {
-    if (k !== 't_us' && k !== 'end_t_us' && k !== 'label' && k !== 'color')
-      throw new McpArgError(`invalid patch: unknown key '${k}' — expected { t_us?, end_t_us?, label?, color? }`)
+    if (k !== 't_us' && k !== 'end_t_us' && k !== 'label' && k !== 'note' && k !== 'color')
+      throw new McpArgError(`invalid patch: unknown key '${k}' — expected { t_us?, end_t_us?, label?, note?, color? }`)
   }
   parseNumOpt(o.t_us, 'patch.t_us')
   parseNumOpt(o.end_t_us, 'patch.end_t_us')
   if (o.label !== undefined && o.label !== null && typeof o.label !== 'string')
     throw new McpArgError(`patch.label must be a string`, 'patch')
+  if (o.note !== undefined && o.note !== null && typeof o.note !== 'string')
+    throw new McpArgError(`patch.note must be a string`, 'patch')
   if (o.color !== undefined && o.color !== null) parseRgba(o.color, 'patch.color')
   return o as MarkerPatch
 }
@@ -882,11 +889,12 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: 'Update a marker. Setting `t_us` re-sorts the marker list.',
     inputSchema: { type: 'object', properties: { marker_id: { type: 'string' }, patch: {
       type: 'object',
-      description: 'Marker patch; only fields you set are applied. `end_t_us` can be set, never cleared (clear = remove + re-add).',
+      description: 'Marker patch; only fields you set are applied. `end_t_us` can be set, never cleared (clear = remove + re-add). A marker\'s anchor is not patchable here — it is set and cleared by the dedicated attach/detach operations.',
       properties: {
         t_us: { type: ['integer', 'null'] },
         end_t_us: { type: ['integer', 'null'] },
-        label: { type: ['string', 'null'] },
+        label: { type: ['string', 'null'], description: 'Short name — what the marker lane and the search palette show. Keep it to a few words; long text belongs in `note`.' },
+        note: { type: ['string', 'null'], description: 'Long text, shown only in the marker panel.' },
         color: RGBA_SCHEMA,
       },
     } }, required: ['marker_id', 'patch'] },

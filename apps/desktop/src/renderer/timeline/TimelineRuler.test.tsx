@@ -247,7 +247,10 @@ describe("markers", () => {
     t_us: 1_000_000,
     end_t_us: null,
     label: "",
+    note: "",
     color_hint: "#ff8800",
+    anchor_layer: null,
+    hibernating: false,
     ...over,
   });
 
@@ -256,7 +259,10 @@ describe("markers", () => {
     t_us: 1_000_000,
     end_t_us: 2_000_000,
     label: "",
+    note: "",
     color_hint: "#22cc55",
+    anchor_layer: null,
+    hibernating: false,
     ...over,
   });
 

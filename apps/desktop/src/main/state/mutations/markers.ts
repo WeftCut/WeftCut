@@ -38,11 +38,20 @@ function requireMarker(p: Project, id: Uuid): LocatedMarker {
 }
 
 /** MarkerPatch. null/absent = "don't touch"; end_t_us can only be SET, never
- *  cleared (clearing → remove+add). */
+ *  cleared (clearing → remove+add).
+ *
+ *  `anchor` is deliberately NOT a patch field, and never becomes one: an anchor
+ *  is set and cleared only by the dedicated attach/detach ops, which check the
+ *  layer and derive `t_us` from it in the same commit. Reachable through a
+ *  generic patch, it would let a caller name a layer in another composition, or
+ *  move the anchor without moving the marker — an inconsistent pair the patch
+ *  surface has no way to repair. The same reasoning keeps `t_us` patchable:
+ *  that one IS the cache, and the next reconcile corrects it. */
 export interface MarkerPatch {
   t_us?: number | null
   end_t_us?: number | null
   label?: string | null
+  note?: string | null
   color?: Rgba | null
 }
 
@@ -58,6 +67,7 @@ export function applyUpdateMarker(p: Project, id: Uuid, patch: MarkerPatch): voi
   if (needsResort) m.t_us = snapped.tUs
   if (typeof patch.end_t_us === 'number') m.end_t_us = snapped.endTUs
   if (typeof patch.label === 'string') m.label = patch.label
+  if (typeof patch.note === 'string') m.note = patch.note
   if (patch.color && typeof patch.color === 'object') m.color = patch.color
   if (needsResort) c.markers.sort((a, b) => (a.t_us < b.t_us ? -1 : a.t_us > b.t_us ? 1 : 0))
 }

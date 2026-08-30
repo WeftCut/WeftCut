@@ -892,11 +892,33 @@ struct Marker {
     id: MarkerId,
     t_us: i64,
     end_t_us: Option<i64>,            // makes it a region marker
-    label: String,
+    label: String,                    // short name — lane text, Ctrl+K row
+    note: String,                     // long text — the marker Panel's field
     color: Rgba,
-    metadata: imbl::HashMap<String, Value>,   // agent notes, todos, etc.
+    anchor: Option<MarkerAnchor>,     // None = a free marker
+}
+
+struct MarkerAnchor {
+    layer: LayerId,
+    src_us: i64,                      // in the layer's SOURCE domain
 }
 ```
+
+A marker belongs to one composition and only ever to one. **Following a clip is
+a field, not a second entity**: an anchored marker names a layer of its own
+composition plus a time in that layer's source window, and `t_us` becomes a
+derived cache that nonetheless stays *stored* — so every reader (ruler, lane,
+`Ctrl+K`, the summary projection, serialize, MCP, export) goes on reading `t_us`.
+
+`label` and `note` split because `label` has two consumers that force it short
+(the lane's inline text, the `Ctrl+K` row) — the same split Premiere makes as
+Name + Comments and Resolve as Name + Notes.
+
+An anchored marker whose `src_us` falls outside its layer's
+`[src_in_us, src_out_us)` window **hibernates**: kept, not painted, and revived
+exactly where it was by undoing the trim. Holding the tie in source time is what
+buys that; it is a legal state, not a broken project, so `src_us` is deliberately
+not range-checked.
 
 ## `Link`
 
@@ -1076,6 +1098,9 @@ struct ChangeEvent {
 | Every composition's `fps`, `sample_rate`, `channels` equal the root's | reject (`CompositionLatticeMismatch { composition, field }`) |
 | `Layer.id` unique across **all** compositions | reject (`DuplicateLayerId`) |
 | `Marker.id` unique across **all** compositions | reject (`DuplicateMarkerId`) |
+| An anchored marker's `anchor.layer` names a layer of the **same** composition | reject (`MarkerAnchorNotInComposition`) — the two timelines share no origin, so no `t_us` could be derived from a crossing tie |
+| An anchored marker's layer carries a source window (`VideoClip` / `Audio` / `CompositionRef`) | reject (`MarkerAnchorLayerHasNoSourceWindow`) — the derivation reads `params.src_in_us` |
+| `anchor.src_us` inside the layer's window | **not checked** — outside it is the legal hibernating state (see `Marker`) |
 | All references (`MediaId`/`LayerId`/`LinkId`/`TransitionId`) resolve | reject |
 | `Link.id` unique within its composition's `links` | reject (`DuplicateLinkId`) |
 | Every `Link.members` entry names a layer of the **same** composition | reject (`LinkMemberMissing`) |

@@ -6,7 +6,9 @@ import type { MediaItem, Project } from './model'
 import { canonicalString } from './canonical'
 import { serializeProject } from './serialize'
 import { serializeProjectToJson, schemaGate, parseProjectJson, reconcileMediaPaths, clearSessionQuickProxies, loadProjectFromJson } from './persistence'
-import { root } from './__tests__/fixtures/project'
+import { root, withGroup } from './__tests__/fixtures/project'
+
+const MARKER_BLUE = { r: 0, g: 128, b: 255, a: 255 }
 
 describe('serializeProjectToJson (mirror io/mod.rs:25 to_string_pretty)', () => {
   it('pretty-prints with 2-space indent and no trailing newline', () => {
@@ -31,6 +33,29 @@ describe('serializeProjectToJson (mirror io/mod.rs:25 to_string_pretty)', () => 
     )
     const { project: back } = parseProjectJson(serializeProjectToJson(p))
     expect(root(back).transitions).toEqual(root(p).transitions)
+    expect(canonicalString(serializeProject(back))).toBe(canonicalString(serializeProject(p)))
+  })
+
+  // The three marker states a project can hold, on one file. Free is what every
+  // marker used to be; anchored is the new tie; hibernating is an anchored
+  // marker whose `src_us` has left its layer's window — a legal, retained state,
+  // so a save/reload that quietly dropped or "repaired" it would destroy exactly
+  // the information source-space anchoring exists to keep.
+  it('round-trips free, anchored and hibernating markers alike', () => {
+    const gen = seededGen()
+    // A CompositionRef layer carries a source window without needing media.
+    const { p, refLayerId } = withGroup(blankProject(gen, 'markers'), gen)
+    const anchorLayer = root(p).tracks.flatMap((t) => t.layers).find((l) => l.id === refLayerId)!
+    const window = anchorLayer.params as { src_in_us: number; src_out_us: number }
+    root(p).markers = [
+      { id: 'free', t_us: 0, end_t_us: null, label: 'free', note: '', color: MARKER_BLUE, anchor: null },
+      { id: 'awake', t_us: 500_000, end_t_us: null, label: 'awake', note: 'inside the window', color: MARKER_BLUE,
+        anchor: { layer: refLayerId, src_us: window.src_in_us + 500_000 } },
+      { id: 'asleep', t_us: 900_000, end_t_us: null, label: 'asleep', note: 'past the out point', color: MARKER_BLUE,
+        anchor: { layer: refLayerId, src_us: window.src_out_us + 1_000_000 } },
+    ]
+    const { project: back } = parseProjectJson(serializeProjectToJson(p))
+    expect(root(back).markers).toEqual(root(p).markers)
     expect(canonicalString(serializeProject(back))).toBe(canonicalString(serializeProject(p)))
   })
 })
