@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen, type IdGen } from '../ids'
 import { blankProject, type Project } from '../model'
-import { applyAddMarker } from './add'
-import { applyUpdateMarker, applyRemoveMarker } from './markers'
+import { applyAddLayer, applyAddMarker, colorParams } from './add'
+import { mediaItemTemplate, videoClipParams } from './media'
+import { applyAttachMarker, applyDetachMarker, applyUpdateMarker, applyRemoveMarker } from './markers'
 import { frameIndexRound, snapFrameRound, timeUsAtFrame } from '../snap'
 import { isCommandFailure } from '../errors'
 import { parseMarkerPatch } from '../mcp-commands'
-import { group, groupedProject, root } from '../__tests__/fixtures/project'
+import { group, groupedProject, root, withGroup } from '../__tests__/fixtures/project'
 
 const BLUE = { r: 0, g: 128, b: 255, a: 255 }
 function withMarkers(specs: Array<[number, number | null]>): { p: Project; ids: string[] } {
@@ -190,5 +191,117 @@ describe('markers inside a Group', () => {
     expect(group(p, groupId).markers).toEqual([])
     expect(root(p)).toEqual(rootBefore)
     expectCmd(() => applyUpdateMarker(p, m, { label: 'x' }), 'MarkerNotFound')
+  })
+})
+
+// ── attach / detach: the two explicit ends of anchoring ──────────────────────
+// Every case below states what the TIE means, never what `t_us` becomes:
+// re-deriving the time is `reconcileMarkers`' job (validate.ts) and runs in the
+// same commit, so an op-level test that asserted a moved `t_us` would be
+// pinning the reconcile from the wrong side.
+const MEDIA = '00000000-0000-0000-0000-0000000000bb'
+/** Root with one clip on the A roll at `[1 s, 3 s)` over source `[2 s, 4 s)`,
+ *  so a mark at 2 s names source 3 s and the two are never confusable. */
+function withClip(): { p: Project; gen: IdGen; clipId: string; trackId: string } {
+  const gen = seededGen(); const p = blankProject(gen, 't')
+  p.media_pool[MEDIA] = mediaItemTemplate(MEDIA, 'Video', 10_000_000)
+  const trackId = root(p).tracks[0].id
+  const clipId = applyAddLayer(p, gen, trackId, videoClipParams(MEDIA, 2_000_000, 4_000_000), 1_000_000, 3_000_000)
+  return { p, gen, clipId, trackId }
+}
+
+describe('applyAttachMarker', () => {
+  it('names the source instant the mark already sits on, and moves the mark nowhere', () => {
+    const { p, gen, clipId } = withClip()
+    const m = applyAddMarker(p, gen, 2_000_000, null, 'cut', BLUE)
+    applyAttachMarker(p, m, clipId)
+    expect(root(p).markers[0]).toMatchObject({ t_us: 2_000_000, anchor: { layer: clipId, src_us: 3_000_000 } })
+  })
+
+  it('re-ties an already anchored marker rather than refusing it', () => {
+    const { p, gen, clipId, trackId } = withClip()
+    const second = applyAddLayer(p, gen, trackId, videoClipParams(MEDIA, 0, 1_000_000), 3_000_000, 4_000_000)
+    const m = applyAddMarker(p, gen, 2_000_000, null, 'cut', BLUE, null, '', { layer: clipId, src_us: 3_000_000 })
+    applyUpdateMarker(p, m, { t_us: 3_500_000 })
+    applyAttachMarker(p, m, second)
+    expect(root(p).markers[0].anchor).toEqual({ layer: second, src_us: 500_000 })
+  })
+
+  // A mark the clip does not touch names no instant in it. The end is EXCLUSIVE
+  // — the boundary after the clip's last frame belongs to whatever comes next.
+  it('refuses a marker the clip does not cover, leaving it free', () => {
+    const { p, gen, clipId } = withClip()
+    const before = applyAddMarker(p, gen, 500_000, null, 'early', BLUE)
+    expect(expectCmdErr(() => applyAttachMarker(p, before, clipId)).error).toBe('InvalidArgument')
+    const atEnd = applyAddMarker(p, gen, 3_000_000, null, 'boundary', BLUE)
+    expect(expectCmdErr(() => applyAttachMarker(p, atEnd, clipId)).error).toBe('InvalidArgument')
+    expect(root(p).markers.map((x) => x.anchor)).toEqual([null, null])
+    // The last frame the clip DOES show is still inside it.
+    const inside = applyAddMarker(p, gen, 2_966_667, null, 'last frame', BLUE)
+    applyAttachMarker(p, inside, clipId)
+    expect(root(p).markers.find((x) => x.id === inside)!.anchor).not.toBeNull()
+  })
+
+  it('refuses a kind with no source window — the fix is a different layer, not a different time', () => {
+    const { p, gen, trackId } = withClip()
+    const color = applyAddLayer(p, gen, trackId, colorParams({ r: 1, g: 2, b: 3, a: 255 }, 16, 9), 4_000_000, 5_000_000)
+    const m = applyAddMarker(p, gen, 4_500_000, null, 'on the colour', BLUE)
+    expect(expectCmdErr(() => applyAttachMarker(p, m, color))).toEqual({
+      error: 'WrongLayerKind', layer: color, expected: 'VideoClip | Audio | CompositionRef',
+    })
+    expect(root(p).markers.find((x) => x.id === m)!.anchor).toBeNull()
+  })
+
+  // Checked BEFORE the kind: the two timelines share no origin, so a
+  // cross-composition tie is unrepresentable whatever the layer is made of.
+  it('refuses a layer outside the marker`s own composition', () => {
+    const gen = seededGen()
+    const { p, groupId, innerId } = groupedProject(gen)
+    const m = applyAddMarker(p, gen, 500_000, null, 'root mark', BLUE)
+    expect(expectCmdErr(() => applyAttachMarker(p, m, innerId))).toEqual({
+      error: 'CrossCompositionSet', layer: innerId, composition: groupId, expected: root(p).id,
+    })
+  })
+
+  it('ties a marker inside a Group to a clip of that Group', () => {
+    const gen = seededGen()
+    const base = blankProject(gen, 't')
+    base.media_pool[MEDIA] = mediaItemTemplate(MEDIA, 'Video', 10_000_000)
+    let innerClip = ''
+    const { p, groupId } = withGroup(base, gen, (g, view) => {
+      innerClip = applyAddLayer(view, gen, g.tracks[0].id, videoClipParams(MEDIA, 2_000_000, 4_000_000), 1_000_000, 3_000_000)
+    })
+    const m = applyAddMarker(p, gen, 2_000_000, null, 'in group', BLUE, groupId)
+    applyAttachMarker(p, m, innerClip)
+    expect(group(p, groupId).markers[0].anchor).toEqual({ layer: innerClip, src_us: 3_000_000 })
+    expect(root(p).markers).toEqual([])
+  })
+
+  it('throws MarkerNotFound / LayerNotFound for an unknown id', () => {
+    const { p, gen, clipId } = withClip()
+    const m = applyAddMarker(p, gen, 2_000_000, null, 'cut', BLUE)
+    expectCmd(() => applyAttachMarker(p, 'ghost', clipId), 'MarkerNotFound')
+    expectCmd(() => applyAttachMarker(p, m, 'ghost'), 'LayerNotFound')
+  })
+})
+
+describe('applyDetachMarker', () => {
+  it('clears the tie and leaves t_us exactly where the last reconcile put it', () => {
+    const { p, gen, clipId } = withClip()
+    const m = applyAddMarker(p, gen, 2_000_000, null, 'cut', BLUE, null, 'the boom dips in here', { layer: clipId, src_us: 3_000_000 })
+    applyDetachMarker(p, m)
+    expect(root(p).markers[0]).toMatchObject({ t_us: 2_000_000, anchor: null, note: 'the boom dips in here' })
+  })
+
+  it('is a no-op on an already free marker', () => {
+    const { p, gen } = withClip()
+    const m = applyAddMarker(p, gen, 2_000_000, null, 'cut', BLUE)
+    applyDetachMarker(p, m)
+    expect(root(p).markers[0].anchor).toBeNull()
+  })
+
+  it('throws MarkerNotFound for a missing marker', () => {
+    const { p } = withClip()
+    expectCmd(() => applyDetachMarker(p, 'ghost'), 'MarkerNotFound')
   })
 })

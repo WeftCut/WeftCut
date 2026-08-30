@@ -25,7 +25,7 @@
 // (ADR 0052), so nothing here wraps `update_layer`, `move_layer` and friends.
 
 import { invoke } from "@/bridge/ipc";
-import type { CompositionPatchPartial, Rgba } from "./index";
+import type { CompositionPatchPartial, MarkerAnchorArg, Rgba } from "./index";
 
 /// `add_track` in `compositionId`. Tracks are kind-agnostic.
 export async function addTrackIn(compositionId: string | null): Promise<string> {
@@ -34,14 +34,26 @@ export async function addTrackIn(compositionId: string | null): Promise<string> 
 
 /// `add_marker` at `tUs` on `compositionId`'s timeline; the label is
 /// deliberately empty (see `addMarkerAt`).
+///
+/// `anchor` ties the new marker to a clip of that same composition inside the
+/// ONE commit that creates it. An optional argument rather than a second
+/// wrapper because free and anchored are one gesture: `M` decides which it is
+/// from the selection at press time, and a caller that has to pick between two
+/// functions is a caller writing that branch twice. Adding then attaching would
+/// also put an undo step between a marker and the clip it was born on.
+/// `src_us` is the caller's to derive (`markerAnchorFor`, timeline/markerAtFrame);
+/// the actor takes the pair on trust and the commit's reconcile derives `t_us`
+/// straight back from it.
 export async function addMarkerAtIn(
   compositionId: string | null,
   tUs: number,
+  anchor?: MarkerAnchorArg | null,
 ): Promise<string> {
   return invoke<string>("add_marker", {
     tUs,
     label: "",
     compositionId,
+    anchor: anchor ?? null,
   });
 }
 

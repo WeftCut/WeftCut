@@ -37,6 +37,7 @@ import {
   clearLayerSelection,
   currentSelection,
   layerIdsOf,
+  primaryLayerIdOf,
   setLayerSelection,
   usePrimaryLayerId,
 } from "./state/selectionStore";
@@ -115,7 +116,10 @@ import {
   addMarkerAtIn,
   addTextLayerIn,
 } from "./ipc/compositionScoped";
-import { markerStartingInFrame } from "./timeline/markerAtFrame";
+import {
+  markerAnchorFor,
+  markerStartingInFrame,
+} from "./timeline/markerAtFrame";
 import { MarkerRenameDialog } from "./timeline/MarkerRenameDialog";
 import { openMarkerRenamePrompt } from "./timeline/markerRenamePrompt";
 import {
@@ -770,6 +774,18 @@ export function App({ onCloseProject }: AppProps) {
     // the user cares about markers right now, and an invisible add reads as a
     // dead key (the documented Premiere confusion), an invisible rename as
     // editing blind. The layer toggle exists to silence agent sweeps, not this.
+    //
+    // The add branch has one more decision: an empty selection marks the
+    // TIMELINE, a selection marks the CLIP. Selection and not "the clip under
+    // the playhead", because stacked tracks give that phrase no single answer —
+    // Resolve settles it with the selection, and so do we. A multi-clip
+    // selection still makes exactly ONE marker, on the primary: M means "mark
+    // this instant", and one instant is one mark. N marks on one frame stack
+    // illegibly, and `markerStartingInFrame`'s one-winner-per-frame rule would
+    // send the NEXT M into renaming the first while the rest stayed unreachable.
+    // A playhead outside the selected clip, or a clip whose kind carries no
+    // source window, falls back to a free marker: a tie to material the mark
+    // does not touch means nothing (`markerAnchorFor` decides all of it).
     addMarkerAtPlayhead: () => {
       // Live store read, not the render-captured summary — same reason the
       // raise-selection handler reads its stores at press time, and the reason
@@ -795,7 +811,15 @@ export function App({ onCloseProject }: AppProps) {
         openMarkerRenamePrompt(existing.id);
         return;
       }
-      void tryMutate(() => addMarkerAtIn(open.id, frameUs), "add_marker");
+      // Live read for the same reason `open` is one: what is selected NOW is
+      // what the key was pressed about, not what App last rendered against.
+      const primary = primaryLayerIdOf(currentSelection());
+      const anchor =
+        primary === null ? null : markerAnchorFor(open, primary, frameUs);
+      void tryMutate(
+        () => addMarkerAtIn(open.id, frameUs, anchor),
+        "add_marker",
+      );
     },
     clearRange: () => clearMarkedRange(),
     openSearchPalette: () => {

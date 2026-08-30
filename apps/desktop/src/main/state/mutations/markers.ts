@@ -1,6 +1,7 @@
 import type { Composition, Marker, Project, Rgba, Uuid } from '../model'
 import { CommandFailure } from '../errors'
 import { snapFrameRound } from '../snap'
+import { hasSourceWindow, requireLayer } from './helpers'
 
 /** Marker times on the composition frame grid — the one snap both the add path
  *  (`applyAddMarker`) and the patch path share.
@@ -76,4 +77,47 @@ export function applyUpdateMarker(p: Project, id: Uuid, patch: MarkerPatch): voi
 export function applyRemoveMarker(p: Project, id: Uuid): void {
   const { comp: c, index } = requireMarker(p, id)
   c.markers.splice(index, 1)
+}
+
+/** Tie a marker to a layer of its own composition — the explicit half of
+ *  anchoring, and (with `applyAddMarker`) one of only two writers of a
+ *  `MarkerAnchor`.
+ *
+ *  `src_us` is read off the marker's CURRENT `t_us`: the anchor names the source
+ *  instant the mark already sits on, so attaching moves nothing. `t_us` is
+ *  deliberately NOT recomputed here — the same `produce()` runs
+ *  `reconcileMarkers` after this returns and derives it from the anchor, and two
+ *  derivations of one value are how the two drift.
+ *
+ *  Three refusals, all before the anchor is written. A layer in another
+ *  composition reads as `CrossCompositionSet`: the marker and its layer are the
+ *  one-composition set here, so `expected` is the marker's composition, and a
+ *  cross-composition tie is unrepresentable rather than merely odd — the two
+ *  timelines share no origin, so no `t_us` could be derived over it. A kind with
+ *  no source window is `WrongLayerKind`, because the derivation reads
+ *  `params.src_in_us` and the fix is a different layer, not a different time. A
+ *  marker outside the layer's timeline span is `InvalidArgument`: a mark the clip
+ *  does not touch names no instant in it, and tying it anyway would only teleport
+ *  it onto the clip. */
+export function applyAttachMarker(p: Project, markerId: Uuid, layerId: Uuid): void {
+  const { comp: c, marker: m } = requireMarker(p, markerId)
+  const { comp: layerComp, layer } = requireLayer(p, layerId)
+  if (layerComp !== c)
+    throw new CommandFailure({ error: 'CrossCompositionSet', layer: layerId, composition: layerComp.id, expected: c.id })
+  if (!hasSourceWindow(layer.params))
+    throw new CommandFailure({ error: 'WrongLayerKind', layer: layerId, expected: 'VideoClip | Audio | CompositionRef' })
+  if (m.t_us < layer.t_start_us || m.t_us >= layer.t_end_us)
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'layer',
+      detail: `marker ${markerId} at t_us ${m.t_us} is outside layer ${layerId}'s span [${layer.t_start_us}, ${layer.t_end_us})` })
+  m.anchor = { layer: layerId, src_us: m.t_us - layer.t_start_us + layer.params.src_in_us }
+}
+
+/** Cut a marker loose from its layer. `t_us` stays exactly where the last
+ *  reconcile left it, so the mark keeps the frame it is on and simply stops
+ *  following.
+ *
+ *  The ONE exit from hibernation, and the answer to "I want the note, not the
+ *  following": what comes out is an ordinary free marker, not a casualty. */
+export function applyDetachMarker(p: Project, markerId: Uuid): void {
+  requireMarker(p, markerId).marker.anchor = null
 }

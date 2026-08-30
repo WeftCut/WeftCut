@@ -528,6 +528,8 @@ const zhCN: Resources = {
     link_hidden_members_one: "{{count}} 个链接片段位于隐藏轨道——点击显示",
     link_hidden_members_other: "{{count}} 个链接片段位于隐藏轨道——点击显示下一个",
     delete_marker: "删除标记",
+    attach_marker: "锚定到片段",
+    detach_marker: "解除锚定",
     rename_track_label: "重命名 {{label}}",
     enable_layer: "启用图层",
     disable_layer: "禁用图层",
@@ -1520,6 +1522,8 @@ const zhCN: Resources = {
       add_shots: "添加镜头标记",
       update: "修改标记",
       remove: "删除标记",
+      attach: "标记锚定到片段",
+      detach: "解除标记锚定",
     },
     effect: {
       add: "添加效果",

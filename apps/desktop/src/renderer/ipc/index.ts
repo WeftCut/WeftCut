@@ -509,6 +509,17 @@ export interface MarkerSummary {
   hibernating: boolean;
 }
 
+/// The tie a marker carries, as the marker channels take it: a layer of the
+/// marker's own composition plus an instant in that layer's SOURCE domain.
+/// Mirrors main/state/model.ts `MarkerAnchor`, field names included — it is an
+/// argument travelling INTO the actor, not a projection coming back, so it
+/// keeps the model's spelling rather than `MarkerSummary`'s flattened
+/// `anchor_layer`.
+export interface MarkerAnchorArg {
+  layer: string;
+  src_us: number;
+}
+
 /// Motion direction, not reveal side — glossary semantics live with the
 /// serde twin (`native/src/state/transition.rs`).
 export type TransitionDirection = "left" | "right" | "up" | "down";
@@ -1179,6 +1190,28 @@ export async function renameMarker(
 /// stands in front of it.
 export async function removeMarker(markerId: string): Promise<void> {
   return invoke<void>("remove_marker", { markerId });
+}
+
+/// Tie a marker to a clip in its own composition. From here on the marker's
+/// time is derived from that clip's source window every commit, so it follows
+/// moves, trims and splits, and goes with the clip if the clip is deleted.
+/// RECORDED.
+///
+/// Refused when the clip is in another composition, carries no source window,
+/// or does not cover the marker's own time — `markerAnchorFor`
+/// (timeline/markerAtFrame) answers all three at the gesture, so a surface that
+/// consults it never reaches the refusal.
+export async function attachMarker(
+  markerId: string,
+  layerId: string,
+): Promise<void> {
+  return invoke<void>("attach_marker", { markerId, layerId });
+}
+
+/// Cut a marker loose from its clip; it stays on the frame it currently sits
+/// on and simply stops following. RECORDED. The one exit from hibernation.
+export async function detachMarker(markerId: string): Promise<void> {
+  return invoke<void>("detach_marker", { markerId });
 }
 
 export async function updateLayerParams(

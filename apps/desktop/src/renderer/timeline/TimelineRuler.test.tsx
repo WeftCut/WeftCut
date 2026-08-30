@@ -8,19 +8,30 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../i18n"; // real en-US bundle, so a tooltip is the shipped string
-import type { MarkerSummary } from "../ipc";
+import type {
+  AnimTrack,
+  LayerSummary,
+  MarkerSummary,
+  TrackSummary,
+} from "../ipc";
 import { summaryFixture } from "../testing/summaryFixture";
 
 const ipcMocks = vi.hoisted(() => ({
   removeMarker: vi.fn(),
+  attachMarker: vi.fn(),
+  detachMarker: vi.fn(),
   logEmit: vi.fn(),
 }));
 
+// `markerAnchorFor` stays REAL: it is the rule the Attach row is gated on, and
+// a stub would leave the gate testing itself.
 vi.mock("../ipc", async (importActual) => {
   const actual = await importActual<typeof import("../ipc")>();
   return {
     ...actual,
     removeMarker: ipcMocks.removeMarker,
+    attachMarker: ipcMocks.attachMarker,
+    detachMarker: ipcMocks.detachMarker,
     logEmit: ipcMocks.logEmit,
   };
 });
@@ -37,6 +48,7 @@ import {
 } from "../state/timelineScrollStore";
 import { hasMarkedRange, useRangeStore } from "../state/rangeStore";
 import { registerCommandProvider } from "../commands/registry";
+import { useSelectionStore } from "../state/selectionStore";
 import { RULER_SCROLL_QUANTUM_PX } from "./rulerModel";
 import { TimelineRuler } from "./TimelineRuler";
 
@@ -238,9 +250,84 @@ describe("markers", () => {
 
   /// Only the root's `markers` carry content; the ruler reads them through the
   /// open composition, so the seed goes through `apply` (which also opens it).
-  const seed = (markers: MarkerSummary[]) => {
-    useProjectStore.getState().apply(summaryFixture({ root: { markers } }));
+  /// `tracks` is for the anchoring rows alone — they read the clip the
+  /// selection names out of the same composition.
+  const seed = (markers: MarkerSummary[], tracks: TrackSummary[] = []) => {
+    useProjectStore.getState().apply(summaryFixture({ root: { markers, tracks } }));
   };
+
+  const staticNum = (value: number): AnimTrack<number> => ({
+    mode: "Static",
+    value,
+  });
+
+  /// A clip at `[1 s, 3 s)` over source `[2 s, 4 s)`, so the mark at 1 s that
+  /// `point()` makes falls inside it and names source 2 s.
+  const clipTrack = (
+    over: Partial<Pick<LayerSummary, "id" | "t_start_us" | "t_end_us">> = {},
+  ): TrackSummary => ({
+    id: "track-1",
+    kind: "Video",
+    label: null,
+    enabled: true,
+    locked: false,
+    muted: false,
+    solo: false,
+    role: null,
+    transient: true,
+    layers: [
+      {
+        id: "clip-1",
+        label: null,
+        t_start_us: 1_000_000,
+        t_end_us: 3_000_000,
+        kind: "VideoClip",
+        color_hint: "#5588aa",
+        enabled: true,
+        locked: false,
+        effects: [],
+        params: {
+          kind: "VideoClip",
+          media_id: "media-1",
+          media_label: "clip.mov",
+          src_in_us: 2_000_000,
+          src_out_us: 4_000_000,
+          x: staticNum(0),
+          y: staticNum(0),
+          scale_x: staticNum(1),
+          scale_y: staticNum(1),
+          scale_linked: true,
+          rotation_deg: staticNum(0),
+          anchor_x: staticNum(0.5),
+          anchor_y: staticNum(0.5),
+          opacity: staticNum(1),
+          speed: 1,
+          flip_h: false,
+          flip_v: false,
+          fade_in_us: 0,
+          fade_out_us: 0,
+        },
+        ...over,
+      },
+    ],
+  });
+
+  /// The marker menu's rows in order: two for maintaining the marker, two for
+  /// the anchoring the glossary spells Attach to clip / Detach.
+  const MARKER_MENU_ROWS = [
+    "Rename",
+    "Delete marker",
+    "Attach to clip",
+    "Detach",
+  ];
+
+  const selectLayers = (...ids: string[]) =>
+    useSelectionStore.setState({
+      selection:
+        ids.length === 0
+          ? { kind: "none" }
+          : { kind: "layers", primary: ids[0]!, ids: new Set(ids) },
+    });
 
   const point = (over: Partial<MarkerSummary> = {}): MarkerSummary => ({
     id: "point-1",
@@ -509,6 +596,9 @@ describe("markers", () => {
   describe("context menu", () => {
     beforeEach(() => {
       ipcMocks.removeMarker.mockReset().mockResolvedValue(undefined);
+      ipcMocks.attachMarker.mockReset().mockResolvedValue(undefined);
+      ipcMocks.detachMarker.mockReset().mockResolvedValue(undefined);
+      useSelectionStore.setState({ selection: { kind: "none" } });
       closeMarkerRenamePrompt();
     });
 
@@ -529,15 +619,12 @@ describe("markers", () => {
       });
     };
 
-    it("right-click on a glyph offers Rename and Delete, adding no strip children", async () => {
+    it("right-click on a glyph offers all four rows, adding no strip children", async () => {
       seed([point()]);
       const { container } = renderRuler();
       const childrenBefore = ticks(container).length;
       const items = await openMenu(container, "point-1");
-      expect(items.map((i) => i.textContent)).toEqual([
-        "Rename",
-        "Delete marker",
-      ]);
+      expect(items.map((i) => i.textContent)).toEqual(MARKER_MENU_ROWS);
       expect(ticks(container)).toHaveLength(childrenBefore);
     });
 
@@ -676,10 +763,102 @@ describe("markers", () => {
         expect(found.length).toBeGreaterThan(0);
         return found;
       });
-      expect(items.map((i) => i.textContent)).toEqual([
-        "Rename",
-        "Delete marker",
+      expect(items.map((i) => i.textContent)).toEqual(MARKER_MENU_ROWS);
+    });
+  });
+
+  // The anchoring rows GREY OUT rather than vanish: a row that disappears
+  // teaches nothing about why, and both of these are unavailable far more often
+  // than they are available.
+  describe("anchoring rows", () => {
+    beforeEach(() => {
+      ipcMocks.attachMarker.mockReset().mockResolvedValue(undefined);
+      ipcMocks.detachMarker.mockReset().mockResolvedValue(undefined);
+      useSelectionStore.setState({ selection: { kind: "none" } });
+      closeMarkerRenamePrompt();
+    });
+    afterEach(() => useSelectionStore.setState({ selection: { kind: "none" } }));
+
+    const disabled = (items: HTMLElement[]): string[] =>
+      items
+        .filter((i) => i.getAttribute("aria-disabled") === "true")
+        .map((i) => i.textContent ?? "");
+
+    const openMenu = async (
+      container: HTMLElement,
+      id: string,
+    ): Promise<HTMLElement[]> => {
+      fireEvent.contextMenu(markById(container, id), {
+        clientX: 80,
+        clientY: 12,
+      });
+      return await waitFor(() => {
+        const items = Array.from(
+          document.querySelectorAll<HTMLElement>(".app-menu-item"),
+        );
+        expect(items.length).toBe(MARKER_MENU_ROWS.length);
+        return items;
+      });
+    };
+
+    it("offers neither on a free marker with nothing selected", async () => {
+      seed([point()], [clipTrack()]);
+      const { container } = renderRuler();
+      expect(disabled(await openMenu(container, "point-1"))).toEqual([
+        "Attach to clip",
+        "Detach",
       ]);
+    });
+
+    // "The selected clip" needs the selection to name exactly one: the primary
+    // of a set would tie the marker to a clip the row never mentioned.
+    it("offers Attach for one selected clip and for no other count", async () => {
+      seed([point()], [clipTrack()]);
+      const { container } = renderRuler();
+      act(() => selectLayers("clip-1"));
+      expect(disabled(await openMenu(container, "point-1"))).toEqual(["Detach"]);
+      act(() => selectLayers("clip-1", "clip-2"));
+      expect(disabled(await openMenu(container, "point-1"))).toEqual([
+        "Attach to clip",
+        "Detach",
+      ]);
+    });
+
+    it("refuses Attach for a marker the selected clip does not cover", async () => {
+      seed([point({ t_us: 3_500_000 })], [clipTrack()]);
+      const { container } = renderRuler();
+      act(() => selectLayers("clip-1"));
+      expect(disabled(await openMenu(container, "point-1"))).toEqual([
+        "Attach to clip",
+        "Detach",
+      ]);
+    });
+
+    it("routes Attach to the channel with the marker and the clip it named", async () => {
+      seed([point()], [clipTrack()]);
+      const { container } = renderRuler();
+      act(() => selectLayers("clip-1"));
+      const items = await openMenu(container, "point-1");
+      fireEvent.click(items[2]!);
+      await waitFor(() =>
+        expect(ipcMocks.attachMarker).toHaveBeenCalledExactlyOnceWith(
+          "point-1",
+          "clip-1",
+        ),
+      );
+    });
+
+    // The one exit from hibernation, so it is offered on an anchored marker
+    // whether or not its clip still shows the frame it names.
+    it("offers Detach on an anchored marker, hibernating included", async () => {
+      seed([point({ anchor_layer: "clip-1", hibernating: true })], [clipTrack()]);
+      const { container } = renderRuler();
+      const items = await openMenu(container, "point-1");
+      expect(disabled(items)).toEqual(["Attach to clip"]);
+      fireEvent.click(items[3]!);
+      await waitFor(() =>
+        expect(ipcMocks.detachMarker).toHaveBeenCalledExactlyOnceWith("point-1"),
+      );
     });
   });
 });

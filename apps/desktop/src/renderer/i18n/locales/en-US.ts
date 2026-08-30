@@ -616,6 +616,11 @@ const enUS = {
     // The marker menu names its subject: its target is a ~5 px glyph, so a
     // bare "Delete" would leave "of what?" to a tooltip the menu just covered.
     delete_marker: "Delete marker",
+    // The two anchoring rows, in the glossary's words (CONTEXT.md). "Attach to
+    // clip" names its target the way "Delete marker" does — the row acts on the
+    // marker but what it needs from the user is a clip.
+    attach_marker: "Attach to clip",
+    detach_marker: "Detach",
     // Accessible name for the lane header's inline rename field — the visible
     // label it replaces is the lane's own name.
     rename_track_label: "Rename {{label}}",
@@ -1677,6 +1682,8 @@ const enUS = {
       add_shots: "Added shot markers",
       update: "Updated marker",
       remove: "Removed marker",
+      attach: "Anchored marker to clip",
+      detach: "Detached marker",
     },
     effect: {
       add: "Added effect",

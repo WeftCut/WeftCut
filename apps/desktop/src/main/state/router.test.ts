@@ -21,7 +21,7 @@ const ALL_CHANNELS: readonly string[] = [
   'groups_create', 'groups_add_members', 'move_layers_to_composition', 'groups_ungroup', 'groups_rename', 'compositions_delete',
   'fit_composition_to_layers', 'update_track_flags', 'rename_track', 'set_role_gain', 'update_role_flags',
   'add_transition', 'update_transition', 'remove_transition',
-  'add_marker', 'update_marker', 'remove_marker',
+  'add_marker', 'update_marker', 'remove_marker', 'attach_marker', 'detach_marker',
   'project_undo', 'project_redo', 'project_restore_checkpoint', 'update_project_settings',
   'project_jump_to', 'project_create_checkpoint', 'project_delete_checkpoint',
   'restyle_captions', 'add_motif',

@@ -35,6 +35,7 @@ describe("composition-scoped creation channels", () => {
       tUs: 500_000,
       label: "",
       compositionId: GROUP,
+      anchor: null,
     });
 
     await addColorLayerIn({ compositionId: GROUP, tStartUs: 0 });
@@ -77,5 +78,16 @@ describe("composition-scoped creation channels", () => {
   it("passes null through as the root, which is what the unbound row is", async () => {
     await addTrackIn(null);
     expect(invoke).toHaveBeenCalledWith("add_track", { compositionId: null });
+  });
+
+  // The mark and its tie ride ONE call, so one undo takes both back.
+  it("carries an anchor into the same add that creates the marker", async () => {
+    await addMarkerAtIn(GROUP, 500_000, { layer: "clip-1", src_us: 200_000 });
+    expect(invoke).toHaveBeenLastCalledWith("add_marker", {
+      tUs: 500_000,
+      label: "",
+      compositionId: GROUP,
+      anchor: { layer: "clip-1", src_us: 200_000 },
+    });
   });
 });

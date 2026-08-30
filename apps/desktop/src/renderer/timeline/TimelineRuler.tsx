@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { tryMutate } from "../errors/tryMutate";
 import { formatTimecode } from "../frames";
-import { removeMarker } from "../ipc";
+import { attachMarker, detachMarker, removeMarker } from "../ipc";
 import { useMarkersVisible } from "../settings/appSettingsStore";
 import { useCompositionMarkers } from "../state/projectStore";
 import { MarkerContextMenu } from "./MarkerContextMenu";
@@ -472,6 +472,8 @@ export function TimelineRuler({
       <MarkerContextMenu
         x={markerMenu.x}
         y={markerMenu.y}
+        compositionId={compositionId}
+        markerId={markerMenu.markerId}
         onClose={() => setMarkerMenu(null)}
         onRename={() => {
           setMarkerMenu(null);
@@ -483,6 +485,20 @@ export function TimelineRuler({
           void tryMutate(
             () => removeMarker(markerMenu.markerId),
             "remove_marker",
+          );
+        }}
+        onAttach={(layerId) => {
+          setMarkerMenu(null);
+          void tryMutate(
+            () => attachMarker(markerMenu.markerId, layerId),
+            "attach_marker",
+          );
+        }}
+        onDetach={() => {
+          setMarkerMenu(null);
+          void tryMutate(
+            () => detachMarker(markerMenu.markerId),
+            "detach_marker",
           );
         }}
       />

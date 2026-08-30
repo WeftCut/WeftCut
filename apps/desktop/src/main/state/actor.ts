@@ -21,7 +21,7 @@ import { applyMoveLayersToComposition } from './mutations/moveToComposition'
 import { applySetLayersEnabled, applyUpdateLayer, type LayerPatch } from './mutations/update'
 import { applyFitComposition } from './mutations/composition'
 import { applyDurationAutofit, compositionOf, locateLayer, locateTrack, requireLayer, requireSameComposition, requireTrack, scopeComposition } from './mutations/helpers'
-import { applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
+import { applyAttachMarker, applyDetachMarker, applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
 import { applyDeleteTrack, applyMoveTrack, applyRenameTrack } from './mutations/tracks'
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, type EffectPatch } from './mutations/effects'
 import { applyAddTransition, applyRemoveTransition, applyUpdateTransition, type TransitionBounce } from './mutations/transitions'
@@ -765,7 +765,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // Creation ops take `composition_id?` (root by default) — the ONLY ops
         // that carry a scope; everything layer-addressed derives it (ADR 0052).
         case 'add_track': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, (a.label as string) ?? null, undefined, comp)) } }
-        case 'add_marker': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 }, comp)) } }
+        // `anchor` rides the ADD for the same reason `add_markers` takes one per
+        // row: the mark and its tie are one gesture, and splitting them into an
+        // add plus an attach would put an undo step between a marker and the clip
+        // it was born on. Taken on trust exactly as `add_markers` takes its rows —
+        // the caller derives `t_us` from the anchor it supplies, and this commit's
+        // reconcile re-derives it right back.
+        case 'add_marker': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 }, comp, undefined, (a.anchor as MarkerAnchor | null | undefined) ?? null)) } }
         case 'move_layer': commit(HISTORY_SUMMARY.layerMove, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_link as boolean) ?? false)); return { ok: true, value: null }
         // move_layers_to_new_track — the whole of z-order rearrangement (ADR 0042
         // decision 2). ONE commit: the lane is minted, the layers move onto it
@@ -1037,6 +1043,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'fit_composition_to_layers': return { ok: true, value: fitCompositionToLayers(compositionArg(a)) }
         case 'update_marker': commit(HISTORY_SUMMARY.markerUpdate, [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateMarker(d, a.marker as Uuid, a.patch as MarkerPatch)); return { ok: true, value: null }
         case 'remove_marker': commit(HISTORY_SUMMARY.markerRemove, [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveMarker(d, a.marker as Uuid)); return { ok: true, value: null }
+        // The anchor is set and cleared HERE and nowhere else — `update_marker`'s
+        // patch refuses the field (`parseMarkerPatch`), so an anchor can never be
+        // established as a side effect of editing something else. Both rows point
+        // at the Marker: what changed is the marker's tie, not the layer.
+        case 'attach_marker': commit(HISTORY_SUMMARY.markerAttach, [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyAttachMarker(d, a.marker as Uuid, a.layer as Uuid)); return { ok: true, value: null }
+        case 'detach_marker': commit(HISTORY_SUMMARY.markerDetach, [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyDetachMarker(d, a.marker as Uuid)); return { ok: true, value: null }
         case 'delete_track': commit(HISTORY_SUMMARY.trackDelete, [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyDeleteTrack(d, a.track as Uuid, (a.force as boolean) ?? false)); return { ok: true, value: null }
         case 'move_track': moveTrack(a.track as Uuid, parseNum(a.new_position, 'new_position')); return { ok: true, value: null }
         // RECORDED, unlike the flags patch below: a name is content, and the
