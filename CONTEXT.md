@@ -220,6 +220,23 @@ never as a project-wide sweep. A track that was born empty was never emptied, so
 one an agent creates on purpose survives.
 _Avoid_: prune (that is the function), auto-delete, garbage collection
 
+**Marker lane**:
+The permanently reserved row between the ruler and the drop strip that carries a
+composition's markers (`MarkerLane.tsx`). Not a **Lane** in the sense above: it
+belongs to the ruler family — it measures time, windowing the same row pixels on
+the same quantised scroll offset the ticks use — where a lane holds a track's
+layers. Its space is held unconditionally, and the reason is sharper than the
+drop strip's: `markers_visible` governs what the row PAINTS and never whether it
+exists, because `M` force-enables that flag and a row bound to it would reflow
+the timeline under the pointer on every press. Collapsing it is the one thing
+that changes its height, and a user asks for that one. Not a scrub surface — the
+ruler is the sole one, and it stayed sole by giving markers up entirely.
+UI word: the row's header reads Markers / 标记; the row itself is the marker
+lane / 标记轨.
+_Avoid_: marker track (there is no track), ruler markers (they do not live
+there), marker strip (strip is the drop strip's word), timeline marker (that
+names a free marker, not the row)
+
 **Drop strip**:
 The permanently reserved row above the topmost lane that turns a drag into a new
 track. Its space is held even when idle so a drag never reflows the timeline, and
