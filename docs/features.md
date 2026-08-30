@@ -908,9 +908,7 @@ region marker drags whole — its ends are not resizable by a gesture yet, and
 only an agent can create one. Child markers are never projected onto a parent's
 lane; the badge asserts a count and no position, because drawing a child
 composition's contents on the parent would erase, visually, the boundary
-ADR 0052 and ADR 0053 pay for. And no MCP tool sets or clears an anchor:
-anchoring is established from the app and by shot detection, so an agent can
-observe an anchored marker and move it but cannot tie or free one.
+ADR 0052 and ADR 0053 pay for.
 
 ## Global search palette
 

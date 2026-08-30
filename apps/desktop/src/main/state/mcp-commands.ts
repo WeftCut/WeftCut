@@ -439,7 +439,12 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
   // different destination or a narrower set, and the ids are what the agent
   // reads back from `project://compositions`.
   if (e.error === 'CrossCompositionMove') return { code: 'invalid_params', message: `layer ${e.layer} lives in composition ${e.from}; the destination is in composition ${e.to}. A *move* never crosses a composition: pick a track / anchor inside ${e.from}, or cross deliberately with move_layers_to_composition (name ${e.to} and a landing time), groups_add_members (move into a Group clip you can see), groups_create (pre-compose) or groups_ungroup` }
-  if (e.error === 'CrossCompositionSet') return { code: 'invalid_params', message: `layer ${e.layer} is in composition ${e.composition} but the set's first member is in ${e.expected}; a set operation addresses one composition, so split the set per composition` }
+  if (e.error === 'CrossCompositionSet') return { code: 'invalid_params', message: `layer ${e.layer} is in composition ${e.composition}, but this operation is confined to composition ${e.expected} — for a set of layers that is where its first member lives; for a marker's anchor, where the marker lives. One composition per call: split the work, or cross deliberately with move_layers_to_composition / groups_add_members` }
+  // `expected` is already a human-readable kind ('visual', 'CompositionRef',
+  // 'VideoClip | Audio | CompositionRef'), so it carries the whole fix. Without
+  // this arm the fallthrough sends the bare word `WrongLayerKind` — no layer, no
+  // kind, nothing to act on, and the client drops `data` (see LayerOverlap).
+  if (e.error === 'WrongLayerKind') return { code: 'invalid_params', message: `layer ${e.layer} is the wrong kind for this operation, which acts on ${e.expected}. The fix is a different layer, not different arguments — project://timeline reports each layer's kind` }
   if (e.error === 'ValidationFailed' && e.detail.rule === 'NegativeLayerStart') {
     const d = e.detail
     return { code: 'invalid_params', message: `layer ${d.layer} would start at ${d.t_start} µs; timeline time starts at 0`, data: {
@@ -889,7 +894,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: 'Update a marker. Setting `t_us` re-sorts the marker list. On a marker ANCHORED to a clip, `t_us` names the time the mark should read and moves the ANCHOR to make it read that, so the mark keeps following its clip from the new offset — a time outside that clip\'s span is refused, and `t_us` together with `end_t_us` is refused (an anchored region\'s end follows its anchor by itself; patch one or the other).',
     inputSchema: { type: 'object', properties: { marker_id: { type: 'string' }, patch: {
       type: 'object',
-      description: 'Marker patch; only fields you set are applied. `end_t_us` can be set, never cleared (clear = remove + re-add). A marker\'s anchor is not patchable here, and no tool sets one: anchoring is established from the app (marking on a selected clip, or Attach to clip) and shot detection. Read `anchor_layer` on a marker to see whether it follows one.',
+      description: 'Marker patch; only fields you set are applied. `end_t_us` can be set, never cleared (clear = remove + re-add). A marker\'s anchor is not patchable here — attach_marker and detach_marker set and clear it, and add_marker can create a marker already carrying one. Read `anchor_layer` on a marker to see whether it follows one.',
       properties: {
         t_us: { type: ['integer', 'null'] },
         end_t_us: { type: ['integer', 'null'] },
@@ -903,6 +908,14 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: 'Remove a marker.',
     inputSchema: { type: 'object', properties: { marker_id: { type: 'string' } }, required: ['marker_id'] },
     parseArgs: (a) => ({ op: 'remove_marker', args: { marker: parseUuid(a.marker_id, 'marker_id') } }) },
+  { name: 'attach_marker', exec: 'table',
+    description: 'Anchor an existing marker to a clip of its own composition, so the mark FOLLOWS that clip — through moves, trims, splits and a crossing into another composition, and the clip\'s deletion takes the mark with it. The anchor names the source instant the mark already sits on, so attaching by itself moves nothing. `t_us` stays the field to read afterwards: it becomes derived, but it is still stored. Refuses without writing: a layer in another composition (`CrossCompositionSet` — the two timelines share no origin, so no `t_us` could be derived across them), a kind carrying no source window such as Color or Text (`WrongLayerKind`), and a marker outside the clip\'s half-open span (`InvalidArgument`) — a mark the clip does not cover names no instant in it. Attaching an already-anchored marker replaces the tie.',
+    inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, marker_id: { type: 'string' } }, required: ['layer_id', 'marker_id'] },
+    parseArgs: (a) => ({ op: 'attach_marker', args: { marker: parseUuid(a.marker_id, 'marker_id'), layer: parseUuid(a.layer_id, 'layer_id') } }) },
+  { name: 'detach_marker', exec: 'table',
+    description: 'Cut a marker loose from the clip it follows. It keeps the frame it currently reads and simply stops following, so what comes out is an ordinary marker fixed to the timeline. This is the one exit from `hibernating`: a marker whose clip was trimmed past it is otherwise retained but painted nowhere, and detaching brings it back as a free mark on its frozen `t_us`. Safe to call on a marker that follows nothing: accepted, and it records no undo entry, so you need not read the marker first to find out whether it needed detaching.',
+    inputSchema: { type: 'object', properties: { marker_id: { type: 'string' } }, required: ['marker_id'] },
+    parseArgs: (a) => ({ op: 'detach_marker', args: { marker: parseUuid(a.marker_id, 'marker_id') } }) },
   // ── table-exec: media ────────────────────────────────────────────────────
   { name: 'remove_media', exec: 'table',
     description: 'Remove a media item. Rejects if any layer references it unless force=true. With force=true, also deletes the referencing layers in one atomic commit.',
@@ -948,10 +961,13 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'),
       at_t_us: parseNum(a.at_t_us, 'at_t_us'), escape_link: a.escape_link }) },
   { name: 'add_marker', exec: 'dedicated',
-    description: 'Add a marker (point or region) to a composition\'s timeline — the root, or the Group named by `composition_id`. Returns the new marker id. Set `end_t_us` to make it a region marker.',
-    inputSchema: { type: 'object', properties: { color: RGBA_SCHEMA, end_t_us: { type: ['integer', 'null'] }, label: { type: 'string' }, t_us: { type: 'integer' }, composition_id: COMPOSITION_ID_SCHEMA }, required: ['color', 'label', 't_us'] },
+    description: 'Add a marker (point or region) to a composition\'s timeline — the root, or the Group named by `composition_id`. Returns the new marker id. Set `end_t_us` to make it a region marker. Set `anchor_layer_id` to have the mark FOLLOW a clip instead of standing at a fixed time; omit it for an ordinary marker.',
+    inputSchema: { type: 'object', properties: { anchor_layer_id: { type: ['string', 'null'],
+      description: 'Clip the new marker should follow — a layer of the SAME composition carrying a source window (VideoClip, Audio, Group). The mark is born tied to the source instant `t_us` lands on, exactly as attach_marker would tie it afterwards, and is refused for the same three reasons; a refusal creates no marker at all. Omit for a marker fixed to the timeline.' },
+      color: RGBA_SCHEMA, end_t_us: { type: ['integer', 'null'] }, label: { type: 'string' }, t_us: { type: 'integer' }, composition_id: COMPOSITION_ID_SCHEMA }, required: ['color', 'label', 't_us'] },
     parseDedicated: (a) => ({ color: parseRgba(a.color, 'color'), t_us: parseNum(a.t_us, 't_us'),
       end_t_us: parseNumOpt(a.end_t_us, 'end_t_us'), label: parseStr(a.label, 'label'),
+      anchor_layer_id: a.anchor_layer_id != null ? parseUuid(a.anchor_layer_id, 'anchor_layer_id') : null,
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'lock_history', exec: 'dedicated',
     description: 'Block the user from reverting (undo / redo / jump_to / restore_checkpoint) while the agent is mid-batch. `jump_to` is the history panel\'s click-a-row cursor move — it is a revert path like the rest and rejects the same way. Never affects what RECORDS: the lock rejects reverts, it does not fold a batch into one history entry. `reason` is shown next to the lock badge in the record-panel header and the history panel, and is returned as the error to revert attempts. Last-writer-wins. Always pair with an unlock_history call; releases also happen on workspace change and on user-side agent-mode exit.',

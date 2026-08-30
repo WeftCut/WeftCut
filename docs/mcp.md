@@ -304,8 +304,9 @@ Groups (see [features.md §Groups](features.md#groups)):
 - Reads: `project://compositions` lists every composition with its `ref_count`; a Group layer's `params.composition` names its composition.
 
 Markers + composition:
-- `add_marker { t_us, label, color, end_t_us?, composition_id? }` → `MarkerId` — markers are per composition; `update_marker` / `remove_marker` find theirs by id. A marker added here is always FREE
+- `add_marker { t_us, label, color, end_t_us?, anchor_layer_id?, composition_id? }` → `MarkerId` — markers are per composition; `update_marker` / `remove_marker` find theirs by id. Free unless `anchor_layer_id` names a clip for the mark to follow
 - `update_marker { marker_id, patch }` / `remove_marker { marker_id }`
+- `attach_marker { marker_id, layer_id }` / `detach_marker { marker_id }` — tie an existing marker to a clip of its own composition, or cut it loose
 
 **Markers follow clips.** A marker may be *anchored* to a clip of its own
 composition — it then carries `{ layer, src_us }`, a time in that layer's SOURCE
@@ -329,9 +330,20 @@ Two consequences worth knowing before you patch one:
   names a moment nothing holds any more, so seek by `anchor_src_us` instead, or
   ignore it — which is what the lane, the search index and the Group badge do.
 
-No tool sets or clears an anchor. Anchoring is established from the app (marking
-with a clip selected, or *Attach to clip*) and by shot detection; `detach` is a
-user action too. Read `anchor_layer` to see whether a marker follows one.
+An anchor is named by the LAYER alone — on `add_marker` and `attach_marker`
+alike, never as the stored `{ layer, src_us }` pair. `src_us` is derived from
+the time the mark lands on, so no call can produce a `t_us` and a `src_us` that
+disagree; a caller free to name both could, and the next commit's reconcile
+would settle it by moving the mark somewhere nobody asked for. Both tools refuse
+the same three ways, before writing anything: a layer in another composition, a
+kind with no source window (Color, Text), and a time the clip does not cover.
+
+`add_marker` ties in the same commit that creates the mark, so one undo takes
+both and a refused tie leaves no marker behind to clean up. `detach_marker` is
+the way back out, and the one exit from `hibernating`. The app sets anchors too
+— marking with a clip selected, *Attach to clip*, and shot detection — so read
+`anchor_layer` to see whether a marker follows one rather than assuming an
+agent-created marker is free.
 - `set_composition { patch }` — nothing in this tool records onto the undo stack;
   the patch is applied to every history snapshot, so undo walks past it. `fps` is
   locked once the timeline holds a layer **or any history snapshot / checkpoint

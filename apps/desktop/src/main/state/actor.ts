@@ -1464,14 +1464,32 @@ export function createActor(opts: ActorOptions): ActorHandle {
             throw err // visual-lane overlap etc. → outer catch → mapCommandError
           }
         }
+        // An anchor reaches this arm as the LAYER alone, unlike the prod arm's
+        // `{layer, src_us}` taken on trust: `src_us` is derivable from `t_us`
+        // and the clip, so a caller free to name both could name a pair that
+        // disagrees, and the reconcile would settle it by moving the mark
+        // somewhere nobody asked for. Deriving it here is exactly
+        // `applyAttachMarker`, which is why the tie inherits that function's
+        // three refusals and this arm needs none of its own.
+        //
+        // Add and attach share ONE commit for the prod arm's reason: the mark
+        // and its tie are one gesture, so one undo takes both. A refused attach
+        // throws out of the recipe (→ the outer catch → mapCommandError) and no
+        // marker is created — it never survives as a free one the caller would
+        // then have to notice and clean up.
         case 'add_marker': {
           const p = mcpDef('add_marker').parseDedicated!(a)
           const color = p.color as Rgba
           const tUs = p.t_us as number
           const endT = (p.end_t_us as number | undefined) ?? null
           const label = p.label as string
+          const anchorLayer = (p.anchor_layer_id as Uuid | null) ?? null
           const comp = compositionArg(p)
-          const id = commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, tUs, endT, label, color, comp))
+          const id = commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => {
+            const marker = applyAddMarker(d, idGen, tUs, endT, label, color, comp)
+            if (anchorLayer !== null) applyAttachMarker(d, marker, anchorLayer)
+            return marker
+          })
           return { ok: true, result: toolText(id) }
         }
         case 'split_layer': {
