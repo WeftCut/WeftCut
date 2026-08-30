@@ -24,8 +24,8 @@ second entity, and this codebase has one strong opinion about second entities:
 `model.ts` records the house rule for exactly this shape — root and Group
 compositions share one `Composition` type with no sub type, because twin types
 leave every walk, every mutation and every validator with two paths, and twin
-paths drift. A second marker kind would fork the ruler, the lane, the `Ctrl+K`
-palette, the `summary.ts` projection, serialize, the MCP surface and validate.
+paths drift. A second marker kind would fork the lane, the `Ctrl+K` palette, the
+`summary.ts` projection, serialize, the MCP surface and validate.
 
 Two facts about the ground make the alternative cheap right now.
 
@@ -56,7 +56,7 @@ One undo restores both.
 
 2. **`t_us` stays STORED, and that is the whole trick.** The anchor is truth and
    `t_us` becomes a derived cache — but the cache lives *in state*, so every
-   reader needs no change at all: the ruler, the lane, `Ctrl+K`, the `summary.ts`
+   reader needs no change at all: the lane, `Ctrl+K`, the `summary.ts`
    projection, serialize, MCP and export all go on reading `t_us`. Deriving at
    projection time instead would strip the meaning out of the sorted-markers
    invariant (`markers` is ordered by `t_us`, and the lane's frame lookup and the
@@ -127,9 +127,9 @@ One undo restores both.
 ## Considered options
 
 **A second marker entity — clip markers beside sequence markers, as Premiere and
-Resolve ship them.** Rejected. It forks every marker consumer: the ruler, the
-lane, the `Ctrl+K` palette, the `summary.ts` projection, serialize, the MCP
-surface and validate would each grow a second path, and the two paths would
+Resolve ship them.** Rejected. It forks every marker consumer: the lane, the
+`Ctrl+K` palette, the `summary.ts` projection, serialize, the MCP surface and
+validate would each grow a second path, and the two paths would
 drift. It is the same trade the composition model already refused — one
 `Composition` shape for the root and every Group, because a sub type gives every
 walk and validator a twin. The user-visible capability is identical; only the
