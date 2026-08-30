@@ -25,11 +25,18 @@ describe("command registry", () => {
     expect(listCommands()).toHaveLength(0);
   });
 
-  it("drops duplicate ids from later providers and warns once", () => {
+  // Once per ID, not once per CALL. `getCommand` walks the whole catalogue, so
+  // a single collision is re-discovered ~25 times per Quick Actions strip
+  // render; warning per walk buried the dev console (and everything else in it)
+  // the moment a second timeline Panel was open.
+  it("drops duplicate ids from later providers and warns once per id, not per call", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const un1 = registerCommandProvider(() => [def("save")]);
     const un2 = registerCommandProvider(() => [def("save"), def("redo")]);
     expect(listCommands().map((c) => c.id)).toEqual(["save", "redo"]);
+    listCommands();
+    getCommand("redo");
+    getCommand("save");
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy.mock.calls[0]?.[0]).toContain("save");
     un1();
@@ -133,5 +140,49 @@ describe("useCommandProvider", () => {
     expect(spy).toHaveBeenCalledTimes(2);
 
     unsub();
+  });
+
+  // The instantiable-Panel gate (ADR 0053). Two Panels of one kind each hold a
+  // provider for the SAME ids; the gate is how exactly one of them answers, so
+  // the catalogue never sees a collision and the ids follow focus rather than
+  // mount order.
+  it("contributes nothing while gated off, and hands the ids over on a flip", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const spy = vi.fn();
+    const unsub = subscribeCommandRegistry(spy);
+
+    const focused = renderHook(
+      ({ enabled }: { enabled: boolean }) =>
+        useCommandProvider(() => [{ ...def("selectAll"), labelKey: "focused" }], {
+          enabled,
+        }),
+      { initialProps: { enabled: true } },
+    );
+    const background = renderHook(
+      ({ enabled }: { enabled: boolean }) =>
+        useCommandProvider(
+          () => [{ ...def("selectAll"), labelKey: "background" }],
+          { enabled },
+        ),
+      { initialProps: { enabled: false } },
+    );
+
+    // Two mounted providers, one id, no collision: the gated-off one is silent.
+    expect(listCommands().map((c) => c.labelKey)).toEqual(["focused"]);
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    // Focus moves. No provider mounts or unmounts, so the flip must be what
+    // tells the registry's snapshot consumers to redraw.
+    const notifiesBefore = spy.mock.calls.length;
+    focused.rerender({ enabled: false });
+    background.rerender({ enabled: true });
+    expect(spy.mock.calls.length).toBe(notifiesBefore + 2);
+    expect(listCommands().map((c) => c.labelKey)).toEqual(["background"]);
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    focused.unmount();
+    background.unmount();
+    unsub();
+    warnSpy.mockRestore();
   });
 });

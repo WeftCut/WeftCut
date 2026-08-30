@@ -1,7 +1,18 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
 import { useTranslation } from "react-i18next";
 
-import { getCommand, type CommandDef } from "../commands/registry";
+import {
+  commandRegistryVersion,
+  getCommand,
+  subscribeCommandRegistry,
+  type CommandDef,
+} from "../commands/registry";
 import { useEdgeOverflow } from "../hooks/useEdgeOverflow";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { resolveAccelerator } from "../shortcuts/match";
@@ -236,6 +247,12 @@ export function QuickActionsPanel({
   docked?: StripOrientation | null;
 }) {
   const { t } = useTranslation();
+  // The registry is a store like the rest, and the same subscribed-not-
+  // imperative rule below applies to it: WHICH commands resolve changes when a
+  // Panel that provides them opens, closes, or hands its ids to a sibling of
+  // the same kind (ADR 0053). Without this the buttons those ids back would
+  // keep their last state until something unrelated re-rendered the strip.
+  useSyncExternalStore(subscribeCommandRegistry, commandRegistryVersion);
   const tool = useActiveTool();
   const displayMode = useDisplayMode();
   // Subscribed, not read imperatively: `clearRange`'s `enabled` predicate is

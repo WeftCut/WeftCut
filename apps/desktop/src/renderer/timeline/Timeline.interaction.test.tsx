@@ -59,7 +59,7 @@ import {
 } from "../state/timelineScrollStore";
 import { setActiveRegion } from "../focus/focusRegionStore";
 import { setTool } from "../state/toolStore";
-import { registerCommandProvider } from "../commands/registry";
+import { listCommands, registerCommandProvider } from "../commands/registry";
 import { registerTransport, releaseTransport } from "../state/playbackStore";
 import { registerRevealTrack } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
@@ -3596,5 +3596,76 @@ describe("a gesture names the Panel it happened in", () => {
         new Set([layer.id, linkedLayer.id]),
       );
     });
+  });
+});
+
+
+// Two timeline Panels are two mounts of this component, and its command
+// provider hands the registry the same ten ids from each of them (ADR 0053).
+// Ungated that was a duplicate-id collision on EVERY `listCommands()` call
+// — and `getCommand` calls it once per lookup, so the Quick Actions strip
+// alone re-discovered it ~25 times a render and flooded the console. Which of
+// the two answers is `commands/registry.test.ts`'s half; this is the wiring:
+// however many Panels are open, the catalogue sees the ids exactly once.
+describe("Timeline command provider with two Panels open", () => {
+  const ROOT = "comp-root";
+  const GROUP = "comp-group";
+  // Every id Timeline's provider contributes, so a new one added without the
+  // gate fails here rather than reintroducing the storm quietly.
+  const TIMELINE_COMMAND_IDS = [
+    "selectAll",
+    "deselectAll",
+    "toggleLinkSelected",
+    "nudgeAudioSampleBack",
+    "nudgeAudioSampleForward",
+    "nudgeAudioMsBack",
+    "nudgeAudioMsForward",
+    "resyncAudioToVideo",
+    "zoomTimelineIn",
+    "zoomTimelineOut",
+  ];
+
+  const focus = (compositionId: string) =>
+    useCompositionAnchorStore.setState({
+      anchors: new Map([
+        [ROOT, []],
+        [GROUP, [{ layerId: "ref-group", compositionId: GROUP }]],
+      ]),
+      focusedId: compositionId,
+    });
+
+  beforeEach(() => {
+    clearLayerSelection();
+    setActiveRegion(null);
+    focus(ROOT);
+  });
+  afterEach(cleanup);
+
+  const timelineIdCounts = () => {
+    const ids = listCommands().map((c) => c.id);
+    return TIMELINE_COMMAND_IDS.map((id) => ids.filter((x) => x === id).length);
+  };
+
+  it("contributes each id exactly once, and says nothing on the console", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderTimeline({ compositionId: ROOT });
+    renderTimeline({ compositionId: GROUP });
+
+    expect(timelineIdCounts()).toEqual(TIMELINE_COMMAND_IDS.map(() => 1));
+    // The storm itself: one lookup used to be one warning per duplicated id.
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("still contributes each id exactly once after focus moves to the other Panel", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderTimeline({ compositionId: ROOT });
+    renderTimeline({ compositionId: GROUP });
+
+    act(() => focus(GROUP));
+
+    expect(timelineIdCounts()).toEqual(TIMELINE_COMMAND_IDS.map(() => 1));
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 });

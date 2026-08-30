@@ -692,6 +692,13 @@ export function Timeline({
     },
   });
 
+  // Gated on the same predicate as the shortcuts above, for the ADR 0053 reason
+  // stated there and one more that is specific to the registry: these ten ids
+  // are one namespace, so two open timeline Panels hand `listCommands()` the
+  // same ten twice. It keeps whichever Panel mounted FIRST, which is not
+  // necessarily the one holding the keyboard — so ungated, the palette's
+  // Select All and Ctrl+A would act on DIFFERENT timelines, and every lookup
+  // would log the collision (25 of them per Quick Actions strip render).
   useCommandProvider(() => [
     // Timeline's provider rather than App's catalogue, which is also why neither
     // appears in the Edit menu: a menu-bar row backed by this provider would
@@ -767,7 +774,7 @@ export function Timeline({
       labelKey: ACTION_DEFS.zoomTimelineOut.labelKey,
       run: handleZoomTimelineOut,
     },
-  ]);
+  ], { enabled: isFocusedTimeline });
 
   // Live lane-element registry. The drag hit-test measures these nodes rather
   // than recomputing row offsets from track heights — a row's on-screen extent

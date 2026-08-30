@@ -27,7 +27,17 @@ const providers = new Set<Provider>();
 const listeners = new Set<() => void>();
 let version = 0;
 
-function notify(): void {
+/// Ids already reported as colliding. A duplicate is a wiring mistake worth
+/// saying out loud once — but `listCommands()` runs per LOOKUP, and the Quick
+/// Actions strip alone resolves ~25 ids per render, so warning per call turns
+/// one mistake into hundreds of console lines a second. Keyed by id, so a
+/// second, different collision still gets its line.
+const warnedDuplicateIds = new Set<string>();
+
+/// Bump the registry version and wake its subscribers. Exported because a
+/// provider's `enabled` gate changes what `listCommands()` answers with no
+/// provider mounting or unmounting — see `useCommandProvider`.
+export function notifyCommandRegistry(): void {
   version++;
   for (const l of listeners) l();
 }
@@ -42,9 +52,9 @@ export function commandRegistryVersion(): number {
 
 export function registerCommandProvider(p: Provider): () => void {
   providers.add(p);
-  notify();
+  notifyCommandRegistry();
   return () => {
-    if (providers.delete(p)) notify();
+    if (providers.delete(p)) notifyCommandRegistry();
   };
 }
 
@@ -63,7 +73,10 @@ export function listCommands(): CommandDef[] {
   for (const p of providers) {
     for (const d of p()) {
       if (seen.has(d.id)) {
-        console.warn(`commands: duplicate id "${d.id}" ignored`);
+        if (!warnedDuplicateIds.has(d.id)) {
+          warnedDuplicateIds.add(d.id);
+          console.warn(`commands: duplicate id "${d.id}" ignored`);
+        }
         continue;
       }
       seen.add(d.id);
@@ -87,10 +100,38 @@ export function getCommand(id: string): CommandDef | undefined {
 /// React binding: register a provider for this component's lifetime.
 /// `getDefs` is read through a ref so handler identities may churn per
 /// render without re-registering (same pattern as useShortcuts).
-export function useCommandProvider(getDefs: () => CommandDef[]): void {
+///
+/// `enabled: false` keeps the registration but contributes nothing, which is
+/// what an INSTANTIABLE Panel kind needs (ADR 0053): every open timeline Panel
+/// mounts a provider for the same ten ids, and only one of them may answer for
+/// them. Ungated, the ids collide and `listCommands()` keeps whichever Panel
+/// mounted FIRST — so the palette and the strip would edit a different
+/// timeline than the keyboard does, and log the collision on every lookup.
+export function useCommandProvider(
+  getDefs: () => CommandDef[],
+  options: { enabled?: boolean } = {},
+): void {
+  const enabled = options.enabled ?? true;
   const ref = useRef(getDefs);
+  const enabledRef = useRef(enabled);
   useLayoutEffect(() => {
     ref.current = getDefs;
-  }, [getDefs]);
-  useEffect(() => registerCommandProvider(() => ref.current()), []);
+    enabledRef.current = enabled;
+  }, [getDefs, enabled]);
+  useEffect(
+    () =>
+      registerCommandProvider(() => (enabledRef.current ? ref.current() : [])),
+    [],
+  );
+  // The gate flipping changes what the registry answers with no provider
+  // mounting or unmounting, so the surfaces that snapshot it
+  // (`commandRegistryVersion`) have nothing else to redraw on. Only a CHANGE
+  // is worth a notify: registration already sent one, and a second on every
+  // provider's mount would re-snapshot the search index for nothing.
+  const notified = useRef(enabled);
+  useEffect(() => {
+    if (notified.current === enabled) return;
+    notified.current = enabled;
+    notifyCommandRegistry();
+  }, [enabled]);
 }
