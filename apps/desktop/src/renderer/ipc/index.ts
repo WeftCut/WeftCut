@@ -1996,6 +1996,21 @@ export async function analyzeShots(mediaId: string): Promise<number | null> {
   }
 }
 
+/// "Mark shot cuts" for one VideoClip layer: materialize its detected shot
+/// boundaries as timeline markers in ONE coalesced commit (a single undo step).
+/// Reads the same VSHOT-cached report `analyzeShots` warms and the agent's
+/// `auto_split_by_shot` splits on, so the markers land on exactly the frames
+/// that tool would cut. Returns the number of markers added — `0` when the clip
+/// has no interior cut.
+///
+/// Unlike `analyzeShots` this THROWS on failure rather than logging: it is a
+/// write, and a silently-swallowed write would leave the timeline looking
+/// unchanged with no reason given. The caller reports it.
+export async function dropShotMarkers(layerId: string): Promise<number> {
+  const r = await invoke<{ markers: number }>("drop_shot_markers", { layerId });
+  return r?.markers ?? 0;
+}
+
 /// Export-readiness audio gate (Rust `ensure_export_audio_conform`): media
 /// ids of audible in-range audio layers whose conform cache is absent or
 /// invalid, each with a conform job kicked. Selection mirrors the Rust mix

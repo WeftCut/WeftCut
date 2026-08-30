@@ -514,6 +514,8 @@ const zhCN: Resources = {
     drop_spawn_hint: "松开即新建轨道",
     toggle_keyframe_lanes: "展开关键帧轨",
     prebake_now: "立即预烘焙",
+    mark_shot_cuts: "标记镜头切点",
+    mark_shot_cuts_hint: "检测此片段的镜头边界，并在每个切点放置标记。",
     rename: "重命名",
     rename_link: "重命名链接…",
     open_group: "打开组",

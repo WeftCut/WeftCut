@@ -587,6 +587,9 @@ const enUS = {
     // Context-menu entries for the right-click menu on layers.
     separate_audio: "Separate audio to new track",
     prebake_now: "Pre-bake now",
+    mark_shot_cuts: "Mark shot cuts",
+    mark_shot_cuts_hint:
+      "Detect this clip's shot boundaries and drop a marker on each.",
     rename: "Rename",
     rename_link: "Rename link…",
     // The Group rows, gated on the right-clicked clip's kind.

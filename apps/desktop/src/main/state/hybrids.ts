@@ -174,8 +174,11 @@ export async function dropShotMarkers(layerId: string, deps: HybridDeps, minShot
 /** Run a hybrid tool: Rust compute then TS-actor write. Returns the tool's
  *  result — a STRING in every arm: a media id (import_media), the bare caption
  *  track id (import_media `.srt` branch), or the MCP ToolResult text
- *  (apply_subtitles). server.ts stringifies the result, so the arms must not
- *  return objects. Throws on a rejected actor write or an unhandled tool. */
+ *  (apply_subtitles). server.ts stringifies the result, so an arm reachable as
+ *  an MCP TOOL must not return an object. `drop_shot_markers` is the one arm
+ *  that is renderer-only (absent from mcp/mutationTools.ts `HYBRID_TOOLS`), so
+ *  it returns the object its IPC caller reads. Throws on a rejected actor write
+ *  or an unhandled tool. */
 export async function runHybrid(tool: string, args: Record<string, unknown>, deps: HybridDeps): Promise<unknown> {
   switch (tool) {
     case 'import_media': {
@@ -291,6 +294,18 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       })
       if (!r.ok) throw new Error(JSON.stringify(r.error))
       return JSON.stringify({ layer_ids: r.value as string[] })
+    }
+    case 'drop_shot_markers': {
+      // The human twin of auto_split_by_shot: the SAME cuts, marked instead of
+      // cut. Renderer-only (no MCP def) — an agent that wants markers has
+      // add_markers, and a second tool over one report would only be a way for
+      // the two surfaces to drift.
+      const layerId = args.layerId
+      if (typeof layerId !== 'string' || layerId.length === 0)
+        throw new Error('drop_shot_markers: layerId is required')
+      const minShotUs = typeof args.minShotUs === 'number' ? args.minShotUs : undefined
+      const ids = await dropShotMarkers(layerId, deps, minShotUs)
+      return { markers: ids.length }
     }
     default:
       throw new Error(`runHybrid: unhandled tool ${tool}`)

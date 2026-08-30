@@ -27,8 +27,14 @@ export type Route =
   | { kind: 'rust' }
 
 /** Hybrid Rust-compute → TS-write channels. install_motif and
- *  acknowledge_motif_staleness ride the motif route instead. */
-export const HYBRID_CHANNELS: ReadonlySet<string> = new Set(['import_media'])
+ *  acknowledge_motif_staleness ride the motif route instead.
+ *
+ *  `drop_shot_markers` is a hybrid by definition — Rust `analyzeShots` computes
+ *  the cuts, the TS actor writes the markers — which is why it routes here and
+ *  not through an index.ts intercept like the read-only `analyze_shots`. */
+export const HYBRID_CHANNELS: ReadonlySet<string> = new Set([
+  'import_media', 'drop_shot_markers',
+])
 
 /** Motif catalog-read + authoring + install + staleness channels, served in TS
  *  by runMotifTool. */

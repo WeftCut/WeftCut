@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import {
   addMediaLayer,
   addTransition,
+  dropShotMarkers,
   linksCreate,
   linksDissolve,
   linksRename,
@@ -1311,6 +1312,24 @@ export function Timeline({
     requestPrebake(layerId);
   }, []);
 
+  /// Shot detection is an inline whole-source scan with no progress surface, so
+  /// the menu closes immediately and the markers appear when it lands — the
+  /// same shape as the media pool's "Analyze shots", and warm after it (both
+  /// read one VSHOT-cached report). `onMutated` is what makes the new markers
+  /// visible: the write goes through the actor, not this component's state.
+  const onMarkShotCuts = useCallback(
+    async (layerId: string) => {
+      setContextMenu(null);
+      try {
+        await dropShotMarkers(layerId);
+        await onMutated();
+      } catch (err) {
+        logMutationFailure(err, "Mark shot cuts");
+      }
+    },
+    [onMutated],
+  );
+
   /// A scrub reads px on THIS Panel's axis, so the time it produces is this
   /// composition's and is reverse-projected into the one moment before it
   /// leaves. A composition with no root time has nothing to project into: its
@@ -1843,6 +1862,7 @@ export function Timeline({
         onToggleEnabled={onToggleEnabled}
         onSeparateAudio={onSeparateAudio}
         onPrebakeNow={onPrebakeNow}
+        onMarkShotCuts={(id) => void onMarkShotCuts(id)}
         onAddTransition={(cut, kind, direction) =>
           void onAddTransition(cut, kind, direction)
         }

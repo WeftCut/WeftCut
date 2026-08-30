@@ -37,7 +37,7 @@ const ALL_CHANNELS: readonly string[] = [
   'export_video_sink_cancel', 'import_cancel', 'import_queue_list', 'report_audio_meter',
   'settings_get_api_key_status', 'settings_test_provider',
   // hybrids (native-compute → TS-write)
-  'import_media',
+  'import_media', 'drop_shot_markers',
   // slice-injected native reads (receive their state slice as a call argument)
   'export_project_audio_only', 'ensure_export_audio_conform', 'ensure_conform', 'ensure_full_proxy',
   'generate_quick_proxy',
@@ -70,7 +70,7 @@ describe('router partition gate', () => {
       expect(r.kind, `${ch} unclassified (reject default)`).not.toBe('reject')
       if (r.kind === 'rust') expect(RUST_ALLOWLIST.has(ch), `${ch} routes to rust`).toBe(true)
     }
-    for (const ch of ['import_media'])
+    for (const ch of ['import_media', 'drop_shot_markers'])
       expect(routeChannel(ch).kind, ch).toBe('hybrid')
     for (const ch of MOTIF_CHANNELS)
       expect(routeChannel(ch).kind, ch).toBe('motif')

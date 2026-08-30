@@ -174,6 +174,7 @@ export function LayerContextMenu({
   onToggleEnabled,
   onSeparateAudio,
   onPrebakeNow,
+  onMarkShotCuts,
   onAddTransition,
 }: {
   x: number;
@@ -203,6 +204,10 @@ export function LayerContextMenu({
   onToggleEnabled: (layerIds: string[], enabled: boolean) => void;
   onSeparateAudio: (id: string) => void;
   onPrebakeNow: (id: string) => void;
+  /// Materializes this clip's detected shot cuts as timeline markers. Layer-
+  /// scoped like the two above — it takes the clicked clip's id, not the
+  /// selection, because a shot report belongs to one source.
+  onMarkShotCuts: (id: string) => void;
   onAddTransition: (
     cut: TransitionCut,
     kind: TransitionKindName,
@@ -417,6 +422,21 @@ export function LayerContextMenu({
                     defaultValue: "Pre-bake now",
                   })}
                   onSelect={() => onPrebakeNow(layerId)}
+                />
+              </>
+            )}
+            {layerKind === "VideoClip" && (
+              <>
+                <MenuSeparator />
+                <MenuItem
+                  label={t("timeline.mark_shot_cuts", {
+                    defaultValue: "Mark shot cuts",
+                  })}
+                  hint={t("timeline.mark_shot_cuts_hint", {
+                    defaultValue:
+                      "Detect this clip's shot boundaries and drop a marker on each.",
+                  })}
+                  onSelect={() => onMarkShotCuts(layerId)}
                 />
               </>
             )}

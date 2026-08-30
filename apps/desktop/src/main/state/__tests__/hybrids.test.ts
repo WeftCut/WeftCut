@@ -522,6 +522,24 @@ describe('dropShotMarkers (human shot-marker surface)', () => {
     expect(actor.historyStatus().len - lenBefore).toBe(0)
     expect(root(actor.snapshot()).markers).toEqual([])
   })
+
+  // The renderer reaches dropShotMarkers through the hybrid route, so the arm
+  // that adapts its camelCase IPC args is covered too — a rename on either side
+  // would otherwise fail only in the running app.
+  it('is reachable as the drop_shot_markers hybrid arm, returning a marker COUNT', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    deps.compute.analyzeShots = vi.fn(async () => shotReport([2_000_000, 4_000_000], 6_000_000))
+    // An object, not a JSON string: this arm is renderer-only (absent from
+    // HYBRID_TOOLS), so server.ts's stringify contract does not apply to it.
+    expect(await runHybrid('drop_shot_markers', { layerId }, deps)).toEqual({ markers: 2 })
+    expect(root(actor.snapshot()).markers).toHaveLength(2)
+  })
+
+  it('the hybrid arm rejects a missing layerId instead of silently marking nothing', async () => {
+    const { actor } = withVideoLayer(6_000_000)
+    await expect(runHybrid('drop_shot_markers', {}, makeDeps(actor))).rejects.toThrow(/layerId/)
+  })
 })
 
 describe('applyWorkspacePathsEvent', () => {
