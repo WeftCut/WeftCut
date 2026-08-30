@@ -20,6 +20,7 @@ import { jumpToLayer, jumpToTimeUs, revealInMediaPool } from "../state/navigatio
 import { registerCommandProvider } from "../commands/registry";
 import { useSearchIndexStore } from "./searchIndexStore";
 import { buildEntries } from "./buildEntries";
+import { pinyinHaystacks } from "./pinyin";
 import { SearchPalette } from "./SearchPalette";
 import type { ProjectSummary } from "../ipc";
 import { rootOf, summaryFixture } from "../testing/summaryFixture";
@@ -34,11 +35,16 @@ if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
 
+/// A note carrying no Latin at all, so the pinyin query below is the only way
+/// to reach the marker that holds it.
+const NOTE_CJK = "换成无人机镜头";
+
 /// Trimmed fixture: media m1 "beach.mp4" used by ONE clip (l1 on
 /// track t1 "A-Roll" — no second usage), caption layer "lc" with content
-/// "字幕第一行" at 1 s, marker mk1 "章节一" at 5 s. Kept to a single media
-/// usage (unlike buildEntries.test.ts's two-usage fixture) so the
-/// expand-media-row test below has exactly one deterministic usage row.
+/// "字幕第一行" at 1 s, and three markers — "章节一" at 5 s with no note,
+/// plus two whose notes are the only place their words appear. Kept to a
+/// single media usage (unlike buildEntries.test.ts's two-usage fixture) so
+/// the expand-media-row test below has exactly one deterministic usage row.
 function fixtureSummary(): ProjectSummary {
   return summaryFixture({
     project_id: "p1",
@@ -120,6 +126,17 @@ function fixtureSummary(): ProjectSummary {
     ],
       markers: [
       { id: "mk1", t_us: 5_000_000, end_t_us: null, label: "章节一", note: "", color_hint: "", anchor_layer: null, hibernating: false },
+      // Notes whose words appear nowhere in their names: one long enough that
+      // the row has to excerpt it, one pure CJK for the pinyin path.
+      {
+        id: "mk2", t_us: 7_000_000, end_t_us: null, label: "章节二",
+        note: "the horizon is crooked in this shot, reshoot before the client review on Friday",
+        color_hint: "", anchor_layer: null, hibernating: false,
+      },
+      {
+        id: "mk3", t_us: 8_000_000, end_t_us: null, label: "章节三",
+        note: NOTE_CJK, color_hint: "", anchor_layer: null, hibernating: false,
+      },
     ],
       links: [],
     },
@@ -179,6 +196,41 @@ describe("SearchPalette", () => {
     await userEvent.keyboard("{Enter}");
     expect(jumpToLayer).toHaveBeenCalledWith("lc");
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("finds a marker by a word written only in its note, and shows that word", async () => {
+    render(<SearchPalette onClose={vi.fn()} />);
+    await userEvent.keyboard("crooked");
+    const row = (await screen.findAllByRole("option")).find((el) =>
+      el.textContent?.includes("章节二"),
+    );
+    expect(row).toBeTruthy();
+    // Without the words themselves the row reads as a result that doesn't
+    // contain what was typed; the composition and time stay in front of them.
+    expect(row!.textContent).toContain("Timeline · 00:00:07:00 · ");
+    expect(row!.textContent).toContain("crooked");
+  });
+
+  it("finds a marker by the pinyin of its note", async () => {
+    render(<SearchPalette onClose={vi.fn()} />);
+    await userEvent.keyboard(pinyinHaystacks(NOTE_CJK)!.initials);
+    const row = (await screen.findAllByRole("option")).find((el) =>
+      el.textContent?.includes("章节三"),
+    );
+    expect(row).toBeTruthy();
+    // A pinyin hit has no literal position in the note, so the row opens the
+    // excerpt at the head — the note is short enough to show whole.
+    expect(row!.textContent).toContain(NOTE_CJK);
+  });
+
+  it("a name hit leaves the note off the row", async () => {
+    render(<SearchPalette onClose={vi.fn()} />);
+    await userEvent.keyboard("章节二");
+    const row = (await screen.findAllByRole("option")).find((el) =>
+      el.textContent?.includes("章节二"),
+    );
+    expect(row).toBeTruthy();
+    expect(row!.textContent).not.toContain("crooked");
   });
 
   it("expands a media row into reveal + usage sub-actions", async () => {

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { buildEntries } from "./buildEntries";
+import { pinyinHaystacks } from "./pinyin";
 import type { SearchEntry } from "./types";
 import type { ProjectSummary } from "../ipc";
-import { summaryFixture } from "../testing/summaryFixture";
+import { compositionFixture, summaryFixture } from "../testing/summaryFixture";
 
 /// 10 s 30 fps summary: video track (clip at 2 s), caption track (one real
 /// Text layer + one whitespace-only Text layer), a B-Roll track whose clip
@@ -138,9 +139,39 @@ function fixtureSummary(): ProjectSummary {
       {
         id: "mk2", t_us: 6_000_000, end_t_us: null, label: "  ", note: "", color_hint: "", anchor_layer: null, hibernating: false,
       },
+      // No name at all, only a note — and the note runs long enough that the
+      // name it lends is a truncation of it, so the full text is still indexed.
+      {
+        id: "mk3", t_us: 7_000_000, end_t_us: null, label: "",
+        note: "  reshoot this 广角 before the client review on Friday, the horizon is crooked  ",
+        color_hint: "", anchor_layer: null, hibernating: false,
+      },
+      // Named, and carrying a CJK note whose words appear nowhere in the name.
+      {
+        id: "mk4", t_us: 8_000_000, end_t_us: null, label: "章节二",
+        note: "换成无人机镜头", color_hint: "", anchor_layer: null, hibernating: false,
+      },
+      // Anchored at material l1 no longer shows: kept in state, not painted.
+      {
+        id: "mk5", t_us: 3_000_000, end_t_us: null, label: "dormant beat",
+        note: "dormant note", color_hint: "", anchor_layer: "l1", hibernating: true,
+      },
     ],
       links: [],
     },
+    groups: [
+      compositionFixture({
+        id: "g1",
+        // Same name, same instant, different timeline — the case a bare
+        // timecode cannot tell apart.
+        markers: [
+          {
+            id: "mkg", t_us: 5_000_000, end_t_us: null, label: "章节一", note: "",
+            color_hint: "", anchor_layer: null, hibernating: false,
+          },
+        ],
+      }),
+    ],
   });
 }
 
@@ -154,9 +185,14 @@ const CMDS = [
 /// en-US name still lands in the haystacks.
 const LOCALE = {
   t: (key: string, values: Record<string, unknown>) =>
-    key === "kinds.color" ? "颜色" : String(values.defaultValue),
-  tEn: (_key: string, values: Record<string, unknown>) =>
-    String(values.defaultValue),
+    key === "kinds.color" ? "颜色"
+    : key === "timeline.group_derived_name" ? `组 ${values.n}`
+    : key === "dock_workspace.panels.timeline" ? "时间线"
+    : String(values.defaultValue),
+  tEn: (key: string, values: Record<string, unknown>) =>
+    key === "timeline.group_derived_name" ? `Group ${values.n}`
+    : key === "dock_workspace.panels.timeline" ? "Timeline"
+    : String(values.defaultValue),
 };
 
 function byKey(entries: SearchEntry[], key: string): SearchEntry {
@@ -227,10 +263,59 @@ describe("buildEntries", () => {
     expect(clip.haystacks).toContain("yanse");
   });
 
-  it("markers with labels become entries; unlabeled ones are skipped", () => {
+  it("a marker is indexed unless BOTH its name and its note are blank", () => {
     const out = buildEntries(fixtureSummary(), [], LOCALE);
     expect(byKey(out, "marker:mk1").payload).toMatchObject({ type: "marker", tUs: 5_000_000 });
-    // mk2's label is whitespace-only — trimmed empty, so no entry.
+    // A written note with no name is exactly what someone searches for.
+    expect(out.some((e) => e.key === "marker:mk3")).toBe(true);
+    // mk2 has a whitespace-only label and no note — nothing to match on.
     expect(out.some((e) => e.key === "marker:mk2")).toBe(false);
+  });
+
+  it("a note is searchable text, and its pinyin is too", () => {
+    const mk4 = byKey(buildEntries(fixtureSummary(), [], LOCALE), "marker:mk4");
+    // The name still comes first — the row displays haystacks[0].
+    expect(mk4.haystacks[0]).toBe("章节二");
+    expect(mk4.haystacks).toContain("换成无人机镜头");
+    const p = pinyinHaystacks("换成无人机镜头")!;
+    expect(mk4.haystacks).toContain(p.full);
+    expect(mk4.haystacks).toContain(p.initials);
+  });
+
+  it("an unnamed marker takes its name from its note, and still indexes all of it", () => {
+    const mk3 = byKey(buildEntries(fixtureSummary(), [], LOCALE), "marker:mk3");
+    expect(mk3.label.startsWith("reshoot this 广角")).toBe(true);
+    // The note runs past the name budget, so the tail is reachable only
+    // because the whole note is a haystack of its own.
+    expect(mk3.label).not.toContain("crooked");
+    expect(mk3.haystacks.some((h) => h.includes("crooked"))).toBe(true);
+  });
+
+  it("a hit on the note is told apart from a hit on the name", () => {
+    const out = buildEntries(fixtureSummary(), [], LOCALE);
+    const mk4 = byKey(out, "marker:mk4");
+    // Everything from `from` onwards came from the note, so a row can say which
+    // words were found; the name's own haystacks sit before it.
+    expect(mk4.detail).toEqual({ text: "换成无人机镜头", from: 3 });
+    expect(mk4.haystacks.slice(mk4.detail!.from)).toContain("换成无人机镜头");
+    // A marker with no note claims no detail at all.
+    expect(byKey(out, "marker:mk1").detail).toBeUndefined();
+  });
+
+  it("a marker's context names the composition it sits on, root included", () => {
+    const out = buildEntries(fixtureSummary(), [], LOCALE);
+    // Same name, same instant, two timelines — the context line is the only
+    // thing that tells the two rows apart.
+    expect(byKey(out, "marker:mk1").label).toBe(byKey(out, "marker:mkg").label);
+    expect(byKey(out, "marker:mk1").context).toBe("时间线 · 00:00:05:00");
+    expect(byKey(out, "marker:mkg").context).toBe("组 1 · 00:00:05:00");
+  });
+
+  it("a hibernating marker is not indexed at all", () => {
+    // Its `t_us` is frozen where it last resolved, so the palette has no
+    // instant to take you to — the marker Panel is where one is dealt with.
+    const out = buildEntries(fixtureSummary(), [], LOCALE);
+    expect(out.some((e) => e.key === "marker:mk5")).toBe(false);
+    expect(out.some((e) => e.label.includes("dormant"))).toBe(false);
   });
 });
