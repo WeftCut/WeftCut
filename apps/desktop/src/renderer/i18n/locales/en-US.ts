@@ -654,9 +654,15 @@ const enUS = {
     transition_menu_direction: "Direction",
     transition_menu_duration: "Duration",
     transition_menu_duration_preset: "{{seconds}} s",
-    // Hover text for a mark in the ruler's lower half; `label` falls back to
+    // The marker lane's own header cell: what the row under the ruler is.
+    marker_lane: "Markers",
+    // Accessible name and tooltip of the lane's collapse twirl. Names the
+    // subject, not the direction: the chevron says which way it goes, and
+    // `aria-expanded` says which state it is in.
+    marker_lane_toggle: "Collapse marker lane",
+    // Hover text for a mark in the marker lane; `label` falls back to
     // `$t(kinds.marker)` at the call site. Which pattern a marker gets is
-    // TimelineRuler.tsx's `markerTitle`.
+    // MarkerLane.tsx's `markerTitle`.
     marker_tooltip_point: "{{label}} · {{timecode}}",
     marker_tooltip_region: "{{label}} · {{start}} – {{end}}",
   },

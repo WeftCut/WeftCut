@@ -6,9 +6,9 @@ import { useComposition } from "../state/projectStore";
 import { useSelectedLayerIds } from "../state/selectionStore";
 import { useCursorAnchor } from "./contextMenuAnchor";
 
-/// Right-click menu on a marker glyph in the ruler. Its own component rather
-/// than an arm of `LayerContextMenu` for the `TrackContextMenu` reason: the
-/// object being acted on is the MARKER, and the ruler owns the state.
+/// Right-click menu on a marker glyph in the marker lane. Its own component
+/// rather than an arm of `LayerContextMenu` for the `TrackContextMenu` reason:
+/// the object being acted on is the MARKER, and the lane owns the state.
 ///
 /// Two tiers. Rename and delete are what a marker's maintainer does to it;
 /// attach and detach are the two explicit ends of anchoring (CONTEXT.md), which
@@ -21,7 +21,7 @@ import { useCursorAnchor } from "./contextMenuAnchor";
 /// row that vanishes teaches nothing about why; a greyed one says the operation
 /// exists and that this marker or this selection is not the case for it.
 ///
-/// The rows the ruler cannot pre-compute read the stores here, as
+/// The rows the lane cannot pre-compute read the stores here, as
 /// `LayerContextMenu` does: the marker's own tie comes off the composition
 /// summary, and the attach target off the live selection, so a menu left open
 /// across a selection change re-decides instead of acting on a stale answer.
@@ -38,8 +38,8 @@ export function MarkerContextMenu({
 }: {
   x: number;
   y: number;
-  /// The composition holding this marker — the ruler's own, since a ruler
-  /// paints the markers of the timeline it belongs to.
+  /// The composition holding this marker — the lane's own, since a lane paints
+  /// the markers of the timeline it belongs to.
   compositionId: string | null;
   markerId: string;
   onClose: () => void;

@@ -232,8 +232,8 @@ export const useProjectSummary = (): ProjectSummary | null =>
 export const useAudioRoles = (): RoleMixView[] =>
   useProjectStore((s) => s.summary?.audio_roles ?? EMPTY_ROLES);
 
-/// One composition's markers — a ruler paints the markers of the timeline it
-/// belongs to, not of whichever timeline has focus. Reads through the empty
+/// One composition's markers — a marker lane paints the markers of the timeline
+/// it belongs to, not of whichever timeline has focus. Reads through the empty
 /// sentinel pre-workspace.
 export const useCompositionMarkers = (
   compositionId: string | null,

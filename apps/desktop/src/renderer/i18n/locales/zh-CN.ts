@@ -557,7 +557,12 @@ const zhCN: Resources = {
     transition_menu_direction: "方向",
     transition_menu_duration: "时长",
     transition_menu_duration_preset: "{{seconds}} 秒",
-    // 时间标尺下半区标记的悬停文案；标记无名称时调用处退回 `$t(kinds.marker)`。
+    // 标尺下方标记轨的表头名称。
+    marker_lane: "标记",
+    // 标记轨折叠开关的无障碍名称与提示：只说对象，方向交给箭头、状态交给
+    // `aria-expanded`。
+    marker_lane_toggle: "折叠标记轨",
+    // 标记轨中标记的悬停文案；标记无名称时调用处退回 `$t(kinds.marker)`。
     marker_tooltip_point: "{{label}} · {{timecode}}",
     marker_tooltip_region: "{{label}} · {{start}} – {{end}}",
   },

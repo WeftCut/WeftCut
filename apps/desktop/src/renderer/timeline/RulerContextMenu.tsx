@@ -26,10 +26,10 @@ export const RULER_MENU_COMMAND_IDS = [
 ] as const;
 
 /**
- * Right-click menu on the ruler's empty space — the in/out and marker family,
- * which until now existed only on the keyboard, in the Quick Actions strip and
- * in the search palette. Right-clicking the ruler is where an editor coming
- * from Premiere or Resolve looks for it first.
+ * Right-click menu on the time ruler — the in/out and marker family, which
+ * until now existed only on the keyboard, in the Quick Actions strip and in the
+ * search palette. Right-clicking the ruler is where an editor coming from
+ * Premiere or Resolve looks for it first.
  *
  * Every row is a registry command, so this file carries no handlers, no
  * labels, and no state: `CommandContextItem` resolves each id to the same
@@ -41,11 +41,12 @@ export const RULER_MENU_COMMAND_IDS = [
  * right-clicked. That is the commands' own contract (`markIn` reads
  * `playheadTimeUs`), it matches Premiere's ruler menu, and it is the honest
  * reading of these operations: an in point is a property of where you ARE, not
- * of where you pointed. The one spatial object on the ruler — a marker — has
- * its own cursor-anchored menu (`MarkerContextMenu`), and the one spatial
- * object on a lane — a cut — has the layer menu's transition section. Do not
- * "fix" this by seeking to the click first: a right-click that moves the
- * playhead is a worse surprise than one that doesn't.
+ * of where you pointed. Nothing on this strip is spatial, which is what lets one
+ * menu cover the whole of it: the spatial objects have their own cursor-anchored
+ * menus elsewhere — a marker in the lane below (`MarkerContextMenu`), a cut on a
+ * track lane (the layer menu's transition section). Do not "fix" this by seeking
+ * to the click first: a right-click that moves the playhead is a worse surprise
+ * than one that doesn't.
  */
 export function RulerContextMenu({
   x,

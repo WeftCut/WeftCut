@@ -64,7 +64,12 @@ import { registerTransport, releaseTransport } from "../state/playbackStore";
 import { registerRevealTrack } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
 import { summaryFixture } from "../testing/summaryFixture";
-import { DEFAULT_TRACK_HEIGHT, HEADER_COL_PX } from "./geometry";
+import {
+  DEFAULT_TRACK_HEIGHT,
+  HEADER_COL_PX,
+  MARKER_LANE_COLLAPSED_HEIGHT_PX,
+  MARKER_LANE_HEIGHT_PX,
+} from "./geometry";
 
 const ipcMocks = vi.hoisted(() => ({
   addMediaLayer: vi.fn().mockResolvedValue(undefined),
@@ -2092,6 +2097,125 @@ describe("Timeline seek/selection coupling", () => {
       );
     });
     expect(ipcMocks.moveLayersToNewTrack).not.toHaveBeenCalled();
+  });
+});
+
+/// The two columns paint the same rows in the same order. A row present in one
+/// and missing from the other — or taller in one than the other — slides every
+/// header beneath it out of line with its lane, and the failure is silent: the
+/// timeline simply reads wrong.
+describe("Timeline row alignment", () => {
+  const q = (c: HTMLElement, id: string): HTMLElement =>
+    c.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
+
+  const testids = (parent: Element): (string | undefined)[] =>
+    Array.from(parent.children).map((el) => (el as HTMLElement).dataset.testid);
+
+  /// One keyed param, so expanding the track adds exactly one sub-lane row to
+  /// both columns — the row the arithmetic hit-tests used to lose.
+  const keyedTrack: TrackSummary = {
+    ...track,
+    layers: [
+      {
+        ...tinyVideoLayer,
+        id: "keyed-1",
+        t_end_us: 2_000_000,
+        params: {
+          ...tinyVideoLayer.params,
+          kind: "VideoClip",
+          opacity: {
+            mode: "Keyframed",
+            value: [{ id: "kf-1", t_us: 0, value: 1, interp: { kind: "Linear" } }],
+          },
+        } as LayerSummary["params"],
+      },
+    ],
+  };
+
+  /// Every row that declares its own height, header cell against body lane.
+  const pairs = (c: HTMLElement): [string, string][] => [
+    [
+      q(c, "timeline-marker-lane-header").style.height,
+      q(c, "timeline-marker-lane").style.height,
+    ],
+    [
+      q(c, "timeline-drop-strip-header").style.height,
+      q(c, "timeline-drop-strip").style.height,
+    ],
+  ];
+
+  it("puts the marker lane between the ruler and the drop strip, in both columns", () => {
+    const { container } = renderTimeline({});
+    // Markers belong to the RULER family — they measure time — while the drop
+    // strip belongs to the track family, so the lane sits between them.
+    expect(testids(q(container, "timeline-ruler-corner").parentElement!).slice(0, 3))
+      .toEqual([
+        "timeline-ruler-corner",
+        "timeline-marker-lane-header",
+        "timeline-drop-strip-header",
+      ]);
+    expect(testids(q(container, "timeline-ruler").parentElement!).slice(0, 3))
+      .toEqual([
+        "timeline-ruler",
+        "timeline-marker-lane",
+        "timeline-canvas",
+      ]);
+    expect(testids(q(container, "timeline-canvas"))[0]).toBe(
+      "timeline-drop-strip",
+    );
+  });
+
+  it("keeps every header cell as tall as its lane, at every track count", () => {
+    for (const tracks of [[], [track], [track, linkedTrack]]) {
+      const { container, unmount } = renderTimeline({ tracks });
+      for (const [header, lane] of pairs(container)) {
+        expect(header).toBe(lane);
+      }
+      expect(q(container, "timeline-marker-lane").style.height).toBe(
+        `${MARKER_LANE_HEIGHT_PX}px`,
+      );
+      unmount();
+    }
+  });
+
+  it("keeps them aligned with a track's keyframe lanes expanded", () => {
+    const { container } = renderTimeline({ tracks: [keyedTrack] });
+    fireEvent.click(container.querySelector('[data-testid="kf-lane-twirl"]')!);
+    expect(container.querySelector('[data-testid="kf-sublane"]')).not.toBeNull();
+    for (const [header, lane] of pairs(container)) {
+      expect(header).toBe(lane);
+    }
+  });
+
+  it("moves both halves of the marker lane together when it collapses", () => {
+    const { container } = renderTimeline({});
+    act(() =>
+      useAppSettingsStore.setState((s) => ({
+        settings: { ...s.settings, marker_lane_collapsed: true },
+      })),
+    );
+    const [header, lane] = pairs(container)[0]!;
+    expect(header).toBe(lane);
+    expect(lane).toBe(`${MARKER_LANE_COLLAPSED_HEIGHT_PX}px`);
+  });
+
+  // `M` force-enables `markers_visible`, so a lane whose height answered to that
+  // flag would reflow the timeline under the pointer on every press.
+  it("changes no row height when marker visibility flips", () => {
+    const { container } = renderTimeline({});
+    const before = pairs(container).map(([header, lane]) => [header, lane]);
+    act(() =>
+      useAppSettingsStore.setState((s) => ({
+        settings: { ...s.settings, markers_visible: false },
+      })),
+    );
+    expect(pairs(container)).toEqual(before);
+    act(() =>
+      useAppSettingsStore.setState((s) => ({
+        settings: { ...s.settings, markers_visible: true },
+      })),
+    );
+    expect(pairs(container)).toEqual(before);
   });
 });
 

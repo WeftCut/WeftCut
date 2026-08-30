@@ -5,11 +5,12 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { invokeCmd, launchApp, newProject, tmpDir, waitForHook, rootSummary } from './helpers/driver'
 
 /**
- * Markers painted on the timeline ruler, and the one switch that silences them.
+ * Markers painted in the timeline's marker lane, and the one switch that
+ * silences them.
  *
  * Everything here is unreachable from the colocated Vitest suites, which mock the
- * IPC surface and render the ruler in isolation: the assertions below are about
- * the REAL wiring — a marker created OUTSIDE the renderer reaching the ruler's
+ * IPC surface and render the lane in isolation: the assertions below are about
+ * the REAL wiring — a marker created OUTSIDE the renderer reaching the lane's
  * own store selector, and one app-level setting reaching the strip button, the
  * View menu checkbox and the marker layer at once.
  *
@@ -47,7 +48,7 @@ async function mcpClient(page: Page): Promise<Client> {
   return client
 }
 
-test('the ruler paints markers, and one toggle silences them from either surface', async () => {
+test('the lane paints markers, and one toggle silences them from either surface', async () => {
   test.setTimeout(120_000)
   const { app, page } = await launchApp()
   try {
@@ -58,7 +59,9 @@ test('the ruler paints markers, and one toggle silences them from either surface
     await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
 
     const marks = page.locator('[data-testid="timeline-marker"]')
+    const markerLane = page.locator('[data-testid="timeline-marker-lane"]')
     const markerLayer = page.locator('[data-testid="timeline-marker-layer"]')
+    const labels = page.locator('[data-testid="timeline-marker-label"]')
     const stripButton = page.locator('button[data-quick-action="toggleMarkersVisible"]')
     const viewMenu = page.locator('.menu-trigger').nth(2)
     const showMarkersItem = page
@@ -66,10 +69,13 @@ test('the ruler paints markers, and one toggle silences them from either surface
       .filter({ hasText: /^Show markers$/ })
 
     // ── Seed a point and a region, from outside the app ───────────────────
+    // The lane holds its row before anything is in it: it is a permanent row,
+    // not one that appears with the first marker.
+    await expect(markerLane).toHaveCount(1)
     await expect(marks).toHaveCount(0)
     // Frame-grid times at 30 fps (ADR 0037 rejects an off-grid marker). Two
     // different authored colours, because the colour IS the content here — a
-    // taxonomy an agent applied is the thing the ruler has to make legible.
+    // taxonomy an agent applied is the thing the lane has to make legible.
     const client = await mcpClient(page)
     try {
       await client.callTool({
@@ -93,7 +99,7 @@ test('the ruler paints markers, and one toggle silences them from either surface
       await client.close()
     }
 
-    // Both appear with no project reload and no user action: the ruler reads the
+    // Both appear with no project reload and no user action: the lane reads the
     // markers through a store selector, so an agent's `add_marker` lands the
     // moment it commits — the whole point of the slice.
     await expect(marks).toHaveCount(2)
@@ -102,10 +108,25 @@ test('the ruler paints markers, and one toggle silences them from either surface
     ).toHaveCount(1)
     const regionMark = page.locator('[data-testid="timeline-marker"][data-shape="region"]')
     await expect(regionMark).toHaveCount(1)
-    // Each in the colour its author gave it, not a semantic marker colour.
-    await expect(regionMark).toHaveCSS('background-color', 'rgb(34, 204, 85)')
-    // Hover text is this slice's only human-readable output, and a region's
-    // carries both ends.
+    // Every glyph is in the lane and none is in the ruler: one object, one hit
+    // region, so a press on the ruler is a scrub and only a scrub.
+    await expect(markerLane.locator('[data-testid="timeline-marker"]')).toHaveCount(2)
+    await expect(
+      page.locator('[data-testid="timeline-ruler"] [data-testid="timeline-marker"]'),
+    ).toHaveCount(0)
+    // Both authored freehand, so both are FREE — hollow, with the colour its
+    // author gave it carried as a ring rather than a fill. Still the authored
+    // colour and not a semantic marker colour, which is the part that matters.
+    await expect(regionMark).toHaveAttribute('data-anchored', 'false')
+    expect(
+      await regionMark.evaluate((el) => getComputedStyle(el).boxShadow),
+    ).toContain('rgb(34, 204, 85)')
+    // Each name readable without a hover, which is what the lane exists for.
+    await expect(labels).toHaveCount(2)
+    await expect(labels.filter({ hasText: 'cut here' })).toHaveCount(1)
+    await expect(labels.filter({ hasText: 'needs VO' })).toHaveCount(1)
+    // Hover text carries what the glyph cannot say, and a region's carries both
+    // ends.
     await expect(regionMark).toHaveAttribute(
       'title',
       'needs VO · 00:00:02:00 – 00:00:03:00',
@@ -117,6 +138,10 @@ test('the ruler paints markers, and one toggle silences them from either surface
     // Not "hidden" — GONE, wrapper included (see the landmine on the layer).
     await expect(marks).toHaveCount(0)
     await expect(markerLayer).toHaveCount(0)
+    // The LANE stays. The flag governs what it paints, never whether it exists —
+    // a row bound to it would reflow the timeline under the pointer, since `M`
+    // force-enables the same flag.
+    await expect(markerLane).toHaveCount(1)
     await expect(stripButton).toHaveAttribute('aria-pressed', 'false')
     await expect(stripButton).toHaveAttribute(
       'aria-label',
@@ -150,7 +175,7 @@ test('the ruler paints markers, and one toggle silences them from either surface
   }
 })
 
-test('markers are authorable from the keyboard and the ruler — no MCP client anywhere', async () => {
+test('markers are authorable from the keyboard and the lane — no MCP client anywhere', async () => {
   test.setTimeout(120_000)
   const { app, page } = await launchApp()
   try {
@@ -159,6 +184,7 @@ test('markers are authorable from the keyboard and the ruler — no MCP client a
     await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
 
     const marks = page.locator('[data-testid="timeline-marker"]')
+    const labels = page.locator('[data-testid="timeline-marker-label"]')
     const stripButton = page.locator('button[data-quick-action="toggleMarkersVisible"]')
     const renameInput = page.getByLabel('Marker label')
 
@@ -183,8 +209,11 @@ test('markers are authorable from the keyboard and the ruler — no MCP client a
     // ── M drops an unlabelled point marker at the playhead's frame ─────────
     await page.keyboard.press('M')
     await expect(marks).toHaveCount(1)
-    // Unlabelled by design: the tooltip's translated fallback is the name.
+    // Unlabelled by design: the tooltip's translated fallback is the name, and
+    // the lane prints nothing beside a mark that has none — "Marker" written out
+    // next to every unnamed one would be noise, not information.
     await expect(marks).toHaveAttribute('title', /^Marker · /)
+    await expect(labels).toHaveCount(0)
     const summary = await rootSummary<{ markers: Array<{ label: string }> }>(page)
     expect(summary.markers).toHaveLength(1)
     expect(summary.markers[0].label).toBe('')
@@ -197,6 +226,9 @@ test('markers are authorable from the keyboard and the ruler — no MCP client a
     await expect(renameInput).toHaveCount(0)
     await expect(marks).toHaveCount(1)
     await expect(marks).toHaveAttribute('title', /^cut here · /)
+    // The name is now on the timeline, with no hover and no panel. That is the
+    // lane's whole reason to exist.
+    await expect(labels).toHaveText(['cut here'])
 
     // ── Right-click, Delete: two inputs, nothing asked first ───────────────
     await marks.click({ button: 'right' })

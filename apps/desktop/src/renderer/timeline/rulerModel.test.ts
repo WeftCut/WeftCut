@@ -14,9 +14,9 @@ import {
   MARKER_MIN_REGION_PX,
   RULER_OVERSCAN_PX,
   RULER_SCROLL_QUANTUM_PX,
-  computeRulerMarkers,
+  computeLaneMarkers,
   computeRulerModel,
-  type RulerMarkerSource,
+  type LaneMarkerSource,
   type RulerModel,
   type RulerModelInput,
   type RulerTick,
@@ -439,12 +439,14 @@ describe("labels", () => {
 const MARKER_PX_PER_SEC = 1000;
 
 function marker(
-  over: Partial<RulerMarkerSource> & Pick<RulerMarkerSource, "id" | "t_us">,
-): RulerMarkerSource {
+  over: Partial<LaneMarkerSource> & Pick<LaneMarkerSource, "id" | "t_us">,
+): LaneMarkerSource {
   return {
     end_t_us: null,
     label: "",
     color_hint: "#ff0000",
+    anchor_layer: null,
+    hibernating: false,
     ...over,
   };
 }
@@ -453,10 +455,10 @@ function marker(
 /// case names rather than about `RULER_OVERSCAN_PX`. The one case that is about
 /// the overscan passes its own.
 function markersIn(
-  markers: RulerMarkerSource[],
-  over: Partial<Parameters<typeof computeRulerMarkers>[0]> = {},
+  markers: LaneMarkerSource[],
+  over: Partial<Parameters<typeof computeLaneMarkers>[0]> = {},
 ) {
-  return computeRulerMarkers({
+  return computeLaneMarkers({
     markers,
     pxPerSec: MARKER_PX_PER_SEC,
     scrollLeftPx: 0,
@@ -518,6 +520,37 @@ describe("marker windowing", () => {
 
   it("has no layout to compute at a non-positive zoom", () => {
     expect(markersIn([marker({ id: "m", t_us: 0 })], { pxPerSec: 0 })).toEqual([]);
+  });
+
+  // A hibernating marker is anchored at source its clip no longer shows, so it
+  // has no position on this timeline — not a position that must be hidden. It
+  // stays in state and revives on its own when the clip's window covers it.
+  it("emits no view for a hibernating marker, wherever the window sits", () => {
+    const views = markersIn([
+      marker({ id: "awake", t_us: 100_000 }),
+      marker({
+        id: "asleep",
+        t_us: 200_000,
+        anchor_layer: "clip-1",
+        hibernating: true,
+      }),
+    ]);
+    expect(views.map((v) => v.id)).toEqual(["awake"]);
+  });
+
+  it("counts a hibernating region out too, at either edge of the window", () => {
+    const views = markersIn(
+      [
+        marker({
+          id: "asleep",
+          t_us: 0,
+          end_t_us: 5_000_000,
+          hibernating: true,
+        }),
+      ],
+      { scrollLeftPx: 1000, viewportWidthPx: 1000 },
+    );
+    expect(views).toEqual([]);
   });
 });
 
@@ -602,6 +635,45 @@ describe("marker ordering and payload", () => {
       ]).map((v) => v.id);
     expect(ids()).toEqual(["a", "z"]);
     expect(ids()).toEqual(ids());
+  });
+
+  // Solid is anchored, hollow is free — so the tie has to survive as a boolean
+  // the lane can paint, not as the anchor id itself, which names a layer the
+  // lane never looks up.
+  it("reports whether a marker follows a layer", () => {
+    const [free, tied] = markersIn([
+      marker({ id: "free", t_us: 100_000 }),
+      marker({ id: "tied", t_us: 200_000, anchor_layer: "clip-1" }),
+    ]);
+    expect(free!.anchored).toBe(false);
+    expect(tied!.anchored).toBe(true);
+  });
+
+  // A label runs right until its neighbour's x and stops there; past it, it
+  // would read as the neighbour's name.
+  it("gives each label the room its neighbour has not claimed", () => {
+    const views = markersIn([
+      marker({ id: "a", t_us: 100_000 }),
+      marker({ id: "b", t_us: 250_000 }),
+      marker({ id: "c", t_us: 900_000 }),
+    ]);
+    expect(views.map((v) => v.labelRoomPx)).toEqual([150, 650, null]);
+  });
+
+  it("leaves the last mark in the window unbounded", () => {
+    // Nothing follows it, so nothing clips it — the row runs on past its label.
+    const [only] = markersIn([marker({ id: "m", t_us: 100_000 })]);
+    expect(only!.labelRoomPx).toBeNull();
+  });
+
+  it("measures the room from the marks that are PAINTED, not the ones stored", () => {
+    // A hibernating neighbour is not on screen, so it cannot clip anything.
+    const views = markersIn([
+      marker({ id: "a", t_us: 100_000 }),
+      marker({ id: "asleep", t_us: 200_000, hibernating: true }),
+      marker({ id: "c", t_us: 400_000 }),
+    ]);
+    expect(views.map((v) => v.labelRoomPx)).toEqual([300, null]);
   });
 
   it("carries the authored colour and label through untouched", () => {
