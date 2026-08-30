@@ -471,10 +471,17 @@ diverge only in the output parser + availability probe.
 
 - **Scene description** (`SceneDescriber` trait) — `describe_clip { layer_id, t_start_us?, t_end_us?, fps?, focus?, backend? }` returns `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags: [ ... ] }] }`, all times **source-absolute** microseconds; `backend`/`model` name the engine that served the request. Samples frames from the layer's source across the window (defaults: the whole layer) at `fps` (default 1.0), runs the model ONCE over all the frames, and normalizes the model's JSON array into timestamped segments — `text` is a free-text span description, `tags` are filterable visual keywords (subjects, setting, camera motion, shot type). `focus` (`"general"` | `"shot-type"`) selects the prompt template that populates `tags`. Results are **cached per source range**: a later call over an already-described window returns instantly with no model spawn (the cache is a `{ covered_ranges, segments }` value keyed by source hash + `{ backend, model, fps, focus, prompt-template version }`, a SEPARATE namespace from the shot layer so the cheap deterministic layer and this opt-in layer never block each other). `VideoClip` layers with `speed != 1.0` reject with a hint to `split_layer` first. The `backend` arg (`"qwen3_vl"` | `"minicpm_v"` | `"byo_endpoint"` | `"cloud"`) is a **strict** override: that engine serves the call or it errors naming the missing piece (binary / model / endpoint / key) — it never substitutes another engine. This is **privacy-strict**: frames are heavier and more sensitive than audio, so the default order is local-first and cloud-last, and an explicit local choice can never fall back to a cloud upload. The cached view is also readable as `media://{id}/description`.
 
-**Config UI (planned):** same secrecy split as Speech — a cloud VLM key lives in
-`safeStorage`; the local engines' binary/model/mmproj paths and a BYO endpoint
-URL live in the TS-owned `vlm_config` store; Electron main merges both into the
-config snapshot the stateless resolver reads.
+**Config UI:** Settings → **Video understanding**, beside Transcription. Same
+secrecy split as Speech — a cloud VLM key lives in `safeStorage`; the local
+engines' binary/model/mmproj paths and a BYO endpoint URL live in the TS-owned
+`vlm_config` store; Electron main merges both into the config snapshot the
+stateless resolver reads. The panel lists every backend with its live
+availability and marks the one the resolver would pick, reusing that resolver's
+own `select_backend` so the two cannot disagree. Its cloud row is a status row:
+the cloud VLM rides the OpenAI key the Transcription section owns. Qwen3-VL and
+its `llama-mtmd-cli` runtime are also an app-managed download there
+([ADR 0055](adr/0055-third-content-slice-is-windows-qwen3-vl-4b-on-llama-mtmd.md)),
+which fills the local engine's three paths on install.
 
 ## Observability
 

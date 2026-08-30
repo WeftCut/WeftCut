@@ -43,7 +43,8 @@ import { KeybindingPanel } from "./KeybindingPanel";
 import { AgentSection } from "./AgentSection";
 import { PreviewSection } from "./PreviewSection";
 import { speechEngineOptions } from "./speechEngineOptions";
-import { SpeechManagedContent } from "./SpeechManagedContent";
+import { ManagedContent } from "./ManagedContent";
+import { VlmSection } from "./VlmSection";
 import {
   setAppSettings,
   usePrebakeMotifsEnabled,
@@ -76,7 +77,13 @@ function clampPreviewSnapStrength(value: number): number {
   );
 }
 
-type SettingsCategory = "general" | "project" | "keyboard" | "speech" | "agent";
+type SettingsCategory =
+  | "general"
+  | "project"
+  | "keyboard"
+  | "speech"
+  | "vlm"
+  | "agent";
 
 /// Sidebar order. Every pane stays mounted (toggled via `hidden`) so
 /// in-progress input and per-section fetches survive a tab switch.
@@ -85,6 +92,9 @@ const CATEGORIES: ReadonlyArray<{ id: SettingsCategory; labelKey: string }> = [
   { id: "project", labelKey: "settings.cat_project" },
   { id: "keyboard", labelKey: "settings.cat_keyboard" },
   { id: "speech", labelKey: "settings.cat_speech" },
+  // Next to Transcription, not folded into it: both configure a model that
+  // reads the footage, and a user looking for one will look beside the other.
+  { id: "vlm", labelKey: "settings.cat_vlm" },
   { id: "agent", labelKey: "settings.cat_agent" },
 ];
 
@@ -349,6 +359,16 @@ export function SettingsPanel({
             className="settings-pane"
           >
             <SpeechSection onError={setError} />
+          </div>
+
+          <div
+            role="tabpanel"
+            id="settings-panel-vlm"
+            aria-labelledby="settings-tab-vlm"
+            hidden={category !== "vlm"}
+            className="settings-pane"
+          >
+            <VlmSection onError={setError} />
           </div>
 
           <div
@@ -1752,7 +1772,8 @@ function LocalBackendRow({
           backends without catalog coverage on this platform; installed paths
           land in the pickers above via the main-process auto-fill → onChanged
           re-fetch (this row's useEffect resync), never via these edit buffers. */}
-      <SpeechManagedContent
+      <ManagedContent
+        family="speech"
         backend={info.backend}
         onChanged={onChanged}
         onError={onError}

@@ -423,3 +423,72 @@ export function speechAutofillPlan(
   }
   return plan;
 }
+
+/**
+ * The vlm-config entries installed managed content should create — the ADR 0055
+ * twin of {@link speechAutofillPlan}, with the same only-if-blank rule: an
+ * existing entry with ANY non-blank path wins outright, so a manual path is
+ * never overwritten and a partially-manual entry is left entirely alone.
+ *
+ * Two differences from the speech plan, both from the shape of the content:
+ *  - An item may serve SEVERAL backends (`VlmConsumer.backends`) — one
+ *    `llama-mtmd-cli` drives Qwen3-VL and MiniCPM-V alike — so a runtime
+ *    contributes its binary to every engine it names.
+ *  - The minimum is binary + model + **mmproj**. A GGUF without its vision
+ *    projector is text-only and `vlm::config::availability` reports NeedsModel,
+ *    so a two-of-three set must configure nothing rather than write an entry
+ *    the resolver would refuse.
+ *
+ * An engine the catalog covers only partly therefore yields no entry: `complete`
+ * stays true for it (no item of its own is pending), but a field it never fills
+ * keeps the set below the minimum.
+ */
+export function vlmAutofillPlan(
+  items: readonly ContentItem[],
+  statusOf: (item: ContentItem) => ContentItemStatus,
+  existingLocal: Record<string, { binary: string; model: string; mmproj: string }>,
+  join: (...parts: string[]) => string,
+): Array<{ backend: string; config: { binary: string; model: string; mmproj: string } }> {
+  const byBackend = new Map<
+    string,
+    Partial<Record<"binary" | "model" | "mmproj", string>> & { complete: boolean }
+  >();
+  for (const item of items) {
+    if (!item.vlm) continue;
+    const status = statusOf(item);
+    for (const backend of item.vlm.backends) {
+      const slot = byBackend.get(backend) ?? { complete: true };
+      if (status.state === "installed") {
+        for (const [field, rel] of Object.entries(item.vlm.fields)) {
+          slot[field as "binary" | "model" | "mmproj"] = join(
+            status.installDir,
+            ...rel.split("/"),
+          );
+        }
+      } else if (status.state !== "unavailable") {
+        // A catalog item this backend needs exists for the platform but is not
+        // installed — the set is incomplete, so nothing is configured.
+        slot.complete = false;
+      }
+      byBackend.set(backend, slot);
+    }
+  }
+
+  const plan: Array<{ backend: string; config: { binary: string; model: string; mmproj: string } }> = [];
+  for (const [backend, slot] of byBackend) {
+    if (!slot.complete || !slot.binary || !slot.model || !slot.mmproj) continue;
+    const existing = existingLocal[backend];
+    if (
+      existing &&
+      (existing.binary.trim() !== "" ||
+        existing.model.trim() !== "" ||
+        existing.mmproj.trim() !== "")
+    )
+      continue;
+    plan.push({
+      backend,
+      config: { binary: slot.binary, model: slot.model, mmproj: slot.mmproj },
+    });
+  }
+  return plan;
+}

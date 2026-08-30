@@ -81,9 +81,8 @@ impl VlmBackend {
         }
     }
 
-    /// Human-facing label for the Settings row / Test button. Reserved for the
-    /// (out-of-scope) Settings UI, same as `SpeechBackend::label`.
-    #[allow(dead_code)]
+    /// Human-facing label for the Settings row, same as `SpeechBackend::label`.
+    /// Read by `commands::vlm::settings_get_vlm_backends`.
     pub fn label(self) -> &'static str {
         match self {
             VlmBackend::Qwen3Vl => "Qwen3-VL (local)",

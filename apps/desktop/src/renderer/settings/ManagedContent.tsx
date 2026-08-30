@@ -13,25 +13,33 @@ import {
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { Button } from "@/components/ui/button";
 
-/// The ADR 0039 download affordance for one local speech backend, rendered
-/// inside its LocalBackendRow. Renders nothing unless the catalog covers this
-/// backend on this platform, so manual-path-only engines (FunASR today) and
-/// uncovered OSes see no change. One button downloads the engine + model pair
+/// The ADR 0039 download affordance for one local engine, rendered inside its
+/// config row — a speech backend's `LocalBackendRow`, or (ADR 0055) a VLM
+/// backend's `VlmLocalRow`. Renders nothing unless the catalog covers this
+/// backend on this platform, so manual-path-only engines (MiniCPM-V today) and
+/// uncovered OSes see no change. One button downloads the whole missing set
 /// sequentially with inline progress and cancel; once everything is installed
 /// it collapses to a managed-content caption with Open folder / Remove.
 /// Downloaded paths land in the row's pickers via the main-process auto-fill →
 /// `onChanged` re-fetch, never by this component writing config itself.
+///
+/// `family` picks which consumer tag to match, and it is a discriminator rather
+/// than one merged predicate because the two catalog shapes genuinely differ:
+/// a speech item names ONE backend, a VLM item names a LIST (one
+/// `llama-mtmd-cli` serves both local vision engines).
 
 type Phase =
   | { kind: "idle" }
   | { kind: "downloading"; itemId: string; received: number; total: number }
   | { kind: "error"; message: string };
 
-export function SpeechManagedContent({
+export function ManagedContent({
+  family,
   backend,
   onChanged,
   onError,
 }: {
+  family: "speech" | "vlm";
   backend: string;
   onChanged: () => Promise<void>;
   onError: (msg: string) => void;
@@ -49,7 +57,15 @@ export function SpeechManagedContent({
   const refresh = async () => {
     try {
       const all = await contentList();
-      setRows(all.filter((r) => r.item.speech?.backend === backend));
+      setRows(
+        all.filter((r) =>
+          family === "speech"
+            ? r.item.speech?.backend === backend
+            : r.item.vlm?.backends.includes(
+                backend as "qwen3_vl" | "minicpm_v",
+              ),
+        ),
+      );
     } catch (e) {
       onError(String(e));
     }
@@ -61,7 +77,7 @@ export function SpeechManagedContent({
       unlistenRef.current?.();
       unlistenRef.current = null;
     };
-  }, [backend]);
+  }, [family, backend]);
 
   if (rows === null) return null;
   const covered = rows.filter((r) => r.status.state !== "unavailable");

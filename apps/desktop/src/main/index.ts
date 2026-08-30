@@ -44,7 +44,7 @@ import {
   CONTENT_EVENTS, contentPlatformKey,
   type ContentDownloadProgress, type ContentDownloadResult, type ContentListRow,
 } from '../shared/content-download.js'
-import { downloadItem, itemStatus, speechAutofillPlan, sweepPartials, type ContentDeps } from './contentDownload.js'
+import { downloadItem, itemStatus, speechAutofillPlan, vlmAutofillPlan, sweepPartials, type ContentDeps } from './contentDownload.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -915,6 +915,80 @@ app.whenReady().then(async () => {
       backend!.clearLocalBackend(tag)
       return null
     }
+    // Video-understanding backends. Same interception rationale as the speech
+    // block above, minus its second half: there is no `backend!.setLocal*` push
+    // to mirror, because the VLM subsystem holds NO resident Rust config
+    // (ADR 0024). Persisting to the store IS the apply — the next describe_clip
+    // gets the merged snapshot injected from it.
+    if (channel === 'settings_get_vlm_backends') {
+      const vc = vlmConfig.get()
+      const json = await backend!.invoke('settings_get_vlm_backends', JSON.stringify({
+        preferred: vc.preferred_engine === 'auto' ? null : vc.preferred_engine,
+        // The SAME merge describe_clip receives, so the panel's availability
+        // badges and the resolver's actual verdict cannot disagree.
+        vlmConfig: toVlmBackendSnapshot(vc, loadAllKeys().openai ?? null),
+      }))
+      const rows = JSON.parse(json) as Array<{ backend: string; locality: string } & Record<string, unknown>>
+      // Merge each row's stored NON-secret config so the UI can populate its
+      // fields: local engines get their paths, the endpoint row its URL/model.
+      // The cloud row carries none (its key is secret and never echoed).
+      return {
+        preferred_engine: vc.preferred_engine,
+        backends: rows.map((r) => {
+          if (r.locality === 'local' && vc.local[r.backend]) return { ...r, local: vc.local[r.backend] }
+          if (r.locality === 'endpoint' && vc.endpoint) {
+            // api_key is persisted (a self-hosted server may need one) but is
+            // still a credential: send presence, never the material.
+            const { api_key, ...rest } = vc.endpoint
+            return { ...r, endpoint: { ...rest, has_api_key: api_key !== undefined } }
+          }
+          return r
+        }),
+      }
+    }
+    if (channel === 'settings_set_vlm_preferred') {
+      const { engine } = (args ?? {}) as { engine: import('../shared/vlm-config.js').VlmPreferredEngine }
+      vlmConfig.apply({ preferred_engine: engine })
+      return null
+    }
+    if (channel === 'settings_set_vlm_local') {
+      const a = (args ?? {}) as { backend: string; binary: string; model: string; mmproj: string; device?: string }
+      vlmConfig.apply({
+        local: {
+          backend: a.backend,
+          config: {
+            binary: a.binary,
+            model: a.model,
+            mmproj: a.mmproj,
+            ...(a.device ? { device: a.device } : {}),
+          },
+        },
+      })
+      return null
+    }
+    if (channel === 'settings_clear_vlm_local') {
+      const { backend: tag } = (args ?? {}) as { backend: string }
+      vlmConfig.apply({ local: { backend: tag, config: null } })
+      return null
+    }
+    if (channel === 'settings_set_vlm_endpoint') {
+      const a = (args ?? {}) as { url: string; model?: string; apiKey?: string | null }
+      if (a.url.trim() === '') {
+        vlmConfig.apply({ endpoint: null })
+        return null
+      }
+      // `apiKey: undefined` KEEPS the stored key (the UI never round-trips it,
+      // so an unedited field must not silently erase it); `null` clears it.
+      const kept = a.apiKey === undefined ? vlmConfig.get().endpoint?.api_key : (a.apiKey ?? undefined)
+      vlmConfig.apply({
+        endpoint: {
+          url: a.url,
+          ...(a.model ? { model: a.model } : {}),
+          ...(kept ? { api_key: kept } : {}),
+        },
+      })
+      return null
+    }
     // "Analyze shots" (media-pool drive-by): warm the deterministic shot report
     // for one media through the existing shot-analysis napi — the SAME VSHOT
     // cache the agent's analyze_clip / auto_split_by_shot read, so a later agent
@@ -1461,9 +1535,24 @@ app.whenReady().then(async () => {
       }
     }
   }
+  // The ADR 0055 twin of the above. No Rust push to mirror: the VLM subsystem
+  // is stateless (ADR 0024), so persisting to the store IS the whole apply —
+  // the next describe_clip reads it through the injected snapshot.
+  const autofillVlmFromContent = (): void => {
+    const plan = vlmAutofillPlan(
+      CONTENT_CATALOG,
+      (item) => itemStatus(contentDeps, item, contentPlatform),
+      vlmConfig.get().local,
+      path.join,
+    )
+    for (const { backend: tag, config } of plan) {
+      vlmConfig.apply({ local: { backend: tag, config } })
+    }
+  }
   // Content installed in an earlier run but never wired (e.g. the app quit
   // between install and apply) heals on the next boot.
   autofillSpeechFromContent()
+  autofillVlmFromContent()
 
   ipcMain.handle('content:list', (): ContentListRow[] =>
     CONTENT_CATALOG.map((item) => {
@@ -1535,7 +1624,10 @@ app.whenReady().then(async () => {
       const result = await downloadItem(contentDeps, item, contentPlatform, onProgress, controller.signal)
       if (result.ok) {
         emitOp({ state: 'Ok' }, `Downloaded ${item.id}`)
+        // Both consumers run on every install: each plan is a no-op for items
+        // it does not claim, so neither needs to know which family just landed.
         autofillSpeechFromContent()
+        autofillVlmFromContent()
       } else if ('cancelled' in result) {
         // A user cancel closes the op cleanly — it is not an error.
         emitOp({ state: 'Ok' }, `Cancelled download of ${item.id}`)

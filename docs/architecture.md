@@ -287,7 +287,8 @@ weftcut/
         panels/               ← side / floating panels
         connect/              ← Connect-agent panel
         settings/             ← Settings panel (Transcription / Speech,
-                              ←   API keys, data location, …)
+                              ←   Video understanding, API keys,
+                              ←   data location, …)
         logs/                 ← status bar + log console
         keyframe/             ← keyframe authoring + curve editing
         workspace/          ← Dock Workspace: the Panel catalogue, the

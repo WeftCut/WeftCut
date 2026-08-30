@@ -751,6 +751,15 @@ impl Backend {
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::speech::settings_get_speech_backends(self, a.preferred).await)
             }
+            // Takes no `&self`: the video-understanding subsystem is stateless
+            // (ADR 0024), so its config arrives in `args` exactly as it does for
+            // `describe_clip`, rather than off a `Backend` field.
+            #[cfg(feature = "speech")]
+            "settings_get_vlm_backends" => {
+                let a: crate::commands::vlm::VlmBackendsArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::vlm::settings_get_vlm_backends(a.preferred, a.vlm_config).await)
+            }
             other => Err(format!("unknown command: '{other}'")),
         }
     }

@@ -46,12 +46,28 @@ export interface SpeechConsumer {
   fields: Partial<Record<"binary" | "model" | "tokens", string>>;
 }
 
+/// The video-understanding twin of `SpeechConsumer` (ADR 0055): which local VLM
+/// backend an item serves, and which `VlmLocalEngineConfig` field(s) its
+/// installed files fill. A separate interface rather than a widened
+/// `SpeechConsumer` because the two write to DIFFERENT config stores
+/// (speech_config.json vs vlm_config.json) and have different required fields —
+/// vision needs `mmproj`, which speech has no concept of.
+///
+/// `backends` is a LIST, not a scalar, because one runtime here can serve
+/// several engines — `llama-mtmd-cli` drives Qwen3-VL and MiniCPM-V alike. An
+/// item lists the engines it is part of a COMPLETE set for, so a shared runtime
+/// does not advertise an engine whose model the catalog is still missing.
+export interface VlmConsumer {
+  backends: ReadonlyArray<"qwen3_vl" | "minicpm_v">;
+  fields: Partial<Record<"binary" | "model" | "mmproj", string>>;
+}
+
 /// One catalog entry. `version` names the install directory
 /// (<dataRoot>/downloads/<id>/<version>/) so a future upgrade is a sibling
 /// install, never an in-place mutation.
 export interface ContentItem {
   id: string;
-  kind: "speech-runtime" | "speech-model";
+  kind: "speech-runtime" | "speech-model" | "vlm-runtime" | "vlm-model";
   version: string;
   /// i18n key for the human label (en-US + zh-CN).
   labelKey: string;
@@ -61,6 +77,7 @@ export interface ContentItem {
   /// runtime the official whisper.cpp Windows build dynamically imports).
   prerequisiteKey?: string;
   speech?: SpeechConsumer;
+  vlm?: VlmConsumer;
   platforms: Partial<Record<ContentPlatformKey, ContentArtifact>>;
 }
 

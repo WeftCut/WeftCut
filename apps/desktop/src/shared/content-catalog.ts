@@ -3,8 +3,10 @@
 // digests (supply-chain rule, docs/licensing.md — never a rolling "latest").
 //
 // Values are verbatim from ADR 0039 (Windows x64 CPU-only whisper.cpp v1.9.1
-// + multilingual Base) and ADR 0043 (sherpa-onnx v1.13.4 + Paraformer-zh for
-// the FunASR backend). Do not re-derive or "refresh" them — a new upstream
+// + multilingual Base), ADR 0043 (sherpa-onnx v1.13.4 + Paraformer-zh for
+// the FunASR backend), and ADR 0055 (llama.cpp b10103 Vulkan +
+// Qwen3-VL-4B-Instruct Q4_K_M for the video-understanding backend). Do not
+// re-derive or "refresh" them — a new upstream
 // release is a NEW catalog entry with its own pinned url/bytes/sha, decided
 // through an ADR update, not an edit here.
 //
@@ -127,6 +129,107 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
         bytes: 234051698,
         archive: "tar.bz2",
         entryPath: "sherpa-onnx-paraformer-zh-2023-09-14/model.int8.onnx",
+      },
+    },
+  },
+  {
+    id: "llama-mtmd-runtime",
+    kind: "vlm-runtime",
+    // llama.cpp build tag — the same build the ticket-06/07 spikes validated.
+    version: "b10103",
+    labelKey: "content_llama_mtmd_runtime",
+    license: { name: "MIT", upstreamUrl: "https://github.com/ggml-org/llama.cpp" },
+    // Same MSVC v14 x64 dependency as the whisper.cpp runtime: llama-mtmd-cli.exe
+    // and llama.dll both dynamically import MSVCP140 + VCRUNTIME140 (verified
+    // against the pinned archive), so the note is shared rather than restated.
+    prerequisiteKey: "content_prereq_msvc14",
+    // The BINARY is engine-agnostic — one llama-mtmd-cli drives Qwen3-VL and
+    // MiniCPM-V alike, which is why `backends` is a list at all. It claims only
+    // qwen3_vl today on purpose: the catalog carries no MiniCPM model, so
+    // claiming that engine here would leave its Settings row offering a
+    // "download" that installs a runtime and then reports the whole set
+    // present. `"minicpm_v"` joins this list in the same change that adds its
+    // model + mmproj entries, never before.
+    vlm: {
+      backends: ["qwen3_vl"],
+      fields: { binary: "llama-mtmd-cli.exe" },
+    },
+    platforms: {
+      // The VULKAN build, not the CPU-only one, and not a tradeoff: this
+      // archive ships ggml-vulkan.dll AND the full ggml-cpu-*.dll set, so it
+      // is a strict superset — it uses the GPU where a Vulkan driver exists
+      // (every current NVIDIA / AMD / Intel Windows driver ships one) and
+      // falls back to the same CPU backends the CPU archive would have given.
+      // 33 MB against the CPU archive's 18 MB buys that (ADR 0055).
+      "win32-x64": {
+        url: "https://github.com/ggml-org/llama.cpp/releases/download/b10103/llama-b10103-bin-win-vulkan-x64.zip",
+        sha256:
+          "3e3aa22631fa7d6cded90219e6e0d4d929b035280f5a9f209e535662e60eb33f",
+        bytes: 33479917,
+        archive: "zip",
+        // The archive is FLAT (no Release/ prefix, unlike whisper.cpp's), and
+        // the runtime is its whole extracted directory — the dynamically
+        // selected ggml backend DLLs must stay beside the exe.
+        entryPath: "llama-mtmd-cli.exe",
+      },
+    },
+  },
+  {
+    id: "qwen3-vl-4b-model",
+    kind: "vlm-model",
+    // Hugging Face revision — platform-independent data, still installed under
+    // <id>/<version>/ like everything else.
+    version: "1cd86afb9a95c410a6038ab3b40d8b578c892266",
+    labelKey: "content_qwen3vl_model",
+    license: {
+      name: "Apache-2.0",
+      upstreamUrl: "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF",
+    },
+    vlm: {
+      backends: ["qwen3_vl"],
+      fields: { model: "Qwen3VL-4B-Instruct-Q4_K_M.gguf" },
+    },
+    platforms: {
+      // Q4_K_M, the quantization the spike measured (~20 s for 8 frames on a
+      // Vulkan RTX 3050) — not F16 (8.0 GB) or Q8_0 (4.3 GB).
+      "win32-x64": {
+        url: "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/1cd86afb9a95c410a6038ab3b40d8b578c892266/Qwen3VL-4B-Instruct-Q4_K_M.gguf?download=true",
+        sha256:
+          "66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a",
+        bytes: 2497281664,
+        archive: "none",
+        entryPath: "Qwen3VL-4B-Instruct-Q4_K_M.gguf",
+      },
+    },
+  },
+  {
+    id: "qwen3-vl-4b-mmproj",
+    kind: "vlm-model",
+    version: "1cd86afb9a95c410a6038ab3b40d8b578c892266",
+    labelKey: "content_qwen3vl_mmproj",
+    license: {
+      name: "Apache-2.0",
+      upstreamUrl: "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF",
+    },
+    // The vision projector is a SEPARATE download from the model (two URLs, so
+    // two entries — unlike the Paraformer bundle, where one archive filled two
+    // fields). Without it the GGUF is text-only and the availability probe
+    // reports NeedsModel, which is why it is a first-class catalog entry rather
+    // than an afterthought on the model row.
+    vlm: {
+      backends: ["qwen3_vl"],
+      fields: { mmproj: "mmproj-Qwen3VL-4B-Instruct-F16.gguf" },
+    },
+    platforms: {
+      // F16 projector, not the Q8_0 one: the projector is small next to the
+      // model (797 MB vs 2.4 GB) and quantizing it is where vision quality goes.
+      "win32-x64": {
+        url: "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/1cd86afb9a95c410a6038ab3b40d8b578c892266/mmproj-Qwen3VL-4B-Instruct-F16.gguf?download=true",
+        sha256:
+          "256f3a43bd4205ffef48d6b92715e1e70b5b0e9aef06522584967513a9985331",
+        bytes: 836180256,
+        archive: "none",
+        entryPath: "mmproj-Qwen3VL-4B-Instruct-F16.gguf",
       },
     },
   },

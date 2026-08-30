@@ -9,6 +9,7 @@ import {
   downloadItem,
   itemStatus,
   speechAutofillPlan,
+  vlmAutofillPlan,
   sweepPartials,
 } from "./contentDownload";
 
@@ -579,5 +580,123 @@ describe("speechAutofillPlan — the only-if-blank / whole-set consumer rules", 
     expect(plan).toEqual([
       { backend: "whisper_cpp", config: { binary: "/e/bin/cli.exe", model: "/m/m.bin" } },
     ]);
+  });
+});
+
+describe("vlmAutofillPlan — same rules, plus mmproj and multi-backend items", () => {
+  const join = (...parts: string[]) => parts.join("/");
+  const runtime: ContentItem = {
+    ...rawItem(),
+    id: "engine",
+    kind: "vlm-runtime",
+    vlm: { backends: ["qwen3_vl"], fields: { binary: "llama-mtmd-cli.exe" } },
+  };
+  const model: ContentItem = {
+    ...rawItem(),
+    id: "model",
+    kind: "vlm-model",
+    vlm: { backends: ["qwen3_vl"], fields: { model: "q.gguf" } },
+  };
+  const mmproj: ContentItem = {
+    ...rawItem(),
+    id: "mmproj",
+    kind: "vlm-model",
+    vlm: { backends: ["qwen3_vl"], fields: { mmproj: "mm.gguf" } },
+  };
+  const installed = (dir: string) =>
+    ({ state: "installed", entryPath: `${dir}/x`, installDir: dir }) as const;
+  const allInstalled = (i: ContentItem) => installed(`/dl/${i.id}/v1`);
+
+  it("all three installed + blank config → one entry with paths under their install dirs", () => {
+    expect(vlmAutofillPlan([runtime, model, mmproj], allInstalled, {}, join)).toEqual([
+      {
+        backend: "qwen3_vl",
+        config: {
+          binary: "/dl/engine/v1/llama-mtmd-cli.exe",
+          model: "/dl/model/v1/q.gguf",
+          mmproj: "/dl/mmproj/v1/mm.gguf",
+        },
+      },
+    ]);
+  });
+
+  it("a model without its projector configures NOTHING — vision needs all three", () => {
+    // The distinguishing rule against speech: binary+model is a complete set
+    // there, and only two thirds of one here.
+    const plan = vlmAutofillPlan(
+      [runtime, model, mmproj],
+      (i) => (i.id === "mmproj" ? { state: "not_installed" } : allInstalled(i)),
+      {},
+      join,
+    );
+    expect(plan).toEqual([]);
+  });
+
+  it("a shared runtime contributes its binary to every backend it names", () => {
+    const shared: ContentItem = {
+      ...runtime,
+      vlm: { backends: ["qwen3_vl", "minicpm_v"], fields: { binary: "llama-mtmd-cli.exe" } },
+    };
+    const miniModel: ContentItem = {
+      ...rawItem(),
+      id: "mini-model",
+      vlm: { backends: ["minicpm_v"], fields: { model: "mini.gguf" } },
+    };
+    const miniMmproj: ContentItem = {
+      ...rawItem(),
+      id: "mini-mmproj",
+      vlm: { backends: ["minicpm_v"], fields: { mmproj: "mini-mm.gguf" } },
+    };
+    const plan = vlmAutofillPlan(
+      [shared, model, mmproj, miniModel, miniMmproj],
+      allInstalled,
+      {},
+      join,
+    );
+    expect(plan).toHaveLength(2);
+    expect(plan.map((p) => p.backend).sort()).toEqual(["minicpm_v", "qwen3_vl"]);
+    // BOTH engines resolve the same runtime install dir for their binary.
+    for (const p of plan)
+      expect(p.config.binary).toBe("/dl/engine/v1/llama-mtmd-cli.exe");
+  });
+
+  it("a backend the shared runtime names but has no model for yields no entry", () => {
+    const shared: ContentItem = {
+      ...runtime,
+      vlm: { backends: ["qwen3_vl", "minicpm_v"], fields: { binary: "llama-mtmd-cli.exe" } },
+    };
+    const plan = vlmAutofillPlan([shared, model, mmproj], allInstalled, {}, join);
+    expect(plan.map((p) => p.backend)).toEqual(["qwen3_vl"]);
+  });
+
+  it("any manual path wins outright — mmproj alone is enough to leave the entry alone", () => {
+    expect(
+      vlmAutofillPlan([runtime, model, mmproj], allInstalled, {
+        qwen3_vl: { binary: "", model: "", mmproj: "C:/my/mm.gguf" },
+      }, join),
+    ).toEqual([]);
+  });
+
+  it("an all-blank existing entry counts as blank and is filled", () => {
+    const plan = vlmAutofillPlan([runtime, model, mmproj], allInstalled, {
+      qwen3_vl: { binary: "", model: "  ", mmproj: "" },
+    }, join);
+    expect(plan).toHaveLength(1);
+  });
+
+  it("ignores items with no vlm consumer (the speech catalog rows)", () => {
+    const speechOnly: ContentItem = {
+      ...rawItem(),
+      id: "whisper",
+      speech: { backend: "whisper_cpp", fields: { binary: "cli.exe" } },
+    };
+    const plan = vlmAutofillPlan(
+      [speechOnly, runtime, model, mmproj],
+      allInstalled,
+      {},
+      join,
+    );
+    expect(plan).toHaveLength(1);
+    expect(plan[0].backend).toBe("qwen3_vl");
   });
 });

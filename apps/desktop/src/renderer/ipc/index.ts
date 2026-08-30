@@ -1779,6 +1779,112 @@ export async function settingsClearLocalBackend(backend: string): Promise<void> 
   return invoke<void>("settings_clear_local_backend", { backend });
 }
 
+// ============================================================
+// Video-understanding (VLM) backends — the Settings surface for `describe_clip`.
+// Structural twin of the speech block above; the differences all follow from
+// the subsystem being STATELESS (ADR 0024) and from vision needing an `mmproj`:
+//   * a third locality, `endpoint` (a self-hosted OpenAI-compatible server),
+//   * a third required local path, `mmproj` (the vision projector),
+//   * no Rust-side push on write — the store IS the state.
+// All five channels are intercepted in Electron main. VlmPreferredEngine /
+// VlmLocalEngineConfig are single-sourced in src/shared/vlm-config.ts.
+// ============================================================
+
+import type {
+  VlmPreferredEngine,
+  VlmLocalEngineConfig,
+} from "../../shared/vlm-config";
+export type { VlmPreferredEngine, VlmLocalEngineConfig };
+
+/// Availability verdict tags mirroring Rust `vlm::config::Availability`.
+export type VlmAvailability =
+  | "available"
+  | "needs_key"
+  | "needs_binary"
+  | "needs_model"
+  | "needs_endpoint";
+
+/// The endpoint row's stored config as the panel sees it. The persisted
+/// `api_key` is replaced by `has_api_key`: main never echoes credential
+/// material back to the renderer, so the field renders as "set" or blank.
+export interface VlmEndpointInfo {
+  url: string;
+  model?: string;
+  has_api_key: boolean;
+}
+
+/// One backend row for the Settings → Video understanding panel. `local` is
+/// present only for local backends with stored config; `endpoint` only for the
+/// BYO row once configured; the cloud row configures a key instead (through the
+/// shared `settingsSetApiKey` surface).
+export interface VlmBackendInfo {
+  backend: string;
+  label: string;
+  locality: "cloud" | "local" | "endpoint";
+  availability: VlmAvailability;
+  /// The one backend the resolver would use right now (preference + what is
+  /// available). `false` on every row when nothing is configured.
+  selected: boolean;
+  local?: VlmLocalEngineConfig;
+  endpoint?: VlmEndpointInfo;
+}
+
+export interface VlmBackendsView {
+  preferred_engine: VlmPreferredEngine;
+  backends: VlmBackendInfo[];
+}
+
+/// Full backend listing + the user's preferred engine, for the Settings panel.
+export async function settingsGetVlmBackends(): Promise<VlmBackendsView> {
+  return invoke<VlmBackendsView>("settings_get_vlm_backends");
+}
+
+/// Persist the user's preferred description engine ("auto" | a backend tag).
+export async function settingsSetVlmPreferred(
+  engine: VlmPreferredEngine,
+): Promise<void> {
+  return invoke<void>("settings_set_vlm_preferred", { engine });
+}
+
+/// Set (or replace) one local engine's binary/model/mmproj config. All three
+/// paths are required — a GGUF without its projector is text-only and the
+/// availability probe reports `needs_model`.
+export async function settingsSetVlmLocal(args: {
+  backend: string;
+  binary: string;
+  model: string;
+  mmproj: string;
+  device?: string;
+}): Promise<void> {
+  return invoke<void>("settings_set_vlm_local", {
+    backend: args.backend,
+    binary: args.binary,
+    model: args.model,
+    mmproj: args.mmproj,
+    ...(args.device !== undefined ? { device: args.device } : {}),
+  });
+}
+
+/// Clear one local engine's config (idempotent).
+export async function settingsClearVlmLocal(backend: string): Promise<void> {
+  return invoke<void>("settings_clear_vlm_local", { backend });
+}
+
+/// Set the BYO endpoint, or clear it with an empty `url`. Omitting `apiKey`
+/// KEEPS whatever key is stored (the panel never round-trips it, so an
+/// untouched field must not erase one); pass `null` to clear it.
+export async function settingsSetVlmEndpoint(args: {
+  url: string;
+  model?: string;
+  apiKey?: string | null;
+}): Promise<void> {
+  return invoke<void>("settings_set_vlm_endpoint", {
+    url: args.url,
+    ...(args.model !== undefined ? { model: args.model } : {}),
+    ...(args.apiKey !== undefined ? { apiKey: args.apiKey } : {}),
+  });
+}
+
 export interface WaveformPeaks {
   /// One f32 in [0.0, 1.0] per peak window; max-abs over `1 / peaks_per_second`
   /// of source audio. Resolves rejected with the literal string "not_ready" if
