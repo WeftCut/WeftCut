@@ -886,10 +886,10 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'fit_composition_to_layers', args: { composition_id: parseCompositionIdOpt(a.composition_id) } }) },
   // ── table-exec: markers ──────────────────────────────────────────────────
   { name: 'update_marker', exec: 'table',
-    description: 'Update a marker. Setting `t_us` re-sorts the marker list.',
+    description: 'Update a marker. Setting `t_us` re-sorts the marker list. On a marker ANCHORED to a clip, `t_us` names the time the mark should read and moves the ANCHOR to make it read that, so the mark keeps following its clip from the new offset — a time outside that clip\'s span is refused, and `t_us` together with `end_t_us` is refused (an anchored region\'s end follows its anchor by itself; patch one or the other).',
     inputSchema: { type: 'object', properties: { marker_id: { type: 'string' }, patch: {
       type: 'object',
-      description: 'Marker patch; only fields you set are applied. `end_t_us` can be set, never cleared (clear = remove + re-add). A marker\'s anchor is not patchable here — it is set and cleared by the dedicated attach/detach operations.',
+      description: 'Marker patch; only fields you set are applied. `end_t_us` can be set, never cleared (clear = remove + re-add). A marker\'s anchor is not patchable here, and no tool sets one: anchoring is established from the app (marking on a selected clip, or Attach to clip) and shot detection. Read `anchor_layer` on a marker to see whether it follows one.',
       properties: {
         t_us: { type: ['integer', 'null'] },
         end_t_us: { type: ['integer', 'null'] },

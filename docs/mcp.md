@@ -163,7 +163,7 @@ around 40, organised below.
 | `project://media` | media pool listing |
 | `project://tracks` | a composition's tracks + layer envelopes — the root's, or `project://tracks?composition=<id>` for a Group's |
 | `project://layers/{id}` | one layer in detail, from whichever composition holds it |
-| `project://markers` | a composition's markers — the root's, or `project://markers?composition=<id>` |
+| `project://markers` | a composition's markers — the root's, or `project://markers?composition=<id>`. Each carries `anchor_layer` and `anchor_src_us` (both null on a free marker) and `hibernating` — see *Markers follow clips* below |
 | `project://history` | recent ops + checkpoints (snapshot-free). Each op carries `summary` (English prose), `label_key` + optional `label_args` (its i18n key and interpolation values — `history.*`, see `main/state/history-labels.ts`), `affected` (Track/Layer/Marker refs) and `entity_labels` (names for `affected`, same length and order, resolved against whichever stored snapshot still **holds** each ref — the op's own for an add/update/move, its predecessor's for a delete — so a deleted entity still has a name). An `entity_labels` element is `{"text": "…"}` for a stored name, or `{"label_key": "…", "label_args": {…}}` for a derived one — a clip's kind (`kinds.color`), a track's role (`tracks.roles.a-roll`) or a track's position (`tracks.positional` with `{"n": 3}`) — which the UI translates. The envelope carries `window_start` and `evicted` — see below |
 | `project://compiled` | compiled audio IRGraph (JSON) |
 | `media://{id}/thumbnail` | middle thumbnail as JPG (base64) |
@@ -304,8 +304,34 @@ Groups (see [features.md §Groups](features.md#groups)):
 - Reads: `project://compositions` lists every composition with its `ref_count`; a Group layer's `params.composition` names its composition.
 
 Markers + composition:
-- `add_marker { t_us, label, color, end_t_us?, composition_id? }` → `MarkerId` — markers are per composition; `update_marker` / `remove_marker` find theirs by id
+- `add_marker { t_us, label, color, end_t_us?, composition_id? }` → `MarkerId` — markers are per composition; `update_marker` / `remove_marker` find theirs by id. A marker added here is always FREE
 - `update_marker { marker_id, patch }` / `remove_marker { marker_id }`
+
+**Markers follow clips.** A marker may be *anchored* to a clip of its own
+composition — it then carries `{ layer, src_us }`, a time in that layer's SOURCE
+domain, and its `t_us` is re-derived from the clip on every commit. So an
+anchored marker travels with its clip through moves, trims, splits and a
+crossing into another composition, and a deleted clip takes its markers with it.
+`t_us` is still the field to read: it is a cache, but a stored one, so nothing
+about reading a marker changes.
+
+Two consequences worth knowing before you patch one:
+
+- **`t_us` on an anchored marker moves the ANCHOR.** It names the time the mark
+  should read; the actor derives `src_us` to make it read that, and the mark
+  goes on following from the new offset. A time outside the clip's half-open
+  span is refused, as is `t_us` together with `end_t_us` (the reconcile carries
+  an anchored region's end by the same delta — patch one or the other).
+- **A marker can be `hibernating`**: its `src_us` has fallen outside the clip's
+  `[src_in_us, src_out_us)` window, usually because a trim moved the edge past
+  it. It is retained, painted on no surface, and revived on the exact frame it
+  always named the moment the window covers it again. Its `t_us` is frozen and
+  names a moment nothing holds any more, so seek by `anchor_src_us` instead, or
+  ignore it — which is what the lane, the search index and the Group badge do.
+
+No tool sets or clears an anchor. Anchoring is established from the app (marking
+with a clip selected, or *Attach to clip*) and by shot detection; `detach` is a
+user action too. Read `anchor_layer` to see whether a marker follows one.
 - `set_composition { patch }` — nothing in this tool records onto the undo stack;
   the patch is applied to every history snapshot, so undo walks past it. `fps` is
   locked once the timeline holds a layer **or any history snapshot / checkpoint

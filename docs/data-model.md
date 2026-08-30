@@ -907,8 +907,18 @@ struct MarkerAnchor {
 A marker belongs to one composition and only ever to one. **Following a clip is
 a field, not a second entity**: an anchored marker names a layer of its own
 composition plus a time in that layer's source window, and `t_us` becomes a
-derived cache that nonetheless stays *stored* — so every reader (ruler, lane,
-`Ctrl+K`, the summary projection, serialize, MCP, export) goes on reading `t_us`.
+derived cache that nonetheless stays *stored* — so every reader (the marker
+lane, `Ctrl+K`, the summary projection, serialize, MCP, export) goes on reading
+`t_us`.
+
+Because `t_us` is the cache, **patching it on an anchored marker moves the
+anchor**: `update_marker` takes the time as a statement of where the mark should
+read, derives `src_us` from the anchoring layer, and leaves the reconcile in the
+same commit to write `t_us` back. A time outside that layer's half-open span is
+refused, and `t_us` paired with `end_t_us` is refused too — the reconcile already
+carries an anchored region's end by the same frame delta, so writing it as well
+would move it twice. `anchor` itself is not patchable at all; it is set and
+cleared only by attach and detach.
 
 `label` and `note` split because `label` has two consumers that force it short
 (the lane's inline text, the `Ctrl+K` row) — the same split Premiere makes as
