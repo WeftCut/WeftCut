@@ -146,8 +146,16 @@ function parseSsimAll(stderr: string): number | null {
   return m ? Number(m[1]) : null
 }
 
+/// Which transport the title names. Derived from `frameKind` rather than listed
+/// per lane: 'browser' IS the shared-texture shape (d3d11va binds an
+/// ImageBitmap snapshot), everything else copies back into NV12/I420P10 ship
+/// bytes (ADR 0034). A hardcoded "copy-back" for all four contradicted this
+/// file's own header on the one lane that isn't.
+const transportWord = (frameKind: HwVariant['frameKind']) =>
+  frameKind === 'browser' ? 'shared-texture' : 'copy-back'
+
 for (const { lane, id, codec, fixture, frameKind, ssimFloor } of VARIANTS) {
-  test(`preview-hw: ffmpeg engine decodes interframe ${codec} on the ${lane} copy-back lane + SSIM (issue #5 Block C3) @serial`, async () => {
+  test(`preview-hw: ffmpeg engine decodes interframe ${codec} on the ${lane} ${transportWord(frameKind)} lane + SSIM (issue #5 Block C3) @serial`, async () => {
     test.skip(!existsSync(fixture), `${codec} fixture not found at ${fixture} (set WEFTCUT_TEST_MEDIA)`)
     test.setTimeout(240_000)
     const PROJECT_PARENT = tmpDir('weftcut-e2e-preview-hw-proj-')
