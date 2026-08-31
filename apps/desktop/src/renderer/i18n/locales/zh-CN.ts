@@ -1095,17 +1095,16 @@ const zhCN: Resources = {
     speech_exact_words_hint:
       "该引擎自身输出逐词精确时间戳；云端 Whisper 只能按字幕时间段近似推算。",
     vlm_blurb:
-      "选择由哪个模型来描述画面内容——它是 agent 场景描述背后的引擎。本地引擎离线运行，只需在下方指定可执行文件与模型文件；也可以使用你自建的 OpenAI 兼容服务，或云端模型。",
+      "选择由哪个模型来描述画面内容——它是 agent 场景描述背后的引擎。本地引擎离线运行，只需在下方指定可执行文件与模型文件；也可以指向任意 OpenAI 兼容服务，无论是你自建的还是云端托管的。",
     vlm_engine: "视频理解引擎",
     vlm_engine_auto: "自动",
     vlm_engine_soon: "即将支持",
     vlm_engine_active: "当前引擎：{{engine}}",
     vlm_engine_none:
-      "尚未配置引擎——请在下方下载或指定本地引擎、填写自建服务地址，或添加 API 密钥。",
+      "尚未配置引擎——请在下方下载或指定本地引擎，或填写 OpenAI 兼容服务地址。",
     vlm_privacy_note:
-      "画面帧只会上传到你自己配置的引擎。「自动」优先选择本地引擎，云端排在最后；显式指定某个引擎时绝不会退回到另一个。",
+      "画面帧只会发送到你自己配置的引擎。「自动」优先选择本地引擎，服务地址排在最后；显式指定某个引擎时绝不会退回到另一个。",
     vlm_available: "可用",
-    vlm_needs_key: "缺少 API 密钥",
     vlm_needs_binary: "缺少可执行文件",
     vlm_needs_model: "缺少模型",
     vlm_needs_endpoint: "缺少服务地址",
@@ -1123,8 +1122,7 @@ const zhCN: Resources = {
     vlm_endpoint_model: "模型",
     vlm_endpoint_model_placeholder: "服务端提供的模型名",
     vlm_endpoint_key: "API 密钥",
-    vlm_endpoint_key_placeholder: "可选——仅当你的服务需要时填写",
-    vlm_cloud_shared_key: "使用「语音转录」中的 OpenAI API 密钥，请到那里添加或修改。",
+    vlm_endpoint_key_placeholder: "可选——仅当服务需要时填写",
     content_whisper_runtime: "whisper.cpp 引擎（v1.9.1）",
     content_whisper_model_base: "Whisper Base 模型（多语言）",
     content_funasr_runtime: "sherpa-onnx 引擎（v1.13.4）",

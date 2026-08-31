@@ -1239,17 +1239,16 @@ const enUS = {
     speech_exact_words_hint:
       "This engine reports precise per-word timestamps itself; cloud Whisper approximates them from subtitle cue spans.",
     vlm_blurb:
-      "Choose which model describes what is on screen — the engine behind the agent's scene descriptions. Local engines run offline from a binary + model file you point to below; you can also use your own OpenAI-compatible server, or a cloud model.",
+      "Choose which model describes what is on screen — the engine behind the agent's scene descriptions. Local engines run offline from a binary + model file you point to below; you can also point WeftCut at any OpenAI-compatible server, whether you host it yourself or it is a hosted service.",
     vlm_engine: "Video-understanding engine",
     vlm_engine_auto: "Automatic",
     vlm_engine_soon: "coming soon",
     vlm_engine_active: "Active engine: {{engine}}",
     vlm_engine_none:
-      "No engine configured — download or point to a local engine below, add a self-hosted endpoint, or add an API key.",
+      "No engine configured — download or point to a local engine below, or add an OpenAI-compatible endpoint.",
     vlm_privacy_note:
-      "Frames are only ever uploaded to an engine you configure. Automatic prefers on-device engines and reaches a cloud model last; asking for a specific engine never falls back to a different one.",
+      "Frames are only ever sent to an engine you configure. Automatic prefers on-device engines and reaches an endpoint last; asking for a specific engine never falls back to a different one.",
     vlm_available: "Available",
-    vlm_needs_key: "Needs API key",
     vlm_needs_binary: "Needs binary",
     vlm_needs_model: "Needs model",
     vlm_needs_endpoint: "Needs endpoint URL",
@@ -1268,9 +1267,7 @@ const enUS = {
     vlm_endpoint_model: "Model",
     vlm_endpoint_model_placeholder: "Model name the server serves",
     vlm_endpoint_key: "API key",
-    vlm_endpoint_key_placeholder: "optional — only if your server requires one",
-    vlm_cloud_shared_key:
-      "Uses the OpenAI API key from the Transcription section. Add or change it there.",
+    vlm_endpoint_key_placeholder: "optional — only if the server requires one",
     content_whisper_runtime: "whisper.cpp engine (v1.9.1)",
     content_whisper_model_base: "Whisper Base model (multilingual)",
     content_funasr_runtime: "sherpa-onnx engine (v1.13.4)",

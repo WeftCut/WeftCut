@@ -51,8 +51,7 @@ function view(over: Partial<VlmBackendInfo>[] = []): VlmBackendsView {
   const base: VlmBackendInfo[] = [
     { backend: "qwen3_vl", label: "Qwen3-VL (local)", locality: "local", availability: "needs_binary", selected: false },
     { backend: "minicpm_v", label: "MiniCPM-V (local)", locality: "local", availability: "needs_binary", selected: false },
-    { backend: "byo_endpoint", label: "Self-hosted endpoint", locality: "endpoint", availability: "needs_endpoint", selected: false },
-    { backend: "cloud", label: "Cloud VLM", locality: "cloud", availability: "needs_key", selected: false },
+    { backend: "byo_endpoint", label: "OpenAI-compatible endpoint", locality: "endpoint", availability: "needs_endpoint", selected: false },
   ];
   return {
     preferred_engine: "auto",
@@ -83,7 +82,9 @@ describe("VlmSection", () => {
     // "unavailable".
     expect(screen.getAllByText("Needs binary")).toHaveLength(2);
     expect(screen.getByText("Needs endpoint URL")).toBeTruthy();
-    expect(screen.getByText("Needs API key")).toBeTruthy();
+    // No key-gated row: the endpoint's key is optional, so no row can ever say
+    // "needs API key".
+    expect(screen.queryByText("Needs API key")).toBeNull();
     expect(
       screen.getByText(/No engine configured/),
     ).toBeTruthy();
@@ -177,7 +178,7 @@ describe("VlmSection", () => {
       ]),
     );
     render(<VlmSection onError={onError} />);
-    await screen.findByText("Self-hosted endpoint");
+    await screen.findByText("OpenAI-compatible endpoint");
     // The key field renders as "already set", never with the material in it.
     const key = screen.getByLabelText("API key") as HTMLInputElement;
     expect(key.value).toBe("");
@@ -203,21 +204,23 @@ describe("VlmSection", () => {
       ]),
     );
     render(<VlmSection onError={onError} />);
-    await screen.findByText("Self-hosted endpoint");
+    await screen.findByText("OpenAI-compatible endpoint");
     await user.click(screen.getAllByRole("button", { name: "Clear" }).at(-1)!);
     await waitFor(() =>
       expect(ipc.settingsSetVlmEndpoint).toHaveBeenCalledWith({ url: "" }),
     );
   });
 
-  it("the cloud row is a status row — it offers no second key editor", async () => {
+  // Every row is an editor. There is no status-only row explaining that some
+  // other section owns this section's config — the endpoint row owns its key,
+  // and nothing here reads the Transcription key.
+  it("renders one editable row per backend and no borrowed-key status row", async () => {
     render(<VlmSection onError={onError} />);
-    await screen.findByText("Cloud VLM");
-    expect(
-      screen.getByText(/Uses the OpenAI API key from the Transcription section/),
-    ).toBeTruthy();
-    // Two local rows + one endpoint row = 3 Save buttons; the cloud row adds none.
+    await screen.findByText("Qwen3-VL (local)");
+    // Two local rows + one endpoint row, each with its own Save.
     expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(3);
+    expect(screen.queryByText(/Transcription section/)).toBeNull();
+    expect(screen.queryByText(/Cloud VLM/)).toBeNull();
   });
 
   it("changing the preferred engine persists it and re-fetches", async () => {
@@ -225,9 +228,9 @@ describe("VlmSection", () => {
     render(<VlmSection onError={onError} />);
     await screen.findByText("Qwen3-VL (local)");
     await user.click(screen.getByRole("combobox", { name: "Video-understanding engine" }));
-    await user.click(await screen.findByRole("option", { name: "Cloud VLM" }));
+    await user.click(await screen.findByRole("option", { name: "OpenAI-compatible endpoint" }));
     await waitFor(() =>
-      expect(ipc.settingsSetVlmPreferred).toHaveBeenCalledWith("cloud"),
+      expect(ipc.settingsSetVlmPreferred).toHaveBeenCalledWith("byo_endpoint"),
     );
     expect(ipc.settingsGetVlmBackends.mock.calls.length).toBeGreaterThan(1);
   });

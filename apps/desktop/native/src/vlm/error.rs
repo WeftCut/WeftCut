@@ -1,20 +1,18 @@
 //! Shared error type for the video-understanding backends (local llama.cpp
-//! sidecar, BYO OpenAI-compatible endpoint, cloud VLM). Concrete backends map
-//! their spawn/HTTP failures onto these variants so the MCP tool layer renders
-//! one agent-friendly error shape regardless of which engine served the request.
+//! sidecar, OpenAI-compatible endpoint). Concrete backends map their spawn/HTTP
+//! failures onto these variants so the MCP tool layer renders one agent-friendly
+//! error shape regardless of which engine served the request.
 //!
-//! Architectural twin of [`speech::error::SpeechError`](crate::speech) — the
-//! variants line up 1:1 (missing key/endpoint, spawn/exit/timeout for the local
-//! sidecar, network/parse for HTTP), so the tool-layer error mapper reads the
-//! same way for both subsystems.
+//! Architectural twin of [`speech::error::SpeechError`](crate::speech), minus
+//! its `MissingKey`: this subsystem's networked backend is URL-gated, so an
+//! absent key is not a configuration gap — the remaining variants line up
+//! (missing endpoint, spawn/exit/timeout for the local sidecar, network/parse
+//! for HTTP) and the tool-layer error mapper reads the same way for both.
 
 use super::backend::VlmBackend;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VlmError {
-    #[error("no API key configured for {provider:?}; configure it in Settings → Transcription")]
-    MissingKey { provider: VlmBackend },
-
     #[error("{provider:?} rejected the API key (401 unauthorized)")]
     InvalidKey { provider: VlmBackend },
 

@@ -81,7 +81,7 @@ describe("vlm-config store", () => {
     expect(s.get().local.qwen3_vl).toBeUndefined();
   });
 
-  it("stores and clears a BYO endpoint", () => {
+  it("stores and clears an endpoint", () => {
     const { fs } = memFs();
     const s = createVlmConfigStore({ fs, path: PATH, dir: DIR });
     s.apply({ endpoint: { url: "http://localhost:8080/v1/chat/completions", model: "qwen2-vl" } });
@@ -92,30 +92,101 @@ describe("vlm-config store", () => {
     s.apply({ endpoint: null });
     expect(createVlmConfigStore({ fs, path: PATH, dir: DIR }).get().endpoint).toBeUndefined();
   });
+
+  // A `preferred_engine` of "cloud" is what a config written before the cloud
+  // backend was removed holds. It must degrade to "auto", not survive as a tag
+  // no resolver knows.
+  it("degrades a retired preferred_engine tag to auto", () => {
+    const s = store({ [PATH]: '{ "preferred_engine": "cloud", "local": {} }' });
+    expect(s.get().preferred_engine).toBe("auto");
+  });
+
+  it("never reads a legacy plaintext endpoint api_key back into the config", () => {
+    const s = store({
+      [PATH]:
+        '{ "preferred_engine": "auto", "local": {}, "endpoint": { "url": "http://h/v1", "api_key": "sk-legacy" } }',
+    });
+    expect(s.get().endpoint).toEqual({ url: "http://h/v1" });
+  });
+});
+
+describe("takeLegacyEndpointKey", () => {
+  it("returns the plaintext key once and scrubs it from disk", () => {
+    const { fs, files } = memFs({
+      [PATH]:
+        '{ "preferred_engine": "auto", "local": {}, "endpoint": { "url": "http://h/v1", "model": "m", "api_key": "  sk-legacy  " } }',
+    });
+    const s = createVlmConfigStore({ fs, path: PATH, dir: DIR });
+    expect(s.takeLegacyEndpointKey()).toBe("sk-legacy");
+    // Scrubbed: the field is gone from the file, the rest of the config intact.
+    expect(files.get(PATH)).not.toContain("api_key");
+    expect(files.get(PATH)).not.toContain("sk-legacy");
+    expect(s.get().endpoint).toEqual({ url: "http://h/v1", model: "m" });
+    // Idempotent — a second launch finds nothing to move.
+    expect(s.takeLegacyEndpointKey()).toBeNull();
+  });
+
+  it("is a no-op with no file, no endpoint, or no key field", () => {
+    expect(store().takeLegacyEndpointKey()).toBeNull();
+    expect(store({ [PATH]: '{ "local": {} }' }).takeLegacyEndpointKey()).toBeNull();
+    expect(
+      store({ [PATH]: '{ "local": {}, "endpoint": { "url": "http://h/v1" } }' })
+        .takeLegacyEndpointKey(),
+    ).toBeNull();
+    expect(store({ [PATH]: "{not json" }).takeLegacyEndpointKey()).toBeNull();
+  });
+
+  it("scrubs a blank leftover key field but reports nothing to move", () => {
+    const { fs, files } = memFs({
+      [PATH]: '{ "local": {}, "endpoint": { "url": "http://h/v1", "api_key": "   " } }',
+    });
+    const s = createVlmConfigStore({ fs, path: PATH, dir: DIR });
+    expect(s.takeLegacyEndpointKey()).toBeNull();
+    expect(files.get(PATH)).not.toContain("api_key");
+  });
 });
 
 describe("toVlmBackendSnapshot", () => {
-  it("maps local + endpoint + cloud key into the Rust-tagged BackendConfig shapes", () => {
+  it("maps local + endpoint into the Rust-tagged BackendConfig shapes, key folded into the endpoint entry", () => {
     const snap = toVlmBackendSnapshot(
       {
         preferred_engine: "auto",
         local: { qwen3_vl: { binary: "/b/cli", model: "/m/q.gguf", mmproj: "/m/mm.gguf" } },
         endpoint: { url: "http://h/v1/chat/completions", model: "m" },
       },
-      "sk-cloud",
+      "  sk-endpoint  ",
     );
     expect(snap.qwen3_vl).toEqual({ kind: "local", binary: "/b/cli", model: "/m/q.gguf", mmproj: "/m/mm.gguf" });
-    expect(snap.byo_endpoint).toEqual({ kind: "endpoint", url: "http://h/v1/chat/completions", model: "m" });
-    expect(snap.cloud).toEqual({ kind: "api_key", key: "sk-cloud" });
+    expect(snap.byo_endpoint).toEqual({
+      kind: "endpoint",
+      url: "http://h/v1/chat/completions",
+      api_key: "sk-endpoint",
+      model: "m",
+    });
+    expect(Object.keys(snap)).toHaveLength(2);
   });
 
-  it("omits the cloud entry when there is no key, and endpoint when URL blank", () => {
+  it("omits the endpoint entry when the URL is blank, key or no key", () => {
     const snap = toVlmBackendSnapshot(
       { preferred_engine: "auto", local: {}, endpoint: { url: "   " } },
-      null,
+      "sk-endpoint",
     );
-    expect(snap.cloud).toBeUndefined();
     expect(snap.byo_endpoint).toBeUndefined();
     expect(Object.keys(snap)).toHaveLength(0);
+  });
+
+  // A key alone configures nothing — availability is URL-gated, so a stored key
+  // with no endpoint must not put an entry in the snapshot at all.
+  it("a key with no endpoint configured yields no entry", () => {
+    const snap = toVlmBackendSnapshot({ preferred_engine: "auto", local: {} }, "sk-endpoint");
+    expect(Object.keys(snap)).toHaveLength(0);
+  });
+
+  it("omits api_key when the endpoint has none, so a self-hosted server sends no header", () => {
+    const snap = toVlmBackendSnapshot(
+      { preferred_engine: "auto", local: {}, endpoint: { url: "http://h/v1" } },
+      null,
+    );
+    expect(snap.byo_endpoint).toEqual({ kind: "endpoint", url: "http://h/v1" });
   });
 });

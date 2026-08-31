@@ -6,7 +6,7 @@
 //! setters populate. The video-understanding subsystem holds **no resident
 //! state**: `describe_clip` takes its merged `vlm_config` snapshot as a call
 //! argument, so this listing does too. Nothing is persisted here — Electron main
-//! owns `vlm_config.json` and the safeStorage cloud key, merges them
+//! owns `vlm_config.json` and the safeStorage endpoint key, merges them
 //! (`toVlmBackendSnapshot`), and injects the result. This command is a PURE
 //! availability report over whatever it is handed.
 //!
@@ -22,8 +22,8 @@ use crate::vlm::resolve::select_backend;
 #[serde(rename_all = "camelCase")]
 pub struct VlmBackendsArgs {
     /// The user's preferred engine tag (`"qwen3_vl"` / `"minicpm_v"` /
-    /// `"byo_endpoint"` / `"cloud"`), or `None`/`"auto"` for automatic (fall
-    /// through `DEFAULT_ORDER`, which is local-first).
+    /// `"byo_endpoint"`), or `None`/`"auto"` for automatic (fall through
+    /// `DEFAULT_ORDER`, which is local-first).
     pub preferred: Option<String>,
     /// The merged backend-config snapshot, keyed by [`VlmBackend::as_str`] —
     /// the SAME map `describe_clip` receives, from the same producer. Absent or
@@ -48,10 +48,9 @@ pub struct VlmBackendStatus {
     /// Stable wire tag (`VlmBackend::as_str`).
     pub backend: String,
     pub label: String,
-    /// `"cloud"` | `"local"` | `"endpoint"`.
+    /// `"local"` | `"endpoint"`.
     pub locality: String,
-    /// `"available"` | `"needs_key"` | `"needs_binary"` | `"needs_model"` |
-    /// `"needs_endpoint"`.
+    /// `"available"` | `"needs_binary"` | `"needs_model"` | `"needs_endpoint"`.
     pub availability: String,
     /// True on the single backend the description resolver would use right now
     /// given the user's preference + what is available. `false` on every row
@@ -60,11 +59,11 @@ pub struct VlmBackendStatus {
 }
 
 /// Stable wire tag for an [`Availability`] verdict. Mirrors
-/// `speech::availability_tag`, plus the endpoint locality STT does not have.
+/// `speech::availability_tag`, plus the endpoint locality STT does not have and
+/// minus its `needs_key` (nothing here is key-gated).
 fn availability_tag(a: Availability) -> &'static str {
     match a {
         Availability::Available => "available",
-        Availability::NeedsKey => "needs_key",
         Availability::NeedsBinary => "needs_binary",
         Availability::NeedsModel => "needs_model",
         Availability::NeedsEndpoint => "needs_endpoint",
@@ -95,7 +94,6 @@ pub async fn settings_get_vlm_backends(
             backend: p.as_str().to_string(),
             label: p.label().to_string(),
             locality: match p.locality() {
-                Locality::Cloud => "cloud",
                 Locality::Local => "local",
                 Locality::Endpoint => "endpoint",
             }
@@ -118,6 +116,17 @@ mod tests {
         BackendConfig::Endpoint { url: url.into(), api_key: None, model: None }
     }
 
+    /// A local config whose three files exist, so it reports `Available`.
+    fn present_local(dir: &std::path::Path) -> BackendConfig {
+        let binary = dir.join("llama-mtmd-cli");
+        let model = dir.join("qwen.gguf");
+        let mmproj = dir.join("mmproj.gguf");
+        for p in [&binary, &model, &mmproj] {
+            std::fs::write(p, b"\x00").unwrap();
+        }
+        BackendConfig::Local { binary, model, mmproj, device: None }
+    }
+
     #[tokio::test]
     async fn empty_config_lists_every_backend_with_its_own_gap_and_nothing_selected() {
         let rows = settings_get_vlm_backends(None, HashMap::new()).await.unwrap();
@@ -127,50 +136,55 @@ mod tests {
         let by = |tag: &str| rows.iter().find(|r| r.backend == tag).unwrap();
         assert_eq!(by("qwen3_vl").availability, "needs_binary");
         assert_eq!(by("byo_endpoint").availability, "needs_endpoint");
-        assert_eq!(by("cloud").availability, "needs_key");
         assert_eq!(by("byo_endpoint").locality, "endpoint");
+        assert_eq!(by("qwen3_vl").locality, "local");
     }
 
     #[tokio::test]
     async fn selected_follows_the_resolver_and_honors_preference() {
+        let dir = tempfile::tempdir().unwrap();
         let cfg = cfg_of(vec![
+            ("qwen3_vl", present_local(dir.path())),
             ("byo_endpoint", endpoint("http://localhost:8080/v1/chat/completions")),
-            ("cloud", BackendConfig::ApiKey { key: "sk-x".into() }),
         ]);
-        // Automatic: DEFAULT_ORDER is local-first, so the endpoint outranks cloud.
+        // Automatic: DEFAULT_ORDER is local-first, so the on-device engine wins.
         let rows = settings_get_vlm_backends(None, cfg.clone()).await.unwrap();
+        assert_eq!(rows.iter().find(|r| r.selected).map(|r| r.backend.as_str()), Some("qwen3_vl"));
+        // An explicit preference that IS available wins.
+        let rows = settings_get_vlm_backends(Some("byo_endpoint".into()), cfg.clone())
+            .await
+            .unwrap();
         assert_eq!(
             rows.iter().find(|r| r.selected).map(|r| r.backend.as_str()),
             Some("byo_endpoint"),
         );
-        // An explicit preference that IS available wins.
-        let rows = settings_get_vlm_backends(Some("cloud".into()), cfg.clone()).await.unwrap();
-        assert_eq!(rows.iter().find(|r| r.selected).map(|r| r.backend.as_str()), Some("cloud"));
         // "auto" is what the TS store spells; it must read as NO preference.
         let rows = settings_get_vlm_backends(Some("auto".into()), cfg).await.unwrap();
-        assert_eq!(
-            rows.iter().find(|r| r.selected).map(|r| r.backend.as_str()),
-            Some("byo_endpoint"),
-        );
+        assert_eq!(rows.iter().find(|r| r.selected).map(|r| r.backend.as_str()), Some("qwen3_vl"));
     }
 
     #[tokio::test]
     async fn a_preference_that_is_unavailable_falls_through_to_what_is() {
-        let cfg = cfg_of(vec![("cloud", BackendConfig::ApiKey { key: "sk-x".into() })]);
-        // qwen3_vl preferred but unconfigured => the walk continues to cloud.
+        let cfg = cfg_of(vec![("byo_endpoint", endpoint("http://h/v1/chat/completions"))]);
+        // qwen3_vl preferred but unconfigured => the walk continues to the endpoint.
         let rows = settings_get_vlm_backends(Some("qwen3_vl".into()), cfg).await.unwrap();
-        assert_eq!(rows.iter().find(|r| r.selected).map(|r| r.backend.as_str()), Some("cloud"));
+        assert_eq!(
+            rows.iter().find(|r| r.selected).map(|r| r.backend.as_str()),
+            Some("byo_endpoint"),
+        );
     }
 
     #[tokio::test]
     async fn args_deserialize_from_the_camel_case_wire_shape() {
         let a: VlmBackendsArgs = serde_json::from_value(serde_json::json!({
             "preferred": "qwen3_vl",
-            "vlmConfig": { "cloud": { "kind": "api_key", "key": "sk-x" } },
+            "vlmConfig": {
+                "byo_endpoint": { "kind": "endpoint", "url": "http://h/v1/chat/completions" },
+            },
         }))
         .unwrap();
         assert_eq!(a.preferred.as_deref(), Some("qwen3_vl"));
-        assert!(a.vlm_config.contains_key("cloud"));
+        assert!(a.vlm_config.contains_key("byo_endpoint"));
         // An omitted config map is the "nothing configured yet" default, not an error.
         let a: VlmBackendsArgs = serde_json::from_value(serde_json::json!({})).unwrap();
         assert!(a.vlm_config.is_empty());

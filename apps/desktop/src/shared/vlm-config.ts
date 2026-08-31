@@ -3,26 +3,37 @@
 // (consumer via ipc). One definition → no main↔renderer drift. Twin of
 // shared/speech-config.ts.
 //
-// Non-secret config only; the cloud API key lives in safeStorage (main/keys.ts).
-// See ADR 0036 "Config splits by secrecy".
+// Non-secret config only; the endpoint's optional API key lives in safeStorage
+// (main/keys.ts) under VLM_ENDPOINT_KEY_TAG. See ADR 0036 "Config splits by
+// secrecy".
 
 /// The engine the user prefers for description. `"auto"` lets the resolver pick
 /// by availability (its local-first default order). The concrete tags mirror the
 /// Rust `VlmBackend::as_str` wire contract.
+///
+/// There is no hosted-provider tag: a hosted VLM is `"byo_endpoint"` pointed at
+/// the provider's URL, because the two would be the same HTTP describer with the
+/// same request shape (see native/src/vlm/endpoint.rs). A `vlm_config.json` left
+/// over from when `"cloud"` was a tag degrades to `"auto"` — the store validates
+/// against VLM_PREFERRED_ENGINES rather than trusting the file.
 export type VlmPreferredEngine =
   | "auto"
   | "qwen3_vl"
   | "minicpm_v"
-  | "byo_endpoint"
-  | "cloud";
+  | "byo_endpoint";
 
 export const VLM_PREFERRED_ENGINES: readonly VlmPreferredEngine[] = [
   "auto",
   "qwen3_vl",
   "minicpm_v",
   "byo_endpoint",
-  "cloud",
 ];
+
+/// The `cloud_keys.json` provider tag the endpoint's optional API key is stored
+/// under. Its own tag, not the speech section's `"openai"` entry: one secret,
+/// one editor — a key the user typed under Video understanding must not change
+/// what Transcription does, and vice versa.
+export const VLM_ENDPOINT_KEY_TAG = "vlm_endpoint";
 
 /// One local engine's on-disk config: the `llama-mtmd-cli` binary, the model
 /// GGUF, and its vision projector (`mmproj`) — all three are needed for vision.
@@ -36,24 +47,23 @@ export interface VlmLocalEngineConfig {
   device?: string;
 }
 
-/// A BYO OpenAI-compatible endpoint (self-hosted llama-server / vLLM / SGLang).
-/// `url` is the full `/v1/chat/completions` URL; `model` names the served model.
-/// `api_key` is optional — set only when a self-hosted server needs one. Unlike
-/// the cloud key it is persisted here in vlm_config.json, not safeStorage (kept
-/// out of logs by the redactor).
+/// An OpenAI-compatible endpoint — self-hosted (llama-server / vLLM / SGLang) or
+/// a hosted provider. `url` is the full `/v1/chat/completions` URL; `model` names
+/// the served model. NO key field: the optional API key is a credential and lives
+/// in safeStorage under [`VLM_ENDPOINT_KEY_TAG`], so nothing on this interface is
+/// secret and the whole file can be logged.
 export interface VlmEndpointConfig {
   url: string;
   model?: string;
-  api_key?: string;
 }
 
 /// The persisted VLM config (<userData>/vlm_config.json).
 export interface VlmConfig {
   preferred_engine: VlmPreferredEngine;
   /// Per-local-engine config, keyed by the backend tag (`"qwen3_vl"` /
-  /// `"minicpm_v"`). Cloud/endpoint backends never appear here.
+  /// `"minicpm_v"`). The endpoint backend never appears here.
   local: Record<string, VlmLocalEngineConfig>;
-  /// The single BYO endpoint config, when configured.
+  /// The single endpoint config, when configured.
   endpoint?: VlmEndpointConfig;
 }
 

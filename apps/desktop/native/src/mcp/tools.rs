@@ -1053,9 +1053,9 @@ pub(super) struct DescribeClipArgs {
     #[serde(default)]
     pub focus: Option<String>,
     /// Optional STRICT backend override: `"qwen3_vl"` | `"minicpm_v"` |
-    /// `"byo_endpoint"` | `"cloud"`. When set, that engine serves the request or
-    /// the call errors naming its exact gap — it never substitutes another
-    /// engine, so an explicit local choice can never leak frames to the cloud.
+    /// `"byo_endpoint"`. When set, that engine serves the request or the call
+    /// errors naming its exact gap — it never substitutes another engine, so an
+    /// explicit local choice can never leak frames over the network.
     /// When omitted, selection is preference then availability. Unknown → rejected.
     #[serde(default)]
     pub backend: Option<String>,
@@ -1196,7 +1196,7 @@ fn map_vlm_error(e: crate::vlm::VlmError) -> McpToolError {
     use crate::vlm::VlmError as E;
     let message = e.to_string();
     match e {
-        E::MissingKey { .. } | E::InvalidKey { .. } | E::MissingEndpoint { .. } => {
+        E::InvalidKey { .. } | E::MissingEndpoint { .. } => {
             McpToolError::invalid_request(message, None)
         }
         E::RateLimited { .. } | E::Provider { .. } | E::Network(_) => {
@@ -1265,7 +1265,7 @@ pub(super) async fn describe_clip(
                 .ok_or_else(|| {
                     McpToolError::invalid_params(
                         format!(
-                            "unknown backend {tag:?}; expected \"qwen3_vl\", \"minicpm_v\", \"byo_endpoint\", or \"cloud\""
+                            "unknown backend {tag:?}; expected \"qwen3_vl\", \"minicpm_v\", or \"byo_endpoint\""
                         ),
                         None,
                     )

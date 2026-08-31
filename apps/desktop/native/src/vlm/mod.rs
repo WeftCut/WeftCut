@@ -16,7 +16,8 @@
 //!   converging on [`description::DescSegment`] (↔ `Segment`).
 //! - [`sidecar::LlamaMtmdSidecar`] (↔ the whisper.cpp/FunASR sidecar) — one-shot
 //!   `llama-mtmd-cli` child, one spawn per clip.
-//! - [`endpoint::OpenAiCompatDescriber`] — BYO endpoint + cloud (ticket 07).
+//! - [`endpoint::OpenAiCompatDescriber`] — the one HTTP describer, self-hosted
+//!   or hosted (ticket 07); there is no separate cloud-provider backend.
 //! - [`resolve`] (↔ `resolve_transcriber` / `_exact`) — preference-then-
 //!   availability + a strict, privacy-strict per-call override.
 //!

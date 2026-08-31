@@ -1,7 +1,8 @@
-//! OpenAI-compatible `/v1/chat/completions` describer — backs BOTH the BYO
-//! endpoint and the cloud VLM backends (ticket 07). They differ only in URL /
-//! key / model; the request shape and the output style are identical, so one
-//! impl serves both.
+//! OpenAI-compatible `/v1/chat/completions` describer — backs the
+//! [`ByoEndpoint`](super::backend::VlmBackend::ByoEndpoint) backend (ticket 07).
+//! Self-hosted (`llama-server`, vLLM, SGLang) and hosted providers differ only
+//! in URL / key / model, so there is ONE impl and no hosted-provider backend of
+//! its own: pointing this at `api.openai.com` is the hosted case.
 //!
 //! Same frame-sampling input as the local sidecar, adapted to the wire by
 //! [`build_request_body`]; the reply is read by `extract_content` and tagged
@@ -9,7 +10,8 @@
 //! `SceneDescription` shape as the local path.
 //!
 //! Reuses [`speech::http`](crate::speech)'s pooled `reqwest::Client` — one TLS
-//! stack, one connection pool across both cloud subsystems.
+//! stack, one connection pool across both networked subsystems. That client is
+//! the ONLY thing this module shares with speech; its config is its own.
 
 use async_trait::async_trait;
 use base64::Engine;
@@ -23,12 +25,6 @@ use super::describer::{DescribeRequest, Focus, SceneDescriber, TimedFrame};
 use super::error::VlmError;
 use super::parser::RawDescription;
 use super::sidecar::build_prompt;
-
-/// The hosted-cloud default endpoint + model (OpenAI-compatible). BYO overrides
-/// both from its `Endpoint` config; cloud uses these unless the config names a
-/// different model.
-pub const CLOUD_URL: &str = "https://api.openai.com/v1/chat/completions";
-pub const CLOUD_MODEL: &str = "gpt-4o";
 
 /// Describer over an OpenAI-compatible chat-completions endpoint.
 pub struct OpenAiCompatDescriber {

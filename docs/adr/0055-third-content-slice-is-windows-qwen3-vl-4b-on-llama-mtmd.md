@@ -82,20 +82,20 @@ notices travel with the managed-content record, and the download manager fetches
 from upstream on the user's request rather than redistributing either.
 
 **The Settings surface.** Video understanding gets its own Settings category
-beside Transcription rather than more rows under it, because it has a third
-locality speech does not: a self-hosted OpenAI-compatible endpoint is a
-first-class way to run a VLM, and it configures a URL rather than a file. The
-listing reuses the Rust resolver's own `select_backend` for its "active engine"
-line, so the panel and `describe_clip` cannot disagree about what would serve a
-call. Its cloud row is a status row, not a second key editor: the cloud VLM
-rides the OpenAI key the Transcription section already owns, and two editors for
-one secret can only drift.
+beside Transcription rather than more rows under it, because it has a locality
+speech does not: an OpenAI-compatible endpoint is a first-class way to run a VLM,
+and it configures a URL rather than a file. The listing reuses the Rust
+resolver's own `select_backend` for its "active engine" line, so the panel and
+`describe_clip` cannot disagree about what would serve a call. Every row is an
+editor, and the section shares no configuration with Transcription — not even a
+key: the endpoint's optional API key is stored under its own `safeStorage` tag,
+so a secret typed here changes nothing about transcription.
 
 ## Consequences
 
 - Slice completion means scene description works from a fresh Windows install
   without the user locating any file by hand; manual paths remain a supported
-  fallback, as does a self-hosted endpoint or a cloud key.
+  fallback, as does an OpenAI-compatible endpoint.
 - The catalog schema gains a second consumer family (`VlmConsumer`) and two
   `kind` values; the managed-download component is now shared by both families
   and discriminates on one.

@@ -1,11 +1,11 @@
 //! Per-backend configuration (split by secrecy) and the availability check the
 //! resolver uses to decide whether a backend can run right now.
 //!
-//! Same secrecy split as ADR 0036 (STT): a cloud VLM **key** is secret and
-//! arrives from the `safeStorage`-backed cache (`cloud_keys.json`); a local
-//! engine's **paths** (binary, model GGUF, mmproj GGUF, device) are non-secret
-//! and come from the TS-owned `vlm-config` store; a BYO endpoint's **URL** is
-//! non-secret (its optional key is secret). Electron main merges all of it into
+//! Same secrecy split as ADR 0036 (STT): a local engine's **paths** (binary,
+//! model GGUF, mmproj GGUF, device) and the endpoint's **URL** + model are
+//! non-secret and come from the TS-owned `vlm-config` store; the endpoint's
+//! optional **API key** is secret and arrives from the `safeStorage`-backed
+//! cache (`cloud_keys.json`, tag `vlm_endpoint`). Electron main merges both into
 //! the single `vlm_config: HashMap<String, BackendConfig>` snapshot the
 //! stateless Rust resolver reads (keyed by [`VlmBackend::as_str`]).
 //!
@@ -26,8 +26,6 @@ use super::backend::{Locality, VlmBackend};
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BackendConfig {
-    /// A cloud backend's API key (secret). Injected from `cloud_keys.json`.
-    ApiKey { key: String },
     /// A local sidecar's on-disk config: the `llama-mtmd-cli` binary, the model
     /// GGUF, and its vision projector (`--mmproj`). A text-only GGUF without the
     /// mmproj cannot do vision, so mmproj is required for `Available`.
@@ -39,9 +37,11 @@ pub enum BackendConfig {
         #[serde(default)]
         device: Option<String>,
     },
-    /// A BYO OpenAI-compatible endpoint. `url` is the full
-    /// `/v1/chat/completions` URL; `api_key` is optional (self-hosted servers
-    /// usually need none); `model` names the served model (defaults downstream).
+    /// An OpenAI-compatible endpoint — self-hosted or a hosted provider. `url`
+    /// is the full `/v1/chat/completions` URL; `api_key` is optional (self-hosted
+    /// servers usually need none, hosted ones do) and is merged in from
+    /// safeStorage, never read off disk; `model` names the served model
+    /// (defaults downstream).
     Endpoint {
         url: String,
         #[serde(default)]
@@ -55,22 +55,21 @@ pub enum BackendConfig {
 /// missing piece — so the resolver's error names the exact gap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Availability {
-    /// Ready: cloud has a key, local has all three files, endpoint has a URL.
+    /// Ready: local has all three files, endpoint has a URL.
     Available,
-    /// Cloud backend with no API key configured.
-    NeedsKey,
     /// Local backend whose CLI binary path does not exist on disk.
     NeedsBinary,
     /// Local backend whose model GGUF or mmproj GGUF is missing.
     NeedsModel,
-    /// BYO endpoint with no URL configured.
+    /// Endpoint backend with no URL configured.
     NeedsEndpoint,
 }
 
 /// Decide whether `backend` can run given its (optional) config map entry.
 ///
-/// Presence of the file / URL / key only — the liveness spawn is a separate
-/// concern. Each [`Availability`] variant names the gap it stands for.
+/// Presence of the files / URL only — the endpoint's API key is optional, and
+/// the liveness spawn is a separate concern. Each [`Availability`] variant names
+/// the gap it stands for.
 ///
 /// A config entry whose shape mismatches the backend's locality is treated as
 /// "the thing it needs is absent".
@@ -94,10 +93,6 @@ pub fn availability(backend: VlmBackend, cfg: Option<&BackendConfig>) -> Availab
             }
             _ => Availability::NeedsEndpoint,
         },
-        Locality::Cloud => match cfg {
-            Some(BackendConfig::ApiKey { .. }) => Availability::Available,
-            _ => Availability::NeedsKey,
-        },
     }
 }
 
@@ -112,15 +107,6 @@ pub fn entry<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cloud_available_iff_api_key_present() {
-        assert_eq!(
-            availability(VlmBackend::Cloud, Some(&BackendConfig::ApiKey { key: "sk-x".into() })),
-            Availability::Available,
-        );
-        assert_eq!(availability(VlmBackend::Cloud, None), Availability::NeedsKey);
-    }
 
     #[test]
     fn endpoint_available_iff_url_nonempty() {
@@ -145,6 +131,20 @@ mod tests {
         assert_eq!(
             availability(VlmBackend::ByoEndpoint, None),
             Availability::NeedsEndpoint,
+        );
+        // The URL gates availability; the key never does. A hosted provider
+        // needs one and a self-hosted server usually does not, so a missing key
+        // must not read as "unavailable" — the endpoint reports its own 401.
+        assert_eq!(
+            availability(
+                VlmBackend::ByoEndpoint,
+                Some(&BackendConfig::Endpoint {
+                    url: "https://api.example.com/v1/chat/completions".into(),
+                    api_key: Some("sk-x".into()),
+                    model: Some("some-vlm".into()),
+                }),
+            ),
+            Availability::Available,
         );
     }
 
@@ -186,14 +186,28 @@ mod tests {
         .unwrap();
         assert!(matches!(local, BackendConfig::Local { .. }));
 
-        let key: BackendConfig =
-            serde_json::from_value(serde_json::json!({ "kind": "api_key", "key": "sk-x" })).unwrap();
-        assert_eq!(key, BackendConfig::ApiKey { key: "sk-x".into() });
-
         let ep: BackendConfig = serde_json::from_value(serde_json::json!({
             "kind": "endpoint", "url": "http://h/v1/chat/completions"
         }))
         .unwrap();
         assert!(matches!(ep, BackendConfig::Endpoint { .. }));
+
+        // The key rides the SAME entry main merges it into — it is not its own
+        // config shape any more.
+        let keyed: BackendConfig = serde_json::from_value(serde_json::json!({
+            "kind": "endpoint",
+            "url": "https://api.example.com/v1/chat/completions",
+            "api_key": "sk-x",
+            "model": "some-vlm",
+        }))
+        .unwrap();
+        assert_eq!(
+            keyed,
+            BackendConfig::Endpoint {
+                url: "https://api.example.com/v1/chat/completions".into(),
+                api_key: Some("sk-x".into()),
+                model: Some("some-vlm".into()),
+            },
+        );
     }
 }

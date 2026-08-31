@@ -11,17 +11,17 @@ use std::collections::HashMap;
 use super::backend::{VlmBackend, DEFAULT_ORDER};
 use super::config::{availability, entry, Availability, BackendConfig};
 use super::describer::SceneDescriber;
-use super::endpoint::{OpenAiCompatDescriber, CLOUD_MODEL, CLOUD_URL};
+use super::endpoint::OpenAiCompatDescriber;
 use super::error::VlmError;
 use super::sidecar::{LlamaMtmdSidecar, OutputStyle};
 
 /// Actionable "nothing can describe" message, naming every remedy (local engine,
-/// BYO endpoint, cloud key). Shared so the tool layer's error and these tests
+/// OpenAI-compatible endpoint). Shared so the tool layer's error and these tests
 /// read the same string.
 pub const NO_DESCRIBER_CONFIGURED: &str =
     "no video-understanding backend available — configure a local engine (llama-mtmd-cli binary \
-     + Qwen3-VL GGUF model + mmproj) in Settings, point WeftCut at a self-hosted \
-     OpenAI-compatible endpoint, or add a cloud VLM API key";
+     + Qwen3-VL GGUF model + mmproj) in Settings, or point WeftCut at an OpenAI-compatible \
+     endpoint";
 
 /// Resolve a describer by **preference then availability**. Returns the chosen
 /// backend alongside the describer so the tool layer can report which engine
@@ -38,7 +38,7 @@ pub fn resolve_scene_describer(
 /// STRICT single-backend resolution for an explicit per-call override: build
 /// `backend` or error naming exactly what is missing. Never falls back — the
 /// caller asked for THIS engine (possibly local-for-privacy), so substituting
-/// another (possibly cloud) engine would silently violate that choice.
+/// another (possibly networked) engine would silently violate that choice.
 pub fn resolve_scene_describer_exact(
     backend: VlmBackend,
     cfg: &HashMap<String, BackendConfig>,
@@ -51,7 +51,6 @@ pub fn resolve_scene_describer_exact(
                 message: "backend is configured but could not be constructed".into(),
             })
         }
-        Availability::NeedsKey => Err(VlmError::MissingKey { provider: backend }),
         Availability::NeedsEndpoint => Err(VlmError::MissingEndpoint { provider: backend }),
         Availability::NeedsBinary => Err(VlmError::Provider {
             provider: backend,
@@ -83,7 +82,7 @@ pub fn select_backend(
 
 /// Build the concrete describer for an already-selected, `Available` backend.
 /// Both local models drive the SAME `LlamaMtmdSidecar` (differing only in the
-/// output style tag); BYO + cloud share `OpenAiCompatDescriber`. A `None` arm
+/// output style tag); the endpoint uses `OpenAiCompatDescriber`. A `None` arm
 /// means a caller hand-built config against a shape the backend can't use.
 fn construct_describer(
     b: VlmBackend,
@@ -116,32 +115,23 @@ fn construct_describer(
                 VlmBackend::ByoEndpoint,
             )))
         }
-        (VlmBackend::Cloud, Some(BackendConfig::ApiKey { key })) => {
-            Some(Box::new(OpenAiCompatDescriber::new(
-                CLOUD_URL.to_string(),
-                Some(key.clone()),
-                CLOUD_MODEL.to_string(),
-                VlmBackend::Cloud,
-            )))
-        }
         _ => None,
     }
 }
 
-/// The `model` string for the result envelope — the model file stem (local),
-/// the configured / default endpoint model (BYO), or the cloud model.
+/// The `model` string for the result envelope — the model file stem (local) or
+/// the configured / default endpoint model.
 pub fn model_label(b: VlmBackend, cfg: Option<&BackendConfig>) -> String {
-    match (b, cfg) {
-        (_, Some(BackendConfig::Local { model, .. })) => model
+    match cfg {
+        Some(BackendConfig::Local { model, .. }) => model
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("local")
             .to_string(),
-        (_, Some(BackendConfig::Endpoint { model, .. })) => {
+        Some(BackendConfig::Endpoint { model, .. }) => {
             model.clone().unwrap_or_else(|| "endpoint".into())
         }
-        (VlmBackend::Cloud, _) => CLOUD_MODEL.to_string(),
-        _ => b.as_str().to_string(),
+        None => b.as_str().to_string(),
     }
 }
 
@@ -188,25 +178,28 @@ mod tests {
         assert_eq!(chosen, VlmBackend::Qwen3Vl);
     }
 
+    /// An endpoint config good enough to be `Available`.
+    fn present_endpoint(url: &str) -> BackendConfig {
+        BackendConfig::Endpoint {
+            url: url.into(),
+            api_key: None,
+            model: Some("qwen2-vl".into()),
+        }
+    }
+
     #[test]
     fn exact_unavailable_errors_instead_of_falling_back() {
-        // Cloud key present, but an explicit Qwen request must NOT substitute
-        // cloud — it errors naming the gap + the omit-`backend` remedy.
-        let cfg = cfg_with(&[("cloud", BackendConfig::ApiKey { key: "sk-x".into() })]);
+        // A reachable endpoint is configured, but an explicit Qwen request must
+        // NOT substitute it — that is the privacy rule: an explicit local choice
+        // never turns into a frame upload. It errors naming the gap + the
+        // omit-`backend` remedy.
+        let cfg = cfg_with(&[("byo_endpoint", present_endpoint("http://h/v1/chat/completions"))]);
         let Err(err) = resolve_scene_describer_exact(VlmBackend::Qwen3Vl, &cfg) else {
-            panic!("must not substitute cloud for an explicit local request");
+            panic!("must not substitute the endpoint for an explicit local request");
         };
         let msg = format!("{err}");
         assert!(msg.contains("binary was not found"), "names the gap: {msg}");
         assert!(msg.contains("omit `backend`"), "names the remedy: {msg}");
-    }
-
-    #[test]
-    fn exact_cloud_without_key_is_missing_key() {
-        let Err(err) = resolve_scene_describer_exact(VlmBackend::Cloud, &HashMap::new()) else {
-            panic!("no key must not resolve");
-        };
-        assert!(matches!(err, VlmError::MissingKey { .. }));
     }
 
     #[test]
@@ -219,27 +212,24 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_and_cloud_construct_when_configured() {
+    fn endpoint_constructs_and_an_explicit_preference_outranks_a_local_engine() {
+        let dir = tempfile::tempdir().unwrap();
         let cfg = cfg_with(&[
-            (
-                "byo_endpoint",
-                BackendConfig::Endpoint {
-                    url: "http://localhost:8080/v1/chat/completions".into(),
-                    api_key: None,
-                    model: Some("qwen2-vl".into()),
-                },
-            ),
-            ("cloud", BackendConfig::ApiKey { key: "sk-x".into() }),
+            ("byo_endpoint", present_endpoint("http://localhost:8080/v1/chat/completions")),
+            ("qwen3_vl", present_local(dir.path())),
         ]);
         assert!(resolve_scene_describer_exact(VlmBackend::ByoEndpoint, &cfg).is_ok());
-        assert!(resolve_scene_describer_exact(VlmBackend::Cloud, &cfg).is_ok());
-        // Preference honored: explicitly prefer cloud → cloud (even though BYO
-        // precedes it in DEFAULT_ORDER).
-        assert_eq!(select_backend(Some(VlmBackend::Cloud), &cfg), Some(VlmBackend::Cloud));
+        // Automatic is local-first…
+        assert_eq!(select_backend(None, &cfg), Some(VlmBackend::Qwen3Vl));
+        // …but an available explicit preference wins over DEFAULT_ORDER.
+        assert_eq!(
+            select_backend(Some(VlmBackend::ByoEndpoint), &cfg),
+            Some(VlmBackend::ByoEndpoint),
+        );
     }
 
     #[test]
-    fn model_label_is_the_local_file_stem() {
+    fn model_label_is_the_local_file_stem_or_the_endpoint_model() {
         let cfg = BackendConfig::Local {
             binary: PathBuf::from("/b/llama-mtmd-cli"),
             model: PathBuf::from("/m/Qwen3VL-4B-Instruct-Q4_K_M.gguf"),
@@ -247,13 +237,17 @@ mod tests {
             device: None,
         };
         assert_eq!(model_label(VlmBackend::Qwen3Vl, Some(&cfg)), "Qwen3VL-4B-Instruct-Q4_K_M");
-        assert_eq!(model_label(VlmBackend::Cloud, None), CLOUD_MODEL);
+        assert_eq!(
+            model_label(VlmBackend::ByoEndpoint, Some(&present_endpoint("http://h/v1"))),
+            "qwen2-vl",
+        );
+        // No config at all → the backend tag, so the envelope is never blank.
+        assert_eq!(model_label(VlmBackend::ByoEndpoint, None), "byo_endpoint");
     }
 
     #[test]
     fn no_provider_message_names_every_remedy() {
         assert!(NO_DESCRIBER_CONFIGURED.contains("local engine"));
         assert!(NO_DESCRIBER_CONFIGURED.contains("endpoint"));
-        assert!(NO_DESCRIBER_CONFIGURED.contains("cloud"));
     }
 }

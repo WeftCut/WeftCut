@@ -6,6 +6,7 @@ import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, Notification, protocol, shell } from 'electron'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
+import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
 import { setRuntimeSource, captureMotifFrameB64, setMotifStore, shutdownCaptureHost } from './motif/capture.js'
 import { UserMotifStore } from './motif/store.js'
@@ -400,7 +401,7 @@ app.whenReady().then(async () => {
   const speechConfig = createSpeechConfigStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'speech_config.json'), dir: app.getPath('userData') })
 
   // Video-understanding (VLM) backend config store — <userData>/vlm_config.json,
-  // the non-secret sibling of the cloud key (ticket 06). Unlike speech (pushed
+  // the non-secret sibling of the endpoint key (ticket 06). Unlike speech (pushed
   // onto the napi Backend), VLM config is injected per-call into describe_clip /
   // media://{id}/description (stateless, ADR 0024) via the provider passed to
   // startMcpHost below.
@@ -527,9 +528,21 @@ app.whenReady().then(async () => {
     startupNotices.push({ level: 'warn', code: 'keyring_unavailable' })
   }
 
+  // One-shot: an endpoint key an older build wrote to vlm_config.json in
+  // PLAINTEXT moves into safeStorage and is scrubbed from the file. Placed here
+  // (not at the store's construction) so safeStorage is known usable, and well
+  // ahead of the first `getVlm()` / Settings read below. No-op on every launch
+  // after the first, and on every profile that never had one.
+  const legacyVlmKey = vlmConfig.takeLegacyEndpointKey()
+  if (legacyVlmKey) setKey(VLM_ENDPOINT_KEY_TAG, legacyVlmKey)
+
   // Push any safeStorage-persisted cloud API keys into the backend cache so
   // reqwest providers + settings_test_provider see them without a renderer round-trip.
+  // The VLM endpoint key is skipped: the speech resolver would never read that
+  // tag, and pushing one subsystem's secret into the other's config cache is
+  // exactly the coupling this key's own tag exists to avoid.
   for (const [provider, key] of Object.entries(loadAllKeys())) {
+    if (provider === VLM_ENDPOINT_KEY_TAG) continue
     backend.setCloudKey(provider, key)
   }
   // …and the TS-owned local-engine config (non-secret binary/model paths) so the
@@ -736,11 +749,14 @@ app.whenReady().then(async () => {
     getTsHost: () => tsHost,
     getPreferredEngine: () => speechConfig.get().preferred_engine,
     getVlm: () => {
-      // Merge non-secret store config + the OpenAI cloud key (the VLM cloud
-      // backend is gpt-4o) into the snapshot the stateless describe_clip resolver
-      // reads; empty until the user configures an engine → "no backend available".
+      // Merge non-secret store config + the endpoint's own safeStorage key into
+      // the snapshot the stateless describe_clip resolver reads; empty until the
+      // user configures an engine → "no backend available".
       const cfg = vlmConfig.get()
-      return { config: toVlmBackendSnapshot(cfg, loadAllKeys().openai ?? null), preferred: cfg.preferred_engine }
+      return {
+        config: toVlmBackendSnapshot(cfg, loadAllKeys()[VLM_ENDPOINT_KEY_TAG] ?? null),
+        preferred: cfg.preferred_engine,
+      }
     },
     // Every MCP request and transport lifecycle event → a LogBus row
     // (docs/status-log.md § Producers).
@@ -922,25 +938,24 @@ app.whenReady().then(async () => {
     // gets the merged snapshot injected from it.
     if (channel === 'settings_get_vlm_backends') {
       const vc = vlmConfig.get()
+      const endpointKey = loadAllKeys()[VLM_ENDPOINT_KEY_TAG] ?? null
       const json = await backend!.invoke('settings_get_vlm_backends', JSON.stringify({
         preferred: vc.preferred_engine === 'auto' ? null : vc.preferred_engine,
         // The SAME merge describe_clip receives, so the panel's availability
         // badges and the resolver's actual verdict cannot disagree.
-        vlmConfig: toVlmBackendSnapshot(vc, loadAllKeys().openai ?? null),
+        vlmConfig: toVlmBackendSnapshot(vc, endpointKey),
       }))
       const rows = JSON.parse(json) as Array<{ backend: string; locality: string } & Record<string, unknown>>
       // Merge each row's stored NON-secret config so the UI can populate its
       // fields: local engines get their paths, the endpoint row its URL/model.
-      // The cloud row carries none (its key is secret and never echoed).
       return {
         preferred_engine: vc.preferred_engine,
         backends: rows.map((r) => {
           if (r.locality === 'local' && vc.local[r.backend]) return { ...r, local: vc.local[r.backend] }
           if (r.locality === 'endpoint' && vc.endpoint) {
-            // api_key is persisted (a self-hosted server may need one) but is
-            // still a credential: send presence, never the material.
-            const { api_key, ...rest } = vc.endpoint
-            return { ...r, endpoint: { ...rest, has_api_key: api_key !== undefined } }
+            // The key is a credential in safeStorage, so it is not on `vc` at
+            // all: send presence read from the keyring, never the material.
+            return { ...r, endpoint: { ...vc.endpoint, has_api_key: (endpointKey ?? '') !== '' } }
           }
           return r
         }),
@@ -974,17 +989,24 @@ app.whenReady().then(async () => {
     if (channel === 'settings_set_vlm_endpoint') {
       const a = (args ?? {}) as { url: string; model?: string; apiKey?: string | null }
       if (a.url.trim() === '') {
+        // Clearing the endpoint takes its key with it — a credential with no URL
+        // to send it to is a secret kept for nothing.
         vlmConfig.apply({ endpoint: null })
+        clearKey(VLM_ENDPOINT_KEY_TAG)
         return null
       }
-      // `apiKey: undefined` KEEPS the stored key (the UI never round-trips it,
-      // so an unedited field must not silently erase it); `null` clears it.
-      const kept = a.apiKey === undefined ? vlmConfig.get().endpoint?.api_key : (a.apiKey ?? undefined)
+      // The key goes to safeStorage, the URL/model to the store — same split as
+      // `settings_set_api_key` + `settings_set_local_backend` on the speech side.
+      // `apiKey: undefined` KEEPS the stored key (the UI never round-trips it, so
+      // an unedited field must not silently erase it); `null` or '' clears it.
+      if (a.apiKey !== undefined) {
+        // setKey treats an empty string as a clear, so both cases are one call.
+        setKey(VLM_ENDPOINT_KEY_TAG, a.apiKey ?? '')
+      }
       vlmConfig.apply({
         endpoint: {
           url: a.url,
           ...(a.model ? { model: a.model } : {}),
-          ...(kept ? { api_key: kept } : {}),
         },
       })
       return null

@@ -23,10 +23,12 @@ import { vlmEngineOptions } from "./vlmEngineOptions";
 /// backend BY LOCALITY. Self-fetches on mount and re-fetches after any mutation
 /// so the badges and the "active engine" line stay live.
 ///
-/// Three localities where speech has two, and the third is the reason this is
-/// its own section rather than more rows under Transcription: a self-hosted
-/// OpenAI-compatible endpoint is a first-class way to run a VLM, and it
-/// configures a URL, not a file.
+/// Two localities, and the endpoint one is the reason this is its own section
+/// rather than more rows under Transcription: an OpenAI-compatible endpoint is a
+/// first-class way to run a VLM, and it configures a URL, not a file. It is also
+/// the only networked row — there is no hosted-provider backend to give a row of
+/// its own, because pointing this one at a provider's URL IS that case. The
+/// section shares no config with Transcription, not even a key.
 export function VlmSection({ onError }: { onError: (msg: string) => void }) {
   const { t } = useTranslation();
   const [view, setView] = useState<VlmBackendsView | null>(null);
@@ -98,15 +100,13 @@ export function VlmSection({ onError }: { onError: (msg: string) => void }) {
               onChanged={refresh}
               onError={onError}
             />
-          ) : b.locality === "endpoint" ? (
+          ) : (
             <VlmEndpointRow
               key={b.backend}
               info={b}
               onChanged={refresh}
               onError={onError}
             />
-          ) : (
-            <VlmCloudRow key={b.backend} info={b} />
           ),
         )}
       </section>
@@ -122,8 +122,6 @@ function availabilityLabel(
   switch (a) {
     case "available":
       return t("settings.vlm_available");
-    case "needs_key":
-      return t("settings.vlm_needs_key");
     case "needs_binary":
       return t("settings.vlm_needs_binary");
     case "needs_model":
@@ -351,13 +349,14 @@ function VlmLocalRow({
   );
 }
 
-/// The BYO endpoint row: a full `/v1/chat/completions` URL, the model name the
-/// server serves, and an optional key for servers that want one.
+/// The endpoint row: a full `/v1/chat/completions` URL, the model name the server
+/// serves, and an optional key — blank for most self-hosted servers, required by
+/// a hosted provider.
 ///
-/// The key is write-only here. Main persists it (a self-hosted server may
-/// require one) but never echoes it back, so the field shows a "already set"
-/// placeholder and an untouched field leaves the stored key alone — the same
-/// contract as the cloud key inputs, for the same reason.
+/// The key is write-only here. Main puts it in safeStorage and never echoes it
+/// back, so the field shows an "already set" placeholder and an untouched field
+/// leaves the stored key alone — the same contract as the Transcription key
+/// inputs, for the same reason.
 function VlmEndpointRow({
   info,
   onChanged,
@@ -493,20 +492,3 @@ function VlmEndpointRow({
   );
 }
 
-/// The cloud row is a STATUS row, not an editor. The cloud VLM rides the same
-/// OpenAI key the Transcription section already manages (main merges it in), so
-/// a second key field here would write the one secret from two places and let
-/// them disagree on screen. It reports the shared key's effect and says where
-/// to change it.
-function VlmCloudRow({ info }: { info: VlmBackendInfo }) {
-  const { t } = useTranslation();
-  return (
-    <div className="settings-key-row">
-      <div className="settings-key-header">
-        <span className="settings-key-label">{info.label}</span>
-        <AvailabilityBadge info={info} />
-      </div>
-      <p className="settings-toggle-hint">{t("settings.vlm_cloud_shared_key")}</p>
-    </div>
-  );
-}

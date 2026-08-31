@@ -1879,7 +1879,9 @@ export async function settingsClearLocalBackend(backend: string): Promise<void> 
 // Video-understanding (VLM) backends — the Settings surface for `describe_clip`.
 // Structural twin of the speech block above; the differences all follow from
 // the subsystem being STATELESS (ADR 0024) and from vision needing an `mmproj`:
-//   * a third locality, `endpoint` (a self-hosted OpenAI-compatible server),
+//   * an `endpoint` locality (any OpenAI-compatible server, self-hosted or
+//     hosted) in place of speech's hosted-provider row — one HTTP describer
+//     covers both, so there is no cloud-provider backend here,
 //   * a third required local path, `mmproj` (the vision projector),
 //   * no Rust-side push on write — the store IS the state.
 // All five channels are intercepted in Electron main. VlmPreferredEngine /
@@ -1892,17 +1894,18 @@ import type {
 } from "../../shared/vlm-config";
 export type { VlmPreferredEngine, VlmLocalEngineConfig };
 
-/// Availability verdict tags mirroring Rust `vlm::config::Availability`.
+/// Availability verdict tags mirroring Rust `vlm::config::Availability`. No
+/// `needs_key` twin: nothing here is key-gated — the endpoint's key is optional,
+/// so its URL is what decides availability.
 export type VlmAvailability =
   | "available"
-  | "needs_key"
   | "needs_binary"
   | "needs_model"
   | "needs_endpoint";
 
-/// The endpoint row's stored config as the panel sees it. The persisted
-/// `api_key` is replaced by `has_api_key`: main never echoes credential
-/// material back to the renderer, so the field renders as "set" or blank.
+/// The endpoint row's stored config as the panel sees it. The API key lives in
+/// safeStorage, so it reaches the renderer only as `has_api_key`: main never
+/// echoes credential material back, and the field renders as "set" or blank.
 export interface VlmEndpointInfo {
   url: string;
   model?: string;
@@ -1911,12 +1914,11 @@ export interface VlmEndpointInfo {
 
 /// One backend row for the Settings → Video understanding panel. `local` is
 /// present only for local backends with stored config; `endpoint` only for the
-/// BYO row once configured; the cloud row configures a key instead (through the
-/// shared `settingsSetApiKey` surface).
+/// endpoint row once configured.
 export interface VlmBackendInfo {
   backend: string;
   label: string;
-  locality: "cloud" | "local" | "endpoint";
+  locality: "local" | "endpoint";
   availability: VlmAvailability;
   /// The one backend the resolver would use right now (preference + what is
   /// available). `false` on every row when nothing is configured.
@@ -1966,9 +1968,10 @@ export async function settingsClearVlmLocal(backend: string): Promise<void> {
   return invoke<void>("settings_clear_vlm_local", { backend });
 }
 
-/// Set the BYO endpoint, or clear it with an empty `url`. Omitting `apiKey`
-/// KEEPS whatever key is stored (the panel never round-trips it, so an
-/// untouched field must not erase one); pass `null` to clear it.
+/// Set the endpoint, or clear it with an empty `url` (which clears its stored
+/// key too). Omitting `apiKey` KEEPS whatever key is stored (the panel never
+/// round-trips it, so an untouched field must not erase one); pass `null` to
+/// clear it. Main routes the key to safeStorage, the URL/model to the store.
 export async function settingsSetVlmEndpoint(args: {
   url: string;
   model?: string;
