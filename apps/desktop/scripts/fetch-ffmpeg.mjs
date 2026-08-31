@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os'
 
 const FFMPEG_VERSION = '7.1.1'
 // SHA-256 of the version-pinned Windows archive (gyan 7.1.1 essentials build) —
-// verified, rejects a tampered/corrupt download. Linux (BtbN `n7.1` asset) is
+// verified, rejects a tampered/corrupt download. Linux (BtbN `n8.1` asset) is
 // ROLLING WITHIN its pinned major.minor line, so a pinned hash there would
 // break on every upstream rebuild; it stays size-validated only. macOS pins a
 // versioned martin-riedl build + hash (see FFMPEG_MAC_* below).
@@ -40,8 +40,8 @@ const MAX_ATTEMPTS = 3
 
 // GPLv3 §6 source pointers per OS, recorded into SOURCE-OFFER.txt. `upstream`
 // is the FFmpeg source for the pinned version (Linux is a rolling git snapshot
-// within n7.1 — the exact commit is embedded in the captured version string,
-// e.g. `n7.1.1-14-gXXXXXXX`); `builder` is where the binary provider publishes
+// within n8.1 — the exact commit is embedded in the captured version string,
+// e.g. `n8.1.1-14-gXXXXXXX`); `builder` is where the binary provider publishes
 // its build scripts/configuration.
 const SOURCES = {
   win: {
@@ -51,7 +51,7 @@ const SOURCES = {
     builder: 'https://www.gyan.dev/ffmpeg/builds/ (build provenance: https://github.com/GyanD/codexffmpeg)',
   },
   linux: {
-    archiveUrl: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-linux64-gpl-7.1.tar.xz',
+    archiveUrl: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz',
     upstream: 'https://git.ffmpeg.org/ffmpeg.git (checkout the commit named in the version string above)',
     builder: 'https://github.com/BtbN/FFmpeg-Builds (build scripts + per-release source snapshots)',
   },
@@ -165,7 +165,7 @@ function downloadWithRetry(url, outPath, label, expectedSha256) {
       continue
     }
     // Verify checksum when a hash is pinned (Windows + macOS pin a hash;
-    // Linux's rolling n7.1 asset does not)
+    // Linux's rolling n8.1 asset does not)
     if (expectedSha256) {
       const got = createHash('sha256').update(readFileSync(outPath)).digest('hex')
       if (got !== expectedSha256) {
@@ -239,11 +239,17 @@ function main() {
 
   } else if (plat === 'linux') {
     // BtbN/FFmpeg-Builds static GPL build (linux64) — GitHub CDN, reliable.
-    // Version-pinned to the `n7.1` asset (NOT `master`): it tracks the same 7.1.x
-    // line as the Windows build, so libavcodec 61 keeps `-vsync` working (master's
-    // avcodec 63 removed it, breaking the conformance e2e), and the GPL build ships
-    // libsvtav1 (AV1 8/10-bit export), plus vaapi + ffnvcodec for the hardware lanes.
-    // Archive layout: ffmpeg-n7.1-latest-linux64-gpl-7.1/bin/ffmpeg + ffprobe —
+    // Version-pinned to the `n8.1` asset (NOT `master`): `-vsync` still parses on
+    // the 8.1 line — the conformance e2e depends on it, and the macOS 8.1.2 build
+    // proves it out by passing those same specs — whereas master's avcodec 63 drops
+    // the flag outright. The GPL build also ships libsvtav1 (AV1 8/10-bit export),
+    // plus vaapi + ffnvcodec for the hardware lanes.
+    // This tracked `n7.1` until BtbN dropped that line from the rolling `latest`
+    // release on 2026-08-30, 404-ing the asset and taking Linux CI down with it;
+    // `latest` now carries only n8.1, n9.0 and master. Because the line is rolling,
+    // a whole major.minor can disappear like that — a 404 here means the line is
+    // gone, not that the download flaked, so check the release's asset list first.
+    // Archive layout: ffmpeg-n8.1-latest-linux64-gpl-8.1/bin/ffmpeg + ffprobe —
     // strip-components=2 drops both the top dir and bin/, leaving binaries in dest.
     const url = SOURCES.linux.archiveUrl
     const tarPath = join(tmp, 'ffmpeg-btbn-linux64-gpl.tar.xz')
@@ -279,8 +285,9 @@ function main() {
     // hevc_videotoolbox cannot create a VT compression session: -12908,
     // issue #7 boundary #9). Version-pinned URL + SHA-256 (unlike evermeet's
     // rolling `getrelease`, so mac gets the same tamper check as Windows).
-    // Skew vs the pinned 7.1.x win/linux builds: 8.1.2 — `-vsync` is deprecated
-    // but still accepted (verified; the preview conformance e2e relies on it) —
+    // Skew vs the pinned 7.1.1 Windows build (Linux is on the 8.1 line too):
+    // 8.1.2 — `-vsync` is deprecated but still accepted (verified; the preview
+    // conformance e2e relies on it) —
     // and unlike evermeet it SHIPS libsvtav1, so AV1 export probes select it
     // (encoder_registry.rs AV1_SOFTWARE) instead of falling back to libaom-av1.
     // ffmpeg and ffprobe are separate single-binary zips.

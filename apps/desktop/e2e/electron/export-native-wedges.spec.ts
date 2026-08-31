@@ -561,7 +561,7 @@ test.describe('native export 10-bit ramp precision gates (Electron)', () => {
   // depth signal.
   test('10-bit ramp through the native route to AV1 10-bit keeps its step count', async () => {
     // AV1 10-bit needs a sidecar built with libsvtav1. The Linux sidecar is
-    // the BtbN n7.1 GPL build (fetch-ffmpeg.mjs), which carries
+    // the BtbN n8.1 GPL build (fetch-ffmpeg.mjs), which carries
     // libsvtav1 (8/10-bit) — so the software-encoder probe picks it and this
     // gate runs on Linux too, alongside Windows.
     test.setTimeout(420_000)
