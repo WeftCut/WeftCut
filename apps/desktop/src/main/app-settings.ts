@@ -103,8 +103,12 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
         typeof parsed.markers_visible === 'boolean'
           ? parsed.markers_visible
           : d.markers_visible,
-      // Additive boolean defaulting FALSE, so "absent" and "off" collapse
+      // Additive booleans defaulting FALSE, so "absent" and "off" collapse
       // harmlessly here — the opposite of the pair above.
+      marker_lane_collapsed:
+        typeof parsed.marker_lane_collapsed === 'boolean'
+          ? parsed.marker_lane_collapsed
+          : d.marker_lane_collapsed,
       safe_area_guides_visible:
         typeof parsed.safe_area_guides_visible === 'boolean'
           ? parsed.safe_area_guides_visible
@@ -153,6 +157,7 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       if (patch.timeline_wheel_axis !== undefined) current.timeline_wheel_axis = patch.timeline_wheel_axis
       if (patch.timeline_follow_playhead !== undefined) current.timeline_follow_playhead = patch.timeline_follow_playhead
       if (patch.markers_visible !== undefined) current.markers_visible = patch.markers_visible
+      if (patch.marker_lane_collapsed !== undefined) current.marker_lane_collapsed = patch.marker_lane_collapsed
       if (patch.safe_area_guides_visible !== undefined) current.safe_area_guides_visible = patch.safe_area_guides_visible
       // Empty / whitespace-only clears the field back to unset (→ default root);
       // any other value is stored verbatim. Storing undefined keeps it off disk.

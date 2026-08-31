@@ -58,6 +58,8 @@ export type ActionId =
   | "markIn"
   | "markOut"
   | "addMarkerAtPlayhead"
+  | "seekPrevMarker"
+  | "seekNextMarker"
   | "clearRange"
   | "openSearchPalette"
   | "openSettings";
@@ -322,6 +324,24 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // Not `repeatable`: the second press on a marked frame OPENS RENAME rather
   // than stacking a duplicate, so holding the key must not re-fire.
   addMarkerAtPlayhead: { defaultKeys: ["M"],               labelKey: "actions.add_marker_at_playhead" },
+  // Walking the marks, at Premiere's pairing for it. UNSCOPED for the reason
+  // `M` is: you step between marks while WATCHING, so a timeline-scoped binding
+  // would be dead exactly where the walk is used. WHICH composition gets walked
+  // is answered by reading focus at press time (`state/navigation.ts`), never by
+  // a registration scope.
+  //
+  // Repeatable, unlike `M`: neither direction has a second-press meaning to
+  // re-arm, and the walk does not wrap, so a held key stops at the end of the
+  // list instead of cycling.
+  //
+  // `fireWhenEditing: false` on the chord half ONLY, and it is what keeps the
+  // pair symmetric rather than what makes it asymmetric: Shift-only reads as
+  // typing and stands down in a text field already, so without this its partner
+  // would be the one key of the two that moves the film while you name a marker.
+  // The Group chords go without it because their scope gate stands them down;
+  // walking marks is deliberately unscoped, so it has no other gate to inherit.
+  seekPrevMarker:    { defaultKeys: ["Mod+Shift+M"],       labelKey: "actions.seek_prev_marker",    repeatable: true, fireWhenEditing: false },
+  seekNextMarker:    { defaultKeys: ["Shift+M"],           labelKey: "actions.seek_next_marker",    repeatable: true },
   clearRange:        { defaultKeys: ["Alt+X"],             labelKey: "actions.clear_range" },
   // Global search palette. A chord, so it fires while a text input is
   // focused (default chord behavior) — expected for a Spotlight-style UI.

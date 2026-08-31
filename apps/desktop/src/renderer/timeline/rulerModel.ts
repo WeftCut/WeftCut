@@ -8,17 +8,22 @@ import {
 } from "../frames";
 import { formatRulerLabel } from "./geometry";
 
-/// The time ruler's view model: which ticks and markers exist, where they sit,
-/// and what they read — for one (rate, zoom, viewport) triple. Pure and
-/// DOM/React-free, so the long-timeline behaviour (24 h at 60 fps) is asserted
-/// by unit tests instead of an e2e measurement.
+/// View model for the two rows that measure TIME rather than content — the
+/// ruler's ticks and the marker lane's glyphs — for one (rate, zoom, viewport)
+/// triple. Pure and DOM/React-free, so the long-timeline behaviour (24 h at
+/// 60 fps) is asserted by unit tests instead of an e2e measurement.
+///
+/// The two rows live in one module because they share the VIEWPORT WINDOW: same
+/// row pixels, same quantised scroll offset, same overscan. Stated twice they
+/// would drift, and a mark that appeared at a different scroll offset than the
+/// ticks around it is exactly what that drift looks like.
 ///
 /// Owns: the two tick regimes, the major-tick stride, tick labels, marker
-/// geometry and its degrade threshold, and the VIEWPORT WINDOW that bounds both
-/// sets. Does not own: how `scrollLeftPx` gets here (`TimelineRuler` subscribes
-/// to `state/timelineScrollStore`), the frame grid itself
-/// (`renderer/frames.ts`), nor marker hover text — that needs a locale, so it
-/// composes in `TimelineRuler`. See `.scratch/timeline-frame-grid/spec.md` and
+/// geometry and its degrade threshold, and the window that bounds both sets.
+/// Does not own: how `scrollLeftPx` gets here (the components subscribe to
+/// `state/timelineScrollStore`), the frame grid itself (`renderer/frames.ts`),
+/// nor marker hover text — that needs a locale, so it composes in `MarkerLane`.
+/// See `.scratch/timeline-frame-grid/spec.md` and
 /// `.scratch/timeline-markers/spec.md`.
 ///
 /// Frame-mode tick times come from the composition frame grid, so the ruler and
@@ -237,29 +242,28 @@ export function computeRulerModel(input: RulerModelInput): RulerModel {
 
 // ===== Markers =============================================================
 //
-// The second thing the ruler paints. Same window as the ticks, same px↔time
-// identity, and — like the ticks — decided here rather than in the component,
-// so the degrade threshold and the windowing are asserted without a DOM.
+// The marker lane's glyphs. Same window as the ticks, same px↔time identity,
+// and — like the ticks — decided here rather than in the component, so the
+// degrade threshold and the windowing are asserted without a DOM.
 //
 // Marker times need no snapping on the way in: ADR 0037 quantises them
 // structurally (`validate` rejects an off-grid marker, an fps change re-snaps
 // them), so `t_us` is already a frame anchor and maps straight to pixels.
 
 /// Painted width below which a region marker is drawn with the POINT shape
-/// instead of a hairline bar, so a two-frame region does not vanish at fit
-/// zoom.
+/// instead of a capsule, so a two-frame region does not vanish at fit zoom.
 ///
 /// The trade is deliberate and this constant owns the reasoning: the shape lies
 /// about point-vs-region at that zoom, the tooltip does not (`endTUs` survives
 /// the degrade), and zooming in restores the honest shape. Do not "fix" it with
-/// a minimum bar width instead — that makes a short region LOOK longer than it
-/// is, which is the worse lie when the shape is being used to judge a cut.
+/// a minimum capsule width instead — that makes a short region LOOK longer than
+/// it is, which is the worse lie when the shape is being used to judge a cut.
 export const MARKER_MIN_REGION_PX = 3;
 
 /// The fields of a marker this model reads. Structurally satisfied by the wire
-/// `MarkerSummary`, and named here so the ruler's geometry does not depend on
+/// `MarkerSummary`, and named here so the lane's geometry does not depend on
 /// the IPC surface.
-export interface RulerMarkerSource {
+export interface LaneMarkerSource {
   id: string;
   t_us: number;
   /// Region end (exclusive), or `null` for a point marker.
@@ -267,10 +271,17 @@ export interface RulerMarkerSource {
   label: string;
   /// `#rrggbb` — the marker's authored colour.
   color_hint: string;
+  /// The layer this marker follows, or `null` when it is FREE. The lane draws
+  /// the two states differently — solid against hollow — so the distinction has
+  /// to survive into the view.
+  anchor_layer: string | null;
+  /// Anchored at source its layer no longer shows. Retained in state, never
+  /// painted: it has no position on this timeline to paint AT.
+  hibernating: boolean;
 }
 
 /// One painted marker.
-export interface RulerMarker {
+export interface LaneMarker {
   /// Also the React key.
   id: string;
   /// Left offset (px) at the current zoom, in row coordinates (x = 0 is time
@@ -288,10 +299,16 @@ export interface RulerMarker {
   /// Region end, or `null` for a point marker. Set independently of `shape`:
   /// a degraded region keeps its end (see `MARKER_MIN_REGION_PX`).
   endTUs: number | null;
+  /// True when the marker follows a layer. Solid glyph; a free one is hollow.
+  anchored: boolean;
+  /// Px available to the label before the next mark's x, or `null` when nothing
+  /// follows this one in the window. A label that ran under its neighbour's
+  /// glyph would read as that neighbour's name.
+  labelRoomPx: number | null;
 }
 
-export interface RulerMarkerInput {
-  markers: readonly RulerMarkerSource[];
+export interface LaneMarkerInput {
+  markers: readonly LaneMarkerSource[];
   pxPerSec: number;
   /// Row-local px offset of the visible lane area's left edge — the same
   /// (quantised) offset `computeRulerModel` windows the ticks with.
@@ -302,19 +319,25 @@ export interface RulerMarkerInput {
 
 /// Marker layout for one (markers, zoom, viewport) triple.
 ///
-/// Windowed and nothing else: every marker the window can show is emitted, with
-/// no clustering and no same-pixel-column dedupe, so dense zoom-outs look like a
-/// picket fence by design. Merged marks would have to drop or merge their
-/// tooltips, and the tooltip is this layer's only human-readable output.
-export function computeRulerMarkers(input: RulerMarkerInput): RulerMarker[] {
+/// Windowed, hibernating markers dropped, and nothing else: every marker the
+/// window can show is emitted, with no clustering and no same-pixel-column
+/// dedupe, so dense zoom-outs look like a picket fence by design. Merged marks
+/// would have to drop or merge their labels, and the label is what the lane
+/// exists to show.
+///
+/// Hibernation is filtered HERE rather than at the JSX because such a marker's
+/// `t_us` names a moment its layer no longer shows: there is no position on this
+/// timeline for it, not merely a position that has to be hidden.
+export function computeLaneMarkers(input: LaneMarkerInput): LaneMarker[] {
   const { markers, pxPerSec, scrollLeftPx, viewportWidthPx } = input;
   const overscanPx = input.overscanPx ?? RULER_OVERSCAN_PX;
   if (!(pxPerSec > 0)) return [];
 
   const { x0, x1 } = paintedWindowPx(scrollLeftPx, viewportWidthPx, overscanPx);
 
-  const out: RulerMarker[] = [];
+  const out: LaneMarker[] = [];
   for (const m of markers) {
+    if (m.hibernating) continue;
     const xPx = (m.t_us / US_PER_SEC) * pxPerSec;
     // A non-advancing end is not a range: it has nothing to span and nothing to
     // report, so it is a point all the way down rather than a `start – start`
@@ -336,11 +359,22 @@ export function computeRulerMarkers(input: RulerMarkerInput): RulerMarker[] {
       label: m.label,
       tUs: m.t_us,
       endTUs,
+      anchored: m.anchor_layer !== null,
+      // Filled in below — the neighbour it is measured against is only known
+      // once the set is ordered.
+      labelRoomPx: null,
     });
   }
   // Ascending time, so the later of two overlapping marks paints over the
   // earlier one; id breaks a tie, so a same-time pair has one stable order
   // rather than whichever the project happened to store first.
   out.sort((a, b) => a.tUs - b.tUs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  // Measured against the NEXT mark's x, not against a fixed budget: what a label
+  // may occupy is whatever its neighbour has not claimed. The last mark in the
+  // window is unbounded (null) — the row runs on past it.
+  for (let i = 0; i < out.length; i++) {
+    const next = out[i + 1];
+    if (next !== undefined) out[i]!.labelRoomPx = Math.max(0, next.xPx - out[i]!.xPx);
+  }
   return out;
 }

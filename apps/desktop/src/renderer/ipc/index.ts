@@ -495,8 +495,35 @@ export interface MarkerSummary {
   id: string;
   t_us: number;
   end_t_us: number | null;
+  /// The short name — marker lane text and the `Ctrl+K` result row.
   label: string;
+  /// The long text; the marker Panel's field and nothing else's.
+  note: string;
   color_hint: string;
+  /// The layer this marker follows, or null when it is FREE. An id, not a
+  /// nested layer view — `tracks` already carries the layer.
+  anchor_layer: string | null;
+  /// The instant the anchor names in that layer's SOURCE domain, null when the
+  /// marker is FREE. The marker Panel's hibernating section shows it, because a
+  /// hibernating marker's frozen `t_us` names a moment nothing holds any more
+  /// and this is the only position it has left. Unrecoverable in the renderer —
+  /// the window `t_us` was derived through has moved.
+  anchor_src_us: number | null;
+  /// Anchored at source material its layer no longer shows, so it is kept but
+  /// not painted. Always false for a free marker. Derived per projection
+  /// (`markerHibernating` in main/state/summary.ts), never stored.
+  hibernating: boolean;
+}
+
+/// The tie a marker carries, as the marker channels take it: a layer of the
+/// marker's own composition plus an instant in that layer's SOURCE domain.
+/// Mirrors main/state/model.ts `MarkerAnchor`, field names included — it is an
+/// argument travelling INTO the actor, not a projection coming back, so it
+/// keeps the model's spelling rather than `MarkerSummary`'s flattened
+/// `anchor_layer`.
+export interface MarkerAnchorArg {
+  layer: string;
+  src_us: number;
 }
 
 /// Motion direction, not reveal side — glossary semantics live with the
@@ -1165,10 +1192,79 @@ export async function renameMarker(
   return invoke<void>("update_marker", { markerId, patch: { label } });
 }
 
+/// Rewrite a marker's long text. RECORDED, one entry — the marker Panel's note
+/// field commits through here on blur/Enter, never per keystroke.
+export async function setMarkerNote(
+  markerId: string,
+  note: string,
+): Promise<void> {
+  return invoke<void>("update_marker", { markerId, patch: { note } });
+}
+
+/// Recolour a marker. RECORDED, one entry.
+///
+/// Alpha is the caller's to supply, and the marker Panel supplies 255: the wire
+/// carries the colour as `#rrggbb` (`markerColorHint`), so a swatch edit has no
+/// alpha to preserve and an opaque write matches what every marker surface
+/// paints.
+export async function setMarkerColor(
+  markerId: string,
+  color: Rgba,
+): Promise<void> {
+  return invoke<void>("update_marker", { markerId, patch: { color } });
+}
+
+/// Move a marker to `tUs` — the marker lane's drag, as ONE commit. RECORDED, so
+/// one undo puts the mark back where it was.
+///
+/// On an ANCHORED marker `t_us` names the time the mark should READ, and the
+/// actor moves the anchor to make it read that; the marker keeps following its
+/// clip from the new offset. Refused when the time falls outside the anchoring
+/// clip's half-open span — `markerDragBoundsUs` (timeline/markerAtFrame) answers
+/// that at the gesture, so a surface that clamps with it never reaches the
+/// refusal.
+///
+/// `endTUs` is a region's new end, and only a FREE region has one to send: an
+/// anchored marker's end is carried by its own anchor (the commit's reconcile
+/// shifts it by the same frame delta), so passing one there would move it twice
+/// and the actor refuses the pair outright.
+export async function moveMarker(
+  markerId: string,
+  tUs: number,
+  endTUs: number | null = null,
+): Promise<void> {
+  return invoke<void>("update_marker", {
+    markerId,
+    patch: endTUs === null ? { t_us: tUs } : { t_us: tUs, end_t_us: endTUs },
+  });
+}
+
 /// Remove a marker. RECORDED; deletion is one undo away, so no confirm dialog
 /// stands in front of it.
 export async function removeMarker(markerId: string): Promise<void> {
   return invoke<void>("remove_marker", { markerId });
+}
+
+/// Tie a marker to a clip in its own composition. From here on the marker's
+/// time is derived from that clip's source window every commit, so it follows
+/// moves, trims and splits, and goes with the clip if the clip is deleted.
+/// RECORDED.
+///
+/// Refused when the clip is in another composition, carries no source window,
+/// or does not cover the marker's own time — `markerAnchorFor`
+/// (timeline/markerAtFrame) answers all three at the gesture, so a surface that
+/// consults it never reaches the refusal.
+export async function attachMarker(
+  markerId: string,
+  layerId: string,
+): Promise<void> {
+  return invoke<void>("attach_marker", { markerId, layerId });
+}
+
+/// Cut a marker loose from its clip; it stays on the frame it currently sits
+/// on and simply stops following. RECORDED. The one exit from hibernation.
+export async function detachMarker(markerId: string): Promise<void> {
+  return invoke<void>("detach_marker", { markerId });
 }
 
 export async function updateLayerParams(

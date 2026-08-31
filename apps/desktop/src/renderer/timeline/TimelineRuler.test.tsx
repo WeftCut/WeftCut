@@ -7,12 +7,11 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import "../i18n"; // real en-US bundle, so a tooltip is the shipped string
+import "../i18n"; // real en-US bundle, so a menu row is the shipped string
 import type { MarkerSummary } from "../ipc";
 import { summaryFixture } from "../testing/summaryFixture";
 
 const ipcMocks = vi.hoisted(() => ({
-  removeMarker: vi.fn(),
   logEmit: vi.fn(),
 }));
 
@@ -20,17 +19,11 @@ vi.mock("../ipc", async (importActual) => {
   const actual = await importActual<typeof import("../ipc")>();
   return {
     ...actual,
-    removeMarker: ipcMocks.removeMarker,
     logEmit: ipcMocks.logEmit,
   };
 });
 
 import { useProjectStore } from "../state/projectStore";
-import {
-  closeMarkerRenamePrompt,
-  useMarkerRenamePromptStore,
-} from "./markerRenamePrompt";
-import { useAppSettingsStore } from "../settings/appSettingsStore";
 import {
   setTimelineScrollLeftPx,
   timelineScrollLeftPx,
@@ -213,470 +206,197 @@ describe("in/out end caps", () => {
   });
 });
 
-describe("markers", () => {
-  /// 4 s row at 2000 px/s at 30 fps, so 1 s of marker time is 2000 px of row
-  /// and every frame is 66.7 px — wide enough that a one-frame region is a bar
-  /// and a shorter one is not.
-  const renderRuler = ({
-    pxPerSec = 2000,
-    onScrub = () => {},
-  }: { pxPerSec?: number; onScrub?: (clientX: number) => void } = {}) => {
-    const widthPx = 4 * pxPerSec;
-    return render(
-      <TimelineRuler
-        compositionId={null}
-        pxPerSec={pxPerSec}
-        totalSec={4}
-        widthPx={widthPx}
-        viewportWidthPx={widthPx}
-        fpsNum={30}
-        fpsDen={1}
-        onScrub={onScrub}
-      />,
-    );
-  };
+/// 4 s row at 2000 px/s at 30 fps — the same row the marker lane's own suite
+/// uses, so "the ruler paints none of these" is a statement about the ruler and
+/// not about a zoom at which nothing would paint anyway.
+const renderRuler = ({
+  onScrub = () => {},
+}: { onScrub?: (clientX: number) => void } = {}) =>
+  render(
+    <TimelineRuler
+      compositionId={null}
+      pxPerSec={2000}
+      totalSec={4}
+      widthPx={8000}
+      viewportWidthPx={8000}
+      fpsNum={30}
+      fpsDen={1}
+      onScrub={onScrub}
+    />,
+  );
 
-  /// Only the root's `markers` carry content; the ruler reads them through the
-  /// open composition, so the seed goes through `apply` (which also opens it).
-  const seed = (markers: MarkerSummary[]) => {
-    useProjectStore.getState().apply(summaryFixture({ root: { markers } }));
-  };
+const point = (over: Partial<MarkerSummary> = {}): MarkerSummary => ({
+  id: "point-1",
+  t_us: 1_000_000,
+  end_t_us: null,
+  label: "",
+  note: "",
+  color_hint: "#ff8800",
+  anchor_layer: null,
+  anchor_src_us: null,
+  hibernating: false,
+  ...over,
+});
 
-  const point = (over: Partial<MarkerSummary> = {}): MarkerSummary => ({
-    id: "point-1",
-    t_us: 1_000_000,
-    end_t_us: null,
-    label: "",
-    color_hint: "#ff8800",
-    ...over,
-  });
+/// Only the root's `markers` carry content; the ruler reads the open
+/// composition, so the seed goes through `apply` (which also opens it).
+const seed = (markers: MarkerSummary[]) =>
+  useProjectStore.getState().apply(summaryFixture({ root: { markers } }));
 
-  const region = (over: Partial<MarkerSummary> = {}): MarkerSummary => ({
-    id: "region-1",
-    t_us: 1_000_000,
-    end_t_us: 2_000_000,
-    label: "",
-    color_hint: "#22cc55",
-    ...over,
-  });
-
-  const layer = (container: HTMLElement) =>
-    container.querySelector<HTMLElement>(
-      '[data-testid="timeline-marker-layer"]',
-    );
-
-  const marks = (container: HTMLElement): HTMLElement[] =>
-    Array.from(
-      container.querySelectorAll<HTMLElement>('[data-testid="timeline-marker"]'),
-    );
-
-  const markById = (container: HTMLElement, id: string): HTMLElement =>
-    container.querySelector<HTMLElement>(`[data-marker-id="${id}"]`)!;
-
-  // Not just "no marks" — no LAYER either. The local ruler node-count gate
-  // reads `parseFloat(style.left)` off every direct child of the strip and
-  // sorts it, and the project it creates has no markers; an always-present
-  // wrapper would feed NaN into that sort. See the landmine on the layer.
-  it("adds nothing to the strip while the project carries no markers", () => {
+// The strip gave markers up entirely, and that is what keeps a left-press here
+// meaning exactly one thing. Two hit regions for one object is the alternative,
+// and it is the scrub conflict the marker lane exists to avoid.
+describe("markers are not the ruler's", () => {
+  it("paints no glyph and no marker layer, whatever the project carries", () => {
+    seed([
+      point(),
+      point({ id: "region-1", t_us: 2_000_000, end_t_us: 3_000_000 }),
+    ]);
     const { container } = renderRuler();
-    expect(marks(container)).toHaveLength(0);
-    expect(layer(container)).toBeNull();
+    expect(
+      container.querySelectorAll('[data-testid="timeline-marker"]'),
+    ).toHaveLength(0);
+    expect(
+      container.querySelector('[data-testid="timeline-marker-layer"]'),
+    ).toBeNull();
+  });
+
+  // A mark at 1 s is at x = 2000 on this row. A press there and a press clear of
+  // it are the same press, because there is nothing at either one.
+  it("scrubs across a marker's x exactly as it does anywhere else", () => {
+    const scrubs: number[] = [];
+    seed([point({ t_us: 1_000_000 })]);
+    const { container } = renderRuler({ onScrub: (x) => scrubs.push(x) });
+    const ruler = container.querySelector('[data-testid="timeline-ruler"]')!;
+    fireEvent.pointerDown(ruler, { button: 0, clientX: 2000 });
+    fireEvent.pointerDown(ruler, { button: 0, clientX: 2400 });
+    expect(scrubs).toEqual([2000, 2400]);
+  });
+
+  // The node-count gate reads `parseFloat(style.left)` off every direct child of
+  // the strip and sorts it; a marker layer among them would feed NaN into that
+  // sort. Nothing the project carries may enter the strip's child budget.
+  it("keeps ticks the only thing in the strip's child budget", () => {
+    const { container } = renderRuler();
+    const bare = ticks(container).length;
+    act(() =>
+      seed(
+        Array.from({ length: 30 }, (_, i) =>
+          point({ id: `m${i}`, t_us: 100_000 * (i + 1) }),
+        ),
+      ),
+    );
+    expect(ticks(container).length).toBe(bare);
     for (const child of ticks(container)) {
       expect(Number.isNaN(Number.parseFloat(child.style.left))).toBe(false);
     }
   });
+});
 
-  it("puts a point marker's mark on its own time, in its author's colour", () => {
-    seed([point({ t_us: 1_500_000, color_hint: "#ff8800" })]);
-    const { container } = renderRuler();
-    const mark = markById(container, "point-1");
-    expect(mark.style.left).toBe("3000px");
-    expect(mark.style.background).toBe("rgb(255, 136, 0)");
-  });
+// The strip's OWN menu: the in/out and marker COMMANDS, which lived only on the
+// keyboard, the strip and the palette. One menu on one strip, because the strip
+// holds no object a second menu could be about.
+describe("ruler context menu", () => {
+  let unregister: (() => void) | null = null;
 
-  it("spans a region marker's bar across its range, in its author's colour", () => {
-    seed([
-      region({ t_us: 500_000, end_t_us: 1_500_000, color_hint: "#22cc55" }),
+  beforeEach(() => {
+    // Every row resolves through the registry, so the menu is empty without a
+    // provider — the same "omit, never render dead" policy the strip applies.
+    unregister = registerCommandProvider(() => [
+      { id: "markIn", actionId: "markIn", labelKey: "actions.mark_in", run: () => {} },
+      { id: "markOut", actionId: "markOut", labelKey: "actions.mark_out", run: () => {} },
+      {
+        id: "clearRange",
+        actionId: "clearRange",
+        labelKey: "actions.clear_range",
+        // Mirrors `appCommands.ts`: the point of the disabled case below is
+        // that the live store read reaches the rendered row.
+        enabled: () => hasMarkedRange(),
+        run: () => {},
+      },
+      {
+        id: "addMarkerAtPlayhead",
+        actionId: "addMarkerAtPlayhead",
+        labelKey: "actions.add_marker_at_playhead",
+        run: () => {},
+      },
+      {
+        id: "toggleMarkersVisible",
+        labelKey: "actions.toggle_markers_visible",
+        checked: () => true,
+        run: () => {},
+      },
     ]);
-    const { container } = renderRuler();
-    const mark = markById(container, "region-1");
-    expect(mark.style.left).toBe("1000px");
-    expect(mark.style.width).toBe("2000px");
-    expect(mark.style.background).toBe("rgb(34, 204, 85)");
   });
 
-  it("keeps every mark clear of the upper half, where the timecode labels live", () => {
-    // The strip is `h-5` (20 px) — see the sizing note on the ruler — so the
-    // lower half is the bottom 10 px, measured up from each mark's own bottom
-    // offset. A point glyph is a rotated square, so what it paints is its
-    // diagonal: its top tip sits at half its height plus half its diagonal.
-    seed([point(), region({ t_us: 2_000_000, end_t_us: 3_000_000 })]);
-    const { container } = renderRuler();
-    expect(marks(container)).toHaveLength(2);
-    for (const mark of marks(container)) {
-      const bottom = Number.parseFloat(mark.style.bottom);
-      const height = Number.parseFloat(mark.style.height);
-      const top =
-        mark.dataset.shape === "point"
-          ? bottom + (height * (1 + Math.SQRT2)) / 2
-          : bottom + height;
-      expect(top).toBeLessThanOrEqual(10);
-    }
+  afterEach(() => {
+    unregister?.();
+    unregister = null;
   });
 
-  it("outlines a mark both dark and light, so no authored colour can vanish", () => {
-    // The ruler is near-black, so the in/out caps' single dark hairline is not
-    // enough here: it separates a BRIGHT marker from the background and leaves a
-    // near-black one (this case's colour) a smudge. The light ring outside it is
-    // what carries that half of the guarantee.
-    seed([point({ color_hint: "#14141a" })]);
-    const { container } = renderRuler();
-    const outline = markById(container, "point-1").className;
-    expect(outline).toContain("rgba(0,0,0,");
-    expect(outline).toContain("rgba(255,255,255,");
-  });
-
-  it("groups the marks under one container, so the tick assertions keep counting ticks", () => {
-    const many = (n: number) =>
-      Array.from({ length: n }, (_, i) =>
-        point({ id: `m${i}`, t_us: 100_000 * (i + 1) }),
+  const openStripMenu = async (container: HTMLElement) => {
+    fireEvent.contextMenu(
+      container.querySelector('[data-testid="timeline-ruler"]')!,
+      { clientX: 300, clientY: 12 },
+    );
+    return await waitFor(() => {
+      const items = Array.from(
+        document.querySelectorAll<HTMLElement>(".app-menu-item"),
       );
+      expect(items.length).toBeGreaterThan(0);
+      return items;
+    });
+  };
+
+  it("offers the in/out and marker commands, adding no strip children", async () => {
     const { container } = renderRuler();
-    const bare = ticks(container).length;
-
-    act(() => seed(many(3)));
-    const withThree = ticks(container).length;
-    expect(marks(container)).toHaveLength(3);
-    // However many marks there are, the strip gains exactly ONE direct child —
-    // they all land inside the single marker layer, so the tick assertions and
-    // the node-count gate keep measuring ticks.
-    expect(withThree).toBe(bare + 1);
-
-    act(() => seed(many(30)));
-    expect(marks(container)).toHaveLength(30);
-    expect(ticks(container).length).toBe(withThree);
-    for (const mark of marks(container)) {
-      expect(layer(container)!.contains(mark)).toBe(true);
-    }
+    const childrenBefore = ticks(container).length;
+    const items = await openStripMenu(container);
+    expect(
+      items.map((i) => i.querySelector(".app-menu-item-label")?.textContent),
+    ).toEqual([
+      "Mark in point",
+      "Mark out point",
+      "Clear in/out points",
+      "Add marker at playhead",
+      "Toggle timeline markers",
+    ]);
+    // The popup portals to the body, so the strip's child budget — what the
+    // node-count gate and the tick enumeration measure — is untouched.
+    expect(ticks(container)).toHaveLength(childrenBefore);
   });
 
-  it("paints markers over the ticks and under the in/out caps", () => {
-    // Same stacking context throughout the strip, so DOM order is the whole
-    // z-story — the cap the user is actively placing must win.
-    act(() => useRangeStore.setState({ inUs: 1_000_000, outUs: null }));
+  // The whole reason these rows come from the registry rather than being
+  // hand-written: each carries the key that does the same thing, so a menu
+  // the user discovered teaches the keystroke they will use next time. The
+  // marker toggle has no binding by design, and correspondingly no cell.
+  it("prints each row's accelerator beside it", async () => {
+    const { container } = renderRuler();
+    const items = await openStripMenu(container);
+    const accelerator = (i: HTMLElement) =>
+      i.querySelector(".app-menu-item-accelerator")?.textContent ?? null;
+    expect(items.map(accelerator)).toEqual(["I", "O", "Alt+X", "M", null]);
+  });
+
+  // Clear spends most of its life unavailable, and the row has to say so
+  // rather than sit there looking live. The gate is the command's own live
+  // store read, reaching the rendered row.
+  it("disables Clear until a range is marked", async () => {
+    const { container } = renderRuler();
+    const items = await openStripMenu(container);
+    expect(items[2]!.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  // One menu, no arbitration: a press that lands where a marker's x is still
+  // opens this one, because the glyph that used to stop it is not here.
+  it("opens on a press at a marker's own x", async () => {
     seed([point()]);
     const { container } = renderRuler();
-    const children = ticks(container);
-    const layerIdx = children.indexOf(layer(container)!);
-    const capIdx = children.findIndex(
-      (el) => el.dataset.testid === "timeline-range-cap-in",
-    );
-    expect(layerIdx).toBeGreaterThan(0);
-    expect(capIdx).toBeGreaterThan(layerIdx);
-  });
-
-  it("reads out a point marker as label · timecode", () => {
-    seed([point({ t_us: 1_000_000, label: "cut here" })]);
-    const { container } = renderRuler();
-    expect(markById(container, "point-1").title).toBe("cut here · 00:00:01:00");
-  });
-
-  it("reads out a region marker as label · start – end", () => {
-    seed([region({ t_us: 1_000_000, end_t_us: 2_000_000, label: "needs VO" })]);
-    const { container } = renderRuler();
-    expect(markById(container, "region-1").title).toBe(
-      "needs VO · 00:00:01:00 – 00:00:02:00",
-    );
-  });
-
-  it("still reads out the real range for a region too narrow to paint as a bar", () => {
-    // Zoomed out to 20 px/s, a two-frame region is 1.3 px — under the bar
-    // threshold. The shape degrades to a point AT THE REGION'S START; the hover
-    // text keeps reporting the range the shape can no longer show.
-    seed([region({ t_us: 1_000_000, end_t_us: 1_066_667, label: "blip" })]);
-    const { container } = renderRuler({ pxPerSec: 20 });
-    const mark = markById(container, "region-1");
-    expect(mark.dataset.shape).toBe("point");
-    expect(mark.style.left).toBe("20px");
-    expect(mark.title).toBe("blip · 00:00:01:00 – 00:00:01:02");
-  });
-
-  // The degrade may drop the region's LENGTH; it may not move its START. A
-  // degraded region begins at its x and nothing of it exists before, so the
-  // glyph is nudged right by its rotation overhang instead of being centred the
-  // way a true point marker is — otherwise ~3.5 px of mark paints over frames
-  // the region does not cover.
-  it("puts a degraded region's painted left edge on the region's start", () => {
-    seed([
-      point({ id: "true-point", t_us: 1_000_000 }),
-      region({ id: "degraded", t_us: 2_000_000, end_t_us: 2_066_667 }),
-    ]);
-    const { container } = renderRuler({ pxPerSec: 20 });
-    // A true point straddles its frame: half its box sits left of it.
-    expect(markById(container, "true-point").style.translate).toBe("-50%");
-    // The degraded region does not. The offset is the 45° rotation's overhang —
-    // half of (diagonal − side) for the 5 px glyph — so the painted edge, not
-    // just the box edge, lands on the start.
-    const nudge = (5 * (Math.SQRT2 - 1)) / 2;
-    const degraded = markById(container, "degraded");
-    expect(Number.parseFloat(degraded.style.translate)).toBeCloseTo(nudge, 5);
-    expect(degraded.style.left).toBe("40px");
-  });
-
-  it("falls back to the translated noun when a marker carries no label", () => {
-    seed([point({ t_us: 1_000_000, label: "" })]);
-    const { container } = renderRuler();
-    expect(markById(container, "point-1").title).toBe("Marker · 00:00:01:00");
-  });
-
-  // The marker layer is permanent, so — like the in/out caps — it must never be
-  // able to swallow a gesture that starts on the ruler.
-  it("lets a pointerdown that lands on a marker start a ruler scrub", () => {
-    const scrubs: number[] = [];
-    seed([region({ t_us: 500_000, end_t_us: 1_500_000 })]);
-    const { container } = renderRuler({
-      onScrub: (clientX) => scrubs.push(clientX),
-    });
-    fireEvent.pointerDown(markById(container, "region-1"), {
-      button: 0,
-      clientX: 1234,
-    });
-    expect(scrubs).toEqual([1234]);
-  });
-
-  it("appears the moment a marker is created and goes the moment it is undone", () => {
-    const { container } = renderRuler();
-    act(() => seed([point()]));
-    expect(marks(container)).toHaveLength(1);
-    act(() => seed([]));
-    expect(marks(container)).toHaveLength(0);
-  });
-
-  // The toggle's whole job, from the ruler's side. Not "the marks are hidden" —
-  // NOTHING renders, layer included, for the same node-count-gate reason the
-  // marker-less project renders nothing. And it happens in place: the flip is an
-  // app-settings write, so a project reload must not be part of the story.
-  describe("visibility setting", () => {
-    const setVisible = (visible: boolean) =>
-      useAppSettingsStore.setState((s) => ({
-        settings: { ...s.settings, markers_visible: visible },
-      }));
-
-    afterEach(() => setVisible(true));
-
-    it("paints no markers at all while the setting is off", () => {
-      setVisible(false);
-      seed([point(), region({ t_us: 2_000_000, end_t_us: 3_000_000 })]);
-      const { container } = renderRuler();
-      expect(marks(container)).toHaveLength(0);
-      expect(layer(container)).toBeNull();
-    });
-
-    it("brings them back on the same mount, with no project reload", () => {
-      seed([point(), region({ t_us: 2_000_000, end_t_us: 3_000_000 })]);
-      const { container } = renderRuler();
-      expect(marks(container)).toHaveLength(2);
-      act(() => setVisible(false));
-      expect(marks(container)).toHaveLength(0);
-      act(() => setVisible(true));
-      expect(marks(container)).toHaveLength(2);
-    });
-
-    // The in/out caps are the other permanent mark in the strip and answer to a
-    // different switch — hiding markers must not take them with it.
-    it("leaves the in/out caps alone", () => {
-      setVisible(false);
-      act(() => useRangeStore.setState({ inUs: 1_000_000, outUs: 2_000_000 }));
-      seed([point()]);
-      const { container } = renderRuler();
-      expect(marks(container)).toHaveLength(0);
-      expect(
-        container.querySelector('[data-testid="timeline-range-cap-in"]'),
-      ).not.toBeNull();
-    });
-  });
-
-  // Authoring separates by input channel: the RIGHT button opens the marker's
-  // menu, and the right button never contested the scrub. The popup portals to
-  // the body, so an open menu leaves the strip's child budget — what the
-  // node-count gate and the tick enumeration measure — untouched.
-  describe("context menu", () => {
-    beforeEach(() => {
-      ipcMocks.removeMarker.mockReset().mockResolvedValue(undefined);
-      closeMarkerRenamePrompt();
-    });
-
-    const openMenu = async (
-      container: HTMLElement,
-      id: string,
-    ): Promise<HTMLElement[]> => {
-      fireEvent.contextMenu(markById(container, id), {
-        clientX: 80,
-        clientY: 12,
-      });
-      return await waitFor(() => {
-        const items = Array.from(
-          document.querySelectorAll<HTMLElement>(".app-menu-item"),
-        );
-        expect(items.length).toBeGreaterThan(0);
-        return items;
-      });
-    };
-
-    it("right-click on a glyph offers Rename and Delete, adding no strip children", async () => {
-      seed([point()]);
-      const { container } = renderRuler();
-      const childrenBefore = ticks(container).length;
-      const items = await openMenu(container, "point-1");
-      expect(items.map((i) => i.textContent)).toEqual([
-        "Rename",
-        "Delete marker",
-      ]);
-      expect(ticks(container)).toHaveLength(childrenBefore);
-    });
-
-    it("Rename routes the marker id to the prompt store — regions included", async () => {
-      seed([region()]);
-      const { container } = renderRuler();
-      const items = await openMenu(container, "region-1");
-      fireEvent.click(items[0]!);
-      expect(useMarkerRenamePromptStore.getState().markerId).toBe("region-1");
-    });
-
-    it("Delete goes straight through the channel, with nothing asked first", async () => {
-      seed([point()]);
-      const { container } = renderRuler();
-      const items = await openMenu(container, "point-1");
-      fireEvent.click(items[1]!);
-      await waitFor(() =>
-        expect(ipcMocks.removeMarker).toHaveBeenCalledExactlyOnceWith(
-          "point-1",
-        ),
-      );
-      expect(useMarkerRenamePromptStore.getState().markerId).toBeNull();
-    });
-  });
-
-  // The ruler's OWN menu: the in/out and marker commands, which lived only on
-  // the keyboard, the strip and the palette. Two menus on one strip, told apart
-  // by nothing more than the glyph's `stopPropagation` — which is exactly what
-  // the second case here pins down.
-  describe("empty-ruler context menu", () => {
-    let unregister: (() => void) | null = null;
-
-    beforeEach(() => {
-      // Every row resolves through the registry, so the menu is empty without a
-      // provider — the same "omit, never render dead" policy the strip applies.
-      unregister = registerCommandProvider(() => [
-        { id: "markIn", actionId: "markIn", labelKey: "actions.mark_in", run: () => {} },
-        { id: "markOut", actionId: "markOut", labelKey: "actions.mark_out", run: () => {} },
-        {
-          id: "clearRange",
-          actionId: "clearRange",
-          labelKey: "actions.clear_range",
-          // Mirrors `appCommands.ts`: the point of the disabled case below is
-          // that the live store read reaches the rendered row.
-          enabled: () => hasMarkedRange(),
-          run: () => {},
-        },
-        {
-          id: "addMarkerAtPlayhead",
-          actionId: "addMarkerAtPlayhead",
-          labelKey: "actions.add_marker_at_playhead",
-          run: () => {},
-        },
-        {
-          id: "toggleMarkersVisible",
-          labelKey: "actions.toggle_markers_visible",
-          checked: () => true,
-          run: () => {},
-        },
-      ]);
-    });
-
-    afterEach(() => {
-      unregister?.();
-      unregister = null;
-    });
-
-    const openStripMenu = async (container: HTMLElement) => {
-      fireEvent.contextMenu(
-        container.querySelector('[data-testid="timeline-ruler"]')!,
-        { clientX: 300, clientY: 12 },
-      );
-      return await waitFor(() => {
-        const items = Array.from(
-          document.querySelectorAll<HTMLElement>(".app-menu-item"),
-        );
-        expect(items.length).toBeGreaterThan(0);
-        return items;
-      });
-    };
-
-    it("offers the in/out and marker commands, adding no strip children", async () => {
-      const { container } = renderRuler();
-      const childrenBefore = ticks(container).length;
-      const items = await openStripMenu(container);
-      expect(
-        items.map(
-          (i) => i.querySelector(".app-menu-item-label")?.textContent,
-        ),
-      ).toEqual([
-        "Mark in point",
-        "Mark out point",
-        "Clear in/out points",
-        "Add marker at playhead",
-        "Toggle timeline markers",
-      ]);
-      // The popup portals to the body, so the strip's child budget — what the
-      // node-count gate and the tick enumeration measure — is untouched.
-      expect(ticks(container)).toHaveLength(childrenBefore);
-    });
-
-    // The whole reason these rows come from the registry rather than being
-    // hand-written: each carries the key that does the same thing, so a menu
-    // the user discovered teaches the keystroke they will use next time. The
-    // marker toggle has no binding by design, and correspondingly no cell.
-    it("prints each row's accelerator beside it", async () => {
-      const { container } = renderRuler();
-      const items = await openStripMenu(container);
-      const accelerator = (i: HTMLElement) =>
-        i.querySelector(".app-menu-item-accelerator")?.textContent ?? null;
-      expect(items.map(accelerator)).toEqual(["I", "O", "Alt+X", "M", null]);
-    });
-
-    // Clear spends most of its life unavailable, and the row has to say so
-    // rather than sit there looking live. The gate is the command's own live
-    // store read, reaching the rendered row.
-    it("disables Clear until a range is marked", async () => {
-      const { container } = renderRuler();
-      const items = await openStripMenu(container);
-      expect(items[2]!.getAttribute("aria-disabled")).toBe("true");
-    });
-
-    // A press on a glyph must reach the MARKER menu and nothing else. Both
-    // menus render `.app-menu-item`, so the row set is the discriminator.
-    it("yields to the marker menu when the press lands on a glyph", async () => {
-      seed([point()]);
-      const { container } = renderRuler();
-      fireEvent.contextMenu(
-        container.querySelector('[data-marker-id="point-1"]')!,
-        { clientX: 80, clientY: 12 },
-      );
-      const items = await waitFor(() => {
-        const found = Array.from(
-          document.querySelectorAll<HTMLElement>(".app-menu-item"),
-        );
-        expect(found.length).toBeGreaterThan(0);
-        return found;
-      });
-      expect(items.map((i) => i.textContent)).toEqual([
-        "Rename",
-        "Delete marker",
-      ]);
-    });
+    const items = await openStripMenu(container);
+    expect(items).toHaveLength(5);
   });
 });
+
 
 describe("scroll subscription", () => {
   /// The acceptance criterion from

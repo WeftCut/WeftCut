@@ -49,6 +49,7 @@ import { TransitionsPanel } from "../panels/TransitionsPanel";
 import { AttributePanel } from "../panels/AttributePanel";
 import { CaptionPanel } from "../panels/CaptionPanel";
 import { EffectPanel } from "../panels/EffectPanel";
+import { MarkerPanel } from "../panels/MarkerPanel";
 import { PlayheadPanel } from "../panels/PlayheadPanel";
 import {
   QuickActionsPanel,
@@ -407,6 +408,17 @@ function CaptionDockPanel() {
   );
 }
 
+/// No contracts: the Marker Panel spans the whole project rather than the
+/// focused composition, so it reads the summary straight off the store and
+/// navigates through the same primitives the search palette uses.
+function MarkerDockPanel() {
+  return (
+    <div className="weft-dock-panel-scroll">
+      <MarkerPanel />
+    </div>
+  );
+}
+
 function RoleMixerDockPanel() {
   const contracts = useContracts();
   const runtime = useDockPanelRuntime();
@@ -513,6 +525,7 @@ const PANEL_COMPONENTS: Readonly<Record<PanelKind, () => ReactElement>> = {
   "quick-actions": QuickActionsDockPanel,
   attribute: AttributeDockPanel,
   caption: CaptionDockPanel,
+  marker: MarkerDockPanel,
   "role-mixer": RoleMixerDockPanel,
   effect: EffectDockPanel,
   playhead: PlayheadDockPanel,

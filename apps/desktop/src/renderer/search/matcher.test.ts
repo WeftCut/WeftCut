@@ -65,6 +65,13 @@ describe("rankEntries", () => {
     expect(viaPinyin.highlight).toHaveLength(0);
   });
 
+  it("reports which haystack won, so a row can tell a name hit from a detail hit", () => {
+    const direct = rankEntries("bea", [mk("media", "beach.mp4")]).get("media")![0]!;
+    expect(direct.matchedHaystack).toBe(0);
+    const viaExtra = rankEntries("export", [mk("command", "导出…", ["Export…"])]).get("command")![0]!;
+    expect(viaExtra.entry.haystacks[viaExtra.matchedHaystack]).toBe("Export…");
+  });
+
   it("command boost raises score over an identical-label non-command", () => {
     const out = rankEntries("export", [mk("clip", "Export project"), mk("command", "Export project")]);
     expect(out.get("command")![0]!.score).toBeGreaterThan(out.get("clip")![0]!.score);

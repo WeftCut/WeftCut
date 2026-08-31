@@ -322,6 +322,7 @@ const enUS = {
       "quick-actions": "Quick Actions",
       attribute: "Attribute",
       caption: "Caption",
+      marker: "Markers",
       "role-mixer": "Role Mixer",
       effect: "Effect",
       playhead: "Playhead",
@@ -363,6 +364,30 @@ const enUS = {
     placeholder: "e.g. Trim this pause",
     confirm: "Rename",
     cancel: "Cancel",
+  },
+  marker_panel: {
+    // A section heading, and the whole disclosure control: the composition's
+    // name plus how many markers it holds. A composition with none still gets
+    // one — "nothing is marked here" is an answer, and a missing heading is not.
+    section_heading: "{{name}} ({{count}})",
+    // The section for markers whose clip no longer shows the frame they name.
+    // CONTEXT.md's pinned word.
+    hibernating: "Hibernating",
+    // Row fields. There is deliberately no time field: a marker's time is
+    // spatial and belongs to the lane's drag (ADR 0056) — on an anchored marker
+    // the next reconcile would overwrite anything typed here.
+    label_field: "Marker label",
+    note_field: "Marker note",
+    color_field: "Marker color",
+    // A marker that follows a clip, as against a free one. CONTEXT.md's pinned
+    // word — never "clip marker", which would name a second entity.
+    anchored: "Anchored",
+    go_to: "Go to {{timecode}}",
+    // A hibernating row seeks nowhere: the frame it names is on no timeline
+    // right now, so the only honest destination is the clip it is tied to.
+    reveal_clip: "In the footage at {{timecode}} — reveal the anchoring clip",
+    // The one exit from hibernation. CONTEXT.md's pinned word.
+    detach: "Detach",
   },
   actions: {
     add_color_layer: "Color layer",
@@ -458,6 +483,11 @@ const enUS = {
     mark_in: "Mark in point",
     mark_out: "Mark out point",
     add_marker_at_playhead: "Add marker at playhead",
+    // The named flags on the marker lane, NOT the in/out range two lines up:
+    // "mark" and "marker" share a root in English and name two different
+    // objects here, so a translation must keep them apart.
+    seek_prev_marker: "Go to previous marker",
+    seek_next_marker: "Go to next marker",
     clear_range: "Clear in/out points",
     open_search: "Search everything…",
     search: "Search",
@@ -606,6 +636,12 @@ const enUS = {
     // Tick: the composition is longer, so there is content to trim out to.
     group_overhang: "Past the end of {{label}} — nothing renders here",
     group_more_content: "{{label}} runs longer — drag this edge out for more",
+    // Tooltip of the `⚑N` badge on a Group clip. The count reaches through
+    // every composition nested inside, so the sentence says "inside" rather
+    // than naming a timeline — the marks are not all on one.
+    group_marker_count_one: "{{count}} marker inside — click to open this group",
+    group_marker_count_other:
+      "{{count}} markers inside — click to open this group",
     // Accessible name for the label tab's inline editor.
     link_label: "Link name",
     // Tooltip of the `+N` badge on a link whose members sit on filtered lanes.
@@ -616,6 +652,11 @@ const enUS = {
     // The marker menu names its subject: its target is a ~5 px glyph, so a
     // bare "Delete" would leave "of what?" to a tooltip the menu just covered.
     delete_marker: "Delete marker",
+    // The two anchoring rows, in the glossary's words (CONTEXT.md). "Attach to
+    // clip" names its target the way "Delete marker" does — the row acts on the
+    // marker but what it needs from the user is a clip.
+    attach_marker: "Attach to clip",
+    detach_marker: "Detach",
     // Accessible name for the lane header's inline rename field — the visible
     // label it replaces is the lane's own name.
     rename_track_label: "Rename {{label}}",
@@ -649,9 +690,15 @@ const enUS = {
     transition_menu_direction: "Direction",
     transition_menu_duration: "Duration",
     transition_menu_duration_preset: "{{seconds}} s",
-    // Hover text for a mark in the ruler's lower half; `label` falls back to
+    // The marker lane's own header cell: what the row under the ruler is.
+    marker_lane: "Markers",
+    // Accessible name and tooltip of the lane's collapse twirl. Names the
+    // subject, not the direction: the chevron says which way it goes, and
+    // `aria-expanded` says which state it is in.
+    marker_lane_toggle: "Collapse marker lane",
+    // Hover text for a mark in the marker lane; `label` falls back to
     // `$t(kinds.marker)` at the call site. Which pattern a marker gets is
-    // TimelineRuler.tsx's `markerTitle`.
+    // MarkerLane.tsx's `markerTitle`.
     marker_tooltip_point: "{{label}} · {{timecode}}",
     marker_tooltip_region: "{{label}} · {{start}} – {{end}}",
   },
@@ -1677,6 +1724,8 @@ const enUS = {
       add_shots: "Added shot markers",
       update: "Updated marker",
       remove: "Removed marker",
+      attach: "Anchored marker to clip",
+      detach: "Detached marker",
     },
     effect: {
       add: "Added effect",

@@ -14,7 +14,9 @@ import {
   selectLayers,
   seekToClamped,
   seekToNextEdit,
+  seekToNextMarker,
   seekToPrevEdit,
+  seekToPrevMarker,
 } from "./navigation";
 import { registerTransport } from "./playbackStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "./playheadStore";
@@ -26,8 +28,14 @@ import {
   primaryLayerIdOf,
   setLayerSelection,
 } from "./selectionStore";
-import type { ProjectSummary } from "../ipc";
-import { rootOf, summaryFixture } from "../testing/summaryFixture";
+import { openComposition } from "./compositionAnchorStore";
+import type { MarkerSummary, ProjectSummary } from "../ipc";
+import {
+  compositionFixture,
+  groupLayerFixture,
+  rootOf,
+  summaryFixture,
+} from "../testing/summaryFixture";
 
 /// 10 s 30 fps summary with one video track (one clip at 2 s) and one
 /// media item. Only the fields navigation touches need to be realistic.
@@ -172,6 +180,183 @@ describe("seekToPrevEdit / seekToNextEdit", () => {
     setPlayheadTimeUs(6_000_000);
     seekToNextEdit();
     expect(playheadTimeUs()).toBe(9_966_667);
+  });
+});
+
+/// A marker with only the fields the walk reads spelled out.
+function marker(over: Partial<MarkerSummary> & { t_us: number }): MarkerSummary {
+  return {
+    id: `mk-${over.t_us}`,
+    end_t_us: null,
+    label: "",
+    note: "",
+    color_hint: "",
+    anchor_layer: null,
+    anchor_src_us: null,
+    hibernating: false,
+    ...over,
+  };
+}
+
+/// The fixture summary with `markers` on its root instead of an empty lane.
+function withMarkers(markers: MarkerSummary[]): ProjectSummary {
+  const summary = fixtureSummary();
+  rootOf(summary).markers = markers;
+  return summary;
+}
+
+describe("seekToPrevMarker / seekToNextMarker", () => {
+  const AT_1_5_9 = [
+    marker({ t_us: 1_000_000 }),
+    marker({ t_us: 5_000_000 }),
+    marker({ t_us: 9_000_000 }),
+  ];
+
+  beforeEach(() => {
+    useProjectStore.getState().apply(withMarkers(AT_1_5_9));
+  });
+
+  it("walks forward mark by mark and stops at the last one", () => {
+    setPlayheadTimeUs(0);
+    seekToNextMarker();
+    expect(playheadTimeUs()).toBe(1_000_000);
+    seekToNextMarker();
+    expect(playheadTimeUs()).toBe(5_000_000);
+    seekToNextMarker();
+    expect(playheadTimeUs()).toBe(9_000_000);
+    // No wrap: the fourth press is a dead key, not a jump back to the first.
+    seekToNextMarker();
+    expect(playheadTimeUs()).toBe(9_000_000);
+  });
+
+  it("walks backward symmetrically and stops at the first one", () => {
+    setPlayheadTimeUs(9_000_000);
+    seekToPrevMarker();
+    expect(playheadTimeUs()).toBe(5_000_000);
+    seekToPrevMarker();
+    expect(playheadTimeUs()).toBe(1_000_000);
+    seekToPrevMarker();
+    expect(playheadTimeUs()).toBe(1_000_000);
+  });
+
+  it("steps OFF a mark the playhead is standing on, never back onto it", () => {
+    setPlayheadTimeUs(5_000_000);
+    seekToNextMarker();
+    expect(playheadTimeUs()).toBe(9_000_000);
+    setPlayheadTimeUs(5_000_000);
+    seekToPrevMarker();
+    expect(playheadTimeUs()).toBe(1_000_000);
+  });
+
+  it("counts a mark sharing the displayed frame as already reached", () => {
+    // Parked inside the 5 s mark's own frame rather than on its boundary: the
+    // same frame is on screen, so the mark is behind in both directions.
+    setPlayheadTimeUs(5_010_000);
+    seekToNextMarker();
+    expect(playheadTimeUs()).toBe(9_000_000);
+    setPlayheadTimeUs(5_010_000);
+    seekToPrevMarker();
+    expect(playheadTimeUs()).toBe(1_000_000);
+  });
+
+  it("skips a mark whose own time sits off-grid in the displayed frame", () => {
+    // ADR 0037 keeps marks on the grid, and one that got off it must still not
+    // be walked to from the frame it is drawn in: the jump would change no
+    // frame and would park the playhead off the lattice.
+    useProjectStore
+      .getState()
+      .apply(
+        withMarkers([marker({ t_us: 5_010_000 }), marker({ t_us: 9_000_000 })]),
+      );
+    setPlayheadTimeUs(5_000_000);
+    seekToNextMarker();
+    expect(playheadTimeUs()).toBe(9_000_000);
+  });
+
+  it("reaches a region marker at its START, never at its end", () => {
+    useProjectStore
+      .getState()
+      .apply(withMarkers([marker({ t_us: 3_000_000, end_t_us: 8_000_000 })]));
+    setPlayheadTimeUs(0);
+    seekToNextMarker();
+    expect(playheadTimeUs()).toBe(3_000_000);
+    // Standing INSIDE the region: it is not a mark ahead, and its end is
+    // nothing to land on, so the walk has nowhere to go.
+    setPlayheadTimeUs(5_000_000);
+    seekToNextMarker();
+    expect(playheadTimeUs()).toBe(5_000_000);
+  });
+
+  it("never lands on a hibernating mark", () => {
+    useProjectStore.getState().apply(
+      withMarkers([
+        marker({ t_us: 1_000_000 }),
+        marker({ t_us: 5_000_000, anchor_layer: "l1", hibernating: true }),
+        marker({ t_us: 9_000_000 }),
+      ]),
+    );
+    setPlayheadTimeUs(0);
+    seekToNextMarker();
+    expect(playheadTimeUs()).toBe(1_000_000);
+    seekToNextMarker();
+    expect(playheadTimeUs()).toBe(9_000_000);
+    seekToPrevMarker();
+    expect(playheadTimeUs()).toBe(1_000_000);
+  });
+
+  it("does nothing at all in a composition with no marks", () => {
+    useProjectStore.getState().apply(withMarkers([]));
+    setPlayheadTimeUs(4_000_000);
+    seekToNextMarker();
+    seekToPrevMarker();
+    expect(playheadTimeUs()).toBe(4_000_000);
+  });
+
+  it("walks the FOCUSED Group's marks, not the root's, and seeks in root time", () => {
+    // A Group placed at 2 s with its window opening at 0, so its clock reads
+    // root minus 2 s. Its own marks are at 0.5 s and 1.5 s LOCAL.
+    const summary = summaryFixture({
+      project_id: "p-group",
+      root: {
+        duration_us: 10_000_000,
+        markers: [marker({ t_us: 1_000_000 })],
+        tracks: [
+          {
+            id: "t1", kind: "Video", label: "A-Roll", enabled: true, locked: false,
+            muted: false, solo: false, role: "a-roll", transient: false,
+            layers: [
+              groupLayerFixture({
+                id: "layer-group",
+                compositionId: "comp-group",
+                tStartUs: 2_000_000,
+                tEndUs: 6_000_000,
+                srcInUs: 0,
+                srcOutUs: 4_000_000,
+              }),
+            ],
+          },
+        ],
+      },
+      groups: [
+        compositionFixture({
+          id: "comp-group",
+          duration_us: 4_000_000,
+          markers: [marker({ t_us: 500_000 }), marker({ t_us: 1_500_000 })],
+        }),
+      ],
+    });
+    useProjectStore.getState().apply(summary);
+    expect(openComposition("comp-group", "layer-group")).toBe(true);
+
+    setPlayheadTimeUs(2_000_000);
+    seekToNextMarker();
+    // The Group's 0.5 s mark, projected up through its placement — the root's
+    // own mark at 1 s is not on this timeline and never comes up.
+    expect(playheadTimeUs()).toBe(2_500_000);
+    seekToNextMarker();
+    expect(playheadTimeUs()).toBe(3_500_000);
+    seekToNextMarker();
+    expect(playheadTimeUs()).toBe(3_500_000);
   });
 });
 

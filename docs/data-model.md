@@ -892,11 +892,43 @@ struct Marker {
     id: MarkerId,
     t_us: i64,
     end_t_us: Option<i64>,            // makes it a region marker
-    label: String,
+    label: String,                    // short name — lane text, Ctrl+K row
+    note: String,                     // long text — the marker Panel's field
     color: Rgba,
-    metadata: imbl::HashMap<String, Value>,   // agent notes, todos, etc.
+    anchor: Option<MarkerAnchor>,     // None = a free marker
+}
+
+struct MarkerAnchor {
+    layer: LayerId,
+    src_us: i64,                      // in the layer's SOURCE domain
 }
 ```
+
+A marker belongs to one composition and only ever to one. **Following a clip is
+a field, not a second entity**: an anchored marker names a layer of its own
+composition plus a time in that layer's source window, and `t_us` becomes a
+derived cache that nonetheless stays *stored* — so every reader (the marker
+lane, `Ctrl+K`, the summary projection, serialize, MCP, export) goes on reading
+`t_us`.
+
+Because `t_us` is the cache, **patching it on an anchored marker moves the
+anchor**: `update_marker` takes the time as a statement of where the mark should
+read, derives `src_us` from the anchoring layer, and leaves the reconcile in the
+same commit to write `t_us` back. A time outside that layer's half-open span is
+refused, and `t_us` paired with `end_t_us` is refused too — the reconcile already
+carries an anchored region's end by the same frame delta, so writing it as well
+would move it twice. `anchor` itself is not patchable at all; it is set and
+cleared only by attach and detach.
+
+`label` and `note` split because `label` has two consumers that force it short
+(the lane's inline text, the `Ctrl+K` row) — the same split Premiere makes as
+Name + Comments and Resolve as Name + Notes.
+
+An anchored marker whose `src_us` falls outside its layer's
+`[src_in_us, src_out_us)` window **hibernates**: kept, not painted, and revived
+exactly where it was by undoing the trim. Holding the tie in source time is what
+buys that; it is a legal state, not a broken project, so `src_us` is deliberately
+not range-checked.
 
 ## `Link`
 
@@ -1076,6 +1108,9 @@ struct ChangeEvent {
 | Every composition's `fps`, `sample_rate`, `channels` equal the root's | reject (`CompositionLatticeMismatch { composition, field }`) |
 | `Layer.id` unique across **all** compositions | reject (`DuplicateLayerId`) |
 | `Marker.id` unique across **all** compositions | reject (`DuplicateMarkerId`) |
+| An anchored marker's `anchor.layer` names a layer of the **same** composition | reject (`MarkerAnchorNotInComposition`) — the two timelines share no origin, so no `t_us` could be derived from a crossing tie |
+| An anchored marker's layer carries a source window (`VideoClip` / `Audio` / `CompositionRef`) | reject (`MarkerAnchorLayerHasNoSourceWindow`) — the derivation reads `params.src_in_us` |
+| `anchor.src_us` inside the layer's window | **not checked** — outside it is the legal hibernating state (see `Marker`) |
 | All references (`MediaId`/`LayerId`/`LinkId`/`TransitionId`) resolve | reject |
 | `Link.id` unique within its composition's `links` | reject (`DuplicateLinkId`) |
 | Every `Link.members` entry names a layer of the **same** composition | reject (`LinkMemberMissing`) |
@@ -1149,7 +1184,7 @@ the UI uses the same actor via backend commands.
 | `delete_layers(layer_ids)` | the cross-**layer** form: one recorded entry however many layers it spans, so one undo restores the lot. Ids are de-duplicated; a locked member rejects the WHOLE batch rather than half-deleting. Takes the id set verbatim — no link fan-out, since selection is what carries a link |
 | `links_create(layer_ids, label?, reassign?)` → `LinkId` | fewer than two distinct ids → `LinkCreateNeedsTwoLayers`; a layer already in another link → `LayerAlreadyLinked` unless `reassign: true`, which moves it over |
 | `links_dissolve(link_id)` / `links_add_members(link_id, layer_ids, reassign?)` / `links_remove_members(link_id, layer_ids)` / `links_rename(link_id, label?)` | an unknown `link_id` → `LinkNotFound`; removing a non-member → `LayerNotInLink`; `add_members` shares `links_create`'s `LayerAlreadyLinked` / `reassign` rule |
-| `groups_create(layer_ids, label?)` → `{ composition_id, layer_id }` | pre-compose (ADR 0052; [features.md §Groups](features.md#groups)): the set — one or more layers of one composition — moves into a new composition carrying the parent's settings and the reserved A/B skeleton, its former tracks mapped bottom-up onto A roll, B roll, then fresh lanes; a Group layer takes its place at the earliest start on the top-most former lane (the drop strip's fallback on collision). Never partial: a locked member → `GroupLockedMember`, a locked track → `TrackLocked`, before anything moves. Links fully inside move with their ids, a straddling link loses its inside members; transitions between two members move, a straddling one is reconciled away and logged; markers stay |
+| `groups_create(layer_ids, label?)` → `{ composition_id, layer_id }` | pre-compose (ADR 0052; [features.md §Groups](features.md#groups)): the set — one or more layers of one composition — moves into a new composition carrying the parent's settings and the reserved A/B skeleton, its former tracks mapped bottom-up onto A roll, B roll, then fresh lanes; a Group layer takes its place at the earliest start on the top-most former lane (the drop strip's fallback on collision). Never partial: a locked member → `GroupLockedMember`, a locked track → `TrackLocked`, before anything moves. Links fully inside move with their ids, a straddling link loses its inside members; transitions between two members move, a straddling one is reconciled away and logged; the markers ANCHORED to a member move with it (their `t_us` re-derived in the child by the same commit), free markers stay |
 | `add_group_layer(source_composition_id, track_id, t_start_us, composition_id?)` → `LayerId` | place an existing composition as one more Group layer — the media pool's drag, and the reuse half of ADR 0052 (`groups_create` is the half that makes a composition). Windowed `[0, duration_us)` with an identity transform; the track fixes the destination composition and `composition_id` is a cross-check. Refused before any write, so nothing is created and no layer id is burned: the root → `RootComposition`; a source that already reaches the destination, itself included → `CompositionCycle` naming the loop; an empty source → `InvalidArgument` |
 | `groups_add_members(layer_ids, group_layer_id)` | move layers already on a timeline INTO the composition a Group layer shows, keeping the screen position they had. The members and the Group clip must be siblings, and the clip's `params.composition` is the destination; each member lands at `t_start_us − group.t_start_us + group.src_in_us`, so one outside the clip's window arrives outside it and shows as overhang. Delegates to `move_layers_to_composition` for the crossing itself, and keeps only what is its own: `CrossCompositionSet` when the clip is not the members' sibling, `WrongLayerKind` when it is not a `CompositionRef`, and `RootComposition` — which guards a `CompositionRef` pointing at the root, not the root receiving layers |
 | `groups_ungroup(layer_id)` | expand a **plain** Group layer in place — identity transform, static opacity 1, no effects, Normal blend; otherwise `GroupNotPlain { reason: transform \| opacity \| effects \| blend_mode }`. Members intersecting `[src_in_us, src_out_us)` copy in at `t + t_start_us − src_in_us`, trimmed to the window with source in/out and keyframes following; members outside are dropped; the composition's tracks become fresh transient lanes at the ref's track index; links and transitions inside carry over under fresh ids; the composition is removed when its last reference goes |

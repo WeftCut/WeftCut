@@ -20,6 +20,12 @@ import type { MediaUsage, SearchEntryType } from "./types";
 
 const VISIBLE_PER_GROUP = 5;
 const RANK_CAP = 50;
+/// How much of an entry's detail text one row may spend. The context line is a
+/// single line in a narrow overlay, and it already carries where and when.
+const DETAIL_EXCERPT_MAX = 48;
+/// Characters kept ahead of the hit, so the matched words are not flush against
+/// the leading ellipsis with nothing around them to read them in.
+const DETAIL_EXCERPT_LEAD = 8;
 
 interface MediaSubList {
   label: string;
@@ -236,6 +242,7 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
                       <ResultRow
                         key={r.entry.key}
                         r={r}
+                        query={query}
                         active={idx === clampedActive}
                         onHover={() => setActive(idx)}
                         onActivate={() => activate(idx)}
@@ -294,13 +301,33 @@ function HighlightedLabel({ label, indexes }: { label: string; indexes: number[]
   return <>{out}</>;
 }
 
+/// A one-line window onto text the row shows nowhere else, opened at the query
+/// wherever the query occurs in it literally. This is the only layer holding
+/// both halves of that question — the index is built without ever seeing a
+/// query, and the ranker knows which haystack won but not what was typed — so
+/// the window is cut here. A pinyin or fuzzy hit has no literal position to open
+/// at and falls back to the head, which still shows text the label didn't.
+function detailExcerpt(text: string, query: string): string {
+  if (text.length <= DETAIL_EXCERPT_MAX) return text;
+  const q = query.trim().toLowerCase();
+  const at = q ? text.toLowerCase().indexOf(q) : -1;
+  const start =
+    at < 0
+      ? 0
+      : Math.max(0, Math.min(at - DETAIL_EXCERPT_LEAD, text.length - DETAIL_EXCERPT_MAX));
+  const end = start + DETAIL_EXCERPT_MAX;
+  return `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`;
+}
+
 function ResultRow({
   r,
+  query,
   active,
   onHover,
   onActivate,
 }: {
   r: RankedResult;
+  query: string;
   active: boolean;
   onHover: () => void;
   onActivate: () => void;
@@ -322,6 +349,11 @@ function ResultRow({
   const unused =
     (p.type === "media" && p.usages.length === 0) ||
     (p.type === "group" && p.refCount === 0);
+  // Found by text the row doesn't show: without the words themselves the row
+  // reads as a result that doesn't contain what was typed.
+  const detail = r.entry.detail;
+  const excerpt =
+    detail && r.matchedHaystack >= detail.from ? detailExcerpt(detail.text, query) : "";
   return (
     <div
       role="option"
@@ -345,7 +377,11 @@ function ResultRow({
         <span className="search-row-badge">{t("search.missing_badge")}</span>
       )}
       <span className="search-row-context">
-        {unused ? t("search.unused") : r.entry.context}
+        {unused
+          ? t("search.unused")
+          : excerpt
+            ? `${r.entry.context} · ${excerpt}`
+            : r.entry.context}
       </span>
       {/* Right-hand end, beside the accelerator, rather than a leading check
           slot like the menus': most rows here are not commands, so a leading

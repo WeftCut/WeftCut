@@ -291,6 +291,7 @@ const zhCN: Resources = {
       "quick-actions": "快捷操作",
       attribute: "属性",
       caption: "字幕",
+      marker: "标记",
       "role-mixer": "角色混音",
       effect: "效果",
       playhead: "播放头",
@@ -331,6 +332,28 @@ const zhCN: Resources = {
     placeholder: "例如：修剪这段停顿",
     confirm: "重命名",
     cancel: "取消",
+  },
+  marker_panel: {
+    // 分区标题，同时就是折叠控件：合成的名字加它持有的标记数量。
+    // 一个标记也没有的合成同样有标题——「这里什么都没标」是一个答案，
+    // 而标题缺席不是。
+    section_heading: "{{name}}（{{count}}）",
+    // 存放那些片段已经不再显示其所指画面的标记。CONTEXT.md 的定名用词。
+    hibernating: "休眠中",
+    // 行内字段。这里刻意没有时间字段：标记的时间是空间性的，属于轨道上的拖拽
+    // （ADR 0056）——已锚定的标记上，下一次 reconcile 会覆盖这里输入的任何值。
+    label_field: "标记标签",
+    note_field: "标记备注",
+    color_field: "标记颜色",
+    // 跟随片段的标记，区别于自由标记。CONTEXT.md 的定名用词——绝不叫「片段标记」，
+    // 那会指向第二种实体。
+    anchored: "已锚定",
+    go_to: "跳到 {{timecode}}",
+    // 休眠行不跳时间：它所指的那一帧此刻不在任何时间线上，
+    // 唯一诚实的去处是它所锚定的片段。
+    reveal_clip: "位于素材的 {{timecode}} —— 显示锚定的片段",
+    // 退出休眠的唯一出口。CONTEXT.md 的定名用词。
+    detach: "解除锚定",
   },
   actions: {
     add_color_layer: "颜色层",
@@ -412,6 +435,10 @@ const zhCN: Resources = {
     mark_in: "设置入点",
     mark_out: "设置出点",
     add_marker_at_playhead: "在播放头处添加标记",
+    // 指标记通道上的标记点，不是上面两行的入出点：英文 mark / marker 同根，
+    // 在这里却是两种对象，译名必须分开。
+    seek_prev_marker: "跳到上一个标记",
+    seek_next_marker: "跳到下一个标记",
     clear_range: "清除入出点",
     open_search: "全局搜索…",
     search: "搜索",
@@ -524,10 +551,16 @@ const zhCN: Resources = {
     group_derived_name: "组 {{n}}",
     group_overhang: "已超出 {{label}} 的末尾——此处不渲染内容",
     group_more_content: "{{label}} 更长——向外拖动此边缘可展开更多",
+    // 组片段上 `⚑N` 徽标的提示。计数会穿透其中层层嵌套的组，所以说“内含”而
+    // 不点名某一条时间线——这些标记本就不在同一条上。
+    group_marker_count_one: "内含 {{count}} 个标记——点击打开该组",
+    group_marker_count_other: "内含 {{count}} 个标记——点击打开该组",
     link_label: "链接名称",
     link_hidden_members_one: "{{count}} 个链接片段位于隐藏轨道——点击显示",
     link_hidden_members_other: "{{count}} 个链接片段位于隐藏轨道——点击显示下一个",
     delete_marker: "删除标记",
+    attach_marker: "锚定到片段",
+    detach_marker: "解除锚定",
     rename_track_label: "重命名 {{label}}",
     enable_layer: "启用图层",
     disable_layer: "禁用图层",
@@ -555,7 +588,12 @@ const zhCN: Resources = {
     transition_menu_direction: "方向",
     transition_menu_duration: "时长",
     transition_menu_duration_preset: "{{seconds}} 秒",
-    // 时间标尺下半区标记的悬停文案；标记无名称时调用处退回 `$t(kinds.marker)`。
+    // 标尺下方标记轨的表头名称。
+    marker_lane: "标记",
+    // 标记轨折叠开关的无障碍名称与提示：只说对象，方向交给箭头、状态交给
+    // `aria-expanded`。
+    marker_lane_toggle: "折叠标记轨",
+    // 标记轨中标记的悬停文案；标记无名称时调用处退回 `$t(kinds.marker)`。
     marker_tooltip_point: "{{label}} · {{timecode}}",
     marker_tooltip_region: "{{label}} · {{start}} – {{end}}",
   },
@@ -1520,6 +1558,8 @@ const zhCN: Resources = {
       add_shots: "添加镜头标记",
       update: "修改标记",
       remove: "删除标记",
+      attach: "标记锚定到片段",
+      detach: "解除标记锚定",
     },
     effect: {
       add: "添加效果",

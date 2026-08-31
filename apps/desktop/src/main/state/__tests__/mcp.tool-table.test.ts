@@ -5,8 +5,8 @@ import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
 import { root } from './fixtures/project'
 
-const ALL_63_NAMES = new Set<string>([
-  // table-exec tools (42)
+const ALL_65_NAMES = new Set<string>([
+  // table-exec tools (44)
   'add_track', 'remove_track', 'rename_track', 'duplicate_layer', 'paste_layers', 'move_track',
   'update_layer', 'set_layers_enabled', 'update_layer_params', 'set_scale_linked',
   'move_layer', 'restack_layer', 'trim_layer', 'delete_layer',
@@ -15,7 +15,7 @@ const ALL_63_NAMES = new Set<string>([
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'add_transition', 'update_transition', 'remove_transition',
   'set_composition', 'fit_composition_to_layers',
-  'update_marker', 'remove_marker',
+  'update_marker', 'remove_marker', 'attach_marker', 'detach_marker',
   'remove_media', 'undo', 'redo',
   'set_role_gain', 'set_role_flags',
   // dedicated-exec tools (21) — auto_split_by_shot is a TS-owned HYBRID def
@@ -31,8 +31,8 @@ const ALL_63_NAMES = new Set<string>([
 ])
 
 describe('MCP tool table projections', () => {
-  it('MCP_TOOLS contains exactly the 63 tool names', () => {
-    expect(MCP_TOOLS).toEqual(ALL_63_NAMES)
+  it('MCP_TOOLS contains exactly the 65 tool names', () => {
+    expect(MCP_TOOLS).toEqual(ALL_65_NAMES)
   })
 
   it('MCP_TOOLS equals the set of def names', () => {
@@ -72,7 +72,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(42)
+    expect(table.length).toBe(44)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }
@@ -297,6 +297,134 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     expect(r.error.code).toBe('invalid_params')
     expect(r.error.message).toContain('visual layers only')
     expect(r.error.data).toEqual({ error: 'TransitionUnsupportedLayerKind', layer: au, kind: 'Audio' })
+  })
+})
+
+describe('marker anchoring through mcpCall (the agent surface, end to end)', () => {
+  const MID = '00000000-0000-7000-8000-0000000000ac'
+  /** One video clip at [1M,3M) windowed on [2M,4M) of its media, plus a Color
+   *  layer — the two kinds an anchor is accepted and refused on.
+   *
+   *  The Color layer takes a lane of its OWN and sits clear of [4M,6M): these
+   *  tests move the clip there to watch a mark follow it, and a blocking layer
+   *  would fail that move as a LayerOverlap, reading as "the anchor did not
+   *  follow" when nothing about anchoring was exercised at all. */
+  function withClip() {
+    const idGen = uuidV7Gen()
+    const initial = blankProject(idGen, 't')
+    const actor = createActor({ initial, idGen, clock: () => '2026-01-01T00:00:00.000Z' })
+    const track = root(initial).tracks[0].id
+    const spare = (actor.dispatch('add_track', { label: 'spare' }) as { ok: true; value: string }).value
+    actor.dispatch('add_media', { id: MID, kind: 'Video', duration_us: 10_000_000 })
+    const clip = (actor.dispatch('add_layer', { track, kind: 'video', media: MID, src_in_us: 2_000_000, src_out_us: 4_000_000, t_start_us: 1_000_000, t_end_us: 3_000_000 }) as { ok: true; value: string }).value
+    const color = (actor.dispatch('add_layer', { track: spare, kind: 'color', t_start_us: 7_000_000, t_end_us: 9_000_000 }) as { ok: true; value: string }).value
+    return { actor, track, spare, clip, color }
+  }
+  const RED = { r: 255, g: 0, b: 0, a: 255 }
+  const addMarker = (actor: ReturnType<typeof withClip>['actor'], args: Record<string, unknown>) =>
+    actor.mcpCall('add_marker', JSON.stringify({ t_us: 2_000_000, label: 'cut', color: RED, ...args }))
+
+  it('an anchored add derives src_us from the clip, follows it, and spends ONE undo on both', () => {
+    const { actor, track, clip } = withClip()
+    const before = actor.historyStatus().len
+    const r = addMarker(actor, { anchor_layer_id: clip })
+    expect(r.ok).toBe(true)
+    // 2M is 1M into the clip, which is windowed from 2M of the source.
+    expect(root(actor.snapshot()).markers[0]).toMatchObject({ t_us: 2_000_000, anchor: { layer: clip, src_us: 3_000_000 } })
+    expect(actor.historyStatus().len).toBe(before + 1)
+
+    expect(actor.dispatch('move_layer', { layer: clip, to_track: track, t_start_us: 4_000_000 }).ok).toBe(true)
+    expect(root(actor.snapshot()).markers[0].t_us).toBe(5_000_000)
+
+    // One commit created the mark AND its tie, so one undo takes both — the
+    // caller is never left holding a marker it did not ask for on its own.
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(root(actor.snapshot()).markers).toEqual([])
+  })
+
+  it('a refused anchor creates NO marker, rather than a free one to clean up', () => {
+    const { actor, color } = withClip()
+    const before = actor.historyStatus().len
+    const r = addMarker(actor, { anchor_layer_id: color })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.code).toBe('invalid_params')
+    // The MESSAGE, because MCP clients drop `data` — an agent told only
+    // "WrongLayerKind" cannot see which layer it named or what would work.
+    expect(r.error.message).toContain(color)
+    expect(r.error.message).toContain('VideoClip | Audio | CompositionRef')
+    expect(root(actor.snapshot()).markers).toEqual([])
+    expect(actor.historyStatus().len).toBe(before)
+  })
+
+  it('a time the clip does not cover is refused on t_us, not silently teleported onto it', () => {
+    const { actor, clip } = withClip()
+    const r = addMarker(actor, { t_us: 8_000_000, anchor_layer_id: clip })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.code).toBe('invalid_params')
+    expect(root(actor.snapshot()).markers).toEqual([])
+  })
+
+  it('omitting anchor_layer_id is the ordinary marker: fixed to the timeline, untouched by the clip', () => {
+    const { actor, track, clip } = withClip()
+    expect(addMarker(actor, {}).ok).toBe(true)
+    expect(root(actor.snapshot()).markers[0].anchor).toBeNull()
+    expect(actor.dispatch('move_layer', { layer: clip, to_track: track, t_start_us: 4_000_000 }).ok).toBe(true)
+    expect(root(actor.snapshot()).markers[0].t_us).toBe(2_000_000)
+  })
+
+  it('attach_marker then detach_marker route through the table: the mark starts following, then stops on the frame it reads', () => {
+    const { actor, track, clip } = withClip()
+    const add = addMarker(actor, {})
+    expect(add.ok).toBe(true)
+    if (!add.ok) return
+    const markerId = add.result.content[0].text
+
+    expect(actor.mcpCall('attach_marker', JSON.stringify({ marker_id: markerId, layer_id: clip })).ok).toBe(true)
+    // The tie names where the mark already sat, so attaching by itself moves nothing.
+    expect(root(actor.snapshot()).markers[0]).toMatchObject({ t_us: 2_000_000, anchor: { layer: clip, src_us: 3_000_000 } })
+    expect(actor.dispatch('move_layer', { layer: clip, to_track: track, t_start_us: 4_000_000 }).ok).toBe(true)
+    expect(root(actor.snapshot()).markers[0].t_us).toBe(5_000_000)
+
+    expect(actor.mcpCall('detach_marker', JSON.stringify({ marker_id: markerId })).ok).toBe(true)
+    expect(root(actor.snapshot()).markers[0]).toMatchObject({ t_us: 5_000_000, anchor: null })
+    expect(actor.dispatch('move_layer', { layer: clip, to_track: track, t_start_us: 1_000_000 }).ok).toBe(true)
+    expect(root(actor.snapshot()).markers[0].t_us).toBe(5_000_000)
+  })
+
+  // Both are claims the tool descriptions make to the agent in so many words.
+  it('attaching an already-anchored marker replaces the tie, and detaching one that follows nothing is accepted', () => {
+    const { actor, spare, clip } = withClip()
+    const add = addMarker(actor, { anchor_layer_id: clip })
+    expect(add.ok).toBe(true)
+    if (!add.ok) return
+    const markerId = add.result.content[0].text
+
+    // A second clip covering the same instant, on its own lane: the marker
+    // moves its tie there rather than being refused for already having one.
+    const other = (actor.dispatch('add_layer', { track: spare, kind: 'video', media: MID, src_in_us: 6_000_000, src_out_us: 8_000_000, t_start_us: 1_000_000, t_end_us: 3_000_000 }) as { ok: true; value: string }).value
+    expect(actor.mcpCall('attach_marker', JSON.stringify({ marker_id: markerId, layer_id: other })).ok).toBe(true)
+    expect(root(actor.snapshot()).markers[0].anchor).toEqual({ layer: other, src_us: 7_000_000 })
+
+    expect(actor.mcpCall('detach_marker', JSON.stringify({ marker_id: markerId })).ok).toBe(true)
+    // Detaching what already follows nothing is accepted rather than refused,
+    // and costs no history entry: the recipe leaves the draft untouched, so the
+    // commit records nothing. An agent can therefore detach defensively without
+    // first reading the marker to find out whether it needed to.
+    const spent = actor.historyStatus().len
+    expect(actor.mcpCall('detach_marker', JSON.stringify({ marker_id: markerId })).ok).toBe(true)
+    expect(actor.historyStatus().len).toBe(spent)
+    expect(root(actor.snapshot()).markers[0].anchor).toBeNull()
+  })
+
+  it('a non-uuid layer id is refused at the parser, before anything is dispatched', () => {
+    const { actor } = withClip()
+    expect(() => MCP_ARG_PARSERS['attach_marker']({ marker_id: '00000000-0000-7000-8000-000000000001', layer_id: 'the beach shot' })).toThrow()
+    const r = addMarker(actor, { anchor_layer_id: 'the beach shot' })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.code).toBe('invalid_params')
+    expect(root(actor.snapshot()).markers).toEqual([])
   })
 })
 

@@ -2,7 +2,19 @@
 import type { Composition, Layer, LayerParams, Project, Track, Transition, Uuid } from './model'
 import { eachLayer } from './model'
 import { ValidationFailure, type ValidationError } from './errors'
-import { frameGrid, gridForLayerKind, isCanonicalOnGrid, snapOnGrid, type Grid } from './snap'
+import { frameGrid, gridForLayerKind, isCanonicalOnGrid, snapFrameRound, snapOnGrid, type Grid } from './snap'
+// The `src_in_us`/`src_out_us` family, from the mutations layer. No cycle: this
+// is a leaf helper module (model + errors + snap + animated), and nothing it
+// reaches imports back here — the mutation modules that DO import validate
+// (duplicate/groups/moveToComposition, for `layerOverlapClass`) sit above it.
+// One predicate, so a marker cannot anchor to a kind trim and split refuse.
+import { hasSourceWindow } from './mutations/helpers'
+// THE definition of "asleep", borrowed rather than restated: the marker lane
+// paints from it and `reconcileMarkers` re-derives from it, so the projection
+// and the reconcile cannot disagree about which markers are hibernating.
+// `summary.ts` is a projection module over model + helpers and reaches nothing
+// here, so the edge is one-way.
+import { markerHibernating } from './summary'
 
 function fail(err: ValidationError): never { throw new ValidationFailure(err) }
 
@@ -108,9 +120,36 @@ function validateComposition(c: Composition): void {
 /** Marker times are on the composition grid (`snapMarkerTimes` is the mutation
  *  side). Checked last so this rule never pre-empts an existing structural one.
  *  Ids are PROJECT-wide unique (`seenMarkers` spans compositions), for the same
- *  reason layer ids are: update/remove derive the composition from the id. */
+ *  reason layer ids are: update/remove derive the composition from the id.
+ *
+ *  An anchor, when present, must resolve INSIDE this composition — `layersHere`
+ *  is the same one-composition layer set links are checked against, and for the
+ *  same reason: the project-wide set would accept a tie reaching into a Group,
+ *  which nothing can derive a `t_us` from (the two timelines have no shared
+ *  origin). The anchor layer must additionally carry a source window, since the
+ *  derivation reads `params.src_in_us`; an anchor on a Text or Color layer is
+ *  not representable rather than merely useless.
+ *
+ *  What is deliberately NOT checked: `anchor.src_us` against the layer's
+ *  `[src_in_us, src_out_us)` window. Outside it is the legal HIBERNATING state
+ *  (see `markerHibernating` in summary.ts) — the marker is kept, unpainted, and
+ *  revived by undoing the trim that pushed it out. Rejecting it here would make
+ *  an ordinary trim produce a project that cannot be committed, and then not
+ *  opened. This omission is a decision, not an oversight. */
 function validateMarkers(c: Composition, seenMarkers: Set<Uuid>): void {
   const grid = frameGrid(c.fps)
+  // Built here rather than threaded in from `validateTrack`'s walk: it is
+  // needed only when a marker actually claims an anchor, and rebuilding it
+  // locally is what keeps "this composition's own layers" true by
+  // construction — the project-wide index could never express that.
+  let layersHere: Map<Uuid, LayerParams> | null = null
+  const paramsOf = (layer: Uuid): LayerParams | undefined => {
+    if (layersHere === null) {
+      layersHere = new Map()
+      for (const t of c.tracks) for (const l of t.layers) layersHere.set(l.id, l.params)
+    }
+    return layersHere.get(layer)
+  }
   for (const m of c.markers) {
     if (seenMarkers.has(m.id)) fail({ rule: 'DuplicateMarkerId', marker: m.id })
     seenMarkers.add(m.id)
@@ -118,6 +157,10 @@ function validateMarkers(c: Composition, seenMarkers: Set<Uuid>): void {
       fail({ rule: 'OffGridTime', entity: 'Marker', id: m.id, field: 't_us', t: m.t_us, fps: c.fps, snap_to: snapOnGrid(m.t_us, grid) })
     if (m.end_t_us !== null && m.end_t_us !== undefined && !isCanonicalOnGrid(m.end_t_us, grid))
       fail({ rule: 'OffGridTime', entity: 'Marker', id: m.id, field: 'end_t_us', t: m.end_t_us, fps: c.fps, snap_to: snapOnGrid(m.end_t_us, grid) })
+    if (m.anchor === null || m.anchor === undefined) continue
+    const params = paramsOf(m.anchor.layer)
+    if (params === undefined) fail({ rule: 'MarkerAnchorNotInComposition', marker: m.id, layer: m.anchor.layer, composition: c.id })
+    if (!hasSourceWindow(params)) fail({ rule: 'MarkerAnchorLayerHasNoSourceWindow', marker: m.id, layer: m.anchor.layer, kind: params.kind })
   }
 }
 
@@ -231,6 +274,120 @@ export function reconcileTransitions(p: Project): DroppedTransition[] {
       else { dropped.push({ id: tr.id, from_layer: tr.from_layer, to_layer: tr.to_layer, reason }); droppedHere = true }
     }
     if (droppedHere) c.transitions = kept
+  }
+  return dropped
+}
+
+export interface DroppedMarker { id: Uuid; composition: Uuid; layer: Uuid; label: string }
+
+/** Markers sorted by `t_us` — the invariant `markerStartingInFrame` (the lane's
+ *  frame lookup) and `applyAddMarker`'s insertion scan both read. The same
+ *  stable comparator `applyUpdateMarker` re-sorts with, so a marker that lands
+ *  on an existing marker's frame keeps its relative order however it got there. */
+function sortMarkers(c: Composition): void {
+  c.markers.sort((a, b) => (a.t_us < b.t_us ? -1 : a.t_us > b.t_us ? 1 : 0))
+}
+
+/** Reconcile-on-commit for anchored markers, the twin of `reconcileTransitions`
+ *  and run from the same slot in the actor's `produce()` — AFTER the mutation
+ *  apply, BEFORE validate. The three reasons are the transitions' three
+ *  verbatim: ordinary edits stay marker-blind (no mutation needs to know
+ *  markers exist), the correction lands in the SAME history snapshot as the
+ *  edit (one undo restores both), and what comes back is PRIMITIVE drop info,
+ *  never draft references — immer revokes those the moment `produce` returns.
+ *
+ *  `anchor` is truth and `t_us` is the cache this rebuilds:
+ *
+ *      t_us = snapFrameRound(layer.t_start_us + (src_us − params.src_in_us), fps)
+ *
+ *  the same source→timeline mapping `resolveShotCuts` performs, and valid only
+ *  while that mapping is speed=1. LANDMINE: variable speed is deferred there and
+ *  here alike, and when it lands this addition becomes a time remap — the field
+ *  is right, the arithmetic is what needs revisiting.
+ *
+ *  Four cases, and only the first two write anything:
+ *
+ *  - **Anchor layer nowhere in the project** — the clip was deleted. DROP the
+ *    marker and report it, the same policy a transition takes when a
+ *    participant leaves: delete means delete, and a clip-scoped mark outlives
+ *    nothing.
+ *  - **Layer here, `src_us` inside its window** — re-derive `t_us` (and carry a
+ *    region's `end_t_us` by the same frame delta, so the span the user drew
+ *    survives the follow and can never invert), then re-sort the composition.
+ *  - **Layer here, `src_us` outside `[src_in_us, src_out_us)`** — HIBERNATING.
+ *    Keep the anchor, freeze `t_us`, derive nothing. Hibernation is never stored:
+ *    it is recomputed here every commit, which is exactly what makes revival on
+ *    re-extend or undo automatic and free.
+ *  - **Layer in ANOTHER composition** — leave the marker exactly where it is.
+ *    Not a drop condition: the layer is alive, so this can only mean a
+ *    cross-composition move failed to carry its markers along
+ *    (`moveLinksTransitionsAndMarkers`), and validate then refuses the whole
+ *    commit with `MarkerAnchorNotInComposition`. Dropping instead would destroy
+ *    the user's marker AND hide the bug that caused it. The "gone" test is
+ *    therefore project-wide and deliberately runs SECOND, only for an anchor
+ *    this composition cannot resolve.
+ *
+ *  A free marker (`anchor === null`) is never touched by any of it. */
+export function reconcileMarkers(p: Project): DroppedMarker[] {
+  const dropped: DroppedMarker[] = []
+  // Built at most once per commit, and only when some anchor misses its own
+  // composition — the rare arm. Every other marker is answered by the
+  // per-composition index below, which the derivation needs anyway.
+  let projectLayers: Set<Uuid> | null = null
+  const existsAnywhere = (layer: Uuid): boolean => {
+    if (projectLayers === null) {
+      const seen = new Set<Uuid>()
+      for (const e of eachLayer(p)) seen.add(e.layer.id)
+      projectLayers = seen
+    }
+    return projectLayers.has(layer)
+  }
+  for (const c of Object.values(p.compositions)) {
+    if (c.markers.length === 0) continue
+    let here: Map<Uuid, Layer> | null = null
+    const layerHere = (id: Uuid): Layer | undefined => {
+      if (here === null) {
+        const idx = new Map<Uuid, Layer>()
+        for (const t of c.tracks) for (const l of t.layers) idx.set(l.id, l)
+        here = idx
+      }
+      return here.get(id)
+    }
+    const goneHere = new Set<Uuid>()
+    let moved = false
+    for (const m of c.markers) {
+      const anchor = m.anchor
+      if (anchor === null || anchor === undefined) continue
+      const layer = layerHere(anchor.layer)
+      if (layer === undefined) {
+        if (!existsAnywhere(anchor.layer)) {
+          dropped.push({ id: m.id, composition: c.id, layer: anchor.layer, label: m.label })
+          goneHere.add(m.id)
+        }
+        continue
+      }
+      // Redundant against the line below — `markerHibernating` already reads a
+      // windowless kind as asleep — and kept because it is what narrows
+      // `layer.params` to the arm carrying the `src_in_us` the derivation reads.
+      // Such an anchor never survives the commit anyway
+      // (`MarkerAnchorLayerHasNoSourceWindow`); this only decides what happens
+      // in the moment between the mutation and the validate that refuses it.
+      if (!hasSourceWindow(layer.params)) continue
+      if (markerHibernating(c, m)) continue
+      const t = snapFrameRound(layer.t_start_us + (anchor.src_us - layer.params.src_in_us), c.fps.num, c.fps.den)
+      if (t === m.t_us) continue
+      // A region carries its END by the same frame delta rather than a second
+      // anchor: one tie means one mapping, and holding `end_t_us` still while
+      // `t_us` follows would stretch the span and eventually invert it.
+      // Re-snapped rather than added, because the difference of two canonical
+      // times is not itself canonical at a fractional rate.
+      if (m.end_t_us !== null && m.end_t_us !== undefined)
+        m.end_t_us = snapFrameRound(m.end_t_us + (t - m.t_us), c.fps.num, c.fps.den)
+      m.t_us = t
+      moved = true
+    }
+    if (goneHere.size > 0) c.markers = c.markers.filter((m) => !goneHere.has(m.id))
+    if (moved) sortMarkers(c)
   }
   return dropped
 }

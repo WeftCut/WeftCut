@@ -8,12 +8,15 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen } from './ids'
 import { blankProject } from './model'
-import type { Layer, Project } from './model'
+import type { Layer, Marker, Project } from './model'
 import { createActor, type ActorLogEntry } from './actor'
-import { reconcileTransitions } from './validate'
-import { applyAddLayer, colorParams } from './mutations/add'
+import { reconcileMarkers, reconcileTransitions, validate } from './validate'
+import { ValidationFailure } from './errors'
+import { markerHibernating } from './summary'
+import { applyAddLayer, applyAddMarker, colorParams } from './mutations/add'
+import { mediaItemTemplate, videoClipParams } from './mutations/media'
 import { applyAddTransition } from './mutations/transitions'
-import { root } from './__tests__/fixtures/project'
+import { root, withGroup } from './__tests__/fixtures/project'
 
 const RED = { r: 255, g: 0, b: 0, a: 255 }
 const color = () => colorParams(RED, 1920, 1080)
@@ -225,5 +228,198 @@ describe('reconcileTransitions (direct, plain object)', () => {
     }])
     expect(root(p).transitions.map((t) => t.id)).toEqual([t2]) // t2 untouched
     expect(l1Obj.t_end_us).toBe(2_000_000) // no shrink-back
+  })
+})
+
+// ── Anchored markers ─────────────────────────────────────────────────────────
+// The same Policy B one entity over: `reconcileMarkers` re-derives an anchored
+// marker's `t_us` from its layer's source window on EVERY commit, drops the
+// marker when the clip it named leaves the project, and does neither while the
+// mark points at source the layer no longer shows.
+
+const MEDIA = '00000000-0000-0000-0000-0000000000aa'
+
+/** A project with a 10 s video in the pool and one clip on the A roll at
+ *  `[1 s, 3 s)` showing source `[2 s, 4 s)`, plus the markers `marks` describes.
+ *  A `srcUs` builds an ANCHORED marker on that clip, placed at the time the
+ *  reconcile would derive; a bare `tUs` builds a free one. Markers are authored
+ *  before the actor exists because attaching is not yet a command — the model
+ *  carries the anchor, so `applyAddMarker` is the whole surface it needs.
+ *
+ *  30 fps, and every time below is a whole frame: a mark at source `s` sits at
+ *  `1 s + (s − 2 s)`. */
+function anchoredFixture(marks: Array<{ srcUs?: number; tUs?: number; endTUs?: number | null; label?: string }> = [{ srcUs: 3_000_000 }]) {
+  const gen = seededGen()
+  const p = blankProject(gen, 'mk')
+  p.media_pool[MEDIA] = mediaItemTemplate(MEDIA, 'Video', 10_000_000)
+  const aRoll = root(p).tracks[0].id
+  const clip = applyAddLayer(p, gen, aRoll, videoClipParams(MEDIA, 2_000_000, 4_000_000), 1_000_000, 3_000_000)
+  const ids = marks.map((m, i) => {
+    const src = m.srcUs
+    const t = typeof src === 'number' ? 1_000_000 + src - 2_000_000 : (m.tUs as number)
+    return applyAddMarker(p, gen, t, m.endTUs ?? null, m.label ?? `m${i}`, RED, null, '',
+      typeof src === 'number' ? { layer: clip, src_us: src } : null)
+  })
+  const logged: ActorLogEntry[] = []
+  const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>', emitLog: (e) => logged.push(e) })
+  return { p, gen, actor, logged, aRoll, clip, ids }
+}
+const markersOf = (p: Project): Marker[] => root(p).markers
+function markerAt(p: Project, id: string): Marker {
+  const m = markersOf(p).find((x) => x.id === id)
+  if (!m) throw new Error(`marker ${id} not found`)
+  return m
+}
+const asleep = (p: Project, id: string): boolean => markerHibernating(root(p), markerAt(p, id))
+function videoLayer(p: Project, id: string) {
+  const l = root(p).tracks[0].layers.find((x) => x.id === id)
+  if (!l || l.params.kind !== 'VideoClip') throw new Error(`video layer ${id} not found`)
+  return { layer: l, params: l.params }
+}
+
+describe('reconcileMarkers (direct, plain object): the policy table', () => {
+  it('a free marker is never touched, whatever the clips under it do', () => {
+    const { p, clip } = anchoredFixture([{ tUs: 500_000 }])
+    videoLayer(p, clip).layer.t_start_us = 2_000_000
+    expect(reconcileMarkers(p)).toEqual([])
+    expect(markersOf(p)[0]).toMatchObject({ t_us: 500_000, anchor: null })
+  })
+
+  it('an anchored marker inside its layer window re-derives t_us from the layer that moved', () => {
+    const { p, clip, ids } = anchoredFixture()
+    const { layer } = videoLayer(p, clip)
+    layer.t_start_us = 5_000_000
+    layer.t_end_us = 7_000_000
+    expect(reconcileMarkers(p)).toEqual([])
+    expect(markerAt(p, ids[0]).t_us).toBe(6_000_000) // 5 s + (3 s − 2 s)
+  })
+
+  it('a src_us outside [src_in_us, src_out_us) HIBERNATES: t_us frozen, anchor kept, nothing dropped', () => {
+    const { p, clip, ids } = anchoredFixture()
+    const { layer, params } = videoLayer(p, clip)
+    params.src_in_us = 3_500_000 // trimmed past the mark
+    layer.t_start_us = 2_500_000
+    expect(reconcileMarkers(p)).toEqual([])
+    expect(markerAt(p, ids[0])).toMatchObject({ t_us: 2_000_000, anchor: { layer: clip, src_us: 3_000_000 } })
+    expect(asleep(p, ids[0])).toBe(true)
+  })
+
+  it('the window is half-open, so a mark exactly on src_out_us is already asleep', () => {
+    const { p, ids } = anchoredFixture([{ srcUs: 4_000_000 }])
+    expect(asleep(p, ids[0])).toBe(true)
+    const before = markerAt(p, ids[0]).t_us
+    expect(reconcileMarkers(p)).toEqual([])
+    expect(markerAt(p, ids[0]).t_us).toBe(before)
+  })
+
+  it('an anchor layer gone from the whole project DROPS the marker and reports it', () => {
+    const { p, clip, ids } = anchoredFixture([{ srcUs: 3_000_000, label: 'cut 1' }, { tUs: 500_000 }])
+    root(p).tracks[0].layers = []
+    expect(reconcileMarkers(p)).toEqual([{ id: ids[0], composition: root(p).id, layer: clip, label: 'cut 1' }])
+    expect(markersOf(p).map((m) => m.id)).toEqual([ids[1]]) // the free marker survives
+  })
+
+  it('an anchor layer that merely MOVED to another composition is kept, not dropped — validate is what must shout', () => {
+    const { p, gen, clip, ids } = anchoredFixture()
+    const layer = root(p).tracks[0].layers.pop()!
+    const { p: withG, groupId } = withGroup(p, gen)
+    withG.compositions[groupId].tracks[0].layers.push(layer)
+    expect(reconcileMarkers(withG)).toEqual([]) // the layer is alive, so nothing is dropped
+    expect(withG.compositions[withG.root_id].markers[0]).toMatchObject({ id: ids[0], t_us: 2_000_000, anchor: { layer: clip } })
+    try { validate(withG); throw new Error('expected a validation failure') }
+    catch (e) { expect(e instanceof ValidationFailure && e.err.rule).toBe('MarkerAnchorNotInComposition') }
+  })
+
+  it('a re-derived marker crossing another lands in the right slot, keeping markers sorted by t_us', () => {
+    const { p, clip, ids } = anchoredFixture([{ srcUs: 3_000_000 }, { tUs: 2_500_000 }])
+    expect(markersOf(p).map((m) => m.id)).toEqual([ids[0], ids[1]]) // 2 s, then 2.5 s
+    videoLayer(p, clip).layer.t_start_us = 2_000_000
+    expect(reconcileMarkers(p)).toEqual([])
+    expect(markersOf(p).map((m) => m.t_us)).toEqual([2_500_000, 3_000_000])
+    expect(markersOf(p).map((m) => m.id)).toEqual([ids[1], ids[0]])
+  })
+
+  it('a region carries its end by the same delta, so the span the user drew survives the follow', () => {
+    const { p, clip, ids } = anchoredFixture([{ srcUs: 3_000_000, endTUs: 2_500_000 }])
+    videoLayer(p, clip).layer.t_start_us = 2_000_000
+    expect(reconcileMarkers(p)).toEqual([])
+    expect(markerAt(p, ids[0])).toMatchObject({ t_us: 3_000_000, end_t_us: 3_500_000 })
+  })
+})
+
+describe('reconcile-on-commit: anchored markers follow their clip', () => {
+  it('a move carries the anchored markers by the same delta and leaves free ones where they were', () => {
+    const { actor, aRoll, clip, ids } = anchoredFixture([{ srcUs: 3_000_000 }, { tUs: 500_000 }])
+    expect(actor.dispatch('move_layer', { layer: clip, to_track: aRoll, t_start_us: 5_000_000 }).ok).toBe(true)
+    expect(markerAt(actor.snapshot(), ids[0]).t_us).toBe(6_000_000)
+    expect(markerAt(actor.snapshot(), ids[1]).t_us).toBe(500_000)
+  })
+
+  it('a head trim that keeps showing the mark does not move it — the window edge and the layer start travel together', () => {
+    const { actor, clip, ids } = anchoredFixture()
+    expect(actor.dispatch('trim_layer', { layer: clip, edge: 'in', new_t_us: 1_500_000 }).ok).toBe(true)
+    expect(asleep(actor.snapshot(), ids[0])).toBe(false)
+    expect(markerAt(actor.snapshot(), ids[0]).t_us).toBe(2_000_000)
+  })
+
+  it('trimming the IN point past a mark hibernates it; re-extending revives it on the exact frame it named', () => {
+    const { actor, clip, ids } = anchoredFixture()
+    expect(actor.dispatch('trim_layer', { layer: clip, edge: 'in', new_t_us: 2_500_000 }).ok).toBe(true)
+    expect(asleep(actor.snapshot(), ids[0])).toBe(true)
+    expect(markerAt(actor.snapshot(), ids[0])).toMatchObject({ t_us: 2_000_000, anchor: { src_us: 3_000_000 } })
+    expect(actor.dispatch('trim_layer', { layer: clip, edge: 'in', new_t_us: 1_000_000 }).ok).toBe(true)
+    expect(asleep(actor.snapshot(), ids[0])).toBe(false)
+    expect(markerAt(actor.snapshot(), ids[0]).t_us).toBe(2_000_000)
+  })
+
+  it('a hibernating mark is inert to the edits an awake one follows, and undo restores it awake', () => {
+    const { actor, aRoll, clip, ids } = anchoredFixture()
+    expect(actor.dispatch('trim_layer', { layer: clip, edge: 'out', new_t_us: 1_500_000 }).ok).toBe(true) // src_out → 2.5 s
+    expect(asleep(actor.snapshot(), ids[0])).toBe(true)
+    expect(actor.dispatch('move_layer', { layer: clip, to_track: aRoll, t_start_us: 5_000_000 }).ok).toBe(true)
+    expect(markerAt(actor.snapshot(), ids[0]).t_us).toBe(2_000_000) // an awake marker would have gone to 6 s
+    expect(actor.dispatch('trim_layer', { layer: clip, edge: 'out', new_t_us: 7_000_000 }).ok).toBe(true)
+    expect(markerAt(actor.snapshot(), ids[0]).t_us).toBe(6_000_000) // revived where its source now plays
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(asleep(actor.snapshot(), ids[0])).toBe(true)
+  })
+
+  it('a split leaves the mark’s source in the RIGHT half, so the anchor — which rides the left half’s id — hibernates', () => {
+    const { actor, clip, ids } = anchoredFixture()
+    expect(actor.dispatch('split_layer', { layer: clip, at_t_us: 1_500_000, escape_link: false }).ok).toBe(true)
+    expect(root(actor.snapshot()).tracks[0].layers[0].id).toBe(clip) // left half keeps the id
+    expect(asleep(actor.snapshot(), ids[0])).toBe(true)
+    expect(markerAt(actor.snapshot(), ids[0])).toMatchObject({ t_us: 2_000_000, anchor: { layer: clip, src_us: 3_000_000 } })
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(asleep(actor.snapshot(), ids[0])).toBe(false)
+    expect(markerAt(actor.snapshot(), ids[0]).t_us).toBe(2_000_000)
+  })
+
+  it('deleting a clip takes its anchored markers in the SAME commit, names them in the status log, and ONE undo restores both', () => {
+    const { actor, logged, clip, ids } = anchoredFixture([{ srcUs: 3_000_000, label: 'cut 1' }, { tUs: 500_000 }])
+    expect(actor.dispatch('delete_layer', { layer: clip }).ok).toBe(true)
+    expect(markersOf(actor.snapshot()).map((m) => m.id)).toEqual([ids[1]]) // the free marker stays
+    expect(logged).toHaveLength(1)
+    expect(logged[0].level).toBe('info')
+    expect(logged[0].category).toEqual({ kind: 'Project' })
+    expect(logged[0].message).toContain('Marker removed')
+    expect(logged[0].message).toContain('cut 1')
+    expect(logged[0].details).toMatchObject({ kind: 'MarkerReconcileDrop', marker: ids[0], layer: clip, label: 'cut 1' })
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(root(actor.snapshot()).tracks[0].layers.map((l) => l.id)).toEqual([clip])
+    expect(markersOf(actor.snapshot()).map((m) => m.id)).toEqual([ids[1], ids[0]])
+  })
+
+  it('pre-composing a clip carries its anchored markers into the Group and leaves free ones in the film', () => {
+    const { actor, clip, ids } = anchoredFixture([{ srcUs: 3_000_000 }, { tUs: 500_000 }])
+    const r = actor.dispatch('groups_create', { layers: [clip] })
+    expect(r.ok).toBe(true)
+    const groupId = (r as { ok: true; value: { composition_id: string } }).value.composition_id
+    const inner = actor.snapshot().compositions[groupId]
+    expect(inner.markers.map((m) => m.id)).toEqual([ids[0]])
+    // The member shifted to composition time 0, and the SAME commit re-derived
+    // the mark there: 0 + (3 s − 2 s).
+    expect(inner.markers[0].t_us).toBe(1_000_000)
+    expect(markersOf(actor.snapshot()).map((m) => m.id)).toEqual([ids[1]])
   })
 })

@@ -11,7 +11,7 @@ import { gridForLayerKind, snapOnGrid } from '../snap'
 import { layerOverlapClass } from '../validate'
 import { applyAddTrack, compositionRefPath } from './add'
 import {
-  applyDurationAutofit, compositionOf, insertSorted, locateLayerIn, moveLinksAndTransitions,
+  applyDurationAutofit, compositionOf, insertSorted, locateLayerIn, moveLinksTransitionsAndMarkers,
   pickFreeOverlayTrack, pruneEmptiedTrack, requireSameComposition,
 } from './helpers'
 
@@ -53,9 +53,9 @@ import {
  *  - `'spawn'` — one fresh lane at the top of the destination's z-stack, which
  *    is where the destination's drop strip puts content.
  *
- *  Links and transitions follow the set, markers do not
- *  (`moveLinksAndTransitions`). Emptied source lanes are pruned and BOTH
- *  compositions autofit.
+ *  Links, transitions and the markers anchored to a member follow the set; a
+ *  free marker stays behind (`moveLinksTransitionsAndMarkers`). Emptied source
+ *  lanes are pruned and BOTH compositions autofit.
  *
  *  Every refusal is decided before the first write, so a refused move leaves the
  *  project byte-identical and burns no id: an empty set, an `anchorLayerId`
@@ -93,7 +93,7 @@ export function applyMoveLayersToComposition(
   const dest = compositionOf(p, destCompositionId)
   // This op crosses; a landing inside the composition the set is already in is
   // `applyMoveLayer`'s, which re-lanes one layer without touching links.
-  // LANDMINE: `moveLinksAndTransitions` splices `from` while pushing to `to`, so
+  // LANDMINE: `moveLinksTransitionsAndMarkers` splices `from` while pushing to `to`, so
   // handing it one composition twice never terminates — the guard is what keeps
   // that unreachable, not an accident of who calls this.
   if (dest === parent)
@@ -198,7 +198,7 @@ export function applyMoveLayersToComposition(
     }
   })
 
-  moveLinksAndTransitions(parent, dest, new Set(ids))
+  moveLinksTransitionsAndMarkers(parent, dest, new Set(ids))
   for (const formerId of formerTrackIds) pruneEmptiedTrack(parent, formerId)
   applyDurationAutofit(parent)
   applyDurationAutofit(dest)

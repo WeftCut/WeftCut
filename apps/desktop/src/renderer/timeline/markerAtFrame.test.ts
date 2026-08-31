@@ -1,8 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { displayedFrameStartUs } from "../frames";
-import type { MarkerSummary } from "../ipc";
-import { markerStartingInFrame } from "./markerAtFrame";
+import type {
+  AnimTrack,
+  CompositionSummary,
+  LayerSummary,
+  MarkerSummary,
+  TrackSummary,
+} from "../ipc";
+import {
+  currentSelection,
+  primaryLayerIdOf,
+  useSelectionStore,
+} from "../state/selectionStore";
+import { compositionFixture } from "../testing/summaryFixture";
+import {
+  clampMarkerTimeUs,
+  markerAnchorFor,
+  markerDragBoundsUs,
+  markerStartingInFrame,
+} from "./markerAtFrame";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -14,7 +31,11 @@ function marker(tUs: number, endTUs: number | null = null): MarkerSummary {
     t_us: tUs,
     end_t_us: endTUs,
     label: "",
+    note: "",
     color_hint: "#0080ff",
+    anchor_layer: null,
+    anchor_src_us: null,
+    hibernating: false,
   };
 }
 
@@ -77,5 +98,279 @@ describe("markerStartingInFrame", () => {
     expect(
       markerStartingInFrame([m], anchorUs + 40_000, 30_000, 1_001),
     ).toBeNull();
+  });
+});
+
+// ── The other half of the `M` key: which clip, if any, the mark is tied to ───
+// `markerStartingInFrame` above answers "add or rename"; `markerAnchorFor`
+// answers "free or anchored". The two are tested together because they are the
+// one gesture's two decisions, taken in that order.
+
+const staticNum = (value: number): AnimTrack<number> => ({
+  mode: "Static",
+  value,
+});
+
+/// A clip on the timeline at `[tStartUs, tEndUs)` showing source
+/// `[srcInUs, …)`, so a mark's timeline time and its source time are never the
+/// same number and a derivation that dropped one of the terms would show.
+function clip({
+  id,
+  tStartUs,
+  tEndUs,
+  srcInUs = 2_000_000,
+  params,
+}: {
+  id: string;
+  tStartUs: number;
+  tEndUs: number;
+  srcInUs?: number;
+  params?: LayerSummary["params"];
+}): LayerSummary {
+  return {
+    id,
+    label: null,
+    t_start_us: tStartUs,
+    t_end_us: tEndUs,
+    kind: params?.kind ?? "VideoClip",
+    color_hint: "#5588aa",
+    enabled: true,
+    locked: false,
+    effects: [],
+    params: params ?? {
+      kind: "VideoClip",
+      media_id: "media-1",
+      media_label: "clip.mov",
+      src_in_us: srcInUs,
+      src_out_us: srcInUs + (tEndUs - tStartUs),
+      x: staticNum(0),
+      y: staticNum(0),
+      scale_x: staticNum(1),
+      scale_y: staticNum(1),
+      scale_linked: true,
+      rotation_deg: staticNum(0),
+      anchor_x: staticNum(0.5),
+      anchor_y: staticNum(0.5),
+      opacity: staticNum(1),
+      speed: 1,
+      flip_h: false,
+      flip_v: false,
+      fade_in_us: 0,
+      fade_out_us: 0,
+    },
+  };
+}
+
+function timelineOf(...layers: LayerSummary[]): CompositionSummary {
+  const track: TrackSummary = {
+    id: "track-1",
+    kind: "Video",
+    label: null,
+    enabled: true,
+    locked: false,
+    muted: false,
+    solo: false,
+    role: null,
+    transient: true,
+    layers,
+  };
+  return compositionFixture({ tracks: [track] });
+}
+
+/// The clip the fixtures anchor to: timeline `[1 s, 3 s)` over source
+/// `[2 s, 4 s)`, so a mark at 2 s names source 3 s.
+const CLIP = clip({ id: "clip-1", tStartUs: 1_000_000, tEndUs: 3_000_000 });
+
+afterEach(() => useSelectionStore.setState({ selection: { kind: "none" } }));
+
+describe("markerAnchorFor", () => {
+  it("names the source instant under the mark, not the timeline one", () => {
+    expect(markerAnchorFor(timelineOf(CLIP), "clip-1", 2_000_000)).toEqual({
+      layer: "clip-1",
+      src_us: 3_000_000,
+    });
+  });
+
+  // A tie to material the mark does not touch means nothing, so the mark stays
+  // free rather than teleporting onto the clip. The end is EXCLUSIVE.
+  it("refuses a time the clip does not cover, at either edge", () => {
+    const comp = timelineOf(CLIP);
+    expect(markerAnchorFor(comp, "clip-1", 999_999)).toBeNull();
+    expect(markerAnchorFor(comp, "clip-1", 3_000_000)).toBeNull();
+    expect(markerAnchorFor(comp, "clip-1", 1_000_000)).not.toBeNull();
+    expect(markerAnchorFor(comp, "clip-1", 2_999_999)).not.toBeNull();
+  });
+
+  // The three kinds main's `hasSourceWindow` admits, and no more: a Motif
+  // carries a `src_in_us` and is still not anchorable, which is the twin that
+  // bites first if this list is ever written as "has a src_in_us".
+  it("refuses a kind with no source WINDOW, Motif included", () => {
+    const motif = clip({
+      id: "motif-1",
+      tStartUs: 1_000_000,
+      tEndUs: 3_000_000,
+      params: {
+        kind: "Motif",
+        motif_id: "lower-third",
+        x: staticNum(0),
+        y: staticNum(0),
+        scale_x: staticNum(1),
+        scale_y: staticNum(1),
+        scale_linked: true,
+        rotation_deg: staticNum(0),
+        anchor_x: staticNum(0.5),
+        anchor_y: staticNum(0.5),
+        opacity: staticNum(1),
+        src_in_us: 0,
+        props: {},
+      },
+    });
+    expect(markerAnchorFor(timelineOf(motif), "motif-1", 2_000_000)).toBeNull();
+  });
+
+  it("refuses a layer this composition does not hold", () => {
+    expect(markerAnchorFor(timelineOf(CLIP), "elsewhere", 2_000_000)).toBeNull();
+  });
+});
+
+// The `M` key's decision, as `App.tsx` takes it: the live selection names the
+// clip, `markerAnchorFor` says whether the mark can be tied to it.
+describe("the M key's anchor decision", () => {
+  const anchorForSelection = (
+    comp: CompositionSummary,
+    frameUs: number,
+  ): ReturnType<typeof markerAnchorFor> => {
+    const primary = primaryLayerIdOf(currentSelection());
+    return primary === null ? null : markerAnchorFor(comp, primary, frameUs);
+  };
+  const select = (primary: string, ...rest: string[]) =>
+    useSelectionStore.setState({
+      selection: { kind: "layers", primary, ids: new Set([primary, ...rest]) },
+    });
+
+  it("marks the TIMELINE when nothing is selected", () => {
+    expect(anchorForSelection(timelineOf(CLIP), 2_000_000)).toBeNull();
+  });
+
+  it("marks the CLIP when one is selected", () => {
+    select("clip-1");
+    expect(anchorForSelection(timelineOf(CLIP), 2_000_000)).toEqual({
+      layer: "clip-1",
+      src_us: 3_000_000,
+    });
+  });
+
+  // One instant, one mark: a multi-clip selection still yields ONE anchor, on
+  // the primary. N marks on one frame stack illegibly, and the next `M` would
+  // rename the first and leave the rest unreachable.
+  it("yields one anchor on the primary when several clips are selected", () => {
+    const second = clip({
+      id: "clip-2",
+      tStartUs: 1_000_000,
+      tEndUs: 3_000_000,
+      srcInUs: 5_000_000,
+    });
+    const third = clip({
+      id: "clip-3",
+      tStartUs: 1_000_000,
+      tEndUs: 3_000_000,
+      srcInUs: 7_000_000,
+    });
+    select("clip-2", "clip-1", "clip-3");
+    expect(
+      anchorForSelection(timelineOf(CLIP, second, third), 2_000_000),
+    ).toEqual({ layer: "clip-2", src_us: 6_000_000 });
+  });
+
+  it("falls back to a free mark when the playhead is off the selected clip", () => {
+    select("clip-1");
+    expect(anchorForSelection(timelineOf(CLIP), 3_500_000)).toBeNull();
+  });
+
+  // A media selection is not a clip selection: `primaryLayerIdOf` answers null
+  // for every non-layer branch, so the pool having focus cannot tie a mark.
+  it("falls back to a free mark for a selection that holds no layers", () => {
+    useSelectionStore.setState({
+      selection: { kind: "media", id: "media-1" },
+    });
+    expect(anchorForSelection(timelineOf(CLIP), 2_000_000)).toBeNull();
+  });
+});
+
+// ── where a drag may put a marker ───────────────────────────────────────────
+// The other renderer-side twin of the actor's marker refusals: `markerAnchorFor`
+// above answers what a tie MEANS, this pair answers where a tied mark may go.
+describe("markerDragBoundsUs", () => {
+  const anchored = (over: Partial<MarkerSummary> = {}): MarkerSummary =>
+    ({ ...marker(2_000_000), anchor_layer: "clip-1", ...over });
+
+  it("bounds a free marker below and nowhere else", () => {
+    // The composition's duration is a derived high-water mark of the LAYERS, so
+    // a ceiling taken from it would shrink when a clip is deleted and forbid a
+    // mark that was placed legally.
+    expect(markerDragBoundsUs(timelineOf(CLIP), marker(2_000_000))).toEqual({
+      minUs: 0,
+      maxUs: null,
+    });
+  });
+
+  // The clip's span is HALF-OPEN, so the last legal landing is the start of the
+  // last frame it shows — not its end boundary, which belongs to whatever comes
+  // next. Expressed in timeline space on purpose: the source-space reading of
+  // the same rule tops out at `src_out_us`, which is precisely the value that
+  // puts the mark to sleep and takes the glyph out from under the cursor.
+  it("bounds an anchored marker to the frames its clip actually shows", () => {
+    const bounds = markerDragBoundsUs(timelineOf(CLIP), anchored())!;
+    expect(bounds.minUs).toBe(CLIP.t_start_us);
+    expect(bounds.maxUs).toBe(2_966_667); // frame 89 at 30 fps
+    expect(bounds.maxUs!).toBeLessThan(CLIP.t_end_us);
+    // The upper bound is a time the actor still accepts, which is the whole
+    // point of stopping there rather than at the end boundary.
+    expect(markerAnchorFor(timelineOf(CLIP), "clip-1", bounds.maxUs!)).not.toBeNull();
+  });
+
+  it("refuses to move a marker whose anchor this composition cannot resolve", () => {
+    expect(markerDragBoundsUs(timelineOf(CLIP), anchored({ anchor_layer: "gone" }))).toBeNull();
+  });
+
+  it("refuses to move a marker anchored to a kind with no source window", () => {
+    const motif = clip({
+      id: "motif-1",
+      tStartUs: 1_000_000,
+      tEndUs: 3_000_000,
+      params: {
+        kind: "Motif",
+        motif_id: "lower-third",
+        x: staticNum(0),
+        y: staticNum(0),
+        scale_x: staticNum(1),
+        scale_y: staticNum(1),
+        scale_linked: true,
+        rotation_deg: staticNum(0),
+        anchor_x: staticNum(0.5),
+        anchor_y: staticNum(0.5),
+        opacity: staticNum(1),
+        src_in_us: 0,
+        props: {},
+      },
+    });
+    expect(
+      markerDragBoundsUs(timelineOf(motif), anchored({ anchor_layer: "motif-1" })),
+    ).toBeNull();
+  });
+});
+
+describe("clampMarkerTimeUs", () => {
+  it("stops at each bound and passes everything between through", () => {
+    const bounds = { minUs: 1_000_000, maxUs: 2_966_667 };
+    expect(clampMarkerTimeUs(0, bounds)).toBe(1_000_000);
+    expect(clampMarkerTimeUs(9_000_000, bounds)).toBe(2_966_667);
+    expect(clampMarkerTimeUs(2_000_000, bounds)).toBe(2_000_000);
+  });
+
+  it("lets a free marker run as far right as it likes, and never past zero", () => {
+    const bounds = { minUs: 0, maxUs: null };
+    expect(clampMarkerTimeUs(-5_000_000, bounds)).toBe(0);
+    expect(clampMarkerTimeUs(99_000_000, bounds)).toBe(99_000_000);
   });
 });

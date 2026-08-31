@@ -8,6 +8,11 @@ export interface RankedResult {
   /// match came from a pinyin/extra haystack — those indexes don't map
   /// 1:1 onto the label's CJK chars, so we skip char highlighting.
   highlight: number[];
+  /// Which of `entry.haystacks` won. The ranker is the only place that knows,
+  /// and `entry.detail.from` says which indexes belong to text the row does not
+  /// otherwise show — so a row can tell "found by its note" from "found by its
+  /// name" and say which words were found.
+  matchedHaystack: number;
 }
 
 /// Display + iteration order for result groups.
@@ -45,7 +50,7 @@ export function rankEntries(
     const rows = entries
       .filter((e) => e.type === "command")
       .slice(0, Math.max(limitPerGroup, 8))
-      .map((entry) => ({ entry, score: 0, highlight: [] as number[] }));
+      .map((entry) => ({ entry, score: 0, highlight: [] as number[], matchedHaystack: 0 }));
     if (rows.length > 0) grouped.set("command", rows);
     return grouped;
   }
@@ -55,17 +60,19 @@ export function rankEntries(
   for (const entry of entries) {
     let bestScore = -1;
     let bestHighlight: number[] = [];
+    let bestIndex = 0;
     for (let i = 0; i < entry.haystacks.length; i++) {
       const r = fuzzysort.single(q, entry.haystacks[i]!);
       if (!r || r.score <= bestScore) continue;
       bestScore = r.score;
       bestHighlight = i === 0 ? Array.from(r.indexes) : [];
+      bestIndex = i;
     }
     if (bestScore < MIN_SCORE) continue;
     let score = bestScore;
     if (entry.type === "command") score += COMMAND_BOOST;
     if (entry.label.toLowerCase().startsWith(qLower)) score += PREFIX_BOOST;
-    scored.push({ entry, score, highlight: bestHighlight });
+    scored.push({ entry, score, highlight: bestHighlight, matchedHaystack: bestIndex });
   }
   scored.sort((a, b) => b.score - a.score);
 

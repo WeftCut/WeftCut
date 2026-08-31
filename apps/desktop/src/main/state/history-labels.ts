@@ -61,6 +61,8 @@ export const HISTORY_SUMMARY = {
   markerAddShots: { key: 'history.marker.add_shots', text: 'Added shot markers' },
   markerUpdate: { key: 'history.marker.update', text: 'Updated marker' },
   markerRemove: { key: 'history.marker.remove', text: 'Removed marker' },
+  markerAttach: { key: 'history.marker.attach', text: 'Anchored marker to clip' },
+  markerDetach: { key: 'history.marker.detach', text: 'Detached marker' },
 
   effectAdd: { key: 'history.effect.add', text: 'Added effect' },
   effectUpdate: { key: 'history.effect.update', text: 'Updated effect' },

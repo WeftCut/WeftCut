@@ -84,6 +84,16 @@ export type ValidationError =
   // composition from the marker id, so the id must name one marker in the
   // whole project.
   | { rule: 'DuplicateMarkerId'; marker: Uuid }
+  // ── Marker anchoring ──
+  // An anchored marker's layer is one of its OWN composition's layers, checked
+  // against that composition's layer set exactly as `Link.members` are. A
+  // cross-composition tie is unrepresentable rather than merely odd: the two
+  // timelines share no origin, so no `t_us` can be derived from it.
+  | { rule: 'MarkerAnchorNotInComposition'; marker: Uuid; layer: Uuid; composition: Uuid }
+  // The anchor layer must carry a source window (VideoClip | Audio |
+  // CompositionRef) — the derivation reads `params.src_in_us`. `kind` names
+  // what was found, because the fix is a different layer, not a different time.
+  | { rule: 'MarkerAnchorLayerHasNoSourceWindow'; marker: Uuid; layer: Uuid; kind: string }
 
 // ── CommandError — the full mutation-error vocabulary. Individual dispatch
 // arms construct only the variants they need. ──

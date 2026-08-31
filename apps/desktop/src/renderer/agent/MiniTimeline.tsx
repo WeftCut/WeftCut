@@ -164,6 +164,13 @@ export function MiniTimeline({
       >
         {markers.map((m) => {
           if (durationUs <= 0) return null;
+          // A hibernating marker's `t_us` names a moment its clip no longer
+          // shows, so there is no position on this strip to paint it AT — the
+          // same reason the full timeline's lane drops them
+          // (`computeLaneMarkers`). Not the `markers_visible` case: that flag is
+          // a preference about canvas noise, and this strip deliberately ignores
+          // it. An anchor that has left its window is a fact about the project.
+          if (m.hibernating) return null;
           const left = (m.t_us / durationUs) * 100;
           const regionWidth =
             m.end_t_us !== null && m.end_t_us > m.t_us
@@ -182,9 +189,9 @@ export function MiniTimeline({
                     }
                   : { left: `${left}%`, background: m.color_hint }
               }
-              // Same empty-label fallback as the ruler's `markerTitle`, trim
-              // included: a whitespace-only label must read as the entity noun
-              // on both surfaces, not blank on one of them.
+              // Same empty-label fallback as the marker lane's `markerTitle`,
+              // trim included: a whitespace-only label must read as the entity
+              // noun on both surfaces, not blank on one of them.
               title={m.label.trim() || t("kinds.marker")}
             />
           );

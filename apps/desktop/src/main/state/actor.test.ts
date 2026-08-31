@@ -3,9 +3,10 @@ import { describe, it, expect } from 'vitest'
 import { seededGen } from './ids'
 import { blankProject } from './model'
 import type { Project } from './model'
-import { colorParams } from './mutations/add'
-import { createActor, type DispatchResult } from './actor'
-import { group, groupedProject, root } from './__tests__/fixtures/project'
+import { applyAddLayer, applyAddMarker, colorParams } from './mutations/add'
+import { mediaItemTemplate, videoClipParams } from './mutations/media'
+import { createActor, type ActorLogEntry, type DispatchResult } from './actor'
+import { group, groupedProject, root, withGroup } from './__tests__/fixtures/project'
 
 function fresh() {
   const idGen = seededGen()
@@ -1898,5 +1899,124 @@ describe('dispatch: add_group_layer', () => {
       if (l.params.kind !== 'CompositionRef') throw new Error('expected a Group layer')
       expect(l.params.composition).toBe(groupId)
     }
+  })
+})
+
+describe('actor commit pipeline: the marker reconcile', () => {
+  const MEDIA_M = '00000000-0000-0000-0000-0000000000bb'
+  const BLUE = { r: 0, g: 128, b: 255, a: 255 }
+
+  /** Root with a clip at `[1 s, 3 s)` over source `[2 s, 4 s)` on the lane
+   *  `track` names, and one marker anchored to it at source 3 s — which derives
+   *  to 2 s. Authored before the actor exists, so the reconcile cases below
+   *  start from a tie rather than from the commit that made one. */
+  function anchoredClip(p: Project, gen: ReturnType<typeof seededGen>, track: string, label: string) {
+    const clip = applyAddLayer(p, gen, track, videoClipParams(MEDIA_M, 2_000_000, 4_000_000), 1_000_000, 3_000_000)
+    const marker = applyAddMarker(p, gen, 2_000_000, null, label, BLUE, null, '', { layer: clip, src_us: 3_000_000 })
+    return { clip, marker }
+  }
+  function withMedia() {
+    const gen = seededGen()
+    const p = blankProject(gen, 'am')
+    p.media_pool[MEDIA_M] = mediaItemTemplate(MEDIA_M, 'Video', 10_000_000)
+    return { p, gen, aRoll: root(p).tracks[0].id, bRoll: root(p).tracks[1].id }
+  }
+
+  it('an edit that touches nothing marker-shaped still re-derives a stale t_us — the reconcile runs on EVERY commit', () => {
+    const { p, gen, aRoll } = withMedia()
+    anchoredClip(p, gen, aRoll, 'cut')
+    root(p).markers[0].t_us = 500_000 // a cache the anchor disagrees with
+    const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
+    expect(actor.dispatch('add_track', {}).ok).toBe(true)
+    expect(root(actor.snapshot()).markers[0].t_us).toBe(2_000_000)
+  })
+
+  it('a reconcile drop reaches the emitLog seam as one Project row', () => {
+    const { p, gen, aRoll } = withMedia()
+    const { clip, marker } = anchoredClip(p, gen, aRoll, 'cut')
+    const logged: ActorLogEntry[] = []
+    const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>', emitLog: (e) => logged.push(e) })
+    expect(actor.dispatch('delete_layer', { layer: clip }).ok).toBe(true)
+    expect(logged.map((e) => e.details)).toEqual([
+      { kind: 'MarkerReconcileDrop', marker, composition: root(p).id, layer: clip, label: 'cut' },
+    ])
+  })
+
+  // The tie's own two commands. `attach_marker` writes the anchor and the SAME
+  // commit's reconcile derives the time from it; `detach_marker` is the one way
+  // back out, and what it leaves behind is an ordinary free marker.
+  it('an attached marker follows its clip; a detached one stops following and keeps its frame', () => {
+    const { p, gen, aRoll } = withMedia()
+    const clip = applyAddLayer(p, gen, aRoll, videoClipParams(MEDIA_M, 2_000_000, 4_000_000), 1_000_000, 3_000_000)
+    const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
+    const add = actor.dispatch('add_marker', { t_us: 2_000_000, label: 'cut' })
+    expect(add.ok).toBe(true)
+    const marker = add.ok ? (add.value as string) : ''
+
+    expect(actor.dispatch('attach_marker', { marker, layer: clip }).ok).toBe(true)
+    // The tie names where the mark already sat, so attaching alone moves nothing.
+    expect(root(actor.snapshot()).markers[0]).toMatchObject({ t_us: 2_000_000, anchor: { layer: clip, src_us: 3_000_000 } })
+
+    expect(actor.dispatch('move_layer', { layer: clip, to_track: aRoll, t_start_us: 4_000_000 }).ok).toBe(true)
+    expect(root(actor.snapshot()).markers[0].t_us).toBe(5_000_000)
+
+    expect(actor.dispatch('detach_marker', { marker }).ok).toBe(true)
+    expect(root(actor.snapshot()).markers[0]).toMatchObject({ t_us: 5_000_000, anchor: null })
+    expect(actor.dispatch('move_layer', { layer: clip, to_track: aRoll, t_start_us: 1_000_000 }).ok).toBe(true)
+    expect(root(actor.snapshot()).markers[0].t_us).toBe(5_000_000)
+  })
+
+  it('add_marker carries its anchor into the ONE commit that creates the marker', () => {
+    const { p, gen, aRoll } = withMedia()
+    const clip = applyAddLayer(p, gen, aRoll, videoClipParams(MEDIA_M, 2_000_000, 4_000_000), 1_000_000, 3_000_000)
+    const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
+    const before = actor.historyStatus().len
+    expect(actor.dispatch('add_marker', { t_us: 2_000_000, label: 'cut', anchor: { layer: clip, src_us: 3_000_000 } }).ok).toBe(true)
+    expect(actor.historyStatus().len).toBe(before + 1)
+    expect(root(actor.snapshot()).markers[0].anchor).toEqual({ layer: clip, src_us: 3_000_000 })
+    // One commit, so ONE undo takes the mark and its tie back together.
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(root(actor.snapshot()).markers).toEqual([])
+  })
+
+  it('a refused attach reaches the caller as a CommandError and commits nothing', () => {
+    const { p, gen, aRoll, bRoll } = withMedia()
+    const clip = applyAddLayer(p, gen, aRoll, videoClipParams(MEDIA_M, 2_000_000, 4_000_000), 1_000_000, 3_000_000)
+    const color = applyAddLayer(p, gen, bRoll, colorParams({ r: 1, g: 2, b: 3, a: 255 }, 16, 9), 1_000_000, 3_000_000)
+    const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
+    const add = actor.dispatch('add_marker', { t_us: 2_000_000, label: 'cut' })
+    const marker = add.ok ? (add.value as string) : ''
+    const before = actor.historyStatus().len
+    const r = actor.dispatch('attach_marker', { marker, layer: color })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatchObject({ error: 'WrongLayerKind', layer: color })
+    expect(actor.historyStatus().len).toBe(before)
+    expect(root(actor.snapshot()).markers[0].anchor).toBeNull()
+    // The same marker on a clip that DOES carry a window is accepted.
+    expect(actor.dispatch('attach_marker', { marker, layer: clip }).ok).toBe(true)
+  })
+
+  it('a commit that fails validate logs nothing, even though the reconcile already recorded a drop', () => {
+    // `stray`'s marker anchors a layer exiled into a Group — the state the
+    // reconcile deliberately declines to repair by dropping, because the layer
+    // is alive and only the move that should have carried the marker is at
+    // fault. Every commit therefore fails validate, which is exactly the setup
+    // this rule needs: the drop of `doomed`'s marker happens inside produce()
+    // and must reach neither the history nor the log.
+    const { p: p0, gen, aRoll, bRoll } = withMedia()
+    const stray = anchoredClip(p0, gen, aRoll, 'stray')
+    const doomed = anchoredClip(p0, gen, bRoll, 'doomed')
+    const { p, groupId } = withGroup(p0, gen)
+    const lane = p.compositions[p.root_id].tracks.find((t) => t.id === aRoll)!
+    p.compositions[groupId].tracks[0].layers.push(lane.layers.pop()!)
+    const logged: ActorLogEntry[] = []
+    const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>', emitLog: (e) => logged.push(e) })
+    const before = actor.snapshot()
+    const r = actor.dispatch('delete_layer', { layer: doomed.clip })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatchObject({ error: 'ValidationFailed', detail: { rule: 'MarkerAnchorNotInComposition' } })
+    expect(actor.snapshot()).toBe(before)
+    expect(root(actor.snapshot()).markers.map((m) => m.id)).toEqual([stray.marker, doomed.marker])
+    expect(logged).toEqual([])
   })
 })

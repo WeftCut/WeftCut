@@ -2,12 +2,12 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen, type IdGen } from '../ids'
 import { blankProject, type Composition, type CompositionRefParams, type Layer, type Project, type Uuid, type VideoClipParams } from '../model'
-import { applyAddLayer, applyAddTrack, colorParams, defaultTransform } from './add'
+import { applyAddLayer, applyAddMarker, applyAddTrack, colorParams, defaultTransform } from './add'
 import { applyLinksCreate } from './links'
 import { applyDeleteLayer } from './delete'
 import { applyDuplicateLayer } from './duplicate'
 import { applyCompositionsDelete, applyGroupsAddMembers, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, compositionRefCount } from './groups'
-import { reconcileTransitions, validate } from '../validate'
+import { reconcileMarkers, reconcileTransitions, validate } from '../validate'
 import { isCommandFailure } from '../errors'
 import { group, root, withGroup } from '../__tests__/fixtures/project'
 
@@ -158,6 +158,24 @@ describe('applyGroupsCreate', () => {
     expect(dropped.map((d) => d.id)).toEqual([tr])
     expect(root(straddle).transitions).toEqual([])
     expect(() => validate(straddle)).not.toThrow()
+  })
+
+  it('a marker anchored to a member arrives in the Group; a free marker stays with the film', () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 't')
+    addMedia(p, 10 * S)
+    const v = applyAddLayer(p, gen, root(p).tracks[0].id, videoParams(2 * S, 4 * S), S, 3 * S)
+    const tied = applyAddMarker(p, gen, 2 * S, null, 'tied', RED, null, '', { layer: v, src_us: 3 * S })
+    const free = applyAddMarker(p, gen, 500_000, null, 'free', RED)
+    const r = applyGroupsCreate(p, gen, [v], null)
+    expect(root(p).markers.map((m) => m.id)).toEqual([free])
+    expect(group(p, r.compositionId).markers.map((m) => m.id)).toEqual([tied])
+    // Pre-compose only relocates the marker — it is the commit's reconcile that
+    // re-times it against the member's new start, `0 + (3 s − 2 s)`.
+    expect(group(p, r.compositionId).markers[0].t_us).toBe(2 * S)
+    expect(reconcileMarkers(p)).toEqual([])
+    expect(group(p, r.compositionId).markers[0].t_us).toBe(S)
+    expect(() => validate(p)).not.toThrow()
   })
 
   it('refuses whole on a locked member or a locked track and leaves the project untouched', () => {

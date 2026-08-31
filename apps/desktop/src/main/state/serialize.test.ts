@@ -221,6 +221,32 @@ describe('parseProject grid repair', () => {
     expect(() => validate(project)).not.toThrow()
   })
 
+  // Additive fields with no value in a stored project are this codebase's
+  // documented route to a blank screen, so the backfill is pinned on the exact
+  // shape a pre-anchoring build wrote: no `note`, no `anchor`, and the
+  // free-schema `metadata` map that never had a writer.
+  it('backfills note/anchor on a marker written before either field existed', () => {
+    const g = seededGen()
+    const p = blankProject(g, 'legacy')
+    const wire = serializeProject(p) as Wire
+    wroot(wire).markers = [{ id: 'mk', t_us: 1_000_000, end_t_us: null, label: 'm', color: RED, metadata: {} }]
+    const project = parseProject(wire, silent)
+    expect(root(project).markers[0].note).toBe('')
+    expect(root(project).markers[0].anchor).toBeNull()
+    expect(() => validate(project)).not.toThrow()
+  })
+  it('leaves a stored note and anchor exactly as written — a default, never a repair', () => {
+    const g = seededGen()
+    // A CompositionRef layer is the source-window kind that needs no media pool.
+    const { p, refLayerId } = withGroup(blankProject(g, 'anchored'), g)
+    const wire = serializeProject(p) as Wire
+    wroot(wire).markers = [{ id: 'mk', t_us: 1_000_000, end_t_us: null, label: 'm', note: 'a note', color: RED, anchor: { layer: refLayerId, src_us: 500_000 } }]
+    const project = parseProject(wire, silent)
+    expect(root(project).markers[0].note).toBe('a note')
+    expect(root(project).markers[0].anchor).toEqual({ layer: refLayerId, src_us: 500_000 })
+    expect(() => validate(project)).not.toThrow()
+  })
+
   it('repairs composition.duration_us and marker times', () => {
     const g = seededGen()
     const p = blankProject(g, 'legacy')

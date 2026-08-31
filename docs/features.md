@@ -833,6 +833,83 @@ machine rather than per project: View → Timeline auto-scroll, `Shift+F`, the
 Quick Actions strip, or the search palette. Absent from an older
 `app_settings.json` reads as **on**.
 
+## Markers
+
+A marker names a moment: a label, a colour, and a longer note. It belongs to
+one composition, and it either sits at a time of its own — a **free marker** —
+or **follows a clip**. Following is a field on the marker, not a second kind of
+entity (ADR 0056): an anchored marker carries a layer of its own composition
+plus a time in that layer's *source* window, and its `t_us` is re-derived from
+the clip on every commit. So it travels with the clip through moves, trims,
+splits and a crossing into a Group, and deleting the clip takes the marker with
+it. `t_us` stays stored, which is why every reader of a marker — the lane,
+`Ctrl+K`, export, MCP — is unchanged by any of this.
+
+**The lane.** Markers live in one row directly under the ruler, never on the
+ruler itself. That row belongs to the ruler family — it measures time, where a
+track's lane holds layers — and it shares the ruler's quantised scroll window,
+so a glyph and the tick under it are the same x forever. A point is a diamond
+on its frame; a region is a capsule across its range, degrading to the point
+shape below `MARKER_MIN_REGION_PX` so a two-frame region does not vanish at fit
+zoom (the tooltip still carries both ends). **Solid means anchored, hollow means
+free**, and names print beside a point or inside a capsule, so a mark is
+readable without a hover. `markers_visible` (`M`'s own toggle, the View menu,
+the Quick Actions strip) silences what the row *paints* and never whether the
+row exists — `M` force-enables it, and a row bound to that flag would reflow the
+timeline under the pointer. The twirl in its header collapses it to a seam.
+
+**Authoring.** `M` marks the playhead's frame; pressing it again on a marked
+frame opens rename rather than stacking a duplicate (the FCP/Resolve
+double-tap). An empty selection marks the *timeline*; a selection marks the
+*clip*, on the primary — one instant is one mark. A playhead outside the
+selected clip, or a clip whose kind carries no source window, falls back to a
+free marker. Right-click a glyph for rename, delete, **Attach to clip** and
+**Detach**; rows that do not apply are greyed, not hidden. Drag a glyph along
+the lane to move it — one commit at release, snapping to clip edges and the
+playhead, and a drag that lands where it started records nothing. Dragging an
+anchored marker moves its *anchor*, so the mark keeps following from the new
+offset; it clamps at its clip's edges rather than being allowed to hibernate
+out from under the cursor. Shot detection writes anchored markers directly, so
+a clip can carry its own cuts instead of being split by them.
+
+**Hibernation.** Trim a clip past one of its anchored markers and the marker
+*hibernates*: the clip no longer shows the frame the mark names, so it is kept,
+painted nowhere, and revived on exactly that frame the moment the window covers
+it again. It is a derived condition recomputed every commit, never a stored
+flag, which is what makes undoing the trim enough to wake it. Deleting the clip
+is the other case and behaves differently — the marker is dropped, with a
+status-log row saying so. Detach is the deliberate exit: it turns the mark back
+into an ordinary free marker at the time it currently sits on, for when the note
+is worth keeping but the following is not.
+
+**Finding them.** `Shift+M` and `Mod+Shift+M` walk to the next and previous mark
+of the timeline holding the keyboard, matching on where a mark *begins* — a
+region merely spanning the playhead is not the current marker. Neither wraps:
+the dead key at the end of the list is the signal that the list has an end. Both
+are also `Ctrl+K` commands and rows on the ruler's right-click menu. `Ctrl+K`
+searches marker labels and notes; hibernating marks are excluded there, having
+no position to seek to.
+
+**The Marker Panel** (closed by default; View → Marker) holds what marks *say*,
+where the lane holds where they *are*: every marker in the project, grouped by
+the composition that owns it, with label, colour and note editable in place.
+Scope is project-wide on purpose — a mark inside a Group is otherwise invisible
+from the root, which is the blindness the feature exists to close — and
+activating a row opens that Group's timeline before seeking. Hibernating marks
+get their own section, last and outside the time ordering, each showing where it
+sits in the *footage* and offering Detach; this is the only surface one appears
+on at all. On the parent timeline a Group clip carries a `⚑N` badge counting the
+marks reachable inside it, nesting included.
+
+**Limits.** Time is read-only in the Panel, free markers included: an anchored
+marker's time is a cache the next commit rewrites, so a typed value would revert
+under the cursor. Position is the lane's drag, and that is the one rule. A
+region marker drags whole — its ends are not resizable by a gesture yet, and
+only an agent can create one. Child markers are never projected onto a parent's
+lane; the badge asserts a count and no position, because drawing a child
+composition's contents on the parent would erase, visually, the boundary
+ADR 0052 and ADR 0053 pay for.
+
 ## Global search palette
 
 `Mod+K` (also a menu item) opens a Spotlight-style overlay that searches,

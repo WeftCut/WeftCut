@@ -276,6 +276,37 @@ function normalizeTextParams(o: Record<string, unknown>): void {
   })
 }
 
+/** `Marker.note` and `Marker.anchor` (added WITHOUT a schema bump): absent →
+ *  `""` and `null`, the same values `applyAddMarker` writes for a plain free
+ *  marker. Pure defaults — a stored note or anchor is authored data and is left
+ *  exactly as written; the anchor's own consistency (does the layer exist here,
+ *  does it carry a source window) is `validate`'s, not this pass's.
+ *
+ *  A missing `note` would reach the marker Panel's text field as `undefined`
+ *  and a missing `anchor` would reach every `m.anchor === null` test as a value
+ *  that is neither — this codebase's documented route to a blank screen, and
+ *  the reason the backfill sits HERE and nowhere else. One pass in one place
+ *  (docs/data-model.md § additive-field backfill): a second site would let
+ *  `replaceState` and `project_open` disagree about what a marker holds.
+ *
+ *  The `metadata` map these fields replace is NOT stripped. It has no writer
+ *  and never had one, so nothing can be read out of it; a hand-edited file
+ *  carrying one loses it on the next save through the model's own field set,
+ *  which is exactly what a removed field should do. A stripping pass would be a
+ *  migration for data that cannot exist.
+ *
+ *  Wire-shaped and defensive like the passes beside it (runs BEFORE the cast to
+ *  Project), and idempotent: a backfilled marker backfills to itself. */
+function normalizeMarkerFields(o: Record<string, unknown>): void {
+  for (const comp of wireCompositions(o)) {
+    for (const m of (comp.markers as Array<Record<string, unknown>> | undefined) ?? []) {
+      if (m === null || typeof m !== 'object') continue
+      if (m.note === undefined) m.note = ''
+      if (m.anchor === undefined) m.anchor = null
+    }
+  }
+}
+
 /** `Composition.ordinal` and `Project.next_group_ordinal` (additive, no schema
  *  bump): materialize the pair on a project written before they existed, and
  *  leave a project that already carries them exactly as found.
@@ -426,6 +457,10 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   // nowhere else, because absent is not the same value as null here — see the
   // function.
   normalizeTextParams(o)
+  // `Marker.note` / `Marker.anchor`: absent → `''` / `null`, so a project
+  // written before markers could follow a clip opens with plain free markers
+  // rather than handing `undefined` to the Panel and the anchor tests.
+  normalizeMarkerFields(o)
   // Grid repair belongs in THIS pass, beside the additive-field default above:
   // one normalize site, so the validator that `replaceState` shares with
   // `project_open` only ever sees already-canonical input. A second repair site is

@@ -12,8 +12,10 @@ import {
 import "../i18n"; // initialize i18next so t(key) resolves in chrome
 import type {
   AnimTrack,
+  CompositionSummary,
   LinkSummary,
   LayerSummary,
+  MarkerSummary,
   MediaSummary,
   TrackSummary,
 } from "../ipc";
@@ -63,8 +65,17 @@ import { listCommands, registerCommandProvider } from "../commands/registry";
 import { registerTransport, releaseTransport } from "../state/playbackStore";
 import { registerRevealTrack } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
-import { summaryFixture } from "../testing/summaryFixture";
-import { DEFAULT_TRACK_HEIGHT, HEADER_COL_PX } from "./geometry";
+import {
+  compositionFixture,
+  groupLayerFixture,
+  summaryFixture,
+} from "../testing/summaryFixture";
+import {
+  DEFAULT_TRACK_HEIGHT,
+  HEADER_COL_PX,
+  MARKER_LANE_COLLAPSED_HEIGHT_PX,
+  MARKER_LANE_HEIGHT_PX,
+} from "./geometry";
 
 const ipcMocks = vi.hoisted(() => ({
   addMediaLayer: vi.fn().mockResolvedValue(undefined),
@@ -2095,6 +2106,125 @@ describe("Timeline seek/selection coupling", () => {
   });
 });
 
+/// The two columns paint the same rows in the same order. A row present in one
+/// and missing from the other — or taller in one than the other — slides every
+/// header beneath it out of line with its lane, and the failure is silent: the
+/// timeline simply reads wrong.
+describe("Timeline row alignment", () => {
+  const q = (c: HTMLElement, id: string): HTMLElement =>
+    c.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
+
+  const testids = (parent: Element): (string | undefined)[] =>
+    Array.from(parent.children).map((el) => (el as HTMLElement).dataset.testid);
+
+  /// One keyed param, so expanding the track adds exactly one sub-lane row to
+  /// both columns — the row the arithmetic hit-tests used to lose.
+  const keyedTrack: TrackSummary = {
+    ...track,
+    layers: [
+      {
+        ...tinyVideoLayer,
+        id: "keyed-1",
+        t_end_us: 2_000_000,
+        params: {
+          ...tinyVideoLayer.params,
+          kind: "VideoClip",
+          opacity: {
+            mode: "Keyframed",
+            value: [{ id: "kf-1", t_us: 0, value: 1, interp: { kind: "Linear" } }],
+          },
+        } as LayerSummary["params"],
+      },
+    ],
+  };
+
+  /// Every row that declares its own height, header cell against body lane.
+  const pairs = (c: HTMLElement): [string, string][] => [
+    [
+      q(c, "timeline-marker-lane-header").style.height,
+      q(c, "timeline-marker-lane").style.height,
+    ],
+    [
+      q(c, "timeline-drop-strip-header").style.height,
+      q(c, "timeline-drop-strip").style.height,
+    ],
+  ];
+
+  it("puts the marker lane between the ruler and the drop strip, in both columns", () => {
+    const { container } = renderTimeline({});
+    // Markers belong to the RULER family — they measure time — while the drop
+    // strip belongs to the track family, so the lane sits between them.
+    expect(testids(q(container, "timeline-ruler-corner").parentElement!).slice(0, 3))
+      .toEqual([
+        "timeline-ruler-corner",
+        "timeline-marker-lane-header",
+        "timeline-drop-strip-header",
+      ]);
+    expect(testids(q(container, "timeline-ruler").parentElement!).slice(0, 3))
+      .toEqual([
+        "timeline-ruler",
+        "timeline-marker-lane",
+        "timeline-canvas",
+      ]);
+    expect(testids(q(container, "timeline-canvas"))[0]).toBe(
+      "timeline-drop-strip",
+    );
+  });
+
+  it("keeps every header cell as tall as its lane, at every track count", () => {
+    for (const tracks of [[], [track], [track, linkedTrack]]) {
+      const { container, unmount } = renderTimeline({ tracks });
+      for (const [header, lane] of pairs(container)) {
+        expect(header).toBe(lane);
+      }
+      expect(q(container, "timeline-marker-lane").style.height).toBe(
+        `${MARKER_LANE_HEIGHT_PX}px`,
+      );
+      unmount();
+    }
+  });
+
+  it("keeps them aligned with a track's keyframe lanes expanded", () => {
+    const { container } = renderTimeline({ tracks: [keyedTrack] });
+    fireEvent.click(container.querySelector('[data-testid="kf-lane-twirl"]')!);
+    expect(container.querySelector('[data-testid="kf-sublane"]')).not.toBeNull();
+    for (const [header, lane] of pairs(container)) {
+      expect(header).toBe(lane);
+    }
+  });
+
+  it("moves both halves of the marker lane together when it collapses", () => {
+    const { container } = renderTimeline({});
+    act(() =>
+      useAppSettingsStore.setState((s) => ({
+        settings: { ...s.settings, marker_lane_collapsed: true },
+      })),
+    );
+    const [header, lane] = pairs(container)[0]!;
+    expect(header).toBe(lane);
+    expect(lane).toBe(`${MARKER_LANE_COLLAPSED_HEIGHT_PX}px`);
+  });
+
+  // `M` force-enables `markers_visible`, so a lane whose height answered to that
+  // flag would reflow the timeline under the pointer on every press.
+  it("changes no row height when marker visibility flips", () => {
+    const { container } = renderTimeline({});
+    const before = pairs(container).map(([header, lane]) => [header, lane]);
+    act(() =>
+      useAppSettingsStore.setState((s) => ({
+        settings: { ...s.settings, markers_visible: false },
+      })),
+    );
+    expect(pairs(container)).toEqual(before);
+    act(() =>
+      useAppSettingsStore.setState((s) => ({
+        settings: { ...s.settings, markers_visible: true },
+      })),
+    );
+    expect(pairs(container)).toEqual(before);
+  });
+});
+
 describe("Timeline clip label fallback", () => {
   beforeEach(() => {
     clearLayerSelection();
@@ -3257,6 +3387,200 @@ describe("Timeline link chrome", () => {
     );
     // The editor opens on the anchor member's tab even for an unlabelled link.
     expect(screen.queryByTestId("link-tab-anchor")).not.toBeNull();
+  });
+});
+
+/// A Group clip is opaque from the timeline that holds it: nothing else on the
+/// block says whether there is anything marked inside. The arithmetic is
+/// unit-tested (`groupMarkerCount.test.ts`); what only shows up here is which
+/// clips draw the badge and what activating it does.
+describe("Timeline group marker badge", () => {
+  const OUTER = "comp-outer";
+  const INNER = "comp-inner";
+
+  let markerSeq = 0;
+  const marker = (over: Partial<MarkerSummary> = {}): MarkerSummary => {
+    markerSeq += 1;
+    return {
+      id: `mark-${markerSeq}`,
+      t_us: 0,
+      end_t_us: null,
+      label: "",
+      note: "",
+      color_hint: "#0080ff",
+      anchor_layer: null,
+      anchor_src_us: null,
+      hibernating: false,
+      ...over,
+    };
+  };
+
+  /// 2 s at the mocked view state's 80 px/s — 160 px, wide enough for the
+  /// block's flow chrome, so a case about the badge is not also a case about
+  /// the label being cut down.
+  const outerClip = groupLayerFixture({
+    id: "ref-outer",
+    compositionId: OUTER,
+    label: "Outer",
+  });
+  const outerTrack: TrackSummary = { ...track, id: "t-root", layers: [outerClip] };
+  const innerClip = groupLayerFixture({
+    id: "ref-inner",
+    compositionId: INNER,
+    label: "Inner",
+  });
+
+  const groupComposition = (
+    id: string,
+    over: Partial<CompositionSummary>,
+  ): CompositionSummary =>
+    compositionFixture({ id, duration_us: 2_000_000, ...over });
+
+  /// The badge reads the STORE, not the `tracks` prop, so every case has to put
+  /// the same timeline in both.
+  function applySummary(
+    groups: CompositionSummary[],
+    tracks: TrackSummary[] = [outerTrack],
+  ) {
+    useProjectStore
+      .getState()
+      .apply(summaryFixture({ root: { duration_us: 10_000_000, tracks }, groups }));
+  }
+
+  const badge = () => screen.queryByTestId("group-marker-count-badge");
+
+  beforeEach(() => {
+    clearLayerSelection();
+    setActiveRegion(null);
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, display_mode: "AllTracks" },
+    }));
+    useCompositionAnchorStore.setState({ anchors: new Map(), focusedId: null });
+  });
+  afterEach(() => {
+    cleanup();
+    useProjectStore.getState().apply(null);
+  });
+
+  it("says how many marks are inside, and says nothing at all when there are none", () => {
+    applySummary([groupComposition(OUTER, { markers: [marker(), marker(), marker()] })]);
+    const { unmount } = renderTimeline({ tracks: [outerTrack] });
+    expect(badge()?.textContent).toBe("3");
+    unmount();
+
+    applySummary([groupComposition(OUTER, {})]);
+    renderTimeline({ tracks: [outerTrack] });
+    expect(badge()).toBeNull();
+  });
+
+  it("counts a mark a Group deeper — the number is what is reachable below, not what one timeline holds", () => {
+    applySummary([
+      groupComposition(OUTER, {
+        tracks: [{ ...track, id: "t-outer", layers: [innerClip] }],
+      }),
+      groupComposition(INNER, { markers: [marker(), marker()] }),
+    ]);
+    renderTimeline({ tracks: [outerTrack] });
+    expect(badge()?.textContent).toBe("2");
+  });
+
+  it("follows the composition: a mark added inside raises it, the last one removed retires it", () => {
+    applySummary([groupComposition(OUTER, { markers: [marker()] })]);
+    renderTimeline({ tracks: [outerTrack] });
+    expect(badge()?.textContent).toBe("1");
+
+    act(() =>
+      applySummary([groupComposition(OUTER, { markers: [marker(), marker()] })]),
+    );
+    expect(badge()?.textContent).toBe("2");
+
+    act(() => applySummary([groupComposition(OUTER, { markers: [] })]));
+    expect(badge()).toBeNull();
+  });
+
+  it("does not count a hibernating mark, which no timeline paints", () => {
+    applySummary([
+      groupComposition(OUTER, {
+        markers: [
+          marker(),
+          marker({ hibernating: true, anchor_layer: "some-inner-layer" }),
+        ],
+      }),
+    ]);
+    renderTimeline({ tracks: [outerTrack] });
+    expect(badge()?.textContent).toBe("1");
+  });
+
+  it("opens that Group's Panel, anchored on the clip it was activated from", () => {
+    applySummary([groupComposition(OUTER, { markers: [marker()] })]);
+    renderTimeline({ tracks: [outerTrack] });
+    fireEvent.click(badge()!);
+
+    expect(useCompositionAnchorStore.getState().focusedId).toBe(OUTER);
+    expect(useCompositionAnchorStore.getState().anchors.get(OUTER)).toEqual([
+      { layerId: outerClip.id, compositionId: OUTER },
+    ]);
+  });
+
+  it("does not select the clip under it — the press is spent on the badge", () => {
+    applySummary([groupComposition(OUTER, { markers: [marker()] })]);
+    renderTimeline({ tracks: [outerTrack] });
+    fireEvent.pointerDown(badge()!, { button: 0, clientX: 150, clientY: 30 });
+
+    expect(layerIdsOf(currentSelection()).size).toBe(0);
+  });
+
+  // The zoom that makes a Group clip a sliver is the zoom at which "is there
+  // anything in there" is the live question, so the badge outlives the flow
+  // chrome the same width takes away.
+  it("survives a clip too narrow for its own full label", () => {
+    const sliver = groupLayerFixture({
+      id: "ref-outer",
+      compositionId: OUTER,
+      label: "Outer",
+      tEndUs: 250_000,
+    });
+    const sliverTrack: TrackSummary = { ...track, id: "t-root", layers: [sliver] };
+    applySummary([groupComposition(OUTER, { markers: [marker()] })], [sliverTrack]);
+    renderTimeline({ tracks: [sliverTrack] });
+    expect(badge()?.textContent).toBe("1");
+  });
+
+  it("no other clip kind carries it", () => {
+    applySummary([groupComposition(OUTER, { markers: [marker()] })], [track]);
+    renderTimeline({ tracks: [track] });
+    expect(badge()).toBeNull();
+  });
+
+  it("shares the block with the label, the link tab and the chain glyph without displacing any of them", () => {
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, display_mode: "AbRoll" },
+    }));
+    const hidden: TrackSummary = {
+      ...track,
+      id: "t-hidden",
+      role: null,
+      transient: true,
+      layers: [linkedLayer],
+    };
+    applySummary(
+      [groupComposition(OUTER, { markers: [marker(), marker()] })],
+      [outerTrack, hidden],
+    );
+    renderTimeline({
+      tracks: [outerTrack, hidden],
+      links: [
+        { id: "link-g", label: "Pair", layer_ids: [outerClip.id, linkedLayer.id] },
+      ],
+    });
+
+    const block = screen.getByText("Outer").closest(".timeline-layer") as HTMLElement;
+    expect(screen.getByTestId("link-tab").textContent).toBe("Pair");
+    expect(screen.getByTestId("link-hidden-badge").textContent).toBe("+1");
+    expect(block.querySelector('[data-testid="link-glyph"]')).not.toBeNull();
+    expect(
+      block.querySelector('[data-testid="group-marker-count-badge"]')?.textContent,
+    ).toBe("2");
   });
 });
 

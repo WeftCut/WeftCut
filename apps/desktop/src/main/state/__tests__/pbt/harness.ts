@@ -11,10 +11,14 @@ import { root } from '../fixtures/project'
 export const PBT_SEED = 0x5747_4354 // "WGCT" — fixed; do not randomize.
 export const PBT_RUNS = Number(process.env.WEFTCUT_PBT_RUNS ?? 200)
 
-export interface WireLayer { id: string; t_start_us: number; t_end_us: number; params: { kind: string } }
+// `src_in_us` / `src_out_us` are present exactly on the source-window kinds
+// (VideoClip, Audio, CompositionRef) — optional here rather than a second layer
+// type, because the marker invariant is the only reader and it already has to
+// answer "does this kind carry a window" for itself.
+export interface WireLayer { id: string; t_start_us: number; t_end_us: number; params: { kind: string; src_in_us?: number; src_out_us?: number } }
 export interface WireTrack { id: string; layers: WireLayer[] }
 export interface WireLink { id: string; members: string[] }
-export interface WireMarker { id: string; t_us: number; end_t_us: number | null }
+export interface WireMarker { id: string; t_us: number; end_t_us: number | null; anchor?: { layer: string; src_us: number } | null }
 export interface WireTransition { id: string; from_layer: string; to_layer: string; duration_us: number; kind: { kind: string; direction?: string }; extended_us: number }
 export interface WireComposition {
   id: string

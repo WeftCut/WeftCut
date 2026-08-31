@@ -1,12 +1,13 @@
 // apps/desktop/src/main/state/mutations/trim.test.ts
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
-import { blankProject, type Layer, type LayerParams, type MediaItem, type Project } from '../model'
+import { blankProject, type Layer, type LayerParams, type Marker, type MediaItem, type Project } from '../model'
 import { applyAddLayer, colorParams } from './add'
 import { applyTrimLayer, clampSigned } from './trim'
 import { applyDeleteLayer } from './delete'
 import { isCommandFailure } from '../errors'
-import { validate } from '../validate'
+import { reconcileMarkers, validate } from '../validate'
+import { markerHibernating } from '../summary'
 import { applyLinksCreate } from './links'
 import { frameCount, frameIndexFloor, frameIndexRound, timeUsAtFrame } from '../../../renderer/frames'
 import { group, groupedProject, root } from '../__tests__/fixtures/project'
@@ -95,6 +96,23 @@ describe('trim', () => {
     expect(l.t_end_us).toBe(2_000_000)
     expect(l.params.kind).toBe('VideoClip')
     if (l.params.kind === 'VideoClip') expect(l.params.src_out_us).toBe(2_000_000)
+  })
+  it('a head trim carries the start and the window edge together, so an anchored marker holds its frame until the trim passes it', () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 't')
+    p.media_pool.m = media('m', 10_000_000)
+    root(p).tracks[0].layers = [video('v', 'm', 1_000_000, 3_000_000, 2_000_000, 4_000_000)]
+    const mk: Marker = { id: 'mk', t_us: 2_000_000, end_t_us: null, label: 'cut', note: '',
+      color: { r: 0, g: 0, b: 0, a: 255 }, anchor: { layer: 'v', src_us: 3_000_000 } }
+    root(p).markers.push(mk)
+    applyTrimLayer(p, 'v', 'In', 1_500_000, false) // start +0.5 s AND src_in +0.5 s
+    expect(reconcileMarkers(p)).toEqual([])
+    expect(markerHibernating(root(p), mk)).toBe(false)
+    expect(mk.t_us).toBe(2_000_000) // 1.5 s + (3 s − 2.5 s) — the mark did not move
+    applyTrimLayer(p, 'v', 'In', 2_500_000, false) // src_in → 3.5 s, past the mark
+    expect(markerHibernating(root(p), mk)).toBe(true)
+    expect(reconcileMarkers(p)).toEqual([]) // asleep, not dropped
+    expect(mk.t_us).toBe(2_000_000) // frozen where it was, awaiting the trim's undo
   })
   it('rejects a locked track', () => {
     const { p, a } = setup(); root(p).tracks[0].locked = true

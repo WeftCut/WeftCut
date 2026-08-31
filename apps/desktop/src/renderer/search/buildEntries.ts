@@ -1,3 +1,4 @@
+import { TEXT_NAME_MAX, textSnippet } from "../../shared/textSnippet";
 import { formatTimecode } from "../frames";
 import type { ProjectSummary } from "../ipc";
 import { compositionRefCounts } from "../lib/compositionRefs";
@@ -190,13 +191,39 @@ export function buildEntries(
   }
 
   for (const comp of compositions) for (const mk of comp.markers) {
-    if (!mk.label.trim()) continue;
+    // A hibernating marker is anchored at source material its clip no longer
+    // shows, so its `t_us` is frozen at wherever it last resolved and no
+    // timeline holds that instant any more. Every other row here answers Enter
+    // by moving you somewhere real; this one could only park the playhead on
+    // content that has nothing to do with it, so it is not offered at all. The
+    // marker Panel keeps them, which is where one is revived or discarded.
+    if (mk.hibernating) continue;
+    const note = mk.note.replace(/\s+/g, " ").trim();
+    // A written note with no name is exactly the thing someone searches for, so
+    // emptiness is judged over both fields — but the note only NAMES the marker
+    // when there is no label, the same view a caption takes of its content.
+    const label = mk.label.trim() || textSnippet(note, TEXT_NAME_MAX);
+    if (!label) continue;
+    // Which composition, because the palette lists markers from all of them at
+    // once and a bare timecode leaves two of them indistinguishable. The root is
+    // not a Group and is never named as one — it IS the timeline, so it takes
+    // the Panel kind's own title, as it does on a timeline tab.
+    const where =
+      comp.id === summary.root_id
+        ? locale.t("dock_workspace.panels.timeline", {})
+        : groupDisplayName(comp.id, comp.label, ordinals, locale.t);
+    const haystacks = withPinyin([label]);
+    const detailFrom = haystacks.length;
+    if (note && note !== label) haystacks.push(...withPinyin([note]));
     entries.push({
       key: `marker:${mk.id}`,
       type: "marker",
-      label: mk.label,
-      context: tc(mk.t_us),
-      haystacks: withPinyin([mk.label]),
+      label,
+      context: `${where} · ${tc(mk.t_us)}`,
+      haystacks,
+      ...(haystacks.length > detailFrom
+        ? { detail: { text: note, from: detailFrom } }
+        : {}),
       payload: { type: "marker", markerId: mk.id, tUs: mk.t_us, compositionId: comp.id },
     });
   }

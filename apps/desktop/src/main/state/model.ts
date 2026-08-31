@@ -120,7 +120,40 @@ export interface Track {
   muted: boolean; solo: boolean; removable: boolean; role: TrackRole | null
   transient: boolean; height_px: number; layers: Layer[]
 }
-export interface Marker { id: Uuid; t_us: TimeUs; end_t_us: TimeUs | null; label: string; color: Rgba; metadata: Record<string, unknown> }
+/** What an anchored marker points at: one layer, and a time in that layer's
+ *  SOURCE domain (the same domain `src_in_us`/`src_out_us` window). Source
+ *  time, not timeline time, is what makes the tie survive a trim or a move —
+ *  the frame the user marked keeps its identity however the clip is later cut.
+ *  Named so the ops that set and clear it can type against the shape. */
+export interface MarkerAnchor { layer: Uuid; src_us: TimeUs }
+/** A point (`end_t_us === null`) or region annotation on ONE composition's
+ *  timeline.
+ *
+ *  `label` and `note` are two fields, not one, because `label` has two
+ *  consumers that force it short — the marker lane's inline text and the
+ *  `Ctrl+K` result row. A paragraph in `label` ruins both, and merging the two
+ *  sacrifices one side by construction; Premiere (Name + Comments) and Resolve
+ *  (Name + Notes) split them for the same reason. `note` is the Panel's field
+ *  and nothing else reads it.
+ *
+ *  `anchor` is TRUTH and `t_us` is a derived cache that nonetheless stays
+ *  STORED: `reconcileMarkers` re-derives `t_us` on every commit as
+ *  `snapFrameRound(layer.t_start_us + (anchor.src_us - params.src_in_us), …)`.
+ *  Keeping the cache in state is the whole trick — every reader (ruler, Ctrl+K,
+ *  summary projection, serialize, MCP, export) goes on reading `t_us` and needs
+ *  no change, and the sorted-markers invariant keeps its meaning. Deriving at
+ *  projection time instead would force each reader to re-resolve the anchor.
+ *
+ *  Following a clip is bought with a FIELD, not a second entity: a clip-marker
+ *  type beside this one would fork every marker consumer, the same way a
+ *  composition sub type would fork every walk (see `Composition` below). */
+export interface Marker {
+  id: Uuid; t_us: TimeUs; end_t_us: TimeUs | null
+  label: string; note: string; color: Rgba
+  /** null = a FREE marker: it marks the composition's own time and behaves
+   *  exactly as every marker did before anchoring existed. */
+  anchor: MarkerAnchor | null
+}
 /** Motion direction, not reveal side — semantics in native/src/state/transition.rs (the serde twin). */
 export type TransitionDirection = 'left' | 'right' | 'up' | 'down'
 export type TransitionKind =

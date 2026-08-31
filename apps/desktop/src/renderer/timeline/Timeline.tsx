@@ -92,6 +92,7 @@ import {
 } from "./marquee";
 import type { MarqueeBox, MarqueeKind } from "./marqueeStore";
 import { DropStrip } from "./DropStrip";
+import { MarkerLane, MarkerLaneHeader } from "./MarkerLane";
 import { registerTimelineSurface } from "./timelineSurfaces";
 import { TimelineRuler } from "./TimelineRuler";
 import { TrackHeader } from "./TrackHeader";
@@ -1680,10 +1681,16 @@ export function Timeline({
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           /> {/* ruler corner */}
-          {/* Row-alignment spacer for the drop strip in the body below. These
-              two loops paint the same rows in the same order out of two
-              columns; a row present in one and missing from the other slides
-              every header beneath it out of line with its lane. */}
+          {/* The two columns paint the same rows in the same order; a row
+              present in one and missing from the other slides every header
+              beneath it out of line with its lane. The next two are the paired
+              halves of the marker lane and the drop strip.
+
+              The marker lane's header is NOT a spacer like the drop strip's — it
+              carries the collapse toggle — but it answers to the same rule:
+              `markerLaneHeightPx` sizes both halves, so neither can be tall
+              alone. */}
+          <MarkerLaneHeader />
           <div
             data-testid="timeline-drop-strip-header"
             className="bg-card"
@@ -1734,6 +1741,16 @@ export function Timeline({
             fpsNum={fpsNum}
             fpsDen={fpsDen}
             onScrub={beginRulerScrub}
+          />
+          {/* Above the drop strip because markers belong to the RULER family —
+              they measure time — while the strip belongs to the track family. */}
+          <MarkerLane
+            compositionId={compositionId}
+            pxPerSec={pxPerSec}
+            widthPx={widthPx}
+            viewportWidthPx={viewportWidthPx}
+            fpsNum={fpsNum}
+            fpsDen={fpsDen}
           />
           <div
             ref={canvasRef}

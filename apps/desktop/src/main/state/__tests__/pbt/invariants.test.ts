@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { checkAllInvariants, invNoUnauthorizedOverlap, invLinksWellFormed, invTransitionsWellFormed, InvariantError } from './invariants'
+import { checkAllInvariants, invNoUnauthorizedOverlap, invLinksWellFormed, invMarkersWellFormed, invTransitionsWellFormed, InvariantError } from './invariants'
 import type { WireComposition, WireProject, WireTransition } from './harness'
 
 const ROOT: WireComposition = {
@@ -125,5 +125,63 @@ describe('transition invariant (re-derived, Policy B reconcile guarantee)', () =
   it('rejects extended_us outside [0, duration_us]', () => {
     expect(() => invTransitionsWellFormed(withPair({ extended_us: -1 }))).toThrow(InvariantError)
     expect(() => invTransitionsWellFormed(withPair({ extended_us: 201 }))).toThrow(InvariantError)
+  })
+})
+
+describe('marker invariant (re-derived, reconcile-on-commit guarantee)', () => {
+  // A 2 s clip at 1 s showing source [2 s, 4 s), so a mark at source `s` derives
+  // to `1 s + (s − 2 s)`. 30 fps, and every time below is a whole frame.
+  const clip = { id: 'v1', t_start_us: 1_000_000, t_end_us: 3_000_000, params: { kind: 'VideoClip', src_in_us: 2_000_000, src_out_us: 4_000_000 } }
+  const withMarkers = (markers: WireComposition['markers']): WireProject =>
+    wp({ tracks: [{ id: 'tA', layers: [clip] }], markers, duration_us: 3_000_000 })
+
+  it('accepts a free marker anywhere and an awake anchored marker on its derived frame', () => {
+    expect(() => invMarkersWellFormed(withMarkers([
+      { id: 'm1', t_us: 500_000, end_t_us: null, anchor: null },
+      { id: 'm2', t_us: 2_000_000, end_t_us: null, anchor: { layer: 'v1', src_us: 3_000_000 } },
+    ]))).not.toThrow()
+  })
+
+  it('accepts a hibernating marker at any t_us — outside the window there is nothing to derive', () => {
+    expect(() => invMarkersWellFormed(withMarkers([
+      { id: 'm1', t_us: 900_000, end_t_us: null, anchor: { layer: 'v1', src_us: 1_000_000 } },
+    ]))).not.toThrow()
+    // src_out_us is EXCLUSIVE: a mark exactly on it is already asleep.
+    expect(() => invMarkersWellFormed(withMarkers([
+      { id: 'm1', t_us: 900_000, end_t_us: null, anchor: { layer: 'v1', src_us: 4_000_000 } },
+    ]))).not.toThrow()
+  })
+
+  it('rejects an awake anchored marker whose t_us disagrees with its anchor', () => {
+    expect(() => invMarkersWellFormed(withMarkers([
+      { id: 'm1', t_us: 2_500_000, end_t_us: null, anchor: { layer: 'v1', src_us: 3_000_000 } },
+    ]))).toThrow(InvariantError)
+  })
+
+  it('rejects an anchor on a layer no composition holds — the drop that did not happen', () => {
+    expect(() => invMarkersWellFormed(withMarkers([
+      { id: 'm1', t_us: 2_000_000, end_t_us: null, anchor: { layer: 'ghost', src_us: 3_000_000 } },
+    ]))).toThrow(InvariantError)
+  })
+
+  it('rejects an anchor reaching into another composition — the move that lost its marker', () => {
+    const p: WireProject = {
+      root_id: 'root',
+      compositions: {
+        root: { ...ROOT, tracks: [{ id: 'tA', layers: [] }], markers: [{ id: 'm1', t_us: 2_000_000, end_t_us: null, anchor: { layer: 'v1', src_us: 3_000_000 } }] },
+        g: { ...ROOT, id: 'g', tracks: [{ id: 'tG', layers: [clip] }], markers: [] },
+      },
+    }
+    expect(() => invMarkersWellFormed(p)).toThrow(InvariantError)
+  })
+
+  it('rejects an anchor on a kind that carries no source window, and markers out of t_us order', () => {
+    expect(() => invMarkersWellFormed(wp({
+      markers: [{ id: 'm1', t_us: 500, end_t_us: null, anchor: { layer: 'l1', src_us: 0 } }],
+    }))).toThrow(InvariantError)
+    expect(() => invMarkersWellFormed(withMarkers([
+      { id: 'm1', t_us: 2_000_000, end_t_us: null, anchor: null },
+      { id: 'm2', t_us: 500_000, end_t_us: null, anchor: null },
+    ]))).toThrow(InvariantError)
   })
 })

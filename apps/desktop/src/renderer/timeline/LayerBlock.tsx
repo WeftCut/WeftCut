@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   AudioWaveform,
   Film,
+  Flag,
   Group as GroupIcon,
   Image as ImageIcon,
   Link2,
@@ -28,6 +29,7 @@ import {
 } from "./geometry";
 import { TimelineVisualPreview } from "./TimelineVisualPreview";
 import { useLayerBakePhase } from "./motifBakeStatusStore";
+import { useGroupMarkerCount } from "./groupMarkerCount";
 import { formatSyncOffset } from "./audioSlip";
 import { useAudioSyncOffset } from "./audioSyncOffsetStore";
 import type { AnimTrack, LayerSummary } from "../ipc";
@@ -117,6 +119,52 @@ function AudioSyncBadge({ layerId }: { layerId: string }) {
     >
       {text}
     </span>
+  );
+}
+
+/// The `⚑N` badge on a Group clip: how many marks are reachable inside the
+/// composition it shows, nesting included (`groupMarkerCount.ts`). From the
+/// parent timeline a Group is opaque, so without this there is nothing to tell
+/// the user whether going in is worth it.
+///
+/// Nothing at zero. Most Groups hold no marks, so a `⚑0` on every Group clip in
+/// the project would be noise sitting exactly where the signal has to be.
+///
+/// Activating it opens that composition's Panel — the same `openComposition`
+/// the clip's double-click and its `Open group` row run, because "go and look"
+/// gets one route, not a second one that could drift.
+function GroupMarkerBadge({
+  compositionId,
+  layerId,
+}: {
+  compositionId: string;
+  layerId: string;
+}) {
+  const { t } = useTranslation();
+  const count = useGroupMarkerCount(compositionId);
+  if (count === 0) return null;
+  const label = t("timeline.group_marker_count", { count });
+  return (
+    <button
+      type="button"
+      data-testid="group-marker-count-badge"
+      className="absolute bottom-1 right-1 z-[4] flex cursor-pointer items-center gap-0.5 rounded bg-black/45 px-1 py-0.5 text-[10px] font-semibold leading-none text-white shadow-sm hover:bg-black/65"
+      title={label}
+      aria-label={label}
+      // The badge sits inside the block, whose pointerdown selects and arms a
+      // drag: without these a press meant for the badge becomes both. The
+      // context menu is deliberately left to bubble — a right-click anywhere on
+      // a clip, badge included, should reach that clip's menu.
+      onPointerDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        openComposition(compositionId, layerId);
+      }}
+    >
+      <Flag size={9} strokeWidth={2.5} aria-hidden="true" />
+      {count}
+    </button>
   );
 }
 
@@ -918,6 +966,15 @@ export function LayerBlock({
         />
       )}
       {layer.params.kind === "Audio" && !previewOnly && <AudioSyncBadge layerId={layer.id} />}
+      {/* No width gate, unlike the label and the chain glyph. Those two sit in
+          the block's flow and a narrow clip has no room to spend on them; this
+          one is absolutely positioned in the corner `AudioSyncBadge` already
+          uses, so it displaces nothing at any width. A gate would also silence
+          it exactly where it earns its keep: at the zoom that makes every Group
+          clip a sliver, "is there anything in there" is the live question. */}
+      {groupCompositionId !== null && !previewOnly && (
+        <GroupMarkerBadge compositionId={groupCompositionId} layerId={layer.id} />
+      )}
       {isEditing && showLabel ? (
         <AppInput
           ref={inputRef}

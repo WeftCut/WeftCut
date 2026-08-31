@@ -1,14 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
-import type { TFunction } from "i18next";
-import { tryMutate } from "../errors/tryMutate";
-import { formatTimecode } from "../frames";
-import { removeMarker } from "../ipc";
-import { useMarkersVisible } from "../settings/appSettingsStore";
-import { useCompositionMarkers } from "../state/projectStore";
-import { MarkerContextMenu } from "./MarkerContextMenu";
 import { RulerContextMenu } from "./RulerContextMenu";
-import { openMarkerRenamePrompt } from "./markerRenamePrompt";
 import { useRangeInUs, useRangeOutUs } from "../state/rangeStore";
 import { useAnchorFrame } from "../state/playheadProjection";
 import { rootToLocalIn, type AnchorFrame } from "../render/timeProjection";
@@ -17,24 +8,20 @@ import {
   timelineScrollLeftPx,
   useTimelineScrollStore,
 } from "../state/timelineScrollStore";
-import {
-  RULER_SCROLL_QUANTUM_PX,
-  computeRulerMarkers,
-  computeRulerModel,
-  type RulerMarker,
-} from "./rulerModel";
+import { RULER_SCROLL_QUANTUM_PX, computeRulerModel } from "./rulerModel";
 
 /// Time ruler at the top of the scrollable timeline root. Width matches the
 /// canvas so horizontal scroll keeps ticks aligned with the layers below.
 ///
-/// This component paints `rulerModel.ts`'s view model: which ticks and markers
-/// exist, where, and how wide all live there, bounded by the viewport rather
-/// than by project length. It adds one thing the model cannot own — marker
-/// hover text, which needs a locale.
+/// This component paints `rulerModel.ts`'s tick model: which ticks exist, where,
+/// and what they read all live there, bounded by the viewport rather than by
+/// project length.
 ///
-/// Every x on this strip is a position on THIS composition's own clock: the
-/// ticks and the markers are already local, and the in/out caps — which are
-/// root times, because export runs the root — are projected here.
+/// The SOLE scrub surface, and it stays sole by carrying nothing a press could
+/// mean something else on: ticks, timecode and the in/out caps, every one of
+/// them pointer-inert. Every x on this strip is a position on THIS
+/// composition's own clock — the ticks are already local, and the in/out caps,
+/// which are root times because export runs the root, are projected here.
 
 const quantizeScroll = (px: number): number =>
   Math.floor(Math.max(0, px) / RULER_SCROLL_QUANTUM_PX) *
@@ -49,7 +36,11 @@ const quantizeScroll = (px: number): number =>
 /// block of scrolling, not once per event, and the window built from a lagging
 /// offset still covers the viewport because the overscan is at least one quantum
 /// wide (see `RULER_OVERSCAN_PX`).
-function useRulerScrollBlockPx(compositionId: string | null): number {
+///
+/// Exported for the marker lane, which windows the SAME row pixels: quantised
+/// on a second, independent offset, a glyph would appear at a different scroll
+/// position than the tick under it.
+export function useRulerScrollBlockPx(compositionId: string | null): number {
   const [blockPx, setBlockPx] = useState(() =>
     quantizeScroll(timelineScrollLeftPx(compositionId)),
   );
@@ -122,132 +113,6 @@ function RangeCap({ xPx, side }: { xPx: number; side: "in" | "out" }) {
   );
 }
 
-/// The reading rule in the 20 px strip is positional: full height is the
-/// playhead and the in/out caps, the upper half is timecode text, and the lower
-/// half — everything the three constants below place — is markers. A full-height
-/// marker rule would be confusable with the caps, whose cyan was itself chosen
-/// to say "standing user mark".
-
-/// Box side of the point glyph, which is a SQUARE rotated 45° — so what it
-/// paints is the diagonal, `size·√2`, and it is the DIAGONAL plus
-/// `MARKER_POINT_BOTTOM_PX` that has to stay inside the strip's 10 px lower
-/// half. Sizing against the side instead is how a diamond ends up under the
-/// timecode labels.
-const MARKER_POINT_SIZE_PX = 5;
-/// Lifts the diamond off the strip's floor: the strip is `overflow-hidden`, so
-/// an unlifted diamond is clipped at its bottom tip.
-const MARKER_POINT_BOTTOM_PX = 1;
-const MARKER_BAR_HEIGHT_PX = 3;
-
-/// Two concentric hairlines: dark inside, light outside. See `MarkerGlyph` for
-/// why a marker needs both where an in/out cap needs only the dark one.
-const MARKER_OUTLINE =
-  "shadow-[0_0_0_0.5px_rgba(0,0,0,0.7),0_0_0_1.25px_rgba(255,255,255,0.4)]";
-
-/// How far a 45°-rotated square paints beyond its own box on each side: the
-/// diagonal is `size·√2`, so the overhang is half the difference. Rotation is
-/// what makes the diamond a diamond, so this is not removable — it is
-/// compensated for instead (`glyphTranslate`).
-const MARKER_ROTATION_OVERHANG_PX =
-  (MARKER_POINT_SIZE_PX * (Math.SQRT2 - 1)) / 2;
-
-/// Where a glyph sits relative to the `left` its view item carries.
-///
-/// A true point marker is CENTRED on its frame: the frame is a line, and the
-/// diamond straddles it the way a playhead would. A degraded region is not — it
-/// begins at that x and nothing of it exists before, so it is nudged right by
-/// the rotation overhang, putting its painted left edge exactly on the region's
-/// start. Getting this backwards paints ~3.5 px of mark over frames the region
-/// does not cover, in the one case the shape has already stopped reporting the
-/// region's true extent.
-function glyphTranslate(view: RulerMarker): string | undefined {
-  if (view.shape === "region") return undefined;
-  return view.endTUs === null ? "-50%" : `${MARKER_ROTATION_OVERHANG_PX}px`;
-}
-
-/// Hover text for one mark: `label · timecode`, or `label · start – end` for
-/// anything carrying an `endTUs` — a degraded region included, which is the
-/// half of `MARKER_MIN_REGION_PX`'s trade this function has to hold up.
-function markerTitle(
-  view: RulerMarker,
-  fpsNum: number,
-  fpsDen: number,
-  t: TFunction,
-): string {
-  const label = view.label.trim() || t("kinds.marker");
-  const start = formatTimecode(view.tUs, fpsNum, fpsDen);
-  if (view.endTUs === null) {
-    return t("timeline.marker_tooltip_point", { label, timecode: start });
-  }
-  return t("timeline.marker_tooltip_region", {
-    label,
-    start,
-    end: formatTimecode(view.endTUs, fpsNum, fpsDen),
-  });
-}
-
-/// One marker: a diamond at its frame, or a bar across its range.
-///
-/// Painted in the marker's OWN colour — timeline chrome is semantic by kind
-/// except where the colour is the content, and a marker's colour is an authored
-/// taxonomy (problem / approved / needs-VO).
-///
-/// Outlined TWICE, which is where this departs from `RangeCap`. A cap is always
-/// cyan, so one dark hairline is all it needs to sit off the ruler. A marker's
-/// colour is whatever its author chose, and the ruler sits on the near-black
-/// `--card`: a near-black marker plus a dark ring is a smudge, not a mark. The
-/// dark ring stays — it is what separates a BRIGHT colour — and a light ring
-/// outside it separates a dark one, so no authored colour can vanish into the
-/// background.
-///
-/// Takes pointer events so the native tooltip fires, but installs no POINTER
-/// handler and stops no pointer propagation: every press continues to the
-/// ruler, which stays the sole scrub surface. A press that lands on a marker
-/// still starts a scrub, and a drag still crosses it without interruption.
-///
-/// The one handler here is `contextmenu` — the right button has never scrubbed,
-/// so no gesture is contested (authoring separates by input channel, not screen
-/// region). preventDefault beats the prod-mode global context-menu suppressor
-/// (main.tsx); stopPropagation keeps any future strip-level menu from stacking.
-function MarkerGlyph({
-  view,
-  title,
-  onOpenMenu,
-}: {
-  view: RulerMarker;
-  title: string;
-  onOpenMenu: (xPx: number, yPx: number, markerId: string) => void;
-}) {
-  const isRegion = view.shape === "region";
-  return (
-    <div
-      data-testid="timeline-marker"
-      data-marker-id={view.id}
-      data-shape={view.shape}
-      title={title}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        onOpenMenu(e.clientX, e.clientY, view.id);
-      }}
-      className={`pointer-events-auto absolute ${MARKER_OUTLINE} ${
-        isRegion ? "rounded-[1px]" : "rotate-45"
-      }`}
-      style={{
-        // `left` is the marker's exact START in every shape — never its range's
-        // midpoint, never widened. How the glyph sits around that x is
-        // `glyphTranslate`'s call, so this stays the honest number.
-        left: view.xPx,
-        translate: glyphTranslate(view),
-        bottom: isRegion ? 0 : MARKER_POINT_BOTTOM_PX,
-        width: isRegion ? view.widthPx : MARKER_POINT_SIZE_PX,
-        height: isRegion ? MARKER_BAR_HEIGHT_PX : MARKER_POINT_SIZE_PX,
-        background: view.color,
-      }}
-    />
-  );
-}
-
 export function TimelineRuler({
   compositionId,
   pxPerSec,
@@ -259,7 +124,7 @@ export function TimelineRuler({
   onScrub,
 }: {
   /// The composition this ruler belongs to, from the Panel that renders it: its
-  /// markers, and its own scroll offset.
+  /// own scroll offset, and the anchor the in/out caps project through.
   compositionId: string | null;
   pxPerSec: number;
   totalSec: number;
@@ -275,35 +140,23 @@ export function TimelineRuler({
   onScrub: (clientX: number) => void;
 }) {
   const scrollLeftPx = useRulerScrollBlockPx(compositionId);
-  // The marker context menu, owned HERE like everything else the ruler paints
-  // (the timeline's prop surface does not change). The popup itself portals to
-  // the body, so an open menu adds zero direct children to the strip — the RTL
-  // tick enumeration and the local node-count gate keep measuring ticks.
-  const [markerMenu, setMarkerMenu] = useState<{
-    x: number;
-    y: number;
-    markerId: string;
-  } | null>(null);
-  // The ruler's own menu — the in/out and marker COMMANDS, as opposed to the
-  // marker menu above, which acts on one marker glyph. Held separately because
-  // a right-click either lands on a glyph or it doesn't: the glyph stops
-  // propagation, so exactly one of the two ever opens.
+  // The strip's own menu: the in/out and marker COMMANDS. A right-click
+  // anywhere on the ruler opens it, because the ruler carries no object a menu
+  // could be about — the per-marker menu belongs to the marker lane, with the
+  // glyphs it acts on.
   const [rulerMenu, setRulerMenu] = useState<{ x: number; y: number } | null>(
     null,
   );
-  // Close the menus when anything scrolls under them — the popups are anchored
-  // to fixed cursor coordinates, so they would float detached over moving
-  // content. Outside-click and Escape closing belong to Base UI. Same effect
-  // every context-menu call site carries (Timeline, TrackHeader).
+  // Close the menu when anything scrolls under it — the popup is anchored to
+  // fixed cursor coordinates, so it would float detached over moving content.
+  // Outside-click and Escape closing belong to Base UI. Same effect every
+  // context-menu call site carries (Timeline, TrackHeader, MarkerLane).
   useEffect(() => {
-    if (!markerMenu && !rulerMenu) return;
-    const onScroll = () => {
-      setMarkerMenu(null);
-      setRulerMenu(null);
-    };
+    if (!rulerMenu) return;
+    const onScroll = () => setRulerMenu(null);
     window.addEventListener("scroll", onScroll, true);
     return () => window.removeEventListener("scroll", onScroll, true);
-  }, [markerMenu, rulerMenu]);
+  }, [rulerMenu]);
   // Plain subscriptions, not the playhead's transient-DOM-mutation pattern:
   // in/out change when the user marks them, not once per composition frame, so
   // a React commit per change costs nothing worth optimising away. Atomic
@@ -316,14 +169,6 @@ export function TimelineRuler({
   const anchorFrame = useAnchorFrame(compositionId);
   const rangeInPx = capXPx(rangeInUs, anchorFrame, pxPerSec);
   const rangeOutPx = capXPx(rangeOutUs, anchorFrame, pxPerSec);
-  // Both read here rather than threaded down from the timeline, for the same
-  // reason the range and scroll stores are: the ruler is the only surface that
-  // paints markers and the only one the flag governs, so neither belongs on the
-  // timeline's prop surface. The array changes once per project mutation, not
-  // once per frame.
-  const markers = useCompositionMarkers(compositionId);
-  const markersVisible = useMarkersVisible();
-  const { t } = useTranslation();
   const { ticks } = useMemo(
     () =>
       computeRulerModel({
@@ -335,38 +180,6 @@ export function TimelineRuler({
         viewportWidthPx,
       }),
     [fpsNum, fpsDen, pxPerSec, totalSec, scrollLeftPx, viewportWidthPx],
-  );
-  // Hover text is composed HERE rather than at each glyph: every title is a pair
-  // of `formatTimecode` calls through the wasm frame grid, so composing per
-  // glyph would re-run all of them on every render instead of once per window.
-  //
-  // The visibility flag short-circuits HERE rather than at the JSX: with the
-  // layer off there is no reason to window the markers or format a timecode at
-  // all — and a project an agent has sprayed hundreds of markers across is
-  // exactly when someone reaches for the toggle.
-  const markerViews = useMemo(
-    () =>
-      markersVisible
-        ? computeRulerMarkers({
-            markers,
-            pxPerSec,
-            scrollLeftPx,
-            viewportWidthPx,
-          }).map((view) => ({
-            view,
-            title: markerTitle(view, fpsNum, fpsDen, t),
-          }))
-        : [],
-    [
-      markersVisible,
-      markers,
-      pxPerSec,
-      scrollLeftPx,
-      viewportWidthPx,
-      fpsNum,
-      fpsDen,
-      t,
-    ],
   );
 
   return (
@@ -395,9 +208,9 @@ export function TimelineRuler({
         if (e.button === 0) onScrub(e.clientX);
       }}
       onClick={(e) => e.stopPropagation()}
-      // Empty-ruler right-click. A press on a marker glyph never reaches here
-      // — `MarkerGlyph` stops propagation — so the glyph menu and this one are
-      // mutually exclusive without either knowing about the other.
+      // Right-click anywhere on the strip. One menu, because the strip holds one
+      // subject — the timeline's clock — and the commands on it are the in/out
+      // and marker COMMANDS, never an act on a particular mark.
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -421,70 +234,28 @@ export function TimelineRuler({
           )}
         </div>
       ))}
-      {/* ONE wrapper, not N direct children of the strip: the ruler's RTL tests
-          enumerate ticks by reading this strip's direct children, and the local
-          node-count gate counts them to prove the tick set is bounded by the
-          viewport rather than by composition length. A wrapper keeps both of
-          those measuring ticks, and gives the e2e one locator for "the marker
-          layer". `inset-0` so its children share the strip's row coordinates.
+      {/* After the ticks so the caps paint over them — same stacking context, so
+          DOM order is the whole z-story, and the mark the user is actively
+          placing wins. Two nodes at most, positioned in the same row coordinates
+          the ticks use, and clipped by this strip's `overflow-hidden` when the
+          range is scrolled out of view.
 
-          LANDMINE: rendered only when it has marks. The node-count gate reads
-          `parseFloat(child.style.left)` off every direct child and sorts the
-          result — an always-present wrapper carries no `left`, so it feeds NaN
-          into that sort on the marker-less project the gate creates. Giving it
-          `left: 0` is NOT the fix: 0 then sorts first forever and the gate's
-          "scrolling moved the window" check (`firstLeft > headLeft`) can never
-          pass. */}
-      {markerViews.length > 0 && (
-        <div
-          data-testid="timeline-marker-layer"
-          className="pointer-events-none absolute inset-0"
-        >
-          {markerViews.map(({ view, title }) => (
-            <MarkerGlyph
-              key={view.id}
-              view={view}
-              title={title}
-              onOpenMenu={(x, y, markerId) => setMarkerMenu({ x, y, markerId })}
-            />
-          ))}
-        </div>
-      )}
-      {/* After the ticks and the markers so the caps paint over both — same
-          stacking context, so DOM order is the whole z-story, and the mark the
-          user is actively placing wins. Two nodes at most, positioned in the
-          same row coordinates the ticks use, and clipped by this strip's
-          `overflow-hidden` when the range is scrolled out of view. */}
+          LANDMINE: the ruler's RTL tests enumerate ticks by reading this strip's
+          direct children, and the local node-count gate reads
+          `parseFloat(child.style.left)` off each of them. Anything added here
+          must therefore carry a real `left` — a wrapper without one feeds NaN
+          into that sort. */}
       {rangeInPx !== null && <RangeCap xPx={rangeInPx} side="in" />}
       {rangeOutPx !== null && <RangeCap xPx={rangeOutPx} side="out" />}
     </div>
     {/* Outside the strip div (the Timeline.tsx placement), not inside it:
         whatever Base UI renders inline must never count as a strip child — see
-        the wrapper landmine above. The popup itself portals to the body. */}
+        the landmine above. The popup itself portals to the body. */}
     {rulerMenu !== null && (
       <RulerContextMenu
         x={rulerMenu.x}
         y={rulerMenu.y}
         onClose={() => setRulerMenu(null)}
-      />
-    )}
-    {markerMenu !== null && (
-      <MarkerContextMenu
-        x={markerMenu.x}
-        y={markerMenu.y}
-        onClose={() => setMarkerMenu(null)}
-        onRename={() => {
-          setMarkerMenu(null);
-          openMarkerRenamePrompt(markerMenu.markerId);
-        }}
-        onDelete={() => {
-          setMarkerMenu(null);
-          // No confirm dialog: deletion is RECORDED, so it is one undo away.
-          void tryMutate(
-            () => removeMarker(markerMenu.markerId),
-            "remove_marker",
-          );
-        }}
       />
     )}
     </>

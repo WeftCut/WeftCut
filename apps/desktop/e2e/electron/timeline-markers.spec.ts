@@ -5,11 +5,12 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { invokeCmd, launchApp, newProject, tmpDir, waitForHook, rootSummary } from './helpers/driver'
 
 /**
- * Markers painted on the timeline ruler, and the one switch that silences them.
+ * Markers painted in the timeline's marker lane, and the one switch that
+ * silences them.
  *
  * Everything here is unreachable from the colocated Vitest suites, which mock the
- * IPC surface and render the ruler in isolation: the assertions below are about
- * the REAL wiring — a marker created OUTSIDE the renderer reaching the ruler's
+ * IPC surface and render the lane in isolation: the assertions below are about
+ * the REAL wiring — a marker created OUTSIDE the renderer reaching the lane's
  * own store selector, and one app-level setting reaching the strip button, the
  * View menu checkbox and the marker layer at once.
  *
@@ -22,12 +23,25 @@ import { invokeCmd, launchApp, newProject, tmpDir, waitForHook, rootSummary } fr
  * reads, so this can boot through `launchApp` like every other UI spec
  * instead of parsing the connect log.
  *
+ * The third test drives the lane's own gesture — the drag — which no unit test
+ * can reach the far side of: whether a press that travels across this row also
+ * moves the PLAYHEAD is a question about two live surfaces sharing one window,
+ * and the colocated suite renders the lane with no ruler beside it.
+ *
+ * The fourth drives the marker KEYS, one layer up from the lane: the walk
+ * reads whichever composition holds the keyboard and writes the one playhead,
+ * so only a real window can say that a keystroke moves the film, lands on each
+ * mark in turn, and goes dead at the end of the list instead of wrapping.
+ *
  * Cross-restart persistence is deliberately NOT here — it is asserted in the
  * main-process app-settings suite, because every spec in this suite boots
  * Electron.
  */
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
+
+/// The `Mod` half of the walk's chord, as `shortcuts/match.ts` resolves it.
+const MOD = process.platform === 'darwin' ? 'Meta' : 'Control'
 
 /// An MCP client on this app's own loopback server, as an agent would connect.
 async function mcpClient(page: Page): Promise<Client> {
@@ -47,7 +61,7 @@ async function mcpClient(page: Page): Promise<Client> {
   return client
 }
 
-test('the ruler paints markers, and one toggle silences them from either surface', async () => {
+test('the lane paints markers, and one toggle silences them from either surface', async () => {
   test.setTimeout(120_000)
   const { app, page } = await launchApp()
   try {
@@ -58,7 +72,9 @@ test('the ruler paints markers, and one toggle silences them from either surface
     await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
 
     const marks = page.locator('[data-testid="timeline-marker"]')
+    const markerLane = page.locator('[data-testid="timeline-marker-lane"]')
     const markerLayer = page.locator('[data-testid="timeline-marker-layer"]')
+    const labels = page.locator('[data-testid="timeline-marker-label"]')
     const stripButton = page.locator('button[data-quick-action="toggleMarkersVisible"]')
     const viewMenu = page.locator('.menu-trigger').nth(2)
     const showMarkersItem = page
@@ -66,10 +82,13 @@ test('the ruler paints markers, and one toggle silences them from either surface
       .filter({ hasText: /^Show markers$/ })
 
     // ── Seed a point and a region, from outside the app ───────────────────
+    // The lane holds its row before anything is in it: it is a permanent row,
+    // not one that appears with the first marker.
+    await expect(markerLane).toHaveCount(1)
     await expect(marks).toHaveCount(0)
     // Frame-grid times at 30 fps (ADR 0037 rejects an off-grid marker). Two
     // different authored colours, because the colour IS the content here — a
-    // taxonomy an agent applied is the thing the ruler has to make legible.
+    // taxonomy an agent applied is the thing the lane has to make legible.
     const client = await mcpClient(page)
     try {
       await client.callTool({
@@ -93,7 +112,7 @@ test('the ruler paints markers, and one toggle silences them from either surface
       await client.close()
     }
 
-    // Both appear with no project reload and no user action: the ruler reads the
+    // Both appear with no project reload and no user action: the lane reads the
     // markers through a store selector, so an agent's `add_marker` lands the
     // moment it commits — the whole point of the slice.
     await expect(marks).toHaveCount(2)
@@ -102,10 +121,25 @@ test('the ruler paints markers, and one toggle silences them from either surface
     ).toHaveCount(1)
     const regionMark = page.locator('[data-testid="timeline-marker"][data-shape="region"]')
     await expect(regionMark).toHaveCount(1)
-    // Each in the colour its author gave it, not a semantic marker colour.
-    await expect(regionMark).toHaveCSS('background-color', 'rgb(34, 204, 85)')
-    // Hover text is this slice's only human-readable output, and a region's
-    // carries both ends.
+    // Every glyph is in the lane and none is in the ruler: one object, one hit
+    // region, so a press on the ruler is a scrub and only a scrub.
+    await expect(markerLane.locator('[data-testid="timeline-marker"]')).toHaveCount(2)
+    await expect(
+      page.locator('[data-testid="timeline-ruler"] [data-testid="timeline-marker"]'),
+    ).toHaveCount(0)
+    // Both authored freehand, so both are FREE — hollow, with the colour its
+    // author gave it carried as a ring rather than a fill. Still the authored
+    // colour and not a semantic marker colour, which is the part that matters.
+    await expect(regionMark).toHaveAttribute('data-anchored', 'false')
+    expect(
+      await regionMark.evaluate((el) => getComputedStyle(el).boxShadow),
+    ).toContain('rgb(34, 204, 85)')
+    // Each name readable without a hover, which is what the lane exists for.
+    await expect(labels).toHaveCount(2)
+    await expect(labels.filter({ hasText: 'cut here' })).toHaveCount(1)
+    await expect(labels.filter({ hasText: 'needs VO' })).toHaveCount(1)
+    // Hover text carries what the glyph cannot say, and a region's carries both
+    // ends.
     await expect(regionMark).toHaveAttribute(
       'title',
       'needs VO · 00:00:02:00 – 00:00:03:00',
@@ -117,6 +151,10 @@ test('the ruler paints markers, and one toggle silences them from either surface
     // Not "hidden" — GONE, wrapper included (see the landmine on the layer).
     await expect(marks).toHaveCount(0)
     await expect(markerLayer).toHaveCount(0)
+    // The LANE stays. The flag governs what it paints, never whether it exists —
+    // a row bound to it would reflow the timeline under the pointer, since `M`
+    // force-enables the same flag.
+    await expect(markerLane).toHaveCount(1)
     await expect(stripButton).toHaveAttribute('aria-pressed', 'false')
     await expect(stripButton).toHaveAttribute(
       'aria-label',
@@ -150,7 +188,7 @@ test('the ruler paints markers, and one toggle silences them from either surface
   }
 })
 
-test('markers are authorable from the keyboard and the ruler — no MCP client anywhere', async () => {
+test('markers are authorable from the keyboard and the lane — no MCP client anywhere', async () => {
   test.setTimeout(120_000)
   const { app, page } = await launchApp()
   try {
@@ -159,6 +197,7 @@ test('markers are authorable from the keyboard and the ruler — no MCP client a
     await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
 
     const marks = page.locator('[data-testid="timeline-marker"]')
+    const labels = page.locator('[data-testid="timeline-marker-label"]')
     const stripButton = page.locator('button[data-quick-action="toggleMarkersVisible"]')
     const renameInput = page.getByLabel('Marker label')
 
@@ -183,8 +222,11 @@ test('markers are authorable from the keyboard and the ruler — no MCP client a
     // ── M drops an unlabelled point marker at the playhead's frame ─────────
     await page.keyboard.press('M')
     await expect(marks).toHaveCount(1)
-    // Unlabelled by design: the tooltip's translated fallback is the name.
+    // Unlabelled by design: the tooltip's translated fallback is the name, and
+    // the lane prints nothing beside a mark that has none — "Marker" written out
+    // next to every unnamed one would be noise, not information.
     await expect(marks).toHaveAttribute('title', /^Marker · /)
+    await expect(labels).toHaveCount(0)
     const summary = await rootSummary<{ markers: Array<{ label: string }> }>(page)
     expect(summary.markers).toHaveLength(1)
     expect(summary.markers[0].label).toBe('')
@@ -197,6 +239,9 @@ test('markers are authorable from the keyboard and the ruler — no MCP client a
     await expect(renameInput).toHaveCount(0)
     await expect(marks).toHaveCount(1)
     await expect(marks).toHaveAttribute('title', /^cut here · /)
+    // The name is now on the timeline, with no hover and no panel. That is the
+    // lane's whole reason to exist.
+    await expect(labels).toHaveText(['cut here'])
 
     // ── Right-click, Delete: two inputs, nothing asked first ───────────────
     await marks.click({ button: 'right' })
@@ -211,6 +256,139 @@ test('markers are authorable from the keyboard and the ruler — no MCP client a
     await page.keyboard.press('M')
     await expect(marks).toHaveCount(1)
     await expect(stripButton).toHaveAttribute('aria-pressed', 'true')
+  } finally {
+    await app.close()
+  }
+})
+
+test('a marker moves by being dragged in its lane, and a drag that goes nowhere records nothing', async () => {
+  test.setTimeout(120_000)
+  const { app, page } = await launchApp()
+  try {
+    const parent = tmpDir('weftcut-marker-drag-')
+    await newProject(page, { parentFolder: parent, name: 'marker-drag', canvas: CANVAS })
+    await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
+
+    const marks = page.locator('[data-testid="timeline-marker"]')
+    const markerTUs = async (): Promise<number> =>
+      (await rootSummary<{ markers: Array<{ t_us: number }> }>(page)).markers[0].t_us
+    const playheadUs = () =>
+      page.evaluate(() => (window as any).__weftcutTest.getPlayheadUs() as number)
+
+    // Same premise as the authoring spec above: real duration first, or the
+    // ruler seek clamps back to frame 0 over an autofitted-to-nothing timeline.
+    await invokeCmd(page, 'add_color_layer', { tStartUs: 0, durationUs: 5_000_000 })
+    await waitForHook(page, 'getPlayheadUs')
+    await page.locator('[data-testid="timeline-ruler"]').click({ position: { x: 200, y: 10 } })
+    await expect.poll(playheadUs).toBeGreaterThan(0)
+
+    await page.keyboard.press('M')
+    await expect(marks).toHaveCount(1)
+    const before = await markerTUs()
+    const parkedPlayheadUs = await playheadUs()
+
+    // ── Carry the mark down the lane ──────────────────────────────────────
+    // One event per protocol round trip, as every other drag spec does: fired
+    // inside one page task, React would still be uncommitted from the
+    // pointerdown when the move arrived.
+    const box = await marks.boundingBox()
+    if (!box) throw new Error('the marker glyph has no layout box')
+    const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    await page.mouse.move(from.x, from.y)
+    await page.mouse.down()
+    await page.mouse.move(from.x + 120, from.y)
+    await page.mouse.up()
+
+    await expect.poll(markerTUs).toBeGreaterThan(before)
+
+    // The gesture the ruler could never have hosted: this lane is not a scrub
+    // surface, so a press that travelled 120 px across it moved the mark and
+    // left the film exactly where it was.
+    expect(await playheadUs()).toBe(parkedPlayheadUs)
+    // Still a marker, still right-clickable — the drag did not swallow the
+    // menu the other two operations live in.
+    await marks.click({ button: 'right' })
+    await expect(page.locator('.app-menu-item', { hasText: 'Rename' })).toHaveCount(1)
+    await page.keyboard.press('Escape')
+
+    // ── ONE history entry for the whole drag ──────────────────────────────
+    await invokeCmd(page, 'project_undo', {})
+    await expect.poll(markerTUs).toBe(before)
+
+    // ── A drag that lands where it started is not an edit ──────────────────
+    const still = await marks.boundingBox()
+    if (!still) throw new Error('the marker glyph has no layout box')
+    await page.mouse.move(still.x + still.width / 2, still.y + still.height / 2)
+    await page.mouse.down()
+    await page.mouse.up()
+    expect(await markerTUs()).toBe(before)
+    // The proof that it recorded nothing: the next undo pops the mark's own
+    // CREATION, not a no-op move standing in front of it.
+    await invokeCmd(page, 'project_undo', {})
+    await expect(marks).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
+})
+
+test('the marker keys walk the marks in order and go dead at each end of the list', async () => {
+  test.setTimeout(120_000)
+  const { app, page } = await launchApp()
+  try {
+    const parent = tmpDir('weftcut-marker-walk-')
+    await newProject(page, { parentFolder: parent, name: 'marker-walk', canvas: CANVAS })
+    await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
+
+    const marks = page.locator('[data-testid="timeline-marker"]')
+    const playheadUs = () =>
+      page.evaluate(() => (window as any).__weftcutTest.getPlayheadUs() as number)
+
+    // Same premise as the two specs above: real duration FIRST, or every seek
+    // here clamps to frame 0 over a timeline autofitted to nothing.
+    await invokeCmd(page, 'add_color_layer', { tStartUs: 0, durationUs: 10_000_000 })
+    // `invokeCmd` lowers straight onto the channel, whose args are camelCase
+    // (`main/state/commands.ts`) — a snake_case key here would arrive as
+    // `undefined` and the mark would land nowhere near the time it names.
+    for (const tUs of [1_000_000, 5_000_000, 9_000_000]) {
+      await invokeCmd(page, 'add_marker', { tUs })
+    }
+    await expect(marks).toHaveCount(3)
+
+    // The ruler click is what puts the keyboard in a timeline; the seek that
+    // follows is what makes the walk start from a known frame. `transportSeekUs`
+    // no-ops SILENTLY until the preview bridge registers, so the seek sits
+    // inside the poll rather than in front of it.
+    await waitForHook(page, 'getPlayheadUs')
+    await page.locator('[data-testid="timeline-ruler"]').click({ position: { x: 200, y: 10 } })
+    await waitForHook(page, 'transportSeekUs')
+    await expect
+      .poll(async () => {
+        await page.evaluate(() => (window as any).__weftcutTest.transportSeekUs(0))
+        return playheadUs()
+      })
+      .toBe(0)
+
+    // ── Shift+M walks forward, one mark per press ──────────────────────
+    await page.keyboard.press('Shift+M')
+    await expect.poll(playheadUs).toBe(1_000_000)
+    await page.keyboard.press('Shift+M')
+    await expect.poll(playheadUs).toBe(5_000_000)
+    await page.keyboard.press('Shift+M')
+    await expect.poll(playheadUs).toBe(9_000_000)
+    // Past the last mark the key is dead, not a jump back to the first. The
+    // count proves the other half: this key walks, it never authors, so the
+    // dead press did not drop a fourth mark under the playhead.
+    await page.keyboard.press('Shift+M')
+    expect(await playheadUs()).toBe(9_000_000)
+    await expect(marks).toHaveCount(3)
+
+    // ── …and Mod+Shift+M walks back the same way ──────────────────────
+    await page.keyboard.press(`${MOD}+Shift+M`)
+    await expect.poll(playheadUs).toBe(5_000_000)
+    await page.keyboard.press(`${MOD}+Shift+M`)
+    await expect.poll(playheadUs).toBe(1_000_000)
+    await page.keyboard.press(`${MOD}+Shift+M`)
+    expect(await playheadUs()).toBe(1_000_000)
   } finally {
     await app.close()
   }

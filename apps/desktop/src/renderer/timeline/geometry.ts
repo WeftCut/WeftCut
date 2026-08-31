@@ -54,6 +54,24 @@ export const HEADER_COL_PX = 160;
 /// enough to read as a seam rather than a lane the user is meant to manage.
 export const DROP_STRIP_HEIGHT_PX = 14;
 
+/// Height of the marker lane under the ruler, expanded: a glyph plus the label
+/// beside it, which is the whole reason the lane exists — a mark whose name is
+/// only reachable by hovering is a mark nobody reads.
+///
+/// Reserved in flow permanently for the same reason the drop strip's row is,
+/// and the trap is sharper here: `markers_visible` governs what the lane PAINTS,
+/// never whether the lane exists, and `M` force-enables that flag. A lane bound
+/// to it would reflow the timeline under the pointer on every press.
+export const MARKER_LANE_HEIGHT_PX = 20;
+
+/// Height of the marker lane collapsed: glyphs, no text. Deliberately the drop
+/// strip's height — a collapsed lane is a seam, not a lane to manage, and the
+/// two seams above the tracks should not be two different thicknesses.
+///
+/// Collapse is a USER-initiated toggle, so unlike the visibility flag its
+/// reflow is asked for.
+export const MARKER_LANE_COLLAPSED_HEIGHT_PX = DROP_STRIP_HEIGHT_PX;
+
 export function computeTimelineExtent({
   durationUs,
   pxPerSec,

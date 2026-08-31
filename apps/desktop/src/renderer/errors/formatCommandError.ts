@@ -274,6 +274,10 @@ const VALIDATION_COPY: { [R in ValidationRule]: Spec<ValidationOf<R>> } = {
   DuplicateMarkerId: { tier: "generic" },
   CompositionCycle: { tier: "generic" },
   CompositionLatticeMismatch: { tier: "generic" },
+  // Marker anchoring. Generic: only an attach op can raise either, and it
+  // offers the user no anchor a live selection could not satisfy.
+  MarkerAnchorNotInComposition: { tier: "generic" },
+  MarkerAnchorLayerHasNoSourceWindow: { tier: "generic" },
 };
 
 // ── Composition ─────────────────────────────────────────────────────────────

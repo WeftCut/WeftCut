@@ -1,12 +1,12 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
-import type { Animated, AudioRole, Composition, Interpolation, LayerParams, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid } from './model'
+import type { Animated, AudioRole, Composition, Interpolation, LayerParams, MarkerAnchor, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid } from './model'
 import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
 import { HISTORY_SUMMARY, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, moveToCompositionSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
-import { validate, reconcileTransitions, type DroppedTransition } from './validate'
+import { validate, reconcileMarkers, reconcileTransitions, type DroppedMarker, type DroppedTransition } from './validate'
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
 import { applyAddGroupLayer, applyAddLayer, applyAddMarker, applyAddTrack, colorParams, defaultTransform, textParamsDefault } from './mutations/add'
 import { applyMoveLayer, applyMoveLayersToNewTrack } from './mutations/move'
@@ -21,7 +21,7 @@ import { applyMoveLayersToComposition } from './mutations/moveToComposition'
 import { applySetLayersEnabled, applyUpdateLayer, type LayerPatch } from './mutations/update'
 import { applyFitComposition } from './mutations/composition'
 import { applyDurationAutofit, compositionOf, locateLayer, locateTrack, requireLayer, requireSameComposition, requireTrack, scopeComposition } from './mutations/helpers'
-import { applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
+import { applyAttachMarker, applyDetachMarker, applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
 import { applyDeleteTrack, applyMoveTrack, applyRenameTrack } from './mutations/tracks'
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, type EffectPatch } from './mutations/effects'
 import { applyAddTransition, applyRemoveTransition, applyUpdateTransition, type TransitionBounce } from './mutations/transitions'
@@ -137,8 +137,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
     }
   }
 
-  /** Run a draft mutation, then reconcile transitions, then validate, record,
-   *  emit — validate FIRST, op_id AFTER validate.
+  /** Run a draft mutation, then reconcile transitions and markers, then
+   *  validate, record, emit — validate FIRST, op_id AFTER validate.
    *  Returns the recipe's value. Throws CommandFailure on a mutation error or a
    *  validation failure.
    *
@@ -150,6 +150,14 @@ export function createActor(opts: ActorOptions): ActorHandle {
    *  update/remove move the incoming layer through a FOLLOWING transition's
    *  geometry (B is also from_layer of some B→C), reconcile dropping that
    *  chained transition — with its status row — is the designed outcome.
+   *
+   *  `reconcileMarkers` rides the same slot for the same three reasons, one
+   *  step later: ordinary edits stay marker-blind, an anchored marker's follow
+   *  (or its drop, when the clip it named was deleted) lands in the same
+   *  snapshot as the edit that caused it, and both reconciles hand back
+   *  primitives rather than draft references. The two are independent — a
+   *  transition drop moves no layer and a marker follow reads no transition —
+   *  so the order between them is free.
    *
    *  `summary` is a `HistorySummary` (history-labels.ts), not a bare string: the
    *  entry records its `.text` verbatim AND its `.key`, so the panel can
@@ -166,17 +174,20 @@ export function createActor(opts: ActorOptions): ActorHandle {
   function commit<T>(summary: HistorySummary, affected: EntityRef[] | ((value: T) => EntityRef[]), diff: DiffHint, recipe: (draft: Project) => T): T {
     let value!: T
     let droppedTransitions: DroppedTransition[] = []
+    let droppedMarkers: DroppedMarker[] = []
     // produce: a throw inside the recipe aborts and discards the draft.
     const next = produce(current(), (draft) => {
       value = recipe(draft)
       droppedTransitions = reconcileTransitions(draft)
+      droppedMarkers = reconcileMarkers(draft)
     })
     // No-op guard: if the recipe left the draft unmodified, immer returns the
     // original object by reference. Recording an identical snapshot would waste
     // a history slot and an op_id, and would fool the undo-unwind property's
     // state-change detector (two entries with the same state look like "bottom").
     // Mirrors the intent of applyTrimLayer's requestedDelta===0 early return.
-    // (A no-op recipe can't dirty a transition, so reconcile never blocks this.)
+    // (A no-op recipe can't dirty a transition or an anchored marker, so
+    // neither reconcile blocks this.)
     if (next === current()) return value
     runValidate(next)
     const refs = typeof affected === 'function' ? affected(value) : affected
@@ -185,6 +196,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     history.record({ op_id: opId, actor, timestamp: ts, summary: summary.text, label_key: summary.key, label_args: summary.label_args, affected: refs, snapshot: next })
     emit({ op_id: opId, actor, timestamp: ts, summary: summary.text, affected: refs, new_snapshot: next, diff_hint: diff })
     logDroppedTransitions(droppedTransitions) // after record — a failed validate logs nothing
+    logDroppedMarkers(droppedMarkers)
     return value
   }
 
@@ -202,6 +214,26 @@ export function createActor(opts: ActorOptions): ActorHandle {
           details: { kind: 'TransitionReconcileDrop', transition: d.id, from_layer: d.from_layer, to_layer: d.to_layer, reason: d.reason },
         })
       } catch (err) { console.warn('[actor] emitLog failed (transition reconcile)', err) }
+    }
+  }
+
+  /** One status-log row per reconcile-dropped marker — the anchored markers
+   *  whose clip the edit deleted. Same seam and same best-effort discipline as
+   *  logDroppedTransitions, and deliberately NO toast: this app's house pattern
+   *  for a side effect the user did not ask for is prevention plus the status
+   *  bar (issue #18), never an interruption. */
+  function logDroppedMarkers(dropped: DroppedMarker[]): void {
+    if (dropped.length === 0 || !opts.emitLog) return
+    for (const d of dropped) {
+      try {
+        opts.emitLog({
+          level: 'info',
+          category: { kind: 'Project' },
+          source: actor.kind === 'Agent' ? { kind: 'Agent', client: actor.client } : { kind: 'User' },
+          message: `Marker removed: the clip it followed is gone (marker ${d.id}${d.label ? ` "${d.label}"` : ''}, layer ${d.layer})`,
+          details: { kind: 'MarkerReconcileDrop', marker: d.id, composition: d.composition, layer: d.layer, label: d.label },
+        })
+      } catch (err) { console.warn('[actor] emitLog failed (marker reconcile)', err) }
     }
   }
 
@@ -733,7 +765,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // Creation ops take `composition_id?` (root by default) — the ONLY ops
         // that carry a scope; everything layer-addressed derives it (ADR 0052).
         case 'add_track': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, (a.label as string) ?? null, undefined, comp)) } }
-        case 'add_marker': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 }, comp)) } }
+        // `anchor` rides the ADD for the same reason `add_markers` takes one per
+        // row: the mark and its tie are one gesture, and splitting them into an
+        // add plus an attach would put an undo step between a marker and the clip
+        // it was born on. Taken on trust exactly as `add_markers` takes its rows —
+        // the caller derives `t_us` from the anchor it supplies, and this commit's
+        // reconcile re-derives it right back.
+        case 'add_marker': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 }, comp, undefined, (a.anchor as MarkerAnchor | null | undefined) ?? null)) } }
         case 'move_layer': commit(HISTORY_SUMMARY.layerMove, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_link as boolean) ?? false)); return { ok: true, value: null }
         // move_layers_to_new_track — the whole of z-order rearrangement (ADR 0042
         // decision 2). ONE commit: the lane is minted, the layers move onto it
@@ -896,11 +934,21 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // `markers` inside ONE commit so a whole boundary set is a single undo.
         // Each row reuses applyAddMarker (same as the add_marker arm); color/label
         // default to the shot-marker style. Returns the new marker ids in order.
+        //
+        // Scope and tie sit at DIFFERENT levels, and neither placement is
+        // arbitrary. `composition_id` is per BATCH because a marker's composition
+        // is the composition being marked — one dispatch marks one timeline, the
+        // same way add_marker does. `anchor` is per ROW because an anchor is a
+        // layer AND a source instant inside it: a shot set shares the layer but
+        // every row carries its own `src_us`, and hoisting the layer alone would
+        // split one indivisible tie across two levels. The caller owns deriving
+        // `t_us` from its own anchor (nothing here does); validate owns whether
+        // the layer named is in this composition and can carry an anchor at all.
         case 'add_markers': {
-          const rows = (a.markers as Array<{ t_us: number; end_t_us?: number | null; label?: string; color?: Rgba }>) ?? []
+          const rows = (a.markers as Array<{ t_us: number; end_t_us?: number | null; label?: string; color?: Rgba; anchor?: MarkerAnchor | null }>) ?? []
           const comp = compositionArg(a)
           return { ok: true, value: commit(HISTORY_SUMMARY.markerAddShots, markerRefs, { kind: 'Coarse' }, (d) =>
-            rows.map((m) => applyAddMarker(d, idGen, parseNum(m.t_us, 't_us'), m.end_t_us ?? null, m.label ?? 'Shot', m.color ?? { r: 0, g: 128, b: 255, a: 255 }, comp))) }
+            rows.map((m) => applyAddMarker(d, idGen, parseNum(m.t_us, 't_us'), m.end_t_us ?? null, m.label ?? 'Shot', m.color ?? { r: 0, g: 128, b: 255, a: 255 }, comp, undefined, m.anchor ?? null))) }
         }
         case 'links_create': return { ok: true, value: commit(HISTORY_SUMMARY.linkCreate, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksCreate(d, idGen, a.layers as Uuid[], (a.label as string) ?? null, (a.reassign as boolean) ?? false)) }
         case 'links_dissolve': commit(HISTORY_SUMMARY.linkDissolve, linkMemberRefs(a.link as Uuid), { kind: 'Coarse' }, (d) => applyLinksDissolve(d, a.link as Uuid)); return { ok: true, value: null }
@@ -995,6 +1043,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'fit_composition_to_layers': return { ok: true, value: fitCompositionToLayers(compositionArg(a)) }
         case 'update_marker': commit(HISTORY_SUMMARY.markerUpdate, [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateMarker(d, a.marker as Uuid, a.patch as MarkerPatch)); return { ok: true, value: null }
         case 'remove_marker': commit(HISTORY_SUMMARY.markerRemove, [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveMarker(d, a.marker as Uuid)); return { ok: true, value: null }
+        // The anchor is set and cleared HERE and nowhere else — `update_marker`'s
+        // patch refuses the field (`parseMarkerPatch`), so an anchor can never be
+        // established as a side effect of editing something else. Both rows point
+        // at the Marker: what changed is the marker's tie, not the layer.
+        case 'attach_marker': commit(HISTORY_SUMMARY.markerAttach, [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyAttachMarker(d, a.marker as Uuid, a.layer as Uuid)); return { ok: true, value: null }
+        case 'detach_marker': commit(HISTORY_SUMMARY.markerDetach, [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyDetachMarker(d, a.marker as Uuid)); return { ok: true, value: null }
         case 'delete_track': commit(HISTORY_SUMMARY.trackDelete, [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyDeleteTrack(d, a.track as Uuid, (a.force as boolean) ?? false)); return { ok: true, value: null }
         case 'move_track': moveTrack(a.track as Uuid, parseNum(a.new_position, 'new_position')); return { ok: true, value: null }
         // RECORDED, unlike the flags patch below: a name is content, and the
@@ -1410,14 +1464,32 @@ export function createActor(opts: ActorOptions): ActorHandle {
             throw err // visual-lane overlap etc. → outer catch → mapCommandError
           }
         }
+        // An anchor reaches this arm as the LAYER alone, unlike the prod arm's
+        // `{layer, src_us}` taken on trust: `src_us` is derivable from `t_us`
+        // and the clip, so a caller free to name both could name a pair that
+        // disagrees, and the reconcile would settle it by moving the mark
+        // somewhere nobody asked for. Deriving it here is exactly
+        // `applyAttachMarker`, which is why the tie inherits that function's
+        // three refusals and this arm needs none of its own.
+        //
+        // Add and attach share ONE commit for the prod arm's reason: the mark
+        // and its tie are one gesture, so one undo takes both. A refused attach
+        // throws out of the recipe (→ the outer catch → mapCommandError) and no
+        // marker is created — it never survives as a free one the caller would
+        // then have to notice and clean up.
         case 'add_marker': {
           const p = mcpDef('add_marker').parseDedicated!(a)
           const color = p.color as Rgba
           const tUs = p.t_us as number
           const endT = (p.end_t_us as number | undefined) ?? null
           const label = p.label as string
+          const anchorLayer = (p.anchor_layer_id as Uuid | null) ?? null
           const comp = compositionArg(p)
-          const id = commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, tUs, endT, label, color, comp))
+          const id = commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => {
+            const marker = applyAddMarker(d, idGen, tUs, endT, label, color, comp)
+            if (anchorLayer !== null) applyAttachMarker(d, marker, anchorLayer)
+            return marker
+          })
           return { ok: true, result: toolText(id) }
         }
         case 'split_layer': {

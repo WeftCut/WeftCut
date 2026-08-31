@@ -43,5 +43,11 @@ export interface SearchEntry {
   context: string;
   /// [0] = label; then extra text (en-US command label) and pinyin strings.
   haystacks: string[];
+  /// Longer text standing behind the entry — a marker's note — and the index
+  /// its haystacks start at. `buildEntries` is the only place that knows which
+  /// haystack came from where and it never sees the query, so provenance is
+  /// recorded here and the ranker reports which haystack won; together they let
+  /// a row that was found by its note show the words that were found.
+  detail?: { text: string; from: number };
   payload: SearchPayload;
 }

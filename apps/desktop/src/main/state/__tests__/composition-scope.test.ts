@@ -8,8 +8,10 @@ import { describe, it, expect } from 'vitest'
 import { createActor, type ActorHandle } from '../actor'
 import { seededGen } from '../ids'
 import { blankProject } from '../model'
-import { applyAddMarker } from '../mutations/add'
+import { applyAddLayer, applyAddMarker } from '../mutations/add'
+import { mediaItemTemplate, videoClipParams } from '../mutations/media'
 import { applyDeleteLayer } from '../mutations/delete'
+import { runHybrid, type HybridDeps } from '../hybrids'
 import { groupedProject, root, withGroup } from './fixtures/project'
 
 const BLUE = { r: 0, g: 128, b: 255, a: 255 }
@@ -138,5 +140,80 @@ describe('composition scope — renderer channels', () => {
     expect(groupOf(actor, groupId).tracks).toHaveLength(3)
     expect(groupOf(actor, groupId).markers).toHaveLength(1)
     expect(root(actor.snapshot()).markers).toHaveLength(0)
+  })
+})
+
+// A hybrid writes through the actor like anything else, so the same rule binds
+// it — and `drop_shot_markers` is the arm where the scope is never NAMED at all:
+// it is renderer-only (absent from mcp/mutationTools.ts's HYBRID_TOOLS, so the
+// MCP `composition_id` sweep above cannot reach it) and its caller passes only a
+// layer id. The composition it writes into has to be derived from that layer, or
+// the cuts — computed against the layer's own fps and origin — land somewhere
+// they do not describe.
+describe('composition scope — hybrids', () => {
+  const VID = '00000000-0000-0000-0000-0000000000dd'
+
+  /** HybridDeps whose only live member is `analyzeShots`, returning one
+   *  whole-source report cut at `boundariesUs`. Everything else throws: the shot
+   *  arm must reach no other compute, and a silent stub would hide it if it did. */
+  function shotDeps(actor: ActorHandle, boundariesUs: number[], endUs: number): HybridDeps {
+    const bounds = [0, ...boundariesUs, endUs]
+    const shots = bounds.slice(0, -1).map((t, i) => ({ t_start_us: t, t_end_us: bounds[i + 1], keyframe_t_us: t }))
+    const unused = (): never => { throw new Error('drop_shot_markers reached an unrelated dependency') }
+    return {
+      actor,
+      compute: {
+        probeMedia: unused, hashMediaSource: unused, parseSubtitles: unused, synthesizeSpeechCompute: unused,
+        analyzeShots: async () => JSON.stringify({ shots, cut_scores: [] }),
+      },
+      enqueueDerivatives: unused, enqueueWorkspaceCopy: unused, workspaceDir: unused, readFile: unused,
+      snapshotComposition: unused,
+    }
+  }
+
+  it('drop_shot_markers marks the Group the clip lives in, taking no scope argument', async () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 'shots')
+    p.media_pool[VID] = mediaItemTemplate(VID, 'Video', 6_000_000)
+    let clip = ''
+    const { p: withComp, groupId } = withGroup(p, gen, (g, view) => {
+      clip = applyAddLayer(view, gen, g.tracks[0].id, videoClipParams(VID, 0, 6_000_000), 0, 6_000_000)
+    })
+    const actor = createActor({ initial: withComp, idGen: gen, clock: () => '<TS>' })
+    const r = await runHybrid('drop_shot_markers', { layerId: clip }, shotDeps(actor, [2_000_000, 4_000_000], 6_000_000))
+    expect(r).toEqual({ markers: 2 })
+    expect(groupOf(actor, groupId).markers.map((m) => [m.t_us, m.anchor])).toEqual([
+      [2_000_000, { layer: clip, src_us: 2_000_000 }],
+      [4_000_000, { layer: clip, src_us: 4_000_000 }],
+    ])
+    expect(root(actor.snapshot()).markers).toEqual([])
+  })
+})
+
+describe('composition scope — an anchored marker travels with its layer', () => {
+  const MEDIA_S = '00000000-0000-0000-0000-0000000000cc'
+
+  it('crossing a composition carries the markers anchored to the set and leaves the free ones behind', () => {
+    // A marker belongs to one composition, and the anchor is what decides which:
+    // it names a layer, and a move is not a delete, so it goes where the layer
+    // goes. A free marker marks the film's own time and stays.
+    const gen = seededGen()
+    const p = blankProject(gen, 'cross')
+    p.media_pool[MEDIA_S] = mediaItemTemplate(MEDIA_S, 'Video', 10_000_000)
+    const aRoll = root(p).tracks[0].id
+    const clip = applyAddLayer(p, gen, aRoll, videoClipParams(MEDIA_S, 2_000_000, 4_000_000), 1_000_000, 3_000_000)
+    const tied = applyAddMarker(p, gen, 2_000_000, null, 'tied', BLUE, null, '', { layer: clip, src_us: 3_000_000 })
+    const free = applyAddMarker(p, gen, 500_000, null, 'free', BLUE)
+    const { p: withComp, groupId } = withGroup(p, gen)
+    const actor = createActor({ initial: withComp, idGen: gen, clock: () => '<TS>' })
+    const r = actor.dispatch('move_layers_to_composition', {
+      layers: [clip], to_composition: groupId, anchor_layer: clip, anchor_t_start_us: 4_000_000, to_track: 'spawn',
+    })
+    expect(r.ok).toBe(true)
+    expect(root(actor.snapshot()).markers.map((m) => m.id)).toEqual([free])
+    const inner = groupOf(actor, groupId)
+    expect(inner.markers.map((m) => m.id)).toEqual([tied])
+    // Re-derived in its new home by the same commit: 4 s + (3 s − 2 s).
+    expect(inner.markers[0].t_us).toBe(5_000_000)
   })
 })

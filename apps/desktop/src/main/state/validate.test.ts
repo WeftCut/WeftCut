@@ -17,6 +17,7 @@ function audioLayer(id: string, media: string, t0: number, t1: number): Layer {
   const params: LayerParams = { kind: 'Audio', media, src_in_us: 0, src_out_us: t1 - t0, gain_db: { mode: 'Static', value: 0 }, pan: { mode: 'Static', value: 0 }, fade_in_us: 0, fade_out_us: 0, mute: false, role: 'music' }
   return { id, label: null, t_start_us: t0, t_end_us: t1, enabled: true, locked: false, metadata: {}, params, effects: [] }
 }
+const BLACK = { r: 0, g: 0, b: 0, a: 255 }
 function expectRule(p: Project, rule: string) {
   try { validate(p); throw new Error(`expected ${rule}, but validate passed`) }
   catch (e) { if (!isValidationFailure(e)) throw e; expect(e.err.rule).toBe(rule) }
@@ -262,14 +263,14 @@ describe('validate — frame-grid backstop', () => {
 
   it('rejects an off-grid marker t_us / end_t_us', () => {
     const p = blankProject(seededGen(), 't')
-    root(p).markers = [{ id: 'mk', t_us: 2_999_999, end_t_us: null, label: 'm', color: { r: 0, g: 0, b: 0, a: 255 }, metadata: {} }]
+    root(p).markers = [{ id: 'mk', t_us: 2_999_999, end_t_us: null, label: 'm', note: '', color: { r: 0, g: 0, b: 0, a: 255 }, anchor: null }]
     try { validate(p); throw new Error('expected OffGridTime, but validate passed') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
       expect(e.err).toEqual({ rule: 'OffGridTime', entity: 'Marker', id: 'mk', field: 't_us', t: 2_999_999, fps: { num: 30, den: 1 }, snap_to: 3_000_000 })
     }
     const q = blankProject(seededGen(), 't')
-    root(q).markers = [{ id: 'mk', t_us: 0, end_t_us: 2_999_999, label: 'm', color: { r: 0, g: 0, b: 0, a: 255 }, metadata: {} }]
+    root(q).markers = [{ id: 'mk', t_us: 0, end_t_us: 2_999_999, label: 'm', note: '', color: { r: 0, g: 0, b: 0, a: 255 }, anchor: null }]
     expectRule(q, 'OffGridTime')
   })
 
@@ -362,10 +363,36 @@ describe('validate — compositions', () => {
   })
   it('DuplicateMarkerId spans compositions', () => {
     const { p, groupId } = twoComps()
-    const m = { id: 'mk', t_us: 0, end_t_us: null, label: 'm', color: { r: 0, g: 0, b: 0, a: 255 }, metadata: {} }
+    const m = { id: 'mk', t_us: 0, end_t_us: null, label: 'm', note: '', color: { r: 0, g: 0, b: 0, a: 255 }, anchor: null }
     root(p).markers = [structuredClone(m)]
     p.compositions[groupId].markers = [structuredClone(m)]
     expectRule(p, 'DuplicateMarkerId')
+  })
+  // An anchor is checked against ONE composition's own layer set, exactly as
+  // link members are: the two timelines share no origin, so no `t_us` could be
+  // derived from a tie that crosses one.
+  it('MarkerAnchorNotInComposition: an anchor may not reach into another composition', () => {
+    const { p, groupId } = twoComps()
+    const groupLayer = p.compositions[groupId].tracks.flatMap((t) => t.layers)[0]
+    root(p).markers = [{ id: 'mk', t_us: 0, end_t_us: null, label: 'm', note: '', color: BLACK, anchor: { layer: groupLayer.id, src_us: 0 } }]
+    expectRule(p, 'MarkerAnchorNotInComposition')
+  })
+  // The derivation reads `params.src_in_us`, so a kind that has none cannot
+  // carry an anchor at all — refused as unrepresentable, not tolerated as inert.
+  it('MarkerAnchorLayerHasNoSourceWindow: a Color layer cannot be anchored to', () => {
+    const { p, groupId } = twoComps()
+    const colorLayerId = p.compositions[groupId].tracks.flatMap((t) => t.layers)[0].id
+    p.compositions[groupId].markers = [{ id: 'mk', t_us: 0, end_t_us: null, label: 'm', note: '', color: BLACK, anchor: { layer: colorLayerId, src_us: 0 } }]
+    expectRule(p, 'MarkerAnchorLayerHasNoSourceWindow')
+  })
+  // HIBERNATING is a legal state, not a broken project: a trim that pushes
+  // `src_us` out of the window must not make the project unopenable, because the
+  // marker is exactly what un-trimming brings back.
+  it('accepts an anchor whose src_us is outside the layer window (hibernating)', () => {
+    const { p, refLayerId } = twoComps()
+    const params = root(p).tracks.flatMap((t) => t.layers).find((l) => l.id === refLayerId)!.params as { src_out_us: number }
+    root(p).markers = [{ id: 'mk', t_us: 0, end_t_us: null, label: 'm', note: '', color: BLACK, anchor: { layer: refLayerId, src_us: params.src_out_us + 10_000_000 } }]
+    expect(() => validate(p)).not.toThrow()
   })
   it('LinkMemberMissing: a link may not reach into another composition', () => {
     const { p, groupId } = twoComps()
