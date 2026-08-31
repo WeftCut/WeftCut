@@ -1,0 +1,42 @@
+name: Agent / MCP issue
+description: An MCP client drives the editor wrongly, or a tool misbehaves.
+labels: ["bug", "mcp"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Help → About → **Copy Version Info**, pasted here.
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      description: Which agent was connected, and its version if you know it.
+      placeholder: Claude Code 2.1.0 / Cursor / Claude Desktop / custom
+    validations:
+      required: true
+  - type: input
+    id: tool
+    attributes:
+      label: Tool involved
+      description: The tool name from the catalog, if you can tell which one it was.
+      placeholder: add_clip, set_keyframe, export_composition …
+  - type: textarea
+    id: what
+    attributes:
+      label: What the agent tried, and what happened
+      description: >
+        The prompt or intent, the resulting edit, and what you expected instead.
+        If the tool returned an error, paste it verbatim.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log excerpt
+      description: >
+        MCP calls are logged like every other producer, in
+        `<your workspace>/Logs/session-<timestamp>.jsonl`.
+      render: text

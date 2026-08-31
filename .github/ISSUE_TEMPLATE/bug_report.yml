@@ -1,0 +1,67 @@
+name: Bug report
+description: Something in the editor behaves wrongly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If a specific media file is what misbehaves, use **Media compatibility**
+        instead — it asks for the things that actually narrow those down.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Help → About → **Copy Version Info**, pasted here.
+      placeholder: WeftCut 0.1.0 | Electron 42.4.1 | Chrome 148 | win32 x64
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where it happens
+      options:
+        - Timeline (editing, keyframes, markers, groups)
+        - Preview / playback
+        - Export
+        - Import / media pool
+        - Audio
+        - Text, captions, motifs
+        - Effects / transitions
+        - Agent / MCP
+        - UI, panels, shortcuts
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Import …
+        2. Drag …
+        3. Press …
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver
+      description: >
+        Needed for anything in preview or export — those lanes run on the GPU and
+        behaviour varies by vendor and driver. Skip it otherwise.
+      placeholder: NVIDIA RTX 3050, driver 566.36
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log excerpt
+      description: >
+        A session log is written to `<your workspace>/Logs/session-<timestamp>.jsonl`.
+        The lines around the failure are usually enough — no need for the whole file.
+      render: text

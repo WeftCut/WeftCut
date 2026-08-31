@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question, idea, or help getting started
+    url: https://github.com/WeftCut/WeftCut/discussions
+    about: Discussions is the better room for anything that isn't a concrete bug or request.
+  - name: Security vulnerability
+    url: https://github.com/WeftCut/WeftCut/security/advisories/new
+    about: Report privately. Please don't open a public issue for anything exploitable.

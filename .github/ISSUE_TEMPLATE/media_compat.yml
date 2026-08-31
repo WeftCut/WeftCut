@@ -1,0 +1,61 @@
+name: Media compatibility
+description: A file won't import, won't play, or won't export correctly.
+labels: ["bug", "media"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        WeftCut decodes through two engines — WebCodecs in the renderer and
+        FFmpeg natively — so "which stage fails" is the single most useful thing
+        you can tell us.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Help → About → **Copy Version Info**, pasted here.
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Which stage fails
+      options:
+        - Import — the file is rejected or never appears in the pool
+        - Import works, but preview shows nothing / black / garbled
+        - Preview works, but export fails or produces a broken file
+        - Video is fine, audio is wrong (missing, desynced, distorted)
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: probe
+    attributes:
+      label: What the file is
+      description: >
+        Container, video codec, audio codec, resolution, frame rate — whatever you
+        know. If you have ffprobe on hand, `ffprobe -hide_banner <file>` prints all
+        of it at once and pasting that output is ideal. WeftCut ships an ffprobe
+        under its `resources/ffmpeg/` directory if you'd rather not install one.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: input
+    id: sample
+    attributes:
+      label: Sample file
+      description: >
+        A few seconds that reproduce it is worth more than any description. Link one
+        if you can share it — and say so if you can't, that's fine too.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log excerpt
+      description: From `<your workspace>/Logs/session-<timestamp>.jsonl`, around the failure.
+      render: text
