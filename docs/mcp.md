@@ -387,7 +387,7 @@ tools. Agents that need a render either ask the user, or read
 User-invoked workflows discoverable in agent UIs (Claude Desktop slash menu, Cursor command palette):
 
 - `/auto-caption { layer_id, language? }` — walks the agent through `transcribe_clip` → inspect the `srt` field → `apply_subtitles`.
-- `/cut-silences { layer_id, threshold_amp?, min_silence_us? }` — `detect_silences` → `split_layer` + `delete_layer` to tighten dead air.
+- `/cut-silences { layer_id, threshold_amp?, min_silence_us? }` — `detect_silences` → one anchored region `add_marker` per gap, marking the dead air. It stops at marking: deleting a silent slice leaves a gap exactly as long as what it removed, and a vacated span stays a gap here by design, so removal waits on a ripple primitive.
 - `/voiceover { script, voice, speed?, target_track_id? }` — `synthesize_speech` for an agent-supplied script. Prompts the agent to split long scripts at paragraph boundaries (tts-1 caps at 4096 chars).
 
 Each prompt closes with the missing-key recovery hint (Settings → API

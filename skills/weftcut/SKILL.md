@@ -40,8 +40,10 @@ intended before reporting it done.
 Common flows, one line each — parameters and caveats live in the tool
 descriptions:
 
-- Tighten silences: `detect_silences` → `split_layer` → `delete_layer` (also
-  packaged as the `/cut-silences` prompt).
+- Mark silences: `detect_silences` → an anchored region `add_marker` per gap
+  (also packaged as the `/cut-silences` prompt). It marks rather than cuts —
+  deleting a silent slice leaves an equally long gap, so removing dead air
+  waits on a ripple primitive.
 - Captions: `transcribe_clip` → inspect the returned SRT → `apply_subtitles`
   (also `/auto-caption`).
 - Voiceover: `synthesize_speech` appends a spoken script to the timeline
