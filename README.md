@@ -106,6 +106,22 @@ surface and multi-agent behavior are documented in [docs/mcp.md](docs/mcp.md).
 - **[v1 target](https://github.com/WeftCut/WeftCut/issues/11)** — release scope and open work. Tracked as a GitHub issue, not a doc: `docs/` describes what exists today.
 - **ADRs** — [`docs/adr/`](docs/adr/): architecture decision records with a `status` frontmatter field (`accepted`, `proposed`, or `superseded`). Prefer the top-level docs above for current behavior; older ADRs may be historical.
 
+## Maintainer
+
+WeftCut is built and maintained by [UncleChair](https://github.com/UncleChair).
+
+It exists to speed up my own video work. I wanted an editor an agent could
+actually drive, and a timeline I could keep watching while it did — so the MCP
+surface is the part I use daily, not a demo bolted onto the side. That is also
+why the app ships no models of its own: the intelligence is whichever agent I
+already have open.
+
+The project sits under the [WeftCut](https://github.com/WeftCut) organization so
+the name, domain and releases have a stable home, but it is a one-person
+project — issues and pull requests all reach me. Design decisions are written
+down as [ADRs](docs/adr/) instead of being settled in private, so the reasoning
+behind the codebase stays legible to anyone reading it.
+
 ## License
 
 WeftCut is licensed under the [MIT License](LICENSE). Packaged installers

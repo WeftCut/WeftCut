@@ -1,0 +1,5 @@
+# Canonical identity for this project's history. `git shortlog -sne` and
+# GitHub's contributor graph both honour this, so an old handle or a commit
+# made with the machine's global git identity still lands under one name.
+UncleChair <voidgun1998@gmail.com> VoidGun <zhongnikan@163.com>
+UncleChair <voidgun1998@gmail.com> Jonny Kan <voidgun1998@gmail.com>
