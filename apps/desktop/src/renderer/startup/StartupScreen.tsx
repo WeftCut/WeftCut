@@ -20,6 +20,7 @@ import { wireDecodeComponent } from "../settings/decodeComponentStore";
 import { SettingsPanel } from "../settings/SettingsPanel";
 import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
+import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { WindowControls } from "../components/WindowControls";
 import { Button } from "@/components/ui/button";
@@ -42,7 +43,14 @@ import {
   type KeybindingsMap,
   type RecentEntry,
 } from "../ipc";
-import { CANVAS_PRESETS } from "./canvasPresets";
+import {
+  DEFAULT_CANVAS,
+  FPS_OPTIONS,
+  RESOLUTION_PRESETS,
+  canvasSizeError,
+  fpsLabel,
+  resolutionLabel,
+} from "./canvasPresets";
 import { LogoPulsePaths } from "./LogoPulsePaths";
 import {
   cleanIpcDetail,
@@ -437,7 +445,8 @@ function joinPath(parent: string, name: string): string {
   return `${trimmed}${sep}${name}`;
 }
 
-function NewProjectForm({
+/// Exported for NewProjectForm.test.tsx (same arrangement as CanvasSection).
+export function NewProjectForm({
   onCancel,
   onCreated,
 }: {
@@ -447,11 +456,21 @@ function NewProjectForm({
   const { t } = useTranslation();
   const [name, setName] = useState("");
   const [parentFolder, setParentFolder] = useState<string>("");
-  const [presetKey, setPresetKey] = useState<string>(CANVAS_PRESETS[0]!.key);
+  /// Size and rate are authored separately, exactly as Settings › Canvas does it:
+  /// they are independent decisions (a 4K project is not automatically a 60 fps
+  /// one), and the cross product of the two ladders is 48 entries nobody wants to
+  /// scroll. `DEFAULT_CANVAS` is the opening pair both surfaces agree on.
+  const [size, setSize] = useState<{ width: number; height: number }>({
+    width: DEFAULT_CANVAS.width,
+    height: DEFAULT_CANVAS.height,
+  });
+  const [customSize, setCustomSize] = useState(false);
+  const [fps, setFps] = useState<{ num: number; den: number }>({
+    num: DEFAULT_CANVAS.fpsNum,
+    den: DEFAULT_CANVAS.fpsDen,
+  });
   const [busy, setBusy] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-
-  const preset = CANVAS_PRESETS.find((p) => p.key === presetKey)!.preset;
 
   // First-launch: ask the backend for the last-used parent. If the
   // user never created a project before, fall back to the OS Documents
@@ -492,7 +511,17 @@ function NewProjectForm({
   }, [t, parentFolder]);
 
   const nameValidationKey = validateProjectName(name);
-  const canCreate = !busy && !nameValidationKey && parentFolder.length > 0;
+  /// Same rule as Settings › Canvas, from the same validator. There is no Apply
+  /// button here to hold a bad size back — nothing exists until Create — so an
+  /// invalid size gates Create instead.
+  const sizeFault = customSize ? canvasSizeError(size.width, size.height) : null;
+  const sizeError =
+    sizeFault === null ? null : t(sizeFault.key, sizeFault.params ?? {});
+  const resolutionValue = customSize
+    ? "custom"
+    : `${size.width}x${size.height}`;
+  const canCreate =
+    !busy && !nameValidationKey && parentFolder.length > 0 && sizeError === null;
   const previewPath = name.trim() && parentFolder
     ? joinPath(parentFolder, name.trim())
     : null;
@@ -505,7 +534,12 @@ function NewProjectForm({
       await projectNewWorkspace({
         parentFolder,
         name: name.trim(),
-        canvas: preset,
+        canvas: {
+          width: size.width,
+          height: size.height,
+          fpsNum: fps.num,
+          fpsDen: fps.den,
+        },
       });
       onCreated();
     } catch (e) {
@@ -514,7 +548,7 @@ function NewProjectForm({
       setSubmitError(describeCreateError(e, previewPath ?? "", t));
       setBusy(false);
     }
-  }, [canCreate, parentFolder, name, preset, previewPath, t, onCreated]);
+  }, [canCreate, parentFolder, name, size, fps, previewPath, t, onCreated]);
 
   return (
     <AppDialog
@@ -569,19 +603,83 @@ function NewProjectForm({
           </p>
         )}
 
-        <label className="new-project-row">
-          <span>{t("new_project.canvas_preset")}</span>
+        <div className="new-project-row">
+          <span>{t("new_project.resolution")}</span>
           <AppSelect
-            value={presetKey}
-            onValueChange={setPresetKey}
+            value={resolutionValue}
+            onValueChange={(v) => {
+              // Custom is a MODE, not a size: it reveals the fields and keeps
+              // whatever size was last shown as their starting point.
+              if (v === "custom") {
+                setCustomSize(true);
+                return;
+              }
+              setCustomSize(false);
+              const [w, h] = v.split("x");
+              setSize({ width: Number(w), height: Number(h) });
+            }}
             disabled={busy}
-            ariaLabel={t("new_project.canvas_preset")}
-            options={CANVAS_PRESETS.map((p) => ({
-              value: p.key,
-              label: t(`new_project.preset.${p.key}`, { defaultValue: p.key }),
+            ariaLabel={t("new_project.resolution")}
+            options={[
+              ...RESOLUTION_PRESETS.map((r) => ({
+                value: `${r.width}x${r.height}`,
+                label: resolutionLabel(r),
+              })),
+              { value: "custom", label: t("new_project.resolution_custom") },
+            ]}
+          />
+        </div>
+
+        {customSize && (
+          <div className="new-project-row">
+            <span>{t("new_project.custom_size")}</span>
+            <div className="new-project-size-fields">
+              {/* Deliberately NO min/max on the fields, for the reason Settings ›
+                  Canvas gives: Base UI clamps the value it reports while leaving the
+                  typed text alone, so a typed 9000 would read 9000 and create 7680.
+                  One authority (the validator), one visible message. */}
+              <AppNumberField
+                value={size.width}
+                disabled={busy}
+                step={2}
+                align="center"
+                ariaLabel={t("new_project.width")}
+                onValueChange={(v) => setSize((s) => ({ ...s, width: v }))}
+              />
+              <span aria-hidden="true">×</span>
+              <AppNumberField
+                value={size.height}
+                disabled={busy}
+                step={2}
+                align="center"
+                ariaLabel={t("new_project.height")}
+                onValueChange={(v) => setSize((s) => ({ ...s, height: v }))}
+              />
+            </div>
+            {sizeError !== null && (
+              <span className="new-project-validation" role="alert">
+                {sizeError}
+              </span>
+            )}
+          </div>
+        )}
+
+        <div className="new-project-row">
+          <span>{t("new_project.frame_rate")}</span>
+          <AppSelect
+            value={`${fps.num}/${fps.den}`}
+            onValueChange={(v) => {
+              const [num, den] = v.split("/");
+              setFps({ num: Number(num), den: Number(den) });
+            }}
+            disabled={busy}
+            ariaLabel={t("new_project.frame_rate")}
+            options={FPS_OPTIONS.map((f) => ({
+              value: `${f.num}/${f.den}`,
+              label: fpsLabel(f, t),
             }))}
           />
-        </label>
+        </div>
 
         {submitError && (
           <p className="new-project-error">{submitError}</p>

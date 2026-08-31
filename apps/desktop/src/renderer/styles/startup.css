@@ -862,6 +862,20 @@
 
 
 
+/* width × height, side by side. Wraps as a unit on a narrow dialog rather
+ * than squeezing the number fields. Mirrors .settings-size-fields, minus the
+ * Apply button — the New Project dialog commits on Create, not per field. */
+.new-project-size-fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.new-project-size-fields .app-number-field {
+  width: 88px;
+}
+
 .new-project-error {
   margin: 0;
   padding: 8px 10px;

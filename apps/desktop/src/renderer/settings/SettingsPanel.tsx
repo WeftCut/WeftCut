@@ -55,8 +55,13 @@ import {
   useTimelineWheelAxis,
 } from "./appSettingsStore";
 import { setPreferProxies, useProxyPrefStore } from "../state/proxyPreferenceStore";
-import { CANVAS_PRESETS } from "../startup/canvasPresets";
-import { STANDARD_HEIGHTS } from "../render/exportSettings";
+import {
+  FPS_OPTIONS,
+  RESOLUTION_PRESETS,
+  canvasSizeError,
+  fpsLabel,
+  resolutionLabel,
+} from "../startup/canvasPresets";
 // Straight from the shared module the main process clamps against, so the
 // slider's ends and the persisted range cannot drift apart.
 import {
@@ -915,45 +920,6 @@ export function DataLocationSection({
   );
 }
 
-/// 16:9 resolution presets, largest first — the same ladder export offers as
-/// downscale targets (`STANDARD_HEIGHTS`), widened to full dimensions here.
-/// Every width lands even (480 → 854, not 853) because an odd dimension would be
-/// silently shaved by the encoder's `makeEven` at export time.
-const RESOLUTION_PRESETS: ReadonlyArray<{ width: number; height: number }> =
-  STANDARD_HEIGHTS.map((height) => {
-    const w = Math.round((height * 16) / 9);
-    return { width: w % 2 === 0 ? w : w + 1, height };
-  });
-
-/// Authorable rates = the new-project preset table's rates, deduped. Sharing that
-/// list is deliberate: a rate offered at creation but not here (or vice versa)
-/// would be a trap, since the choice is effectively one-way (see the rate lock).
-const FPS_OPTIONS: ReadonlyArray<{ num: number; den: number }> = (() => {
-  const seen = new Set<string>();
-  const out: Array<{ num: number; den: number }> = [];
-  for (const { preset } of CANVAS_PRESETS) {
-    const key = `${preset.fpsNum}/${preset.fpsDen}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({ num: preset.fpsNum, den: preset.fpsDen });
-  }
-  return out;
-})();
-
-/// Rounded for reading only — the exact rational is what travels over the wire
-/// (30000/1001 is not 29.97 to ffmpeg). Trailing zeros trimmed: 29.970 → 29.97.
-function formatFps(num: number, den: number): string {
-  if (den === 1) return String(num);
-  return (num / den).toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
-}
-
-/// Canvas bounds. Even because yuv420 encoders need it; 8K as the ceiling
-/// because canvas size drives the transition RT pool and every sprite's texture
-/// allocation, and 16 as a floor so a half-typed "1" can't land as a 1×1 canvas.
-const CANVAS_MIN = 16;
-const CANVAS_MAX = 7680;
-const CANVAS_MAX_PIXELS = 7680 * 4320;
-
 /// Canvas size + frame rate. Both are composition SETUP: neither records onto the
 /// undo stack (the patch is applied to every history snapshot), which is why this
 /// lives in its own section away from the duration control.
@@ -1004,21 +970,12 @@ export function CanvasSection({
   const dirty =
     composition !== null && (width !== composition.width || height !== composition.height);
 
-  /// Pure validator, run on every keystroke so feedback arrives while typing.
+  /// Run on every keystroke so feedback arrives while typing. The rule itself is
+  /// shared with the New Project dialog; only the wording is resolved here.
   const sizeError = ((): string | null => {
     if (composition === null || !dirty) return null;
-    for (const v of [width, height]) {
-      if (v < CANVAS_MIN || v > CANVAS_MAX) {
-        return t("settings.canvas_size_range", { min: CANVAS_MIN, max: CANVAS_MAX });
-      }
-      // A fractional value belongs to the even/whole rule, not the range one —
-      // "1920.5 must be between 16 and 7680" reads as a lie.
-      if (!Number.isInteger(v) || v % 2 !== 0) return t("settings.canvas_size_odd");
-    }
-    if (width * height > CANVAS_MAX_PIXELS) {
-      return t("settings.canvas_size_too_many_pixels");
-    }
-    return null;
+    const err = canvasSizeError(width, height);
+    return err === null ? null : t(err.key, err.params ?? {});
   })();
 
   const patch = async (fields: Record<string, unknown>) => {
@@ -1096,7 +1053,7 @@ export function CanvasSection({
           options={[
             ...RESOLUTION_PRESETS.map((p) => ({
               value: `${p.width}x${p.height}`,
-              label: `${p.width} × ${p.height}`,
+              label: resolutionLabel(p),
             })),
             { value: "custom", label: t("settings.canvas_resolution_custom") },
           ]}
@@ -1160,7 +1117,7 @@ export function CanvasSection({
           }}
           options={fpsOptions.map((f) => ({
             value: `${f.num}/${f.den}`,
-            label: `${formatFps(f.num, f.den)} fps`,
+            label: fpsLabel(f, t),
           }))}
         />
       </div>

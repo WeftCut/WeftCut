@@ -310,13 +310,25 @@ describe("CanvasSection custom size validation", () => {
 });
 
 describe("CanvasSection frame rate", () => {
-  it("offers the new-project rate ladder, NTSC family included", async () => {
+  /// The labels carry the broadcast note (`canvas.fps_note.*`) because this list
+  /// is the same one the New Project dialog renders, where "25" alone does not say
+  /// PAL to anyone who has not shot PAL.
+  it("offers the shared rate ladder, NTSC family included", async () => {
     const user = userEvent.setup();
     renderSection();
     await unlock(user);
     await openSelect(user, "Frame rate");
 
-    for (const label of ["30 fps", "24 fps", "25 fps", "50 fps", "60 fps", "23.976 fps", "29.97 fps", "59.94 fps"]) {
+    for (const label of [
+      "30 fps",
+      "60 fps",
+      "24 fps (film)",
+      "25 fps (PAL)",
+      "50 fps (PAL)",
+      "23.976 fps (NTSC film)",
+      "29.97 fps (NTSC)",
+      "59.94 fps (NTSC)",
+    ]) {
       expect(screen.getByRole("option", { name: label })).toBeTruthy();
     }
   });
@@ -326,7 +338,7 @@ describe("CanvasSection frame rate", () => {
     renderSection();
     await unlock(user);
     await openSelect(user, "Frame rate");
-    await pickOption(user, "29.97 fps");
+    await pickOption(user, "29.97 fps (NTSC)");
 
     await waitFor(() => expect(ipc.setCompositionOf).toHaveBeenCalledTimes(1));
     expect(ipc.setCompositionOf).toHaveBeenCalledWith("comp-1", { fps: { num: 30_000, den: 1001 } });

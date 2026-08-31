@@ -119,6 +119,22 @@ const enUS = {
     time_days_ago_one: "{{count}} day ago",
     time_days_ago_other: "{{count}} days ago",
   },
+  // Canvas vocabulary shared by the New Project dialog and Settings > Canvas.
+  // Both surfaces author the same two values off the same lists
+  // (`startup/canvasPresets.ts`), so the wording lives in one place too.
+  canvas: {
+    // Parenthetical after a rate — what a newcomer needs in order to pick 25
+    // over 30, at the one moment the choice is still freely reversible.
+    fps_note: {
+      film: "film",
+      pal: "PAL",
+      ntsc: "NTSC",
+      ntsc_film: "NTSC film",
+    },
+    size_range: "Width and height must be between {{min}} and {{max}}.",
+    size_odd: "Width and height must be whole even numbers.",
+    size_too_many_pixels: "Total canvas area cannot exceed 8K (7680 × 4320).",
+  },
   new_project: {
     title: "New project",
     name: "Project name",
@@ -133,25 +149,18 @@ const enUS = {
       "Project name can't contain any of: \\ / : * ? \" < > |",
     validation_trailing_dot: "Project name can't end with a period.",
     validation_reserved: "Project name is reserved by the OS — pick another.",
-    canvas_preset: "Canvas",
-    preset: {
-      hd1080p30: "1080p · 30 fps",
-      hd1080p60: "1080p · 60 fps",
-      hd1080p24: "1080p · 24 fps (film)",
-      hd1080p25: "1080p · 25 fps (PAL)",
-      hd1080p50: "1080p · 50 fps (PAL)",
-      uhd4k30: "4K · 30 fps",
-      uhd4k60: "4K · 60 fps",
-      ntsc1080p2398: "1080p · 23.976 fps (NTSC film)",
-      ntsc1080p: "1080p · 29.97 fps (NTSC)",
-      ntsc1080p5994: "1080p · 59.94 fps (NTSC)",
-    },
+    resolution: "Resolution",
+    resolution_custom: "Custom",
+    custom_size: "Custom size",
+    width: "Width",
+    height: "Height",
+    frame_rate: "Frame rate",
     create: "Create",
     creating: "Creating…",
     cancel: "Cancel",
     folder_exists:
       "A folder with that name is already there. Pick a different name, or a different location.",
-    invalid_preset: "That canvas preset isn't valid — pick another.",
+    invalid_preset: "That canvas size or frame rate isn't valid — pick another.",
     create_failed: "Couldn't create the project: {{detail}}",
   },
   project: {
@@ -1149,9 +1158,6 @@ const enUS = {
     canvas_width: "Width",
     canvas_height: "Height",
     canvas_apply: "Apply",
-    canvas_size_range: "Width and height must be between {{min}} and {{max}}.",
-    canvas_size_odd: "Width and height must be whole even numbers.",
-    canvas_size_too_many_pixels: "Total canvas area cannot exceed 8K (7680 × 4320).",
     canvas_fps: "Frame rate",
     canvas_fps_hint:
       "The frame rate can only be changed in a project whose timeline has never had content.",
