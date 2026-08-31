@@ -401,7 +401,7 @@ app.whenReady().then(async () => {
   const speechConfig = createSpeechConfigStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'speech_config.json'), dir: app.getPath('userData') })
 
   // Video-understanding (VLM) backend config store — <userData>/vlm_config.json,
-  // the non-secret sibling of the endpoint key (ticket 06). Unlike speech (pushed
+  // the non-secret sibling of the endpoint key. Unlike speech (pushed
   // onto the napi Backend), VLM config is injected per-call into describe_clip /
   // media://{id}/description (stateless, ADR 0024) via the provider passed to
   // startMcpHost below.
@@ -623,7 +623,7 @@ app.whenReady().then(async () => {
 
   /** Direct LogBus emit. NOT the ts-actor-host `emitLog` seam: its type carries
    *  no op_id/op_state, which is why the content-download producer invokes
-   *  log_emit directly too (`.scratch/mcp-logbus/spec.md`). Swallows — a logging
+   *  log_emit directly too (`docs/status-log.md`). Swallows — a logging
    *  failure must never fail the call that produced the row. */
   const emitLogEntry = (entry: McpLogEntryInput): void => {
     try { void backend!.invoke('log_emit', JSON.stringify({ input: entry })).catch(() => {}) } catch { /* no bus */ }
@@ -1464,13 +1464,12 @@ app.whenReady().then(async () => {
     clearMarker(migrationMarkerPath, migrationFs)
   })
 
-  // content:* — app-managed content downloads (ADR 0039; spec under
-  // .scratch/app-managed-content/). A dedicated main-owned family like
-  // dataRoot:* above. The lifecycle itself is pure + DI (contentDownload.ts);
-  // these handlers bind it to node:fs, fflate, and Electron net.fetch —
-  // Chromium's network stack, which honors the system proxy configuration
-  // (incl. SOCKS) that the ureq-based sidecar downloader documented in
-  // docs/setup.md cannot.
+  // content:* — app-managed content downloads (ADR 0039, 0043, 0055). A
+  // dedicated main-owned family like dataRoot:* above. The lifecycle itself is
+  // pure + DI (contentDownload.ts); these handlers bind it to node:fs, fflate,
+  // and Electron net.fetch — Chromium's network stack, which honors the system
+  // proxy configuration (incl. SOCKS) that the ureq-based sidecar downloader
+  // documented in docs/setup.md cannot.
   const contentDeps: ContentDeps = {
     fs: {
       mkdirp: (d) => { fs.mkdirSync(d, { recursive: true }) },

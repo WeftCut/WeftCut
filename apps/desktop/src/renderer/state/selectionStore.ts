@@ -178,8 +178,7 @@ export function setCompositionSelection(compositionId: string): void {
 /// entity that is inspectable while no timeline shows it.
 ///
 /// One id, never a set: the inspector is this selection's only consumer and it
-/// can only have one subject (`.scratch/pool-unification/spec.md`, "Pool
-/// selection is single").
+/// can only have one subject — pool selection is single.
 export function setMediaSelection(mediaId: string): void {
   commit({ kind: "media", id: mediaId });
 }

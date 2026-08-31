@@ -1892,9 +1892,9 @@ describe("Timeline seek/selection coupling", () => {
   // -------- The strip's OTHER event model: a pointer-driven clip drag --------
   //
   // A media-pool drag is HTML5 drag-and-drop and a clip drag is pointer-driven,
-  // and they converge on this one row. These cases exist because the failure the
-  // ticket predicted is one mechanism working while the other silently does
-  // nothing: every one of them would still pass on the placement policy alone.
+  // and they converge on this one row. These cases exist because the failure mode
+  // is one mechanism working while the other silently does nothing: every one of
+  // them would still pass on the placement policy alone.
 
   /// The strip above the lanes, laid out the way it renders. The lanes follow it
   /// in visual order, so lane i owns `[14 + 56i, 70 + 56i)`.

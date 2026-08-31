@@ -56,7 +56,7 @@ export interface FfmpegSourceInit {
   /// Linux/macOS copy-back lanes); the Windows shared-texture lane has no IPC
   /// pixels to reclaim. Omitted = 1 = full resolution.
   playbackScaleDiv?: number;
-  /// Bench-only: pin the lane (decode-bench Stage 3). Skips capability probing.
+  /// Bench-only: pin the lane (docs/decode-bench.md). Skips capability probing.
   forceLane?: FfmpegLane;
 }
 
@@ -381,7 +381,7 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// is selected only after a budget refusal; ordinary software and the
   /// copy-back lanes preserve the user's resolution and full cadence.
   ///
-  /// The transport FORMAT is decided here too (issue #10 ticket 03): a 10-bit
+  /// The transport FORMAT is decided here too (issue #10): a 10-bit
   /// source on the videotoolbox lane opens I420P10, so ProRes/10-bit frames
   /// ride the ten-bit adapter instead of being quantized to NV12. Every other
   /// open — plain software (including the HW→SW fallback of the same media),

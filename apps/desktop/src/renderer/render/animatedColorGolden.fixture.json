@@ -1,5 +1,5 @@
 {
-  "comment": "Golden vectors for Animated<Rgba>::value_at. Expected mixed-color values are anchored to Chromium 149 color-mix(in oklab) output (external authority). Rust native/src/state/animated.rs::golden_color_vectors_match_fixture and TS (Task 4) both assert this fixture. Edit only with a matching change on BOTH sides.",
+  "comment": "Golden vectors for Animated<Rgba>::value_at. Expected mixed-color values are anchored to Chromium 149 color-mix(in oklab) output (external authority). Rust native/src/state/animated.rs::golden_color_vectors_match_fixture and TS both assert this fixture. Edit only with a matching change on BOTH sides.",
   "default": { "r": 0, "g": 0, "b": 0, "a": 255 },
   "cases": [
     {

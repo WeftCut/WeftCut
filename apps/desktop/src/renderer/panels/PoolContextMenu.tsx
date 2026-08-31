@@ -19,7 +19,7 @@ const PROXY_MODES: readonly MediaProxyMode[] = ["auto", "proxy", "original"];
 /// separate handlers instead of the menu taking the union of every callback
 /// either might need. Media deliberately do not gain rename: `MediaSummary`
 /// has no label writer, and giving it one is a command, a history entry and a
-/// search-index path. See `.scratch/pool-unification/spec.md`.
+/// search-index path.
 export type PoolMenuTarget = MediaMenuTarget | GroupMenuTarget;
 
 interface MediaMenuTarget {

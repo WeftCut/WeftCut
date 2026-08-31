@@ -8,8 +8,7 @@
 //!
 //! Audio inside a Group (`LayerParams::CompositionRef`) is reached by
 //! recursing with a time offset, never by flattening state; role buses stay
-//! project-global (ADR 0023). Spec: `.scratch/links-and-groups/spec.md`
-//! § "Time and audio"; shape: ADR 0052 §4.
+//! project-global (ADR 0023); shape: ADR 0052 §4.
 
 use std::path::PathBuf;
 

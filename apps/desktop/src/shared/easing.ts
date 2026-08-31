@@ -3,7 +3,7 @@
 // exact-equality reverse lookup. Lives in src/shared/ because main (state
 // model, MCP preset baking) and the renderer (preset picker, curve editor)
 // both author it — same pattern as DecodeRoute / RecentEntry / AppSettings.
-// Spec: .scratch/keyframe-easing/spec.md.
+// The preset table's append-only rule is in docs/data-model.md.
 
 /// Easing direction for the procedural families (`Elastic` / `Bounce`).
 /// Serializes as the bare variant name, mirroring the Rust `EaseDir`.

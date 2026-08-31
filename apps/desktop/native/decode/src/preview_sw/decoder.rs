@@ -276,8 +276,8 @@ pub struct SwColorTags {
 /// Target pixel format a stream packs decoded frames into. Both lanes pick per
 /// session: export via `export_sw::ExportOutFormat`, preview via
 /// `preview_sw_open`'s `out_format` (NV12 default; I420P10 for a 10-bit source
-/// on the VideoToolbox lane — issue #10 ticket 03). `wire_name` is the tag JS
-/// sees on the frame wire structs.
+/// on the VideoToolbox lane — issue #10). `wire_name` is the tag JS sees on
+/// the frame wire structs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SwOutFormat {
     /// 8-bit: `Y` plane `w*h` bytes, then interleaved `UV` `w*h/2` bytes.
@@ -1268,8 +1268,8 @@ mod tests {
 
     #[test]
     fn scaled_i420p10_pack_ships_the_target_dims_worth_of_bytes() {
-        // Ticket 03 (issue #10): the playback-resolution downscale must apply
-        // to p10 frames too — I420P10 doubles IPC bandwidth vs NV12 (~24.9 MB
+        // The playback-resolution downscale must apply to p10 frames too
+        // (issue #10) — I420P10 doubles IPC bandwidth vs NV12 (~24.9 MB
         // per 4K frame), so the divisor is what keeps 4K bounded. A downscaled
         // p10 frame must still satisfy the renderer adapter's layout contract
         // (`tenBitFrameFromBytes` computes w*h*2 + 2*(w>>1)*(h>>1)*2 and THROWS
@@ -1532,7 +1532,7 @@ mod tests {
             .expect("VideoToolbox H.264 probe must confirm a hw surface");
     }
 
-    // Ticket 03 (issue #10): the ProRes probe verdict is HOST-CLASS dependent —
+    // The ProRes probe verdict is HOST-CLASS dependent (issue #10) —
     // ffmpeg's videotoolbox hwaccel creates the VT session with
     // `kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder`
     // for every codec but HEVC (release/8.x), and the ProRes HARDWARE decoder
@@ -1563,7 +1563,7 @@ mod tests {
         }
     }
 
-    // Ticket 03: 10-bit HEVC (Main10) IS hardware-decoded by VideoToolbox on
+    // 10-bit HEVC (Main10) IS hardware-decoded by VideoToolbox on
     // every supported Mac (the HEVC engine is in every Apple Silicon media
     // block, and ffmpeg's HEVC hwaccel uses Enable, not Require) — so this is
     // the DETERMINISTIC 10-bit hw-surface proof on any macOS host, ProRes
@@ -1581,7 +1581,7 @@ mod tests {
             .expect("VideoToolbox HEVC Main10 probe must confirm a hw surface");
     }
 
-    // Ticket 03: a 10-bit source decoded ON the VideoToolbox lane ships the
+    // A 10-bit source decoded ON the VideoToolbox lane ships the
     // I420P10 transport shape — `av_hwframe_transfer_data` lands a 10-bit CPU
     // frame (P010 for Main10 surfaces) and ONE swscale pass packs it (never
     // through an 8-bit intermediate), byte-matching the renderer's
@@ -1623,7 +1623,7 @@ mod tests {
         assert!(luma_varies, "decoded luma is uniform — black/garbage frames");
     }
 
-    // Ticket 03: the same I420P10 session shape for ProRes — the codec the
+    // The same I420P10 session shape for ProRes — the codec the
     // lane exists for. On a ProRes-engine Mac this is a true hw copy-back; on
     // a base M1 the VT hwaccel init declines and libavcodec decodes the SAME
     // open on the CPU — and the packed bytes are IDENTICAL either way (the

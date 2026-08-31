@@ -1,8 +1,7 @@
 //! Deterministic shot layer: split a source video into shots (the spans between
 //! cuts) and attach cheap per-shot pixel stats. Tier-1 of the scene-analysis
-//! design — always on, zero new deps. See
-//! `.scratch/scene-content-analysis/spec.md` (Subsystem A) and the
-//! `analyze_clip` MCP tool.
+//! design — always on, zero new deps. Surfaced as the `analyze_clip` MCP tool
+//! (docs/mcp.md).
 //!
 //! Owns: cut detection behind the [`ShotDetector`] seam (ffmpeg today; a learned
 //! detector like TransNetV2 can swap in behind the same trait), shot assembly,

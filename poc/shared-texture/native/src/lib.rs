@@ -282,7 +282,7 @@ pub fn poc_create_synthetic_texture(format: String) -> Result<PocSharedTexture> 
     make_shared_texture(SIZE, SIZE, dxgi_format, bind, row_pitch, &pixels, &want)
 }
 
-/// A′ ticket 01: deterministic RGBA8 probe pattern. 16×16 corner markers
+/// A′ rgba probe: deterministic RGBA8 pattern. 16×16 corner markers
 /// (TL red, TR green, BL blue, BR white) over an (x,y)-indexed gradient
 /// (R=x&255, G=y&255, B=(x+y)&255), alpha 255 everywhere. A row-pitch error
 /// shears the gradient, a vertical flip swaps TL/BL, an R/B (rgba-vs-bgra)
@@ -312,7 +312,7 @@ fn rgba_probe_pattern(w: u32, h: u32) -> Vec<u8> {
     px
 }
 
-/// A′ ticket 01: create a shared R8G8B8A8 texture carrying the deterministic
+/// A′ rgba probe: create a shared R8G8B8A8 texture carrying the deterministic
 /// probe pattern, for the `pixelFormat:'rgba'` end-to-end import probe. Same
 /// bind flags as the BGRA path (RENDER_TARGET needed for a shareable RGB
 /// texture, per the Result-1 flag-combo probe) — and identical to what the
@@ -357,7 +357,7 @@ pub fn poc_create_texture_from_video(path: String) -> Result<PocSharedTexture> {
     )
 }
 
-/// Step 1b-ii: TRUE zero-copy. Hardware-decode the first frame to a D3D11
+/// TRUE zero-copy. Hardware-decode the first frame to a D3D11
 /// surface, then `CopySubresourceRegion` it (GPU→GPU, no CPU bounce) into a
 /// shared NV12 texture created on ffmpeg's own device, and share that.
 #[napi]

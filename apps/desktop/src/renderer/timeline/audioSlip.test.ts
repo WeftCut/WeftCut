@@ -1,6 +1,7 @@
-// Ticket 11's acceptance, as properties of the pure slip logic. The UI wiring around
-// these (shortcut dispatch, IPC, badge render) is thin by design precisely so the
-// load-bearing behaviour is testable here rather than through a driven app.
+// Sub-frame audio slip (ADR 0038), as properties of the pure slip logic. The UI
+// wiring around these (shortcut dispatch, IPC, badge render) is thin by design
+// precisely so the load-bearing behaviour is testable here rather than through a
+// driven app.
 import { describe, expect, it } from "vitest";
 import {
   NUDGE_MS,

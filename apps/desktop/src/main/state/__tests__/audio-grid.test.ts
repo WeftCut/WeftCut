@@ -1,6 +1,6 @@
-// Ticket 10's acceptance: audio geometry lives on the fixed 48 kHz mix lattice while
-// visual geometry stays on the composition frame grid, and the ONE
-// `gridForLayerKind` lookup is honoured at all three enforcement sites.
+// Audio geometry lives on the fixed 48 kHz mix lattice while visual geometry stays
+// on the composition frame grid (ADR 0038), and the ONE `gridForLayerKind` lookup
+// is honoured at all three enforcement sites.
 //
 // Both DATA-LOSS dependencies are covered here WITH NEGATIVE CONTROLS, because the
 // failure mode they guard is silent: a kind-blind snap does not error, it just quietly
@@ -230,9 +230,9 @@ describe('audio grid — the 48 kHz mix lattice', () => {
   })
 
   it('a legacy frame-aligned audio layer IS repaired onto the sample lattice on load (repair, never reject)', () => {
-    // The other direction of D4: projects written before this ticket hold audio on
-    // frame boundaries, which at 29.97 are not sample boundaries. They must OPEN —
-    // repaired by ≤ half a sample (~10 µs, inaudible) — not be rejected.
+    // The other direction: a legacy project holds its audio on frame boundaries,
+    // which at 29.97 are not sample boundaries. They must OPEN — repaired by
+    // ≤ half a sample (~10 µs, inaudible) — not be rejected.
     const { actor, audioLayer } = pairedFixture()
     const wire = JSON.parse(serializeProjectToJson(actor.snapshot())) as Record<string, unknown> & {
       compositions: Record<string, { tracks: Array<{ layers: Array<Record<string, unknown>> }> }>
@@ -272,7 +272,7 @@ describe('audio grid — the 48 kHz mix lattice', () => {
     expect(comp.duration_us).toBeGreaterThanOrEqual(audio.t_end_us)
   })
 
-  // ── Ticket 11 acceptance, at the mutation level ──────────────────────────────
+  // ── One-sample audio nudge, at the mutation level ────────────────────────────
   it('a one-sample nudge moves the audio alone; the video member stays put', () => {
     const { actor, videoLayer, audioLayer, audioTrack } = pairedFixture()
     const before = actor.snapshot()

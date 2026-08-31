@@ -32,7 +32,7 @@ export interface PendingProjectSummary {
 /// would wait for an event that has already gone by.
 ///
 /// The timeout is a liveness backstop, not a policy: `jumpTo` always
-/// broadcasts (ticket 02 — even a jump to the current index), so under normal
+/// broadcasts (even a jump to the current index), so under normal
 /// operation the subscription fires long first. Without it a dropped broadcast
 /// would leave the caller awaiting forever.
 export function afterNextProjectSummary(

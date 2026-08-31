@@ -1,4 +1,4 @@
-//! Windows-only native GPU decode preview path (decode-bench Stage 2).
+//! Windows-only native GPU decode preview path (see docs/decode-bench.md).
 //! d3d11va decode -> own-shader NV12→RGBA conversion into a pool of shared
 //! RGBA8 textures -> Electron sharedTexture -> renderer FrameRing. The
 //! conversion (convert.rs) keeps color math + tag authority native (ADR 0032

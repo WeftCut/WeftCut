@@ -369,9 +369,9 @@ fn resolve_frame_ref(
 }
 
 /// `compare_frames` — pairwise perceptual similarity of two video frames.
-/// Read-only and cacheless (a pure function, per the ticket): sample one frame
-/// per side at its source-absolute `t_us` through the same PNG extract as the
-/// shot stats, then a DCT perceptual hash + MSSIM fused into a `similar` verdict.
+/// Read-only and cacheless — a pure function: sample one frame per side at its
+/// source-absolute `t_us` through the same PNG extract as the shot stats, then a
+/// DCT perceptual hash + MSSIM fused into a `similar` verdict.
 /// Works across two different clips as well as within one.
 #[cfg(feature = "jobs")]
 pub(super) async fn compare_frames(

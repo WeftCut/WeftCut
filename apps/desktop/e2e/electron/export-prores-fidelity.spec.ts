@@ -207,7 +207,7 @@ test.describe('export ProRes fidelity gates (Electron)', () => {
     expect(report.worst_app_max).toBeLessThanOrEqual(COLOR_APP_MAX)
   })
 
-  // Gate B: the ticket's reason to exist — one timeline, two exports, only
+  // Gate B: the reason this spec exists — one timeline, two exports, only
   // the decode pin flipped. The native leg reads the ProRes original in one
   // generation; the webcodecs leg re-encodes through the full proxy first, so
   // its output must sit strictly farther from the source.

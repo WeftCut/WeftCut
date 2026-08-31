@@ -2,7 +2,7 @@
 //!
 //! The input contract is a set of *timed frames*, not a video file (see
 //! [`super::describer`]). We own the sampling so the timestamps become a quantity
-//! WE define (the whole premise of the ticket 06 design): given a source window
+//! WE define (the whole premise of the design): given a source window
 //! `[in_us, out_us]` and a sampling `fps`, we midpoint-sample N frames, extract
 //! each as a downscaled PNG, and return them tagged with their **window-relative**
 //! timestamp.
@@ -27,7 +27,7 @@ use super::error::VlmError;
 const MAX_SIDE: u32 = 768;
 
 /// Hard cap on frames per clip. The context is capped at 8192 tokens (KV-cache
-/// OOM guard, ticket 06), which comfortably holds ~8–16 downscaled frames plus
+/// OOM guard), which comfortably holds ~8–16 downscaled frames plus
 /// generation; beyond that we'd overflow. A longer clip samples coarser rather
 /// than spawning an OOM.
 pub const MAX_FRAMES: usize = 16;

@@ -57,20 +57,19 @@ function parseSsimAll(stderr: string): number | null {
   return m ? Number(m[1]) : null
 }
 
-test('preview-sw: Compositor uses the ffmpeg engine\'s software lane for the NativeSw-routed ProRes clip + SSIM (Task 8b runtime proof)', async () => {
+test('preview-sw: Compositor uses the ffmpeg engine\'s software lane for the NativeSw-routed ProRes clip + SSIM', async () => {
   test.skip(!existsSync(PRORES), `ProRes fixture not found at ${PRORES} (set WEFTCUT_TEST_MEDIA)`)
   test.setTimeout(240_000)
   const PROJECT_PARENT = tmpDir('weftcut-e2e-preview-sw-proj-')
   const OUT_DIR = tmpDir('weftcut-e2e-preview-sw-')
 
-  // Pin the resolver to the software lane: ProRes is videotoolbox-eligible
-  // since the lane-aware widening (VT lane ticket 03), so on a ProRes-engine
-  // Mac this spec's clip would otherwise ride the HW lane and never exercise
-  // the SOFTWARE path it gates. Forcing a lane the addon never advertises
-  // ('software' is not an HW lane) leaves the HW resolver no candidate —
-  // clean software fallback, every host.
+  // Pin the resolver to the software lane: ProRes is videotoolbox-eligible, so
+  // on a ProRes-engine Mac this spec's clip would otherwise ride the HW lane
+  // and never exercise the SOFTWARE path it gates. Forcing a lane the addon
+  // never advertises ('software' is not an HW lane) leaves the HW resolver no
+  // candidate — clean software fallback, every host.
   const { app, page } = await launchApp({ env: { WEFTCUT_FORCE_HW_LANE: 'software' } })
-  // Surface renderer console noise (warnings are findings per the task).
+  // Surface renderer console noise — a warning here is a finding.
   const consoleLines: string[] = []
   page.on('console', (m) => consoleLines.push(`[${m.type()}] ${m.text()}`))
   page.on('pageerror', (e) => consoleLines.push(`[pageerror] ${String(e)}`))

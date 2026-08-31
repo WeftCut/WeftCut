@@ -75,8 +75,7 @@ async function fetchView(): Promise<void> {
 /// Explicit refetch for the actions that change the view WITHOUT emitting
 /// `project:changed` — checkpoint create and delete both change no project
 /// state, so nothing broadcasts and this store would otherwise never hear
-/// about them (ticket 02's constraint on 03/04). No-op while the Panel is
-/// closed.
+/// about them. No-op while the Panel is closed.
 export async function refreshHistoryView(): Promise<void> {
   await fetchView();
 }

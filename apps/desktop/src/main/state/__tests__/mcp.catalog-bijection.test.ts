@@ -125,7 +125,7 @@ describe('MCP catalog↔handler bijection (permanent gate)', () => {
   })
 
   it('7. every advertised property carries a type (untyped fields get string-coerced by MCP clients)', () => {
-    // Root finding of .scratch/mcp-agent-hardening: a property advertised as
+    // The finding this gate exists for: a property advertised as
     // `{}` (or description-only) is rewritten to `type: string` by the Claude
     // Code MCP client layer, CONSTRAINING the model to emit the payload as a
     // JSON-encoded string no matter the prompt. The server then rejects — or

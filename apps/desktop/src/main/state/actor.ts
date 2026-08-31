@@ -883,13 +883,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // split_layer_multi — coalesced multi-split for the auto_split_by_shot
         // hybrid: split `layer` at every ascending, strictly-interior timeline
         // time in `at_t_us_list` inside ONE commit, so a whole shot-split is a
-        // single undo (mirrors update_layer_param_tracks' one-commit batch, per
-        // the ticket's single-history-entry acceptance). Each split's RIGHT half
-        // carries forward to the next cut; link-aware (escape_link=false) so an
-        // auto-paired audio partner splits in lockstep with the video. Cuts arrive
-        // pre-snapped from resolveShotCuts, but each is re-checked against the
-        // CURRENT segment bounds and a non-interior one is SKIPPED (not thrown),
-        // so a redundant/collapsed cut can never abort the whole batch.
+        // single undo (mirrors update_layer_param_tracks' one-commit batch).
+        // Each split's RIGHT half carries forward to the next cut; link-aware
+        // (escape_link=false) so an auto-paired audio partner splits in lockstep
+        // with the video. Cuts arrive pre-snapped from resolveShotCuts, but each
+        // is re-checked against the CURRENT segment bounds and a non-interior one
+        // is SKIPPED (not thrown), so a redundant/collapsed cut can never abort
+        // the whole batch.
         // When `drop_short_us` is set, any resulting VIDEO segment shorter than it
         // is deleted (applyDeleteLayer honors empty-track cleanup). LANDMINE: the
         // drop walks only the video ids the splits returned, NOT their link-paired

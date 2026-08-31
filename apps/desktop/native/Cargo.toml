@@ -66,27 +66,26 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # api-key/bearer-token patterns from `details` payloads.
 regex = "1"
 
-# --- Phase 0 spike deps. Pin/upgrade once verified to compile. ---
+# Media, network, and encoding
 ffmpeg-sidecar = "2"
-# S4a: the MCP core is transport-free (the HTTP/streamable server lives in the
-# Electron main process; see `src/mcp/` + `docs/mcp.md`). rmcp/axum/tokio-stream/
-# futures are gone — the old SSE transport + axum change-feed were deleted in the
-# napi migration. The wire types in `src/mcp/wire.rs` serialize to the exact JSON
-# the `@modelcontextprotocol/sdk` low-level Server expects.
-# Phase 1.x Stage 6 base64-encodes media bytes (JPG thumbnails, peaks file)
-# into the media://* resources' blob field. Pinning for direct use.
+# The MCP core is transport-free — the HTTP/streamable server lives in the
+# Electron main process (see `src/mcp/` + `docs/mcp.md`) — so there is
+# deliberately no rmcp/axum/tokio-stream dependency here. The wire types in
+# `src/mcp/wire.rs` serialize to the exact JSON the `@modelcontextprotocol/sdk`
+# low-level Server expects.
+# Base64-encodes media bytes (JPG thumbnails, peaks file) into the media://*
+# resources' blob field. Pinned for direct use.
 base64 = "0.23"
 # HTTP client for Whisper / Deepgram / future cloud providers. Pin rustls
 # explicitly to avoid pulling in a native-tls stack (single TLS backend).
 reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls", "stream"] }
-# Phase 6 Stage 4 cloud-provider traits (`Transcriber`, `Synthesizer`) need
-# `dyn`-compatible async methods. Native async-fn-in-trait isn't dyn-safe yet
-# on stable; `async-trait` is the standard workaround and keeps the
-# "add Deepgram in a single file" exit criterion clean.
+# The cloud-provider traits (`Transcriber`, `Synthesizer`) need `dyn`-compatible
+# async methods. Native async-fn-in-trait isn't dyn-safe yet on stable;
+# `async-trait` is the standard workaround and is what keeps "add Deepgram in a
+# single file" true.
 async-trait = "0.1"
 # Export/conformance helpers use temp files for streamed media slices and
 # decoded-frame probes. RAII drop on `NamedTempFile` cleans temps automatically.
-# Already a dev-dep; promoted to production.
 tempfile = "3"
 # `content_extract_archive` (ADR 0043): app-managed content downloads arrive as
 # .tar.bz2 (sherpa-onnx publishes no zips) and extraction runs here as
@@ -96,7 +95,7 @@ tempfile = "3"
 # path-traversal guard (entries escaping the destination are refused).
 tar = "0.4"
 bzip2 = "0.6"
-# P10b: `commands::compare_fixture_frame` SSIM-compares an actual PNG
+# `commands::compare_fixture_frame` SSIM-compares an actual PNG
 # (from `extract_video_frame`) against a committed baseline. We use
 # `image-compare`'s `rgb_similarity_structure` with `MSSIMSimple` —
 # returns a score in [0, 1] where 1.0 is pixel-identical. License is
@@ -111,18 +110,17 @@ image-compare = "0.5"
 insta = { version = "1", features = ["json", "yaml"] }
 proptest = "1"
 
-# The four subsystem features were staged ON one at a time during S2–S4; the
-# shipping addon now enables all of them, always, so they ARE the default set.
+# All four subsystem features are enabled, always, so they ARE the default set.
 # `napi:build` (see apps/desktop/package.json) therefore passes NO `--features`
 # flag — it builds `default`, the single source of truth for the production
 # feature union. The only consumer that deviates is `cargo test`, which ADDS
 # `test-noop` (below) on top of the defaults; keep no second copy of this list.
 [features]
 default = ["jobs", "export", "mcp", "speech"]
-jobs = []        # import/proxy/conform/thumbnails/waveform + io::probe + ffmpeg (S3)
-export = ["jobs"]  # video export + IPC videosink (S3); needs jobs for enqueue_conform/io::probe
-speech = ["jobs"]  # transcription/TTS (S4b); needs jobs for audio_extract's ffmpeg_sem
-mcp = []         # MCP server (S4)
+jobs = []        # import/proxy/conform/thumbnails/waveform + io::probe + ffmpeg
+export = ["jobs"]  # video export + IPC videosink; needs jobs for enqueue_conform/io::probe
+speech = ["jobs"]  # transcription/TTS; needs jobs for audio_extract's ffmpeg_sem
+mcp = []         # MCP server
 
 # test-noop: NAPI-RS's official Cargo-test compilation mode (TEST-ONLY, never in
 # `napi:build`). A `cargo test` binary is a standalone executable, not a

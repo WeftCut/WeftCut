@@ -611,9 +611,9 @@ impl PreviewSwRegistry {
     /// `output_cadence` selects which decoded frames are packed and shipped,
     /// and `out_format` the CPU transport format the session packs into —
     /// NV12 (every existing caller), or I420P10 for a 10-bit source on the
-    /// VideoToolbox lane (issue #10 ticket 03), whose frame pokes then carry
-    /// tightly-packed u16LE planes into the renderer's ten-bit adapter. The
-    /// identity cadence + NV12 preserve every existing caller exactly.
+    /// VideoToolbox lane (issue #10), whose frame pokes then carry tightly-packed
+    /// u16LE planes into the renderer's ten-bit adapter. The identity cadence +
+    /// NV12 preserve every existing caller exactly.
     pub fn open_with_accel_and_cadence(
         &self,
         stream_id: &str,
@@ -870,12 +870,12 @@ mod tests {
         assert_eq!(frames[0].2, (320 * 240) + (320 * 240 / 2));
     }
 
-    // The wired session path for the macOS copy-back lane (issue #10 ticket 02):
+    // The wired session path for the macOS copy-back lane (issue #10):
     // `preview_sw_open("videotoolbox")` maps to `DecodeAccel::VideoToolbox` and
     // lands here — the registry's session thread must open on that accel and
     // deliver the SAME NV12 frame pokes the software lane does. Deterministic on
-    // any macOS host (VideoToolbox is an OS framework; see ticket 01's decoder
-    // tests), unlike NVDEC/VAAPI whose registry-path proof stays manual/bench.
+    // any macOS host (VideoToolbox is an OS framework; see the decoder tests),
+    // unlike NVDEC/VAAPI whose registry-path proof stays manual/bench.
     #[cfg(target_os = "macos")]
     #[test]
     fn videotoolbox_session_delivers_nv12_frames_through_the_registry() {
@@ -905,10 +905,10 @@ mod tests {
         assert_eq!(frames[0].2, (192 * 144) + (192 * 144 / 2));
     }
 
-    // Ticket 03 (issue #10): a 10-bit source on the VideoToolbox lane opens
-    // with I420P10 output through the WIRED registry path — the session thread
-    // decodes on the OS media engine, copies back, and pokes tightly-packed
-    // u16LE I420P10 frames whose byte length is exactly what the renderer's
+    // A 10-bit source on the VideoToolbox lane (issue #10) opens with I420P10
+    // output through the WIRED registry path — the session thread decodes on the
+    // OS media engine, copies back, and pokes tightly-packed u16LE I420P10
+    // frames whose byte length is exactly what the renderer's
     // `tenBitFrameFromBytes` adapter expects (w*h*3 for even dims; a drift
     // there throws, so the length IS the contract). HEVC Main10 rather than
     // ProRes so the hw path truly engages on EVERY macOS host (the ProRes VT

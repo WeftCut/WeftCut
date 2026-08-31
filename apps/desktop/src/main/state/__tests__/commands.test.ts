@@ -20,7 +20,7 @@ describe('PRODUCTION_OPS', () => {
       'add_color_layer', 'add_demo_color_layer', 'add_demo_text_layer', 'add_effect',
       // The media pool's Group drop: an existing composition placed as one layer.
       'add_group_layer',
-      // Markers (marker-authoring ticket 01) — the renderer's first marker channels.
+      // Markers — the renderer's first marker channels.
       'add_marker',
       // Anchoring's two explicit gestures; the patch surface refuses `anchor`,
       // so these are the only way a marker gains or loses its tie.

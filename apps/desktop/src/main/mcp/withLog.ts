@@ -4,7 +4,7 @@
  *
  *  Owns the entry shape (level, message, `details`) and the slow-op timing.
  *  Does NOT own transport lifecycle (connect / bind / 401) or the LogBus itself
- *  — see `docs/status-log.md` and `.scratch/mcp-logbus/spec.md`.
+ *  — see `docs/status-log.md`.
  */
 
 import { createHash, randomUUID } from 'node:crypto'

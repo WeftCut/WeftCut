@@ -2,8 +2,8 @@
    History Panel — the edit stack as a navigable timeline.
 
    Layout: a three-row grid. Row 1 is the checkpoint section
-   (ticket 04 — present and empty, so adding it never reflows
-   the stack), row 2 the lock badge, row 3 the scrolling stack.
+   (present and empty, so adding it never reflows the stack),
+   row 2 the lock badge, row 3 the scrolling stack.
    Oldest at the top, newest at the bottom, matching the Agent
    record panel's chronology and its sticky-to-bottom scroll.
 

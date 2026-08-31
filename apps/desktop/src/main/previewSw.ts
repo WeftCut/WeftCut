@@ -30,7 +30,7 @@ import type { NativeDecode } from '@weftcut/native-decode'
 ///
 /// `outFormat` selects the session's CPU transport format (null = 'NV12'):
 /// 'I420P10' opens 10-bit output — the renderer asks for it on the
-/// videotoolbox lane for a 10-bit source (issue #10 ticket 03) — and every
+/// videotoolbox lane for a 10-bit source (issue #10) — and every
 /// relayed frame carries the matching `format` tag.
 export function openPreviewSw(
   backend: NativeDecode,

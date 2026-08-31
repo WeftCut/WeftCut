@@ -14,14 +14,14 @@ describe('routeMcpTool', () => {
     expect(routeMcpTool('apply_subtitles')).toBe('hybrid')
     expect(routeMcpTool('synthesize_speech')).toBe('hybrid')
   })
-  it('add_motif routes to ts (pure TS mutation, Phase 4a-ii §2.2)', () => {
+  it('add_motif routes to ts (pure TS mutation)', () => {
     expect(routeMcpTool('add_motif')).toBe('ts')
   })
-  it('routes the 5 MCP motif tools to the motif route (Phase 2)', () => {
+  it('routes the 5 MCP motif tools to the motif route', () => {
     for (const t of ['list_motifs', 'get_motif_source', 'write_motif_draft', 'delete_motif', 'install_motif'])
       expect(routeMcpTool(t), t).toBe('motif')
   })
-  it('routes motif_staleness_report and acknowledge_motif_staleness to the motif route (Phase 3)', () => {
+  it('routes motif_staleness_report and acknowledge_motif_staleness to the motif route', () => {
     expect(routeMcpTool('motif_staleness_report')).toBe('motif')
     expect(routeMcpTool('acknowledge_motif_staleness')).toBe('motif')
   })

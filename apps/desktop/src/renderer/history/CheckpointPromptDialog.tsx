@@ -57,7 +57,7 @@ export function CheckpointPromptDialog() {
     closeCheckpointPrompt();
     // `create_checkpoint` changes no project state, so it neither commits nor
     // broadcasts `project:changed` — the Panel is driven by that event and
-    // would never hear about the new row (ticket 02's constraint on 04).
+    // would never hear about the new row.
     // No-op while the Panel is closed, which the command path allows.
     await refreshHistoryView();
   };

@@ -138,7 +138,7 @@ export function parseObj(v: unknown, field: string): Record<string, unknown> {
 
 /** Strict update_effect patch — mirrors EffectPatch (mutations/effects.ts).
  *  Unknown keys and malformed values reject; applyUpdateEffect would otherwise
- *  silently skip them (issue 02, .scratch/mcp-agent-hardening). */
+ *  silently skip them. */
 export function parseEffectPatch(v: unknown): EffectPatch {
   const o = parseObj(v, 'patch')
   for (const k of Object.keys(o)) {
@@ -386,7 +386,7 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
     // The full cause + options go into the MESSAGE, not only `data`: MCP
     // clients (Claude Code verified against the hero-capture traces) surface
     // only `code: message` to the model and drop `error.data`, so a bare
-    // 'layer overlap' left agents blind-retrying (.scratch/mcp-agent-hardening 04).
+    // 'layer overlap' left agents blind-retrying.
     return { code: 'invalid_params', message:
       `layer overlap on track ${d.track}: the requested range [${d.b_start}, ${d.b_end}) µs collides with layer ${d.a} at [${d.a_start}, ${d.a_end}) µs. Layers of the same class collide per track (each track has ONE visual lane and ONE audio lane — a track that looks empty can still hold audio, e.g. another clip's auto-paired dialogue). Options: create_new_track and retry there; trim_existing (trim ${d.a} to t_end_us ${d.b_start}); split_at_t (split ${d.a} at ${d.b_start}).`,
     data: {
@@ -517,9 +517,8 @@ export interface McpToolDef {
 // Every advertised property MUST carry a "type": MCP clients (Claude Code
 // verified) coerce untyped fields to `type: string`, which FORCES the model to
 // send nested payloads as JSON-encoded strings no matter how it is prompted —
-// the server then rejects or, worse, silently ignores them
-// (.scratch/mcp-agent-hardening). mcp.catalog-bijection.test.ts gates this
-// catalog-wide.
+// the server then rejects or, worse, silently ignores them.
+// mcp.catalog-bijection.test.ts gates this catalog-wide.
 const RGBA_SCHEMA = { type: 'object', properties: { r: { type: 'integer' }, g: { type: 'integer' }, b: { type: 'integer' }, a: { type: 'integer' } }, required: ['r', 'g', 'b', 'a'] }
 // The creation-op scope (ADR 0052): only tools that CREATE take it. Every
 // layer-addressed tool derives its composition from the layer id — an agent

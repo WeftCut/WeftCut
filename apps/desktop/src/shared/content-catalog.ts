@@ -135,7 +135,7 @@ export const CONTENT_CATALOG: readonly ContentItem[] = [
   {
     id: "llama-mtmd-runtime",
     kind: "vlm-runtime",
-    // llama.cpp build tag — the same build the ticket-06/07 spikes validated.
+    // llama.cpp build tag — the build both VLM engines are validated against.
     version: "b10103",
     labelKey: "content_llama_mtmd_runtime",
     license: { name: "MIT", upstreamUrl: "https://github.com/ggml-org/llama.cpp" },

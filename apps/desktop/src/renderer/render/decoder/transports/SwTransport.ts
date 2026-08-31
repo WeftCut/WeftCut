@@ -7,7 +7,7 @@
 //
 // Frames are wrapped ZERO-COPY, dispatched on the message's `format` tag —
 // NV12 as `NativeNv12Frame`s, I420P10 (the 10-bit VideoToolbox-lane sessions,
-// issue #10 ticket 03) as `TenBitFrame`s — never reconstructed as
+// issue #10) as `TenBitFrame`s — never reconstructed as
 // `VideoFrame`s: Chromium's software conversion of a buffer-defined NV12 frame
 // applies BT.601 regardless of the stamped colorSpace (see nv12Frame.ts /
 // ADR 0032), so the Compositor converts these in its own ingest passes
@@ -66,7 +66,7 @@ export class SwTransport implements DecodeTransport {
   /// `outFormat`: optional CPU transport format for the native session. Absent
   /// or 'NV12' = today's 8-bit path exactly; 'I420P10' opens 10-bit output —
   /// `FfmpegSource` picks it for a 10-bit source on the videotoolbox lane
-  /// (issue #10 ticket 03). Delivery still dispatches per frame on the
+  /// (issue #10). Delivery still dispatches per frame on the
   /// message's own `format` tag, never on this request.
   constructor(
     private readonly accel?: { lane: string; device: string | null },

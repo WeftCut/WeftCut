@@ -88,7 +88,7 @@ describe("SwTransport", () => {
     t601.dispose();
   });
 
-  // Ticket 03 (issue #10): I420P10 frames — the 10-bit VideoToolbox-lane
+  // I420P10 frames (issue #10) — the 10-bit VideoToolbox-lane
   // sessions — dispatch on the MESSAGE's format tag into the existing ten-bit
   // adapter (`tenBitFrameFromBytes`), zero-copy, so both producers (WebCodecs
   // copyToTenBit and this transport) feed one consumer path (TenBitIngest).

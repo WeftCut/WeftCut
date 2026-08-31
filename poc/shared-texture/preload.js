@@ -752,7 +752,7 @@ ipcRenderer.on('poc-cib-done', (_e, info) => {
 })
 
 // ---------------------------------------------------------------------------
-// A′ ticket 01 — rgba end-to-end probe (POC_RGBA_PROBE=1, renderer side).
+// A′ rgba end-to-end probe (POC_RGBA_PROBE=1, renderer side).
 //
 // For each announced case: getVideoFrame() and compare the pattern at two
 // stages against the SAME generator the native side used —
@@ -762,7 +762,7 @@ ipcRenderer.on('poc-cib-done', (_e, info) => {
 //   stage 2  createImageBitmap(): the PRODUCTION ingestion, called with the
 //                                 exact production signature (no options),
 //                                 then an exact-size 2D readback. This is the
-//                                 stage the ticket's verdict is about.
+//                                 stage the probe's verdict is about.
 // PASS needs stage 2 byte-exact (0 mismatched bytes) on every case.
 // ---------------------------------------------------------------------------
 const rgbaCaseQueue = []

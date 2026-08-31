@@ -81,7 +81,7 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
         manifest: {
           // `type` is load-bearing: an untyped field gets string-coerced by MCP
           // clients, forcing agents to send the manifest as a JSON-encoded
-          // string (.scratch/mcp-agent-hardening; bijection assertion 7).
+          // string (mcp.catalog-bijection.test.ts assertion 7 gates this).
           type: 'object',
           description:
             'The manifest as a JSON object (its `id`/`version` are ignored — app-assigned). Shape: `{ name, size:[w,h], default_duration_s, props_schema, ... }` — inspect a built-in via `get_motif_source` for an exact example. Rejected if malformed.',

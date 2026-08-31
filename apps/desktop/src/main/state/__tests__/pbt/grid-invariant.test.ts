@@ -25,7 +25,7 @@ import { frameIndexRound, timeUsAtFrame } from '../../snap'
 import { PBT_SEED, PBT_RUNS, wireRoot, type WireComposition, type WireProject } from './harness'
 import { root } from '../fixtures/project'
 
-// spec § Gates and test assets — the rate matrix every ticket in this round runs.
+// The rate matrix the properties below run across.
 const RATES: ReadonlyArray<[number, number]> = [
   [24000, 1001], [24, 1], [25, 1], [30000, 1001], [30, 1], [50, 1], [60000, 1001], [60, 1],
 ]

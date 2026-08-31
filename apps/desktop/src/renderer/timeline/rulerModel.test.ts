@@ -242,7 +242,7 @@ describe("viewport-bounded tick count", () => {
 });
 
 describe("windowing is a pure restriction of the whole-row grid", () => {
-  /// The regression this ticket could introduce: a windowed tick that differs
+  /// The regression windowing could introduce: a windowed tick that differs
   /// from the tick the un-windowed grid would have put there. Scrolling the
   /// window across a short row must reproduce the whole-row set exactly.
   function assertWindowsReproduceRow(

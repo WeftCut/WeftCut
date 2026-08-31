@@ -1,10 +1,10 @@
-// Integration test for the native export-decode session (export-decode engine
-// spec, ticket 01). Drives the @weftcut/native-decode napi seam DIRECTLY from
-// Node — open → decodeRange → returnCredit → close — with zero renderer/Electron
-// involvement, and asserts exactly-once, GOP-exact, presentation-ordered
-// coverage against ffprobe-known fixtures, plus the credit-window flow control,
-// internal EOS flush, and the in-band ordering of control signals (frames and
-// rangeEnd/ended/error share one per-session channel).
+// Integration test for the native export-decode session (ADR 0033). Drives the
+// @weftcut/native-decode napi seam DIRECTLY from Node — open → decodeRange →
+// returnCredit → close — with zero renderer/Electron involvement, and asserts
+// exactly-once, GOP-exact, presentation-ordered coverage against ffprobe-known
+// fixtures, plus the credit-window flow control, internal EOS flush, and the
+// in-band ordering of control signals (frames and rangeEnd/ended/error share one
+// per-session channel).
 //
 // Component-gated: the addon builds on Windows + Linux + macOS (each needs its
 // ffmpeg-lgpl libs + a `napi:build:decode`; macOS builds the libs from source). When
@@ -287,7 +287,7 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
   })
 
   it('long-GOP mid-stream range covers exactly the linear-decode subset', async () => {
-    // The open-GOP case (ticket AC #2): a window starting INSIDE a later GOP
+    // The open-GOP case: a window starting INSIDE a later GOP
     // forces a seek to an earlier keyframe + a forward decode whose reference
     // chain must be rebuilt. Cross-check exactness against a full LINEAR decode —
     // the mid-stream seek must deliver exactly the frames the linear pass produced

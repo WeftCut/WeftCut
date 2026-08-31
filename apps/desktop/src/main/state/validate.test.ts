@@ -143,7 +143,7 @@ describe('validate — frame-grid backstop', () => {
   })
 
   // ── The two grids, asserted against each other ──────────────────────────────
-  // Both halves in one test on purpose (ticket 10 acceptance): a predicate that
+  // Both halves in one test on purpose: a predicate that
   // accepted everything for audio, or that had quietly stayed frame-only, would pass
   // one half and fail the other.
   it('holds Audio to the 48 kHz sample lattice and visual kinds to the composition frame grid', () => {

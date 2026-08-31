@@ -218,7 +218,7 @@ describe('resolveHwLane (advertisement-gated multi-lane HW probe)', () => {
     expect(s.get('videotoolbox', 'h264::yuv420p:uhd', 'gpu:1:2:drv')).toBe(false)
   })
 
-  // Lane-aware eligibility (issue #10 ticket 03): the walk drops advertised
+  // Lane-aware eligibility (issue #10): the walk drops advertised
   // lanes the format class is not eligible on (shared/hwLaneEligibility.ts) —
   // an ineligible lane is never probed and never cached, so ProRes/10-bit
   // reaching the probe on macOS cannot change any other lane's behavior.

@@ -119,10 +119,10 @@ describe('routeChannel', () => {
     expect(routeChannel('agent_session_end').kind).toBe('agentSessionEnd')
     expect(routeChannel('agent_session_begin').kind).toBe('agentSessionBegin')
   })
-  it('routes add_motif to command (Phase 4a-ii §2.2 — pure TS mutation, blocked sets ∅)', () => {
+  it('routes add_motif to command (pure TS mutation, blocked sets ∅)', () => {
     expect(routeChannel('add_motif').kind).toBe('command')
   })
-  it('routes project_restore_checkpoint to command (Phase 4a-i §2.1)', () => {
+  it('routes project_restore_checkpoint to command', () => {
     expect(routeChannel('project_restore_checkpoint').kind).toBe('command')
   })
   // The history panel's four channels: three actions ride the command route, but
@@ -171,7 +171,7 @@ describe('routeChannel', () => {
   it('routes the one remaining hybrid channel to hybrid', () => {
     expect(routeChannel('import_media').kind).toBe('hybrid')
   })
-  it('routes motif authoring/read/install/staleness channels to the motif route (Phase 2/3)', () => {
+  it('routes motif authoring/read/install/staleness channels to the motif route', () => {
     for (const ch of ['list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft', 'create_edit_draft', 'import_motif', 'delete_motif', 'install_motif', 'motif_staleness_report', 'acknowledge_motif_staleness'])
       expect(routeChannel(ch).kind, ch).toBe('motif')
   })

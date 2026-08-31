@@ -301,7 +301,7 @@ describe("AttributePanel envelope command routing", () => {
     await vi.waitFor(() => expect(onMutated).toHaveBeenCalledOnce());
   });
 
-  // ── Sub-frame audio entry (ADR 0038 / ticket 11) ─────────────────────────────
+  // ── Sub-frame audio entry (ADR 0038) ─────────────────────────────────────────
   it("offers the audio-units selector on an audio layer only", () => {
     summaryWithLinks([]);
     renderPanel(audioTrack(), "layer-a1");

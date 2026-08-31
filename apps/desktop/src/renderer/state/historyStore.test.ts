@@ -102,8 +102,8 @@ describe("historyStore wiring", () => {
     expect(useHistoryStore.getState().view).toBeNull();
     expect(useHistoryStore.getState().ready).toBe(false);
 
-    // Even a stale event handle (or a ticket-04 explicit refresh) fetches
-    // nothing while the panel is closed.
+    // Even a stale event handle (or an explicit refresh) fetches nothing while
+    // the panel is closed.
     changed();
     await refreshHistoryView();
     await settle();

@@ -1,9 +1,9 @@
 // apps/desktop/src/main/state/__tests__/mcp.agent-hardening.test.ts
-// Regression gates for .scratch/mcp-agent-hardening: (02) update_effect must
-// reject an unparseable patch, never commit nothing and report success; (03)
-// add_video_layer must place the video and its auto-paired audio atomically or
-// not at all; (04) a clip's paired audio must land on its OWN track's audio
-// lane, not a shared one.
+// Regression gates for the three ways this surface used to mislead an agent:
+// update_effect must reject an unparseable patch, never commit nothing and
+// report success; add_video_layer must place the video and its auto-paired
+// audio atomically or not at all; and a clip's paired audio must land on its
+// OWN track's audio lane, not a shared one.
 import { describe, it, expect } from 'vitest'
 import { freshActor, aRollId, bRollId } from './pbt/harness'
 import { root } from './fixtures/project'

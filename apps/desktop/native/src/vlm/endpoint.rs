@@ -1,5 +1,5 @@
 //! OpenAI-compatible `/v1/chat/completions` describer — backs the
-//! [`ByoEndpoint`](super::backend::VlmBackend::ByoEndpoint) backend (ticket 07).
+//! [`ByoEndpoint`](super::backend::VlmBackend::ByoEndpoint) backend.
 //! Self-hosted (`llama-server`, vLLM, SGLang) and hosted providers differ only
 //! in URL / key / model, so there is ONE impl and no hosted-provider backend of
 //! its own: pointing this at `api.openai.com` is the hosted case.

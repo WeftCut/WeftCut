@@ -29,8 +29,8 @@ use super::parser::RawDescription;
 pub struct TimedFrame {
     /// Window-relative microseconds (0-based). The prompt renders this as
     /// `Frame at <t>s:` — the plain-text time signal Qwen3-VL / MiniCPM-V honor
-    /// verbatim (ticket 06 spike). The parser echoes these back; the tool shifts
-    /// them by the source-window start to reach source-absolute time.
+    /// verbatim. The parser echoes these back; the tool shifts them by the
+    /// source-window start to reach source-absolute time.
     pub t_us: i64,
     /// Extracted still (PNG) for this timestamp.
     pub path: PathBuf,

@@ -336,7 +336,7 @@ Outcomes (2026-06-29): Claim A NV12 **PASS**, Claim B **PASS** (pool 1 & 2), Cla
 P010 **BLOCKED** (null/black import). Details + the 10-bit decision in
 [INTEGRATION-DESIGN.md](./INTEGRATION-DESIGN.md) §5a.
 
-**A′ ticket 01 — rgba end-to-end byte-exactness probe** (`POC_RGBA_PROBE=1`).
+**A′ rgba end-to-end byte-exactness probe** (`POC_RGBA_PROBE=1`).
 Shares a native R8G8B8A8 texture carrying a deterministic pattern (16px corner
 markers + (x,y) gradient, twin generators in Rust and preload) and asserts
 BYTE-EXACT readback at two stages: `VideoFrame.copyTo` (rawest import view) and
@@ -353,8 +353,8 @@ Outcome (2026-07-30, Electron 42.4.1, RTX 3050): **PASS** — both stages, both
 geometries, 0 mismatched bytes; colorSpace tag echoed intact
 (`transfer:'iec61966-2-1'`, `matrix:'rgb'`, fullRange); `rgb10a2` rejected
 (`Invalid shared texture info object`). The A′ premise — an sRGB-passthrough
-RGBA share turns the browser into a pure byte mover — holds. Details in
-`.scratch/hw-lane-color-sovereign/issues/01-…md` `## Answer`.
+RGBA share turns the browser into a pure byte mover — holds. This finding is
+what ADR 0040 rests on.
 
 ## Success criteria
 

@@ -816,7 +816,7 @@ export function MediaPool({
 /// rendered or fetched for a composition.** Its pixels change whenever a member
 /// is edited, so a real frame would need a derivative with its own invalidation
 /// model and job queue; the first member's thumbnail would show something that
-/// is not the Group. See `.scratch/pool-unification/spec.md`.
+/// is not the Group.
 ///
 /// The menu state stays with the Panel — one state for both kinds of card — so
 /// this reports the anchor point and nothing more.

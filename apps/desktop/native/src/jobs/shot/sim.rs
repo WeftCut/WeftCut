@@ -5,7 +5,7 @@
 //!
 //! Not owned here: cut detection / per-shot stats (the parent `shot` module) and
 //! the VSHOT cache (compare_frames is deliberately cacheless — a pure function).
-//! See `.scratch/scene-content-analysis/issues/02-compare-frames.md`.
+//! The tool's contract is in docs/mcp.md.
 
 use image::imageops::{self, FilterType};
 use image::RgbImage;
@@ -243,8 +243,8 @@ mod tests {
 
     #[test]
     fn compare_scaled_copy_is_similar() {
-        // A proxy-grade rescale of the SAME frame must still read as similar
-        // (ticket acceptance: proxy vs source at one timestamp).
+        // A proxy-grade rescale of the SAME frame must still read as similar:
+        // the proxy-vs-source comparison at one timestamp.
         let a = pattern(320, 240, 0.0);
         let c = compare_frames(&a, &rescaled(&a));
         assert!(c.phash_hamming <= PHASH_MAX_HAMMING, "hamming {}", c.phash_hamming);

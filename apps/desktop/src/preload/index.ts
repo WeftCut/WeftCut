@@ -279,7 +279,7 @@ const api: WeftcutApi = {
       ipcRenderer.invoke('decodeCap:probeHw', { path, classKey }) as Promise<DecodeHwProbeResult>,
   },
 
-  // User-managed data location (ticket 03). Plain main-process actions; the copy
+  // User-managed data location. Plain main-process actions; the copy
   // migration's progress arrives out-of-band on `evt:dataRoot:progress` (subscribe
   // via the generic `on()` above), not as a return value.
   dataRoot: {

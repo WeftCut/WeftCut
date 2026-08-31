@@ -246,7 +246,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   const clientInfo = (): { name: string; version?: string } | undefined => server.getClientVersion()
 
   // Every handler goes through withLog: the funnel is what keeps a newly added
-  // tool logged with nothing to remember. See `.scratch/mcp-logbus/spec.md`.
+  // tool logged with nothing to remember. See `docs/status-log.md`.
   server.setRequestHandler(ListToolsRequestSchema, withLog('tools/list', async () => {
     const rust = (JSON.parse(await backend.mcpCatalog()) as { tools: Array<{ name: string }> }).tools
     return { tools: mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS]) } as unknown as ServerResult

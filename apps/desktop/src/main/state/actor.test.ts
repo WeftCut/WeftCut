@@ -1150,7 +1150,7 @@ describe('replace_state (wholesale swap + history reset)', () => {
   })
 })
 
-describe('media-pool mutations dispatch (Phase 3c-i)', () => {
+describe('media-pool mutations dispatch', () => {
   const MID = '00000000-0000-0000-0000-0000000000aa'
   function actorWithMedia() {
     const gen = seededGen()

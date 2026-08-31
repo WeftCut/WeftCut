@@ -66,7 +66,7 @@ describe('trim', () => {
     expect(l.t_start_us).toBe(2_966_667) // frame 89 at 30/1 — frame 90 is t_end
     expect(l.t_end_us - l.t_start_us).toBe(33_333)
   })
-  it('trims the OUT edge, and clamps an inverting OUT trim to one frame (ticket 03)', () => {
+  it('trims the OUT edge, and clamps an inverting OUT trim to one frame', () => {
     const { p, a } = setup()
     applyTrimLayer(p, a, 'Out', 4_000_000, false)
     expect(root(p).tracks[0].layers.find((x) => x.id === a)!.t_end_us).toBe(4_000_000)

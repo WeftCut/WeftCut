@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 pub enum VlmBackend {
     /// Qwen3-VL-4B-Instruct via `llama-mtmd-cli` (Apache 2.0). The DEFAULT —
     /// its timestamps are injected plain text, so the llama.cpp path is
-    /// low-risk and fully controllable (ticket 06 spike).
+    /// low-risk and fully controllable.
     Qwen3Vl,
     /// MiniCPM-V 4.5 via `llama-mtmd-cli`. Reuses the SAME frames + text-marker
     /// input path as Qwen3-VL (spike-proven — `temporal_ids` not needed);
@@ -58,7 +58,7 @@ pub enum Locality {
 /// **Local-first** (unlike STT, which leads with a hosted provider): the whole
 /// subsystem is opt-in and privacy-sensitive (frames), so with nothing preferred
 /// we pick an on-device engine and only reach the network when no local engine
-/// is configured. Qwen3-VL leads — it is the validated default (ticket 06).
+/// is configured. Qwen3-VL leads — it is the validated default (ADR 0055).
 pub const DEFAULT_ORDER: &[VlmBackend] = &[
     VlmBackend::Qwen3Vl,
     VlmBackend::MiniCpmV,

@@ -40,7 +40,7 @@ describe('handleCallTool flip routing', () => {
     const layers = root(ts.actor.snapshot()).tracks.reduce((n: number, t: any) => n + t.layers.length, 0)
     expect(layers).toBe(1)
   })
-  it('routes synthesize_speech through the hybrid (not blocked, Task 6)', async () => {
+  it('routes synthesize_speech through the hybrid (not blocked)', async () => {
     // synthesize_speech is a hybrid; it must NOT be rejected with -32600.
     // The fake synthesizeSpeechCompute returns '{}'  (no media_item)
     // so the arm throws an actor-write error — but NOT a -32600 blocked rejection.

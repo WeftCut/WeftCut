@@ -40,8 +40,8 @@ function formatBytes(bytes: number): string {
 ///
 /// Read-only on purpose: proxy override and shot analysis stay in the pool's
 /// context menu, because a setting reachable from two places has no
-/// authoritative home (`.scratch/pool-unification/spec.md`). Everything here
-/// comes off the `MediaSummary` the store already holds — no probe, no command.
+/// authoritative home. Everything here comes off the `MediaSummary` the store
+/// already holds — no probe, no command.
 ///
 /// `fpsNum`/`fpsDen` are the panel's, and they format the usage list's
 /// timecodes; see `mediaReferenceMeta` for why one rate serves every

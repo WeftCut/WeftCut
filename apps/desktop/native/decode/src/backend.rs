@@ -87,7 +87,7 @@ pub struct PreviewSwOpenInfoJs {
 /// One software-decoded frame delivered to JS. `data` is tightly packed per
 /// `format`: `"NV12"` (8-bit: `Y` plane `w*h` then interleaved `UV` `w*h/2`) or
 /// `"I420P10"` (u16LE planes `Y` then `U` then `V`, the `copyToTenBit` layout —
-/// the 10-bit VideoToolbox-lane sessions, issue #10 ticket 03).
+/// the 10-bit VideoToolbox-lane sessions, issue #10).
 /// `pts_us`/`dur_us` cross as `f64` (napi has no ergonomic `i64`
 /// binding — matches the `preview_gpu` `target_us` convention). Color tags are
 /// canonical FFmpeg string names (`bt709`, `tv`, …) or `null` where the stream
@@ -723,8 +723,8 @@ impl NativeDecode {
     /// copy-back/swscale/packing and IPC.
     ///
     /// `out_format` selects the CPU transport format the session packs into
-    /// (issue #10 ticket 03): absent/`"NV12"` = 8-bit NV12 (every pre-existing
-    /// caller, byte-for-byte); `"I420P10"` = tightly-packed u16LE planes (the
+    /// (issue #10): absent/`"NV12"` = 8-bit NV12 (every pre-existing caller,
+    /// byte-for-byte); `"I420P10"` = tightly-packed u16LE planes (the
     /// `copyToTenBit` layout), which the renderer picks for a 10-bit source on
     /// the VideoToolbox lane. Each frame's `format` tag names what it carries,
     /// so an unknown string falls back to NV12 defensively (mirrors `lane`) —

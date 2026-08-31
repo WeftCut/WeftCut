@@ -404,7 +404,7 @@ async function bgraTest(win) {
 }
 
 // ---------------------------------------------------------------------------
-// A′ ticket 01 — rgba shared-texture end-to-end probe (POC_RGBA_PROBE=1).
+// A′ rgba shared-texture end-to-end probe (POC_RGBA_PROBE=1).
 //
 // The A′ architecture premise: if native shares an ALREADY-RGBA texture tagged
 // sRGB-passthrough, the renderer's createImageBitmap becomes a pure byte copy —
@@ -414,11 +414,11 @@ async function bgraTest(win) {
 // PRODUCTION ingestion (getVideoFrame → createImageBitmap, no options — the
 // exact calls apps/desktop's preload makes), on a pattern that would expose
 // row-pitch/byte-order/flip errors. Any deviation ⇒ Chromium still does color
-// math on this path ⇒ the A′ premise fails (ticket 01 is the first falsifier).
+// math on this path ⇒ the A′ premise fails (this probe is the first falsifier).
 //
 // Two geometries: the pool-typical 256×256, and an odd 253×119 whose tight
 // 1012-byte row pitch catches pitch-vs-width confusion on either side of the
-// share. Also recorded, for the ticket's 10-bit question: Electron 42's
+// share. Also recorded, for the 10-bit question: Electron 42's
 // pixelFormat vocabulary has NO 10-bit RGB integer format ('bgra'|'rgba'|
 // 'rgbaf16'|'nv12'|'nv16'|'p010le'), so we probe the runtime with 'rgb10a2'
 // anyway (typings can lag) and record the rejection.
@@ -873,7 +873,7 @@ app.whenReady().then(() => {
     setTimeout(() => app.quit(), 1500)
   })
 
-  // A′ ticket 01 — rgba probe results. Per case the renderer reports two
+  // A′ rgba probe results. Per case the renderer reports two
   // comparison stages: copyTo (the rawest renderer view, pre-createImageBitmap)
   // and bitmap (through the PRODUCTION createImageBitmap→2D readback). The
   // verdict is byte-exactness of the bitmap stage on BOTH geometries; copyTo
@@ -886,7 +886,7 @@ app.whenReady().then(() => {
     ipcMain.emit(`poc-rgba-case-done-${r.tag}`)
   })
   ipcMain.on('poc-rgba-summary', (_e, { rgb10a2 }) => {
-    console.log('[poc] ===== A′ TICKET 01 — rgba SHARED-TEXTURE END-TO-END: VERDICT =====')
+    console.log('[poc] ===== A′ rgba SHARED-TEXTURE END-TO-END: VERDICT =====')
     const cases = Object.values(rgbaProbeResults)
     let pass = cases.length === 2
     for (const r of cases) {
@@ -906,7 +906,7 @@ app.whenReady().then(() => {
       `  rgb10a2 pixelFormat at runtime: ${rgb10a2.accepted ? 'ACCEPTED (typings lag!)' : `REJECTED (${rgb10a2.error})`}`
     )
     console.log(
-      `[poc] TICKET 01 VERDICT: ${pass ? 'PASS ✅ (rgba import is a pure byte path through production createImageBitmap — A′ premise holds)' : 'FAIL ❌ (Chromium still touches bytes on the rgba path — A′ premise broken, escalate per ticket)'}`
+      `[poc] RGBA PROBE VERDICT: ${pass ? 'PASS ✅ (rgba import is a pure byte path through production createImageBitmap — A′ premise holds)' : 'FAIL ❌ (Chromium still touches bytes on the rgba path — A′ premise broken)'}`
     )
     setTimeout(() => app.quit(), 1500)
   })

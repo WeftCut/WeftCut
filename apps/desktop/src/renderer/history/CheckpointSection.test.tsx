@@ -258,7 +258,7 @@ describe("checkpoint create", () => {
     // Trimmed: the backend refuses a blank label outright.
     expect(mocks.projectCreateCheckpoint).toHaveBeenCalledWith("Before the recut");
     // `create_checkpoint` emits no `project:changed`, so without this explicit
-    // refetch the new row would never appear (ticket 02's constraint).
+    // refetch the new row would never appear.
     expect(mocks.projectHistoryView).toHaveBeenCalledTimes(2);
     expect(screen.queryByLabelText("Checkpoint name")).toBeNull();
   });

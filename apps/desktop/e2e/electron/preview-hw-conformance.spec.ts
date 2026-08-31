@@ -32,7 +32,7 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir } from '.
 // (or a Mac, which has only videotoolbox) with no per-machine config. The loop
 // body is variant-agnostic — fixture, artifact names, and the forced lane all
 // come from the entry — so a new codec on an existing lane (e.g. the
-// videotoolbox ProRes/p10 variant, VT lane ticket 03) is one more entry.
+// videotoolbox ProRes/p10 variants) is one more entry.
 //
 // Fixture (8-bit 1080p30 H.264, interframe, HW-decodable on every lane):
 // test_1080p_h264.mp4, the `h264Interframe` entry of the fixture matrix
@@ -48,10 +48,9 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir } from '.
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 const H264 = path.resolve(MEDIA_DIR, 'test_1080p_h264.mp4')
-// 10-bit fixtures for the videotoolbox p10 variants (VT lane ticket 03). Both
-// 1080p30, ≥ 1 s, already in the generator matrix. The SSIM leg normalizes
-// BOTH sides through `format=yuv420p`, so a 10-bit source works unmodified as
-// a structural gate.
+// 10-bit fixtures for the videotoolbox p10 variants. Both 1080p30, ≥ 1 s,
+// already in the generator matrix. The SSIM leg normalizes BOTH sides through
+// `format=yuv420p`, so a 10-bit source works unmodified as a structural gate.
 // - ProRes 422 HQ (yuv422p10le): the codec the lane exists for. testsrc2
 //   content like the H.264 fixture, so it shares SSIM_FLOOR_HIGH_FREQ. ffmpeg's
 //   VT hwaccel REQUIREs the hardware ProRes decoder (release/8.x), which only
@@ -113,8 +112,8 @@ interface HwVariant {
   fixture: string
   /// Which ingest path the bound frame must have taken (`ActiveClipProbe.
   /// boundFrameKind`): copy-back 8-bit ships NV12 → Nv12Ingest; copy-back
-  /// 10-bit ships I420P10 → TenBitIngest ('p10', VT lane ticket 03); the
-  /// Windows shared-texture lane binds an ImageBitmap snapshot ('browser').
+  /// 10-bit ships I420P10 → TenBitIngest ('p10'); the Windows shared-texture
+  /// lane binds an ImageBitmap snapshot ('browser').
   frameKind: 'nv12' | 'p10' | 'browser'
   /// Floor the best-of-three SSIM must clear. Tracks `fixture`, never the
   /// lane — see the SSIM_FLOOR_* notes.
@@ -125,8 +124,8 @@ const VARIANTS: readonly HwVariant[] = [
   { lane: 'vaapi', id: 'vaapi-h264', codec: 'H.264', fixture: H264, frameKind: 'nv12', ssimFloor: SSIM_FLOOR_HIGH_FREQ },
   { lane: 'd3d11va', id: 'd3d11va-h264', codec: 'H.264', fixture: H264, frameKind: 'browser', ssimFloor: SSIM_FLOOR_HIGH_FREQ },
   { lane: 'videotoolbox', id: 'videotoolbox-h264', codec: 'H.264', fixture: H264, frameKind: 'nv12', ssimFloor: SSIM_FLOOR_HIGH_FREQ },
-  // VT lane ticket 03 — the I420P10 preview transport variants (see the
-  // fixture notes above for which hosts each engages on).
+  // The I420P10 preview transport variants (see the fixture notes above for
+  // which hosts each engages on).
   { lane: 'videotoolbox', id: 'videotoolbox-prores', codec: 'ProRes', fixture: PRORES, frameKind: 'p10', ssimFloor: SSIM_FLOOR_HIGH_FREQ },
   { lane: 'videotoolbox', id: 'videotoolbox-hevc10', codec: 'HEVC Main10', fixture: HEVC10, frameKind: 'p10', ssimFloor: SSIM_FLOOR_SMOOTH },
 ]

@@ -399,12 +399,10 @@ describe("ruler context menu", () => {
 
 
 describe("scroll subscription", () => {
-  /// The acceptance criterion from
-  /// `.scratch/timeline-frame-grid/issues/06-ruler-model-and-virtualization.md`:
-  /// the visible interval reaches the ruler without `scrollLeft` becoming
-  /// React state above a leaf. Proven with a counter, not by inspection — a
-  /// parent that re-rendered on scroll would be the whole timeline tree in
-  /// production.
+  /// The virtualization criterion: the visible interval reaches the ruler
+  /// without `scrollLeft` becoming React state above a leaf. Proven with a
+  /// counter, not by inspection — a parent that re-rendered on scroll would be
+  /// the whole timeline tree in production.
   function renderWithParentCounter() {
     const counter = { renders: 0 };
     function Parent() {

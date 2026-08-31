@@ -5,7 +5,7 @@
  *  the workspace-open path installs a bus.
  *
  *  Producer-side only: `LogBus`, `Clear` and `log_list` semantics are untouched
- *  (`.scratch/mcp-logbus/spec.md` decision 5). Owns the bound and the replay
+ *  (`docs/status-log.md`). Owns the bound and the replay
  *  order; owns no emit path of its own — the caller hands one to `flush`.
  */
 

@@ -67,7 +67,7 @@ export function CheckpointSection({
     setPendingDelete(null);
     // Refetch on FAILURE as much as on success. `delete_checkpoint` changes no
     // project state, so nothing broadcasts and the Panel would keep drawing the
-    // row it just destroyed (ticket 02's constraint on 04) — and the likeliest
+    // row it just destroyed — and the likeliest
     // failure is `CheckpointNotFound`, i.e. the row on screen was already stale.
     // Skipping the refetch there pins the stale row permanently and makes every
     // retry fail the same way.
