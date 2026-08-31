@@ -19,6 +19,11 @@
     "package": "npm --workspace apps/desktop run package",
     "knip": "npx --yes knip"
   },
+  "overrides": {
+    "typed-rest-client": {
+      "qs": "^6.15.2"
+    }
+  },
   "engines": {
     "node": ">=22"
   }
