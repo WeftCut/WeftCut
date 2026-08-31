@@ -7,9 +7,14 @@ there are no maintained release branches yet.
 
 ## Reporting a vulnerability
 
-Email **voidgun1998@gmail.com** with what you found, the version or commit you
-saw it on, and a minimal reproduction if you have one. Please don't open a
-public issue for anything exploitable.
+Use GitHub's [private vulnerability reporting](https://github.com/WeftCut/WeftCut/security/advisories/new) — the report stays
+private until a fix ships, and it gives us one place to work the issue rather
+than a mail thread. Email **voidgun1998@gmail.com** instead if you'd rather not
+go through GitHub.
+
+Either way, include what you found, the version or commit you saw it on, and a
+minimal reproduction if you have one. Please don't open a public issue for
+anything exploitable.
 
 I aim to acknowledge within a week. This is a one-person project, so treat that
 as best effort rather than a guaranteed response time. When a fix ships you'll
