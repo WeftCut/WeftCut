@@ -1,7 +1,7 @@
 /// The project's public web presence. The repo (package.json `homepage`) is
 /// the single root; releases / issues hang off it. Used by the Help menu and
 /// the About dialog.
-export const REPO_URL = "https://github.com/UncleChair/WeftCut";
+export const REPO_URL = "https://github.com/WeftCut/WeftCut";
 export const RELEASES_URL = `${REPO_URL}/releases`;
 export const ISSUES_URL = `${REPO_URL}/issues`;
 /// Repo files referenced from the About dialog (default branch: main).

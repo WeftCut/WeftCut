@@ -3,9 +3,9 @@
   "productName": "WeftCut",
   "version": "0.0.0",
   "description": "WeftCut video editor desktop app",
-  "homepage": "https://github.com/UncleChair/WeftCut",
+  "homepage": "https://github.com/WeftCut/WeftCut",
   "author": {
-    "name": "UncleChair",
+    "name": "WeftCut",
     "email": "voidgun1998@gmail.com"
   },
   "license": "MIT",

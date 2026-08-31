@@ -87,7 +87,7 @@
 
 ## 对 macOS 修复的复核
 
-提交 [`4d957078`](https://github.com/UncleChair/WeftCut/commit/4d95707889aa94aeb7956839a0b3084a10aeda7e) 把 `REORDER_MARGIN = 16` 的额外输入从部分 lane 推广到全部 Lite decode lane。
+提交 [`4d957078`](https://github.com/WeftCut/WeftCut/commit/4d95707889aa94aeb7956839a0b3084a10aeda7e) 把 `REORDER_MARGIN = 16` 的额外输入从部分 lane 推广到全部 Lite decode lane。
 
 **[直接证据] 修复与观察到的故障链一致：**
 
@@ -106,7 +106,7 @@
 
 ## Linux 硬件黑帧不是尾帧 +1
 
-提交 [`4a30765b`](https://github.com/UncleChair/WeftCut/commit/4a30765b27b78d3ae40450a6544d1d715c40262a) 记录了同一 Linux/NVIDIA 主机上的隔离探针（结论同时归档在 codec-matrix 的 tracker 讨论里）：
+提交 [`4a30765b`](https://github.com/WeftCut/WeftCut/commit/4a30765b27b78d3ae40450a6544d1d715c40262a) 记录了同一 Linux/NVIDIA 主机上的隔离探针（结论同时归档在 codec-matrix 的 tracker 讨论里）：
 
 - **[直接证据]** software I420 在 Window/Worker 以及四条导入/回读路径都正常；
 - **[直接证据]** hardware BGRA 在四条路径都读成纯黑，包括 `VideoFrame.copyTo()`；

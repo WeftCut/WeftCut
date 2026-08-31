@@ -182,7 +182,7 @@ const zhCN: Resources = {
     report_issue: "报告问题…",
     about: "关于 WeftCut",
     version: "版本 {{version}}",
-    developed_by: "作者:UncleChair",
+    developed_by: "作者:WeftCut",
     license_mit: "证书:本体采用 <mit>MIT</mit> 许可证。",
     third_party: "第三方组件许可见 <notices>THIRD-PARTY-NOTICES.md</notices>。",
     copy_version: "复制版本信息",

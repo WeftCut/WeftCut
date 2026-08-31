@@ -62,7 +62,7 @@ const SOURCES = {
     builder: 'https://ffmpeg.martin-riedl.de/ (build configuration published per build id)',
   },
 }
-const PROJECT_ISSUES_URL = 'https://github.com/UncleChair/WeftCut/issues'
+const PROJECT_ISSUES_URL = 'https://github.com/WeftCut/WeftCut/issues'
 
 /** Pure gate, exported for the packaging assert (after-pack-licensing.mjs):
  *  throws unless the sidecar's configuration banner is redistributable. GPL is

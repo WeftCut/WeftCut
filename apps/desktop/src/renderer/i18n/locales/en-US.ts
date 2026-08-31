@@ -183,7 +183,7 @@ const enUS = {
     report_issue: "Report an Issue…",
     about: "About WeftCut",
     version: "Version {{version}}",
-    developed_by: "Developed by UncleChair",
+    developed_by: "Developed by WeftCut",
     license_mit: "License: WeftCut is <mit>MIT</mit>-licensed.",
     third_party:
       "Third-party components have their own licenses: <notices>THIRD-PARTY-NOTICES.md</notices>.",
