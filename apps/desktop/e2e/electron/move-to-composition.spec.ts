@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from "./helpers/driver";
 
 /**
- * *Move to composition ›* — the crossing reached by NAMING a destination
+ * *Move to… ›* — the crossing reached by NAMING a destination
  * (spec § Group semantics, ADR 0052 and ADR 0053).
  *
  * One timeline Panel throughout. Entering a Group swaps which composition the
@@ -133,7 +133,7 @@ async function seekAndSettle(page: Page, us: number): Promise<void> {
     .toBe(us);
 }
 
-test.describe("Move to composition", () => {
+test.describe("Move to…", () => {
   test("the clip menu carries a selection out of a Group to the film's playhead, and one undo takes it back", async () => {
     test.setTimeout(180_000);
     const { app, page } = await launchApp();
@@ -211,7 +211,7 @@ test.describe("Move to composition", () => {
       // on the trigger races that gate and dismisses the whole menu.
       await page
         .locator(".app-submenu-trigger")
-        .filter({ hasText: /^Move to composition$/ })
+        .filter({ hasText: /^Move to…$/ })
         .hover();
 
       // The root is named as the film's own timeline: it has no name of its

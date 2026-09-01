@@ -158,9 +158,18 @@ export function App({ onCloseProject }: AppProps) {
   }
   const summaryRequests = summaryRequestsRef.current;
   // The timeline the panels, the shortcuts and the Insert menu act on. Export
-  // reads the root below regardless (compositionAnchorStore.ts says why).
+  // and Settings read the root below regardless (compositionAnchorStore.ts
+  // says why).
   const focusedId = useFocusedCompositionId();
   const comp = compositionOrRoot(summary, focusedId);
+  // Settings → Project edits the ROOT, whichever composition holds the focus.
+  // Canvas size and duration are the film's own: a Group's size is copied at
+  // pre-compose and its length follows its content, which is why the inspector
+  // prints both read-only (`properties/PropertyPanel.tsx`). Taking the focused
+  // composition here would silently retarget the whole category at a Group the
+  // moment its tab was active — an edit no other surface offers, under a
+  // heading that says "Project".
+  const rootComp = summary ? rootCompositionOf(summary) : null;
   const [busy, setBusy] = useState(false);
   // Write-only: error text is surfaced through the status bar / log (see the
   // setError call sites), not rendered here, so we keep only the setter.
@@ -1134,24 +1143,24 @@ export function App({ onCloseProject }: AppProps) {
           keybindings={keybindings}
           onKeybindingsChanged={setKeybindings}
           composition={
-            comp
+            rootComp
               ? {
-                  id: comp.id,
-                  durationUs: comp.duration_us,
-                  durationPinned: comp.duration_pinned,
+                  id: rootComp.id,
+                  durationUs: rootComp.duration_us,
+                  durationPinned: rootComp.duration_pinned,
                   // The floor for a user-set duration: `max(layer.t_end_us)`
                   // across every track/layer. Mirrors the
                   // `applyDurationAutofit` overflow guard in
                   // main/state/mutations/helpers.ts so the UI can pre-validate
                   // before invoking `set_composition`.
-                  layersMaxEndUs: comp.tracks
+                  layersMaxEndUs: rootComp.tracks
                     .flatMap((t) => t.layers.map((l) => l.t_end_us))
                     .reduce((a, b) => Math.max(a, b), 0),
-                  fpsNum: comp.fps_num,
-                  fpsDen: comp.fps_den,
-                  width: comp.width,
-                  height: comp.height,
-                  fpsLocked: comp.fps_locked,
+                  fpsNum: rootComp.fps_num,
+                  fpsDen: rootComp.fps_den,
+                  width: rootComp.width,
+                  height: rootComp.height,
+                  fpsLocked: rootComp.fps_locked,
                 }
               : null
           }

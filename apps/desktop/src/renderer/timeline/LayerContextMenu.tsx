@@ -115,7 +115,7 @@ const ADD_TO_GROUP_REASON: Record<Exclude<AddToGroupState, "add_to_group">, stri
     starts_before_group: "quick_actions.add_to_group_starts_before_group",
   };
 
-/// Why a greyed *Move to composition ›* trigger is greyed. Same block and same
+/// Why a greyed *Move to… ›* trigger is greyed. Same block and same
 /// `Record`-over-the-remaining-states rule as `ADD_TO_GROUP_REASON` above.
 const MOVE_TO_COMPOSITION_REASON: Record<
   Exclude<MoveToCompositionState, "move_to_composition">,
@@ -155,9 +155,9 @@ const DESTINATION_REASON: Record<Exclude<DestinationState, "eligible">, string> 
 /// reaches `MenuItem` via `CommandContextItem`) and the tiers under it used
 /// to sit on two different left edges inside the one popup.
 ///
-/// Flat but for one row: *Move to composition ›*, whose destinations are a list
-/// only the project can enumerate. Every other row is a single act, and a
-/// submenu around one act is a click spent on nothing.
+/// Flat but for one row: *Move to… ›*, whose destinations are a list only the
+/// project can enumerate. Every other row is a single act, and a submenu around
+/// one act is a click spent on nothing.
 export function LayerContextMenu({
   x,
   y,
@@ -270,12 +270,14 @@ export function LayerContextMenu({
     : undefined;
   const addToGroupHint =
     addToGroup === "add_to_group" ? undefined : t(ADD_TO_GROUP_REASON[addToGroup]);
-  // The *Move to composition ›* trigger. Live it is a submenu — a destination
-  // is the content of the gesture, and only a list can carry one — and greyed
-  // it falls back to the flat registry row, which is what can show WHY. The
-  // command is read from the registry so the trigger's label has the one home
-  // its accelerator and its `enabled` already have, and so an unregistered
-  // provider drops this row exactly as `CommandContextItem` drops the others.
+  // The *Move to… ›* trigger. Live it is a submenu — a destination is the
+  // content of the gesture, and only a list can carry one — and greyed it falls
+  // back to the flat registry row, which is what can show WHY. The command is
+  // still read from the registry, so an unregistered provider drops this row
+  // exactly as `CommandContextItem` drops the others; only the LABEL is the
+  // menu's own, because the two forms are two different acts. The flat one
+  // moves to the root and says so; the trigger says nothing about where,
+  // because the destination rows under it each name themselves.
   const moveToComposition = useMoveToCompositionState();
   const moveToCompositionCommand = getCommand("moveToComposition");
   const moveToCompositionHint =
@@ -337,7 +339,7 @@ export function LayerContextMenu({
                 <MenuSeparator key={`sep-${i}`} />
               ) : id === "moveToComposition" ? (
                 moveToCompositionCommand && destinations.length > 0 ? (
-                  <SubMenu key={id} label={t(moveToCompositionCommand.labelKey)}>
+                  <SubMenu key={id} label={t("actions.move_to_composition_submenu")}>
                     {destinations.map((d) => {
                       const hint = destinationHint(d);
                       return (

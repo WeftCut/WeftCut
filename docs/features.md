@@ -408,7 +408,7 @@ the whole set clears — the bound belongs to the earliest member, not to
 whichever one the refusal happens to report, so retrying at it is not refused
 again).
 
-**Move to composition** (`move_layers_to_composition`) is the same crossing
+**Moving to another composition** (`move_layers_to_composition`) is the same crossing
 addressed by NAMING a destination instead of by pointing at a Group clip: a set
 of layers, one destination composition, and an ABSOLUTE landing time on that
 composition's clock. Add to Group is one of its callers — it reads the landing
@@ -450,7 +450,8 @@ fresh lane at the top of its z-stack. The fork is about what the user was shown:
 a menu has no ghost, so bouncing is honest for it; a drag has one, and bouncing
 would make the ghost a lie.
 
-**Move to composition ›** on a clip's context menu is the submenu form. The
+**Move to… ›** on a clip's context menu is the submenu form. The trigger
+names no destination because the rows under it each name one. The
 film's own timeline sorts first — it is the answer to "get this back out of the
 Group", which is the commonest reason to open the row — then every Group by
 name. A destination that cannot take the selection is listed and greyed rather
@@ -473,7 +474,8 @@ clears and the view stays where it was: the menu never left the Panel it was
 opened in. The same command sits in the Edit menu, in the search palette and on
 any key someone binds it to — surfaces with no room for a list, so there it
 means the root, and greys once the selection is already in it rather than taking
-whichever Group happens to sort first.
+whichever Group happens to sort first. Carrying no list, it can say where it
+goes, and does: those surfaces label it **Move to timeline**.
 
 **Carrying a clip into another timeline Panel.** With two compositions open side
 by side, dragging a clip out of one timeline and into the other commits the same

@@ -264,14 +264,15 @@ const zhCN: Resources = {
     add_to_group_needs_member: "除了组片段，还要选中要加入的片段",
     add_to_group_locked: "先解锁要加入的那些片段",
     add_to_group_starts_before_group: "该片段比组开始得更早——先把它往后移",
-    // 移动到合成。前三条解释变灰的子菜单入口——要去修的是选区；
-    // 后面几条解释某一个变灰的目标行——要换一个目标去选。
-    move_to_composition_needs_selection: "选中要移动到其他合成的片段",
+    // 移动到…。前三条解释变灰的子菜单入口——要去修的是选区；
+    // 后面几条解释某一个变灰的目标行——要换一个目标去选。目标行自己会报名字，
+    // 所以这几句都不点名"移动到什么"（词汇约定见 CONTEXT.md 的 Composition 条）。
+    move_to_composition_needs_selection: "选中要移动走的片段",
     move_to_composition_locked: "先解锁要移动的那些片段",
-    move_to_composition_no_destination: "没有其他合成可以放这些片段",
+    move_to_composition_no_destination: "没有别处可以放这些片段",
     move_to_composition_already_there: "这些片段已经在这里了",
-    move_to_composition_cycle: "所选的组里已经包含这个合成，它不能再放进自己里面",
-    move_to_composition_offscreen: "播放头处看不到这个合成——片段会落在它的开头",
+    move_to_composition_cycle: "所选的组里已经包含它——不能再把组放进它里面",
+    move_to_composition_offscreen: "播放头处看不到它——片段会落在它的开头",
   },
   dock_workspace: {
     editing_label: "编辑工作区",
@@ -421,9 +422,11 @@ const zhCN: Resources = {
     // 右键菜单专用：它知道自己是在哪个组上打开的。一次性构建的菜单——编辑菜单、
     // 原生菜单栏、搜索面板——沿用上面的通用标签（原因见 menu/CommandContextItem.tsx）。
     add_to_group_named: "加入“{{name}}”",
-    // 尾部的箭头是子菜单自带的，不属于名字本身：编辑菜单和搜索面板用同一条标签，
-    // 后面并没有列表（那两种形态做什么，见 shortcuts/defs.ts）。
-    move_to_composition: "移动到合成",
+    // 两种形态两条标签。子菜单入口后面跟着目标列表，名词由目标行自己说，所以
+    // 入口只留省略号；编辑菜单和搜索面板没有列表，那里的形态就是"移到根"，
+    // 于是直接点名时间线（两种形态各做什么，见 shortcuts/defs.ts）。
+    move_to_composition: "移动到时间线",
+    move_to_composition_submenu: "移动到…",
     toggle_link_selected: "链接 / 取消链接所选图层",
     toggle_link_override: "切换忽略链接",
     nudge_audio_sample_back: "音频前移 1 个采样",
@@ -521,7 +524,7 @@ const zhCN: Resources = {
     groups_refs_other: "{{count}} 处引用",
     groups_actions_for: "{{label}} 的组操作",
     groups_delete: "删除组",
-    groups_delete_hint: "从工程中移除该合成",
+    groups_delete_hint: "从工程中移除该组",
     groups_delete_in_use: "仍有组片段在显示它。请先删除那些片段或解组。",
     groups_rename_title: "重命名组",
     groups_rename_confirm: "重命名",
@@ -794,7 +797,7 @@ const zhCN: Resources = {
     audio_excluded: "本次导出不包含音频。如需包含，请在「通用」中修改「导出内容」。",
     resolution: "分辨率",
     fps: "帧率",
-    follow_comp: "跟随合成",
+    follow_comp: "跟随时间线",
     codec: "编码",
     container: "容器 / 复用器",
     encoder_engine: "编码引擎",
@@ -1022,10 +1025,10 @@ const zhCN: Resources = {
     canvas_fps_hint: "帧率仅在时间线未添加过内容的项目中可修改。",
     duration_heading: "时长",
     duration_blurb:
-      "合成时长默认跟随最末一帧。需要固定时长且大于内容时可手动延长。",
-    pin_composition_duration: "延长合成时长",
+      "时长默认跟随最末一帧。需要固定时长且大于内容时可手动延长。",
+    pin_composition_duration: "延长时长",
     pin_composition_duration_hint:
-      "将合成保持在下方时长。仅能设为 ≥ {{floor}}（内容末尾）。",
+      "保持在下方时长。仅能设为 ≥ {{floor}}（内容末尾）。",
     composition_duration_label: "时长",
     composition_duration_invalid: "时间码格式无效。",
     composition_duration_below_floor: "不得小于 {{floor}}（内容末尾）。",
@@ -1306,7 +1309,7 @@ const zhCN: Resources = {
     link_rename: "重命名链接",
     group: "组",
     group_name: "名称",
-    group_size: "合成尺寸",
+    group_size: "组尺寸",
     group_refs: "引用",
     group_open: "打开组",
     group_ungroup: "解组",
@@ -1516,7 +1519,7 @@ const zhCN: Resources = {
     export_cancelled: "已取消导出",
     cleared: "已清空日志",
     center_layer_unstaged: "预览尚未装载该图层，无法居中——其尺寸未知",
-    cross_composition_copy: "不能把片段复制到另一个合成——松开 Alt 即可将其移动过去",
+    cross_composition_copy: "不能跨时间线复制片段——松开 Alt 即可将其移动过去",
   },
   history: {
     initial: "初始状态",
@@ -1530,7 +1533,7 @@ const zhCN: Resources = {
       move: "移动图层",
       move_to_new_track: "移动到新轨道",
       move_to_composition: "已把 {{count}} 个图层移动到{{composition}}",
-      move_to_composition_unnamed: "已把 {{count}} 个图层移动到另一个合成",
+      move_to_composition_unnamed: "已把 {{count}} 个图层移动到别处",
       restack: "重排图层层级",
       trim: "修剪",
       split: "分割图层",
@@ -1587,7 +1590,7 @@ const zhCN: Resources = {
       ungroup: "解组",
       rename: "重命名组",
     },
-    composition: { delete: "删除合成" },
+    composition: { delete: "删除组" },
     caption: { restyle: "修改字幕样式" },
     media: { remove_cascade: "删除素材 {{media}} 及其 {{count}} 个引用图层" },
     audio: { set_role_gain: "设置{{role}}角色增益" },

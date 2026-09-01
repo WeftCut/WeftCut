@@ -133,10 +133,12 @@ interface Props {
   /// dispatcher re-resolves the moment the user edits.
   keybindings: KeybindingsMap;
   onKeybindingsChanged: (next: KeybindingsMap) => void;
-  /// Live composition state for the Composition section. `null` while
-  /// the project summary is still loading. Omitted entirely (together
-  /// with `onCompositionChanged`) when no project is open — e.g. on the
-  /// startup screen.
+  /// Live state of the ROOT composition, for the Canvas and Duration
+  /// sections. The root and not the focused composition: these are the film's
+  /// own canvas and runtime, and a Group's are read-only everywhere else
+  /// (`App.tsx` says why). `null` while the project summary is still loading.
+  /// Omitted entirely (together with `onCompositionChanged`) when no project
+  /// is open — e.g. on the startup screen.
   composition?: CompositionState | null;
   /// Refresh the parent project summary after Pin / Fit actions so the
   /// section's labels reflect the new state immediately. Its presence is

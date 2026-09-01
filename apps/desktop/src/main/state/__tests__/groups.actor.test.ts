@@ -120,7 +120,7 @@ describe('groups — actor dispatch', () => {
     len = actor.historyStatus().len
     expect(actor.dispatch('compositions_delete', { composition: orphan.composition_id })).toEqual({ ok: true, value: null })
     expect(actor.historyStatus().len).toBe(len + 1)
-    expect(actor.historyView(1).ops[0]).toMatchObject({ summary: 'Deleted composition', label_key: 'history.composition.delete', affected: [] })
+    expect(actor.historyView(1).ops[0]).toMatchObject({ summary: 'Deleted Group', label_key: 'history.composition.delete', affected: [] })
     expect(groupsIn(actor)).toEqual([])
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     expect(groupsIn(actor)).toEqual([orphan.composition_id])

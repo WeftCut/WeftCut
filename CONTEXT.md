@@ -367,9 +367,13 @@ A timeline — settings, tracks, markers, transitions and links. The root is
 one and every Group is one, with the same shape: there is no "sub" type,
 so every walk, mutation and validator has one path. Opened, it takes a timeline
 Panel of its own, addressed by its id, so several stand open at once and the
-editor is never looking at exactly one. UI word: Composition /
-合成, never shown as a noun for the root — that is "the timeline".
-_Avoid_: sub-composition (as a data-model term), sequence, nested timeline
+editor is never looking at exactly one. A model word with no UI word: nothing
+on screen calls a composition one. A Group is "Group / 组", the root is "the
+timeline", and where a gesture crosses between them the destinations name
+themselves — so *Move to… ›* lists "Timeline" and each Group, and its flat form
+(no list behind it) says *Move to timeline*.
+_Avoid_: sub-composition (as a data-model term), sequence, nested timeline;
+composition / 合成 anywhere in UI copy
 
 **Root composition**:
 The composition export renders and a fresh project opens on

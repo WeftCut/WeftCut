@@ -82,7 +82,7 @@ export const HISTORY_SUMMARY = {
   // Groups (ADR 0052). `groupCreate` is templated — see groupCreateSummary.
   groupUngroup: { key: 'history.group.ungroup', text: 'Ungrouped' },
   groupRename: { key: 'history.group.rename', text: 'Renamed Group' },
-  compositionDelete: { key: 'history.composition.delete', text: 'Deleted composition' },
+  compositionDelete: { key: 'history.composition.delete', text: 'Deleted Group' },
 
   captionRestyle: { key: 'history.caption.restyle', text: 'Restyled captions' },
 } satisfies Record<string, HistorySummary>
@@ -130,7 +130,7 @@ export function moveToCompositionSummary(count: number, compositionName: string 
   const name = compositionName?.trim()
   return name
     ? { key: 'history.layer.move_to_composition', text: `Moved ${count} layers to ${name}`, label_args: { count, composition: name } }
-    : { key: 'history.layer.move_to_composition_unnamed', text: `Moved ${count} layers to another composition`, label_args: { count } }
+    : { key: 'history.layer.move_to_composition_unnamed', text: `Moved ${count} layers elsewhere`, label_args: { count } }
 }
 /** `set_layers_enabled` — one key per direction rather than a `{{state}}`
  *  placeholder, so each locale conjugates the verb natively. */

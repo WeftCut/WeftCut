@@ -284,19 +284,20 @@ const enUS = {
     add_to_group_locked: "Unlock the clips you are adding to the group",
     add_to_group_starts_before_group:
       "This clip starts before the group does — move it later first",
-    // Move to composition. The first three explain the greyed submenu TRIGGER
-    // — what to go and fix about the selection — and the rest explain one
-    // greyed destination row, where the answer is to pick a different one.
-    move_to_composition_needs_selection:
-      "Select the clips to move to another composition",
+    // Move to…. The first three explain the greyed submenu TRIGGER — what to
+    // go and fix about the selection — and the rest explain one greyed
+    // destination row, where the answer is to pick a different one. A
+    // destination row names itself, so none of these names one (CONTEXT.md's
+    // Composition entry says why the word stays out of UI copy).
+    move_to_composition_needs_selection: "Select the clips to move",
     move_to_composition_locked: "Unlock the clips you are moving",
     move_to_composition_no_destination:
-      "There is no other composition these clips can go to",
+      "There is nowhere else these clips can go",
     move_to_composition_already_there: "These clips are already here",
     move_to_composition_cycle:
-      "A selected group already contains this composition — it cannot also sit inside it",
+      "A selected group already contains it — the group cannot also sit inside it",
     move_to_composition_offscreen:
-      "This composition is not on screen at the playhead — the clips land at its start",
+      "Not on screen at the playhead — the clips land at its start",
   },
   dock_workspace: {
     editing_label: "Editing workspace",
@@ -470,10 +471,13 @@ const enUS = {
     // menus built once — Edit, the native bar, the search palette — keep the
     // plain label above (`menu/CommandContextItem.tsx` says why).
     add_to_group_named: "Add to “{{name}}”",
-    // The trailing chevron is the submenu's own affordance, not part of the
-    // name: the Edit menu and the palette carry the same label with no list
-    // behind it (`shortcuts/defs.ts` says what those forms do).
-    move_to_composition: "Move to composition",
+    // Two forms, two labels. The submenu trigger is followed by the list of
+    // destinations, each of which names itself, so the trigger keeps only the
+    // ellipsis; the Edit menu and the palette have no list behind them and
+    // that form means "move to the root", so it names the timeline outright
+    // (`shortcuts/defs.ts` says what those forms do).
+    move_to_composition: "Move to timeline",
+    move_to_composition_submenu: "Move to…",
     toggle_link_selected: "Link / Unlink selected layers",
     toggle_link_override: "Toggle link override",
     nudge_audio_sample_back: "Nudge audio 1 sample earlier",
@@ -594,7 +598,7 @@ const enUS = {
     groups_refs_other: "{{count}} refs",
     groups_actions_for: "Group actions for {{label}}",
     groups_delete: "Delete Group",
-    groups_delete_hint: "Remove this composition from the project",
+    groups_delete_hint: "Remove this Group from the project",
     groups_delete_in_use:
       "Still shown by a Group clip. Delete those clips, or ungroup them, first.",
     groups_rename_title: "Rename Group",
@@ -922,7 +926,7 @@ const enUS = {
       "Audio isn't included in this export. Change “Export content” under General to include it.",
     resolution: "Resolution",
     fps: "Frame rate",
-    follow_comp: "Follow composition",
+    follow_comp: "Follow timeline",
     codec: "Codec",
     container: "Container / Muxer",
     encoder_engine: "Encoder engine",
@@ -1163,10 +1167,10 @@ const enUS = {
       "The frame rate can only be changed in a project whose timeline has never had content.",
     duration_heading: "Duration",
     duration_blurb:
-      "Composition duration follows the last visible frame by default. Extend it to hold a fixed runtime longer than the content.",
-    pin_composition_duration: "Extend composition duration",
+      "Duration follows the last visible frame by default. Extend it to hold a fixed runtime longer than the content.",
+    pin_composition_duration: "Extend duration",
     pin_composition_duration_hint:
-      "Holds the composition at the value below. Can only be set ≥ {{floor}} (content end).",
+      "Holds it at the value below. Can only be set ≥ {{floor}} (content end).",
     composition_duration_label: "Duration",
     composition_duration_invalid: "Invalid timecode.",
     composition_duration_below_floor: "Must be ≥ {{floor}} (content end).",
@@ -1458,7 +1462,7 @@ const enUS = {
     // two navigation/structure buttons.
     group: "Group",
     group_name: "Name",
-    group_size: "Composition size",
+    group_size: "Group size",
     group_refs: "References",
     group_open: "Open group",
     group_ungroup: "Ungroup",
@@ -1674,7 +1678,7 @@ const enUS = {
     center_layer_unstaged:
       "Cannot center a layer the preview has not staged yet — its size is unknown",
     cross_composition_copy:
-      "A clip cannot be copied into another composition — release without Alt to move it there",
+      "A clip cannot be copied across timelines — release without Alt to move it there",
   },
   // Edit-stack row labels — one per `HISTORY_SUMMARY` entry in
   // main/state/history-labels.ts, which owns the English source text. The three
@@ -1697,7 +1701,7 @@ const enUS = {
       // the unnamed one covers a derived `Group N` and the root, neither of
       // which main can name.
       move_to_composition: "Moved {{count}} layers to {{composition}}",
-      move_to_composition_unnamed: "Moved {{count}} layers to another composition",
+      move_to_composition_unnamed: "Moved {{count}} layers elsewhere",
       restack: "Restacked layer",
       trim: "Trimmed layer",
       split: "Split layer",
@@ -1754,7 +1758,7 @@ const enUS = {
       ungroup: "Ungrouped",
       rename: "Renamed Group",
     },
-    composition: { delete: "Deleted composition" },
+    composition: { delete: "Deleted Group" },
     caption: { restyle: "Restyled captions" },
     media: {
       remove_cascade:
