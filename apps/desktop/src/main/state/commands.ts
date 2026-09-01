@@ -107,7 +107,11 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   update_layer: (a) => ({ op: 'update_layer', args: { layer: a.layerId, patch: a.patch } }),
   // Remaining mechanical + meta channels
   move_layer: (a) => ({ op: 'move_layer', args: { layer: a.layerId, to_track: a.newTrackId, t_start_us: a.newTStartUs, escape_link: a.escapeLink ?? false } }),
-  move_layers_to_new_track: (a) => ({ op: 'move_layers_to_new_track', args: { layers: a.layerIds } }),
+  // The landing is optional and its two halves travel together — the renderer
+  // API bundles them into one `anchor` object so a caller cannot supply half,
+  // and this flattens the pair onto the wire the way every other op carries its
+  // args. Both null is the raise that names no time.
+  move_layers_to_new_track: (a) => ({ op: 'move_layers_to_new_track', args: { layers: a.layerIds, anchor_layer_id: a.anchorLayerId ?? null, t_start_us: a.anchorTStartUs ?? null } }),
   // Anchored z-reorder (ADR 0044) — the Playhead Panel's drop gesture. Pure renaming;
   // position/anchor validation lives with the mutation.
   restack_layer: (a) => ({ op: 'restack_layer', args: { layer: a.layerId, anchor: a.anchorLayerId, position: a.position } }),

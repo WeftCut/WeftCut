@@ -1937,11 +1937,50 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerUp(window, { clientX: 80, clientY: 7 });
 
     await waitFor(() => {
-      expect(ipcMocks.moveLayersToNewTrack).toHaveBeenCalledWith([layer.id]);
+      // Straight up, so the landing is the clip's own head — a raise names a
+      // time whether or not the pointer moved it, the way a cross-lane move
+      // names one.
+      expect(ipcMocks.moveLayersToNewTrack).toHaveBeenCalledWith([layer.id], {
+        layerId: layer.id,
+        tStartUs: 0,
+      });
     });
     // The one create-and-move operation, never decomposed into add-then-move.
     expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
     expect(ipcMocks.addTrack).not.toHaveBeenCalled();
+  });
+
+  it("carries a raise's horizontal travel onto the new lane", () => {
+    // The regression this guards: the strip used to pin `deltaUs` to 0, so a
+    // clip dragged diagonally into it snapped back to where it started at the
+    // moment the pointer crossed the seam — the one destination in the timeline
+    // that did not stay under the hand carrying it.
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, tail_snap_enabled: false },
+    }));
+    const { container, getByText } = renderTimeline({
+      selectedLayerId: layer.id,
+    });
+    const strip = stubRaiseLayout(container);
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+    // Up into the strip AND 3 px right — one frame at 80 px/s and 30 fps.
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 40 });
+    fireEvent.pointerMove(window, { clientX: 83, clientY: 7 });
+
+    // The promise is on screen before release: the chip has moved, and the
+    // strip's hint sits at the head it is about to land on.
+    expect(block.style.left).toBe(`${(33_333 / 1_000_000) * 80}px`);
+    expect(stripState(strip).lit).toBe("true");
+
+    fireEvent.pointerUp(window, { clientX: 83, clientY: 7 });
+
+    return waitFor(() => {
+      expect(ipcMocks.moveLayersToNewTrack).toHaveBeenCalledWith([layer.id], {
+        layerId: layer.id,
+        tStartUs: 33_333,
+      });
+    });
   });
 
   it("raises a whole link onto the ONE new lane", async () => {
@@ -1959,10 +1998,13 @@ describe("Timeline seek/selection coupling", () => {
 
     // The drag's own subject set, exactly as a cross-lane move would carry it.
     await waitFor(() => {
-      expect(ipcMocks.moveLayersToNewTrack).toHaveBeenCalledWith([
-        layer.id,
-        linkedLayer.id,
-      ]);
+      expect(ipcMocks.moveLayersToNewTrack).toHaveBeenCalledWith(
+        [layer.id, linkedLayer.id],
+        // One landing positions the whole set — the seed's. Every other member
+        // holds its phase to it, which is the mutation's contract, not a second
+        // number the drag has to send.
+        { layerId: layer.id, tStartUs: 0 },
+      );
     });
   });
 

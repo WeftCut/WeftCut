@@ -251,13 +251,16 @@ ADR 0052), never a link.
   supplies the link's members (or the clicked layer alone when escaped), and an
   agent names the layers it means.
 - **Raise to a new track** is not a fan-out: `move_layers_to_new_track` moves
-  exactly the layers it is handed, onto one fresh lane, with every time carried
-  verbatim — there is no delta for a member to follow. What differs between its
-  two entry points is only which layers they name. The **Move to a new track**
-  command names the selection; a clip dragged into the **drop strip** names the
-  drag's subject set, so a linked clip takes its link up with it and every
-  member changes lane, unlike a plain Move (above), where only the targeted layer
-  does.
+  exactly the layers it is handed, onto one fresh lane. Its two entry points
+  differ in which layers they name *and* in whether they name a time. The
+  **Move to a new track** command names the selection and no time, so every clip
+  keeps the moment it was already at — a menu shows no ghost, and may not move a
+  clip somewhere the editor never saw. A clip dragged into the **drop strip**
+  names the drag's subject set and the landing under the pointer: the clip stays
+  under the hand that carried it there, exactly as it does on any other lane. One
+  member is the anchor and the rest hold their phase to it, so a linked clip takes
+  its link up with it and every member changes lane — unlike a plain Move (above),
+  where only the targeted layer does.
 - **Locks reject the whole op:** if a fan-out would touch a member with
   `locked == true` — or any layer on a `Track.locked` track — the op fails
   with `LinkLockedMember` / `TrackLocked` rather than partially applying.
@@ -483,7 +486,11 @@ operation. The destination Panel owns the drop, because ownership follows the
 coordinate system: zoom, scroll, the frame grid, the snapping targets and the
 lane geometry are all per Panel, so only the composition under the pointer can
 turn that pointer into a lane and a time, and it is the Panel that sends the
-command. It draws its own ghost for a clip it holds no data for — the kind's
+command. **The clip stays under the grab point** the way it does at home: the
+pointer names where inside the clip the editor took hold, not the clip's head, so
+crossing the seam does not shift it. What travels is a duration rather than a
+distance in pixels, which is why the source Panel's zoom does not distort it. It
+draws its own ghost for a clip it holds no data for — the kind's
 colour, the clip's name, and the footprint recomputed at THIS Panel's zoom,
 since the source's width would be a lie about the duration here; no filmstrip,
 waveform, link chrome or transition chip, because none of them answers what the
@@ -705,6 +712,9 @@ low-frequency operation. **Move to a new track** is the same operation without a
 pointer (search palette, Edit menu, and a clip's own context menu; no default
 binding, disabled when the selection would overlap itself on one lane). A drag
 gesture is unreachable from the keyboard, so the command is not a convenience.
+The one thing it does not carry is a time: a raise **may** name where the set
+lands, and the drag does because its ghost showed the editor that landing, while
+the command leaves every clip where it was.
 
 **Cleanup is one sentence: a track disappears when its last layer leaves it.** A
 track that was *born* empty was never emptied, so one an agent creates on purpose

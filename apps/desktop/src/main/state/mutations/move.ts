@@ -107,26 +107,50 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
  *  repeating this, and every repetition has to clean up after itself, which is
  *  the rule this file already owns.
  *
- *  Each layer keeps its `t_start_us` / `t_end_us` verbatim. No re-snap: an
- *  endpoint grid follows the layer's KIND, not its track, so times that were
- *  canonical stay canonical. That is also why `applyDurationAutofit` is NOT
- *  called — nothing is added, removed or retimed, so `max(t_end_us)` cannot
- *  move, and running it would fold unrelated duration drift into this entry.
+ *  `anchor` decides whether the raise is also a MOVE, and it is the whole of the
+ *  difference between this op's two entry points:
+ *
+ *  - `null` — no opinion. Every layer keeps its `t_start_us` / `t_end_us`
+ *    verbatim, with no re-snap: an endpoint grid follows the layer's KIND, not
+ *    its track, so times that were canonical stay canonical, and a set the
+ *    caller never retimed must not drift on the way up. `applyDurationAutofit`
+ *    is skipped for the same reason — nothing is added, removed or retimed, so
+ *    `max(t_end_us)` cannot move, and running it would fold unrelated duration
+ *    drift into this entry. This is the *Move to a new track* command's shape: a
+ *    menu has no ghost, so it may not silently name a time the user did not see.
+ *  - `{ layerId, tStartUs }` — the drag's landing. `layerId` lands on
+ *    `tStartUs`, every other member holds its phase to it, and the whole set
+ *    then re-snaps on each member's own lattice. Homomorphic with
+ *    `applyMoveLayer` (an ABSOLUTE time, floored as a body at 0) rather than
+ *    with `applyMoveLayersToComposition` (absolute, but REFUSED before 0): both
+ *    of those are the rule for a move that stays inside one composition, which
+ *    is what a raise is. The drop strip resolves the number from the pointer,
+ *    which is the only value current enough to compute an absolute time from.
  *
  *  Two same-class layers landing on top of each other is left to `validate`
  *  (`LayerOverlap`), which runs after this inside `commit`. The command's
  *  `enabled` predicate prevents that request up front; re-checking it here would
- *  give one rule two homes to drift between.
+ *  give one rule two homes to drift between. A landing cannot introduce one the
+ *  verbatim raise would not have had: the shift is uniform, so members that did
+ *  not overlap before still do not.
  *
  *  Link membership is untouched: `c.links` names layer ids and no invariant
  *  ties a link to a track, so the caller's explicit selection moves and nothing
- *  is dragged along — unlike `applyMoveLayer`, which has a time delta for
- *  siblings to follow. The set is one composition's (CrossCompositionSet
- *  otherwise): the lane is minted there. */
-export function applyMoveLayersToNewTrack(p: Project, idGen: IdGen, layerIds: readonly Uuid[]): Uuid {
+ *  is dragged along — unlike `applyMoveLayer`, which fans a time delta out to
+ *  siblings the caller did not name. The set is one composition's
+ *  (CrossCompositionSet otherwise): the lane is minted there. */
+export function applyMoveLayersToNewTrack(
+  p: Project,
+  idGen: IdGen,
+  layerIds: readonly Uuid[],
+  anchor: { layerId: Uuid; tStartUs: number } | null = null,
+): Uuid {
   const ids = [...new Set(layerIds)]
   if (ids.length === 0) throw new CommandFailure({ error: 'InvalidArgument', field: 'layers', detail: 'at least one layer is required' })
   const c = requireSameComposition(p, ids)
+  if (anchor !== null && !ids.includes(anchor.layerId))
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'anchor_layer_id',
+      detail: `layer ${anchor.layerId} is not in the raised set, so there is nothing for ${anchor.tStartUs} µs to position` })
   // Locate and lock-check EVERY layer before the lane is minted, so a refusal
   // burns no id. The distinct source ids are read here, while the layers are
   // still on them: pruning needs the lanes they LEFT, and one raise can empty
@@ -136,6 +160,26 @@ export function applyMoveLayersToNewTrack(p: Project, idGen: IdGen, layerIds: re
     const { track } = checkTrackLock(p, id) // LayerNotFound, then TrackLocked
     if (!sourceTrackIds.includes(track.id)) sourceTrackIds.push(track.id)
   }
+
+  // ── Where the set lands ─────────────────────────────────────────────────────
+  // `applyMoveLayer`'s two steps, from the module both sides share
+  // (`renderer/grid.ts`), so the drop strip's ghost and this landing are the
+  // same numbers rather than two roundings of one intention. Empty for a
+  // verbatim raise, which is what keeps "no opinion means no re-snap" a fact
+  // about the code rather than a promise in a comment.
+  const landings = anchor === null ? null : (() => {
+    const movers: ShiftMember[] = ids
+      .map((id) => locateLayerIn(c, id)!.layer) // located by the lock walk above
+      .map((l) => ({ id: l.id, kind: l.params.kind, tStartUs: l.t_start_us, tEndUs: l.t_end_us }))
+    const seed = locateLayerIn(c, anchor.layerId)!.layer
+    // The requested start snaps on the ANCHOR's own grid first, then the delta
+    // it implies carries the set — the same order `applyMoveLayer` uses, and the
+    // reason a set dragged toward zero stops as one body instead of flattening
+    // its phase against the boundary.
+    const snapped = snapOnGrid(anchor.tStartUs, gridForLayerKind(seed.params.kind, c.fps))
+    return shiftOnGrids(movers, floorShiftAtZero(movers, snapped - seed.t_start_us), c.fps)
+  })()
+
   // `label: null` lets the renderer derive the name — a literal written here
   // could never be localized (ADR 0042).
   const trackId = applyAddTrack(p, idGen, null, undefined, c.id)
@@ -143,11 +187,18 @@ export function applyMoveLayersToNewTrack(p: Project, idGen: IdGen, layerIds: re
   for (const id of ids) {
     const loc = locateLayerIn(c, id)! // verified above, and nothing has removed it
     const layer = loc.track.layers.splice(loc.layerIndex, 1)[0]
+    const landed = landings?.get(id)
+    if (landed) {
+      layer.t_start_us = landed.tStartUs
+      layer.t_end_us = landed.tEndUs
+    }
     const at = dest.layers.findIndex((l) => l.t_start_us > layer.t_start_us)
     dest.layers.splice(at < 0 ? dest.layers.length : at, 0, layer)
   }
   // Once per DISTINCT source lane, on settled state: a multi-clip raise off two
   // lanes has to take both with it, in this same history entry.
   for (const srcTrackId of sourceTrackIds) pruneEmptiedTrack(c, srcTrackId)
+  // Only when this call actually retimed something — see the `anchor` contract.
+  if (landings !== null) applyDurationAutofit(c)
   return trackId
 }

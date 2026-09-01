@@ -774,15 +774,29 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'add_marker': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 }, comp, undefined, (a.anchor as MarkerAnchor | null | undefined) ?? null)) } }
         case 'move_layer': commit(HISTORY_SUMMARY.layerMove, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_link as boolean) ?? false)); return { ok: true, value: null }
         // move_layers_to_new_track — the whole of z-order rearrangement (ADR 0042
-        // decision 2). ONE commit: the lane is minted, the layers move onto it
-        // keeping their times, and every lane the raise emptied goes with them, so
-        // one undo restores all of it. `affected` takes commit's function form
-        // because the lane's id is minted inside the recipe.
+        // decision 2). ONE commit: the lane is minted, the layers move onto it,
+        // and every lane the raise emptied goes with them, so one undo restores
+        // all of it. `affected` takes commit's function form because the lane's
+        // id is minted inside the recipe.
+        //
+        // `anchor_layer_id` + `t_start_us` are the drop strip's landing and travel
+        // TOGETHER: the pair is one value on the wire's flat shape, so half of it
+        // is a malformed request rather than a defaultable field. Both absent is
+        // the raise that names no time (the *Move to a new track* command's).
         case 'move_layers_to_new_track': {
           const layers = a.layers as Uuid[]
+          const anchorLayerId = (a.anchor_layer_id as Uuid | null | undefined) ?? null
+          const anchorTStartUs = parseNumOpt(a.t_start_us, 't_start_us') ?? null
+          if ((anchorLayerId === null) !== (anchorTStartUs === null)) {
+            return { ok: false, error: { error: 'InvalidArgument', field: anchorLayerId === null ? 'anchor_layer_id' : 't_start_us',
+              detail: 'a landing needs both anchor_layer_id and t_start_us; omit both to keep every time verbatim' } }
+          }
+          const anchor = anchorLayerId === null || anchorTStartUs === null
+            ? null
+            : { layerId: anchorLayerId, tStartUs: anchorTStartUs }
           return { ok: true, value: commit(HISTORY_SUMMARY.layerMoveToNewTrack,
             (newTrackId: Uuid) => [...layerRefs(layers), { kind: 'Track', id: newTrackId }],
-            { kind: 'Coarse' }, (d) => applyMoveLayersToNewTrack(d, idGen, layers)) }
+            { kind: 'Coarse' }, (d) => applyMoveLayersToNewTrack(d, idGen, layers, anchor)) }
         }
         // restack_layer — anchored z-reorder (ADR 0044): ONE commit. Degradation
         // and the destination-or-null return contract are applyRestackLayer's

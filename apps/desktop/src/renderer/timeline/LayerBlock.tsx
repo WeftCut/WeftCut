@@ -627,10 +627,8 @@ export function LayerBlock({
       onBladeSplit(layer, e.clientX);
       return;
     }
-    const zone = edgeZoneFor(
-      e.clientX,
-      e.currentTarget.getBoundingClientRect(),
-    );
+    const blockRect = e.currentTarget.getBoundingClientRect();
+    const zone = edgeZoneFor(e.clientX, blockRect);
     const kind: DragKind =
       zone === "left" ? "trim-start" : zone === "right" ? "trim-end" : "move";
     // Snapshotted BEFORE the click's selection applies — see
@@ -656,6 +654,11 @@ export function LayerBlock({
       trackKind,
       startX: e.clientX,
       startY: e.clientY,
+      // Converted to time HERE, where this Panel's zoom is in scope. Carrying
+      // the px would hand a Panel at another zoom a number it cannot read, which
+      // is exactly why the crossing used to drop the grab point altogether.
+      grabOffsetUs:
+        pxPerSec > 0 ? ((e.clientX - blockRect.left) / pxPerSec) * 1_000_000 : 0,
       originalTStart: layer.t_start_us,
       originalTEnd: layer.t_end_us,
       deltaUs: 0,

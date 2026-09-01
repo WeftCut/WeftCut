@@ -256,9 +256,10 @@ _Avoid_: lasso (it is not a freeform lasso), box select, rubber band, drag-selec
 Moving a clip onto a fresh track at the top of the z-stack —
 `move_layers_to_new_track`, reachable by dragging into the drop strip or by the
 *Move to a new track* command. The spawn-at-top gesture, and only that —
-anchored reordering is *Restack*. Each raise empties its source track, which
-cleanup then removes. One history entry, so one undo restores clip and track
-together.
+anchored reordering is *Restack*. A raise may also name a landing time, and the
+drag does while the command does not; without one every clip keeps the moment it
+was already at. Each raise empties its source track, which cleanup then removes.
+One history entry, so one undo restores clip and track together.
 _Avoid_: add track and move, promote, bring to front, reorder tracks, restack
 
 **Restack**:

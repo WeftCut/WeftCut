@@ -1368,14 +1368,25 @@ export async function moveLayer(
   });
 }
 
-/// Raise layers onto one fresh lane at the top of the z-stack — the "Move to a
-/// new track" command (ADR 0042). One commit: the lane appears, every listed
-/// layer moves onto it keeping its times, and every lane the raise emptied goes
-/// with it, so one undo restores all of them. Returns the new track's id.
+/// Raise layers onto one fresh lane at the top of the z-stack (ADR 0042). One
+/// commit: the lane appears, every listed layer moves onto it, and every lane
+/// the raise emptied goes with it, so one undo restores all of them. Returns the
+/// new track's id.
+///
+/// `anchor` is the drop strip's landing — its layer's head goes to `tStartUs`
+/// and every other member holds its phase. Omit it to keep every time verbatim,
+/// which is the *Move to a new track* command's shape: a menu has no ghost, so
+/// it may not name a time the user never saw. One object rather than two loose
+/// arguments because half a landing is not a request.
 export async function moveLayersToNewTrack(
   layerIds: string[],
+  anchor?: { layerId: string; tStartUs: number } | null,
 ): Promise<string> {
-  return invoke<string>("move_layers_to_new_track", { layerIds });
+  return invoke<string>("move_layers_to_new_track", {
+    layerIds,
+    anchorLayerId: anchor?.layerId ?? null,
+    anchorTStartUs: anchor?.tStartUs ?? null,
+  });
 }
 
 /// Restack a visual layer directly above/below an anchor layer in the z-stack

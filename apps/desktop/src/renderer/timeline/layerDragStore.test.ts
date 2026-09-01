@@ -58,6 +58,7 @@ function stateAt(
     trackKind: "Video",
     startX: 100,
     startY: 50,
+    grabOffsetUs: 0,
     originalTStart: 0,
     originalTEnd: 1_000_000,
     deltaUs,

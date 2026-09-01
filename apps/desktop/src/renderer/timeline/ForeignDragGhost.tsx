@@ -252,13 +252,27 @@ function resolveForeignDrop(
     drag.subjects[0];
   if (anchor === undefined) return null;
 
-  // The anchor's HEAD lands under the pointer. The grab offset — where inside
-  // the clip the user took hold — is deliberately not carried across: it is a px
-  // quantity measured at the source Panel's zoom, so re-applying it here would
-  // name an arbitrary time on a Panel that does not share that zoom.
+  // The clip stays where the user took hold of it: the pointer names the GRAB
+  // POINT and the head sits that far behind it, which is what the drag already
+  // does at home — `deltaUs` is measured from `startX`, so the grab point is
+  // preserved structurally there. The offset crosses as a DURATION, so the
+  // source Panel's zoom never reaches this arithmetic; that is the same property
+  // that lets the set's phase and each clip's length cross, and dropping the
+  // offset instead is what used to make the clip jump the moment the pointer
+  // entered this Panel.
+  //
+  // The anchor IS the seed — `buildDragSubjects` always includes it — so the
+  // guard covers only the defensive fallback above, whose head belongs to a
+  // different clip than the one the offset was measured on.
+  const grabOffsetUs =
+    anchor.layerId === drag.layerId ? drag.grabOffsetUs : 0;
   const pointerUs =
     ((pointer.clientX - canvasRect.left) / pxPerSec) * 1_000_000;
-  const griddedUs = snapFrameRound(pointerUs, fpsNum, fpsDen);
+  // Subtracted BEFORE the grid, never after: a head snapped to this
+  // composition's lattice and then shifted by an off-lattice offset is off the
+  // lattice, `applyMoveLayersToComposition` re-snaps it on the other side of the
+  // commit, and the clip lands a frame from where the ghost drew it.
+  const griddedUs = snapFrameRound(pointerUs - grabOffsetUs, fpsNum, fpsDen);
   // The subject's own `originalTStart` is a SOURCE-composition time, and it is
   // used as an algebraic pivot only: the helper's delta is measured from it and
   // added straight back, so it cancels and every surviving number is this

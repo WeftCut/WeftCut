@@ -70,6 +70,16 @@ export interface DragSeed {
   trackKind: string;
   startX: number;
   startY: number;
+  /// How far INTO the seed clip the user took hold, as a DURATION. Converted
+  /// from px at pointerdown, where the source Panel's zoom is known, because px
+  /// is the one part of a grab that cannot cross a Panel — a duration is the
+  /// same number on any axis, exactly as `DragSubject`'s phase and lengths are.
+  ///
+  /// Only the cross-Panel resolution reads it (`ForeignDragGhost.tsx`). The
+  /// in-composition drag preserves the grab point structurally, `deltaUs` being
+  /// measured from `startX` rather than from the clip's head, so a second reader
+  /// here would be a second chance to disagree with that.
+  grabOffsetUs: number;
   originalTStart: number;
   originalTEnd: number;
   deltaUs: number;
@@ -242,8 +252,8 @@ export const useLayerDragStore = create<LayerDragStore>((set) => ({
 //     the pointer just left (`useLayerDragForTrack`) — the last of those
 //     renders once more, to drop the chrome it was drawing, and then goes quiet;
 //   - the drop strip, but only while the pointer is over it, and then only if
-//     the clip head moves — which a raise never lets it do (`deltaUs` is pinned
-//     to 0 over the strip).
+//     the clip head moves — a raise takes a landing, so the head does move and
+//     the strip renders at the rate its hint slides.
 //
 // Every other lane, block, chip and sub-lane sees an unchanged `null` and does
 // not render. `Timeline.tsx` subscribes only to booleans and to `subjects`,
@@ -344,8 +354,14 @@ export const useForeignDropStripAnchorUs = (
 /// The dragged clip's head, in this composition's µs, while the drop strip is
 /// the resolved destination — null otherwise, which is also the strip's answer
 /// to "is a clip drag over me". Gated so a drag that never reaches the strip
-/// does not re-render it, and exact because a raise carries times verbatim:
-/// `deltaUs` is pinned to 0 over the strip, so this head is where the clip lands.
+/// does not re-render it.
+///
+/// `constrainedAnchorUs`'s formula for a move, one re-snap short of the head the
+/// commit sends: `buildMoveProjection` puts that through the anchor's own
+/// lattice and this does not, the projection being the drag hook's and not this
+/// store's. The difference is sub-frame and its only reader positions the
+/// strip's hint, which cannot show it — do NOT reach for this number where a
+/// landing is what is wanted.
 ///
 /// The composition gate is what makes "in this composition's µs" true: the head
 /// is on the DRAG's axis, and only the Panel the drag started in shares it.

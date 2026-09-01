@@ -176,3 +176,71 @@ describe('applyMoveLayer inside a Group', () => {
     expect(root(p).tracks).toHaveLength(rootTracks)
   })
 })
+
+/// `anchor` is the whole of the difference between the raise's two entry points:
+/// the *Move to a new track* command names no time and must not invent one, the
+/// drop strip resolves one from the pointer and the clip has to land on it.
+describe('applyMoveLayersToNewTrack: the landing', () => {
+  /// Two clips two seconds apart, on two lanes — the shape that makes both
+  /// "every member moves by the same delta" and "the raise empties more than one
+  /// lane" observable at once. Returns them in time order.
+  function twoLanes() {
+    const g = seededGen(); const p = blankProject(g, 't')
+    const a = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 1_000_000, 2_000_000)
+    const b = applyAddLayer(p, g, root(p).tracks[1].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 3_000_000, 4_000_000)
+    return { p, g, a, b }
+  }
+  const spans = (p: ReturnType<typeof twoLanes>['p'], trackId: string) =>
+    root(p).tracks.find((t) => t.id === trackId)!.layers.map((l) => [l.id, l.t_start_us, l.t_end_us])
+
+  it('carries every time verbatim when no anchor is named — an off-lattice one included', () => {
+    const { p, g, a } = twoLanes()
+    // Deliberately off the 30 fps lattice. An endpoint's grid follows the
+    // layer's KIND and not its track, so a raise that re-snapped would move a
+    // time the caller never asked about — the reason the verbatim path takes no
+    // shift at all rather than a zero one.
+    root(p).tracks[0].layers[0].t_start_us = 40_000
+    root(p).tracks[0].layers[0].t_end_us = 1_040_000
+    const lane = applyMoveLayersToNewTrack(p, g, [a])
+    expect(spans(p, lane)).toEqual([[a, 40_000, 1_040_000]])
+  })
+
+  it('lands the anchor and holds every other member to its phase', () => {
+    const { p, g, a, b } = twoLanes()
+    const lane = applyMoveLayersToNewTrack(p, g, [a, b], { layerId: a, tStartUs: 2_000_000 })
+    // A moved +1 s; B is still 2 s behind it, and both are on the one new lane.
+    expect(spans(p, lane)).toEqual([[a, 2_000_000, 3_000_000], [b, 4_000_000, 5_000_000]])
+    // Both source lanes emptied. They are the RESERVED skeleton, which the prune
+    // leaves standing (`transient && !locked`), so what the raise proves here is
+    // that it emptied them — not that it removed them.
+    expect(root(p).tracks.at(-1)!.id).toBe(lane)
+    expect(root(p).tracks.slice(0, -1).flatMap((t) => t.layers)).toEqual([])
+  })
+
+  it('snaps the requested head onto the grid before the set follows it', () => {
+    const { p, g, a } = twoLanes()
+    // Half a frame past frame 60 at 30 fps. The anchor's own grid decides, and
+    // the delta the set travels is measured from the SNAPPED head — sending the
+    // raw one would land the clip off the ghost that promised it.
+    const lane = applyMoveLayersToNewTrack(p, g, [a], { layerId: a, tStartUs: 2_016_000 })
+    expect(spans(p, lane)).toEqual([[a, 2_000_000, 3_000_000]])
+  })
+
+  it('floors the set at zero as one body, not member by member', () => {
+    const { p, g, a, b } = twoLanes()
+    // Ask for the LATER clip at 0: the delta that would put it there takes the
+    // earlier one to −2 s, so the whole set stops where the earliest member hits
+    // zero. Clamping per member would flatten the 2 s between them.
+    const lane = applyMoveLayersToNewTrack(p, g, [a, b], { layerId: b, tStartUs: 0 })
+    expect(spans(p, lane)).toEqual([[a, 0, 1_000_000], [b, 2_000_000, 3_000_000]])
+  })
+
+  it('refuses an anchor that is not in the raised set, before minting a lane', () => {
+    const { p, g, a, b } = twoLanes()
+    const before = structuredClone(p)
+    try { applyMoveLayersToNewTrack(p, g, [a], { layerId: b, tStartUs: 0 }); throw new Error('x') }
+    catch (e) { expect(isCommandFailure(e) && e.err).toMatchObject({ error: 'InvalidArgument', field: 'anchor_layer_id' }) }
+    // Byte-identical: a refusal burns no id and leaves no half-built lane.
+    expect(p).toEqual(before)
+  })
+})

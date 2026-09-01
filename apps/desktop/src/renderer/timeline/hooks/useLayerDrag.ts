@@ -554,11 +554,15 @@ export function useLayerDrag(opts: {
         overTrackId !== null && trackAcceptsForLayer(overTrackId, state)
           ? overTrackId
           : state.trackId;
-      // A raise takes the WHOLE subject set onto the one new lane and carries
-      // every time verbatim: `move_layers_to_new_track` has no delta for a
-      // sibling to follow. Projecting them all onto `SPAWN_TRACK_ID` is exactly
-      // the question "could one empty lane hold them" — which is what makes a set
-      // that would overlap itself there answer `"collision"` and refuse.
+      // A raise takes the WHOLE subject set onto the one new lane, where a
+      // landing move re-lanes the anchor alone. Projecting them all onto
+      // `SPAWN_TRACK_ID` is exactly the question "could one empty lane hold
+      // them" — which is what makes a set that would overlap itself there answer
+      // `"collision"` and refuse.
+      //
+      // TIME is not part of that difference any more: `move_layers_to_new_track`
+      // takes a landing, so a raise reads the same shift a landing move does and
+      // the strip's ghost slides with the pointer like every other destination.
       const spawning = destinationTrackId === SPAWN_TRACK_ID;
       const projected: TimelinePlacement[] = [];
 
@@ -566,16 +570,12 @@ export function useLayerDrag(opts: {
         const entry = layerEntryById.get(subject.layerId);
         if (!entry) continue;
         const isAnchor = subject.layerId === state.layerId;
-        // A raise carries every time VERBATIM — `move_layers_to_new_track` has no
-        // delta at all — so only a landing move reads the shift.
-        const landed = landings.get(subject.layerId);
-        const tStartUs = spawning ? subject.originalTStart : landed!.tStartUs;
-        const tEndUs = spawning ? subject.originalTEnd : landed!.tEndUs;
+        const landed = landings.get(subject.layerId)!;
         projected.push({
           layerId: subject.layerId,
           trackId: spawning || isAnchor ? destinationTrackId : subject.trackId,
-          tStartUs,
-          tEndUs,
+          tStartUs: landed.tStartUs,
+          tEndUs: landed.tEndUs,
           overlapClass: layerOverlapClass(entry.layer),
           // The SOURCE lane's lock speaks too. With a real destination the target
           // lane's own lock already refuses — a sibling's destination IS its
@@ -681,19 +681,19 @@ export function useLayerDrag(opts: {
 
       const hasEditIntent = timeChanged || trackChanged;
       // A purely vertical move preserves time. In particular, do not let its
-      // zero horizontal delta be attracted to the playhead. A raise onto the
-      // strip preserves it too, whatever the pointer did horizontally: the commit
-      // carries times verbatim, so a ghost that slid would promise an edit
-      // `move_layers_to_new_track` cannot make.
+      // zero horizontal delta be attracted to the playhead.
+      //
+      // The drop strip is NOT one of these cases: it takes a landing like any
+      // other destination, so the clip stays under the hand that carried it
+      // there rather than snapping back to where it started.
+      //
       // Over another Panel the ghost freezes where the clip already is: this
       // Panel has no reading of a pointer outside it, and the DESTINATION draws
       // the preview that does (`ForeignDragGhost.tsx`). Dragging back into this
       // Panel picks the delta up again — the whole gesture is recomputed from
       // the pointer each event.
       const deltaUs =
-        timeChanged &&
-        destinationTrackId !== SPAWN_TRACK_ID &&
-        foreignCompositionId === null
+        timeChanged && foreignCompositionId === null
           ? snapDeltaToTimelineBoundary(state, frameDeltaUs)
           : 0;
       const moveProjection =
@@ -859,15 +859,26 @@ export function useLayerDrag(opts: {
               // add-track + move — that is two entries and a stranded lane if the
               // second half fails.
               //
-              // A bridge is keyed by destination track id and this destination
-              // has no id until the commit returns, so one written here could
-              // match no lane and would never clear. Nothing to bridge either —
-              // times are carried verbatim, so the only change is which row the
-              // clip sits on. Any bridge an earlier gesture left is dropped for
-              // the same reason: the raise moves its subjects out from under it.
+              // No bridge, and this one is a REAL cost rather than a nicety
+              // declined: a placement promise is keyed by destination track id
+              // and this destination has no id until the commit returns, so one
+              // written here could match no lane and would never clear. A raise
+              // that also retimes therefore shows the clip at its old time for
+              // the round trip, where a landing move covers that gap. Any bridge
+              // an earlier gesture left is dropped for the same reason: the raise
+              // moves its subjects out from under it.
               setPendingCommit(null);
+              // The anchor's LANDED head, not `originalTStart + deltaUs`: the
+              // projection re-snapped it on the anchor's own lattice, and that is
+              // the number every ghost above was drawn against. Sending the
+              // unsnapped one would hand the command a different offset and land
+              // the set off its own preview.
               const spawnedTrackId = await moveLayersToNewTrack(
                 committed.subjects.map((subject) => subject.layerId),
+                {
+                  layerId: committed.layerId,
+                  tStartUs: moveProjection.anchorStartUs,
+                },
               );
               onLaneSpawned(spawnedTrackId);
               break;

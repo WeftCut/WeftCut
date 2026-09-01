@@ -12,13 +12,16 @@ const FIXTURE = path.resolve(__dirname, '../fixtures/media/test_chart_320x240.pn
 
 interface RaiseSummary {
   history: { len: number }
-  tracks: Array<{ id: string; role: string | null; layers: Array<{ id: string }> }>
+  tracks: Array<{ id: string; role: string | null; layers: Array<{ id: string; t_start_us: number }> }>
 }
 
 const raiseSummary = (page: Page) => rootSummary<RaiseSummary>(page)
 
 const laneHolding = (s: RaiseSummary, layerId: string): string | null =>
   s.tracks.find((t) => t.layers.some((l) => l.id === layerId))?.id ?? null
+
+const startOf = (s: RaiseSummary, layerId: string): number =>
+  s.tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)!.t_start_us
 
 test.describe('timeline drop strip — an existing clip', () => {
   test.skip(
@@ -35,7 +38,13 @@ test.describe('timeline drop strip — an existing clip', () => {
   // every unit test in this repo for as long as it existed), and whether the
   // gesture stayed ONE history entry is the cheapest guard against it quietly
   // decomposing back into add-track-then-move.
-  test('dragged onto the strip spawns a lane, moves the clip, and removes the lane it left', async () => {
+  //
+  // The drag is DIAGONAL, and that is the third property: a raise carries a
+  // landing, so the clip has to arrive where the pointer left it. This is the
+  // only gate that watches horizontal travel survive the whole chain — the
+  // ghost's arithmetic, the wire's `anchor_layer_id` + `t_start_us` pair, and
+  // the mutation's shift — into the project the app actually holds.
+  test('dragged onto the strip spawns a lane, lands the clip where the pointer left it, and removes the lane it left', async () => {
     test.setTimeout(90_000)
     const { app, page } = await launchApp()
     try {
@@ -78,10 +87,13 @@ test.describe('timeline drop strip — an existing clip', () => {
       // Real mouse input, one protocol round trip per step. Firing the three
       // events in one page task would leave React uncommitted between them, so
       // the drag the pointerdown began would not exist yet when the move arrived.
-      const dragX = clipBox.x + clipBox.width / 2
-      await page.mouse.move(dragX, clipBox.y + clipBox.height / 2)
+      const grabX = clipBox.x + clipBox.width / 2
+      // Far enough right that the playhead at 0 cannot pull the landing back:
+      // tail snapping is on by default and its radius is a few px.
+      const dropX = grabX + 120
+      await page.mouse.move(grabX, clipBox.y + clipBox.height / 2)
       await page.mouse.down()
-      await page.mouse.move(dragX, stripBox.y + stripBox.height / 2)
+      await page.mouse.move(dropX, stripBox.y + stripBox.height / 2)
 
       // The intermediate state, asserted with the button still down: the strip
       // lights from a drag that publishes to no media-drag store, which is the
@@ -111,6 +123,11 @@ test.describe('timeline drop strip — an existing clip', () => {
       // Nothing else moved, and no second lane was minted on the way.
       expect(after.tracks.flatMap((t) => t.layers).map((l) => l.id)).toEqual([layerId])
       expect(after.history.len).toBe(before.history.len + 1)
+      // And it went WITH the pointer. An exact microsecond would pin this to a
+      // zoom the spec does not set; what must never come back is the old
+      // behaviour, where the strip pinned the delta to 0 and the clip snapped
+      // home the instant the pointer crossed the seam.
+      expect(startOf(after, layerId)).toBeGreaterThan(startOf(before, layerId))
     } finally {
       await app.close()
     }

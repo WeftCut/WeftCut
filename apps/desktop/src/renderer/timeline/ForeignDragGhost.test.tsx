@@ -162,6 +162,9 @@ function dragState(over: Partial<DragState> = {}): DragState {
     trackKind: "Video",
     startX: 200,
     startY: 60,
+    // Taken by the head, so every landing below reads as "the head is where the
+    // pointer is". The offset's own effect gets its own case.
+    grabOffsetUs: 0,
     originalTStart: ANCHOR.originalTStart,
     originalTEnd: ANCHOR.originalTEnd,
     deltaUs: 0,
@@ -299,6 +302,28 @@ describe("ForeignDragGhost", () => {
       String(LANDING_AT_30FPS),
     );
     expect(LANDING_AT_30FPS % 40_000).not.toBe(0);
+  });
+
+  it("keeps the clip under the grab point the user took hold of", () => {
+    // 0.8 s into the 2 s anchor. A DURATION, so the source Panel's 25 px/s never
+    // enters the arithmetic — the same pointer would name the same head at any
+    // source zoom, which is what makes carrying it across legitimate.
+    const view = mountGhost({
+      drag: { grabOffsetUs: 800_000, subjects: [ANCHOR, PARTNER] },
+      pointer: OVER_LANE_2,
+    });
+
+    const [first, second] = view.ghosts();
+    // 1.33 s under the pointer, less the 0.8 s grab, snapped on the
+    // destination's 40 000 µs lattice — not the 1.32 s a head-under-pointer
+    // landing gives, and the difference IS the jump this removes.
+    expect(first!.dataset.startUs).toBe("520000");
+    expect(first!.dataset.startUs).not.toBe(String(LANDING_AT_25FPS));
+    // The offset positions the set; it does not disturb it. Still 2.5 s behind.
+    expect(second!.dataset.startUs).toBe(String(520_000 + 2_500_000));
+    // And the claim carries the same head the block was drawn at, so the release
+    // commits what the ghost promised.
+    expect(view.claim()?.anchorTStartUs).toBe(520_000);
   });
 
   it("reads an occupied span as a collision", () => {

@@ -1617,6 +1617,34 @@ describe('dispatch: move to a new track', () => {
     expect(lanes(actor)).toEqual(before)
   })
 
+  // The drop strip's half of the op: the raise carries a landing, so a clip
+  // dragged diagonally into the strip arrives where the ghost drew it rather
+  // than back where the drag began.
+  it('lands the set where the drop strip resolved it', () => {
+    const { actor, aRoll } = setup()
+    const clip = addClip(actor, aRoll, 1_000_000, 2_000_000)
+    const newLane = value(actor.dispatch('move_layers_to_new_track',
+      { layers: [clip], anchor_layer_id: clip, t_start_us: 3_000_000 }))
+    expect(clipsOn(actor, newLane).map((l) => [l.t_start_us, l.t_end_us])).toEqual([[3_000_000, 4_000_000]])
+  })
+
+  // Half a landing is a malformed request, not a defaultable field: the pair
+  // is one value that the wire's flat shape happens to carry in two slots.
+  it('refuses half a landing and mints no lane', () => {
+    const { actor, aRoll } = setup()
+    const clip = addClip(actor, aRoll)
+    const before = lanes(actor)
+    for (const args of [
+      { layers: [clip], anchor_layer_id: clip },
+      { layers: [clip], t_start_us: 3_000_000 },
+    ]) {
+      const r = actor.dispatch('move_layers_to_new_track', args)
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.error.error).toBe('InvalidArgument')
+    }
+    expect(lanes(actor)).toEqual(before)
+  })
+
   it('names the moved layers AND the new lane in the entry`s affected refs', () => {
     const { actor, aRoll } = setup()
     const clip = addClip(actor, aRoll)

@@ -64,6 +64,30 @@ describe('parseMechanical restack_layer', () => {
   })
 })
 
+// The one hop neither the mutation's tests nor the actor's reach: the renderer
+// hands `moveLayersToNewTrack` an `anchor` OBJECT so half a landing cannot be
+// written, and this is where that pair is flattened onto the wire. A typo in
+// either snake_case name would leave every other test in this repo green and
+// silently turn every raise back into a verbatim one.
+describe('parseMechanical move_layers_to_new_track', () => {
+  it('flattens the drop strip landing onto the wire', () => {
+    expect(
+      parseMechanical('move_layers_to_new_track', {
+        layerIds: ['layer-1', 'layer-2'], anchorLayerId: 'layer-1', anchorTStartUs: 33_333,
+      }),
+    ).toEqual({
+      op: 'move_layers_to_new_track',
+      args: { layers: ['layer-1', 'layer-2'], anchor_layer_id: 'layer-1', t_start_us: 33_333 },
+    })
+  })
+  it('sends both halves null for the raise that names no time', () => {
+    expect(parseMechanical('move_layers_to_new_track', { layerIds: ['layer-1'] })).toEqual({
+      op: 'move_layers_to_new_track',
+      args: { layers: ['layer-1'], anchor_layer_id: null, t_start_us: null },
+    })
+  })
+})
+
 describe('parseMechanical media removal', () => {
   it('maps the guarded and forced renderer paths to remove_media', () => {
     expect(parseMechanical('remove_media', { mediaId: 'media-1' })).toEqual({
