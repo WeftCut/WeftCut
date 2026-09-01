@@ -1126,6 +1126,9 @@ function TimelineTabContextMenu({
     <MenuPrimitive.Root
       open
       modal={false}
+      // A submenu lives in this menu, so the pointer-driven highlight has to go
+      // — see the LANDMINE on `SubMenu` in `menu/Menu.tsx`.
+      highlightItemOnHover={false}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}

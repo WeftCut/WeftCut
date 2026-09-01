@@ -310,6 +310,9 @@ export function LayerContextMenu({
   return (
     <MenuPrimitive.Root
       open
+      // A submenu lives in this menu, so the pointer-driven highlight has to go
+      // — see the LANDMINE on `SubMenu` in `menu/Menu.tsx`.
+      highlightItemOnHover={false}
       // Non-modal: no scroll lock — the scroll-close effect in Timeline
       // handles the anchored-to-stale-coordinates case instead.
       modal={false}

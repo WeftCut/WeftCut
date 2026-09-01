@@ -66,6 +66,9 @@ export function TransitionChipMenu({
       // Non-modal for the LayerContextMenu reason: the Timeline's
       // scroll-close effect handles anchored-to-stale-coordinates.
       modal={false}
+      // A submenu lives in this menu, so the pointer-driven highlight has to go
+      // — see the LANDMINE on `SubMenu` in `menu/Menu.tsx`.
+      highlightItemOnHover={false}
       onOpenChange={closeContextMenuOn(onClose)}
     >
       <MenuPrimitive.Portal>

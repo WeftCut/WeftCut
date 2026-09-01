@@ -173,6 +173,23 @@ interface SubMenuProps {
 /// opens to the trigger's right edge with no extra placement props. The
 /// trigger row reuses the .app-menu-item styles (plus a right chevron) so it
 /// lines up with plain items.
+///
+/// LANDMINE: a CONTEXT menu holding one of these must set
+/// `highlightItemOnHover={false}` on its Root, or the submenu is unreachable —
+/// it opens on hover and then closes the instant the pointer travels toward it.
+/// The chain, traced live: hover-highlight is Base UI's roving DOM FOCUS, so
+/// the trigger row holds focus; leaving that row fires `useListNavigation`'s
+/// `onPointerLeave`, which refocuses the parent popup; the submenu sees focus
+/// leave its trigger and dismisses itself with reason `focus-out`. The pointer
+/// crosses the parent's edge one pixel before it reaches the submenu, so the
+/// close always wins the race.
+///
+/// A menubar Menu does NOT need this and must not get it — only these detached
+/// `Menu.Root open` context menus reproduce it, which is why the fix is per-Root
+/// rather than built in here. The rows keep their hover feedback through
+/// `.app-menu-item:hover` in `styles/menu.css`; what is given up is hover
+/// setting the ARMED row, so Enter still acts on the arrow-key row, not the
+/// hovered one. On a menu opened by right-click that is the right trade.
 export function SubMenu({ label, disabled, children }: SubMenuProps) {
   return (
     <MenuPrimitive.SubmenuRoot>

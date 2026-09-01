@@ -91,10 +91,15 @@
   outline: none;
 }
 
-/* data-highlighted covers BOTH hover and keyboard navigation (Base UI
- * moves the highlight with ArrowUp/Down); data-disabled replaces
- * :disabled now that items render as divs, not buttons. */
-.app-menu-item[data-highlighted] {
+/* data-highlighted is set by keyboard navigation, and by hover on every menu
+ * that still lets Base UI move the highlight with the pointer. The context
+ * menus holding a submenu switch that off (see the LANDMINE on `SubMenu`), so
+ * :hover carries their row feedback instead — the two are deliberately styled
+ * the same, because which one paints a row is an implementation detail the
+ * user should never be able to see. data-disabled replaces :disabled now that
+ * items render as divs, not buttons. */
+.app-menu-item[data-highlighted],
+.app-menu-item:hover:not([data-disabled]) {
   background: var(--hover-neutral-strong);
 }
 
