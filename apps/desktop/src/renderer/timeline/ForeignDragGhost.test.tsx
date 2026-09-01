@@ -28,7 +28,7 @@ import {
   useLayerDragForTrack,
   useLayerDragStore,
   useIsLayerMoveDragging,
-  useLayerDragStripAnchorUs,
+  useLayerDragForStrip,
   useLayerMoveDragSubjects,
   type DragState,
   type DragSubject,
@@ -634,7 +634,7 @@ describe("ForeignDragGhost", () => {
       useLayerDragForTrack("d-1");
       useLayerDragFor("dest-standing");
       useIsLayerMoveDragging(DEST);
-      useLayerDragStripAnchorUs(DEST);
+      useLayerDragForStrip(DEST);
       useLayerMoveDragSubjects();
       probeRenders += 1;
       return null;

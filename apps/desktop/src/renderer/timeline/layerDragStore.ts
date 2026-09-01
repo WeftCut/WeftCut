@@ -16,7 +16,14 @@
 import { create } from "zustand";
 import type { LayerParamsView } from "../ipc";
 import { SPAWN_TRACK_ID, type PlacementValidity } from "./placement";
-import type { ShiftMember } from "../grid";
+import {
+  floorShiftAtZero,
+  gridForLayerKind,
+  shiftOnGrids,
+  snapOnGrid,
+  type RateLike,
+  type ShiftMember,
+} from "../grid";
 
 export type DragKind = "move" | "trim-start" | "trim-end";
 
@@ -33,6 +40,51 @@ export function shiftMembersOf(
     tStartUs: subject.originalTStart,
     tEndUs: subject.originalTEnd,
   }));
+}
+
+/// Where a live move's subject set lands, on the gesture's own axis.
+export interface MoveLandings {
+  /// Each subject's landed span, keyed by layer id. Every subject is present.
+  byLayerId: ReadonlyMap<string, { tStartUs: number; tEndUs: number }>;
+  /// The anchor's landed head — the ONE number that positions the whole set,
+  /// which is what both the commit and the strip's hint say out loud.
+  anchorTStartUs: number;
+}
+
+/// `applyMoveLayer`'s three steps (`main/state/mutations/move.ts`), assembled
+/// once for every surface that has to PROMISE its result: the projection the
+/// lanes draw and hold the project to, and the drop strip's own ghost. The
+/// mutation runs the same three on the other side of the commit, so a promise
+/// computed any other way is one the project can never satisfy — see
+/// `shiftOnGrids` for the two rules a hand-written copy gets wrong.
+///
+/// The anchor's REQUESTED head goes through its own lattice first, then the set
+/// is floored at zero as one body (`floorShiftAtZero`, never per member), then
+/// every member snaps on ITS lattice. `deltaUs` is the gesture's raw shift; the
+/// landings are what the user is being shown.
+export function moveLandings(
+  drag: DragState,
+  deltaUs: number,
+  fps: RateLike,
+): MoveLandings {
+  const movers = shiftMembersOf(drag.subjects);
+  const anchor = drag.subjects.find(
+    (subject) => subject.layerId === drag.layerId,
+  );
+  const anchorGrid = gridForLayerKind(anchor?.kind ?? "VideoClip", fps);
+  const requestedDeltaUs =
+    snapOnGrid(drag.originalTStart + deltaUs, anchorGrid) - drag.originalTStart;
+  const actualDeltaUs = floorShiftAtZero(movers, requestedDeltaUs);
+  const byLayerId = shiftOnGrids(movers, actualDeltaUs, fps);
+  return {
+    byLayerId,
+    // `buildDragSubjects` always carries the seed, so the fallback is reached
+    // only when the summary has lost the layer the gesture names — the same
+    // case its own fallback subject covers.
+    anchorTStartUs:
+      byLayerId.get(drag.layerId)?.tStartUs ??
+      snapOnGrid(drag.originalTStart + actualDeltaUs, anchorGrid),
+  };
 }
 
 /// One clip the gesture carries — a DESCRIPTION of it, never a mirror. The two
@@ -253,7 +305,7 @@ export const useLayerDragStore = create<LayerDragStore>((set) => ({
 //     renders once more, to drop the chrome it was drawing, and then goes quiet;
 //   - the drop strip, but only while the pointer is over it, and then only if
 //     the clip head moves — a raise takes a landing, so the head does move and
-//     the strip renders at the rate its hint slides.
+//     the strip renders at the rate its ghost and hint slide.
 //
 // Every other lane, block, chip and sub-lane sees an unchanged `null` and does
 // not render. `Timeline.tsx` subscribes only to booleans and to `subjects`,
@@ -337,7 +389,7 @@ export const useIsForeignDropClaimed = (
   );
 
 /// The foreign clip's head, in this composition's µs, while its claim names the
-/// drop strip — the sibling of `useLayerDragStripAnchorUs` for a gesture that
+/// drop strip — the sibling of `useLayerDragForStrip` for a gesture that
 /// started next door. Null over a lane, so the strip re-renders per pointer
 /// event only while the pointer is actually on it.
 export const useForeignDropStripAnchorUs = (
@@ -351,28 +403,28 @@ export const useForeignDropStripAnchorUs = (
       : null,
   );
 
-/// The dragged clip's head, in this composition's µs, while the drop strip is
-/// the resolved destination — null otherwise, which is also the strip's answer
-/// to "is a clip drag over me". Gated so a drag that never reaches the strip
-/// does not re-render it.
+/// The live gesture while the drop strip is its resolved destination — null
+/// otherwise, which is also the strip's answer to "is a clip drag over me".
+/// Gated so a drag that never reaches the strip does not re-render it.
 ///
-/// `constrainedAnchorUs`'s formula for a move, one re-snap short of the head the
-/// commit sends: `buildMoveProjection` puts that through the anchor's own
-/// lattice and this does not, the projection being the drag hook's and not this
-/// store's. The difference is sub-frame and its only reader positions the
-/// strip's hint, which cannot show it — do NOT reach for this number where a
-/// landing is what is wanted.
+/// The whole state rather than a head, because the strip DRAWS this drop: a
+/// raise's preview belongs to the strip and to no lane (`previewTrackId`), so
+/// the row needs every subject's landing and the verdict on them, and it puts
+/// them through `moveLandings` — the projection's own arithmetic — rather than
+/// being handed a number computed some other way.
 ///
-/// The composition gate is what makes "in this composition's µs" true: the head
-/// is on the DRAG's axis, and only the Panel the drag started in shares it.
-export const useLayerDragStripAnchorUs = (
+/// The composition gate is what makes those landings this composition's µs: they
+/// are on the DRAG's axis, and only the Panel the drag started in shares it. A
+/// clip carried in from next door reaches the strip as a CLAIM instead
+/// (`useForeignDropStripAnchorUs`), and draws its own ghost there.
+export const useLayerDragForStrip = (
   compositionId: string | null,
-): number | null =>
+): DragState | null =>
   useLayerDragStore((s) =>
     s.drag !== null &&
     s.drag.kind === "move" &&
     s.drag.compositionId === compositionId &&
     s.drag.overTrackId === SPAWN_TRACK_ID
-      ? Math.max(0, s.drag.originalTStart + s.drag.deltaUs)
+      ? s.drag
       : null,
   );

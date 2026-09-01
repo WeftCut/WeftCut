@@ -9,8 +9,9 @@ import {
   useIsForeignDropClaimed,
   useIsLayerDragging,
   useIsLayerMoveDragging,
+  useLayerDragForStrip,
   useLayerDragStore,
-  useLayerDragStripAnchorUs,
+  moveLandings,
   type DragState,
   type DragSubject,
 } from "./layerDragStore";
@@ -153,10 +154,67 @@ describe("layerDragStore", () => {
     expect(renderHook(() => useIsLayerMoveDragging("comp-a")).result.current).toBe(true);
     expect(renderHook(() => useIsLayerMoveDragging("comp-b")).result.current).toBe(false);
 
-    // The head is on the DRAG's axis, so the Panel that does not share it must
-    // read null rather than a time it would place on its own grid.
-    expect(renderHook(() => useLayerDragStripAnchorUs("comp-a")).result.current).toBe(0);
-    expect(renderHook(() => useLayerDragStripAnchorUs("comp-b")).result.current).toBeNull();
+    // The landings this feeds are on the DRAG's axis, so the Panel that does
+    // not share it must read null rather than draw a ghost on its own grid.
+    expect(
+      renderHook(() => useLayerDragForStrip("comp-a")).result.current?.layerId,
+    ).toBe("a");
+    expect(
+      renderHook(() => useLayerDragForStrip("comp-b")).result.current,
+    ).toBeNull();
+  });
+
+  it("floors a move at zero as ONE body, through the mutation's arithmetic", () => {
+    // `moveLandings` is what every surface that PROMISES a landing calls — the
+    // move projection and the drop strip's ghost — so the two rules it wraps are
+    // pinned here rather than at each caller: the anchor's requested head goes
+    // through its own lattice, and the set stops as one body at zero.
+    const drag = {
+      ...stateAt(0),
+      layerId: "late",
+      originalTStart: 1_000_000,
+      originalTEnd: 2_000_000,
+      subjects: [
+        {
+          ...subjects[0]!,
+          layerId: "early",
+          originalTStart: 500_000,
+          originalTEnd: 1_000_000,
+        },
+        {
+          ...subjects[0]!,
+          layerId: "late",
+          originalTStart: 1_000_000,
+          originalTEnd: 2_000_000,
+        },
+      ],
+    } satisfies DragState;
+
+    // 2 s left, which would put the earliest member 1.5 s before zero.
+    const landed = moveLandings(drag, -2_000_000, { num: 30, den: 1 });
+
+    // The earliest lands on 0 and the 500 ms between them survives. A per-member
+    // clamp would have flattened both onto zero.
+    expect(landed.byLayerId.get("early")).toEqual({
+      tStartUs: 0,
+      tEndUs: 500_000,
+    });
+    expect(landed.byLayerId.get("late")).toEqual({
+      tStartUs: 500_000,
+      tEndUs: 1_500_000,
+    });
+    // The anchor's landed head — the ONE number the commit sends and the hint
+    // shows, and it is the anchor's, not the set's earliest.
+    expect(landed.anchorTStartUs).toBe(500_000);
+  });
+
+  it("hands the strip nothing while the pointer is over a lane", () => {
+    // The gate that keeps a raise's ghost out of the row until the row is the
+    // destination — and keeps the strip out of every OTHER pointermove.
+    useLayerDragStore.getState().begin(stateAt(0, "t2"), 120, 60);
+    expect(
+      renderHook(() => useLayerDragForStrip("comp-a")).result.current,
+    ).toBeNull();
   });
 
   // The drop strip's OTHER arming condition. The gate above is what keeps a

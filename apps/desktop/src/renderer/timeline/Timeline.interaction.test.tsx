@@ -1914,6 +1914,15 @@ describe("Timeline seek/selection coupling", () => {
       .length,
   });
 
+  /// The raise's own preview, which lives in the strip and on no lane: the
+  /// destination is a track that does not exist yet, so there is no row to host
+  /// a chip and the source lane has released the clip it is losing.
+  const stripGhosts = (strip: HTMLElement): HTMLElement[] => [
+    ...strip.querySelectorAll<HTMLElement>(
+      '[data-testid="timeline-drop-strip-clip-ghost"]',
+    ),
+  ];
+
   it("lights the strip and raises an existing clip onto a fresh lane", async () => {
     const { container, getByText } = renderTimeline({
       selectedLayerId: layer.id,
@@ -1927,12 +1936,16 @@ describe("Timeline seek/selection coupling", () => {
 
     // Armed and lit from a drag that publishes to no media-drag store.
     expect(stripState(strip)).toEqual({ armed: "true", lit: "true", hints: 1 });
-    // `spawn` is a destination being created, not a refusal — the chip must not
+    // The preview moved INTO the strip, and the lane the clip is leaving let go
+    // of it. Both halves matter: the strip is the only row that can host a
+    // preview of a lane that does not exist yet, and a chip left behind on the
+    // source lane says the clip is staying (`previewTrackId`).
+    const [ghost] = stripGhosts(strip);
+    expect(ghost?.dataset.layerId).toBe(layer.id);
+    expect(container.querySelectorAll(".timeline-layer")).toHaveLength(0);
+    // `spawn` is a destination being created, not a refusal — the ghost must not
     // wear the collision chrome or the gesture reads as blocked.
-    expect(block.dataset.dragValidity).toBe("spawn");
-    expect(
-      block.querySelector('[data-testid="layer-drag-invalid-badge"]'),
-    ).toBeNull();
+    expect(ghost?.dataset.validity).toBe("spawn");
 
     fireEvent.pointerUp(window, { clientX: 80, clientY: 7 });
 
@@ -1968,9 +1981,11 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 40 });
     fireEvent.pointerMove(window, { clientX: 83, clientY: 7 });
 
-    // The promise is on screen before release: the chip has moved, and the
-    // strip's hint sits at the head it is about to land on.
-    expect(block.style.left).toBe(`${(33_333 / 1_000_000) * 80}px`);
+    // The promise is on screen before release: the ghost in the strip has moved
+    // one frame, and the strip's hint sits at the head it is about to land on.
+    const [ghost] = stripGhosts(strip);
+    expect(ghost?.dataset.startUs).toBe("33333");
+    expect(ghost?.style.left).toBe(`${(33_333 / 1_000_000) * 80}px`);
     expect(stripState(strip).lit).toBe("true");
 
     fireEvent.pointerUp(window, { clientX: 83, clientY: 7 });
@@ -1981,6 +1996,46 @@ describe("Timeline seek/selection coupling", () => {
         tStartUs: 33_333,
       });
     });
+  });
+
+  it("keeps the raise on screen for the round trip, not flashing it home", async () => {
+    // The regression this guards is the release, where the one above guards the
+    // drag: the raise wrote no promise, so `end()` handed the clip straight back
+    // to its old lane at its old time until the refreshed project arrived — a
+    // flash of exactly the state the gesture had just spent itself undoing.
+    //
+    // The commit never resolves, so the whole assertion sits inside that round
+    // trip. A promise keyed on `SPAWN_TRACK_ID` is what covers it: no lane can
+    // draw a clip whose destination has no id yet, and the strip can.
+    ipcMocks.moveLayersToNewTrack.mockReturnValue(new Promise<string>(() => {}));
+    try {
+      useAppSettingsStore.setState((s) => ({
+        settings: { ...s.settings, tail_snap_enabled: false },
+      }));
+      const { container, getByText } = renderTimeline({
+        selectedLayerId: layer.id,
+      });
+      const strip = stubRaiseLayout(container);
+      const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+      fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 40 });
+      fireEvent.pointerMove(window, { clientX: 83, clientY: 7 });
+      fireEvent.pointerUp(window, { clientX: 83, clientY: 7 });
+
+      await waitFor(() =>
+        expect(ipcMocks.moveLayersToNewTrack).toHaveBeenCalled(),
+      );
+      // Still in the strip, still one frame along — the promise, drawn where the
+      // live ghost was.
+      const [ghost] = stripGhosts(strip);
+      expect(ghost?.dataset.startUs).toBe("33333");
+      // And NOT back on the lane it is leaving. This is the assertion that fails
+      // on the old behaviour, where the clip reappeared at 0 on its old lane.
+      expect(container.querySelectorAll(".timeline-layer")).toHaveLength(0);
+    } finally {
+      ipcMocks.moveLayersToNewTrack.mockReset();
+      ipcMocks.moveLayersToNewTrack.mockResolvedValue("raised-track");
+    }
   });
 
   it("raises a whole link onto the ONE new lane", async () => {
@@ -2045,15 +2100,22 @@ describe("Timeline seek/selection coupling", () => {
       ...twoLaneLink(anchor, overlapping),
       selectedLayerId: anchor.id,
     });
-    stubRaiseLayout(container);
+    const strip = stubRaiseLayout(container);
     // "Anchor" lives on the lower lane, which renders SECOND — band [70, 126).
     const block = getByText("Anchor").closest(".timeline-layer") as HTMLElement;
 
     fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 98 });
     fireEvent.pointerMove(window, { clientX: 80, clientY: 7 });
 
-    // `collision` out-ranks `spawn`: one empty lane cannot hold both.
-    expect(block.dataset.dragValidity).toBe("collision");
+    // `collision` out-ranks `spawn`: one empty lane cannot hold both. A raise
+    // takes the WHOLE set, so both bars are in the row wearing the verdict.
+    expect(stripGhosts(strip).map((g) => g.dataset.validity)).toEqual([
+      "collision",
+      "collision",
+    ]);
+    // And the row itself says so, where it used to light blue over a drop it
+    // was about to refuse.
+    expect(strip.className).toContain("bg-red-500/25");
 
     fireEvent.pointerUp(window, { clientX: 80, clientY: 7 });
     expect(ipcMocks.moveLayersToNewTrack).not.toHaveBeenCalled();
@@ -2072,7 +2134,7 @@ describe("Timeline seek/selection coupling", () => {
       ...twoLaneLink(anchor, pinned, { locked: true }),
       selectedLayerId: anchor.id,
     });
-    stubRaiseLayout(container);
+    const strip = stubRaiseLayout(container);
     const block = getByText("Anchor").closest(".timeline-layer") as HTMLElement;
 
     fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 98 });
@@ -2081,7 +2143,13 @@ describe("Timeline seek/selection coupling", () => {
     // The times do not overlap, so `locked` is the only verdict that can refuse
     // this — and it out-ranks `spawn`, which is why the strip is not a way around
     // a lock rather than a case anyone had to branch on.
-    expect(block.dataset.dragValidity).toBe("locked");
+    expect(stripGhosts(strip).map((g) => g.dataset.validity)).toEqual([
+      "locked",
+      "locked",
+    ]);
+    // Amber, not red: a lock is not an overlap, and the row uses the same
+    // vocabulary a lane does.
+    expect(strip.className).toContain("bg-amber-500/25");
 
     fireEvent.pointerUp(window, { clientX: 80, clientY: 7 });
     expect(ipcMocks.moveLayersToNewTrack).not.toHaveBeenCalled();

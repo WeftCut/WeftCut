@@ -17,22 +17,31 @@ export type PlacementValidity = "valid" | "collision" | "locked" | "spawn";
 /// surface has to special-case it.
 export const SPAWN_TRACK_ID = "__weftcut-spawn-track__";
 
-/// Which lane a live drag's preview chip belongs in, given its resolved
+/// Which row a live drag's preview chip belongs in, given its resolved
 /// destination and the lane the clip is still on.
 ///
-/// `SPAWN_TRACK_ID` names no lane, so a raise previews on the SOURCE lane: every
-/// lane would otherwise filter the chip out (each renders only the subjects whose
-/// preview lands on it) and the clip would vanish for the length of the gesture,
-/// with the 14 px strip far too thin to stand in for it. Honest as well as
-/// visible — a raise carries times verbatim, so where the chip sits already is
-/// where it will land. The lit strip is what says which lane it is going to.
+/// `SPAWN_TRACK_ID` is a row like any other here — the drop strip draws the
+/// raise's ghost itself (`DropStrip.tsx`), so the answer is the sentinel and
+/// every lane filters the chip out, the SOURCE lane included. That last part is
+/// the point rather than a side effect: a raise is LEAVING that lane, and a chip
+/// left sitting on it said the opposite.
+///
+/// This used to answer the source lane, on two grounds that have both since
+/// expired: the 14 px strip was too thin to stand in for a chip (the
+/// cross-Panel ghost draws in exactly that band, `ForeignDragGhost.tsx`), and a
+/// raise carried its times verbatim so the chip already sat where it would land
+/// (`move_layers_to_new_track` takes a landing now). Between them they made the
+/// strip the one destination in the timeline where the clip jumped BACK to where
+/// it started as the pointer arrived.
+///
+/// `null` still answers the source lane: it means the pointer is over no row at
+/// all, and it is also the destination WITHHELD from a duplicate over the strip
+/// (`useLayerDrag`). Nothing is leaving in either case, so the chip stays home.
 export function previewTrackId(
   destinationTrackId: string | null,
   sourceTrackId: string,
 ): string {
-  return destinationTrackId === null || destinationTrackId === SPAWN_TRACK_ID
-    ? sourceTrackId
-    : destinationTrackId;
+  return destinationTrackId ?? sourceTrackId;
 }
 
 /// Whether a verdict refuses the placement. `"spawn"` is committable, so

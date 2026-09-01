@@ -1771,6 +1771,8 @@ export function Timeline({
               fpsNum={fpsNum}
               fpsDen={fpsDen}
               mediaDropSnap={mediaDropSnap}
+              pendingPlacements={pendingPlacements}
+              pendingLayerById={pendingLayerById}
               onMediaDrop={onMediaDrop}
             />
             {orderedTracks.length === 0 && <EmptyHint mode={displayMode} />}

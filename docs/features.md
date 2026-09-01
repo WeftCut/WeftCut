@@ -702,6 +702,14 @@ why both are end-to-end gated (`e2e/electron/timeline-drop-strip.spec.ts`,
 `timeline-raise-to-strip.spec.ts`). A clip dropped on a lane that has room still
 lands there; spawning is the exception.
 
+The strip is also where a raise's **preview** is drawn, and it is the only row
+that can be: every other destination is a lane that can host the chip itself,
+while this one has no lane until the commit returns. So the bars sit in the strip
+and the lane the clip is leaving lets go of it — a chip left behind there would
+say the clip is staying. The preview outlasts the release too, holding its place
+for the round trip in which the destination still has no id, which is what keeps
+a released raise from flashing back to where it started.
+
 The top is the **only** spawn point. A lane below A-roll composites underneath it
 and is invisible unless A-roll has a gap, so a bottom entry point would lie about
 what it does. Z-order is therefore rearranged by **raising to the top, repeatedly**

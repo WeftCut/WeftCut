@@ -100,6 +100,13 @@ test.describe('timeline drop strip — an existing clip', () => {
       // half of the wiring a unit test on the placement policy cannot see.
       await expect(strip).toHaveAttribute('data-lit', 'true')
       await expect(page.locator('[data-testid="timeline-drop-strip-hint"]')).toBeVisible()
+      // And the preview MOVED — into the strip, out of the lane the clip is
+      // leaving. Both halves in one place because they are one decision
+      // (`previewTrackId`): the strip is the only row that can host a preview of
+      // a lane that does not exist yet, and a chip left on the source lane says
+      // the clip is staying.
+      await expect(page.locator('[data-testid="timeline-drop-strip-clip-ghost"]')).toHaveCount(1)
+      await expect(page.locator('.timeline-layer')).toHaveCount(0)
 
       await page.mouse.up()
 

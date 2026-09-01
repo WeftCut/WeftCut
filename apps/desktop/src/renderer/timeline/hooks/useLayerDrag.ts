@@ -14,12 +14,6 @@ import i18n from "../../i18n";
 import { layerDisplayName } from "../../lib/layerName";
 import { currentGroupOrdinals } from "../../state/projectStore";
 import { adjacentFrameBoundaryUs, snapFrameRound } from "../../frames";
-import {
-  floorShiftAtZero,
-  gridForLayerKind,
-  shiftOnGrids,
-  snapOnGrid,
-} from "../../grid";
 import { logMutationFailure } from "../../errors/tryMutate";
 import {
   layerOverlapClass,
@@ -29,7 +23,7 @@ import {
 } from "../geometry";
 import { type PendingLayerPlacement } from "../LayerBlock";
 import {
-  shiftMembersOf,
+  moveLandings,
   useLayerDragStore,
   useLayerMoveDragSubjects,
   type DragSeed,
@@ -251,7 +245,15 @@ export function useLayerDrag(opts: {
   useEffect(() => {
     if (!pendingCommit) return;
     const allLanded = pendingCommit.placements.every((placement) => {
-      const track = tracks.find((t) => t.id === placement.trackId);
+      // A raise's promise names `SPAWN_TRACK_ID`, a lane that has no id until
+      // the command returns, so "landed" cannot be "landed on THAT row" — it is
+      // "the layer exists at the promised span, wherever the actor put it". The
+      // spawned lane is empty by construction, so there is nothing else the
+      // times could belong to.
+      const spawning = placement.trackId === SPAWN_TRACK_ID;
+      const track = spawning
+        ? tracks.find((t) => t.layers.some((l) => l.id === placement.layerId))
+        : tracks.find((t) => t.id === placement.trackId);
       const layer = track?.layers.find((l) => l.id === placement.layerId);
       if (!layer) return false;
       // A clone has landed the moment it exists: the actor placed it where its
@@ -533,23 +535,12 @@ export function useLayerDrag(opts: {
       // that never comes while the lane draws the stale promise over the real
       // clip.
       const fps = { num: fpsNum, den: fpsDen };
-      // `applyMoveLayer`'s own two steps, from the module both sides share, so a
-      // promise cannot be computed by an arithmetic the command does not use.
-      const movers = shiftMembersOf(state.subjects);
-      const anchorGrid = gridForLayerKind(
-        state.subjects.find((subject) => subject.layerId === state.layerId)
-          ?.kind ?? "VideoClip",
-        fps,
-      );
-      const actualDeltaUs = floorShiftAtZero(
-        movers,
-        snapOnGrid(state.originalTStart + deltaUs, anchorGrid) -
-          state.originalTStart,
-      );
-      const landings = shiftOnGrids(movers, actualDeltaUs, fps);
-      const anchorStartUs =
-        landings.get(state.layerId)?.tStartUs ??
-        snapOnGrid(state.originalTStart + actualDeltaUs, anchorGrid);
+      // `applyMoveLayer`'s own steps, assembled once in the module every
+      // promising surface shares, so a promise cannot be computed by an
+      // arithmetic the command does not use. The drop strip's ghost makes the
+      // same call for the same reason (`DropStrip.tsx`).
+      const { byLayerId: landings, anchorTStartUs: anchorStartUs } =
+        moveLandings(state, deltaUs, fps);
       const destinationTrackId =
         overTrackId !== null && trackAcceptsForLayer(overTrackId, state)
           ? overTrackId
@@ -859,15 +850,19 @@ export function useLayerDrag(opts: {
               // add-track + move — that is two entries and a stranded lane if the
               // second half fails.
               //
-              // No bridge, and this one is a REAL cost rather than a nicety
-              // declined: a placement promise is keyed by destination track id
-              // and this destination has no id until the commit returns, so one
-              // written here could match no lane and would never clear. A raise
-              // that also retimes therefore shows the clip at its old time for
-              // the round trip, where a landing move covers that gap. Any bridge
-              // an earlier gesture left is dropped for the same reason: the raise
-              // moves its subjects out from under it.
-              setPendingCommit(null);
+              // Bridged like every other move, on `SPAWN_TRACK_ID` — the same
+              // sentinel row the ghost was just drawn in, so the drop strip
+              // keeps drawing the clip there for the round trip and the release
+              // is not a flash of the clip back where it started. No lane can
+              // match that id, which is deliberate twice over: the source lane
+              // filters the clip out (`TrackLane`) because the clip really is
+              // leaving, and the settle watcher's `SPAWN_TRACK_ID` arm is what
+              // gives the promise its equality exit without an id to compare.
+              setPendingCommit({
+                seq: commitSeq,
+                placements: moveProjection.placements,
+                verified: false,
+              });
               // The anchor's LANDED head, not `originalTStart + deltaUs`: the
               // projection re-snapped it on the anchor's own lattice, and that is
               // the number every ghost above was drawn against. Sending the

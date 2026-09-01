@@ -204,12 +204,21 @@ describe("placementRefuses", () => {
 });
 
 describe("previewTrackId", () => {
-  it("previews a raise on the lane the clip is still on", () => {
-    expect(previewTrackId(SPAWN_TRACK_ID, "track-1")).toBe("track-1");
+  it("previews a raise on the strip, and so on no lane at all", () => {
+    // The sentinel travels through: the drop strip draws the raise's ghost, and
+    // every lane — the source lane above all — filters the chip out, because the
+    // clip is LEAVING. Answering "track-1" here is what used to snap the clip
+    // back to where it started as the pointer reached the strip.
+    expect(previewTrackId(SPAWN_TRACK_ID, "track-1")).toBe(SPAWN_TRACK_ID);
   });
 
   it("previews on the destination lane once there is one", () => {
     expect(previewTrackId("track-2", "track-1")).toBe("track-2");
+  });
+
+  it("keeps the chip home when the pointer names no destination", () => {
+    // Over no row, and the destination withheld from a duplicate over the strip.
+    // Nothing is leaving in either case.
     expect(previewTrackId(null, "track-1")).toBe("track-1");
   });
 });
