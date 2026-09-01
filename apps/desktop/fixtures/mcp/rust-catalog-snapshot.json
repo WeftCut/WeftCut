@@ -426,7 +426,7 @@
   "prompts": [
     {
       "name": "cut-silences",
-      "description": "Find silent regions in a clip and tighten it up by splitting + deleting the dead air.",
+      "description": "Find the silent regions in a clip and mark them. It stops at marking on purpose: removing dead air needs a ripple delete this editor does not have.",
       "arguments": [
         {
           "name": "layer_id",
