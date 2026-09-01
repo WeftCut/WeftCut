@@ -14,7 +14,12 @@ import i18n from "../../i18n";
 import { layerDisplayName } from "../../lib/layerName";
 import { currentGroupOrdinals } from "../../state/projectStore";
 import { adjacentFrameBoundaryUs, snapFrameRound } from "../../frames";
-import { gridForLayerKind, snapOnGrid } from "../../grid";
+import {
+  floorShiftAtZero,
+  gridForLayerKind,
+  shiftOnGrids,
+  snapOnGrid,
+} from "../../grid";
 import { logMutationFailure } from "../../errors/tryMutate";
 import {
   layerOverlapClass,
@@ -24,6 +29,7 @@ import {
 } from "../geometry";
 import { type PendingLayerPlacement } from "../LayerBlock";
 import {
+  shiftMembersOf,
   useLayerDragStore,
   useLayerMoveDragSubjects,
   type DragSeed,
@@ -527,29 +533,23 @@ export function useLayerDrag(opts: {
       // that never comes while the lane draws the stale promise over the real
       // clip.
       const fps = { num: fpsNum, den: fpsDen };
+      // `applyMoveLayer`'s own two steps, from the module both sides share, so a
+      // promise cannot be computed by an arithmetic the command does not use.
+      const movers = shiftMembersOf(state.subjects);
       const anchorGrid = gridForLayerKind(
         state.subjects.find((subject) => subject.layerId === state.layerId)
           ?.kind ?? "VideoClip",
         fps,
       );
-      // The set stops as ONE body at zero: the delta is floored at whatever puts
-      // the EARLIEST member on 0, never each member clamped where it lands
-      // (`earliestStart`, the mutation's own rule). Clamping per member would
-      // flatten a link's phase against the boundary and promise a landing the
-      // command does not make.
-      const earliestStartUs = state.subjects.reduce(
-        (earliest, subject) => Math.min(earliest, subject.originalTStart),
-        state.originalTStart,
-      );
-      const actualDeltaUs = Math.max(
+      const actualDeltaUs = floorShiftAtZero(
+        movers,
         snapOnGrid(state.originalTStart + deltaUs, anchorGrid) -
           state.originalTStart,
-        -earliestStartUs,
       );
-      const anchorStartUs = snapOnGrid(
-        state.originalTStart + actualDeltaUs,
-        anchorGrid,
-      );
+      const landings = shiftOnGrids(movers, actualDeltaUs, fps);
+      const anchorStartUs =
+        landings.get(state.layerId)?.tStartUs ??
+        snapOnGrid(state.originalTStart + actualDeltaUs, anchorGrid);
       const destinationTrackId =
         overTrackId !== null && trackAcceptsForLayer(overTrackId, state)
           ? overTrackId
@@ -566,19 +566,11 @@ export function useLayerDrag(opts: {
         const entry = layerEntryById.get(subject.layerId);
         if (!entry) continue;
         const isAnchor = subject.layerId === state.layerId;
-        // Each member lands on ITS OWN lattice — the audio sample grid for an
-        // Audio member, the composition frame grid for every other — which is
-        // how a deliberately slipped A/V sync offset survives a whole-link move
-        // (R2-D7). BOTH endpoints take the same delta and snap; never
-        // `start + duration`, because a duration is the difference of two
-        // lattice points and is not itself one.
-        const grid = gridForLayerKind(subject.kind, fps);
-        const tStartUs = spawning
-          ? subject.originalTStart
-          : snapOnGrid(subject.originalTStart + actualDeltaUs, grid);
-        const tEndUs = spawning
-          ? subject.originalTEnd
-          : snapOnGrid(subject.originalTEnd + actualDeltaUs, grid);
+        // A raise carries every time VERBATIM — `move_layers_to_new_track` has no
+        // delta at all — so only a landing move reads the shift.
+        const landed = landings.get(subject.layerId);
+        const tStartUs = spawning ? subject.originalTStart : landed!.tStartUs;
+        const tEndUs = spawning ? subject.originalTEnd : landed!.tEndUs;
         projected.push({
           layerId: subject.layerId,
           trackId: spawning || isAnchor ? destinationTrackId : subject.trackId,

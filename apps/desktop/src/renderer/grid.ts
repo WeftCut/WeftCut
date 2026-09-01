@@ -118,3 +118,70 @@ export function isCanonicalOnGrid(tUs: number, g: Grid): boolean {
 export function stepOnGrid(tUs: number, steps: number, g: Grid): number {
   return timeUsAtGridIndex(Math.max(0, gridIndex(tUs, g) + steps), g)
 }
+
+/** One member of a set on the move: whatever carries a kind and a span. Neither
+ *  side's layer model appears here — the actor adapts its `Layer`, the timeline
+ *  adapts its `DragSubject` — so this stays a statement about lattices. */
+export interface ShiftMember {
+  id: string
+  kind: string
+  tStartUs: number
+  tEndUs: number
+}
+
+/** Where every member of a set lands when the whole set shifts by `deltaUs`.
+ *
+ *  THE arithmetic of a move, and the reason it is one function rather than one
+ *  per caller. Four sites need it — `applyMoveLayer`, `applyMoveLayersToComposition`,
+ *  the timeline's move projection and the cross-Panel ghost — and the first two
+ *  DECIDE where a clip goes while the last two PROMISE it in advance, drawing the
+ *  answer and, in the projection's case, holding the project to it until it
+ *  matches. A promise computed by an arithmetic the mutation does not share is one
+ *  the project can never satisfy.
+ *
+ *  Two rules, and both are the ones a hand-written copy gets wrong:
+ *
+ *  - BOTH endpoints take the same `deltaUs` and are snapped. Never
+ *    `landing + duration`: a duration is the difference of two lattice points and
+ *    is not itself one, so the sum is off-lattice wherever a frame is not a whole
+ *    number of microseconds — 1 µs at 60 fps, on roughly 30 % of landings.
+ *  - Each member snaps on ITS OWN lattice (`gridForLayerKind`), never the anchor's.
+ *    That is what carries a deliberately slipped A/V sync offset through a
+ *    whole-link move intact (R2-D7): the offset is stored as geometry and nothing
+ *    else, so it survives exactly as long as every member keeps landing on the
+ *    lattice it was authored on.
+ *
+ *  Pure, and deliberately free of policy: the zero boundary is `floorShiftAtZero`
+ *  for a caller that CLAMPS and a refusal for a caller that does not
+ *  (`applyMoveLayersToComposition` refuses, on the grounds that sliding a set off
+ *  the picture it was placed against is not a repair). */
+export function shiftOnGrids(
+  members: readonly ShiftMember[],
+  deltaUs: number,
+  fps: RateLike,
+): Map<string, { tStartUs: number; tEndUs: number }> {
+  const landings = new Map<string, { tStartUs: number; tEndUs: number }>()
+  for (const m of members) {
+    const g = gridForLayerKind(m.kind, fps)
+    landings.set(m.id, {
+      tStartUs: snapOnGrid(m.tStartUs + deltaUs, g),
+      tEndUs: snapOnGrid(m.tEndUs + deltaUs, g),
+    })
+  }
+  return landings
+}
+
+/** `deltaUs` floored so the EARLIEST member lands on 0 — the set stopping as ONE
+ *  body rather than each member clamped where it lands.
+ *
+ *  Clamping per member would flatten the set's phase against the boundary, which
+ *  is the same data loss as re-snapping a sibling on the anchor's lattice: an
+ *  A/V pair dragged past zero would arrive in sync having started slipped. 0 is a
+ *  lattice point on every grid, so the floored delta needs no snap of its own —
+ *  `shiftOnGrids` still snaps every member, and the earliest one is already
+ *  canonical at 0. */
+export function floorShiftAtZero(members: readonly ShiftMember[], deltaUs: number): number {
+  let earliest = Infinity
+  for (const m of members) earliest = Math.min(earliest, m.tStartUs)
+  return earliest === Infinity ? deltaUs : Math.max(deltaUs, -earliest)
+}

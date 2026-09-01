@@ -1,26 +1,11 @@
 // apps/desktop/src/main/state/mutations/move.ts
-import type { Composition, Project, Uuid } from '../model'
+import type { Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
-import { gridForLayerKind, snapOnGrid } from '../snap'
+import { floorShiftAtZero, gridForLayerKind, shiftOnGrids, snapOnGrid, type ShiftMember } from '../snap'
 import { applyAddTrack } from './add'
 import { applyDurationAutofit, checkTrackLock, locateLayerIn, locateTrack, pruneEmptiedTrack, requireLayer, requireSameComposition } from './helpers'
 import { linkSiblingsExcluding, checkLinkLock } from './links'
 import { CommandFailure } from '../errors'
-
-/** Earliest `t_start_us` across the whole moving set (target + link siblings) —
- *  the member that decides where the set stops when it is dragged toward zero.
- *  Read BEFORE the target is spliced out, so `targetStart` is passed in rather than
- *  re-located. A sibling that cannot be located is skipped, matching the move loop's
- *  own tolerance for a stale member id. */
-function earliestStart(c: Composition, targetStart: number, siblings: readonly Uuid[]): number {
-  let earliest = targetStart
-  for (const sid of siblings) {
-    const loc = locateLayerIn(c, sid)
-    if (!loc) continue
-    if (loc.layer.t_start_us < earliest) earliest = loc.layer.t_start_us
-  }
-  return earliest
-}
 
 /** Move one layer (and its link siblings) within its composition. The target
  *  track names a composition too, and it must be the layer's own: a track in
@@ -50,25 +35,32 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
   // Only fires for a coupled move with real siblings.
   if (!escapeLink && siblings.length > 0) checkLinkLock(c, id, [id, ...siblings])
 
-  // ── Clamp the DELTA, not each member's start ────────────────────────────────
-  // Dragged toward zero, the moving set stops AS A SET: its earliest member lands
-  // exactly on 0 and every other member keeps its distance from that member.
+  // ── Where the set lands ─────────────────────────────────────────────────────
+  // Both halves are `renderer/grid.ts`'s, because the timeline has to promise
+  // this answer before the command gives it: the delta is CLAMPED rather than each
+  // member's start, so a set dragged toward zero stops as a set, and every member
+  // then snaps both endpoints on its own lattice. `NegativeLayerStart` validation
+  // is the structural half of the floor — a negative start is otherwise perfectly
+  // canonical, so the grid backstop alone would wave it through.
   //
-  // `NegativeLayerStart` validation is the structural half: a negative start is
-  // otherwise perfectly canonical, so the grid backstop alone would wave it through.
-  //
-  // 0 is a lattice point on every grid, so the earliest member needs no re-snap to
-  // stay canonical, and every other member is still `its own start + delta` snapped
-  // on its own lattice — which is exactly what keeps a slipped A/V sync offset
-  // intact through a whole-link move (R2-D7).
-  const delta = Math.max(snapped - curStart, -earliestStart(c, curStart, siblings))
-  const newStart = snapOnGrid(curStart + delta, targetGrid)
+  // The moving SET, target first, read BEFORE the splices below — one list, so
+  // the zero floor and the landing cannot disagree about who is in it. A sibling
+  // that cannot be located is skipped, matching the fan-out loop's own tolerance
+  // for a stale member id.
+  const movers: ShiftMember[] = [target, ...siblings.map((sid) => locateLayerIn(c, sid)?.layer).filter((l) => l !== undefined)]
+    .map((l) => ({ id: l.id, kind: l.params.kind, tStartUs: l.t_start_us, tEndUs: l.t_end_us }))
+  const delta = floorShiftAtZero(movers, snapped - curStart)
+  // One arithmetic for every site that has to agree about where this set lands —
+  // the two mutations that decide it and the two timeline surfaces that draw it
+  // in advance (`renderer/grid.ts`). Both endpoints, each member's own lattice.
+  const landings = shiftOnGrids(movers, delta, fps)
+  const targetLanding = landings.get(id)!
+  const newStart = targetLanding.tStartUs
 
   // Remove the target layer.
   const layer = src.track.layers.splice(src.layerIndex, 1)[0]
   layer.t_start_us = newStart
-  // Re-snap t_end on the same grid (alternating 33_333/33_334µs frame widths at 30fps).
-  layer.t_end_us = snapOnGrid(layer.t_end_us + delta, targetGrid)
+  layer.t_end_us = targetLanding.tEndUs
   const dest = dst.track
   const at = dest.layers.findIndex((l) => l.t_start_us > newStart)
   dest.layers.splice(at < 0 ? dest.layers.length : at, 0, layer)
@@ -81,16 +73,14 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
       const siblingTrack = loc.track
       const s = siblingTrack.layers.splice(loc.layerIndex, 1)[0]
       if (delta !== 0) {
-        // LANDMINE: each sibling snaps on ITS OWN grid, not the target's. Snapping a
-        // linked audio member on the composition frame grid here would drag it back
-        // to the nearest video frame on any unrelated whole-link move, and the user's
-        // deliberately slipped sync offset would silently vanish (spec § Two data-loss
-        // dependencies, #1). The offset survives precisely because every member shifts
-        // by the same `delta` and then lands on its own lattice — which is also how the
-        // implicit sync offset is stored at all (R2-D7: no field, just geometry).
-        const g = gridForLayerKind(s.params.kind, fps)
-        s.t_start_us = snapOnGrid(s.t_start_us + delta, g)
-        s.t_end_us = snapOnGrid(s.t_end_us + delta, g)
+        // Each sibling lands on ITS OWN lattice, which `shiftOnGrids` owns and
+        // documents: snapping a linked audio member on the composition frame grid
+        // would drag it to the nearest video frame on any unrelated whole-link move
+        // and silently spend the user's deliberately slipped sync offset (R2-D7 —
+        // the offset is geometry and nothing else).
+        const landed = landings.get(sid)!
+        s.t_start_us = landed.tStartUs
+        s.t_end_us = landed.tEndUs
       }
       // No per-sibling floor here: `delta` is already clamped so no member can cross
       // 0, and snapping a non-negative time can only return a non-negative lattice

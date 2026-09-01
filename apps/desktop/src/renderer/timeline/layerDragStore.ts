@@ -16,8 +16,24 @@
 import { create } from "zustand";
 import type { LayerParamsView } from "../ipc";
 import { SPAWN_TRACK_ID, type PlacementValidity } from "./placement";
+import type { ShiftMember } from "../grid";
 
 export type DragKind = "move" | "trim-start" | "trim-end";
+
+/// The gesture's subjects as the shared move arithmetic wants them
+/// (`renderer/grid.ts`). Both surfaces that PROMISE a landing go through this
+/// one adapter — the in-composition projection and the cross-Panel ghost — so
+/// neither can grow a private idea of which fields the arithmetic reads.
+export function shiftMembersOf(
+  subjects: readonly DragSubject[],
+): ShiftMember[] {
+  return subjects.map((subject) => ({
+    id: subject.layerId,
+    kind: subject.kind,
+    tStartUs: subject.originalTStart,
+    tEndUs: subject.originalTEnd,
+  }));
+}
 
 /// One clip the gesture carries — a DESCRIPTION of it, never a mirror. The two
 /// display fields are here because a Panel showing ANOTHER composition can draw

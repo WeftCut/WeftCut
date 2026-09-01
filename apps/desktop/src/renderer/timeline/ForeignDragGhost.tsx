@@ -47,10 +47,12 @@ import {
 } from "./geometry";
 import { timelineLayerTheme } from "./layerTheme";
 import {
+  shiftMembersOf,
   useLayerDragStore,
   type DragState,
   type DragSubject,
 } from "./layerDragStore";
+import { floorShiftAtZero, shiftOnGrids } from "../grid";
 import {
   evaluateTimelinePlacements,
   placementRefuses,
@@ -296,10 +298,17 @@ function resolveForeignDrop(
   // the grounds that sliding a set off the picture it was placed against is not
   // a repair. Flooring here keeps that refusal unreachable by this gesture, the
   // way naming the earliest member as anchor keeps it unreachable from the menu.
-  const earliestStartUs = Math.min(
-    ...drag.subjects.map((subject) => subject.originalTStart),
-  );
-  const phaseDeltaUs = Math.max(snappedDeltaUs, -earliestStartUs);
+  const movers = shiftMembersOf(drag.subjects);
+  const phaseDeltaUs = floorShiftAtZero(movers, snappedDeltaUs);
+  // Every block THIS Panel draws, on this composition's rate — the same
+  // arithmetic `applyMoveLayersToComposition` runs on the other side of the
+  // commit (`renderer/grid.ts`), which is what makes the ghost a promise rather
+  // than an approximation of one.
+  const landings = shiftOnGrids(movers, phaseDeltaUs, { num: fpsNum, den: fpsDen });
+  // The command derives its own offset as `anchorTStartUs - anchor.t_start_us`,
+  // so the number sent is the RAW shifted head, not the snapped one: sending the
+  // snapped head would hand the command a different offset from the one every
+  // block above was drawn with, and the set's phase would land off its preview.
   const anchorTStartUs = anchor.originalTStart + phaseDeltaUs;
 
   const rows: MeasuredTrackRow[] = [];
@@ -353,12 +362,8 @@ function resolveForeignDrop(
   const blocks: GhostBlock[] = drag.subjects.map((subject) => {
     // No clamp: the floor above already guarantees every member is at or past
     // zero, so the set's mutual geometry survives the boundary intact.
-    const tStartUs = subject.originalTStart + phaseDeltaUs;
-    return {
-      subject,
-      tStartUs,
-      tEndUs: tStartUs + (subject.originalTEnd - subject.originalTStart),
-    };
+    const landed = landings.get(subject.layerId)!;
+    return { subject, tStartUs: landed.tStartUs, tEndUs: landed.tEndUs };
   });
   const placements: TimelinePlacement[] = blocks.map((block) => ({
     layerId: block.subject.layerId,

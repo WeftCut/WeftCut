@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LayerBlock, type PendingLayerPlacement } from "./LayerBlock";
 import {
+  shiftMembersOf,
   useLayerDragForTrack,
   type DragSeed,
   type DragSubject,
 } from "./layerDragStore";
+import { shiftOnGrids } from "../grid";
 import {
   computeLayerSlices,
   layerSliceRect,
@@ -261,19 +263,35 @@ export function TrackLane({
           ? (dragState.overTrackId ?? subject.trackId)
           : subject.trackId;
       if (previewTrackId !== track.id) continue;
-      const tStartUs = Math.max(0, subject.originalTStart + dragState.deltaUs);
+      // Per member, and clamped per member: a duplicate's members are placed one
+      // at a time (`pasteLayerInterval` resolves one layer), so unlike a move
+      // there is no set for the zero boundary to stop as one body.
+      //
+      // The endpoints themselves are the shared arithmetic (`renderer/grid.ts`),
+      // which is what `pasteLayerInterval` computes on the other side of the
+      // commit: both endpoints take the same delta and snap on this member's own
+      // lattice.
+      const clampedStartUs = Math.max(
+        0,
+        subject.originalTStart + dragState.deltaUs,
+      );
+      const landed = shiftOnGrids(
+        shiftMembersOf([subject]),
+        clampedStartUs - subject.originalTStart,
+        { num: fpsNum, den: fpsDen },
+      ).get(subject.layerId)!;
       out.push({
         layer,
         sliceLayer: {
           ...layer,
           id: `${layer.id}::duplicate-preview`,
-          t_start_us: tStartUs,
-          t_end_us: tStartUs + subject.originalTEnd - subject.originalTStart,
+          t_start_us: landed.tStartUs,
+          t_end_us: landed.tEndUs,
         } satisfies LayerSummary,
       });
     }
     return out;
-  }, [dragLayerById, dragState, track.id]);
+  }, [dragLayerById, dragState, fpsDen, fpsNum, track.id]);
 
   const onDragOver = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {

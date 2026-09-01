@@ -7,7 +7,7 @@
 import type { Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
-import { gridForLayerKind, snapOnGrid } from '../snap'
+import { shiftOnGrids } from '../snap'
 import { layerOverlapClass } from '../validate'
 import { applyAddTrack, compositionRefPath } from './add'
 import {
@@ -128,14 +128,25 @@ export function applyMoveLayersToComposition(
   // number the caller can retry and be refused at again. Round-to-nearest never
   // takes a non-negative time below zero, so this pre-snap arithmetic is exact.
   const earliestStartUs = Math.min(...located.map((m) => m.layer.t_start_us))
+  // The shift the cross-Panel ghost already drew, from the module both sides
+  // share (`renderer/grid.ts`): the preview and this landing are then the same
+  // numbers rather than two roundings of one intention. Every member snaps on
+  // its own lattice at the DESTINATION's rate, which is why two compositions at
+  // different rates do not round trip.
+  const shifted = shiftOnGrids(
+    located.map((m) => ({ id: m.layer.id, kind: m.layer.params.kind, tStartUs: m.layer.t_start_us, tEndUs: m.layer.t_end_us })),
+    offset, dest.fps,
+  )
   const landing = new Map<Uuid, { t0: number; t1: number }>()
   for (const m of located) {
-    const grid = gridForLayerKind(m.layer.params.kind, dest.fps)
-    const t0 = snapOnGrid(m.layer.t_start_us + offset, grid)
+    const { tStartUs: t0, tEndUs: t1 } = shifted.get(m.layer.id)!
+    // No floor, deliberately — `floorShiftAtZero` is the timeline gesture's rule
+    // and not this op's. A member before zero is REFUSED here, on the grounds
+    // that sliding a set off the picture it was placed against is not a repair.
     if (t0 < 0)
       throw new CommandFailure({ error: 'InvalidArgument', field: 'layer_ids',
         detail: `layer ${m.layer.id} would land at ${t0} µs in composition ${dest.id}, before its start; anchor the set at ${anchor.layer.t_start_us - earliestStartUs} µs or later` })
-    landing.set(m.layer.id, { t0, t1: snapOnGrid(m.layer.t_end_us + offset, grid) })
+    landing.set(m.layer.id, { t0, t1 })
   }
 
   // A named lane is vetted here, with the rest of the refusals, so that it too

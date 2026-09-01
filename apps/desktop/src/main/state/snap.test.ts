@@ -2,10 +2,12 @@ import { describe, it, expect } from 'vitest'
 import {
   AUDIO_GRID,
   AUDIO_SAMPLE_RATE_HZ,
+  floorShiftAtZero,
   frameGrid,
   gridForLayerKind,
   gridIndex,
   isCanonicalOnGrid,
+  shiftOnGrids,
   snapFrameRound,
   snapOnGrid,
   timeUsAtGridIndex,
@@ -97,5 +99,78 @@ describe('gridForLayerKind', () => {
         expect(isCanonicalOnGrid(once, grid)).toBe(true)
       }
     }
+  })
+})
+
+describe('shiftOnGrids', () => {
+  const clip = (id: string, kind: string, t0: number, t1: number) => ({ id, kind, tStartUs: t0, tEndUs: t1 })
+
+  it('snaps t_end rather than adding a duration to the landing', () => {
+    // A duration is the DIFFERENCE of two lattice points and is not itself one,
+    // so `landing + duration` leaves the grid wherever a frame is not a whole
+    // number of microseconds. 61 frames at 30 fps landing on frame 1: the sum
+    // says 2_066_666, the lattice says 2_066_667. One microsecond, and the whole
+    // reason this is one function instead of four.
+    const fps = { num: 30, den: 1 }
+    const landed = shiftOnGrids([clip('a', 'Color', 0, 2_033_333)], 33_333, fps).get('a')!
+    expect(landed.tStartUs).toBe(33_333)
+    expect(landed.tEndUs).toBe(2_066_667)
+    expect(landed.tEndUs).not.toBe(landed.tStartUs + 2_033_333)
+  })
+
+  it('lands every member on its OWN lattice, so a slipped A/V offset survives', () => {
+    // The video member takes the frame grid, the audio member the 48 kHz sample
+    // lattice. Snapping the audio one on the frame grid would drag it to the
+    // nearest video frame and silently spend the offset (R2-D7).
+    const fps = { num: 30, den: 1 }
+    const landed = shiftOnGrids(
+      [clip('v', 'VideoClip', 0, 1_000_000), clip('a', 'Audio', 1_000, 1_001_000)],
+      33_333,
+      fps,
+    )
+    expect(landed.get('v')!.tStartUs).toBe(snapOnGrid(33_333, frameGrid(fps)))
+    expect(landed.get('a')!.tStartUs).toBe(snapOnGrid(34_333, AUDIO_GRID))
+    // Not the same number: the two lattices are genuinely different here, which
+    // is what the per-member grid is for.
+    expect(landed.get('a')!.tStartUs).not.toBe(landed.get('v')!.tStartUs)
+  })
+
+  it('is what applyMoveLayer lands, across the rates whose frame is not whole microseconds', () => {
+    // The property the four call sites exist to share, checked directly: for
+    // every rate and every landing frame, both endpoints are canonical.
+    for (const fps of [{ num: 60, den: 1 }, { num: 30, den: 1 }, { num: 24, den: 1 }, { num: 30_000, den: 1001 }, { num: 25, den: 1 }]) {
+      const g = frameGrid(fps)
+      const t1 = timeUsAtGridIndex(61, g)
+      for (let frame = 0; frame < 24; frame++) {
+        const delta = timeUsAtGridIndex(frame, g)
+        const landed = shiftOnGrids([clip('a', 'Color', 0, t1)], delta, fps).get('a')!
+        expect(isCanonicalOnGrid(landed.tStartUs, g)).toBe(true)
+        expect(isCanonicalOnGrid(landed.tEndUs, g)).toBe(true)
+      }
+    }
+  })
+})
+
+describe('floorShiftAtZero', () => {
+  const clip = (id: string, t0: number) => ({ id, kind: 'Color', tStartUs: t0, tEndUs: t0 + 1_000_000 })
+
+  it('stops the set as one body, keeping the phase between its members', () => {
+    // The earliest member lands exactly on 0 and the later one keeps its
+    // distance. Clamping per member would put BOTH on 0 and spend the offset.
+    const set = [clip('late', 500_000), clip('early', 200_000)]
+    const delta = floorShiftAtZero(set, -900_000)
+    expect(delta).toBe(-200_000)
+    const landed = shiftOnGrids(set, delta, { num: 30, den: 1 })
+    expect(landed.get('early')!.tStartUs).toBe(0)
+    expect(landed.get('late')!.tStartUs).toBe(300_000)
+  })
+
+  it('leaves a delta that clears zero alone, in both directions', () => {
+    const set = [clip('a', 1_000_000)]
+    expect(floorShiftAtZero(set, -500_000)).toBe(-500_000)
+    expect(floorShiftAtZero(set, 500_000)).toBe(500_000)
+    // An empty set has no earliest member to floor against, and answering
+    // `-Infinity` would poison every landing computed from it.
+    expect(floorShiftAtZero([], -500_000)).toBe(-500_000)
   })
 })

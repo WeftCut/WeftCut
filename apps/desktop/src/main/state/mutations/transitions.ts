@@ -1,7 +1,7 @@
 import type { Composition, Layer, Project, Transition, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
-import { frameIndexRound, gridForLayerKind, snapOnGrid, timeUsAtFrame } from '../snap'
+import { frameIndexRound, gridForLayerKind, shiftOnGrids, snapOnGrid, timeUsAtFrame } from '../snap'
 import { applyDurationAutofit, hasSourceWindow, locateLayerIn, pickFreeOverlayTrack, requireLayer, sourceDurationUs } from './helpers'
 import { applyAddTrack } from './add'
 import { checkLinkLock, linkSiblingsExcluding, indexLinks } from './links'
@@ -102,28 +102,44 @@ function rejectAudioParticipant(layer: Layer): void {
     throw new CommandFailure({ error: 'TransitionUnsupportedLayerKind', layer: layer.id, kind: layer.params.kind })
 }
 
+/** Where each member of `memberIds` lands under a `deltaUs` shift — the shared
+ *  arithmetic (`renderer/grid.ts`), fed from this composition. Both the write
+ *  and the pre-check that guards it read this one map, so they cannot round
+ *  apart. An unlocatable member simply has no entry. */
+function shiftedSpans(c: Composition, memberIds: readonly Uuid[], deltaUs: number): Map<Uuid, { tStartUs: number; tEndUs: number }> {
+  return shiftOnGrids(
+    memberIds.flatMap((id) => {
+      const loc = locateLayerIn(c, id)
+      return loc ? [{ id, kind: loc.layer.params.kind, tStartUs: loc.layer.t_start_us, tEndUs: loc.layer.t_end_us }] : []
+    }),
+    deltaUs, c.fps,
+  )
+}
+
 /** Shift a moving set (the incoming layer + its link siblings) by ONE µs delta,
  *  each member landing on its OWN lattice, and re-insert each at its track's
  *  sorted position — the applyMoveLayer discipline verbatim.
  *
- *  LANDMINE (shared with move.ts): each member snaps on ITS OWN grid, not the
- *  incoming layer's. Snapping a linked audio member on the composition frame
- *  grid here would drag it to the nearest video frame on every duration edit,
- *  silently erasing a deliberately slipped sync offset — the offset survives
- *  precisely because every member shifts by the same delta and then lands on
- *  its own lattice. An unlocatable member is skipped, the move loop's own
- *  tolerance for a stale id. */
+ *  Not "the same as move.ts" by convention — literally the same function
+ *  (`shiftOnGrids`, `renderer/grid.ts`), which owns the reason a member snaps
+ *  on ITS OWN grid: on the frame grid a linked audio member would be dragged to
+ *  the nearest video frame on every duration edit and a deliberately slipped
+ *  sync offset would silently go with it. An unlocatable member is skipped, the
+ *  move loop's own tolerance for a stale id. */
 function shiftLayerSet(c: Composition, memberIds: readonly Uuid[], deltaUs: number): void {
   if (deltaUs === 0) return
-  const fps = c.fps
+  const landings = shiftedSpans(c, memberIds, deltaUs)
+  // Located again per member, deliberately: the splice below invalidates any
+  // index taken during the pass above, and re-locating is the loop's existing
+  // tolerance for a member that has since gone.
   for (const id of memberIds) {
     const loc = locateLayerIn(c, id)
     if (!loc) continue
     const track = loc.track
     const l = track.layers.splice(loc.layerIndex, 1)[0]
-    const g = gridForLayerKind(l.params.kind, fps)
-    l.t_start_us = snapOnGrid(l.t_start_us + deltaUs, g)
-    l.t_end_us = snapOnGrid(l.t_end_us + deltaUs, g)
+    const landed = landings.get(id)!
+    l.t_start_us = landed.tStartUs
+    l.t_end_us = landed.tEndUs
     const at = track.layers.findIndex((x) => x.t_start_us > l.t_start_us)
     track.layers.splice(at < 0 ? track.layers.length : at, 0, l)
   }
@@ -410,15 +426,16 @@ export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { d
  *  structured refusal naming the member that cannot land; the system never
  *  makes room (the user may have filled the vacated gap deliberately). */
 function precheckRestoreCollision(c: Composition, memberIds: readonly Uuid[], deltaUs: number, fromLayer: Uuid, shrunkFromEnd: number | null): void {
-  const fps = c.fps
+  // The SAME call `shiftLayerSet` will make, not a re-derivation of it: a
+  // pre-check that rounded differently from the write it guards would refuse
+  // landings that fit and admit ones that do not.
+  const landings = shiftedSpans(c, memberIds, deltaUs)
   const moving = new Set(memberIds)
   for (const id of memberIds) {
     const loc = locateLayerIn(c, id)
     if (!loc) continue
     const l = loc.layer
-    const g = gridForLayerKind(l.params.kind, fps)
-    const destStart = snapOnGrid(l.t_start_us + deltaUs, g)
-    const destEnd = snapOnGrid(l.t_end_us + deltaUs, g)
+    const { tStartUs: destStart, tEndUs: destEnd } = landings.get(id)!
     const cls = l.params.kind === 'Audio' ? 'audio' : 'visual'
     for (const other of loc.track.layers) {
       if (moving.has(other.id)) continue

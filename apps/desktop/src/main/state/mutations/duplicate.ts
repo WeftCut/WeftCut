@@ -3,7 +3,7 @@ import type { IdGen } from '../ids'
 import { applyDurationAutofit, cloneLayer, locateTrack, requireLayer, requireSameComposition } from './helpers'
 import { applyLinksCreate } from './links'
 import { CommandFailure } from '../errors'
-import { gridForLayerKind, snapOnGrid } from '../snap'
+import { gridForLayerKind, shiftOnGrids, snapOnGrid } from '../snap'
 import { layerOverlapClass } from '../validate'
 
 /** Shallow-clone the layer with one fresh id (nested keyframe/effect ids are
@@ -43,11 +43,15 @@ export function pasteLayerInterval(p: Project, id: Uuid, tStartUs: number): Past
   const { comp: c, layer: source } = requireLayer(p, id)
   const grid = gridForLayerKind(source.params.kind, c.fps)
   const snappedStart = snapOnGrid(tStartUs, grid)
-  const delta = snappedStart - source.t_start_us
-  return {
-    tStartUs: snappedStart,
-    tEndUs: snapOnGrid(source.t_end_us + delta, grid),
-  }
+  // A set of one, through the arithmetic every landing shares
+  // (`renderer/grid.ts`) — which is also what the timeline's duplicate preview
+  // draws with, so the ghost under the pointer and the clone that lands are the
+  // same two numbers.
+  return shiftOnGrids(
+    [{ id: source.id, kind: source.params.kind, tStartUs: source.t_start_us, tEndUs: source.t_end_us }],
+    snappedStart - source.t_start_us,
+    c.fps,
+  ).get(source.id)!
 }
 
 /** Paste a detached clone onto an explicitly resolved target track — in the

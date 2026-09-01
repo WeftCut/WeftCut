@@ -25,9 +25,11 @@ export {
   AUDIO_GRID,
   AUDIO_SAMPLE_RATE_HZ,
   AUDIO_SAMPLES_PER_MS,
+  floorShiftAtZero,
   frameGrid,
   gridIndex,
   isCanonicalOnGrid,
+  shiftOnGrids,
   snapDownOnGrid,
   snapOnGrid,
   snapUpOnGrid,
@@ -35,6 +37,7 @@ export {
   timeUsAtGridIndex,
   type Grid,
   type GridDomain,
+  type ShiftMember,
 } from '../../renderer/grid'
 
 import { gridForLayerKind as gridForKindString } from '../../renderer/grid'
