@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 
-import { MenuItem, MenuSeparator } from "../menu/Menu";
+import { contextMenuFinalFocus, MenuItem, MenuSeparator } from "../menu/Menu";
 import { useCursorAnchor } from "../timeline/contextMenuAnchor";
 import type { RestackMenuTargets, RestackTarget } from "./playheadItems";
 
@@ -76,6 +76,7 @@ export function PlayheadRowContextMenu({
         >
           <MenuPrimitive.Popup
             className="app-menu-list"
+            finalFocus={contextMenuFinalFocus}
             aria-label={t(
               targets ? "playhead_panel.row_menu" : "playhead_panel.link_menu",
               { label },

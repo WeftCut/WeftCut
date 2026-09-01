@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, Eye, EyeOff, Lock, LockOpen, Music } from "l
 import { renameTrack, updateTrackFlags, type TrackSummary } from "../ipc";
 import { AppInput } from "../components/AppInput";
 import { trackDisplayName } from "../lib/trackName";
+import { handCaretToEditor } from "../menu/Menu";
 import { useComposition } from "../state/projectStore";
 import { trackHeaderControls } from "./geometry";
 import { beginTrackRename, endRename, useEditingTrackId } from "./renameStore";
@@ -198,6 +199,9 @@ export function TrackHeader({ compositionId, track, height, isRevealed, isRoleSe
           onClose={() => setMenu(null)}
           onRename={() => {
             setMenu(null);
+            // See `contextMenuFinalFocus`: without this the menu's focus
+            // return blurs the field, and the field commits on blur.
+            handCaretToEditor();
             beginTrackRename(track.id);
           }}
         />

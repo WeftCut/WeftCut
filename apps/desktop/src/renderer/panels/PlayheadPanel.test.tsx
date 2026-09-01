@@ -1261,6 +1261,29 @@ describe("PlayheadPanel folded link rows", () => {
     expect(onRename).not.toHaveBeenCalled();
   });
 
+  // The LANDMINE `contextMenuFinalFocus` guards: the menu returns focus to
+  // whatever held it when it opened, a microtask AFTER it unmounts, and this
+  // field commits on blur — so the row read as doing nothing at all. The parked
+  // button stands in for the focus region the app has focused by the time a
+  // right-click lands; the case above has none, which is why it never saw this.
+  it("Rename link… keeps the caret in the editor it opened", async () => {
+    const user = userEvent.setup();
+    const parked = document.createElement("button");
+    document.body.appendChild(parked);
+    parked.focus();
+
+    renderPanel(linkedTracks(), {}, [LINK]);
+    openMenuOn("Cam");
+    await user.click(screen.getByRole("menuitem", { name: "Rename link…" }));
+
+    const field = screen.getByLabelText("Rename Cam");
+    // A macrotask: it runs after the focus-return microtask has drained.
+    await new Promise((done) => setTimeout(done, 0));
+    expect(field.isConnected).toBe(true);
+    expect(document.activeElement).toBe(field);
+    parked.remove();
+  });
+
   it("an emptied link label commits as null; Escape commits nothing", () => {
     renderPanel(linkedTracks(), {}, [{ ...LINK, label: "Interview" }]);
 

@@ -127,6 +127,38 @@ export function closeContextMenuOn(
   };
 }
 
+/// Set by `handCaretToEditor`, read and cleared by `contextMenuFinalFocus`.
+/// Module-level because the two run in the same tick — a row's handler and the
+/// unmount it causes — and never overlap between menus.
+let caretHandedOff = false;
+
+/// Call from a context-menu row whose handler opens an INLINE EDITOR: a rename
+/// field that lives in the page, not a dialog. It tells the menu the caret has
+/// a new owner, so `contextMenuFinalFocus` can leave it alone.
+export function handCaretToEditor(): void {
+  caretHandedOff = true;
+}
+
+/// The `finalFocus` every context menu with such a row must pass to its Popup.
+///
+/// LANDMINE: Base UI returns focus to whatever held it before the menu opened,
+/// and queues that as a microtask while the popup unmounts — which lands AFTER
+/// the row's handler has put the caret in the field it opened. Those fields
+/// commit on blur, so the returned focus closes the editor in the frame it
+/// appeared and the row reads as doing nothing at all.
+///
+/// It cannot be a prop closed over the owner's state: Base UI reads `finalFocus`
+/// from a ref during the unmount, and that ref stopped updating at the last
+/// render BEFORE the row ran. Hence the latch, set synchronously by the row.
+///
+/// Every other close still returns focus, which is what keeps the keyboard on
+/// the region the menu was opened from (ADR 0041).
+export function contextMenuFinalFocus(): boolean {
+  const handedOff = caretHandedOff;
+  caretHandedOff = false;
+  return !handedOff;
+}
+
 interface SubMenuProps {
   /// Label rendered on the trigger row.
   label: string;

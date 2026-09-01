@@ -52,6 +52,7 @@ import {
   useDeltaWindowUs,
   useDisplayMode,
 } from "../settings/appSettingsStore";
+import { handCaretToEditor } from "../menu/Menu";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { resolveAccelerator } from "../shortcuts/match";
 import { useFocusedPlayheadUsThrottled } from "../state/playheadProjection";
@@ -562,6 +563,9 @@ export function PlayheadPanel({
           }}
           onRenameLink={(linkId) => {
             setRowMenu(null);
+            // See `contextMenuFinalFocus`: without this the menu's focus
+            // return blurs the row's field, and the field commits on blur.
+            handCaretToEditor();
             setLinkRenameRequest(linkId);
           }}
           onUnlink={(linkId) => {

@@ -107,6 +107,7 @@ import {
   useAnchorPath,
   useFocusedCompositionId,
 } from "../state/compositionAnchorStore";
+import { handCaretToEditor } from "../menu/Menu";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { ForeignDragGhost } from "./ForeignDragGhost";
 import { MarqueeOverlay } from "./MarqueeOverlay";
@@ -1246,11 +1247,15 @@ export function Timeline({
 
   const onRename = useCallback((layerId: string) => {
     setContextMenu(null);
+    // The menu would otherwise take the caret back as it unmounts, and the
+    // editor commits on blur — see `contextMenuFinalFocus`.
+    handCaretToEditor();
     beginLayerRename(layerId);
   }, []);
 
   const onRenameLink = useCallback((linkId: string) => {
     setContextMenu(null);
+    handCaretToEditor();
     beginLinkRename(linkId);
   }, []);
 
@@ -1264,6 +1269,7 @@ export function Timeline({
         for (const layer of track.layers) {
           if (layer.id !== layerId) continue;
           if (layer.params.kind !== "CompositionRef") return;
+          handCaretToEditor();
           beginGroupRename(layer.params.composition_id);
           return;
         }

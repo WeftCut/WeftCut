@@ -12,6 +12,7 @@ import { groupDisplayName } from "../lib/layerName";
 import { CommandContextItem } from "../menu/CommandContextItem";
 import {
   closeContextMenuOn,
+  contextMenuFinalFocus,
   MenuItem,
   MenuSeparator,
   SubMenu,
@@ -322,7 +323,10 @@ export function LayerContextMenu({
           sideOffset={0}
           className="app-popup-positioner"
         >
-          <MenuPrimitive.Popup className="app-menu-list">
+          <MenuPrimitive.Popup
+            className="app-menu-list"
+            finalFocus={contextMenuFinalFocus}
+          >
             {LAYER_MENU_COMMAND_IDS.map((id, i) =>
               id === "---" ? (
                 // Position-keyed: separators have no identity, and the list is

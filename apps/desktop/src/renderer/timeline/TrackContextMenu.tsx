@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import { MenuItem } from "../menu/Menu";
+import { contextMenuFinalFocus, MenuItem } from "../menu/Menu";
 import { useCursorAnchor } from "./contextMenuAnchor";
 
 /// Right-click menu on a lane header. Its own component rather than an arm of
@@ -41,7 +41,10 @@ export function TrackContextMenu({
           sideOffset={0}
           className="app-popup-positioner"
         >
-          <MenuPrimitive.Popup className="app-menu-list">
+          <MenuPrimitive.Popup
+            className="app-menu-list"
+            finalFocus={contextMenuFinalFocus}
+          >
             <MenuItem
               label={t("timeline.rename", { defaultValue: "Rename" })}
               onSelect={onRename}

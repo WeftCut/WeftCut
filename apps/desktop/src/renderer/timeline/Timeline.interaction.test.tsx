@@ -60,6 +60,7 @@ import {
   timelineScrollLeftPx,
 } from "../state/timelineScrollStore";
 import { setActiveRegion } from "../focus/focusRegionStore";
+import { endRename } from "./renameStore";
 import { setTool } from "../state/toolStore";
 import { listCommands, registerCommandProvider } from "../commands/registry";
 import { registerTransport, releaseTransport } from "../state/playbackStore";
@@ -3276,6 +3277,9 @@ describe("Timeline link chrome", () => {
   beforeEach(() => {
     clearLayerSelection();
     setActiveRegion(null);
+    // The rename store is module-global, and the two focus-return cases below
+    // deliberately leave an editor open; a leaked one hides every clip's label.
+    endRename();
     useAppSettingsStore.setState((s) => ({
       settings: { ...s.settings, display_mode: "AllTracks", tail_snap_enabled: false },
     }));
@@ -3387,6 +3391,60 @@ describe("Timeline link chrome", () => {
     );
     // The editor opens on the anchor member's tab even for an unlabelled link.
     expect(screen.queryByTestId("link-tab-anchor")).not.toBeNull();
+  });
+
+  // Both rows below guard one LANDMINE (`contextMenuFinalFocus`): the menu
+  // returns focus to whatever held it when it opened, a microtask AFTER it
+  // unmounts — so it lands on top of the editor the row just opened, and the
+  // editor commits on blur. The row then reads as doing nothing at all.
+  //
+  // `parkFocus` stands in for what the app always has by the time a right-click
+  // lands: the focus REGION, focused on pointerdown by `useFocusRegions`. Drop
+  // it and the menu has nothing to return focus to, which is exactly why this
+  // survived every earlier test of these rows.
+  const parkFocus = () => {
+    const parked = document.createElement("button");
+    document.body.appendChild(parked);
+    parked.focus();
+    return parked;
+  };
+  // A macrotask: it runs after the focus-return microtask has drained.
+  const afterFocusReturn = () => new Promise((done) => setTimeout(done, 0));
+
+  it("keeps the caret in the field Rename opened", async () => {
+    const parked = parkFocus();
+    renderTimeline({ tracks: [linkedTrack], links: [link] });
+    fireEvent.contextMenu(blockOf("Clip A"), { clientX: 40, clientY: 30 });
+    await waitFor(() => expect(screen.queryByText("Rename")).not.toBeNull());
+    fireEvent.click(screen.getByText("Rename"));
+
+    const field = await waitFor(() => {
+      const found = document.querySelector<HTMLInputElement>(".app-input");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    await afterFocusReturn();
+    expect(field.isConnected).toBe(true);
+    expect(document.activeElement).toBe(field);
+    parked.remove();
+  });
+
+  it("keeps the caret in the tab Rename link… opened", async () => {
+    const parked = parkFocus();
+    renderTimeline({ tracks: [linkedTrack], links: [link] });
+    fireEvent.contextMenu(blockOf("Clip A"), { clientX: 40, clientY: 30 });
+    await waitFor(() => expect(screen.queryByText("Rename link…")).not.toBeNull());
+    fireEvent.click(screen.getByText("Rename link…"));
+
+    const field = await waitFor(() => {
+      const found = screen.queryByLabelText("Link name");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    await afterFocusReturn();
+    expect(field.isConnected).toBe(true);
+    expect(document.activeElement).toBe(field);
+    parked.remove();
   });
 });
 

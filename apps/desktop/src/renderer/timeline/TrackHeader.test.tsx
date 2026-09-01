@@ -154,6 +154,33 @@ describe("TrackHeader inline rename", () => {
     await waitFor(() => expect(input(container)!.value).toBe("Titles"));
   });
 
+  // The lane menu's half of the LANDMINE the clip menu's rows carry too
+  // (`contextMenuFinalFocus`): the menu returns focus to whatever held it when
+  // it opened, a microtask after it unmounts, and this field commits on blur.
+  // The parked button stands in for the focus region the app has focused by the
+  // time a right-click lands; without one the menu has nothing to return to.
+  it("the context menu's Rename keeps the caret in that edit", async () => {
+    const parked = document.createElement("button");
+    document.body.appendChild(parked);
+    parked.focus();
+
+    const { container } = renderHeader(track({ label: "Titles" }));
+    fireEvent.contextMenu(nameCell(container), { clientX: 40, clientY: 12 });
+    const item = await waitFor(() => {
+      const found = document.querySelector(".app-menu-item") as HTMLElement | null;
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    fireEvent.click(item);
+    await waitFor(() => expect(input(container)).not.toBeNull());
+
+    // A macrotask: it runs after the focus-return microtask has drained.
+    await new Promise((done) => setTimeout(done, 0));
+    expect(input(container)).not.toBeNull();
+    expect(document.activeElement).toBe(input(container));
+    parked.remove();
+  });
+
   // Undo must never flip a control the editor set, which is a property of the
   // flags riding the UNRECORDED channel. Renaming must not have quietly joined
   // the name to that patch: the two commands stay separate on the wire.
