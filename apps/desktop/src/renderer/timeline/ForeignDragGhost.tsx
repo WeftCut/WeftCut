@@ -27,7 +27,6 @@
 // own axis, so it is the one that sends `move_layers_to_composition`.
 
 import { useEffect, useRef } from "react";
-import { useTranslation } from "react-i18next";
 import {
   moveLayersToComposition,
   type LinkSummary,
@@ -38,14 +37,13 @@ import { focusComposition } from "../state/compositionAnchorStore";
 import { setLayerSelection } from "../state/selectionStore";
 import { snapFrameRound } from "../frames";
 import { playheadClockUs } from "../state/playheadProjection";
+import { DragGhostChip, dragGhostBand } from "./DragGhostChip";
 import {
-  layerSliceRect,
   overlapClassForKind,
   trackIdAtClientY,
   type MeasuredTrackRow,
   type VisualTrack,
 } from "./geometry";
-import { timelineLayerTheme } from "./layerTheme";
 import {
   shiftMembersOf,
   useLayerDragStore,
@@ -55,21 +53,12 @@ import {
 import { floorShiftAtZero, shiftOnGrids } from "../grid";
 import {
   evaluateTimelinePlacements,
-  placementRefuses,
   SPAWN_TRACK_ID,
   type PlacementValidity,
   type TimelinePlacement,
 } from "./placement";
 import { snapDragDeltaToTimelineBoundary } from "./snapping";
 import { foreignCompositionAtPoint } from "./timelineSurfaces";
-
-/// The colour hint handed to `timelineLayerTheme`, which only consults one for a
-/// `Color` layer. A foreign ghost is deliberately not a mirror of the clip — no
-/// filmstrip, no waveform, no link chrome, no transition chip, because none of
-/// those answer a question the drop asks — so it does not carry the fill either,
-/// and `DragSubject` has no third field to carry it in. Every kind therefore
-/// reads as its type colour, and `Color` reads as the neutral this names.
-const GHOST_NEUTRAL_SURFACE = "#22262b";
 
 export interface ForeignDragGhostProps {
   /// This Panel's composition. The axis every number below is expressed on, and
@@ -400,13 +389,14 @@ function resolveForeignDrop(
     replacedLayerIds: new Set(),
   });
 
-  // The chip band, not the whole row: `layerSliceRect` is where the padding a
-  // clip sits inside is defined, so the ghost occupies the band a real chip
-  // would rather than one this file measures out for itself.
+  // The ROW decides the band, not this file and not which Panel the gesture came
+  // from — `dragGhostBand` is the rule, and the raise's own ghost reads it too,
+  // so a clip carried in from next door and one raised at home draw the same box
+  // on the same row.
   const rowRect = rowRects.get(trackId);
   let band: ForeignLanding["band"] = null;
   if (rowRect !== undefined) {
-    const slice = layerSliceRect(rowRect.height, "full");
+    const slice = dragGhostBand(rowRect.height, trackId);
     band = {
       top: rowRect.top - canvasRect.top + slice.top,
       height: slice.height,
@@ -442,7 +432,6 @@ function resolveForeignDrop(
  */
 export function ForeignDragGhost(props: ForeignDragGhostProps): React.ReactNode {
   const { compositionId, pxPerSec } = props;
-  const { t } = useTranslation();
   // Two atomic selectors rather than one composite: a selector that built an
   // object would return a fresh reference on every store tick and loop
   // (feedback_zustand_composite_selector).
@@ -528,75 +517,36 @@ export function ForeignDragGhost(props: ForeignDragGhostProps): React.ReactNode 
     return () => window.removeEventListener("pointerup", release);
   }, []);
 
-  if (landing === null || landing.band === null) return null;
+  // One condition spelled twice: `resolveForeignDrop` returns a null band and a
+  // null row together — over no row there is nothing to draw and nothing to draw
+  // it in — and naming both is what lets the ghost below take a row id rather
+  // than an assertion.
+  if (landing === null || landing.band === null || landing.trackId === null) {
+    return null;
+  }
   const band = landing.band;
-  // Not `!== "valid"`: over the drop strip the verdict is `"spawn"`, a
-  // destination being created rather than a refusal (ADR 0042).
-  const refused = placementRefuses(landing.validity);
-  const refusalLabel =
-    landing.validity === "collision"
-      ? t("timeline.drop_collision", { defaultValue: "Overlap" })
-      : landing.validity === "locked"
-        ? t("timeline.drop_locked", { defaultValue: "Locked" })
-        : null;
+  const trackId = landing.trackId;
 
   return (
     <>
-      {landing.blocks.map((block) => {
-        const theme = timelineLayerTheme(
-          block.subject.kind,
-          GHOST_NEUTRAL_SURFACE,
-        );
-        return (
-          <div
-            key={block.subject.layerId}
-            data-testid="timeline-foreign-ghost"
-            data-layer-id={block.subject.layerId}
-            data-track-id={landing.trackId}
-            data-validity={landing.validity}
-            data-start-us={block.tStartUs}
-            data-end-us={block.tEndUs}
-            aria-hidden="true"
-            className="pointer-events-none absolute z-[5] flex items-center gap-1 overflow-hidden rounded border border-white/25 px-2 text-[10px] font-semibold text-white shadow-[0_4px_10px_rgba(0,0,0,0.45)]"
-            style={{
-              left: (block.tStartUs / 1_000_000) * pxPerSec,
-              top: band.top,
-              // THIS Panel's zoom. Recomputing the width is the difference
-              // between showing a duration and lying about one — the source
-              // Panel's px/sec would draw the same clip a different length here.
-              width: Math.max(
-                4,
-                ((block.tEndUs - block.tStartUs) / 1_000_000) * pxPerSec,
-              ),
-              height: band.height,
-              backgroundColor: theme.surface,
-              opacity: 0.85,
-              // The same red / amber the in-composition ghost wears, so one
-              // vocabulary covers both halves of the gesture.
-              borderColor:
-                landing.validity === "collision"
-                  ? "rgb(252 165 165)"
-                  : landing.validity === "locked"
-                    ? "rgb(252 211 77)"
-                    : undefined,
-              outline:
-                landing.validity === "collision"
-                  ? "2px solid rgb(248 113 113)"
-                  : landing.validity === "locked"
-                    ? "2px solid rgb(251 191 36)"
-                    : undefined,
-              outlineOffset: refused ? -2 : undefined,
-            }}
-          >
-            <span className="min-w-0 truncate">{block.subject.name}</span>
-            {refusalLabel !== null && (
-              <span className="ml-auto shrink-0 rounded bg-black/35 px-1 py-0.5">
-                {refusalLabel}
-              </span>
-            )}
-          </div>
-        );
-      })}
+      {landing.blocks.map((block) => (
+        <DragGhostChip
+          key={block.subject.layerId}
+          testId="timeline-foreign-ghost"
+          layerId={block.subject.layerId}
+          trackId={trackId}
+          name={block.subject.name}
+          kind={block.subject.kind}
+          tStartUs={block.tStartUs}
+          tEndUs={block.tEndUs}
+          validity={landing.validity}
+          pxPerSec={pxPerSec}
+          fpsNum={props.fpsNum}
+          fpsDen={props.fpsDen}
+          top={band.top}
+          height={band.height}
+        />
+      ))}
     </>
   );
 }

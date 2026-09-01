@@ -403,6 +403,24 @@ export const useForeignDropStripAnchorUs = (
       : null,
   );
 
+/// That same claim's verdict — what the strip's own chrome has to wear while a
+/// clip carried in from next door hovers over it. A second atomic selector
+/// rather than one returning both: a composite would mint an object per store
+/// tick and loop (`feedback_zustand_composite_selector`).
+///
+/// Without it the row lit blue and offered a track under a ghost that was
+/// already drawing itself red, the refusal living only in the claim.
+export const useForeignDropStripValidity = (
+  compositionId: string | null,
+): PlacementValidity | null =>
+  useLayerDragStore((s) =>
+    s.claim !== null &&
+    s.claim.compositionId === compositionId &&
+    s.claim.trackId === SPAWN_TRACK_ID
+      ? s.claim.validity
+      : null,
+  );
+
 /// The live gesture while the drop strip is its resolved destination — null
 /// otherwise, which is also the strip's answer to "is a clip drag over me".
 /// Gated so a drag that never reaches the strip does not re-render it.

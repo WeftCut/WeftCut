@@ -3,8 +3,12 @@ import { useTranslation } from "react-i18next";
 
 import { formatTimecode } from "../frames";
 import type { LayerParamsView, LayerSummary } from "../ipc";
+import {
+  DragGhostChip,
+  dragGhostBand,
+  GHOST_HEAD_CAP_PX,
+} from "./DragGhostChip";
 import { DROP_STRIP_HEIGHT_PX } from "./geometry";
-import { timelineLayerTheme } from "./layerTheme";
 import type { PendingLayerPlacement } from "./LayerBlock";
 import { placementRefuses, SPAWN_TRACK_ID } from "./placement";
 import { playheadClockUs } from "../state/playheadProjection";
@@ -23,22 +27,21 @@ import {
 import {
   moveLandings,
   useForeignDropStripAnchorUs,
+  useForeignDropStripValidity,
   useIsForeignDropClaimed,
   useIsLayerMoveDragging,
   useLayerDragForStrip,
 } from "./layerDragStore";
 
-/// The colour hint `timelineLayerTheme` consults for a `Color` layer only. A
-/// raise's ghost is a bar in a 14 px row rather than a mirror of the clip, so it
-/// carries no fill to offer — the same reading, and the same constant, as the
-/// cross-Panel ghost (`ForeignDragGhost.tsx`).
-const GHOST_NEUTRAL_SURFACE = "#22262b";
-
-/// One bar the strip draws for a clip whose destination is the lane this row
+/// One ghost the strip draws for a clip whose destination is the lane this row
 /// spawns. Minted from the LIVE gesture while the pointer is here, and from the
 /// PENDING promise for the round trip after release — the strip is the only
 /// surface either can be drawn on, a spawned lane having no id to key a lane
 /// preview by until the command returns.
+///
+/// A clip carried in from ANOTHER Panel is not in this list: it draws its own
+/// ghost over this row (`ForeignDragGhost.tsx`), and draws the same one, both
+/// going through `DragGhostChip` on the band `dragGhostBand` gives this row.
 interface StripClipGhost {
   layerId: string;
   /// The clip's display name, or null for a promise — resolved where the layer
@@ -133,6 +136,7 @@ export function DropStrip({
   const stripDrag = useLayerDragForStrip(compositionId);
   const foreignDropArmed = useIsForeignDropClaimed(compositionId);
   const foreignStripAnchorUs = useForeignDropStripAnchorUs(compositionId);
+  const foreignStripValidity = useForeignDropStripValidity(compositionId);
   const activeMediaDrag = useMediaDragStore((s) => s.active);
   const dropTargetTrackId = useMediaDragStore((s) => s.dropTargetTrackId);
   const claimDropTarget = useMediaDragStore((s) => s.claimDropTarget);
@@ -288,6 +292,11 @@ export function DropStrip({
   // µs — the local one by its composition gate, the foreign one because the
   // claim was resolved on this Panel's axis in the first place.
   const clipDragAnchorUs = stripLanding?.anchorTStartUs ?? foreignStripAnchorUs;
+  // And its verdict, from whichever side. One value, so the row cannot light
+  // blue and promise a track under a ghost that is already red — which is what
+  // it did for a refused drop carried in from next door, the claim's validity
+  // having never reached the chrome.
+  const clipValidity = stripDrag?.validity ?? foreignStripValidity;
   // One armed/lit pair, fed by every event model. Any drag arms the row;
   // whichever one currently owns the strip lights it. A promise draws its bars
   // without lighting anything: the gesture is over, and "release to create a
@@ -300,17 +309,17 @@ export function DropStrip({
   const mediaRefused =
     visibleDropPreview !== null &&
     mediaDropInvalid(visibleDropPreview.plan.validity);
-  const clipRefused = stripDrag !== null && placementRefuses(stripDrag.validity);
+  const clipRefused = clipValidity !== null && placementRefuses(clipValidity);
   const refused = mediaRefused || clipRefused;
-  const lockRefused = stripDrag?.validity === "locked";
+  const lockRefused = clipValidity === "locked";
   // WHICH refusal, not merely whether: a fresh lane refuses for three different
   // reasons — a composition that would contain itself (media), a subject set
   // that would overlap itself on the one new lane, and a locked subject — and
   // "Overlap" on an empty lane reads as a bug. Amber for a lock, red for the
-  // rest, the vocabulary every lane and the cross-Panel ghost already use.
+  // rest, the vocabulary every lane and the ghost in this row already use.
   const refusalLabel = mediaRefused
     ? t("timeline.drop_cycle")
-    : stripDrag?.validity === "collision"
+    : clipValidity === "collision"
       ? t("timeline.drop_collision", { defaultValue: "Overlap" })
       : lockRefused
         ? t("timeline.drop_locked", { defaultValue: "Locked" })
@@ -322,15 +331,22 @@ export function DropStrip({
   // Anchored to the gesture's head rather than to the row, so the hint lands
   // beside the pointer at any scroll offset. For a media drag that is the ghost's
   // head, offset far enough to clear the absorbed media chip (which reaches at
-  // most MEDIA_DRAG_CURSOR_OFFSET_PX + 18 px past it); for a clip drag it is the
-  // anchor clip's own head, and the label therefore sits ON its bar rather than
-  // beside it — every clip ghost is under this hint's z tier. Deliberate: the
-  // alternative is the bar's TAIL, which at frame-level zoom is off screen
-  // while the hand holding the clip is not.
+  // most MEDIA_DRAG_CURSOR_OFFSET_PX + 18 px past it).
+  //
+  // For a clip drag it begins where the ghost's HEAD CAP ends — the label sits on
+  // the bar (there is no room beside it in a 14 px row) but never on the one edge
+  // the gesture is about. Not a nudge for looks: the hint is opaque and a tier
+  // above every ghost, so at offset 0 it covered the landing marker completely.
+  // The bar's TAIL would clear it too and is the wrong answer — at frame-level
+  // zoom the tail is off screen while the hand holding the clip is not.
   const hintLeftPx =
     visibleDropPreview !== null
       ? ghostLeftPx + MEDIA_DRAG_CURSOR_OFFSET_PX + 24
-      : ((clipDragAnchorUs ?? 0) / 1_000_000) * pxPerSec;
+      : ((clipDragAnchorUs ?? 0) / 1_000_000) * pxPerSec + GHOST_HEAD_CAP_PX;
+  // Row-local, because the ghosts are children of the row. The SAME rule the
+  // cross-Panel ghost applies to this row from outside it, which is what makes
+  // the two boxes coincide instead of merely resembling each other.
+  const stripGhostBand = dragGhostBand(DROP_STRIP_HEIGHT_PX, SPAWN_TRACK_ID);
   // The strip is a clip surface for selection too: a sweep may start on the
   // reserved row and reach down into the lanes.
   const { onPointerDown: onMarqueeDown } = useMarqueeAnchor({ kind: "clip" });
@@ -384,44 +400,25 @@ export function DropStrip({
           clip because the clip is leaving it (`previewTrackId`) — and it outlives
           the gesture, the promise on `SPAWN_TRACK_ID` keeping it drawn through
           the round trip in which the destination lane has no id yet. */}
-      {clipGhosts.map((ghost) => {
-        const theme = timelineLayerTheme(ghost.kind, GHOST_NEUTRAL_SURFACE);
-        // The same red / amber a lane and the cross-Panel ghost wear, so one
-        // vocabulary covers every surface a drop can be refused on. Read off the
-        // CLIP's verdict, never `refused` — a media drag refusing on this row
-        // says nothing about a clip that is not being dragged.
-        const tone =
-          stripDrag?.validity === "collision"
-            ? { border: "rgb(252 165 165)", outline: "2px solid rgb(248 113 113)" }
-            : stripDrag?.validity === "locked"
-              ? { border: "rgb(252 211 77)", outline: "2px solid rgb(251 191 36)" }
-              : null;
-        return (
-          <div
-            key={ghost.layerId}
-            data-testid="timeline-drop-strip-clip-ghost"
-            data-layer-id={ghost.layerId}
-            data-validity={stripDrag?.validity ?? "spawn"}
-            data-start-us={ghost.tStartUs}
-            data-end-us={ghost.tEndUs}
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 z-[5] overflow-hidden rounded-sm border border-white/25"
-            style={{
-              left: (ghost.tStartUs / 1_000_000) * pxPerSec,
-              width: Math.max(
-                4,
-                ((ghost.tEndUs - ghost.tStartUs) / 1_000_000) * pxPerSec,
-              ),
-              backgroundColor: theme.surface,
-              opacity: 0.85,
-              borderColor: tone?.border,
-              outline: tone?.outline,
-              outlineOffset: tone === null ? undefined : -2,
-            }}
-            title={`${ghost.name === null ? "" : `${ghost.name}: `}${formatTimecode(ghost.tStartUs, fpsNum, fpsDen)} → ${formatTimecode(ghost.tEndUs, fpsNum, fpsDen)}`}
-          />
-        );
-      })}
+      {clipGhosts.map((ghost) => (
+        <DragGhostChip
+          key={ghost.layerId}
+          testId="timeline-drop-strip-clip-ghost"
+          layerId={ghost.layerId}
+          trackId={SPAWN_TRACK_ID}
+          name={ghost.name}
+          kind={ghost.kind}
+          tStartUs={ghost.tStartUs}
+          tEndUs={ghost.tEndUs}
+          // A promise has outlived the gesture that carried a verdict, and only a
+          // committable one is ever written — `"spawn"` is what it committed on.
+          validity={clipValidity ?? "spawn"}
+          pxPerSec={pxPerSec}
+          fpsNum={fpsNum}
+          fpsDen={fpsDen}
+          {...stripGhostBand}
+        />
+      ))}
       {/* Says what release will do, for whichever gesture is over the row.
           Absolute because a 14 px row's height must never depend on the text. */}
       {lit && (

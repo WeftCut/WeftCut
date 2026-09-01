@@ -359,6 +359,16 @@ describe("ForeignDragGhost", () => {
     expect(ghost.style.outline).toBe("");
     expect(ghost.textContent).not.toContain("Overlap");
     expect(view.claim()?.trackId).toBe(SPAWN_TRACK_ID);
+    // The ROW decides the band, not which Panel the gesture came from: the strip
+    // gets the whole row, which is the box a raise's own ghost takes there
+    // (`dragGhostBand`). The canvas and the strip share a top in this fixture, so
+    // 0 px here IS the row's own origin — a chip band would have put an 8 px
+    // sliver at 4, riding high in a 14 px row and looking like a different thing
+    // from the local raise it is standing in for.
+    expect(ghost.style.top).toBe("0px");
+    expect(ghost.style.height).toBe("14px");
+    // And no label at that height, on the same one rule.
+    expect(ghost.textContent).toBe("");
   });
 
   it("lands every member on the one hit lane, holding its phase to the anchor", () => {
