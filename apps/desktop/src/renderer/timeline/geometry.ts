@@ -89,9 +89,8 @@ export function computeTimelineExtent({
 
 export interface VisualTrack {
   track: TrackSummary;
-  /// True when this is the first lane of its section — the renderer adds a
-  /// divider line above it. Sections are role-stamped vs role-less, not kind
-  /// buckets, so there is exactly one boundary (see `visualOrderedTracks`).
+  /// True on the first lane after a role/extra section change. Visual order
+  /// always places extras above the A/B skeleton, so this is that cut.
   isRoleSectionStart: boolean;
 }
 
@@ -266,8 +265,8 @@ export function layerSliceRect(
 //   │ idx 5 — additional (newest)     │         │ A roll                      │
 //   └─────────────────────────────────┘         └─────────────────────────────┘
 //
-// One role-section divider separates the two sections: it lands on the first
-// role-stamped row, i.e. under the "additional" region at the top.
+// The extra→role cut lands on the first role-stamped row, i.e. under the
+// "additional" region at the top.
 export function visualOrderedTracks(tracks: TrackSummary[]): VisualTrack[] {
   const reversed = tracks.slice().reverse();
   const out: VisualTrack[] = [];
@@ -276,7 +275,7 @@ export function visualOrderedTracks(tracks: TrackSummary[]): VisualTrack[] {
     // Role-stamped tracks (the reserved A/B skeleton + their separated
     // audio derivatives if any) form one section; everything else
     // (transient imports, spawned additional tracks) forms the section
-    // above them. The boundary between them gets a divider.
+    // above them.
     const section: "role" | "extra" = track.role !== null ? "role" : "extra";
     const isRoleSectionStart = prevSection !== null && section !== prevSection;
     out.push({ track, isRoleSectionStart });

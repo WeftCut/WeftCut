@@ -70,7 +70,6 @@ export function TrackLane({
   onCommitLinkLabel,
   onCommitGroupLabel,
   onCommitParamTrack,
-  isRoleSectionStart,
   isRevealed,
   isResizing,
   onHeightDragStart,
@@ -137,7 +136,6 @@ export function TrackLane({
   onCommitLinkLabel: (linkId: string, label: string | null) => void;
   onCommitGroupLabel: (compositionId: string, label: string | null) => void;
   onCommitParamTrack: (layerId: string, paramKey: string, track: AnimTrack<number>) => void;
-  isRoleSectionStart: boolean;
   /// Inline-reveal flag. The lane renders with extra chrome
   /// (dashed border / "hidden" badge) so the user knows this row is
   /// only here because they clicked a Playhead Panel row.
@@ -470,7 +468,6 @@ export function TrackLane({
               : isRevealed
                 ? "outline outline-1 outline-dashed -outline-offset-1 outline-blue-400/55 bg-blue-400/5"
                 : "",
-        isRoleSectionStart ? "border-t border-t-border" : "",
       ].join(" ")}
       style={{ height }}
       onPointerDown={onMarqueeDown}

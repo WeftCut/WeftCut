@@ -1697,14 +1697,13 @@ export function Timeline({
               strip's, but it is exactly as tall. */}
           <MarkerLaneHeader />
           <DropStripHeader />
-          {orderedTracks.map(({ track, isRoleSectionStart }) => (
+          {orderedTracks.map(({ track }) => (
             <Fragment key={track.id}>
               <TrackHeader
                 compositionId={compositionId}
                 track={track}
                 height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
                 isRevealed={track.id === (revealedTrackId ?? null)}
-                isRoleSectionStart={isRoleSectionStart}
                 isExpanded={expandedTracks.has(track.id)}
                 hasKeyframes={trackKeyframeProperties(track).length > 0}
                 onToggleExpand={() => toggleExpanded(track.id)}
@@ -1778,7 +1777,7 @@ export function Timeline({
               by kind. The role-less section is the one at the top, which is
               where the strip above spawns into.
             */}
-            {orderedTracks.map(({ track, isRoleSectionStart }) => (
+            {orderedTracks.map(({ track }) => (
               <Fragment key={track.id}>
               <TrackLane
                 track={track}
@@ -1809,7 +1808,6 @@ export function Timeline({
                 onCommitGroupLabel={onCommitGroupLabel}
                 onCommitParamTrack={onCommitParamTrack}
                 onMediaDrop={onMediaDrop}
-                isRoleSectionStart={isRoleSectionStart}
                 isRevealed={track.id === (revealedTrackId ?? null)}
                 isResizing={heightDrag !== null}
                 onHeightDragStart={beginHeightDrag(track.id)}

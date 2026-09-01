@@ -41,7 +41,6 @@ function renderHeader(t: TrackSummary, onMutated = vi.fn().mockResolvedValue(und
       track={t}
       height={56}
       isRevealed={false}
-      isRoleSectionStart={false}
       isExpanded={false}
       hasKeyframes={false}
       onToggleExpand={vi.fn()}

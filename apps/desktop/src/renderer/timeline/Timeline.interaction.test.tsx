@@ -2357,6 +2357,61 @@ describe("Timeline row alignment", () => {
   });
 });
 
+describe("Timeline track seams", () => {
+  beforeEach(() => {
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, display_mode: "AllTracks" },
+    }));
+  });
+  afterEach(() => cleanup());
+
+  /// Extra tracks sit above the reserved A/B skeleton. The extra→role
+  /// boundary used to paint an extra `border-t` on the first A/B row, which
+  /// stacked on the previous row's `border-b` into a 2px mixed-color seam
+  /// while every other track join stayed a 1px `--border-soft` hairline.
+  const seamClasses = (el: Element): string[] =>
+    [...el.classList].filter((c) => c.startsWith("border")).sort();
+
+  it("uses the same hairline between extra tracks and the A/B skeleton as between any two tracks", () => {
+    const overlay: TrackSummary = {
+      ...track,
+      id: "overlay-1",
+      role: null,
+      transient: true,
+      layers: [],
+    };
+    const bRoll: TrackSummary = { ...track, id: "b-roll", role: "b-roll", layers: [] };
+    const aRoll: TrackSummary = { ...track, id: "a-roll", role: "a-roll", layers: [] };
+    const { container } = renderTimeline({ tracks: [aRoll, bRoll, overlay] });
+
+    const lanes = [
+      ...container.querySelectorAll<HTMLElement>('[data-testid="track-lane"]'),
+    ];
+    expect(lanes.map((el) => el.dataset.trackId)).toEqual([
+      "overlay-1",
+      "b-roll",
+      "a-roll",
+    ]);
+    expect(seamClasses(lanes[0]!)).toEqual(seamClasses(lanes[1]!));
+    expect(seamClasses(lanes[1]!)).toEqual(seamClasses(lanes[2]!));
+    expect(seamClasses(lanes[1]!)).toContain("border-b");
+    expect(seamClasses(lanes[1]!)).toContain("border-border-soft");
+    expect(seamClasses(lanes[1]!)).not.toContain("border-t");
+
+    const headers = [
+      ...container.querySelectorAll<HTMLElement>('[data-testid="track-header"]'),
+    ];
+    expect(headers.map((el) => el.dataset.trackId)).toEqual([
+      "overlay-1",
+      "b-roll",
+      "a-roll",
+    ]);
+    expect(seamClasses(headers[0]!)).toEqual(seamClasses(headers[1]!));
+    expect(seamClasses(headers[1]!)).toEqual(seamClasses(headers[2]!));
+    expect(seamClasses(headers[1]!)).not.toContain("border-t");
+  });
+});
+
 describe("Timeline clip label fallback", () => {
   beforeEach(() => {
     clearLayerSelection();

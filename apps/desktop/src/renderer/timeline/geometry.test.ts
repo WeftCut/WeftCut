@@ -195,12 +195,13 @@ describe("visualOrderedTracks", () => {
   it("reverses data order and marks the role/extra boundary", () => {
     // Data order as production builds it: the reserved skeleton first, then the
     // lanes placement APPENDED. Reversed, the role-less tail is the top of the
-    // screen, so the divider lands on the first role-stamped row below it.
+    // screen, so the extra→role cut lands on the first role-stamped row below it.
     const aRoll = track({ id: "a-roll", role: "a-roll" as never });
     const bRoll = track({ id: "b-roll", role: "b-roll" as never });
     const spawned = track({ id: "spawned", role: null, transient: true });
     const out = visualOrderedTracks([aRoll, bRoll, spawned]);
     expect(out.map((v) => v.track.id)).toEqual(["spawned", "b-roll", "a-roll"]);
+    // Extra→role cut: spawned is extra, b-roll is the first role-stamped row.
     expect(out.map((v) => v.isRoleSectionStart)).toEqual([false, true, false]);
   });
   it("produces isRoleSectionStart === false for every entry when all tracks have role: null", () => {
