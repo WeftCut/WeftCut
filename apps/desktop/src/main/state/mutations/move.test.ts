@@ -22,6 +22,26 @@ describe('applyMoveLayer', () => {
     expect(l.t_start_us).toBe(2_000_000)
     expect(l.t_end_us - l.t_start_us).toBe(1_000_000) // duration preserved
   })
+  /// The other half of a twin that spans the process boundary: the timeline's
+  /// move projection promises where a drag will land, and `TrackLane` gives that
+  /// promise precedence over the project until the landing matches it — so a
+  /// promise computed by an arithmetic THIS function does not share is one the
+  /// project can never satisfy, and the lane draws it over the real clip for the
+  /// rest of the session.
+  ///
+  /// A 61-frame clip at 30 fps landing on frame 1 is the case that exposes it:
+  /// `snapped landing + snapped duration` is 2_066_666, one microsecond off the
+  /// lattice point this returns. The renderer half is
+  /// `Timeline.interaction.test.tsx`, "Timeline move promise", whose
+  /// `ACTOR_LANDING` is these two numbers.
+  it('lands the 61-frame wedge case on the lattice, not on landing + duration', () => {
+    const g = seededGen(); const p = blankProject(g, 't')
+    const a = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 2_033_333)
+    applyMoveLayer(p, a, root(p).tracks[0].id, 33_333, false)
+    const l = root(p).tracks[0].layers[0]
+    expect(l.t_start_us).toBe(33_333)
+    expect(l.t_end_us).toBe(2_066_667)
+  })
   it('moves across tracks', () => {
     const g = seededGen(); const p = blankProject(g, 't')
     const a = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 1_000_000)

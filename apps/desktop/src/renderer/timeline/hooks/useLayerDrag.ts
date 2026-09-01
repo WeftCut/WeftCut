@@ -14,6 +14,7 @@ import i18n from "../../i18n";
 import { layerDisplayName } from "../../lib/layerName";
 import { currentGroupOrdinals } from "../../state/projectStore";
 import { adjacentFrameBoundaryUs, snapFrameRound } from "../../frames";
+import { gridForLayerKind, snapOnGrid } from "../../grid";
 import { logMutationFailure } from "../../errors/tryMutate";
 import {
   layerOverlapClass,
@@ -56,6 +57,23 @@ interface LayerMoveProjection {
   anchorStartUs: number;
   validity: PlacementValidity;
   conflictingLayerIds: string[];
+}
+
+/// What one commit promised, and whether the project has had its say yet.
+///
+/// The promise exists so the clip does not flicker back to where it was for the
+/// round trip between the release and the refreshed summary. It is a bet on what
+/// the command will do, which means it needs BOTH a way to be kept and a way to
+/// be lost — see the watcher's two exits.
+interface PendingCommit {
+  /// Monotonic, one per commit. A refresh can only verify the promise its own
+  /// commit wrote: without this, a slow first commit's refresh would land after
+  /// a second gesture replaced the promise and would drop that newer one.
+  seq: number;
+  placements: PendingLayerPlacement[];
+  /// The command returned and its refresh was awaited — so from here the mirror
+  /// is the truth and the promise no longer outranks it.
+  verified: boolean;
 }
 
 const UNSELECTED_CLIP_DRAG_ARM_MS = 100;
@@ -173,8 +191,12 @@ export function useLayerDrag(opts: {
   // Local, not in the store: a placement is written once on commit and cleared
   // once the refreshed project shows the layer where it was promised, never at
   // event rate — so the rule the store exists to enforce does not reach it.
-  const [pendingPlacements, setPendingPlacements] =
-    useState<PendingLayerPlacement[] | null>(null);
+  const [pendingCommit, setPendingCommit] = useState<PendingCommit | null>(null);
+  const pendingPlacements = pendingCommit?.placements ?? null;
+  // Stamped onto the promise a commit writes, so the refresh that follows THIS
+  // commit cannot verify — and drop — a promise a later gesture has since put in
+  // its place.
+  const commitSeqRef = useRef(0);
 
   const layerEntryById = useMemo(() => {
     const layerById = new Map<
@@ -221,8 +243,8 @@ export function useLayerDrag(opts: {
   }, [dragSubjects, layerEntryById]);
 
   useEffect(() => {
-    if (!pendingPlacements) return;
-    const allLanded = pendingPlacements.every((placement) => {
+    if (!pendingCommit) return;
+    const allLanded = pendingCommit.placements.every((placement) => {
       const track = tracks.find((t) => t.id === placement.trackId);
       const layer = track?.layers.find((l) => l.id === placement.layerId);
       if (!layer) return false;
@@ -235,10 +257,18 @@ export function useLayerDrag(opts: {
         layer.t_end_us === placement.tEndUs
       );
     });
-    if (allLanded) {
-      setPendingPlacements(null);
+    // `verified` is the second exit, and the timeline depends on there being
+    // one. A promise is a bet on what the command will do, and a bet the
+    // refreshed project has already settled AGAINST is not a preview of
+    // anything: `TrackLane` draws the promised lane's phantom and filters the
+    // real clip out of the lane it actually reached, so a promise with only the
+    // equality exit pins the clip at a landing that never happened for the rest
+    // of the session. Showing the truth one frame later beats showing a
+    // fiction forever.
+    if (allLanded || pendingCommit.verified) {
+      setPendingCommit(null);
     }
-  }, [pendingPlacements, tracks]);
+  }, [pendingCommit, tracks]);
 
   const visibleSnapTracks = useMemo(
     () => orderedTracks.map(({ track }) => track),
@@ -488,8 +518,38 @@ export function useLayerDrag(opts: {
       deltaUs: number,
       overTrackId: string | null,
     ): LayerMoveProjection => {
-      const anchorStartUs = Math.max(0, state.originalTStart + deltaUs);
-      const actualDeltaUs = anchorStartUs - state.originalTStart;
+      // Mirrors `applyMoveLayer` (`main/state/mutations/move.ts`) term for term,
+      // because a placement is a PROMISE the settle watcher holds the command
+      // to. An arithmetic the mutation does not share makes a promise it can
+      // never keep: at 60 fps a frame is 16666.67 µs, so an already-snapped
+      // start plus an already-snapped duration is OFF the lattice, the
+      // mutation's re-snap lands 1 µs away, and the watcher waits for a landing
+      // that never comes while the lane draws the stale promise over the real
+      // clip.
+      const fps = { num: fpsNum, den: fpsDen };
+      const anchorGrid = gridForLayerKind(
+        state.subjects.find((subject) => subject.layerId === state.layerId)
+          ?.kind ?? "VideoClip",
+        fps,
+      );
+      // The set stops as ONE body at zero: the delta is floored at whatever puts
+      // the EARLIEST member on 0, never each member clamped where it lands
+      // (`earliestStart`, the mutation's own rule). Clamping per member would
+      // flatten a link's phase against the boundary and promise a landing the
+      // command does not make.
+      const earliestStartUs = state.subjects.reduce(
+        (earliest, subject) => Math.min(earliest, subject.originalTStart),
+        state.originalTStart,
+      );
+      const actualDeltaUs = Math.max(
+        snapOnGrid(state.originalTStart + deltaUs, anchorGrid) -
+          state.originalTStart,
+        -earliestStartUs,
+      );
+      const anchorStartUs = snapOnGrid(
+        state.originalTStart + actualDeltaUs,
+        anchorGrid,
+      );
       const destinationTrackId =
         overTrackId !== null && trackAcceptsForLayer(overTrackId, state)
           ? overTrackId
@@ -505,18 +565,25 @@ export function useLayerDrag(opts: {
       for (const subject of state.subjects) {
         const entry = layerEntryById.get(subject.layerId);
         if (!entry) continue;
-        const durationUs = subject.originalTEnd - subject.originalTStart;
         const isAnchor = subject.layerId === state.layerId;
+        // Each member lands on ITS OWN lattice — the audio sample grid for an
+        // Audio member, the composition frame grid for every other — which is
+        // how a deliberately slipped A/V sync offset survives a whole-link move
+        // (R2-D7). BOTH endpoints take the same delta and snap; never
+        // `start + duration`, because a duration is the difference of two
+        // lattice points and is not itself one.
+        const grid = gridForLayerKind(subject.kind, fps);
         const tStartUs = spawning
           ? subject.originalTStart
-          : isAnchor
-            ? anchorStartUs
-            : Math.max(0, subject.originalTStart + actualDeltaUs);
+          : snapOnGrid(subject.originalTStart + actualDeltaUs, grid);
+        const tEndUs = spawning
+          ? subject.originalTEnd
+          : snapOnGrid(subject.originalTEnd + actualDeltaUs, grid);
         projected.push({
           layerId: subject.layerId,
           trackId: spawning || isAnchor ? destinationTrackId : subject.trackId,
           tStartUs,
-          tEndUs: tStartUs + durationUs,
+          tEndUs,
           overlapClass: layerOverlapClass(entry.layer),
           // The SOURCE lane's lock speaks too. With a real destination the target
           // lane's own lock already refuses — a sibling's destination IS its
@@ -550,7 +617,7 @@ export function useLayerDrag(opts: {
         conflictingLayerIds: evaluation.conflictingLayerIds,
       };
     },
-    [layerEntryById, tracks],
+    [fpsDen, fpsNum, layerEntryById, tracks],
   );
 
   const evaluatePointer = useCallback(
@@ -771,6 +838,7 @@ export function useLayerDrag(opts: {
       const committed = evaluation.state;
       const deltaUs = committed.deltaUs;
       const moveProjection = evaluation.moveProjection;
+      const commitSeq = ++commitSeqRef.current;
 
       try {
         // `docs/features.md#links` — Alt-held at drag start opts the move /
@@ -789,7 +857,7 @@ export function useLayerDrag(opts: {
               !moveProjection ||
               moveProjection.validity !== (spawning ? "spawn" : "valid")
             ) {
-              setPendingPlacements(null);
+              setPendingCommit(null);
               return;
             }
             if (spawning) {
@@ -805,7 +873,7 @@ export function useLayerDrag(opts: {
               // times are carried verbatim, so the only change is which row the
               // clip sits on. Any bridge an earlier gesture left is dropped for
               // the same reason: the raise moves its subjects out from under it.
-              setPendingPlacements(null);
+              setPendingCommit(null);
               const spawnedTrackId = await moveLayersToNewTrack(
                 committed.subjects.map((subject) => subject.layerId),
               );
@@ -833,9 +901,13 @@ export function useLayerDrag(opts: {
                   layerId: cloneIdFor(placement.layerId),
                   sourceLayerId: placement.layerId,
                 }));
-              setPendingPlacements(
-                ghosts((sourceId) => `${sourceId}::pending-duplicate`),
-              );
+              setPendingCommit({
+                seq: commitSeq,
+                placements: ghosts(
+                  (sourceId) => `${sourceId}::pending-duplicate`,
+                ),
+                verified: false,
+              });
               const { clones } = await pasteLayers(
                 seedFirst,
                 moveProjection.anchorStartUs,
@@ -844,15 +916,21 @@ export function useLayerDrag(opts: {
               const cloneBySource = new Map(
                 clones.map((pair) => [pair.source, pair.clone]),
               );
-              setPendingPlacements(
-                ghosts(
+              setPendingCommit({
+                seq: commitSeq,
+                placements: ghosts(
                   (sourceId) =>
                     cloneBySource.get(sourceId) ?? `${sourceId}::pending-duplicate`,
                 ),
-              );
+                verified: false,
+              });
               break;
             }
-            setPendingPlacements(moveProjection.placements);
+            setPendingCommit({
+              seq: commitSeq,
+              placements: moveProjection.placements,
+              verified: false,
+            });
             await moveLayer(
               committed.layerId,
               moveProjection.destinationTrackId,
@@ -873,8 +951,17 @@ export function useLayerDrag(opts: {
           }
         }
         await onMutated();
+        // The command has returned and its refresh has been awaited, so the
+        // mirror is authoritative from here on and the promise has had its
+        // chance. Marked rather than cleared: the watcher above still prefers
+        // the equality exit, which clears without a frame of the old position.
+        setPendingCommit((current) =>
+          current !== null && current.seq === commitSeq
+            ? { ...current, verified: true }
+            : current,
+        );
       } catch (err) {
-        setPendingPlacements(null);
+        setPendingCommit(null);
         logMutationFailure(err, "Timeline drag commit");
       }
     },

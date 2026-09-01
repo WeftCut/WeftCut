@@ -4051,3 +4051,157 @@ describe("Timeline command provider with two Panels open", () => {
     warnSpy.mockRestore();
   });
 });
+
+// -------- The promise a commit writes, and its two exits --------
+//
+// A move draws a PROMISE for the round trip between the release and the
+// refreshed summary, and `TrackLane` gives that promise precedence: it draws the
+// promised lane's block and filters the clip out of the lane it really reached.
+// So a promise the project can never satisfy does not degrade — it REPLACES the
+// timeline's picture of that clip for as long as the Panel lives.
+//
+// Both tests below start from a clip whose span makes the arithmetic bite. At
+// 30 fps a frame is 33333.33 µs, so `snapped start + snapped duration` is off
+// the lattice for a 61-frame clip landing on frame 1 — the mutation's re-snap
+// puts `t_end` 1 µs away, which is invisible on screen and fatal to an equality
+// test.
+describe("Timeline move promise", () => {
+  const WEDGE_END_US = 2_033_333; // frame 61 at 30 fps
+  const LANDING_US = 33_333; // frame 1 — where a 3 px drag at 80 px/s lands
+  const wedgeLayer: LayerSummary = { ...layer, t_end_us: WEDGE_END_US };
+  const wedgeTrack: TrackSummary = { ...track, layers: [wedgeLayer] };
+
+  /// What `applyMoveLayer` lands this clip on, to the microsecond. The renderer
+  /// tsconfig does not reach the actor's tree, so the other half of this twin is
+  /// a test beside the mutation — `move.test.ts`, "lands the 61-frame wedge
+  /// case", which pins these same two numbers as the mutation's own output. The
+  /// pair is the assertion: change either side alone and one of them fails.
+  ///
+  /// Note `t_end`: the promise used to read `landing + duration` = 2_066_666,
+  /// and the mutation's re-snap says 2_066_667. One microsecond, invisible on
+  /// screen, and enough to make the promise unsatisfiable forever.
+  const ACTOR_LANDING = { tStartUs: 33_333, tEndUs: 2_066_667 };
+
+  function renderWedge(tracks: TrackSummary[]) {
+    const props = {
+      compositionId: null,
+      links: [],
+      durationUs: 5_000_000,
+      keybindings: {},
+      fpsNum: 30,
+      fpsDen: 1,
+      bladeMode: false,
+      media: [],
+      importing: new Set<string>(),
+      proxyState: new Map(),
+      previewDecodable: new Set<string>(),
+      onExitBlade: vi.fn(),
+      onSeek: vi.fn(),
+      onMutated: vi.fn().mockResolvedValue(undefined),
+    };
+    const view = render(<Timeline {...props} tracks={tracks} />);
+    return {
+      ...view,
+      setTracks: (next: TrackSummary[]) =>
+        view.rerender(<Timeline {...props} tracks={next} />),
+    };
+  }
+
+  const blockLeftPx = () =>
+    (screen.getByText("Clip A").closest(".timeline-layer") as HTMLElement).style
+      .left;
+  const atUs = (us: number) => `${(us / 1_000_000) * 80}px`;
+
+  /// One 3 px drag on an armed clip — the same gesture the arming tests use,
+  /// reduced to the two events that matter here.
+  function dragOneFrame() {
+    const block = screen.getByText("Clip A").closest(".timeline-layer")!;
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 83, clientY: 30 });
+    fireEvent.pointerUp(window, { clientX: 83, clientY: 30 });
+  }
+
+  beforeEach(() => {
+    clearLayerSelection();
+    setActiveRegion(null);
+    setPlayheadTimeUs(0);
+    ipcMocks.moveLayer.mockClear();
+    useAppSettingsStore.setState((s) => ({
+      settings: {
+        ...s.settings,
+        display_mode: "AllTracks",
+        tail_snap_enabled: false,
+      },
+    }));
+  });
+  afterEach(() => {
+    // Restored explicitly: the shared `beforeEach` only CLEARS these mocks, so
+    // an implementation left behind here would follow every later test.
+    ipcMocks.moveLayer.mockReset();
+    ipcMocks.moveLayer.mockResolvedValue(undefined);
+    cleanup();
+  });
+
+  it("promises exactly the times applyMoveLayer lands, so the equality exit clears it", async () => {
+    // The commit never resolves, so the refresh that verifies a promise never
+    // runs and the safety net below cannot fire. Only an EXACT match can clear
+    // the promise here — which is the whole assertion: the projection's
+    // arithmetic is the mutation's.
+    ipcMocks.moveLayer.mockReturnValue(new Promise<void>(() => {}));
+    setLayerSelection(wedgeLayer.id, [wedgeLayer.id]);
+    const { setTracks } = renderWedge([wedgeTrack]);
+
+    dragOneFrame();
+    await waitFor(() =>
+      expect(ipcMocks.moveLayer).toHaveBeenCalledWith(
+        wedgeLayer.id,
+        wedgeTrack.id,
+        LANDING_US,
+        false,
+      ),
+    );
+
+    // The project comes back with the actor's landing, which must satisfy the
+    // promise and retire it.
+    const moved: LayerSummary = {
+      ...wedgeLayer,
+      t_start_us: ACTOR_LANDING.tStartUs,
+      t_end_us: ACTOR_LANDING.tEndUs,
+    };
+    act(() => setTracks([{ ...wedgeTrack, layers: [moved] }]));
+
+    // A retired promise stops speaking for the clip. A wedged one keeps drawing
+    // it at the landing it promised, whatever the project says next — which is
+    // the defect this guards, and it only becomes visible on the NEXT change.
+    act(() =>
+      setTracks([
+        {
+          ...wedgeTrack,
+          layers: [{ ...moved, t_start_us: 3_000_000, t_end_us: 4_000_000 }],
+        },
+      ]),
+    );
+    expect(blockLeftPx()).toBe(atUs(3_000_000));
+  });
+
+  it("drops a promise the refreshed project contradicts, rather than drawing it forever", async () => {
+    setLayerSelection(wedgeLayer.id, [wedgeLayer.id]);
+    const { setTracks } = renderWedge([wedgeTrack]);
+
+    dragOneFrame();
+    await waitFor(() => expect(ipcMocks.moveLayer).toHaveBeenCalled());
+
+    // A landing that is NOT what was promised — the shape every refusal the
+    // command resolves its own way takes, from a bounce to a clamp. The promise
+    // has had its round trip and lost; the project wins.
+    act(() =>
+      setTracks([
+        {
+          ...wedgeTrack,
+          layers: [{ ...wedgeLayer, t_start_us: 1_000_000, t_end_us: 3_033_333 }],
+        },
+      ]),
+    );
+    await waitFor(() => expect(blockLeftPx()).toBe(atUs(1_000_000)));
+  });
+});
