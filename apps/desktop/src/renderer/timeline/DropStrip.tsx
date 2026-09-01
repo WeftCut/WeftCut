@@ -53,34 +53,52 @@ interface StripClipGhost {
   tEndUs: number;
 }
 
-/// The idle dashed rule both columns of the drop-strip row paint along their
-/// bottom edge — the split between this reserved row and the topmost lane.
-/// Fainter and dashed so it reads as a split, not as another track's bottom
-/// edge (those are solid `--border-soft`). The 14 px above it stays the hit
-/// target.
-export function DropStripSeam() {
+/// The idle dashed rule between the drop strip and the topmost lane.
+///
+/// A zero-height overlay *after* the 14 px hit row, not a child of it: a
+/// hairline that overflowed the strip would paint *under* the first lane's
+/// fill (`bg-track-lane` is opaque). `z-[1]` lets this 1 px sit on top of
+/// that fill without raising the strip itself (a strip stacking context
+/// would cover first-lane link tabs that overflow upward). `intoLanePx`
+/// is the offset into the following row; 0 is the strip/lane boundary.
+export function DropStripSeam({ intoLanePx }: { intoLanePx: number }) {
   return (
     <div
-      data-testid="timeline-drop-strip-seam"
+      className="pointer-events-none relative z-[1] h-0"
       aria-hidden="true"
-      className="pointer-events-none absolute inset-x-0 bottom-0 z-0 border-t border-dashed border-white/[0.10]"
-    />
+    >
+      <div
+        data-testid="timeline-drop-strip-seam"
+        className="absolute inset-x-0 h-px"
+        style={{
+          top: intoLanePx,
+          // `border-dashed` on a 1 px hairline (0.9 px at 110% OS scale)
+          // paints as sparse dots, so the 14 px empty strip leaks through
+          // and the gutter under the "line" reads as 14+4. Paint the dashes
+          // as a fill so they actually occlude that void.
+          backgroundImage:
+            "repeating-linear-gradient(to right, var(--border-soft) 0 3px, transparent 3px 7px)",
+        }}
+      />
+    </div>
   );
 }
 
 /// Header-column half of the drop-strip row. Same height as the body, or every
 /// header beneath it loses its lane. The plus is a landmark in the cell, not a
 /// control: ADR 0042 has no click-to-spawn-empty-track, and a button here would
-/// teach the mental model the strip exists to remove.
+/// teach the mental model the strip exists to remove. It sits at the bottom of
+/// the hit row (`items-end`) so leftover pixels fall above the plus, not as a
+/// gutter between the strip and the first track. The dashed rule itself is the
+/// overlay `DropStripSeam` Timeline mounts after this cell.
 export function DropStripHeader() {
   return (
     <div
       data-testid="timeline-drop-strip-header"
-      className="relative flex items-center justify-center bg-card"
+      className="relative flex items-end justify-center bg-card pb-px"
       style={{ height: DROP_STRIP_HEIGHT_PX }}
       aria-hidden="true"
     >
-      <DropStripSeam />
       <span
         data-testid="timeline-drop-strip-add"
         className="relative z-[1] text-muted-foreground/40"
@@ -94,13 +112,13 @@ export function DropStripHeader() {
 /// The permanently reserved row above the topmost lane: releasing a drag here
 /// spawns a lane at the top of the z-stack and places the clip on it (ADR 0042).
 ///
-/// Idle it is a dashed rule along the bottom of the reserved row, with a plus
-/// in the header half — a seam, not a lane. No fill, nothing that reads as an
-/// empty track the editor is supposed to manage, because that mental model is
-/// what tracks-as-a-by-product removes. It lights up only while a drag is in
-/// flight, and it claims the highlight through the SAME drop-target protocol
-/// the lanes use, under `SPAWN_TRACK_ID`, so ownership transfers between the
-/// strip and a lane without a second mechanism deciding who is lit.
+/// Idle it is a plus in the header half and a dashed rule that Timeline paints
+/// as `DropStripSeam` after this row — a seam, not a lane. No fill, nothing
+/// that reads as an empty track the editor is supposed to manage, because that
+/// mental model is what tracks-as-a-by-product removes. It lights up only while
+/// a drag is in flight, and it claims the highlight through the SAME drop-target
+/// protocol the lanes use, under `SPAWN_TRACK_ID`, so ownership transfers
+/// between the strip and a lane without a second mechanism deciding who is lit.
 ///
 /// A drop here is never a collision WITH THE DESTINATION: the lane it lands on
 /// does not exist yet, so `planMediaDrop` with no track answers `"spawn"` (see
@@ -374,7 +392,7 @@ export function DropStrip({
   // most MEDIA_DRAG_CURSOR_OFFSET_PX + 18 px past it).
   //
   // For a clip drag it begins where the ghost's HEAD CAP ends — the label sits on
-  // the bar (there is no room beside it in a 14 px row) but never on the one edge
+  // the bar (there is no room beside it in a strip this thin) but never on the one edge
   // the gesture is about. Not a nudge for looks: the hint is opaque and a tier
   // above every ghost, so at offset 0 it covered the landing marker completely.
   // The bar's TAIL would clear it too and is the wrong answer — at frame-level
@@ -413,7 +431,6 @@ export function DropStrip({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <DropStripSeam />
       {visibleDropPreview !== null && (
         <div
           data-testid="timeline-drop-strip-ghost"
@@ -461,14 +478,14 @@ export function DropStrip({
         />
       ))}
       {/* Says what release will do, for whichever gesture is over the row.
-          Absolute because a 14 px row's height must never depend on the text. */}
+          Absolute because the strip's height must never depend on the text. */}
       {lit && (
         <div
           data-testid="timeline-drop-strip-hint"
-          className={`pointer-events-none absolute inset-y-0 z-[6] whitespace-nowrap rounded-sm px-1.5 text-[9px] font-semibold leading-[14px] ${
+          className={`pointer-events-none absolute inset-y-0 z-[6] whitespace-nowrap rounded-sm px-1.5 text-[9px] font-semibold ${
             refused ? "bg-red-950/85 text-red-50" : "bg-blue-950/85 text-blue-50"
           }`}
-          style={{ left: hintLeftPx }}
+          style={{ left: hintLeftPx, lineHeight: `${DROP_STRIP_HEIGHT_PX}px` }}
         >
           {refusalLabel ??
             t("timeline.drop_spawn_hint", {

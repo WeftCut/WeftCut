@@ -53,6 +53,13 @@ export const HEADER_COL_PX = 160;
 /// appeared mid-gesture would reflow the timeline under the pointer. Thin
 /// enough to read as a seam rather than a lane the user is meant to manage.
 export const DROP_STRIP_HEIGHT_PX = 14;
+/// The dashed rule sits on the strip/lane boundary (`intoLanePx = 0` when a
+/// lane exists). A positive inset was tried to shrink the gutter under a
+/// hairline that is almost invisible (`white/10` on `--track-lane`); it did
+/// not change what the eye measures, because that empty 14 px strip still
+/// groups with the 4 px clip pad. The hairline uses `--border-soft` (dashed)
+/// so it actually splits that void the way a track `border-b` does.
+export const DROP_STRIP_SEAM_OVERLAP_PX = 0;
 
 /// Height of the marker lane under the ruler: an L plus the name beside it,
 /// which is the whole reason the lane exists — a mark whose name is only

@@ -74,6 +74,7 @@ import {
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import {
   DEFAULT_TRACK_HEIGHT,
+  DROP_STRIP_SEAM_OVERLAP_PX,
   HEADER_COL_PX,
   computeTimelineExtent,
   indexLinks,
@@ -90,7 +91,7 @@ import {
   type MeasuredSubLaneRow,
 } from "./marquee";
 import type { MarqueeBox, MarqueeKind } from "./marqueeStore";
-import { DropStrip, DropStripHeader } from "./DropStrip";
+import { DropStrip, DropStripHeader, DropStripSeam } from "./DropStrip";
 import { MarkerLane, MarkerLaneHeader } from "./MarkerLane";
 import { registerTimelineSurface } from "./timelineSurfaces";
 import { TimelineRuler } from "./TimelineRuler";
@@ -1648,6 +1649,9 @@ export function Timeline({
     [onMarqueeBackgroundClick, onMarqueeBox, takeMarqueeSnapshot],
   );
 
+  const dropSeamIntoLanePx =
+    orderedTracks.length > 0 ? DROP_STRIP_SEAM_OVERLAP_PX : 0;
+
   return (
     <MarqueeAnchorContext.Provider value={marqueeAnchor}>
     <KeyframeBatchContext.Provider value={commitKeyframeBatch}>
@@ -1697,6 +1701,7 @@ export function Timeline({
               strip's, but it is exactly as tall. */}
           <MarkerLaneHeader />
           <DropStripHeader />
+          <DropStripSeam intoLanePx={dropSeamIntoLanePx} />
           {orderedTracks.map(({ track }) => (
             <Fragment key={track.id}>
               <TrackHeader
@@ -1768,6 +1773,7 @@ export function Timeline({
               pendingLayerById={pendingLayerById}
               onMediaDrop={onMediaDrop}
             />
+            <DropStripSeam intoLanePx={dropSeamIntoLanePx} />
             {orderedTracks.length === 0 && <EmptyHint mode={displayMode} />}
             {/*
               Data model: `tracks[0]` is the bottom of the z-stack, `tracks[last]`

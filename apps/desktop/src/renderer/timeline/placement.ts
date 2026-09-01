@@ -27,7 +27,7 @@ export const SPAWN_TRACK_ID = "__weftcut-spawn-track__";
 /// left sitting on it said the opposite.
 ///
 /// This used to answer the source lane, on two grounds that have both since
-/// expired: the 14 px strip was too thin to stand in for a chip (the
+/// expired: the strip was too thin to stand in for a chip (the
 /// cross-Panel ghost draws in exactly that band, `ForeignDragGhost.tsx`), and a
 /// raise carried its times verbatim so the chip already sat where it would land
 /// (`move_layers_to_new_track` takes a landing now). Between them they made the

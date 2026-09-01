@@ -46,7 +46,7 @@ function mountChip(
 
 describe("dragGhostBand", () => {
   it("gives the drop strip the whole row and a lane its chip band", () => {
-    // The strip is not a lane and has no interior: 14 px less two 4 px pads is
+    // The strip is not a lane and has no interior: its height less two 4 px pads is
     // under `layerSliceRect`'s own floor, so asking it for a chip band there
     // answers a box that overflows the padding it was meant to respect.
     expect(dragGhostBand(DROP_STRIP_HEIGHT_PX, SPAWN_TRACK_ID)).toEqual({
@@ -68,7 +68,7 @@ describe("dragGhostBand", () => {
 
     const strip = mountChip(dragGhostBand(DROP_STRIP_HEIGHT_PX, SPAWN_TRACK_ID));
     // Bare — the row's own hint carries the message there, and 10 px type in a
-    // 14 px box would only be clipped. The name survives on the tooltip.
+    // strip this thin would only be clipped. The name survives on the tooltip.
     expect(strip.textContent).toBe("");
     expect(strip.title).toBe("Beach: 00:00:01:00 → 00:00:02:00");
   });

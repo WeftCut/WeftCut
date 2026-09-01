@@ -73,10 +73,10 @@ const LABEL_MIN_HEIGHT_PX = layerSliceRect(MIN_TRACK_HEIGHT, "full").height;
 ///
 /// A lane gives the ghost the padded interior a real chip sits in. The drop strip
 /// gives it the whole row: the strip is not a lane and has no interior to speak
-/// of — 14 px less two 4 px pads is under `layerSliceRect`'s own floor, so asking
-/// it for a chip band there returns a box that overflows the padding it was meant
-/// to respect. Taking the row is also what the media-pool ghost already does on
-/// that row, so this is one rule where there were two.
+/// of — its height less two 4 px pads is under `layerSliceRect`'s own floor, so
+/// asking it for a chip band there returns a box that overflows the padding it
+/// was meant to respect. Taking the row is also what the media-pool ghost already
+/// does on that row, so this is one rule where there were two.
 export function dragGhostBand(
   rowHeight: number,
   trackId: string,

@@ -73,6 +73,8 @@ import {
 } from "../testing/summaryFixture";
 import {
   DEFAULT_TRACK_HEIGHT,
+  DROP_STRIP_HEIGHT_PX,
+  DROP_STRIP_SEAM_OVERLAP_PX,
   HEADER_COL_PX,
   MARKER_LANE_HEIGHT_PX,
 } from "./geometry";
@@ -1777,9 +1779,9 @@ describe("Timeline seek/selection coupling", () => {
       left: 0,
       right: 1040,
       top: 0,
-      bottom: 14,
+      bottom: DROP_STRIP_HEIGHT_PX,
       width: 1040,
-      height: 14,
+      height: DROP_STRIP_HEIGHT_PX,
       x: 0,
       y: 0,
       toJSON: () => ({}),
@@ -1797,18 +1799,53 @@ describe("Timeline seek/selection coupling", () => {
     ) as HTMLElement;
 
     // Both columns paint the row, or every header below it loses its lane.
-    expect(strip.style.height).toBe("14px");
+    // 14 px is the hit target (ADR 0042); shrinking it to close the gutter
+    // under the plus would steal drop area. The plus sits on the bottom of
+    // that row instead, so leftover pixels fall above it. The dashed rule is
+    // a zero-height overlay *after* the row so the hairline can paint on top
+    // of the first lane's fill, as a filled dash (not `border-dashed`, which
+    // on a 1 px rule is invisible at 110% OS scale).
+    expect(DROP_STRIP_HEIGHT_PX).toBe(14);
+    expect(DROP_STRIP_SEAM_OVERLAP_PX).toBe(0);
+    expect(strip.style.height).toBe(`${DROP_STRIP_HEIGHT_PX}px`);
     expect(spacer.style.height).toBe(strip.style.height);
+    expect(spacer.className).toContain("items-end");
+    expect(spacer.className).not.toContain("overflow-hidden");
     expect(strip.dataset.armed).toBe("false");
-    // Idle the body is a dashed rule along its bottom edge and the header a
-    // centered plus — a seam, not a lane. No hint, no ghost. The plus is a
-    // landmark, not a control: it must not sit on the canvas where a drop lands.
+    // Idle the body is a dashed rule and the header a plus — a seam, not a
+    // lane. No hint, no ghost. The plus is a landmark, not a control: it must
+    // not sit on the canvas where a drop lands.
     expect(strip.textContent).toBe("");
+    const seams = [
+      ...container.querySelectorAll('[data-testid="timeline-drop-strip-seam"]'),
+    ];
+    expect(seams).toHaveLength(2);
+    for (const seam of seams) {
+      expect(seam.className).toContain("h-px");
+      expect((seam as HTMLElement).style.top).toBe(
+        `${DROP_STRIP_SEAM_OVERLAP_PX}px`,
+      );
+      expect((seam as HTMLElement).style.backgroundImage).toContain(
+        "repeating-linear-gradient",
+      );
+    }
+    // Not a child of the hit row: overflowing a child would paint under the
+    // first lane's opaque fill.
     expect(
       strip.querySelector('[data-testid="timeline-drop-strip-seam"]'),
-    ).not.toBeNull();
+    ).toBeNull();
     expect(
       spacer.querySelector('[data-testid="timeline-drop-strip-seam"]'),
+    ).toBeNull();
+    expect(
+      spacer.nextElementSibling?.querySelector(
+        '[data-testid="timeline-drop-strip-seam"]',
+      ),
+    ).not.toBeNull();
+    expect(
+      strip.nextElementSibling?.querySelector(
+        '[data-testid="timeline-drop-strip-seam"]',
+      ),
     ).not.toBeNull();
     expect(
       spacer.querySelector('[data-testid="timeline-drop-strip-add"]'),
@@ -1819,6 +1856,17 @@ describe("Timeline seek/selection coupling", () => {
     expect(
       strip.querySelector('[data-testid="timeline-drop-strip-hint"]'),
     ).toBeNull();
+  });
+
+  it("parks the dashed rule on the strip edge when there is no lane yet", () => {
+    const { container } = renderTimeline({ tracks: [] });
+    const seams = container.querySelectorAll(
+      '[data-testid="timeline-drop-strip-seam"]',
+    );
+    expect(seams.length).toBe(2);
+    for (const seam of seams) {
+      expect((seam as HTMLElement).style.top).toBe("0px");
+    }
   });
 
   it("spawns a lane and places the clip when a media drag is released on the strip", async () => {
@@ -4019,8 +4067,8 @@ describe("a gesture names the Panel it happened in", () => {
       '[data-testid="timeline-drop-strip"]',
     ) as HTMLElement;
     vi.spyOn(strip, "getBoundingClientRect").mockReturnValue({
-      left: 0, right: 1040, top: 0, bottom: 14,
-      width: 1040, height: 14, x: 0, y: 0, toJSON: () => ({}),
+      left: 0, right: 1040, top: 0, bottom: DROP_STRIP_HEIGHT_PX,
+      width: 1040, height: DROP_STRIP_HEIGHT_PX, x: 0, y: 0, toJSON: () => ({}),
     } as DOMRect);
     return strip;
   };
