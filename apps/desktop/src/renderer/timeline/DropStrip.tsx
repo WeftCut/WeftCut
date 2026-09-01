@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Plus } from "lucide-react";
 
 import { formatTimecode } from "../frames";
 import type { LayerParamsView, LayerSummary } from "../ipc";
@@ -52,15 +53,54 @@ interface StripClipGhost {
   tEndUs: number;
 }
 
+/// The idle dashed rule both columns of the drop-strip row paint along their
+/// bottom edge — the split between this reserved row and the topmost lane.
+/// Fainter and dashed so it reads as a split, not as another track's bottom
+/// edge (those are solid `--border-soft`). The 14 px above it stays the hit
+/// target.
+export function DropStripSeam() {
+  return (
+    <div
+      data-testid="timeline-drop-strip-seam"
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-x-0 bottom-0 z-0 border-t border-dashed border-white/[0.10]"
+    />
+  );
+}
+
+/// Header-column half of the drop-strip row. Same height as the body, or every
+/// header beneath it loses its lane. The plus is a landmark in the cell, not a
+/// control: ADR 0042 has no click-to-spawn-empty-track, and a button here would
+/// teach the mental model the strip exists to remove.
+export function DropStripHeader() {
+  return (
+    <div
+      data-testid="timeline-drop-strip-header"
+      className="relative flex items-center justify-center bg-card"
+      style={{ height: DROP_STRIP_HEIGHT_PX }}
+      aria-hidden="true"
+    >
+      <DropStripSeam />
+      <span
+        data-testid="timeline-drop-strip-add"
+        className="relative z-[1] text-muted-foreground/40"
+      >
+        <Plus size={10} strokeWidth={2.25} aria-hidden />
+      </span>
+    </div>
+  );
+}
+
 /// The permanently reserved row above the topmost lane: releasing a drag here
 /// spawns a lane at the top of the z-stack and places the clip on it (ADR 0042).
 ///
-/// Idle it is a bare seam — no header, no content, nothing that reads as an
-/// empty lane the editor is supposed to manage, because that mental model is
-/// what tracks-as-a-by-product removes. It shows itself only while a drag is in
-/// flight, and it claims the highlight through the SAME drop-target protocol the
-/// lanes use, under `SPAWN_TRACK_ID`, so ownership transfers between the strip
-/// and a lane without a second mechanism deciding who is lit.
+/// Idle it is a dashed rule along the bottom of the reserved row, with a plus
+/// in the header half — a seam, not a lane. No fill, nothing that reads as an
+/// empty track the editor is supposed to manage, because that mental model is
+/// what tracks-as-a-by-product removes. It lights up only while a drag is in
+/// flight, and it claims the highlight through the SAME drop-target protocol
+/// the lanes use, under `SPAWN_TRACK_ID`, so ownership transfers between the
+/// strip and a lane without a second mechanism deciding who is lit.
 ///
 /// A drop here is never a collision WITH THE DESTINATION: the lane it lands on
 /// does not exist yet, so `planMediaDrop` with no track answers `"spawn"` (see
@@ -373,6 +413,7 @@ export function DropStrip({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
+      <DropStripSeam />
       {visibleDropPreview !== null && (
         <div
           data-testid="timeline-drop-strip-ghost"

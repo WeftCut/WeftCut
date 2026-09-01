@@ -239,9 +239,10 @@ names a free marker, not the row)
 
 **Drop strip**:
 The permanently reserved row above the topmost lane that turns a drag into a new
-track. Its space is held even when idle so a drag never reflows the timeline, and
-it shows itself only while a drag is live so it never reads as an empty lane to
-manage.
+track. Its space is held even when idle so a drag never reflows the timeline.
+Idle it is a dashed rule along the bottom of that row, with a plus in the header
+half — a seam, not a lane — and it lights up only while a drag is live so it
+never reads as an empty lane to manage.
 _Avoid_: add-track row, new-track button, ghost lane, phantom track
 
 **Marquee**:

@@ -1787,7 +1787,7 @@ describe("Timeline seek/selection coupling", () => {
     return strip;
   };
 
-  it("reserves the strip's row in flow and keeps it inert with no drag in flight", () => {
+  it("reserves the strip's row in flow and keeps it a seam with no drag in flight", () => {
     const { container } = renderTimeline({});
     const strip = container.querySelector(
       '[data-testid="timeline-drop-strip"]',
@@ -1800,7 +1800,25 @@ describe("Timeline seek/selection coupling", () => {
     expect(strip.style.height).toBe("14px");
     expect(spacer.style.height).toBe(strip.style.height);
     expect(strip.dataset.armed).toBe("false");
+    // Idle the body is a dashed rule along its bottom edge and the header a
+    // centered plus — a seam, not a lane. No hint, no ghost. The plus is a
+    // landmark, not a control: it must not sit on the canvas where a drop lands.
     expect(strip.textContent).toBe("");
+    expect(
+      strip.querySelector('[data-testid="timeline-drop-strip-seam"]'),
+    ).not.toBeNull();
+    expect(
+      spacer.querySelector('[data-testid="timeline-drop-strip-seam"]'),
+    ).not.toBeNull();
+    expect(
+      spacer.querySelector('[data-testid="timeline-drop-strip-add"]'),
+    ).not.toBeNull();
+    expect(
+      strip.querySelector('[data-testid="timeline-drop-strip-add"]'),
+    ).toBeNull();
+    expect(
+      strip.querySelector('[data-testid="timeline-drop-strip-hint"]'),
+    ).toBeNull();
   });
 
   it("spawns a lane and places the clip when a media drag is released on the strip", async () => {

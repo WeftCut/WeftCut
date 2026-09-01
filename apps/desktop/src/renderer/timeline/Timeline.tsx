@@ -74,7 +74,6 @@ import {
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import {
   DEFAULT_TRACK_HEIGHT,
-  DROP_STRIP_HEIGHT_PX,
   HEADER_COL_PX,
   computeTimelineExtent,
   indexLinks,
@@ -91,7 +90,7 @@ import {
   type MeasuredSubLaneRow,
 } from "./marquee";
 import type { MarqueeBox, MarqueeKind } from "./marqueeStore";
-import { DropStrip } from "./DropStrip";
+import { DropStrip, DropStripHeader } from "./DropStrip";
 import { MarkerLane, MarkerLaneHeader } from "./MarkerLane";
 import { registerTimelineSurface } from "./timelineSurfaces";
 import { TimelineRuler } from "./TimelineRuler";
@@ -1697,12 +1696,7 @@ export function Timeline({
               The header names the row; it is not a spacer like the drop
               strip's, but it is exactly as tall. */}
           <MarkerLaneHeader />
-          <div
-            data-testid="timeline-drop-strip-header"
-            className="bg-card"
-            style={{ height: DROP_STRIP_HEIGHT_PX }}
-            aria-hidden="true"
-          />
+          <DropStripHeader />
           {orderedTracks.map(({ track, isRoleSectionStart }) => (
             <Fragment key={track.id}>
               <TrackHeader

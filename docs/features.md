@@ -694,13 +694,15 @@ A **drop strip** sits above the topmost lane: a 12–16 px row that turns a drag
 into a new track at the top of the z-stack. Two of its properties look like
 oversights and are neither. Its space is reserved **permanently**, because a row
 that appeared on drag would reflow the timeline under the pointer mid-gesture. And
-it is **visually inert when idle**, lighting up only while a drag is live, because
-anything that looks like an empty lane when nothing is happening reads as a lane
-the editor is supposed to manage. It accepts a media-pool drag and an
-existing-clip drag identically — two different event models, one target, which is
-why both are end-to-end gated (`e2e/electron/timeline-drop-strip.spec.ts`,
-`timeline-raise-to-strip.spec.ts`). A clip dropped on a lane that has room still
-lands there; spawning is the exception.
+idle it is a **dashed rule** along the bottom of that row, with a plus in the
+header half — a seam, not a lane — lighting up only while a drag is live,
+because anything that looks like an empty lane when nothing is happening
+reads as a lane the editor is supposed to manage. It accepts
+a media-pool drag and an existing-clip drag identically — two different event
+models, one target, which is why both are end-to-end gated
+(`e2e/electron/timeline-drop-strip.spec.ts`, `timeline-raise-to-strip.spec.ts`).
+A clip dropped on a lane that has room still lands there; spawning is the
+exception.
 
 The strip is also where a raise's **preview** is drawn, and it is the only row
 that can be: every other destination is a lane that can host the chip itself,
