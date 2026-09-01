@@ -184,31 +184,7 @@ describe('app-settings store', () => {
     expect(createAppSettingsStore({ fs, path: PATH, dir: DIR }).get().markers_visible).toBe(true)
   })
 
-  it('marker_lane_collapsed defaults to expanded on a file written before the field existed', () => {
-    // The mirror of markers_visible: this one defaults FALSE, so an absent key
-    // reading as false is exactly right. The lane's labels are why it is a lane,
-    // so nobody gets it collapsed without asking.
-    expect(store({ [PATH]: '{ "display_mode": "AllTracks" }' }).get().marker_lane_collapsed).toBe(false)
-    expect(store().get().marker_lane_collapsed).toBe(false)
-    expect(store().apply({ marker_lane_collapsed: true }).marker_lane_collapsed).toBe(true)
-    // Hand-edited / wrong-typed values degrade to the default.
-    expect(store({ [PATH]: '{ "marker_lane_collapsed": "yes" }' }).get().marker_lane_collapsed).toBe(false)
-    expect(store({ [PATH]: '{ "marker_lane_collapsed": 1 }' }).get().marker_lane_collapsed).toBe(false)
-  })
-
-  // How someone wants to LOOK right now is still a preference, not a session
-  // flag: it never enters project history, so the file is the only thing that
-  // can carry it across a restart.
-  it('marker_lane_collapsed survives a restart through the file', () => {
-    const { fs } = memFs()
-    createAppSettingsStore({ fs, path: PATH, dir: DIR }).apply({ marker_lane_collapsed: true })
-    const nextLaunch = createAppSettingsStore({ fs, path: PATH, dir: DIR })
-    expect(nextLaunch.get().marker_lane_collapsed).toBe(true)
-    expect(nextLaunch.apply({ marker_lane_collapsed: false }).marker_lane_collapsed).toBe(false)
-    expect(createAppSettingsStore({ fs, path: PATH, dir: DIR }).get().marker_lane_collapsed).toBe(false)
-  })
-
-  // The mirror image of the two booleans above: this one defaults OFF, so an
+  // The mirror image of the boolean above: this one defaults OFF, so an
   // absent key reading as false is exactly right. What still has to hold is the
   // restart — a view toggle the user turned on is a preference, not a session
   // flag, and it never enters project history to be restored from.

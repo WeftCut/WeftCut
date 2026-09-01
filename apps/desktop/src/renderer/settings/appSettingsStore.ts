@@ -53,7 +53,6 @@ const FALLBACK: AppSettings = {
   timeline_wheel_axis: "horizontal",
   timeline_follow_playhead: true,
   markers_visible: true,
-  marker_lane_collapsed: false,
   safe_area_guides_visible: false,
 };
 
@@ -107,14 +106,11 @@ export const useTimelineWheelAxis = (): AppSettings["timeline_wheel_axis"] =>
 /// Whether the timeline pages its view to keep the playhead visible.
 export const useFollowPlayheadEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.timeline_follow_playhead);
-/// Whether the timeline's marker lane paints the project's markers. Governs what
-/// that lane paints and nothing else — the lane itself is unconditional (see
-/// `markers_visible` in `shared/app-settings.ts`).
+/// Whether the timeline shows its marker lane at all — both halves of the row,
+/// glyphs and header cell alike (see `markers_visible` in
+/// `shared/app-settings.ts`).
 export const useMarkersVisible = (): boolean =>
   useAppSettingsStore((s) => s.settings.markers_visible);
-/// Whether the marker lane is at its short height (glyphs, no label text).
-export const useMarkerLaneCollapsed = (): boolean =>
-  useAppSettingsStore((s) => s.settings.marker_lane_collapsed);
 /// Whether the preview draws the title-safe / action-safe rectangles. The
 /// overlay subscribes through this hook and then tracks the canvas box
 /// imperatively — a React re-render per frame is what the playhead gate forbids.
@@ -157,14 +153,6 @@ export async function toggleFollowPlayhead(): Promise<AppSettings> {
 export async function toggleMarkersVisible(): Promise<AppSettings> {
   const current = useAppSettingsStore.getState().settings.markers_visible;
   return setAppSettings({ markers_visible: !current });
-}
-
-/// The marker lane's height toggle. Its reflow is welcome where the visibility
-/// flag's would not be: a user pressed the twirl, where `M` flips
-/// `markers_visible` from under the pointer.
-export async function toggleMarkerLaneCollapsed(): Promise<AppSettings> {
-  const current = useAppSettingsStore.getState().settings.marker_lane_collapsed;
-  return setAppSettings({ marker_lane_collapsed: !current });
 }
 
 export async function toggleSafeAreaGuides(): Promise<AppSettings> {

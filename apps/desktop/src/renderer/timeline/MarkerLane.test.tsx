@@ -11,7 +11,6 @@ import "../i18n"; // real en-US bundle, so a tooltip is the shipped string
 import type {
   AnimTrack,
   AppSettings,
-  AppSettingsPatch,
   LayerSummary,
   MarkerSummary,
   TrackSummary,
@@ -30,7 +29,6 @@ const ipcMocks = vi.hoisted(() => ({
   removeMarker: vi.fn(),
   attachMarker: vi.fn(),
   detachMarker: vi.fn(),
-  appSettingsSet: vi.fn(),
   logEmit: vi.fn(),
 }));
 
@@ -44,7 +42,6 @@ vi.mock("../ipc", async (importActual) => {
     removeMarker: ipcMocks.removeMarker,
     attachMarker: ipcMocks.attachMarker,
     detachMarker: ipcMocks.detachMarker,
-    appSettingsSet: ipcMocks.appSettingsSet,
     logEmit: ipcMocks.logEmit,
   };
 });
@@ -57,29 +54,16 @@ import {
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { setTimelineScrollLeftPx } from "../state/timelineScrollStore";
 import { useSelectionStore } from "../state/selectionStore";
-import {
-  DROP_STRIP_HEIGHT_PX,
-  MARKER_LANE_COLLAPSED_HEIGHT_PX,
-  MARKER_LANE_HEIGHT_PX,
-} from "./geometry";
+import { MARKER_LANE_HEIGHT_PX } from "./geometry";
 import { MarkerLane, MarkerLaneHeader } from "./MarkerLane";
 
 afterEach(cleanup);
 // Every store here is renderer-global; reset them so each case starts at the row
-// head with no markers, the lane expanded and the marks shown.
+// head with no markers and the marks shown.
 beforeEach(() => {
   setTimelineScrollLeftPx(null, 0);
   useProjectStore.setState({ summary: null });
-  setSettings({ markers_visible: true, marker_lane_collapsed: false });
-  // The store's own write path, minus the disk: `setAppSettings` awaits the IPC
-  // and hydrates whatever comes back, so the toggle under test is exercised end
-  // to end rather than stubbed at the store.
-  ipcMocks.appSettingsSet.mockImplementation((patch: AppSettingsPatch) =>
-    Promise.resolve({
-      ...useAppSettingsStore.getState().settings,
-      ...patch,
-    } as AppSettings),
-  );
+  setSettings({ markers_visible: true });
 });
 
 const setSettings = (patch: Partial<AppSettings>) =>
@@ -229,42 +213,46 @@ const labels = (container: HTMLElement): string[] =>
     ),
   ).map((el) => el.textContent ?? "");
 
-describe("the lane is permanent", () => {
+describe("the lane's existence is the visibility switch", () => {
   it("holds its row with no markers in the project", () => {
     const { container } = renderLane();
     expect(lane(container)).not.toBeNull();
     expect(lane(container).style.height).toBe(`${MARKER_LANE_HEIGHT_PX}px`);
-    // No marks and no LAYER either — "hidden" has to mean gone, or an empty
-    // wrapper leaves "painted transparently" and "not painted" the same picture.
+    // No marks and no LAYER either — an empty wrapper would leave "painted
+    // transparently" and "not painted" the same picture.
     expect(marks(container)).toHaveLength(0);
     expect(layer(container)).toBeNull();
   });
 
-  it("holds its row with the marks switched off", () => {
+  it("vanishes when the marks are switched off", () => {
     setSettings({ markers_visible: false });
     seed([point(), region({ t_us: 2_000_000, end_t_us: 3_000_000 })]);
     const { container } = renderLane();
-    expect(lane(container)).not.toBeNull();
-    expect(lane(container).style.height).toBe(`${MARKER_LANE_HEIGHT_PX}px`);
+    expect(
+      container.querySelector('[data-testid="timeline-marker-lane"]'),
+    ).toBeNull();
     expect(marks(container)).toHaveLength(0);
     expect(layer(container)).toBeNull();
   });
 
-  // The trap this exists to keep shut: `M` force-enables `markers_visible`, so a
-  // lane whose EXISTENCE answered to that flag would reflow the timeline under
-  // the pointer on every press.
-  it("changes no height when the marks are hidden and shown again", () => {
+  // The 20 px going back to the tracks is what the switch is for. `M`
+  // force-enables the same flag, so authoring a mark brings the row back with
+  // it — a reflow somebody asked for, not one that happens under a press.
+  it("gives the row back when the marks return, on the same mount", () => {
     seed([point()]);
     const { container } = renderLane();
-    const height = lane(container).style.height;
+    expect(lane(container).style.height).toBe(`${MARKER_LANE_HEIGHT_PX}px`);
     act(() => setSettings({ markers_visible: false }));
-    expect(lane(container).style.height).toBe(height);
+    expect(
+      container.querySelector('[data-testid="timeline-marker-lane"]'),
+    ).toBeNull();
+    expect(marks(container)).toHaveLength(0);
     act(() => setSettings({ markers_visible: true }));
-    expect(lane(container).style.height).toBe(height);
+    expect(lane(container).style.height).toBe(`${MARKER_LANE_HEIGHT_PX}px`);
     expect(marks(container)).toHaveLength(1);
   });
 
-  it("brings the marks back on the same mount, with no project reload", () => {
+  it("brings every mark back on the same mount, with no project reload", () => {
     seed([point(), region({ t_us: 2_000_000, end_t_us: 3_000_000 })]);
     const { container } = renderLane();
     expect(marks(container)).toHaveLength(2);
@@ -314,9 +302,9 @@ describe("the lane is permanent", () => {
 });
 
 describe("glyph geometry", () => {
-  // Anchored, so the colour lands as a FILL — a free marker carries the same
-  // colour as a ring instead (see "anchored and free read apart").
-  it("puts a point marker's mark on its own time, in its author's colour", () => {
+  // Anchored, so the stem is the tall one — a free marker carries the same
+  // colour on a shorter tick (see "anchored and free read apart").
+  it("puts a point marker's L on its own time, in its author's colour", () => {
     seed([
       point({
         t_us: 1_500_000,
@@ -327,7 +315,8 @@ describe("glyph geometry", () => {
     const { container } = renderLane();
     const mark = markById(container, "point-1");
     expect(mark.style.left).toBe("3000px");
-    expect(mark.style.background).toBe("rgb(255, 136, 0)");
+    expect(mark.style.borderLeft).toMatch(/#ff8800|rgb\(255,\s*136,\s*0\)/i);
+    expect(mark.style.borderBottom).toMatch(/#ff8800|rgb\(255,\s*136,\s*0\)/i);
   });
 
   it("spans a region marker's capsule across its range, in its author's colour", () => {
@@ -347,54 +336,46 @@ describe("glyph geometry", () => {
   });
 
   it("keeps every glyph inside the lane it sits in", () => {
-    // A point glyph is a rotated square, so what it paints is its DIAGONAL —
-    // sizing against the side is how a diamond ends up taller than its row.
+    // An L is two axis-aligned strokes, so the painted box IS the hit box —
+    // unlike a rotated diamond, whose diagonal outran the side we sized.
     seed([point(), region({ t_us: 2_000_000, end_t_us: 3_000_000 })]);
     const { container } = renderLane();
     expect(marks(container)).toHaveLength(2);
     for (const mark of marks(container)) {
       const top = Number.parseFloat(mark.style.top);
       const height = Number.parseFloat(mark.style.height);
-      const painted =
-        mark.dataset.shape === "point" ? height * Math.SQRT2 : height;
-      const centre = top + height / 2;
-      expect(centre - painted / 2).toBeGreaterThanOrEqual(0);
-      expect(centre + painted / 2).toBeLessThanOrEqual(MARKER_LANE_HEIGHT_PX);
+      expect(top).toBeGreaterThanOrEqual(0);
+      expect(top + height).toBeLessThanOrEqual(MARKER_LANE_HEIGHT_PX);
     }
   });
 
-  it("outlines a mark both dark and light, so no authored colour can vanish", () => {
-    // The lane is near-black, so one dark hairline separates a BRIGHT marker
-    // from the background and leaves a near-black one (this case's colour) a
-    // smudge. The light ring outside it carries that half of the guarantee.
-    seed([point({ color_hint: "#14141a" })]);
+  it("paints an L as two strokes with no halo", () => {
+    seed([point({ color_hint: "#ff8800" })]);
     const { container } = renderLane();
-    const outline = markById(container, "point-1").style.boxShadow;
-    expect(outline).toContain("rgba(0,0,0,0.7)");
-    expect(outline).toContain("rgba(255,255,255,0.4)");
+    const mark = markById(container, "point-1");
+    expect(mark.style.filter).toBe("");
+    expect(mark.style.boxShadow).toBe("");
+    expect(mark.style.borderLeft).toMatch(/#ff8800|rgb\(255,\s*136,\s*0\)/i);
+    expect(mark.style.borderBottom).toMatch(/#ff8800|rgb\(255,\s*136,\s*0\)/i);
   });
 
   // The degrade may drop the region's LENGTH; it may not move its START. A
-  // degraded region begins at its x and nothing of it exists before, so the
-  // glyph is nudged right by its rotation overhang instead of being centred the
-  // way a true point marker is — otherwise ~5 px of mark paints over frames the
-  // region does not cover.
+  // diamond had to be nudged right by its rotation overhang so it would not
+  // paint over frames the region does not cover. An L has nothing to nudge:
+  // its left edge IS the start, for a true point and a degraded region alike.
   it("puts a degraded region's painted left edge on the region's start", () => {
     seed([
       point({ id: "true-point", t_us: 1_000_000 }),
       region({ id: "degraded", t_us: 2_000_000, end_t_us: 2_066_667 }),
     ]);
     const { container } = renderLane({ pxPerSec: 20 });
-    // A true point straddles its frame: half its box sits left of it.
-    expect(markById(container, "true-point").style.translate).toBe("-50%");
-    // The degraded region does not. The offset is the 45° rotation's overhang —
-    // half of (diagonal − side) for the glyph — so the painted edge, not just
-    // the box edge, lands on the start.
+    const truePoint = markById(container, "true-point");
     const degraded = markById(container, "degraded");
-    const sizePx = Number.parseFloat(degraded.style.width);
-    const nudge = (sizePx * (Math.SQRT2 - 1)) / 2;
-    expect(Number.parseFloat(degraded.style.translate)).toBeCloseTo(nudge, 5);
+    expect(truePoint.style.translate).toBe("");
+    expect(degraded.style.translate).toBe("");
+    expect(truePoint.style.left).toBe("20px");
     expect(degraded.style.left).toBe("40px");
+    expect(degraded.dataset.shape).toBe("point");
   });
 
   it("groups the marks under one container", () => {
@@ -411,11 +392,11 @@ describe("glyph geometry", () => {
   });
 });
 
-// Solid is anchored, hollow is free. No tether line to the anchoring clip: the
-// clip may be several lanes away, so the line would cross the whole lane region
-// to say one bit.
+// An L grows its stem when anchored; a capsule fills. No tether line to the
+// anchoring clip: the clip may be several lanes away, so the line would cross
+// the whole lane region to say one bit.
 describe("anchored and free read apart", () => {
-  it("fills an anchored marker and hollows out a free one", () => {
+  it("gives an anchored L a taller stem than a free one, from the same foot", () => {
     seed([
       point({ id: "free", t_us: 500_000, color_hint: "#ff8800" }),
       point({
@@ -431,9 +412,41 @@ describe("anchored and free read apart", () => {
 
     expect(free.dataset.anchored).toBe("false");
     expect(tied.dataset.anchored).toBe("true");
+    expect(Number.parseFloat(tied.style.height)).toBeGreaterThan(
+      Number.parseFloat(free.style.height),
+    );
+    // Same foot line: the two hang from different heights off one baseline.
+    expect(
+      Number.parseFloat(tied.style.top) + Number.parseFloat(tied.style.height),
+    ).toBe(
+      Number.parseFloat(free.style.top) + Number.parseFloat(free.style.height),
+    );
+    expect(tied.style.borderLeft).toMatch(/#ff8800|rgb\(255,\s*136,\s*0\)/i);
+    expect(free.style.borderLeft).toMatch(/#ff8800|rgb\(255,\s*136,\s*0\)/i);
+  });
+
+  it("fills an anchored region's capsule and rings a free one", () => {
+    seed([
+      region({
+        id: "free",
+        t_us: 500_000,
+        end_t_us: 1_000_000,
+        color_hint: "#ff8800",
+      }),
+      region({
+        id: "tied",
+        t_us: 1_500_000,
+        end_t_us: 2_000_000,
+        color_hint: "#ff8800",
+        anchor_layer: "clip-1",
+      }),
+    ]);
+    const { container } = renderLane();
+    const free = markById(container, "free");
+    const tied = markById(container, "tied");
+
     expect(tied.style.background).toBe("rgb(255, 136, 0)");
     expect(free.style.background).toBe("transparent");
-    // The hollow one still shows its colour — as a ring, not a fill.
     expect(free.style.boxShadow).toContain("#ff8800");
   });
 
@@ -492,10 +505,9 @@ describe("labels", () => {
     const first = container.querySelector<HTMLElement>(
       '[data-testid="timeline-marker-label"][data-marker-id="a"]',
     )!;
-    // 500 ms at 2000 px/s is 1000 px of room, less the clearance the diamond
-    // itself takes.
-    expect(Number.parseFloat(first.style.maxWidth)).toBeGreaterThan(980);
-    expect(Number.parseFloat(first.style.maxWidth)).toBeLessThan(1000);
+    // 500 ms at 2000 px/s is 1000 px of room, less the clearance the L's
+    // foot itself takes (6 px painted width + 3 px gap).
+    expect(Number.parseFloat(first.style.maxWidth)).toBe(991);
   });
 
   it("leaves the last mark's label unbounded", () => {
@@ -542,57 +554,7 @@ describe("hover text", () => {
   });
 });
 
-// Collapse is a USER-initiated toggle, like track expand, so unlike the
-// visibility flag its reflow is asked for and welcome.
-describe("collapse", () => {
-  it("gives back the 6 px and keeps every glyph", () => {
-    seed([
-      point({ label: "cut here" }),
-      region({ t_us: 2_000_000, end_t_us: 3_000_000, label: "needs VO" }),
-    ]);
-    const { container } = renderLane();
-    expect(lane(container).style.height).toBe(`${MARKER_LANE_HEIGHT_PX}px`);
-    expect(labels(container)).toHaveLength(2);
-
-    act(() => setSettings({ marker_lane_collapsed: true }));
-    expect(lane(container).style.height).toBe(
-      `${MARKER_LANE_COLLAPSED_HEIGHT_PX}px`,
-    );
-    expect(MARKER_LANE_HEIGHT_PX - MARKER_LANE_COLLAPSED_HEIGHT_PX).toBe(6);
-    // Every mark survives — what goes is the text.
-    expect(marks(container)).toHaveLength(2);
-    expect(labels(container)).toHaveLength(0);
-  });
-
-  // A collapsed lane is a seam, not a lane to manage, so it is exactly as thick
-  // as the other seam above the tracks.
-  it("collapses to the drop strip's height", () => {
-    expect(MARKER_LANE_COLLAPSED_HEIGHT_PX).toBe(DROP_STRIP_HEIGHT_PX);
-  });
-
-  it("keeps every glyph inside the shorter row too", () => {
-    seed([point(), region({ t_us: 2_000_000, end_t_us: 3_000_000 })]);
-    setSettings({ marker_lane_collapsed: true });
-    const { container } = renderLane();
-    for (const mark of marks(container)) {
-      const top = Number.parseFloat(mark.style.top);
-      const height = Number.parseFloat(mark.style.height);
-      const painted =
-        mark.dataset.shape === "point" ? height * Math.SQRT2 : height;
-      const centre = top + height / 2;
-      expect(centre - painted / 2).toBeGreaterThanOrEqual(0);
-      expect(centre + painted / 2).toBeLessThanOrEqual(
-        MARKER_LANE_COLLAPSED_HEIGHT_PX,
-      );
-    }
-  });
-});
-
 describe("the lane header", () => {
-  const twirl = (container: HTMLElement): HTMLElement =>
-    container.querySelector<HTMLElement>(
-      '[data-testid="timeline-marker-lane-twirl"]',
-    )!;
   const header = (container: HTMLElement): HTMLElement =>
     container.querySelector<HTMLElement>(
       '[data-testid="timeline-marker-lane-header"]',
@@ -601,7 +563,7 @@ describe("the lane header", () => {
   // The invariant the two columns live under: the header cell and the body lane
   // paint the same row, so a height either one owns alone slides every header
   // below it out of line with its lane.
-  it("is exactly as tall as the lane, in both states", () => {
+  it("is exactly as tall as the lane", () => {
     const { container } = render(
       <>
         <MarkerLaneHeader />
@@ -616,34 +578,40 @@ describe("the lane header", () => {
       </>,
     );
     expect(header(container).style.height).toBe(lane(container).style.height);
-    act(() => setSettings({ marker_lane_collapsed: true }));
-    expect(header(container).style.height).toBe(lane(container).style.height);
-    expect(header(container).style.height).toBe(
-      `${MARKER_LANE_COLLAPSED_HEIGHT_PX}px`,
-    );
+    expect(header(container).style.height).toBe(`${MARKER_LANE_HEIGHT_PX}px`);
   });
 
   it("names the row it heads", () => {
     const { container } = render(<MarkerLaneHeader />);
     expect(header(container).textContent).toContain("Markers");
+    expect(
+      container.querySelector('[data-testid="timeline-marker-lane-twirl"]'),
+    ).toBeNull();
   });
 
-  it("flips the collapse preference from the twirl", async () => {
-    const { container } = render(<MarkerLaneHeader />);
-    expect(twirl(container).getAttribute("aria-expanded")).toBe("true");
-    fireEvent.click(twirl(container));
-    await waitFor(() =>
-      expect(
-        useAppSettingsStore.getState().settings.marker_lane_collapsed,
-      ).toBe(true),
+  it("vanishes with the lane when the marks are hidden", () => {
+    const { container } = render(
+      <>
+        <MarkerLaneHeader />
+        <MarkerLane
+          compositionId={null}
+          pxPerSec={2000}
+          widthPx={8000}
+          viewportWidthPx={8000}
+          fpsNum={30}
+          fpsDen={1}
+        />
+      </>,
     );
-    expect(twirl(container).getAttribute("aria-expanded")).toBe("false");
-    // App-level, not project state: the flip goes out as a settings patch, so it
-    // never enters undo and never makes one project look different on two
-    // machines.
-    expect(ipcMocks.appSettingsSet).toHaveBeenCalledExactlyOnceWith({
-      marker_lane_collapsed: true,
-    });
+    expect(header(container)).not.toBeNull();
+    expect(lane(container)).not.toBeNull();
+    act(() => setSettings({ markers_visible: false }));
+    expect(
+      container.querySelector('[data-testid="timeline-marker-lane-header"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="timeline-marker-lane"]'),
+    ).toBeNull();
   });
 });
 

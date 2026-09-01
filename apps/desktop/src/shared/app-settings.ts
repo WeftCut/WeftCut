@@ -74,19 +74,18 @@ export interface AppSettings {
   /// when it reaches an edge (`renderer/timeline/followPlayhead.ts`). Off means
   /// the view only ever moves because the user moved it.
   timeline_follow_playhead: boolean;
-  /// Paint the project's markers in the timeline's marker lane
-  /// (`renderer/timeline/MarkerLane.tsx`). A canvas-noise control and nothing
-  /// more: `add_markers` can spray hundreds in one commit, and this silences
-  /// them. Governs what the lane PAINTS, never whether the lane exists — see
-  /// `MARKER_LANE_HEIGHT_PX`. App-level because it is a view preference of this
-  /// user, not project content — so the markers themselves are untouched, and
-  /// neither the agent-mode mini timeline nor the search palette answers to it.
+  /// Show the timeline's marker lane (`renderer/timeline/MarkerLane.tsx`) — the
+  /// ROW, not merely its contents. One switch owns the whole surface: off, the
+  /// lane's 20 px go back to the tracks, and the reflow that costs is the point
+  /// rather than a side effect. A canvas-noise control and nothing more:
+  /// `add_markers` can spray hundreds in one commit, and this silences them.
+  ///
+  /// `M` force-enables it, so authoring a mark brings the row back with it.
+  ///
+  /// App-level because it is a view preference of this user, not project content
+  /// — so the markers themselves are untouched, and neither the agent-mode mini
+  /// timeline nor the search palette answers to it.
   markers_visible: boolean;
-  /// Show the marker lane at its short height: glyphs, no label text. App-level
-  /// for the same reason `markers_visible` is, and a sharper one — it is how
-  /// this user wants to look at the timeline right now, so in the project it
-  /// would make one project look different on two machines and would enter undo.
-  marker_lane_collapsed: boolean;
   /// Draw the broadcast title-safe / action-safe rectangles over the preview
   /// (`renderer/preview/SafeAreaGuides.tsx`). A property of the frame, not of a
   /// selection, so unlike the transform gizmo it needs no selected layer.
@@ -130,7 +129,6 @@ export interface AppSettingsPatch {
   timeline_wheel_axis?: TimelineWheelAxis;
   timeline_follow_playhead?: boolean;
   markers_visible?: boolean;
-  marker_lane_collapsed?: boolean;
   safe_area_guides_visible?: boolean;
   /// New data-root path. An empty string clears it back to unset (→ default).
   data_root?: string;
@@ -168,9 +166,6 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   // On, like every NLE that has markers ships it: a mark nobody can see is
   // indistinguishable from one that was never written.
   markers_visible: true,
-  // Expanded, because the lane's labels are the reason it is a lane at all — a
-  // user who wants the 6 px back asks for them back.
-  marker_lane_collapsed: false,
   // OFF, unlike the two toggles above: safe-area guides are a broadcast-delivery
   // aid, and every NLE that draws them ships them hidden. The additive-boolean
   // trap does not apply in this direction — an app_settings.json written before

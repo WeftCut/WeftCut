@@ -74,7 +74,6 @@ import {
 import {
   DEFAULT_TRACK_HEIGHT,
   HEADER_COL_PX,
-  MARKER_LANE_COLLAPSED_HEIGHT_PX,
   MARKER_LANE_HEIGHT_PX,
 } from "./geometry";
 
@@ -2304,35 +2303,39 @@ describe("Timeline row alignment", () => {
     }
   });
 
-  it("moves both halves of the marker lane together when it collapses", () => {
+  it("drops both halves of the marker lane together when markers are hidden", () => {
     const { container } = renderTimeline({});
-    act(() =>
-      useAppSettingsStore.setState((s) => ({
-        settings: { ...s.settings, marker_lane_collapsed: true },
-      })),
-    );
-    const [header, lane] = pairs(container)[0]!;
-    expect(header).toBe(lane);
-    expect(lane).toBe(`${MARKER_LANE_COLLAPSED_HEIGHT_PX}px`);
-  });
-
-  // `M` force-enables `markers_visible`, so a lane whose height answered to that
-  // flag would reflow the timeline under the pointer on every press.
-  it("changes no row height when marker visibility flips", () => {
-    const { container } = renderTimeline({});
-    const before = pairs(container).map(([header, lane]) => [header, lane]);
+    expect(q(container, "timeline-marker-lane-header")).not.toBeNull();
+    expect(q(container, "timeline-marker-lane")).not.toBeNull();
     act(() =>
       useAppSettingsStore.setState((s) => ({
         settings: { ...s.settings, markers_visible: false },
       })),
     );
-    expect(pairs(container)).toEqual(before);
+    expect(
+      container.querySelector('[data-testid="timeline-marker-lane-header"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="timeline-marker-lane"]'),
+    ).toBeNull();
+    // The drop strip is now the first row under the ruler, still aligned.
+    expect(
+      testids(q(container, "timeline-ruler-corner").parentElement!).slice(0, 2),
+    ).toEqual(["timeline-ruler-corner", "timeline-drop-strip-header"]);
+    expect(
+      testids(q(container, "timeline-ruler").parentElement!).slice(0, 2),
+    ).toEqual(["timeline-ruler", "timeline-canvas"]);
+    expect(q(container, "timeline-drop-strip-header").style.height).toBe(
+      q(container, "timeline-drop-strip").style.height,
+    );
     act(() =>
       useAppSettingsStore.setState((s) => ({
         settings: { ...s.settings, markers_visible: true },
       })),
     );
-    expect(pairs(container)).toEqual(before);
+    const [header, lane] = pairs(container)[0]!;
+    expect(header).toBe(lane);
+    expect(lane).toBe(`${MARKER_LANE_HEIGHT_PX}px`);
   });
 });
 

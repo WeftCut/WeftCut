@@ -82,8 +82,8 @@ test('the lane paints markers, and one toggle silences them from either surface'
       .filter({ hasText: /^Show markers$/ })
 
     // ── Seed a point and a region, from outside the app ───────────────────
-    // The lane holds its row before anything is in it: it is a permanent row,
-    // not one that appears with the first marker.
+    // The lane holds its row before anything is in it: visibility owns the
+    // row, not whether the project has marks.
     await expect(markerLane).toHaveCount(1)
     await expect(marks).toHaveCount(0)
     // Frame-grid times at 30 fps (ADR 0037 rejects an off-grid marker). Two
@@ -127,9 +127,9 @@ test('the lane paints markers, and one toggle silences them from either surface'
     await expect(
       page.locator('[data-testid="timeline-ruler"] [data-testid="timeline-marker"]'),
     ).toHaveCount(0)
-    // Both authored freehand, so both are FREE — hollow, with the colour its
-    // author gave it carried as a ring rather than a fill. Still the authored
-    // colour and not a semantic marker colour, which is the part that matters.
+    // Both authored freehand, so both are FREE. The region's colour is a ring
+    // rather than a fill — still the authored colour, not a semantic marker
+    // colour, which is the part that matters.
     await expect(regionMark).toHaveAttribute('data-anchored', 'false')
     expect(
       await regionMark.evaluate((el) => getComputedStyle(el).boxShadow),
@@ -148,13 +148,11 @@ test('the lane paints markers, and one toggle silences them from either surface'
     // ── Hide from the strip ───────────────────────────────────────────────
     await expect(stripButton).toHaveAttribute('aria-pressed', 'true')
     await stripButton.click()
-    // Not "hidden" — GONE, wrapper included (see the landmine on the layer).
+    // Not "hidden" — GONE, the row included. One switch owns the whole
+    // surface: off, the 20 px go back to the tracks.
     await expect(marks).toHaveCount(0)
     await expect(markerLayer).toHaveCount(0)
-    // The LANE stays. The flag governs what it paints, never whether it exists —
-    // a row bound to it would reflow the timeline under the pointer, since `M`
-    // force-enables the same flag.
-    await expect(markerLane).toHaveCount(1)
+    await expect(markerLane).toHaveCount(0)
     await expect(stripButton).toHaveAttribute('aria-pressed', 'false')
     await expect(stripButton).toHaveAttribute(
       'aria-label',
@@ -208,11 +206,10 @@ test('markers are authorable from the keyboard and the lane — no MCP client an
     // command bridge keeps this spec's premise: still no MCP client anywhere.
     await invokeCmd(page, 'add_color_layer', { tStartUs: 0, durationUs: 5_000_000 })
 
-    // Park the playhead away from the row head: a frame-0 diamond is centred
-    // on the lane's left edge, so half of it sits under the sticky header
-    // column — a poor right-click target for the step below. Asserted, not
-    // assumed: a park that quietly clamped home would fail HERE, instead of as
-    // an interception mystery at the right-click.
+    // Park the playhead away from the row head: a frame-0 L sits flush against
+    // the sticky header column — a poor right-click target for the step below.
+    // Asserted, not assumed: a park that quietly clamped home would fail HERE,
+    // instead of as an interception mystery at the right-click.
     await waitForHook(page, 'getPlayheadUs')
     await page.locator('[data-testid="timeline-ruler"]').click({ position: { x: 200, y: 10 } })
     await expect

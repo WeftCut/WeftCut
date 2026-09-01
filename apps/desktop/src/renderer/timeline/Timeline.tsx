@@ -1692,10 +1692,10 @@ export function Timeline({
               beneath it out of line with its lane. The next two are the paired
               halves of the marker lane and the drop strip.
 
-              The marker lane's header is NOT a spacer like the drop strip's — it
-              carries the collapse toggle — but it answers to the same rule:
-              `markerLaneHeightPx` sizes both halves, so neither can be tall
-              alone. */}
+              Both halves of the marker lane read `markers_visible` themselves,
+              so the row cannot vanish from one column and stay in the other.
+              The header names the row; it is not a spacer like the drop
+              strip's, but it is exactly as tall. */}
           <MarkerLaneHeader />
           <div
             data-testid="timeline-drop-strip-header"

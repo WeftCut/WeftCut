@@ -868,15 +868,16 @@ it. `t_us` stays stored, which is why every reader of a marker — the lane,
 **The lane.** Markers live in one row directly under the ruler, never on the
 ruler itself. That row belongs to the ruler family — it measures time, where a
 track's lane holds layers — and it shares the ruler's quantised scroll window,
-so a glyph and the tick under it are the same x forever. A point is a diamond
-on its frame; a region is a capsule across its range, degrading to the point
-shape below `MARKER_MIN_REGION_PX` so a two-frame region does not vanish at fit
-zoom (the tooltip still carries both ends). **Solid means anchored, hollow means
-free**, and names print beside a point or inside a capsule, so a mark is
+so a glyph and the tick under it are the same x forever. A point is an L on
+its frame — stem on the left edge, foot running right under the name — so the
+position is the painted edge rather than a diamond's centre; a region is a
+capsule across its range, degrading to the same L below `MARKER_MIN_REGION_PX`
+so a two-frame region does not vanish at fit zoom (the tooltip still carries
+both ends). **An anchored L grows its stem; an anchored capsule fills** (a free
+one rings), and names print beside a point or inside a capsule, so a mark is
 readable without a hover. `markers_visible` (`M`'s own toggle, the View menu,
-the Quick Actions strip) silences what the row *paints* and never whether the
-row exists — `M` force-enables it, and a row bound to that flag would reflow the
-timeline under the pointer. The twirl in its header collapses it to a seam.
+the Quick Actions strip) owns the whole row: off, the 20 px go back to the
+tracks. `M` force-enables it, so authoring a mark brings the row back with it.
 
 **Authoring.** `M` marks the playhead's frame; pressing it again on a marked
 frame opens rename rather than stacking a duplicate (the FCP/Resolve
