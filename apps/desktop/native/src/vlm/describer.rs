@@ -1,5 +1,5 @@
 //! `SceneDescriber` capability surface — a set of timed frames in, a
-//! format-tagged [`RawDescription`](super::parser::RawDescription) out.
+//! format-tagged [`RawDescription`] out.
 //!
 //! Twin of [`speech::transcriber`](crate::speech): the trait is deliberately
 //! thin (a backend produces one raw output style, it does NOT normalize —

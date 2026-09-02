@@ -15,10 +15,9 @@
 //!     ring (microseconds), then `broadcast::Sender::send` (non-blocking,
 //!     drops if no subscribers) and `mpsc::Sender::try_send` (drops the
 //!     JSONL line on full, silently — see `WRITER_CAPACITY`).
-//!   * Never call `tracing::*!` macros inside `emit` — see
-//!     [[feedback_async_block_on_in_async]] for the analogous trap.
-//!     `tracing_layer` forwards `tracing::error!` events into `emit`,
-//!     so re-emitting tracing events inside `emit` would recurse.
+//!   * Never call `tracing::*!` macros inside `emit`: `tracing_layer`
+//!     forwards `tracing::error!` events into `emit`, so re-emitting tracing
+//!     events inside `emit` would recurse.
 
 use std::collections::VecDeque;
 use std::path::Path;

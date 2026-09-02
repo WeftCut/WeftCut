@@ -58,7 +58,7 @@ const FADE_MIN_DELTA: f64 = 0.15; // and the luma ramp must span at least this m
 
 /// Tuning for one shot-detection run.
 pub struct ShotOpts {
-    /// Cut threshold in [0,1]: a frame whose detector score exceeds it starts a
+    /// Cut threshold in `[0,1]`: a frame whose detector score exceeds it starts a
     /// new shot. Lower = more (finer) cuts.
     pub sensitivity: f32,
     /// Interior cuts closer than this to the previous shot boundary are dropped,
@@ -688,7 +688,7 @@ pub(crate) fn build_shots(
     bounds.windows(2).map(|w| (w[0], w[1])).collect()
 }
 
-/// Mean Rec.601 luma in [0,1].
+/// Mean Rec.601 luma in `[0,1]`.
 fn mean_luma(img: &RgbImage) -> f64 {
     let mut sum = 0.0f64;
     for p in img.pixels() {
@@ -699,7 +699,7 @@ fn mean_luma(img: &RgbImage) -> f64 {
 }
 
 /// Variance of the Laplacian of luma — a focus/sharpness proxy (higher =
-/// sharper). Computed on [0,1] luma so it is resolution independent.
+/// sharper). Computed on `[0,1]` luma so it is resolution independent.
 fn var_laplacian(img: &RgbImage) -> f64 {
     let w = img.width() as i64;
     let h = img.height() as i64;
@@ -727,7 +727,7 @@ fn var_laplacian(img: &RgbImage) -> f64 {
     vals.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>() / n
 }
 
-/// MSSIM in [0,1]; 1.0 == identical. Same algorithm the conformance harness
+/// MSSIM in `[0,1]`; 1.0 == identical. Same algorithm the conformance harness
 /// uses. Unequal dimensions (a sampling bug) degrade to 0.0 rather than panic.
 fn ssim(a: &RgbImage, b: &RgbImage) -> f64 {
     image_compare::rgb_similarity_structure(&image_compare::Algorithm::MSSIMSimple, a, b)
@@ -736,7 +736,7 @@ fn ssim(a: &RgbImage, b: &RgbImage) -> f64 {
 }
 
 /// Coarse motion proxy: how much the shot's endpoints differ, `1 - SSIM` in
-/// [0,1] (1 = completely different).
+/// `[0,1]` (1 = completely different).
 fn motion_between(a: &RgbImage, b: &RgbImage) -> f64 {
     (1.0 - ssim(a, b)).clamp(0.0, 1.0)
 }

@@ -1,7 +1,8 @@
 //! Pluggable video-understanding backends behind a locality-neutral trait
 //! surface — the architectural TWIN of the STT sidecar (`speech/`, ADR 0036).
 //!
-//! One capability surface: **scene description** — the [`SceneDescriber`] trait
+//! One capability surface: **scene description** — the
+//! [`SceneDescriber`](describer::SceneDescriber) trait
 //! → the `describe_clip` MCP tool + the `media://{id}/description` resource.
 //! Take a clip's sampled frames, produce open-vocabulary timestamped
 //! descriptions, cache them incrementally.

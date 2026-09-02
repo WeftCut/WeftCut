@@ -2,10 +2,12 @@
 //! sharpness plus the black / freeze / fade flags, over spans a caller names
 //! rather than over a detection's own shots.
 //!
-//! Owns [`measure_span`] — the ONE place three frames become four numbers, used
-//! both by `analyze_clip`'s per-shot pass (`super::attach_stats`) and by the
-//! review surface's on-demand [`attach_span_stats`] — and the `shot-stats/`
-//! sidecar the second accumulates into. It does not own where a shot begins:
+//! Owns [`measure_span`](crate::jobs::shot::stats::measure_span) — the ONE
+//! place three frames become four numbers, used both by `analyze_clip`'s
+//! per-shot pass (`super::attach_stats`) and by the review surface's on-demand
+//! [`attach_span_stats`](crate::jobs::shot::stats::attach_span_stats) — and
+//! the `shot-stats/` sidecar the second accumulates into. It does not own
+//! where a shot begins:
 //! spans arrive from `super::reduce` by way of the Panel, and nothing here
 //! detects, merges or re-indexes them. See ADR 0057.
 

@@ -52,7 +52,7 @@ pub(crate) struct FrameComparison {
     /// Hamming distance between the two frames' 64-bit perceptual hashes (0 =
     /// identical hash, 64 = maximally different).
     pub phash_hamming: u32,
-    /// MSSIM structural similarity in [0,1] (1.0 = structurally identical).
+    /// MSSIM structural similarity in `[0,1]` (1.0 = structurally identical).
     pub ssim: f64,
     /// `phash_hamming <= PHASH_MAX_HAMMING && ssim >= SSIM_MIN` — both the
     /// perceptual hash and the structural score must agree it is the same frame.
@@ -119,7 +119,7 @@ fn hamming(a: u64, b: u64) -> u32 {
     (a ^ b).count_ones()
 }
 
-/// MSSIM in [0,1]; 1.0 == structurally identical. Squares both frames to a common
+/// MSSIM in `[0,1]`; 1.0 == structurally identical. Squares both frames to a common
 /// size first (MSSIM requires equal dimensions). Same `image_compare` MSSIM the
 /// shot detector and the conformance harness use; a compare error degrades to 0.0
 /// rather than panicking.

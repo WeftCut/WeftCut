@@ -13,7 +13,7 @@ use crate::state::animated::Animated;
 
 pub const ENVELOPE_STEP_US: i64 = 10_000; // 10 ms grid
 
-/// Control points on the implicit grid: values[k] sits at t = k * step_us,
+/// Control points on the implicit grid: `values[k]` sits at `t = k * step_us`,
 /// the last point clamps to the layer end. len()==1 ⇔ effectively static.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Envelope {

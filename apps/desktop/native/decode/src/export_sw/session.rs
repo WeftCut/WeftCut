@@ -1,7 +1,7 @@
 //! Per-source export-decode session thread + registry + credit window.
 //!
 //! Owns: a dedicated OS thread per session that opens a
-//! [`SwVideoStream`](crate::preview_sw::decoder::SwVideoStream), services
+//! [`SwVideoStream`], services
 //! `decode_range` commands posted over an mpsc channel, and ships owned
 //! [`SwFrame`] bytes (NV12 or I420P10, per the session's [`ExportOutFormat`])
 //! out through a shared sink one credit at a time. The reorder,

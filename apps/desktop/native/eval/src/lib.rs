@@ -227,7 +227,7 @@ pub enum EaseDir {
 /// Two-endpoint blend at eased progress `u`. `u` is ALREADY remapped by the
 /// segment's `Interpolation` before lerp sees it, so easing stays orthogonal
 /// to the value type. Overshooting eases (Elastic, Bezier with y outside
-/// [0,1]) hand over `u < 0` / `u > 1` and the blend extrapolates — correct for
+/// `[0,1]`) hand over `u < 0` / `u > 1` and the blend extrapolates — correct for
 /// scalars; colors extrapolate in OkLab and clamp at the u8 conversion.
 /// (Spatial motion paths are NOT this trait — they need the whole keyframe
 /// sequence; a separate future layer.)
@@ -270,7 +270,7 @@ pub struct Rgba8 {
     pub a: u8,
 }
 
-/// u8 channel → f64 in [0,1].
+/// u8 channel → f64 in `[0,1]`.
 #[inline]
 fn u8_to_f(c: u8) -> f64 {
     c as f64 / 255.0
@@ -401,9 +401,9 @@ fn fabs(x: f64) -> f64 {
 }
 
 /// Evaluate a `cubic-bezier(x1,y1,x2,y2)` timing function at normalized
-/// progress `x` ∈ [0,1]. Control points are (0,0),(x1,y1),(x2,y2),(1,1):
+/// progress `x` ∈ `[0,1]`. Control points are (0,0),(x1,y1),(x2,y2),(1,1):
 /// solve `X(s)=x` for the Bézier parameter `s` (Newton-Raphson, ≤8 iters,
-/// bisection fallback), then return `Y(s)`. `x1,x2` are assumed in [0,1]
+/// bisection fallback), then return `Y(s)`. `x1,x2` are assumed in `[0,1]`
 /// (enforced at authoring) so `X` is monotone and the solve single-valued.
 ///
 /// CANONICAL WebKit UnitBezier: the renderer's keyframe eval calls this via

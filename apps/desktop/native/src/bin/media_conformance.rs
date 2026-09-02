@@ -11,8 +11,10 @@
 //!   - `--audio-envelope`: windowed-RMS levels vs analytic expectations.
 //!   - `--audio-pan`: per-channel RMS ratio vs an expected L−R dB delta.
 //!
-//!   media_conformance --output <mp4> --source <mp4> --samples N1,N2,... \
-//!     [--window 2] [--ssim-min 0.95]
+//! ```text
+//! media_conformance --output <mp4> --source <mp4> --samples N1,N2,... \
+//!   [--window 2] [--ssim-min 0.95]
+//! ```
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -222,7 +224,7 @@ fn decode_rgb8(png: &[u8]) -> Result<image::RgbImage> {
         .to_rgb8())
 }
 
-/// MSSIM in [0,1]; 1.0 == identical. Errors if dimensions disagree (a fixture
+/// MSSIM in `[0,1]`; 1.0 == identical. Errors if dimensions disagree (a fixture
 /// mismatch, not a regression).
 fn ssim_pngs(a_png: &[u8], b_png: &[u8]) -> Result<f64> {
     let a = decode_rgb8(a_png)?;
