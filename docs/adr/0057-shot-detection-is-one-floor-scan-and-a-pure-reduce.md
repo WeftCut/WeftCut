@@ -134,6 +134,15 @@ is one, two producers of it is one too many.
   threshold move keep its measurement while a reshaped span simply has none.
   Measuring a merged span is measuring the span the reviewer made — the only
   span whose numbers mean anything for that row.
+- **The tier is chosen once, at the first scan.** `pick_source` decides which
+  physical input a *new* scan reads — quick proxy, full proxy, original — and
+  that tier is part of the sidecar key, so two renditions of one source never
+  alias. A lookup, though, consults every tier: a source scanned on the original
+  while its proxy was still transcoding keeps that report after the proxy lands,
+  so the probe never reports a source under review as unanalyzed, and no second
+  whole-source decode is spent re-deriving candidates already on disk. The
+  on-demand measurements follow the report's tier for the same reason — a row's
+  numbers and its boundaries come from one file.
 - **`analyze_clip` keeps its own scan.** The agent tool defaults to stats and
   events on, which the floor report cannot serve, so a source analyzed by the
   agent and reviewed by a person holds two cache entries. Their BOUNDARIES

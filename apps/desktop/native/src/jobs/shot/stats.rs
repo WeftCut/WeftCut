@@ -17,8 +17,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    extract_rgb, is_fade, mean_luma, motion_between, pick_source, ssim, var_laplacian,
-    write_json_atomic, ShotFlag, BLACK_LUMA, FREEZE_SSIM,
+    extract_rgb, is_fade, mean_luma, motion_between, ssim, var_laplacian, write_json_atomic,
+    ShotFlag, BLACK_LUMA, FREEZE_SSIM,
 };
 use crate::cache::CacheLayout;
 use crate::state::MediaItem;
@@ -110,11 +110,12 @@ impl SpanStatsCache {
 }
 
 /// The sidecar key: `blake3(source_hash | tier)`. The source content hash makes
-/// a relink / content change auto-invalidate; `tier` is which physical input
-/// [`super::pick_source`] chose, folded in for `super::cache_key`'s reason —
+/// a relink / content change auto-invalidate; `tier` is the physical input the
+/// measurements are taken on — the floor report's own tier
+/// ([`super::report_source`]) — folded in for `super::cache_key`'s reason:
 /// these numbers derive from that tier's swscale output, so a brightness
-/// measured on the original before the proxy job finished must not be served as
-/// the proxy's. Detection parameters are deliberately ABSENT: a span is a span
+/// measured on the original must not be served as the proxy's. Detection
+/// parameters are deliberately ABSENT: a span is a span
 /// whatever threshold produced it, which is what lets a boundary that survives a
 /// threshold move keep its measurement.
 pub fn cache_key(source_hash: &str, tier: &str) -> String {
@@ -189,8 +190,9 @@ pub async fn attach_span_stats(
     if spans.is_empty() {
         return Ok(Vec::new());
     }
-    // Resolve the physical input first — its tier is part of the key.
-    let (video, tier) = pick_source(cache, media);
+    // Measure on the tier the floor report was scanned on — its tier is part of
+    // the key, and the numbers must share the boundaries' provenance.
+    let (video, tier) = super::report_source(cache, media);
     let path = cache.shot_stats(&cache_key(&media.file_hash_blake3, tier));
     crate::cache::touch_if_stale(&path);
     let mut measured = if crate::cache::cached_ok(&path) {

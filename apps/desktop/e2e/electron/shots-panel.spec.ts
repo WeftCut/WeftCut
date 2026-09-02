@@ -33,7 +33,12 @@ import {
  * The fixture's own manifest pins those numbers (`e2e/fixtures/generate.mjs`,
  * `SHOT_CUTS`), and the scores are identical whichever tier `pick_source`
  * hands the detector — original, quick proxy or full master — so the
- * background proxy job cannot shift what this spec expects.
+ * background proxy job cannot shift what this spec expects. It does race the
+ * scan: the import's quick-proxy transcode lands while or after the floor scan
+ * runs, so by the time the split changes the subject, the tier a fresh scan
+ * would use may not be the one the report was cached under. The post-split row
+ * count is therefore also the assertion that a cached report is found on any
+ * tier (`find_cached_report`), not only on the tier a fresh scan would read.
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))

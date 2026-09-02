@@ -9,7 +9,9 @@
 //! write-through cache
 //! ([`cached_source_report`]) shared by the `analyze_clip` tool and the
 //! `media://{id}/analysis` resource. The cache stores ONE whole-source report
-//! per (source, params); callers clip it to a layer window with [`clip_report`].
+//! per (source, params) — keyed by the tier it was scanned on, found on any
+//! tier ([`find_cached_report`]); callers clip it to a layer window with
+//! [`clip_report`].
 //!
 //! Also owns the scan / reduce split: [`floor_opts`] is the single cached
 //! whole-source pass at [`FLOOR_SENSITIVITY`], [`reduce`] re-derives the shot
@@ -238,14 +240,15 @@ pub async fn analyze(
 /// relink / content change auto-invalidate (the key changes with it); the
 /// detection params are folded in because they change the report, so a call at a
 /// new sensitivity gets a fresh entry instead of a stale hit. `tier` is which
-/// physical input [`pick_source`] chose (quick proxy / full proxy / original):
-/// ffmpeg `scene` scores shift with resolution + compression, so a report
-/// computed on the ORIGINAL before the proxy job finished must NOT alias the
-/// later proxy-based report — folding the tier gives each its own entry, and a
-/// read after the proxy lands recomputes on the proxy instead of returning the
-/// stale original-based cuts. The layer WINDOW is deliberately absent — the
-/// cached report is whole-source and clipped per layer at read time, so one
-/// entry serves every layer on the source. Mirrors `vlm::cache_key`.
+/// physical input the scan ran on (quick proxy / full proxy / original): ffmpeg
+/// `scene` scores shift with resolution + compression, so a report computed on
+/// the ORIGINAL must never be read back as the proxy's — folding the tier in
+/// gives each rendition its own entry. What the tier does NOT do is decide a
+/// hit: a lookup consults every tier ([`find_cached_report`]), so the report a
+/// source has is the report it keeps, whichever input existed when it was
+/// scanned. The layer WINDOW is deliberately absent — the cached report is
+/// whole-source and clipped per layer at read time, so one entry serves every
+/// layer on the source. Mirrors `vlm::cache_key`.
 pub fn cache_key(source_hash: &str, tier: &str, opts: &ShotOpts) -> String {
     let mut h = blake3::Hasher::new();
     h.update(source_hash.as_bytes());
@@ -260,22 +263,80 @@ pub fn cache_key(source_hash: &str, tier: &str, opts: &ShotOpts) -> String {
     h.finalize().to_hex().to_string()
 }
 
-/// Pick the video the detector runs on plus a tier tag for the cache key: the
-/// 720p quick proxy if built (`"quick"`), else the full proxy (`"full"`), else
-/// the original source (`"orig"`). The detector is scale-tolerant, so a proxy
-/// keeps the whole-file decode cheap; the tag is folded into [`cache_key`] so a
-/// report computed on one tier never aliases another (see cache_key). (Shared by
-/// the tool AND the resource so both use one compute-on-miss path.)
+/// The physical inputs a scan may run on, in the order [`pick_source`] prefers
+/// them: the 720p quick proxy, the full proxy, the original source.
+const TIERS: [&str; 3] = ["quick", "full", "orig"];
+
+/// The file one tier names for `media`. Only `"orig"` is guaranteed to exist;
+/// the proxies are cache entries that land after import and can be evicted.
+fn tier_path(cache: &CacheLayout, media: &MediaItem, tier: &str) -> std::path::PathBuf {
+    match tier {
+        "quick" => cache.quick_proxy(&media.file_hash_blake3),
+        "full" => cache.proxy(&media.file_hash_blake3),
+        _ => media.path_abs.clone(),
+    }
+}
+
+/// Pick the video a NEW scan runs on plus its tier tag: the quick proxy if
+/// built, else the full proxy, else the original. The detector is
+/// scale-tolerant, so a proxy keeps the whole-file decode cheap. This decides
+/// the input of a scan that has to happen; which sidecar an earlier scan left
+/// behind is [`find_cached_report`]'s question, and the two must not be
+/// conflated — the proxies land after import and get evicted, so this answer
+/// moves over time while a cached report stays where it was written.
 fn pick_source(cache: &CacheLayout, media: &MediaItem) -> (std::path::PathBuf, &'static str) {
-    let quick = cache.quick_proxy(&media.file_hash_blake3);
-    if crate::cache::cached_ok(&quick) {
-        return (quick, "quick");
+    TIERS[..2]
+        .iter()
+        .map(|&tier| (tier_path(cache, media, tier), tier))
+        .find(|(path, _)| crate::cache::cached_ok(path))
+        .unwrap_or_else(|| (media.path_abs.clone(), "orig"))
+}
+
+/// The sidecar an earlier scan of `media` under `opts` left behind, whatever
+/// tier that scan ran on — the tier [`pick_source`] would choose now first, then
+/// the others — together with that tier. `None` when no tier has been scanned.
+///
+/// This is the lookup [`cached_source_report`] and [`is_report_cached`] share,
+/// and the reason `tier` sits in the key without deciding a hit: a scan that ran
+/// on the original because the quick proxy was still being transcoded stays the
+/// source's report after the proxy lands. Keying alone would orphan it — the
+/// probe would answer "not analyzed" for a source whose review is on screen, and
+/// the next read would spend a whole-source decode replacing candidates it
+/// already has with the proxy's rendition of them.
+fn find_cached_report(
+    cache: &CacheLayout,
+    media: &MediaItem,
+    opts: &ShotOpts,
+) -> Option<(std::path::PathBuf, &'static str)> {
+    let (_video, current) = pick_source(cache, media);
+    std::iter::once(current)
+        .chain(TIERS.into_iter().filter(move |tier| *tier != current))
+        .map(|tier| {
+            (
+                cache.shot(&cache_key(&media.file_hash_blake3, tier, opts)),
+                tier,
+            )
+        })
+        .find(|(path, _)| crate::cache::cached_ok(path))
+}
+
+/// The input the review surface's on-demand numbers are measured on: the tier
+/// the floor report was scanned on while that file still exists, else what
+/// [`pick_source`] would scan now. Boundaries and measurements then share one
+/// provenance — a brightness read off the proxy is never attached to a cut the
+/// original produced — and a proxy landing mid-review does not move the
+/// measurements' key from under the ones already taken.
+pub(crate) fn report_source(
+    cache: &CacheLayout,
+    media: &MediaItem,
+) -> (std::path::PathBuf, &'static str) {
+    if let Some((_, tier)) = find_cached_report(cache, media, &floor_opts()) {
+        let path = tier_path(cache, media, tier);
+        if tier == "orig" || crate::cache::cached_ok(&path) {
+            return (path, tier);
+        }
     }
-    let full = cache.proxy(&media.file_hash_blake3);
-    if crate::cache::cached_ok(&full) {
-        return (full, "full");
-    }
-    (media.path_abs.clone(), "orig")
+    pick_source(cache, media)
 }
 
 /// The threshold the one cached whole-source scan runs at. It sits deliberately
@@ -338,12 +399,10 @@ pub async fn cached_source_report(
     media: &MediaItem,
     opts: &ShotOpts,
 ) -> Result<ShotReport> {
-    // Resolve the physical input first — its tier is part of the key (see
-    // `cache_key`).
-    let (video, tier) = pick_source(cache, media);
-    let path = cache.shot(&cache_key(&media.file_hash_blake3, tier, opts));
-    crate::cache::touch_if_stale(&path);
-    if crate::cache::cached_ok(&path) {
+    // Serve the sidecar an earlier scan left on ANY tier (see
+    // `find_cached_report`); only a source no tier has scanned pays a decode.
+    if let Some((path, _tier)) = find_cached_report(cache, media, opts) {
+        crate::cache::touch_if_stale(&path);
         match read_report(&path) {
             Ok(report) => return Ok(report),
             Err(e) => tracing::warn!(
@@ -352,6 +411,9 @@ pub async fn cached_source_report(
             ),
         }
     }
+    // The input a fresh scan reads, and the key its report is written under.
+    let (video, tier) = pick_source(cache, media);
+    let path = cache.shot(&cache_key(&media.file_hash_blake3, tier, opts));
 
     // Whole-source scan: the detector is window-agnostic, so we analyze the full
     // content window and cache that once. A source with no probed duration can't
@@ -370,17 +432,15 @@ pub async fn cached_source_report(
     Ok(report)
 }
 
-/// Whether [`cached_source_report`] would HIT for `(media, opts)` — the sidecar
-/// at the same source-keyed path exists and is non-empty. A probe, not a
-/// get-or-compute: it resolves the tier through [`pick_source`] (the tier is
-/// part of the key) but reads no file contents, computes nothing, and
-/// deliberately skips the `touch_if_stale` mtime bump `cached_source_report`
-/// does — a caller asking "has this been analyzed?" must not look like a use
-/// that keeps the entry alive in the disk LRU, and must not be able to start a
-/// whole-source decode by asking.
+/// Whether [`cached_source_report`] would HIT for `(media, opts)` — a sidecar
+/// exists and is non-empty on some tier, found the way that function finds it
+/// ([`find_cached_report`]). A probe, not a get-or-compute: it reads no file
+/// contents, computes nothing, and deliberately skips the `touch_if_stale` mtime
+/// bump `cached_source_report` does — a caller asking "has this been analyzed?"
+/// must not look like a use that keeps the entry alive in the disk LRU, and
+/// must not be able to start a whole-source decode by asking.
 pub fn is_report_cached(cache: &CacheLayout, media: &MediaItem, opts: &ShotOpts) -> bool {
-    let (_video, tier) = pick_source(cache, media);
-    crate::cache::cached_ok(&cache.shot(&cache_key(&media.file_hash_blake3, tier, opts)))
+    find_cached_report(cache, media, opts).is_some()
 }
 
 /// Clip a WHOLE-source report to the layer window `[in_us, out_us]` (mirrors how
@@ -1319,5 +1379,147 @@ mod tests {
             &opts(0.4, 500_000, true, true)
         ));
         assert_eq!(file_count(tmp.path()), seeded, "a probe writes nothing");
+    }
+
+    // ── The tier is chosen once, at the first scan ───────────────────────────
+
+    /// Drop a non-empty quick proxy into the cache, the way the import's
+    /// transcode does after it finishes — `pick_source` flips to `"quick"`.
+    fn land_quick_proxy(cache: &CacheLayout, media: &MediaItem) {
+        std::fs::write(cache.quick_proxy(&media.file_hash_blake3), b"proxy").unwrap();
+        assert_eq!(pick_source(cache, media).1, "quick");
+    }
+
+    /// A whole-source report with no interior cut — distinguishable from
+    /// `sample_report` (two shots) by its shot count.
+    fn one_shot_report() -> ShotReport {
+        ShotReport {
+            shots: vec![Shot {
+                index: 0,
+                t_start_us: 0,
+                t_end_us: 6_000_000,
+                keyframe_t_us: 3_000_000,
+                brightness: None,
+                motion: None,
+                sharpness: None,
+                flags: vec![],
+            }],
+            cut_scores: vec![],
+        }
+    }
+
+    /// A scan that ran on the original while the quick proxy was still being
+    /// transcoded is still the source's report after the proxy lands: the probe
+    /// keeps answering true, and the read serves that sidecar instead of
+    /// spending a fresh whole-source decode on the proxy's rendition of the
+    /// same candidates.
+    #[tokio::test]
+    async fn cached_report_outlives_a_proxy_landing_after_the_scan() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cache = CacheLayout::new(tmp.path().to_path_buf());
+        cache.ensure_dirs().unwrap();
+        let media = test_media("cafef00d", Some(6_000_000));
+        let o = floor_opts();
+
+        // No proxy yet → the scan ran on the original.
+        assert_eq!(pick_source(&cache, &media).1, "orig");
+        let orig_path = cache.shot(&cache_key(&media.file_hash_blake3, "orig", &o));
+        write_json_atomic(&orig_path, &sample_report(), "shot report")
+            .await
+            .unwrap();
+        assert!(is_report_cached(&cache, &media, &o));
+
+        land_quick_proxy(&cache, &media);
+        let before = file_count(tmp.path());
+        assert!(
+            is_report_cached(&cache, &media, &o),
+            "a proxy landing after the scan must not orphan it"
+        );
+        // A HIT on the orig sidecar: `/nonexistent.mp4` cannot be scanned, so a
+        // miss here would not silently recompute — it would error.
+        let got = cached_source_report(&cache, &media, &o).await.unwrap();
+        assert_eq!(got.shots.len(), 2);
+        assert_eq!(
+            file_count(tmp.path()),
+            before,
+            "a hit writes no second sidecar"
+        );
+        assert!(!crate::cache::cached_ok(&cache.shot(&cache_key(
+            &media.file_hash_blake3,
+            "quick",
+            &o
+        ))));
+    }
+
+    /// When sidecars exist on more than one tier, the tier `pick_source` would
+    /// scan now wins — the preferred input, and the newer entry where a source
+    /// was once recomputed on its proxy.
+    #[tokio::test]
+    async fn lookup_prefers_the_tier_pick_source_would_scan_now() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cache = CacheLayout::new(tmp.path().to_path_buf());
+        cache.ensure_dirs().unwrap();
+        let media = test_media("cafef00d", Some(6_000_000));
+        let o = floor_opts();
+        let key = |tier: &str| cache.shot(&cache_key(&media.file_hash_blake3, tier, &o));
+        write_json_atomic(&key("orig"), &sample_report(), "shot report")
+            .await
+            .unwrap();
+        write_json_atomic(&key("quick"), &one_shot_report(), "shot report")
+            .await
+            .unwrap();
+
+        // Without the proxy the current tier is orig → the two-shot report.
+        let got = cached_source_report(&cache, &media, &o).await.unwrap();
+        assert_eq!(got.shots.len(), 2);
+
+        // With it the current tier is quick → its own report, and the orig entry
+        // is neither served nor disturbed.
+        land_quick_proxy(&cache, &media);
+        let got = cached_source_report(&cache, &media, &o).await.unwrap();
+        assert_eq!(got.shots.len(), 1);
+        assert!(crate::cache::cached_ok(&key("orig")));
+    }
+
+    /// Fresh measurements are taken on the tier the floor report was scanned on,
+    /// not on the proxy that landed after it, so a row's numbers and its
+    /// boundaries come from one file — and the measurements' key stays put when
+    /// the proxy arrives. With no report, or a report whose tier file is gone,
+    /// the input is what a scan would read now.
+    #[tokio::test]
+    async fn report_source_measures_on_the_floor_report_tier() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cache = CacheLayout::new(tmp.path().to_path_buf());
+        cache.ensure_dirs().unwrap();
+        let media = test_media("cafef00d", Some(6_000_000));
+        let key = |tier: &str| cache.shot(&cache_key(&media.file_hash_blake3, tier, &floor_opts()));
+
+        // Nothing scanned: the same input a fresh scan would use.
+        assert_eq!(report_source(&cache, &media), pick_source(&cache, &media));
+
+        // Scanned on the original, then the proxy lands: a scan would now read
+        // the proxy, a measurement still reads the original.
+        write_json_atomic(&key("orig"), &sample_report(), "shot report")
+            .await
+            .unwrap();
+        land_quick_proxy(&cache, &media);
+        assert_eq!(pick_source(&cache, &media).1, "quick");
+        assert_eq!(
+            report_source(&cache, &media),
+            (media.path_abs.clone(), "orig")
+        );
+
+        // Scanned on the proxy, then the proxy is evicted: the report's tier has
+        // no file left to measure, so the input falls back to what exists.
+        std::fs::remove_file(key("orig")).unwrap();
+        write_json_atomic(&key("quick"), &one_shot_report(), "shot report")
+            .await
+            .unwrap();
+        assert_eq!(report_source(&cache, &media).1, "quick");
+        std::fs::remove_file(cache.quick_proxy(&media.file_hash_blake3)).unwrap();
+        assert_eq!(
+            report_source(&cache, &media),
+            (media.path_abs.clone(), "orig")
+        );
     }
 }
