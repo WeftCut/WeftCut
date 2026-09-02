@@ -194,14 +194,23 @@ export async function dropShotMarkers(layerId: string, deps: HybridDeps, minShot
   return r.value as string[]
 }
 
-/** Run a hybrid tool: Rust compute then TS-actor write. Returns the tool's
- *  result — a STRING in every arm: a media id (import_media), the bare caption
- *  track id (import_media `.srt` branch), or the MCP ToolResult text
- *  (apply_subtitles). server.ts stringifies the result, so an arm reachable as
- *  an MCP TOOL must not return an object. `drop_shot_markers` is the one arm
- *  that is renderer-only (absent from mcp/mutationTools.ts `HYBRID_TOOLS`), so
- *  it returns the object its IPC caller reads. Throws on a rejected actor write
- *  or an unhandled tool. */
+/** Run a hybrid tool: Rust compute then TS-actor write.
+ *
+ *  Return-shape contract, and it is the MCP half that constrains it: server.ts
+ *  stringifies whatever comes back into one `ToolResult` text block, so an arm
+ *  listed in `mcp/mutationTools.ts` `HYBRID_TOOLS` must return a STRING — a
+ *  media id (import_media), the bare caption track id (import_media's
+ *  `.srt` branch), the id plus a styling note (apply_subtitles), or a JSON
+ *  string (synthesize_speech, auto_split_by_shot). `drop_shot_markers` is the
+ *  one arm with no MCP tool at all, so it returns the object its IPC caller
+ *  reads directly.
+ *
+ *  Several of these arms are reachable from BOTH sides (`router.ts`
+ *  `HYBRID_CHANNELS`): the renderer's speech dialogs call `apply_subtitles`
+ *  and `synthesize_speech` by name. The shape stays the MCP one either way;
+ *  the renderer's typed wrapper parses it (`renderer/ipc/index.ts`).
+ *
+ *  Throws on a rejected actor write or an unhandled tool. */
 export async function runHybrid(tool: string, args: Record<string, unknown>, deps: HybridDeps): Promise<unknown> {
   switch (tool) {
     case 'import_media': {
@@ -242,7 +251,9 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       return item.id
     }
     case 'apply_subtitles': {
-      // MCP-only: body + optional format tag. Label is always "Captions".
+      // Body + optional format tag; label is always "Captions". Reached by the
+      // agent's `apply_subtitles` tool and by the renderer's auto-caption entry,
+      // which hands over the `srt` its `transcribe_clip` call returned.
       // ToolResult text contract: the bare track id, or the id + a
       // simplified-styling annotation. server.ts wraps this string into
       // `{content:[{type:'text', text}]}`.

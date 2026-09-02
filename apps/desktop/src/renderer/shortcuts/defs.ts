@@ -40,6 +40,7 @@ export type ActionId =
   | "openGroup"
   | "addToGroup"
   | "moveToComposition"
+  | "autoCaptionSelected"
   | "toggleLinkSelected"
   | "toggleLinkOverride"
   | "nudgeAudioSampleBack"
@@ -267,6 +268,17 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // — and greys where the selection is already there
   // (`timeline/moveToCompositionEligibility.ts`).
   moveToComposition:      { defaultKeys: [],               labelKey: "actions.move_to_composition", scope: TIMELINE_SELECTION },
+  // Transcribe the selected clip and apply the cues. Catalogued here rather
+  // than as a menu-only command, for `openGroup`'s reason and `addToGroup`'s
+  // shape: it acts on the timeline SELECTION, so `scope` is the gate that keeps
+  // it from firing with the media pool focused, and a user who captions every
+  // clip has somewhere to bind it (Settings → Keyboard) — which a menu-only
+  // command has not. Unbound by default because its home is the pointer: you
+  // right-click the clip you mean.
+  //
+  // No `cut-silences` twin beside it: that recipe's apply step needs a ripple
+  // delete this editor does not have, so it stays out of the menus entirely.
+  autoCaptionSelected:    { defaultKeys: [],               labelKey: "actions.auto_caption_selected", scope: TIMELINE_SELECTION },
   // `docs/features.md#links` — Ctrl/Cmd+L toggles the link on the current
   // selection, Premiere's Link: two or more unlinked layers link, a selection
   // inside one link unlinks it (`timeline/linkEligibility.ts` decides).

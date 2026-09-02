@@ -562,6 +562,11 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         return reject(`recents: unhandled channel ${channel}`)
       }
       case 'reject': return reject(route.reason)
+      // Both served upstream of this host — `clipCompute` by index.ts (which
+      // owns the engine-selection closures), `rust` by the backend dispatcher.
+      // Loud rather than a silent `undefined`, because an intercept dropped
+      // during a refactor would otherwise read as "the tool returned nothing".
+      case 'clipCompute': return reject(`router bug: ${channel} reached the TS host but is a clip-compute channel`)
       case 'rust': return reject(`router bug: ${channel} reached the TS host but is a Rust channel`)
     }
   }

@@ -17,14 +17,34 @@ export function describeRefusal(err: unknown): RefusalDescription | null {
   return { ...formatCommandError(parsed), error: parsed };
 }
 
+/// Electron's `ipcRenderer.invoke` rejects with the main-side message wrapped in
+/// its own prose — `Error invoking remote method 'backend:invoke': Error: …`.
+/// `parseCommandError` peels that off a structured refusal by parsing from the
+/// first `{`; a refusal stated in PROSE has no `{` to anchor on, so the sentence
+/// would otherwise arrive behind plumbing. The speech tools' messages are the
+/// ones that matter here: they name the Settings panel, the payload cap, the
+/// split to make.
+///
+/// Matched loosely on the channel name and swallowing one redundant `Error:`
+/// with it, so an Electron major rewording the middle of that sentence degrades
+/// to leaving the prose in rather than eating part of the message. A throw that
+/// never crossed IPC is untouched.
+const IPC_INVOKE_PROSE = /Error invoking remote method '[^']*':\s*(?:Error:\s*)?/;
+
+/// The plain text of a throw that is not a structured refusal, with Electron's
+/// IPC prose taken out.
+function plainThrowText(err: unknown): string {
+  return String(err).replace(IPC_INVOKE_PROSE, "");
+}
+
 /// For components that already own an INLINE error slot (Motif lifecycle
-/// cards, effects section): the refusal line in the active locale, or
-/// `String(err)` when the failure isn't a structured refusal. Inline slots
-/// beat the status bar on proximity, so they keep their placement and only
-/// the copy upgrades.
+/// cards, effects section, the speech dialogs): the refusal line in the active
+/// locale, or the throw's own text when the failure isn't a structured refusal.
+/// Inline slots beat the status bar on proximity, so they keep their placement
+/// and only the copy upgrades.
 export function refusalText(err: unknown): string {
   const refusal = describeRefusal(err);
-  if (!refusal) return String(err);
+  if (!refusal) return plainThrowText(err);
   return refusal.i18n_key
     ? i18n.t(refusal.i18n_key, {
         ...(refusal.i18n_args ?? {}),
@@ -55,7 +75,9 @@ export function logMutationFailure(err: unknown, context: string): void {
     level: "error",
     category: { kind: "Project" },
     source: { kind: "User" },
-    message: `${context} failed: ${String(err)}`,
+    // Same peel as the inline slot: a row reading Electron's plumbing sentence
+    // buries the one instruction the user can act on.
+    message: `${context} failed: ${plainThrowText(err)}`,
     details: { context },
   });
 }

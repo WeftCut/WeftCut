@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { handleCallTool } from './server'
+import { callClipComputeTool, handleCallTool } from './server'
 import { createActor } from '../state/actor'
 import { uuidV7Gen } from '../state/ids'
 import { blankProject } from '../state/model'
@@ -128,5 +128,33 @@ describe('handleCallTool flip routing', () => {
     const sent = JSON.parse(spy.mock.calls[0][1])
     expect(sent.backend).toBeUndefined()
     expect(sent.preferred_backend).toBeUndefined()
+  })
+
+  // The renderer's `clipCompute` route calls this function directly (index.ts),
+  // so the two surfaces are one code path by construction rather than by
+  // convention. Driven here beside the MCP cases: what the gate has to hold is
+  // that the SAME arguments come out either way, injection included.
+  it('resolves the slice and injects the same hints when called directly', async () => {
+    const ts = tsHostStub()
+    const spy = vi.fn(okEnvelope)
+    await callClipComputeTool(fakeBackend(spy), ts, 'transcribe_clip', { layer_id: 'gone' }, () => 'whisper_cpp')
+    const sent = JSON.parse(spy.mock.calls[0][1])
+    expect(sent.preferred_backend).toBe('whisper_cpp')
+    // The slice keys the stateless Rust handler reads, present (null for a layer
+    // the actor does not hold — Rust owns the not-found refusal).
+    expect(sent).toHaveProperty('layer')
+    expect(sent).toHaveProperty('media')
+  })
+  it('injects the VLM config snapshot when called directly for describe_clip', async () => {
+    const ts = tsHostStub()
+    const spy = vi.fn(okEnvelope)
+    await callClipComputeTool(
+      fakeBackend(spy), ts, 'describe_clip', { layer_id: 'gone' },
+      () => null,
+      () => ({ config: { qwen3_vl: { binary: 'q' } }, preferred: 'qwen3_vl' }),
+    )
+    const sent = JSON.parse(spy.mock.calls[0][1])
+    expect(sent.vlm_config).toEqual({ qwen3_vl: { binary: 'q' } })
+    expect(sent.preferred_backend).toBe('qwen3_vl')
   })
 })

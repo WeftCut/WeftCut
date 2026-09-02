@@ -134,6 +134,25 @@ function installApplicationMenu(projection: MenuProjection | null): void {
   )
 }
 
+// An MCP `ToolResult` reduced to what the renderer channel promised: these tools
+// answer with a single JSON text block, so the carrier is peeled off here and the
+// wrapper in `renderer/ipc/index.ts` types the payload directly.
+//
+// Falls back rather than throws — a text block that is not JSON is handed over as
+// the string it is, and an unrecognised envelope as itself. A tool whose result
+// shape changes should surface as a type error at the wrapper, not as a parse
+// crash in the dispatcher.
+function toolResultPayload(result: unknown): unknown {
+  const content = (result as { content?: Array<{ type?: string; text?: string }> } | null)?.content
+  const first = content?.[0]
+  if (first?.type !== 'text' || typeof first.text !== 'string') return result
+  try {
+    return JSON.parse(first.text)
+  } catch {
+    return first.text
+  }
+}
+
 // DRM render nodes (/dev/dri/renderD*) for VAAPI device enumeration (issue #5
 // Block C, User Story 9): libva's default device selection picks the wrong GPU
 // on a multi-GPU machine, so the resolver probes each node explicitly. Sorted
@@ -741,23 +760,31 @@ app.whenReady().then(async () => {
     emitToRenderer('motifs:changed', {})
   })
 
+  // The two engine-selection closures the clip-compute tools resolve against.
+  // Defined once and shared by the MCP host below and the renderer's
+  // `clipCompute` dispatch in `backend:invoke`: the injection is what decides
+  // which engine serves a call, so two definitions of it would be two answers
+  // to the same question depending on who asked.
+  const getPreferredEngine = (): string | null => speechConfig.get().preferred_engine
+  const getVlm = (): { config: Record<string, unknown>; preferred: string | null } => {
+    // Merge non-secret store config + the endpoint's own safeStorage key into
+    // the snapshot the stateless describe_clip resolver reads; empty until the
+    // user configures an engine → "no backend available".
+    const cfg = vlmConfig.get()
+    return {
+      config: toVlmBackendSnapshot(cfg, loadAllKeys()[VLM_ENDPOINT_KEY_TAG] ?? null),
+      preferred: cfg.preferred_engine,
+    }
+  }
+
   // Start the MCP host (streamable HTTP + bearer) and expose its info IPC.
   // Started AFTER tsHost.start() so the actor is ready before any MCP read can run
   // (the host serves state views from the actor and injects compute slices).
   const { startMcpHost } = await import('./mcp/index.js')
   const mcpHost = await startMcpHost(backend, {
     getTsHost: () => tsHost,
-    getPreferredEngine: () => speechConfig.get().preferred_engine,
-    getVlm: () => {
-      // Merge non-secret store config + the endpoint's own safeStorage key into
-      // the snapshot the stateless describe_clip resolver reads; empty until the
-      // user configures an engine → "no backend available".
-      const cfg = vlmConfig.get()
-      return {
-        config: toVlmBackendSnapshot(cfg, loadAllKeys()[VLM_ENDPOINT_KEY_TAG] ?? null),
-        preferred: cfg.preferred_engine,
-      }
-    },
+    getPreferredEngine,
+    getVlm,
     // Every MCP request and transport lifecycle event → a LogBus row
     // (docs/status-log.md § Producers).
     log: {
@@ -845,6 +872,13 @@ app.whenReady().then(async () => {
     platform: process.platform,
     arch: process.arch,
   }))
+
+  // Clip compute for the renderer: the MCP host's own tool function plus the
+  // channel set that selects for it. Awaited here beside the host rather than
+  // imported at module top so `backend:invoke` closes over both without pulling
+  // the MCP SDK into the entry chunk.
+  const { callClipComputeTool } = await import('./mcp/server.js')
+  const { CLIP_COMPUTE_CHANNELS } = await import('./state/router.js')
 
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
     // Motif runtime registration: renderer sends its clock-takeover source once
@@ -1025,6 +1059,22 @@ app.whenReady().then(async () => {
       if (!item) throw new Error(`media ${mediaId ?? ''} not found`)
       const report = JSON.parse(await backend!.analyzeShots(JSON.stringify(item), '{}')) as { shots?: unknown[] }
       return { shots: report.shots?.length ?? 0 }
+    }
+    // Clip compute (transcribe_clip / detect_silences / describe_clip): the
+    // renderer's half of the human entries, and it goes through the MCP host's
+    // OWN function so the slice resolution and the engine injection are literally
+    // the same code the agent's call takes. Intercepted here rather than folded
+    // into the router block below because that block hands everything non-rust to
+    // the TS host, which holds neither closure.
+    //
+    // The renderer gets the tool's PAYLOAD, not the MCP envelope: the channel's
+    // contract is the tool's answer, and unwrapping in one place beats every
+    // caller learning MCP's carrier shape.
+    if (tsHost && CLIP_COMPUTE_CHANNELS.has(channel)) {
+      const result = await callClipComputeTool(
+        backend!, tsHost, channel, (args ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm,
+      )
+      return toolResultPayload(result)
     }
     // Single-media compute: the TS actor owns state, so resolve the MediaItem
     // here and forward it — the Rust fns take it as a call argument.

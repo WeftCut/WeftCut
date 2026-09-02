@@ -2121,6 +2121,132 @@ export async function dropShotMarkers(layerId: string): Promise<number> {
   return r?.markers ?? 0;
 }
 
+// ============================================================
+// Speech — transcription and voiceover
+// ============================================================
+// The renderer half of the two authored speech recipes. Every channel here is
+// the SAME tool an agent calls by the same name: `transcribe_clip` and
+// `describe_clip` go through the MCP host's own `callClipComputeTool` (slice
+// resolution and engine injection included), and `apply_subtitles` /
+// `synthesize_speech` go through the same hybrid arms, so a human and an agent
+// land the same single commit.
+//
+// All four THROW. They are the read and write halves of one gesture, and a
+// swallowed failure would leave the timeline looking untouched with no reason
+// given; the calling dialog shows the message inline and logs a row.
+
+/// One word of a transcript with its own span. Times are timeline-absolute
+/// microseconds, already shifted by the slice's offset. Mirrors `speech::Word`.
+export interface TranscriptWord {
+  t_start_us: number;
+  t_end_us: number;
+  text: string;
+}
+
+/// One cue-sized span. `words` is empty when the engine reported no word-level
+/// timing at all (`word_timing: "none"`). Mirrors `speech::Segment`.
+export interface TranscriptSegment {
+  t_start_us: number;
+  t_end_us: number;
+  text: string;
+  words: TranscriptWord[];
+}
+
+/// Provenance of the per-word timestamps: straight from the engine's token
+/// offsets, derived by splitting a cue span across its words, or absent.
+/// Mirrors `speech::WordTiming` (serde snake_case).
+export type WordTiming = "exact" | "interpolated_from_cue" | "none";
+
+/// What `transcribe_clip` answers with. `backend` names the engine that actually
+/// served the request, so a resolver fallback is visible rather than silent.
+/// `srt` is the rendered cue body — the argument `applySubtitles` takes, which
+/// is why a caller never has to walk `segments` to apply a transcript.
+export interface TranscriptResult {
+  backend: string;
+  segments: TranscriptSegment[];
+  language?: string | null;
+  word_timing: WordTiming;
+  srt: string;
+}
+
+/// Transcribe one VideoClip or Audio layer's whole span. The engine is chosen by
+/// the user's Settings → Transcription preference then availability; when
+/// nothing is configured the call rejects with the message that names that
+/// panel. `language` blank/omitted lets the engine auto-detect.
+///
+/// A read: it commits nothing, so it neither enters undo nor dirties the
+/// project. Applying the result is `applySubtitles`.
+export async function transcribeClip(
+  layerId: string,
+  opts: { language?: string } = {},
+): Promise<TranscriptResult> {
+  const language = opts.language?.trim();
+  return invoke<TranscriptResult>("transcribe_clip", {
+    layer_id: layerId,
+    ...(language ? { language } : {}),
+  });
+}
+
+/// Parse an SRT body and write it as a caption-role track of `Text` layers in
+/// ONE commit (`add_caption_track`), so a whole transcript is one undo step.
+/// Returns the new track id. Cues self-position from their own timestamps —
+/// there is no start/end argument.
+///
+/// `format` is pinned rather than sniffed: the only body this reaches is the
+/// `srt` field of a `transcribe_clip` result. That pin is also what makes the
+/// arm's bare-id answer exact — the styling annotation it can append belongs to
+/// the ASS branch, which SRT never takes.
+export async function applySubtitles(srt: string): Promise<string> {
+  return invoke<string>("apply_subtitles", { body: srt, format: "srt" });
+}
+
+/// Voiceover request. Snake_case because these are the Rust tool's own argument
+/// names and the hybrid arm reads them straight off the forwarded object — one
+/// wire schema for both callers.
+export interface SynthesizeSpeechArgs {
+  /// The script. The provider caps a single call at 4096 characters; the dialog
+  /// enforces that in the field rather than letting the request fail.
+  text: string;
+  voice: string;
+  /// Playback rate. Omitted at the provider default (1.0) rather than sent as
+  /// `1`: the TTS cache keys an absent speed apart from an explicit 1.0, so
+  /// sending it would bill a fresh request for a script an agent's
+  /// default-speed call already produced, and vice versa.
+  speed?: number;
+  /// The Audio track the layer lands on. Passed explicitly by the dialog even
+  /// when it matches the default the hybrid would have picked, so where the
+  /// audio goes is never a hidden decision.
+  target_track_id?: string;
+  /// Timeline start in microseconds, in the ROOT composition's clock.
+  t_start_us?: number;
+}
+
+/// What one synthesis produced. `cached` is true when the request hit the
+/// content-addressed cache — same `(model, voice, speed, text)`, so no API call
+/// was billed.
+export interface SynthesizeSpeechResult {
+  layer_id: string;
+  media_id: string;
+  t_start_us: number;
+  t_end_us: number;
+  cached: boolean;
+}
+
+/// Synthesize a script and attach it as an Audio layer in ONE commit, so one
+/// undo removes the layer. Rejects with the resolver's own actionable message
+/// when no TTS provider is configured.
+///
+/// Parses, because the hybrid arm answers with a JSON STRING: its shape is set
+/// by the MCP side, where every result becomes one `ToolResult` text block
+/// (`main/state/hybrids.ts` states that contract). Peeling it here keeps the
+/// arm single and the caller typed.
+export async function synthesizeSpeech(
+  args: SynthesizeSpeechArgs,
+): Promise<SynthesizeSpeechResult> {
+  const json = await invoke<string>("synthesize_speech", { ...args });
+  return JSON.parse(json) as SynthesizeSpeechResult;
+}
+
 /// Export-readiness audio gate (Rust `ensure_export_audio_conform`): media
 /// ids of audible in-range audio layers whose conform cache is absent or
 /// invalid, each with a conform job kicked. Selection mirrors the Rust mix

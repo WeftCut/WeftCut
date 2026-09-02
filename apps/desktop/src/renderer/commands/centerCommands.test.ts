@@ -41,6 +41,7 @@ const menu = {
   moveToNewTrack: () => {},
   toggleMarkersVisible: () => {},
   applyDefaultTransition: () => {},
+  openVoiceoverDialog: () => {},
 };
 const flags = {
   busy: false,

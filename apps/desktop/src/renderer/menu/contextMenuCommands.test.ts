@@ -4,6 +4,7 @@ import { buildAppCommands } from "../commands/appCommands";
 import { ACTION_DEFS, type ActionId } from "../shortcuts/defs";
 import type { HandlerMap } from "../shortcuts/useShortcuts";
 import {
+  ANALYSIS_MENU_COMMAND_IDS,
   GROUP_MENU_COMMAND_IDS,
   LAYER_MENU_COMMAND_IDS,
 } from "../timeline/LayerContextMenu";
@@ -40,6 +41,7 @@ function catalogue() {
       moveToNewTrack: noop,
       toggleMarkersVisible: noop,
       applyDefaultTransition: noop,
+      openVoiceoverDialog: noop,
     },
     {
       busy: false,
@@ -65,6 +67,8 @@ const MENUS = {
   // The kind-gated Group tier of the same popup. Swept separately because it is
   // a separate list, not because it is a separate menu.
   "layer context menu (Group tier)": GROUP_MENU_COMMAND_IDS,
+  // The other kind-gated tier of that popup — the rows a clip with audio gets.
+  "layer context menu (analysis tier)": ANALYSIS_MENU_COMMAND_IDS,
   "ruler context menu": RULER_MENU_COMMAND_IDS,
 } as const;
 

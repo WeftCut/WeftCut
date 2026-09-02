@@ -95,6 +95,16 @@ export const EDIT_MENU: MenuSection = {
     "addToGroup",
     "moveToComposition",
     "openGroup",
+    "---",
+    // Speech. Last in Edit and in their own group because they are the only two
+    // rows here that reach outside the project for their result — one listens to
+    // a clip, one speaks a script — and neither belongs beside the structural
+    // edits above. Auto-caption is also on the clip's context menu, which is its
+    // pointer home; voiceover is only here and in the palette, because it acts
+    // on no clip at all. There is no aggregate "AI" menu on purpose: each
+    // capability hangs off the object it acts on, and a script has none.
+    "autoCaptionSelected",
+    "openVoiceoverDialog",
   ],
 };
 

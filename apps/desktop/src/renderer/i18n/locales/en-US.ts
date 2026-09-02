@@ -298,6 +298,17 @@ const enUS = {
       "A selected group already contains it — the group cannot also sit inside it",
     move_to_composition_offscreen:
       "Not on screen at the playhead — the clips land at its start",
+    // Auto-caption. The clip menu is the only surface that shows these, but
+    // they are the same kind of sentence as the ones above and drift if kept
+    // apart. Each names one thing to go and do — which is why the wrong-kind
+    // and speed cases stay separate: "pick a clip with sound" and "split a
+    // speed-1 segment off" are different work.
+    auto_caption_needs_selection: "Select a video or audio clip to transcribe",
+    auto_caption_needs_audio_kind:
+      "This clip carries no sound — select a video or audio clip",
+    auto_caption_speed_not_one:
+      "This clip is re-timed — split a normal-speed segment off it first, or the words land in the wrong place",
+    auto_caption_transcribing: "A transcription is already running",
   },
   dock_workspace: {
     editing_label: "Editing workspace",
@@ -478,6 +489,11 @@ const enUS = {
     // (`shortcuts/defs.ts` says what those forms do).
     move_to_composition: "Move to timeline",
     move_to_composition_submenu: "Move to…",
+    // "Auto-caption" and not "Transcribe": the row's result is a caption track,
+    // and what a user is reaching for is the captions, not the transcript.
+    // Ellipsis on both because both raise a dialog first.
+    auto_caption_selected: "Auto-caption clip…",
+    open_voiceover: "Voiceover…",
     toggle_link_selected: "Link / Unlink selected layers",
     toggle_link_override: "Toggle link override",
     nudge_audio_sample_back: "Nudge audio 1 sample earlier",
@@ -1675,6 +1691,15 @@ const enUS = {
       "Cannot center a layer the preview has not staged yet — its size is unknown",
     cross_composition_copy:
       "A clip cannot be copied across timelines — release without Alt to move it there",
+    auto_caption_started: "Transcribing “{{clip}}”",
+    auto_caption_done: "{{cues}} caption cues added ({{engine}})",
+    // Two terminal rows and not one with a flag, because the difference is what
+    // the run COST: a cached hit billed nothing, and that is the fact worth
+    // reading in the record.
+    voiceover_started: "Generating voiceover — {{chars}} characters, {{voice}}",
+    voiceover_done: "Voiceover added — {{chars}} characters, {{voice}}",
+    voiceover_done_cached:
+      "Voiceover added — reused cached audio, nothing billed",
   },
   // Edit-stack row labels — one per `HISTORY_SUMMARY` entry in
   // main/state/history-labels.ts, which owns the English source text. The three
@@ -1846,6 +1871,44 @@ const enUS = {
     // uses this as their last rung so a blank-labelled marker never renders as a
     // raw uuid (main/state/history-labels.ts).
     marker: "Marker",
+  },
+  // The auto-caption dialog. One field, because the authored recipe declares one
+  // optional parameter and nothing here is invented beyond it.
+  auto_caption: {
+    title: "Auto-caption",
+    clip: "Clip",
+    language: "Language",
+    language_placeholder: "Leave empty to detect automatically",
+    language_hint: "A two-letter code ({{examples}}), or leave it empty.",
+    note: "The words land on a new caption track. Open the Caption panel to read and fix them.",
+    cancel: "Cancel",
+    confirm: "Transcribe",
+    running: "Transcribing…",
+  },
+  // The voiceover dialog.
+  voiceover: {
+    title: "Voiceover",
+    script: "Script",
+    // Counter, always shown — an over-length script is refused here rather than
+    // by the provider, so the number has to be visible before the limit is hit.
+    script_count: "{{chars}} / {{max}} characters",
+    script_empty: "type the script to be spoken",
+    script_too_long: "{{over}} over the {{max}}-character limit for one voiceover",
+    voice: "Voice",
+    speed: "Speed",
+    track: "Track",
+    placement: "Where it lands",
+    placement_append: "After everything else",
+    placement_append_desc: "Starts at {{time}}, past the end of the timeline.",
+    placement_playhead: "At the playhead",
+    placement_playhead_desc: "Starts at {{time}}.",
+    // Said before the button, not after the bill: this is the only entry in the
+    // editor that spends money per use, and the cache is what makes a re-run of
+    // the same script free.
+    cost: "Generating new audio is a paid request. The same script, voice and speed reuses the audio already made, at no cost.",
+    cancel: "Cancel",
+    confirm: "Generate",
+    running: "Generating…",
   },
   search: {
     placeholder: "Search commands, media, clips, captions…",

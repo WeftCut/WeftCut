@@ -104,6 +104,12 @@ import {
   openSelectedGroup,
   ungroupSelected,
 } from "./commands/groupCommands";
+import {
+  openAutoCaptionForSelection,
+  openVoiceoverPrompt,
+} from "./commands/speechCommands";
+import { AutoCaptionDialog } from "./speech/AutoCaptionDialog";
+import { VoiceoverDialog } from "./speech/VoiceoverDialog";
 import { setTool } from "./state/toolStore";
 import { logEmit } from "./ipc";
 import { logMutationFailure, tryMutate } from "./errors/tryMutate";
@@ -693,6 +699,10 @@ export function App({ onCloseProject }: AppProps) {
     openGroup: openSelectedGroup,
     addToGroup: () => void addToGroupSelected(),
     moveToComposition: () => void moveSelectionToRoot(),
+    // Self-contained like the Group commands: it reads the selection store and
+    // raises its own dialog, so App lends a slot and nothing else
+    // (`commands/speechCommands.ts`).
+    autoCaptionSelected: openAutoCaptionForSelection,
     focusNextPanel: () => workspaceController?.focusNextPanel(),
     focusPreviousPanel: () => workspaceController?.focusPreviousPanel(),
     toggleMaximizePanel: () => workspaceController?.toggleMaximize(),
@@ -942,6 +952,7 @@ export function App({ onCloseProject }: AppProps) {
         // live and reports refusals itself, so App only lends `refresh`.
         applyDefaultTransition: () =>
           applyTransitionAtPlayhead("Crossfade", undefined, refresh),
+        openVoiceoverDialog: openVoiceoverPrompt,
       },
       {
         busy,
@@ -1058,6 +1069,17 @@ export function App({ onCloseProject }: AppProps) {
           renders nothing until something calls `openCheckpointPrompt()`. */}
       <CheckpointPromptDialog />
       <MarkerRenameDialog />
+
+      {/* The two speech dialogs, owned here for the same reason: both commands
+          reach the Edit menu and the palette, which must work with every Panel
+          closed. Each renders nothing until its prompt is opened.
+          `onRevealCaptions` is App's — the Caption Panel is where a landed
+          transcript becomes visible, and only the workspace controller can
+          open it. */}
+      <AutoCaptionDialog
+        onRevealCaptions={() => workspaceController?.openPanel("caption")}
+      />
+      <VoiceoverDialog />
 
       {/* Save Workspace As / Rename Workspace name prompt. */}
       {workspaceNameDialog && workspaceProfiles && (

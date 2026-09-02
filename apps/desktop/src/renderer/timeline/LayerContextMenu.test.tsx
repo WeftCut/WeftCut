@@ -15,13 +15,22 @@ import userEvent from "@testing-library/user-event";
 
 vi.mock("../commands/registry", () => ({
   // No commands registered → CommandContextItem drops every registry row, which
-  // is exactly what leaves the kind-gated tier alone on screen.
-  getCommand: () => undefined,
+  // is exactly what leaves the kind-gated tier alone on screen. The one
+  // exception is the analysis tier's row: that row is itself kind-gated, so this
+  // file is where its gate is covered, and dropping it would make every
+  // assertion about it vacuously pass.
+  getCommand: (id: string) =>
+    id === "autoCaptionSelected"
+      ? { id, labelKey: "actions.auto_caption_selected", run: () => {} }
+      : undefined,
   commandRegistryVersion: () => 0,
   subscribeCommandRegistry: () => () => {},
 }));
 vi.mock("../state/linkOverrideStore", () => ({ useLinkOverride: () => false }));
 vi.mock("../state/projectStore", () => ({ useGroupOrdinals: () => new Map() }));
+vi.mock("../speech/autoCaptionEligibility", () => ({
+  useAutoCaptionState: () => "auto_caption",
+}));
 vi.mock("./groupEligibility", () => ({
   useAddToGroupState: () => "needs_selection",
   addToGroupTarget: () => null,
@@ -100,4 +109,21 @@ describe("LayerContextMenu — kind-gated rows", () => {
       screen.queryByRole("menuitem", { name: "Separate audio to new track" }),
     ).toBeNull();
   });
+
+  // The analysis tier follows the MATERIAL, not the visual kind: both kinds that
+  // reference media with an audio stream get it, and nothing else does.
+  it.each(["VideoClip", "Audio"])("%s gets the auto-caption row", (kind) => {
+    renderMenu(kind);
+    expect(screen.getByRole("menuitem", { name: /Auto-caption clip/ })).toBeTruthy();
+  });
+
+  it.each(["Text", "Color", "Motif", "ImageOverlay", "CompositionRef"])(
+    "%s gets no auto-caption row — a row that can only refuse is worse than none",
+    (kind) => {
+      renderMenu(kind);
+      expect(
+        screen.queryByRole("menuitem", { name: /Auto-caption clip/ }),
+      ).toBeNull();
+    },
+  );
 });

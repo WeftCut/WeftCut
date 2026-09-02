@@ -22,6 +22,7 @@ export type Route =
   | { kind: 'keybindings' }   // per-user keybinding overrides, owned in TS main (config-dir)
   | { kind: 'recents' }       // recent-projects list + prefs, owned in TS main (config-dir)
   | { kind: 'hybrid'; tool: string } // native-compute → TS-write
+  | { kind: 'clipCompute' }   // native clip read/compute over an actor-resolved slice
   | { kind: 'motif'; tool: string }  // TS Motif authoring/read/install
   | { kind: 'reject'; reason: string }
   | { kind: 'rust' }
@@ -31,9 +32,30 @@ export type Route =
  *
  *  `drop_shot_markers` is a hybrid by definition — Rust `analyzeShots` computes
  *  the cuts, the TS actor writes the markers — which is why it routes here and
- *  not through an index.ts intercept like the read-only `analyze_shots`. */
+ *  not through an index.ts intercept like the read-only `analyze_shots`.
+ *
+ *  `apply_subtitles` and `synthesize_speech` are the write halves of the two
+ *  authored speech recipes, and the renderer's auto-caption and voiceover
+ *  dialogs reach them by the same names. Classified here rather than as an
+ *  index.ts intercept because they ARE hybrids — Rust renders or synthesizes,
+ *  the actor commits — and an unclassified channel is rejected by design.
+ *  Either caller lands the same single commit; the MCP path differs only in
+ *  wrapping the string result as a `ToolResult` text block (server.ts). */
 export const HYBRID_CHANNELS: ReadonlySet<string> = new Set([
-  'import_media', 'drop_shot_markers',
+  'import_media', 'drop_shot_markers', 'apply_subtitles', 'synthesize_speech',
+])
+
+/** Native clip read/compute channels: no actor write, but the stateless Rust
+ *  handler needs the layer + its MediaItem injected, which only the actor can
+ *  resolve. Served in index.ts by `callClipComputeTool` — the SAME function the
+ *  MCP tool of the same name goes through, injection included, so the human and
+ *  the agent path cannot pick different engines or different slices.
+ *
+ *  A strict subset of `clip-slice-forward.ts`'s `CLIP_SLICE_TOOLS`: `analyze_clip`
+ *  stays agent-only, because the renderer's shot surfaces read the whole-source
+ *  report through `analyze_shots` instead. */
+export const CLIP_COMPUTE_CHANNELS: ReadonlySet<string> = new Set([
+  'detect_silences', 'transcribe_clip', 'describe_clip',
 ])
 
 /** Motif catalog-read + authoring + install + staleness channels, served in TS
@@ -66,6 +88,7 @@ export const PERSISTENCE: ReadonlySet<string> = new Set([
 export function routeChannel(channel: string): Route {
   if (PRODUCTION_OPS.has(channel)) return { kind: 'command' }
   if (HYBRID_CHANNELS.has(channel)) return { kind: 'hybrid', tool: channel }
+  if (CLIP_COMPUTE_CHANNELS.has(channel)) return { kind: 'clipCompute' }
   if (MOTIF_CHANNELS.has(channel)) return { kind: 'motif', tool: channel }
   switch (channel) {
     case 'project_summary': return { kind: 'summary' }

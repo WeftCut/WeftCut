@@ -37,6 +37,7 @@ import {
 } from "../timeline/groupEligibility";
 import { canMoveSelectionToRoot } from "../timeline/moveToCompositionEligibility";
 import { canOpenSelectedGroup } from "./groupCommands";
+import { canAutoCaptionSelection } from "./speechCommands";
 import { currentOpenComposition } from "../state/projectStore";
 import {
   currentSelection,
@@ -101,6 +102,13 @@ export const MENU_ONLY_COMMAND_IDS = [
   // binding on purpose (the key budget rule above); discoverability rides the
   // strip button, the palette, and the Transitions panel instead.
   "applyDefaultTransition",
+  // Voiceover. Menu-only and NOT an `ACTION_DEFS` entry, unlike its
+  // auto-caption sibling: this operation has no scope at all — it needs a
+  // script, not a selection, and must be reachable with nothing selected — so
+  // an `ActionDef` would carry a `scope` field with nothing to say and a
+  // rebindable row for a key that acts on no object (`shortcuts/defs.ts` states
+  // the same rule for the self-contained block below).
+  "openVoiceoverDialog",
 ] as const;
 
 export type MenuOnlyCommandId = (typeof MENU_ONLY_COMMAND_IDS)[number];
@@ -120,6 +128,7 @@ const MENU_ONLY_LABEL_KEYS: Record<MenuOnlyCommandId, string> = {
   moveToNewTrack: "actions.move_to_new_track",
   toggleMarkersVisible: "actions.toggle_markers_visible",
   applyDefaultTransition: "actions.apply_default_transition",
+  openVoiceoverDialog: "actions.open_voiceover",
 };
 
 /// Commands implemented HERE, in full. They differ from `MENU_ONLY_COMMAND_IDS`
@@ -372,6 +381,11 @@ export function buildAppCommands(
     openGroup: canOpenSelectedGroup,
     addToGroup: canAddToGroupSelection,
     moveToComposition: canMoveSelectionToRoot,
+    // Live-read through the one predicate every surface shares
+    // (`speech/autoCaptionEligibility.ts`), for the Group commands' reason, plus
+    // one of its own: the gate also stands the command down while a run is in
+    // flight, and nothing rebuilds the catalogue when a transcription starts.
+    autoCaptionSelected: canAutoCaptionSelection,
   };
 
   // The armed modal tool, read straight from `toolStore` for the same

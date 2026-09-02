@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   routeChannel,
   HYBRID_CHANNELS, SLICE_INJECTED_READS, PURE_NATIVE, PERSISTENCE, MOTIF_CHANNELS,
+  CLIP_COMPUTE_CHANNELS,
 } from './router'
 import { PRODUCTION_OPS } from './commands'
 
@@ -37,7 +38,9 @@ const ALL_CHANNELS: readonly string[] = [
   'export_video_sink_cancel', 'import_cancel', 'import_queue_list', 'report_audio_meter',
   'settings_get_api_key_status', 'settings_test_provider',
   // hybrids (native-compute → TS-write)
-  'import_media', 'drop_shot_markers',
+  'import_media', 'drop_shot_markers', 'apply_subtitles', 'synthesize_speech',
+  // clip compute (actor-resolved { layer, media } slice, no actor write)
+  'detect_silences', 'transcribe_clip', 'describe_clip',
   // slice-injected native reads (receive their state slice as a call argument)
   'export_project_audio_only', 'ensure_export_audio_conform', 'ensure_conform', 'ensure_full_proxy',
   'generate_quick_proxy',
@@ -70,8 +73,10 @@ describe('router partition gate', () => {
       expect(r.kind, `${ch} unclassified (reject default)`).not.toBe('reject')
       if (r.kind === 'rust') expect(RUST_ALLOWLIST.has(ch), `${ch} routes to rust`).toBe(true)
     }
-    for (const ch of ['import_media', 'drop_shot_markers'])
+    for (const ch of HYBRID_CHANNELS)
       expect(routeChannel(ch).kind, ch).toBe('hybrid')
+    for (const ch of CLIP_COMPUTE_CHANNELS)
+      expect(routeChannel(ch).kind, ch).toBe('clipCompute')
     for (const ch of MOTIF_CHANNELS)
       expect(routeChannel(ch).kind, ch).toBe('motif')
   })
@@ -94,6 +99,7 @@ describe('router partition gate', () => {
       ['PURE_NATIVE', PURE_NATIVE], ['PERSISTENCE', PERSISTENCE],
       ['SLICE_INJECTED_READS', SLICE_INJECTED_READS],
       ['HYBRID_CHANNELS', HYBRID_CHANNELS],
+      ['CLIP_COMPUTE_CHANNELS', CLIP_COMPUTE_CHANNELS],
       ['MOTIF_CHANNELS', MOTIF_CHANNELS],
       ['PRODUCTION_OPS', PRODUCTION_OPS as ReadonlySet<string>],
       ['SPECIAL', SPECIAL],
@@ -168,8 +174,30 @@ describe('routeChannel', () => {
     for (const ch of ['recents_list', 'recents_remove', 'recents_get_reopen_on_launch', 'recents_set_reopen_on_launch', 'recents_most_recent', 'recents_last_new_project_parent'])
       expect(routeChannel(ch).kind, ch).toBe('recents')
   })
-  it('routes the one remaining hybrid channel to hybrid', () => {
+  it('routes import_media to hybrid', () => {
     expect(routeChannel('import_media').kind).toBe('hybrid')
+  })
+  // The write halves of the two speech recipes, reached by the renderer's
+  // auto-caption and voiceover dialogs under the same names the agent uses —
+  // one arm and one commit shape, whoever asks.
+  it('routes the two speech write channels to hybrid', () => {
+    expect(routeChannel('apply_subtitles').kind).toBe('hybrid')
+    expect(routeChannel('synthesize_speech').kind).toBe('hybrid')
+  })
+  // Read/compute, never a write: these must not reach the command route (no
+  // undo entry, no dirty flag) and must not reach bare rust either — the
+  // stateless handler needs the actor-resolved slice index.ts injects.
+  it('routes the three clip-compute channels to their own read kind', () => {
+    for (const ch of ['detect_silences', 'transcribe_clip', 'describe_clip'])
+      expect(routeChannel(ch), ch).toEqual({ kind: 'clipCompute' })
+    for (const ch of ['detect_silences', 'transcribe_clip', 'describe_clip'])
+      expect(PRODUCTION_OPS.has(ch), ch).toBe(false)
+  })
+  // `analyze_clip` shares the MCP slice-injection path but has no renderer
+  // channel: the pool's shot surfaces read the whole-source report through
+  // `analyze_shots` instead.
+  it('leaves analyze_clip unclassified as a renderer channel', () => {
+    expect(routeChannel('analyze_clip').kind).toBe('reject')
   })
   it('routes motif authoring/read/install/staleness channels to the motif route', () => {
     for (const ch of ['list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft', 'create_edit_draft', 'import_motif', 'delete_motif', 'install_motif', 'motif_staleness_report', 'acknowledge_motif_staleness'])

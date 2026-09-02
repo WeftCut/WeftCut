@@ -17,6 +17,10 @@ import {
   MenuSeparator,
   SubMenu,
 } from "../menu/Menu";
+import {
+  useAutoCaptionState,
+  type AutoCaptionState,
+} from "../speech/autoCaptionEligibility";
 import { useLinkOverride } from "../state/linkOverrideStore";
 import { useGroupOrdinals } from "../state/projectStore";
 import { useCursorAnchor } from "./contextMenuAnchor";
@@ -96,6 +100,23 @@ export const GROUP_MENU_COMMAND_IDS = [
   "addToGroup",
 ] as const;
 
+/// The rows a clip WITH AUDIO gets — a `VideoClip` or an `Audio` layer.
+/// Registry-driven like the two tiers above and swept by the same test.
+///
+/// Kind-gated rather than always-present because the row is about the clip's
+/// material: offering "Auto-caption" over a Color layer would be a row that can
+/// only ever refuse. The gate is the two kinds that carry a media reference with
+/// an audio stream, which is exactly what `resolve_clip_audio_source` accepts.
+///
+/// A tier of one, and it is left as a list anyway: this is where `cut-silences`
+/// would join once the timeline has a ripple delete to apply it with, and the
+/// sweep in `menu/contextMenuCommands.test.ts` covers a list rather than a row.
+export const ANALYSIS_MENU_COMMAND_IDS = ["autoCaptionSelected"] as const;
+
+/// Kinds whose material carries audio — the gate on the tier above. Matches the
+/// two `LayerParams` variants that hold a `media` id with an audio stream.
+const AUDIO_BEARING_KINDS: ReadonlySet<string> = new Set(["VideoClip", "Audio"]);
+
 /// Why a greyed *Add to Group* row is greyed, one sentence per state, in the
 /// `quick_actions` namespace the strip's disabled-button reasons already live
 /// in — this row is the only surface that shows them, but they are the same
@@ -114,6 +135,22 @@ const ADD_TO_GROUP_REASON: Record<Exclude<AddToGroupState, "add_to_group">, stri
     locked: "quick_actions.add_to_group_locked",
     starts_before_group: "quick_actions.add_to_group_starts_before_group",
   };
+
+/// Why a greyed *Auto-caption* row is greyed. Same block and same
+/// `Record`-over-the-remaining-states rule as `ADD_TO_GROUP_REASON` above.
+///
+/// `needs_selection` survives even though the row only renders over a clip a
+/// right-click has just selected: the state is reachable when the summary has
+/// not caught up with the selection, and the `Record` admits no gap.
+const AUTO_CAPTION_REASON: Record<
+  Exclude<AutoCaptionState, "auto_caption">,
+  string
+> = {
+  needs_selection: "quick_actions.auto_caption_needs_selection",
+  needs_audio_kind: "quick_actions.auto_caption_needs_audio_kind",
+  speed_not_one: "quick_actions.auto_caption_speed_not_one",
+  transcribing: "quick_actions.auto_caption_transcribing",
+};
 
 /// Why a greyed *Move to… ›* trigger is greyed. Same block and same
 /// `Record`-over-the-remaining-states rule as `ADD_TO_GROUP_REASON` above.
@@ -142,9 +179,10 @@ const DESTINATION_REASON: Record<Exclude<DestinationState, "eligible">, string> 
 ///   1. `LAYER_MENU_COMMAND_IDS` — registry commands on the selection, which
 ///      carry their own labels, enabled state and accelerators.
 ///   2. Layer-scoped actions taking an explicit `layerId`, some of them gated
-///      on the right-clicked layer's KIND — including the Group tier, which
-///      mixes registry rows (`GROUP_MENU_COMMAND_IDS`) with the one
-///      composition-scoped rename that has no command form.
+///      on the right-clicked layer's KIND — plus two kind-gated registry tiers:
+///      the Group tier (`GROUP_MENU_COMMAND_IDS`), which mixes registry rows
+///      with the one composition-scoped rename that has no command form, and
+///      the analysis tier (`ANALYSIS_MENU_COMMAND_IDS`) on any clip with audio.
 ///   3. The transition section, appended only when the right-click landed
 ///      within the click-tolerance band of a cut between same-track adjacent
 ///      visual layers (`transitionCut` non-null).
@@ -270,6 +308,11 @@ export function LayerContextMenu({
     : undefined;
   const addToGroupHint =
     addToGroup === "add_to_group" ? undefined : t(ADD_TO_GROUP_REASON[addToGroup]);
+  // The *Auto-caption* row's tooltip. Subscribed so a greyed row re-labels
+  // under an open popup — a transcription started elsewhere flips the state.
+  const autoCaption = useAutoCaptionState();
+  const autoCaptionHint =
+    autoCaption === "auto_caption" ? undefined : t(AUTO_CAPTION_REASON[autoCaption]);
   // The *Move to… ›* trigger. Live it is a submenu — a destination is the
   // content of the gesture, and only a list can carry one — and greyed it falls
   // back to the flat registry row, which is what can show WHY. The command is
@@ -432,6 +475,24 @@ export function LayerContextMenu({
                   })}
                   onSelect={() => onPrebakeNow(layerId)}
                 />
+              </>
+            )}
+            {/* Above the shot-cut row rather than below it, because captioning
+                is the operation reached far more often — and it is the one that
+                takes an argument, so it wants the eye first. */}
+            {AUDIO_BEARING_KINDS.has(layerKind) && (
+              <>
+                <MenuSeparator />
+                {ANALYSIS_MENU_COMMAND_IDS.map((id) => (
+                  <CommandContextItem
+                    key={id}
+                    id={id}
+                    onRun={onClose}
+                    {...(id === "autoCaptionSelected" && autoCaptionHint
+                      ? { hint: autoCaptionHint }
+                      : {})}
+                  />
+                ))}
               </>
             )}
             {layerKind === "VideoClip" && (

@@ -51,8 +51,54 @@ function unwrap(json: string): unknown { return unwrapEnvelope(JSON.parse(json) 
  *  merged backend-config snapshot the stateless resolver reads (ADR 0024) keyed
  *  by backend tag, plus the user's SOFT preferred engine. VLM config is not held
  *  on the napi `Backend` like speech — it rides in with each call. */
-type VlmProvider = () => { config: Record<string, unknown>; preferred: string | null }
+export type VlmProvider = () => { config: Record<string, unknown>; preferred: string | null }
 const NO_VLM: VlmProvider = () => ({ config: {}, preferred: null })
+
+/** One clip-compute tool call: resolve the `{ layer, media }` slice from the
+ *  actor (the sole state owner), inject the engine-selection hints the stateless
+ *  Rust resolvers read, dispatch, and unwrap the envelope.
+ *
+ *  Exported because the renderer reaches the same tools through
+ *  `backend:invoke`'s `clipCompute` route (`state/router.ts`), and both surfaces
+ *  must be ONE code path: a human and an agent asking the same clip the same
+ *  question have to get the same engine and the same slice, and two copies of
+ *  this injection would be exactly how that stops being true.
+ *
+ *  Read/compute only — no arm here writes. The write half of a recipe (the SRT
+ *  a transcript becomes, the layer a synthesis lands as) is a hybrid channel. */
+export async function callClipComputeTool(
+  backend: Backend,
+  tsHost: TsActorHost,
+  name: string,
+  args: Record<string, unknown>,
+  getPreferredEngine: () => string | null = () => null,
+  getVlm: VlmProvider = NO_VLM,
+): Promise<ServerResult> {
+  const merged = resolveClipSliceArgs(args, tsHost.actor.snapshot())
+  // Inject the user's preferred engine as the SOFT `preferred_backend`
+  // hint (ADR 0036: select by user preference THEN availability). The
+  // agent-visible `backend` arg is deliberately NOT touched — it is a
+  // STRICT override in Rust (that engine or an error, never a substitute),
+  // so conflating the two would turn a mere preference into a hard
+  // requirement (or worse, a hard requirement into a silent fallback).
+  // "auto"/unset injects nothing; the Rust resolver's DEFAULT_ORDER decides.
+  if (name === 'transcribe_clip' && merged.backend == null) {
+    const pref = getPreferredEngine()
+    if (pref && pref !== 'auto') merged.preferred_backend = pref
+  }
+  // describe_clip: inject the stateless VLM backend-config snapshot (ADR
+  // 0024) it resolves against, plus the SOFT preferred-engine hint — same
+  // soft/strict split as transcribe_clip (the agent-visible `backend` stays
+  // a STRICT override, so only fill preferred_backend when it is unset).
+  if (name === 'describe_clip') {
+    const vlm = getVlm()
+    merged.vlm_config = vlm.config
+    if (merged.backend == null && vlm.preferred && vlm.preferred !== 'auto') {
+      merged.preferred_backend = vlm.preferred
+    }
+  }
+  return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult
+}
 
 /** CallTool routing (tsHost present): mutations → TS actor.mcpCall, hybrid →
  *  runHybrid, rust → backend (native reads/compute that take an injected state slice). */
@@ -84,41 +130,18 @@ export async function handleCallTool(
       const raw = tsHost.motifTool(name, args)
       return shapeMotifMcpResult(name, raw) as unknown as ServerResult
     }
-    // Clip compute (detect_silences / transcribe_clip audio; describe_clip
-    // video) routes to 'rust', but the Rust core holds no state: resolve the
-    // { layer, media } slice from the actor (sole state owner) and forward it.
-    // Two-slice compute (compare_frames): resolve BOTH nested { a, b } clip
-    // slices from the actor and forward. Kept separate from the single-slice
-    // branch below, which reads a top-level `layer_id`.
+    // Clip compute routes to 'rust', but the Rust core holds no state — the
+    // slice is resolved here from the actor and forwarded.
+    //
+    // Two-slice compute (compare_frames) resolves BOTH nested { a, b } clip
+    // slices. Kept separate from the single-slice call below, which reads a
+    // top-level `layer_id`.
     if (TWO_SLICE_TOOLS.has(name)) {
       const merged = resolveTwoSliceArgs(args, tsHost.actor.snapshot())
       return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult
     }
     if (CLIP_SLICE_TOOLS.has(name)) {
-      const merged = resolveClipSliceArgs(args, tsHost.actor.snapshot())
-      // Inject the user's preferred engine as the SOFT `preferred_backend`
-      // hint (ADR 0036: select by user preference THEN availability). The
-      // agent-visible `backend` arg is deliberately NOT touched — it is a
-      // STRICT override in Rust (that engine or an error, never a substitute),
-      // so conflating the two would turn a mere preference into a hard
-      // requirement (or worse, a hard requirement into a silent fallback).
-      // "auto"/unset injects nothing; the Rust resolver's DEFAULT_ORDER decides.
-      if (name === 'transcribe_clip' && merged.backend == null) {
-        const pref = getPreferredEngine()
-        if (pref && pref !== 'auto') merged.preferred_backend = pref
-      }
-      // describe_clip: inject the stateless VLM backend-config snapshot (ADR
-      // 0024) it resolves against, plus the SOFT preferred-engine hint — same
-      // soft/strict split as transcribe_clip (the agent-visible `backend` stays
-      // a STRICT override, so only fill preferred_backend when it is unset).
-      if (name === 'describe_clip') {
-        const vlm = getVlm()
-        merged.vlm_config = vlm.config
-        if (merged.backend == null && vlm.preferred && vlm.preferred !== 'auto') {
-          merged.preferred_backend = vlm.preferred
-        }
-      }
-      return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult
+      return callClipComputeTool(backend, tsHost, name, args, getPreferredEngine, getVlm)
     }
     // route === 'rust' → fall through (other reads are served by the backend).
   }

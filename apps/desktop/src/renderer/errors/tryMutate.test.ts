@@ -84,4 +84,32 @@ describe("logMutationFailure / refusalText", () => {
     );
     expect(refusalText(new Error("plain boom"))).toBe("Error: plain boom");
   });
+
+  // A refusal Rust states in prose carries no JSON for `parseCommandError` to
+  // anchor on, so the actionable sentence would arrive behind Electron's
+  // plumbing — and the instruction (which panel to open) is the whole value of
+  // these messages.
+  it("refusalText strips Electron's IPC prose from a prose refusal", () => {
+    expect(
+      refusalText(
+        new Error(
+          "Error invoking remote method 'backend:invoke': Error: no transcription backend available; configure one in Settings → Transcription",
+        ),
+      ),
+    ).toBe(
+      "Error: no transcription backend available; configure one in Settings → Transcription",
+    );
+  });
+
+  it("logMutationFailure strips the same prose from its generic row", () => {
+    logEmitMock.mockClear();
+    logMutationFailure(
+      new Error("Error invoking remote method 'backend:invoke': Error: payload too large"),
+      "transcribe_clip",
+    );
+    expect(logEmitMock.mock.calls[0]![0]).toMatchObject({
+      level: "error",
+      message: "transcribe_clip failed: Error: payload too large",
+    });
+  });
 });

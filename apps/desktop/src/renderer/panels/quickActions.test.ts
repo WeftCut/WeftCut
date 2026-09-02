@@ -39,6 +39,7 @@ function commandIds(): Set<string> {
       moveToNewTrack: () => {},
       toggleMarkersVisible: () => {},
       applyDefaultTransition: () => {},
+      openVoiceoverDialog: () => {},
     },
     { busy: false, canUndo: false, canRedo: false, canBlade: false, exportLocked: false },
   );

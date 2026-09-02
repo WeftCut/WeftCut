@@ -47,6 +47,7 @@ const menu = {
   moveToNewTrack: noop,
   toggleMarkersVisible: noop,
   applyDefaultTransition: noop,
+  openVoiceoverDialog: noop,
 };
 
 const flags = { busy: false, canUndo: true, canRedo: false, canBlade: true, exportLocked: true };

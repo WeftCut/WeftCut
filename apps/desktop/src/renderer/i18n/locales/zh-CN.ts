@@ -273,6 +273,14 @@ const zhCN: Resources = {
     move_to_composition_already_there: "这些片段已经在这里了",
     move_to_composition_cycle: "所选的组里已经包含它——不能再把组放进它里面",
     move_to_composition_offscreen: "播放头处看不到它——片段会落在它的开头",
+    // 自动字幕。只有片段右键菜单会显示这几句，但它们和上面是同一类句子，分开放
+    // 就会走样。每句都指向一件具体要做的事——所以"选错种类"和"变速了"分成两句：
+    // "选一个有声音的片段"和"先切出一段常速"要做的事并不相同。
+    auto_caption_needs_selection: "选中一个视频或音频片段来转写",
+    auto_caption_needs_audio_kind: "这个片段没有声音——请选视频或音频片段",
+    auto_caption_speed_not_one:
+      "这个片段变过速——先从中切出一段常速，否则字会落错位置",
+    auto_caption_transcribing: "已经有一次转写在进行中",
   },
   dock_workspace: {
     editing_label: "编辑工作区",
@@ -427,6 +435,10 @@ const zhCN: Resources = {
     // 于是直接点名时间线（两种形态各做什么，见 shortcuts/defs.ts）。
     move_to_composition: "移动到时间线",
     move_to_composition_submenu: "移动到…",
+    // 用"自动字幕"而不是"转写"：这一行的产物是一条字幕轨，用户要的是字幕本身，
+    // 不是转写文本。两条都带省略号，因为都会先弹对话框。
+    auto_caption_selected: "自动字幕…",
+    open_voiceover: "配音…",
     toggle_link_selected: "链接 / 取消链接所选图层",
     toggle_link_override: "切换忽略链接",
     nudge_audio_sample_back: "音频前移 1 个采样",
@@ -1517,6 +1529,13 @@ const zhCN: Resources = {
     cleared: "已清空日志",
     center_layer_unstaged: "预览尚未装载该图层，无法居中——其尺寸未知",
     cross_composition_copy: "不能跨时间线复制片段——松开 Alt 即可将其移动过去",
+    auto_caption_started: "正在转写“{{clip}}”",
+    auto_caption_done: "已添加 {{cues}} 条字幕（{{engine}}）",
+    // 收尾分两条而不是一条带标记：区别在于这次运行花没花钱——命中缓存等于没有
+    // 计费，这才是记录里值得看的事实。
+    voiceover_started: "正在生成配音——{{chars}} 个字符，{{voice}}",
+    voiceover_done: "已添加配音——{{chars}} 个字符，{{voice}}",
+    voiceover_done_cached: "已添加配音——复用了缓存音频，未产生费用",
   },
   history: {
     initial: "初始状态",
@@ -1647,6 +1666,42 @@ const zhCN: Resources = {
     color: "颜色",
     compositionref: "组",
     marker: "标记",
+  },
+  // 自动字幕对话框。只有一个字段，因为编排好的配方只声明了一个可选参数，这里
+  // 不额外发明任何东西。
+  auto_caption: {
+    title: "自动字幕",
+    clip: "片段",
+    language: "语言",
+    language_placeholder: "留空则自动识别",
+    language_hint: "两位字母代码（{{examples}}），或者留空。",
+    note: "文字会落在一条新的字幕轨上。打开字幕面板即可阅读和修改。",
+    cancel: "取消",
+    confirm: "开始转写",
+    running: "正在转写…",
+  },
+  // 配音对话框。
+  voiceover: {
+    title: "配音",
+    script: "文稿",
+    // 计数一直显示——超长在这里就被拒，所以数字必须在触到上限之前就看得见。
+    script_count: "{{chars}} / {{max}} 个字符",
+    script_empty: "输入要朗读的文稿",
+    script_too_long: "超出单次配音 {{max}} 字符上限 {{over}} 个",
+    voice: "声音",
+    speed: "语速",
+    track: "轨道",
+    placement: "落在哪里",
+    placement_append: "接在所有内容之后",
+    placement_append_desc: "从 {{time}} 开始，位于时间线末尾之后。",
+    placement_playhead: "在播放头处",
+    placement_playhead_desc: "从 {{time}} 开始。",
+    // 话说在按钮之前，而不是账单之后：这是编辑器里唯一按次计费的功能，而缓存正
+    // 是让同一份文稿重跑一次不花钱的东西。
+    cost: "生成新音频是一次付费请求。文稿、声音、语速都相同时会复用已生成的音频，不产生费用。",
+    cancel: "取消",
+    confirm: "生成",
+    running: "正在生成…",
   },
   search: {
     placeholder: "搜索命令、素材、片段、字幕…",
