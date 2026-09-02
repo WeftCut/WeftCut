@@ -358,3 +358,28 @@
   flex: none;
   margin-top: 2px;
 }
+
+/* ── The apply bar ──────────────────────────────────────────────────────────
+   Above the row list: the Panel scrolls as one in the dock's shared scroller,
+   so a bar under a long list would only be reachable at the end of a scroll. */
+
+.shots-apply {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.shots-apply-verbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* The reason a verb is greyed lives in its `title`, and the shared button
+   skeleton sets `disabled:pointer-events-none` — which stops the element being
+   hit-tested at all, so the tooltip that explains the greying would be the one
+   thing nobody can read. Pointer events back on; a disabled button dispatches
+   no click either way. */
+.shots-apply-verb:disabled {
+  pointer-events: auto;
+}

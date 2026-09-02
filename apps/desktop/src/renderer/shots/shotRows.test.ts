@@ -14,7 +14,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AnimTrack, LayerSummary, Shot, ShotReport } from "../ipc";
-import { acceptedCutsSrcUs, discardedSpans, shotRows } from "./shotRows";
+import { acceptedCutsSrcUs, shotRows } from "./shotRows";
 
 const FPS = { num: 30, den: 1 };
 const NONE: ReadonlySet<number> = new Set<number>();
@@ -291,9 +291,8 @@ describe("shotRows — keep and the apply derivations", () => {
   it("marks only the rows the reviewer unchecked", () => {
     const rows = shotRows(MEASURED, layer, FPS, NONE, new Set([2_000_000]));
     expect(rows.map((r) => r.keep)).toEqual([true, false, true]);
-    expect(discardedSpans(rows)).toEqual([
-      { srcStartUs: 2_000_000, srcEndUs: 4_000_000 },
-    ]);
+    // Row `i` is segment `i`, which is how a discard names it on the wire.
+    expect(rows.filter((r) => !r.keep).map((r) => r.index)).toEqual([1]);
   });
 
   it("offers every surviving boundary as a cut, and never the window edge", () => {
@@ -305,7 +304,18 @@ describe("shotRows — keep and the apply derivations", () => {
     ).toEqual([2_000_000]);
   });
 
-  it("discards nothing by default", () => {
-    expect(discardedSpans(shotRows(MEASURED, layer, FPS, NONE, NONE))).toEqual([]);
+  it("still cuts at an unchecked row's own boundary", () => {
+    // A discard cuts at every accepted boundary and THEN deletes the named
+    // segment, so an unchecked row keeps contributing its opening cut. Fusing
+    // it into its predecessor is what clearing the candidate means instead.
+    expect(
+      acceptedCutsSrcUs(shotRows(MEASURED, layer, FPS, NONE, new Set([2_000_000]))),
+    ).toEqual([2_000_000, 4_000_000]);
+  });
+
+  it("keeps every row by default, so a plain apply is a split", () => {
+    expect(shotRows(MEASURED, layer, FPS, NONE, NONE).every((r) => r.keep)).toBe(
+      true,
+    );
   });
 });

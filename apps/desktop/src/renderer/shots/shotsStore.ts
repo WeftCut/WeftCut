@@ -22,6 +22,7 @@ import { create } from "zustand";
 import { describeRefusal, refusalText } from "../errors/tryMutate";
 import {
   analyzeShotsFloor,
+  applyShotCuts,
   getProjectSettings,
   logEmit,
   reduceShotReport,
@@ -29,11 +30,13 @@ import {
   shotFloorReportCached,
   shotFloorSensitivity,
   updateProjectSettings,
+  type ApplyShotCutsResult,
   type ShotReport,
   type ShotReviewSettings,
 } from "../ipc";
 import { LatestRequestCoordinator } from "../state/latestRequest";
 import { useProjectStore } from "../state/projectStore";
+import { acceptedCutsSrcUs, type ShotRow } from "./shotRows";
 
 /// The clip under review. A layer and not a media item: the report is
 /// source-scoped, but every apply step is layer-scoped, and `[srcInUs, srcOutUs)`
@@ -45,6 +48,11 @@ export interface ShotSubject {
   srcInUs: number;
   srcOutUs: number;
 }
+
+/// The three verbs over one reviewed list. Also the discriminant
+/// `apply_shot_cuts` answers under, because what a split produces (segments)
+/// and what a mark produces (markers) are not the same kind of thing.
+export type ShotApplyVerb = "split" | "mark" | "discard";
 
 export interface ShotsStoreState {
   subject: ShotSubject | null;
@@ -64,8 +72,14 @@ export interface ShotsStoreState {
   /// one runs is a no-op — the scan is idempotent, but two would bill two
   /// decodes and race their reports onto one subject.
   analyzing: string | null;
-  /// The Analyze failure's own sentence, for the Panel's inline slot. Cleared
-  /// when the next attempt starts and when the subject changes.
+  /// The verb an apply is running, or null. One at a time: the three verbs
+  /// commit to the same layer, and a second press mid-commit would send the
+  /// row indices of a list the first press is already consuming.
+  applying: ShotApplyVerb | null;
+  /// The failure's own sentence — the scan's or an apply's — for the Panel's
+  /// inline slot. One slot because the two are never reachable at once: Analyze
+  /// is offered only while there are no rows, and the apply bar only once there
+  /// are. Cleared when the next attempt starts and when the subject changes.
   error: string;
   /// The detection defaults as RUST states them, kept beside the effective pair
   /// so a project that carries no review parameters — or one that clears them —
@@ -97,6 +111,7 @@ const INITIAL: ShotsStoreState = {
   cached: null,
   reduced: null,
   analyzing: null,
+  applying: null,
   error: "",
   rustDefaults: null,
   sensitivity: null,
@@ -416,10 +431,9 @@ export async function analyzeShotSubject(clipName: string): Promise<void> {
     // refuses with a re-import instruction, and that instruction is the whole
     // actionable half of the failure.
     set({ analyzing: null, error: refusalText(err) });
-    // Terminated under the same `op_id` rather than left to
-    // `logMutationFailure`'s standalone row: an unterminated op keeps the
-    // status bar's running badge spinning forever, and the row carries the same
-    // refusal `logMutationFailure` would have emitted.
+    // Hand-rolled rather than `logMutationFailure(err, ctx, opId)`: that helper
+    // closes the op too, but its prose fallback carries no key, and a scan that
+    // fails outside a structured refusal still deserves a translated row.
     const refusal = describeRefusal(err);
     void logEmit({
       level: refusal?.level ?? "error",
@@ -435,6 +449,222 @@ export async function analyzeShotSubject(clipName: string): Promise<void> {
       op_id: opId,
       op_state: { state: "Err" },
       details: { context: "analyze_shots_floor", ...(refusal ? { error: refusal.error } : {}) },
+    });
+  }
+}
+
+/// Why `verb` cannot run over `rows`, as a `shots_panel.*` key — or null when
+/// it can. ONE rule, read by the buttons and asserted by the tests, so a greyed
+/// button and a refused press can never disagree about the precondition.
+///
+/// A press with no interior boundary is honestly a no-op on the wire — the
+/// channel answers with the unchanged layer id, or an empty marker list — and
+/// on screen a control that does nothing is indistinguishable from a dead one.
+/// So the two cutting verbs are greyed with the remedy instead.
+///
+/// The all-unchecked case is deliberately absent: `apply_shot_cuts` refuses it
+/// ("discarding every segment is a delete, not an apply"), and a second copy of
+/// that rule here would be free to drift from the wire's. The press goes out and
+/// the channel's own sentence lands in the inline slot.
+export function shotApplyBlocker(
+  verb: ShotApplyVerb,
+  rows: readonly ShotRow[],
+  applying: ShotApplyVerb | null,
+): string | null {
+  if (applying !== null) return "shots_panel.apply_running";
+  if (verb === "discard") {
+    return rows.some((row) => !row.keep)
+      ? null
+      : "shots_panel.apply_no_discards";
+  }
+  return acceptedCutsSrcUs(rows).length === 0
+    ? "shots_panel.apply_no_cuts"
+    : null;
+}
+
+/// Drop the reviewer's vetoes and discards for one source. Why an apply spends
+/// them is at the call site.
+function forgetReviewDecisions(mediaId: string): void {
+  const vetoed = new Map(get().vetoed);
+  const discarded = new Map(get().discarded);
+  vetoed.delete(mediaId);
+  discarded.delete(mediaId);
+  set({ vetoed, discarded });
+}
+
+/// One log row's three text fields. `message` is canonical English and
+/// `i18n_key` is what the console renders (`docs/status-log.md`).
+interface StatusText {
+  message: string;
+  i18n_key: string;
+  i18n_args: Record<string, unknown>;
+}
+
+/// What is about to happen, and to how much of the clip.
+function applyStartedText(
+  verb: ShotApplyVerb,
+  clip: string,
+  cuts: number,
+  discarded: number,
+): StatusText {
+  switch (verb) {
+    case "split":
+      return {
+        message: `Splitting ${clip} at ${cuts} shot cuts`,
+        i18n_key: "log.shots_apply_split_started",
+        i18n_args: { clip, cuts },
+      };
+    case "mark":
+      return {
+        message: `Marking ${cuts} shot cuts in ${clip}`,
+        i18n_key: "log.shots_apply_mark_started",
+        i18n_args: { clip, cuts },
+      };
+    case "discard":
+      return {
+        message: `Splitting ${clip} at ${cuts} shot cuts, discarding ${discarded} shots`,
+        i18n_key: "log.shots_apply_discard_started",
+        i18n_args: { clip, cuts, discarded },
+      };
+  }
+}
+
+/// What the apply produced, read off the ANSWER's own discriminant rather than
+/// off the verb that was asked for: segments, markers and survivors are three
+/// different counts, and the union is what guarantees the row names the one the
+/// channel actually returned.
+function applyDoneText(
+  result: ApplyShotCutsResult,
+  clip: string,
+  discarded: number,
+): StatusText {
+  switch (result.mode) {
+    case "split":
+      return {
+        message: `${clip} split into ${result.layer_ids.length} segments`,
+        i18n_key: "log.shots_apply_split_done",
+        i18n_args: { clip, segments: result.layer_ids.length },
+      };
+    case "mark":
+      return {
+        message: `${result.marker_ids.length} shot cut markers added to ${clip}`,
+        i18n_key: "log.shots_apply_mark_done",
+        i18n_args: { clip, markers: result.marker_ids.length },
+      };
+    case "discard":
+      return {
+        message: `${result.layer_ids.length} segments kept from ${clip}, ${discarded} discarded`,
+        i18n_key: "log.shots_apply_discard_done",
+        i18n_args: { clip, segments: result.layer_ids.length, discarded },
+      };
+  }
+}
+
+/// Run one verb over the reviewed rows — one commit, one undo entry, one
+/// `op_id` pairing the Started row with what happened.
+///
+/// `rows` and `clipName` come in rather than being derived here, for
+/// `analyzeShotSubject`'s reason: rows need the layer summary and the
+/// composition rate, naming the clip needs the active locale, and both belong
+/// to the component.
+///
+/// No confirmation on the discarding verb: destructive-but-undoable is house
+/// style, and the whole commit is one undo entry that restores the single
+/// pre-apply layer.
+export async function applyShotVerb(
+  verb: ShotApplyVerb,
+  rows: readonly ShotRow[],
+  clipName: string,
+): Promise<void> {
+  const { subject, applying } = get();
+  if (subject === null || applying !== null) return;
+  const cuts = acceptedCutsSrcUs(rows);
+  // Row `i` IS segment `i`: a row is the span between two consecutive accepted
+  // boundaries, which is exactly what the split's `cuts + 1` segments are.
+  //
+  // LANDMINE: those indices count over the CANONICAL cut list, and
+  // `cutsToTimeline` snaps every boundary to the composition grid and dedups —
+  // so two boundaries that land on one frame collapse into a single segment and
+  // an index past the collapse would name a neighbour. Do NOT snap here to
+  // predict it: a second snap in TypeScript is a twin of the one mapping site
+  // ADR 0057 exists to keep singular. The channel refuses the collapsed case.
+  const discardSegments = rows.flatMap((row) => (row.keep ? [] : [row.index]));
+  set({ applying: verb, error: "" });
+  // One `op_id` for the pair. A shot apply is a single dispatch and usually
+  // settles inside the 250 ms the house shape would need before announcing
+  // itself, but the count is the fact worth recording either way — the Started
+  // row is what says how much of the review went out, and the terminal row
+  // alone cannot (a discard's answer names survivors, not what it cut at).
+  const opId = crypto.randomUUID();
+  void logEmit({
+    level: "info",
+    category: { kind: "Project" },
+    source: { kind: "User" },
+    ...applyStartedText(verb, clipName, cuts.length, discardSegments.length),
+    op_id: opId,
+    op_state: { state: "Started" },
+  });
+  try {
+    const result = await applyShotCuts({
+      layer_id: subject.layerId,
+      mode: verb,
+      cuts_src_us: cuts,
+      // `discard` is the only verb that reads the set; riding one along on a
+      // split would be an argument the answer never mentions.
+      ...(verb === "discard" ? { discard_segments: discardSegments } : {}),
+    });
+    set({ applying: null });
+    // The reviewed layer became segments, so its decisions are spent — and left
+    // in place they would bite: the map is keyed by a span's SOURCE start, the
+    // second segment's first row starts at exactly the boundary that was cut,
+    // and it would come up already marked for discard.
+    //
+    // The subject itself is NOT cleared here. It is derived from the selection,
+    // and the commit's `project:changed` drops the vanished id
+    // (`retainLayerSelection`), which lands the Panel in its "select a video
+    // clip" state through the same path every other mutation takes. Clearing it
+    // from underneath would put the Panel in a state it has no sentence for —
+    // a subject-less rowless Panel says it is still probing.
+    //
+    // And the Panel deliberately does NOT adopt the first surviving segment:
+    // nothing else in the app re-selects what a split produced (a split at the
+    // playhead re-selects nothing either), and a segment adopted here would
+    // open a fresh review whose window is one shot, whose one-row list reads as
+    // though the apply had done nothing.
+    if (result.mode !== "mark") forgetReviewDecisions(subject.mediaId);
+    void logEmit({
+      level: "info",
+      category: { kind: "Project" },
+      source: { kind: "User" },
+      ...applyDoneText(result, clipName, discardSegments.length),
+      op_id: opId,
+      op_state: { state: "Ok" },
+    });
+  } catch (err) {
+    // The channel's own sentence, verbatim: a locked track names the lock, and
+    // an argument refusal names the field and the rule it broke. Inline beats
+    // the status bar on proximity; the row below keeps the record.
+    set({ applying: null, error: refusalText(err) });
+    // Hand-rolled rather than `logMutationFailure(err, ctx, opId)` for the
+    // analyze path's reason: the prose fallback here has a key of its own.
+    const refusal = describeRefusal(err);
+    void logEmit({
+      level: refusal?.level ?? "error",
+      category: { kind: "Project" },
+      source: { kind: "User" },
+      message: refusal?.message ?? `Shot apply failed: ${String(err)}`,
+      ...(refusal?.i18n_key
+        ? { i18n_key: refusal.i18n_key, i18n_args: refusal.i18n_args ?? null }
+        : {
+            i18n_key: "log.shots_apply_failed",
+            i18n_args: { clip: clipName, error: refusalText(err) },
+          }),
+      op_id: opId,
+      op_state: { state: "Err" },
+      details: {
+        context: "apply_shot_cuts",
+        ...(refusal ? { error: refusal.error } : {}),
+      },
     });
   }
 }
@@ -482,6 +712,9 @@ export const useShotCached = (): boolean | null => useShotsStore((s) => s.cached
 
 export const useShotAnalyzing = (): string | null =>
   useShotsStore((s) => s.analyzing);
+
+export const useShotApplying = (): ShotApplyVerb | null =>
+  useShotsStore((s) => s.applying);
 
 export const useShotError = (): string => useShotsStore((s) => s.error);
 

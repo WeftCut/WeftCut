@@ -481,6 +481,21 @@ const enUS = {
     flag_black: "black",
     flag_freeze: "freeze",
     flag_fade: "fade",
+    // The three verbs over the reviewed list. Named for what they do to the
+    // clip, not for the wire's mode: "Split at cuts" says where, and the
+    // discarding one says both halves of what it is about to do.
+    apply_split: "Split at cuts",
+    apply_mark: "Mark cuts",
+    apply_discard: "Split and discard unchecked",
+    // Disabled-button reasons, `quick_actions.clear_range_empty`'s rule: name
+    // the precondition — here the remedy — rather than repeat a label that
+    // cannot be acted on. There is deliberately no sentence for an
+    // all-unchecked discard: the channel refuses that one and its wording is
+    // the only one, so the press goes out and the refusal lands below.
+    apply_no_cuts:
+      "Lower the threshold, or restore a cleared cut — this clip is one shot",
+    apply_no_discards: "Uncheck the shots you want discarded first",
+    apply_running: "An apply is already running",
   },
   actions: {
     add_color_layer: "Color layer",
@@ -1780,6 +1795,24 @@ const enUS = {
     // Only reached when the failure is not a structured refusal — a refusal
     // carries its own key and closes the op under that instead.
     shots_analyze_failed: "Shot analysis of “{{clip}}” failed: {{error}}",
+    // One Started row per verb rather than one with the verb interpolated: a
+    // discard announces two counts, and a translated sentence cannot carry an
+    // untranslated verb name. The Started rows say how much of the review went
+    // out; the terminal rows say what came back, which for a discard is
+    // survivors and not the boundaries it cut at.
+    shots_apply_split_started: "Splitting “{{clip}}” at {{cuts}} shot cuts",
+    shots_apply_split_done: "“{{clip}}” split into {{segments}} segments",
+    shots_apply_mark_started: "Marking {{cuts}} shot cuts in “{{clip}}”",
+    shots_apply_mark_done:
+      "{{markers}} shot cut markers added to “{{clip}}”",
+    shots_apply_discard_started:
+      "Splitting “{{clip}}” at {{cuts}} shot cuts, discarding {{discarded}} shots",
+    shots_apply_discard_done:
+      "{{segments}} segments kept from “{{clip}}”, {{discarded}} discarded",
+    // Only reached when the failure is not a structured refusal — a refusal
+    // closes the op under its own curated key instead.
+    shots_apply_failed:
+      "Applying shot cuts to “{{clip}}” failed: {{error}}",
     // Two terminal rows and not one with a flag, because the difference is what
     // the run COST: a cached hit billed nothing, and that is the fact worth
     // reading in the record.

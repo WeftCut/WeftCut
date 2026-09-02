@@ -6,7 +6,7 @@
 // leave the resolution itself untested.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // Partial, for `MarkerPanel.test.tsx`'s reason: the composition switch under
@@ -19,13 +19,14 @@ vi.mock("../state/navigation", async (importActual) => ({
 const shots = vi.hoisted(() => ({
   shotFloorReportCached: vi.fn<(id: string) => Promise<boolean>>(),
   analyzeShotsFloor: vi.fn(),
+  applyShotCuts: vi.fn(),
   reduceShotReport: vi.fn(),
   shotDefaultOpts: vi.fn(),
   shotFloorSensitivity: vi.fn(),
   getMediaFrame: vi.fn<(id: string, tUs: number) => Promise<string>>(),
   getProjectSettings: vi.fn(),
   updateProjectSettings: vi.fn(),
-  logEmit: vi.fn(() => Promise.resolve()),
+  logEmit: vi.fn<(input: LogEntryInput) => Promise<void>>(),
 }));
 vi.mock("../ipc", async (importActual) => ({
   ...(await importActual<typeof import("../ipc")>()),
@@ -52,6 +53,7 @@ import {
 import type {
   AnimTrack,
   LayerSummary,
+  LogEntryInput,
   ProjectSummary,
   Shot,
   ShotReport,
@@ -175,6 +177,30 @@ function fixture(): ProjectSummary {
   });
 }
 
+/// The same project after a split of `l1` — the two segments stand where the
+/// reviewed clip was, and the clip's own id is gone. What `project:changed`
+/// delivers once the apply commits.
+function fixtureAfterSplit(): ProjectSummary {
+  return summaryFixture({
+    root: {
+      duration_us: 20_000_000,
+      tracks: [
+        track("t1", [
+          clip({ id: "s1", mediaId: "m1", tStartUs: 1_000_000, srcOutUs: 2_000_000 }),
+          clip({
+            id: "s2",
+            mediaId: "m1",
+            tStartUs: 3_000_000,
+            srcInUs: 2_000_000,
+            srcOutUs: 6_000_000,
+          }),
+        ]),
+        track("t2", [textLayer()]),
+      ],
+    },
+  });
+}
+
 /// A scanned source with one interior candidate at 2 s.
 const REPORT: ShotReport = {
   shots: [
@@ -208,6 +234,7 @@ beforeEach(async () => {
   shots.shotFloorSensitivity.mockResolvedValue(0.05);
   shots.reduceShotReport.mockResolvedValue(REPORT);
   shots.analyzeShotsFloor.mockResolvedValue(REPORT);
+  shots.applyShotCuts.mockResolvedValue({ mode: "split", layer_ids: ["s1", "s2"] });
   shots.logEmit.mockResolvedValue(undefined);
   shots.getMediaFrame.mockResolvedValue("data:image/jpeg;base64,AA==");
   shots.getProjectSettings.mockResolvedValue({
@@ -435,6 +462,183 @@ describe("ShotsPanel — rows", () => {
     );
     // Still on screen: the reviewer has to see what an apply would delete.
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
+  });
+});
+
+describe("ShotsPanel — the apply bar", () => {
+  beforeEach(() => {
+    shots.shotFloorReportCached.mockResolvedValue(true);
+  });
+
+  /// Mount over the reviewed clip and wait for its two rows.
+  async function review(): Promise<void> {
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(2));
+  }
+
+  function verb(id: "split" | "mark" | "discard"): HTMLButtonElement {
+    return screen.getByTestId(`shots-apply-${id}`) as HTMLButtonElement;
+  }
+
+  it("sends the reviewed list, under the name the rest of the app shows", async () => {
+    await review();
+
+    fireEvent.click(verb("split"));
+
+    await waitFor(() =>
+      expect(shots.applyShotCuts).toHaveBeenCalledWith({
+        layer_id: "l1",
+        mode: "split",
+        cuts_src_us: [2_000_000],
+      }),
+    );
+    // `layerDisplayName`, the same name the timeline and the log rows use.
+    expect(shots.logEmit.mock.calls[0]?.[0]).toMatchObject({
+      i18n_key: "log.shots_apply_split_started",
+      i18n_args: { clip: "shot reel", cuts: 1 },
+    });
+  });
+
+  it("marks the boundaries a split would cut at", async () => {
+    shots.applyShotCuts.mockResolvedValue({ mode: "mark", marker_ids: ["m1"] });
+    await review();
+
+    fireEvent.click(verb("mark"));
+
+    await waitFor(() =>
+      expect(shots.applyShotCuts).toHaveBeenCalledWith({
+        layer_id: "l1",
+        mode: "mark",
+        cuts_src_us: [2_000_000],
+      }),
+    );
+  });
+
+  it("sends the unchecked row's index and cuts at its boundary anyway", async () => {
+    shots.applyShotCuts.mockResolvedValue({ mode: "discard", layer_ids: ["s1"] });
+    await review();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Keep shot 2" }));
+    await waitFor(() => expect(verb("discard").disabled).toBe(false));
+    fireEvent.click(verb("discard"));
+
+    await waitFor(() =>
+      expect(shots.applyShotCuts).toHaveBeenCalledWith({
+        layer_id: "l1",
+        mode: "discard",
+        cuts_src_us: [2_000_000],
+        discard_segments: [1],
+      }),
+    );
+  });
+
+  it("greys the discard until a shot is unchecked, and says which", async () => {
+    await review();
+
+    expect(verb("discard").disabled).toBe(true);
+    // The precondition, not the label it cannot act on.
+    expect(verb("discard").getAttribute("title")).toBe(
+      "Uncheck the shots you want discarded first",
+    );
+    expect(verb("split").disabled).toBe(false);
+    expect(verb("split").getAttribute("title")).toBe("Split at cuts");
+  });
+
+  it("greys both cutting verbs when the last boundary is cleared", async () => {
+    await review();
+
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Cut at the start of shot 2" }),
+    );
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
+
+    // With no interior boundary the channel answers with the unchanged layer
+    // id, which on screen is indistinguishable from a dead button — so the
+    // remedy is what the greyed pair says instead.
+    for (const id of ["split", "mark"] as const) {
+      expect(verb(id).disabled).toBe(true);
+      expect(verb(id).getAttribute("title")).toBe(
+        "Lower the threshold, or restore a cleared cut — this clip is one shot",
+      );
+    }
+    expect(shots.applyShotCuts).not.toHaveBeenCalled();
+  });
+
+  it("locks all three while one apply is in flight", async () => {
+    let land!: (r: { mode: "split"; layer_ids: string[] }) => void;
+    shots.applyShotCuts.mockReturnValue(
+      new Promise((res) => {
+        land = res;
+      }),
+    );
+    await review();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Keep shot 2" }));
+    await waitFor(() => expect(verb("discard").disabled).toBe(false));
+
+    fireEvent.click(verb("split"));
+    await waitFor(() => expect(verb("split").disabled).toBe(true));
+    expect(verb("mark").disabled).toBe(true);
+    expect(verb("discard").disabled).toBe(true);
+    expect(verb("mark").getAttribute("title")).toBe("An apply is already running");
+    // A second press cannot even be delivered, but the assertion is about the
+    // count either way: two commits over one reviewed list is the failure.
+    fireEvent.click(verb("split"));
+    expect(shots.applyShotCuts).toHaveBeenCalledTimes(1);
+
+    land({ mode: "split", layer_ids: ["s1", "s2"] });
+    await waitFor(() => expect(verb("mark").disabled).toBe(false));
+  });
+
+  it("shows the channel's own refusal inline rather than pre-empting it", async () => {
+    shots.applyShotCuts.mockRejectedValue(
+      new Error(
+        JSON.stringify({
+          error: "InvalidArgument",
+          field: "discard_segments",
+          detail:
+            "discard_segments names all 2 segment(s) — discarding every segment is a delete, not an apply",
+        }),
+      ),
+    );
+    await review();
+
+    // Every row unchecked — the one case the buttons do NOT grey, so that the
+    // rule has exactly one statement of itself and it is the wire's.
+    fireEvent.click(screen.getByRole("checkbox", { name: "Keep shot 1" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Keep shot 2" }));
+    await waitFor(() => expect(verb("discard").disabled).toBe(false));
+    fireEvent.click(verb("discard"));
+
+    expect(
+      await screen.findByText(/discarding every segment is a delete/),
+    ).toBeTruthy();
+    // No toast and no dialog: destructive-but-undoable is house style, and the
+    // record is the paired Err row.
+    expect(shots.logEmit.mock.calls[1]?.[0]).toMatchObject({
+      op_state: { state: "Err" },
+    });
+  });
+
+  it("falls to the select-a-clip state once the split's summary lands", async () => {
+    await review();
+
+    fireEvent.click(verb("split"));
+    await waitFor(() => expect(shots.applyShotCuts).toHaveBeenCalled());
+    // What `project:changed` delivers: `l1` is gone and two segments stand in
+    // its place. `retainLayerSelection` drops the vanished primary, which is
+    // the only thing that has to happen for the Panel to land somewhere sane.
+    act(() => {
+      useProjectStore.getState().apply(fixtureAfterSplit());
+    });
+
+    expect(
+      await screen.findByText("Select a video clip to review its shot cuts."),
+    ).toBeTruthy();
+    // No rows for a layer that no longer exists, and no apply bar over them.
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+    expect(screen.queryByTestId("shots-apply")).toBeNull();
   });
 });
 

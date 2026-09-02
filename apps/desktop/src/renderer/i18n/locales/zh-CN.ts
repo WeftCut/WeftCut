@@ -428,6 +428,17 @@ const zhCN: Resources = {
     flag_black: "黑场",
     flag_freeze: "静帧",
     flag_fade: "淡入淡出",
+    // 对审阅结果的三个动作。按它们对片段做了什么来命名，而不是照搬传输里的
+    // mode：切开那个说清在哪儿切，丢弃那个把要做的两件事都说出来。
+    apply_split: "在切点处切开",
+    apply_mark: "标记切点",
+    apply_discard: "切开并丢弃未勾选的镜头",
+    // 禁用原因，与 quick_actions.clear_range_empty 同一条规则：说明前置条件
+    // ——这里是补救办法——而不是重复一个点不了的标签。全部未勾选的丢弃故意
+    // 没有对应文案：那一条由通道拒绝，措辞只有一份，所以按下去让拒绝落在下面。
+    apply_no_cuts: "把阈值调低，或恢复一个已取消的切点——这个片段只有一个镜头",
+    apply_no_discards: "先取消勾选想丢弃的镜头",
+    apply_running: "已经有一个应用在执行",
   },
   actions: {
     add_color_layer: "颜色层",
@@ -1600,6 +1611,19 @@ const zhCN: Resources = {
     // 只在失败不是结构化拒绝时才会走到：结构化拒绝自带 key，
     // 收尾那一行用它自己的措辞。
     shots_analyze_failed: "“{{clip}}”的镜头分析失败：{{error}}",
+    // 每个动作各有一条开始行，而不是一条把动作名插进去：丢弃要报两个数字，
+    // 而一句译好的话里塞不进一个没译的动作名。开始行说的是这次送出去了多少，
+    // 收尾行说的是回来了什么——丢弃回来的是留下的段，不是它切在哪儿。
+    shots_apply_split_started: "正在按 {{cuts}} 个镜头切点切开“{{clip}}”",
+    shots_apply_split_done: "“{{clip}}”已切成 {{segments}} 段",
+    shots_apply_mark_started: "正在为“{{clip}}”标记 {{cuts}} 个镜头切点",
+    shots_apply_mark_done: "已为“{{clip}}”添加 {{markers}} 个镜头切点标记",
+    shots_apply_discard_started:
+      "正在按 {{cuts}} 个镜头切点切开“{{clip}}”，并丢弃其中 {{discarded}} 个镜头",
+    shots_apply_discard_done:
+      "从“{{clip}}”保留了 {{segments}} 段，丢弃了 {{discarded}} 段",
+    // 只在失败不是结构化拒绝时才会走到：结构化拒绝用它自己的措辞收尾。
+    shots_apply_failed: "对“{{clip}}”应用镜头切点失败：{{error}}",
     // 收尾分两条而不是一条带标记：区别在于这次运行花没花钱——命中缓存等于没有
     // 计费，这才是记录里值得看的事实。
     voiceover_started: "正在生成配音——{{chars}} 个字符，{{voice}}",

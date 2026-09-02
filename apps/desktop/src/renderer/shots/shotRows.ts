@@ -194,23 +194,17 @@ export function shotRows(
   );
 }
 
-/// The boundaries an apply would cut at: every kept row's opening candidate.
-/// Ascending, and interior by construction — the first row has no candidate, so
-/// the window edge can never enter the list.
+/// The canonical cut list an apply consumes: every row's opening candidate,
+/// whether the row is kept or not. Ascending, and interior by construction —
+/// the first row has no candidate, so the window edge can never enter the list.
 ///
-/// Ready for the apply verbs; nothing in the Panel calls it yet.
+/// The keep flag is deliberately not a filter here. A discard cuts at every
+/// accepted boundary and then deletes named segments, so dropping an unchecked
+/// row's opening boundary would fuse it into its predecessor instead — which is
+/// what clearing the CANDIDATE means, a different decision the reviewer makes
+/// with a different box.
 export function acceptedCutsSrcUs(rows: readonly ShotRow[]): number[] {
   return rows.flatMap((row) =>
     row.openingCandidate ? [row.openingCandidate.srcUs] : [],
   );
-}
-
-/// The source spans the reviewer unchecked — what a split-and-discard would
-/// delete after cutting at `acceptedCutsSrcUs`.
-export function discardedSpans(
-  rows: readonly ShotRow[],
-): { srcStartUs: number; srcEndUs: number }[] {
-  return rows
-    .filter((row) => !row.keep)
-    .map((row) => ({ srcStartUs: row.srcStartUs, srcEndUs: row.srcEndUs }));
 }

@@ -46,6 +46,7 @@ import { ScoreStrip } from "./ScoreStrip";
 import { shotRows, type ShotCandidate, type ShotRow } from "./shotRows";
 import {
   analyzeShotSubject,
+  applyShotVerb,
   commitShotThreshold,
   loadShotDefaults,
   resetShotsStore,
@@ -54,8 +55,10 @@ import {
   setShotMinShotUs,
   setShotSubject,
   setShotThreshold,
+  shotApplyBlocker,
   useDiscardedRows,
   useShotAnalyzing,
+  useShotApplying,
   useShotCached,
   useShotError,
   useShotFloor,
@@ -65,6 +68,7 @@ import {
   useShotThreshold,
   useVetoedCandidates,
   wireShotReviewPrefs,
+  type ShotApplyVerb,
 } from "./shotsStore";
 
 /// Stable empty reference — a fresh `[]` per selector call would defeat the
@@ -414,6 +418,99 @@ function MinShotLengthField({ minShotUs }: { minShotUs: number }) {
   );
 }
 
+/// One verb. Disabled with the reason in its tooltip rather than with the
+/// unusable label repeated, the `quick_actions.clear_range_empty` rule: a greyed
+/// button whose tooltip still reads "Split at cuts" is a button that looks
+/// broken.
+function ShotApplyButton({
+  verb,
+  variant,
+  labelKey,
+  testId,
+  rows,
+  clipName,
+  applying,
+}: {
+  verb: ShotApplyVerb;
+  variant: "default" | "secondary" | "destructive";
+  labelKey: string;
+  testId: string;
+  rows: readonly ShotRow[];
+  clipName: string;
+  applying: ShotApplyVerb | null;
+}) {
+  const { t } = useTranslation();
+  const blocker = shotApplyBlocker(verb, rows, applying);
+  const label = t(labelKey);
+  return (
+    <Button
+      className="shots-apply-verb"
+      variant={variant}
+      size="default"
+      data-testid={testId}
+      disabled={blocker !== null}
+      title={blocker === null ? label : t(blocker)}
+      onClick={() => void applyShotVerb(verb, rows, clipName)}
+    >
+      {label}
+    </Button>
+  );
+}
+
+/// The three verbs over the reviewed list, plus the slot a refusal lands in.
+///
+/// ABOVE the row list, not below it. `DockWorkspace` scrolls the whole Panel as
+/// one, so a bar under a forty-row list is only reachable at the end of a
+/// scroll — and the commit for a review has to stay reachable while the review
+/// is being read. It also completes the band the threshold line and the length
+/// field begin: what shapes the list, then what to do with it, then the list.
+///
+/// Three variants for three intents: splitting is the plain apply, marking
+/// writes nothing away, and discarding deletes segments — the one verb that
+/// wants the destructive skin before it is pressed rather than a dialog after.
+function ShotApplyBar({
+  rows,
+  clipName,
+}: {
+  rows: readonly ShotRow[];
+  clipName: string;
+}) {
+  const applying = useShotApplying();
+  const error = useShotError();
+  const shared = { rows, clipName, applying };
+  return (
+    <div className="shots-apply" data-testid="shots-apply">
+      <div className="shots-apply-verbs">
+        <ShotApplyButton
+          verb="split"
+          variant="default"
+          labelKey="shots_panel.apply_split"
+          testId="shots-apply-split"
+          {...shared}
+        />
+        <ShotApplyButton
+          verb="mark"
+          variant="secondary"
+          labelKey="shots_panel.apply_mark"
+          testId="shots-apply-mark"
+          {...shared}
+        />
+        <ShotApplyButton
+          verb="discard"
+          variant="destructive"
+          labelKey="shots_panel.apply_discard"
+          testId="shots-apply-discard"
+          {...shared}
+        />
+      </div>
+      {/* The channel's own sentence — including the one refusal the buttons
+          deliberately do not pre-empt, an all-unchecked discard. The log row
+          keeps the record (`docs/status-log.md`). */}
+      {error !== "" && <p className="shots-error">{error}</p>}
+    </div>
+  );
+}
+
 /// The subject: the PRIMARY selected layer when it is a `VideoClip`, plus the
 /// composition it lives in — the rate its timecodes are read at and the clock a
 /// row activation seeks on.
@@ -591,6 +688,7 @@ export function ShotsPanel() {
         />
       )}
       {minShotUs !== null && <MinShotLengthField minShotUs={minShotUs} />}
+      <ShotApplyBar rows={rows} clipName={clipName} />
       <ul className="shots-list" data-testid="shots-list">
         {rows.map((row) => (
           <ShotRowView

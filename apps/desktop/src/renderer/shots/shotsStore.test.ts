@@ -18,6 +18,10 @@ import type {
 const mocks = vi.hoisted(() => ({
   shotFloorReportCached: vi.fn<(id: string) => Promise<boolean>>(),
   analyzeShotsFloor: vi.fn<(id: string) => Promise<ShotReport>>(),
+  // Never called from this file — the apply verbs have their own
+  // (`shotsApply.test.ts`) — but a mock factory that omits an export the
+  // module imports makes the whole module fail to load.
+  applyShotCuts: vi.fn(),
   reduceShotReport: vi.fn(),
   shotDefaultOpts: vi.fn(),
   shotFloorSensitivity: vi.fn(),
@@ -29,6 +33,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../ipc", () => ({
   shotFloorReportCached: (id: string) => mocks.shotFloorReportCached(id),
   analyzeShotsFloor: (id: string) => mocks.analyzeShotsFloor(id),
+  applyShotCuts: (...args: unknown[]) => mocks.applyShotCuts(...args),
   reduceShotReport: (...args: unknown[]) => mocks.reduceShotReport(...args),
   shotDefaultOpts: () => mocks.shotDefaultOpts(),
   shotFloorSensitivity: () => mocks.shotFloorSensitivity(),
