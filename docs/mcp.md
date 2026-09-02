@@ -503,7 +503,9 @@ an agent already composes each from tools it has: `analyze_clip` or the
 `media://{id}/analysis` view plus `split_layer` / `add_markers`, and
 `detect_silences` plus `add_markers`; a second tool over one detection would
 only be a way for the two surfaces to drift. `analyze_clip` stays agent-only —
-the renderer's shot surfaces read the whole-source report instead
+the renderer's shot surfaces read the whole-source report instead, and the
+shot rows read a source's cached description through the same
+`media://{id}/description` handler an agent reads, never computing one
 ([features.md](features.md)).
 
 **Tool gating:** the `tool_table!` macro registers tools at compile
