@@ -5,15 +5,17 @@
 // solve. Times are layer-local microseconds (the keyframe `t_us` base).
 // TWIN: native/src/state/keyframe_edits.rs, golden-locked through
 // keyframeEditsGolden.fixture.json (edits.golden.test.ts on this side).
-import type { AnimTrack, Interpolation, Keyframe } from "../ipc";
+import type { AnimTrack, Continuity, Extrapolate, Interpolation, Keyframe, Tangent } from "../ipc";
 import { applySegmentEasing } from "../../shared/easing";
 import {
   HOLD_EXTRAPOLATION,
   cloneSegment,
   cloneTangent,
+  freeSide,
   inIdentity,
   outIdentity,
 } from "../../shared/keyframe";
+import { inSlope, inYForSlope, outSlope, outYForSlope } from "../../shared/tangents";
 import { resolveAnimated } from "../render/animated";
 
 function newId(): string {
@@ -175,6 +177,114 @@ export function setAuto(track: AnimTrack<number>, ids: readonly string[]): AnimT
     if (i > 0) keys[i - 1] = { ...keys[i - 1]!, segment: { kind: "Spline" } };
   }
   return { ...track, value: keys };
+}
+
+const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/// Write one side of key `id` as `Free {x, y}` — the curve graph's handle drag
+/// and MCP `set_keyframe_tangents`. `x` is clamped to `[0, 1]` (time is
+/// monotone inside a segment), `y` is free. Grabbing either handle of an Auto
+/// key converts the key to Free: the other side keeps its stored numbers with
+/// mode Free. The segment the written side shapes becomes Spline so the number
+/// is read. With `Smooth` continuity, when the OPPOSITE side's segment is
+/// Spline, that side is rotated to the same value slope in the same returned
+/// track, keeping its x (the slope helpers in shared/tangents.ts; skipped when
+/// no finite y does it — a flat neighbour or an x at its degenerate bound).
+/// Main's "out wins" solve then finds the pair already consistent — exactly
+/// when `out` was written, and up to f64 rounding when `in` was, since main
+/// re-derives `in.y` from the `out` computed here.
+export function setTangent(
+  track: AnimTrack<number>,
+  id: string,
+  side: "in" | "out",
+  xy: { x: number; y: number },
+): AnimTrack<number> {
+  if (track.mode === "Static") return track;
+  const keys = track.value.slice();
+  const i = keys.findIndex((k) => k.id === id);
+  if (i < 0) return track;
+  const k = keys[i]!;
+  const prev = keys[i - 1];
+  const next = keys[i + 1];
+  const written = freeSide(clamp01(xy.x), xy.y);
+  const other = side === "in" ? k.out : k.in;
+  const otherFree: Tangent = other.mode === "Free" ? other : { ...other, mode: "Free" };
+  let inSide = side === "in" ? written : otherFree;
+  let outSide = side === "out" ? written : otherFree;
+
+  if (k.continuity === "Smooth") {
+    const dtPrev = prev ? k.t_us - prev.t_us : 0;
+    const dvPrev = prev ? k.value - prev.value : 0;
+    const dtNext = next ? next.t_us - k.t_us : 0;
+    const dvNext = next ? next.value - k.value : 0;
+    if (side === "out" && prev && prev.segment.kind === "Spline") {
+      const m = outSlope(written, dtNext, dvNext);
+      const y = m === null ? null : inYForSlope(otherFree.x, m, dtPrev, dvPrev);
+      if (y !== null) inSide = freeSide(otherFree.x, y);
+    }
+    if (side === "in" && next && k.segment.kind === "Spline") {
+      const m = inSlope(written, dtPrev, dvPrev);
+      const y = m === null ? null : outYForSlope(otherFree.x, m, dtNext, dvNext);
+      if (y !== null) outSide = freeSide(otherFree.x, y);
+    }
+  }
+
+  keys[i] = {
+    ...k,
+    in: inSide,
+    out: outSide,
+    ...(side === "out" && next ? { segment: { kind: "Spline" } as const } : {}),
+  };
+  if (side === "in" && prev) keys[i - 1] = { ...prev, segment: { kind: "Spline" } };
+  return { ...track, value: keys };
+}
+
+/// Set key `id`'s continuity. Switching to `Smooth` with both sides Free and
+/// both adjacent segments Spline rotates `in` to `out`'s slope at once ("out
+/// wins", the same rule main's solve applies), so the curve the user sees is
+/// the curve that will be stored. `Broken` changes no number.
+export function setContinuity(
+  track: AnimTrack<number>,
+  id: string,
+  continuity: Continuity,
+): AnimTrack<number> {
+  if (track.mode === "Static") return track;
+  const keys = track.value.slice();
+  const i = keys.findIndex((k) => k.id === id);
+  if (i < 0) return track;
+  const k = keys[i]!;
+  const prev = keys[i - 1];
+  const next = keys[i + 1];
+  let inSide = k.in;
+  if (
+    continuity === "Smooth" &&
+    k.in.mode === "Free" &&
+    k.out.mode === "Free" &&
+    prev && prev.segment.kind === "Spline" &&
+    next && k.segment.kind === "Spline"
+  ) {
+    const m = outSlope(k.out, next.t_us - k.t_us, next.value - k.value);
+    const y = m === null ? null : inYForSlope(k.in.x, m, k.t_us - prev.t_us, k.value - prev.value);
+    if (y !== null) inSide = freeSide(k.in.x, y);
+  }
+  keys[i] = { ...k, in: inSide, continuity };
+  return { ...track, value: keys };
+}
+
+/// Patch the track's extrapolation, one side or both; a Static track has none
+/// and is returned as is.
+export function setExtrapolation(
+  track: AnimTrack<number>,
+  patch: { before?: Extrapolate | undefined; after?: Extrapolate | undefined },
+): AnimTrack<number> {
+  if (track.mode === "Static") return track;
+  return {
+    ...track,
+    extrapolate: {
+      before: patch.before ?? track.extrapolate.before,
+      after: patch.after ?? track.extrapolate.after,
+    },
+  };
 }
 
 export type { Keyframe };

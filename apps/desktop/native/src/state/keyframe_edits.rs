@@ -2,11 +2,11 @@
 //!
 //! Behavioral mirror of `apps/desktop/src/renderer/keyframe/edits.ts`, plus the
 //! twins of the two segment-easing bridges in `src/shared/easing.ts`
-//! (`segment_easing` / `apply_segment_easing`) and of the write-time tangent
-//! solver `src/shared/tangents.ts` (`solve_auto_tangents`). Times are
-//! LAYER-LOCAL microseconds (the keyframe `t_us` base). Each fn returns a NEW
-//! track; the actor re-normalizes (snap/sort/dedupe) on write, so these need
-//! only stay self-consistent.
+//! (`segment_easing` / `apply_segment_easing`), of the write-time tangent
+//! solver `src/shared/tangents.ts` (`solve_auto_tangents`) and of its four
+//! side-slope helpers. Times are LAYER-LOCAL microseconds (the keyframe `t_us`
+//! base). Each fn returns a NEW track; the actor re-normalizes
+//! (snap/sort/dedupe) on write, so these need only stay self-consistent.
 //!
 //! Cross-language parity is locked by `keyframeEditsGolden.fixture.json`
 //! (asserted by `golden_vectors_match_fixture` here AND by
@@ -15,8 +15,8 @@
 //! `feedback_engine_source_drift`, `feedback_snap_math_drift`).
 
 use crate::state::animated::{
-    Animated, Continuity, EaseDir, Extrapolation, Keyframe, Segment, Tangent, TangentMode,
-    IN_IDENTITY, OUT_IDENTITY,
+    Animated, Continuity, EaseDir, Extrapolate, Extrapolation, Keyframe, Segment, Tangent,
+    TangentMode, IN_IDENTITY, OUT_IDENTITY,
 };
 use crate::state::ids::{new_id, KeyframeId};
 
@@ -279,8 +279,183 @@ pub fn set_auto(track: &Animated<f64>, ids: &[KeyframeId]) -> Animated<f64> {
     Animated::Keyframed(keys.into_iter().collect(), *ex)
 }
 
+/// Which side of a key a tangent edit addresses. Serializes lowercase so the
+/// golden fixture's `"side": "in" | "out"` deserializes here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Side {
+    In,
+    Out,
+}
+
+/// Write one side of key `id` as `Free (x, y)`: `x` clamped to `[0, 1]`, `y`
+/// free. Grabbing either handle of an Auto key converts the key to Free (the
+/// other side keeps its numbers, mode Free). The segment the written side
+/// shapes becomes Spline. With `Smooth` continuity, when the OPPOSITE side's
+/// segment is Spline, that side is rotated to the same value slope (the slope
+/// helpers below), keeping its x; skipped when no finite y does it.
+pub fn set_tangent(
+    track: &Animated<f64>,
+    id: KeyframeId,
+    side: Side,
+    x: f64,
+    y: f64,
+) -> Animated<f64> {
+    let Animated::Keyframed(kfs, ex) = track else {
+        return track.clone();
+    };
+    let mut keys: Vec<Keyframe<f64>> = kfs.iter().cloned().collect();
+    let Some(i) = keys.iter().position(|k| k.id == id) else {
+        return track.clone();
+    };
+    let k = keys[i].clone();
+    let prev = if i > 0 {
+        Some(keys[i - 1].clone())
+    } else {
+        None
+    };
+    let next = keys.get(i + 1).cloned();
+    let written = Tangent::free(clamp01(x), y);
+    let other = match side {
+        Side::In => k.out,
+        Side::Out => k.in_,
+    };
+    let other_free = Tangent {
+        mode: TangentMode::Free,
+        ..other
+    };
+    let (mut in_side, mut out_side) = match side {
+        Side::In => (written, other_free),
+        Side::Out => (other_free, written),
+    };
+
+    if k.continuity == Continuity::Smooth {
+        let dt_prev = prev.as_ref().map_or(0.0, |p| (k.t_us - p.t_us) as f64);
+        let dv_prev = prev.as_ref().map_or(0.0, |p| k.value - p.value);
+        let dt_next = next.as_ref().map_or(0.0, |n| (n.t_us - k.t_us) as f64);
+        let dv_next = next.as_ref().map_or(0.0, |n| n.value - k.value);
+        match side {
+            Side::Out if prev.as_ref().is_some_and(|p| p.segment == Segment::Spline) => {
+                if let Some(y) = out_slope(written, dt_next, dv_next)
+                    .and_then(|m| in_y_for_slope(other_free.x, m, dt_prev, dv_prev))
+                {
+                    in_side = Tangent::free(other_free.x, y);
+                }
+            }
+            Side::In if next.is_some() && k.segment == Segment::Spline => {
+                if let Some(y) = in_slope(written, dt_prev, dv_prev)
+                    .and_then(|m| out_y_for_slope(other_free.x, m, dt_next, dv_next))
+                {
+                    out_side = Tangent::free(other_free.x, y);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    keys[i].in_ = in_side;
+    keys[i].out = out_side;
+    if side == Side::Out && next.is_some() {
+        keys[i].segment = Segment::Spline;
+    }
+    if side == Side::In && prev.is_some() {
+        keys[i - 1].segment = Segment::Spline;
+    }
+    Animated::Keyframed(keys.into_iter().collect(), *ex)
+}
+
+/// Set key `id`'s continuity. Switching to `Smooth` with both sides Free and
+/// both adjacent segments Spline rotates `in_` to `out`'s slope at once ("out
+/// wins", the rule `solve_auto_tangents` applies). `Broken` changes no number.
+pub fn set_continuity(
+    track: &Animated<f64>,
+    id: KeyframeId,
+    continuity: Continuity,
+) -> Animated<f64> {
+    let Animated::Keyframed(kfs, ex) = track else {
+        return track.clone();
+    };
+    let mut keys: Vec<Keyframe<f64>> = kfs.iter().cloned().collect();
+    let Some(i) = keys.iter().position(|k| k.id == id) else {
+        return track.clone();
+    };
+    let k = keys[i].clone();
+    if continuity == Continuity::Smooth
+        && k.in_.mode == TangentMode::Free
+        && k.out.mode == TangentMode::Free
+        && i > 0
+        && keys[i - 1].segment == Segment::Spline
+        && i + 1 < keys.len()
+        && k.segment == Segment::Spline
+    {
+        let (p, n) = (&keys[i - 1], &keys[i + 1]);
+        if let Some(y) = out_slope(k.out, (n.t_us - k.t_us) as f64, n.value - k.value)
+            .and_then(|m| in_y_for_slope(k.in_.x, m, (k.t_us - p.t_us) as f64, k.value - p.value))
+        {
+            keys[i].in_ = Tangent::free(k.in_.x, y);
+        }
+    }
+    keys[i].continuity = continuity;
+    Animated::Keyframed(keys.into_iter().collect(), *ex)
+}
+
+/// Patch the track's extrapolation, one side or both; a `Static` track has
+/// none and is returned as is.
+pub fn set_extrapolation(
+    track: &Animated<f64>,
+    before: Option<Extrapolate>,
+    after: Option<Extrapolate>,
+) -> Animated<f64> {
+    let Animated::Keyframed(kfs, ex) = track else {
+        return track.clone();
+    };
+    Animated::Keyframed(
+        kfs.clone(),
+        Extrapolation {
+            before: before.unwrap_or(ex.before),
+            after: after.unwrap_or(ex.after),
+        },
+    )
+}
+
 fn clamp01(v: f64) -> f64 {
     v.clamp(0.0, 1.0)
+}
+
+// ---------------------------------------------------------------------------
+// Side slopes, in value per microsecond over the side's own segment — the
+// twins of the four helpers in `src/shared/tangents.ts`, the only place a
+// slope becomes a coordinate. `None` when no finite answer exists: a handle
+// pointing nowhere in time (`out.x = 0`, `in.x = 1`), a segment with no span,
+// or a flat segment for the inverse direction.
+// ---------------------------------------------------------------------------
+
+fn out_slope(out: Tangent, dt_next: f64, dv_next: f64) -> Option<f64> {
+    if out.x == 0.0 || dt_next <= 0.0 {
+        return None;
+    }
+    Some((out.y / out.x) * (dv_next / dt_next))
+}
+
+fn in_slope(in_: Tangent, dt_prev: f64, dv_prev: f64) -> Option<f64> {
+    if in_.x == 1.0 || dt_prev <= 0.0 {
+        return None;
+    }
+    Some(((1.0 - in_.y) / (1.0 - in_.x)) * (dv_prev / dt_prev))
+}
+
+fn in_y_for_slope(in_x: f64, m: f64, dt_prev: f64, dv_prev: f64) -> Option<f64> {
+    if dv_prev == 0.0 || dt_prev <= 0.0 || in_x == 1.0 {
+        return None;
+    }
+    Some(1.0 - (m * (1.0 - in_x) * dt_prev) / dv_prev)
+}
+
+fn out_y_for_slope(out_x: f64, m: f64, dt_next: f64, dv_next: f64) -> Option<f64> {
+    if dv_next == 0.0 || dt_next <= 0.0 || out_x == 0.0 {
+        return None;
+    }
+    Some((m * out_x * dt_next) / dv_next)
 }
 
 /// Monotone-clamped tangent (scalar per microsecond) at key `i` over the
@@ -394,9 +569,10 @@ pub fn solve_auto_tangents<T: Clone>(
                 let dv_next = s[i + 1] - s[i];
                 let dt_prev = (t[i] - t[i - 1]) as f64;
                 let dv_prev = s[i] - s[i - 1];
-                if k.out.x != 0.0 && dv_prev != 0.0 && dt_prev > 0.0 && k.in_.x != 1.0 {
-                    let m = (k.out.y / k.out.x) * (dv_next / dt_next);
-                    out[i].in_.y = 1.0 - m * (1.0 - k.in_.x) * dt_prev / dv_prev;
+                if let Some(y) = out_slope(k.out, dt_next, dv_next)
+                    .and_then(|m| in_y_for_slope(k.in_.x, m, dt_prev, dv_prev))
+                {
+                    out[i].in_.y = y;
                 }
             }
         }
@@ -556,7 +732,67 @@ mod tests {
         let out = remove(&tr, uuid::Uuid::from_u128(1), 0.0);
         assert_eq!(out.extrapolation().after, Extrapolate::Loop);
     }
-    use crate::state::animated::Extrapolate;
+
+    #[test]
+    fn set_tangent_and_set_continuity_leave_a_static_or_idless_track_alone() {
+        let st = Animated::Static(2.0);
+        assert!(matches!(
+            set_tangent(&st, uuid::Uuid::from_u128(9), Side::Out, 0.5, 0.5),
+            Animated::Static(v) if v == 2.0
+        ));
+        let tr = keyframed(vec![kf(1, 0, 0.0, Segment::Linear)]);
+        let missing = uuid::Uuid::from_u128(9);
+        assert_eq!(
+            keys(&set_tangent(&tr, missing, Side::Out, 0.5, 0.5))[0].out,
+            Tangent::out_identity()
+        );
+        assert_eq!(
+            keys(&set_continuity(&tr, missing, Continuity::Smooth))[0].continuity,
+            Continuity::Broken
+        );
+    }
+
+    #[test]
+    fn set_extrapolation_patches_only_the_named_side_and_skips_static() {
+        let tr = keyframed(vec![
+            kf(1, 0, 0.0, Segment::Linear),
+            kf(2, 1_000_000, 1.0, Segment::Linear),
+        ]);
+        let out = set_extrapolation(&tr, None, Some(Extrapolate::Offset));
+        assert_eq!(
+            out.extrapolation(),
+            Extrapolation {
+                before: Extrapolate::Hold,
+                after: Extrapolate::Offset
+            }
+        );
+        assert!(matches!(
+            set_extrapolation(&Animated::Static(1.0), Some(Extrapolate::Loop), None),
+            Animated::Static(_)
+        ));
+    }
+
+    #[test]
+    fn side_slope_helpers_invert_each_other() {
+        // A leaving handle's slope, fed back through the inverse, returns its y.
+        let out = Tangent::free(0.25, 0.8);
+        let m = out_slope(out, 2_000_000.0, 3.0).unwrap();
+        assert!(near(
+            out_y_for_slope(out.x, m, 2_000_000.0, 3.0).unwrap(),
+            out.y
+        ));
+        let in_ = Tangent::free(0.6, 0.1);
+        let m = in_slope(in_, 500_000.0, -2.0).unwrap();
+        assert!(near(
+            in_y_for_slope(in_.x, m, 500_000.0, -2.0).unwrap(),
+            in_.y
+        ));
+        // Degenerate bounds have no finite answer.
+        assert_eq!(out_slope(Tangent::free(0.0, 1.0), 1.0, 1.0), None);
+        assert_eq!(in_slope(Tangent::free(1.0, 1.0), 1.0, 1.0), None);
+        assert_eq!(in_y_for_slope(0.5, 1.0, 1.0, 0.0), None);
+        assert_eq!(out_y_for_slope(0.0, 1.0, 1.0, 1.0), None);
+    }
 
     #[test]
     fn retime_resorts() {
@@ -744,6 +980,12 @@ mod tests {
         fallback: Option<f64>,
         new_t_us: Option<i64>,
         easing: Option<Interpolation>,
+        side: Option<Side>,
+        x: Option<f64>,
+        y: Option<f64>,
+        continuity: Option<Continuity>,
+        before: Option<Extrapolate>,
+        after: Option<Extrapolate>,
     }
     #[derive(serde::Deserialize)]
     struct GoldenCase {
@@ -775,6 +1017,15 @@ mod tests {
                     .collect();
                 set_auto(track, &ids)
             }
+            "set_tangent" => set_tangent(
+                track,
+                id(),
+                args.side.unwrap(),
+                args.x.unwrap(),
+                args.y.unwrap(),
+            ),
+            "set_continuity" => set_continuity(track, id(), args.continuity.unwrap()),
+            "set_extrapolation" => set_extrapolation(track, args.before, args.after),
             "solve" => match track {
                 Animated::Keyframed(kfs, ex) => {
                     let keys: Vec<Keyframe<f64>> = kfs.iter().cloned().collect();

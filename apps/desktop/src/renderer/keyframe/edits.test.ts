@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   liftToKeyframed, collapseToStatic, upsertKeyframe, removeKeyframe,
-  retimeKeyframe, setSegmentEasing, setSegmentCoeffs, setAuto,
+  retimeKeyframe, setSegmentEasing, setSegmentCoeffs, setAuto, setTangent, setContinuity, setExtrapolation,
 } from "./edits";
 import type { AnimTrack } from "../ipc";
 import { resolveAnimated } from "../render/animated";
@@ -204,5 +204,41 @@ describe("setAuto (+ the write-time solve)", () => {
     expect(b.out.y).toBeLessThanOrEqual(1);
     expect(b.in.y).toBeGreaterThanOrEqual(0);
     expect(b.in.y).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("setTangent / setContinuity / setExtrapolation (the golden holds the numbers)", () => {
+  const ramp: AnimTrack<number> = { mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" }, value: [
+    { id: "a", t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Spline" } },
+    { id: "b", t_us: 1_000_000, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Auto" }, out: { x: 1 / 3, y: 1 / 3, mode: "Auto" }, continuity: "Smooth", segment: { kind: "Spline" } },
+    { id: "c", t_us: 2_000_000, value: 2, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+  ]};
+  it("returns the same track for a Static track or an unknown id", () => {
+    const st: AnimTrack<number> = { mode: "Static", value: 1 };
+    expect(setTangent(st, "a", "out", { x: 0.5, y: 0.5 })).toBe(st);
+    expect(setContinuity(st, "a", "Smooth")).toBe(st);
+    expect(setExtrapolation(st, { before: "Loop" })).toBe(st);
+    expect(setTangent(ramp, "zzz", "out", { x: 0.5, y: 0.5 })).toBe(ramp);
+    expect(setContinuity(ramp, "zzz", "Broken")).toBe(ramp);
+  });
+  it("does not mutate the input track", () => {
+    const before = JSON.stringify(ramp);
+    setTangent(ramp, "b", "in", { x: 0.5, y: 0.5 });
+    setContinuity(ramp, "b", "Broken");
+    setExtrapolation(ramp, { after: "PingPong" });
+    expect(JSON.stringify(ramp)).toBe(before);
+  });
+  it("grabbing a handle of an Auto key frees both sides and keeps the untouched side's numbers", () => {
+    const out = setTangent(ramp, "b", "in", { x: 0.5, y: 0.25 });
+    if (out.mode !== "Keyframed") throw new Error();
+    const b = out.value[1]!;
+    expect(b.in).toEqual({ x: 0.5, y: 0.25, mode: "Free" });
+    expect(b.out.mode).toBe("Free");
+    expect(b.out.x).toBe(1 / 3);
+  });
+  it("an empty extrapolation patch is the identity", () => {
+    const out = setExtrapolation(ramp, {});
+    if (out.mode !== "Keyframed") throw new Error();
+    expect(out.extrapolate).toEqual({ before: "Hold", after: "Hold" });
   });
 });

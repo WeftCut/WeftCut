@@ -18,6 +18,42 @@ import {
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
+// ---------------------------------------------------------------------------
+// Side slopes, in value per microsecond over the side's own segment. The four
+// helpers are the ONLY place a slope is turned into a coordinate: the solver's
+// Smooth rule below and the renderer's handle drag (keyframe/edits.ts
+// `setTangent` / `setContinuity`) both go through them, so a pair the renderer
+// made consistent is exactly the pair main's re-solve finds. Each returns
+// `null` when no finite answer exists — a handle pointing nowhere in time
+// (`out.x = 0`, `in.x = 1`), a segment with no span, or a flat segment
+// (`dv = 0`) for the inverse direction.
+// TWIN: the same four functions in `native/src/state/keyframe_edits.rs`.
+// ---------------------------------------------------------------------------
+
+/// Slope the LEAVING side gives its segment: `out.y·dvNext / (out.x·dtNext)`.
+export function outSlope(out: { x: number; y: number }, dtNext: number, dvNext: number): number | null {
+  if (out.x === 0 || dtNext <= 0) return null;
+  return (out.y / out.x) * (dvNext / dtNext);
+}
+
+/// Slope the ARRIVING side gives its segment: `(1 − in.y)·dvPrev / ((1 − in.x)·dtPrev)`.
+export function inSlope(in_: { x: number; y: number }, dtPrev: number, dvPrev: number): number | null {
+  if (in_.x === 1 || dtPrev <= 0) return null;
+  return ((1 - in_.y) / (1 - in_.x)) * (dvPrev / dtPrev);
+}
+
+/// The `in.y` that makes the arriving side's slope `m`, keeping `inX`.
+export function inYForSlope(inX: number, m: number, dtPrev: number, dvPrev: number): number | null {
+  if (dvPrev === 0 || dtPrev <= 0 || inX === 1) return null;
+  return 1 - (m * (1 - inX) * dtPrev) / dvPrev;
+}
+
+/// The `out.y` that makes the leaving side's slope `m`, keeping `outX`.
+export function outYForSlope(outX: number, m: number, dtNext: number, dvNext: number): number | null {
+  if (dvNext === 0 || dtNext <= 0 || outX === 0) return null;
+  return (m * outX * dtNext) / dvNext;
+}
+
 /// Monotone-clamped tangent (scalar per microsecond) at key `i` over the scalar
 /// projections `s` and times `t`: 0 at an endpoint, at a local extremum, or when
 /// a neighbour delta is 0 — Blender "Auto Clamped", so an Auto key never
@@ -102,10 +138,9 @@ export function solveAutoTangents<T>(
       const dvNext = s[i + 1]! - s[i]!;
       const dtPrev = t[i]! - t[i - 1]!;
       const dvPrev = s[i]! - s[i - 1]!;
-      if (k.out.x !== 0 && dvPrev !== 0 && dtPrev > 0 && k.in.x !== 1) {
-        const m = (k.out.y / k.out.x) * (dvNext / dtNext);
-        nextIn = { x: k.in.x, y: 1 - (m * (1 - k.in.x) * dtPrev) / dvPrev, mode: "Free" };
-      }
+      const m = outSlope(k.out, dtNext, dvNext);
+      const y = m === null ? null : inYForSlope(k.in.x, m, dtPrev, dvPrev);
+      if (y !== null) nextIn = { x: k.in.x, y, mode: "Free" };
     }
 
     if (!tangentEqExact(nextIn, k.in) || !tangentEqExact(nextOut, k.out)) {

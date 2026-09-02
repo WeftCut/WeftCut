@@ -12,4 +12,7 @@ export {
   setSegmentEasing,
   setSegmentCoeffs,
   setAuto,
+  setTangent,
+  setContinuity,
+  setExtrapolation,
 } from '../../renderer/keyframe/edits'

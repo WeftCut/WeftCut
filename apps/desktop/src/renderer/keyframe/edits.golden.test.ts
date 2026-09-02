@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { AnimTrack, Interpolation, Keyframe, Tangent } from "../ipc";
+import type { AnimTrack, Continuity, Extrapolate, Interpolation, Keyframe, Tangent } from "../ipc";
 import {
   upsertKeyframe,
   removeKeyframe,
   retimeKeyframe,
   setSegmentEasing,
   setAuto,
+  setTangent,
+  setContinuity,
+  setExtrapolation,
 } from "./edits";
 import { solveAutoTangents } from "../../shared/tangents";
 import { extrapolationEq, segmentEqExact } from "../../shared/keyframe";
@@ -39,6 +42,12 @@ function applyOp(track: Track, op: string, args: Record<string, unknown>): Track
       return setSegmentEasing(track, args.id as string, args.easing as Interpolation);
     case "set_auto":
       return setAuto(track, args.ids as string[]);
+    case "set_tangent":
+      return setTangent(track, args.id as string, args.side as "in" | "out", { x: args.x as number, y: args.y as number });
+    case "set_continuity":
+      return setContinuity(track, args.id as string, args.continuity as Continuity);
+    case "set_extrapolation":
+      return setExtrapolation(track, { before: args.before as Extrapolate | undefined, after: args.after as Extrapolate | undefined });
     case "solve":
       return solve(track);
     default:
