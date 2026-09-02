@@ -485,6 +485,20 @@ that reports `Available` or the exact missing piece. Engines that report
 engine-exact per-word timestamps (whisper.cpp, FunASR) carry an
 "exact word timing" badge on their row.
 
+**Human entries ride the same tools.** The renderer's *Auto-caption clip…*
+and *Voiceover…* dialogs do not have a second implementation: the main
+process serves `transcribe_clip`, `detect_silences` and `describe_clip` to
+the renderer through `callClipComputeTool` (`main/mcp/server.ts`) — the very
+function `handleCallTool` uses for the MCP call of the same name, slice
+resolution and engine injection included — so a person and an agent asking
+the same clip the same question get the same engine and the same slice by
+construction. `apply_subtitles` and `synthesize_speech` are renderer hybrid
+channels (`main/state/router.ts` `HYBRID_CHANNELS`) reaching the same
+`runHybrid` arms; either caller lands one commit, and the only difference is
+that the MCP path wraps the string result as a `ToolResult` text block.
+`analyze_clip` stays agent-only — the renderer's shot surfaces read the
+whole-source report instead ([features.md](features.md)).
+
 **Tool gating:** the `tool_table!` macro registers tools at compile
 time, and the catalog has no per-session filter today, so unconfigured
 speech tools are always listed and fail with a structured "no backend

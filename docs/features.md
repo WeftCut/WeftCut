@@ -933,6 +933,62 @@ lane; the badge asserts a count and no position, because drawing a child
 composition's contents on the parent would erase, visually, the boundary
 ADR 0052 and ADR 0053 pay for.
 
+## Auto-caption and voiceover
+
+Two speech operations the MCP prompts `/auto-caption` and `/voiceover`
+already script for an agent are reachable by hand, through the same tools
+([mcp.md](mcp.md) § Speech). Neither gets a review gate, and neither gets an
+aggregate "AI" menu: each capability hangs off the object it acts on, which
+is how every comparable NLE places them.
+
+**Auto-caption clip…** sits on a `VideoClip` or `Audio` layer's context menu
+(the two kinds whose media carries an audio stream — offering it over a
+Color layer would be a row that can only refuse), in the Edit menu, and in
+the palette. It is an `ACTION_DEFS` entry scoped to the timeline selection
+with no default key, so a user who captions every clip can bind one in
+Settings → Keyboard. The dialog has one optional field, the language hint
+(blank = detect). Confirming runs `transcribe_clip` on the primary selected
+layer's whole span, applies the returned `srt` as one caption-role track
+(`add_caption_track`, so one undo removes every cue), and reveals the Caption
+panel — a landed transcript is invisible until its editor is open. A greyed
+row says why: nothing selected, wrong kind, a re-timed clip (`speed != 1`,
+refused at the gesture before any audio is extracted), or a transcription
+already running (a second concurrent run would bill a second request). The
+transcript is edited in `CaptionsPanel`, per cue, which is strictly more than
+a review list could offer ([captions.md](captions.md)).
+
+**Voiceover…** is menu-only (Edit menu + palette): it acts on no clip, it
+needs a script, so it must be reachable with nothing selected and a
+rebindable key would bind to no object. The dialog carries the prompt's
+parameters — script, voice (tts-1's six), speed — plus one addition, *where
+it lands*: after everything else (the tool's own default, what an agent
+gets) or at the playhead (what a person usually means), each printed as the
+timecode it resolves to. The destination track is stated and then sent
+explicitly even when it equals the hybrid's own default, so the track shown
+is the track written. The 4096-character cap is enforced in the field with a
+live counter, before any request. `speed` is omitted at 1.0 rather than sent
+as `1`: the TTS cache keys an absent speed apart from an explicit one, and
+sending it would bill a fresh request for a script an agent's default-speed
+call already produced. A cost sentence sits above the button — this is the
+one per-use paid action in the editor, and the content-addressed cache is
+what makes a re-run of the same script free.
+
+Both dialogs keep the tool's own refusal inline ("no transcription backend
+available; configure one in Settings → Transcription", the payload cap, the
+missing key) and stay open, so what was typed survives a fix in Settings;
+each run is also two status-log rows under one `op_id`
+([status-log.md](status-log.md)). Log rows carry the script's length, never
+the script.
+
+`cut-silences`, the third authored speech prompt, has no entry: its apply
+step is a ripple delete this editor does not have, and a row that deletes
+equal-length gaps would sound like it did nothing.
+
+Code: `renderer/speech/` (eligibility, placement arithmetic, the two
+dialogs), `renderer/commands/speechCommands.ts`; the main-process bridge is
+`callClipComputeTool` in `main/mcp/server.ts` and the `clipCompute` route in
+`main/state/router.ts`.
+
 ## Global search palette
 
 `Mod+K` (also a menu item) opens a Spotlight-style overlay that searches,

@@ -35,7 +35,14 @@ chokepoint so there is exactly one parsing path and one mutation:
 - **Transcription.** `transcribe_clip` returns a normalized transcript
   envelope; its rendered `srt` field (timestamps already timeline-absolute)
   pipes into `apply_subtitles` to land the cues on a caption track at the
-  right offset.
+  right offset. A person reaches the same pair as **Auto-caption clip…** on a
+  `VideoClip` / `Audio` layer's context menu, in the Edit menu and in the
+  search palette: one dialog with one optional language field, then the
+  returned `srt` is applied and the Caption panel is revealed so the new track
+  is visible. There is no review step between the two — the result is a track
+  of editable `Text` layers, and `CaptionsPanel` already edits them per cue,
+  which is strictly more than a review list offers ([features.md](features.md)
+  § Auto-caption and voiceover).
 
 All three call `subtitles::parse(body, format)` → `Cue { start_us, end_us, text,
 style }`, then the atomic `add_caption_track` mutation. Format is sniffed
