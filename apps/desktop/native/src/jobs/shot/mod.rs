@@ -11,6 +11,11 @@
 //! `media://{id}/analysis` resource. The cache stores ONE whole-source report
 //! per (source, params); callers clip it to a layer window with [`clip_report`].
 //!
+//! Also owns the scan / reduce split: [`floor_opts`] is the single cached
+//! whole-source pass at [`FLOOR_SENSITIVITY`], [`reduce`] re-derives the shot
+//! list from it at any higher threshold with no I/O, and [`is_report_cached`] is
+//! the read-only probe for whether that pass has already run.
+//!
 //! ffmpeg's `scene` score is an internal detail — the public surface says
 //! "shot" / "cut".
 
@@ -267,6 +272,39 @@ fn pick_source(cache: &CacheLayout, media: &MediaItem) -> (std::path::PathBuf, &
     (media.path_abs.clone(), "orig")
 }
 
+/// The threshold the one cached whole-source scan runs at. It sits deliberately
+/// low so every candidate a user might raise the line to is already present:
+/// on handheld 1080p30 footage decoded at the 320 px stat width, 0.05 admits
+/// ≈1.4 candidates/s (mostly motion noise), 0.2 roughly a quarter of those and
+/// 0.4 about the real cuts, while a static screen recording never exceeds
+/// 0.009.
+///
+/// Lowering it is not a cost tradeoff. The ffmpeg `scene` filter runs during
+/// decode either way, so the scan takes the same time at any threshold — the
+/// value only decides how many metadata lines get parsed. What it does decide
+/// is REACH: [`reduce`] can re-derive any threshold at or above this line
+/// without I/O, and the score strip shows exactly the candidates above it;
+/// anything below needs a fresh whole-source scan.
+pub const FLOOR_SENSITIVITY: f32 = 0.05;
+
+/// The one whole-source pass the shot-review surface and the canonical cut-list
+/// producer read: [`FLOOR_SENSITIVITY`], timing only.
+///
+/// Stats and events stay OFF because each pass spawns ffmpeg for three frames
+/// per shot — at a low floor on motion-heavy footage that multiplies the scan
+/// cost by the candidate count and makes it depend on the threshold again, the
+/// exact property this split exists to remove. So a reduced shot carries stats
+/// only where the scanned report already measured an identical span (see
+/// [`reduce`]).
+///
+/// `min_shot_us` shapes only the report's OWN `shots` — the raw `cut_scores`
+/// are never min-spacing-filtered and [`reduce`] re-derives the shot list at
+/// whatever spacing a caller asks for — so it is a fixed constant here, not a
+/// knob.
+pub fn floor_opts() -> ShotOpts {
+    ShotOpts { sensitivity: FLOOR_SENSITIVITY, min_shot_us: 500_000, stats: false, events: false }
+}
+
 /// The WHOLE-source shot report for `media` under `opts`, from the VSHOT cache —
 /// computed and written through on a miss. This is the single compute-on-miss
 /// path shared by the `analyze_clip` tool and the `media://{id}/analysis`
@@ -309,6 +347,19 @@ pub async fn cached_source_report(
     Ok(report)
 }
 
+/// Whether [`cached_source_report`] would HIT for `(media, opts)` — the sidecar
+/// at the same source-keyed path exists and is non-empty. A probe, not a
+/// get-or-compute: it resolves the tier through [`pick_source`] (the tier is
+/// part of the key) but reads no file contents, computes nothing, and
+/// deliberately skips the `touch_if_stale` mtime bump `cached_source_report`
+/// does — a caller asking "has this been analyzed?" must not look like a use
+/// that keeps the entry alive in the disk LRU, and must not be able to start a
+/// whole-source decode by asking.
+pub fn is_report_cached(cache: &CacheLayout, media: &MediaItem, opts: &ShotOpts) -> bool {
+    let (_video, tier) = pick_source(cache, media);
+    crate::cache::cached_ok(&cache.shot(&cache_key(&media.file_hash_blake3, tier, opts)))
+}
+
 /// Clip a WHOLE-source report to the layer window `[in_us, out_us]` (mirrors how
 /// `detect_silences` clips its regions to the same window). Each whole-source
 /// shot is intersected with the window: shots with no overlap are dropped,
@@ -348,6 +399,77 @@ pub fn clip_report(report: &ShotReport, in_us: i64, out_us: i64) -> ShotReport {
         .iter()
         .filter(|c| c.t_us > in_us && c.t_us < out_us)
         .cloned()
+        .collect();
+    ShotReport { shots, cut_scores }
+}
+
+/// Re-derive a shot list from an already-scanned report at `sensitivity` /
+/// `min_shot_us`, viewed through the window `[in_us, out_us]`. Pure and total:
+/// no I/O, no frame sampling, no panic on any input.
+///
+/// This is the cheap half of the scan / reduce split. The floor scan
+/// ([`floor_opts`]) emits every candidate above [`FLOOR_SENSITIVITY`] once, and
+/// every threshold at or above that line is then a filter over `cut_scores`
+/// instead of a fresh whole-source decode. `score > sensitivity` is strict to
+/// match ffmpeg, which emits a candidate only when `scene` EXCEEDS the filter
+/// threshold. Asking for a sensitivity below the scanned floor cannot invent
+/// candidates that were never emitted — the result is simply the scan's own set.
+///
+/// Stats and flags are copied only onto a span the source report already held
+/// EXACTLY. A merged or window-truncated span is a different shot, and its
+/// brightness / motion / sharpness / flags are unknown rather than zero or a
+/// neighbour's. That is why the reduce assembles shots itself instead of routing
+/// through [`clip_report`], which carries stats through truncation by design.
+///
+/// Parameters are taken as given — an inverted window yields nothing (see
+/// [`build_shots`]) and nothing is clamped. Range validation belongs at the napi
+/// boundary, next to `parse_shot_opts`.
+pub fn reduce(
+    report: &ShotReport,
+    sensitivity: f32,
+    min_shot_us: i64,
+    in_us: i64,
+    out_us: i64,
+) -> ShotReport {
+    let mut cuts: Vec<Cut> = report
+        .cut_scores
+        .iter()
+        .filter(|c| c.score > sensitivity)
+        .cloned()
+        .collect();
+    // Sort defensively, like `analyze` — build_shots and the min-spacing filter
+    // assume ascending cut times.
+    cuts.sort_by_key(|c| c.t_us);
+
+    let cut_times: Vec<i64> = cuts.iter().map(|c| c.t_us).collect();
+    let spans = build_shots(&cut_times, in_us, out_us, min_shot_us);
+
+    let mut shots = Vec::with_capacity(spans.len());
+    for (index, (t_start_us, t_end_us)) in spans.into_iter().enumerate() {
+        let same = report
+            .shots
+            .iter()
+            .find(|s| s.t_start_us == t_start_us && s.t_end_us == t_end_us);
+        shots.push(Shot {
+            index,
+            t_start_us,
+            t_end_us,
+            keyframe_t_us: match same {
+                Some(s) => s.keyframe_t_us,
+                None => t_start_us + (t_end_us - t_start_us) / 2,
+            },
+            brightness: same.and_then(|s| s.brightness),
+            motion: same.and_then(|s| s.motion),
+            sharpness: same.and_then(|s| s.sharpness),
+            flags: same.map(|s| s.flags.clone()).unwrap_or_default(),
+        });
+    }
+
+    // The surviving raw signal inside the window — the same strict-interior
+    // contract `analyze` and `clip_report` use.
+    let cut_scores = cuts
+        .into_iter()
+        .filter(|c| c.t_us > in_us && c.t_us < out_us)
         .collect();
     ShotReport { shots, cut_scores }
 }
@@ -888,5 +1010,206 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("no known duration"), "got: {err:#}");
+    }
+
+    // ── Floor scan + reduce: one decode, any threshold above the floor ───────
+
+    /// Five candidates over a 12 s source whose scores straddle several
+    /// thresholds — the shape a floor scan produces.
+    fn floor_cuts() -> Vec<Cut> {
+        vec![
+            Cut { t_us: 1_000_000, score: 0.08 },
+            Cut { t_us: 3_000_000, score: 0.90 },
+            Cut { t_us: 5_000_000, score: 0.25 },
+            Cut { t_us: 8_000_000, score: 0.55 },
+            Cut { t_us: 10_000_000, score: 0.12 },
+        ]
+    }
+
+    /// Assemble a whole-source report exactly the way [`analyze`] does — every
+    /// candidate time through `build_shots`, midpoint keyframes, strictly
+    /// interior `cut_scores` — so a reduce at the same params must reproduce it.
+    /// Stats are filled per shot so the carry-over rule is observable.
+    fn scanned_report(cuts: Vec<Cut>, out_us: i64, min_shot_us: i64) -> ShotReport {
+        let times: Vec<i64> = cuts.iter().map(|c| c.t_us).collect();
+        let shots = build_shots(&times, 0, out_us, min_shot_us)
+            .into_iter()
+            .enumerate()
+            .map(|(index, (t_start_us, t_end_us))| Shot {
+                index,
+                t_start_us,
+                t_end_us,
+                keyframe_t_us: t_start_us + (t_end_us - t_start_us) / 2,
+                brightness: Some(index as f64 / 10.0),
+                motion: Some(0.2),
+                sharpness: Some(4.0),
+                flags: if index == 0 { vec![ShotFlag::Black] } else { vec![] },
+            })
+            .collect();
+        let cut_scores = cuts.into_iter().filter(|c| c.t_us > 0 && c.t_us < out_us).collect();
+        ShotReport { shots, cut_scores }
+    }
+
+    /// A shot list's interior boundaries — every start except the window edge
+    /// the first shot opens on.
+    fn boundaries(shots: &[Shot]) -> Vec<i64> {
+        shots.iter().skip(1).map(|s| s.t_start_us).collect()
+    }
+
+    /// Count every file under `root`, recursively, so a probe can be asserted to
+    /// leave the cache tree alone.
+    fn file_count(root: &Path) -> usize {
+        let Ok(entries) = std::fs::read_dir(root) else { return 0 };
+        let mut n = 0;
+        for e in entries.flatten() {
+            if e.path().is_dir() {
+                n += file_count(&e.path());
+            } else {
+                n += 1;
+            }
+        }
+        n
+    }
+
+    #[test]
+    fn floor_opts_scans_at_the_floor_and_measures_nothing() {
+        let o = floor_opts();
+        assert_eq!(o.sensitivity, FLOOR_SENSITIVITY);
+        assert!(!o.stats && !o.events, "the floor scan is timing-only");
+        assert!(o.min_shot_us > 0);
+    }
+
+    #[test]
+    fn reduce_at_the_scanned_params_reproduces_the_report() {
+        let report = scanned_report(floor_cuts(), 12_000_000, 500_000);
+        let back = reduce(&report, FLOOR_SENSITIVITY, 500_000, 0, 12_000_000);
+        assert_eq!(
+            serde_json::to_string(&back).unwrap(),
+            serde_json::to_string(&report).unwrap()
+        );
+    }
+
+    #[test]
+    fn reduce_narrows_upward_and_cannot_invent_candidates_downward() {
+        let report = scanned_report(floor_cuts(), 12_000_000, 500_000);
+        let scanned = boundaries(&report.shots);
+
+        // 0.3 admits only the 0.90 and 0.55 candidates → a strict subset.
+        let tight = reduce(&report, 0.3, 500_000, 0, 12_000_000);
+        assert_eq!(boundaries(&tight.shots), vec![3_000_000, 8_000_000]);
+        assert!(boundaries(&tight.shots).iter().all(|t| scanned.contains(t)));
+        assert!(boundaries(&tight.shots).len() < scanned.len());
+
+        // Below the scanned floor there is nothing new to admit.
+        let loose = reduce(&report, 0.0, 500_000, 0, 12_000_000);
+        assert_eq!(boundaries(&loose.shots), scanned);
+    }
+
+    #[test]
+    fn reduce_returns_the_same_report_for_equal_arguments() {
+        let report = scanned_report(floor_cuts(), 12_000_000, 500_000);
+        let a = reduce(&report, 0.2, 700_000, 500_000, 11_000_000);
+        let b = reduce(&report, 0.2, 700_000, 500_000, 11_000_000);
+        assert_eq!(
+            serde_json::to_string(&a).unwrap(),
+            serde_json::to_string(&b).unwrap()
+        );
+    }
+
+    #[test]
+    fn reduce_carries_stats_only_onto_an_identical_span() {
+        let report = scanned_report(floor_cuts(), 12_000_000, 500_000);
+        let r = reduce(&report, 0.2, 500_000, 0, 12_000_000);
+        assert_eq!(
+            r.shots.iter().map(|s| (s.index, s.t_start_us, s.t_end_us)).collect::<Vec<_>>(),
+            vec![
+                (0, 0, 3_000_000),
+                (1, 3_000_000, 5_000_000),
+                (2, 5_000_000, 8_000_000),
+                (3, 8_000_000, 12_000_000),
+            ]
+        );
+
+        // The first row merges the scan's [0,1s] + [1s,3s]: a different shot, so
+        // its stats are unknown — and the predecessor's Black flag does not leak
+        // forward. Its keyframe is the new span's midpoint.
+        assert_eq!(r.shots[0].brightness, None);
+        assert_eq!(r.shots[0].motion, None);
+        assert_eq!(r.shots[0].sharpness, None);
+        assert!(r.shots[0].flags.is_empty());
+        assert_eq!(r.shots[0].keyframe_t_us, 1_500_000);
+
+        // [3s,5s] and [5s,8s] survive untouched → the scan's numbers carry over.
+        assert_eq!(r.shots[1].brightness, report.shots[2].brightness);
+        assert_eq!(r.shots[1].keyframe_t_us, report.shots[2].keyframe_t_us);
+        assert_eq!(r.shots[2].sharpness, report.shots[3].sharpness);
+
+        // The trailing merge is reshaped too.
+        assert_eq!(r.shots[3].brightness, None);
+    }
+
+    #[test]
+    fn reduce_clips_a_narrower_window_and_keeps_interior_cuts_only() {
+        let report = scanned_report(floor_cuts(), 12_000_000, 500_000);
+        let r = reduce(&report, FLOOR_SENSITIVITY, 500_000, 3_000_000, 9_000_000);
+        assert_eq!(
+            r.shots.iter().map(|s| (s.index, s.t_start_us, s.t_end_us)).collect::<Vec<_>>(),
+            vec![
+                (0, 3_000_000, 5_000_000),
+                (1, 5_000_000, 8_000_000),
+                (2, 8_000_000, 9_000_000),
+            ]
+        );
+        // Strictly interior: the 3 s candidate sits ON the window start and the
+        // 10 s one is outside it.
+        assert_eq!(
+            r.cut_scores.iter().map(|c| c.t_us).collect::<Vec<_>>(),
+            vec![5_000_000, 8_000_000]
+        );
+        // The window edge reshapes the last span → its stats are unknown, while
+        // the untouched first span keeps the scan's.
+        assert_eq!(r.shots[2].brightness, None);
+        assert_eq!(r.shots[0].brightness, report.shots[2].brightness);
+    }
+
+    #[test]
+    fn reduce_applies_min_shot_us_independently_of_the_score_filter() {
+        let report = scanned_report(floor_cuts(), 12_000_000, 500_000);
+        let fine = reduce(&report, FLOOR_SENSITIVITY, 500_000, 0, 12_000_000);
+        let coarse = reduce(&report, FLOOR_SENSITIVITY, 4_000_000, 0, 12_000_000);
+        // The same candidates pass the score line …
+        assert_eq!(
+            fine.cut_scores.iter().map(|c| c.t_us).collect::<Vec<_>>(),
+            coarse.cut_scores.iter().map(|c| c.t_us).collect::<Vec<_>>()
+        );
+        // … but a 4 s floor on shot length merges spans away.
+        assert!(coarse.shots.len() < fine.shots.len());
+        assert_eq!(boundaries(&coarse.shots), vec![5_000_000]);
+    }
+
+    /// The probe answers from the floor-keyed sidecar's existence alone: false
+    /// before a scan, true after one, and it writes nothing either way.
+    #[tokio::test]
+    async fn is_report_cached_follows_the_floor_sidecar_without_writing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cache = CacheLayout::new(tmp.path().to_path_buf());
+        cache.ensure_dirs().unwrap();
+        let media = test_media("cafef00d", Some(6_000_000));
+
+        let empty = file_count(tmp.path());
+        assert!(!is_report_cached(&cache, &media, &floor_opts()));
+        assert_eq!(file_count(tmp.path()), empty, "a probe writes nothing");
+
+        // No proxy exists in the temp cache → pick_source takes the original,
+        // tier "orig"; seed the sidecar at exactly that key.
+        let path = cache.shot(&cache_key(&media.file_hash_blake3, "orig", &floor_opts()));
+        write_report_atomic(&path, &sample_report()).await.unwrap();
+        let seeded = file_count(tmp.path());
+        assert!(is_report_cached(&cache, &media, &floor_opts()));
+
+        // The probe is keyed, so the analyze_clip default entry is a separate
+        // question — the floor scan neither answers for it nor disturbs it.
+        assert!(!is_report_cached(&cache, &media, &opts(0.4, 500_000, true, true)));
+        assert_eq!(file_count(tmp.path()), seeded, "a probe writes nothing");
     }
 }

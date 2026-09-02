@@ -383,6 +383,90 @@ impl Backend {
         serde_json::to_string(&report).map_err(|e| Error::from_reason(e.to_string()))
     }
 
+    /// The threshold the floor scan runs at (`jobs::shot::FLOOR_SENSITIVITY`).
+    /// Exposed so the threshold control's lower bound comes from the scan that
+    /// produced the candidates instead of a TS-side literal, which would be a
+    /// second source of truth free to drift from the cached reports.
+    #[napi]
+    #[cfg(feature = "jobs")]
+    pub fn shot_floor_sensitivity(&self) -> f64 {
+        crate::jobs::shot::FLOOR_SENSITIVITY as f64
+    }
+
+    /// The WHOLE-source floor scan for `media`, from the VSHOT cache
+    /// (`jobs::shot::cached_source_report` at `jobs::shot::floor_opts` —
+    /// computed + written through on a miss). Returns `ShotReport` JSON
+    /// `{ shots, cut_scores }` in SOURCE-ABSOLUTE time. The shot-review Panel's
+    /// Analyze action and the canonical cut-list producer both call this once per
+    /// source, then narrow the result with `reduce_shot_report`; one decode
+    /// serves every threshold at or above the floor. NO actor write.
+    #[napi]
+    #[cfg(feature = "jobs")]
+    pub async fn analyze_shots_floor(&self, media_json: String) -> napi::Result<String> {
+        let media: crate::state::MediaItem = serde_json::from_str(&media_json)
+            .map_err(|e| Error::from_reason(format!("parse media: {e}")))?;
+        let report = crate::jobs::shot::cached_source_report(
+            &self.cache,
+            &media,
+            &crate::jobs::shot::floor_opts(),
+        )
+        .await
+        .map_err(|e| Error::from_reason(format!("shot analysis: {e:#}")))?;
+        serde_json::to_string(&report).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    /// Whether `media`'s floor scan is already on disk
+    /// (`jobs::shot::is_report_cached`). A probe, never a scan — the Panel calls
+    /// it on every selection change to decide between rendering rows and offering
+    /// an Analyze action, and a whole-source decode must not be startable by
+    /// selecting a clip.
+    #[napi]
+    #[cfg(feature = "jobs")]
+    pub async fn shot_floor_report_cached(&self, media_json: String) -> napi::Result<bool> {
+        let media: crate::state::MediaItem = serde_json::from_str(&media_json)
+            .map_err(|e| Error::from_reason(format!("parse media: {e}")))?;
+        Ok(crate::jobs::shot::is_report_cached(
+            &self.cache,
+            &media,
+            &crate::jobs::shot::floor_opts(),
+        ))
+    }
+
+    /// Re-derive a shot list from an already-scanned `ShotReport` JSON at
+    /// `sensitivity` / `min_shot_us`, viewed through `[in_us, out_us]`
+    /// (`jobs::shot::reduce`). The cheap half of the floor-scan / reduce split,
+    /// and the single producer of the canonical cut list both apply verbs
+    /// consume — which is what keeps markers on exactly the frames splits land
+    /// on. Synchronous because it is pure: no I/O, no frame sampling. Range
+    /// validation mirrors `parse_shot_opts`, so the same bad threshold is
+    /// rejected the same way on both paths.
+    #[napi]
+    #[cfg(feature = "jobs")]
+    pub fn reduce_shot_report(
+        &self,
+        report_json: String,
+        sensitivity: f64,
+        min_shot_us: i64,
+        in_us: i64,
+        out_us: i64,
+    ) -> napi::Result<String> {
+        if !(0.0..=1.0).contains(&sensitivity) {
+            return Err(Error::from_reason(format!(
+                "sensitivity {sensitivity} must be in [0.0, 1.0]"
+            )));
+        }
+        if min_shot_us <= 0 {
+            return Err(Error::from_reason(format!(
+                "min_shot_us {min_shot_us} must be positive"
+            )));
+        }
+        let report: crate::jobs::shot::ShotReport = serde_json::from_str(&report_json)
+            .map_err(|e| Error::from_reason(format!("parse shot report: {e}")))?;
+        let reduced =
+            crate::jobs::shot::reduce(&report, sensitivity as f32, min_shot_us, in_us, out_us);
+        serde_json::to_string(&reduced).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
     /// Pure parse half of the `apply_subtitles` hybrid. Validates
     /// the body, sniffs/applies the format, runs the parser, and returns a JSON
     /// string `{ cues: Cue[], simplified: boolean }`. NO actor write — the TS
@@ -816,6 +900,43 @@ mod tests {
         assert!(parse_shot_opts(r#"{"min_shot_us":0}"#).is_err());
         assert!(parse_shot_opts(r#"{"passes":["bogus"]}"#).is_err());
         assert!(parse_shot_opts("not json").is_err());
+    }
+
+    /// The reduce boundary reports the floor the scan runs at, re-derives a shot
+    /// list from report JSON alone, and rejects the same out-of-range params
+    /// `parse_shot_opts` does.
+    #[cfg(feature = "jobs")]
+    #[test]
+    fn reduce_shot_report_narrows_a_report_and_validates_params() {
+        let sink = std::sync::Arc::new(crate::events::VecEventSink::new());
+        let b = Backend::new_for_test(sink as std::sync::Arc<dyn crate::events::EventSink>);
+        assert_eq!(
+            b.shot_floor_sensitivity(),
+            crate::jobs::shot::FLOOR_SENSITIVITY as f64
+        );
+
+        // Two candidates straddling 0.5 → one boundary, so two shots in [0,6s].
+        let report =
+            r#"{"shots":[],"cut_scores":[{"t_us":2000000,"score":0.9},{"t_us":4000000,"score":0.1}]}"#;
+        let out = b
+            .reduce_shot_report(report.to_string(), 0.5, 500_000, 0, 6_000_000)
+            .unwrap();
+        let reduced: crate::jobs::shot::ShotReport = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            reduced.shots.iter().map(|s| (s.t_start_us, s.t_end_us)).collect::<Vec<_>>(),
+            vec![(0, 2_000_000), (2_000_000, 6_000_000)]
+        );
+        assert_eq!(reduced.cut_scores.len(), 1);
+
+        assert!(b
+            .reduce_shot_report(report.to_string(), 1.5, 500_000, 0, 6_000_000)
+            .is_err());
+        assert!(b
+            .reduce_shot_report(report.to_string(), 0.5, 0, 0, 6_000_000)
+            .is_err());
+        assert!(b
+            .reduce_shot_report("not json".to_string(), 0.5, 500_000, 0, 6_000_000)
+            .is_err());
     }
 
     #[cfg(feature = "jobs")]
