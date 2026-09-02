@@ -376,6 +376,17 @@ export async function splitByShotCuts(spec: ShotCutSpec, deps: HybridDeps): Prom
   // untouched layer id.
   let discard: number[] | null = null
   if (spec.discard_segments !== undefined && spec.discard_segments !== null) {
+    // A reviewed list arrives validated (ascending, inside the window), so the
+    // only way the canonical list is SHORTER is two boundaries snapping onto one
+    // composition frame and `cutsToTimeline` keeping one. The caller numbered
+    // its rows over the list it sent; past the collapse every index would name
+    // a neighbour of the shot the reviewer unchecked. Refused rather than
+    // re-mapped, because the reviewer has not seen the merged list.
+    if (Array.isArray(spec.cuts_src_us) && cuts.length < spec.cuts_src_us.length) {
+      const lost = spec.cuts_src_us.length - cuts.length
+      refuseArg('discard_segments',
+        `${lost} of the ${spec.cuts_src_us.length} reviewed boundaries fall on the same frame as a neighbour at this composition's rate, so the segments no longer number as the review shows them — raise the minimum shot length above one frame and review again`)
+    }
     const parsed = parseDiscardSegments(spec.discard_segments, cuts.length + 1)
     if (!parsed.ok) refuseArg('discard_segments', parsed.detail)
     discard = parsed.value

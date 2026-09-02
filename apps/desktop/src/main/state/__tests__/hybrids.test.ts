@@ -910,6 +910,25 @@ describe('runHybrid: apply_shot_cuts', () => {
     expect(JSON.stringify(actor.snapshot())).toBe(before)
   })
 
+  it('refuses a discard whose reviewed boundaries collapse onto one frame, and writes nothing', async () => {
+    // 10 ms apart at 30 fps: both snap to frame 60 and `cutsToTimeline` keeps
+    // one, so the review's row 2 would name what is now row 1's neighbour. The
+    // same list as a plain split is fine — it simply cuts once there.
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    const before = JSON.stringify(actor.snapshot())
+    const err = await runHybrid('apply_shot_cuts',
+      { layer_id: layerId, mode: 'discard', cuts_src_us: [2_000_000, 2_010_000, 4_000_000], discard_segments: [2] }, deps)
+      .then(() => null, (e: Error) => JSON.parse(e.message) as { error: string; field: string; detail: string })
+    expect(err?.error).toBe('InvalidArgument')
+    expect(err?.field).toBe('discard_segments')
+    expect(err?.detail).toMatch(/1 of the 3 reviewed boundaries fall on the same frame/)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+    const split = await runHybrid('apply_shot_cuts',
+      { layer_id: layerId, mode: 'split', cuts_src_us: [2_000_000, 2_010_000, 4_000_000] }, deps) as { layer_ids: string[] }
+    expect(split.layer_ids).toHaveLength(3)
+  })
+
   it('keeps the empty-list no-op when no discard set comes with it', async () => {
     const { actor, layerId } = withVideoLayer(6_000_000)
     const deps = makeDeps(actor)
