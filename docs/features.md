@@ -1006,13 +1006,36 @@ returns to its empty state; after a mark the review stands. As with the
 agent's `drop_short_us`, a discarded take's link-paired audio is left in
 place — delete never fans out across a link here.
 
+**What is in each shot.** *Describe content…* — on a `VideoClip`'s context
+menu beside *Review shots…*, in the Edit menu and the palette — runs
+`describe_clip` over the clip with the tool's own two parameters (frames
+sampled per second, default 1.0; focus, *general* or *shot type and camera*)
+and lands the result as a column on the shot rows: each row shows the model's
+prose for the stretch of source it covers, tags after it, and a segment that
+straddles a detected boundary appears on both rows — the model and the
+detector disagreeing about where the content changes is exactly the
+correlation the column is for. Shots with no description read *Not described*
+at the same row height; that is the ordinary state, not a failure. The
+dialog says up front that this is a local model run of around twenty seconds,
+and its run is Started → Ok/Err under one `op_id`, the Ok row naming the
+engine and model that answered. The one failure with a remedy inside the app —
+no video-understanding engine configured — grows a button to Settings → Video
+understanding; every other refusal is the tool's own sentence. Selecting a
+clip never describes it: the rows read the cached view through
+`media://{id}/description`, which serves the default sampling and focus, so a
+run at other settings is readable for the session and the dialog says so.
+Descriptions are read-only.
+
 Code: `renderer/shots/` (`shotsStore.ts` owns the subject, the reduce, the
 review decisions and the verbs; `shotRows.ts` projects spans into rows;
 `ScoreStrip.tsx`; `ShotsPanel.tsx`), `styles/shots.css`; the reduce and the
 floor scan are `native/src/jobs/shot/`, read through `analyzeShotsFloor` /
 `reduceShotReport`; the verbs are the `apply_shot_cuts` hybrid in
 `main/state/hybrids.ts` over `split_layer_multi` (with `discard_segments`) and
-`add_markers`.
+`add_markers`. Descriptions: `renderer/describe/` (dialog, eligibility, the
+per-source store and the time-intersection join), `commands/describeCommands.ts`,
+and `readMediaDescription` in `main/mcp/server.ts` behind the
+`get_media_description` channel.
 
 ## Auto-caption and voiceover
 
