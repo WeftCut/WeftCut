@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
@@ -78,6 +79,54 @@ function fakeGenerator(marker, generated) {
       writeFileSync(path.join(outputDir, file), marker)
     }
   }
+}
+
+/// The threshold the editor's shot detector scans the floor at. Candidates are
+/// read at the floor because that is the widest net: anything the fixture is
+/// expected NOT to yield shows up here or nowhere.
+const SCENE_FLOOR = 0.05
+/// One frame of the shot fixture (30 fps). Candidate times are held to frame
+/// granularity: a metric that moved would displace a candidate by whole frames,
+/// while the `pts_time` ffmpeg prints is rounded.
+const SHOT_FRAME_US = 1_000_000 / 30
+
+/// Every other test here injects `run` and encodes nothing, so this is the one
+/// place the suite needs a real ffmpeg. Without it the fixture cannot be
+/// produced either, so there is nothing to measure rather than something
+/// unmeasured.
+function ffmpegOnPath() {
+  const probe = spawnSync('ffmpeg', ['-hide_banner', '-version'], { encoding: 'utf8' })
+
+  return !probe.error && probe.status === 0
+}
+
+/// The scene-cut candidates ffmpeg finds in `mediaPath`, read with the same
+/// filter chain the editor's detector runs. Returned in stream order.
+function sceneCandidates(mediaPath) {
+  const probe = spawnSync(
+    'ffmpeg',
+    [
+      '-hide_banner', '-i', mediaPath,
+      '-vf', `select='gt(scene,${SCENE_FLOOR})',metadata=print`,
+      '-an', '-f', 'null', '-',
+    ],
+    { encoding: 'utf8' },
+  )
+  assert.equal(probe.error, undefined)
+  assert.equal(probe.status, 0, `ffmpeg failed:\n${probe.stderr}`)
+
+  // `metadata=print` writes a frame line then a score line per candidate, both
+  // to stderr and interleaved with ffmpeg's own banner and progress output — so
+  // each is matched on its own and the score attaches to the frame before it.
+  const candidates = []
+  for (const line of probe.stderr.split(/\r?\n/)) {
+    const time = /\bpts_time:(\d+(?:\.\d+)?)/.exec(line)
+    if (time) candidates.push({ timeUs: Math.round(Number(time[1]) * 1_000_000) })
+    const score = /\blavfi\.scene_score=(\d+(?:\.\d+)?)/.exec(line)
+    if (score) candidates.at(-1).score = Number(score[1])
+  }
+
+  return candidates
 }
 
 async function withCapturedLogs(run) {
@@ -306,7 +355,7 @@ test('a moved recipe deletes and regenerates only its own entry', async () => {
     assert.ok(skipped.includes('[fixtures] skip (recipe matches): test_1080p_60fps.mp4'))
 
     const manifest = JSON.parse(readFileSync(path.join(outputDir, 'manifest.json'), 'utf8'))
-    assert.equal(manifest.version, 1)
+    assert.equal(manifest.version, 2)
     assert.equal(manifest.entries['test_1080p_30fps.mp4'].hash, recipeOf(after).hash)
   } finally {
     rmSync(parent, { recursive: true, force: true })
@@ -421,6 +470,49 @@ test('a file no entry claims is reported and left alone', async () => {
     )
     assert.ok(existsSync(path.join(outputDir, 'stray file.mp4')))
     assert.ok(existsSync(path.join(outputDir, '.gitkeep')))
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('the shot fixture yields exactly the cuts and scores its manifest records', async (t) => {
+  if (!ffmpegOnPath()) {
+    t.skip('no ffmpeg on PATH, so the fixture cannot be produced either')
+    return
+  }
+  const parent = mkdtempSync(path.join(tmpdir(), 'weftcut fixture shot '))
+  const outputDir = path.join(parent, 'media with spaces')
+  const entry = { shotCuts: true }
+  const name = outputName(entry)
+
+  try {
+    // Real encode, then re-measure: the scene metric belongs to ffmpeg, so only
+    // ffmpeg can say whether a release has moved it, and that has to redden the
+    // fixture suite rather than a spec that consumes the fixture. Cheap enough
+    // to earn its place here — three flat colours at 320x180.
+    await withCapturedLogs(() => ensureFixtures(outputDir, { matrix: [entry] }))
+
+    const manifest = JSON.parse(readFileSync(path.join(outputDir, 'manifest.json'), 'utf8'))
+    const expected = manifest.entries[name].sceneCuts
+    const measured = sceneCandidates(path.join(outputDir, name))
+
+    assert.ok(expected?.length > 0, `${name} records no expected cuts`)
+    assert.equal(
+      measured.length,
+      expected.length,
+      `expected ${expected.length} candidates, measured ${JSON.stringify(measured)}`,
+    )
+    for (const [index, cut] of expected.entries()) {
+      assert.ok(
+        Math.abs(measured[index].timeUs - cut.timeUs) < SHOT_FRAME_US,
+        `cut ${index}: recorded ${cut.timeUs}us, measured ${measured[index].timeUs}us`,
+      )
+      assert.equal(
+        measured[index].score.toFixed(3),
+        cut.score.toFixed(3),
+        `cut ${index} at ${cut.timeUs}us: score`,
+      )
+    }
   } finally {
     rmSync(parent, { recursive: true, force: true })
   }

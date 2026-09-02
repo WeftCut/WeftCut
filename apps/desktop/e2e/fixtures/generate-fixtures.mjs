@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:f
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { generateFixture, outputName, recipeOf, writeFileAtomic } from "./generate.mjs";
+import { SHOT_CUTS, generateFixture, outputName, recipeOf, writeFileAtomic } from "./generate.mjs";
 
 export { outputName } from "./generate.mjs";
 
@@ -15,7 +15,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MANIFEST_NAME = "manifest.json";
 /// Bump when the manifest's own shape changes: an unreadable version means
 /// nothing on disk is accounted for, so the whole matrix is regenerated.
-const MANIFEST_VERSION = 1;
+const MANIFEST_VERSION = 2;
 /// Committed to keep the gitignored media directory in the tree, so it is never
 /// an unclaimed file.
 const KEEP_FILE = ".gitkeep";
@@ -70,6 +70,10 @@ export const MATRIX = [
   // HW conformance gates (preview-hw-conformance.spec.ts: NVDEC/VAAPI/d3d11va/
   // VideoToolbox).
   { h264Interframe: true },
+  // three flat 2s colour segments, hard-cut (320x180, 6s) — the only fixture a
+  // scene-score shot detector can find cuts in. Its two candidates and their
+  // scores ride in the manifest; see `SHOT_CUTS` in generate.mjs.
+  { shotCuts: true },
   // still-image chart set (png/jpg/webp/bmp/gif/tiff + manifest, one flag) —
   // media-import.spec.ts. The generator writes the whole set in one run, and
   // the manifest claims all seven, so losing any one of them regenerates it.
@@ -112,6 +116,14 @@ function readManifest(manifestPath) {
   }
 }
 
+/// What an entry's media is expected to measure, beyond existing. Recorded
+/// alongside the recipe hash so a consumer reads its expectations from the
+/// manifest next to the media rather than restating them, and so the fixture
+/// suite is where a shifted measurement is caught. Only the shot entry has any.
+function measurementsOf(entry) {
+  return entry.shotCuts ? { sceneCuts: SHOT_CUTS } : {};
+}
+
 /// Bring `mediaDir` up to date with the recipes and record what it now holds.
 /// Existence is not evidence — an edited recipe leaves the old file in place
 /// under its old name, and an entry that writes seven files (the imageset) still
@@ -133,11 +145,12 @@ export async function ensureFixtures(mediaDir, {
       const name = outputName(entry);
       const { hash, files } = recipeOf(entry);
       const previous = recorded[name];
+      const measurements = measurementsOf(entry);
       const missing = files.filter((file) => !existsSync(path.join(mediaDir, file)));
 
       if (previous?.hash === hash && missing.length === 0) {
         console.log(`[fixtures] skip (recipe matches): ${name}`);
-        entries[name] = { hash, files };
+        entries[name] = { hash, files, ...measurements };
         continue;
       }
 
@@ -154,7 +167,7 @@ export async function ensureFixtures(mediaDir, {
       if (absent.length > 0) {
         throw new Error(`generate.mjs ran but did not produce ${absent.join(", ")} in ${mediaDir}`);
       }
-      entries[name] = { hash, files };
+      entries[name] = { hash, files, ...measurements };
     }
   } finally {
     // Recorded even when an entry throws, so a failure halfway through a cold

@@ -292,6 +292,16 @@ jobs:
       - name: Generate e2e fixtures
         run: node e2e/fixtures/generate-fixtures.mjs
 
+      # The fixture suite's one real encode: the shot fixture is re-measured with
+      # the editor's own scene filter and held to the cut times and scores its
+      # manifest records. It runs HERE and not only in `checks` because this leg
+      # has a real ffmpeg on PATH (the `checks` job stages LGPL DLLs only, so the
+      # test skips there) and because it runs on all three OSes — which is the
+      # only way the recipe's cross-OS determinism is measured rather than
+      # argued. The other tests in the file inject their ffmpeg and cost nothing.
+      - name: Shot fixture measures as its manifest records
+        run: node --test e2e/fixtures/generate-fixtures.test.mjs
+
       # `cache-hit` is 'true' only on an exact key match, so this one condition
       # covers both a total miss and a restore-keys partial hit — which is what
       # re-publishes the set under the new key when a recipe is edited.
@@ -568,7 +578,9 @@ jobs:
       # apps/desktop/scripts/ and e2e/ and are a different runner, so nothing
       # else picks them up. They gate pure argv/env planning (E2E gate-flag
       # splitting, preflight wiring, fixture recipe identity): fast, no build
-      # artifacts, OS-independent.
+      # artifacts, OS-independent. The one exception — the shot fixture's real
+      # encode-and-measure — skips visibly here (no `ffmpeg` on this job's PATH)
+      # and is run for real by every e2e leg after its fixture step.
       - name: Build-script tests (node:test)
         run: npm run test:scripts
 

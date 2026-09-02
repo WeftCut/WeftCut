@@ -14,6 +14,30 @@ const AUDIO_BASE_HZ = 400
 const AUDIO_STEP_HZ = 120
 const AUDIO_SAMPLE_RATE = 48_000
 
+/// The shot fixture's shape: flat-colour segments butted hard against each
+/// other. Deliberately tiny — a scene-score detector reads frame-to-frame
+/// difference, so resolution and detail buy the fixture nothing.
+const SHOT_SIZE = '320x180'
+const SHOT_FPS = 30
+const SHOT_SEGMENT_SECONDS = 2
+const SHOT_COLORS = ['0x203040', '0xd0b070', '0x30a050']
+/// `lavfi.scene_score` at each segment boundary, measured. The pair is the
+/// point: the two scores straddle a usable threshold, so a consumer gates the
+/// threshold line itself rather than merely proving that cuts were found. A
+/// score is a function of the colour pair either side of its boundary, so
+/// recolouring a segment invalidates it.
+const SHOT_CUT_SCORES = [1, 0.52]
+
+/// Every scene-cut candidate `select='gt(scene,T)'` reports for the shot fixture
+/// at the detector's 0.05 floor scan. There are no others at any threshold:
+/// within a segment consecutive frames are identical and score zero. Recorded
+/// into the fixture manifest, so an ffmpeg release that moves the metric reddens
+/// the fixture suite instead of a spec that consumes the fixture.
+export const SHOT_CUTS = SHOT_CUT_SCORES.map((score, index) => ({
+  timeUs: (index + 1) * SHOT_SEGMENT_SECONDS * 1_000_000,
+  score,
+}))
+
 const PATCH_VALUES = [
   [255, 0, 0], [0, 255, 0], [0, 0, 255], [0, 255, 255], [255, 0, 255],
   [255, 255, 0], [255, 255, 255], [0, 0, 0], [16, 16, 16], [235, 235, 235],
@@ -65,6 +89,7 @@ export function outputName({
   gradientAv1,
   gradientH2644k,
   h264Interframe,
+  shotCuts,
   eostail,
   imageset,
   audiotones,
@@ -90,6 +115,7 @@ export function outputName({
   if (gradientAv1) return 'test_1080p_gradient10_av1.mp4'
   if (gradientH2644k) return 'test_2160p_gradient10_h264.mp4'
   if (h264Interframe) return 'test_1080p_h264.mp4'
+  if (shotCuts) return `test_shot_cuts_${SHOT_COLORS.length * SHOT_SEGMENT_SECONDS}s.mp4`
   const container = format ?? 'mp4'
   // Non-default durations ride in the name because the name IS the entry's key
   // — the fixture manifest is keyed on it — so two entries differing only in
@@ -650,6 +676,40 @@ function generateH264Interframe(outputDir, run, io) {
   io.log(`Done: ${output}`)
 }
 
+/// The one fixture that contains a shot boundary. Every other video fixture is
+/// `testsrc2`, `color=` or `nullsrc` — smooth animation or a single held frame —
+/// and none of them scores high enough anywhere for a scene-score detector to
+/// find a cut, at any threshold. `SHOT_CUTS` records what this one yields.
+function generateShotCuts(outputDir, run, io) {
+  const output = outputName({ shotCuts: true })
+  const args = ['-y', '-hide_banner', '-loglevel', 'error']
+  for (const color of SHOT_COLORS) {
+    args.push(
+      '-f', 'lavfi', '-i',
+      `color=c=${color}:size=${SHOT_SIZE}:rate=${SHOT_FPS}:duration=${SHOT_SEGMENT_SECONDS}`,
+    )
+  }
+  const segmentInputs = SHOT_COLORS.map((_, index) => `[${index}:v]`).join('')
+  // One keyframe per segment: keys then land exactly on the cuts, and x264's own
+  // scene-cut heuristic — which differs between builds — stops deciding the
+  // frame types, which is what makes the output identical on all three CI OSes.
+  const gop = String(SHOT_SEGMENT_SECONDS * SHOT_FPS)
+  args.push(
+    // No colour filter and no colour tags, unlike the other mp4 lanes: routing
+    // the flat colours through a scale/matrix stage shifts the decoded values
+    // enough to move the second cut off `SHOT_CUT_SCORES`.
+    '-filter_complex', `${segmentInputs}concat=n=${SHOT_COLORS.length}:v=1:a=0[v]`,
+    '-map', '[v]',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', '-preset', 'medium',
+    '-g', gop, '-keyint_min', gop, '-sc_threshold', '0',
+    '-an', output,
+  )
+
+  io.log(`Generating ${output} (${SHOT_COLORS.length} flat ${SHOT_SEGMENT_SECONDS}s shots, hard cuts)`)
+  run(args, { cwd: outputDir })
+  io.log(`Done: ${output}`)
+}
+
 function drawtextFilters(fps, font) {
   const common = `fontfile='${font}':fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=8`
   return [
@@ -781,6 +841,7 @@ export function generateFixture(entry, {
   if (entry.color) return generateColor(entry, outputDir, ffmpeg, io)
   if (entry.colorProres) return generateColorProres(entry, outputDir, ffmpeg, io)
   if (entry.h264Interframe) return generateH264Interframe(outputDir, ffmpeg, io)
+  if (entry.shotCuts) return generateShotCuts(outputDir, ffmpeg, io)
   if (
     entry.gradient
     || entry.gradientH264
@@ -869,6 +930,7 @@ const BOOLEAN_FLAGS = new Map([
   ['--gradient-av1', 'gradientAv1'],
   ['--gradient-h264-4k', 'gradientH2644k'],
   ['--h264-interframe', 'h264Interframe'],
+  ['--shot-cuts', 'shotCuts'],
 ])
 
 export function parseArgs(argv) {
@@ -923,6 +985,7 @@ Generate one deterministic fixture in the current directory.
   --gradient | --gradient-h264 | --gradient-h264-bf
   --gradient-av1 | --gradient-h264-4k
   --h264-interframe
+  --shot-cuts
   --output-dir PATH`)
 }
 
