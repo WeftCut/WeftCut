@@ -1000,10 +1000,13 @@ for a discard, with the remedy (raise the minimum shot length), because the
 row numbering the reviewer saw no longer matches the segments a split would
 make. No confirmation dialog on discard: destructive-but-undoable is house
 style, and the status bar reports what happened (Started → Ok/Err under one
-`op_id`, the Started row carrying how much went out). After a split or
-discard the reviewed layer is gone, the selection drops it, and the Panel
-returns to its empty state; after a mark the review stands. As with the
-agent's `drop_short_us`, a discarded take's link-paired audio is left in
+`op_id`, the Started row carrying how much went out). The Panel keeps
+following the selection afterwards: a split leaves the clip's identity on its
+first segment, so that segment is what the Panel reviews next — one shot,
+with no candidate inside its window — and the other segments are a click
+away; a discard that removes the first segment leaves nothing selected and
+the Panel returns to its empty state; after a mark the review stands. As with
+the agent's `drop_short_us`, a discarded take's link-paired audio is left in
 place — delete never fans out across a link here.
 
 **What is in each shot.** *Describe content…* — on a `VideoClip`'s context
@@ -1024,7 +1027,8 @@ understanding; every other refusal is the tool's own sentence. Selecting a
 clip never describes it: the rows read the cached view through
 `media://{id}/description`, which serves the default sampling and focus, so a
 run at other settings is readable for the session and the dialog says so.
-Descriptions are read-only.
+Descriptions are read-only here, and searchable from the palette (§ Global
+search palette).
 
 Code: `renderer/shots/` (`shotsStore.ts` owns the subject, the reduce, the
 review decisions and the verbs; `shotRows.ts` projects spans into rows;
@@ -1140,9 +1144,15 @@ has `detect_silences` and `add_markers`.
 `Mod+K` (also a menu item) opens a Spotlight-style overlay that searches,
 in one box: **commands** (every user-invocable app action), **media-pool
 items**, **tracks**, **clips** (timeline layers by label), **captions /
-text** (`Text` layer content — captions are Text layers, ADR 0026), and
-**markers**. Selecting a result either executes (commands) or navigates
-(everything else: select the item, move the playhead, scroll the timeline).
+text** (`Text` layer content — captions are Text layers, ADR 0026),
+**markers**, and **descriptions** (what a vision model said about a stretch
+of a clip, text and tags alike — § Shot review). Selecting a result either
+executes (commands) or navigates (everything else: select the item, move the
+playhead, scroll the timeline). A description row is one described segment on
+one placement of its source: activating it selects that clip and parks the
+playhead where the described stretch begins; a described source that sits only
+in the pool contributes no row, since there is no clip to select. The index
+carries only what is already cached — opening the palette never runs a model.
 Navigating never changes play state — seek-while-playing keeps playing, the
 Premiere/Resolve convention. Chinese text matches three ways: original
 characters, full pinyin ("zimu" → 字幕), and pinyin initials ("zm");
@@ -1169,7 +1179,8 @@ makes full rebuilds behave like increments.
 **Ranking & activation.** fuzzysort scores every haystack and keeps the
 best per entry, with a floor that drops scatter matches and small boosts
 for commands and exact prefixes; results group in fixed order (commands →
-media → tracks → clips → captions → markers), capped per group with a
+media → tracks → clips → captions → markers → descriptions, the last because
+those are the only rows nobody wrote), capped per group with a
 "show more" expander. Pinyin-matched results skip highlighting — fuzzysort
 indexes don't map 1:1 onto CJK label chars, so no highlight beats a wrong
 one. Media rows open a second level (reveal in pool + one row per timeline

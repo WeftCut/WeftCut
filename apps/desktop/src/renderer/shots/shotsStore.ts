@@ -619,18 +619,17 @@ export async function applyShotVerb(
     // second segment's first row starts at exactly the boundary that was cut,
     // and it would come up already marked for discard.
     //
-    // The subject itself is NOT cleared here. It is derived from the selection,
-    // and the commit's `project:changed` drops the vanished id
-    // (`retainLayerSelection`), which lands the Panel in its "select a video
-    // clip" state through the same path every other mutation takes. Clearing it
-    // from underneath would put the Panel in a state it has no sentence for —
-    // a subject-less rowless Panel says it is still probing.
-    //
-    // And the Panel deliberately does NOT adopt the first surviving segment:
-    // nothing else in the app re-selects what a split produced (a split at the
-    // playhead re-selects nothing either), and a segment adopted here would
-    // open a fresh review whose window is one shot, whose one-row list reads as
-    // though the apply had done nothing.
+    // The subject itself is NOT cleared here; it is derived from the selection
+    // and follows it. A split keeps the reviewed id on the FIRST segment
+    // (`mutations/split.ts` `splitSingleLayer`: left reuses the original id), so
+    // the selection keeps it and the Panel re-reviews that segment on the next
+    // summary — a one-shot window with no candidate inside, which is the true
+    // answer for it, with the other segments one click away. A discard that
+    // deletes the first segment removes the id, `retainLayerSelection` drops
+    // it, and the Panel lands in its "select a video clip" state through the
+    // same path every other mutation takes. Neither case is forced from here:
+    // clearing the selection would take away what the user had selected, and
+    // adopting a segment would be a re-selection nothing else in the app does.
     if (result.mode !== "mark") forgetReviewDecisions(subject.mediaId);
     void logEmit({
       level: "info",

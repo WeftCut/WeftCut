@@ -183,16 +183,40 @@ function fixture(): ProjectSummary {
   });
 }
 
-/// The same project after a split of `l1` — the two segments stand where the
-/// reviewed clip was, and the clip's own id is gone. What `project:changed`
-/// delivers once the apply commits.
+/// The same project after a plain split of `l1` at 2 s. A split keeps the
+/// original id on the LEFT half (`mutations/split.ts` `splitSingleLayer`), so
+/// `l1` is still there — shorter — and a fresh `s2` stands after it. What
+/// `project:changed` delivers once a split commits.
 function fixtureAfterSplit(): ProjectSummary {
   return summaryFixture({
     root: {
       duration_us: 20_000_000,
       tracks: [
         track("t1", [
-          clip({ id: "s1", mediaId: "m1", tStartUs: 1_000_000, srcOutUs: 2_000_000 }),
+          clip({ id: "l1", mediaId: "m1", tStartUs: 1_000_000, srcOutUs: 2_000_000 }),
+          clip({
+            id: "s2",
+            mediaId: "m1",
+            tStartUs: 3_000_000,
+            srcInUs: 2_000_000,
+            srcOutUs: 6_000_000,
+          }),
+        ]),
+        track("t2", [textLayer()]),
+      ],
+    },
+  });
+}
+
+/// The same project after a discard that threw the FIRST segment away: the id
+/// the review was about is gone, and only the second segment remains. The one
+/// apply outcome that leaves the selection with nothing to keep.
+function fixtureAfterDiscardOfFirst(): ProjectSummary {
+  return summaryFixture({
+    root: {
+      duration_us: 20_000_000,
+      tracks: [
+        track("t1", [
           clip({
             id: "s2",
             mediaId: "m1",
@@ -731,16 +755,41 @@ describe("ShotsPanel — the apply bar", () => {
     });
   });
 
-  it("falls to the select-a-clip state once the split's summary lands", async () => {
+  it("keeps reviewing the first segment after a split, because the split kept its id", async () => {
     await review();
 
     fireEvent.click(verb("split"));
     await waitFor(() => expect(shots.applyShotCuts).toHaveBeenCalled());
-    // What `project:changed` delivers: `l1` is gone and two segments stand in
-    // its place. `retainLayerSelection` drops the vanished primary, which is
-    // the only thing that has to happen for the Panel to land somewhere sane.
+    // What `project:changed` delivers: `l1` survives as the left half, so the
+    // selection keeps it and the Panel follows — the subject is now that
+    // segment, reviewed on its own (shorter) window. Nothing here re-selects
+    // and nothing clears: the Panel follows the selection, and that is all.
     act(() => {
       useProjectStore.getState().apply(fixtureAfterSplit());
+    });
+
+    await waitFor(() =>
+      expect(shots.reduceShotReport).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ inUs: 0, outUs: 2_000_000 }),
+      ),
+    );
+    expect(
+      screen.queryByText("Select a video clip to review its shot cuts."),
+    ).toBeNull();
+    expect(screen.getByTestId("shots-apply")).toBeTruthy();
+  });
+
+  it("falls to the select-a-clip state when a discard removed the reviewed segment", async () => {
+    await review();
+
+    fireEvent.click(verb("split"));
+    await waitFor(() => expect(shots.applyShotCuts).toHaveBeenCalled());
+    // What `project:changed` delivers when the discard took the FIRST segment:
+    // `l1` is gone. `retainLayerSelection` drops the vanished primary, which is
+    // the only thing that has to happen for the Panel to land somewhere sane.
+    act(() => {
+      useProjectStore.getState().apply(fixtureAfterDiscardOfFirst());
     });
 
     expect(
