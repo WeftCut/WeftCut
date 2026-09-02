@@ -42,6 +42,7 @@ export type ActionId =
   | "moveToComposition"
   | "autoCaptionSelected"
   | "detectSilencesSelected"
+  | "describeSelected"
   | "reviewShots"
   | "toggleLinkSelected"
   | "toggleLinkOverride"
@@ -290,6 +291,12 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // it acts on the timeline selection, a user who does this to every clip has
   // somewhere to bind it, and its home is the pointer.
   detectSilencesSelected: { defaultKeys: [],               labelKey: "actions.detect_silences_selected", scope: TIMELINE_SELECTION },
+  // Ask a vision model what is in the selected clip. Catalogued, scoped and
+  // unbound for `autoCaptionSelected`'s three reasons, with one that belongs to
+  // this row alone: it is the most expensive gesture in the app — ~20 s against
+  // a local 2.5 GB model — so a default chord would be a way to spend that by
+  // accident. Its home is the pointer, and the dialog is the confirmation.
+  describeSelected:       { defaultKeys: [],               labelKey: "actions.describe_selected", scope: TIMELINE_SELECTION },
   // Open the shot-review Panel on the selected clip. Catalogued here and not as
   // a menu-only command, for `autoCaptionSelected`'s reason and against
   // `openVoiceoverDialog`'s: this one HAS a scope. What it reviews is the

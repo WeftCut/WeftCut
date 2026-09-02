@@ -66,10 +66,17 @@ export const HYBRID_CHANNELS: ReadonlySet<string> = new Set([
  *  a scan, which is what lets the review surface ask it on every selection
  *  change. `shot_floor_sensitivity` and `shot_default_opts` are constant reads
  *  off the addon, exposed so the review surface's threshold comes from the scan
- *  that produced the candidates rather than from a renderer literal. */
+ *  that produced the candidates rather than from a renderer literal.
+ *
+ *  `get_media_frame` and `get_media_description` are the two `media://` resource
+ *  reads the review surface pulls. Both are cache reads: the frame one extracts
+ *  on demand and caches per `(source, t)`, and the description one reports a
+ *  miss rather than spawning a model — `describe_clip` (a clip-compute channel)
+ *  is the only path that runs one. */
 export const DIRECT_NAPI_READS: ReadonlySet<string> = new Set([
   'analyze_shots', 'analyze_shots_floor', 'shot_floor_report_cached',
   'shot_floor_sensitivity', 'shot_default_opts', 'reduce_shot_report', 'get_media_frame',
+  'get_media_description',
 ])
 
 /** Native clip read/compute channels: no actor write, but the stateless Rust

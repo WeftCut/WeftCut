@@ -354,6 +354,46 @@
   color: var(--warning, currentcolor);
 }
 
+/* ── The description column ─────────────────────────────────────────────────
+   What a vision model said about this row's stretch of source, with its tags
+   inline after the prose.
+
+   `min-height` is load-bearing: a described row and an undescribed one have to
+   stand the same height, or a list where only some spans were sampled reads as
+   broken alignment. One line of body text at the cell's own line-height. */
+
+.shots-description {
+  min-height: calc(var(--font-size-caption) * 1.5);
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+}
+
+.shots-description-span {
+  margin: 0;
+}
+
+/* Prose, so it stays the row's readable colour rather than the label grey the
+   stats use. */
+.shots-description-text {
+  color: var(--foreground);
+}
+
+/* Italic on the same rule as `shots-stats-absent`, and the same colour as a
+   filled cell: "not described" is the ordinary state of a shot, not an error. */
+.shots-description-empty {
+  margin: 0;
+  font-style: italic;
+}
+
+.shots-description-tag {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: var(--radius-control);
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
 .shots-keep {
   flex: none;
   margin-top: 2px;

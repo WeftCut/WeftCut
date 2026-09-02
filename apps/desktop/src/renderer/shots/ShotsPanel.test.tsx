@@ -24,6 +24,10 @@ const shots = vi.hoisted(() => ({
   shotDefaultOpts: vi.fn(),
   shotFloorSensitivity: vi.fn(),
   getMediaFrame: vi.fn<(id: string, tUs: number) => Promise<string>>(),
+  // Both halves of the description column, so the file can assert the one that
+  // matters: opening the Panel reads the cache and never spends a model.
+  getMediaDescription: vi.fn<(id: string) => Promise<DescriptionCache | null>>(),
+  describeClip: vi.fn(),
   getProjectSettings: vi.fn(),
   updateProjectSettings: vi.fn(),
   logEmit: vi.fn<(input: LogEntryInput) => Promise<void>>(),
@@ -52,6 +56,7 @@ import {
 } from "../testing/summaryFixture";
 import type {
   AnimTrack,
+  DescriptionCache,
   LayerSummary,
   LogEntryInput,
   ProjectSummary,
@@ -59,6 +64,7 @@ import type {
   ShotReport,
   TrackSummary,
 } from "../ipc";
+import { resetDescriptionsStore } from "../describe/descriptionsStore";
 import { resetShotsStore } from "./shotsStore";
 import { ShotsPanel } from "./ShotsPanel";
 
@@ -237,6 +243,7 @@ beforeEach(async () => {
   shots.applyShotCuts.mockResolvedValue({ mode: "split", layer_ids: ["s1", "s2"] });
   shots.logEmit.mockResolvedValue(undefined);
   shots.getMediaFrame.mockResolvedValue("data:image/jpeg;base64,AA==");
+  shots.getMediaDescription.mockResolvedValue(null);
   shots.getProjectSettings.mockResolvedValue({
     prefer_proxies: false,
     proxy_overrides: {},
@@ -257,6 +264,7 @@ afterEach(() => {
   unregisterTimelinePanels();
   setLayerSelection(null, []);
   resetShotsStore();
+  resetDescriptionsStore();
 });
 
 describe("ShotsPanel — the three states", () => {
@@ -462,6 +470,108 @@ describe("ShotsPanel — rows", () => {
     );
     // Still on screen: the reviewer has to see what an apply would delete.
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
+  });
+});
+
+// The correlation the column exists for: where the clip cuts, beside what is in
+// it. `REPORT` puts the boundary at 2 s, so a segment ending after it and a
+// segment starting before it are the two interesting cases.
+describe("ShotsPanel — the description column", () => {
+  beforeEach(() => {
+    shots.shotFloorReportCached.mockResolvedValue(true);
+  });
+
+  it("says a shot is not described rather than leaving the cell blank", async () => {
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    const rows = await waitFor(() => {
+      const found = screen.getAllByRole("listitem");
+      expect(found).toHaveLength(2);
+      return found;
+    });
+    for (const row of rows) expect(row.textContent).toContain("Not described");
+  });
+
+  // The rule this file exists to keep: clicking a clip must never start a
+  // ~20 s model run.
+  it("reads the cache on selection and spends no model", async () => {
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    await waitFor(() =>
+      expect(shots.getMediaDescription).toHaveBeenCalledWith("m1"),
+    );
+    expect(shots.describeClip).not.toHaveBeenCalled();
+  });
+
+  it("shows each row's own prose and tags", async () => {
+    shots.getMediaDescription.mockResolvedValue({
+      covered_ranges: [[0, 6_000_000]],
+      segments: [
+        { t_start_us: 0, t_end_us: 2_000_000, text: "a hallway", tags: ["interior"] },
+        { t_start_us: 2_000_000, t_end_us: 6_000_000, text: "a street", tags: ["exterior", "wide"] },
+      ],
+    });
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    const rows = await waitFor(() => {
+      const found = screen.getAllByRole("listitem");
+      expect(found[0]?.textContent).toContain("a hallway");
+      return found;
+    });
+    expect(rows[0]?.textContent).toContain("interior");
+    expect(rows[0]?.textContent).not.toContain("a street");
+    expect(rows[1]?.textContent).toContain("a street");
+    expect(rows[1]?.textContent).toContain("exterior");
+    expect(rows[1]?.textContent).toContain("wide");
+    // Neither row falls back to the empty state once it has prose.
+    for (const row of rows) expect(row.textContent).not.toContain("Not described");
+  });
+
+  // The acceptance: a segment sampled ACROSS the boundary belongs to both rows.
+  // The model and the detector disagreeing about where the content changes is
+  // exactly what a reviewer is here to see.
+  it("puts a segment that straddles the cut on both rows", async () => {
+    shots.getMediaDescription.mockResolvedValue({
+      covered_ranges: [[0, 6_000_000]],
+      segments: [
+        {
+          t_start_us: 1_500_000,
+          t_end_us: 2_500_000,
+          text: "she turns to the window",
+          tags: [],
+        },
+      ],
+    });
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    const rows = await waitFor(() => {
+      const found = screen.getAllByRole("listitem");
+      expect(found[0]?.textContent).toContain("she turns to the window");
+      return found;
+    });
+    expect(rows[1]?.textContent).toContain("she turns to the window");
+  });
+
+  it("leaves a row the described ranges never reached saying so", async () => {
+    shots.getMediaDescription.mockResolvedValue({
+      covered_ranges: [[0, 2_000_000]],
+      segments: [
+        { t_start_us: 0, t_end_us: 2_000_000, text: "a hallway", tags: [] },
+      ],
+    });
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    const rows = await waitFor(() => {
+      const found = screen.getAllByRole("listitem");
+      expect(found[0]?.textContent).toContain("a hallway");
+      return found;
+    });
+    expect(rows[1]?.textContent).toContain("Not described");
   });
 });
 

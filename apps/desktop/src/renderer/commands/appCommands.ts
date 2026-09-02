@@ -36,6 +36,7 @@ import {
   canUngroupSelection,
 } from "../timeline/groupEligibility";
 import { canMoveSelectionToRoot } from "../timeline/moveToCompositionEligibility";
+import { canDescribeSelection } from "./describeCommands";
 import { canOpenSelectedGroup } from "./groupCommands";
 import { canDetectSilencesSelection } from "./silenceCommands";
 import { canAutoCaptionSelection } from "./speechCommands";
@@ -390,6 +391,10 @@ export function buildAppCommands(
     // The same shared audio-clip gate, minus auto-caption's in-flight
     // condition (`commands/silenceCommands.ts` says why it is not folded in).
     detectSilencesSelected: canDetectSilencesSelection,
+    // The picture-clip gate, one notch narrower than the audio one above: a
+    // description reads FRAMES, so an Audio layer the two rows above accept is
+    // the wrong kind here (`describe/describeEligibility.ts`).
+    describeSelected: canDescribeSelection,
   };
 
   // The armed modal tool, read straight from `toolStore` for the same

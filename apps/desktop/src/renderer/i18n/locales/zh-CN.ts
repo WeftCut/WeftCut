@@ -287,6 +287,12 @@ const zhCN: Resources = {
     detect_silences_needs_audio_kind: "这个片段没有声音——请选视频或音频片段",
     detect_silences_speed_not_one:
       "这个片段变过速——先从中切出一段常速，否则区间会落错位置",
+    // 描述内容。同样是自己的三句，其中"选错种类"这一句和上面两块真的不一样：
+    // 描述读的是画面，有没有声音在这里不构成条件。
+    describe_needs_selection: "选中一个视频片段来描述",
+    describe_needs_video_kind: "描述读的是画面——请选一个视频片段",
+    describe_speed_not_one:
+      "这个片段变过速——先从中切出一段常速，否则描述会落错位置",
   },
   dock_workspace: {
     editing_label: "编辑工作区",
@@ -439,6 +445,12 @@ const zhCN: Resources = {
     apply_no_cuts: "把阈值调低，或恢复一个已取消的切点——这个片段只有一个镜头",
     apply_no_discards: "先取消勾选想丢弃的镜头",
     apply_running: "已经有一个应用在执行",
+    // 描述列的空状态。一个镜头没有描述是常态——这句话说清它处在哪种状态，
+    // 而空白格会被读成一次永远没结束的加载。
+    not_described: "未描述",
+    // 唯一合理的过渡态，而且只在这一格没有别的可显示时出现：针对这个源的
+    // 一次运行正在路上。
+    describing: "正在描述…",
   },
   actions: {
     add_color_layer: "颜色层",
@@ -508,6 +520,9 @@ const zhCN: Resources = {
     // 不是转写文本。两条都带省略号，因为都会先弹对话框。
     auto_caption_selected: "自动字幕…",
     detect_silences_selected: "检测静默…",
+    // 用"描述内容"而不是"描述片段"：模型读的是画面里有什么，这一行的产物是
+    // 落在镜头行上的文字，而不是关于片段这个对象的任何说明。
+    describe_selected: "描述内容…",
     open_voiceover: "配音…",
     // 带省略号，因为这一行打开的是一个界面而不是提交任何改动：接下来是审阅，
     // 应用是面板里的另一次按下。
@@ -1632,6 +1647,10 @@ const zhCN: Resources = {
     mark_silences_started: "正在标记“{{clip}}”的静默区间",
     // 数量是这行的全部意义：标记落在标尺下半部分，用户当时未必在看那里。
     mark_silences_done: "已为“{{clip}}”添加 {{markers}} 个静默标记",
+    describe_started: "正在描述“{{clip}}”",
+    // 引擎和模型都写上，和转写那行只写引擎不同：这里一个运行时服务多个视觉
+    // 模型，只写引擎标签说不清是哪套权重回答的。
+    describe_done: "已从“{{clip}}”得到 {{segments}} 段描述（{{engine}}，{{model}}）",
   },
   history: {
     initial: "初始状态",
@@ -1824,6 +1843,31 @@ const zhCN: Resources = {
     cancel: "取消",
     confirm: "标记静默",
     running: "正在标记…",
+  },
+  describe: {
+    title: "描述内容",
+    clip: "片段",
+    // 按它控制什么来命名，而不是按线上的字段名（fps）：用户在选的是模型看得
+    // 多细，单位就写在输入框旁边。
+    sampling: "采样",
+    unit_fps: "帧 / 秒",
+    sampling_hint: "在整个片段上每秒采样的帧数——越多越细，也越慢。",
+    focus: "侧重",
+    focus_general: "画面内容",
+    focus_shot_type: "镜别与运镜",
+    focus_hint: "决定标签偏向哪一边。无论选哪个，正文都会描述画面。",
+    // 代价在按下之前就说清楚，而不是按下之后才发现。没有百分比可报：模型只在
+    // 最后一次性给出答案。
+    note: "这会在本机运行一个视觉模型——一个片段大约二十秒。",
+    // 只有按默认采样和默认侧重跑出来的结果才会落进被读回的那个视图，所以这句
+    // 随输入框变化，而不是当一句没人再读的警告摆在那里。
+    remembered_default: "按当前设置跑出的描述会留到下次会话，并且可被搜索。",
+    remembered_custom:
+      "现在可以读，但只有按 {{fps}} 帧 / 秒、侧重{{focus}}跑出的描述才会留到下次会话。",
+    open_settings: "打开设置 → 视频理解",
+    cancel: "取消",
+    confirm: "描述",
+    running: "正在描述…",
   },
   search: {
     placeholder: "搜索命令、素材、片段、字幕…",

@@ -2550,6 +2550,104 @@ export async function reportAudioMeter(report: {
 }
 
 // ============================================================
+// Content description — describe, and read back what was described
+// ============================================================
+// The two halves of scene description: run a local vision model over a clip's
+// frames, and read the cache a previous run left. `describeClip` is the only
+// one that can spend the ~20 s a model costs; `getMediaDescription` never
+// computes, which is what lets a Panel ask for it on every selection change.
+//
+// `describeClip` THROWS, like every dialog-driven compute here — the dialog
+// shows the message inline and logs a row. `getMediaDescription` answers `null`
+// for the two "nothing to read" states and throws only on a real failure.
+
+/// One described span: a window of the SOURCE plus the model's prose and the
+/// tags it extracted. Times are source-absolute microseconds, which is what
+/// makes a shot row's own source span the only join needed. Mirrors Rust
+/// `DescSegment` (`native/src/vlm/description.rs`).
+export interface DescSegment {
+  t_start_us: number;
+  t_end_us: number;
+  text: string;
+  tags: string[];
+}
+
+/// What `describe_clip` answers with. `backend` and `model` name the engine that
+/// actually served the request, so a resolver fallback is visible rather than
+/// silent. Mirrors Rust `SceneDescription`.
+export interface SceneDescription {
+  backend: string;
+  model: string;
+  segments: DescSegment[];
+}
+
+/// The range-lazy cache value behind `media://{id}/description`: which source
+/// ranges have been described, and every segment described so far. Mirrors Rust
+/// `DescriptionCache`.
+///
+/// `covered_ranges` is what distinguishes "this stretch holds nothing worth
+/// describing" from "this stretch was never looked at" — a described range with
+/// no segment in it is a real answer.
+export interface DescriptionCache {
+  covered_ranges: [number, number][];
+  segments: DescSegment[];
+}
+
+/// What the model is asked to attend to: the general scene, or the shot type and
+/// camera work. Mirrors Rust `Focus` (the wire tags, hyphen included).
+export type DescribeFocus = "general" | "shot-type";
+
+/// Describe one VideoClip layer's window with a video-understanding model. The
+/// engine is chosen by the user's Settings → Video understanding preference then
+/// availability; when nothing is configured the call rejects with the message
+/// that names that panel.
+///
+/// A read: it commits nothing, so it neither enters undo nor dirties the
+/// project. What it writes is its own content-addressed cache, keyed by
+/// `(source, backend, model, fps, focus)` — so a second call over a window the
+/// same key already covers returns from disk with no model spawn.
+///
+/// `t_start_us` / `t_end_us` default to the layer's own endpoints in Rust, and
+/// `fps` / `focus` are omitted rather than defaulted here so Rust's defaults
+/// decide — `detectSilences`' rule. Sending an explicit value equal to the
+/// default would key the same cache entry, but it would also put a second
+/// statement of that default in TypeScript.
+export async function describeClip(args: {
+  layerId: string;
+  tStartUs?: number;
+  tEndUs?: number;
+  fps?: number;
+  focus?: DescribeFocus;
+}): Promise<SceneDescription> {
+  return invoke<SceneDescription>("describe_clip", {
+    layer_id: args.layerId,
+    ...(args.tStartUs === undefined ? {} : { t_start_us: args.tStartUs }),
+    ...(args.tEndUs === undefined ? {} : { t_end_us: args.tEndUs }),
+    ...(args.fps === undefined ? {} : { fps: args.fps }),
+    ...(args.focus === undefined ? {} : { focus: args.focus }),
+  });
+}
+
+/// The description cached for one source's DEFAULT view — the resolver's default
+/// engine at the default sampling and focus — or `null` when there is nothing
+/// there to read.
+///
+/// `null` covers both nothing-described-yet and no-engine-configured, because a
+/// row that has no description has one empty state either way. Which of the two
+/// it is matters only where something can be done about it, and that is the
+/// describe dialog, which gets the engine's own sentence.
+///
+/// Never computes: this is the read path a Panel may issue on every selection
+/// change. `describeClip` is the only call that spends a model.
+export async function getMediaDescription(
+  mediaId: string,
+): Promise<DescriptionCache | null> {
+  return invoke<DescriptionCache | null>("get_media_description", {
+    media_id: mediaId,
+  });
+}
+
+// ============================================================
 // Motifs
 // ============================================================
 

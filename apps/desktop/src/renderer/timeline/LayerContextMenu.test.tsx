@@ -13,18 +13,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+/// The registry rows this file must keep on screen — the kind-gated tiers'
+/// own, whose gates nothing else covers. Hoisted because the registry mock
+/// factory below closes over it.
+const KIND_GATED_LABELS = vi.hoisted<Record<string, string | undefined>>(() => ({
+  autoCaptionSelected: "actions.auto_caption_selected",
+  reviewShots: "actions.review_shots",
+  describeSelected: "actions.describe_selected",
+}));
+
 vi.mock("../commands/registry", () => ({
   // No commands registered → CommandContextItem drops every registry row, which
-  // is exactly what leaves the kind-gated tier alone on screen. The one
-  // exceptions are the two kind-gated registry rows: those rows are themselves
-  // gated by kind, so this file is where their gates are covered, and dropping
-  // them would make every assertion about them vacuously pass.
+  // is exactly what leaves the kind-gated tier alone on screen. The exceptions
+  // are the kind-gated registry rows: those rows are themselves gated by kind,
+  // so this file is where their gates are covered, and dropping them would make
+  // every assertion about them vacuously pass.
   getCommand: (id: string) =>
-    id === "autoCaptionSelected"
-      ? { id, labelKey: "actions.auto_caption_selected", run: () => {} }
-      : id === "reviewShots"
-        ? { id, labelKey: "actions.review_shots", run: () => {} }
-        : undefined,
+    KIND_GATED_LABELS[id] === undefined
+      ? undefined
+      : { id, labelKey: KIND_GATED_LABELS[id], run: () => {} },
   commandRegistryVersion: () => 0,
   subscribeCommandRegistry: () => () => {},
 }));
@@ -33,6 +40,9 @@ vi.mock("../state/projectStore", () => ({ useGroupOrdinals: () => new Map() }));
 vi.mock("../speech/autoCaptionEligibility", () => ({
   useAutoCaptionState: () => "auto_caption",
   useAudioClipState: () => "ok",
+}));
+vi.mock("../describe/describeEligibility", () => ({
+  useDescribeState: () => "describe",
 }));
 vi.mock("./groupEligibility", () => ({
   useAddToGroupState: () => "needs_selection",
@@ -149,6 +159,29 @@ describe("LayerContextMenu — kind-gated rows", () => {
     (kind) => {
       renderMenu(kind);
       expect(screen.queryByRole("menuitem", { name: /Review shots/ })).toBeNull();
+    },
+  );
+
+  // Describe follows Review shots in the same tier, and for the same reason it
+  // is in that tier at all: its answer is prose to read ON those rows.
+  it("offers Describe content on a VideoClip, after Review shots", () => {
+    renderMenu("VideoClip");
+    const labels = screen
+      .getAllByRole("menuitem")
+      .map((el) => el.textContent ?? "");
+    const review = labels.findIndex((l) => /Review shots/.test(l));
+    const describe = labels.findIndex((l) => /Describe content/.test(l));
+    expect(review).toBeGreaterThanOrEqual(0);
+    expect(review).toBeLessThan(describe);
+  });
+
+  it.each(["Audio", "Text", "Color", "Motif", "ImageOverlay", "CompositionRef"])(
+    "%s gets no Describe content row",
+    (kind) => {
+      renderMenu(kind);
+      expect(
+        screen.queryByRole("menuitem", { name: /Describe content/ }),
+      ).toBeNull();
     },
   );
 });

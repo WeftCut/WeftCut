@@ -82,7 +82,11 @@ function clampPreviewSnapStrength(value: number): number {
   );
 }
 
-type SettingsCategory =
+/// The sidebar's tabs. Exported because App holds the selected one as state and
+/// deep-links into it: a capability notice's recovery card and the describe
+/// dialog's "no engine configured" button both name a category, and a narrower
+/// type at that boundary would let one of them name a tab that does not exist.
+export type SettingsCategory =
   | "general"
   | "project"
   | "keyboard"

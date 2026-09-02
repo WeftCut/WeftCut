@@ -27,6 +27,13 @@ import {
   type ShotFlag,
   type TrackSummary,
 } from "../ipc";
+import {
+  hydrateDescription,
+  resetDescriptionsStore,
+  useDescribing,
+  useDescription,
+} from "../describe/descriptionsStore";
+import { segmentsForSpan } from "../describe/segmentsForSpan";
 import { layerDisplayName } from "../lib/layerName";
 import {
   focusedCompositionId,
@@ -227,6 +234,64 @@ function ShotStatsCells({ row }: { row: ShotRow }) {
   );
 }
 
+/// What a vision model said about this shot's stretch of the source, plus the
+/// tags it extracted.
+///
+/// The join is a time intersection and nothing else: `describe_clip` segments
+/// and shot spans are both source-absolute (`describe/segmentsForSpan.ts`). A
+/// segment that straddles two boundaries shows on BOTH rows — the model and the
+/// detector disagreeing about where the content changes is the correlation this
+/// column exists to make visible.
+///
+/// "Not described" and never blank: shots without descriptions are the normal
+/// case, and an empty cell would read as a load that never finished. The one
+/// transient is a run against this very source, which the cell may say it is
+/// waiting on — but only where it has nothing else to show, so a re-describe
+/// never blanks prose that is already on screen.
+///
+/// Read-only. Editing a model's sentences is not a feature this column claims.
+function ShotDescriptionCell({
+  row,
+  mediaId,
+}: {
+  row: ShotRow;
+  mediaId: string;
+}) {
+  const { t } = useTranslation();
+  const segments = useDescription(mediaId);
+  const describing = useDescribing();
+  const overlapping = useMemo(
+    () => segmentsForSpan(segments, row.srcStartUs, row.srcEndUs),
+    [segments, row.srcStartUs, row.srcEndUs],
+  );
+  if (overlapping.length === 0) {
+    return (
+      <p className="shots-description shots-description-empty">
+        {describing === mediaId
+          ? t("shots_panel.describing")
+          : t("shots_panel.not_described")}
+      </p>
+    );
+  }
+  return (
+    <div className="shots-description">
+      {overlapping.map((segment) => (
+        <p
+          className="shots-description-span"
+          key={`${segment.t_start_us}-${segment.t_end_us}`}
+        >
+          <span className="shots-description-text">{segment.text}</span>
+          {segment.tags.map((tag) => (
+            <span className="shots-description-tag" key={tag}>
+              {tag}
+            </span>
+          ))}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 function ShotFlags({ flags }: { flags: readonly ShotFlag[] }) {
   const { t } = useTranslation();
   if (flags.length === 0) return null;
@@ -354,6 +419,7 @@ function ShotRowView({
           </button>
           <ShotStatsCells row={row} />
           <ShotFlags flags={row.flags} />
+          <ShotDescriptionCell row={row} mediaId={mediaId} />
         </div>
         <AppCheckbox
           className="shots-keep"
@@ -582,9 +648,20 @@ export function ShotsPanel() {
     return () => {
       unwire();
       resetShotsStore();
+      resetDescriptionsStore();
       resetFrameLoader();
     };
   }, []);
+
+  // The description column's read, keyed on the media id rather than on the
+  // layer: `layer` is a fresh object per summary tick, and this read must not
+  // re-run on every unrelated edit. A cache probe that never computes, so
+  // selecting a clip costs no model time — `descriptionsStore.ts` is where that
+  // rule is enforced.
+  useEffect(() => {
+    if (mediaId === null) return;
+    void hydrateDescription(mediaId);
+  }, [mediaId]);
 
   // The subject, restated on every summary tick. `setShotSubject` is idempotent
   // on an unchanged one, which is what keeps that from re-probing per keystroke

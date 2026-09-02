@@ -52,7 +52,10 @@ import {
   seekToPrevMarker,
 } from "./state/navigation";
 import { AgentMode } from "./agent/AgentMode";
-import { SettingsPanel } from "./settings/SettingsPanel";
+import {
+  SettingsPanel,
+  type SettingsCategory,
+} from "./settings/SettingsPanel";
 import { MotifPicker } from "./motifs/MotifPicker";
 import { tenBitExportCapable } from "./render/exportSettings";
 import { AppDialog } from "./components/AppDialog";
@@ -104,11 +107,13 @@ import {
   openSelectedGroup,
   ungroupSelected,
 } from "./commands/groupCommands";
+import { openDescribeForSelection } from "./commands/describeCommands";
 import { openSilenceForSelection } from "./commands/silenceCommands";
 import {
   openAutoCaptionForSelection,
   openVoiceoverPrompt,
 } from "./commands/speechCommands";
+import { DescribeDialog } from "./describe/DescribeDialog";
 import { SilenceDialog } from "./silence/SilenceDialog";
 import { AutoCaptionDialog } from "./speech/AutoCaptionDialog";
 import { VoiceoverDialog } from "./speech/VoiceoverDialog";
@@ -195,8 +200,11 @@ export function App({ onCloseProject }: AppProps) {
   // (transient / throttled / imperative) — see playheadStore.ts.
   const [paused, setPaused] = useState<boolean>(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The full tab union, not just the system-status subset: the describe
+  // dialog's remedy button deep-links to Video understanding, which no
+  // capability notice names.
   const [settingsCategory, setSettingsCategory] =
-    useState<SystemSettingsTarget>("general");
+    useState<SettingsCategory>("general");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [logConsoleOpen, setLogConsoleOpen] = useState(false);
   const [systemStatusOpen, setSystemStatusOpen] = useState(false);
@@ -399,7 +407,7 @@ export function App({ onCloseProject }: AppProps) {
     }
   }, []);
 
-  const openSettings = useCallback((category: SystemSettingsTarget = "general") => {
+  const openSettings = useCallback((category: SettingsCategory = "general") => {
     setSettingsCategory(category);
     setSettingsOpen(true);
   }, []);
@@ -707,6 +715,8 @@ export function App({ onCloseProject }: AppProps) {
     autoCaptionSelected: openAutoCaptionForSelection,
     // Same split, same slot-and-nothing-else (`commands/silenceCommands.ts`).
     detectSilencesSelected: openSilenceForSelection,
+    // And again (`commands/describeCommands.ts`).
+    describeSelected: openDescribeForSelection,
     // Opening the Panel is the whole command: it resolves its own subject from
     // the primary selection, and the right-click that raised the row has
     // already made the clicked clip that selection. `openPanel` is idempotent,
@@ -1079,20 +1089,28 @@ export function App({ onCloseProject }: AppProps) {
       <CheckpointPromptDialog />
       <MarkerRenameDialog />
 
-      {/* The three clip-analysis dialogs, owned here for the same reason: every
+      {/* The four clip-analysis dialogs, owned here for the same reason: every
           one of their commands reaches the Edit menu and the palette, which must
           work with every Panel closed. Each renders nothing until its prompt is
-          opened. `onRevealCaptions` is App's — the Caption Panel is where a
-          landed transcript becomes visible, and only the workspace controller
-          can open it.
+          opened. The two reveals are App's — the Caption Panel is where a landed
+          transcript becomes visible and the Shots Panel is where described
+          segments do, and only the workspace controller can open either.
 
           The silence dialog needs no such reveal: its result lands in the
-          timeline ruler, which is already the surface the user is looking at. */}
+          timeline ruler, which is already the surface the user is looking at.
+
+          Describe also gets `onOpenSettings`: its one recoverable failure is
+          "no engine configured", and the category that configures one is
+          App's modal to open. */}
       <AutoCaptionDialog
         onRevealCaptions={() => workspaceController?.openPanel("caption")}
       />
       <VoiceoverDialog />
       <SilenceDialog />
+      <DescribeDialog
+        onRevealShots={() => workspaceController?.openPanel("shots")}
+        onOpenSettings={() => openSettings("vlm")}
+      />
 
       {/* Save Workspace As / Rename Workspace name prompt. */}
       {workspaceNameDialog && workspaceProfiles && (

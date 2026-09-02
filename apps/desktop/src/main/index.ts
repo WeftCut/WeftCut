@@ -900,7 +900,7 @@ app.whenReady().then(async () => {
   // channel set that selects for it. Awaited here beside the host rather than
   // imported at module top so `backend:invoke` closes over both without pulling
   // the MCP SDK into the entry chunk.
-  const { callClipComputeTool, readMediaFrameDataUrl } = await import('./mcp/server.js')
+  const { callClipComputeTool, readMediaFrameDataUrl, readMediaDescription } = await import('./mcp/server.js')
   const { CLIP_COMPUTE_CHANNELS } = await import('./state/router.js')
 
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
@@ -1111,6 +1111,16 @@ app.whenReady().then(async () => {
       const a = (args ?? {}) as { media_id?: string; t_us?: number }
       const host = tsHost
       return await readMediaFrameDataUrl(backend!, () => host, a.media_id ?? '', a.t_us ?? 0)
+    }
+    // The cached scene description for one source, for the shot rows' text
+    // column. Read-only and it never computes: the resource reports a miss
+    // rather than spawning a model, which is what lets the Panel ask on every
+    // subject change — `describe_clip` is the only path that runs one, and only
+    // a deliberate press reaches it.
+    if (tsHost && channel === 'get_media_description') {
+      const a = (args ?? {}) as { media_id?: string }
+      const host = tsHost
+      return await readMediaDescription(backend!, () => host, a.media_id ?? '', getVlm)
     }
     if (channel === 'shot_floor_sensitivity') return backend!.shotFloorSensitivity()
     // The detection defaults, straight off the addon. The review Panel seeds its

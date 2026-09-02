@@ -8,6 +8,10 @@ import {
   getCommand,
   subscribeCommandRegistry,
 } from "../commands/registry";
+import {
+  useDescribeState,
+  type DescribeState,
+} from "../describe/describeEligibility";
 import { groupDisplayName } from "../lib/layerName";
 import { CommandContextItem } from "../menu/CommandContextItem";
 import {
@@ -138,7 +142,11 @@ export const ANALYSIS_MENU_COMMAND_IDS = [
 /// this is the surface the review effort made authoritative — marking is the
 /// drive-by that writes without looking, and the eye should reach the one that
 /// shows you the cuts first.
-export const VIDEO_MENU_COMMAND_IDS = ["reviewShots"] as const;
+/// *Review shots* first: it is the surface this menu made authoritative, and it
+/// costs nothing to open. *Describe content* follows because its answer is
+/// something to READ on those rows — the correlation between where a clip cuts
+/// and what is in it is the whole reason the two sit together.
+export const VIDEO_MENU_COMMAND_IDS = ["reviewShots", "describeSelected"] as const;
 
 /// Kinds whose material carries audio — the gate on the tier above. Matches the
 /// two `LayerParams` variants that hold a `media` id with an audio stream.
@@ -188,6 +196,19 @@ const DETECT_SILENCES_REASON: Record<Exclude<AudioClipState, "ok">, string> = {
   needs_selection: "quick_actions.detect_silences_needs_selection",
   needs_audio_kind: "quick_actions.detect_silences_needs_audio_kind",
   speed_not_one: "quick_actions.detect_silences_speed_not_one",
+};
+
+/// Why a greyed *Describe content* row is greyed. Same block and same
+/// `Record`-over-the-remaining-states rule as the two tables above.
+///
+/// `needs_video_kind` survives even though the row renders only over a
+/// `VideoClip`, on `AUTO_CAPTION_REASON`'s note: the state is reachable when
+/// the summary has not caught up with the selection, and the `Record` admits no
+/// gap.
+const DESCRIBE_REASON: Record<Exclude<DescribeState, "describe">, string> = {
+  needs_selection: "quick_actions.describe_needs_selection",
+  needs_video_kind: "quick_actions.describe_needs_video_kind",
+  speed_not_one: "quick_actions.describe_speed_not_one",
 };
 
 /// Why a greyed *Move to… ›* trigger is greyed. Same block and same
@@ -359,6 +380,11 @@ export function LayerContextMenu({
   const audioClip = useAudioClipState();
   const detectSilencesHint =
     audioClip === "ok" ? undefined : t(DETECT_SILENCES_REASON[audioClip]);
+  // The *Describe content* row's tooltip. Subscribed like the two above it, on
+  // its own picture-clip gate.
+  const describe = useDescribeState();
+  const describeHint =
+    describe === "describe" ? undefined : t(DESCRIBE_REASON[describe]);
   // The *Move to… ›* trigger. Live it is a submenu — a destination is the
   // content of the gesture, and only a list can carry one — and greyed it falls
   // back to the flat registry row, which is what can show WHY. The command is
@@ -548,7 +574,14 @@ export function LayerContextMenu({
               <>
                 <MenuSeparator />
                 {VIDEO_MENU_COMMAND_IDS.map((id) => (
-                  <CommandContextItem key={id} id={id} onRun={onClose} />
+                  <CommandContextItem
+                    key={id}
+                    id={id}
+                    onRun={onClose}
+                    {...(id === "describeSelected" && describeHint
+                      ? { hint: describeHint }
+                      : {})}
+                  />
                 ))}
                 <MenuItem
                   label={t("timeline.mark_shot_cuts", {

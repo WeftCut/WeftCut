@@ -242,6 +242,52 @@ export async function readMediaFrameDataUrl(
   return `data:${content.mimeType ?? 'image/jpeg'};base64,${content.blob}`
 }
 
+/** The two refusals `media://{id}/description` answers with when the DEFAULT
+ *  view simply holds nothing: no description has been computed at that key yet,
+ *  or no engine is configured to have computed one. Both mean "not described" to
+ *  a reader, which is why `readMediaDescription` folds them into `null` instead
+ *  of throwing — a Panel column has one empty state, and a backend that is not
+ *  set up is the describe dialog's news to break, not a shot row's.
+ *
+ *  Matched on the leading phrase and unanchored: the media id and the backend
+ *  tag are interpolated into both sentences, and the resource errors are prose
+ *  with no structured code to key on. Every OTHER failure — an unknown media id,
+ *  an unreadable cache file — still throws, because those are real. */
+const NOT_DESCRIBED = /no description computed yet for media|no video-understanding backend/
+
+/** The cached description for one source's DEFAULT view — the resolver's default
+ *  backend at fps 1.0 and focus `general` — or `null` when nothing is cached
+ *  there, read through the SAME `media://{id}/description` resource an agent
+ *  reads.
+ *
+ *  Exported for the renderer's description channel (`index.ts`), the way
+ *  `readMediaFrameDataUrl` is. The default view is the only view this resource
+ *  serves and deliberately so: it is what a description made at the dialog's
+ *  default sampling lands in, and therefore the only one a Panel reopened in a
+ *  later session can still find.
+ *
+ *  `getVlm` is not optional here as it is on the frame read: the resource needs
+ *  the merged backend config to resolve which backend's cache key to look
+ *  under, and an empty config would report every source as undescribed. */
+export async function readMediaDescription(
+  backend: Backend,
+  getTsHost: () => TsActorHost | null,
+  mediaId: string,
+  getVlm: VlmProvider,
+): Promise<unknown | null> {
+  const uri = `media://${mediaId}/description`
+  let res: ServerResult
+  try {
+    res = await handleReadResource(backend, getTsHost, uri, getVlm)
+  } catch (err) {
+    if (NOT_DESCRIBED.test(String(err))) return null
+    throw err
+  }
+  const content = (res as { contents?: Array<{ text?: string }> }).contents?.[0]
+  if (typeof content?.text !== 'string') throw new Error(`${uri} returned no body`)
+  return JSON.parse(content.text)
+}
+
 /** `withLog`'s `observe` seam for one session: which tools' commits may be
  *  attributed to their call, and the actor to watch for them.
  *

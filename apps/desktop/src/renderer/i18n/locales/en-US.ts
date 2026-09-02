@@ -317,6 +317,14 @@ const enUS = {
       "This clip carries no sound — select a video or audio clip",
     detect_silences_speed_not_one:
       "This clip is re-timed — split a normal-speed segment off it first, or the ranges land in the wrong place",
+    // Describe content. Its own three sentences again, and the kind case is the
+    // one that genuinely differs from the two blocks above: a description reads
+    // frames, so sound is not what makes a clip eligible here.
+    describe_needs_selection: "Select a video clip to describe",
+    describe_needs_video_kind:
+      "A description reads frames — select a video clip",
+    describe_speed_not_one:
+      "This clip is re-timed — split a normal-speed segment off it first, or the descriptions land in the wrong place",
   },
   dock_workspace: {
     editing_label: "Editing workspace",
@@ -496,6 +504,13 @@ const enUS = {
       "Lower the threshold, or restore a cleared cut — this clip is one shot",
     apply_no_discards: "Uncheck the shots you want discarded first",
     apply_running: "An apply is already running",
+    // The description column's empty state. A shot without a description is the
+    // ordinary case — the phrase says which state it is in, where a blank cell
+    // would read as a load that never finished.
+    not_described: "Not described",
+    // The one legitimate transient, and only where the cell has nothing else to
+    // show: a run against this very source is on its way.
+    describing: "Describing…",
   },
   actions: {
     add_color_layer: "Color layer",
@@ -584,6 +599,10 @@ const enUS = {
     // measures and marks, because cutting needs a ripple delete this timeline
     // does not have (`timeline/LayerContextMenu.tsx` carries the whole reason).
     detect_silences_selected: "Detect silences…",
+    // "Describe content" and not "Describe clip": what the model reads is
+    // what is IN the footage, and the row's answer lands as prose on the shot
+    // rows rather than as anything about the clip as an object.
+    describe_selected: "Describe content…",
     open_voiceover: "Voiceover…",
     // Ellipsis because the row opens a surface rather than committing anything:
     // reviewing is what happens next, and the apply is a press inside the Panel.
@@ -1824,6 +1843,12 @@ const enUS = {
     // The COUNT is the whole point of the row: the marks land in the ruler's
     // lower half, which the user may not have been looking at.
     mark_silences_done: "{{markers}} silence markers added to “{{clip}}”",
+    describe_started: "Describing “{{clip}}”",
+    // The engine AND the model, unlike the transcription row's engine alone:
+    // one runtime serves several vision models here, so the engine tag on its
+    // own does not say which weights answered.
+    describe_done:
+      "{{segments}} described spans in “{{clip}}” ({{engine}}, {{model}})",
   },
   // Edit-stack row labels — one per `HISTORY_SUMMARY` entry in
   // main/state/history-labels.ts, which owns the English source text. The three
@@ -2060,6 +2085,36 @@ const enUS = {
     cancel: "Cancel",
     confirm: "Mark silences",
     running: "Marking…",
+  },
+  describe: {
+    title: "Describe content",
+    clip: "Clip",
+    // Named for what it controls rather than for the wire field (`fps`): what a
+    // user is choosing is how closely the model looks, and the unit is beside
+    // the field.
+    sampling: "Sample",
+    unit_fps: "frames / second",
+    sampling_hint:
+      "Frames per second sampled across the clip — more is finer and slower.",
+    focus: "Focus",
+    focus_general: "General scene",
+    focus_shot_type: "Shot type and camera",
+    focus_hint: "What the tags lean toward. The prose describes the scene either way.",
+    // The cost, said before the press rather than discovered after it. No
+    // percentage exists to report: the model answers once, at the end.
+    note:
+      "This runs a vision model on your machine — around twenty seconds for a clip.",
+    // Only a run at the default sampling and focus lands in the view that is
+    // read back, so the sentence changes with the fields rather than sitting
+    // there as a warning nobody re-reads.
+    remembered_default:
+      "Remembered for later sessions, and searchable, at these settings.",
+    remembered_custom:
+      "Readable now, but only descriptions made at {{fps}} frames / second with {{focus}} are remembered for later sessions.",
+    open_settings: "Open Settings → Video understanding",
+    cancel: "Cancel",
+    confirm: "Describe",
+    running: "Describing…",
   },
   search: {
     placeholder: "Search commands, media, clips, captions…",
