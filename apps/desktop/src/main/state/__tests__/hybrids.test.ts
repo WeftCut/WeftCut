@@ -444,6 +444,31 @@ function withVideoLayer(durationUs = 6_000_000, opts: { srcInUs?: number; srcOut
   return { actor, track, mediaId: VID, layerId: add.value as string }
 }
 
+/** `withVideoLayer` plus a co-extensive Audio partner on the same track's audio
+ *  lane, the two linked — the shape an auto-paired A/V import makes, and the
+ *  only one in which a shot apply's reach across a link is visible. */
+function withLinkedAudio(durationUs = 6_000_000) {
+  const base = withVideoLayer(durationUs)
+  const AUD = '00000000-0000-0000-0000-0000000000dd'
+  base.actor.dispatch('add_media', { id: AUD, kind: 'Audio', duration_us: durationUs })
+  const add = base.actor.dispatch('add_layer', { track: base.track, kind: 'audio', media: AUD,
+    src_in_us: 0, src_out_us: durationUs, t_start_us: 0, t_end_us: durationUs })
+  if (!add.ok) throw new Error(JSON.stringify(add.error))
+  const audioId = add.value as string
+  const linked = base.actor.dispatch('links_create', { layers: [base.layerId, audioId], reassign: false })
+  if (!linked.ok) throw new Error(JSON.stringify(linked.error))
+  return { ...base, audioId }
+}
+
+/** Spans of one param kind across the project, in timeline order — the video and
+ *  audio lanes share a track, so an assertion has to name which one it reads. */
+function spansOfKind(actor: ActorHandle, kind: 'VideoClip' | 'Audio'): Array<[number, number]> {
+  return root(actor.snapshot()).tracks.flatMap((t) => t.layers)
+    .filter((l) => l.params.kind === kind)
+    .map((l): [number, number] => [l.t_start_us, l.t_end_us])
+    .sort((x, y) => x[0] - y[0])
+}
+
 /** The same clip one composition deeper: a full-window VideoClip on a Group's A
  *  roll, the root holding nothing but the CompositionRef. The smallest project
  *  in which "the clip's composition" and "the root" differ. */
@@ -513,6 +538,20 @@ describe('runHybrid: auto_split_by_shot', () => {
     expect(parsed.layer_ids).toHaveLength(2) // the 0.3s segment was dropped
     const track = root(actor.snapshot()).tracks.find((t) => t.layers.length > 0 && t.layers.some((l) => parsed.layer_ids.includes(l.id)))!
     expect(track.layers).toHaveLength(2)
+  })
+
+  it('drop_short takes the dropped segment\'s link-paired audio with it', async () => {
+    const { actor, layerId } = withLinkedAudio(6_000_000)
+    const deps = makeDeps(actor)
+    withShotReport(deps, [2_000_000, 2_300_000], 6_000_000)
+    const lenBefore = actor.historyStatus().len
+    const result = await runHybrid('auto_split_by_shot', { layer_id: layerId, min_shot_us: 500_000, drop_short: true }, deps)
+    expect(actor.historyStatus().len - lenBefore).toBe(1) // split, drop and fan-out are ONE commit
+    expect((JSON.parse(result as string) as { layer_ids: string[] }).layer_ids).toHaveLength(2)
+    // The audio split in lockstep, so it has a piece per segment — and the one
+    // under the dropped sliver goes with it rather than being left orphaned.
+    expect(spansOfKind(actor, 'VideoClip')).toEqual([[0, 2_000_000], [2_300_000, 6_000_000]])
+    expect(spansOfKind(actor, 'Audio')).toEqual([[0, 2_000_000], [2_300_000, 6_000_000]])
   })
 
   it('collapses sub-frame-spaced cuts to one split instead of throwing', async () => {
@@ -853,6 +892,20 @@ describe('runHybrid: apply_shot_cuts', () => {
     // nothing else is left on the timeline.
     expect(spansOf(b.actor, discard.layer_ids)).toEqual([reference[0], reference[2]])
     expect(allSpans(b.actor)).toEqual([reference[0], reference[2]])
+  })
+
+  it('discard removes each unchecked span\'s link-paired audio, and one undo restores it all', async () => {
+    const { actor, layerId } = withLinkedAudio(6_000_000)
+    const deps = makeDeps(actor)
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    const r = await runHybrid('apply_shot_cuts',
+      { layer_id: layerId, mode: 'discard', cuts_src_us: DISCARD_CUTS, discard_segments: [1, 3] }, deps) as { layer_ids: string[] }
+    expect(actor.historyStatus().len - lenBefore).toBe(1)
+    expect(spansOfKind(actor, 'VideoClip')).toEqual(spansOf(actor, r.layer_ids))
+    expect(spansOfKind(actor, 'Audio')).toEqual(spansOf(actor, r.layer_ids))
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
   })
 
   it('is ONE history entry, and its undo restores the single pre-apply layer', async () => {

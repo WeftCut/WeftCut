@@ -15,7 +15,7 @@ import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
 import { applyDuplicateLayer, applyPasteLayer, applyPasteLayers, pasteLayerInterval } from './mutations/duplicate'
 import { applySplitLayer, parseDiscardSegments } from './mutations/split'
-import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, applyLinksRename } from './mutations/links'
+import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, applyLinksRename, linkSiblingsExcluding } from './mutations/links'
 import { applyCompositionsDelete, applyGroupsAddMembers, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, type GroupCreateResult } from './mutations/groups'
 import { applyMoveLayersToComposition } from './mutations/moveToComposition'
 import { applySetLayersEnabled, applyUpdateLayer, type LayerPatch } from './mutations/update'
@@ -928,12 +928,19 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // caller named (parseDiscardSegments owns the numbering and the
         // refusals). A segment that is both short and named is deleted once.
         // applyDeleteLayer honors empty-track cleanup for both.
-        // LANDMINE: both deletes walk only the video ids the splits returned,
-        // NOT their link-paired audio halves, so a dropped or discarded take
-        // leaves the paired audio sliver orphaned at that cut. Deliberate:
-        // delete is always local in this project (docs/features.md § Links), so
-        // fanning either delete across a link would be a link semantic invented
-        // here. The drop_short half of it is called out in docs/mcp.md.
+        // Either delete FANS OUT across the target's link: every other member
+        // OVERLAPPING the rejected segment's half-open span goes with it, so a
+        // dropped or discarded take takes its paired audio along. Those pieces
+        // exist only because the split in this very commit cut them; keeping
+        // the audio a rejected take cut off is a half-result nobody asked for.
+        // Overlap and not exact co-span, so a slipped-sync partner still
+        // travels; overlap and not "every member", so a manual bundle member
+        // sitting wholly inside a KEPT segment stays. `delete_layer` itself is
+        // still local — this is the shot-apply's own reach, not a link rule
+        // (docs/features.md § Links). A partner on a locked track fails the
+        // whole op through applyDeleteLayer's own checkTrackLock and the commit
+        // rolls back atomically, which IS § Links' "locks reject the whole op":
+        // no special casing here.
         // Returns the ordered target segment layer ids that survived.
         case 'split_layer_multi': {
           const layer = a.layer as Uuid
@@ -977,11 +984,26 @@ export function createActor(opts: ActorOptions): ActorHandle {
             const discarded = new Set(discardIdx.map((i) => carrier[i]))
             if (dropShortUs === null && discarded.size === 0) return ids
             const kept: Uuid[] = []
+            const targets = new Set(ids)
             for (const id of ids) {
-              const seg = locateLayer(d, id)?.layer ?? null
+              const loc = locateLayer(d, id)
+              const seg = loc?.layer ?? null
               const short = seg !== null && dropShortUs !== null && seg.t_end_us - seg.t_start_us < dropShortUs
-              if (seg && (short || discarded.has(id))) applyDeleteLayer(d, id)
-              else kept.push(id)
+              if (!seg || !(short || discarded.has(id))) { kept.push(id); continue }
+              // Read the link BEFORE this segment's own delete: a link
+              // auto-dissolves below two members, so a two-member pair would
+              // have no siblings left to read afterwards.
+              const partners = linkSiblingsExcluding(loc!.comp, id).filter((sid) => {
+                if (targets.has(sid)) return false // never another segment of the target
+                const s = locateLayer(d, sid)?.layer
+                return s !== undefined && s.t_start_us < seg.t_end_us && s.t_end_us > seg.t_start_us
+              })
+              applyDeleteLayer(d, id)
+              // Defensive re-locate: no partner should overlap two rejected
+              // segments, since a member spanning a cut was split at it — but a
+              // stale id here would throw LayerNotFound and abort the whole
+              // apply, so the list is checked rather than trusted.
+              for (const sid of partners) if (locateLayer(d, sid)) applyDeleteLayer(d, sid)
             }
             return kept
           }) }

@@ -237,7 +237,10 @@ ADR 0052), never a link.
   "aligned" state), with the delta clamped so no member crosses its source
   bounds (`src_in_us`/`src_out_us`) or inverts.
 - **Split** cuts every member spanning `T`, distributing source in/out
-  proportionally for media-bearing kinds; all pieces stay in the link.
+  proportionally for media-bearing kinds; all pieces stay in the link. The
+  shot-apply's rejecting verbs (§ Shot review) are the one place a *delete*
+  travels a link too: they remove every member piece lying under a rejected
+  span and nothing under a kept one. `delete_layer` stays local.
 - **Duplicate** (`paste_layers`) clones every member and links the clones to
   each other — never to their sources — as **one** undo step. The first id is
   the seed the drop position refers to; every other clone shifts by the same
@@ -1008,9 +1011,13 @@ following the selection afterwards: a split leaves the clip's identity on its
 first segment, so that segment is what the Panel reviews next — one shot,
 with no candidate inside its window — and the other segments are a click
 away; a discard that removes the first segment leaves nothing selected and
-the Panel returns to its empty state; after a mark the review stands. As with
-the agent's `drop_short_us`, a discarded take's link-paired audio is left in
-place — delete never fans out across a link here.
+the Panel returns to its empty state; after a mark the review stands. A
+discarded take takes its link partners with it — every other member of the
+clip's link overlapping the rejected span goes in the same commit, so a
+rejected shot's paired audio leaves with the picture rather than staying behind
+as a sliver. The same reach covers the agent's `drop_short_us`. What sits wholly
+inside a kept segment — a lower-third over the surviving middle of a manual
+bundle — stays.
 
 **What is in each shot.** *Describe content…* — on a `VideoClip`'s context
 menu beside *Review shots…*, in the Edit menu and the palette — runs

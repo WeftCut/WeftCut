@@ -133,14 +133,35 @@ describe('dispatch: split + links', () => {
     const idGen = seededGen()
     const initial = blankProject(idGen, 'd')
     const track = root(initial).tracks[0].id
+    const bRoll = root(initial).tracks[1].id
     const actor = createActor({ initial, idGen, clock: () => '<TS>' })
     const VID = '00000000-0000-0000-0000-0000000000cc'
     actor.dispatch('add_media', { id: VID, kind: 'Video', duration_us: 6_000_000 })
     const add = actor.dispatch('add_layer', { track, kind: 'video', media: VID, src_in_us: 0, src_out_us: 6_000_000, t_start_us: 0, t_end_us: 6_000_000 })
-    return { actor, track, layer: (add as { ok: true; value: unknown }).value as string }
+    return { actor, track, bRoll, layer: (add as { ok: true; value: unknown }).value as string }
   }
   const layersOf = (actor: ActorHandle, track: string) =>
     root(actor.snapshot()).tracks.find((t) => t.id === track)!.layers
+
+  /** The clip with a 6 s Audio partner on the same track's audio lane, the two
+   *  linked — the shape an auto-paired A/V import makes. `slipUs` offsets the
+   *  audio on the timeline (a slipped sync); it is on the 48 kHz lattice. */
+  function linkedPair(slipUs = 0) {
+    const base = splittableClip()
+    const AUD = '00000000-0000-0000-0000-0000000000dd'
+    base.actor.dispatch('add_media', { id: AUD, kind: 'Audio', duration_us: 6_000_000 })
+    const addA = base.actor.dispatch('add_layer', { track: base.track, kind: 'audio', media: AUD,
+      src_in_us: 0, src_out_us: 6_000_000, t_start_us: slipUs, t_end_us: slipUs + 6_000_000 })
+    expect(addA.ok).toBe(true)
+    const audio = (addA as { ok: true; value: unknown }).value as string
+    expect(base.actor.dispatch('links_create', { layers: [base.layer, audio], reassign: false }).ok).toBe(true)
+    return { ...base, audio }
+  }
+  /** Spans of one param kind on `track`, in timeline order — the video lane and
+   *  the audio lane share a track, so every assertion has to name which. */
+  const spansOfKind = (actor: ActorHandle, track: string, kind: 'VideoClip' | 'Audio') =>
+    layersOf(actor, track).filter((l) => l.params.kind === kind)
+      .map((l) => [l.t_start_us, l.t_end_us]).sort((x, y) => x[0] - y[0])
 
   it('split_layer_multi deletes the named segments in the split commit; one undo restores the pre-split layer', () => {
     const { actor, track, layer } = splittableClip()
@@ -181,6 +202,79 @@ describe('dispatch: split + links', () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(layersOf(actor, track).map((l) => [l.t_start_us, l.t_end_us])).toEqual([[0, 2_000_000], [4_000_000, 6_000_000]])
+  })
+
+  // Fan-out of the two deletes: a rejected take takes the link pieces its own
+  // split produced with it. `delete_layer` stays local; this is the shot-apply's
+  // reach, and its shape is OVERLAP with the rejected span.
+  it('split_layer_multi discard deletes the paired audio piece of each discarded segment and keeps the kept ones', () => {
+    const { actor, track, layer } = linkedPair()
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [1_000_000, 2_000_000, 4_000_000], discard_segments: [1, 3] })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(spansOfKind(actor, track, 'VideoClip')).toEqual([[0, 1_000_000], [2_000_000, 4_000_000]])
+    // The audio was split in lockstep, so every piece answers to a segment: the
+    // two under a discarded one are gone, the two under a kept one are intact.
+    expect(spansOfKind(actor, track, 'Audio')).toEqual([[0, 1_000_000], [2_000_000, 4_000_000]])
+  })
+
+  it('split_layer_multi drop_short_us deletes the paired audio sliver with the short segment', () => {
+    const { actor, track, layer } = linkedPair()
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [2_000_000, 2_300_000], drop_short_us: 500_000 })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(spansOfKind(actor, track, 'VideoClip')).toEqual([[0, 2_000_000], [2_300_000, 6_000_000]])
+    expect(spansOfKind(actor, track, 'Audio')).toEqual([[0, 2_000_000], [2_300_000, 6_000_000]])
+  })
+
+  it('split_layer_multi fans out to a SLIPPED partner: overlap, not an exact co-span, is the test', () => {
+    const { actor, track, layer } = linkedPair(40_000) // audio 40 ms late — a slipped sync
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [2_000_000, 4_000_000], discard_segments: [0] })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(spansOfKind(actor, track, 'VideoClip')).toEqual([[2_000_000, 4_000_000], [4_000_000, 6_000_000]])
+    // The first audio piece starts 40 ms after the discarded segment does, so it
+    // shares no edge with it and still travels; the two later pieces sit off the
+    // discarded span entirely (half-open — the abutting one does not count).
+    expect(spansOfKind(actor, track, 'Audio')).toEqual([[2_000_000, 4_000_000], [4_000_000, 6_040_000]])
+  })
+
+  it('split_layer_multi leaves a bundle member wholly inside a KEPT segment in place, still linked', () => {
+    const { actor, track, bRoll, layer } = splittableClip()
+    // A manual scene bundle rather than an A/V pair: a lower-third over the
+    // middle of the clip, spanning no cut, so the split never touches it.
+    const addC = actor.dispatch('add_layer', { track: bRoll, kind: 'color', t_start_us: 2_500_000, t_end_us: 3_500_000 })
+    expect(addC.ok).toBe(true)
+    const third = (addC as { ok: true; value: unknown }).value as string
+    expect(actor.dispatch('links_create', { layers: [layer, third], reassign: false }).ok).toBe(true)
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [1_000_000, 2_000_000, 4_000_000], discard_segments: [1, 3] })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(spansOfKind(actor, track, 'VideoClip')).toEqual([[0, 1_000_000], [2_000_000, 4_000_000]])
+    expect(layersOf(actor, bRoll).map((l) => [l.id, l.t_start_us, l.t_end_us])).toEqual([[third, 2_500_000, 3_500_000]])
+    expect(root(actor.snapshot()).links[0].members).toContain(third)
+  })
+
+  it('split_layer_multi fan-out never reaches another TARGET segment', () => {
+    const { actor, track, layer } = linkedPair()
+    // Every segment of the target joins the link as the splits run, and the two
+    // neighbours of the discarded one abut it. Only the audio under it may go.
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [2_000_000, 4_000_000], discard_segments: [1] })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value as string[]).toHaveLength(2)
+    expect(spansOfKind(actor, track, 'VideoClip')).toEqual([[0, 2_000_000], [4_000_000, 6_000_000]])
+    expect(spansOfKind(actor, track, 'Audio')).toEqual([[0, 2_000_000], [4_000_000, 6_000_000]])
+  })
+
+  it('split_layer_multi fan-out rides the split commit: one undo restores the audio too', () => {
+    const { actor, layer } = linkedPair()
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    expect(actor.dispatch('split_layer_multi', { layer, at_t_us_list: [1_000_000, 2_000_000, 4_000_000], discard_segments: [1, 3] }).ok).toBe(true)
+    expect(actor.historyStatus().len - lenBefore).toBe(1) // split + video deletes + audio deletes
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
   })
 
   it.each([
