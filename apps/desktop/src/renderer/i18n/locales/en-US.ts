@@ -432,6 +432,21 @@ const enUS = {
     // A scanned source whose window holds no boundary above the threshold. An
     // answer, not a failure.
     no_shots: "No shot cuts in this clip's range.",
+    // The strip's axis, named by what it MEASURES. The wire field is called
+    // `sensitivity` and reaches no label: a higher value yields FEWER cuts, so
+    // the word reads backwards — the control's meaning is the line's position.
+    axis_frame_change: "Frame change",
+    threshold_line: "Shot cut threshold",
+    threshold_value: "{{value}} frame change",
+    // The floor scan emitted nothing inside this clip's range, so there is no
+    // signal for a line to cross.
+    no_candidates:
+      "No candidate cuts in this clip's range — nothing for a threshold to sort.",
+    // Output granularity, not accuracy: boundaries closer together than this
+    // are dropped. In milliseconds because the source's own frame rate is not
+    // known here.
+    min_shot_length: "Minimum shot length",
+    milliseconds: "ms",
     go_to: "Go to {{timecode}}",
     cover_frame: "Cover frame of shot {{index}}",
     // The pair either side of a candidate boundary — the one look that answers

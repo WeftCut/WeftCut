@@ -235,6 +235,27 @@ describe('parseProject grid repair', () => {
     expect(root(project).markers[0].anchor).toBeNull()
     expect(() => validate(project)).not.toThrow()
   })
+  // Every additive settings field takes its default in the parse pass and
+  // nowhere else. A consumer that reads one as non-optional — `shot_review` is
+  // read that way by the Shots Panel's store — otherwise gets `undefined` on an
+  // older project and throws mid-render.
+  it('backfills settings.shot_review on a project written before the field existed', () => {
+    const wire = serializeProject(blankProject(seededGen(), 'legacy')) as Wire & {
+      settings: Record<string, unknown>
+    }
+    delete wire.settings.shot_review
+    const project = parseProject(wire, silent)
+    expect(project.settings.shot_review).toBeNull()
+    expect(() => validate(project)).not.toThrow()
+  })
+  it('leaves a stored shot_review exactly as written — a default, never a repair', () => {
+    const wire = serializeProject(blankProject(seededGen(), 'tuned')) as Wire & {
+      settings: Record<string, unknown>
+    }
+    wire.settings.shot_review = { sensitivity: 0.62, min_shot_us: 250_000 }
+    const project = parseProject(wire, silent)
+    expect(project.settings.shot_review).toEqual({ sensitivity: 0.62, min_shot_us: 250_000 })
+  })
   it('leaves a stored note and anchor exactly as written — a default, never a repair', () => {
     const g = seededGen()
     // A CompositionRef layer is the source-window kind that needs no media pool.

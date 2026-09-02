@@ -11,20 +11,29 @@
 // whole source and can run for minutes. Clicking clips is the highest-frequency
 // gesture in the app, so the scan is reachable only from `analyzeShotSubject`,
 // which one deliberate press calls.
+//
+// The two tuned parameters live on `ProjectSettings.shot_review` — per project,
+// because a shoot has one character — and are written through the UNRECORDED
+// `update_project_settings`, so tuning never enters the undo stack
+// (`docs/preview.md` §Proxies is the same convention).
 
 import { create } from "zustand";
 
 import { describeRefusal, refusalText } from "../errors/tryMutate";
 import {
   analyzeShotsFloor,
+  getProjectSettings,
   logEmit,
   reduceShotReport,
   shotDefaultOpts,
   shotFloorReportCached,
   shotFloorSensitivity,
+  updateProjectSettings,
   type ShotReport,
+  type ShotReviewSettings,
 } from "../ipc";
 import { LatestRequestCoordinator } from "../state/latestRequest";
+import { useProjectStore } from "../state/projectStore";
 
 /// The clip under review. A layer and not a media item: the report is
 /// source-scoped, but every apply step is layer-scoped, and `[srcInUs, srcOutUs)`
@@ -58,9 +67,14 @@ export interface ShotsStoreState {
   /// The Analyze failure's own sentence, for the Panel's inline slot. Cleared
   /// when the next attempt starts and when the subject changes.
   error: string;
-  /// Detection parameters, read from `shot_default_opts`. `null` until that read
-  /// lands: the Panel holds no threshold literal of its own, so there is
-  /// nothing to reduce at before then.
+  /// The detection defaults as RUST states them, kept beside the effective pair
+  /// so a project that carries no review parameters — or one that clears them —
+  /// falls back without a second read. `null` until `shot_default_opts` lands.
+  rustDefaults: { sensitivity: number; minShotUs: number } | null;
+  /// The parameters the reduce actually runs at: the project's if it carries
+  /// them, else `rustDefaults`. `null` until one of those two reads lands — the
+  /// Panel holds no threshold literal of its own, so there is nothing to reduce
+  /// at before then.
   sensitivity: number | null;
   minShotUs: number | null;
   /// The floor the scan itself ran at (`shot_floor_sensitivity`) — the lowest a
@@ -84,6 +98,7 @@ const INITIAL: ShotsStoreState = {
   reduced: null,
   analyzing: null,
   error: "",
+  rustDefaults: null,
   sensitivity: null,
   minShotUs: null,
   floor: null,
@@ -171,17 +186,118 @@ async function runReduce(): Promise<void> {
 /// Read the detection defaults and the scan floor once. Both are constants of
 /// the build, so a second call is a no-op — the Panel calls it on every mount.
 export async function loadShotDefaults(): Promise<void> {
-  if (get().sensitivity !== null) return;
+  if (get().rustDefaults !== null) return;
   const [defaults, floor] = await Promise.all([
     shotDefaultOpts(),
     shotFloorSensitivity(),
   ]);
-  set({
+  const rustDefaults = {
     sensitivity: defaults.sensitivity,
     minShotUs: defaults.min_shot_us,
-    floor,
+  };
+  // This read and `hydrateShotReview` race, and the project's own values win.
+  // Seeding only when nothing has set the pair yet is what makes the order
+  // between them irrelevant.
+  const seed =
+    get().sensitivity === null
+      ? { sensitivity: rustDefaults.sensitivity, minShotUs: rustDefaults.minShotUs }
+      : {};
+  set({ rustDefaults, floor, ...seed });
+  await runReduce();
+}
+
+/// Nothing below the floor: the scan emitted no candidate there, so a threshold
+/// under it can only ask for a set that does not exist. The clamp lives here
+/// rather than in the control because `floor` does — one home for the bound and
+/// the value it bounds.
+function clampThreshold(value: number): number {
+  const { floor } = get();
+  return Math.min(1, Math.max(floor ?? 0, value));
+}
+
+/// Write the reviewed parameters onto the project. Unrecorded, like the proxy
+/// preferences: tuning a threshold is a preference, and a drag that logged undo
+/// entries would bury the edit before it under its own dust.
+async function persistShotReview(): Promise<void> {
+  const { sensitivity, minShotUs } = get();
+  if (sensitivity === null || minShotUs === null) return;
+  try {
+    await updateProjectSettings({
+      shot_review: { sensitivity, min_shot_us: minShotUs },
+    });
+  } catch (err) {
+    // A preference that cannot be written leaves the review fully usable at the
+    // values on screen; they are simply not remembered for the next session.
+    console.warn("[shotsStore] could not persist the review parameters", err);
+  }
+}
+
+/// Move the threshold and relay the rows. NO write: a drag is one gesture, and
+/// one pointer move is not the end of it — `commitShotThreshold` is.
+export function setShotThreshold(value: number): void {
+  const next = clampThreshold(value);
+  if (get().sensitivity === next) return;
+  set({ sensitivity: next });
+  void runReduce();
+}
+
+/// The end of a threshold gesture, and its one write.
+export async function commitShotThreshold(): Promise<void> {
+  await persistShotReview();
+}
+
+/// A committed minimum-shot-length edit: relay the rows and remember it. One
+/// write per edit — `AppNumberField` commits on blur / Enter / step, not per
+/// keystroke. Out-of-range values are ignored rather than sent, because the
+/// reduce refuses anything but a positive whole number of microseconds.
+export async function setShotMinShotUs(us: number): Promise<void> {
+  if (!Number.isSafeInteger(us) || us <= 0) return;
+  if (get().minShotUs === us) return;
+  set({ minShotUs: us });
+  void runReduce();
+  await persistShotReview();
+}
+
+/// Take the review parameters from the open project, falling back to Rust's
+/// defaults when it carries none. The project wins on purpose: the values a
+/// person tuned against this footage are the ones to come back to.
+async function hydrateShotReview(): Promise<void> {
+  let review: ShotReviewSettings | null;
+  try {
+    review = (await getProjectSettings()).shot_review;
+  } catch {
+    // No project open — whatever the defaults read seeded stands.
+    return;
+  }
+  const { rustDefaults } = get();
+  const params =
+    review !== null
+      ? { sensitivity: review.sensitivity, minShotUs: review.min_shot_us }
+      : rustDefaults;
+  // `null` on both sides means the defaults read has not landed yet; it will
+  // seed the pair itself when it does.
+  if (params === null) return;
+  set({
+    sensitivity: clampThreshold(params.sensitivity),
+    minShotUs: params.minShotUs,
   });
   await runReduce();
+}
+
+/// Hydrate now, and again whenever the open PROJECT changes — the Panel can
+/// stay open across a project swap, and the previous shoot's threshold must not
+/// silently apply to the next one.
+///
+/// Project IDENTITY and not the summary object: `projectStore.apply` installs a
+/// brand-new summary on every commit, so comparing objects would re-read the
+/// settings on every edit — a round trip per keystroke, and a real race where an
+/// unrelated edit's in-flight read resolves after a drag's write and restores
+/// the stale value (`proxyPreferenceStore` carries the same note).
+export function wireShotReviewPrefs(): () => void {
+  void hydrateShotReview();
+  return useProjectStore.subscribe((s, prev) => {
+    if (s.summary?.project_id !== prev.summary?.project_id) void hydrateShotReview();
+  });
 }
 
 /// Probe the subject's source and, ONLY on a hit, fetch the report it already
@@ -368,6 +484,21 @@ export const useShotAnalyzing = (): string | null =>
   useShotsStore((s) => s.analyzing);
 
 export const useShotError = (): string => useShotsStore((s) => s.error);
+
+export const useShotThreshold = (): number | null =>
+  useShotsStore((s) => s.sensitivity);
+
+export const useShotFloor = (): number | null => useShotsStore((s) => s.floor);
+
+export const useShotMinShotUs = (): number | null =>
+  useShotsStore((s) => s.minShotUs);
+
+/// The FLOOR report for one source — every candidate the scan emitted, not the
+/// reduce's survivors. The score strip draws from this one because its job is to
+/// show what the line is currently EXCLUDING, and the reduced report has already
+/// dropped exactly those.
+export const useShotFloorReport = (mediaId: string | null): ShotReport | null =>
+  useShotsStore((s) => (mediaId === null ? null : s.reports.get(mediaId) ?? null));
 
 export const useVetoedCandidates = (mediaId: string | null): ReadonlySet<number> =>
   useShotsStore((s) => (mediaId === null ? NO_TIMES : s.vetoed.get(mediaId) ?? NO_TIMES));

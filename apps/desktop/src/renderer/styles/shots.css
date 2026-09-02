@@ -50,6 +50,122 @@
   line-height: 1.5;
 }
 
+/* ── The candidate score strip ──────────────────────────────────────────────
+   x = source time across the clip's window, y = the frame-change score, one
+   tick per candidate the floor scan emitted. The plot's SVG stretches
+   (preserveAspectRatio: none) while the ticks keep a screen-width stroke via
+   vector-effect, so the strip stays readable from TOOL_MINIMUM's 240px up to a
+   full-width dock. The line is an HTML element rather than an SVG one for the
+   same reason: a stretched viewBox would squash a handle, and a real element
+   takes focus and keyboard on its own. */
+
+.shots-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.shots-strip-plot {
+  position: relative;
+  height: 56px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
+  background: var(--surface-sunken);
+  cursor: ns-resize;
+  /* Or a drag on a touch/pen device scrolls the Panel instead of moving the
+     line. */
+  touch-action: none;
+}
+
+.shots-strip-plot-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Excluded by the line — still drawn, because how much is being thrown away is
+   half of what the strip is for. */
+.shots-tick {
+  stroke: var(--muted-foreground);
+  stroke-width: 1.5;
+}
+
+.shots-tick[data-accepted="true"] {
+  stroke: var(--selection);
+  stroke-width: 2;
+}
+
+/* The threshold line and its handle in one element: full width so it reads as
+   a line, tall enough to be grabbable, and centred on its own position. */
+.shots-threshold {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 9px;
+  transform: translateY(-50%);
+  border-radius: var(--radius-control);
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.shots-threshold::before {
+  position: absolute;
+  right: 0;
+  left: 0;
+  top: 50%;
+  height: 1px;
+  background: var(--selection);
+  content: "";
+}
+
+/* The grip, parked at the right end so it never sits over the tallest ticks. */
+.shots-threshold::after {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border-radius: 999px;
+  background: var(--selection);
+  content: "";
+}
+
+.shots-threshold:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.shots-strip-axis {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-micro);
+}
+
+.shots-strip-range {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+
+/* The minimum shot length. A labelled field with a unit, wrapping at narrow
+   widths rather than truncating — it must never read as a second slider. */
+.shots-params {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+}
+
+.shots-param-field {
+  width: 72px;
+}
+
 .shots-list {
   display: flex;
   flex-direction: column;

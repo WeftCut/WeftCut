@@ -439,8 +439,9 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
     for (const arr of ['tracks', 'markers', 'transitions', 'links'] as const)
       if (!Array.isArray((c as Record<string, unknown>)[arr])) throw new Error(`parseProject: compositions[${k}].${arr} must be an array`)
   }
-  // Additive settings fields (prefer_proxies/proxy_overrides, added later WITHOUT
-  // a schema bump) deserialize as absent on projects saved before they existed.
+  // Additive settings fields (prefer_proxies/proxy_overrides/shot_review, added
+  // later WITHOUT a schema bump) deserialize as absent on projects saved before
+  // they existed.
   // Backfill here, or a consumer that reads a field as non-optional (e.g.
   // get_project_settings → the renderer proxy store) hands `undefined` downstream
   // and a `settings.proxy_overrides[id]` read throws mid-render. Existing keys win.

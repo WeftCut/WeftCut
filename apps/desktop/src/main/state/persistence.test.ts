@@ -127,7 +127,7 @@ function withMedia(items: MediaItem[]): Project {
       tracks: [], markers: [], transitions: [], links: [],
     } }, root_id: 'root', next_group_ordinal: 1,
     media_pool: Object.fromEntries(items.map((i) => [i.id, i])), audio_roles: {},
-    settings: { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60, history_capacity: 200, auto_pair_audio_on_import: true, prefer_proxies: false, proxy_overrides: {} },
+    settings: { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60, history_capacity: 200, auto_pair_audio_on_import: true, prefer_proxies: false, proxy_overrides: {}, shot_review: null },
   }
 }
 

@@ -8,7 +8,12 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { LogEntryInput, ShotReport } from "../ipc";
+import type {
+  LogEntryInput,
+  ProjectSettingsPatch,
+  ProjectSettingsView,
+  ShotReport,
+} from "../ipc";
 
 const mocks = vi.hoisted(() => ({
   shotFloorReportCached: vi.fn<(id: string) => Promise<boolean>>(),
@@ -16,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   reduceShotReport: vi.fn(),
   shotDefaultOpts: vi.fn(),
   shotFloorSensitivity: vi.fn(),
+  getProjectSettings: vi.fn<() => Promise<ProjectSettingsView>>(),
+  updateProjectSettings: vi.fn<(patch: ProjectSettingsPatch) => Promise<void>>(),
   logEmit: vi.fn<(input: LogEntryInput) => Promise<void>>(),
 }));
 
@@ -25,18 +32,27 @@ vi.mock("../ipc", () => ({
   reduceShotReport: (...args: unknown[]) => mocks.reduceShotReport(...args),
   shotDefaultOpts: () => mocks.shotDefaultOpts(),
   shotFloorSensitivity: () => mocks.shotFloorSensitivity(),
+  getProjectSettings: () => mocks.getProjectSettings(),
+  updateProjectSettings: (patch: ProjectSettingsPatch) =>
+    mocks.updateProjectSettings(patch),
   logEmit: (input: LogEntryInput) => mocks.logEmit(input),
 }));
 
+import { useProjectStore } from "../state/projectStore";
+import { summaryFixture } from "../testing/summaryFixture";
 import {
   analyzeShotSubject,
+  commitShotThreshold,
   invalidateShotSource,
   loadShotDefaults,
   resetShotsStore,
   setCandidateAccepted,
   setRowKept,
+  setShotMinShotUs,
   setShotSubject,
+  setShotThreshold,
   useShotsStore,
+  wireShotReviewPrefs,
   type ShotSubject,
 } from "./shotsStore";
 
@@ -71,9 +87,48 @@ beforeEach(() => {
   mocks.shotDefaultOpts.mockResolvedValue({ sensitivity: 0.4, min_shot_us: 500_000 });
   mocks.shotFloorSensitivity.mockResolvedValue(0.05);
   mocks.reduceShotReport.mockImplementation((r: ShotReport) => Promise.resolve(r));
+  mocks.getProjectSettings.mockResolvedValue(settings(null));
+  mocks.updateProjectSettings.mockResolvedValue(undefined);
   mocks.logEmit.mockResolvedValue(undefined);
   resetShotsStore();
 });
+
+/// The settings view, carrying only what this store reads.
+function settings(
+  shot_review: ProjectSettingsView["shot_review"],
+): ProjectSettingsView {
+  return { prefer_proxies: false, proxy_overrides: {}, shot_review };
+}
+
+/// The arguments of the most recent reduce — the one place a parameter change
+/// has to show up, since the rows are a projection of exactly its answer.
+function lastReduceParams(): {
+  sensitivity: number;
+  minShotUs: number;
+  inUs: number;
+  outUs: number;
+} {
+  const calls = mocks.reduceShotReport.mock.calls;
+  return calls[calls.length - 1]?.[1] as {
+    sensitivity: number;
+    minShotUs: number;
+    inUs: number;
+    outUs: number;
+  };
+}
+
+/// A subject with a report already in hand, so a parameter change is the only
+/// thing left that can move the rows.
+async function withReport(): Promise<void> {
+  mocks.shotFloorReportCached.mockResolvedValue(true);
+  mocks.analyzeShotsFloor.mockResolvedValue(report([2_000_000, 4_000_000]));
+  await loadShotDefaults();
+  setShotSubject(subject("m1"));
+  await settle();
+  mocks.reduceShotReport.mockClear();
+  mocks.analyzeShotsFloor.mockClear();
+  mocks.updateProjectSettings.mockClear();
+}
 
 describe("selection never scans", () => {
   it("issues the probe and NO scan when a source has no cached report", async () => {
@@ -298,5 +353,197 @@ describe("the reviewer's two decisions", () => {
     await loadShotDefaults();
     await settle();
     expect(mocks.reduceShotReport).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the reviewed parameters come from the project", () => {
+  beforeEach(() => {
+    // The subscription compares project identity, so each test starts from no
+    // project rather than inheriting the previous one's id.
+    useProjectStore.getState().apply(null);
+  });
+
+  it("prefers the project's values over the detector's defaults", async () => {
+    mocks.getProjectSettings.mockResolvedValue(
+      settings({ sensitivity: 0.62, min_shot_us: 250_000 }),
+    );
+    await loadShotDefaults();
+    const unwire = wireShotReviewPrefs();
+    await settle();
+
+    expect(useShotsStore.getState().sensitivity).toBe(0.62);
+    expect(useShotsStore.getState().minShotUs).toBe(250_000);
+    unwire();
+  });
+
+  it("still prefers them when the settings read lands FIRST", async () => {
+    // The two reads race. Whichever order they land in, the values a person
+    // tuned against this footage are the ones to come back to.
+    mocks.getProjectSettings.mockResolvedValue(
+      settings({ sensitivity: 0.62, min_shot_us: 250_000 }),
+    );
+    const unwire = wireShotReviewPrefs();
+    await settle();
+    expect(useShotsStore.getState().sensitivity).toBe(0.62);
+
+    await loadShotDefaults();
+    expect(useShotsStore.getState().sensitivity).toBe(0.62);
+    expect(useShotsStore.getState().minShotUs).toBe(250_000);
+    unwire();
+  });
+
+  it("falls back to the detector's defaults on a project nobody has tuned", async () => {
+    mocks.getProjectSettings.mockResolvedValue(settings(null));
+    await loadShotDefaults();
+    const unwire = wireShotReviewPrefs();
+    await settle();
+
+    expect(useShotsStore.getState().sensitivity).toBe(0.4);
+    expect(useShotsStore.getState().minShotUs).toBe(500_000);
+    unwire();
+  });
+
+  it("re-hydrates on a project swap and stays quiet on an ordinary edit", async () => {
+    mocks.getProjectSettings.mockResolvedValue(
+      settings({ sensitivity: 0.62, min_shot_us: 250_000 }),
+    );
+    await loadShotDefaults();
+    const unwire = wireShotReviewPrefs();
+    useProjectStore.getState().apply(summaryFixture({ project_id: "p1" }));
+    await settle();
+    expect(useShotsStore.getState().sensitivity).toBe(0.62);
+
+    // The next shoot has its own character.
+    mocks.getProjectSettings.mockResolvedValue(
+      settings({ sensitivity: 0.33, min_shot_us: 700_000 }),
+    );
+    useProjectStore.getState().apply(summaryFixture({ project_id: "p2" }));
+    await settle();
+    expect(useShotsStore.getState().sensitivity).toBe(0.33);
+    expect(useShotsStore.getState().minShotUs).toBe(700_000);
+
+    // `apply` installs a brand-new summary object on EVERY commit, so comparing
+    // objects instead of the project id would re-read the settings once per
+    // edit — and could resolve a stale snapshot over a just-dragged value.
+    const reads = mocks.getProjectSettings.mock.calls.length;
+    useProjectStore.getState().apply(summaryFixture({ project_id: "p2", name: "edited" }));
+    await settle();
+    expect(mocks.getProjectSettings.mock.calls.length).toBe(reads);
+    unwire();
+  });
+
+  it("stops re-hydrating once the Panel has unwired it", async () => {
+    await loadShotDefaults();
+    const unwire = wireShotReviewPrefs();
+    await settle();
+    unwire();
+    const reads = mocks.getProjectSettings.mock.calls.length;
+
+    useProjectStore.getState().apply(summaryFixture({ project_id: "p3" }));
+    await settle();
+    expect(mocks.getProjectSettings.mock.calls.length).toBe(reads);
+  });
+});
+
+describe("the threshold line", () => {
+  it("can never go below the scan floor, or above 1", async () => {
+    await loadShotDefaults();
+
+    // Below the floor the scan emitted nothing, so a lower line could only ask
+    // for a set that does not exist.
+    setShotThreshold(0);
+    expect(useShotsStore.getState().sensitivity).toBe(0.05);
+    setShotThreshold(-1);
+    expect(useShotsStore.getState().sensitivity).toBe(0.05);
+    setShotThreshold(5);
+    expect(useShotsStore.getState().sensitivity).toBe(1);
+  });
+
+  it("re-reduces at the new value and issues NO scan", async () => {
+    await withReport();
+
+    setShotThreshold(0.7);
+    await settle();
+
+    expect(lastReduceParams()).toEqual({
+      sensitivity: 0.7,
+      minShotUs: 500_000,
+      inUs: 0,
+      outUs: 6_000_000,
+    });
+    // The whole point of the floor-scan / reduce split: every threshold at or
+    // above the floor is free.
+    expect(mocks.analyzeShotsFloor).not.toHaveBeenCalled();
+  });
+
+  it("writes once per gesture — the moves are silent, the release is the write", async () => {
+    await withReport();
+
+    setShotThreshold(0.5);
+    setShotThreshold(0.6);
+    setShotThreshold(0.7);
+    await settle();
+    // A write per pointer move would be a settings round trip per frame of a
+    // drag.
+    expect(mocks.updateProjectSettings).not.toHaveBeenCalled();
+
+    await commitShotThreshold();
+    expect(mocks.updateProjectSettings).toHaveBeenCalledTimes(1);
+    expect(mocks.updateProjectSettings).toHaveBeenCalledWith({
+      shot_review: { sensitivity: 0.7, min_shot_us: 500_000 },
+    });
+  });
+
+  it("does not re-reduce when a move lands on the value already held", async () => {
+    await withReport();
+
+    setShotThreshold(0.4);
+    await settle();
+    expect(mocks.reduceShotReport).not.toHaveBeenCalled();
+  });
+});
+
+describe("the minimum shot length", () => {
+  it("relays the rows and writes once per committed edit", async () => {
+    await withReport();
+
+    await setShotMinShotUs(250_000);
+    await settle();
+
+    expect(lastReduceParams().minShotUs).toBe(250_000);
+    expect(mocks.updateProjectSettings).toHaveBeenCalledTimes(1);
+    expect(mocks.updateProjectSettings).toHaveBeenCalledWith({
+      shot_review: { sensitivity: 0.4, min_shot_us: 250_000 },
+    });
+  });
+
+  it("ignores a length the reduce would refuse", async () => {
+    await withReport();
+
+    await setShotMinShotUs(0);
+    await setShotMinShotUs(-1);
+    await setShotMinShotUs(1.5);
+    await settle();
+
+    expect(useShotsStore.getState().minShotUs).toBe(500_000);
+    expect(mocks.reduceShotReport).not.toHaveBeenCalled();
+    expect(mocks.updateProjectSettings).not.toHaveBeenCalled();
+  });
+
+  it("is independent of the line: each leaves the other's argument alone", async () => {
+    await withReport();
+
+    setShotThreshold(0.7);
+    await settle();
+    const afterLine = lastReduceParams();
+
+    await setShotMinShotUs(250_000);
+    await settle();
+    const afterLength = lastReduceParams();
+
+    // Two knobs, two errors: the line trades misses against false positives,
+    // the length is pure output granularity.
+    expect(afterLine).toEqual({ sensitivity: 0.7, minShotUs: 500_000, inUs: 0, outUs: 6_000_000 });
+    expect(afterLength).toEqual({ sensitivity: 0.7, minShotUs: 250_000, inUs: 0, outUs: 6_000_000 });
   });
 });

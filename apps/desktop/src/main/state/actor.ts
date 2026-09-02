@@ -671,7 +671,21 @@ export function createActor(opts: ActorOptions): ActorHandle {
   function updateProjectSettings(patch: {
     prefer_proxies?: boolean | null
     proxy_override?: { media_id: string; value: boolean | null } | null
+    shot_review?: { sensitivity: number; min_shot_us: number } | null
   }): void {
+    // Validated whole or refused whole, against the SAME bounds
+    // `reduce_shot_report` enforces at the napi boundary — so a pair that
+    // persists is a pair next session's reduce will accept, and a bad one is
+    // named here rather than surfacing as a failed reduce much later.
+    function reviewedShotParams(v: unknown): { sensitivity: number; min_shot_us: number } | null {
+      if (v === null) return null
+      const o = v as { sensitivity?: unknown; min_shot_us?: unknown }
+      if (typeof o !== 'object' || typeof o.sensitivity !== 'number' || !Number.isFinite(o.sensitivity) || o.sensitivity < 0 || o.sensitivity > 1)
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'shot_review.sensitivity', detail: `sensitivity ${String(o?.sensitivity)} must be a finite number in [0, 1]` })
+      if (typeof o.min_shot_us !== 'number' || !Number.isSafeInteger(o.min_shot_us) || o.min_shot_us <= 0)
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'shot_review.min_shot_us', detail: `min_shot_us ${String(o.min_shot_us)} must be a positive whole number of microseconds` })
+      return { sensitivity: o.sensitivity, min_shot_us: o.min_shot_us }
+    }
     const next = { ...current().settings, proxy_overrides: { ...current().settings.proxy_overrides } }
     if (typeof patch.prefer_proxies === 'boolean') next.prefer_proxies = patch.prefer_proxies
     if (patch.proxy_override) {
@@ -679,6 +693,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
       if (value === null) delete next.proxy_overrides[media_id]
       else next.proxy_overrides[media_id] = value
     }
+    // Absent = not in this patch; `null` = clear the tuning and fall back to
+    // the detector's defaults. The refusal above happens BEFORE the replace,
+    // so a rejected patch leaves every snapshot untouched.
+    if (patch.shot_review !== undefined) next.shot_review = reviewedShotParams(patch.shot_review)
     history.replaceSettingsEverywhere(next)
     broadcastUnrecorded('Updated project settings', current())
   }
@@ -1142,7 +1160,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'remove_media': removeMedia(a.media as Uuid, (a.force as boolean) ?? false); return { ok: true, value: null }
         case 'set_role_gain': setRoleGain(a.role as string, parseNum(a.gain_db, 'gain_db')); return { ok: true, value: null }
         case 'update_role_flags': updateRoleFlags(a.role as string, a.patch as RoleFlagsPatch); return { ok: true, value: null }
-        case 'update_project_settings': updateProjectSettings(a.patch as { prefer_proxies?: boolean | null; proxy_override?: { media_id: string; value: boolean | null } | null }); return { ok: true, value: null }
+        case 'update_project_settings': updateProjectSettings(a.patch as { prefer_proxies?: boolean | null; proxy_override?: { media_id: string; value: boolean | null } | null; shot_review?: { sensitivity: number; min_shot_us: number } | null }); return { ok: true, value: null }
         case 'add_caption_track': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.trackAddCaption, trackRef, { kind: 'Coarse' }, (d) => applyAddCaptionTrack(d, idGen, a.cues as Cue[], a.comp_w as number, a.comp_h as number, (a.label as string) ?? null, comp)) } }
         case 'restyle_captions': {
           // Project-wide: one commit over EVERY caption-role track in every

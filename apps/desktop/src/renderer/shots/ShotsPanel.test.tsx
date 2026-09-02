@@ -7,6 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 // Partial, for `MarkerPanel.test.tsx`'s reason: the composition switch under
 // test runs the REAL `openComposition`, which calls back into navigation.
@@ -22,6 +23,8 @@ const shots = vi.hoisted(() => ({
   shotDefaultOpts: vi.fn(),
   shotFloorSensitivity: vi.fn(),
   getMediaFrame: vi.fn<(id: string, tUs: number) => Promise<string>>(),
+  getProjectSettings: vi.fn(),
+  updateProjectSettings: vi.fn(),
   logEmit: vi.fn(() => Promise.resolve()),
 }));
 vi.mock("../ipc", async (importActual) => ({
@@ -50,6 +53,7 @@ import type {
   AnimTrack,
   LayerSummary,
   ProjectSummary,
+  Shot,
   ShotReport,
   TrackSummary,
 } from "../ipc";
@@ -206,6 +210,12 @@ beforeEach(async () => {
   shots.analyzeShotsFloor.mockResolvedValue(REPORT);
   shots.logEmit.mockResolvedValue(undefined);
   shots.getMediaFrame.mockResolvedValue("data:image/jpeg;base64,AA==");
+  shots.getProjectSettings.mockResolvedValue({
+    prefer_proxies: false,
+    proxy_overrides: {},
+    shot_review: null,
+  });
+  shots.updateProjectSettings.mockResolvedValue(undefined);
   // The anchor store is module state and outlives a `cleanup()`, so a file that
   // inherits another file's focus would assert the wrong seek branch.
   useCompositionAnchorStore.setState({ anchors: new Map(), focusedId: null });
@@ -459,5 +469,304 @@ describe("ShotsPanel — a row click seeks in the layer's own composition", () =
     // and not merely that a seek happened.
     expect(jumpToTimeUs).toHaveBeenCalledWith(4_000_000);
     expect(focusedCompositionId()).toBe("g1");
+  });
+});
+
+// ── The score strip and its threshold line ───────────────────────────────────
+//
+// Every reduced report below is verbatim `Backend.reduceShotReport` output over
+// FLOOR at the stated parameters, obtained from a plain Node script. The addon
+// is NOT loaded here: `new Backend(...)` spins a tokio runtime with no shutdown
+// entry point, so a vitest worker that constructed one would never exit. The
+// mock refuses any parameter pair that was not measured, which is what keeps a
+// row expectation from quietly becoming a TypeScript re-implementation of the
+// reduce.
+
+/// A shot the way `reduce` returns one for a span the floor scan never sampled:
+/// cover frame at the midpoint, stats absent, no flags.
+function reducedShot(index: number, tStartUs: number, tEndUs: number): Shot {
+  return {
+    index,
+    t_start_us: tStartUs,
+    t_end_us: tEndUs,
+    keyframe_t_us: tStartUs + Math.floor((tEndUs - tStartUs) / 2),
+    brightness: null,
+    motion: null,
+    sharpness: null,
+    flags: [],
+  };
+}
+
+function reducedReport(
+  spans: readonly (readonly [number, number])[],
+  cuts: readonly (readonly [number, number])[],
+): ShotReport {
+  return {
+    shots: spans.map(([a, b], i) => reducedShot(i, a, b)),
+    cut_scores: cuts.map(([t_us, score]) => ({ t_us, score })),
+  };
+}
+
+/// Four candidates over a six-second source, scores spread so a line has
+/// somewhere to sit between them, and the pair at 1.0 s / 1.2 s close enough
+/// that the minimum shot length has something to merge.
+const FLOOR_CANDIDATES: readonly (readonly [number, number])[] = [
+  [1_000_000, 0.9],
+  [1_200_000, 0.8],
+  [3_000_000, 0.3],
+  [4_500_000, 0.6],
+];
+
+const FLOOR: ShotReport = reducedReport(
+  [
+    [0, 1_000_000],
+    [1_000_000, 1_200_000],
+    [1_200_000, 3_000_000],
+    [3_000_000, 4_500_000],
+    [4_500_000, 6_000_000],
+  ],
+  FLOOR_CANDIDATES,
+);
+
+const ABOVE_0_4: readonly (readonly [number, number])[] = [
+  [1_000_000, 0.9],
+  [1_200_000, 0.8],
+  [4_500_000, 0.6],
+];
+const ABOVE_0_6: readonly (readonly [number, number])[] = [
+  [1_000_000, 0.9],
+  [1_200_000, 0.8],
+];
+
+/// `sensitivity@minShotUs` → the measured answer.
+const MEASURED = new Map<string, ShotReport>([
+  [
+    "0.4@200000",
+    reducedReport(
+      [
+        [0, 1_000_000],
+        [1_000_000, 1_200_000],
+        [1_200_000, 4_500_000],
+        [4_500_000, 6_000_000],
+      ],
+      ABOVE_0_4,
+    ),
+  ],
+  [
+    "0.5@200000",
+    reducedReport(
+      [
+        [0, 1_000_000],
+        [1_000_000, 1_200_000],
+        [1_200_000, 4_500_000],
+        [4_500_000, 6_000_000],
+      ],
+      ABOVE_0_4,
+    ),
+  ],
+  [
+    "0.6@200000",
+    reducedReport(
+      [
+        [0, 1_000_000],
+        [1_000_000, 1_200_000],
+        [1_200_000, 6_000_000],
+      ],
+      ABOVE_0_6,
+    ),
+  ],
+  // The SAME threshold, one step of the length knob further: two spans merge
+  // and the candidates above the line are untouched.
+  [
+    "0.4@300000",
+    reducedReport(
+      [
+        [0, 1_000_000],
+        [1_000_000, 4_500_000],
+        [4_500_000, 6_000_000],
+      ],
+      ABOVE_0_4,
+    ),
+  ],
+]);
+
+/// A scanned source whose window holds no candidate at all.
+const NO_CANDIDATES: ShotReport = reducedReport([[0, 6_000_000]], []);
+
+function reviewOf(container: HTMLElement): {
+  ticks: () => { srcUs: string | null; accepted: string | null }[];
+  rowStarts: () => (string | null)[];
+} {
+  return {
+    ticks: () =>
+      [...container.querySelectorAll(".shots-tick")].map((el) => ({
+        srcUs: el.getAttribute("data-src-us"),
+        accepted: el.getAttribute("data-accepted"),
+      })),
+    rowStarts: () =>
+      [...container.querySelectorAll(".shots-timecode")].map(
+        (el) => el.textContent,
+      ),
+  };
+}
+
+describe("ShotsPanel — the score strip and its line", () => {
+  beforeEach(() => {
+    shots.shotFloorReportCached.mockResolvedValue(true);
+    shots.analyzeShotsFloor.mockResolvedValue(FLOOR);
+    shots.shotDefaultOpts.mockResolvedValue({
+      sensitivity: 0.4,
+      min_shot_us: 200_000,
+    });
+    shots.reduceShotReport.mockImplementation(
+      (_report: ShotReport, p: { sensitivity: number; minShotUs: number }) => {
+        const key = `${p.sensitivity}@${p.minShotUs}`;
+        const answer = MEASURED.get(key);
+        if (answer === undefined) {
+          return Promise.reject(
+            new Error(`no measured reduce for ${key} — add one from the addon`),
+          );
+        }
+        return Promise.resolve(answer);
+      },
+    );
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+  });
+
+  it("draws one tick per FLOOR candidate, above the row list", async () => {
+    const { container } = render(<ShotsPanel />);
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(4));
+    const review = reviewOf(container);
+
+    // Four ticks from a reduce that answered with three candidates: the strip
+    // reads the FLOOR report, because showing what the line excludes is half of
+    // what it is for.
+    expect(review.ticks()).toEqual([
+      { srcUs: "1000000", accepted: "true" },
+      { srcUs: "1200000", accepted: "true" },
+      { srcUs: "3000000", accepted: "false" },
+      { srcUs: "4500000", accepted: "true" },
+    ]);
+    const strip = screen.getByTestId("shots-score-strip");
+    const list = screen.getByTestId("shots-list");
+    expect(
+      strip.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("nudges the line, and the rows become the reduce's answer at that threshold", async () => {
+    const { container } = render(<ShotsPanel />);
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(4));
+    shots.analyzeShotsFloor.mockClear();
+    const review = reviewOf(container);
+
+    const line = screen.getByRole("slider");
+    fireEvent.keyDown(line, { key: "PageUp" }); // 0.4 → 0.5
+    fireEvent.keyDown(line, { key: "PageUp" }); // 0.5 → 0.6
+
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(3));
+    expect(line.getAttribute("aria-valuenow")).toBe("0.6");
+    // The clip sits at 1 s with `src_in_us` 0, so the measured spans read as
+    // 1 s / 2 s / 2.2 s on the composition clock.
+    expect(review.rowStarts()).toEqual([
+      "00:00:01:00",
+      "00:00:02:00",
+      "00:00:02:06",
+    ]);
+    // The 0.6 candidate has fallen below the line; the 0.3 one was never above
+    // it.
+    expect(review.ticks().map((tick) => tick.accepted)).toEqual([
+      "true",
+      "true",
+      "false",
+      "false",
+    ]);
+    // Free by construction: every threshold at or above the floor comes out of
+    // the scan already in hand.
+    expect(shots.analyzeShotsFloor).not.toHaveBeenCalled();
+  });
+
+  it("persists on the gesture's release and not on its presses", async () => {
+    render(<ShotsPanel />);
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(4));
+
+    const line = screen.getByRole("slider");
+    fireEvent.keyDown(line, { key: "PageUp" });
+    fireEvent.keyDown(line, { key: "PageUp" });
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(3));
+    expect(shots.updateProjectSettings).not.toHaveBeenCalled();
+
+    fireEvent.keyUp(line, { key: "PageUp" });
+    await waitFor(() =>
+      expect(shots.updateProjectSettings).toHaveBeenCalledWith({
+        shot_review: { sensitivity: 0.6, min_shot_us: 200_000 },
+      }),
+    );
+    expect(shots.updateProjectSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("raising the minimum shot length merges spans and leaves the line alone", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<ShotsPanel />);
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(4));
+    const review = reviewOf(container);
+    const before = review.ticks();
+
+    const length = screen.getByLabelText("Minimum shot length") as HTMLInputElement;
+    expect(length.value).toBe("200");
+    await user.click(length);
+    await user.keyboard("{ArrowUp}"); // 200 ms → 300 ms
+    await user.keyboard("{Enter}");
+
+    // 1.0 s and 1.2 s are now closer together than the minimum, so the pair
+    // becomes one span — while the reduce's own candidate list is unchanged,
+    // which is what "the line did not move" means.
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(3));
+    expect(review.rowStarts()).toEqual([
+      "00:00:01:00",
+      "00:00:02:00",
+      "00:00:05:15",
+    ]);
+    expect(review.ticks()).toEqual(before);
+    const params = shots.reduceShotReport.mock.calls.map(([, p]) => p);
+    expect(params[params.length - 1]).toEqual({
+      sensitivity: 0.4,
+      minShotUs: 300_000,
+      inUs: 0,
+      outUs: 6_000_000,
+    });
+    await waitFor(() =>
+      expect(shots.updateProjectSettings).toHaveBeenCalledWith({
+        shot_review: { sensitivity: 0.4, min_shot_us: 300_000 },
+      }),
+    );
+  });
+
+  it("seeds the line from the project's threshold, not the detector's default", async () => {
+    shots.getProjectSettings.mockResolvedValue({
+      prefer_proxies: false,
+      proxy_overrides: {},
+      shot_review: { sensitivity: 0.6, min_shot_us: 200_000 },
+    });
+    render(<ShotsPanel />);
+
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(3));
+    expect(screen.getByRole("slider").getAttribute("aria-valuenow")).toBe("0.6");
+  });
+
+  it("says so when the floor scan found no candidate in the window", async () => {
+    shots.analyzeShotsFloor.mockResolvedValue(NO_CANDIDATES);
+    // Measured too: with no candidate to filter, the reduce answers the whole
+    // window as one shot at every parameter pair.
+    shots.reduceShotReport.mockResolvedValue(NO_CANDIDATES);
+    render(<ShotsPanel />);
+
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
+    expect(screen.getByTestId("shots-no-candidates").textContent).toContain(
+      "No candidate cuts in this clip's range",
+    );
+    // No line to drag over an empty plot.
+    expect(screen.queryByRole("slider")).toBeNull();
   });
 });

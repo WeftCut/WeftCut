@@ -229,11 +229,23 @@ export interface MediaItem {
   conform_path: string | null; waveform_path: string | null; thumbnails_dir: string | null
 }
 export interface ProjectMetadata { name: string; created_at: string; modified_at: string; description: string | null }
+/** The Shots Panel's review parameters: the score a candidate must exceed to
+ *  become a boundary, and the shortest span the reduce keeps. Both are wire
+ *  fields of `reduce_shot_report` and are range-checked against its bounds on
+ *  the way in. `sensitivity` reads backwards — a higher value yields FEWER
+ *  cuts — which is why it never reaches a label; see ADR 0057. */
+export interface ShotReviewSettings { sensitivity: number; min_shot_us: number }
 export interface ProjectSettings {
   preview_width: number; preview_height: number; autosave_interval_secs: number | null
   history_capacity: number; auto_pair_audio_on_import: boolean
   prefer_proxies: boolean
   proxy_overrides: Record<string, boolean>
+  /** The reviewed detection parameters, or `null` for "whatever the detector
+   *  defaults to". Null rather than a pair of numbers so no threshold literal
+   *  lives in TypeScript at all: the defaults are Rust's
+   *  (`Backend::shot_default_opts`), and a copy here would be free to drift
+   *  from the value a zero-argument apply and `analyze_clip` both use. */
+  shot_review: ShotReviewSettings | null
 }
 export interface Project {
   schema_version: number; project_id: Uuid; metadata: ProjectMetadata
@@ -294,7 +306,7 @@ export function* eachLayer(p: Pick<Project, 'compositions'>): Iterable<{ composi
 export function defaultSettings(): ProjectSettings {
   return { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
     history_capacity: 200, auto_pair_audio_on_import: true,
-    prefer_proxies: false, proxy_overrides: {} }
+    prefer_proxies: false, proxy_overrides: {}, shot_review: null }
 }
 
 /** Mirror of Rust `Project::new_blank`. Id order: A-roll, B-roll, project_id,

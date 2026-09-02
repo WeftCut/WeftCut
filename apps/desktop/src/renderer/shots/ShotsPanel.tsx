@@ -18,6 +18,7 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { AppCheckbox } from "../components/AppCheckbox";
+import { AppNumberField } from "../components/AppNumberField";
 import { formatMediaDuration, formatTimecode } from "../frames";
 import {
   getMediaFrame,
@@ -41,20 +42,29 @@ import {
 } from "../state/projectStore";
 import { usePrimaryLayerId } from "../state/selectionStore";
 import { primarySelectedLayer } from "../speech/autoCaptionEligibility";
+import { ScoreStrip } from "./ScoreStrip";
 import { shotRows, type ShotCandidate, type ShotRow } from "./shotRows";
 import {
   analyzeShotSubject,
+  commitShotThreshold,
   loadShotDefaults,
   resetShotsStore,
   setCandidateAccepted,
   setRowKept,
+  setShotMinShotUs,
   setShotSubject,
+  setShotThreshold,
   useDiscardedRows,
   useShotAnalyzing,
   useShotCached,
   useShotError,
+  useShotFloor,
+  useShotFloorReport,
+  useShotMinShotUs,
   useShotReduced,
+  useShotThreshold,
   useVetoedCandidates,
+  wireShotReviewPrefs,
 } from "./shotsStore";
 
 /// Stable empty reference — a fresh `[]` per selector call would defeat the
@@ -352,6 +362,58 @@ function ShotRowView({
   );
 }
 
+/// The minimum-shot-length field's step, in milliseconds.
+///
+/// Milliseconds and not frames: `min_shot_us` is a duration in SOURCE time, and
+/// the renderer does not know a source's frame rate — `MediaSummary` carries a
+/// duration and dimensions and no fps at all. A frames field would have to
+/// convert through the LAYER's composition rate, so the same "6 frames" would
+/// mean different amounts of source on a 24p clip in a 30p timeline.
+const MIN_SHOT_MS_STEP = 100;
+
+/// The reduce refuses anything but a positive whole number of microseconds, so
+/// one millisecond is the smallest length this field can offer.
+const MIN_SHOT_MS_FLOOR = 1;
+
+/// Output granularity, shaped as deliberately unlike the threshold line as
+/// possible: a typed length with a unit, apart from the strip. The two fix
+/// different errors — the line trades misses against false positives, while this
+/// only drops boundaries closer together than itself — and two look-alike
+/// sliders would invite reaching for the granularity knob to fix an accuracy
+/// problem.
+function MinShotLengthField({ minShotUs }: { minShotUs: number }) {
+  const { t } = useTranslation();
+  const [draftMs, setDraftMs] = useState(minShotUs / 1000);
+  const [editing, setEditing] = useState(false);
+  // Focus-gated resync: the field mirrors what is being typed, so an echo of
+  // the store landing mid-edit would clobber the digits already entered.
+  useEffect(() => {
+    if (!editing) setDraftMs(minShotUs / 1000);
+  }, [minShotUs, editing]);
+  return (
+    <div className="shots-params">
+      <span className="shots-param-label">
+        {t("shots_panel.min_shot_length")}
+      </span>
+      <AppNumberField
+        className="shots-param-field"
+        value={draftMs}
+        min={MIN_SHOT_MS_FLOOR}
+        step={MIN_SHOT_MS_STEP}
+        format={{ maximumFractionDigits: 0 }}
+        ariaLabel={t("shots_panel.min_shot_length")}
+        onValueChange={setDraftMs}
+        // One write per edit: `onCommit` fires on blur / Enter / step-end, not
+        // per keystroke.
+        onCommit={(ms) => void setShotMinShotUs(Math.round(ms) * 1000)}
+        onFocus={() => setEditing(true)}
+        onBlur={() => setEditing(false)}
+      />
+      <span className="shots-param-unit">{t("shots_panel.milliseconds")}</span>
+    </div>
+  );
+}
+
 /// The subject: the PRIMARY selected layer when it is a `VideoClip`, plus the
 /// composition it lives in — the rate its timecodes are read at and the clock a
 /// row activation seeks on.
@@ -399,8 +461,10 @@ export function ShotsPanel() {
   const subject = useShotSubject();
   const layer = subject?.layer ?? null;
   const composition = subject?.composition ?? null;
-  const mediaId =
-    layer?.params.kind === "VideoClip" ? layer.params.media_id : null;
+  // Narrowed once: the row list needs the media id, and the strip needs the
+  // clip's SOURCE window — the span its x axis runs across.
+  const clip = layer?.params.kind === "VideoClip" ? layer.params : null;
+  const mediaId = clip?.media_id ?? null;
 
   const cached = useShotCached();
   const reduced = useShotReduced();
@@ -408,12 +472,18 @@ export function ShotsPanel() {
   const error = useShotError();
   const vetoed = useVetoedCandidates(mediaId);
   const discarded = useDiscardedRows(mediaId);
+  const threshold = useShotThreshold();
+  const floor = useShotFloor();
+  const minShotUs = useShotMinShotUs();
+  const floorReport = useShotFloorReport(mediaId);
 
   // Mount wiring. The defaults read is what the store reduces at, and the reset
   // on unmount is why a reopened Panel never shows an abandoned review.
   useEffect(() => {
     void loadShotDefaults();
+    const unwire = wireShotReviewPrefs();
     return () => {
+      unwire();
       resetShotsStore();
       resetFrameLoader();
     };
@@ -455,7 +525,7 @@ export function ShotsPanel() {
     if (compositionId !== null) activateShotRow(compositionId, row.tStartUs);
   };
 
-  if (layer === null || mediaId === null || composition === null) {
+  if (layer === null || clip === null || composition === null) {
     return (
       <div className="shots-panel" data-testid="shots-panel">
         <p className="shots-empty">{t("shots_panel.needs_video_clip")}</p>
@@ -503,12 +573,30 @@ export function ShotsPanel() {
 
   return (
     <div className="shots-panel" data-testid="shots-panel">
+      {/* Above the rows, because the line is what the rows are a consequence
+          of. The parameters are `null` only until their reads land, and the
+          floor report is what the strip draws — the reduced one has already
+          dropped exactly the candidates the strip exists to show. */}
+      {threshold !== null && floor !== null && floorReport !== null && (
+        <ScoreStrip
+          candidates={floorReport.cut_scores}
+          srcInUs={clip.src_in_us}
+          srcOutUs={clip.src_out_us}
+          threshold={threshold}
+          floor={floor}
+          fpsNum={composition.fps_num}
+          fpsDen={composition.fps_den}
+          onThresholdChange={setShotThreshold}
+          onThresholdCommit={() => void commitShotThreshold()}
+        />
+      )}
+      {minShotUs !== null && <MinShotLengthField minShotUs={minShotUs} />}
       <ul className="shots-list" data-testid="shots-list">
         {rows.map((row) => (
           <ShotRowView
             key={row.srcStartUs}
             row={row}
-            mediaId={mediaId}
+            mediaId={clip.media_id}
             fpsNum={composition.fps_num}
             fpsDen={composition.fps_den}
             onActivate={onActivate}

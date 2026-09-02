@@ -1705,16 +1705,35 @@ export async function fitCompositionToLayers(): Promise<void> {
   return invoke<void>("fit_composition_to_layers");
 }
 
+/// The Shots Panel's per-project review parameters — the score a candidate must
+/// exceed to become a boundary, and the shortest span the reduce keeps. Mirrors
+/// main `ShotReviewSettings`; both are wire fields of `reduceShotReport`.
+///
+/// `sensitivity` reads backwards (a higher value yields FEWER cuts) and reaches
+/// no label: the human control is a line over the candidate scores, and its
+/// meaning is its position. The name survives here and on disk only.
+export interface ShotReviewSettings {
+  sensitivity: number;
+  min_shot_us: number;
+}
+
 /// Per-project behavior settings (`Project.settings`). Only the fields
 /// the UI consumes are typed; the Rust struct carries more.
 export interface ProjectSettingsView {
   prefer_proxies: boolean;
   proxy_overrides: Record<string, boolean>;
+  /// `null` on a project nobody has tuned — read as "whatever the detector
+  /// defaults to", which is what keeps every threshold literal in Rust.
+  shot_review: ShotReviewSettings | null;
 }
 
 export interface ProjectSettingsPatch {
   prefer_proxies?: boolean;
   proxy_override?: { media_id: string; value: boolean | null };
+  /// `null` clears the tuning and restores the detection defaults. Refused
+  /// whole if `sensitivity` is outside [0, 1] or `min_shot_us` is not a
+  /// positive whole number — the bounds `reduceShotReport` itself enforces.
+  shot_review?: ShotReviewSettings | null;
 }
 
 export async function getProjectSettings(): Promise<ProjectSettingsView> {

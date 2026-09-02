@@ -1142,6 +1142,47 @@ describe('dispatch: role gain + flags + project settings', () => {
     actor.dispatch('undo', {})
     expect(actor.snapshot().settings.prefer_proxies).toBe(true)
   })
+  it('update_project_settings stores shot_review, clears it with null, and records nothing', () => {
+    const { actor } = setup()
+    const before = actor.historyStatus().len
+    // The review parameters are a preference, so tuning a threshold must not
+    // put an entry between the edit before it and the edit after.
+    expect(actor.dispatch('update_project_settings', { patch: { shot_review: { sensitivity: 0.62, min_shot_us: 250_000 } } }).ok).toBe(true)
+    expect(actor.snapshot().settings.shot_review).toEqual({ sensitivity: 0.62, min_shot_us: 250_000 })
+    expect(actor.historyStatus().len).toBe(before)
+    // Untouched by a patch that does not mention it.
+    actor.dispatch('update_project_settings', { patch: { prefer_proxies: true } })
+    expect(actor.snapshot().settings.shot_review).toEqual({ sensitivity: 0.62, min_shot_us: 250_000 })
+    // null = back to the detector's own defaults, which is why no threshold
+    // literal lives on this side at all.
+    expect(actor.dispatch('update_project_settings', { patch: { shot_review: null } }).ok).toBe(true)
+    expect(actor.snapshot().settings.shot_review).toBeNull()
+  })
+  it('update_project_settings refuses a shot_review outside the reduce bounds, whole', () => {
+    const { actor, a } = setup()
+    actor.dispatch('update_project_settings', { patch: { shot_review: { sensitivity: 0.5, min_shot_us: 500_000 } } })
+    const good = { sensitivity: 0.5, min_shot_us: 500_000 }
+    // The same bounds `reduce_shot_report` enforces at the napi boundary: a
+    // threshold in [0, 1] and a positive whole number of microseconds.
+    for (const bad of [
+      { sensitivity: 1.5, min_shot_us: 500_000 },
+      { sensitivity: -0.1, min_shot_us: 500_000 },
+      { sensitivity: Number.NaN, min_shot_us: 500_000 },
+      { sensitivity: 0.5, min_shot_us: 0 },
+      { sensitivity: 0.5, min_shot_us: -1 },
+      { sensitivity: 0.5, min_shot_us: 1.5 },
+    ]) {
+      const r = actor.dispatch('update_project_settings', { patch: { shot_review: bad } })
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.error.error).toBe('InvalidArgument')
+      // Refused BEFORE the replace, so the last good pair still stands.
+      expect(actor.snapshot().settings.shot_review).toEqual(good)
+    }
+    // And the preference survives undo like every other unrecorded setting.
+    actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    actor.dispatch('undo', {})
+    expect(actor.snapshot().settings.shot_review).toEqual(good)
+  })
 })
 
 describe('dispatch: caption tracks', () => {

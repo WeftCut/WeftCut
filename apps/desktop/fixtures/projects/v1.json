@@ -594,6 +594,7 @@
     "prefer_proxies": true,
     "proxy_overrides": {
       "00000000-0000-0000-0000-0000000000aa": false
-    }
+    },
+    "shot_review": null
   }
 }
