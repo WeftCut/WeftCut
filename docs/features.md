@@ -927,11 +927,92 @@ marks reachable inside it, nesting included.
 **Limits.** Time is read-only in the Panel, free markers included: an anchored
 marker's time is a cache the next commit rewrites, so a typed value would revert
 under the cursor. Position is the lane's drag, and that is the one rule. A
-region marker drags whole — its ends are not resizable by a gesture yet, and
-only an agent can create one. Child markers are never projected onto a parent's
+region marker drags whole — its ends are not resizable by a gesture yet; the
+only hand-reachable producer of one is *Detect silences…* (§ below), which
+writes a region per silent range. Child markers are never projected onto a parent's
 lane; the badge asserts a count and no position, because drawing a child
 composition's contents on the parent would erase, visually, the boundary
 ADR 0052 and ADR 0053 pay for.
+
+## Shot review
+
+Shot detection is the one analysis a person reviews before it lands, because
+one candidate cut is verifiable at a glance — a frame pair either changes or it
+does not — which is cheaper than undoing a whole split and starting over. The
+review lives in the **Shots** Panel (View menu, or *Review shots…* on a
+`VideoClip`'s context menu and in the palette; closed by default). Everything
+it shows is a pure `reduce` over ONE whole-source scan
+([ADR 0057](adr/0057-shot-detection-is-one-floor-scan-and-a-pure-reduce.md)):
+ffmpeg scores every frame once at a fixed floor, and every threshold the
+reviewer tries afterwards is a cache read, never a decode.
+
+**The subject** is the primary selected `VideoClip`. A source whose scan is
+cached renders its shots the instant the clip is selected; one that is not
+shows an **Analyze** button and nothing else — clicking clips is the
+highest-frequency gesture in the editor, so the Panel never scans on
+selection. (The media pool's *Analyze shots* is the same scan as a warm-up.)
+The scan is one status-log op, Started → Ok, and its failure sentence stays
+inline.
+
+**One row per shot**: a cover frame at the shot's own keyframe, its span and
+duration on the composition clock, and — on every row but the first — the
+candidate cut it opens on: the detector's score for that frame and the frame
+pair either side of it, the one look that answers "is this a real cut".
+Clearing a candidate's checkbox merges its shot into the predecessor; the
+cleared boundary stays listed on the merged row so the merge is reversible.
+A merged row shows no stats or flags, for the reduce's own reason: it is a
+different shot from any the scan measured. (The floor scan is timing-only, so
+in the current build every row's brightness / motion / sharpness cells read
+as absent; a stats pass over the reduced spans is a separate, opt-in step.)
+Clicking a row seeks the playhead to the shot's start. A second checkbox per
+row, **keep**, defaults on: unchecking marks a shot for discard.
+
+**The strip and the line.** Above the rows, a strip plots one tick per
+candidate the floor scan emitted (x = source time, y = frame-change score)
+and a horizontal, draggable threshold across it. Ticks above the line are the
+boundaries the rows are built from; ticks below are what is being thrown
+away — so the strip answers how many candidates are still outside the line,
+and whether the source has any score separation at all. Dragging re-runs the
+reduce and relays the rows live; the line cannot go below the floor, and a
+window with no candidate says so instead of drawing a line over an empty
+plot. The line is a keyboard slider too (arrows, Page, Home/End). No control
+is labelled "sensitivity": the wire field of that name reads backwards
+(higher = fewer cuts), so the axis is named by what it measures and the
+control's meaning is its position. **Minimum shot length** is a separate
+millisecond field, deliberately unlike the line: it fixes output granularity
+(boundaries closer than it are dropped), not accuracy, and two look-alike
+sliders would invite using one to fix the other's problem. Both persist per
+project (`settings.shot_review`, `null` = the detector's defaults so no
+threshold literal lives outside Rust) through the unrecorded settings patch,
+so tuning never enters the undo stack.
+
+**Three verbs**, one canonical list: *Split at cuts*, *Mark cuts* and *Split
+and discard unchecked* all send the accepted boundaries — every row's opening
+candidate, kept or not — through one channel, so a split and a mark of the
+same review land on identical frames and a discard's survivors sit exactly
+where a plain split would have cut. Each is one commit and one undo, the
+discard included: undo restores the single pre-apply layer. A greyed verb
+carries its reason in the tooltip (no interior boundary; nothing unchecked;
+an apply already running). Unchecking every shot is refused by the channel —
+erasing the clip is a delete, not an apply — and the refusal lands inline.
+Two reviewed boundaries that snap onto the same composition frame are refused
+for a discard, with the remedy (raise the minimum shot length), because the
+row numbering the reviewer saw no longer matches the segments a split would
+make. No confirmation dialog on discard: destructive-but-undoable is house
+style, and the status bar reports what happened (Started → Ok/Err under one
+`op_id`, the Started row carrying how much went out). After a split or
+discard the reviewed layer is gone, the selection drops it, and the Panel
+returns to its empty state; after a mark the review stands. As with the
+agent's `drop_short_us`, a discarded take's link-paired audio is left in
+place — delete never fans out across a link here.
+
+Code: `renderer/shots/` (`shotsStore.ts` owns the subject, the reduce, the
+review decisions and the verbs; `shotRows.ts` projects spans into rows;
+`ScoreStrip.tsx`; `ShotsPanel.tsx`), `styles/shots.css`; the reduce and the
+floor scan are `native/src/jobs/shot/`, read through `analyzeShotsFloor` /
+`reduceShotReport`; the verbs are the `apply_shot_cuts` hybrid in
+`main/state/hybrids.ts` over `split_layer_multi` (with `discard_segments`) and
+`add_markers`.
 
 ## Auto-caption and voiceover
 
