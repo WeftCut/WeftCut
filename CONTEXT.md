@@ -342,6 +342,59 @@ _Avoid_: orphan (a detached marker is an ordinary free marker, not a casualty);
 unlink, unpin, release; link (that is the propagation relationship between
 layers)
 
+## Shots
+
+**Shot**:
+The span of one SOURCE between two accepted boundaries, in source-absolute
+time. A shot report belongs to a source; every apply step (split, mark) belongs
+to a layer, and the layer's source window is what maps one onto the other. UI
+word: Shot / 镜头.
+_Avoid_: scene (several shots; ffmpeg's filter is named `scene` but what it
+detects is a shot change), segment (a layer a split produced), clip (a layer)
+
+**Candidate cut**:
+One `cut_scores` entry — a source time at which the frame-change score exceeded
+the floor, together with that score. A measurement, not a decision: which
+candidates become boundaries is what a threshold decides. A candidate the
+threshold accepts is a **shot cut**; UI word: shot cut / 镜头切点 ("Mark shot
+cuts" / 标记镜头切点 is the verb that writes them as anchored markers).
+_Avoid_: cut (an edit), scene change, keyframe (`keyframe_t_us` is a shot's
+cover-frame time, a different thing), score (the number, not the candidate)
+
+**Floor scan**:
+The one whole-source detection pass per source, run at `FLOOR_SENSITIVITY`
+(0.05), timing only, and cached. It costs the same as a scan at any other
+threshold, so every threshold at or above the floor is derivable from it
+without another decode, and nothing below it is ever offered. The media pool's
+"Analyze shots" / 分析镜头 warms it. ADR 0057.
+_Avoid_: analysis (the agent's `analyze_clip` report is a different,
+stats-bearing report with its own cache entry), rescan, full scan
+
+**Reduce**:
+The pure Rust re-derivation of a shot list from a floor scan at a threshold and
+a minimum shot length, viewed through a window. Free — no decode, no file — and
+never re-implemented in TypeScript. Stats and flags carry onto a reduced shot
+only when the scan measured that exact span; otherwise they are absent, and
+absent renders as absent, never as zero.
+_Avoid_: filter, re-detect, refine; "reduce" is the word in code and prose alike
+
+**Canonical cut list**:
+The one list of source boundaries an apply verb consumes — either the
+detector's at given or default parameters, or a list a person reviewed — and
+the only path a boundary takes onto the timeline (mapped, frame-snapped,
+deduplicated once). A split and a mark of the same list land on identical
+frames because there is one list, not because two call sites agree.
+_Avoid_: cut points (in prose; the zh UI word 切点 is fine), split points,
+detected cuts (the list may be the user's, not the detector's)
+
+**Threshold**:
+The score a candidate must exceed to become a boundary. On the wire and on disk
+the field is `sensitivity`, a name that reads backwards — a higher value yields
+FEWER cuts — so no control is labelled with it: the human control is a line
+over the candidates, and its meaning is its position.
+_Avoid_: sensitivity in UI copy, detection strength, granularity (that is the
+minimum shot length, a different knob that fixes a different error)
+
 ## Links and Groups
 
 **Link**:
