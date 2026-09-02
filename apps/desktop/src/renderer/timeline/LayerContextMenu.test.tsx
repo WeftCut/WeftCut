@@ -32,6 +32,7 @@ vi.mock("../state/linkOverrideStore", () => ({ useLinkOverride: () => false }));
 vi.mock("../state/projectStore", () => ({ useGroupOrdinals: () => new Map() }));
 vi.mock("../speech/autoCaptionEligibility", () => ({
   useAutoCaptionState: () => "auto_caption",
+  useAudioClipState: () => "ok",
 }));
 vi.mock("./groupEligibility", () => ({
   useAddToGroupState: () => "needs_selection",

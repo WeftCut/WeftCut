@@ -5,7 +5,10 @@ import { blankProject, type MediaItem } from '../model'
 import { mediaItemTemplate, videoClipParams } from '../mutations/media'
 import { applyAddLayer } from '../mutations/add'
 import { markerHibernating } from '../summary'
-import { runHybrid, markShotCuts, cutsToTimeline, type HybridDeps } from '../hybrids'
+import {
+  runHybrid, markShotCuts, cutsToTimeline, SILENCE_MARKER_COLOR,
+  type HybridDeps, type SilenceRegion,
+} from '../hybrids'
 import { applyWorkspacePathsEvent } from '../jobs-writeback'
 import { root, withGroup } from './fixtures/project'
 
@@ -60,6 +63,7 @@ function makeDeps(actor: ActorHandle, opts: { workspaceDir?: string | null; file
       analyzeShotsFloor: vi.fn(async () => JSON.stringify({ shots: [], cut_scores: [] })),
       reduceShotReport: vi.fn((reportJson: string) => reportJson),
       shotDefaultOpts: vi.fn(() => ({ ...RUST_SHOT_DEFAULTS })),
+      detectSilences: vi.fn(async () => [] as SilenceRegion[]),
     },
     enqueueDerivatives,
     enqueueWorkspaceCopy,
@@ -939,6 +943,210 @@ describe('runHybrid: apply_shot_cuts', () => {
       [2_000_000, 'Cut 1', { layer: layerId, src_us: 2_000_000 }],
       [4_000_000, 'Cut 2', { layer: layerId, src_us: 4_000_000 }],
     ])
+    expect(root(actor.snapshot()).markers).toEqual([])
+  })
+})
+
+/** Point the silence compute at one fixed region list and hand back the spy.
+ *
+ *  The detector itself is Rust's and unit-tested there, so what these tests own
+ *  is the TS half: which parameters reach it, and what its answer becomes on the
+ *  timeline. The list arrives TIMELINE-absolute and pre-clipped, which is the
+ *  contract `detect_silences` states. */
+function withSilences(deps: HybridDeps, regions: Array<[number, number]>) {
+  const detectSilences = vi.fn(async () =>
+    regions.map(([t_start_us, t_end_us]) => ({ t_start_us, t_end_us })))
+  deps.compute.detectSilences = detectSilences
+  return { detectSilences }
+}
+
+/** Fresh project with an Audio layer on the B-roll track — the second kind
+ *  `mark_silences` admits, and the one a shot operation refuses. */
+function withAudioLayer(durationUs = 6_000_000) {
+  const actor = freshActor()
+  const track = root(actor.snapshot()).tracks[1].id
+  const AID = '00000000-0000-0000-0000-0000000000dd'
+  actor.dispatch('add_media', { id: AID, kind: 'Audio', duration_us: durationUs })
+  const add = actor.dispatch('add_layer', { track, kind: 'audio', media: AID, src_in_us: 0, src_out_us: durationUs, t_start_us: 0, t_end_us: durationUs })
+  if (!add.ok) throw new Error(JSON.stringify(add.error))
+  return { actor, layerId: add.value as string }
+}
+
+/** `[t_us, end_t_us]` of every marker in the root, in stored order. */
+function markerSpans(actor: ActorHandle): Array<[number, number | null]> {
+  return root(actor.snapshot()).markers.map((m) => [m.t_us, m.end_t_us ?? null])
+}
+
+describe('runHybrid: mark_silences', () => {
+  it('lands one REGION marker per detected range, in ONE history entry', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
+    const lenBefore = actor.historyStatus().len
+    expect(await runHybrid('mark_silences', { layer_id: layerId }, deps))
+      .toEqual({ markers: 2, marker_ids: expect.arrayContaining([expect.any(String)]) })
+    // Single-undo acceptance: a whole detected set is one commit.
+    expect(actor.historyStatus().len - lenBefore).toBe(1)
+    // A region, not a point: `end_t_us` is what makes the silence's LENGTH
+    // legible on the ruler, which is the whole review surface this slice ships.
+    expect(markerSpans(actor)).toEqual([[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
+  })
+
+  it('labels and colours the marks as a class of their own, not as shot marks', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[1_000_000, 2_000_000]])
+    await runHybrid('mark_silences', { layer_id: layerId }, deps)
+    const [m] = root(actor.snapshot()).markers
+    expect(m.label).toBe('Silence')
+    // Explicitly NOT the `add_markers` shot-blue default: the two machine
+    // producers sit on the same clip and have to be separable at a glance.
+    expect(m.color).toEqual(SILENCE_MARKER_COLOR)
+    expect(m.color).not.toEqual({ r: 0, g: 128, b: 255, a: 255 })
+  })
+
+  it("anchors every mark to the clip at its range's SOURCE time", async () => {
+    // Source window [1s, 7s) placed at 2s, so timeline = source + 1s: an anchor
+    // that merely copied t_us would be off by exactly that offset.
+    const { actor, layerId } = withVideoLayer(10_000_000, { srcInUs: 1_000_000, srcOutUs: 7_000_000, tStartUs: 2_000_000 })
+    const deps = makeDeps(actor)
+    withSilences(deps, [[3_000_000, 4_000_000]])
+    await runHybrid('mark_silences', { layer_id: layerId }, deps)
+    expect(root(actor.snapshot()).markers.map((m) => [m.t_us, m.end_t_us, m.anchor])).toEqual([
+      [3_000_000, 4_000_000, { layer: layerId, src_us: 2_000_000 }],
+    ])
+  })
+
+  it('passes both parameters through, and invents neither when omitted', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    const { detectSilences } = withSilences(deps, [])
+    await runHybrid('mark_silences', { layer_id: layerId, threshold_amp: 0.05, min_silence_us: 250_000 }, deps)
+    expect(detectSilences).toHaveBeenCalledWith({ layer_id: layerId, threshold_amp: 0.05, min_silence_us: 250_000 })
+    // Omitted means ABSENT on the wire, so Rust's own defaults decide — a
+    // number invented at this hop would be free to drift from them.
+    await runHybrid('mark_silences', { layer_id: layerId }, deps)
+    expect(detectSilences).toHaveBeenLastCalledWith({ layer_id: layerId })
+  })
+
+  it('writes nothing at all — no marker, no history entry — when nothing is silent', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [])
+    const lenBefore = actor.historyStatus().len
+    expect(await runHybrid('mark_silences', { layer_id: layerId }, deps))
+      .toEqual({ markers: 0, marker_ids: [] })
+    // Re-tuning the threshold and re-running has to cost no undo steps, or the
+    // live control would bury the edit that preceded it.
+    expect(actor.historyStatus().len - lenBefore).toBe(0)
+    expect(root(actor.snapshot()).markers).toEqual([])
+  })
+
+  it('a whole set is ONE undo, restoring the project exactly', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
+    const before = JSON.stringify(actor.snapshot())
+    await runHybrid('mark_silences', { layer_id: layerId }, deps)
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
+  it("marks the CLIP'S composition: a clip inside a Group marks the Group, and the root gains nothing", async () => {
+    const { actor, groupId, layerId } = withVideoLayerInGroup(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[1_000_000, 2_000_000]])
+    await runHybrid('mark_silences', { layer_id: layerId }, deps)
+    const inner = actor.snapshot().compositions[groupId]
+    expect(inner.markers.map((m) => [m.t_us, m.end_t_us, m.label])).toEqual([
+      [1_000_000, 2_000_000, 'Silence'],
+    ])
+    expect(root(actor.snapshot()).markers).toEqual([])
+  })
+
+  it('accepts an Audio layer, which a shot operation refuses', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[2_000_000, 3_000_000]])
+    expect(await runHybrid('mark_silences', { layer_id: layerId }, deps))
+      .toEqual({ markers: 1, marker_ids: [expect.any(String)] })
+    await expect(runHybrid('drop_shot_markers', { layerId }, deps)).rejects.toThrow(/VideoClip/)
+  })
+
+  it('refuses a kind with no audio stream to be silent in', async () => {
+    const actor = freshActor()
+    const track = root(actor.snapshot()).tracks[0].id
+    const add = actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 })
+    expect(add.ok).toBe(true)
+    if (!add.ok) return
+    await expect(runHybrid('mark_silences', { layer_id: add.value as string }, makeDeps(actor)))
+      .rejects.toThrow(/VideoClip or Audio/)
+  })
+
+  it('rejects a missing layer_id instead of silently marking nothing', async () => {
+    const { actor } = withVideoLayer(6_000_000)
+    await expect(runHybrid('mark_silences', {}, makeDeps(actor))).rejects.toThrow(/layer_id/)
+  })
+
+  it('throws (not silent no-op) when silence detection is not wired into the build', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    deps.compute.detectSilences = undefined
+    await expect(runHybrid('mark_silences', { layer_id: layerId }, deps)).rejects.toThrow(/not available/)
+  })
+
+  // The state a fresh import is genuinely in: the waveform job is still running,
+  // and Rust says so in words that name the event to wait for. The arm must
+  // neither swallow it (nothing would be marked, with no reason given) nor
+  // reword it — the renderer recognises that sentence to start waiting.
+  it('propagates the waveform-not-ready refusal with its own text', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    deps.compute.detectSilences = vi.fn(async () => {
+      throw new Error('waveform not generated yet for media m-1 — wait for a media:job_complete event with kind=waveform and retry')
+    })
+    await expect(runHybrid('mark_silences', { layer_id: layerId }, deps))
+      .rejects.toThrow(/waveform not generated yet/)
+    expect(root(actor.snapshot()).markers).toEqual([])
+  })
+
+  it('silence regions travel with the clip, span intact', async () => {
+    const { actor, track, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[1_000_000, 2_000_000]])
+    await runHybrid('mark_silences', { layer_id: layerId }, deps)
+    expect(actor.dispatch('move_layer', { layer: layerId, to_track: track, t_start_us: 3_000_000 }).ok).toBe(true)
+    // `reconcileMarkers` re-derives `t_us` from the anchor and carries `end_t_us`
+    // by the SAME frame delta — so the region keeps its length rather than
+    // stretching to a re-derived end.
+    expect(markerSpans(actor)).toEqual([[4_000_000, 5_000_000]])
+  })
+
+  it('trimming past a silence region hibernates it; re-extending revives it with its span', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
+    await runHybrid('mark_silences', { layer_id: layerId }, deps)
+    expect(actor.dispatch('trim_layer', { layer: layerId, edge: 'out', new_t_us: 3_000_000 }).ok).toBe(true)
+    const trimmed = root(actor.snapshot())
+    // Hibernation is a KEPT marker the clip no longer shows: its times freeze
+    // rather than being re-derived, and nothing is deleted.
+    expect(trimmed.markers.map((m) => [m.t_us, m.end_t_us, markerHibernating(trimmed, m)])).toEqual([
+      [1_000_000, 2_000_000, false], [4_000_000, 5_000_000, true],
+    ])
+    expect(actor.dispatch('trim_layer', { layer: layerId, edge: 'out', new_t_us: 6_000_000 }).ok).toBe(true)
+    const restored = root(actor.snapshot())
+    expect(restored.markers.map((m) => [m.t_us, m.end_t_us, markerHibernating(restored, m)])).toEqual([
+      [1_000_000, 2_000_000, false], [4_000_000, 5_000_000, false],
+    ])
+  })
+
+  it('deleting the clip takes its silence regions with it', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[1_000_000, 2_000_000]])
+    await runHybrid('mark_silences', { layer_id: layerId }, deps)
+    expect(actor.dispatch('delete_layer', { layer: layerId }).ok).toBe(true)
     expect(root(actor.snapshot()).markers).toEqual([])
   })
 })

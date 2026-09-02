@@ -37,6 +37,7 @@ import {
 } from "../timeline/groupEligibility";
 import { canMoveSelectionToRoot } from "../timeline/moveToCompositionEligibility";
 import { canOpenSelectedGroup } from "./groupCommands";
+import { canDetectSilencesSelection } from "./silenceCommands";
 import { canAutoCaptionSelection } from "./speechCommands";
 import { currentOpenComposition } from "../state/projectStore";
 import {
@@ -386,6 +387,9 @@ export function buildAppCommands(
     // one of its own: the gate also stands the command down while a run is in
     // flight, and nothing rebuilds the catalogue when a transcription starts.
     autoCaptionSelected: canAutoCaptionSelection,
+    // The same shared audio-clip gate, minus auto-caption's in-flight
+    // condition (`commands/silenceCommands.ts` says why it is not folded in).
+    detectSilencesSelected: canDetectSilencesSelection,
   };
 
   // The armed modal tool, read straight from `toolStore` for the same

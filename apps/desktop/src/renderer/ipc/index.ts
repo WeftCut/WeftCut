@@ -2458,6 +2458,71 @@ export async function synthesizeSpeech(
   return JSON.parse(json) as SynthesizeSpeechResult;
 }
 
+// ============================================================
+// Silence — detect and mark
+// ============================================================
+// The two halves of the authored `cut-silences` recipe this editor can honour:
+// find the silent ranges, and mark them. The apply half of that recipe needs a
+// ripple delete which does not exist here, so nothing below removes anything —
+// what lands is a region marker per range, on the waveform the timeline already
+// draws.
+//
+// Both THROW, like every write and every dialog-driven read here: the dialog
+// shows the message inline and logs a row.
+
+/// One silent range in the clip's own composition clock — timeline-absolute and
+/// already clipped to the layer's span, so a caller never maps source time
+/// itself. Mirrors Rust `SilenceRegion` (`native/src/mcp/tools.rs`).
+export interface SilenceRegion {
+  t_start_us: number;
+  t_end_us: number;
+}
+
+/// Detect one VideoClip or Audio layer's silent ranges. Reads the PRE-COMPUTED
+/// waveform peaks — no decode — which is what makes re-running it on every
+/// parameter change affordable, and why the silence dialog's controls are live
+/// where the shot Panel's threshold needed a Rust split to become so.
+///
+/// A read: it commits nothing, so it neither enters undo nor dirties the
+/// project. Marking the result is `markSilences`.
+///
+/// Rejects while the source's waveform job is still running, with a message
+/// naming the `media:job_complete` event to wait for — a real state on a fresh
+/// import, and one the caller is expected to WAIT on rather than report
+/// (`silence/SilenceDialog.tsx`). `threshold_amp` and `min_silence_us` are
+/// omitted rather than defaulted here so Rust's own defaults decide.
+export async function detectSilences(args: {
+  layerId: string;
+  thresholdAmp?: number;
+  minSilenceUs?: number;
+}): Promise<SilenceRegion[]> {
+  return invoke<SilenceRegion[]>("detect_silences", {
+    layer_id: args.layerId,
+    ...(args.thresholdAmp === undefined ? {} : { threshold_amp: args.thresholdAmp }),
+    ...(args.minSilenceUs === undefined ? {} : { min_silence_us: args.minSilenceUs }),
+  });
+}
+
+/// Detect and mark in ONE commit (one undo entry): a region marker per silent
+/// range, in the clip's own composition, anchored to the clip so trimming past
+/// one hibernates its mark and deleting the clip takes them all (ADR 0056).
+/// Detection re-runs inside the same call at the parameters given, so the marks
+/// can never be a set the preview did not show.
+///
+/// `markers` is `0` with no commit at all when nothing is silent above the
+/// threshold — re-tuning and re-running costs no undo steps.
+export async function markSilences(args: {
+  layerId: string;
+  thresholdAmp?: number;
+  minSilenceUs?: number;
+}): Promise<{ markers: number; marker_ids: string[] }> {
+  return invoke<{ markers: number; marker_ids: string[] }>("mark_silences", {
+    layer_id: args.layerId,
+    ...(args.thresholdAmp === undefined ? {} : { threshold_amp: args.thresholdAmp }),
+    ...(args.minSilenceUs === undefined ? {} : { min_silence_us: args.minSilenceUs }),
+  });
+}
+
 /// Export-readiness audio gate (Rust `ensure_export_audio_conform`): media
 /// ids of audible in-range audio layers whose conform cache is absent or
 /// invalid, each with a conform job kicked. Selection mirrors the Rust mix

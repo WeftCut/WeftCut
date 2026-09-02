@@ -104,10 +104,12 @@ import {
   openSelectedGroup,
   ungroupSelected,
 } from "./commands/groupCommands";
+import { openSilenceForSelection } from "./commands/silenceCommands";
 import {
   openAutoCaptionForSelection,
   openVoiceoverPrompt,
 } from "./commands/speechCommands";
+import { SilenceDialog } from "./silence/SilenceDialog";
 import { AutoCaptionDialog } from "./speech/AutoCaptionDialog";
 import { VoiceoverDialog } from "./speech/VoiceoverDialog";
 import { setTool } from "./state/toolStore";
@@ -703,6 +705,8 @@ export function App({ onCloseProject }: AppProps) {
     // raises its own dialog, so App lends a slot and nothing else
     // (`commands/speechCommands.ts`).
     autoCaptionSelected: openAutoCaptionForSelection,
+    // Same split, same slot-and-nothing-else (`commands/silenceCommands.ts`).
+    detectSilencesSelected: openSilenceForSelection,
     // Opening the Panel is the whole command: it resolves its own subject from
     // the primary selection, and the right-click that raised the row has
     // already made the clicked clip that selection. `openPanel` is idempotent,
@@ -1075,16 +1079,20 @@ export function App({ onCloseProject }: AppProps) {
       <CheckpointPromptDialog />
       <MarkerRenameDialog />
 
-      {/* The two speech dialogs, owned here for the same reason: both commands
-          reach the Edit menu and the palette, which must work with every Panel
-          closed. Each renders nothing until its prompt is opened.
-          `onRevealCaptions` is App's — the Caption Panel is where a landed
-          transcript becomes visible, and only the workspace controller can
-          open it. */}
+      {/* The three clip-analysis dialogs, owned here for the same reason: every
+          one of their commands reaches the Edit menu and the palette, which must
+          work with every Panel closed. Each renders nothing until its prompt is
+          opened. `onRevealCaptions` is App's — the Caption Panel is where a
+          landed transcript becomes visible, and only the workspace controller
+          can open it.
+
+          The silence dialog needs no such reveal: its result lands in the
+          timeline ruler, which is already the surface the user is looking at. */}
       <AutoCaptionDialog
         onRevealCaptions={() => workspaceController?.openPanel("caption")}
       />
       <VoiceoverDialog />
+      <SilenceDialog />
 
       {/* Save Workspace As / Rename Workspace name prompt. */}
       {workspaceNameDialog && workspaceProfiles && (

@@ -919,3 +919,42 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* --- Silence dialog preview --- */
+
+/* The detected ranges, inside the compact form dialog above. Its own block
+ * rather than a reuse of .new-project-preview because that one is a single
+ * left-truncated line and this is a LIST whose length is the answer: a clip can
+ * hold dozens of silent stretches, so the list scrolls inside a bounded box and
+ * the dialog keeps its height. */
+.silence-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--surface-tint);
+  border-radius: var(--radius-control);
+}
+
+.silence-summary {
+  margin: 0;
+  font-size: var(--font-size-body);
+  color: var(--foreground);
+}
+
+.silence-ranges {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  /* Roughly six rows before it scrolls — enough that a typical result reads
+   * whole, bounded so a talky clip cannot push the buttons off screen. */
+  max-height: 132px;
+  overflow-y: auto;
+  font-size: var(--font-size-caption);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color: var(--muted-foreground);
+}
+
+.silence-ranges li {
+  padding: 1px 0;
+}

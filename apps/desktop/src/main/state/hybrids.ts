@@ -8,7 +8,7 @@
 // and the MCP handler (server.ts) call via the host's `hybridDeps`. One arm
 // per hybrid tool.
 import type { ActorHandle } from './actor'
-import type { Composition, Layer, MediaItem, VideoClipParams } from './model'
+import type { AudioParams, Composition, Layer, MediaItem, Rgba, VideoClipParams } from './model'
 import { eachLayer, rootComposition } from './model'
 import { parseDiscardSegments } from './mutations/split'
 import { snapFrameRound } from './snap'
@@ -55,7 +55,25 @@ export interface ComputeNapi {
    *  parameter resolves to, on the agent's path and the human's alike. Read
    *  rather than mirrored, for the same reason as `shotFloorSensitivity`. */
   shotDefaultOpts?(): ShotDefaultOpts
+  /** Silent ranges of one VideoClip/Audio layer, TIMELINE-absolute and already
+   *  clipped to the layer's span, from the pre-computed waveform peaks — no
+   *  decode, which is what makes a live parameter control affordable.
+   *
+   *  Routed through the MCP `detect_silences` tool rather than a bare napi
+   *  method, so the layer + media slice is resolved by the one function the
+   *  agent's call goes through too (`mcp/server.ts` `callClipComputeTool`).
+   *  Rejects while the source's waveform job is still running; the message
+   *  names the event to wait for, and the renderer's dialog waits on it.
+   *
+   *  Optional like the shot entries above: a build without it wired refuses
+   *  with an actionable error rather than marking nothing. */
+  detectSilences?(args: { layer_id: string; threshold_amp?: number; min_silence_us?: number }): Promise<SilenceRegion[]>
 }
+
+/** One silent range in the layer's OWN composition clock. Mirrors native
+ *  `SilenceRegion` serde (`native/src/mcp/tools.rs`); the renderer reads the
+ *  same shape through its own mirror in `renderer/ipc`. */
+export interface SilenceRegion { t_start_us: number; t_end_us: number }
 
 /** The subset of a `jobs::shot::ShotReport` the split/marker orchestration
  *  reads: shot spans (source-absolute) whose interior boundaries become cuts.
@@ -176,6 +194,18 @@ export interface ShotCutSpec {
   discard_segments?: unknown
 }
 
+/** The layer with this id and the composition holding it, or `undefined` for
+ *  the layer when the project has no such layer. Shared by the two analysis
+ *  resolvers below, which differ only in the KIND they admit and the prose they
+ *  refuse with — the walk itself has one right answer. */
+function findLayer(layerId: string, deps: HybridDeps): { layer: Layer | undefined; composition: Composition } {
+  const snap = deps.actor.snapshot()
+  for (const e of eachLayer(snap)) {
+    if (e.layer.id === layerId) return { layer: e.layer, composition: e.composition }
+  }
+  return { layer: undefined, composition: rootComposition(snap) }
+}
+
 /** Resolve the VideoClip layer a shot operation names, together with the media
  *  it reads and the composition its times are expressed in. Throws (never
  *  silently no-ops) on a missing or non-video layer, or on media the pool has
@@ -184,19 +214,31 @@ function resolveShotLayer(
   layerId: string,
   deps: HybridDeps,
 ): { layer: Layer; media: MediaItem; params: VideoClipParams; composition: Composition } {
-  const snap = deps.actor.snapshot()
-  let layer: Layer | undefined
-  let composition = rootComposition(snap)
-  for (const e of eachLayer(snap)) {
-    if (e.layer.id === layerId) { layer = e.layer; composition = e.composition; break }
-  }
+  const { layer, composition } = findLayer(layerId, deps)
   if (!layer) throw new Error(`shot cuts: layer ${layerId} not found`)
   if (layer.params.kind !== 'VideoClip')
     throw new Error(`shot cuts: layer ${layerId} is not a VideoClip — shots are a video concept`)
   const params = layer.params
-  const media = (snap.media_pool as Record<string, MediaItem>)[params.media]
+  const media = (deps.actor.snapshot().media_pool as Record<string, MediaItem>)[params.media]
   if (!media) throw new Error(`shot cuts: layer ${layerId} references missing media ${params.media}`)
   return { layer, media, params, composition }
+}
+
+/** Resolve the layer a silence operation names. Wider than `resolveShotLayer`
+ *  by exactly one kind: a silent stretch is a fact about an AUDIO stream, so an
+ *  `Audio` layer is as legitimate a subject as a `VideoClip` — which is also
+ *  the pair `detect_silences` itself accepts. A `CompositionRef` is not among
+ *  them even though it carries a source window: a Group has no waveform of its
+ *  own to read. */
+function resolveSilenceLayer(
+  layerId: string,
+  deps: HybridDeps,
+): { layer: Layer; params: VideoClipParams | AudioParams; composition: Composition } {
+  const { layer, composition } = findLayer(layerId, deps)
+  if (!layer) throw new Error(`mark silences: layer ${layerId} not found`)
+  if (layer.params.kind !== 'VideoClip' && layer.params.kind !== 'Audio')
+    throw new Error(`mark silences: layer ${layerId} is not a VideoClip or Audio layer — silence is a claim about an audio stream`)
+  return { layer, params: layer.params, composition }
 }
 
 /** Turn source-time boundaries into the cuts a split can actually take: map
@@ -373,6 +415,69 @@ export async function markShotCuts(spec: ShotCutSpec, deps: HybridDeps): Promise
   return r.value as string[]
 }
 
+/** The default colour of a silence mark — amber, and deliberately NOT the
+ *  `add_markers` shot blue it would otherwise inherit.
+ *
+ *  Machine-produced marks are a class of their own next to hand-authored notes,
+ *  and within that class the two producers answer different questions: a shot
+ *  mark says "the picture changes here", a silence region says "nobody is
+ *  speaking through here". They routinely sit on the same clip, so the ruler has
+ *  to keep them apart at a glance — and hue is the only channel free to do it,
+ *  since a region already reads as a bar and a point as an L
+ *  (`renderer/timeline` marker lane). */
+export const SILENCE_MARKER_COLOR: Rgba = { r: 230, g: 160, b: 40, a: 255 }
+
+/** Detect one clip's silent ranges and materialize each as a REGION marker in
+ *  ONE coalesced commit. Marks go into the CLIP'S composition — the only one
+ *  the detector's timeline-absolute times mean anything on — so a clip inside a
+ *  Group marks the Group, exactly as `markShotCuts` does.
+ *
+ *  Every mark is ANCHORED to the clip at the source instant its own range
+ *  begins, for `markShotCuts`' reason: a silent stretch is a fact about the
+ *  material, not about a timeline instant that coincided once. `reconcileMarkers`
+ *  then supplies the consequences for free — trimming past a range hibernates
+ *  its mark (re-extending revives it), and deleting the clip takes its marks
+ *  with it. The region's `end_t_us` follows by the same frame delta, so the span
+ *  the detector found survives the follow.
+ *
+ *  Region rather than point markers, and that is the whole shape of the answer:
+ *  a silence has a LENGTH, and this slice stops before removing it (ripple
+ *  delete does not exist here), so the length has to be legible on the ruler.
+ *
+ *  No dispatch at all when nothing is silent above the threshold — an empty
+ *  answer writes no history entry, so re-tuning and re-running costs no undo
+ *  steps. */
+export async function markSilences(
+  spec: { layer_id: string; threshold_amp?: number; min_silence_us?: number },
+  deps: HybridDeps,
+): Promise<string[]> {
+  const detect = deps.compute.detectSilences
+  if (!detect) throw new Error('mark silences: silence detection is not available in this build')
+  const { layer, params, composition } = resolveSilenceLayer(spec.layer_id, deps)
+  const regions = await detect({
+    layer_id: spec.layer_id,
+    ...(spec.threshold_amp === undefined ? {} : { threshold_amp: spec.threshold_amp }),
+    ...(spec.min_silence_us === undefined ? {} : { min_silence_us: spec.min_silence_us }),
+  })
+  if (regions.length === 0) return []
+  // The regions arrive timeline-absolute and clipped to this layer's span, so
+  // the anchor's source instant is the inverse of that mapping — at speed 1,
+  // the same deferral `cutsToTimeline` records. `t_us`/`end_t_us` are left
+  // unsnapped: `applyAddMarker` puts both on the composition grid, and the
+  // reconcile in the same commit derives `t_us` back off the anchor through the
+  // identical snap, so one snap decides where the bar sits.
+  const markers = regions.map((r) => ({
+    t_us: r.t_start_us,
+    end_t_us: r.t_end_us,
+    label: 'Silence',
+    color: SILENCE_MARKER_COLOR,
+    anchor: { layer: spec.layer_id, src_us: params.src_in_us + (r.t_start_us - layer.t_start_us) },
+  }))
+  const res = deps.actor.dispatch('add_markers', { markers, composition_id: composition.id })
+  if (!res.ok) throw new Error(JSON.stringify(res.error))
+  return res.value as string[]
+}
+
 /** Run a hybrid tool: Rust compute then TS-actor write.
  *
  *  Return-shape contract, and it is the MCP half that constrains it: server.ts
@@ -380,11 +485,12 @@ export async function markShotCuts(spec: ShotCutSpec, deps: HybridDeps): Promise
  *  listed in `mcp/mutationTools.ts` `HYBRID_TOOLS` must return a STRING — a
  *  media id (import_media), the bare caption track id (import_media's
  *  `.srt` branch), the id plus a styling note (apply_subtitles), or a JSON
- *  string (synthesize_speech, auto_split_by_shot). `drop_shot_markers` and
- *  `apply_shot_cuts` have no MCP tool at all, so they return the object their
- *  IPC caller reads directly — `apply_shot_cuts` a union discriminated by the
- *  `mode` it was asked for, since what the splitting verbs produce (surviving
- *  segments) and what a mark produces (markers) are not the same kind of thing.
+ *  string (synthesize_speech, auto_split_by_shot). `drop_shot_markers`,
+ *  `apply_shot_cuts` and `mark_silences` have no MCP tool at all, so they return
+ *  the object their IPC caller reads directly — `apply_shot_cuts` a union
+ *  discriminated by the `mode` it was asked for, since what the splitting verbs
+ *  produce (surviving segments) and what a mark produces (markers) are not the
+ *  same kind of thing.
  *
  *  Several of these arms are reachable from BOTH sides (`router.ts`
  *  `HYBRID_CHANNELS`): the renderer's speech dialogs call `apply_subtitles`
@@ -511,6 +617,29 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       const minShotUs = typeof args.minShotUs === 'number' ? args.minShotUs : undefined
       const ids = await markShotCuts({ layer_id: layerId, min_shot_us: minShotUs }, deps)
       return { markers: ids.length }
+    }
+    case 'mark_silences': {
+      // The silence entry's write half: detect at the given (or default)
+      // parameters and land one region marker per silent range. Renderer-only,
+      // with no MCP tool of its own — an agent that wants the ranges has
+      // `detect_silences` and `add_markers`, and a second tool over one
+      // detection would only be a way for the two surfaces to drift.
+      //
+      // The count AND the ids: the dialog's Ok row names the count, and the ids
+      // are what any later "select what I just marked" would need. An object,
+      // not the MCP arms' JSON string — nothing stringifies this one.
+      const layerId = args.layer_id
+      if (typeof layerId !== 'string' || layerId.length === 0)
+        throw new Error('mark_silences: layer_id is required')
+      // Left UNDEFINED rather than defaulted here: the defaults belong to Rust
+      // (`native/src/mcp/tools.rs`), and a number invented at this hop would be
+      // free to disagree with the one an omitted parameter actually resolves to.
+      const ids = await markSilences({
+        layer_id: layerId,
+        ...(typeof args.threshold_amp === 'number' ? { threshold_amp: args.threshold_amp } : {}),
+        ...(typeof args.min_silence_us === 'number' ? { min_silence_us: args.min_silence_us } : {}),
+      }, deps)
+      return { markers: ids.length, marker_ids: ids }
     }
     case 'apply_shot_cuts': {
       // The reviewed-list channel: one canonical cut list, three verbs over it.

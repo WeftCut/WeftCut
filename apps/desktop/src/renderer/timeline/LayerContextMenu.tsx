@@ -18,7 +18,9 @@ import {
   SubMenu,
 } from "../menu/Menu";
 import {
+  useAudioClipState,
   useAutoCaptionState,
+  type AudioClipState,
   type AutoCaptionState,
 } from "../speech/autoCaptionEligibility";
 import { useLinkOverride } from "../state/linkOverrideStore";
@@ -108,10 +110,22 @@ export const GROUP_MENU_COMMAND_IDS = [
 /// only ever refuse. The gate is the two kinds that carry a media reference with
 /// an audio stream, which is exactly what `resolve_clip_audio_source` accepts.
 ///
-/// A tier of one, and it is left as a list anyway: this is where `cut-silences`
-/// would join once the timeline has a ripple delete to apply it with, and the
-/// sweep in `menu/contextMenuCommands.test.ts` covers a list rather than a row.
-export const ANALYSIS_MENU_COMMAND_IDS = ["autoCaptionSelected"] as const;
+/// Two rows, in the order they are reached: caption a clip, then measure its
+/// silence. Both take arguments, so both open a dialog rather than acting on the
+/// click.
+///
+/// The silence row joins as *detect and mark*, not as *cut silences*, and the
+/// distinction is the reason the tier still holds two entries rather than three:
+/// cutting needs a ripple delete this timeline does not have, and split →
+/// split → delete leaves a gap exactly as long as what it removed, which is
+/// audibly identical to doing nothing. Ripple delete is its own issue with its
+/// own open questions (link siblings, Groups, transitions' deliberately vacated
+/// gaps), and it must not grow as a side effect of a silence feature. Until it
+/// exists, what the human gets is the measurement.
+export const ANALYSIS_MENU_COMMAND_IDS = [
+  "autoCaptionSelected",
+  "detectSilencesSelected",
+] as const;
 
 /// The rows only a `VideoClip` gets. Registry-driven like the tiers above and
 /// swept by the same test.
@@ -163,6 +177,17 @@ const AUTO_CAPTION_REASON: Record<
   needs_audio_kind: "quick_actions.auto_caption_needs_audio_kind",
   speed_not_one: "quick_actions.auto_caption_speed_not_one",
   transcribing: "quick_actions.auto_caption_transcribing",
+};
+
+/// Why a greyed *Detect silences* row is greyed. Its own table even though the
+/// gate is shared with *Auto-caption*: the verdict is one thing, but the
+/// instruction reads differently per verb — "a clip to transcribe" and "a clip
+/// to measure" send the user to the same place for different reasons, and a
+/// tooltip that names the wrong operation is worse than none.
+const DETECT_SILENCES_REASON: Record<Exclude<AudioClipState, "ok">, string> = {
+  needs_selection: "quick_actions.detect_silences_needs_selection",
+  needs_audio_kind: "quick_actions.detect_silences_needs_audio_kind",
+  speed_not_one: "quick_actions.detect_silences_speed_not_one",
 };
 
 /// Why a greyed *Move to… ›* trigger is greyed. Same block and same
@@ -327,6 +352,13 @@ export function LayerContextMenu({
   const autoCaption = useAutoCaptionState();
   const autoCaptionHint =
     autoCaption === "auto_caption" ? undefined : t(AUTO_CAPTION_REASON[autoCaption]);
+  // The *Detect silences* row's tooltip. Subscribed like the row above it, on
+  // the shared half of the same gate — a selection change under an open popup
+  // has to re-label both rows or one of them would be explaining a clip the
+  // other has moved on from.
+  const audioClip = useAudioClipState();
+  const detectSilencesHint =
+    audioClip === "ok" ? undefined : t(DETECT_SILENCES_REASON[audioClip]);
   // The *Move to… ›* trigger. Live it is a submenu — a destination is the
   // content of the gesture, and only a list can carry one — and greyed it falls
   // back to the flat registry row, which is what can show WHY. The command is
@@ -491,9 +523,9 @@ export function LayerContextMenu({
                 />
               </>
             )}
-            {/* Above the shot-cut row rather than below it, because captioning
-                is the operation reached far more often — and it is the one that
-                takes an argument, so it wants the eye first. */}
+            {/* Above the shot-cut row rather than below it, because these are
+                the operations reached far more often — and they are the ones
+                that take arguments, so they want the eye first. */}
             {AUDIO_BEARING_KINDS.has(layerKind) && (
               <>
                 <MenuSeparator />
@@ -504,6 +536,9 @@ export function LayerContextMenu({
                     onRun={onClose}
                     {...(id === "autoCaptionSelected" && autoCaptionHint
                       ? { hint: autoCaptionHint }
+                      : {})}
+                    {...(id === "detectSilencesSelected" && detectSilencesHint
+                      ? { hint: detectSilencesHint }
                       : {})}
                   />
                 ))}

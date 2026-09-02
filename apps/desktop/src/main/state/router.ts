@@ -42,9 +42,16 @@ export type Route =
  *  index.ts intercept because they ARE hybrids — Rust renders or synthesizes,
  *  the actor commits — and an unclassified channel is rejected by design.
  *  Either caller lands the same single commit; the MCP path differs only in
- *  wrapping the string result as a `ToolResult` text block (server.ts). */
+ *  wrapping the string result as a `ToolResult` text block (server.ts).
+ *
+ *  `mark_silences` is the same split one capability over: Rust reads the
+ *  waveform peaks through `detect_silences`, the TS actor lands one region
+ *  marker per silent range in a single commit. Renderer-only for
+ *  `apply_shot_cuts`' reason — an agent already has the read tool and
+ *  `add_markers`. */
 export const HYBRID_CHANNELS: ReadonlySet<string> = new Set([
-  'import_media', 'drop_shot_markers', 'apply_shot_cuts', 'apply_subtitles', 'synthesize_speech',
+  'import_media', 'drop_shot_markers', 'apply_shot_cuts', 'mark_silences',
+  'apply_subtitles', 'synthesize_speech',
 ])
 
 /** Read-only channels whose Rust entry point is a direct napi method (or the

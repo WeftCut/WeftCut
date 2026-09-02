@@ -41,6 +41,7 @@ export type ActionId =
   | "addToGroup"
   | "moveToComposition"
   | "autoCaptionSelected"
+  | "detectSilencesSelected"
   | "reviewShots"
   | "toggleLinkSelected"
   | "toggleLinkOverride"
@@ -277,9 +278,18 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // command has not. Unbound by default because its home is the pointer: you
   // right-click the clip you mean.
   //
-  // No `cut-silences` twin beside it: that recipe's apply step needs a ripple
-  // delete this editor does not have, so it stays out of the menus entirely.
   autoCaptionSelected:    { defaultKeys: [],               labelKey: "actions.auto_caption_selected", scope: TIMELINE_SELECTION },
+  // The `cut-silences` recipe's first half, and only its first half: the label
+  // says *detect* because the apply step that would CUT needs a ripple delete
+  // this editor does not have, and split-split-delete leaves a hole exactly as
+  // long as what it removed — audibly identical to doing nothing. What lands
+  // instead is a region marker per silent range, on the waveform the timeline
+  // already draws.
+  //
+  // Catalogued, scoped and unbound for `autoCaptionSelected`'s three reasons:
+  // it acts on the timeline selection, a user who does this to every clip has
+  // somewhere to bind it, and its home is the pointer.
+  detectSilencesSelected: { defaultKeys: [],               labelKey: "actions.detect_silences_selected", scope: TIMELINE_SELECTION },
   // Open the shot-review Panel on the selected clip. Catalogued here and not as
   // a menu-only command, for `autoCaptionSelected`'s reason and against
   // `openVoiceoverDialog`'s: this one HAS a scope. What it reviews is the

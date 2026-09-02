@@ -309,6 +309,14 @@ const enUS = {
     auto_caption_speed_not_one:
       "This clip is re-timed — split a normal-speed segment off it first, or the words land in the wrong place",
     auto_caption_transcribing: "A transcription is already running",
+    // Detect silences. The same gate as auto-caption, said in the verb the row
+    // uses: the place to go is the same, but "to transcribe" and "to measure"
+    // are not the same errand.
+    detect_silences_needs_selection: "Select a video or audio clip to measure",
+    detect_silences_needs_audio_kind:
+      "This clip carries no sound — select a video or audio clip",
+    detect_silences_speed_not_one:
+      "This clip is re-timed — split a normal-speed segment off it first, or the ranges land in the wrong place",
   },
   dock_workspace: {
     editing_label: "Editing workspace",
@@ -557,6 +565,10 @@ const enUS = {
     // and what a user is reaching for is the captions, not the transcript.
     // Ellipsis on both because both raise a dialog first.
     auto_caption_selected: "Auto-caption clip…",
+    // "Detect silences" and not "Cut silences": nothing is removed. The row
+    // measures and marks, because cutting needs a ripple delete this timeline
+    // does not have (`timeline/LayerContextMenu.tsx` carries the whole reason).
+    detect_silences_selected: "Detect silences…",
     open_voiceover: "Voiceover…",
     // Ellipsis because the row opens a surface rather than committing anything:
     // reviewing is what happens next, and the apply is a press inside the Panel.
@@ -1775,6 +1787,10 @@ const enUS = {
     voiceover_done: "Voiceover added — {{chars}} characters, {{voice}}",
     voiceover_done_cached:
       "Voiceover added — reused cached audio, nothing billed",
+    mark_silences_started: "Marking silences in “{{clip}}”",
+    // The COUNT is the whole point of the row: the marks land in the ruler's
+    // lower half, which the user may not have been looking at.
+    mark_silences_done: "{{markers}} silence markers added to “{{clip}}”",
   },
   // Edit-stack row labels — one per `HISTORY_SUMMARY` entry in
   // main/state/history-labels.ts, which owns the English source text. The three
@@ -1984,6 +2000,33 @@ const enUS = {
     cancel: "Cancel",
     confirm: "Generate",
     running: "Generating…",
+  },
+  // The silence dialog. Two live parameters and a preview, straight from the
+  // authored `cut-silences` prompt's parameter set — nothing invented beyond it,
+  // and nothing from its apply step, which needs a ripple delete this editor
+  // does not have.
+  silence: {
+    title: "Detect silences",
+    clip: "Clip",
+    threshold: "Silence below",
+    // The number is amplitude because that is what the tool takes; the decibels
+    // are what an audio person reasons in, so both are shown.
+    threshold_hint: "Peak amplitude, roughly {{dbfs}} dBFS.",
+    min_length: "Shortest silence",
+    min_length_hint: "Gaps shorter than this are not marked.",
+    unit_ms: "ms",
+    detecting: "Reading the waveform…",
+    // A state, not a failure: on a fresh import the peaks are still being
+    // generated, and the dialog retries by itself once they are.
+    waiting_waveform: "Waiting for the waveform…",
+    none: "No silence above this threshold",
+    summary_one: "1 silent range, {{total}} in total",
+    summary_other: "{{count}} silent ranges, {{total}} in total",
+    range: "{{start}} – {{end}}",
+    note: "Each range becomes a marker on this clip. Nothing is cut.",
+    cancel: "Cancel",
+    confirm: "Mark silences",
+    running: "Marking…",
   },
   search: {
     placeholder: "Search commands, media, clips, captions…",

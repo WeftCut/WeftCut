@@ -677,6 +677,23 @@ app.whenReady().then(async () => {
     shotFloorSensitivity: () => backend!.shotFloorSensitivity(),
     shotDefaultOpts: () =>
       JSON.parse(backend!.shotDefaultOpts()) as import('./state/hybrids.js').ShotDefaultOpts,
+    // Not a bare napi method like the shot entries above: `detect_silences` is
+    // a clip-compute TOOL, and its `{ layer, media }` slice is resolved by
+    // `callClipComputeTool` — the very function the agent's call and the
+    // renderer's read channel go through. One call site is the point: a second
+    // resolution here would be a second answer to "which clip is this", and the
+    // waveform-not-ready refusal has to read identically on every path.
+    //
+    // `tsHost` is resolved LAZILY because this facade is built before the host
+    // exists; by the time a hybrid can run, it does. The import is local for
+    // the same chunking reason the renderer's dispatch states below — a
+    // top-level one would pull the MCP SDK into the entry chunk.
+    detectSilences: async (args: { layer_id: string; threshold_amp?: number; min_silence_us?: number }) => {
+      if (!tsHost) throw new Error('detect_silences: the project actor is not started yet')
+      const { callClipComputeTool } = await import('./mcp/server.js')
+      const result = await callClipComputeTool(backend!, tsHost, 'detect_silences', { ...args })
+      return toolResultPayload(result) as import('./state/hybrids.js').SilenceRegion[]
+    },
   }
 
   // Load built-in Motif sources once (manifest + relocated index.html) for the

@@ -281,6 +281,12 @@ const zhCN: Resources = {
     auto_caption_speed_not_one:
       "这个片段变过速——先从中切出一段常速，否则字会落错位置",
     auto_caption_transcribing: "已经有一次转写在进行中",
+    // 检测静默。门禁与自动字幕完全一样，只是换成这一行自己的动词：要去的地方
+    // 相同，但"去转写"和"去测量"并不是同一件事。
+    detect_silences_needs_selection: "选中一个视频或音频片段来测量",
+    detect_silences_needs_audio_kind: "这个片段没有声音——请选视频或音频片段",
+    detect_silences_speed_not_one:
+      "这个片段变过速——先从中切出一段常速，否则区间会落错位置",
   },
   dock_workspace: {
     editing_label: "编辑工作区",
@@ -490,6 +496,7 @@ const zhCN: Resources = {
     // 用"自动字幕"而不是"转写"：这一行的产物是一条字幕轨，用户要的是字幕本身，
     // 不是转写文本。两条都带省略号，因为都会先弹对话框。
     auto_caption_selected: "自动字幕…",
+    detect_silences_selected: "检测静默…",
     open_voiceover: "配音…",
     // 带省略号，因为这一行打开的是一个界面而不是提交任何改动：接下来是审阅，
     // 应用是面板里的另一次按下。
@@ -1598,6 +1605,9 @@ const zhCN: Resources = {
     voiceover_started: "正在生成配音——{{chars}} 个字符，{{voice}}",
     voiceover_done: "已添加配音——{{chars}} 个字符，{{voice}}",
     voiceover_done_cached: "已添加配音——复用了缓存音频，未产生费用",
+    mark_silences_started: "正在标记“{{clip}}”的静默区间",
+    // 数量是这行的全部意义：标记落在标尺下半部分，用户当时未必在看那里。
+    mark_silences_done: "已为“{{clip}}”添加 {{markers}} 个静默标记",
   },
   history: {
     initial: "初始状态",
@@ -1764,6 +1774,32 @@ const zhCN: Resources = {
     cancel: "取消",
     confirm: "生成",
     running: "正在生成…",
+  },
+  // 静默对话框。两个实时参数加一份预览，参数集直接来自已写好的 `cut-silences`
+  // 提示词；没有额外发明，也没有它的删除那一步——那一步需要本编辑器
+  // 尚不具备的涟漪删除。
+  silence: {
+    title: "检测静默",
+    clip: "片段",
+    threshold: "静默阈值",
+    // 输入的是幅度，因为工具收的就是幅度；分贝才是做声音的人在想的单位，
+    // 所以两者都显示。
+    threshold_hint: "峰值幅度，约为 {{dbfs}} dBFS。",
+    min_length: "最短静默",
+    min_length_hint: "短于此长度的空白不会被标记。",
+    unit_ms: "毫秒",
+    detecting: "正在读取波形…",
+    // 这是一种状态，不是失败：刚导入的素材峰值还在生成，完成后对话框
+    // 会自己重试。
+    waiting_waveform: "正在等待波形…",
+    none: "在这个阈值下没有静默",
+    summary_one: "1 段静默，共 {{total}}",
+    summary_other: "{{count}} 段静默，共 {{total}}",
+    range: "{{start}} – {{end}}",
+    note: "每段静默会在这个片段上变成一个标记。不会剪掉任何东西。",
+    cancel: "取消",
+    confirm: "标记静默",
+    running: "正在标记…",
   },
   search: {
     placeholder: "搜索命令、素材、片段、字幕…",

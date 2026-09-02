@@ -15,7 +15,7 @@
 import i18n from "../i18n";
 import { layerDisplayName } from "../lib/layerName";
 import {
-  autoCaptionTarget,
+  audioClipTarget,
   canAutoCaptionSelection,
 } from "../speech/autoCaptionEligibility";
 import { openAutoCaptionPrompt } from "../speech/autoCaptionPrompt";
@@ -34,7 +34,7 @@ export { canAutoCaptionSelection };
 /// React. No group ordinals are passed because a Group layer never reaches this
 /// point: the gate admits VideoClip and Audio only.
 export function openAutoCaptionForSelection(): void {
-  const layer = autoCaptionTarget();
+  const layer = audioClipTarget();
   // Prevented by the command's `enabled`; a palette entry built before the
   // selection changed can still reach here, and doing nothing is the honest
   // answer to "no target".
