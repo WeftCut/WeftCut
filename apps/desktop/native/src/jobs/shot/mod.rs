@@ -14,7 +14,9 @@
 //! Also owns the scan / reduce split: [`floor_opts`] is the single cached
 //! whole-source pass at [`FLOOR_SENSITIVITY`], [`reduce`] re-derives the shot
 //! list from it at any higher threshold with no I/O, and [`is_report_cached`] is
-//! the read-only probe for whether that pass has already run.
+//! the read-only probe for whether that pass has already run. What it does NOT
+//! own is measuring a span the scan never sampled — that, and the sidecar those
+//! measurements accumulate in, belong to [`stats`].
 //!
 //! ffmpeg's `scene` score is an internal detail — the public surface says
 //! "shot" / "cut".
@@ -27,6 +29,10 @@ use anyhow::{Context, Result};
 /// Pairwise perceptual frame similarity (pHash + MSSIM) behind the standalone
 /// `compare_frames` tool — a pure function, not part of the cut/stats pipeline.
 pub(crate) mod sim;
+/// The on-demand pass that measures spans a scan never sampled, and its own
+/// per-(source, tier) sidecar. Owns the one measurement function; [`attach_stats`]
+/// is its other caller.
+pub(crate) mod stats;
 use async_trait::async_trait;
 use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
 use image::RgbImage;
@@ -351,7 +357,7 @@ pub async fn cached_source_report(
         );
     }
     let report = analyze(&video, 0, duration_us, opts).await?;
-    write_report_atomic(&path, &report).await?;
+    write_json_atomic(&path, &report, "shot report").await?;
     cache.notify_write();
     Ok(report)
 }
@@ -489,16 +495,23 @@ fn read_report(path: &Path) -> Result<ShotReport> {
     serde_json::from_slice(&bytes).with_context(|| format!("parse shot report {}", path.display()))
 }
 
-/// Persist a `ShotReport` JSON atomically (temp → promote), mirroring
-/// `write_description_atomic` — a killed write leaves a `<dest>.tmp` the next run
-/// discards, never a half-written `<dest>` that `cached_ok` would trust.
-async fn write_report_atomic(dest: &Path, report: &ShotReport) -> Result<()> {
+/// Persist one of this module's JSON sidecars atomically (temp → promote),
+/// mirroring `write_description_atomic` — a killed write leaves a `<dest>.tmp`
+/// the next run discards, never a half-written `<dest>` that `cached_ok` would
+/// trust. `what` names the payload in the failure messages, so the VSHOT report
+/// and the span-stats sidecar ([`stats`]) share one statement of the protocol
+/// instead of two copies free to drift.
+pub(crate) async fn write_json_atomic<T: Serialize>(
+    dest: &Path,
+    value: &T,
+    what: &str,
+) -> Result<()> {
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent)
             .await
             .with_context(|| format!("ensure {}", parent.display()))?;
     }
-    let body = serde_json::to_vec_pretty(report).context("serialize shot report")?;
+    let body = serde_json::to_vec_pretty(value).with_context(|| format!("serialize {what}"))?;
     let tmp = crate::cache::temp_path(dest);
     let _ = tokio::fs::remove_file(&tmp).await;
     tokio::fs::write(&tmp, &body)
@@ -506,48 +519,36 @@ async fn write_report_atomic(dest: &Path, report: &ShotReport) -> Result<()> {
         .with_context(|| format!("write {}", tmp.display()))?;
     if !crate::cache::cached_ok(&tmp) {
         crate::cache::discard_temp(dest);
-        anyhow::bail!("shot report cache is empty after write");
+        anyhow::bail!("{what} cache is empty after write");
     }
     crate::cache::promote_temp(dest)?;
     Ok(())
 }
 
-/// Sample a shot's start / mid / end frames and fill in the requested stats and
-/// flags. Endpoints are inset slightly so they sit inside the shot rather than
-/// on a cut boundary shared with the neighbour.
+/// Measure one shot's span and keep the parts `opts` asked for.
+///
+/// The measurement itself is [`stats::measure_span`], shared with the on-demand
+/// pass the review surface presses: the numbers a Panel row shows and the ones
+/// `analyze_clip` reports are then the same computation over the same three
+/// frames, not two implementations that agree today. This function is only the
+/// projection of that result onto `opts` — a pass left off simply drops its half.
 async fn attach_stats(shot: &mut Shot, video: &Path, dir: &Path, opts: &ShotOpts) -> Result<()> {
-    let dur = (shot.t_end_us - shot.t_start_us).max(0);
-    let inset = (dur / 8).clamp(0, 250_000);
-    let t_start = shot.t_start_us + inset;
-    let t_mid = shot.keyframe_t_us;
-    let t_end = (shot.t_end_us - inset).max(t_start);
-
-    let idx = shot.index;
-    let f_start = extract_rgb(video, t_start, &dir.join(format!("s{idx}_a.png"))).await?;
-    let f_mid = extract_rgb(video, t_mid, &dir.join(format!("s{idx}_m.png"))).await?;
-    let f_end = extract_rgb(video, t_end, &dir.join(format!("s{idx}_z.png"))).await?;
-
-    let l_start = mean_luma(&f_start);
-    let l_mid = mean_luma(&f_mid);
-    let l_end = mean_luma(&f_end);
-
+    let measured = stats::measure_span(
+        video,
+        dir,
+        shot.t_start_us,
+        shot.t_end_us,
+        shot.keyframe_t_us,
+        &format!("s{}", shot.index),
+    )
+    .await?;
     if opts.stats {
-        shot.brightness = Some(l_mid);
-        shot.sharpness = Some(var_laplacian(&f_mid));
-        shot.motion = Some(motion_between(&f_start, &f_end));
+        shot.brightness = Some(measured.brightness);
+        shot.sharpness = Some(measured.sharpness);
+        shot.motion = Some(measured.motion);
     }
     if opts.events {
-        let mut flags = Vec::new();
-        if l_start < BLACK_LUMA && l_mid < BLACK_LUMA && l_end < BLACK_LUMA {
-            flags.push(ShotFlag::Black);
-        }
-        if ssim(&f_start, &f_mid) >= FREEZE_SSIM && ssim(&f_mid, &f_end) >= FREEZE_SSIM {
-            flags.push(ShotFlag::Freeze);
-        }
-        if is_fade(l_start, l_mid, l_end) {
-            flags.push(ShotFlag::Fade);
-        }
-        shot.flags = flags;
+        shot.flags = measured.flags;
     }
     Ok(())
 }
@@ -994,7 +995,7 @@ mod tests {
         // No proxy exists for this media in the temp cache, so pick_source uses
         // the original → tier "orig"; pre-seed the sidecar at that exact key.
         let path = cache.shot(&cache_key(&media.file_hash_blake3, "orig", &o));
-        write_report_atomic(&path, &sample_report()).await.unwrap();
+        write_json_atomic(&path, &sample_report(), "shot report").await.unwrap();
         assert!(crate::cache::cached_ok(&path));
 
         // HIT: reads the sidecar, never spawns ffmpeg (path /nonexistent.mp4).
@@ -1212,7 +1213,7 @@ mod tests {
         // No proxy exists in the temp cache → pick_source takes the original,
         // tier "orig"; seed the sidecar at exactly that key.
         let path = cache.shot(&cache_key(&media.file_hash_blake3, "orig", &floor_opts()));
-        write_report_atomic(&path, &sample_report()).await.unwrap();
+        write_json_atomic(&path, &sample_report(), "shot report").await.unwrap();
         let seeded = file_count(tmp.path());
         assert!(is_report_cached(&cache, &media, &floor_opts()));
 

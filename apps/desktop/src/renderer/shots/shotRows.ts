@@ -1,5 +1,6 @@
 // The Shots Panel's row view model: one row per shot of the REDUCE's output,
-// with the reviewer's own two decisions folded in.
+// with the reviewer's own two decisions and any on-demand measurements folded
+// in.
 //
 // Boundary: this module never decides where a shot begins. Spans come from
 // `reduce_shot_report`, which is the single producer of the canonical cut list
@@ -11,7 +12,25 @@
 // the Rust tests already pin.
 
 import { approxFrameDurUs } from "../frames";
-import type { LayerSummary, Shot, ShotFlag, ShotReport } from "../ipc";
+import type {
+  LayerSummary,
+  Shot,
+  ShotFlag,
+  ShotReport,
+  SpanStats,
+} from "../ipc";
+
+/// How a measured span is addressed. A span and not a row: the pair IS the
+/// identity, so the same key answers whether the span came from a threshold, a
+/// veto or a window edge — and a row whose span nothing measured finds nothing
+/// rather than a neighbour's numbers.
+///
+/// It lives here, beside the lookup that reads it, and `shotsStore` imports it
+/// to key what a measurement pass publishes. Stating the format twice would
+/// make a measured span unfindable the moment the two spellings drifted.
+export function spanKey(startUs: number, endUs: number): string {
+  return `${startUs}:${endUs}`;
+}
 
 /// A shot's three measurements, together or not at all. `Shot` carries them as
 /// three independent optionals, but a scan either sampled the span or it did
@@ -105,8 +124,13 @@ interface ReviewedSpan {
 /// its average and a neighbour's flags are not its flags. A union of the parts'
 /// flags would be defensible on its own — a flag is existential — but it would
 /// make this the one place a row says more than `reduce` does about the same
-/// span, and a later stats pass over the merged span would then have to
-/// overwrite a value the Panel had invented. One rule, stated once, in Rust.
+/// span, and the on-demand stats pass would then be overwriting a value the
+/// Panel had invented. One rule, stated once, in Rust.
+///
+/// That absence is not a dead end: it is exactly what *Measure shots* fills.
+/// Measuring a merged span measures the span the REVIEWER made — the frames of
+/// the shot as they have decided it is — which is the only span whose numbers
+/// would mean anything here.
 ///
 /// The first shot is never joinable: it opens on the window edge, so no
 /// candidate of its own exists to veto. A veto set naming that time is ignored
@@ -150,12 +174,21 @@ function reviewedSpans(
 /// window sits on a timeline. Speed is not applied: the apply path's
 /// `cutsToTimeline` maps at 1:1 too, and a row that disagreed with the cut it
 /// produces would be worse than one that ignores a re-time.
+///
+/// `spanStats` is the on-demand pass's answers for this source, consulted only
+/// where a span has none of its own and only on an EXACT span match — the same
+/// carry-over rule `reduce` applies, so a measurement can no more land on a
+/// neighbouring span here than it can there. The `ShotReport` is never
+/// mutated: it is the scan's statement of what it measured, and a Panel that
+/// wrote its own numbers into it would make the report's meaning depend on
+/// which surface had been opened.
 export function shotRows(
   reduced: ShotReport,
   layer: LayerSummary,
   compositionFps: { num: number; den: number },
   vetoedCandidateSrcUs: ReadonlySet<number>,
   discardedSrcStartUs: ReadonlySet<number>,
+  spanStats?: ReadonlyMap<string, SpanStats>,
 ): ShotRow[] {
   // The kind gate is what narrows `src_in_us` into scope; the Panel's subject
   // is a VideoClip by construction, so no row is ever lost to it.
@@ -173,6 +206,14 @@ export function shotRows(
   };
   return reviewedSpans(reduced.shots, vetoedCandidateSrcUs).map(
     (span, index): ShotRow => {
+      // Stats and flags arrive TOGETHER or not at all, from whichever pass
+      // measured this exact span: the scan's own numbers when it sampled the
+      // span, else the on-demand pass's. Mixing halves would put a scan's flags
+      // beside a measurement's brightness with nothing saying so.
+      const measured =
+        span.stats === null
+          ? spanStats?.get(spanKey(span.srcStartUs, span.srcEndUs))
+          : undefined;
       return {
         index,
         srcStartUs: span.srcStartUs,
@@ -181,8 +222,14 @@ export function shotRows(
         tEndUs: toTimeline(span.srcEndUs),
         durationUs: span.srcEndUs - span.srcStartUs,
         keyframeTUs: span.keyframeTUs,
-        stats: span.stats,
-        flags: span.flags,
+        stats: measured
+          ? {
+              brightness: measured.brightness,
+              motion: measured.motion,
+              sharpness: measured.sharpness,
+            }
+          : span.stats,
+        flags: measured ? measured.flags : span.flags,
         openingCandidate: index === 0 ? null : candidateAt(span.srcStartUs),
         mergedCandidates: span.vetoedSrcUs.flatMap((srcUs) => {
           const candidate = candidateAt(srcUs);

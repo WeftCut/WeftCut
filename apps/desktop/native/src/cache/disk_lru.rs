@@ -12,7 +12,7 @@
 //!
 //! Nothing else under `Cache/` is swept — the rule is cheap-to-regenerate
 //! only. Every other dir is either expensive to rebuild (`proxies/`, `audio/`
-//! conform PCM, `shots/`), re-pays an API cost on eviction (`voiceover/`,
+//! conform PCM, `shots/`, `shot-stats/`), re-pays an API cost on eviction (`voiceover/`,
 //! `transcribe-audio/`, `descriptions/`), or too small to be worth the risk
 //! (`frames/`, `inline-subs/`).
 

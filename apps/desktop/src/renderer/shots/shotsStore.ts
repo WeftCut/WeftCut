@@ -7,10 +7,12 @@
 // open or not. Here the Panel owns the reads, so a closed Panel issues none.
 //
 // THE RULE THIS MODULE EXISTS TO ENFORCE: selecting a clip probes and never
-// scans. `shotFloorReportCached` stats a sidecar; `analyzeShotsFloor` decodes a
-// whole source and can run for minutes. Clicking clips is the highest-frequency
-// gesture in the app, so the scan is reachable only from `analyzeShotSubject`,
-// which one deliberate press calls.
+// scans, and never measures. `shotFloorReportCached` stats a sidecar;
+// `analyzeShotsFloor` decodes a whole source and can run for minutes, and
+// `attachShotStats` spawns three ffmpeg extracts per unmeasured span. Clicking
+// clips is the highest-frequency gesture in the app, so those two are reachable
+// only from `analyzeShotSubject` and `measureShotRows`, each of which one
+// deliberate press calls.
 //
 // The two tuned parameters live on `ProjectSettings.shot_review` — per project,
 // because a shoot has one character — and are written through the UNRECORDED
@@ -23,6 +25,7 @@ import { describeRefusal, refusalText } from "../errors/tryMutate";
 import {
   analyzeShotsFloor,
   applyShotCuts,
+  attachShotStats,
   getProjectSettings,
   logEmit,
   reduceShotReport,
@@ -33,10 +36,11 @@ import {
   type ApplyShotCutsResult,
   type ShotReport,
   type ShotReviewSettings,
+  type SpanStats,
 } from "../ipc";
 import { LatestRequestCoordinator } from "../state/latestRequest";
 import { useProjectStore } from "../state/projectStore";
-import { acceptedCutsSrcUs, type ShotRow } from "./shotRows";
+import { acceptedCutsSrcUs, spanKey, type ShotRow } from "./shotRows";
 
 /// The clip under review. A layer and not a media item: the report is
 /// source-scoped, but every apply step is layer-scoped, and `[srcInUs, srcOutUs)`
@@ -76,10 +80,11 @@ export interface ShotsStoreState {
   /// commit to the same layer, and a second press mid-commit would send the
   /// row indices of a list the first press is already consuming.
   applying: ShotApplyVerb | null;
-  /// The failure's own sentence — the scan's or an apply's — for the Panel's
-  /// inline slot. One slot because the two are never reachable at once: Analyze
-  /// is offered only while there are no rows, and the apply bar only once there
-  /// are. Cleared when the next attempt starts and when the subject changes.
+  /// The failure's own sentence — the scan's, a measurement's or an apply's —
+  /// for the Panel's inline slot. One slot because no two are reachable at
+  /// once: Analyze is offered only while there are no rows, and once there are,
+  /// measuring and applying each grey the other out. Cleared when the next
+  /// attempt starts and when the subject changes.
   error: string;
   /// The detection defaults as RUST states them, kept beside the effective pair
   /// so a project that carries no review parameters — or one that clears them —
@@ -103,6 +108,16 @@ export interface ShotsStoreState {
   /// A key whose boundary a threshold change removes goes inert rather than
   /// discarding some other span.
   discarded: ReadonlyMap<string, ReadonlySet<number>>;
+  /// Measured spans by media id, then by [`spanKey`]. Keyed by SOURCE span and
+  /// not by row, for `reports`' reason: a measurement is a fact about the
+  /// footage, so it outlives the threshold that produced the span and is worth
+  /// nothing to a row it was not taken over. A span that survives a threshold
+  /// move keeps its numbers; one the move reshaped simply has no entry.
+  spanStats: ReadonlyMap<string, ReadonlyMap<string, SpanStats>>;
+  /// The media id a measurement pass is running for, or null. One at a time,
+  /// like the scan: each fresh span spawns three ffmpeg extracts, and two
+  /// passes over one clip would double that for nothing.
+  measuring: string | null;
 }
 
 const INITIAL: ShotsStoreState = {
@@ -119,6 +134,8 @@ const INITIAL: ShotsStoreState = {
   floor: null,
   vetoed: new Map(),
   discarded: new Map(),
+  spanStats: new Map(),
+  measuring: null,
 };
 
 export const useShotsStore = create<ShotsStoreState>(() => ({ ...INITIAL }));
@@ -164,6 +181,7 @@ function withKey<T>(
 }
 
 const NO_TIMES: ReadonlySet<number> = new Set<number>();
+const NO_SPAN_STATS: ReadonlyMap<string, SpanStats> = new Map();
 
 /// The reduce, re-run from whatever the store currently holds. Every input it
 /// reads — report, window, threshold, spacing — is store state, so this is the
@@ -371,7 +389,12 @@ export function setShotSubject(subject: ShotSubject | null): void {
 export function invalidateShotSource(mediaId: string): void {
   const next = new Map(get().reports);
   next.delete(mediaId);
-  set({ reports: next });
+  // The measurements go with the report: both are keyed by media id, and this
+  // is the path a relink takes — the same id pointing at different footage,
+  // whose spans hold different frames.
+  const stats = new Map(get().spanStats);
+  stats.delete(mediaId);
+  set({ reports: next, spanStats: stats });
   const { subject } = get();
   if (subject === null || subject.mediaId !== mediaId) return;
   set({ cached: null, reduced: null });
@@ -449,6 +472,100 @@ export async function analyzeShotSubject(clipName: string): Promise<void> {
       op_id: opId,
       op_state: { state: "Err" },
       details: { context: "analyze_shots_floor", ...(refusal ? { error: refusal.error } : {}) },
+    });
+  }
+}
+
+/// Measure the rows that carry no stats — the opt-in half of the floor-scan
+/// split, and the second path in this module that spawns ffmpeg.
+///
+/// Only the unmeasured rows go out. A row already showing numbers holds them
+/// because some pass measured that exact span, so re-sending it would spend
+/// three extracts to learn what is on screen; the answer for the rest is
+/// per-span cached in Rust, which is what makes a second press after a
+/// threshold nudge cost only the spans the nudge reshaped.
+///
+/// The answer is published under the MEDIA id, whether or not that clip is
+/// still the subject. A measurement is a fact about the source (`reports`
+/// carries the same rule), so a reviewer who clicks away mid-pass and comes
+/// back finds it waiting rather than having paid for nothing.
+///
+/// `rows` and `clipName` come in rather than being derived here, for
+/// `analyzeShotSubject`'s reason: rows need the layer summary and the
+/// composition rate, and naming the clip needs the active locale.
+export async function measureShotRows(
+  rows: readonly ShotRow[],
+  clipName: string,
+): Promise<void> {
+  const { subject, measuring } = get();
+  if (subject === null || measuring !== null) return;
+  const spans = rows.flatMap((row) =>
+    row.stats === null
+      ? [{ t_start_us: row.srcStartUs, t_end_us: row.srcEndUs }]
+      : [],
+  );
+  if (spans.length === 0) return;
+  const mediaId = subject.mediaId;
+  set({ measuring: mediaId, error: "" });
+  // Three ffmpeg extracts per fresh span and no percentage to report, so the
+  // Started row is what the status badge spins on — and the span count is the
+  // fact worth recording, since it is what the pass costs. One `op_id` pairs it
+  // with the terminal row (docs/status-log.md).
+  const opId = crypto.randomUUID();
+  void logEmit({
+    level: "info",
+    category: { kind: "Project" },
+    source: { kind: "User" },
+    message: `Measuring ${spans.length} shots in ${clipName}`,
+    i18n_key: "log.shots_stats_started",
+    i18n_args: { clip: clipName, spans: spans.length },
+    op_id: opId,
+    op_state: { state: "Started" },
+  });
+  try {
+    const measured = await attachShotStats(mediaId, spans);
+    const bySpan = new Map(get().spanStats.get(mediaId) ?? []);
+    for (const stats of measured) {
+      bySpan.set(spanKey(stats.t_start_us, stats.t_end_us), stats);
+    }
+    set({
+      spanStats: new Map(get().spanStats).set(mediaId, bySpan),
+      measuring: null,
+    });
+    void logEmit({
+      level: "info",
+      category: { kind: "Project" },
+      source: { kind: "User" },
+      message: `${measured.length} shots measured in ${clipName}`,
+      i18n_key: "log.shots_stats_done",
+      i18n_args: { clip: clipName, spans: measured.length },
+      op_id: opId,
+      op_state: { state: "Ok" },
+    });
+  } catch (err) {
+    // The boundary's own sentence: a malformed span is refused by index, and
+    // that index is the actionable half.
+    set({ measuring: null, error: refusalText(err) });
+    // Hand-rolled rather than `logMutationFailure(err, ctx, opId)` for the
+    // analyze path's reason: the prose fallback here has a key of its own.
+    const refusal = describeRefusal(err);
+    void logEmit({
+      level: refusal?.level ?? "error",
+      category: { kind: "Project" },
+      source: { kind: "User" },
+      message: refusal?.message ?? `Shot measurement failed: ${String(err)}`,
+      ...(refusal?.i18n_key
+        ? { i18n_key: refusal.i18n_key, i18n_args: refusal.i18n_args ?? null }
+        : {
+            i18n_key: "log.shots_stats_failed",
+            i18n_args: { clip: clipName, error: refusalText(err) },
+          }),
+      op_id: opId,
+      op_state: { state: "Err" },
+      details: {
+        context: "attach_shot_stats",
+        ...(refusal ? { error: refusal.error } : {}),
+      },
     });
   }
 }
@@ -693,9 +810,9 @@ export function setRowKept(
 export function resetShotsStore(): void {
   sourceRequests.invalidate();
   reduceRequests.invalidate();
-  // `INITIAL`'s three maps are never mutated — every write above builds a new
-  // one — so restoring them by reference is both correct and what keeps the
-  // selectors from re-rendering on a reset that changed nothing.
+  // `INITIAL`'s maps are never mutated — every write above builds a new one —
+  // so restoring them by reference is both correct and what keeps the selectors
+  // from re-rendering on a reset that changed nothing.
   useShotsStore.setState({ ...INITIAL });
 }
 
@@ -731,6 +848,18 @@ export const useShotMinShotUs = (): number | null =>
 /// dropped exactly those.
 export const useShotFloorReport = (mediaId: string | null): ShotReport | null =>
   useShotsStore((s) => (mediaId === null ? null : s.reports.get(mediaId) ?? null));
+
+/// One source's measured spans, by [`spanKey`]. The row builder reads this to
+/// fill the cells a reduce left absent; the report itself is never touched.
+export const useSpanStats = (
+  mediaId: string | null,
+): ReadonlyMap<string, SpanStats> =>
+  useShotsStore((s) =>
+    mediaId === null ? NO_SPAN_STATS : s.spanStats.get(mediaId) ?? NO_SPAN_STATS,
+  );
+
+export const useShotMeasuring = (): string | null =>
+  useShotsStore((s) => s.measuring);
 
 export const useVetoedCandidates = (mediaId: string | null): ReadonlySet<number> =>
   useShotsStore((s) => (mediaId === null ? NO_TIMES : s.vetoed.get(mediaId) ?? NO_TIMES));

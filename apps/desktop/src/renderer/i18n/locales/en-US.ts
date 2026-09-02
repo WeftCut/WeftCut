@@ -477,9 +477,20 @@ const enUS = {
     // Checked = keep. Every row starts kept, so a plain apply is "split here"
     // and discarding is opted into row by row.
     keep_shot: "Keep shot {{index}}",
-    // Absent and not zero: a span the scan never sampled has no brightness, and
+    // Absent and not zero: a span nothing has sampled has no brightness, and
     // "0.00" would report a black frame.
     stats_absent: "not measured",
+    // The on-demand stats pass. Named for the rows it acts on, because it acts
+    // on all of them that have nothing — the hint says what it costs, since the
+    // cost is the only reason it is not automatic.
+    measure: "Measure shots",
+    measure_running: "Measuring…",
+    measure_hint:
+      "Sample three frames per shot for brightness, motion and focus — one ffmpeg pass per shot, so it is opt-in.",
+    // Disabled-button reasons, `apply_no_cuts`' rule: name the precondition
+    // rather than repeat a label that cannot be acted on.
+    measure_all_measured: "Every shot in this list is already measured",
+    measure_busy: "An apply is already running",
     brightness: "Mean brightness",
     motion: "Motion between sampled frames",
     sharpness: "Focus proxy (variance of the Laplacian)",
@@ -1814,6 +1825,13 @@ const enUS = {
     // Only reached when the failure is not a structured refusal — a refusal
     // carries its own key and closes the op under that instead.
     shots_analyze_failed: "Shot analysis of “{{clip}}” failed: {{error}}",
+    // The SPAN count both ways: it is what the pass costs (three ffmpeg
+    // extracts each, for the spans no pass had measured) and what came back.
+    shots_stats_started: "Measuring {{spans}} shots in “{{clip}}”",
+    shots_stats_done: "{{spans}} shots measured in “{{clip}}”",
+    // Only reached when the failure is not a structured refusal, as above.
+    shots_stats_failed:
+      "Measuring shots in “{{clip}}” failed: {{error}}",
     // One Started row per verb rather than one with the verb interpolated: a
     // discard announces two counts, and a translated sentence cannot carry an
     // untranslated verb name. The Started rows say how much of the review went

@@ -23,6 +23,7 @@ const shots = vi.hoisted(() => ({
   reduceShotReport: vi.fn(),
   shotDefaultOpts: vi.fn(),
   shotFloorSensitivity: vi.fn(),
+  attachShotStats: vi.fn(),
   getMediaFrame: vi.fn<(id: string, tUs: number) => Promise<string>>(),
   // Both halves of the description column, so the file can assert the one that
   // matters: opening the Panel reads the cache and never spends a model.
@@ -62,6 +63,7 @@ import type {
   ProjectSummary,
   Shot,
   ShotReport,
+  SpanStats,
   TrackSummary,
 } from "../ipc";
 import { resetDescriptionsStore } from "../describe/descriptionsStore";
@@ -265,6 +267,7 @@ beforeEach(async () => {
   shots.reduceShotReport.mockResolvedValue(REPORT);
   shots.analyzeShotsFloor.mockResolvedValue(REPORT);
   shots.applyShotCuts.mockResolvedValue({ mode: "split", layer_ids: ["s1", "s2"] });
+  shots.attachShotStats.mockResolvedValue([]);
   shots.logEmit.mockResolvedValue(undefined);
   shots.getMediaFrame.mockResolvedValue("data:image/jpeg;base64,AA==");
   shots.getMediaDescription.mockResolvedValue(null);
@@ -494,6 +497,154 @@ describe("ShotsPanel — rows", () => {
     );
     // Still on screen: the reviewer has to see what an apply would delete.
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
+  });
+});
+
+// The opt-in stats pass. `REPORT`'s first shot was sampled by a scan and its
+// second was not, so one row is measured and one is not from the first paint —
+// which is what makes both the gating and the in-place flip observable.
+describe("ShotsPanel — Measure shots", () => {
+  beforeEach(() => {
+    shots.shotFloorReportCached.mockResolvedValue(true);
+  });
+
+  /// The boundary's answer for the one unmeasured span, `[2s, 6s]`. Its
+  /// `freeze` flag is the same one the report already carries for that span:
+  /// both come from `measure_span` over the same three frames, so a fixture
+  /// where they disagreed would be describing a bug.
+  const MEASURED_TAIL: SpanStats[] = [
+    {
+      t_start_us: 2_000_000,
+      t_end_us: 6_000_000,
+      brightness: 0.31,
+      motion: 0.42,
+      sharpness: 0.017,
+      flags: ["freeze"],
+    },
+  ];
+
+  async function review(): Promise<HTMLElement[]> {
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    return await waitFor(() => {
+      const found = screen.getAllByRole("listitem");
+      expect(found).toHaveLength(2);
+      return found;
+    });
+  }
+
+  function measureButton(): HTMLButtonElement {
+    return screen.getByTestId("shots-measure") as HTMLButtonElement;
+  }
+
+  it("sits on the parameters row, above the apply verbs", async () => {
+    await review();
+    // Not among the apply verbs: those write to the project, this writes only a
+    // cache sidecar — it changes what the rows SAY, like the threshold line and
+    // the length field it shares a row with.
+    const params = measureButton().parentElement;
+    expect(params?.className).toContain("shots-params");
+    expect(screen.getByLabelText("Minimum shot length")).toBeTruthy();
+    const bar = screen.getByTestId("shots-apply");
+    expect(
+      measureButton().compareDocumentPosition(bar) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("measures only the unmeasured span and flips its cells in place", async () => {
+    shots.attachShotStats.mockResolvedValue(MEASURED_TAIL);
+    const before = await review();
+    expect(before[1]?.textContent).toContain("not measured");
+
+    fireEvent.click(measureButton());
+
+    await waitFor(() =>
+      expect(shots.attachShotStats).toHaveBeenCalledWith("m1", [
+        // Row 1's span was sampled by the scan, so it is not re-measured.
+        { t_start_us: 2_000_000, t_end_us: 6_000_000 },
+      ]),
+    );
+    const after = await waitFor(() => {
+      const found = screen.getAllByRole("listitem");
+      expect(found[1]?.textContent).toContain("B 0.31");
+      return found;
+    });
+    expect(after[1]?.textContent).not.toContain("not measured");
+    expect(after[1]?.textContent).toContain("M 0.42");
+    expect(after[1]?.textContent).toContain("S 0.017");
+    // The acceptance: the row list did not re-render its boundaries. Keying on
+    // the span's source start is what keeps these the SAME nodes, so the cells
+    // fill without the list flashing or losing scroll.
+    expect(after[0]?.isSameNode(before[0]!)).toBe(true);
+    expect(after[1]?.isSameNode(before[1]!)).toBe(true);
+    expect(after[1]?.getAttribute("data-index")).toBe("1");
+  });
+
+  it("greys itself once every row is measured, and says why", async () => {
+    shots.attachShotStats.mockResolvedValue(MEASURED_TAIL);
+    await review();
+    expect(measureButton().disabled).toBe(false);
+    // The hint is what it costs — the only reason the pass is not automatic.
+    expect(measureButton().getAttribute("title")).toContain("three frames per shot");
+
+    fireEvent.click(measureButton());
+    await waitFor(() => expect(measureButton().disabled).toBe(true));
+    expect(measureButton().getAttribute("title")).toBe(
+      "Every shot in this list is already measured",
+    );
+    // A second press cannot be delivered, and would send nothing anyway.
+    expect(shots.attachShotStats).toHaveBeenCalledTimes(1);
+  });
+
+  it("locks itself while the pass runs, and the apply verbs while it does", async () => {
+    let land!: (stats: SpanStats[]) => void;
+    shots.attachShotStats.mockReturnValue(
+      new Promise<SpanStats[]>((res) => {
+        land = res;
+      }),
+    );
+    await review();
+
+    fireEvent.click(measureButton());
+    await waitFor(() => expect(measureButton().disabled).toBe(true));
+    expect(measureButton().getAttribute("title")).toBe("Measuring…");
+
+    land(MEASURED_TAIL);
+    await waitFor(() =>
+      expect(screen.getAllByRole("listitem")[1]?.textContent).toContain("B 0.31"),
+    );
+  });
+
+  it("greys itself while an apply is running, naming that instead", async () => {
+    shots.applyShotCuts.mockReturnValue(new Promise(() => {}));
+    await review();
+
+    fireEvent.click(screen.getByTestId("shots-apply-split"));
+    // An apply reshapes the very rows a measurement would be taken over, and
+    // the two share the one inline error slot.
+    await waitFor(() => expect(measureButton().disabled).toBe(true));
+    expect(measureButton().getAttribute("title")).toBe(
+      "An apply is already running",
+    );
+    expect(shots.attachShotStats).not.toHaveBeenCalled();
+  });
+
+  it("shows the boundary's own refusal inline", async () => {
+    shots.attachShotStats.mockRejectedValue(
+      new Error("spans[0].t_end_us 9000000 is past the source's 6000000 µs duration"),
+    );
+    await review();
+
+    fireEvent.click(measureButton());
+
+    expect(await screen.findByText(/spans\[0\]/)).toBeTruthy();
+    // Still pressable: nothing was measured, so the offer stands.
+    expect(measureButton().disabled).toBe(false);
+    expect(shots.logEmit.mock.calls[1]?.[0]).toMatchObject({
+      op_state: { state: "Err" },
+    });
   });
 });
 

@@ -967,11 +967,25 @@ pair either side of it, the one look that answers "is this a real cut".
 Clearing a candidate's checkbox merges its shot into the predecessor; the
 cleared boundary stays listed on the merged row so the merge is reversible.
 A merged row shows no stats or flags, for the reduce's own reason: it is a
-different shot from any the scan measured. (The floor scan is timing-only, so
-in the current build every row's brightness / motion / sharpness cells read
-as absent; a stats pass over the reduced spans is a separate, opt-in step.)
-Clicking a row seeks the playhead to the shot's start. A second checkbox per
-row, **keep**, defaults on: unchecking marks a shot for discard.
+different shot from any the scan measured. Clicking a row seeks the playhead to
+the shot's start. A second checkbox per row, **keep**, defaults on: unchecking
+marks a shot for discard.
+
+**Measure shots** fills the stat cells the scan left absent — the floor scan is
+timing-only, so at first that is every row. It samples three frames of each row
+that has none (inside the start, the cover frame, inside the end) for mean
+brightness, motion across the span and a focus proxy, plus the black / freeze /
+fade flags, through the same measurement `analyze_clip` reports, so the two
+never disagree about one span. It is opt-in because it spawns an ffmpeg pass per
+shot, and it writes nothing to the project: the measurements are cached per
+source span, so a boundary that survives a threshold move keeps its numbers and
+a second press costs only the spans the move reshaped. A merged row is
+measurable like any other — the span the reviewer made is the only span whose
+numbers mean anything for it. The button sits on the parameters row rather than
+among the apply verbs, because what it changes is what the rows say, not what
+they are; it greys with its reason once nothing is left to measure, while it
+runs, and while an apply runs. The pass is one status-log op, Started → Ok/Err,
+carrying the span count, and its failure sentence stays inline.
 
 **The strip and the line.** Above the rows, a strip plots one tick per
 candidate the floor scan emitted (x = source time, y = frame-change score)

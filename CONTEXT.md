@@ -390,6 +390,18 @@ only when the scan measured that exact span; otherwise they are absent, and
 absent renders as absent, never as zero.
 _Avoid_: filter, re-detect, refine; "reduce" is the word in code and prose alike
 
+**Span measurement**:
+The three-frame sample that gives one shot span its brightness, motion,
+sharpness and event flags. Opt-in, because it spawns an ffmpeg pass per span,
+and cached per (source content hash, source tier) and addressed by span — never
+by detection parameters — so a boundary that survives a threshold move keeps
+its numbers while a reshaped span has none until asked for. One measurement
+function serves both this and `analyze_clip`'s own per-shot pass. UI word:
+Measure shots / 测量镜头.
+_Avoid_: stats pass (in UI copy; fine in code, where `attach_span_stats` and
+`SpanStats` are the names), analysis (that is the agent's report), re-measure
+(a measured span is never re-sampled)
+
 **Canonical cut list**:
 The one list of source boundaries an apply verb consumes — either the
 detector's at given or default parameters, or a list a person reviewed — and

@@ -68,6 +68,10 @@ export const HYBRID_CHANNELS: ReadonlySet<string> = new Set([
  *  off the addon, exposed so the review surface's threshold comes from the scan
  *  that produced the candidates rather than from a renderer literal.
  *
+ *  `attach_shot_stats` is a compute that spawns ffmpeg per unmeasured span, like
+ *  `analyze_shots_floor` — it writes to its own cache sidecar and never to the
+ *  actor, and only a deliberate press in the review surface reaches it.
+ *
  *  `get_media_frame` and `get_media_description` are the two `media://` resource
  *  reads the review surface pulls. Both are cache reads: the frame one extracts
  *  on demand and caches per `(source, t)`, and the description one reports a
@@ -75,7 +79,8 @@ export const HYBRID_CHANNELS: ReadonlySet<string> = new Set([
  *  is the only path that runs one. */
 export const DIRECT_NAPI_READS: ReadonlySet<string> = new Set([
   'analyze_shots', 'analyze_shots_floor', 'shot_floor_report_cached',
-  'shot_floor_sensitivity', 'shot_default_opts', 'reduce_shot_report', 'get_media_frame',
+  'shot_floor_sensitivity', 'shot_default_opts', 'reduce_shot_report',
+  'attach_shot_stats', 'get_media_frame',
   'get_media_description',
 ])
 

@@ -1107,6 +1107,23 @@ app.whenReady().then(async () => {
       if (channel === 'shot_floor_report_cached') return await backend!.shotFloorReportCached(itemJson)
       return JSON.parse(await backend!.analyzeShotsFloor(itemJson))
     }
+    // The review surface's one deliberate measurement: brightness / motion /
+    // sharpness and the event flags for the reduced spans a reviewer is looking
+    // at. The floor scan is timing-only, so this is where those numbers come
+    // from — and it spawns three ffmpeg extracts per span the sidecar has not
+    // seen, which is why it rides a press and not a selection.
+    if (tsHost && channel === 'attach_shot_stats') {
+      const { media_id, spans } = (args ?? {}) as { media_id?: string; spans?: unknown }
+      const pool = tsHost.actor.snapshot().media_pool as Record<string, import('./state/model.js').MediaItem>
+      const item = pool[media_id ?? '']
+      if (!item) throw new Error(`media ${media_id ?? ''} not found`)
+      // The spans go over as JSON and Rust validates them by index — a second
+      // copy of that validation here would be free to disagree about which span
+      // is the bad one.
+      return JSON.parse(
+        await backend!.attachShotStats(JSON.stringify(item), JSON.stringify(spans ?? [])),
+      )
+    }
     if (tsHost && channel === 'get_media_frame') {
       const a = (args ?? {}) as { media_id?: string; t_us?: number }
       const host = tsHost

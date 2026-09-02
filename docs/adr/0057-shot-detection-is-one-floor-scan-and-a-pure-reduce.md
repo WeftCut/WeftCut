@@ -63,9 +63,10 @@ sites happening to agree.
    brightness, motion, sharpness and flags only when the scanned report measured
    that exact `(t_start, t_end)`; a merged or truncated span is a different shot,
    and its numbers are absent, never a neighbour's. Because the floor scan is
-   timing-only, that means the review surface shows stats as absent until a
-   stats pass over the reduced spans exists. Absent renders as absent, never as
-   zero.
+   timing-only, the review surface's numbers come from the on-demand span
+   measurement instead (§ Consequences), taken over exactly the spans a
+   reviewer kept; a span nothing has measured is absent. Absent renders as
+   absent, never as zero.
 
 4. **One canonical cut list, one snapping site.** `shotCutList` in
    `main/state/hybrids.ts` is the sole producer of a cut list — either the
@@ -108,7 +109,7 @@ within a frame of a boundary.
 **A floor scan with stats on.** Rejected. It re-couples scan cost to the
 threshold through the candidate count, which is the property the split exists
 to remove. Stats over the spans a person actually keeps are a separate, cheaper
-pass and belong to a follow-up.
+pass.
 
 **A floor of zero.** Rejected. At zero every frame with any change is a
 candidate — on a smooth synthetic source that is every frame — so the report
@@ -124,14 +125,23 @@ is one, two producers of it is one too many.
 
 - **Any threshold at or above the floor is free**; loosening below it would need
   a fresh scan, and the UI does not offer it.
-- **The review surface's stats are absent in this version.** The floor scan is
-  timing-only by design, so brightness, motion, sharpness and flags appear only
-  once an on-demand stats pass over reduced spans exists.
+- **Stats reach the review surface through an on-demand pass, not the scan.**
+  The floor scan is timing-only by design, so brightness, motion, sharpness and
+  flags arrive only for spans a reviewer asks about, one deliberate press at a
+  time. Its answers accumulate in a sidecar of their own, keyed per (source
+  content hash, source tier) and addressed by span: the detection parameters are
+  deliberately not in that key, which is what lets a boundary that survives a
+  threshold move keep its measurement while a reshaped span simply has none.
+  Measuring a merged span is measuring the span the reviewer made — the only
+  span whose numbers mean anything for that row.
 - **`analyze_clip` keeps its own scan.** The agent tool defaults to stats and
   events on, which the floor report cannot serve, so a source analyzed by the
-  agent and reviewed by a person holds two cache entries until that stats pass
-  lands. Their BOUNDARIES agree: `auto_split_by_shot` and the pool's "Analyze
-  shots" count reduce the floor report at the same defaults `analyze_clip` uses.
+  agent and reviewed by a person holds two cache entries. Their BOUNDARIES
+  agree: `auto_split_by_shot` and the pool's "Analyze shots" count reduce the
+  floor report at the same defaults `analyze_clip` uses. So do their NUMBERS:
+  one measurement function serves both passes, so what a row shows and what the
+  agent reports for the same span is the same computation over the same three
+  frames.
 - **The pool's "Analyze shots" is a cache warmer.** It warms the floor report
   the review surface reads and reports a count from a reduce at the defaults;
   the Panel is the authoritative display.

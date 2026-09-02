@@ -13,8 +13,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { AnimTrack, LayerSummary, Shot, ShotReport } from "../ipc";
-import { acceptedCutsSrcUs, shotRows } from "./shotRows";
+import type {
+  AnimTrack,
+  LayerSummary,
+  Shot,
+  ShotReport,
+  SpanStats,
+} from "../ipc";
+import { acceptedCutsSrcUs, shotRows, spanKey } from "./shotRows";
 
 const FPS = { num: 30, den: 1 };
 const NONE: ReadonlySet<number> = new Set<number>();
@@ -214,6 +220,104 @@ describe("shotRows", () => {
     // A scan fills all three or none; half a triple is not a measurement to
     // render two thirds of.
     expect(rows[0]?.stats).toBeNull();
+  });
+});
+
+describe("shotRows — the on-demand measurements", () => {
+  const layer = layerAt(0, 0, 6_000_000);
+
+  function measured(
+    tStartUs: number,
+    tEndUs: number,
+    over: Partial<SpanStats> = {},
+  ): ReadonlyMap<string, SpanStats> {
+    return new Map([
+      [
+        spanKey(tStartUs, tEndUs),
+        {
+          t_start_us: tStartUs,
+          t_end_us: tEndUs,
+          brightness: 0.33,
+          motion: 0.44,
+          sharpness: 0.055,
+          flags: [],
+          ...over,
+        } satisfies SpanStats,
+      ],
+    ]);
+  }
+
+  it("fills a merged span's cells from a measurement of exactly that span", () => {
+    // The span a veto made: absent in the report, and the one span whose
+    // numbers would mean anything — it is the shot as the reviewer decided it.
+    const vetoed: ReadonlySet<number> = new Set([4_000_000]);
+    const rows = shotRows(
+      MEASURED,
+      layer,
+      FPS,
+      vetoed,
+      NONE,
+      measured(2_000_000, 6_000_000, { flags: ["freeze"] }),
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[1]?.stats).toEqual({
+      brightness: 0.33,
+      motion: 0.44,
+      sharpness: 0.055,
+    });
+    // Stats and flags arrive together, from the same three frames.
+    expect(rows[1]?.flags).toEqual(["freeze"]);
+    // And the reduce's own spans still carry the scan's numbers.
+    expect(rows[0]?.stats?.brightness).toBe(0.12);
+  });
+
+  it("matches a span exactly, never a neighbouring one", () => {
+    const rows = shotRows(
+      MERGED_BY_THRESHOLD,
+      layer,
+      FPS,
+      NONE,
+      NONE,
+      // One microsecond short of the merged span: a different shot.
+      measured(2_000_000, 5_999_999),
+    );
+    expect(rows[1]?.stats).toBeNull();
+    expect(rows[1]?.flags).toEqual([]);
+  });
+
+  it("leaves a span the scan already measured alone", () => {
+    const rows = shotRows(
+      MEASURED,
+      layer,
+      FPS,
+      NONE,
+      NONE,
+      measured(0, 2_000_000, { brightness: 0.99 }),
+    );
+    // The scan sampled [0,2s] itself, so its numbers stand — a measurement of
+    // the same span cannot disagree, and reading it here would make which one
+    // wins depend on map order.
+    expect(rows[0]?.stats?.brightness).toBe(0.12);
+  });
+
+  it("never writes into the report it was built from", () => {
+    const before = JSON.stringify(MERGED_BY_THRESHOLD);
+    shotRows(
+      MERGED_BY_THRESHOLD,
+      layer,
+      FPS,
+      NONE,
+      NONE,
+      measured(2_000_000, 6_000_000),
+    );
+    // The report is the scan's statement of what IT measured. A Panel that
+    // wrote its own numbers into it would make the report mean different things
+    // depending on which surface had been opened.
+    expect(JSON.stringify(MERGED_BY_THRESHOLD)).toBe(before);
+  });
+
+  it("reads as unmeasured when no measurements are passed at all", () => {
+    expect(shotRows(MERGED_BY_THRESHOLD, layer, FPS, NONE, NONE)[1]?.stats).toBeNull();
   });
 });
 

@@ -151,8 +151,9 @@
   white-space: nowrap;
 }
 
-/* The minimum shot length. A labelled field with a unit, wrapping at narrow
-   widths rather than truncating — it must never read as a second slider. */
+/* The parameters row: the minimum shot length as a labelled field with a unit,
+   and the on-demand measure action. Wraps at narrow widths rather than
+   truncating — the length field must never read as a second slider. */
 .shots-params {
   display: flex;
   flex-wrap: wrap;
@@ -164,6 +165,12 @@
 
 .shots-param-field {
   width: 72px;
+}
+
+/* Pushed to the far end of the parameters row: it acts on the whole list, where
+   everything to its left shapes one number. */
+.shots-measure {
+  margin-inline-start: auto;
 }
 
 .shots-list {

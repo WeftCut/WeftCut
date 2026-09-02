@@ -13,7 +13,10 @@ import type {
   ProjectSettingsPatch,
   ProjectSettingsView,
   ShotReport,
+  SpanStats,
 } from "../ipc";
+
+type Span = { t_start_us: number; t_end_us: number };
 
 const mocks = vi.hoisted(() => ({
   shotFloorReportCached: vi.fn<(id: string) => Promise<boolean>>(),
@@ -25,6 +28,11 @@ const mocks = vi.hoisted(() => ({
   reduceShotReport: vi.fn(),
   shotDefaultOpts: vi.fn(),
   shotFloorSensitivity: vi.fn(),
+  attachShotStats: vi.fn<
+    (id: string, spans: { t_start_us: number; t_end_us: number }[]) => Promise<
+      SpanStats[]
+    >
+  >(),
   getProjectSettings: vi.fn<() => Promise<ProjectSettingsView>>(),
   updateProjectSettings: vi.fn<(patch: ProjectSettingsPatch) => Promise<void>>(),
   logEmit: vi.fn<(input: LogEntryInput) => Promise<void>>(),
@@ -37,6 +45,8 @@ vi.mock("../ipc", () => ({
   reduceShotReport: (...args: unknown[]) => mocks.reduceShotReport(...args),
   shotDefaultOpts: () => mocks.shotDefaultOpts(),
   shotFloorSensitivity: () => mocks.shotFloorSensitivity(),
+  attachShotStats: (id: string, spans: Span[]) =>
+    mocks.attachShotStats(id, spans),
   getProjectSettings: () => mocks.getProjectSettings(),
   updateProjectSettings: (patch: ProjectSettingsPatch) =>
     mocks.updateProjectSettings(patch),
@@ -45,11 +55,13 @@ vi.mock("../ipc", () => ({
 
 import { useProjectStore } from "../state/projectStore";
 import { summaryFixture } from "../testing/summaryFixture";
+import { spanKey, type ShotRow } from "./shotRows";
 import {
   analyzeShotSubject,
   commitShotThreshold,
   invalidateShotSource,
   loadShotDefaults,
+  measureShotRows,
   resetShotsStore,
   setCandidateAccepted,
   setRowKept,
@@ -95,8 +107,47 @@ beforeEach(() => {
   mocks.getProjectSettings.mockResolvedValue(settings(null));
   mocks.updateProjectSettings.mockResolvedValue(undefined);
   mocks.logEmit.mockResolvedValue(undefined);
+  mocks.attachShotStats.mockImplementation((_id, spans) =>
+    Promise.resolve(spans.map((span) => spanStats(span.t_start_us, span.t_end_us))),
+  );
   resetShotsStore();
 });
+
+/// What the measurement boundary answers for one span.
+function spanStats(tStartUs: number, tEndUs: number): SpanStats {
+  return {
+    t_start_us: tStartUs,
+    t_end_us: tEndUs,
+    brightness: 0.5,
+    motion: 0.2,
+    sharpness: 0.01,
+    flags: [],
+  };
+}
+
+/// A row carrying only what `measureShotRows` reads off it: its span and
+/// whether anything has measured it. The real builder needs a layer summary and
+/// a composition rate, neither of which this action touches.
+function row(
+  srcStartUs: number,
+  srcEndUs: number,
+  hasStats: boolean,
+): ShotRow {
+  return {
+    index: 0,
+    srcStartUs,
+    srcEndUs,
+    tStartUs: srcStartUs,
+    tEndUs: srcEndUs,
+    durationUs: srcEndUs - srcStartUs,
+    keyframeTUs: srcStartUs + Math.floor((srcEndUs - srcStartUs) / 2),
+    stats: hasStats ? { brightness: 0.4, motion: 0.1, sharpness: 0.02 } : null,
+    flags: [],
+    openingCandidate: null,
+    mergedCandidates: [],
+    keep: true,
+  };
+}
 
 /// The settings view, carrying only what this store reads.
 function settings(
@@ -294,6 +345,172 @@ describe("Analyze", () => {
     expect(mocks.logEmit).toHaveBeenCalledTimes(1);
     scan.resolve(report([]));
     await settle();
+  });
+});
+
+describe("Measure shots", () => {
+  /// The subject bound with a report in hand, so the measure pass has a media
+  /// id to publish under.
+  async function subjectWithRows(mediaId = "m1"): Promise<void> {
+    mocks.shotFloorReportCached.mockResolvedValue(true);
+    mocks.analyzeShotsFloor.mockResolvedValue(report([2_000_000]));
+    await loadShotDefaults();
+    setShotSubject(subject(mediaId));
+    await settle();
+    mocks.logEmit.mockClear();
+  }
+
+  it("sends only the spans nothing has measured", async () => {
+    await subjectWithRows();
+
+    await measureShotRows(
+      [
+        row(0, 2_000_000, true), // the scan sampled this one
+        row(2_000_000, 4_000_000, false),
+        row(4_000_000, 6_000_000, false),
+      ],
+      "clip.mp4",
+    );
+    await settle();
+
+    // The acceptance: one measurement per uncached span and none for the rest.
+    // Re-sending a measured span would spend three ffmpeg extracts to learn
+    // what is already on screen.
+    expect(mocks.attachShotStats).toHaveBeenCalledTimes(1);
+    expect(mocks.attachShotStats).toHaveBeenCalledWith("m1", [
+      { t_start_us: 2_000_000, t_end_us: 4_000_000 },
+      { t_start_us: 4_000_000, t_end_us: 6_000_000 },
+    ]);
+    const byKey = useShotsStore.getState().spanStats.get("m1");
+    expect([...(byKey?.keys() ?? [])]).toEqual([
+      spanKey(2_000_000, 4_000_000),
+      spanKey(4_000_000, 6_000_000),
+    ]);
+    expect(useShotsStore.getState().measuring).toBeNull();
+  });
+
+  it("sends nothing at all when every row is measured", async () => {
+    await subjectWithRows();
+
+    await measureShotRows([row(0, 6_000_000, true)], "clip.mp4");
+    await settle();
+
+    expect(mocks.attachShotStats).not.toHaveBeenCalled();
+    // And no op is opened either: a pass that measures nothing has nothing to
+    // report, and a Started row with no terminal one spins the status badge.
+    expect(mocks.logEmit).not.toHaveBeenCalled();
+  });
+
+  it("pairs Started and Ok under one op_id and carries the span count", async () => {
+    await subjectWithRows();
+
+    await measureShotRows(
+      [row(0, 2_000_000, false), row(2_000_000, 6_000_000, false)],
+      "clip.mp4",
+    );
+    await settle();
+
+    const rows = mocks.logEmit.mock.calls.map(([entry]) => entry);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      i18n_key: "log.shots_stats_started",
+      i18n_args: { clip: "clip.mp4", spans: 2 },
+      op_state: { state: "Started" },
+      source: { kind: "User" },
+      category: { kind: "Project" },
+    });
+    expect(rows[1]).toMatchObject({
+      i18n_key: "log.shots_stats_done",
+      i18n_args: { clip: "clip.mp4", spans: 2 },
+      op_state: { state: "Ok" },
+    });
+    expect(rows[0]?.op_id).toBe(rows[1]?.op_id);
+  });
+
+  it("closes the op and keeps the boundary's sentence on failure", async () => {
+    await subjectWithRows();
+    mocks.attachShotStats.mockRejectedValue(
+      new Error("spans[1].t_end_us 9000000 is past the source's 6000000 µs duration"),
+    );
+
+    await measureShotRows([row(0, 9_000_000, false)], "clip.mp4");
+    await settle();
+
+    expect(useShotsStore.getState().measuring).toBeNull();
+    expect(useShotsStore.getState().error).toContain("spans[1]");
+    const rows = mocks.logEmit.mock.calls.map(([entry]) => entry);
+    // TERMINATED, not left open: an unterminated op keeps the status bar's
+    // running badge spinning for the rest of the session.
+    expect(rows[1]).toMatchObject({
+      i18n_key: "log.shots_stats_failed",
+      op_state: { state: "Err" },
+      level: "error",
+      details: { context: "attach_shot_stats" },
+    });
+    expect(rows[0]?.op_id).toBe(rows[1]?.op_id);
+  });
+
+  it("is a no-op while one is already running", async () => {
+    await subjectWithRows();
+    const pass = deferred<SpanStats[]>();
+    mocks.attachShotStats.mockReturnValue(pass.promise);
+
+    void measureShotRows([row(0, 2_000_000, false)], "clip.mp4");
+    await settle();
+    expect(useShotsStore.getState().measuring).toBe("m1");
+    await measureShotRows([row(2_000_000, 6_000_000, false)], "clip.mp4");
+    await settle();
+
+    expect(mocks.attachShotStats).toHaveBeenCalledTimes(1);
+    pass.resolve([spanStats(0, 2_000_000)]);
+    await settle();
+    expect(useShotsStore.getState().measuring).toBeNull();
+  });
+
+  it("publishes against the source it measured, not the subject on screen", async () => {
+    await subjectWithRows();
+    const pass = deferred<SpanStats[]>();
+    mocks.attachShotStats.mockReturnValue(pass.promise);
+
+    void measureShotRows([row(0, 2_000_000, false)], "clip.mp4");
+    await settle();
+    // The reviewer clicks another clip mid-pass.
+    mocks.shotFloorReportCached.mockResolvedValue(false);
+    setShotSubject(subject("m2"));
+    await settle();
+
+    pass.resolve([spanStats(0, 2_000_000)]);
+    await settle();
+
+    // A measurement is a fact about the SOURCE, like the floor report, so it is
+    // kept for m1 rather than dropped — coming back to that clip finds it.
+    expect(useShotsStore.getState().subject?.mediaId).toBe("m2");
+    expect(
+      useShotsStore.getState().spanStats.get("m1")?.get(spanKey(0, 2_000_000)),
+    ).toMatchObject({ brightness: 0.5 });
+    expect(useShotsStore.getState().spanStats.has("m2")).toBe(false);
+  });
+
+  it("forgets a source's measurements when the source is invalidated", async () => {
+    await subjectWithRows();
+    await measureShotRows([row(0, 2_000_000, false)], "clip.mp4");
+    await settle();
+    expect(useShotsStore.getState().spanStats.has("m1")).toBe(true);
+
+    // The relink path: same media id, different frames behind it.
+    invalidateShotSource("m1");
+    await settle();
+    expect(useShotsStore.getState().spanStats.has("m1")).toBe(false);
+  });
+
+  it("is dropped wholesale by a reset", async () => {
+    await subjectWithRows();
+    await measureShotRows([row(0, 2_000_000, false)], "clip.mp4");
+    await settle();
+
+    resetShotsStore();
+    expect(useShotsStore.getState().spanStats.size).toBe(0);
+    expect(useShotsStore.getState().measuring).toBeNull();
   });
 });
 

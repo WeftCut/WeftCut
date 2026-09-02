@@ -152,6 +152,56 @@ fn parse_shot_opts(opts_json: &str) -> std::result::Result<crate::jobs::shot::Sh
     Ok(crate::jobs::shot::ShotOpts { sensitivity, min_shot_us, stats, events })
 }
 
+/// One span the on-demand stats pass is asked about, as the renderer sends it.
+#[cfg(feature = "jobs")]
+#[derive(serde::Deserialize)]
+struct SpanRequest {
+    t_start_us: i64,
+    t_end_us: i64,
+}
+
+/// Parse + validate the `attach_shot_stats` spans JSON into the `(start, end)`
+/// pairs `jobs::shot::stats` takes. Pure + total, so it is unit-tested directly;
+/// errors are plain strings (the napi method maps them to `Error::from_reason`).
+///
+/// `duration_us` is the source's probed duration when one is known. A span past
+/// the end of the file is refused rather than clamped: the pass would extract
+/// whatever ffmpeg's fast seek lands on, and a measurement of the last frame
+/// reported as a measurement of a span that does not exist is worse than a
+/// refusal. An UNKNOWN duration skips that check alone — a source ffprobe never
+/// measured has no end to compare against, and `analyze_shots_floor` already
+/// refuses to scan one.
+#[cfg(feature = "jobs")]
+fn parse_span_requests(
+    spans_json: &str,
+    duration_us: Option<i64>,
+) -> std::result::Result<Vec<(i64, i64)>, String> {
+    let raw: Vec<SpanRequest> =
+        serde_json::from_str(spans_json).map_err(|e| format!("parse spans: {e}"))?;
+    let mut spans = Vec::with_capacity(raw.len());
+    for (i, span) in raw.iter().enumerate() {
+        if span.t_start_us < 0 {
+            return Err(format!("spans[{i}].t_start_us {} must not be negative", span.t_start_us));
+        }
+        if span.t_end_us <= span.t_start_us {
+            return Err(format!(
+                "spans[{i}].t_end_us {} must be greater than t_start_us {}",
+                span.t_end_us, span.t_start_us
+            ));
+        }
+        if let Some(duration_us) = duration_us {
+            if span.t_end_us > duration_us {
+                return Err(format!(
+                    "spans[{i}].t_end_us {} is past the source's {duration_us} µs duration",
+                    span.t_end_us
+                ));
+            }
+        }
+        spans.push((span.t_start_us, span.t_end_us));
+    }
+    Ok(spans)
+}
+
 #[napi]
 impl Backend {
     #[napi(constructor)]
@@ -456,6 +506,37 @@ impl Backend {
             &media,
             &crate::jobs::shot::floor_opts(),
         ))
+    }
+
+    /// Measure the spans in `spans_json` (`[{ t_start_us, t_end_us }]`) for
+    /// `media` and answer with a `SpanStats` array in request order
+    /// (`jobs::shot::stats::attach_span_stats`). The on-demand half of the
+    /// floor-scan split: the scan is timing-only, so brightness / motion /
+    /// sharpness and the black / freeze / fade flags come from here, over the
+    /// spans a reviewer actually kept rather than over every candidate a low
+    /// threshold admits.
+    ///
+    /// EXPENSIVE per span the sidecar has not seen — three ffmpeg extracts each —
+    /// and free per span it has, which is why only a deliberate press reaches
+    /// it. NO actor write.
+    ///
+    /// Ranges are validated at this boundary like `reduce_shot_report`'s, so a
+    /// malformed span is named by index and nothing is measured.
+    #[napi]
+    #[cfg(feature = "jobs")]
+    pub async fn attach_shot_stats(
+        &self,
+        media_json: String,
+        spans_json: String,
+    ) -> napi::Result<String> {
+        let media: crate::state::MediaItem = serde_json::from_str(&media_json)
+            .map_err(|e| Error::from_reason(format!("parse media: {e}")))?;
+        let spans = parse_span_requests(&spans_json, media.metadata.duration_us)
+            .map_err(Error::from_reason)?;
+        let stats = crate::jobs::shot::stats::attach_span_stats(&self.cache, &media, &spans)
+            .await
+            .map_err(|e| Error::from_reason(format!("shot span stats: {e:#}")))?;
+        serde_json::to_string(&stats).map_err(|e| Error::from_reason(e.to_string()))
     }
 
     /// Re-derive a shot list from an already-scanned `ShotReport` JSON at
@@ -938,6 +1019,38 @@ mod tests {
         assert!(parse_shot_opts(r#"{"min_shot_us":0}"#).is_err());
         assert!(parse_shot_opts(r#"{"passes":["bogus"]}"#).is_err());
         assert!(parse_shot_opts("not json").is_err());
+    }
+
+    /// The span boundary takes a JSON array of spans and refuses a malformed one
+    /// whole, by index — nothing is measured, so a typo cannot spend three
+    /// ffmpeg extracts on a span that does not exist.
+    #[cfg(feature = "jobs")]
+    #[test]
+    fn parse_span_requests_validates_every_span() {
+        let ok = parse_span_requests(
+            r#"[{"t_start_us":0,"t_end_us":2000000},{"t_start_us":2000000,"t_end_us":6000000}]"#,
+            Some(6_000_000),
+        )
+        .unwrap();
+        assert_eq!(ok, vec![(0, 2_000_000), (2_000_000, 6_000_000)]);
+        // An empty request is legal and asks for nothing.
+        assert!(parse_span_requests("[]", Some(6_000_000)).unwrap().is_empty());
+
+        assert!(parse_span_requests("{}", Some(6_000_000)).is_err()); // not an array
+        assert!(parse_span_requests("not json", None).is_err());
+        assert!(parse_span_requests(r#"[{"t_start_us":-1,"t_end_us":10}]"#, None).is_err());
+        // Zero-length and inverted: neither is a span with frames in it.
+        assert!(parse_span_requests(r#"[{"t_start_us":10,"t_end_us":10}]"#, None).is_err());
+        assert!(parse_span_requests(r#"[{"t_start_us":10,"t_end_us":5}]"#, None).is_err());
+        // Past the end of a source whose duration IS known …
+        let past = parse_span_requests(
+            r#"[{"t_start_us":0,"t_end_us":7000000}]"#,
+            Some(6_000_000),
+        )
+        .unwrap_err();
+        assert!(past.contains("spans[0]") && past.contains("duration"), "got: {past}");
+        // … and accepted where there is no measured end to compare against.
+        assert!(parse_span_requests(r#"[{"t_start_us":0,"t_end_us":7000000}]"#, None).is_ok());
     }
 
     /// The reduce boundary reports the floor the scan runs at, re-derives a shot

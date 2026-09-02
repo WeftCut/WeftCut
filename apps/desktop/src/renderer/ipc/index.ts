@@ -2268,6 +2268,43 @@ export async function reduceShotReport(
   });
 }
 
+/// One measured span: the same four measurements a `Shot` carries, keyed by the
+/// span they were taken over. Mirrors Rust `SpanStats`.
+///
+/// Not optional here, unlike on `Shot`: a span either has a measurement or has
+/// no entry at all, because the three frames that answer one question answer
+/// all four.
+export interface SpanStats {
+  t_start_us: number;
+  t_end_us: number;
+  brightness: number;
+  motion: number;
+  sharpness: number;
+  flags: ShotFlag[];
+}
+
+/// Measure the given spans of one source and answer for all of them, in request
+/// order.
+///
+/// EXPENSIVE per span nothing has measured yet — three ffmpeg extracts each —
+/// and a cache hit per span something has, so the cost of a call is the number
+/// of spans a threshold move actually reshaped. Only a deliberate press may
+/// reach it: the floor scan is timing-only by design (ADR 0057), and an
+/// automatic pass over every reduce would re-couple the cost of a review to the
+/// threshold, which is the property that split exists to remove.
+///
+/// A span is matched EXACTLY. Times are source-absolute, `t_end_us` exclusive,
+/// and a span outside `[0, duration]` is refused by index rather than clamped.
+export async function attachShotStats(
+  mediaId: string,
+  spans: { t_start_us: number; t_end_us: number }[],
+): Promise<SpanStats[]> {
+  return invoke<SpanStats[]>("attach_shot_stats", {
+    media_id: mediaId,
+    spans,
+  });
+}
+
 /// Apply shot boundaries to one VideoClip layer. Snake_case because these are
 /// the hybrid arm's own argument names and it reads them straight off the
 /// forwarded object.

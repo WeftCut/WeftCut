@@ -55,6 +55,7 @@ import {
   applyShotVerb,
   commitShotThreshold,
   loadShotDefaults,
+  measureShotRows,
   resetShotsStore,
   setCandidateAccepted,
   setRowKept,
@@ -69,9 +70,11 @@ import {
   useShotError,
   useShotFloor,
   useShotFloorReport,
+  useShotMeasuring,
   useShotMinShotUs,
   useShotReduced,
   useShotThreshold,
+  useSpanStats,
   useVetoedCandidates,
   wireShotReviewPrefs,
   type ShotApplyVerb,
@@ -204,10 +207,10 @@ function ShotFrame({
   );
 }
 
-/// The three stats, or the absent marker. A row whose span the scan never
-/// sampled — every merged or window-truncated span — shows a dash, because `0`
-/// would report a black, motionless, out-of-focus shot that was simply never
-/// measured.
+/// The three stats, or the absent marker. A row nothing has measured yet — the
+/// floor scan is timing-only, so at first that is every row — reads as absent,
+/// because `0` would report a black, motionless, out-of-focus shot that was
+/// simply never sampled. *Measure shots* is what fills them.
 function ShotStatsCells({ row }: { row: ShotRow }) {
   const { t } = useTranslation();
   if (row.stats === null) {
@@ -450,6 +453,9 @@ const MIN_SHOT_MS_FLOOR = 1;
 /// only drops boundaries closer together than itself — and two look-alike
 /// sliders would invite reaching for the granularity knob to fix an accuracy
 /// problem.
+///
+/// It shares its row with *Measure shots*, which is not an apply verb: see
+/// [`MeasureShotsButton`].
 function MinShotLengthField({ minShotUs }: { minShotUs: number }) {
   const { t } = useTranslation();
   const [draftMs, setDraftMs] = useState(minShotUs / 1000);
@@ -460,7 +466,7 @@ function MinShotLengthField({ minShotUs }: { minShotUs: number }) {
     if (!editing) setDraftMs(minShotUs / 1000);
   }, [minShotUs, editing]);
   return (
-    <div className="shots-params">
+    <>
       <span className="shots-param-label">
         {t("shots_panel.min_shot_length")}
       </span>
@@ -479,7 +485,57 @@ function MinShotLengthField({ minShotUs }: { minShotUs: number }) {
         onBlur={() => setEditing(false)}
       />
       <span className="shots-param-unit">{t("shots_panel.milliseconds")}</span>
-    </div>
+    </>
+  );
+}
+
+/// The on-demand stats pass, over every row that has none.
+///
+/// On the PARAMETERS row and deliberately not among the apply verbs: those
+/// three write to the project and land an undo entry, while this writes nothing
+/// but a cache sidecar — it changes what the reviewer can see, which is what the
+/// threshold line and the length field do too. Filing it beside them keeps the
+/// apply bar meaning exactly "commit this review".
+///
+/// Disabled with the reason in the tooltip, the apply buttons' convention. Three
+/// preconditions, in the order that answers the reviewer's question soonest:
+/// nothing left to measure, this pass already running, an apply already running
+/// (the two share the inline error slot, and an apply reshapes the very rows a
+/// measurement is being taken over).
+function MeasureShotsButton({
+  rows,
+  clipName,
+  applying,
+}: {
+  rows: readonly ShotRow[];
+  clipName: string;
+  applying: ShotApplyVerb | null;
+}) {
+  const { t } = useTranslation();
+  const measuring = useShotMeasuring();
+  const unmeasured = rows.filter((row) => row.stats === null).length;
+  const blocker =
+    unmeasured === 0
+      ? "shots_panel.measure_all_measured"
+      : measuring !== null
+        ? "shots_panel.measure_running"
+        : applying !== null
+          ? "shots_panel.measure_busy"
+          : null;
+  return (
+    <Button
+      className="shots-measure"
+      variant="secondary"
+      size="sm"
+      data-testid="shots-measure"
+      disabled={blocker !== null}
+      title={blocker === null ? t("shots_panel.measure_hint") : t(blocker)}
+      onClick={() => void measureShotRows(rows, clipName)}
+    >
+      {measuring !== null
+        ? t("shots_panel.measure_running")
+        : t("shots_panel.measure")}
+    </Button>
   );
 }
 
@@ -631,9 +687,11 @@ export function ShotsPanel() {
   const cached = useShotCached();
   const reduced = useShotReduced();
   const analyzing = useShotAnalyzing();
+  const applying = useShotApplying();
   const error = useShotError();
   const vetoed = useVetoedCandidates(mediaId);
   const discarded = useDiscardedRows(mediaId);
+  const spanStats = useSpanStats(mediaId);
   const threshold = useShotThreshold();
   const floor = useShotFloor();
   const minShotUs = useShotMinShotUs();
@@ -692,8 +750,9 @@ export function ShotsPanel() {
             { num: composition.fps_num, den: composition.fps_den },
             vetoed,
             discarded,
+            spanStats,
           ),
-    [reduced, layer, composition, vetoed, discarded],
+    [reduced, layer, composition, vetoed, discarded, spanStats],
   );
 
   const clipName = layer ? layerDisplayName(layer, t, ordinals) : "";
@@ -767,7 +826,18 @@ export function ShotsPanel() {
           onThresholdCommit={() => void commitShotThreshold()}
         />
       )}
-      {minShotUs !== null && <MinShotLengthField minShotUs={minShotUs} />}
+      {/* One band, in the order the review is read: what shapes the list, then
+          what to do with it, then the list. Measuring shapes what the rows SAY
+          rather than which rows there are, which is why it sits here and not
+          among the apply verbs. */}
+      <div className="shots-params">
+        {minShotUs !== null && <MinShotLengthField minShotUs={minShotUs} />}
+        <MeasureShotsButton
+          rows={rows}
+          clipName={clipName}
+          applying={applying}
+        />
+      </div>
       <ShotApplyBar rows={rows} clipName={clipName} />
       <ul className="shots-list" data-testid="shots-list">
         {rows.map((row) => (

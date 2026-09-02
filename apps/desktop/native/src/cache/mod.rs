@@ -285,6 +285,24 @@ impl CacheLayout {
         self.shots_dir().join(format!("{key}.json"))
     }
 
+    /// Per-span pixel measurements for the shot layer's on-demand stats pass
+    /// (`jobs::shot::stats`). A SEPARATE namespace from `shots` because it is
+    /// keyed differently: a VSHOT entry is one report per (source, detection
+    /// params), while this is one accumulating sidecar per (source, tier) whose
+    /// entries are addressed by span — the spans a reviewer measures depend on
+    /// the threshold, and a namespace keyed by detection params could not hold
+    /// them. The `key` is `jobs::shot::stats::cache_key` (source content hash +
+    /// the source tier the frames were sampled from); the value is a
+    /// `SpanStatsCache` JSON. Like `shots`, the source content hash in the key
+    /// auto-invalidates a relink-by-content.
+    pub fn shot_stats_dir(&self) -> PathBuf {
+        self.current_root().join("shot-stats")
+    }
+
+    pub fn shot_stats(&self, key: &str) -> PathBuf {
+        self.shot_stats_dir().join(format!("{key}.json"))
+    }
+
     /// Synthesized TTS output. Content-addressed by `blake3(model || '\0' ||
     /// voice || '\0' || speed || '\0' || text)` so repeated requests with the
     /// same parameters skip the API call entirely — see
@@ -321,6 +339,7 @@ impl CacheLayout {
             self.transcribe_audio_dir(),
             self.descriptions_dir(),
             self.shots_dir(),
+            self.shot_stats_dir(),
             self.voiceover_dir(),
         ] {
             fs::create_dir_all(&p).with_context(|| format!("create cache dir {}", p.display()))?;
@@ -503,6 +522,10 @@ mod tests {
             tmp.path().join("shots").join("abc.json"),
         );
         assert_eq!(
+            layout.shot_stats("abc"),
+            tmp.path().join("shot-stats").join("abc.json"),
+        );
+        assert_eq!(
             layout.voiceover("abc", "mp3"),
             tmp.path().join("voiceover").join("abc.mp3"),
         );
@@ -532,6 +555,7 @@ mod tests {
         assert!(layout.transcribe_audio_dir().is_dir());
         assert!(layout.descriptions_dir().is_dir());
         assert!(layout.shots_dir().is_dir());
+        assert!(layout.shot_stats_dir().is_dir());
         assert!(layout.voiceover_dir().is_dir());
         assert!(layout.filmstrip_root().is_dir());
     }
