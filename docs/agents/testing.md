@@ -51,6 +51,16 @@ FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/linux" \
 (Windows/macOS swap the `ffmpeg-lgpl/<os>` dir + loader var — DLLs already on
 `PATH` on Windows, `DYLD_FALLBACK_LIBRARY_PATH` on macOS; see `electron-ci.yml`.)
 
+Lint gate — CI runs both on every OS with `-D warnings`, and the baseline is
+zero, so a new warning is a red build rather than noise:
+
+```bash
+cargo fmt --check --all --manifest-path native/Cargo.toml
+# Same FFMPEG_DIR / libclang as the decode tests. Clippy never links, so no
+# `test-noop`; `--all-targets` lints the tests as well.
+cargo clippy --manifest-path native/Cargo.toml --workspace --all-targets -- -D warnings
+```
+
 ## Why not one directory
 
 - **Unit tests are colocated on purpose.** They sit beside the module (short

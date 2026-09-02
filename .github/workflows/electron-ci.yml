@@ -588,7 +588,8 @@ jobs:
         shell: bash
         run: npm run mcp:catalog:check
 
-  # `cargo test` for all three OSes, and the only remaining consumer of
+  # `cargo test` plus the rustfmt/clippy gate for all three OSes, and the only
+  # remaining consumer of
   # Swatinem/rust-cache: these tests need `target/`, which the rust-artifacts
   # OUTPUT cache does not carry. Giving them their own job is what decouples that
   # 537 MB compilation cache from every e2e leg. Concurrent with the e2e matrix,
@@ -711,6 +712,8 @@ jobs:
           # (that was the magic of @stable), so name the toolchain explicitly.
           # No wasm32 target: nothing here builds the wasm leaf.
           toolchain: stable
+          # For the lint step below; the tests themselves need neither.
+          components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -764,6 +767,29 @@ jobs:
             DYLD_FALLBACK_LIBRARY_PATH="$PWD/resources/ffmpeg-lgpl/mac/lib" \
             cargo test --manifest-path native/decode/Cargo.toml --features test-noop
           fi
+
+      # The lint gate: rustfmt drift and every default-set clippy lint, on all
+      # targets (tests included), as errors. The baseline is zero on every crate
+      # and OS, and this step is what keeps it there — `cargo build` alone shows
+      # only rustc's own lints, and formatting drift is invisible until checked.
+      # Per OS because the decode crate has cfg(windows) / cfg(linux) halves
+      # that only that OS compiles. Clippy never links, so the `test-noop` shim
+      # is not needed; decode still wants FFMPEG_DIR + libclang because its
+      # build script runs bindgen even for a check. Runs after the tests: a red
+      # lint should not hide a red test.
+      - name: Rust lints (rustfmt + clippy, -D warnings)
+        shell: bash
+        run: |
+          cargo fmt --check --all --manifest-path native/Cargo.toml
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export FFMPEG_DIR="$(cygpath -m "$PWD")/resources/ffmpeg-lgpl/win"
+            export LIBCLANG_PATH="C:\\Program Files\\LLVM\\bin"
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            export FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/linux"
+          else
+            export FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/mac"
+          fi
+          cargo clippy --manifest-path native/Cargo.toml --workspace --all-targets -- -D warnings
 
   # Cross-OS SSIM comparison.  Runs after every e2e leg finishes — one per
   # (os, e2e slice) pair — but only the slice carrying the serial project
