@@ -78,10 +78,10 @@ pub enum ContentBlock {
     Text {
         text: String,
     },
-    #[expect(
+    #[cfg_attr(not(feature = "test-noop"), expect(
         dead_code,
         reason = "MCP content-block protocol shape; no Rust-side tool returns images yet"
-    )]
+    ))]
     Image {
         data: String,
         #[serde(rename = "mimeType")]
@@ -180,10 +180,10 @@ pub struct McpCatalog {
 #[serde(rename_all = "lowercase")]
 pub enum PromptRole {
     User,
-    #[expect(
+    #[cfg_attr(not(feature = "test-noop"), expect(
         dead_code,
         reason = "MCP prompt protocol shape; catalog prompts are user-role only today"
-    )]
+    ))]
     Assistant,
 }
 

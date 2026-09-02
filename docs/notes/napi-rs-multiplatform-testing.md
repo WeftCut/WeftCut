@@ -45,9 +45,13 @@ The two noop features are separable, and WeftCut's two addons need different
 subsets:
 
 - **`@weftcut/core`** → `test-noop = ["napi/noop", "napi-derive/noop"]` (both).
-  The exported wrappers vanish under `napi-derive/noop`, producing expected
-  `dead_code` warnings. The crate still compiles because nothing depends on the
-  derived `ToNapiValue`/`FromNapiValue` impls at compile time.
+  The exported wrappers vanish under `napi-derive/noop`, so everything reachable
+  only through them reads as dead; `lib.rs` allows `dead_code` under this
+  feature alone, and item-level `#[expect(dead_code)]` sites opt out of it too
+  (rustc reports only the outermost dead item, so a field's expectation would
+  go unfulfilled once its parent is dead). The crate still compiles because
+  nothing depends on the derived `ToNapiValue`/`FromNapiValue` impls at compile
+  time.
 - **`@weftcut/native-decode`** → `test-noop = ["napi/noop"]` (**only**).
   It must **not** add `napi-derive/noop`: decode holds
   `ThreadsafeFunction<ExportSwMsg>` and `ThreadsafeFunction<String>` in non-test
@@ -148,7 +152,7 @@ still has no `cfg(target_os = "macos")` code. Items 1–5 and 8 **landed
   cargo test --manifest-path native/Cargo.toml --lib \
     --features test-noop encoder_registry::tests
   ```
-  → 9 passed, 0 failed (expected `dead_code` warnings from `napi-derive/noop`).
+  → 9 passed, 0 failed, no warnings.
 - Decode, full suite:
   ```sh
   FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/linux" \

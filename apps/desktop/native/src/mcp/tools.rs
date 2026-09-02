@@ -730,12 +730,12 @@ pub(crate) struct SynthesizeSpeechArgs {
     pub speed: Option<f32>,
     /// Optional Audio track id. If omitted, lands on the first existing Audio
     /// track or auto-creates one labeled "Voiceover".
-    #[expect(dead_code, reason = "placement is applied TS-side; kept for wire-schema stability")]
+    #[cfg_attr(not(feature = "test-noop"), expect(dead_code, reason = "placement is applied TS-side; kept for wire-schema stability"))]
     #[serde(default)]
     pub target_track_id: Option<String>,
     /// Optional timeline start in microseconds. Defaults to the composition's
     /// current `duration_us` so the voiceover appends at the end.
-    #[expect(dead_code, reason = "placement is applied TS-side; kept for wire-schema stability")]
+    #[cfg_attr(not(feature = "test-noop"), expect(dead_code, reason = "placement is applied TS-side; kept for wire-schema stability"))]
     #[serde(default)]
     pub t_start_us: Option<i64>,
 }

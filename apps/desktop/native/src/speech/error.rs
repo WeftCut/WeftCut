@@ -37,10 +37,10 @@ pub enum SpeechError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[expect(
+    #[cfg_attr(not(feature = "test-noop"), expect(
         dead_code,
         reason = "reserved speech-pipeline error shape; audio-extract failures currently surface through Io/Provider"
-    )]
+    ))]
     #[error("audio extraction failed: {0}")]
     AudioExtract(String),
 

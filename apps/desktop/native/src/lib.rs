@@ -6,6 +6,15 @@
 // project state (`state::Project` → `OrdMap<_, Composition>` → `Vector<Track>`
 // → `Vector<Layer>`) blows the default trait-recursion limit.
 #![recursion_limit = "512"]
+// Under `test-noop` (see `[features]` in Cargo.toml) `napi-derive/noop` deletes
+// every `#[napi]` wrapper, so everything reachable only through the addon
+// surface reads as dead. That cascade is a property of the test link mode, not
+// of the code, and it buries any real warning — so `dead_code` is allowed for
+// that feature only; the production build keeps the lint live. Item-level
+// `#[expect(dead_code)]` sites opt out of the same feature for the same reason:
+// rustc reports only the outermost dead item, so a field's expectation goes
+// unfulfilled once its parent is dead.
+#![cfg_attr(feature = "test-noop", allow(dead_code))]
 
 // `audio::{conform_reader, mix}` read the VCONF conform format produced by
 // `jobs`, and the `export` mixer consumes `audio`. With both deferred features
