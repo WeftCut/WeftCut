@@ -2260,18 +2260,27 @@ export async function reduceShotReport(
 /// entry takes. A malformed list is refused whole (structured `InvalidArgument`
 /// on `cuts_src_us`, naming the offending index) and nothing is written.
 ///
-/// A further verb — split, then delete the spans the reviewer unchecked, in one
-/// commit — is addable without a new field here: it is the same list plus the
-/// same `drop_short_us` commit shape, so it arrives as a third `mode`.
+/// `mode` picks the verb over that one list: `split` cuts at every boundary,
+/// `mark` writes an anchored marker at each instead, and `discard` splits and
+/// then deletes the segments the reviewer unchecked — all three in one commit,
+/// one undo entry.
 export interface ApplyShotCutsArgs {
   layer_id: string;
-  mode: "split" | "mark";
+  mode: "split" | "mark" | "discard";
   cuts_src_us?: number[];
   sensitivity?: number;
   min_shot_us?: number;
   /// Delete any resulting segment shorter than this within the SAME commit.
   /// Split-only — a marker has no length to be short.
   drop_short_us?: number;
+  /// Which segments `discard` deletes: 0-based indices in timeline order over
+  /// the `cuts + 1` segments the split produces, numbered BEFORE any
+  /// `drop_short_us` pruning so a row can be named off the cut list alone.
+  /// Read only in `discard` mode, where it is required — absent or empty is
+  /// refused, because keeping every segment is what `split` is. A set naming
+  /// EVERY segment is refused too: erasing the whole clip is a delete, not an
+  /// apply.
+  discard_segments?: number[];
 }
 
 /// What one apply produced, discriminated by the verb asked for: segments are
@@ -2280,14 +2289,21 @@ export interface ApplyShotCutsArgs {
 ///
 /// `split` with no interior boundary answers with the unchanged layer id and
 /// `mark` with an empty list — an idempotent no-op that writes no history
-/// entry, rather than an error.
+/// entry, rather than an error. `discard` has no such case: with no boundary
+/// the clip is one segment, and the set can only be naming that.
+///
+/// `discard`'s `layer_ids` are the segments that SURVIVED, in timeline order —
+/// the discarded ones are gone, not listed.
 export type ApplyShotCutsResult =
   | { mode: "split"; layer_ids: string[] }
-  | { mode: "mark"; marker_ids: string[] };
+  | { mode: "mark"; marker_ids: string[] }
+  | { mode: "discard"; layer_ids: string[] };
 
-/// Split at, or mark, a clip's shot boundaries in ONE commit (one undo entry).
-/// Both verbs consume the same canonical cut list, so a split and a mark of the
-/// same request land on identical frames.
+/// Split at, mark, or split-and-discard a clip's shot boundaries in ONE commit
+/// (one undo entry). Every verb consumes the same canonical cut list, so a
+/// split and a mark of the same request land on identical frames, and a
+/// discard's survivors sit on exactly the boundaries a plain split would have
+/// produced.
 ///
 /// THROWS, like every write here: a swallowed failure would leave the timeline
 /// looking untouched with no reason given.

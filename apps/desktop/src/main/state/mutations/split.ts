@@ -98,3 +98,38 @@ export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: nu
 
   return targetHalves
 }
+
+/** Validate the set of segments a multi-split should delete in its own commit,
+ *  against the `cuts + 1` segments that split will produce. Indices are 0-based
+ *  in timeline order and counted BEFORE any `drop_short_us` pruning, so a caller
+ *  can name them off the cut list alone instead of predicting which segments the
+ *  length filter is about to take.
+ *
+ *  Naming EVERY segment is refused: erasing the whole clip is `delete_layer`,
+ *  and an apply that answered "keep nothing" by deleting what it was applied to
+ *  would be a destructive reading of a request that never said delete.
+ *
+ *  A result rather than a throw, because the two callers refuse in different
+ *  shapes — the dispatch returns a `CommandError`, the hybrid channel throws a
+ *  JSON string — and the same rule written out at both would be free to drift. */
+export function parseDiscardSegments(
+  raw: unknown,
+  segmentCount: number,
+): { ok: true; value: number[] } | { ok: false; detail: string } {
+  if (!Array.isArray(raw))
+    return { ok: false, detail: `discard_segments must be an array of segment indices, got ${typeof raw}` }
+  const seen = new Set<number>()
+  for (let i = 0; i < raw.length; i++) {
+    const v: unknown = raw[i]
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0)
+      return { ok: false, detail: `discard_segments[${i}] is ${String(v)} — every entry must be a non-negative integer` }
+    if (v >= segmentCount)
+      return { ok: false, detail: `discard_segments[${i}] (${v}) is out of range — the split produces ${segmentCount} segment(s), numbered 0..${segmentCount - 1}` }
+    if (seen.has(v))
+      return { ok: false, detail: `discard_segments[${i}] (${v}) is named twice` }
+    seen.add(v)
+  }
+  if (seen.size === segmentCount)
+    return { ok: false, detail: `discard_segments names all ${segmentCount} segment(s) — discarding every segment is a delete, not an apply` }
+  return { ok: true, value: [...seen] }
+}

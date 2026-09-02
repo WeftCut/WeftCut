@@ -688,6 +688,18 @@ function boundariesOf(actor: ActorHandle, layerIds: string[]): number[] {
   return layerIds.slice(1).map((id) => byId.get(id)!.t_start_us)
 }
 
+/** The `[t_start, t_end)` span of every named layer, in the order named. */
+function spansOf(actor: ActorHandle, layerIds: string[]): Array<[number, number]> {
+  const byId = new Map(root(actor.snapshot()).tracks.flatMap((t) => t.layers).map((l) => [l.id, l]))
+  return layerIds.map((id) => [byId.get(id)!.t_start_us, byId.get(id)!.t_end_us])
+}
+
+/** Every layer on the project, span-only, in track order — what a discard has
+ *  to leave behind and what a refusal has to leave untouched. */
+function allSpans(actor: ActorHandle): Array<[number, number]> {
+  return root(actor.snapshot()).tracks.flatMap((t) => t.layers).map((l) => [l.t_start_us, l.t_end_us])
+}
+
 describe('runHybrid: apply_shot_cuts', () => {
   // The acceptance the whole channel exists for, asserted directly rather than
   // inferred from a shared call site: two projects in the same state, one list,
@@ -776,7 +788,9 @@ describe('runHybrid: apply_shot_cuts', () => {
   it('refuses an unknown mode rather than guessing a verb', async () => {
     const { actor, layerId } = withVideoLayer(6_000_000)
     const deps = makeDeps(actor)
-    await expect(runHybrid('apply_shot_cuts', { layer_id: layerId, mode: 'discard' }, deps))
+    // 'delete' is the plausible near-miss: the channel discards named segments,
+    // but it will not read a verb it was not given.
+    await expect(runHybrid('apply_shot_cuts', { layer_id: layerId, mode: 'delete' }, deps))
       .rejects.toThrow(/"field":"mode"/)
   })
 
@@ -811,6 +825,107 @@ describe('runHybrid: apply_shot_cuts', () => {
       { layer_id: layerId, mode: 'split', cuts_src_us: [2_000_000, 2_300_000], drop_short_us: 500_000 }, deps) as { layer_ids: string[] }
     expect(actor.historyStatus().len - lenBefore).toBe(1)
     expect(r.layer_ids).toHaveLength(2)
+  })
+
+  // mode 'discard' — split, then delete the shots the reviewer unchecked. The
+  // list is the same canonical one; all the verb adds is which segments to keep.
+  const DISCARD_CUTS = [1_000_000, 2_000_000, 4_000_000] // 4 segments on a 6 s clip
+
+  it('deletes exactly the unchecked spans, leaving the survivors on a plain split\'s frames', async () => {
+    // Two projects in the same state, one list: what `split` produced is the
+    // reference the discard's survivors are read against, so "the discard moved
+    // a boundary" cannot pass by both sides agreeing on the wrong number.
+    const a = withVideoLayer(6_000_000)
+    const b = withVideoLayer(6_000_000)
+    const split = await runHybrid('apply_shot_cuts',
+      { layer_id: a.layerId, mode: 'split', cuts_src_us: DISCARD_CUTS }, makeDeps(a.actor)) as { layer_ids: string[] }
+    const discard = await runHybrid('apply_shot_cuts',
+      { layer_id: b.layerId, mode: 'discard', cuts_src_us: DISCARD_CUTS, discard_segments: [1, 3] }, makeDeps(b.actor)) as
+      { mode: string; layer_ids: string[] }
+    expect(discard.mode).toBe('discard')
+    const reference = spansOf(a.actor, split.layer_ids)
+    expect(reference).toHaveLength(4)
+    // The survivors ARE segments 0 and 2 of the plain split, span for span, and
+    // nothing else is left on the timeline.
+    expect(spansOf(b.actor, discard.layer_ids)).toEqual([reference[0], reference[2]])
+    expect(allSpans(b.actor)).toEqual([reference[0], reference[2]])
+  })
+
+  it('is ONE history entry, and its undo restores the single pre-apply layer', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    await runHybrid('apply_shot_cuts',
+      { layer_id: layerId, mode: 'discard', cuts_src_us: DISCARD_CUTS, discard_segments: [1, 3] }, deps)
+    expect(actor.historyStatus().len - lenBefore).toBe(1) // split AND both deletes
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
+  it('drops a short segment and a discarded one in the same commit, deleting the overlap once', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    const lenBefore = actor.historyStatus().len
+    // Segment 1 is the 0.3 s sliver: under the floor AND unchecked. A second
+    // delete of it would fail the dispatch outright.
+    const r = await runHybrid('apply_shot_cuts',
+      { layer_id: layerId, mode: 'discard', cuts_src_us: [2_000_000, 2_300_000], drop_short_us: 500_000, discard_segments: [1] },
+      deps) as { layer_ids: string[] }
+    expect(actor.historyStatus().len - lenBefore).toBe(1)
+    expect(spansOf(actor, r.layer_ids)).toEqual([[0, 2_000_000], [2_300_000, 6_000_000]])
+  })
+
+  // Every refusal here has to leave the clip whole: a half-applied discard is a
+  // destructive edit no undo entry describes.
+  it.each([
+    ['names every segment', DISCARD_CUTS, [0, 1, 2, 3]],
+    ['is empty', DISCARD_CUTS, []],
+    ['is absent', DISCARD_CUTS, undefined],
+    ['runs past the last segment', DISCARD_CUTS, [4]],
+    ['names one segment twice', DISCARD_CUTS, [1, 1]],
+    ['is not a whole number', DISCARD_CUTS, [1.5]],
+    ['is negative', DISCARD_CUTS, [-1]],
+    ['is not an array at all', DISCARD_CUTS, 'nope'],
+    // No interior boundary: the clip is one segment, so any set at all is
+    // asking to delete the clip.
+    ['names the whole clip when there is no boundary to cut at', [], [0]],
+  ])('refuses a discard set that %s, and writes nothing', async (_name, cutsSrcUs, discardSegments) => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    const err = await runHybrid('apply_shot_cuts',
+      { layer_id: layerId, mode: 'discard', cuts_src_us: cutsSrcUs, discard_segments: discardSegments }, deps)
+      .then(() => null, (e: Error) => JSON.parse(e.message) as { error: string; field: string; detail: string })
+    expect(err?.error).toBe('InvalidArgument')
+    expect(err?.field).toBe('discard_segments')
+    expect(err?.detail.length).toBeGreaterThan(0)
+    expect(actor.historyStatus().len - lenBefore).toBe(0)
+    expect(root(actor.snapshot()).tracks.flatMap((t) => t.layers).map((l) => l.id)).toEqual([layerId])
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
+  it('keeps the empty-list no-op when no discard set comes with it', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    const lenBefore = actor.historyStatus().len
+    expect(await runHybrid('apply_shot_cuts', { layer_id: layerId, mode: 'split', cuts_src_us: [] }, deps))
+      .toEqual({ mode: 'split', layer_ids: [layerId] })
+    expect(actor.historyStatus().len - lenBefore).toBe(0)
+  })
+
+  it('refuses a locked track before mutating, naming the lock', async () => {
+    const { actor, track, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    expect(actor.dispatch('update_track_flags', { track, patch: { locked: true } }).ok).toBe(true)
+    const before = JSON.stringify(actor.snapshot())
+    const err = await runHybrid('apply_shot_cuts',
+      { layer_id: layerId, mode: 'discard', cuts_src_us: DISCARD_CUTS, discard_segments: [1] }, deps)
+      .then(() => null, (e: Error) => JSON.parse(e.message) as { error: string })
+    // The split's own gate, unchanged — discarding is not a way past it.
+    expect(err?.error).toBe('TrackLocked')
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
   })
 
   it('marks a clip inside a Group on the GROUP, with anchors at the source times given', async () => {

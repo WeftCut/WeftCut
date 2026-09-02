@@ -14,7 +14,7 @@ import { applyRestackLayer, type RestackPosition } from './mutations/restack'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
 import { applyDuplicateLayer, applyPasteLayer, applyPasteLayers, pasteLayerInterval } from './mutations/duplicate'
-import { applySplitLayer } from './mutations/split'
+import { applySplitLayer, parseDiscardSegments } from './mutations/split'
 import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, applyLinksRename } from './mutations/links'
 import { applyCompositionsDelete, applyGroupsAddMembers, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, type GroupCreateResult } from './mutations/groups'
 import { applyMoveLayersToComposition } from './mutations/moveToComposition'
@@ -894,30 +894,51 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
         case 'delete_checkpoint': deleteCheckpoint(parseUuid(a.checkpoint_id, 'checkpoint_id')); return { ok: true, value: null }
         case 'split_layer': return { ok: true, value: commit(HISTORY_SUMMARY.layerSplit, (s: { left: Uuid; right: Uuid }) => layerRefs([s.left, s.right]), { kind: 'Coarse' }, (d) => applySplitLayer(d, idGen, a.layer as Uuid, parseNum(a.at_t_us, 'at_t_us'), (a.escape_link as boolean) ?? false)) }
-        // split_layer_multi — coalesced multi-split for the auto_split_by_shot
-        // hybrid: split `layer` at every ascending, strictly-interior timeline
-        // time in `at_t_us_list` inside ONE commit, so a whole shot-split is a
-        // single undo (mirrors update_layer_param_tracks' one-commit batch).
+        // split_layer_multi — coalesced multi-split for the shot-apply hybrids:
+        // split `layer` at every ascending, strictly-interior timeline time in
+        // `at_t_us_list` inside ONE commit, so a whole shot-split is a single
+        // undo (mirrors update_layer_param_tracks' one-commit batch).
         // Each split's RIGHT half carries forward to the next cut; link-aware
         // (escape_link=false) so an auto-paired audio partner splits in lockstep
         // with the video. Cuts arrive pre-snapped from resolveShotCuts, but each
         // is re-checked against the CURRENT segment bounds and a non-interior one
         // is SKIPPED (not thrown), so a redundant/collapsed cut can never abort
         // the whole batch.
-        // When `drop_short_us` is set, any resulting VIDEO segment shorter than it
-        // is deleted (applyDeleteLayer honors empty-track cleanup). LANDMINE: the
-        // drop walks only the video ids the splits returned, NOT their link-paired
-        // audio halves, so drop_short leaves the paired audio sliver orphaned at
-        // that cut — a known v1 limitation (called out in docs/mcp.md). Returns the
-        // ordered target segment layer ids that survived.
+        // Two deletes ride the SAME commit, so a split and whatever it throws
+        // away are one undo entry: `drop_short_us` deletes any resulting VIDEO
+        // segment shorter than it, and `discard_segments` deletes the ones the
+        // caller named (parseDiscardSegments owns the numbering and the
+        // refusals). A segment that is both short and named is deleted once.
+        // applyDeleteLayer honors empty-track cleanup for both.
+        // LANDMINE: both deletes walk only the video ids the splits returned,
+        // NOT their link-paired audio halves, so a dropped or discarded take
+        // leaves the paired audio sliver orphaned at that cut. Deliberate:
+        // delete is always local in this project (docs/features.md § Links), so
+        // fanning either delete across a link would be a link semantic invented
+        // here. The drop_short half of it is called out in docs/mcp.md.
+        // Returns the ordered target segment layer ids that survived.
         case 'split_layer_multi': {
           const layer = a.layer as Uuid
           const ats = (a.at_t_us_list as number[]) ?? []
           const dropShortUs = parseNumOpt(a.drop_short_us, 'drop_short_us') ?? null
+          // Refused BEFORE the commit opens: a split whose deletes turned out to
+          // be unaskable is not a state any undo entry could describe.
+          let discardIdx: number[] = []
+          if (a.discard_segments !== undefined && a.discard_segments !== null) {
+            const parsed = parseDiscardSegments(a.discard_segments, ats.length + 1)
+            if (!parsed.ok) return { ok: false, error: { error: 'InvalidArgument', field: 'discard_segments', detail: parsed.detail } }
+            discardIdx = parsed.value
+          }
           return { ok: true, value: commit(HISTORY_SUMMARY.layerSplitByShots, layerRefs, { kind: 'Coarse' }, (d) => {
             let currentId = layer
             const ids: Uuid[] = []
-            for (const at of ats) {
+            // Which segment actually carries each NOMINAL index — the numbering
+            // the caller counted off the cut list. A skipped cut merges two
+            // nominal segments into one real one, and without this map every
+            // index past the skip would name a neighbour of what was unchecked.
+            const carrier: Uuid[] = []
+            for (let i = 0; i < ats.length; i++) {
+              const at = ats[i]
               // Re-snap on the CURRENT SEGMENT's own grid and skip a cut that no
               // longer falls strictly inside it — defensive against a redundant cut so
               // applySplitLayer never rejects mid-batch. The segment must be located
@@ -929,15 +950,19 @@ export function createActor(opts: ActorOptions): ActorHandle {
               const atSnapped = snapOnGrid(parseNum(at, 'at_t_us'), gridForLayerKind(seg.params.kind, loc!.comp.fps))
               if (atSnapped <= seg.t_start_us || atSnapped >= seg.t_end_us) continue
               const { left, right } = applySplitLayer(d, idGen, currentId, atSnapped, false)
+              while (carrier.length <= i) carrier.push(left)
               ids.push(left)
               currentId = right
             }
+            while (carrier.length <= ats.length) carrier.push(currentId)
             ids.push(currentId)
-            if (dropShortUs === null) return ids
+            const discarded = new Set(discardIdx.map((i) => carrier[i]))
+            if (dropShortUs === null && discarded.size === 0) return ids
             const kept: Uuid[] = []
             for (const id of ids) {
               const seg = locateLayer(d, id)?.layer ?? null
-              if (seg && seg.t_end_us - seg.t_start_us < dropShortUs) applyDeleteLayer(d, id)
+              const short = seg !== null && dropShortUs !== null && seg.t_end_us - seg.t_start_us < dropShortUs
+              if (seg && (short || discarded.has(id))) applyDeleteLayer(d, id)
               else kept.push(id)
             }
             return kept

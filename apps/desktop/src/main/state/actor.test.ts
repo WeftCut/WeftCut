@@ -5,7 +5,7 @@ import { blankProject } from './model'
 import type { Project } from './model'
 import { applyAddLayer, applyAddMarker, colorParams } from './mutations/add'
 import { mediaItemTemplate, videoClipParams } from './mutations/media'
-import { createActor, type ActorLogEntry, type DispatchResult } from './actor'
+import { createActor, type ActorHandle, type ActorLogEntry, type DispatchResult } from './actor'
 import { group, groupedProject, root, withGroup } from './__tests__/fixtures/project'
 
 function fresh() {
@@ -125,6 +125,117 @@ describe('dispatch: split + links', () => {
     expect((r.value as string[]).length).toBe(2) // the ~0.3s middle segment was dropped
     expect(root(actor.snapshot()).tracks.find((t) => t.id === a)!.layers).toHaveLength(2)
   })
+
+  // discard_segments — the reviewer's "this take is bad" set, deleted inside the
+  // split's own commit so the two halves of one gesture are one undo.
+  /** A 6 s VideoClip filling the A-roll track: the fixture every discard case starts from. */
+  function splittableClip() {
+    const idGen = seededGen()
+    const initial = blankProject(idGen, 'd')
+    const track = root(initial).tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const VID = '00000000-0000-0000-0000-0000000000cc'
+    actor.dispatch('add_media', { id: VID, kind: 'Video', duration_us: 6_000_000 })
+    const add = actor.dispatch('add_layer', { track, kind: 'video', media: VID, src_in_us: 0, src_out_us: 6_000_000, t_start_us: 0, t_end_us: 6_000_000 })
+    return { actor, track, layer: (add as { ok: true; value: unknown }).value as string }
+  }
+  const layersOf = (actor: ActorHandle, track: string) =>
+    root(actor.snapshot()).tracks.find((t) => t.id === track)!.layers
+
+  it('split_layer_multi deletes the named segments in the split commit; one undo restores the pre-split layer', () => {
+    const { actor, track, layer } = splittableClip()
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    // Three cuts → four segments; the reviewer unchecked the second and the last.
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [1_000_000, 2_000_000, 4_000_000], discard_segments: [1, 3] })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(actor.historyStatus().len - lenBefore).toBe(1) // split + two deletes = ONE entry
+    // Exactly the unchecked spans are gone, and the survivors keep the bounds
+    // the split gave them — a neighbour's removal moves nothing.
+    expect(layersOf(actor, track).map((l) => [l.t_start_us, l.t_end_us])).toEqual([[0, 1_000_000], [2_000_000, 4_000_000]])
+    expect(r.value as string[]).toEqual(layersOf(actor, track).map((l) => l.id))
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
+  it('split_layer_multi deletes a segment that is both short and discarded exactly once', () => {
+    const { actor, track, layer } = splittableClip()
+    // The 0.3 s sliver between the two cuts is segment 1: under the length floor
+    // AND unchecked. Two reasons to go, one delete — a second would throw
+    // LayerNotFound and fail the whole dispatch.
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [2_000_000, 2_300_000], drop_short_us: 500_000, discard_segments: [1] })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value as string[]).toHaveLength(2)
+    expect(layersOf(actor, track).map((l) => [l.t_start_us, l.t_end_us])).toEqual([[0, 2_000_000], [2_300_000, 6_000_000]])
+  })
+
+  it('split_layer_multi maps a discard index past a collapsed cut onto the segment that carries it', () => {
+    const { actor, track, layer } = splittableClip()
+    // The middle cut repeats the first, so it is skipped and the four segments
+    // the caller counted off the list are three on the timeline. Index 2 still
+    // names the span the caller meant, [2s, 4s) — not whatever happens to sit
+    // third in the array the splits returned.
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [2_000_000, 2_000_000, 4_000_000], discard_segments: [2] })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(layersOf(actor, track).map((l) => [l.t_start_us, l.t_end_us])).toEqual([[0, 2_000_000], [4_000_000, 6_000_000]])
+  })
+
+  it.each([
+    ['names every segment', [0, 1, 2]],
+    ['runs past the last segment', [3]],
+    ['names one segment twice', [1, 1]],
+    ['is not a whole number', [1.5]],
+    ['is negative', [-1]],
+    ['is not an array at all', 'nope'],
+  ])('split_layer_multi refuses a discard set that %s, and writes nothing', (_name, discard) => {
+    const { actor, layer } = splittableClip()
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [2_000_000, 4_000_000], discard_segments: discard })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error).toMatchObject({ error: 'InvalidArgument', field: 'discard_segments' })
+    expect((r.error as { detail: string }).detail.length).toBeGreaterThan(0)
+    // The refusal lands before the commit opens: a split whose deletes turned
+    // out to be unaskable is not a state an undo entry could describe.
+    expect(actor.historyStatus().len - lenBefore).toBe(0)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
+  it('split_layer_multi with a discard set still refuses a locked track, mutating nothing', () => {
+    const { actor, track, layer } = splittableClip()
+    expect(actor.dispatch('update_track_flags', { track, patch: { locked: true } }).ok).toBe(true)
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [2_000_000, 4_000_000], discard_segments: [1] })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.error).toBe('TrackLocked') // the split's own gate; a discard set is no way past it
+    expect(actor.historyStatus().len - lenBefore).toBe(0)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
+  it('split_layer_multi with a discard set still refuses a locked link member, mutating nothing', () => {
+    const { actor, track, layer } = splittableClip()
+    // A second clip on the same track's audio lane, linked to the video and
+    // locked — the shape an auto-paired A/V import makes.
+    const AUD = '00000000-0000-0000-0000-0000000000dd'
+    actor.dispatch('add_media', { id: AUD, kind: 'Audio', duration_us: 6_000_000 })
+    const addA = actor.dispatch('add_layer', { track, kind: 'audio', media: AUD, src_in_us: 0, src_out_us: 6_000_000, t_start_us: 0, t_end_us: 6_000_000 })
+    const audio = (addA as { ok: true; value: unknown }).value as string
+    expect(actor.dispatch('links_create', { layers: [layer, audio], reassign: false }).ok).toBe(true)
+    expect(actor.dispatch('update_layer', { layer: audio, patch: { locked: true } }).ok).toBe(true)
+    const before = JSON.stringify(actor.snapshot())
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [2_000_000, 4_000_000], discard_segments: [1] })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.error).toBe('LinkLockedMember')
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
   it('add_markers drops every marker in ONE commit (one undo reverts all)', () => {
     const idGen = seededGen()
     const initial = blankProject(idGen, 'd')

@@ -10,6 +10,7 @@
 import type { ActorHandle } from './actor'
 import type { Composition, Layer, MediaItem, VideoClipParams } from './model'
 import { eachLayer, rootComposition } from './model'
+import { parseDiscardSegments } from './mutations/split'
 import { snapFrameRound } from './snap'
 
 /** Rust compute facade — each method runs a native (no-actor-write) computation
@@ -142,7 +143,7 @@ function shotDefaults(deps: HybridDeps): ShotDefaultOpts {
  *  an anchor to a boundary that never became a cut. */
 export interface ShotCut { tUs: number; srcUs: number }
 
-/** What either apply verb needs to arrive at a cut list.
+/** What any apply verb needs to arrive at a cut list.
  *
  *  `cuts_src_us` present means the caller already decided the boundaries — a
  *  reviewed list with rows vetoed — and the detector is not consulted at all.
@@ -150,10 +151,10 @@ export interface ShotCut { tUs: number; srcUs: number }
  *  the detection default; that is the path the zero-argument clip-menu entries
  *  take.
  *
- *  A third verb — split, then delete the spans the user unchecked, in one
- *  commit — needs no field beyond these: it is `split_layer_multi` over the
- *  same `cuts_src_us`, and the spans to drop are the gaps between consecutive
- *  kept boundaries, which the list already names. */
+ *  The list is also what makes the discard verb — split, then delete the shots
+ *  the reviewer unchecked, in one commit — cost exactly one extra field: the
+ *  boundaries already say where the segments start, so all that is missing is
+ *  which of them to keep. */
 export interface ShotCutSpec {
   layer_id: string
   /** Source-absolute microseconds, ascending. Arrives UNCHECKED and is refused
@@ -166,6 +167,13 @@ export interface ShotCutSpec {
   /** Delete any resulting segment shorter than this within the SAME commit.
    *  Split-only — a marker has no length to be short. */
   drop_short_us?: number
+  /** Which of the segments the split produces to delete in the same commit —
+   *  0-based indices in timeline order over `cuts + 1` segments, counted before
+   *  any `drop_short_us` pruning. Arrives UNCHECKED for the same reason
+   *  `cuts_src_us` does: only the resolved cut list knows how many segments
+   *  there are to name, and the refusal has to land before any dispatch.
+   *  Split-only. */
+  discard_segments?: unknown
 }
 
 /** Resolve the VideoClip layer a shot operation names, together with the media
@@ -264,10 +272,10 @@ async function resolveShotCuts(
   return { compositionId: composition.id, cuts: cutsToTimeline(srcCuts, layer, params, composition.fps) }
 }
 
-/** Structured refusal for a caller-supplied cut list, shaped so the renderer's
+/** Structured refusal for a caller-supplied argument, shaped so the renderer's
  *  `parseCommandError` can name the field and show the detail. */
-function refuseCuts(detail: string): never {
-  throw new Error(JSON.stringify({ error: 'InvalidArgument', field: 'cuts_src_us', detail }))
+function refuseArg(field: string, detail: string): never {
+  throw new Error(JSON.stringify({ error: 'InvalidArgument', field, detail }))
 }
 
 /** Validate a caller-filtered list of source-time boundaries against the
@@ -278,16 +286,16 @@ function refuseCuts(detail: string): never {
  *  list is never half applied. */
 function validateExplicitCuts(raw: unknown, params: VideoClipParams): number[] {
   if (!Array.isArray(raw))
-    refuseCuts(`cuts_src_us must be an array of source-time microseconds, got ${typeof raw}`)
+    refuseArg('cuts_src_us', `cuts_src_us must be an array of source-time microseconds, got ${typeof raw}`)
   const cuts: number[] = []
   for (let i = 0; i < raw.length; i++) {
     const v: unknown = raw[i]
     if (typeof v !== 'number' || !Number.isFinite(v))
-      refuseCuts(`cuts_src_us[${i}] is ${String(v)} — every entry must be a finite number`)
+      refuseArg('cuts_src_us', `cuts_src_us[${i}] is ${String(v)} — every entry must be a finite number`)
     if (i > 0 && v <= cuts[i - 1])
-      refuseCuts(`cuts_src_us[${i}] (${v}) must be greater than cuts_src_us[${i - 1}] (${cuts[i - 1]}) — the list must ascend strictly`)
+      refuseArg('cuts_src_us', `cuts_src_us[${i}] (${v}) must be greater than cuts_src_us[${i - 1}] (${cuts[i - 1]}) — the list must ascend strictly`)
     if (v <= params.src_in_us || v >= params.src_out_us)
-      refuseCuts(`cuts_src_us[${i}] (${v}) is outside the clip's source window (${params.src_in_us}, ${params.src_out_us})`)
+      refuseArg('cuts_src_us', `cuts_src_us[${i}] (${v}) is outside the clip's source window (${params.src_in_us}, ${params.src_out_us})`)
     cuts.push(v)
   }
   return cuts
@@ -307,18 +315,35 @@ async function shotCutList(spec: ShotCutSpec, deps: HybridDeps): Promise<{ compo
 }
 
 /** Split a VideoClip layer at its shot boundaries in ONE commit (one undo
- *  entry), returning the segment ids in timeline order. No interior boundary
- *  means the clip is a single shot: nothing is dispatched and the unchanged
- *  layer id comes back, so the answer is idempotent rather than an error. */
+ *  entry), returning the SURVIVING segment ids in timeline order. No interior
+ *  boundary means the clip is a single shot: nothing is dispatched and the
+ *  unchanged layer id comes back, so the answer is idempotent rather than an
+ *  error.
+ *
+ *  `discard_segments` rides the same commit, so split-and-discard is still one
+ *  undo — and the undo restores the single pre-split layer, not a split clip
+ *  missing its takes. */
 export async function splitByShotCuts(spec: ShotCutSpec, deps: HybridDeps): Promise<string[]> {
   // No `composition_id` on the dispatch and none wanted: split_layer_multi is
   // layer-addressed, so it derives the scope from the id it is given.
   const { cuts } = await shotCutList(spec, deps)
+  // Checked against the CANONICAL list, which is what the indices count over —
+  // and checked ahead of the no-op return below, because with no interior
+  // boundary the clip is one segment and any set at all names the whole clip.
+  // That is a delete, and it has to be refused rather than answered with the
+  // untouched layer id.
+  let discard: number[] | null = null
+  if (spec.discard_segments !== undefined && spec.discard_segments !== null) {
+    const parsed = parseDiscardSegments(spec.discard_segments, cuts.length + 1)
+    if (!parsed.ok) refuseArg('discard_segments', parsed.detail)
+    discard = parsed.value
+  }
   if (cuts.length === 0) return [spec.layer_id]
   const r = deps.actor.dispatch('split_layer_multi', {
     layer: spec.layer_id,
     at_t_us_list: cuts.map((c) => c.tUs),
     drop_short_us: spec.drop_short_us ?? null,
+    discard_segments: discard,
   })
   if (!r.ok) throw new Error(JSON.stringify(r.error))
   return r.value as string[]
@@ -358,8 +383,8 @@ export async function markShotCuts(spec: ShotCutSpec, deps: HybridDeps): Promise
  *  string (synthesize_speech, auto_split_by_shot). `drop_shot_markers` and
  *  `apply_shot_cuts` have no MCP tool at all, so they return the object their
  *  IPC caller reads directly — `apply_shot_cuts` a union discriminated by the
- *  `mode` it was asked for, since what a split produces (segments) and what a
- *  mark produces (markers) are not the same kind of thing.
+ *  `mode` it was asked for, since what the splitting verbs produce (surviving
+ *  segments) and what a mark produces (markers) are not the same kind of thing.
  *
  *  Several of these arms are reachable from BOTH sides (`router.ts`
  *  `HYBRID_CHANNELS`): the renderer's speech dialogs call `apply_subtitles`
@@ -488,26 +513,34 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       return { markers: ids.length }
     }
     case 'apply_shot_cuts': {
-      // The reviewed-list channel: one canonical cut list, two verbs over it.
+      // The reviewed-list channel: one canonical cut list, three verbs over it.
       // Renderer-only, so the answer is an object rather than the MCP arms'
       // string.
       const layerId = args.layer_id
       if (typeof layerId !== 'string' || layerId.length === 0)
         throw new Error('apply_shot_cuts: layer_id is required')
       const mode = args.mode
-      if (mode !== 'split' && mode !== 'mark')
+      if (mode !== 'split' && mode !== 'mark' && mode !== 'discard')
         throw new Error(JSON.stringify({ error: 'InvalidArgument', field: 'mode',
-          detail: `mode must be "split" or "mark", got ${String(args.mode)}` }))
+          detail: `mode must be "split", "mark" or "discard", got ${String(args.mode)}` }))
+      // `discard` is the only verb that reads the set, and it requires a
+      // non-empty one. An absent set reads as empty rather than as "no discard"
+      // so that asking for the verb without naming a shot is answered with the
+      // verb that means it, instead of quietly splitting.
+      const discardSegments = mode === 'discard' ? (args.discard_segments ?? []) : undefined
+      if (Array.isArray(discardSegments) && discardSegments.length === 0)
+        refuseArg('discard_segments', 'discard needs at least one segment to discard — "split" is the verb that keeps every one')
       const spec: ShotCutSpec = {
         layer_id: layerId,
         cuts_src_us: args.cuts_src_us,
         sensitivity: typeof args.sensitivity === 'number' ? args.sensitivity : undefined,
         min_shot_us: typeof args.min_shot_us === 'number' ? args.min_shot_us : undefined,
         drop_short_us: typeof args.drop_short_us === 'number' ? args.drop_short_us : undefined,
+        discard_segments: discardSegments,
       }
-      return mode === 'split'
-        ? { mode: 'split', layer_ids: await splitByShotCuts(spec, deps) }
-        : { mode: 'mark', marker_ids: await markShotCuts(spec, deps) }
+      return mode === 'mark'
+        ? { mode: 'mark', marker_ids: await markShotCuts(spec, deps) }
+        : { mode, layer_ids: await splitByShotCuts(spec, deps) }
     }
     default:
       throw new Error(`runHybrid: unhandled tool ${tool}`)
