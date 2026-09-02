@@ -301,8 +301,8 @@ mod tests {
         // and below clipping.
         let bytes = std::fs::read(&path).unwrap();
         let mut max = 0.0_f32;
-        for c in bytes[HEADER_LEN as usize..].chunks_exact(4) {
-            max = max.max(f32::from_le_bytes([c[0], c[1], c[2], c[3]]).abs());
+        for c in bytes[HEADER_LEN as usize..].as_chunks::<4>().0 {
+            max = max.max(f32::from_le_bytes(*c).abs());
         }
         assert!(max > 0.05 && max <= 1.01, "max sample {max}");
     }
@@ -380,8 +380,8 @@ mod tests {
             );
             let bytes = std::fs::read(&path).unwrap();
             let mut max = 0.0_f32;
-            for c in bytes[HEADER_LEN as usize..].chunks_exact(4) {
-                max = max.max(f32::from_le_bytes([c[0], c[1], c[2], c[3]]).abs());
+            for c in bytes[HEADER_LEN as usize..].as_chunks::<4>().0 {
+                max = max.max(f32::from_le_bytes(*c).abs());
             }
             assert!(max > 0.05 && max <= 1.01, "{name}: max sample {max}");
         }

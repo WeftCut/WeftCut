@@ -784,8 +784,8 @@ mod tests {
         let mut luma_above_8bit = false;
         for d in &c.datas {
             assert_eq!(d.len(), 320 * 240 * 3, "tightly-packed I420P10 length");
-            for (i, s) in d.chunks_exact(2).enumerate() {
-                let v = u16::from_le_bytes([s[0], s[1]]);
+            for (i, s) in d.as_chunks::<2>().0.iter().enumerate() {
+                let v = u16::from_le_bytes(*s);
                 assert!(v <= 1023, "sample {i} = {v} exceeds the 10-bit range");
                 if i * 2 < y_bytes && v > 255 {
                     luma_above_8bit = true;
@@ -821,8 +821,8 @@ mod tests {
         for d in &c.datas {
             assert_eq!(d.len(), 320 * 240 * 3, "tightly-packed I420P10 length");
             let mut max = 0u16;
-            for s in d.chunks_exact(2) {
-                let v = u16::from_le_bytes([s[0], s[1]]);
+            for s in d.as_chunks::<2>().0 {
+                let v = u16::from_le_bytes(*s);
                 assert!(v <= 1023, "upconverted sample {v} exceeds the 10-bit range");
                 max = max.max(v);
             }

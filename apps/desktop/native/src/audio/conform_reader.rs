@@ -44,8 +44,8 @@ impl ConformReader {
             .read_exact(&mut bytes)
             .context("read conform frames")?;
         let dst_off = (read_start - start_frame) as usize * ch;
-        for (i, c) in bytes.chunks_exact(4).enumerate() {
-            out[dst_off + i] = f32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+        for (i, c) in bytes.as_chunks::<4>().0.iter().enumerate() {
+            out[dst_off + i] = f32::from_le_bytes(*c);
         }
         Ok(out)
     }

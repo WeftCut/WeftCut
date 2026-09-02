@@ -385,8 +385,8 @@ fn extract_audio_pcm(mp4: &Path) -> Result<Vec<f32>> {
         );
     }
     let mut pcm = Vec::with_capacity(out.stdout.len() / 4);
-    for chunk in out.stdout.chunks_exact(4) {
-        pcm.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    for chunk in out.stdout.as_chunks::<4>().0 {
+        pcm.push(f32::from_le_bytes(*chunk));
     }
     if pcm.is_empty() {
         anyhow::bail!("no audio samples decoded from {}", mp4.display());
@@ -650,8 +650,8 @@ fn extract_audio_pcm_stereo(mp4: &Path) -> Result<Vec<f32>> {
         );
     }
     let mut pcm = Vec::with_capacity(out.stdout.len() / 4);
-    for chunk in out.stdout.chunks_exact(4) {
-        pcm.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    for chunk in out.stdout.as_chunks::<4>().0 {
+        pcm.push(f32::from_le_bytes(*chunk));
     }
     if pcm.len() < 4 {
         anyhow::bail!("no stereo audio decoded from {}", mp4.display());
@@ -828,8 +828,7 @@ struct SelfReport {
 fn analyze_self(output: &Path, samples: &[u64], ssim_max: f64) -> Result<SelfReport> {
     let mut pairs = Vec::new();
     let mut all_pass = !samples.is_empty();
-    for chunk in samples.chunks_exact(2) {
-        let (a, b) = (chunk[0], chunk[1]);
+    for &[a, b] in samples.as_chunks::<2>().0 {
         let a_png = extract_frame_png(output, a)?;
         let b_png = extract_frame_png(output, b)?;
         let ssim = ssim_pngs(&a_png, &b_png)?;

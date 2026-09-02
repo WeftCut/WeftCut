@@ -1622,10 +1622,10 @@ mod tests {
             // must stay under 4, or the pack is not the 10-bit layout at all.
             let y = &f.data[..192 * 144 * 2];
             assert!(
-                y.chunks_exact(2).all(|px| px[1] < 4),
+                y.as_chunks::<2>().0.iter().all(|px| px[1] < 4),
                 "a luma sample exceeds 10 bits — not I420P10 packing"
             );
-            if y.chunks_exact(2).any(|px| px != [y[0], y[1]]) {
+            if y.as_chunks::<2>().0.iter().any(|px| *px != [y[0], y[1]]) {
                 luma_varies = true;
             }
             frames += 1;

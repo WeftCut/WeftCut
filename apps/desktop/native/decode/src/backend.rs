@@ -312,6 +312,16 @@ impl NativeDecode {
     /// Backend's sink emits; main relays both through `evt:*`.
     #[napi(constructor)]
     pub fn new(on_event: ThreadsafeFunction<String>) -> Self {
+        // The GPU lane is the only emitter today and exists on Windows only; the
+        // sink itself is platform-neutral and is constructed everywhere so the
+        // next channel can wire in without touching the constructor.
+        #[cfg_attr(
+            not(windows),
+            expect(
+                unused_variables,
+                reason = "only the Windows-only GPU lane emits today"
+            )
+        )]
         let events: Arc<dyn EventSink> = Arc::new(TsfnEventSink::new(on_event));
 
         // Wire the registry's poke sink to the same `events` sink every other

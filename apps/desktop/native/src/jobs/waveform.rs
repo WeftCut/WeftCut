@@ -427,8 +427,8 @@ async fn compute_finest_level(
             }
         }
         let aligned = slice.len() - (slice.len() % 4);
-        for chunk in slice[..aligned].chunks_exact(4) {
-            let s = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        for chunk in slice[..aligned].as_chunks::<4>().0 {
+            let s = f32::from_le_bytes(*chunk);
             consume(
                 s,
                 channels,

@@ -6,10 +6,24 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use serde_json::Value;
 
 pub trait EventSink: Send + Sync {
+    #[cfg_attr(
+        not(windows),
+        expect(
+            dead_code,
+            reason = "only the Windows-only preview_gpu lane emits today"
+        )
+    )]
     fn emit(&self, event: &str, payload: Value);
 }
 
 pub struct TsfnEventSink {
+    #[cfg_attr(
+        not(windows),
+        expect(
+            dead_code,
+            reason = "read by `emit`, which only the Windows-only GPU lane calls"
+        )
+    )]
     tsfn: ThreadsafeFunction<String>,
 }
 

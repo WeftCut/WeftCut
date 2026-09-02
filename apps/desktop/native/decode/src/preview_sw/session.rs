@@ -911,7 +911,9 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn videotoolbox_session_delivers_i420p10_frames_through_the_registry() {
-        let got: Arc<Mutex<Vec<(u32, u32, SwOutFormat, usize)>>> = Arc::new(Mutex::new(vec![]));
+        // (width, height, format, byte length) per delivered frame.
+        type Delivered = Arc<Mutex<Vec<(u32, u32, SwOutFormat, usize)>>>;
+        let got: Delivered = Arc::new(Mutex::new(vec![]));
         let g2 = got.clone();
         let reg = PreviewSwRegistry::new();
         reg.set_frame_sink(Box::new(move |poke| {
