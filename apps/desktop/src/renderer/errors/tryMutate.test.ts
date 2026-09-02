@@ -112,4 +112,29 @@ describe("logMutationFailure / refusalText", () => {
       message: "transcribe_clip failed: Error: payload too large",
     });
   });
+
+  // The status bar's running badge clears only on a terminal row under the
+  // same `op_id`, so a dialog that announced its run with a Started row must
+  // hand that id here — on BOTH branches, refusal and prose alike.
+  it("logMutationFailure closes the op it is handed, refusal or prose", () => {
+    logEmitMock.mockClear();
+    logMutationFailure(wireError({ error: "TrackLocked", track: "t-9" }), "mark_silences", "op-1");
+    logMutationFailure(new Error("plain boom"), "mark_silences", "op-2");
+    expect(logEmitMock.mock.calls[0]![0]).toMatchObject({
+      op_id: "op-1",
+      op_state: { state: "Err" },
+    });
+    expect(logEmitMock.mock.calls[1]![0]).toMatchObject({
+      op_id: "op-2",
+      op_state: { state: "Err" },
+    });
+  });
+
+  it("logMutationFailure without an op id stays a standalone row", () => {
+    logEmitMock.mockClear();
+    logMutationFailure(new Error("plain boom"), "Paste layer");
+    const row = logEmitMock.mock.calls[0]![0] as Record<string, unknown>;
+    expect(row).not.toHaveProperty("op_id");
+    expect(row).not.toHaveProperty("op_state");
+  });
 });

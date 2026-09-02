@@ -102,7 +102,9 @@ export function AutoCaptionDialog({
       // speed refusal names `split_layer`. A generic "transcription failed"
       // would throw away the only actionable half.
       setError(refusalText(err));
-      logMutationFailure(err, "transcribe_clip");
+      // Under the run's own `op_id`, or the Started row above never closes and
+      // the status bar keeps a transcription spinning that has already failed.
+      logMutationFailure(err, "transcribe_clip", opId);
       setAutoCaptionTranscribing(false);
     }
   };

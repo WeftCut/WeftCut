@@ -170,7 +170,9 @@ export function VoiceoverDialog() {
       // already points at the key editor, and a generic failure would throw
       // that away.
       setError(refusalText(err));
-      logMutationFailure(err, "synthesize_speech");
+      // Under the run's own `op_id`, so the Started row above closes as `Err`
+      // instead of spinning on in the status bar.
+      logMutationFailure(err, "synthesize_speech", opId);
       setGenerating(false);
     }
   };

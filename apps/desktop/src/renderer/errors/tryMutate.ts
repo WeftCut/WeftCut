@@ -56,7 +56,14 @@ export function refusalText(err: unknown): string {
 /// One failed direct commit → one `Project`/`User` log entry. For call sites
 /// that already own a try/catch with revert logic (the drag gesture);
 /// everything else goes through `tryMutate` below.
-export function logMutationFailure(err: unknown, context: string): void {
+///
+/// `opId` is for a caller that already announced the run with a `Started` row
+/// (the analysis dialogs): the failure row then closes that op as `Err`. The
+/// status bar's running badge clears only on a terminal row under the SAME
+/// `op_id` (`logs/store.ts` `runningOps`), so a Started row whose failure is
+/// logged standalone spins forever.
+export function logMutationFailure(err: unknown, context: string, opId?: string): void {
+  const closesOp = opId === undefined ? {} : { op_id: opId, op_state: { state: "Err" as const } };
   const refusal = describeRefusal(err);
   if (refusal) {
     void logEmit({
@@ -68,6 +75,7 @@ export function logMutationFailure(err: unknown, context: string): void {
         ? { i18n_key: refusal.i18n_key, i18n_args: refusal.i18n_args ?? null }
         : {}),
       details: { context, error: refusal.error },
+      ...closesOp,
     });
     return;
   }
@@ -79,6 +87,7 @@ export function logMutationFailure(err: unknown, context: string): void {
     // buries the one instruction the user can act on.
     message: `${context} failed: ${plainThrowText(err)}`,
     details: { context },
+    ...closesOp,
   });
 }
 
