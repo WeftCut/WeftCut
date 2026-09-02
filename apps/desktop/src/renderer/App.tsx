@@ -703,6 +703,11 @@ export function App({ onCloseProject }: AppProps) {
     // raises its own dialog, so App lends a slot and nothing else
     // (`commands/speechCommands.ts`).
     autoCaptionSelected: openAutoCaptionForSelection,
+    // Opening the Panel is the whole command: it resolves its own subject from
+    // the primary selection, and the right-click that raised the row has
+    // already made the clicked clip that selection. `openPanel` is idempotent,
+    // so invoking it on an already-open Panel costs a focus and nothing else.
+    reviewShots: () => workspaceController?.openPanel("shots"),
     focusNextPanel: () => workspaceController?.focusNextPanel(),
     focusPreviousPanel: () => workspaceController?.focusPreviousPanel(),
     toggleMaximizePanel: () => workspaceController?.toggleMaximize(),

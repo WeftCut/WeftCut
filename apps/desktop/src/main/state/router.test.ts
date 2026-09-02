@@ -43,7 +43,7 @@ const ALL_CHANNELS: readonly string[] = [
   'detect_silences', 'transcribe_clip', 'describe_clip',
   // direct-napi reads (served by an index.ts intercept, never by the router)
   'analyze_shots', 'analyze_shots_floor', 'shot_floor_report_cached',
-  'shot_floor_sensitivity', 'reduce_shot_report', 'get_media_frame',
+  'shot_floor_sensitivity', 'shot_default_opts', 'reduce_shot_report', 'get_media_frame',
   // slice-injected native reads (receive their state slice as a call argument)
   'export_project_audio_only', 'ensure_export_audio_conform', 'ensure_conform', 'ensure_full_proxy',
   'generate_quick_proxy',

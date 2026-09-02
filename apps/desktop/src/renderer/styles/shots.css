@@ -1,0 +1,244 @@
+/* ============================================================
+   Shots Panel — one row per detected shot, each row carrying
+   its opening candidate above its own body.
+
+   Layout: a single column list. A row is two stacked strips —
+   the candidate header (checkbox, score, before/after frame
+   pair) and the body (cover frame, facts, keep box). Stacked
+   rather than side by side because the Panel must stay legible
+   at TOOL_MINIMUM's 240px, where a five-column row would put
+   two 40px frames next to a truncated timecode.
+
+   Visual language follows history.css: no drawn row borders,
+   hover as a tint, state carried by text colour and opacity.
+
+   Every frame slot holds its space with `aspect-ratio`, so the
+   list never reflows as the extracts land one at a time.
+   ============================================================ */
+
+.shots-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  font-size: var(--font-size-body);
+  color: var(--foreground);
+}
+
+/* The three sentences that are not a row list: what to select, what has not
+   been analyzed, and a scanned source with no shots in the window. */
+.shots-empty {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+}
+
+.shots-offer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* The Analyze refusal, in the slot next to the button that raised it. Inline
+   beats the status bar on proximity; the log row is the record. */
+.shots-error {
+  margin: 0;
+  color: var(--destructive);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+}
+
+.shots-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shots-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius-control);
+}
+
+.shots-row:hover {
+  background: var(--surface-tint);
+}
+
+/* A row marked for discard. Dimmed and struck rather than hidden: the reviewer
+   has to be able to see what an apply would delete, and a row that vanished on
+   being unchecked would leave nothing to re-check. */
+.shots-row[data-kept="false"] {
+  opacity: 0.55;
+}
+
+.shots-row[data-kept="false"] .shots-timecode,
+.shots-row[data-kept="false"] .shots-duration {
+  text-decoration: line-through;
+}
+
+.shots-row-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* A candidate the reviewer cleared. It stays on the row it merged into so the
+   merge can be undone, and it is dimmed so the accepted boundary above it still
+   reads as the row's own opening. */
+.shots-row-header[data-accepted="false"] {
+  opacity: 0.6;
+}
+
+.shots-score {
+  flex: none;
+  min-width: 2.5em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--font-size-caption);
+  color: var(--muted-foreground);
+}
+
+.shots-row-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Both frame slots. `aspect-ratio` plus a fixed width is what holds the row's
+   height while a frame is pending or has failed — the placeholder IS the slot,
+   not a substitute drawn inside a collapsed one. */
+.shots-cover,
+.shots-pair-frame {
+  flex: none;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
+  background: var(--muted);
+}
+
+.shots-cover {
+  width: 72px;
+}
+
+.shots-pair-frame {
+  width: 40px;
+}
+
+.shots-cover img,
+.shots-pair-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* A frame the extractor refused. Marked rather than left looking pending, so a
+   permanently empty slot is not read as a load that never finishes. */
+.shots-cover[data-state="failed"],
+.shots-pair-frame[data-state="failed"] {
+  border-style: dashed;
+}
+
+.shots-row-facts {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The row's activation target: index, timecode, duration. A button and not the
+   whole row, so the two checkboxes stay independently clickable. */
+.shots-row-goto {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+  cursor: pointer;
+  text-align: left;
+}
+
+.shots-row-goto:hover .shots-timecode {
+  color: var(--selection);
+}
+
+.shots-row-goto:focus-visible {
+  border-radius: var(--radius-control);
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.shots-index {
+  flex: none;
+  min-width: 1.5em;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+}
+
+.shots-timecode {
+  flex: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--font-size-caption);
+}
+
+.shots-duration {
+  flex: none;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+}
+
+.shots-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+}
+
+/* Absent, not zero. Kept at the same colour as a measured cell so the row does
+   not read as an error — an unsampled span is the ordinary case for anything
+   the reduce reshaped. */
+.shots-stats-absent {
+  font-style: italic;
+}
+
+.shots-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.shots-flag {
+  padding: 0 4px;
+  border-radius: var(--radius-control);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+}
+
+.shots-flag[data-flag="black"] {
+  color: var(--foreground);
+}
+
+.shots-flag[data-flag="freeze"],
+.shots-flag[data-flag="fade"] {
+  color: var(--warning, currentcolor);
+}
+
+.shots-keep {
+  flex: none;
+  margin-top: 2px;
+}

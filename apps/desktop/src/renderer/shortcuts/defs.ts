@@ -41,6 +41,7 @@ export type ActionId =
   | "addToGroup"
   | "moveToComposition"
   | "autoCaptionSelected"
+  | "reviewShots"
   | "toggleLinkSelected"
   | "toggleLinkOverride"
   | "nudgeAudioSampleBack"
@@ -279,6 +280,20 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // No `cut-silences` twin beside it: that recipe's apply step needs a ripple
   // delete this editor does not have, so it stays out of the menus entirely.
   autoCaptionSelected:    { defaultKeys: [],               labelKey: "actions.auto_caption_selected", scope: TIMELINE_SELECTION },
+  // Open the shot-review Panel on the selected clip. Catalogued here and not as
+  // a menu-only command, for `autoCaptionSelected`'s reason and against
+  // `openVoiceoverDialog`'s: this one HAS a scope. What it reviews is the
+  // primary timeline selection, so `scope` is the gate that keeps a bare key
+  // from firing with the media pool focused, and a user who reviews every clip
+  // has somewhere to bind it (Settings → Keyboard) — which `openAgentPanel`,
+  // the other Panel-opening command, deliberately has not, because that one
+  // acts on no object at all.
+  //
+  // Unbound by default because its home is the pointer: you right-click the
+  // clip you mean, and the right-click has already selected it. The Panel also
+  // appears in the View menu's Panels list for free — that list maps over
+  // `PANEL_KINDS`.
+  reviewShots:            { defaultKeys: [],               labelKey: "actions.review_shots", scope: TIMELINE_SELECTION },
   // `docs/features.md#links` — Ctrl/Cmd+L toggles the link on the current
   // selection, Premiere's Link: two or more unlinked layers link, a selection
   // inside one link unlinks it (`timeline/linkEligibility.ts` decides).

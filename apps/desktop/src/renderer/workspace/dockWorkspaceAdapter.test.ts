@@ -393,9 +393,9 @@ function fakeDockview(
 }
 
 describe("Dock Panel registry", () => {
-  it("registers exactly the thirteen semantic singleton kinds", () => {
-    expect(PANEL_KINDS).toHaveLength(13);
-    expect(new Set(PANEL_KINDS).size).toBe(13);
+  it("registers exactly the fourteen semantic singleton kinds", () => {
+    expect(PANEL_KINDS).toHaveLength(14);
+    expect(new Set(PANEL_KINDS).size).toBe(14);
     expect(Object.keys(PANEL_REGISTRY)).toEqual([...PANEL_KINDS]);
     expect(EDITING_OPEN_PANEL_KINDS).toEqual([
       "media",
@@ -420,6 +420,13 @@ describe("Dock Panel registry", () => {
     expect(PANEL_REGISTRY.marker).toMatchObject({
       kind: "marker",
       titleKey: "dock_workspace.panels.marker",
+      initiallyOpen: false,
+    });
+    // The Shots Panel reads the shot channels itself and has a subject only
+    // while a video clip is selected, so it joins the same on-demand tier.
+    expect(PANEL_REGISTRY.shots).toMatchObject({
+      kind: "shots",
+      titleKey: "dock_workspace.panels.shots",
       initiallyOpen: false,
     });
   });

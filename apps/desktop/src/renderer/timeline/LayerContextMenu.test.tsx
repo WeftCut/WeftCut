@@ -16,13 +16,15 @@ import userEvent from "@testing-library/user-event";
 vi.mock("../commands/registry", () => ({
   // No commands registered → CommandContextItem drops every registry row, which
   // is exactly what leaves the kind-gated tier alone on screen. The one
-  // exception is the analysis tier's row: that row is itself kind-gated, so this
-  // file is where its gate is covered, and dropping it would make every
-  // assertion about it vacuously pass.
+  // exceptions are the two kind-gated registry rows: those rows are themselves
+  // gated by kind, so this file is where their gates are covered, and dropping
+  // them would make every assertion about them vacuously pass.
   getCommand: (id: string) =>
     id === "autoCaptionSelected"
       ? { id, labelKey: "actions.auto_caption_selected", run: () => {} }
-      : undefined,
+      : id === "reviewShots"
+        ? { id, labelKey: "actions.review_shots", run: () => {} }
+        : undefined,
   commandRegistryVersion: () => 0,
   subscribeCommandRegistry: () => () => {},
 }));
@@ -124,6 +126,28 @@ describe("LayerContextMenu — kind-gated rows", () => {
       expect(
         screen.queryByRole("menuitem", { name: /Auto-caption clip/ }),
       ).toBeNull();
+    },
+  );
+
+  // The video tier is one notch narrower than the analysis tier above it: a
+  // shot report is a claim about a picture stream, so an Audio layer — which
+  // the analysis tier accepts — must not get this row.
+  it("offers Review shots on a VideoClip, above Mark shot cuts", () => {
+    renderMenu("VideoClip");
+    const labels = screen
+      .getAllByRole("menuitem")
+      .map((el) => el.textContent ?? "");
+    const review = labels.findIndex((l) => /Review shots/.test(l));
+    const mark = labels.findIndex((l) => /Mark shot cuts/.test(l));
+    expect(review).toBeGreaterThanOrEqual(0);
+    expect(review).toBeLessThan(mark);
+  });
+
+  it.each(["Audio", "Text", "Color", "Motif", "ImageOverlay", "CompositionRef"])(
+    "%s gets no Review shots row",
+    (kind) => {
+      renderMenu(kind);
+      expect(screen.queryByRole("menuitem", { name: /Review shots/ })).toBeNull();
     },
   );
 });

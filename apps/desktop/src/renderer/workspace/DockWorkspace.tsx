@@ -59,6 +59,7 @@ import {
 import { RoleMixerPanel } from "../panels/RoleMixerPanel";
 import { AgentPanel } from "../agent/AgentPanel";
 import { HistoryPanel } from "../history/HistoryPanel";
+import { ShotsPanel } from "../shots/ShotsPanel";
 import {
   importCancel,
   restackLayer,
@@ -505,6 +506,18 @@ function HistoryDockPanel() {
   return <HistoryPanel />;
 }
 
+/// No contracts, for the Marker Panel's reason: the Shots Panel resolves its
+/// own subject from the selection and reads the shot channels itself, so nothing
+/// about it rides the summary the other Panels share. It scrolls in the shared
+/// wrapper — the list is the whole Panel and has no sticky chrome of its own.
+function ShotsDockPanel() {
+  return (
+    <div className="weft-dock-panel-scroll">
+      <ShotsPanel />
+    </div>
+  );
+}
+
 /// Reads its cut/playhead/selection inputs from the stores inside
 /// `applyTransition.ts`'s kernel, so the only contract it needs is the
 /// refresh callback every renderer-initiated mutation must invoke.
@@ -531,6 +544,7 @@ const PANEL_COMPONENTS: Readonly<Record<PanelKind, () => ReactElement>> = {
   playhead: PlayheadDockPanel,
   agent: AgentDockPanel,
   history: HistoryDockPanel,
+  shots: ShotsDockPanel,
 };
 
 export function WeftCutPanelRenderer({

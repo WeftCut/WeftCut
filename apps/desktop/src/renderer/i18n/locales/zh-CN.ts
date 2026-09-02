@@ -313,6 +313,7 @@ const zhCN: Resources = {
       playhead: "播放头",
       agent: "代理",
       history: "历史记录",
+      shots: "镜头",
     },
     position: {
       left: "左侧",
@@ -370,6 +371,46 @@ const zhCN: Resources = {
     reveal_clip: "位于素材的 {{timecode}} —— 显示锚定的片段",
     // 退出休眠的唯一出口。CONTEXT.md 的定名用词。
     detach: "解除锚定",
+  },
+  shots_panel: {
+    // 状态（a）：没有对象。点名"视频片段"而不是说"未选中"——音频或文字片段也是
+    // 选中状态，只是没有镜头可审。
+    needs_video_clip: "选中一个视频片段，即可查看它的镜头切点。",
+    // 处在两种状态之间：探测正在 stat 侧车文件。单独一句话，因为"尚未分析"
+    // 是探测还没给出的结论；命中缓存时它只闪过一帧。
+    checking: "正在检查是否已有镜头分析…",
+    not_analyzed: "“{{clip}}”尚未做过镜头切点分析。",
+    // 没有百分比可报：ffmpeg 那一遍输出的是元数据行，不是进度。
+    // 一行运行中文案加一个禁用的按钮就是全部反馈。
+    analyzing: "正在分析“{{clip}}”——这会把整个源解码一遍。",
+    analyze: "分析",
+    analyze_running: "分析中…",
+    // 已扫描的源，窗口内没有高于阈值的边界。这是答案，不是失败。
+    no_shots: "该片段范围内没有镜头切点。",
+    go_to: "跳到 {{timecode}}",
+    cover_frame: "第 {{index}} 个镜头的封面帧",
+    // 候选边界前后各一帧——"这到底是不是一刀真切点"，看一眼就有答案。
+    frame_before: "切点前一帧",
+    frame_after: "切点所在帧",
+    score: "检测器在此边界上的置信度",
+    // 勾选＝这条边界成立。取消勾选会把该镜头并入前一个；被取消的边界仍留在
+    // 合并后的行上，随时可以恢复。
+    accept_candidate: "在第 {{index}} 个镜头开头切一刀",
+    restore_candidate: "恢复 {{timecode}} 处的切点",
+    // 勾选＝保留。每行默认保留，所以直接应用就是"在此切开"，
+    // 丢弃要逐行主动勾掉。
+    keep_shot: "保留第 {{index}} 个镜头",
+    // 缺失，不是零：扫描没采样过的区间没有亮度，写"0.00"等于报告了一个黑帧。
+    stats_absent: "未测量",
+    brightness: "平均亮度",
+    motion: "采样帧之间的运动量",
+    sharpness: "清晰度代理值（拉普拉斯方差）",
+    brightness_value: "亮 {{value}}",
+    motion_value: "动 {{value}}",
+    sharpness_value: "锐 {{value}}",
+    flag_black: "黑场",
+    flag_freeze: "静帧",
+    flag_fade: "淡入淡出",
   },
   actions: {
     add_color_layer: "颜色层",
@@ -439,6 +480,9 @@ const zhCN: Resources = {
     // 不是转写文本。两条都带省略号，因为都会先弹对话框。
     auto_caption_selected: "自动字幕…",
     open_voiceover: "配音…",
+    // 带省略号，因为这一行打开的是一个界面而不是提交任何改动：接下来是审阅，
+    // 应用是面板里的另一次按下。
+    review_shots: "查看镜头…",
     toggle_link_selected: "链接 / 取消链接所选图层",
     toggle_link_override: "切换忽略链接",
     nudge_audio_sample_back: "音频前移 1 个采样",
@@ -1531,6 +1575,13 @@ const zhCN: Resources = {
     cross_composition_copy: "不能跨时间线复制片段——松开 Alt 即可将其移动过去",
     auto_caption_started: "正在转写“{{clip}}”",
     auto_caption_done: "已添加 {{cues}} 条字幕（{{engine}}）",
+    shots_analyze_started: "正在分析“{{clip}}”的镜头",
+    // 报的是候选数而不是镜头数：扫描的产物是候选列表，
+    // 从中得出多少个镜头取决于随后读的阈值。
+    shots_analyze_done: "在“{{clip}}”中找到 {{candidates}} 个镜头候选",
+    // 只在失败不是结构化拒绝时才会走到：结构化拒绝自带 key，
+    // 收尾那一行用它自己的措辞。
+    shots_analyze_failed: "“{{clip}}”的镜头分析失败：{{error}}",
     // 收尾分两条而不是一条带标记：区别在于这次运行花没花钱——命中缓存等于没有
     // 计费，这才是记录里值得看的事实。
     voiceover_started: "正在生成配音——{{chars}} 个字符，{{voice}}",

@@ -113,6 +113,19 @@ export const GROUP_MENU_COMMAND_IDS = [
 /// sweep in `menu/contextMenuCommands.test.ts` covers a list rather than a row.
 export const ANALYSIS_MENU_COMMAND_IDS = ["autoCaptionSelected"] as const;
 
+/// The rows only a `VideoClip` gets. Registry-driven like the tiers above and
+/// swept by the same test.
+///
+/// Kind-gated for the analysis tier's reason, one notch narrower: a shot report
+/// is a claim about a picture stream, so the row is meaningless over an Audio
+/// layer that the audio tier above happily accepts.
+///
+/// Above the hand-rolled *Mark shot cuts* row rather than below it, because
+/// this is the surface the review effort made authoritative — marking is the
+/// drive-by that writes without looking, and the eye should reach the one that
+/// shows you the cuts first.
+export const VIDEO_MENU_COMMAND_IDS = ["reviewShots"] as const;
+
 /// Kinds whose material carries audio — the gate on the tier above. Matches the
 /// two `LayerParams` variants that hold a `media` id with an audio stream.
 const AUDIO_BEARING_KINDS: ReadonlySet<string> = new Set(["VideoClip", "Audio"]);
@@ -182,7 +195,8 @@ const DESTINATION_REASON: Record<Exclude<DestinationState, "eligible">, string> 
 ///      on the right-clicked layer's KIND — plus two kind-gated registry tiers:
 ///      the Group tier (`GROUP_MENU_COMMAND_IDS`), which mixes registry rows
 ///      with the one composition-scoped rename that has no command form, and
-///      the analysis tier (`ANALYSIS_MENU_COMMAND_IDS`) on any clip with audio.
+///      the analysis tier (`ANALYSIS_MENU_COMMAND_IDS`) on any clip with audio,
+///      and the video tier (`VIDEO_MENU_COMMAND_IDS`) on a `VideoClip`.
 ///   3. The transition section, appended only when the right-click landed
 ///      within the click-tolerance band of a cut between same-track adjacent
 ///      visual layers (`transitionCut` non-null).
@@ -498,6 +512,9 @@ export function LayerContextMenu({
             {layerKind === "VideoClip" && (
               <>
                 <MenuSeparator />
+                {VIDEO_MENU_COMMAND_IDS.map((id) => (
+                  <CommandContextItem key={id} id={id} onRun={onClose} />
+                ))}
                 <MenuItem
                   label={t("timeline.mark_shot_cuts", {
                     defaultValue: "Mark shot cuts",

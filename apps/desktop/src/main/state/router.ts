@@ -57,10 +57,12 @@ export const HYBRID_CHANNELS: ReadonlySet<string> = new Set([
  *
  *  `shot_floor_report_cached` is a disk probe that Rust guarantees never starts
  *  a scan, which is what lets the review surface ask it on every selection
- *  change. */
+ *  change. `shot_floor_sensitivity` and `shot_default_opts` are constant reads
+ *  off the addon, exposed so the review surface's threshold comes from the scan
+ *  that produced the candidates rather than from a renderer literal. */
 export const DIRECT_NAPI_READS: ReadonlySet<string> = new Set([
   'analyze_shots', 'analyze_shots_floor', 'shot_floor_report_cached',
-  'shot_floor_sensitivity', 'reduce_shot_report', 'get_media_frame',
+  'shot_floor_sensitivity', 'shot_default_opts', 'reduce_shot_report', 'get_media_frame',
 ])
 
 /** Native clip read/compute channels: no actor write, but the stateless Rust

@@ -54,6 +54,7 @@ import {
 import { formatMediaDuration } from "../frames";
 import { parseCommandError } from "../errors/parseCommandError";
 import { registerRevealMedia } from "../state/navigation";
+import { invalidateShotSource } from "../shots/shotsStore";
 import { tryMutate } from "../errors/tryMutate";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
 import { setAppSettings, useMediaPoolLayout } from "../settings/appSettingsStore";
@@ -433,6 +434,13 @@ export function MediaPool({
         closeMenu();
         setAnalyzingId(m.id);
         void analyzeShots(m.id)
+          // The entry is a cache WARMER and knows nothing about the review
+          // Panel; this is how its result reaches an open one. The Panel
+          // re-probes and finds the report this call just wrote — without it a
+          // Panel showing "not analyzed" for this source would keep saying so.
+          .then((shots) => {
+            if (shots !== null) invalidateShotSource(m.id);
+          })
           .catch((error) => {
             console.warn("analyze shots failed:", error);
           })

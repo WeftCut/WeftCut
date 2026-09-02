@@ -21,6 +21,7 @@ export const PANEL_KINDS = [
   "playhead",
   "agent",
   "history",
+  "shots",
 ] as const;
 
 export type PanelKind = (typeof PANEL_KINDS)[number];
@@ -153,6 +154,16 @@ export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
   history: {
     kind: "history",
     titleKey: "dock_workspace.panels.history",
+    ...TOOL_MINIMUM,
+    initiallyOpen: false,
+  },
+  // Closed by default for History's reason and one of its own: the Panel pulls
+  // its rows over the shot channels rather than off the project summary, and it
+  // has a subject only while a video clip is selected — so an open one would
+  // spend permanent screen on a review nobody asked for.
+  shots: {
+    kind: "shots",
+    titleKey: "dock_workspace.panels.shots",
     ...TOOL_MINIMUM,
     initiallyOpen: false,
   },

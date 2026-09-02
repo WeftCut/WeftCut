@@ -7,6 +7,7 @@ import {
   ANALYSIS_MENU_COMMAND_IDS,
   GROUP_MENU_COMMAND_IDS,
   LAYER_MENU_COMMAND_IDS,
+  VIDEO_MENU_COMMAND_IDS,
 } from "../timeline/LayerContextMenu";
 import { RULER_MENU_COMMAND_IDS } from "../timeline/RulerContextMenu";
 import en from "../i18n/locales/en-US";
@@ -69,6 +70,8 @@ const MENUS = {
   "layer context menu (Group tier)": GROUP_MENU_COMMAND_IDS,
   // The other kind-gated tier of that popup — the rows a clip with audio gets.
   "layer context menu (analysis tier)": ANALYSIS_MENU_COMMAND_IDS,
+  // And the narrowest tier — the rows only a picture clip gets.
+  "layer context menu (video tier)": VIDEO_MENU_COMMAND_IDS,
   "ruler context menu": RULER_MENU_COMMAND_IDS,
 } as const;
 

@@ -2186,6 +2186,25 @@ export async function shotFloorSensitivity(): Promise<number> {
   return invoke<number>("shot_floor_sensitivity");
 }
 
+/// The detection defaults every omitted parameter resolves to, as Rust states
+/// them. A review surface seeds its threshold from here rather than from a
+/// literal of its own: a literal would be free to drift from the value the
+/// zero-argument apply and the agent's `analyze_clip` both use, and the rows
+/// the user reviewed would then name different cuts from the ones an apply
+/// makes.
+///
+/// `min_shot_us` is output granularity, not accuracy — `build_shots` only drops
+/// boundaries closer together than it — so the two numbers fix different errors
+/// and no control should present them alike.
+export interface ShotDefaultOpts {
+  sensitivity: number;
+  min_shot_us: number;
+}
+
+export async function shotDefaultOpts(): Promise<ShotDefaultOpts> {
+  return invoke<ShotDefaultOpts>("shot_default_opts");
+}
+
 /// The whole-source floor scan for one media. EXPENSIVE the first time (a full
 /// decode pass) and a cache hit afterwards, so call it behind a deliberate
 /// action, never on selection — ask `shotFloorReportCached` first.

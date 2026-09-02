@@ -349,6 +349,10 @@ const enUS = {
       playhead: "Playhead",
       agent: "Agent",
       history: "History",
+      // Plural, because the Panel is a list of them and the tab names what it
+      // holds. Never "Scene detection" — the detector's name is not what a
+      // reviewer is looking at.
+      shots: "Shots",
     },
     position: {
       left: "left",
@@ -409,6 +413,51 @@ const enUS = {
     reveal_clip: "In the footage at {{timecode}} — reveal the anchoring clip",
     // The one exit from hibernation. CONTEXT.md's pinned word.
     detach: "Detach",
+  },
+  shots_panel: {
+    // State (a): no subject. It names the kind rather than saying "nothing
+    // selected", because an Audio or Text clip IS selected and still has no
+    // shots to review.
+    needs_video_clip: "Select a video clip to review its shot cuts.",
+    // Between the two states, while the probe stats the sidecar. A distinct
+    // sentence, because "not analyzed" would be a claim the probe has not made
+    // yet — and it flickers past in a frame on a hit.
+    checking: "Checking for a shot analysis…",
+    not_analyzed: "“{{clip}}” has not been analyzed for shot cuts yet.",
+    // No percentage exists to report: the ffmpeg pass emits metadata lines, not
+    // progress. A running label and a disabled button are the whole affordance.
+    analyzing: "Analyzing “{{clip}}” — this decodes the whole source once.",
+    analyze: "Analyze",
+    analyze_running: "Analyzing…",
+    // A scanned source whose window holds no boundary above the threshold. An
+    // answer, not a failure.
+    no_shots: "No shot cuts in this clip's range.",
+    go_to: "Go to {{timecode}}",
+    cover_frame: "Cover frame of shot {{index}}",
+    // The pair either side of a candidate boundary — the one look that answers
+    // "is this a real cut".
+    frame_before: "Frame before the cut",
+    frame_after: "Frame at the cut",
+    score: "Detector confidence at this boundary",
+    // Checked = this boundary stands. Clearing it merges the shot into the one
+    // before it; the cleared boundary stays on that row so it can be restored.
+    accept_candidate: "Cut at the start of shot {{index}}",
+    restore_candidate: "Restore the cut at {{timecode}}",
+    // Checked = keep. Every row starts kept, so a plain apply is "split here"
+    // and discarding is opted into row by row.
+    keep_shot: "Keep shot {{index}}",
+    // Absent and not zero: a span the scan never sampled has no brightness, and
+    // "0.00" would report a black frame.
+    stats_absent: "not measured",
+    brightness: "Mean brightness",
+    motion: "Motion between sampled frames",
+    sharpness: "Focus proxy (variance of the Laplacian)",
+    brightness_value: "B {{value}}",
+    motion_value: "M {{value}}",
+    sharpness_value: "S {{value}}",
+    flag_black: "black",
+    flag_freeze: "freeze",
+    flag_fade: "fade",
   },
   actions: {
     add_color_layer: "Color layer",
@@ -494,6 +543,9 @@ const enUS = {
     // Ellipsis on both because both raise a dialog first.
     auto_caption_selected: "Auto-caption clip…",
     open_voiceover: "Voiceover…",
+    // Ellipsis because the row opens a surface rather than committing anything:
+    // reviewing is what happens next, and the apply is a press inside the Panel.
+    review_shots: "Review shots…",
     toggle_link_selected: "Link / Unlink selected layers",
     toggle_link_override: "Toggle link override",
     nudge_audio_sample_back: "Nudge audio 1 sample earlier",
@@ -1693,6 +1745,14 @@ const enUS = {
       "A clip cannot be copied across timelines — release without Alt to move it there",
     auto_caption_started: "Transcribing “{{clip}}”",
     auto_caption_done: "{{cues}} caption cues added ({{engine}})",
+    shots_analyze_started: "Analyzing shots in “{{clip}}”",
+    // The CANDIDATE count, not a shot count: the scan's product is the
+    // candidate list, and how many shots come out of it is whatever threshold
+    // is read next.
+    shots_analyze_done: "{{candidates}} shot candidates found in “{{clip}}”",
+    // Only reached when the failure is not a structured refusal — a refusal
+    // carries its own key and closes the op under that instead.
+    shots_analyze_failed: "Shot analysis of “{{clip}}” failed: {{error}}",
     // Two terminal rows and not one with a flag, because the difference is what
     // the run COST: a cached hit billed nothing, and that is the fact worth
     // reading in the record.

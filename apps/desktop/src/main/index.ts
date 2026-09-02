@@ -1096,6 +1096,10 @@ app.whenReady().then(async () => {
       return await readMediaFrameDataUrl(backend!, () => host, a.media_id ?? '', a.t_us ?? 0)
     }
     if (channel === 'shot_floor_sensitivity') return backend!.shotFloorSensitivity()
+    // The detection defaults, straight off the addon. The review Panel seeds its
+    // threshold from these rather than from a literal of its own, so a default
+    // apply and the rows the user reviewed cannot name different cuts.
+    if (channel === 'shot_default_opts') return computeFacade.shotDefaultOpts()
     if (channel === 'reduce_shot_report') {
       const a = (args ?? {}) as { report?: unknown; sensitivity?: number; min_shot_us?: number; in_us?: number; out_us?: number }
       // The window is refused rather than defaulted: an inverted or zero-length
