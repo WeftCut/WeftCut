@@ -23,10 +23,10 @@ afterEach(() => {
 });
 
 const opacityTrack: AnimTrack<number> = {
-  mode: "Keyframed",
+  mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
   value: [
-    { id: "a", t_us: 0, value: 0, interp: { kind: "Linear" } },
-    { id: "b", t_us: 1_000_000, value: 1, interp: { kind: "Linear" } },
+    { id: "a", t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+    { id: "b", t_us: 1_000_000, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
   ],
 };
 
@@ -122,8 +122,8 @@ describe("KeyframeNavigator ◄ ► arrows", () => {
 describe("KeyframeNavigator focused-clip targeting (rule 1) + arrow side effects", () => {
   it("targets the focused clip among several, then selects + focuses the landed key", () => {
     const l2Track: AnimTrack<number> = {
-      mode: "Keyframed",
-      value: [{ id: "z", t_us: 1_800_000, value: 1, interp: { kind: "Linear" } }],
+      mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+      value: [{ id: "z", t_us: 1_800_000, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }],
     };
     const tr = {
       layers: [

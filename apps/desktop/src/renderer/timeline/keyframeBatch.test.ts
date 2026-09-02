@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  applyInterp,
+  applySegmentEasingKeys,
   batchParamTrackEntries,
   removeKeys,
-  smoothKeys,
+  setAutoKeys,
   type KeyframeGroupEdit,
   type ParamTrackEntry,
 } from "./keyframeBatch";
@@ -16,11 +16,11 @@ const kf = (id: string, tUs: number, value: number): Keyframe<number> => ({
   id,
   t_us: tUs,
   value,
-  interp: { kind: "Linear" },
+  in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" },
 });
 
 const keyed = (keys: Keyframe<number>[]): KeyframedTrack => ({
-  mode: "Keyframed",
+  mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
   value: keys,
 });
 
@@ -212,37 +212,37 @@ describe("removeKeys", () => {
   });
 });
 
-describe("applyInterp / smoothKeys", () => {
+describe("applySegmentEasingKeys / setAutoKeys", () => {
   const tracks = [
     track("t1", [layer("l1", { opacity: keyed([kf("a", 0, 0), kf("b", 1_000_000, 1)]) })]),
     track("t2", [layer("l2", { opacity: keyed([kf("c", 0, 0), kf("d", 1_000_000, 1)]) })]),
   ];
 
-  it("sets one interpolation on the selected keys of every layer in the batch", () => {
+  it("sets one easing on the segment leaving each selected key of every layer in the batch", () => {
     const entries = batchParamTrackEntries({
       selected: [sel("l1", "opacity", "a"), sel("l2", "opacity", "c"), sel("l2", "opacity", "d")],
       tracks,
-      edit: applyInterp({ kind: "Hold" }),
+      edit: applySegmentEasingKeys({ kind: "Hold" }),
     });
     expect(addressed(entries)).toEqual([
       ["l1", "opacity"],
       ["l2", "opacity"],
     ]);
-    const interps = (t: AnimTrack<number>) =>
-      t.mode === "Keyframed" ? t.value.map((k) => k.interp.kind) : [];
+    const classes = (t: AnimTrack<number>) =>
+      t.mode === "Keyframed" ? t.value.map((k) => k.segment.kind) : [];
     // l1: only the selected `a` changed; l2: both selected keys did.
-    expect(interps(entries[0]![2])).toEqual(["Hold", "Linear"]);
-    expect(interps(entries[1]![2])).toEqual(["Hold", "Hold"]);
+    expect(classes(entries[0]![2])).toEqual(["Hold", "Linear"]);
+    expect(classes(entries[1]![2])).toEqual(["Hold", "Hold"]);
   });
 
-  it("smooths a group's keys sequentially, so a key sees its neighbour's result", () => {
+  it("marks every selected key Auto and splines the segments between them", () => {
     const t = keyed([kf("a", 0, 0), kf("b", 500_000, 1), kf("c", 1_000_000, 2)]);
-    const next = smoothKeys(t, ["a", "b", "c"], 0);
+    const next = setAutoKeys(t, ["a", "b", "c"], 0);
     expect(next.mode).toBe("Keyframed");
     const keys = (next as KeyframedTrack).value;
-    // A fold that re-read the ORIGINAL track for each key would leave `a`
-    // Linear: only the last pass would survive, and `c` (an endpoint) rewrites
-    // `b` alone.
-    expect(keys.map((k) => k.interp.kind)).toEqual(["Bezier", "Bezier", "Linear"]);
+    // Every key is Auto/Smooth; the last key's leaving class has no segment to
+    // shape and stays as it was.
+    expect(keys.map((k) => k.segment.kind)).toEqual(["Spline", "Spline", "Linear"]);
+    expect(keys.every((k) => k.in.mode === "Auto" && k.out.mode === "Auto" && k.continuity === "Smooth")).toBe(true);
   });
 });

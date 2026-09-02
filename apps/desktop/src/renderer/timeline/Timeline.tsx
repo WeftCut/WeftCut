@@ -1162,7 +1162,7 @@ export function Timeline({
   const onCommitParamTrack = useCallback(
     async (layerId: string, paramKey: string, track: AnimTrack<number>) => {
       try {
-        // Every timeline keyframe edit (value field, diamond drag, interp
+        // Every timeline keyframe edit (value field, diamond drag, easing
         // menu, curve editor, navigator) funnels through here. A scale write
         // on a LINKED layer fans out to both axes in one batch — otherwise
         // the result-based invariant would read the single-axis write as

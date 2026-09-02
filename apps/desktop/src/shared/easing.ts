@@ -4,16 +4,28 @@
 // model, MCP preset baking) and the renderer (preset picker, curve editor)
 // both author it — same pattern as DecodeRoute / RecentEntry / AppSettings.
 // The preset table's append-only rule is in docs/data-model.md.
+import {
+  freeSide,
+  inIdentity,
+  outIdentity,
+  type Keyframe,
+  type Segment,
+  type Tangent,
+} from "./keyframe";
 
 /// Easing direction for the procedural families (`Elastic` / `Bounce`).
 /// Serializes as the bare variant name, mirroring the Rust `EaseDir`.
 export type EaseDir = "In" | "Out" | "InOut";
 
-/// Wire-compatible mirror of the Rust `Interpolation` enum (serde tag "kind").
-/// TWIN: keep in lockstep with `native/eval/src/lib.rs::Interpolation` and the
-/// napi wire contract in `native/src/state/animated.rs`. Named ease presets are
-/// a display-layer concept — they bake to `Bezier` params at authoring time
-/// (see `EASING_PRESETS`), so the schema carries no named variants.
+/// The easing of ONE segment as a value: what the preset table holds, what
+/// `set_keyframe_easing` takes, what the menus checkmark. NOT the stored shape —
+/// a key stores a `Segment` class plus two tangents (shared/keyframe.ts), and
+/// `segmentEasing` / `applySegmentEasing` below are the only conversion:
+/// `Bezier` is a `Spline` segment whose `p1` is the left key's `out` and `p2`
+/// the right key's `in`. TWIN: `native/src/state/keyframe_edits.rs::Interpolation`
+/// (serde tag "kind"). Named ease presets are a display-layer concept — they
+/// bake through `applySegmentEasing` at authoring time (see `EASING_PRESETS`),
+/// so the schema carries no named variants.
 export type Interpolation =
   | { kind: "Hold" }
   | { kind: "Linear" }
@@ -144,9 +156,9 @@ export function presetIdForInterp(interp: Interpolation): EasingPresetId | undef
   return undefined;
 }
 
-/// Structural deep copy (Bezier handle arrays re-created, never aliased).
-/// Shared by the fan-out twin writers on both sides of the process boundary
-/// (renderer keyframe/fanOut.ts, main mutations/scaleLink.ts).
+/// Structural deep copy (Bezier handle arrays re-created, never aliased) —
+/// what the MCP preset bake hands out so a table entry never aliases into a
+/// track.
 export function cloneInterp(i: Interpolation): Interpolation {
   switch (i.kind) {
     case "Hold":
@@ -159,4 +171,76 @@ export function cloneInterp(i: Interpolation): Interpolation {
     case "Bounce":
       return { kind: "Bounce", dir: i.dir };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Segment-easing bridges. A stored segment is a class on the LEFT key plus the
+// left key's `out` and the right key's `in`; an `Interpolation` is that same
+// easing as one value. These two functions are the only conversion between the
+// two, and `presetIdForSegment` is the reverse lookup the record's exact
+// (un-mirrored) `in` exists for: a preset applied through `applySegmentEasing`
+// reads back as the same id with no arithmetic in between.
+// TWIN: `native/src/state/keyframe_edits.rs::segment_easing` /
+// `apply_segment_easing` (golden-locked through keyframeEditsGolden.fixture.json).
+// ---------------------------------------------------------------------------
+
+/// The easing of segment `left → right` as a value: a Spline is its two
+/// tangents as a cubic, any other class is itself.
+export function segmentEasing<T>(left: Keyframe<T>, right: Keyframe<T>): Interpolation {
+  const s = left.segment;
+  switch (s.kind) {
+    case "Spline":
+      return { kind: "Bezier", p1: [left.out.x, left.out.y], p2: [right.in.x, right.in.y] };
+    case "Hold":
+    case "Linear":
+      return { kind: s.kind };
+    case "Elastic":
+      return { kind: "Elastic", dir: s.dir, amplitude: s.amplitude, period: s.period };
+    case "Bounce":
+      return { kind: "Bounce", dir: s.dir };
+  }
+}
+
+/// Write easing `e` onto segment `left → right`: the class and the leaving side
+/// onto `left`, the arriving side onto `right`; both sides come out `Free`.
+/// `right` is `undefined` when `left` is the last key — only `left` is written.
+/// Pure: returns new key objects (key order preserved).
+export function applySegmentEasing<T>(
+  left: Keyframe<T>,
+  right: Keyframe<T> | undefined,
+  e: Interpolation,
+): [Keyframe<T>, Keyframe<T> | undefined] {
+  let segment: Segment;
+  let out: Tangent;
+  let arriving: Tangent;
+  switch (e.kind) {
+    case "Bezier":
+      segment = { kind: "Spline" };
+      out = freeSide(e.p1[0], e.p1[1]);
+      arriving = freeSide(e.p2[0], e.p2[1]);
+      break;
+    case "Hold":
+    case "Linear":
+      segment = { kind: e.kind };
+      out = outIdentity();
+      arriving = inIdentity();
+      break;
+    case "Elastic":
+      segment = { kind: "Elastic", dir: e.dir, amplitude: e.amplitude, period: e.period };
+      out = outIdentity();
+      arriving = inIdentity();
+      break;
+    case "Bounce":
+      segment = { kind: "Bounce", dir: e.dir };
+      out = outIdentity();
+      arriving = inIdentity();
+      break;
+  }
+  return [{ ...left, out, segment }, right === undefined ? undefined : { ...right, in: arriving }];
+}
+
+/// Reverse lookup for a stored segment — `presetIdForInterp` over
+/// `segmentEasing(left, right)`.
+export function presetIdForSegment<T>(left: Keyframe<T>, right: Keyframe<T>): EasingPresetId | undefined {
+  return presetIdForInterp(segmentEasing(left, right));
 }

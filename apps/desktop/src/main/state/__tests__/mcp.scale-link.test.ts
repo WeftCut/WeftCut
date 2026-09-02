@@ -11,7 +11,7 @@ import { root } from './fixtures/project'
 
 // Factory, not a shared literal: a dispatched track object gets frozen by the
 // actor's immer produce, so reusing one instance across dispatches throws.
-const KF = () => ({ mode: 'Keyframed', value: [{ id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 2, interp: { kind: 'Linear' } }] })
+const KF = () => ({ mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [{ id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 2, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } }] })
 
 function addTextLayer(actor: ReturnType<typeof freshActor>): string {
   const r = actor.dispatch('add_layer', { track: bRollId(actor), kind: 'text', t_start_us: 0, t_end_us: 2_000_000 })

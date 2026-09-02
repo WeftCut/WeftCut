@@ -37,7 +37,7 @@ import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
 import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult } from './mcp-commands'
-import { upsertKeyframe, removeKeyframe, retimeKeyframe, setKeyframeInterp, smoothKeyframe, smoothTrack } from './keyframeEdits'
+import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
@@ -1612,8 +1612,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const layer = p.layer as string
           const paramKey = p.param_key as string
           const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
-          const interp = p.interp as Interpolation | undefined
-          const next = upsertKeyframe(track, (p.t_us as number) - tStartUs, p.value as number, interp, idGen)
+          const easing = p.interp as Interpolation | undefined
+          const next = upsertKeyframe(track, (p.t_us as number) - tStartUs, p.value as number, easing, idGen)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
@@ -1657,7 +1657,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const paramKey = p.param_key as string
           const { track } = readLayerTrack(current(), layer, paramKey)
           if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
-          const next = setKeyframeInterp(track, keyframeId, p.interp as Interpolation)
+          const next = setSegmentEasing(track, keyframeId, p.interp as Interpolation)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
@@ -1668,13 +1668,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const paramKey = p.param_key as string
           const { track } = readLayerTrack(current(), layer, paramKey)
           const keyframeId = p.keyframe_id as string | null
-          let next
-          if (keyframeId !== null) {
-            if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
-            next = smoothKeyframe(track, keyframeId)
-          } else {
-            next = smoothTrack(track)
-          }
+          if (keyframeId !== null && !keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
+          // One key, or every key: Auto on both sides + Smooth, neighbours splined;
+          // the actor's write step solves the coordinates.
+          const ids = keyframeId !== null ? [keyframeId] : track.mode === 'Keyframed' ? track.value.map((k) => k.id) : []
+          const next = setAuto(track, ids)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
@@ -1697,7 +1695,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const { tStartUs } = readLayerTrack(current(), layer, paramKey) // validate layer+param; current discarded
           const input = p.track as Animated<number>
           const shifted: Animated<number> = input.mode === 'Keyframed'
-            ? { mode: 'Keyframed', value: input.value.map((k) => ({ ...k, t_us: k.t_us - tStartUs })) }
+            ? { ...input, value: input.value.map((k) => ({ ...k, t_us: k.t_us - tStartUs })) }
             : input
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: shifted })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }

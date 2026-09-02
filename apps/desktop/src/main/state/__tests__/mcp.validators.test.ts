@@ -103,24 +103,46 @@ describe('parseEasing', () => {
 describe('parseAnimatedF64', () => {
   it('accepts Static', () => { expect(parseAnimatedF64({ mode: 'Static', value: 1 })).toEqual({ mode: 'Static', value: 1 }) })
   it('accepts Keyframed', () => {
-    const t = { mode: 'Keyframed', value: [{ id: '00000000-0000-0000-0000-000000000001', t_us: 0, value: 0, interp: { kind: 'Linear' } }] }
+    const t = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [{ id: '00000000-0000-0000-0000-000000000001', t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } }] }
     expect(parseAnimatedF64(t)).toEqual(t)
   })
+  const SIDES = { in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken' }
+  const keyed = (keys: unknown[], extrapolate?: unknown) =>
+    ({ mode: 'Keyframed', value: keys, ...(extrapolate === undefined ? {} : { extrapolate }) })
   it('accepts Keyframed keys carrying the procedural kinds (Elastic defaults backfilled)', () => {
-    const t = { mode: 'Keyframed', value: [
-      { id: '00000000-0000-0000-0000-000000000001', t_us: 0, value: 0, interp: { kind: 'Elastic', dir: 'Out' } },
-      { id: '00000000-0000-0000-0000-000000000002', t_us: 1, value: 1, interp: { kind: 'Bounce', dir: 'In' } },
-    ] }
-    const parsed = parseAnimatedF64(t) as { value: Array<{ interp: unknown }> }
-    expect(parsed.value[0].interp).toEqual({ kind: 'Elastic', dir: 'Out', amplitude: 1, period: 0.3 })
-    expect(parsed.value[1].interp).toEqual({ kind: 'Bounce', dir: 'In' })
+    const t = keyed([
+      { id: '00000000-0000-0000-0000-000000000001', t_us: 0, value: 0, ...SIDES, segment: { kind: 'Elastic', dir: 'Out' } },
+      { id: '00000000-0000-0000-0000-000000000002', t_us: 1, value: 1, ...SIDES, segment: { kind: 'Bounce', dir: 'In' } },
+    ], { before: 'Hold', after: 'Hold' })
+    const parsed = parseAnimatedF64(t) as { value: Array<{ segment: unknown }> }
+    expect(parsed.value[0].segment).toEqual({ kind: 'Elastic', dir: 'Out', amplitude: 1, period: 0.3 })
+    expect(parsed.value[1].segment).toEqual({ kind: 'Bounce', dir: 'In' })
+  })
+  it('accepts Spline and Auto sides verbatim, and defaults a missing extrapolate to Hold/Hold', () => {
+    const k = { id: '00000000-0000-0000-0000-000000000001', t_us: 0, value: 0, in: { x: 0.5, y: 0.2, mode: 'Auto' }, out: { x: 0.42, y: 0, mode: 'Free' }, continuity: 'Smooth', segment: { kind: 'Spline' } }
+    expect(parseAnimatedF64(keyed([k]))).toEqual({ mode: 'Keyframed', value: [k], extrapolate: { before: 'Hold', after: 'Hold' } })
+    expect(parseAnimatedF64(keyed([k], { before: 'Loop', after: 'Continue' }))).toMatchObject({ extrapolate: { before: 'Loop', after: 'Continue' } })
   })
   it('rejects a bad mode', () => { expect(() => parseAnimatedF64({ mode: 'Bogus', value: 1 })).toThrow(McpArgError) })
-  it('rejects a keyframe with a bad interp', () => {
-    expect(() => parseAnimatedF64({ mode: 'Keyframed', value: [{ id: 'x', t_us: 0, value: 0, interp: { kind: 'no' } }] })).toThrow(McpArgError)
+  it('rejects a keyframe with a bad segment kind', () => {
+    expect(() => parseAnimatedF64(keyed([{ id: 'x', t_us: 0, value: 0, ...SIDES, segment: { kind: 'no' } }]))).toThrow(McpArgError)
   })
-  it('rejects a keyframe with the retired EaseIn interp', () => {
-    expect(() => parseAnimatedF64({ mode: 'Keyframed', value: [{ id: 'x', t_us: 0, value: 0, interp: { kind: 'EaseIn' } }] })).toThrow(McpArgError)
+  it('rejects a keyframe with the retired EaseIn kind', () => {
+    expect(() => parseAnimatedF64(keyed([{ id: 'x', t_us: 0, value: 0, ...SIDES, segment: { kind: 'EaseIn' } }]))).toThrow(McpArgError)
+  })
+  it('rejects a Bezier segment kind — the cubic lives on the tangents', () => {
+    expect(() => parseAnimatedF64(keyed([{ id: 'x', t_us: 0, value: 0, ...SIDES, segment: { kind: 'Bezier', p1: [0, 0], p2: [1, 1] } }]))).toThrow(/Spline/)
+  })
+  it('rejects a keyframe still carrying the retired per-segment interp, naming the record', () => {
+    expect(() => parseAnimatedF64(keyed([{ id: 'x', t_us: 0, value: 0, interp: { kind: 'Linear' } }]))).toThrow(/retired per-segment "interp"/)
+  })
+  it('rejects a keyframe lacking a side, a non-finite tangent, a bad mode, continuity or extrapolate', () => {
+    const k = { id: 'x', t_us: 0, value: 0, ...SIDES, segment: { kind: 'Linear' } }
+    expect(() => parseAnimatedF64(keyed([{ ...k, in: undefined }]))).toThrow(/lacks "in"/)
+    expect(() => parseAnimatedF64(keyed([{ ...k, out: { x: Number.NaN, y: 0, mode: 'Free' } }]))).toThrow(/finite/)
+    expect(() => parseAnimatedF64(keyed([{ ...k, out: { x: 0, y: 0, mode: 'Loose' } }]))).toThrow(/mode/)
+    expect(() => parseAnimatedF64(keyed([{ ...k, continuity: 'Kinked' }]))).toThrow(/continuity/)
+    expect(() => parseAnimatedF64(keyed([k], { before: 'Bogus', after: 'Hold' }))).toThrow(/extrapolate\.before/)
   })
 })
 describe('parseRole', () => {

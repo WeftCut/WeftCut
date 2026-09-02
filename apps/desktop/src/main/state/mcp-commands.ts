@@ -4,11 +4,12 @@
 // The byte-exact mcp.differential gate (vs Rust dispatch_tool) is the backstop.
 // Mirrors native/src/mcp/{tools.rs,wire.rs}.
 import type { CommandError } from './errors'
-import type { Animated, EaseDir, Interpolation, Keyframe, Rgba, TransitionDirection, TransitionKind } from './model'
+import type { Animated, Continuity, EaseDir, Extrapolate, Extrapolation, Interpolation, Keyframe, Rgba, Segment, Tangent, TangentMode, TransitionDirection, TransitionKind } from './model'
+import { HOLD_EXTRAPOLATION } from '../../shared/keyframe'
 import type { EffectPatch } from './mutations/effects'
 import type { MarkerPatch } from './mutations/markers'
 import { sortKeys } from './canonical'
-import { EASING_PRESETS, ELASTIC_DEFAULT_AMPLITUDE, ELASTIC_DEFAULT_PERIOD, cloneInterp, presetIdForInterp } from '../../shared/easing'
+import { EASING_PRESETS, ELASTIC_DEFAULT_AMPLITUDE, ELASTIC_DEFAULT_PERIOD, cloneInterp, presetIdForSegment } from '../../shared/easing'
 
 export type McpErrorCode = 'invalid_params' | 'invalid_request' | 'not_found' | 'internal'
 export type McpToolErrorJson = { code: McpErrorCode; message: string; data?: unknown }
@@ -101,8 +102,53 @@ export function parseEasing(v: unknown): Interpolation {
   return cloneInterp(hit.interp)
 }
 
+const TANGENT_MODES: readonly TangentMode[] = ['Auto', 'Free']
+const CONTINUITIES: readonly Continuity[] = ['Smooth', 'Broken']
+const EXTRAPOLATES: readonly Extrapolate[] = ['Hold', 'Loop', 'PingPong', 'Offset', 'Continue']
+const KEY_SHAPE = '{id, t_us, value, in: {x, y, mode}, out: {x, y, mode}, continuity, segment: {kind, ...}}'
+
+/** One side of a key: finite unit-square coords + a mode. */
+function parseTangent(v: unknown, side: 'in' | 'out'): Tangent {
+  if (v === null || typeof v !== 'object') throw new McpArgError(`invalid track: keyframe "${side}" must be a tangent {x, y, mode}`)
+  const o = v as Record<string, unknown>
+  if (typeof o.x !== 'number' || !Number.isFinite(o.x) || typeof o.y !== 'number' || !Number.isFinite(o.y))
+    throw new McpArgError(`invalid track: keyframe "${side}" needs finite x and y`)
+  if (!TANGENT_MODES.includes(o.mode as TangentMode))
+    throw new McpArgError(`invalid track: keyframe "${side}".mode must be 'Auto' | 'Free', got ${String(o.mode)}`)
+  return { x: o.x, y: o.y, mode: o.mode as TangentMode }
+}
+
+/** The class of the segment leaving a key. `Spline` carries no params (its
+ *  shape is the two tangents); the other kinds are the same shapes as the
+ *  matching `Interpolation` kinds and take the same defaults and range checks. */
+function parseSegment(v: unknown): Segment {
+  if (v === null || typeof v !== 'object') throw new McpArgError(`invalid track: keyframe segment must be an object {kind, ...}`)
+  const o = v as Record<string, unknown>
+  if (o.kind === 'Spline') return { kind: 'Spline' }
+  if (o.kind === 'Bezier') throw new McpArgError(NO_BEZIER_SEGMENT)
+  const i = parseInterp(v)
+  // Narrowing only: parseInterp mints Bezier from kind 'Bezier' alone, refused above.
+  if (i.kind === 'Bezier') throw new McpArgError(NO_BEZIER_SEGMENT)
+  return i
+}
+const NO_BEZIER_SEGMENT = `invalid track: a stored segment has no 'Bezier' kind — send {"kind":"Spline"} and put the cubic on this key's out and the next key's in`
+
+function parseContinuity(v: unknown): Continuity {
+  if (!CONTINUITIES.includes(v as Continuity)) throw new McpArgError(`invalid track: keyframe continuity must be 'Smooth' | 'Broken', got ${String(v)}`)
+  return v as Continuity
+}
+
+function parseExtrapolate(v: unknown, side: 'before' | 'after'): Extrapolate {
+  if (!EXTRAPOLATES.includes(v as Extrapolate))
+    throw new McpArgError(`invalid track: extrapolate.${side} must be one of ${EXTRAPOLATES.map((e) => `'${e}'`).join(' | ')}, got ${String(v)}`)
+  return v as Extrapolate
+}
+
 /** Validate an Animated<number> (model.ts) — mirrors the Rust serde form of
- *  Animated<f64> in state/animated.rs. Throws McpArgError → invalid_params. */
+ *  Animated<f64> in state/animated.rs. `extrapolate` is optional at THIS API
+ *  edge only (→ Hold/Hold); a saved project must carry it (serialize.ts). A key
+ *  still carrying the retired per-segment `interp` is refused with the new
+ *  shape in the message. Throws McpArgError → invalid_params. */
 export function parseAnimatedF64(v: unknown): Animated<number> {
   if (v === null || typeof v !== 'object') throw new McpArgError(`invalid track: not an object`)
   const o = v as Record<string, unknown>
@@ -115,12 +161,26 @@ export function parseAnimatedF64(v: unknown): Animated<number> {
     const kfs: Keyframe<number>[] = o.value.map((raw) => {
       if (raw === null || typeof raw !== 'object') throw new McpArgError(`invalid track: keyframe must be an object`)
       const k = raw as Record<string, unknown>
+      if ('interp' in k)
+        throw new McpArgError(`invalid track: keyframe carries the retired per-segment "interp" field — a key is ${KEY_SHAPE}; the easing of a segment is this key's segment + out and the next key's in`)
       if (typeof k.id !== 'string') throw new McpArgError(`invalid track: keyframe id must be a string`)
       if (typeof k.t_us !== 'number') throw new McpArgError(`invalid track: keyframe t_us must be a number`)
       if (typeof k.value !== 'number') throw new McpArgError(`invalid track: keyframe value must be a number`)
-      return { id: k.id, t_us: k.t_us, value: k.value, interp: parseInterp(k.interp) }
+      for (const field of ['in', 'out', 'continuity', 'segment'] as const)
+        if (k[field] === undefined) throw new McpArgError(`invalid track: keyframe lacks "${field}" — a key is ${KEY_SHAPE}`)
+      return {
+        id: k.id, t_us: k.t_us, value: k.value,
+        in: parseTangent(k.in, 'in'), out: parseTangent(k.out, 'out'),
+        continuity: parseContinuity(k.continuity), segment: parseSegment(k.segment),
+      }
     })
-    return { mode: 'Keyframed', value: kfs }
+    let extrapolate: Extrapolation = { ...HOLD_EXTRAPOLATION }
+    if (o.extrapolate !== undefined && o.extrapolate !== null) {
+      if (typeof o.extrapolate !== 'object') throw new McpArgError(`invalid track: extrapolate must be {before, after}`)
+      const e = o.extrapolate as Record<string, unknown>
+      extrapolate = { before: parseExtrapolate(e.before, 'before'), after: parseExtrapolate(e.after, 'after') }
+    }
+    return { mode: 'Keyframed', value: kfs, extrapolate }
   }
   throw new McpArgError(`invalid track: unknown mode '${String(o.mode)}'`)
 }
@@ -308,19 +368,27 @@ export function toolEmpty(): ToolResultJson { return { content: [] } }
 export function toolJson(v: unknown): ToolResultJson { return { content: [{ type: 'text', text: JSON.stringify(sortKeys(v)) }] } }
 
 /** get_param_track result shape (NOT the raw Animated serde): Static →
- *  {mode,value}; Keyframed → {mode, keyframes:[{id, t_us (timeline-absolute =
- *  local + t_start), t_local_us (stored base), value, interp, preset_id?}]}.
- *  preset_id is the exact-match reverse lookup against the canonical easing
- *  table — present only when the stored params ARE a table entry's (a
- *  hand-tuned curve carries none; the field is omitted, never null). Caller
- *  wraps in toolJson (sorted keys, mirrors Rust json!/BTreeMap). */
-export function shapeGetParamTrack(track: { mode: 'Static'; value: number } | { mode: 'Keyframed'; value: Array<{ id: string; t_us: number; value: number; interp: Interpolation }> }, tStartUs: number): unknown {
+ *  {mode,value}; Keyframed → {mode, extrapolate, keyframes:[{id, t_us
+ *  (timeline-absolute = local + t_start), t_local_us (stored base), value, in,
+ *  out, continuity, segment, preset_id?}]}. preset_id is the exact-match reverse
+ *  lookup of the segment LEAVING the key (this key's segment + out, the next
+ *  key's in) against the canonical easing table — present only when that
+ *  segment IS a table entry's (a hand-tuned curve carries none, and the last key
+ *  has no leaving segment; the field is omitted, never null). Caller wraps in
+ *  toolJson (sorted keys, mirrors Rust json!/BTreeMap). */
+export function shapeGetParamTrack(track: Animated<number>, tStartUs: number): unknown {
   if (track.mode === 'Static') return { mode: 'Static', value: track.value }
   return {
     mode: 'Keyframed',
-    keyframes: track.value.map((k) => {
-      const presetId = presetIdForInterp(k.interp)
-      return { id: k.id, t_us: k.t_us + tStartUs, t_local_us: k.t_us, value: k.value, interp: k.interp, ...(presetId === undefined ? {} : { preset_id: presetId }) }
+    extrapolate: track.extrapolate,
+    keyframes: track.value.map((k, i) => {
+      const next = track.value[i + 1]
+      const presetId = next === undefined ? undefined : presetIdForSegment(k, next)
+      return {
+        id: k.id, t_us: k.t_us + tStartUs, t_local_us: k.t_us, value: k.value,
+        in: k.in, out: k.out, continuity: k.continuity, segment: k.segment,
+        ...(presetId === undefined ? {} : { preset_id: presetId }),
+      }
     }),
   }
 }
@@ -565,9 +633,40 @@ const EASING_SCHEMA = {
   },
   required: [],
 }
+const TANGENT_SCHEMA = {
+  type: 'object',
+  description: 'One side of a key: a control point in the owning segment\'s unit square (x = fraction of the segment\'s time span, y = fraction of its value span). `in` is the arriving cubic\'s second control point as stored (un-mirrored). mode "Auto" = re-solved on every write (monotone, no overshoot), "Free" = authored.',
+  properties: {
+    x: { type: 'number' },
+    y: { type: 'number' },
+    mode: { type: 'string', enum: ['Auto', 'Free'] },
+  },
+  required: ['x', 'y', 'mode'],
+}
+const SEGMENT_SCHEMA = {
+  type: 'object',
+  description: 'Class of the segment LEAVING a key: {"kind":"Spline"} (its cubic is this key\'s out and the next key\'s in) | {"kind":"Hold"} | {"kind":"Linear"} | {"kind":"Elastic","dir",amplitude?,period?} | {"kind":"Bounce","dir"}.',
+  properties: {
+    kind: { type: 'string', enum: ['Spline', 'Hold', 'Linear', 'Elastic', 'Bounce'] },
+    dir: INTERP_SCHEMA.properties.dir,
+    amplitude: INTERP_SCHEMA.properties.amplitude,
+    period: INTERP_SCHEMA.properties.period,
+  },
+  required: ['kind'],
+}
+const EXTRAPOLATE_ENUM = ['Hold', 'Loop', 'PingPong', 'Offset', 'Continue']
+const EXTRAPOLATION_SCHEMA = {
+  type: 'object',
+  description: 'What the track does outside its key range, per side. Hold clamps to the end key; Loop / PingPong / Offset repeat the range (period = last − first; Offset adds the range delta per period); Continue extends the end segment\'s slope. A single-key track never extrapolates.',
+  properties: {
+    before: { type: 'string', enum: EXTRAPOLATE_ENUM },
+    after: { type: 'string', enum: EXTRAPOLATE_ENUM },
+  },
+  required: ['before', 'after'],
+}
 const ANIM_TRACK_SCHEMA = {
   type: 'object',
-  description: 'AnimTrack<f64>: {"mode":"Static","value":<number>} or {"mode":"Keyframed","value":[{id, t_us, value, interp}, ...]}.',
+  description: 'AnimTrack<f64>: {"mode":"Static","value":<number>} or {"mode":"Keyframed","value":[{id, t_us, value, in, out, continuity, segment}, ...],"extrapolate":{before, after}}. A segment\'s easing is the LEFT key\'s segment + out and the RIGHT key\'s in. `extrapolate` defaults to Hold/Hold when omitted.',
   properties: {
     mode: { type: 'string', enum: ['Static', 'Keyframed'] },
     value: {
@@ -575,10 +674,16 @@ const ANIM_TRACK_SCHEMA = {
       description: 'Static: the held number. Keyframed: the keyframe array.',
       items: {
         type: 'object',
-        properties: { id: { type: 'string' }, t_us: { type: 'integer' }, value: { type: 'number' }, interp: INTERP_SCHEMA },
-        required: ['id', 't_us', 'value', 'interp'],
+        properties: {
+          id: { type: 'string' }, t_us: { type: 'integer' }, value: { type: 'number' },
+          in: TANGENT_SCHEMA, out: TANGENT_SCHEMA,
+          continuity: { type: 'string', enum: ['Smooth', 'Broken'], description: 'With both sides Free: Smooth keeps their slopes locked equal on write, Broken lets them differ.' },
+          segment: SEGMENT_SCHEMA,
+        },
+        required: ['id', 't_us', 'value', 'in', 'out', 'continuity', 'segment'],
       },
     },
+    extrapolate: EXTRAPOLATION_SCHEMA,
   },
   required: ['mode', 'value'],
 }
@@ -982,7 +1087,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key'),
       t_us: parseNum(a.t_us, 't_us'), value: parseNum(a.value, 'value'), interp: parseInterpOpt(a.interp) }) },
   { name: 'get_param_track', exec: 'dedicated',
-    description: 'Read a layer param\'s animation track, flattened for editing. Returns {"mode":"Static","value":n} or {"mode":"Keyframed","keyframes":[{id, t_us, t_local_us, value, interp, preset_id?}]}. `t_us` is timeline-absolute; `t_local_us` is layer-local (the stored base). `preset_id` names the canonical easing preset whose params exactly match the key\'s interp; a hand-tuned curve carries none. Use this to discover keyframe ids before editing.',
+    description: 'Read a layer param\'s animation track, flattened for editing. Returns {"mode":"Static","value":n} or {"mode":"Keyframed","extrapolate":{before, after},"keyframes":[{id, t_us, t_local_us, value, in, out, continuity, segment, preset_id?}]}. `t_us` is timeline-absolute; `t_local_us` is layer-local (the stored base). `in`/`out` are the key\'s arriving/leaving tangents ({x, y, mode}), `segment` the class of the segment leaving it; `preset_id` names the canonical easing preset that segment (this key\'s segment + out, the next key\'s in) exactly matches — a hand-tuned curve and the last key carry none. Use this to discover keyframe ids before editing.',
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, param_key: { type: 'string' } }, required: ['layer_id', 'param_key'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key') }) },
   { name: 'remove_keyframe', exec: 'dedicated',
@@ -1001,7 +1106,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'),
       param_key: parseStr(a.param_key, 'param_key'), interp: parseEasing(a.interp) }) },
   { name: 'smooth_keyframes', exec: 'dedicated',
-    description: 'Bake monotone (no-overshoot) smooth tangents. With `keyframe_id`, smooths that one key; without it, smooths the whole track.',
+    description: 'Set Auto on keyframe(s): both tangent sides become Auto — monotone, no-overshoot tangents re-solved on every write — with Smooth continuity, and the segments on either side become Spline. With `keyframe_id`, one key; without it, every key on the track.',
     inputSchema: { type: 'object', properties: { keyframe_id: { type: ['string', 'null'] }, layer_id: { type: 'string' }, param_key: { type: 'string' } }, required: ['layer_id', 'param_key'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key'),
       keyframe_id: a.keyframe_id != null ? parseUuid(a.keyframe_id, 'keyframe_id') : null }) },
@@ -1011,7 +1116,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key'),
       value: parseNumOpt(a.value, 'value') }) },
   { name: 'set_param_track', exec: 'dedicated',
-    description: 'Low-level: replace a layer param\'s whole animation track. `track` is an AnimTrack<f64>: {"mode":"Static","value":n} or {"mode":"Keyframed","value":[{id, t_us, value, interp}]} with keyframe `t_us` timeline-absolute. Use the granular tools (set_keyframe etc.) unless you need bulk authoring. Replacing only one scale axis on a scale-linked layer diverges the pair and auto-clears the link in the same commit (see set_scale_linked).',
+    description: 'Low-level: replace a layer param\'s whole animation track. `track` is an AnimTrack<f64>: {"mode":"Static","value":n} or {"mode":"Keyframed","value":[{id, t_us, value, in, out, continuity, segment}],"extrapolate":{before, after}} with keyframe `t_us` timeline-absolute (get_param_track returns this shape; `extrapolate` defaults to Hold/Hold). Use the granular tools (set_keyframe etc.) unless you need bulk authoring. Replacing only one scale axis on a scale-linked layer diverges the pair and auto-clears the link in the same commit (see set_scale_linked).',
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, param_key: { type: 'string' }, track: ANIM_TRACK_SCHEMA }, required: ['layer_id', 'param_key', 'track'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key'),
       track: parseAnimatedF64(a.track) }) },

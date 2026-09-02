@@ -473,7 +473,7 @@ describe('MCP adapter routing — set_keyframe (dedicated)', () => {
       param_key: 'opacity',
       t_us: 2_000_000,
       value: 0.5,
-      interp: { kind: 'Linear' },
+      in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' },
     }))
     expect(r.ok).toBe(true)
 
@@ -495,7 +495,7 @@ describe('MCP adapter routing — set_keyframe (dedicated)', () => {
       param_key: 'opacity',
       t_us: 1_000_000,
       value: 0.5,
-      interp: { kind: 'Linear' },
+      in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' },
     }))
     expect(r.ok).toBe(false)
     if (r.ok) return

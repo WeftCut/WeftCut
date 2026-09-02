@@ -1,7 +1,8 @@
 //! Sampled envelope contract — docs/audio.md §The envelope contract.
 //!
 //! `sample_gain` composes Animated gain_db (collected once via `eval_kfs` and
-//! evaluated through `weftcut_eval::eval_f64`) with the layer's linear fade
+//! evaluated through `weftcut_eval::eval_f64_ext` with the track's stored
+//! extrapolation) with the layer's linear fade
 //! ramps, on a fixed 10 ms grid, in LINEAR gain (10^(dB/20)). Both renderers
 //! linearly interpolate between the same points: Web Audio
 //! `setValueCurveAtTime` on the TS side, `Envelope::eval` per sample on this
@@ -91,6 +92,7 @@ pub fn sample_gain(
     // re-materialize the Kf slice on every 10 ms step. `static_v` short-circuits
     // the Static case (empty kfs ⇒ eval_f64 would return the default, not v).
     let kfs = gain_db.eval_kfs();
+    let ex = gain_db.extrapolation();
     let static_v = if let Animated::Static(v) = gain_db {
         Some(*v)
     } else {
@@ -99,7 +101,7 @@ pub fn sample_gain(
     let base = |t: i64| -> f64 {
         match static_v {
             Some(v) => v,
-            None => weftcut_eval::eval_f64(&kfs, t, 0.0),
+            None => weftcut_eval::eval_f64_ext(&kfs, ex, t, 0.0),
         }
     };
     let mut values = Vec::with_capacity((span_us / ENVELOPE_STEP_US) as usize + 2);
@@ -128,11 +130,12 @@ pub fn sample_pan(pan: &Animated<f64>, span_us: i64) -> Envelope {
     // Animated ⇒ Keyframed with ≥2 keys, so collect once and eval the slice
     // directly (no Static case to special-case here).
     let kfs = pan.eval_kfs();
+    let ex = pan.extrapolation();
     let mut values = Vec::new();
     let mut k = 0i64;
     loop {
         let t = (k * ENVELOPE_STEP_US).min(span_us);
-        values.push(weftcut_eval::eval_f64(&kfs, t, 0.0).clamp(-1.0, 1.0) as f32);
+        values.push(weftcut_eval::eval_f64_ext(&kfs, ex, t, 0.0).clamp(-1.0, 1.0) as f32);
         if t >= span_us {
             break;
         }
@@ -240,7 +243,7 @@ mod pbt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::animated::{Animated, Interpolation, Keyframe};
+    use crate::state::animated::{Animated, Continuity, Extrapolation, Keyframe, Segment, Tangent};
     use crate::state::ids::new_id;
 
     fn kf(t_us: i64, value: f64) -> Keyframe<f64> {
@@ -248,7 +251,10 @@ mod tests {
             id: new_id(),
             t_us,
             value,
-            interp: Interpolation::Linear,
+            in_: Tangent::in_identity(),
+            out: Tangent::out_identity(),
+            continuity: Continuity::Broken,
+            segment: Segment::Linear,
         }
     }
 
@@ -298,8 +304,10 @@ mod tests {
     fn keyframed_gain_samples_the_engine_curve() {
         // -20 dB → 0 dB linear over 1 s: midpoint is -10 dB in dB-space,
         // sampled then linearized.
-        let track =
-            Animated::Keyframed(vec![kf(0, -20.0), kf(1_000_000, 0.0)].into_iter().collect());
+        let track = Animated::Keyframed(
+            vec![kf(0, -20.0), kf(1_000_000, 0.0)].into_iter().collect(),
+            Extrapolation::HOLD,
+        );
         let e = sample_gain(&track, 0, 0, 1_000_000);
         assert!(!e.is_constant());
         assert!((e.eval(500_000) - db_to_linear(-10.0)).abs() < 2e-3);
@@ -315,7 +323,7 @@ mod tests {
     /// Cross-language golden vectors. The SAME fixture is asserted by
     /// `render/audio/envelope.golden.test.ts` against the TS twin; a change
     /// that passes one side and fails the other is envelope-contract drift.
-    /// Also locks the serde wire shape (`mode`/`value`, `interp.kind`).
+    /// Also locks the serde wire shape (`mode`/`value`/`extrapolate`, `segment.kind`).
     #[test]
     fn golden_vectors_match_fixture() {
         #[derive(serde::Deserialize)]

@@ -13,7 +13,7 @@ import type { MotifManifest } from "../render/motifs/catalog";
 import type { DecodeRoute } from "../render/decodeRoute";
 import type { RecentEntry } from "../../shared/recents";
 export type { RecentEntry } from "../../shared/recents";
-import type { Interpolation } from "../../shared/easing";
+import type { Animated } from "../../shared/keyframe";
 
 /// One composition's timeline — the root and every Group share this shape
 /// (ADR 0052 §3). Mirrors main/state/summary.ts `CompositionSummary`.
@@ -466,22 +466,24 @@ export interface LinkSummary {
   layer_ids: string[];
 }
 
-/// Wire mirror of the Rust `Interpolation` enum, single-sourced with main
-/// under src/shared (the canonical preset table lives beside it).
+/// Segment easing as a value (`Interpolation`) and the canonical preset table,
+/// single-sourced with main under src/shared/easing.ts.
 export type { EaseDir, Interpolation } from "../../shared/easing";
 
-export interface Keyframe<T> {
-  id: string;
-  t_us: number;
-  value: T;
-  interp: Interpolation;
-}
-
-/// Wire-compatible mirror of the Rust `Animated<T>` enum
-/// (`#[serde(tag = "mode", content = "value")]`).
-export type AnimTrack<T> =
-  | { mode: "Static"; value: T }
-  | { mode: "Keyframed"; value: Keyframe<T>[] };
+/// The keyframe record — per-key tangents, segment class on the left key,
+/// track-level `extrapolate` — single-sourced with main in
+/// src/shared/keyframe.ts (the Rust twin is native/src/state/animated.rs).
+/// `AnimTrack<T>` is the renderer's name for `Animated<T>`.
+export type {
+  Continuity,
+  Extrapolate,
+  Extrapolation,
+  Keyframe,
+  Segment,
+  Tangent,
+  TangentMode,
+} from "../../shared/keyframe";
+export type AnimTrack<T> = Animated<T>;
 
 /// Static read of a track — the editing-surface view of "the value"
 /// (Static → value; Keyframed → first keyframe, else fallback).

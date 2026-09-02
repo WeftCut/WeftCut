@@ -6,7 +6,12 @@
 // scalar-only calls. `initEval()` must be awaited before any wrapper is called
 // (the renderer bootstrap does so).
 import { EVAL_WASM_BASE64 } from './evalWasm.generated'
-import type { Interpolation } from '../../shared/easing'
+import {
+  HOLD_EXTRAPOLATION,
+  type Extrapolate,
+  type Extrapolation,
+  type Segment,
+} from '../../shared/keyframe'
 
 interface Exports {
   snap_round(tUs: number, num: number, den: number): number
@@ -18,28 +23,34 @@ interface Exports {
   frame_index_ceil(tUs: number, num: number, den: number): number
   frame_count(startUs: number, endUs: number, num: number, den: number): number
   us_to_frame(us: number, rate: number): number
-  set_n(n: number): void
+  set_n(n: number, before: number, after: number): void
   set_kf(
     i: number,
     tUs: number,
     value: number,
-    interp: number,
-    p1x: number,
-    p1y: number,
-    p2x: number,
-    p2y: number,
+    outX: number,
+    outY: number,
+    inX: number,
+    inY: number,
+    seg: number,
+    s0: number,
+    s1: number,
+    s2: number,
   ): void
   eval(tUs: number, def: number): number
-  set_n_rgba(n: number): void
+  set_n_rgba(n: number, before: number, after: number): void
   set_kf_rgba(
     i: number,
     tUs: number,
     packed: number,
-    interp: number,
-    p1x: number,
-    p1y: number,
-    p2x: number,
-    p2y: number,
+    outX: number,
+    outY: number,
+    inX: number,
+    inY: number,
+    seg: number,
+    s0: number,
+    s1: number,
+    s2: number,
   ): void
   eval_rgba_packed(tUs: number, defPacked: number): number
   db_to_linear(db: number): number
@@ -50,37 +61,59 @@ interface Exports {
 
 let ex: Exports | null = null
 
-/// `(interp code, p1x, p1y, p2x, p2y)` — the wasm `set_kf`/`set_kf_rgba` slots
-/// for one keyframe's interpolation.
+/// `(segment code, s0, s1, s2)` — the wasm `set_kf`/`set_kf_rgba` slots for one
+/// keyframe's segment class. The Spline tangents ride in their own four slots
+/// (`out.x, out.y, in.x, in.y`), not here.
 ///
-/// Code table — KEEP in lockstep with `native/eval/src/wasm.rs::decode_interp`:
-///   0 = Hold, 1 = Linear, 4 = Bezier, 5 = Elastic, 6 = Bounce.
+/// Code table — KEEP in lockstep with `native/eval/src/wasm.rs::decode_segment`:
+///   0 = Hold, 1 = Linear, 4 = Spline, 5 = Elastic, 6 = Bounce.
 /// Codes 2/3 are RETIRED (the removed named EaseIn/EaseOut variants) and must
 /// never be reassigned — a stale caller sending them must not get a different
-/// curve than it asked for. Param-slot layout mirrors `decode_interp`:
-///   Bezier:  p1 = (p1x, p1y), p2 = (p2x, p2y)
-///   Elastic: p1x = dir, p1y = amplitude, p2x = period (p2y unused)
-///   Bounce:  p1x = dir
+/// curve than it asked for. Param-slot layout mirrors `decode_segment`:
+///   Elastic: s0 = dir, s1 = amplitude, s2 = period
+///   Bounce:  s0 = dir
 /// Dir codes (`decode_dir`): 0 = In, 1 = Out, 2 = InOut.
 ///
 /// An unrecognized kind (only reachable through a cast hole — the wire type is
 /// closed) falls back to Linear: visible motion rather than a silently wrong
 /// curve, the same deliberate policy as the Rust side's debug assert.
-function encodeInterp(interp: Interpolation): [number, number, number, number, number] {
-  switch (interp.kind) {
+function encodeSegment(seg: Segment): [number, number, number, number] {
+  switch (seg.kind) {
     case 'Hold':
-      return [0, 0, 0, 0, 0]
+      return [0, 0, 0, 0]
     case 'Linear':
-      return [1, 0, 0, 0, 0]
-    case 'Bezier':
-      return [4, interp.p1[0], interp.p1[1], interp.p2[0], interp.p2[1]]
+      return [1, 0, 0, 0]
+    case 'Spline':
+      return [4, 0, 0, 0]
     case 'Elastic':
-      return [5, dirCode(interp.dir), interp.amplitude, interp.period, 0]
+      return [5, dirCode(seg.dir), seg.amplitude, seg.period]
     case 'Bounce':
-      return [6, dirCode(interp.dir), 0, 0, 0]
+      return [6, dirCode(seg.dir), 0, 0]
     default:
-      console.assert(false, `weftcut-eval: unknown interp kind, evaluating as Linear`, interp)
-      return [1, 0, 0, 0, 0]
+      console.assert(false, `weftcut-eval: unknown segment kind, evaluating as Linear`, seg)
+      return [1, 0, 0, 0]
+  }
+}
+
+/// `Extrapolate` → ABI code. KEEP in lockstep with
+/// `native/eval/src/wasm.rs::decode_extrapolate`:
+///   0 = Hold, 1 = Loop, 2 = PingPong, 3 = Offset, 4 = Continue.
+/// Unknown (cast hole) → Hold, the clamp — no motion invented.
+function encodeExtrapolate(mode: Extrapolate): number {
+  switch (mode) {
+    case 'Hold':
+      return 0
+    case 'Loop':
+      return 1
+    case 'PingPong':
+      return 2
+    case 'Offset':
+      return 3
+    case 'Continue':
+      return 4
+    default:
+      console.assert(false, `weftcut-eval: unknown extrapolate mode '${String(mode)}', evaluating as Hold`)
+      return 0
   }
 }
 
@@ -185,11 +218,21 @@ export function usToFrame(us: number, rate: number): number {
   return E().us_to_frame(us, rate)
 }
 
-/** Keyframe shape from the IPC AnimTrack (renderer/render/animated.ts). */
+/** A unit-square control point — what the buffer needs of a `Tangent`. */
+interface Side {
+  x: number
+  y: number
+}
+
+/** Keyframe shape the resident buffer needs: a structural subset of the shared
+ * `Keyframe<number>` (render/animated.ts hands tracks straight through), minus
+ * the authoring-only tangent modes and continuity the engine never reads. */
 export interface Kf {
   t_us: number
   value: number
-  interp: Interpolation
+  in: Side
+  out: Side
+  segment: Segment
 }
 
 /** Resident keyframe-buffer capacity — mirrors `MAXKF` in
@@ -203,13 +246,31 @@ export interface Kf {
 export const MAX_KEYFRAMES = 256
 
 let loadedHandle = -1
+let loadedN = 0
+let loadedBefore = -1
+let loadedAfter = -1
 let warnedOverflow = false
 /** Upload a property's keyframes into the resident wasm buffer ONCE, cached by a
  * monotonically-assigned handle (see render/animated.ts). Re-uploads only when
- * the handle differs from the last-loaded — so per-frame eval pays no marshaling. */
-export function loadTrack(handle: number, kfs: Kf[]): void {
-  if (handle === loadedHandle) return
+ * the handle differs from the last-loaded — so per-frame eval pays no marshaling.
+ * The extrapolation codes ride on `set_n`, so a same-handle call whose codes
+ * differ re-issues only that one call. */
+export function loadTrack(
+  handle: number,
+  kfs: readonly Kf[],
+  extrapolate: Extrapolation = HOLD_EXTRAPOLATION,
+): void {
   const e = E()
+  const before = encodeExtrapolate(extrapolate.before)
+  const after = encodeExtrapolate(extrapolate.after)
+  if (handle === loadedHandle) {
+    if (before !== loadedBefore || after !== loadedAfter) {
+      e.set_n(loadedN, before, after)
+      loadedBefore = before
+      loadedAfter = after
+    }
+    return
+  }
   if (kfs.length > MAX_KEYFRAMES && !warnedOverflow) {
     warnedOverflow = true
     console.warn(
@@ -222,11 +283,14 @@ export function loadTrack(handle: number, kfs: Kf[]): void {
   const n = Math.min(kfs.length, MAX_KEYFRAMES)
   for (let i = 0; i < n; i++) {
     const k = kfs[i]!
-    const [c, p1x, p1y, p2x, p2y] = encodeInterp(k.interp)
-    e.set_kf(i, k.t_us, k.value, c, p1x, p1y, p2x, p2y)
+    const [c, s0, s1, s2] = encodeSegment(k.segment)
+    e.set_kf(i, k.t_us, k.value, k.out.x, k.out.y, k.in.x, k.in.y, c, s0, s1, s2)
   }
-  e.set_n(n)
+  e.set_n(n, before, after)
   loadedHandle = handle
+  loadedN = n
+  loadedBefore = before
+  loadedAfter = after
 }
 
 export function evalTrack(tUs: number, def: number): number {
@@ -252,7 +316,9 @@ export interface RgbaLike {
 export interface KfColor {
   t_us: number
   value: RgbaLike
-  interp: Interpolation
+  in: Side
+  out: Side
+  segment: Segment
 }
 
 // Pack/unpack MUST be byte-identical to the Rust shim (`wasm.rs`): r in the HIGH
@@ -264,12 +330,29 @@ const unpackRgba = (p: number): RgbaLike => {
 }
 
 let loadedColorHandle = -1
+let loadedColorN = 0
+let loadedColorBefore = -1
+let loadedColorAfter = -1
 let warnedColorOverflow = false
 /** Upload a color property's keyframes into the resident wasm COLOR buffer ONCE,
- * cached by handle (twin of `loadTrack`; separate buffer + cache var). */
-export function loadColorTrack(handle: number, kfs: KfColor[]): void {
-  if (handle === loadedColorHandle) return
+ * cached by handle (twin of `loadTrack`; separate buffer + cache vars, same
+ * re-issue-`set_n_rgba` rule for a changed extrapolation). */
+export function loadColorTrack(
+  handle: number,
+  kfs: readonly KfColor[],
+  extrapolate: Extrapolation = HOLD_EXTRAPOLATION,
+): void {
   const e = E()
+  const before = encodeExtrapolate(extrapolate.before)
+  const after = encodeExtrapolate(extrapolate.after)
+  if (handle === loadedColorHandle) {
+    if (before !== loadedColorBefore || after !== loadedColorAfter) {
+      e.set_n_rgba(loadedColorN, before, after)
+      loadedColorBefore = before
+      loadedColorAfter = after
+    }
+    return
+  }
   if (kfs.length > MAX_KEYFRAMES && !warnedColorOverflow) {
     warnedColorOverflow = true
     console.warn(
@@ -282,11 +365,14 @@ export function loadColorTrack(handle: number, kfs: KfColor[]): void {
   const n = Math.min(kfs.length, MAX_KEYFRAMES)
   for (let i = 0; i < n; i++) {
     const k = kfs[i]!
-    const [c, p1x, p1y, p2x, p2y] = encodeInterp(k.interp)
-    e.set_kf_rgba(i, k.t_us, packRgba(k.value), c, p1x, p1y, p2x, p2y)
+    const [c, s0, s1, s2] = encodeSegment(k.segment)
+    e.set_kf_rgba(i, k.t_us, packRgba(k.value), k.out.x, k.out.y, k.in.x, k.in.y, c, s0, s1, s2)
   }
-  e.set_n_rgba(n)
+  e.set_n_rgba(n, before, after)
   loadedColorHandle = handle
+  loadedColorN = n
+  loadedColorBefore = before
+  loadedColorAfter = after
 }
 
 /** Evaluate the resident color track at `tUs` (OkLab + premult, via the leaf). */

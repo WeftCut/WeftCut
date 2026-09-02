@@ -10,7 +10,7 @@ import { createContext, useContext } from "react";
 
 import type { AnimTrack, Interpolation, LayerSummary, TrackSummary } from "../ipc";
 import { animatableParams, readParamTrack } from "../keyframe/descriptors";
-import { setKeyframeInterp, smoothKeyframe } from "../keyframe/edits";
+import { setAuto, setSegmentEasing } from "../keyframe/edits";
 import type { SelectedKeyframe } from "../keyframe/selectionStore";
 
 type KeyframedTrack = Extract<AnimTrack<number>, { mode: "Keyframed" }>;
@@ -42,24 +42,22 @@ export type KeyframeGroupEdit = (
 export const removeKeys: KeyframeGroupEdit = (track, kfIds, fallback) => {
   const drop = new Set(kfIds);
   const remaining = track.value.filter((k) => !drop.has(k.id));
-  if (remaining.length > 0) return { mode: "Keyframed", value: remaining };
+  if (remaining.length > 0) return { ...track, value: remaining };
   return { mode: "Static", value: track.value[track.value.length - 1]?.value ?? fallback };
 };
 
-/// Set one interpolation on every selected key of a group. Folds the existing
-/// per-key editor: unlike a removal, setting an interp cannot change which keys
-/// the next step of the fold finds.
-export function applyInterp(interp: Interpolation): KeyframeGroupEdit {
+/// Set one easing on the segment leaving every selected key of a group. Folds
+/// the existing per-key editor: unlike a removal, setting an easing cannot
+/// change which keys the next step of the fold finds.
+export function applySegmentEasingKeys(easing: Interpolation): KeyframeGroupEdit {
   return (track, kfIds) =>
-    kfIds.reduce<AnimTrack<number>>((acc, id) => setKeyframeInterp(acc, id, interp), track);
+    kfIds.reduce<AnimTrack<number>>((acc, id) => setSegmentEasing(acc, id, easing), track);
 }
 
-/// Smooth every selected key of a group — `smoothTrack`'s fold narrowed to the
-/// selection. Sequential ON PURPOSE: smoothing a key also rewrites its
-/// PREVIOUS key's outgoing control point, so a later step has to see the
-/// earlier one's result.
-export const smoothKeys: KeyframeGroupEdit = (track, kfIds) =>
-  kfIds.reduce<AnimTrack<number>>((acc, id) => smoothKeyframe(acc, id), track);
+/// Set Auto on every selected key of a group — one `setAuto` over the
+/// selection (it marks the keys and splines their neighbouring segments; the
+/// coordinates are solved when the actor stores the track).
+export const setAutoKeys: KeyframeGroupEdit = (track, kfIds) => setAuto(track, kfIds);
 
 /// The selection's entries for `updateParamTracksMulti`, in the order the
 /// groups first appear in `selected`. A group whose layer, param or track is

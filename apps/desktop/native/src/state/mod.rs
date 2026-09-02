@@ -33,7 +33,10 @@ pub use command::{
 };
 pub use decode_route::DecodeRoute;
 
-pub use animated::{Animated, EaseDir, Interpolation, Keyframe};
+pub use animated::{
+    Animated, Continuity, EaseDir, Extrapolate, Extrapolation, Keyframe, Segment, Tangent,
+    TangentMode,
+};
 pub use audio_role::{AudioRole, RoleFlagsPatch, RoleMixSettings};
 pub use color::{ColorSpace, Rgba};
 pub use composition::Composition;

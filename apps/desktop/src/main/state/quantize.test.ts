@@ -194,18 +194,18 @@ describe('quantizeTrack', () => {
   })
 
   it('quantizes EVERY keyframe, not just the first', () => {
-    const t: Animated<number> = { mode: 'Keyframed', value: [
-      { id: 'a', t_us: 0, value: 10.373737, interp: { kind: 'Linear' } },
-      { id: 'b', t_us: 1000, value: 20.982, interp: { kind: 'Linear' } },
+    const t: Animated<number> = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [
+      { id: 'a', t_us: 0, value: 10.373737, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } },
+      { id: 'b', t_us: 1000, value: 20.982, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } },
     ] }
     quantizeTrack('x', t)
     expect((t.value as Array<{ value: number }>).map((k) => k.value)).toEqual([10.4, 21])
   })
 
   it('refuses when ANY keyframe is out of range — a track is not partly valid', () => {
-    const t: Animated<number> = { mode: 'Keyframed', value: [
-      { id: 'a', t_us: 0, value: 0.5, interp: { kind: 'Linear' } },
-      { id: 'b', t_us: 1000, value: 1.5, interp: { kind: 'Linear' } },
+    const t: Animated<number> = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [
+      { id: 'a', t_us: 0, value: 0.5, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } },
+      { id: 'b', t_us: 1000, value: 1.5, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } },
     ] }
     expectCmd(() => quantizeTrack('opacity', t), 'InvalidArgument')
   })

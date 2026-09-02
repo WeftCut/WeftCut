@@ -2,13 +2,15 @@
 // keyframed property of one layer. Curve + handles live in an SVG overlay
 // (absolute, ruler-px coordinates); keyframe dots are HTML spans on top so
 // they keep the `.kf-sublane-diamond` contract the e2e suite asserts.
-// Two segment classes: spline (Linear/Bezier — draggable handles) and
+// Two segment classes: spline (Linear/Spline — draggable handles on Spline) and
 // procedural (Elastic/Bounce — read-only sampled curve, --keyframe tint +
-// badge, params edited in the EasingMenu popover).
+// badge, params edited in the EasingMenu popover). A segment's shape is the
+// LEFT key's class + leaving tangent and the RIGHT key's arriving tangent.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { AnimTrack, Interpolation } from "../ipc";
-import { interpGlyphClass, interpToCoeffs, isSplineInterp } from "../keyframe/curve";
+import type { AnimTrack, Interpolation, Keyframe } from "../ipc";
+import { applySegmentEasing } from "../../shared/easing";
+import { interpGlyphClass, isProceduralSegment } from "../keyframe/curve";
 import { useEasingPreviewStore } from "../keyframe/easingPreviewStore";
 import {
   computeValueRange, segmentPolyline, segmentHandles, handleDragToCoeff,
@@ -27,7 +29,7 @@ export function KeyframeCurveGraph({
   isSelected,
   onSelectSeek,
   onRetime,
-  onSetInterp,
+  onSetSegmentCoeffs,
   onOpenMenu,
 }: {
   track: KeyframedTrack;
@@ -43,8 +45,9 @@ export function KeyframeCurveGraph({
   onSelectSeek: (kfId: string) => void;
   /// drag a dot horizontally: retime to a new layer-local µs (caller commits).
   onRetime: (kfId: string, newTUsLocal: number) => void;
-  /// drag a handle: set the owning segment-key's interp.
-  onSetInterp: (kfId: string, interp: Interpolation) => void;
+  /// drag a handle: the segment leaving `kfId` becomes this cubic (both sides
+  /// Free; the caller commits through `setSegmentCoeffs`).
+  onSetSegmentCoeffs: (kfId: string, coeffs: [number, number, number, number]) => void;
   /// right-click a dot or the curve: open the preset/Smooth menu.
   onOpenMenu: (clientX: number, clientY: number, kfId: string) => void;
 }) {
@@ -56,40 +59,56 @@ export function KeyframeCurveGraph({
 
   const keys = track.value;
 
-  // Live interp from the easing popover's Elastic sliders. Keyed by kfId
-  // (UUIDs — at most one graph's track holds it), so a non-matching preview is
-  // inert here. Read-only: the menu owns the store's set/clear lifecycle.
+  // Live easing from the easing popover's Elastic sliders / gallery hover. Keyed
+  // by kfId (UUIDs — at most one graph's track holds it), so a non-matching
+  // preview is inert here. Read-only: the menu owns the store's set/clear
+  // lifecycle. Applied to the segment LEAVING that key through the same bridge
+  // a commit would take (`applySegmentEasing`).
   const menuPreview = useEasingPreviewStore((s) => s.preview);
 
-  // In-flight tangent-handle drag: holds the dragged segment's interp locally so
+  // In-flight tangent-handle drag: holds the dragged segment's cubic locally so
   // the curve previews live WITHOUT committing per pointermove. A per-move commit
   // would fire one async actor round-trip and one undo entry per move (60+ for a
   // single gesture). We commit once on pointerup; this preview survives until the
   // committed track catches up (see the clear effect below), so there's no
   // flicker back to the pre-drag curve while the async commit is in flight.
-  const [preview, setPreview] = useState<{ owner: string; interp: Interpolation } | null>(null);
+  const [preview, setPreview] = useState<{ owner: string; coeffs: [number, number, number, number] } | null>(null);
 
   // Keys as rendered: a previewed segment (handle drag, or the popover's
-  // Elastic sliders) shows its preview interp; everything else is the
+  // easing) shows its preview shape on BOTH of its keys; everything else is the
   // committed track. Drives geom + segments so the value-range and handle
   // positions track the drag live. The local drag preview is applied last so
   // it wins should both ever target one key.
   const renderKeys = useMemo(() => {
     if (!preview && !menuPreview) return keys;
-    return keys.map((k) => {
-      let out = k;
-      if (menuPreview && k.id === menuPreview.kfId) out = { ...out, interp: menuPreview.interp };
-      if (preview && k.id === preview.owner) out = { ...out, interp: preview.interp };
-      return out;
-    });
+    const out: Keyframe<number>[] = keys.slice();
+    const applyLeaving = (kfId: string, e: Interpolation) => {
+      const i = out.findIndex((k) => k.id === kfId);
+      if (i < 0) return;
+      const [l, r] = applySegmentEasing(out[i]!, out[i + 1], e);
+      out[i] = l;
+      if (r) out[i + 1] = r;
+    };
+    if (menuPreview) applyLeaving(menuPreview.kfId, menuPreview.interp);
+    if (preview) {
+      const [x1, y1, x2, y2] = preview.coeffs;
+      applyLeaving(preview.owner, { kind: "Bezier", p1: [x1, y1], p2: [x2, y2] });
+    }
+    return out;
   }, [keys, preview, menuPreview]);
 
-  // Drop the preview once the committed track reflects it (or the owner key is
+  // Drop the preview once the committed track reflects it (or the segment is
   // gone). Until then the preview stands in for the not-yet-arrived commit.
   useEffect(() => {
     if (!preview) return;
-    const k = keys.find((x) => x.id === preview.owner);
-    if (!k || JSON.stringify(k.interp) === JSON.stringify(preview.interp)) setPreview(null);
+    const i = keys.findIndex((x) => x.id === preview.owner);
+    const k = keys[i];
+    const next = keys[i + 1];
+    const [x1, y1, x2, y2] = preview.coeffs;
+    const committed =
+      k !== undefined && next !== undefined && k.segment.kind === "Spline" &&
+      k.out.x === x1 && k.out.y === y1 && next.in.x === x2 && next.in.y === y2;
+    if (!k || !next || committed) setPreview(null);
   }, [keys, preview]);
 
   const geom: CurveGeom = useMemo(() => {
@@ -104,16 +123,18 @@ export function KeyframeCurveGraph({
     geomRef.current = geom;
   }, [geom]);
 
-  // Segments: each owns renderKeys[i].interp (p1 near keys[i], p2 near keys[i+1]).
+  // Segments: each is owned by its LEFT key (class + leaving tangent), and reads
+  // the RIGHT key's arriving tangent.
   const segments = useMemo(() => {
-    const out: { owner: string; seg: Seg; interp: Interpolation }[] = [];
+    const out: { owner: string; seg: Seg; left: Keyframe<number>; right: Keyframe<number> }[] = [];
     for (let i = 0; i < renderKeys.length - 1; i++) {
       const a = renderKeys[i]!;
       const b = renderKeys[i + 1]!;
       out.push({
         owner: a.id,
         seg: { aTUs: a.t_us, aVal: a.value, bTUs: b.t_us, bVal: b.value },
-        interp: a.interp,
+        left: a,
+        right: b,
       });
     }
     return out;
@@ -129,24 +150,25 @@ export function KeyframeCurveGraph({
     e.stopPropagation();
     e.preventDefault();
     // Start from what's on screen (preview if a prior commit is still in flight,
-    // else the committed interp), so the math is single-valued from the grab.
-    // Handles only exist on Bezier segments (segmentHandles), so a non-spline
-    // interp here means the segment changed under the pointer — drop the drag.
-    const grabbed = renderKeys.find((k) => k.id === owner)!.interp;
-    if (!isSplineInterp(grabbed)) return;
-    const current = interpToCoeffs(grabbed);
-    let nextInterp: Interpolation | null = null;
+    // else the committed shape), so the math is single-valued from the grab.
+    // Handles only exist on Spline segments (segmentHandles), so anything else
+    // here means the segment changed under the pointer — drop the drag.
+    const i = renderKeys.findIndex((k) => k.id === owner);
+    const left = renderKeys[i];
+    const right = renderKeys[i + 1];
+    if (!left || !right || left.segment.kind !== "Spline") return;
+    const current: [number, number, number, number] = [left.out.x, left.out.y, right.in.x, right.in.y];
+    let nextCoeffs: [number, number, number, number] | null = null;
     const move = (me: PointerEvent) => {
       const p = svgPoint(me);
-      const [c0, c1, c2, c3] = handleDragToCoeff(which, p.x, p.y, seg, geomRef.current, current);
-      nextInterp = { kind: "Bezier", p1: [c0, c1], p2: [c2, c3] };
-      setPreview({ owner, interp: nextInterp });
+      nextCoeffs = handleDragToCoeff(which, p.x, p.y, seg, geomRef.current, current);
+      setPreview({ owner, coeffs: nextCoeffs });
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       teardownRef.current = null;
-      if (nextInterp) onSetInterp(owner, nextInterp);
+      if (nextCoeffs) onSetSegmentCoeffs(owner, nextCoeffs);
     };
     teardownRef.current = up;
     window.addEventListener("pointermove", move);
@@ -181,13 +203,13 @@ export function KeyframeCurveGraph({
         className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
         data-testid="kf-curve-graph"
       >
-        {segments.map(({ owner, seg, interp }) => {
-          const pts = segmentPolyline(seg, interp, geom).map((p) => `${p.x},${p.y}`).join(" ");
-          const handles = editable ? segmentHandles(seg, interp, geom) : null;
+        {segments.map(({ owner, seg, left, right }) => {
+          const pts = segmentPolyline(seg, left, right, geom).map((p) => `${p.x},${p.y}`).join(" ");
+          const handles = editable ? segmentHandles(seg, left, right, geom) : null;
           // Procedural (Elastic/Bounce) segments are the read-only parameter-
           // curve class: no handles (segmentHandles is already null), and the
           // --keyframe domain tint sets them apart from spline segments.
-          const procedural = !isSplineInterp(interp);
+          const procedural = isProceduralSegment(left.segment);
           return (
             <g key={owner}>
               <polyline
@@ -236,8 +258,8 @@ export function KeyframeCurveGraph({
       {/* Parameter-curve badge on procedural segments — only in the expanded
           editor (the collapsed lanes keep just the tint) so 24px rows stay
           quiet. No convert-to-bezier affordance anywhere, by design. */}
-      {editable && segments.map(({ owner, seg, interp }) =>
-        isSplineInterp(interp) ? null : (
+      {editable && segments.map(({ owner, seg, left }) =>
+        !isProceduralSegment(left.segment) ? null : (
           <span
             key={`badge-${owner}`}
             className="kf-procedural-badge"
@@ -249,7 +271,7 @@ export function KeyframeCurveGraph({
         ),
       )}
       {keys.map((k) => {
-        const glyph = interpGlyphClass(k.interp.kind);
+        const glyph = interpGlyphClass(k.segment.kind);
         return (
           <span
             key={k.id}

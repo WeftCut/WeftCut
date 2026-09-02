@@ -106,7 +106,7 @@ describe('validate', () => {
   it('does NOT reject out-of-range keyframes (intentional, validate.rs:495-509)', () => {
     const p = blankProject(seededGen(), 't')
     const l = colorLayer('a', 0, 100_000)
-    ;(l.params as any).color = { mode: 'Keyframed', value: [{ id: 'k', t_us: -50_000, value: { r: 1, g: 2, b: 3, a: 4 }, interp: { kind: 'Linear' } }] }
+    ;(l.params as any).color = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [{ id: 'k', t_us: -50_000, value: { r: 1, g: 2, b: 3, a: 4 }, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } }] }
     root(p).tracks[0].layers = [l]
     expect(() => validate(p)).not.toThrow()
   })
@@ -117,7 +117,7 @@ describe('validate', () => {
     // colliding keys and lose authored data — see validateLayerParams.
     const p = blankProject(seededGen(), 't')
     const l = colorLayer('a', 0, 100_000)
-    ;(l.params as any).color = { mode: 'Keyframed', value: [{ id: 'k', t_us: 33_334, value: { r: 1, g: 2, b: 3, a: 4 }, interp: { kind: 'Linear' } }] }
+    ;(l.params as any).color = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [{ id: 'k', t_us: 33_334, value: { r: 1, g: 2, b: 3, a: 4 }, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } }] }
     root(p).tracks[0].layers = [l]
     expect(() => validate(p)).not.toThrow()
   })

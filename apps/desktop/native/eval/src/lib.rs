@@ -179,29 +179,30 @@ pub fn us_to_frame(us: i64, rate: u32) -> i64 {
 }
 
 // ===========================================================================
-// Keyframe evaluation. `Interpolation` + `unit_bezier` + the slice-form
-// evaluator `eval_f64` are shared with the renderer (wasm) so preview, export,
-// and the actor all interpolate identically.
+// Keyframe evaluation. `Segment` + the per-key tangents + `unit_bezier` + the
+// slice-form evaluators `eval` / `eval_f64` / `eval_f64_ext` are shared with the
+// renderer (wasm) so preview, export, and the actor all interpolate identically.
+// The record itself (tangents on the key, segment class on the LEFT key,
+// track-level extrapolation) is ADR 0058; `docs/data-model.md` § Animated values
+// carries the wire shape.
 // ===========================================================================
 
-/// Keyframe interpolation. Segment `[kf[i], kf[i+1])` is governed by
-/// `kf[i].interp`: Hold holds the left value; Bezier remaps `u` via
-/// `unit_bezier`; Elastic/Bounce remap `u` via the closed-form Penner easings
-/// below. `Default = Linear`. The serde wire shape (`{kind: ...}`) is gated on
-/// the `serde` feature. Named ease presets are a display-layer concept — they
-/// bake to `Bezier` params at authoring time, so the engine carries no named
-/// variants.
+/// Class of the segment LEAVING a key (`kf[i].segment` governs
+/// `[kf[i], kf[i+1])`). `Spline` is the only class that reads the tangents:
+/// its timing cubic is `unit_bezier(a.out, b.in_)`. Hold holds the left
+/// value; Linear is the identity; Elastic/Bounce remap `u` via the closed-form
+/// Penner easings below. `Default = Linear`. The serde wire shape
+/// (`{kind: ...}`) is gated on the `serde` feature. Named ease presets are a
+/// display-layer concept — they bake to a `Spline` segment's two tangents at
+/// authoring time, so the engine carries no named variants.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "kind"))]
-pub enum Interpolation {
+pub enum Segment {
+    Spline,
     Hold,
     #[default]
     Linear,
-    Bezier {
-        p1: (f64, f64),
-        p2: (f64, f64),
-    },
     /// `amplitude` ≥ 1 (engine clamps defensively), `period` > 0 (authoring
     /// enforces; the engine divides by it as given).
     Elastic {
@@ -224,20 +225,72 @@ pub enum EaseDir {
     InOut,
 }
 
-/// Two-endpoint blend at eased progress `u`. `u` is ALREADY remapped by the
-/// segment's `Interpolation` before lerp sees it, so easing stays orthogonal
-/// to the value type. Overshooting eases (Elastic, Bezier with y outside
-/// `[0,1]`) hand over `u < 0` / `u > 1` and the blend extrapolates — correct for
-/// scalars; colors extrapolate in OkLab and clamp at the u8 conversion.
-/// (Spatial motion paths are NOT this trait — they need the whole keyframe
-/// sequence; a separate future layer.)
+/// What a track does strictly outside `[first.t_us, last.t_us]`. `Hold` is the
+/// end-key clamp. The cyclic modes take `period = last.t_us − first.t_us`:
+/// `Loop` replays the range (so `t = last + k·period` lands on `first.value`
+/// — a visible jump when the ends differ, with no bridging segment); `PingPong`
+/// mirrors every odd period; `Offset` adds `k·(last − first)` per period in the
+/// value type's interpolation space (`Interpolate::offset`); `Continue`
+/// extends the end segment's unit slope linearly. Serializes as the bare
+/// variant name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Extrapolate {
+    #[default]
+    Hold,
+    Loop,
+    PingPong,
+    Offset,
+    Continue,
+}
+
+/// Per-track extrapolation, one mode per side. `Default` (and `HOLD`) is the
+/// clamp on both sides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Extrapolation {
+    pub before: Extrapolate,
+    pub after: Extrapolate,
+}
+
+impl Extrapolation {
+    pub const HOLD: Extrapolation = Extrapolation {
+        before: Extrapolate::Hold,
+        after: Extrapolate::Hold,
+    };
+}
+
+/// The tangent a side holds when its segment does not read it (Hold / Linear /
+/// procedural neighbours, the first key's `in_`, the last key's `out`): the
+/// linear parametrisation's own control points, `(1/3, 1/3)` leaving and
+/// `(2/3, 2/3)` arriving. Kept as ARITHMETIC EXPRESSIONS, never decimal
+/// literals — the TS twins (`src/shared/keyframe.ts`) compute the same
+/// expressions, and the goldens compare the coordinates exactly.
+pub const OUT_IDENTITY: (f64, f64) = (1.0 / 3.0, 1.0 / 3.0);
+pub const IN_IDENTITY: (f64, f64) = (2.0 / 3.0, 2.0 / 3.0);
+
+/// Two-endpoint blend at eased progress `u`, plus the affine step extrapolation
+/// needs. `u` is ALREADY remapped by the segment before lerp sees it, so easing
+/// stays orthogonal to the value type. Overshooting eases (Elastic, a Spline
+/// with a tangent y outside `[0,1]`) hand over `u < 0` / `u > 1` and the blend
+/// extrapolates — correct for scalars; colors extrapolate in OkLab and clamp at
+/// the u8 conversion. (Spatial motion paths are NOT this trait — they need the
+/// whole keyframe sequence; a separate future layer.)
 pub trait Interpolate: Copy {
     fn lerp(a: Self, b: Self, u: f64) -> Self;
+    /// `base + n·(to − from)` in the type's interpolation space. `Offset`
+    /// extrapolation calls it with the period count; `Continue` with the
+    /// slope × time overhang. Only ever reached strictly outside the key range.
+    fn offset(base: Self, from: Self, to: Self, n: f64) -> Self;
 }
 impl Interpolate for f64 {
     #[inline]
     fn lerp(a: f64, b: f64, u: f64) -> f64 {
         a + (b - a) * u
+    }
+    #[inline]
+    fn offset(base: f64, from: f64, to: f64, n: f64) -> f64 {
+        base + n * (to - from)
     }
 }
 
@@ -331,63 +384,94 @@ fn oklab_to_linear(ll: f64, aa: f64, bb: f64) -> (f64, f64, f64) {
     )
 }
 
+/// Alpha-PREMULTIPLIED OkLab `(L·α, a·α, b·α, α)` — the vector both `lerp` and
+/// `offset` do their arithmetic in (CSS Color 4 §12.3).
+type PremulLab = (f64, f64, f64, f64);
+
+/// sRGB u8 → premultiplied OkLab.
+fn rgba8_to_premul_lab(c: Rgba8) -> PremulLab {
+    let (lr, lg, lb) = (
+        srgb_to_linear(u8_to_f(c.r)),
+        srgb_to_linear(u8_to_f(c.g)),
+        srgb_to_linear(u8_to_f(c.b)),
+    );
+    let (ll, aa, bb) = linear_to_oklab(lr, lg, lb);
+    let alpha = u8_to_f(c.a);
+    (ll * alpha, aa * alpha, bb * alpha, alpha)
+}
+
+/// Premultiplied OkLab → sRGB u8: un-premultiply by the result alpha (zero
+/// alpha → zero color), then clamp every channel at the u8 conversion. This
+/// clamp is where an overshooting ease or an `Offset` extrapolation lands.
+fn premul_lab_to_rgba8((pl, pa, pb, ar): PremulLab) -> Rgba8 {
+    let (ll, oa, ob) = if ar > 0.0 {
+        (pl / ar, pa / ar, pb / ar)
+    } else {
+        (0.0, 0.0, 0.0)
+    };
+    let (lr, lg, lb) = oklab_to_linear(ll, oa, ob);
+    Rgba8 {
+        r: f_to_u8(linear_to_srgb(lr)),
+        g: f_to_u8(linear_to_srgb(lg)),
+        b: f_to_u8(linear_to_srgb(lb)),
+        a: f_to_u8(ar),
+    }
+}
+
 impl Interpolate for Rgba8 {
     /// Premultiplied-alpha OkLab interpolation (CSS Color 4 §12.3).
     /// Premultiplication is why a fade to transparent keeps its hue instead of
     /// darkening toward black. `u==0.0` returns `a` and `u==1.0` returns `b`
     /// exactly (the scalar lerp gives this).
     fn lerp(a: Rgba8, b: Rgba8, u: f64) -> Rgba8 {
-        // Endpoint → (L,a,b) in OkLab + alpha in [0,1].
-        let to_lab = |c: Rgba8| -> (f64, f64, f64, f64) {
-            let (lr, lg, lb) = (
-                srgb_to_linear(u8_to_f(c.r)),
-                srgb_to_linear(u8_to_f(c.g)),
-                srgb_to_linear(u8_to_f(c.b)),
-            );
-            let (ll, aa, bb) = linear_to_oklab(lr, lg, lb);
-            (ll, aa, bb, u8_to_f(c.a))
-        };
-        let (al, aa, ab, aalpha) = to_lab(a);
-        let (bl, ba, bb, balpha) = to_lab(b);
-
-        // Premultiply (L,a,b) by alpha.
-        let (apl, apa, apb) = (al * aalpha, aa * aalpha, ab * aalpha);
-        let (bpl, bpa, bpb) = (bl * balpha, ba * balpha, bb * balpha);
-
-        // Scalar lerp the premultiplied components + alpha.
+        let (apl, apa, apb, aalpha) = rgba8_to_premul_lab(a);
+        let (bpl, bpa, bpb, balpha) = rgba8_to_premul_lab(b);
         let lerp = |x: f64, y: f64| x + (y - x) * u;
-        let pl = lerp(apl, bpl);
-        let pa = lerp(apa, bpa);
-        let pb = lerp(apb, bpb);
-        let ar = lerp(aalpha, balpha);
+        premul_lab_to_rgba8((
+            lerp(apl, bpl),
+            lerp(apa, bpa),
+            lerp(apb, bpb),
+            lerp(aalpha, balpha),
+        ))
+    }
 
-        // Un-premultiply by the result alpha (zero alpha → zero color).
-        let (ll, oa, ob) = if ar > 0.0 {
-            (pl / ar, pa / ar, pb / ar)
-        } else {
-            (0.0, 0.0, 0.0)
-        };
-
-        let (lr, lg, lb) = oklab_to_linear(ll, oa, ob);
-        Rgba8 {
-            r: f_to_u8(linear_to_srgb(lr)),
-            g: f_to_u8(linear_to_srgb(lg)),
-            b: f_to_u8(linear_to_srgb(lb)),
-            a: f_to_u8(ar),
-        }
+    /// The same premultiplied OkLab vector, stepped by `n·(to − from)`; the
+    /// documented "extrapolate in OkLab, clamp at u8" rule falls out of
+    /// `premul_lab_to_rgba8`.
+    fn offset(base: Rgba8, from: Rgba8, to: Rgba8, n: f64) -> Rgba8 {
+        let (bl, ba, bb, balpha) = rgba8_to_premul_lab(base);
+        let (fl, fa, fb, falpha) = rgba8_to_premul_lab(from);
+        let (tl, ta, tb, talpha) = rgba8_to_premul_lab(to);
+        let step = |x: f64, f: f64, t: f64| x + n * (t - f);
+        premul_lab_to_rgba8((
+            step(bl, fl, tl),
+            step(ba, fa, ta),
+            step(bb, fb, tb),
+            step(balpha, falpha, talpha),
+        ))
     }
 }
 
-/// POD keyframe — the input to `eval_f64`. The actor's imbl-backed
-/// `Keyframe<T>` collects into a `&[Kf]` before evaluating (`eval_kfs`).
-/// `Copy` so the wasm shim can stage a fixed-size `[Kf; N]` buffer.
-/// Default type param `T = f64` so existing `Kf`, `[Kf; N]`, `Vec<Kf>` sites
-/// keep meaning `Kf<f64>` without any edits.
+/// POD keyframe — the input to `eval`. The actor's imbl-backed `Keyframe<T>`
+/// collects into a `&[Kf]` before evaluating (`eval_kfs`); modes and
+/// continuity never reach the engine (main solves them into these numbers at
+/// write time). `Copy` so the wasm shim can stage a fixed-size `[Kf; N]`
+/// buffer. Default type param `T = f64` so `Kf`, `[Kf; N]`, `Vec<Kf>` sites
+/// mean `Kf<f64>`.
+///
+/// `out` is the first control point of the cubic LEAVING this key and `in_`
+/// the second control point of the cubic ARRIVING — both in the owning
+/// segment's unit square, both stored UN-MIRRORED so `[a, b]` evaluates as
+/// `unit_bezier(a.out.0, a.out.1, b.in_.0, b.in_.1, u)` with no arithmetic on
+/// the stored numbers (a `1 − (1 − x)` round trip is not exact in f64 and would
+/// break the exact-equality preset lookup and the byte-identical goldens).
 #[derive(Clone, Copy, Debug)]
 pub struct Kf<T = f64> {
     pub t_us: i64,
     pub value: T,
-    pub interp: Interpolation,
+    pub out: (f64, f64),
+    pub in_: (f64, f64),
+    pub segment: Segment,
 }
 
 /// `f64::abs` is std-only; the wasm (no_std) build needs a core-only abs.
@@ -541,19 +625,37 @@ fn bounce_in_out(t: f64) -> f64 {
     }
 }
 
-/// Generic slice-form keyframe evaluator. Empty slice ⇒ `default`; `t_us`
-/// before-first/after-last clamps to the end key. Segment interpolation follows
-/// [`Interpolation`]. PRECONDITION: keyframes sorted by `t_us` (the actor stores
-/// them normalized). `render/animated.ts::resolveAnimated` calls this through
-/// wasm. The only type-specific operation is `T::lerp` at the very tail; all
-/// segment search, clamp, and easing logic is shared across value types.
-pub fn eval<T: Interpolate>(kfs: &[Kf<T>], t_us: i64, default: T) -> T {
+/// Generic slice-form keyframe evaluator. Empty slice ⇒ `default`; one key ⇒
+/// that key (a single key never extrapolates); `t_us` strictly before the
+/// first / after the last key goes through `ex.before` / `ex.after`; inside the
+/// range the governing segment is the LEFT key's (`kf[i].segment` owns
+/// `[kf[i], kf[i+1])`). PRECONDITION: keyframes sorted by `t_us` (the actor
+/// stores them normalized). `render/animated.ts::resolveAnimated` calls this
+/// through wasm. The only type-specific operations are `T::lerp` and
+/// `T::offset`; segment search, easing and extrapolation are shared across
+/// value types.
+pub fn eval<T: Interpolate>(kfs: &[Kf<T>], ex: Extrapolation, t_us: i64, default: T) -> T {
     if kfs.is_empty() {
         return default;
     }
     if kfs.len() == 1 {
         return kfs[0].value;
     }
+    let first = &kfs[0];
+    let last = &kfs[kfs.len() - 1];
+    if t_us < first.t_us {
+        return extrapolate(kfs, ex.before, t_us, true);
+    }
+    if t_us > last.t_us {
+        return extrapolate(kfs, ex.after, t_us, false);
+    }
+    eval_inside(kfs, t_us)
+}
+
+/// The in-range evaluator: the end keys clamp (so a procedural segment's
+/// endpoint residue never surfaces AT a key), then the segment search and the
+/// left key's easing. Callers guarantee `kfs.len() >= 2`.
+fn eval_inside<T: Interpolate>(kfs: &[Kf<T>], t_us: i64) -> T {
     let first = &kfs[0];
     let last = &kfs[kfs.len() - 1];
     if t_us <= first.t_us {
@@ -573,11 +675,11 @@ pub fn eval<T: Interpolate>(kfs: &[Kf<T>], t_us: i64, default: T) -> T {
         return b.value;
     }
     let mut u = (t_us - a.t_us) as f64 / span;
-    match a.interp {
-        Interpolation::Hold => return a.value,
-        Interpolation::Linear => {}
-        Interpolation::Bezier { p1, p2 } => u = unit_bezier(p1.0, p1.1, p2.0, p2.1, u),
-        Interpolation::Elastic {
+    match a.segment {
+        Segment::Hold => return a.value,
+        Segment::Linear => {}
+        Segment::Spline => u = unit_bezier(a.out.0, a.out.1, b.in_.0, b.in_.1, u),
+        Segment::Elastic {
             dir,
             amplitude,
             period,
@@ -588,7 +690,7 @@ pub fn eval<T: Interpolate>(kfs: &[Kf<T>], t_us: i64, default: T) -> T {
                 EaseDir::InOut => elastic_in_out(u, amplitude, period),
             }
         }
-        Interpolation::Bounce { dir } => {
+        Segment::Bounce { dir } => {
             u = match dir {
                 EaseDir::In => bounce_in(u),
                 EaseDir::Out => bounce_out(u),
@@ -599,10 +701,136 @@ pub fn eval<T: Interpolate>(kfs: &[Kf<T>], t_us: i64, default: T) -> T {
     T::lerp(a.value, b.value, u)
 }
 
-/// Thin wrapper — KEEP this exact public signature (audio envelope sampler
-/// calls it directly).
+/// Value strictly outside the key range (`before` says which side). The cyclic
+/// modes fold `t_us` into `[first.t_us, last.t_us)` with `div_euclid` /
+/// `rem_euclid` (core, no_std-safe; euclid so a negative overhang counts
+/// periods the same way a positive one does), then re-enter `eval_inside`.
+/// A zero period (all keys on one time) clamps like `Hold`.
+fn extrapolate<T: Interpolate>(kfs: &[Kf<T>], mode: Extrapolate, t_us: i64, before: bool) -> T {
+    let first = &kfs[0];
+    let last = &kfs[kfs.len() - 1];
+    let end = if before { first.value } else { last.value };
+    let period = last.t_us - first.t_us;
+    if period <= 0 {
+        return end;
+    }
+    let rel = t_us - first.t_us;
+    let n = rel.div_euclid(period);
+    let u = rel.rem_euclid(period);
+    match mode {
+        Extrapolate::Hold => end,
+        Extrapolate::Loop => eval_inside(kfs, first.t_us + u),
+        Extrapolate::PingPong => {
+            if n.rem_euclid(2) == 1 {
+                eval_inside(kfs, last.t_us - u)
+            } else {
+                eval_inside(kfs, first.t_us + u)
+            }
+        }
+        Extrapolate::Offset => T::offset(
+            eval_inside(kfs, first.t_us + u),
+            first.value,
+            last.value,
+            n as f64,
+        ),
+        Extrapolate::Continue => {
+            if before {
+                let a = first;
+                let b = &kfs[1];
+                let dt = b.t_us - a.t_us;
+                if dt <= 0 {
+                    return a.value;
+                }
+                let s = start_unit_slope(a, b);
+                T::offset(
+                    a.value,
+                    a.value,
+                    b.value,
+                    s * (t_us - a.t_us) as f64 / dt as f64,
+                )
+            } else {
+                let a = &kfs[kfs.len() - 2];
+                let b = last;
+                let dt = b.t_us - a.t_us;
+                if dt <= 0 {
+                    return b.value;
+                }
+                let s = end_unit_slope(a, b);
+                T::offset(
+                    b.value,
+                    a.value,
+                    b.value,
+                    s * (t_us - b.t_us) as f64 / dt as f64,
+                )
+            }
+        }
+    }
+}
+
+/// Slope of the unit-square direction `d`, or 0 when it points nowhere in time
+/// (`d.0 <= 0`) — a vertical or backwards handle has no finite velocity to
+/// continue along.
+#[inline]
+fn unit_slope(d: (f64, f64)) -> f64 {
+    if d.0 <= 0.0 {
+        0.0
+    } else {
+        d.1 / d.0
+    }
+}
+
+/// Unit slope at which segment `a → b` ARRIVES, in `(Δvalue / Δtime)` units of
+/// that segment. Linear → 1; Hold and the procedural kinds → 0 (a step, or a
+/// curve with no single arrival velocity). Spline → the direction from
+/// `b.in_` to `(1,1)`; a zero-length arriving handle falls back to the leaving
+/// handle's direction to `(1,1)`, and a degenerate cubic to the diagonal.
+fn end_unit_slope<T>(a: &Kf<T>, b: &Kf<T>) -> f64 {
+    match a.segment {
+        Segment::Linear => 1.0,
+        Segment::Hold | Segment::Elastic { .. } | Segment::Bounce { .. } => 0.0,
+        Segment::Spline => {
+            let mut d = (1.0 - b.in_.0, 1.0 - b.in_.1);
+            if d == (0.0, 0.0) {
+                d = (1.0 - a.out.0, 1.0 - a.out.1);
+            }
+            if d == (0.0, 0.0) {
+                d = (1.0, 1.0);
+            }
+            unit_slope(d)
+        }
+    }
+}
+
+/// Mirror of `end_unit_slope` for the slope at which segment `a → b` LEAVES
+/// `a`: `a.out` from the origin, then `b.in_` from the origin, then the
+/// diagonal.
+fn start_unit_slope<T>(a: &Kf<T>, b: &Kf<T>) -> f64 {
+    match a.segment {
+        Segment::Linear => 1.0,
+        Segment::Hold | Segment::Elastic { .. } | Segment::Bounce { .. } => 0.0,
+        Segment::Spline => {
+            let mut d = (a.out.0, a.out.1);
+            if d == (0.0, 0.0) {
+                d = (b.in_.0, b.in_.1);
+            }
+            if d == (0.0, 0.0) {
+                d = (1.0, 1.0);
+            }
+            unit_slope(d)
+        }
+    }
+}
+
+/// Thin wrapper with the clamp on both sides — KEEP this exact public
+/// signature (the wasm shim and callers that own no extrapolation use it).
 pub fn eval_f64(kfs: &[Kf<f64>], t_us: i64, default: f64) -> f64 {
-    eval(kfs, t_us, default)
+    eval(kfs, Extrapolation::HOLD, t_us, default)
+}
+
+/// `eval_f64` with the track's stored extrapolation — what
+/// `Animated<f64>::value_at` and the audio envelope samplers call.
+pub fn eval_f64_ext(kfs: &[Kf<f64>], ex: Extrapolation, t_us: i64, default: f64) -> f64 {
+    eval(kfs, ex, t_us, default)
 }
 
 // ===========================================================================
@@ -833,13 +1061,45 @@ mod tests {
         }
     }
 
-    // ---- keyframe eval (eval_f64) ----
-    fn kf(t_us: i64, value: f64, interp: Interpolation) -> Kf {
+    // ---- keyframe eval (eval / eval_f64) ----
+    /// A key whose sides are the identity — what every non-Spline segment holds.
+    fn kf(t_us: i64, value: f64, segment: Segment) -> Kf {
         Kf {
             t_us,
             value,
-            interp,
+            out: OUT_IDENTITY,
+            in_: IN_IDENTITY,
+            segment,
         }
+    }
+
+    /// The left key of a Spline segment with an explicit leaving handle.
+    fn spline(t_us: i64, value: f64, out: (f64, f64)) -> Kf {
+        Kf {
+            out,
+            ..kf(t_us, value, Segment::Spline)
+        }
+    }
+
+    /// A key with an explicit arriving handle (the right key of a Spline).
+    fn arriving(t_us: i64, value: f64, in_: (f64, f64)) -> Kf {
+        Kf {
+            in_,
+            ..kf(t_us, value, Segment::Linear)
+        }
+    }
+
+    /// Two-key `0 → 10` ramp over `[0 s, 10 s]` — the extrapolation cases'
+    /// shared track (period 10 s, Δv 10).
+    fn ramp() -> [Kf; 2] {
+        [
+            kf(0, 0.0, Segment::Linear),
+            kf(10_000_000, 10.0, Segment::Linear),
+        ]
+    }
+
+    fn ex(before: Extrapolate, after: Extrapolate) -> Extrapolation {
+        Extrapolation { before, after }
     }
 
     #[test]
@@ -849,15 +1109,15 @@ mod tests {
 
     #[test]
     fn eval_single_returns_value() {
-        let kfs = [kf(0, 3.0, Interpolation::Linear)];
+        let kfs = [kf(0, 3.0, Segment::Linear)];
         assert!((eval_f64(&kfs, 100_000, 0.0) - 3.0).abs() < 1e-9);
     }
 
     #[test]
     fn eval_clamps_before_first_and_after_last() {
         let kfs = [
-            kf(5_000_000, 2.0, Interpolation::Linear),
-            kf(10_000_000, 8.0, Interpolation::Linear),
+            kf(5_000_000, 2.0, Segment::Linear),
+            kf(10_000_000, 8.0, Segment::Linear),
         ];
         assert!((eval_f64(&kfs, 0, 0.0) - 2.0).abs() < 1e-9);
         assert!((eval_f64(&kfs, 15_000_000, 0.0) - 8.0).abs() < 1e-9);
@@ -865,56 +1125,205 @@ mod tests {
 
     #[test]
     fn eval_linear_midpoint() {
-        let kfs = [
-            kf(0, 0.0, Interpolation::Linear),
-            kf(10_000_000, 10.0, Interpolation::Linear),
-        ];
+        let kfs = ramp();
         assert!((eval_f64(&kfs, 5_000_000, 0.0) - 5.0).abs() < 1e-6);
     }
 
     #[test]
     fn eval_hold_sticks_left() {
         let kfs = [
-            kf(0, 3.0, Interpolation::Hold),
-            kf(10_000_000, 8.0, Interpolation::Hold),
+            kf(0, 3.0, Segment::Hold),
+            kf(10_000_000, 8.0, Segment::Hold),
         ];
         assert!((eval_f64(&kfs, 5_000_000, 0.0) - 3.0).abs() < 1e-9);
     }
 
     #[test]
-    fn eval_bezier_baked_ease_in_matches_unit_bezier() {
-        // (0.42,0),(1,1) — the params the retired named ease-in variant baked to.
+    fn eval_spline_ease_in_matches_unit_bezier() {
+        // (0.42,0),(1,1) — the CSS ease-in cubic, split across the two keys.
         let kfs = [
-            kf(
-                0,
-                0.0,
-                Interpolation::Bezier {
-                    p1: (0.42, 0.0),
-                    p2: (1.0, 1.0),
-                },
-            ),
-            kf(10_000_000, 10.0, Interpolation::Linear),
+            spline(0, 0.0, (0.42, 0.0)),
+            arriving(10_000_000, 10.0, (1.0, 1.0)),
         ];
         let expected = unit_bezier(0.42, 0.0, 1.0, 1.0, 0.5) * 10.0;
         assert!((eval_f64(&kfs, 5_000_000, 0.0) - expected).abs() < 1e-9);
     }
 
     #[test]
-    fn eval_bezier_baked_ease_out_matches_unit_bezier() {
-        // (0,0),(0.58,1) — the params the retired named ease-out variant baked to.
+    fn eval_spline_ease_out_matches_unit_bezier() {
+        // (0,0),(0.58,1) — the CSS ease-out cubic, split across the two keys.
         let kfs = [
-            kf(
-                0,
-                0.0,
-                Interpolation::Bezier {
-                    p1: (0.0, 0.0),
-                    p2: (0.58, 1.0),
-                },
-            ),
-            kf(10_000_000, 10.0, Interpolation::Linear),
+            spline(0, 0.0, (0.0, 0.0)),
+            arriving(10_000_000, 10.0, (0.58, 1.0)),
         ];
         let expected = unit_bezier(0.0, 0.0, 0.58, 1.0, 0.5) * 10.0;
         assert!((eval_f64(&kfs, 5_000_000, 0.0) - expected).abs() < 1e-9);
+    }
+
+    /// The tangents are ignored unless the LEFT key's segment is Spline — a
+    /// Linear key carrying an ease-in handle still evaluates as the identity.
+    #[test]
+    fn eval_non_spline_segment_ignores_tangents() {
+        let kfs = [
+            Kf {
+                out: (0.42, 0.0),
+                ..kf(0, 0.0, Segment::Linear)
+            },
+            arriving(10_000_000, 10.0, (1.0, 1.0)),
+        ];
+        assert!((eval_f64(&kfs, 5_000_000, 0.0) - 5.0).abs() < 1e-9);
+    }
+
+    // ---- extrapolation ----
+    // Hand-derived on `ramp()` (0 → 10 over 10 s): the same expectations the
+    // cross-language `animatedGolden.fixture.json` pins.
+
+    #[test]
+    fn eval_f64_is_eval_with_hold_on_both_sides() {
+        let kfs = ramp();
+        for t in [-2_000_000, 0, 5_000_000, 10_000_000, 12_000_000] {
+            assert_eq!(
+                eval_f64(&kfs, t, 0.0),
+                eval(&kfs, Extrapolation::HOLD, t, 0.0),
+                "t={t}"
+            );
+        }
+    }
+
+    #[test]
+    fn extrapolate_hold_clamps_both_sides() {
+        let kfs = ramp();
+        let e = ex(Extrapolate::Hold, Extrapolate::Hold);
+        assert_eq!(eval_f64_ext(&kfs, e, -2_000_000, 0.0), 0.0);
+        assert_eq!(eval_f64_ext(&kfs, e, 12_000_000, 0.0), 10.0);
+    }
+
+    #[test]
+    fn extrapolate_loop_replays_the_range_and_jumps_at_the_period() {
+        let kfs = ramp();
+        let e = ex(Extrapolate::Loop, Extrapolate::Loop);
+        // after: 12 s is 2 s into the second period
+        assert!((eval_f64_ext(&kfs, e, 12_000_000, 0.0) - 2.0).abs() < 1e-9);
+        // before: −2 s is 8 s into the period preceding the range
+        assert!((eval_f64_ext(&kfs, e, -2_000_000, 0.0) - 8.0).abs() < 1e-9);
+        // exactly one period after the last key lands on first.value — the jump
+        assert_eq!(eval_f64_ext(&kfs, e, 20_000_000, 0.0), 0.0);
+    }
+
+    #[test]
+    fn extrapolate_pingpong_mirrors_odd_periods_on_both_sides() {
+        let kfs = ramp();
+        let e = ex(Extrapolate::PingPong, Extrapolate::PingPong);
+        // after: period 1 (odd) runs backwards → 10 − 2
+        assert!((eval_f64_ext(&kfs, e, 12_000_000, 0.0) - 8.0).abs() < 1e-9);
+        // before: −2 s is in period −1 (odd, euclid) → mirrored → 2
+        assert!((eval_f64_ext(&kfs, e, -2_000_000, 0.0) - 2.0).abs() < 1e-9);
+        // before: −12 s is in period −2 (even) → forward → 8
+        assert!((eval_f64_ext(&kfs, e, -12_000_000, 0.0) - 8.0).abs() < 1e-9);
+        // after: period 2 (even) runs forward again
+        assert!((eval_f64_ext(&kfs, e, 22_000_000, 0.0) - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn extrapolate_offset_adds_the_range_delta_per_period() {
+        let kfs = ramp();
+        let e = ex(Extrapolate::Offset, Extrapolate::Offset);
+        assert!((eval_f64_ext(&kfs, e, 12_000_000, 0.0) - 12.0).abs() < 1e-9);
+        assert!((eval_f64_ext(&kfs, e, -2_000_000, 0.0) - -2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn extrapolate_continue_extends_a_linear_end_segment() {
+        let kfs = ramp();
+        let e = ex(Extrapolate::Continue, Extrapolate::Continue);
+        assert!((eval_f64_ext(&kfs, e, 12_000_000, 0.0) - 12.0).abs() < 1e-9);
+        assert!((eval_f64_ext(&kfs, e, -2_000_000, 0.0) - -2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn extrapolate_continue_over_hold_has_zero_slope() {
+        let kfs = [
+            kf(0, 0.0, Segment::Hold),
+            kf(10_000_000, 10.0, Segment::Linear),
+        ];
+        let e = ex(Extrapolate::Continue, Extrapolate::Continue);
+        assert_eq!(eval_f64_ext(&kfs, e, 12_000_000, 0.0), 10.0);
+        assert_eq!(eval_f64_ext(&kfs, e, -2_000_000, 0.0), 0.0);
+    }
+
+    #[test]
+    fn extrapolate_continue_over_spline_uses_the_arriving_handle() {
+        // ease_in: `in_ = (1,1)` is a zero-length arriving handle, so the end
+        // direction falls back to `(1 − 0.42, 1 − 0)` → slope 1/0.58.
+        let kfs = [
+            spline(0, 0.0, (0.42, 0.0)),
+            arriving(10_000_000, 10.0, (1.0, 1.0)),
+        ];
+        let e = ex(Extrapolate::Continue, Extrapolate::Continue);
+        let expected = 10.0 + 1.0 * (1.0 / 10.0) * (1.0 / 0.58) * 10.0;
+        assert!((eval_f64_ext(&kfs, e, 11_000_000, 0.0) - expected).abs() < 1e-9);
+        assert!((expected - 11.724137931034482).abs() < 1e-9);
+        // before: the leaving handle (0.42, 0) is flat → slope 0 → clamps.
+        assert_eq!(eval_f64_ext(&kfs, e, -1_000_000, 0.0), 0.0);
+    }
+
+    #[test]
+    fn extrapolate_only_the_named_side() {
+        let kfs = ramp();
+        let e = ex(Extrapolate::Hold, Extrapolate::Loop);
+        assert_eq!(eval_f64_ext(&kfs, e, -2_000_000, 0.0), 0.0);
+        assert!((eval_f64_ext(&kfs, e, 12_000_000, 0.0) - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn extrapolate_single_key_never_extrapolates() {
+        let kfs = [kf(5_000_000, 3.0, Segment::Linear)];
+        for mode in [
+            Extrapolate::Loop,
+            Extrapolate::PingPong,
+            Extrapolate::Offset,
+            Extrapolate::Continue,
+        ] {
+            assert_eq!(eval_f64_ext(&kfs, ex(mode, mode), 0, 0.0), 3.0);
+            assert_eq!(eval_f64_ext(&kfs, ex(mode, mode), 99_000_000, 0.0), 3.0);
+        }
+    }
+
+    #[test]
+    fn rgba8_offset_extrapolates_in_oklab_and_clamps_at_u8() {
+        let black = Rgba8 {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
+        let white = Rgba8 {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255,
+        };
+        let kfs = [
+            Kf {
+                t_us: 0,
+                value: black,
+                out: OUT_IDENTITY,
+                in_: IN_IDENTITY,
+                segment: Segment::Linear,
+            },
+            Kf {
+                t_us: 1_000_000,
+                value: white,
+                out: OUT_IDENTITY,
+                in_: IN_IDENTITY,
+                segment: Segment::Linear,
+            },
+        ];
+        let e = ex(Extrapolate::Offset, Extrapolate::Offset);
+        // 2.5 s = two whole ramps past the mid-gray: L ≈ 2.5 → clamps to white.
+        assert_eq!(eval(&kfs, e, 2_500_000, black), white);
+        // −0.5 s = one ramp below the mid-gray: L ≈ −0.5 → clamps to black.
+        assert_eq!(eval(&kfs, e, -500_000, white), black);
     }
 
     // ---- procedural easing (elastic + bounce) ----
@@ -1084,13 +1493,13 @@ mod tests {
             kf(
                 0,
                 0.0,
-                Interpolation::Elastic {
+                Segment::Elastic {
                     dir: EaseDir::Out,
                     amplitude: 1.0,
                     period: 0.3,
                 },
             ),
-            kf(10_000_000, 10.0, Interpolation::Linear),
+            kf(10_000_000, 10.0, Segment::Linear),
         ];
         assert!((eval_f64(&kfs, 2_500_000, 0.0) - 9.116116523516816).abs() < 1e-9);
         // u = 0.1 → 1.25: overshoot flows through the lerp unclamped.
@@ -1108,13 +1517,13 @@ mod tests {
                 kf(
                     0,
                     0.0,
-                    Interpolation::Elastic {
+                    Segment::Elastic {
                         dir,
                         amplitude: 1.5,
                         period: 0.45,
                     },
                 ),
-                kf(10_000_000, 10.0, Interpolation::Linear),
+                kf(10_000_000, 10.0, Segment::Linear),
             ]
         };
         // In at u=0.25 lands negative — undershoot also flows through the lerp.
@@ -1126,8 +1535,8 @@ mod tests {
     fn eval_bounce_through_enum_matches_closed_form() {
         let mk = |dir| {
             [
-                kf(0, 0.0, Interpolation::Bounce { dir }),
-                kf(10_000_000, 10.0, Interpolation::Linear),
+                kf(0, 0.0, Segment::Bounce { dir }),
+                kf(10_000_000, 10.0, Segment::Linear),
             ]
         };
         assert!((eval_f64(&mk(EaseDir::Out), 2_500_000, 0.0) - 4.7265625).abs() < 1e-9);

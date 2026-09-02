@@ -130,6 +130,63 @@ clears it in the same commit, and re-linking snaps `scale_y` to a copy of
 `scale_x`.
 _Avoid_: uniform-scale mode, scale lock, third keyframe mode
 
+## Keyframes
+
+**Tangent**:
+One side of a keyframe's shape — `out` for the segment leaving the key, `in`
+for the segment arriving — as a point `{x, y}` in the owning segment's unit
+square (fractions of its time span and value span, the CSS `cubic-bezier`
+lineage) plus a mode. The segment between two keys is the cubic
+`(left.out, right.in)`, and `in` is stored as that cubic's own control point,
+never mirrored about the key: the curve graph mirrors it for display, the file
+does not, because exact equality is what preset recovery and the twin compare
+rest on. Read only by a Spline segment (ADR 0058).
+_Avoid_: handle (that is the thing drawn — fine for the gesture), in/out
+easing, influence, velocity, bezier point
+
+**Auto**:
+The tangent mode in which a side's numbers are solved for the key instead of
+written by hand — clamped monotone: the slope from the neighbours, flat at an
+extremum, never overshooting (Blender's Auto Clamped). Solved when the track is
+written, so a stored tangent is always explicit and every reader agrees on it;
+the other mode is **Free**, the numbers as authored. Per side in the model,
+presented per key in the menu; Smooth in `smooth_keyframes` means set Auto.
+_Avoid_: smooth as a mode (Smooth is a continuity), bake, auto-bezier,
+automatic easing
+
+**Continuity**:
+Whether the two sides of a key are kept at one slope — Smooth — or left to
+differ — Broken. A property the authoring layer maintains on every write, not a
+constraint anything enforces: Smooth re-derives the in-side from the out-side
+when both are Free and a neighbour's edit changed the segment under them.
+Meaningful only between two Spline segments.
+_Avoid_: tangent lock, linked handles, smooth mode
+
+**Segment**:
+The span between two adjacent keyframes, and the class stored on its LEFT key:
+Spline, Hold, Linear, Elastic or Bounce. Spline is the only class that reads the
+tangents; the other four ignore them — Hold is a step no cubic makes, Linear is
+kept as a class so its glyph needs no float equality, Elastic and Bounce are the
+procedural escape hatch with parameters in place of handles. Named presets are
+not classes: a preset is a Spline segment with known tangents, recovered by exact
+lookup.
+_Avoid_: interp / interpolation as the stored thing (`Interpolation` is the
+easing of one segment as a value — what the preset table holds), easing type,
+span; and never a layer a split produced
+
+**Extrapolation**:
+What a keyframed track does outside its first and last key —
+`extrapolate { before, after }` on the track, each one of five modes.
+**Hold** keeps the end value (the default — the clamp). **Loop** repeats the
+cycle from the first key, with the jump that first ≠ last implies; nothing
+bridges it. **PingPong** runs alternate cycles backwards. **Offset** adds the
+last-minus-first delta each cycle, in the value type's interpolation space.
+**Continue** carries the last segment's end velocity on as a line, zero after a
+Hold or procedural segment. The period is last minus first; a single key never
+extrapolates.
+_Avoid_: cycle as the umbrella (it is Loop's period, and Blender's name for that
+one mode), repeat, loop mode for the family, clamp (that is Hold)
+
 ## Text box
 
 **Text box**:

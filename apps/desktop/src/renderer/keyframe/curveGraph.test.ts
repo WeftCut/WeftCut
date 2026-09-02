@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
-import type { Interpolation } from "../ipc";
+import type { Interpolation, Keyframe } from "../ipc";
 import { resolveAnimated } from "../render/animated";
+import { applySegmentEasing } from "../../shared/easing";
+import { HOLD_EXTRAPOLATION, inIdentity, outIdentity } from "../../shared/keyframe";
 import {
   computeValueRange, valueToY, yToValue, timeToXPx, xPxToTimeUs,
   type CurveGeom,
 } from "./curveGraph";
+
+/// A two-key segment carrying easing `e`: the left key's class + leaving side,
+/// the right key's arriving side — exactly what a preset writes.
+function pair(e: Interpolation, aVal = 0, bVal = 1): [Keyframe<number>, Keyframe<number>] {
+  const base = (id: string, t_us: number, value: number): Keyframe<number> => ({
+    id, t_us, value, in: inIdentity(), out: outIdentity(), continuity: "Broken", segment: { kind: "Linear" },
+  });
+  const [a, b] = applySegmentEasing(base("a", 0, aVal), base("b", 1_000_000, bVal), e);
+  return [a, b!];
+}
 
 const G: CurveGeom = { pxPerSec: 100, layerTStartUs: 0, height: 80, vmin: 0, vmax: 1 };
 
@@ -34,32 +46,26 @@ describe("value/time mappings", () => {
 describe("computeValueRange", () => {
   it("pads min/max of keyframe values", () => {
     const r = computeValueRange([
-      { t_us: 0, value: 0, interp: { kind: "Linear" } },
-      { t_us: 1_000_000, value: 10, interp: { kind: "Linear" } },
+      { t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, segment: { kind: "Linear" } },
+      { t_us: 1_000_000, value: 10, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, segment: { kind: "Linear" } },
     ]);
     expect(r.vmin).toBeCloseTo(-1, 6); // 0 - 10*0.1
     expect(r.vmax).toBeCloseTo(11, 6); // 10 + 10*0.1
   });
   it("includes overshoot from a curved segment (y>1)", () => {
     // p2 y = 1.5 overshoots past the end value → range must exceed [0,1]
-    const r = computeValueRange([
-      { t_us: 0, value: 0, interp: { kind: "Bezier", p1: [0.3, 0], p2: [0.7, 1.5] } },
-      { t_us: 1_000_000, value: 1, interp: { kind: "Linear" } },
-    ], 0);
+    const r = computeValueRange(pair({ kind: "Bezier", p1: [0.3, 0], p2: [0.7, 1.5] }), 0);
     expect(r.vmax).toBeGreaterThan(1);
   });
   it("all-equal values yield a nominal band, not a zero span", () => {
     const r = computeValueRange([
-      { t_us: 0, value: 3, interp: { kind: "Linear" } },
-      { t_us: 1_000_000, value: 3, interp: { kind: "Linear" } },
+      { t_us: 0, value: 3, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, segment: { kind: "Linear" } },
+      { t_us: 1_000_000, value: 3, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, segment: { kind: "Linear" } },
     ]);
     expect(r.vmax).toBeGreaterThan(r.vmin);
   });
   it("includes procedural (Elastic) overshoot sampled through the engine", () => {
-    const r = computeValueRange([
-      { t_us: 0, value: 0, interp: { kind: "Elastic", dir: "Out", amplitude: 1, period: 0.3 } },
-      { t_us: 1_000_000, value: 1, interp: { kind: "Linear" } },
-    ], 0);
+    const r = computeValueRange(pair({ kind: "Elastic", dir: "Out", amplitude: 1, period: 0.3 }), 0);
     expect(r.vmax).toBeGreaterThan(1); // elastic ring rises past the end value
   });
 });
@@ -71,20 +77,20 @@ const G2: CurveGeom = { pxPerSec: 100, layerTStartUs: 0, height: 100, vmin: 0, v
 
 describe("segmentPolyline", () => {
   it("Linear → two points corner to corner", () => {
-    expect(segmentPolyline(SEG, { kind: "Linear" }, G2)).toEqual([
+    expect(segmentPolyline(SEG, ...pair({ kind: "Linear" }), G2)).toEqual([
       { x: 0, y: 100 }, // t0 v0 → bottom-left
       { x: 100, y: 0 }, // t1 v1 → top-right
     ]);
   });
   it("Hold → flat then vertical step", () => {
-    expect(segmentPolyline(SEG, { kind: "Hold" }, G2)).toEqual([
+    expect(segmentPolyline(SEG, ...pair({ kind: "Hold" }), G2)).toEqual([
       { x: 0, y: 100 },   // start
       { x: 100, y: 100 }, // flat at start value
       { x: 100, y: 0 },   // step up at next key
     ]);
   });
-  it("Bezier → sampled, endpoints anchored at the keyframes", () => {
-    const pts = segmentPolyline(SEG, { kind: "Bezier", p1: [0.42, 0], p2: [0.58, 1] }, G2, 10);
+  it("Spline → sampled, endpoints anchored at the keyframes", () => {
+    const pts = segmentPolyline(SEG, ...pair({ kind: "Bezier", p1: [0.42, 0], p2: [0.58, 1] }), G2, 10);
     expect(pts.length).toBe(11);
     expect(pts[0]).toEqual({ x: 0, y: 100 });
     expect(pts[10]).toEqual({ x: 100, y: 0 });
@@ -93,24 +99,21 @@ describe("segmentPolyline", () => {
     expect(pts[5]!.y).toBeGreaterThan(0);
     expect(pts[5]!.y).toBeLessThan(100);
   });
-  it("flat-value Bezier (Δv==0) renders a horizontal line, no NaN", () => {
+  it("flat-value Spline (Δv==0) renders a horizontal line, no NaN", () => {
     const flat: Seg = { aTUs: 0, aVal: 5, bTUs: 1_000_000, bVal: 5 };
     const gFlat: CurveGeom = { pxPerSec: 100, layerTStartUs: 0, height: 100, vmin: 4, vmax: 6 };
-    const pts = segmentPolyline(flat, { kind: "Bezier", p1: [0.3, 0], p2: [0.7, 1] }, gFlat, 8);
+    const pts = segmentPolyline(flat, ...pair({ kind: "Bezier", p1: [0.3, 0], p2: [0.7, 1] }, 5, 5), gFlat, 8);
     expect(pts.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))).toBe(true);
     const y0 = pts[0]!.y;
     expect(pts.every((p) => Math.abs(p.y - y0) < 1e-9)).toBe(true);
   });
   it("samples exactly what the wasm eval computes (no JS curve twin)", () => {
-    const interp: Interpolation = { kind: "Bezier", p1: [0.42, 0], p2: [0.58, 1] };
-    const pts = segmentPolyline(SEG, interp, G2, 10);
+    const [a, b] = pair({ kind: "Bezier", p1: [0.42, 0], p2: [0.58, 1] });
+    const pts = segmentPolyline(SEG, a, b, G2, 10);
     for (let s = 0; s <= 10; s++) {
       const t = (SEG.bTUs - SEG.aTUs) * (s / 10);
       const v = resolveAnimated(
-        { mode: "Keyframed", value: [
-          { id: "a", t_us: SEG.aTUs, value: SEG.aVal, interp },
-          { id: "b", t_us: SEG.bTUs, value: SEG.bVal, interp: { kind: "Linear" } },
-        ] },
+        { mode: "Keyframed", value: [a, b], extrapolate: HOLD_EXTRAPOLATION },
         t, SEG.aVal,
       );
       expect(pts[s]!.y).toBeCloseTo(valueToY(v, G2), 9);
@@ -118,7 +121,7 @@ describe("segmentPolyline", () => {
   });
   it("Elastic → sampled curve shows the engine's overshoot; endpoints anchored", () => {
     const pts = segmentPolyline(
-      SEG, { kind: "Elastic", dir: "Out", amplitude: 1, period: 0.3 }, G2, 10,
+      SEG, ...pair({ kind: "Elastic", dir: "Out", amplitude: 1, period: 0.3 }), G2, 10,
     );
     expect(pts[0]).toEqual({ x: 0, y: 100 });
     expect(pts[10]).toEqual({ x: 100, y: 0 });
@@ -129,15 +132,19 @@ describe("segmentPolyline", () => {
 
 describe("segmentHandles", () => {
   it("returns null for Hold and Linear (no editable handles)", () => {
-    expect(segmentHandles(SEG, { kind: "Hold" }, G2)).toBeNull();
-    expect(segmentHandles(SEG, { kind: "Linear" }, G2)).toBeNull();
+    expect(segmentHandles(SEG, ...pair({ kind: "Hold" }), G2)).toBeNull();
+    expect(segmentHandles(SEG, ...pair({ kind: "Linear" }), G2)).toBeNull();
   });
   it("returns null for procedural kinds (read-only sampled curve)", () => {
-    expect(segmentHandles(SEG, { kind: "Elastic", dir: "Out", amplitude: 1, period: 0.3 }, G2)).toBeNull();
-    expect(segmentHandles(SEG, { kind: "Bounce", dir: "InOut" }, G2)).toBeNull();
+    expect(segmentHandles(SEG, ...pair({ kind: "Elastic", dir: "Out", amplitude: 1, period: 0.3 }), G2)).toBeNull();
+    expect(segmentHandles(SEG, ...pair({ kind: "Bounce", dir: "InOut" }), G2)).toBeNull();
   });
-  it("places p1/p2 control points in time/value px space", () => {
-    const h = segmentHandles(SEG, { kind: "Bezier", p1: [0.25, 0.1], p2: [0.75, 0.9] }, G2)!;
+  it("ignores the tangents unless the left key's class is Spline", () => {
+    const [a, b] = pair({ kind: "Bezier", p1: [0.25, 0.1], p2: [0.75, 0.9] });
+    expect(segmentHandles(SEG, { ...a, segment: { kind: "Linear" } }, b, G2)).toBeNull();
+  });
+  it("places p1 (the left key's out) and p2 (the right key's in, un-mirrored) in time/value px space", () => {
+    const h = segmentHandles(SEG, ...pair({ kind: "Bezier", p1: [0.25, 0.1], p2: [0.75, 0.9] }), G2)!;
     expect(h.p1.x).toBeCloseTo(25, 6);  // 0.25 of 100px width
     expect(h.p1.y).toBeCloseTo(90, 6);  // value 0.1 → y = (1-0.1)*100
     expect(h.p2.x).toBeCloseTo(75, 6);

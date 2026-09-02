@@ -9,7 +9,7 @@ export {
   upsertKeyframe,
   removeKeyframe,
   retimeKeyframe,
-  setKeyframeInterp,
-  smoothKeyframe,
-  smoothTrack,
+  setSegmentEasing,
+  setSegmentCoeffs,
+  setAuto,
 } from '../../renderer/keyframe/edits'

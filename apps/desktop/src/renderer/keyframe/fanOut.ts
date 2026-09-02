@@ -4,7 +4,7 @@
 // main-side twin invariant (main/state/mutations/scaleLink.ts): the batch
 // result is twins, so a linked layer STAYS linked.
 import type { AnimTrack } from "../ipc";
-import { cloneInterp } from "../../shared/easing";
+import { cloneExtrapolation, cloneKeyframeShape } from "../../shared/keyframe";
 
 /// Structural copy with fresh keyframe ids. Ids are per-track identities (the
 /// twin comparison ignores them) and the linked UI never surfaces the copy's
@@ -13,7 +13,8 @@ export function twinTrackCopy(track: AnimTrack<number>): AnimTrack<number> {
   if (track.mode === "Static") return { mode: "Static", value: track.value };
   return {
     mode: "Keyframed",
-    value: track.value.map((k) => ({ id: crypto.randomUUID(), t_us: k.t_us, value: k.value, interp: cloneInterp(k.interp) })),
+    value: track.value.map((k) => ({ id: crypto.randomUUID(), ...cloneKeyframeShape(k) })),
+    extrapolate: cloneExtrapolation(track.extrapolate),
   };
 }
 

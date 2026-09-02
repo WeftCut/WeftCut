@@ -15,8 +15,8 @@ afterEach(() => {
 });
 
 const opacityTrack: AnimTrack<number> = {
-  mode: "Keyframed",
-  value: [{ id: "a", t_us: 0, value: 0.5, interp: { kind: "Linear" } }],
+  mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+  value: [{ id: "a", t_us: 0, value: 0.5, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }],
 };
 const oneClip = (params: Record<string, AnimTrack<number>>): TrackSummary =>
   ({ layers: [{ id: "L1", t_start_us: 0, t_end_us: 2_000_000, params }] }) as unknown as TrackSummary;
@@ -58,8 +58,8 @@ describe("KeyframeValueField", () => {
 
   it("places the key at the playhead's layer-local (t_start-relative, frame-snapped) time", async () => {
     const track: AnimTrack<number> = {
-      mode: "Keyframed",
-      value: [{ id: "a", t_us: 0, value: 0.5, interp: { kind: "Linear" } }],
+      mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+      value: [{ id: "a", t_us: 0, value: 0.5, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }],
     };
     const tr = {
       layers: [{ id: "L1", t_start_us: 1_000_000, t_end_us: 3_000_000, params: { opacity: track } }],

@@ -176,7 +176,14 @@ const keyOpacity = (
     // would move the diamonds' y for a reason the case is not testing.
     track: {
       mode: "Keyframed",
-      value: keys.map((k) => ({ ...k, interp: { kind: "Linear" } })),
+      value: keys.map((k) => ({
+        ...k,
+        in: { x: 2 / 3, y: 2 / 3, mode: "Free" },
+        out: { x: 1 / 3, y: 1 / 3, mode: "Free" },
+        continuity: "Broken",
+        segment: { kind: "Linear" },
+      })),
+      extrapolate: { before: "Hold", after: "Hold" },
     },
   });
 

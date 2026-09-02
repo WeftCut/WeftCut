@@ -18,7 +18,7 @@ import {
   useIsKeyframeSelected,
   useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
-import { retimeKeyframe, setKeyframeInterp } from "../keyframe/edits";
+import { retimeKeyframe, setSegmentCoeffs } from "../keyframe/edits";
 import { useKeyframeBatchCommit } from "./keyframeBatch";
 import { transportSeek } from "../state/playbackStore";
 import { useLocalPlayheadUsThrottled } from "../state/playheadProjection";
@@ -309,8 +309,8 @@ function LayerCurveLane({
       onRetime={(kfId, newTUs) =>
         onCommitParamTrack(layerId, paramKey, retimeKeyframe(track, kfId, newTUs))
       }
-      onSetInterp={(kfId, interp) =>
-        onCommitParamTrack(layerId, paramKey, setKeyframeInterp(track, kfId, interp))
+      onSetSegmentCoeffs={(kfId, coeffs) =>
+        onCommitParamTrack(layerId, paramKey, setSegmentCoeffs(track, kfId, coeffs))
       }
       onOpenMenu={(cx, cy, kfId) => onOpenInterpMenu(cx, cy, layerId, paramKey, kfId)}
     />

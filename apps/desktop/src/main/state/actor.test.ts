@@ -1103,16 +1103,16 @@ describe('dispatch: params', () => {
   })
   it('update_layer_param_track writes opacity keyframes', () => {
     const { actor, id } = textActor()
-    const track = { mode: 'Keyframed', value: [
-      { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 0, interp: { kind: 'Linear' } },
-      { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: 1, interp: { kind: 'Linear' } }] }
+    const track = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [
+      { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } },
+      { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } }] }
     expect(actor.dispatch('update_layer_param_track', { layer: id, param_key: 'opacity', track }).ok).toBe(true)
     expect((root(actor.snapshot()).tracks[1].layers[0].params as { opacity: { mode: string } }).opacity.mode).toBe('Keyframed')
   })
   it('update_layer_param_tracks applies a batch in one commit (one undo reverts all)', () => {
     const { actor, id } = textActor()
     const before = JSON.stringify(actor.snapshot())
-    const kf = (v: number) => ({ mode: 'Keyframed', value: [{ id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: v, interp: { kind: 'Linear' } }, { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: v, interp: { kind: 'Linear' } }] })
+    const kf = (v: number) => ({ mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [{ id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: v, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } }, { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: v, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } }] })
     expect(actor.dispatch('update_layer_param_tracks', { layer: id, entries: [['x', kf(0)], ['opacity', kf(1)]] }).ok).toBe(true)
     expect(actor.dispatch('undo', {}).ok).toBe(true) // single commit → one undo
     expect(JSON.stringify(actor.snapshot())).toBe(before)
@@ -1121,9 +1121,9 @@ describe('dispatch: params', () => {
   // ── update_param_tracks_multi — the cross-layer batch ──────────────────────
   // The keyframe marquee's op: a swept selection spans layers, and the whole
   // contract is that N layers still cost ONE history entry.
-  const kfTrack = (v: number) => ({ mode: 'Keyframed', value: [
-    { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: v, interp: { kind: 'Linear' } },
-    { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: v, interp: { kind: 'Linear' } }] })
+  const kfTrack = (v: number) => ({ mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [
+    { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: v, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } },
+    { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: v, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } }] })
   /** A second text layer on the same lane, clear of the first one's span. */
   function secondTextLayer(actor: ReturnType<typeof textActor>['actor']): string {
     return (actor.dispatch('add_layer', { track: root(actor.snapshot()).tracks[1].id, kind: 'text', t_start_us: 3_000_000, t_end_us: 5_000_000 }) as { ok: true; value: string }).value

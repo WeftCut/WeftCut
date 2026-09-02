@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/model.ts
 import type { IdGen } from './ids'
 import type { DecodeRoute } from '../../shared/decode-route'
-import type { Interpolation } from '../../shared/easing'
+import type { Animated } from '../../shared/keyframe'
 
 /** The on-disk `project.json` schema version this build reads and writes.
  *
@@ -24,8 +24,10 @@ export type BlendMode =
   | 'Normal' | 'Multiply' | 'Screen' | 'Overlay' | 'Darken' | 'Lighten' | 'Add' | 'Difference'
 
 export type { EaseDir, Interpolation } from '../../shared/easing'
-export interface Keyframe<T> { id: Uuid; t_us: TimeUs; value: T; interp: Interpolation }
-export type Animated<T> = { mode: 'Static'; value: T } | { mode: 'Keyframed'; value: Keyframe<T>[] }
+/** The keyframe record (per-key tangents, segment class on the left key,
+ *  track-level `extrapolate`) and `Animated<T>` are single-sourced in
+ *  src/shared/keyframe.ts; the Rust twin is native/src/state/animated.rs. */
+export type { Animated, Continuity, Extrapolate, Extrapolation, Keyframe, Segment, Tangent, TangentMode } from '../../shared/keyframe'
 
 export interface Transform {
   x: Animated<number>; y: Animated<number>

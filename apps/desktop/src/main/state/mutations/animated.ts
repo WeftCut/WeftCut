@@ -49,17 +49,24 @@ export function lastKeyframeValue<T>(a: Animated<T>): T | null {
   return kfs.length ? kfs[kfs.length - 1].value : null
 }
 /** Rewrite `a` in place into Static(value) — used to collapse an emptied
- *  Keyframed half (animated.rs split semantics). */
+ *  Keyframed half (animated.rs split semantics). The Keyframed-only
+ *  `extrapolate` is removed rather than left dangling: the wire shape of a
+ *  Static track has exactly two keys, and the Rust twin would otherwise carry
+ *  an unknown field through every round trip. */
 export function collapseToStatic<T>(a: Animated<T>, value: T): void {
-  const m = a as { mode: 'Static'; value: T }
+  const m = a as { mode: 'Static'; value: T; extrapolate?: unknown }
   m.mode = 'Static'; m.value = value
+  delete m.extrapolate
 }
 
-/** native/src/state/animated.rs:118 — canonicalize a Keyframed track: snap each
- *  t_us, stable-sort by t_us, dedupe same-snapped-time KEEPING THE LAST (JS
- *  Array.sort is stable on Node 22; the write path appends the edited key last →
- *  last-write-wins on a collision). Returns false for an EMPTY Keyframed track
- *  (→ EmptyKeyframeTrack); Static is unchanged and always true. */
+/** native/src/state/animated.rs `normalize_keyframes` — canonicalize a Keyframed
+ *  track: snap each t_us, stable-sort by t_us, dedupe same-snapped-time KEEPING
+ *  THE LAST (JS Array.sort is stable on Node 22; the write path appends the
+ *  edited key last → last-write-wins on a collision). Tangents, continuity,
+ *  segment and `extrapolate` ride along untouched — solving Auto sides is
+ *  `applyUpdateLayerParamTrack`'s next step (shared/tangents.ts), not this one.
+ *  Returns false for an EMPTY Keyframed track (→ EmptyKeyframeTrack); Static is
+ *  unchanged and always true. */
 export function normalizeKeyframes<T>(a: Animated<T>, snap: (t: number) => number): boolean {
   if (a.mode !== 'Keyframed') return true
   const kfs = a.value as Keyframe<T>[]

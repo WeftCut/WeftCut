@@ -10,7 +10,7 @@ import {
 } from "./marquee";
 import type {
   LinkSummary,
-  Interpolation,
+  Segment,
   Keyframe,
   LayerSummary,
   TrackSummary,
@@ -380,9 +380,13 @@ function kf(
   id: string,
   tUs: number,
   value: number,
-  interp: Interpolation = { kind: "Linear" },
+  segment: Segment = { kind: "Linear" },
 ): Keyframe<number> {
-  return { id, t_us: tUs, value, interp };
+  return {
+    id, t_us: tUs, value,
+    in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" },
+    continuity: "Broken", segment,
+  };
 }
 
 /// Params as the IPC view flattens them, with `paramKey` keyframed. `extra`
@@ -394,7 +398,7 @@ function keyedParams(
 ): LayerSummary["params"] {
   return {
     kind: "VideoClip",
-    [paramKey]: { mode: "Keyframed", value: keys },
+    [paramKey]: { mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" }, value: keys },
     ...extra,
   } as unknown as LayerSummary["params"];
 }
@@ -568,7 +572,7 @@ describe("marqueeHitKeyframes", () => {
           t_start_us: 1_000_000,
           t_end_us: 3_000_000,
           params: keyedParams("opacity", [kf("o1", 0, 1)], {
-            x: { mode: "Keyframed", value: [kf("x1", 0, 5)] },
+            x: { mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" }, value: [kf("x1", 0, 5)] },
           }),
         }),
       ],

@@ -5,10 +5,10 @@ import { resolveColorView, resolveTextView, resolveVideoClipView } from "./resol
 
 const stat = (v: number): AnimTrack<number> => ({ mode: "Static", value: v });
 const ramp: AnimTrack<number> = {
-  mode: "Keyframed",
+  mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
   value: [
-    { id: "a", t_us: 0, value: 0, interp: { kind: "Linear" } },
-    { id: "b", t_us: 1_000_000, value: 1, interp: { kind: "Linear" } },
+    { id: "a", t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+    { id: "b", t_us: 1_000_000, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
   ],
 };
 const white: Rgba = { r: 255, g: 255, b: 255, a: 255 };
@@ -59,10 +59,10 @@ describe("resolveView", () => {
     const red: Rgba = { r: 255, g: 0, b: 0, a: 255 };
     const green: Rgba = { r: 0, g: 255, b: 0, a: 255 };
     const colorTrack: AnimTrack<Rgba> = {
-      mode: "Keyframed",
+      mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
       value: [
-        { id: "k0", t_us: 0, value: red, interp: { kind: "Linear" } },
-        { id: "k1", t_us: 1_000_000, value: green, interp: { kind: "Linear" } },
+        { id: "k0", t_us: 0, value: red, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+        { id: "k1", t_us: 1_000_000, value: green, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
       ],
     };
     const v: ColorView = { color: colorTrack, width: 1920, height: 1080 };

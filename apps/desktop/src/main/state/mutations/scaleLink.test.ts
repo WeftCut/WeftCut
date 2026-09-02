@@ -1,15 +1,29 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
-import { blankProject, type Animated, type Interpolation, type TextParams } from '../model'
+import { blankProject, type Animated, type Interpolation, type Keyframe, type TextParams } from '../model'
+import { applySegmentEasing } from '../../../shared/easing'
 import { createActor } from '../actor'
 import { parseProject, serializeProject } from '../serialize'
 import { applySetScaleLinked, scaleTracksTwins } from './scaleLink'
 import { applyAddLayer, textParamsDefault } from './add'
 import { group, groupedProject, root } from '../__tests__/fixtures/project'
 
-const lin: Interpolation = { kind: 'Linear' }
-const kf = (entries: Array<[string, number, number, Interpolation?]>): Animated<number> =>
-  ({ mode: 'Keyframed', value: entries.map(([id, t_us, value, interp]) => ({ id, t_us, value, interp: interp ?? lin })) })
+/** Keys with identity sides; an entry's easing is written onto the segment
+ *  leaving it the way a commit writes it (class + out here, in on the next). */
+const kf = (entries: Array<[string, number, number, Interpolation?]>): Animated<number> => {
+  const keys: Keyframe<number>[] = entries.map(([id, t_us, value]) => ({
+    id, t_us, value,
+    in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' },
+    continuity: 'Broken', segment: { kind: 'Linear' },
+  }))
+  entries.forEach(([, , , interp], i) => {
+    if (!interp) return
+    const [l, r] = applySegmentEasing(keys[i], keys[i + 1], interp)
+    keys[i] = l
+    if (r) keys[i + 1] = r
+  })
+  return { mode: 'Keyframed', value: keys, extrapolate: { before: 'Hold', after: 'Hold' } }
+}
 
 describe('scaleTracksTwins', () => {
   it('Static: equal values are twins, unequal are not, mode mismatch is not', () => {
@@ -17,24 +31,36 @@ describe('scaleTracksTwins', () => {
     expect(scaleTracksTwins({ mode: 'Static', value: 1 }, { mode: 'Static', value: 2 })).toBe(false)
     expect(scaleTracksTwins({ mode: 'Static', value: 1 }, kf([['a', 0, 1]]))).toBe(false)
   })
-  it('Keyframed: ids are IGNORED — same (t_us, value, interp) with different ids are twins', () => {
+  it('Keyframed: ids are IGNORED — same (t_us, value, sides, segment) with different ids are twins', () => {
     expect(scaleTracksTwins(kf([['a', 0, 1], ['b', 1_000_000, 2]]), kf([['c', 0, 1], ['d', 1_000_000, 2]]))).toBe(true)
   })
-  it('Keyframed: t_us, value, key count, and interp kind all discriminate', () => {
+  it('Keyframed: t_us, value, key count, and segment class all discriminate', () => {
     const base = kf([['a', 0, 1], ['b', 1_000_000, 2]])
     expect(scaleTracksTwins(base, kf([['c', 0, 1], ['d', 999_999, 2]]))).toBe(false)
     expect(scaleTracksTwins(base, kf([['c', 0, 1], ['d', 1_000_000, 3]]))).toBe(false)
     expect(scaleTracksTwins(base, kf([['c', 0, 1]]))).toBe(false)
     expect(scaleTracksTwins(base, kf([['c', 0, 1], ['d', 1_000_000, 2, { kind: 'Hold' }]]))).toBe(false)
   })
-  it('Bezier control points discriminate', () => {
-    const bz = (p1: [number, number]): Interpolation => ({ kind: 'Bezier', p1, p2: [1, 1] })
-    expect(scaleTracksTwins(kf([['a', 0, 1, bz([0.3, 0])]]), kf([['b', 0, 1, bz([0.3, 0])]]))).toBe(true)
-    expect(scaleTracksTwins(kf([['a', 0, 1, bz([0.3, 0])]]), kf([['b', 0, 1, bz([0.4, 0])]]))).toBe(false)
+  it('Spline tangents discriminate on either key', () => {
+    const bz = (p1: [number, number], p2: [number, number] = [1, 1]): Interpolation => ({ kind: 'Bezier', p1, p2 })
+    expect(scaleTracksTwins(kf([['a', 0, 1, bz([0.3, 0])], ['b', 1_000_000, 2]]), kf([['c', 0, 1, bz([0.3, 0])], ['d', 1_000_000, 2]]))).toBe(true)
+    expect(scaleTracksTwins(kf([['a', 0, 1, bz([0.3, 0])], ['b', 1_000_000, 2]]), kf([['c', 0, 1, bz([0.4, 0])], ['d', 1_000_000, 2]]))).toBe(false)
+    expect(scaleTracksTwins(kf([['a', 0, 1, bz([0.3, 0])], ['b', 1_000_000, 2]]), kf([['c', 0, 1, bz([0.3, 0], [0.9, 1])], ['d', 1_000_000, 2]]))).toBe(false)
+  })
+  it('tangent mode, continuity and extrapolate discriminate', () => {
+    const base = kf([['a', 0, 1], ['b', 1_000_000, 2]])
+    const withMode = kf([['c', 0, 1], ['d', 1_000_000, 2]]) as Extract<Animated<number>, { mode: 'Keyframed' }>
+    withMode.value[0] = { ...withMode.value[0], out: { ...withMode.value[0].out, mode: 'Auto' } }
+    expect(scaleTracksTwins(base, withMode)).toBe(false)
+    const withSmooth = kf([['c', 0, 1], ['d', 1_000_000, 2]]) as Extract<Animated<number>, { mode: 'Keyframed' }>
+    withSmooth.value[1] = { ...withSmooth.value[1], continuity: 'Smooth' }
+    expect(scaleTracksTwins(base, withSmooth)).toBe(false)
+    const looped = { ...kf([['c', 0, 1], ['d', 1_000_000, 2]]), extrapolate: { before: 'Loop' as const, after: 'Hold' as const } }
+    expect(scaleTracksTwins(base, looped)).toBe(false)
   })
   it('malformed wire shapes compare as diverged, never throw', () => {
     expect(scaleTracksTwins(null as unknown as Animated<number>, { mode: 'Static', value: 1 })).toBe(false)
-    expect(scaleTracksTwins({ mode: 'Keyframed', value: [null] } as unknown as Animated<number>, { mode: 'Keyframed', value: [null] } as unknown as Animated<number>)).toBe(false)
+    expect(scaleTracksTwins({ mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [null] } as unknown as Animated<number>, { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [null] } as unknown as Animated<number>)).toBe(false)
   })
 })
 

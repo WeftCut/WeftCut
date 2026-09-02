@@ -8,12 +8,16 @@ import { describe, it, expect } from 'vitest'
 import { freshActor, aRollId } from './pbt/harness'
 import { EASING_PRESETS } from '../../../shared/easing'
 
+type Side = { x: number; y: number; mode: string }
 type KfEntry = {
   id: string
   t_us: number
   t_local_us: number
   value: number
-  interp: Record<string, unknown>
+  in: Side
+  out: Side
+  continuity: string
+  segment: Record<string, unknown>
   preset_id?: string
 }
 
@@ -48,10 +52,14 @@ describe('set_keyframe_easing → get_param_track (preset baking + readback)', (
     const kfId = readKeys(a, layerId)[0].id
     expect(setEasing(a, layerId, kfId, { preset: 'ease_in_out' }).ok).toBe(true)
     const keys = readKeys(a, layerId)
-    expect(keys[0].interp).toEqual({ kind: 'Bezier', p1: [0.42, 0], p2: [0.58, 1] })
+    // The cubic is split across the pair: p1 on the left key's out, p2 on the
+    // right key's in (un-mirrored), the class on the left key.
+    expect(keys[0].segment).toEqual({ kind: 'Spline' })
+    expect(keys[0].out).toEqual({ x: 0.42, y: 0, mode: 'Free' })
+    expect(keys[1].in).toEqual({ x: 0.58, y: 1, mode: 'Free' })
     expect(keys[0].preset_id).toBe('ease_in_out')
-    // The untouched Linear key reports its id too — plain kinds are table entries.
-    expect(keys[1].preset_id).toBe('linear')
+    // The last key has no leaving segment, so it names no preset.
+    expect('preset_id' in keys[1]).toBe(false)
   })
 
   it('an elastic preset bakes dir plus the shared defaults and reads its id back', () => {
@@ -59,7 +67,7 @@ describe('set_keyframe_easing → get_param_track (preset baking + readback)', (
     const kfId = readKeys(a, layerId)[0].id
     expect(setEasing(a, layerId, kfId, { preset: 'ease_out_elastic' }).ok).toBe(true)
     const k = readKeys(a, layerId)[0]
-    expect(k.interp).toEqual({ kind: 'Elastic', dir: 'Out', amplitude: 1, period: 0.3 })
+    expect(k.segment).toEqual({ kind: 'Elastic', dir: 'Out', amplitude: 1, period: 0.3 })
     expect(k.preset_id).toBe('ease_out_elastic')
   })
 
@@ -68,7 +76,7 @@ describe('set_keyframe_easing → get_param_track (preset baking + readback)', (
     const kfId = readKeys(a, layerId)[0].id
     expect(setEasing(a, layerId, kfId, { kind: 'Elastic', dir: 'In' }).ok).toBe(true)
     const k = readKeys(a, layerId)[0]
-    expect(k.interp).toEqual({ kind: 'Elastic', dir: 'In', amplitude: 1, period: 0.3 })
+    expect(k.segment).toEqual({ kind: 'Elastic', dir: 'In', amplitude: 1, period: 0.3 })
     expect(k.preset_id).toBe('ease_in_elastic')
   })
 
@@ -76,9 +84,11 @@ describe('set_keyframe_easing → get_param_track (preset baking + readback)', (
     const { a, layerId } = withKeyedOpacity()
     const kfId = readKeys(a, layerId)[0].id
     expect(setEasing(a, layerId, kfId, { kind: 'Bezier', p1: [0.42, 0.001], p2: [1, 1] }).ok).toBe(true)
-    const k = readKeys(a, layerId)[0]
-    expect(k.interp).toEqual({ kind: 'Bezier', p1: [0.42, 0.001], p2: [1, 1] })
-    expect('preset_id' in k).toBe(false)
+    const keys = readKeys(a, layerId)
+    expect(keys[0].segment).toEqual({ kind: 'Spline' })
+    expect(keys[0].out).toEqual({ x: 0.42, y: 0.001, mode: 'Free' })
+    expect(keys[1].in).toEqual({ x: 1, y: 1, mode: 'Free' })
+    expect('preset_id' in keys[0]).toBe(false)
   })
 
   it('raw Bounce and Hold forms are accepted (and reverse-match their table ids)', () => {
@@ -117,6 +127,6 @@ describe('set_keyframe_easing → get_param_track (preset baking + readback)', (
       expect(r.error.message, JSON.stringify(interp)).toMatch(msgRe)
     }
     // No rejected write may have committed: the key still reads Linear.
-    expect(readKeys(a, layerId)[0].interp).toEqual({ kind: 'Linear' })
+    expect(readKeys(a, layerId)[0].segment).toEqual({ kind: 'Linear' })
   })
 })

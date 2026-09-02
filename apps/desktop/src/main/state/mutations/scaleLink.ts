@@ -1,6 +1,6 @@
-import type { Animated, Keyframe, Layer, Project, Transform, Uuid } from '../model'
+import type { Animated, Extrapolation, Keyframe, Layer, Project, Transform, Uuid } from '../model'
 import type { IdGen } from '../ids'
-import { cloneInterp, interpEqExact } from '../../../shared/easing'
+import { cloneExtrapolation, cloneKeyframeShape, extrapolationEq, keyframeShapeEqExact } from '../../../shared/keyframe'
 import { CommandFailure } from '../errors'
 import { checkTrackLock, locateLayer } from './helpers'
 
@@ -23,23 +23,32 @@ export function scaleTracksTwins(a: Animated<number>, b: Animated<number>): bool
   const ka = a.value
   const kb = (b as { value: Keyframe<number>[] }).value
   if (!Array.isArray(ka) || !Array.isArray(kb) || ka.length !== kb.length) return false
+  const ea = a.extrapolate as Extrapolation | undefined
+  const eb = (b as { extrapolate?: Extrapolation }).extrapolate
+  if (!isWireObject(ea) || !isWireObject(eb) || !extrapolationEq(ea, eb)) return false
   return ka.every((k, i) => {
     const o = kb[i]
-    return k !== null && o !== null && typeof k === 'object' && typeof o === 'object'
-      && k.t_us === o.t_us && k.value === o.value && interpEqExact(k.interp, o.interp)
+    return isWireKey(k) && isWireKey(o) && keyframeShapeEqExact(k, o)
   })
 }
+const isWireObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object'
+/** The fields `keyframeShapeEqExact` dereferences must be present, or a malformed
+ *  wire key would throw here instead of reading as diverged. */
+const isWireKey = (k: unknown): k is Keyframe<number> =>
+  isWireObject(k) && isWireObject(k.in) && isWireObject(k.out) && isWireObject(k.segment)
 
 /** Structural copy of a scale track for the OTHER axis: fresh keyframe ids
  *  (per-track identities — see scaleTracksTwins), no shared mutable state
- *  (interp params re-created via the shared `cloneInterp`, not aliased). The
- *  renderer's fan-out twin (keyframe/fanOut.ts twinTrackCopy) is the same
- *  shape with crypto ids — a change here usually needs the same change there. */
+ *  (tangents, segment and extrapolation re-created via the shared clone
+ *  helpers, not aliased). The renderer's fan-out twin (keyframe/fanOut.ts
+ *  twinTrackCopy) is the same shape with crypto ids — a change here usually
+ *  needs the same change there. */
 export function copyTrackFreshIds(track: Animated<number>, idGen: IdGen): Animated<number> {
   if (track.mode === 'Static') return { mode: 'Static', value: track.value }
   return {
     mode: 'Keyframed',
-    value: track.value.map((k) => ({ id: idGen(), t_us: k.t_us, value: k.value, interp: cloneInterp(k.interp) })),
+    value: track.value.map((k) => ({ id: idGen(), ...cloneKeyframeShape(k) })),
+    extrapolate: cloneExtrapolation(track.extrapolate),
   }
 }
 

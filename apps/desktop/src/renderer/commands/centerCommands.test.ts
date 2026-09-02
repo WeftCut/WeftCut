@@ -161,8 +161,8 @@ describe("centerHorizontally / centerVertically", () => {
     useProjectStore.getState().apply(
       fixture("VideoClip", {
         x: {
-          mode: "Keyframed",
-          value: [{ id: "k1", t_us: 0, value: 0, interp: { kind: "Linear" } }],
+          mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+          value: [{ id: "k1", t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }],
         } as AnimTrack<number>,
       }),
     );

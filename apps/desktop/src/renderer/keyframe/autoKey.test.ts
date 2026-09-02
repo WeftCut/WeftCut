@@ -5,8 +5,8 @@ import { autoKeyTrack } from "./autoKey";
 describe("autoKeyTrack", () => {
   it("upserts a new key at tInLayerUs on a Keyframed track", () => {
     const track: AnimTrack<number> = {
-      mode: "Keyframed",
-      value: [{ id: "a", t_us: 0, value: 0, interp: { kind: "Linear" } }],
+      mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+      value: [{ id: "a", t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }],
     };
     const next = autoKeyTrack(track, 500_000, 0.5);
     expect(next.mode).toBe("Keyframed");
@@ -17,8 +17,8 @@ describe("autoKeyTrack", () => {
 
   it("updates the value of an existing key at the same time in place", () => {
     const track: AnimTrack<number> = {
-      mode: "Keyframed",
-      value: [{ id: "a", t_us: 0, value: 0, interp: { kind: "Linear" } }],
+      mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+      value: [{ id: "a", t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }],
     };
     const next = autoKeyTrack(track, 0, 0.9);
     if (next.mode !== "Keyframed") throw new Error("unreachable");

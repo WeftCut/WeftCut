@@ -1,17 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import type { Animated, LayerParams } from '../model'
+import type { Animated, Keyframe, LayerParams } from '../model'
 import {
   forEachAnimatedF64, forEachAnimatedRgba, shiftKeyframes, retainKeyframes,
   firstKeyframeValue, lastKeyframeValue, collapseToStatic, normalizeKeyframes,
 } from './animated'
 
-function kf<T>(id: string, t: number, v: T): { id: string; t_us: number; value: T; interp: { kind: 'Linear' } } {
-  return { id, t_us: t, value: v, interp: { kind: 'Linear' } }
+function kf<T>(id: string, t: number, v: T): Keyframe<T> {
+  return { id, t_us: t, value: v, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } }
 }
 
 describe('animated traversal', () => {
   it('shiftKeyframes shifts Keyframed, no-ops Static', () => {
-    const a: Animated<number> = { mode: 'Keyframed', value: [kf('k', 100, 1), kf('k2', 200, 2)] }
+    const a: Animated<number> = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [kf('k', 100, 1), kf('k2', 200, 2)] }
     shiftKeyframes(a, -50)
     expect((a as any).value.map((k: any) => k.t_us)).toEqual([50, 150])
     const s: Animated<number> = { mode: 'Static', value: 5 }
@@ -19,7 +19,7 @@ describe('animated traversal', () => {
   })
 
   it('retainKeyframes filters by t_us', () => {
-    const a: Animated<number> = { mode: 'Keyframed', value: [kf('a', 0, 1), kf('b', 100, 2), kf('c', 200, 3)] }
+    const a: Animated<number> = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [kf('a', 0, 1), kf('b', 100, 2), kf('c', 200, 3)] }
     retainKeyframes(a, (t) => t > 50)
     expect((a as any).value.map((k: any) => k.t_us)).toEqual([100, 200])
   })
@@ -27,14 +27,14 @@ describe('animated traversal', () => {
   it('first/last keyframe value: Static→value, Keyframed→ends, empty→null', () => {
     expect(firstKeyframeValue({ mode: 'Static', value: 7 })).toBe(7)
     expect(lastKeyframeValue({ mode: 'Static', value: 7 })).toBe(7)
-    const a: Animated<number> = { mode: 'Keyframed', value: [kf('a', 0, 1), kf('b', 100, 2)] }
+    const a: Animated<number> = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [kf('a', 0, 1), kf('b', 100, 2)] }
     expect(firstKeyframeValue(a)).toBe(1); expect(lastKeyframeValue(a)).toBe(2)
-    const e: Animated<number> = { mode: 'Keyframed', value: [] }
+    const e: Animated<number> = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [] }
     expect(firstKeyframeValue(e)).toBeNull(); expect(lastKeyframeValue(e)).toBeNull()
   })
 
   it('collapseToStatic rewrites mode + value in place', () => {
-    const a: Animated<number> = { mode: 'Keyframed', value: [] }
+    const a: Animated<number> = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [] }
     collapseToStatic(a, 42)
     expect(a).toEqual({ mode: 'Static', value: 42 })
   })
@@ -63,17 +63,17 @@ describe('animated traversal', () => {
 
 describe('normalizeKeyframes', () => {
   const id = (n: number) => `00000000-0000-0000-0000-0000000000${n.toString(16).padStart(2, '0')}`
-  const kf = (n: number, t: number, v: number) => ({ id: id(n), t_us: t, value: v, interp: { kind: 'Linear' as const } })
+  const kf = (n: number, t: number, v: number) => ({ id: id(n), t_us: t, value: v, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' as const }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' as const }, continuity: 'Broken' as const, segment: { kind: 'Linear' as const } })
   it('Static is unchanged and returns true', () => {
     const a = { mode: 'Static' as const, value: 5 }
     expect(normalizeKeyframes(a, (t) => t)).toBe(true)
     expect(a).toEqual({ mode: 'Static', value: 5 })
   })
   it('empty Keyframed returns false', () => {
-    expect(normalizeKeyframes({ mode: 'Keyframed' as const, value: [] }, (t) => t)).toBe(false)
+    expect(normalizeKeyframes({ mode: 'Keyframed' as const, extrapolate: { before: 'Hold' as const, after: 'Hold' as const }, value: [] }, (t) => t)).toBe(false)
   })
   it('snaps + stable-sorts + dedupes same-snapped-time keeping the last', () => {
-    const a: Animated<number> = { mode: 'Keyframed', value: [kf(2, 2_000_000, 20), kf(1, 0, 10), kf(3, 10, 99)] }
+    const a: Animated<number> = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [kf(2, 2_000_000, 20), kf(1, 0, 10), kf(3, 10, 99)] }
     // snap-to-0 collapses kf1(t=0) and kf3(t=10→0); stable order keeps kf3 (last in input among equal times)
     expect(normalizeKeyframes(a, (t) => (t < 1_000_000 ? 0 : t))).toBe(true)
     expect((a.value as { t_us: number; value: number }[]).map((k) => [k.t_us, k.value])).toEqual([[0, 99], [2_000_000, 20]])

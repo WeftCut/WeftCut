@@ -449,3 +449,80 @@ describe('parseProject over two compositions', () => {
     expect(() => parseProject(flat)).toThrow(/root_id must be a string/)
   })
 })
+
+// ── The keyframe record: refused, never defaulted (ADR 0058) ──────────────────
+describe('parseProject refuses the retired keyframe shape', () => {
+  type WireTrack = { mode: string; value: Array<Record<string, unknown>>; extrapolate?: unknown }
+  /** A saved project with a two-key opacity track on a text layer, in the current
+   *  shape, plus the wire path to that track. */
+  function keyedWire(): { wire: Wire; track: () => WireTrack } {
+    const g = seededGen()
+    const actor = createActor({ initial: blankProject(g, 'kf'), idGen: g })
+    const trackId = root(actor.snapshot()).tracks[0].id
+    const added = actor.dispatch('add_layer', { track: trackId, kind: 'text', t_start_us: 0, t_end_us: 2_000_000 })
+    if (!added.ok) throw new Error('setup add_layer failed')
+    const layer = added.value as string
+    const side = (x: number, y: number) => ({ x, y, mode: 'Free' as const })
+    const r = actor.dispatch('update_layer_param_track', {
+      layer, param_key: 'opacity',
+      track: {
+        mode: 'Keyframed',
+        value: [
+          { id: '00000000-0000-7000-8000-0000000000a1', t_us: 0, value: 0, in: side(2 / 3, 2 / 3), out: side(0.42, 0), continuity: 'Broken', segment: { kind: 'Spline' } },
+          { id: '00000000-0000-7000-8000-0000000000a2', t_us: 1_000_000, value: 1, in: side(1, 1), out: side(1 / 3, 1 / 3), continuity: 'Broken', segment: { kind: 'Linear' } },
+        ],
+        extrapolate: { before: 'Hold', after: 'Loop' },
+      },
+    })
+    if (!r.ok) throw new Error(`setup update_layer_param_track failed: ${JSON.stringify(r.error)}`)
+    const wire = JSON.parse(JSON.stringify(serializeProject(actor.snapshot()))) as Wire
+    const track = () => (wroot(wire).tracks[0].layers[0].params as { opacity: WireTrack }).opacity
+    return { wire, track }
+  }
+
+  it('opens a project in the current shape and keeps the record byte for byte', () => {
+    const { wire, track } = keyedWire()
+    const before = JSON.stringify(track())
+    const project = parseProject(wire, silent)
+    expect(() => validate(project)).not.toThrow()
+    expect(JSON.stringify((root(project).tracks[0].layers[0].params as { opacity: unknown }).opacity)).toBe(before)
+  })
+
+  it('refuses a key carrying the retired per-segment "interp", naming the field and the ADR', () => {
+    const { wire, track } = keyedWire()
+    track().value[0].interp = { kind: 'Linear' }
+    expect(() => parseProject(wire, silent)).toThrow(/parseProject: layer .* opacity keyframe 00000000-0000-7000-8000-0000000000a1 carries the retired per-segment "interp" field — this project predates per-key tangents \(ADR 0058\) and cannot be opened/)
+  })
+
+  it('refuses a Keyframed track without "extrapolate" rather than defaulting it', () => {
+    const { wire, track } = keyedWire()
+    delete track().extrapolate
+    expect(() => parseProject(wire, silent)).toThrow(/parseProject: layer .* opacity is a Keyframed track without "extrapolate"/)
+  })
+
+  it('refuses a key lacking a record field, or holding a value outside its enum', () => {
+    for (const field of ['in', 'out', 'continuity', 'segment']) {
+      const { wire, track } = keyedWire()
+      delete track().value[1][field]
+      expect(() => parseProject(wire, silent), field).toThrow(new RegExp(`keyframe 00000000-0000-7000-8000-0000000000a2 lacks "${field}"`))
+    }
+    const bad = keyedWire()
+    bad.track().value[0].segment = { kind: 'Bezier', p1: [0, 0], p2: [1, 1] }
+    expect(() => parseProject(bad.wire, silent)).toThrow(/invalid "segment"/)
+    const mode = keyedWire()
+    mode.track().value[0].out = { x: 0.5, y: 0.5, mode: 'Loose' }
+    expect(() => parseProject(mode.wire, silent)).toThrow(/invalid "out" tangent/)
+    const ex = keyedWire()
+    ex.track().extrapolate = { before: 'Hold', after: 'Bounce' }
+    expect(() => parseProject(ex.wire, silent)).toThrow(/invalid "extrapolate"/)
+  })
+
+  it('walks effect params too', () => {
+    const { wire } = keyedWire()
+    const layer = wroot(wire).tracks[0].layers[0]
+    layer.effects = [{ id: '00000000-0000-7000-8000-0000000000e1', kind: 'blur', enabled: true, params: {
+      strength: { mode: 'Keyframed', value: [{ id: '00000000-0000-7000-8000-0000000000e2', t_us: 0, value: 0, interp: { kind: 'Linear' } }], extrapolate: { before: 'Hold', after: 'Hold' } },
+    } }]
+    expect(() => parseProject(wire, silent)).toThrow(/effects\[00000000-0000-7000-8000-0000000000e1\]\.params\.strength keyframe 00000000-0000-7000-8000-0000000000e2 carries the retired per-segment "interp" field/)
+  })
+})

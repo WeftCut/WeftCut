@@ -1,38 +1,169 @@
-//! `Animated<T>` — either a static value or a sorted keyframe vector.
+//! `Animated<T>` — either a static value or a sorted keyframe vector plus a
+//! track-level extrapolation.
 //!
 //! Keyframe times are RELATIVE to the layer's `t_start_us`. Otherwise moving a
-//! layer breaks its animation.
+//! layer breaks its animation. The record — tangents on the key, the segment
+//! class on the LEFT key, `extrapolate` on the track — is ADR 0058; the wire
+//! shape is `docs/data-model.md` § Animated values and is pinned byte-for-byte
+//! by `wire_shape_is_the_pinned_record` below. The TS twin of every type here is
+//! `src/shared/keyframe.ts`.
 
 // `Animated::static` is part of the keyframe-mutation API; not every caller
 // is wired up yet, so the dead-code lint is silenced module-wide.
 #![allow(dead_code)]
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::color::Rgba;
 use super::ids::KeyframeId;
 use super::time::TimeUs;
 
-// `Interpolation`, `unit_bezier`, and the slice-form keyframe evaluator now live
-// in the `weftcut-eval` leaf crate (one source of truth shared with the renderer
-// via wasm). `Animated<f64>::value_at` below delegates to `eval_f64` through a
-// POD `Kf` slice; `Animated<T>` itself (imbl-backed) stays here.
-pub use weftcut_eval::{unit_bezier, EaseDir, Interpolation};
+// The engine vocabulary lives in the `weftcut-eval` leaf crate (one source of
+// truth shared with the renderer via wasm). `value_at` below delegates to it
+// through a POD `Kf` slice; `Animated<T>` itself (imbl-backed) stays here.
+pub use weftcut_eval::{
+    unit_bezier, EaseDir, Extrapolate, Extrapolation, Segment, IN_IDENTITY, OUT_IDENTITY,
+};
+
+/// Who owns a side's coordinates: `Auto` sides are re-solved by the actor's
+/// write normalization (`keyframe_edits::solve_auto_tangents`, TS
+/// `src/shared/tangents.ts`) on every track write; `Free` sides are authored.
+/// Stored so every reader — curve graph, MCP, wasm preview, native export —
+/// sees the same explicit numbers; the engine never reads the mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TangentMode {
+    Auto,
+    Free,
+}
+
+/// With both sides `Free`, whether the write normalization keeps their slopes
+/// locked equal (`Smooth`) or lets them differ (`Broken`). Not stored as
+/// geometry: C1 is maintained by the authoring layer, never by the engine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Continuity {
+    Smooth,
+    Broken,
+}
+
+/// One side of a key: a control point in the owning segment's unit square
+/// (`x` = fraction of the segment's time span, `y` = fraction of its value
+/// span). The arriving side is stored UN-MIRRORED — see `weftcut_eval::Kf`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Tangent {
+    pub x: f64,
+    pub y: f64,
+    pub mode: TangentMode,
+}
+
+impl Tangent {
+    pub const fn free(x: f64, y: f64) -> Self {
+        Tangent {
+            x,
+            y,
+            mode: TangentMode::Free,
+        }
+    }
+
+    /// The leaving side of a key whose segment does not read it.
+    pub const fn out_identity() -> Self {
+        Tangent::free(OUT_IDENTITY.0, OUT_IDENTITY.1)
+    }
+
+    /// The arriving side of a key whose preceding segment does not read it.
+    pub const fn in_identity() -> Self {
+        Tangent::free(IN_IDENTITY.0, IN_IDENTITY.1)
+    }
+}
+
+/// Field order is the wire order and is CANONICAL: `fixtures/projects/v1.json`
+/// is compared byte-for-byte after a TS parse → serialize round trip, and the
+/// TS twin writes keys in this order.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Keyframe<T: Clone> {
+    pub id: KeyframeId,
+    /// Time relative to the owning layer's `t_start_us`.
+    pub t_us: TimeUs,
+    pub value: T,
+    /// Shape of the segment ARRIVING at this key. Meaningless on the first key.
+    #[serde(rename = "in")]
+    pub in_: Tangent,
+    /// Shape of the segment LEAVING this key. Meaningless on the last key.
+    pub out: Tangent,
+    pub continuity: Continuity,
+    /// Class of the segment LEAVING this key; only `Spline` reads the tangents.
+    pub segment: Segment,
+}
 
 /// `T: Clone` is required because `imbl::Vector` uses structural sharing — the
 /// inner `Keyframe<T>` must be cloneable. Bounding the type is cleaner than
 /// repeating the bound at every use site.
+///
+/// The wire shape (`{"mode":"Static","value":v}` /
+/// `{"mode":"Keyframed","value":[..],"extrapolate":{..}}`) is produced by the
+/// hand-written impls below over the private `AnimatedWire*` mirrors, so the
+/// tuple variants stay as they are: `Static(v)` sites are untouched and the
+/// `Keyframed(..)` sites only carry the second field.
 ///
 /// **No `JsonSchema` derive**: `imbl::Vector` doesn't ship a `JsonSchema`
 /// impl, and `Uuid` requires schemars' `uuid1` feature. MCP tools that
 /// need to accept an `Animated<T>` from agents declare the field as
 /// `serde_json::Value` and deserialize inside the handler; the wire
 /// shape is the same.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "mode", content = "value")]
+#[derive(Clone, Debug)]
 pub enum Animated<T: Clone> {
     Static(T),
-    Keyframed(imbl::Vector<Keyframe<T>>),
+    Keyframed(imbl::Vector<Keyframe<T>>, Extrapolation),
+}
+
+/// Internally-tagged mirror for `Serialize` (borrows, so no clone per write).
+#[derive(Serialize)]
+#[serde(tag = "mode")]
+enum AnimatedWireRef<'a, T: Clone> {
+    Static {
+        value: &'a T,
+    },
+    Keyframed {
+        value: &'a imbl::Vector<Keyframe<T>>,
+        extrapolate: &'a Extrapolation,
+    },
+}
+
+/// Internally-tagged mirror for `Deserialize`. `extrapolate` defaults as a
+/// DEFENCE only — the TS `parseProject` refuses a Keyframed track without it,
+/// so a project file never reaches here lacking the field.
+#[derive(Deserialize)]
+#[serde(tag = "mode")]
+enum AnimatedWire<T: Clone> {
+    Static {
+        value: T,
+    },
+    Keyframed {
+        value: imbl::Vector<Keyframe<T>>,
+        #[serde(default)]
+        extrapolate: Extrapolation,
+    },
+}
+
+impl<T: Clone + Serialize> Serialize for Animated<T> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Animated::Static(value) => AnimatedWireRef::Static { value }.serialize(s),
+            Animated::Keyframed(value, extrapolate) => {
+                AnimatedWireRef::Keyframed { value, extrapolate }.serialize(s)
+            }
+        }
+    }
+}
+
+impl<'de, T: Clone + Deserialize<'de>> Deserialize<'de> for Animated<T> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match AnimatedWire::<T>::deserialize(d)? {
+            AnimatedWire::Static { value } => Animated::Static(value),
+            AnimatedWire::Keyframed { value, extrapolate } => {
+                Animated::Keyframed(value, extrapolate)
+            }
+        })
+    }
 }
 
 /// `normalize_keyframes` refused an empty `Keyframed` track: a keyframed
@@ -60,20 +191,27 @@ impl<T: Clone> Animated<T> {
     pub fn is_animated(&self) -> bool {
         match self {
             Animated::Static(_) => false,
-            Animated::Keyframed(kfs) => kfs.len() > 1,
+            Animated::Keyframed(kfs, _) => kfs.len() > 1,
+        }
+    }
+
+    /// The stored extrapolation; `Static` reports the clamp, so every eval
+    /// path can ask without matching first.
+    pub fn extrapolation(&self) -> Extrapolation {
+        match self {
+            Animated::Static(_) => Extrapolation::HOLD,
+            Animated::Keyframed(_, ex) => *ex,
         }
     }
 
     /// Shift every keyframe's `t_us` by `delta_us` (no-op on `Static`).
     pub fn shift_keyframes(&mut self, delta_us: TimeUs) {
-        if let Animated::Keyframed(kfs) = self {
+        if let Animated::Keyframed(kfs, _) = self {
             *kfs = kfs
                 .iter()
                 .map(|k| Keyframe {
-                    id: k.id,
                     t_us: k.t_us + delta_us,
-                    value: k.value.clone(),
-                    interp: k.interp,
+                    ..k.clone()
                 })
                 .collect();
         }
@@ -84,7 +222,7 @@ impl<T: Clone> Animated<T> {
     /// half to the value the track clamps to before its first key.
     pub fn first_keyframe_value(&self) -> Option<T> {
         match self {
-            Animated::Keyframed(kfs) => kfs.front().map(|k| k.value.clone()),
+            Animated::Keyframed(kfs, _) => kfs.front().map(|k| k.value.clone()),
             Animated::Static(_) => None,
         }
     }
@@ -94,7 +232,7 @@ impl<T: Clone> Animated<T> {
     /// half to the value the track clamps to after its last key.
     pub fn last_keyframe_value(&self) -> Option<T> {
         match self {
-            Animated::Keyframed(kfs) => kfs.back().map(|k| k.value.clone()),
+            Animated::Keyframed(kfs, _) => kfs.back().map(|k| k.value.clone()),
             Animated::Static(_) => None,
         }
     }
@@ -105,7 +243,7 @@ impl<T: Clone> Animated<T> {
     /// since an empty `Keyframed` is rejected by `normalize_keyframes` and
     /// reads as the fallback in `value_at`.
     pub fn retain_keyframes(&mut self, keep: impl Fn(TimeUs) -> bool) {
-        if let Animated::Keyframed(kfs) = self {
+        if let Animated::Keyframed(kfs, _) = self {
             *kfs = kfs.iter().filter(|k| keep(k.t_us)).cloned().collect();
         }
     }
@@ -115,25 +253,24 @@ impl<T: Clone> Animated<T> {
     /// stable sort preserves input order among equal keys, so the dedupe keeps
     /// whichever key appears LAST in the input vector — the caller must supply
     /// keys with the most-recent write last (the write path appends the edited
-    /// key, so a duplicate snapped time resolves last-write-wins). Refuses an
-    /// empty `Keyframed` track with [`EmptyKeyframedTrack`] (a keyframed
-    /// property must hold at least one key). `Static` is unchanged and always
-    /// `Ok`.
+    /// key, so a duplicate snapped time resolves last-write-wins). Tangents,
+    /// continuity and segment ride along untouched — solving `Auto` sides is
+    /// the TS actor's write step, not this one. Refuses an empty `Keyframed`
+    /// track with [`EmptyKeyframedTrack`] (a keyframed property must hold at
+    /// least one key). `Static` is unchanged and always `Ok`.
     pub fn normalize_keyframes(
         &mut self,
         snap: impl Fn(TimeUs) -> TimeUs,
     ) -> Result<(), EmptyKeyframedTrack> {
-        if let Animated::Keyframed(kfs) = self {
+        if let Animated::Keyframed(kfs, _) = self {
             if kfs.is_empty() {
                 return Err(EmptyKeyframedTrack);
             }
             let mut v: Vec<Keyframe<T>> = kfs
                 .iter()
                 .map(|k| Keyframe {
-                    id: k.id,
                     t_us: snap(k.t_us),
-                    value: k.value.clone(),
-                    interp: k.interp,
+                    ..k.clone()
                 })
                 .collect();
             v.sort_by_key(|k| k.t_us); // stable
@@ -152,14 +289,14 @@ impl<T: Clone> Animated<T> {
 
 impl<T: Clone + PartialEq> Animated<T> {
     /// Owner-local intervals where this track is *actually animating*
-    /// — adjacent keyframe pairs with continuous-interp on the LEFT
+    /// — adjacent keyframe pairs with a continuous segment class on the LEFT
     /// keyframe AND distinct values.
     ///
-    /// Interp-direction convention (verified against `render/animated.ts`
+    /// Segment-direction convention (verified against `render/animated.ts`
     /// `resolveAnimated`): the segment `[kf[i].t_us, kf[i+1].t_us)` is
-    /// governed by `kf[i].interp`. Hold on the left → no motion in the
-    /// segment (value is constant `kf[i].value`); continuous interp
-    /// (Linear / Bezier / Elastic / Bounce) on the left WITH
+    /// governed by `kf[i].segment`. Hold on the left → no motion in the
+    /// segment (value is constant `kf[i].value`); a continuous class
+    /// (Linear / Spline / Elastic / Bounce) on the left WITH
     /// `kf[i].value != kf[i+1].value` → motion across the segment.
     ///
     /// Static tracks and zero/one keyframe tracks return empty.
@@ -171,7 +308,7 @@ impl<T: Clone + PartialEq> Animated<T> {
     ///
     /// See `docs/data-model.md` § Animated values.
     pub fn animating_runs(&self) -> Vec<(TimeUs, TimeUs)> {
-        let Animated::Keyframed(kfs) = self else {
+        let Animated::Keyframed(kfs, _) = self else {
             return Vec::new();
         };
         if kfs.len() < 2 {
@@ -184,7 +321,7 @@ impl<T: Clone + PartialEq> Animated<T> {
             if a.value == b.value {
                 continue;
             }
-            if matches!(a.interp, Interpolation::Hold) {
+            if matches!(a.segment, Segment::Hold) {
                 continue;
             }
             if b.t_us <= a.t_us {
@@ -197,7 +334,7 @@ impl<T: Clone + PartialEq> Animated<T> {
 
     /// Owner-local timestamps where a Hold-step occurs — the value
     /// changes from one constant level to another at exactly
-    /// `kf[i+1].t_us` because `kf[i].interp == Hold` AND
+    /// `kf[i+1].t_us` because `kf[i].segment == Hold` AND
     /// `kf[i].value != kf[i+1].value`.
     ///
     /// NOTE: like `animating_runs`, may now return times outside `[0, duration]`
@@ -205,7 +342,7 @@ impl<T: Clone + PartialEq> Animated<T> {
     ///
     /// See `docs/data-model.md` §4.
     pub fn hold_step_times(&self) -> Vec<TimeUs> {
-        let Animated::Keyframed(kfs) = self else {
+        let Animated::Keyframed(kfs, _) = self else {
             return Vec::new();
         };
         if kfs.len() < 2 {
@@ -215,7 +352,7 @@ impl<T: Clone + PartialEq> Animated<T> {
         for i in 0..kfs.len() - 1 {
             let a = &kfs[i];
             let b = &kfs[i + 1];
-            if matches!(a.interp, Interpolation::Hold) && a.value != b.value {
+            if matches!(a.segment, Segment::Hold) && a.value != b.value {
                 steps.push(b.t_us);
             }
         }
@@ -223,34 +360,41 @@ impl<T: Clone + PartialEq> Animated<T> {
     }
 }
 
+/// The engine-facing slice of one key: coordinates and segment class only
+/// (modes and continuity are authoring state the engine never reads).
+fn eval_kf<T: Clone, U>(k: &Keyframe<T>, value: U) -> weftcut_eval::Kf<U> {
+    weftcut_eval::Kf {
+        t_us: k.t_us,
+        value,
+        out: (k.out.x, k.out.y),
+        in_: (k.in_.x, k.in_.y),
+        segment: k.segment,
+    }
+}
+
 impl Animated<f64> {
     /// Materialize the keyframes as POD `weftcut_eval::Kf` for slice evaluation
     /// (empty for `Static`). HOIST this out of per-sample loops (e.g. the audio
-    /// envelope sampler) and call `weftcut_eval::eval_f64` on the slice directly,
-    /// rather than paying the collection on every sample.
+    /// envelope sampler) and call `weftcut_eval::eval_f64_ext` on the slice
+    /// directly, rather than paying the collection on every sample.
     pub fn eval_kfs(&self) -> Vec<weftcut_eval::Kf> {
         match self {
             Animated::Static(_) => Vec::new(),
-            Animated::Keyframed(kfs) => kfs
-                .iter()
-                .map(|k| weftcut_eval::Kf {
-                    t_us: k.t_us,
-                    value: k.value,
-                    interp: k.interp,
-                })
-                .collect(),
+            Animated::Keyframed(kfs, _) => kfs.iter().map(|k| eval_kf(k, k.value)).collect(),
         }
     }
 
     /// Resolve the value at owner-local `t_us`. `Static(v)` → `v`; otherwise
-    /// delegates to the shared `weftcut_eval::eval_f64` over a `Kf` slice, so
-    /// preview, export, and the renderer interpolate identically. See the leaf
-    /// for the empty/single/clamp/segment/interp semantics (mirrors
-    /// `render/animated.ts::resolveAnimated`).
+    /// delegates to the shared `weftcut_eval::eval_f64_ext` over a `Kf` slice
+    /// with the stored extrapolation, so preview, export, and the renderer
+    /// interpolate identically. See the leaf for the empty/single/segment/
+    /// extrapolation semantics (mirrors `render/animated.ts::resolveAnimated`).
     pub fn value_at(&self, t_us: TimeUs, default: f64) -> f64 {
         match self {
             Animated::Static(v) => *v,
-            Animated::Keyframed(_) => weftcut_eval::eval_f64(&self.eval_kfs(), t_us, default),
+            Animated::Keyframed(_, ex) => {
+                weftcut_eval::eval_f64_ext(&self.eval_kfs(), *ex, t_us, default)
+            }
         }
     }
 }
@@ -262,28 +406,24 @@ impl Animated<Rgba> {
     pub fn eval_kfs(&self) -> Vec<weftcut_eval::Kf<weftcut_eval::Rgba8>> {
         match self {
             Animated::Static(_) => Vec::new(),
-            Animated::Keyframed(kfs) => kfs
-                .iter()
-                .map(|k| weftcut_eval::Kf {
-                    t_us: k.t_us,
-                    value: k.value.to_eval(),
-                    interp: k.interp,
-                })
-                .collect(),
+            Animated::Keyframed(kfs, _) => {
+                kfs.iter().map(|k| eval_kf(k, k.value.to_eval())).collect()
+            }
         }
     }
 
     /// Resolve the color at owner-local `t_us`. `Static(v)` → `v`; otherwise
     /// delegates to the shared generic `weftcut_eval::eval::<Rgba8>` over a
     /// `Kf<Rgba8>` slice, which interpolates in OkLab + premultiplied alpha (see
-    /// `Rgba8::lerp`). Same empty/single/clamp/segment/interp semantics as
-    /// `Animated<f64>::value_at`.
+    /// `Rgba8::lerp`) and extrapolates through `Rgba8::offset`. Same
+    /// empty/single/segment/extrapolation semantics as `Animated<f64>::value_at`.
     pub fn value_at(&self, t_us: TimeUs, default: Rgba) -> Rgba {
         match self {
             Animated::Static(v) => *v,
-            Animated::Keyframed(_) => {
+            Animated::Keyframed(_, ex) => {
                 let out = weftcut_eval::eval::<weftcut_eval::Rgba8>(
                     &self.eval_kfs(),
+                    *ex,
                     t_us,
                     default.to_eval(),
                 );
@@ -299,31 +439,27 @@ impl<T: Clone + Default> Default for Animated<T> {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Keyframe<T: Clone> {
-    pub id: KeyframeId,
-    /// Time relative to the owning layer's `t_start_us`.
-    pub t_us: TimeUs,
-    pub value: T,
-    pub interp: Interpolation,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::state::ids::new_id;
 
-    fn kf(t_us: TimeUs, value: f64, interp: Interpolation) -> Keyframe<f64> {
+    /// A key whose sides are the identity — what every non-Spline segment
+    /// holds; `segment` is the class of the segment LEAVING it.
+    fn kf(t_us: TimeUs, value: f64, segment: Segment) -> Keyframe<f64> {
         Keyframe {
             id: new_id(),
             t_us,
             value,
-            interp,
+            in_: Tangent::in_identity(),
+            out: Tangent::out_identity(),
+            continuity: Continuity::Broken,
+            segment,
         }
     }
 
     fn keyframed(kfs: Vec<Keyframe<f64>>) -> Animated<f64> {
-        Animated::Keyframed(kfs.into_iter().collect())
+        Animated::Keyframed(kfs.into_iter().collect(), Extrapolation::HOLD)
     }
 
     #[test]
@@ -334,15 +470,15 @@ mod tests {
 
     #[test]
     fn single_kf_animating_runs_empty() {
-        let a = keyframed(vec![kf(0, 1.0, Interpolation::Linear)]);
+        let a = keyframed(vec![kf(0, 1.0, Segment::Linear)]);
         assert_eq!(a.animating_runs(), Vec::<(TimeUs, TimeUs)>::new());
     }
 
     #[test]
     fn linear_distinct_pair_yields_one_run() {
         let a = keyframed(vec![
-            kf(5_000_000, 0.0, Interpolation::Linear),
-            kf(10_000_000, 8.0, Interpolation::Linear),
+            kf(5_000_000, 0.0, Segment::Linear),
+            kf(10_000_000, 8.0, Segment::Linear),
         ]);
         assert_eq!(a.animating_runs(), vec![(5_000_000, 10_000_000)]);
     }
@@ -350,17 +486,17 @@ mod tests {
     #[test]
     fn equal_value_pair_yields_no_run() {
         let a = keyframed(vec![
-            kf(0, 5.0, Interpolation::Linear),
-            kf(10_000_000, 5.0, Interpolation::Linear),
+            kf(0, 5.0, Segment::Linear),
+            kf(10_000_000, 5.0, Segment::Linear),
         ]);
         assert_eq!(a.animating_runs(), Vec::<(TimeUs, TimeUs)>::new());
     }
 
     #[test]
-    fn hold_left_interp_yields_no_run() {
+    fn hold_left_segment_yields_no_run() {
         let a = keyframed(vec![
-            kf(0, 0.0, Interpolation::Hold),
-            kf(5_000_000, 8.0, Interpolation::Hold),
+            kf(0, 0.0, Segment::Hold),
+            kf(5_000_000, 8.0, Segment::Hold),
         ]);
         assert_eq!(a.animating_runs(), Vec::<(TimeUs, TimeUs)>::new());
     }
@@ -368,36 +504,35 @@ mod tests {
     #[test]
     fn hold_step_times_captures_value_step() {
         let a = keyframed(vec![
-            kf(0, 0.0, Interpolation::Hold),
-            kf(5_000_000, 8.0, Interpolation::Hold),
-            kf(10_000_000, 8.0, Interpolation::Hold),
+            kf(0, 0.0, Segment::Hold),
+            kf(5_000_000, 8.0, Segment::Hold),
+            kf(10_000_000, 8.0, Segment::Hold),
         ]);
         // Step at t=5 (value changes 0→8); no step at t=10 (8→8 same).
         assert_eq!(a.hold_step_times(), vec![5_000_000]);
     }
 
     #[test]
-    fn hold_step_times_skips_left_continuous_interp() {
-        // Linear left interp doesn't step, it lerps. Even though the
+    fn hold_step_times_skips_left_continuous_segment() {
+        // A Linear left segment doesn't step, it lerps. Even though the
         // values differ, no hold_step entry.
         let a = keyframed(vec![
-            kf(0, 0.0, Interpolation::Linear),
-            kf(5_000_000, 8.0, Interpolation::Linear),
+            kf(0, 0.0, Segment::Linear),
+            kf(5_000_000, 8.0, Segment::Linear),
         ]);
         assert_eq!(a.hold_step_times(), Vec::<TimeUs>::new());
     }
 
     #[test]
     fn mixed_track_animating_and_hold_step() {
-        // [0:0 Linear, 5:8 Hold, 10:8 Hold, 10:0 Hold]
+        // [0:0 Linear, 5:8 Hold, 10:8 Hold, 15:0 Hold]
         // Linear pair (0→8 over [0,5)) = animating run [0,5)
         // Hold pair (5→10) values equal, no step.
-        // Hold pair (10→10) — careful: duplicate timestamps. Skip this case.
         let a = keyframed(vec![
-            kf(0, 0.0, Interpolation::Linear),
-            kf(5_000_000, 8.0, Interpolation::Hold),
-            kf(10_000_000, 8.0, Interpolation::Hold),
-            kf(15_000_000, 0.0, Interpolation::Hold),
+            kf(0, 0.0, Segment::Linear),
+            kf(5_000_000, 8.0, Segment::Hold),
+            kf(10_000_000, 8.0, Segment::Hold),
+            kf(15_000_000, 0.0, Segment::Hold),
         ]);
         assert_eq!(a.animating_runs(), vec![(0, 5_000_000)]);
         // Hold-step at t=15 only (value steps 8→0).
@@ -413,18 +548,21 @@ mod tests {
 
     #[test]
     fn value_at_empty_keyframed_returns_default() {
-        let a: Animated<f64> = Animated::Keyframed(imbl::Vector::new());
+        let a: Animated<f64> = Animated::Keyframed(imbl::Vector::new(), Extrapolation::HOLD);
         assert!((a.value_at(0, 4.2) - 4.2).abs() < 1e-9);
     }
 
     // ---- Animated<Rgba>::value_at structural shape (exact OkLab values not pinned here) ----
 
-    fn color_kf(t_us: TimeUs, value: Rgba, interp: Interpolation) -> Keyframe<Rgba> {
+    fn color_kf(t_us: TimeUs, value: Rgba, segment: Segment) -> Keyframe<Rgba> {
         Keyframe {
             id: new_id(),
             t_us,
             value,
-            interp,
+            in_: Tangent::in_identity(),
+            out: Tangent::out_identity(),
+            continuity: Continuity::Broken,
+            segment,
         }
     }
 
@@ -437,7 +575,7 @@ mod tests {
 
     #[test]
     fn color_value_at_empty_keyframed_returns_default() {
-        let a: Animated<Rgba> = Animated::Keyframed(imbl::Vector::new());
+        let a: Animated<Rgba> = Animated::Keyframed(imbl::Vector::new(), Extrapolation::HOLD);
         assert_eq!(a.value_at(0, Rgba::WHITE), Rgba::WHITE);
     }
 
@@ -447,11 +585,12 @@ mod tests {
         let green = Rgba::rgb(0, 255, 0);
         let a: Animated<Rgba> = Animated::Keyframed(
             vec![
-                color_kf(5_000_000, red, Interpolation::Linear),
-                color_kf(10_000_000, green, Interpolation::Linear),
+                color_kf(5_000_000, red, Segment::Linear),
+                color_kf(10_000_000, green, Segment::Linear),
             ]
             .into_iter()
             .collect(),
+            Extrapolation::HOLD,
         );
         // Endpoint clamp must be exact (delegates to the same eval clamp).
         assert_eq!(a.value_at(0, Rgba::BLACK), red);
@@ -466,7 +605,7 @@ mod tests {
 
     #[test]
     fn value_at_single_keyframe() {
-        let a = keyframed(vec![kf(0, 3.0, Interpolation::Linear)]);
+        let a = keyframed(vec![kf(0, 3.0, Segment::Linear)]);
         assert!((a.value_at(0, 0.0) - 3.0).abs() < 1e-9);
         assert!((a.value_at(100_000, 0.0) - 3.0).abs() < 1e-9);
     }
@@ -474,8 +613,8 @@ mod tests {
     #[test]
     fn value_at_clamps_before_first_and_after_last() {
         let a = keyframed(vec![
-            kf(5_000_000, 2.0, Interpolation::Linear),
-            kf(10_000_000, 8.0, Interpolation::Linear),
+            kf(5_000_000, 2.0, Segment::Linear),
+            kf(10_000_000, 8.0, Segment::Linear),
         ]);
         // Before first
         assert!((a.value_at(0, 0.0) - 2.0).abs() < 1e-9);
@@ -484,10 +623,33 @@ mod tests {
     }
 
     #[test]
+    fn value_at_uses_the_stored_extrapolation() {
+        let a = Animated::Keyframed(
+            vec![
+                kf(0, 0.0, Segment::Linear),
+                kf(10_000_000, 10.0, Segment::Linear),
+            ]
+            .into_iter()
+            .collect(),
+            Extrapolation {
+                before: Extrapolate::Offset,
+                after: Extrapolate::Loop,
+            },
+        );
+        assert!((a.value_at(-2_000_000, 0.0) - -2.0).abs() < 1e-9);
+        assert!((a.value_at(12_000_000, 0.0) - 2.0).abs() < 1e-9);
+        assert_eq!(a.extrapolation().after, Extrapolate::Loop);
+        assert_eq!(
+            Animated::<f64>::Static(1.0).extrapolation(),
+            Extrapolation::HOLD
+        );
+    }
+
+    #[test]
     fn value_at_linear_interpolates_midpoint() {
         let a = keyframed(vec![
-            kf(0, 0.0, Interpolation::Linear),
-            kf(10_000_000, 10.0, Interpolation::Linear),
+            kf(0, 0.0, Segment::Linear),
+            kf(10_000_000, 10.0, Segment::Linear),
         ]);
         assert!((a.value_at(5_000_000, 0.0) - 5.0).abs() < 1e-6);
         assert!((a.value_at(2_000_000, 0.0) - 2.0).abs() < 1e-6);
@@ -496,8 +658,8 @@ mod tests {
     #[test]
     fn value_at_hold_returns_left_value() {
         let a = keyframed(vec![
-            kf(0, 3.0, Interpolation::Hold),
-            kf(10_000_000, 8.0, Interpolation::Hold),
+            kf(0, 3.0, Segment::Hold),
+            kf(10_000_000, 8.0, Segment::Hold),
         ]);
         // Mid-segment: held at left value, NOT lerped.
         assert!((a.value_at(5_000_000, 0.0) - 3.0).abs() < 1e-9);
@@ -506,25 +668,25 @@ mod tests {
     }
 
     #[test]
-    fn value_at_baked_ease_in_bezier_uses_cubic_bezier() {
-        // (0.42,0),(1,1) — the params the retired named ease-in variant baked to.
-        let interp = Interpolation::Bezier {
-            p1: (0.42, 0.0),
-            p2: (1.0, 1.0),
-        };
-        let a = keyframed(vec![kf(0, 0.0, interp), kf(10_000_000, 10.0, interp)]);
+    fn value_at_spline_ease_in_uses_cubic_bezier() {
+        // (0.42,0),(1,1) — the CSS ease-in cubic split across the two keys.
+        let mut a0 = kf(0, 0.0, Segment::Spline);
+        a0.out = Tangent::free(0.42, 0.0);
+        let mut a1 = kf(10_000_000, 10.0, Segment::Linear);
+        a1.in_ = Tangent::free(1.0, 1.0);
+        let a = keyframed(vec![a0, a1]);
         let expected = super::unit_bezier(0.42, 0.0, 1.0, 1.0, 0.5) * 10.0;
         assert!((a.value_at(5_000_000, 0.0) - expected).abs() < 1e-9);
     }
 
     #[test]
-    fn value_at_baked_ease_out_bezier_uses_cubic_bezier() {
-        // (0,0),(0.58,1) — the params the retired named ease-out variant baked to.
-        let interp = Interpolation::Bezier {
-            p1: (0.0, 0.0),
-            p2: (0.58, 1.0),
-        };
-        let a = keyframed(vec![kf(0, 0.0, interp), kf(10_000_000, 10.0, interp)]);
+    fn value_at_spline_ease_out_uses_cubic_bezier() {
+        // (0,0),(0.58,1) — the CSS ease-out cubic split across the two keys.
+        let mut a0 = kf(0, 0.0, Segment::Spline);
+        a0.out = Tangent::free(0.0, 0.0);
+        let mut a1 = kf(10_000_000, 10.0, Segment::Linear);
+        a1.in_ = Tangent::free(0.58, 1.0);
+        let a = keyframed(vec![a0, a1]);
         let expected = super::unit_bezier(0.0, 0.0, 0.58, 1.0, 0.5) * 10.0;
         assert!((a.value_at(5_000_000, 0.0) - expected).abs() < 1e-9);
     }
@@ -537,28 +699,28 @@ mod tests {
             kf(
                 0,
                 0.0,
-                Interpolation::Elastic {
+                Segment::Elastic {
                     dir: EaseDir::Out,
                     amplitude: 1.0,
                     period: 0.3,
                 },
             ),
-            kf(10_000_000, 10.0, Interpolation::Linear),
+            kf(10_000_000, 10.0, Segment::Linear),
         ]);
         assert!((e.value_at(2_500_000, 0.0) - 9.116116523516816).abs() < 1e-9);
         let b = keyframed(vec![
-            kf(0, 0.0, Interpolation::Bounce { dir: EaseDir::In }),
-            kf(10_000_000, 10.0, Interpolation::Linear),
+            kf(0, 0.0, Segment::Bounce { dir: EaseDir::In }),
+            kf(10_000_000, 10.0, Segment::Linear),
         ]);
         assert!((b.value_at(5_000_000, 0.0) - 2.34375).abs() < 1e-9);
     }
 
-    /// Locks the serde wire shape of the procedural variants — the TS union in
-    /// `render/animated.ts` mirrors exactly this JSON (`dir` as the bare
-    /// variant name).
+    /// Locks the serde wire shape of the procedural segment variants — the TS
+    /// union in `src/shared/keyframe.ts` mirrors exactly this JSON (`dir` as
+    /// the bare variant name).
     #[test]
-    fn procedural_interp_wire_shape() {
-        let e = Interpolation::Elastic {
+    fn procedural_segment_wire_shape() {
+        let e = Segment::Elastic {
             dir: EaseDir::InOut,
             amplitude: 1.0,
             period: 0.3,
@@ -567,19 +729,84 @@ mod tests {
             serde_json::to_value(e).unwrap(),
             serde_json::json!({ "kind": "Elastic", "dir": "InOut", "amplitude": 1.0, "period": 0.3 })
         );
-        let b: Interpolation =
-            serde_json::from_str(r#"{ "kind": "Bounce", "dir": "In" }"#).unwrap();
-        assert_eq!(b, Interpolation::Bounce { dir: EaseDir::In });
+        let b: Segment = serde_json::from_str(r#"{ "kind": "Bounce", "dir": "In" }"#).unwrap();
+        assert_eq!(b, Segment::Bounce { dir: EaseDir::In });
+        let s: Segment = serde_json::from_str(r#"{ "kind": "Spline" }"#).unwrap();
+        assert_eq!(s, Segment::Spline);
+    }
+
+    /// The pinned record, byte for byte (key ORDER included — `v1.json` is
+    /// compared as bytes after a TS round trip, so both twins must emit it):
+    /// `id, t_us, value, in, out, continuity, segment` per key, then the
+    /// track-level `extrapolate`; `Static` is unchanged.
+    #[test]
+    fn wire_shape_is_the_pinned_record() {
+        let s: Animated<f64> = Animated::Static(7.5);
+        assert_eq!(
+            serde_json::to_string(&s).unwrap(),
+            r#"{"mode":"Static","value":7.5}"#
+        );
+        let k = Animated::Keyframed(
+            vec![Keyframe {
+                id: uuid::Uuid::from_u128(1),
+                t_us: 0,
+                value: 0.0,
+                in_: Tangent::in_identity(),
+                out: Tangent::out_identity(),
+                continuity: Continuity::Broken,
+                segment: Segment::Linear,
+            }]
+            .into_iter()
+            .collect(),
+            Extrapolation::HOLD,
+        );
+        let text = serde_json::to_string(&k).unwrap();
+        assert_eq!(
+            text,
+            concat!(
+                r#"{"mode":"Keyframed","value":[{"id":"00000000-0000-0000-0000-000000000001","t_us":0,"value":0.0,"#,
+                r#""in":{"x":0.6666666666666666,"y":0.6666666666666666,"mode":"Free"},"#,
+                r#""out":{"x":0.3333333333333333,"y":0.3333333333333333,"mode":"Free"},"#,
+                r#""continuity":"Broken","segment":{"kind":"Linear"}}],"#,
+                r#""extrapolate":{"before":"Hold","after":"Hold"}}"#
+            )
+        );
+        let back: Animated<f64> = serde_json::from_str(&text).unwrap();
+        let Animated::Keyframed(kfs, ex) = back else {
+            panic!("keyframed")
+        };
+        assert_eq!(kfs.len(), 1);
+        assert_eq!(kfs[0].in_, Tangent::in_identity());
+        assert_eq!(kfs[0].segment, Segment::Linear);
+        assert_eq!(ex, Extrapolation::HOLD);
+        let s2: Animated<f64> = serde_json::from_str(r#"{"mode":"Static","value":7.5}"#).unwrap();
+        assert!(matches!(s2, Animated::Static(v) if v == 7.5));
+    }
+
+    /// The Rust side defaults a missing `extrapolate` to the clamp as a defence;
+    /// refusing it is the TS `parseProject`'s job.
+    #[test]
+    fn missing_extrapolate_defaults_to_hold() {
+        let a: Animated<f64> = serde_json::from_str(
+            r#"{"mode":"Keyframed","value":[{"id":"00000000-0000-0000-0000-000000000001","t_us":0,"value":1.0,"in":{"x":0.5,"y":0.5,"mode":"Free"},"out":{"x":0.5,"y":0.5,"mode":"Auto"},"continuity":"Smooth","segment":{"kind":"Spline"}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(a.extrapolation(), Extrapolation::HOLD);
+        let Animated::Keyframed(kfs, _) = a else {
+            panic!("keyframed")
+        };
+        assert_eq!(kfs[0].out.mode, TangentMode::Auto);
+        assert_eq!(kfs[0].continuity, Continuity::Smooth);
     }
 
     #[test]
     fn shift_keyframes_offsets_all_times() {
         let mut a = keyframed(vec![
-            kf(1_000_000, 0.0, Interpolation::Linear),
-            kf(3_000_000, 1.0, Interpolation::Linear),
+            kf(1_000_000, 0.0, Segment::Linear),
+            kf(3_000_000, 1.0, Segment::Linear),
         ]);
         a.shift_keyframes(-1_000_000);
-        let Animated::Keyframed(kfs) = &a else {
+        let Animated::Keyframed(kfs, _) = &a else {
             panic!("keyframed")
         };
         assert_eq!(kfs[0].t_us, 0);
@@ -596,12 +823,12 @@ mod tests {
     #[test]
     fn retain_keyframes_filters_by_time() {
         let mut a = keyframed(vec![
-            kf(0, 0.0, Interpolation::Linear),
-            kf(2_000_000, 1.0, Interpolation::Linear),
-            kf(5_000_000, 2.0, Interpolation::Linear),
+            kf(0, 0.0, Segment::Linear),
+            kf(2_000_000, 1.0, Segment::Linear),
+            kf(5_000_000, 2.0, Segment::Linear),
         ]);
         a.retain_keyframes(|t| t <= 2_000_000);
-        let Animated::Keyframed(kfs) = &a else {
+        let Animated::Keyframed(kfs, _) = &a else {
             panic!("keyframed")
         };
         assert_eq!(kfs.len(), 2);
@@ -611,8 +838,8 @@ mod tests {
     #[test]
     fn first_last_keyframe_value() {
         let a = keyframed(vec![
-            kf(0, 3.0, Interpolation::Linear),
-            kf(5_000_000, 7.0, Interpolation::Linear),
+            kf(0, 3.0, Segment::Linear),
+            kf(5_000_000, 7.0, Segment::Linear),
         ]);
         assert_eq!(a.first_keyframe_value(), Some(3.0));
         assert_eq!(a.last_keyframe_value(), Some(7.0));
@@ -623,7 +850,7 @@ mod tests {
         let s: Animated<f64> = Animated::Static(1.0);
         assert_eq!(s.first_keyframe_value(), None);
         assert_eq!(s.last_keyframe_value(), None);
-        let e: Animated<f64> = Animated::Keyframed(imbl::Vector::new());
+        let e: Animated<f64> = Animated::Keyframed(imbl::Vector::new(), Extrapolation::HOLD);
         assert_eq!(e.first_keyframe_value(), None);
         assert_eq!(e.last_keyframe_value(), None);
     }
@@ -635,13 +862,13 @@ mod tests {
         // after a stable sort) wins.
         let snap = |t: TimeUs| ((t + 500_000) / 1_000_000) * 1_000_000;
         let mut a = keyframed(vec![
-            kf(3_000_000, 3.0, Interpolation::Linear),
-            kf(900_000, 1.0, Interpolation::Linear),
-            kf(1_100_000, 2.0, Interpolation::Linear),
+            kf(3_000_000, 3.0, Segment::Linear),
+            kf(900_000, 1.0, Segment::Linear),
+            kf(1_100_000, 2.0, Segment::Linear),
         ]);
         a.normalize_keyframes(snap)
             .expect("non-empty keyframed normalizes");
-        let Animated::Keyframed(kfs) = &a else {
+        let Animated::Keyframed(kfs, _) = &a else {
             panic!("keyframed")
         };
         assert_eq!(kfs.len(), 2, "900k & 1100k collapse to one at 1_000_000");
@@ -651,8 +878,37 @@ mod tests {
     }
 
     #[test]
+    fn normalize_keeps_tangents_and_extrapolation() {
+        let mut k0 = kf(0, 0.0, Segment::Spline);
+        k0.out = Tangent {
+            x: 0.25,
+            y: 0.1,
+            mode: TangentMode::Auto,
+        };
+        k0.continuity = Continuity::Smooth;
+        let mut a = Animated::Keyframed(
+            vec![k0, kf(1_000_000, 1.0, Segment::Linear)]
+                .into_iter()
+                .collect(),
+            Extrapolation {
+                before: Extrapolate::Hold,
+                after: Extrapolate::PingPong,
+            },
+        );
+        a.normalize_keyframes(|t| t).unwrap();
+        let Animated::Keyframed(kfs, ex) = &a else {
+            panic!("keyframed")
+        };
+        assert_eq!(kfs[0].out.mode, TangentMode::Auto);
+        assert_eq!(kfs[0].out.x, 0.25);
+        assert_eq!(kfs[0].continuity, Continuity::Smooth);
+        assert_eq!(kfs[0].segment, Segment::Spline);
+        assert_eq!(ex.after, Extrapolate::PingPong);
+    }
+
+    #[test]
     fn normalize_rejects_empty_keyframed() {
-        let mut a: Animated<f64> = Animated::Keyframed(imbl::Vector::new());
+        let mut a: Animated<f64> = Animated::Keyframed(imbl::Vector::new(), Extrapolation::HOLD);
         assert!(a.normalize_keyframes(|t| t).is_err());
     }
 
@@ -765,7 +1021,7 @@ mod tests {
     /// `render/animated.golden.test.ts` against the TS `resolveAnimated`;
     /// a change that passes one side and fails the other is an engine
     /// drift, which is exactly what this test exists to catch. Also
-    /// locks the serde wire shape (`mode`/`value`, `interp.kind`).
+    /// locks the serde wire shape (`mode`/`value`/`extrapolate`, `segment.kind`).
     #[test]
     fn golden_vectors_match_fixture() {
         #[derive(serde::Deserialize)]

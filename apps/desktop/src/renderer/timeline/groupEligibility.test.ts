@@ -92,8 +92,8 @@ describe("groupNotPlainReason", () => {
   // have no shared track to carry it onto.
   it("names the transform for a keyframed axis, whatever its values", () => {
     const keyed: AnimTrack<number> = {
-      mode: "Keyframed",
-      value: [{ id: "k", t_us: 0, value: 0, interp: { kind: "Linear" } }],
+      mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+      value: [{ id: "k", t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }],
     };
     expect(groupNotPlainReason(groupLayerFixture({ x: keyed }))).toBe("transform");
   });

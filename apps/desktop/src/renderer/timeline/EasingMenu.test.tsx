@@ -2,8 +2,8 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 import "../i18n"; // initialize i18next with en-US translations so t(key) resolves
-import type { AnimTrack, Interpolation } from "../ipc";
-import { EASING_PRESETS } from "../../shared/easing";
+import type { AnimTrack, Interpolation, Keyframe } from "../ipc";
+import { EASING_PRESETS, applySegmentEasing, segmentEasing } from "../../shared/easing";
 import { clearEasingPreview, getEasingPreview } from "../keyframe/easingPreviewStore";
 import {
   clearKeyframeSelection,
@@ -60,24 +60,27 @@ afterEach(() => {
   clearKeyframeSelection();
 });
 
+const baseKeys: Keyframe<number>[] = [
+  { id: "k0", t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+  { id: "k1", t_us: 1_000_000, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+];
 const track: AnimTrack<number> = {
-  mode: "Keyframed",
-  value: [
-    { id: "k0", t_us: 0, value: 0, interp: { kind: "Linear" } },
-    { id: "k1", t_us: 1_000_000, value: 1, interp: { kind: "Linear" } },
-  ],
+  mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+  value: baseKeys,
 };
 
-/// Same two keys with k0's interp swapped — each test states only the interp
-/// under test.
+/// Same two keys with the k0 → k1 segment's easing swapped — each test states
+/// only the easing under test, written the way a commit writes it.
 function trackWith(interp: Interpolation): AnimTrack<number> {
-  return {
-    mode: "Keyframed",
-    value: [
-      { id: "k0", t_us: 0, value: 0, interp },
-      { id: "k1", t_us: 1_000_000, value: 1, interp: { kind: "Linear" } },
-    ],
-  };
+  const [k0, k1] = applySegmentEasing(baseKeys[0]!, baseKeys[1], interp);
+  return { mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" }, value: [k0, k1!] };
+}
+
+/// The easing of the segment leaving `id`, read back the way the menu reads it
+/// (a last key has no segment; its own class stands in).
+function easingOf(keys: readonly Keyframe<number>[], id: string): Interpolation {
+  const i = keys.findIndex((k) => k.id === id);
+  return segmentEasing(keys[i]!, keys[i + 1] ?? keys[i]!);
 }
 
 function presetInterp(id: string): Interpolation {
@@ -136,7 +139,7 @@ describe("EasingMenu — tier 1 command menu", () => {
     render(<EasingMenu x={10} y={10} track={track} kfId="k0" onApply={onApply} onClose={onClose} />);
     fireEvent.click(screen.getByTestId("easing-cmd-ease_in_out"));
     const next = editedTrack(onApply, track);
-    expect(next.value.find((k) => k.id === "k0")!.interp).toEqual(presetInterp("ease_in_out"));
+    expect(easingOf(next.value, "k0")).toEqual(presetInterp("ease_in_out"));
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -199,7 +202,7 @@ describe("EasingMenu — tier 1 command menu", () => {
     fireEvent.click(screen.getByTestId("easing-cmd-hold"));
     const next = editedTrack(onApply, track, ["k0", "k1"]);
     for (const id of ["k0", "k1"]) {
-      expect(next.value.find((k) => k.id === id)!.interp).toEqual(presetInterp("hold"));
+      expect(easingOf(next.value, id)).toEqual(presetInterp("hold"));
     }
   });
 });
@@ -232,7 +235,7 @@ describe("EasingMenu — tier 2 gallery", () => {
     openGallery();
     fireEvent.click(screen.getByRole("button", { name: "Expo In" }));
     const next = editedTrack(onApply, track);
-    expect(next.value.find((k) => k.id === "k0")!.interp).toEqual(presetInterp("ease_in_expo"));
+    expect(easingOf(next.value, "k0")).toEqual(presetInterp("ease_in_expo"));
   });
 
   it("marks exactly the thumbnail the reverse lookup names for the current params", () => {
@@ -325,7 +328,7 @@ describe("EasingMenu — elastic parameters (gallery view)", () => {
     fireEvent.pointerUp(amp);
     expect(onApply).toHaveBeenCalledTimes(1);
     const next = editedTrack(onApply, trackWith(elastic));
-    expect(next.value.find((k) => k.id === "k0")!.interp)
+    expect(easingOf(next.value, "k0"))
       .toEqual({ kind: "Elastic", dir: "Out", amplitude: 2, period: 0.3 });
   });
 
@@ -344,7 +347,7 @@ describe("EasingMenu — elastic parameters (gallery view)", () => {
     fireEvent.pointerUp(per);
     expect(onApply).toHaveBeenCalledTimes(2);
     const next = editedTrack(onApply, trackWith(elasticIn), ["k0"], 1);
-    expect(next.value.find((k) => k.id === "k0")!.interp)
+    expect(easingOf(next.value, "k0"))
       .toEqual({ kind: "Elastic", dir: "In", amplitude: 1.5, period: 0.45 });
   });
 

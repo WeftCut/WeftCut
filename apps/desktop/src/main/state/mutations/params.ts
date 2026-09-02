@@ -4,6 +4,7 @@ import { snapFrameFloor, snapFrameCeil, gridForLayerKind, snapOnGrid } from '../
 import { authoredExtentPx, authoredValue, quantizeTrack } from '../quantize'
 import { checkTrackLock, applyDurationAutofit, requireLayer } from './helpers'
 import { normalizeKeyframes } from './animated'
+import { solveAutoTangents } from '../../../shared/tangents'
 import type { MotifCatalog } from '../../../shared/motifs/catalog'
 import { resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
 
@@ -447,6 +448,13 @@ export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: strin
   // `f64Lens` still answers UnknownKeyframeParam for it two lines down. Only keys
   // that ARE in the table carry a range, and those are exactly the valid ones.
   quantizeTrack(paramKey, track)
+  // Tangents, after the values: every Auto side and every Smooth pair of Free
+  // sides is solved HERE — after snap / sort / dedupe / quantize, so the stored
+  // numbers describe the stored keys — and nowhere else. The engine never
+  // solves, so preview, export, the curve graph and get_param_track all read
+  // these same explicit coordinates; trim / split / move carry them through
+  // unchanged, which is what keeps motion byte-identical across a cut.
+  if (track.mode === 'Keyframed') track.value = solveAutoTangents(track.value, (v) => v)
   if (f64Lens(layer, paramKey) === null) {
     const eff = parseEffectParamKey(paramKey)
     if (eff) {

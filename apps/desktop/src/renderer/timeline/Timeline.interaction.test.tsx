@@ -2306,8 +2306,8 @@ describe("Timeline row alignment", () => {
           ...tinyVideoLayer.params,
           kind: "VideoClip",
           opacity: {
-            mode: "Keyframed",
-            value: [{ id: "kf-1", t_us: 0, value: 1, interp: { kind: "Linear" } }],
+            mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+            value: [{ id: "kf-1", t_us: 0, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }],
           },
         } as LayerSummary["params"],
       },
@@ -2763,8 +2763,8 @@ describe("Timeline marquee", () => {
           anchor_y: { mode: "Static", value: 0.5 },
           // The one keyed param, so the track offers exactly one sub-lane row.
           opacity: {
-            mode: "Keyframed",
-            value: [{ id: "kf-1", t_us: 0, value: 1, interp: { kind: "Linear" } }],
+            mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+            value: [{ id: "kf-1", t_us: 0, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }],
           },
           speed: 1,
           flip_h: false,
@@ -2793,11 +2793,11 @@ describe("Timeline marquee", () => {
             { kind: "VideoClip" }
           >),
           opacity: {
-            mode: "Keyframed",
+            mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
             value: [
-              { id: "kf-hi", t_us: 0, value: 1, interp: { kind: "Linear" } },
-              { id: "kf-mid", t_us: 500_000, value: 0.5, interp: { kind: "Linear" } },
-              { id: "kf-lo", t_us: 1_000_000, value: 0, interp: { kind: "Linear" } },
+              { id: "kf-hi", t_us: 0, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+              { id: "kf-mid", t_us: 500_000, value: 0.5, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+              { id: "kf-lo", t_us: 1_000_000, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
             ],
           },
         },
@@ -2823,8 +2823,8 @@ describe("Timeline marquee", () => {
           { kind: "VideoClip" }
         >),
         opacity: {
-          mode: "Keyframed",
-          value: keys.map((k) => ({ ...k, interp: { kind: "Linear" as const } })),
+          mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+          value: keys.map((k) => ({ ...k, in: { x: 2 / 3, y: 2 / 3, mode: "Free" as const }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" as const }, continuity: "Broken" as const, segment: { kind: "Linear" as const } })),
         },
       },
     };
@@ -3426,7 +3426,7 @@ describe("Timeline marquee", () => {
     ]);
   });
 
-  /// The interps the batch committed, per entry.
+  /// The segment classes the batch committed, per entry.
   function committedInterps(): [string, string[]][] {
     const entries = ipcMocks.updateParamTracksMulti.mock.calls[0]![0] as [
       string,
@@ -3435,7 +3435,7 @@ describe("Timeline marquee", () => {
     ][];
     return entries.map(([layerId, , t]) => [
       layerId,
-      t.mode === "Keyframed" ? t.value.map((k) => k.interp.kind) : [],
+      t.mode === "Keyframed" ? t.value.map((k) => k.segment.kind) : [],
     ]);
   }
 

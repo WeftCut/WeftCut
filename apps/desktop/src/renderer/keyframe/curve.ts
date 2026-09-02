@@ -6,6 +6,7 @@
 // The preset gallery reads the canonical table (src/shared/easing.ts)
 // directly — this module owns no preset data.
 import type { Interpolation } from "../../shared/easing";
+import type { Segment } from "../../shared/keyframe";
 
 /// The segment kinds whose curve IS a cubic spline — the only kinds with
 /// draggable tangent handles. Procedural kinds (Elastic/Bounce) have no
@@ -17,15 +18,22 @@ export function isSplineInterp(i: Interpolation): i is SplineInterpolation {
   return i.kind === "Hold" || i.kind === "Linear" || i.kind === "Bezier";
 }
 
-/// Glyph modifier class for a keyframe's outgoing interpolation — the NLE
-/// convention (diamond = linear, square = hold, circle = eased) so interp
-/// state reads at a glance without opening the easing menu. "" keeps the base
+/// Glyph modifier class for a keyframe's outgoing segment class — the NLE
+/// convention (diamond = linear, square = hold, circle = eased) so the class
+/// reads at a glance without opening the easing menu. "" keeps the base
 /// .kf-diamond shape; shared by the collapsed in-clip row and the sub-lane
 /// curve editor so both surfaces speak the same glyph language.
-export function interpGlyphClass(kind: Interpolation["kind"]): "" | "kf-interp-hold" | "kf-interp-eased" {
+export function interpGlyphClass(kind: Segment["kind"]): "" | "kf-interp-hold" | "kf-interp-eased" {
   if (kind === "Hold") return "kf-interp-hold";
   if (kind === "Linear") return "";
   return "kf-interp-eased";
+}
+
+/// The read-only parameter-curve class: Elastic / Bounce have no tangent
+/// representation, so the curve graph draws them sampled, tinted, without
+/// handles.
+export function isProceduralSegment(seg: Segment): boolean {
+  return seg.kind === "Elastic" || seg.kind === "Bounce";
 }
 
 /// Spline interp → cubic-bezier control coords for handle placement.

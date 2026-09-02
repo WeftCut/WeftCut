@@ -96,9 +96,9 @@ describe('applySplitLayer', () => {
     const p = blankProject(seededGen(), 't')
     const c: Layer = {
       id: 'c', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {},
-      params: { kind: 'Color', width: 1, height: 1, color: { mode: 'Keyframed', value: [
-        { id: 'k0', t_us: 0, value: { r: 10, g: 0, b: 0, a: 255 }, interp: { kind: 'Linear' } },
-        { id: 'k1', t_us: 100_000, value: { r: 20, g: 0, b: 0, a: 255 }, interp: { kind: 'Linear' } },
+      params: { kind: 'Color', width: 1, height: 1, color: { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [
+        { id: 'k0', t_us: 0, value: { r: 10, g: 0, b: 0, a: 255 }, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } },
+        { id: 'k1', t_us: 100_000, value: { r: 20, g: 0, b: 0, a: 255 }, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } },
       ] } }, effects: [],
     }
     root(p).tracks[0].layers = [c]

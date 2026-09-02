@@ -839,8 +839,9 @@ cannot move it — the reverse of the anchor case above.
 
 `scale_linked` records **uniform-scale intent**: while `true`, the two scale
 tracks are structural twins — same mode, and when keyframed the same
-`(t_us, value, interp)` sequence (keyframe `id`s are per-track identities and
-legitimately differ) — and every editing surface shows and writes them as one
+`(t_us, value, in, out, continuity, segment)` sequence and the same
+`extrapolate` (keyframe `id`s are per-track identities and legitimately
+differ) — and every editing surface shows and writes them as one
 "Scale"; the preview's resize handles do it by offering **corners only**, since a
 linked layer has no honest single-axis handle. The invariant is enforced on
 **results**, not write paths
@@ -858,22 +859,40 @@ only; no compute reads it.
 ## Animated values
 
 ```rust
-enum Animated<T> {
+enum Animated<T> {                           // wire: {"mode":"Static","value":v} | {"mode":"Keyframed","value":[..],"extrapolate":{..}}
     Static(T),
-    Keyframed(imbl::Vector<Keyframe<T>>),    // sorted by t_us
+    Keyframed(imbl::Vector<Keyframe<T>>, Extrapolation),   // sorted by t_us; Hold / Hold is the clamp
 }
 
 struct Keyframe<T> {
     id: KeyframeId,
     t_us: i64,                               // RELATIVE to layer.t_start_us
     value: T,
-    interp: Interpolation,                   // Hold | Linear | Bezier(p1,p2) | Elastic{dir,amplitude,period} | Bounce{dir}
+    in_: Tangent,                            // wire "in": shape of the segment ARRIVING at this key
+    out: Tangent,                            // shape of the segment LEAVING this key
+    continuity: Continuity,                  // Smooth | Broken
+    segment: Segment,                        // class of the segment LEAVING; only Spline reads tangents
 }
+
+struct Tangent { x: f64, y: f64, mode: TangentMode }   // a point in the segment's unit square
+enum TangentMode { Auto, Free }
+enum Continuity { Smooth, Broken }
+enum Segment { Spline, Hold, Linear, Elastic { dir, amplitude, period }, Bounce { dir } }   // wire: tagged by "kind"
+enum Extrapolate { Hold, Loop, PingPong, Offset, Continue }
+struct Extrapolation { before: Extrapolate, after: Extrapolate }
 ```
 
 Keyframe times are **relative to the layer's start**. Otherwise moving a layer breaks its animation. Trim and split keep keyframes content-anchored: an IN-edge trim shifts every key by the edge delta, split partitions keys at the cut (right half re-based, an emptied half collapses to `Static` at the boundary value), and keys pushed outside `[0, duration]` are **retained, not dropped** (so trims stay reversible) — `value_at` clamps out-of-range keys and the UI hides them.
 
-`Interpolation` is per-segment, stored on the segment's left keyframe (`kf[i].interp` governs `kf[i] → kf[i+1]`), and splits into two classes. **Spline** segments: `Hold` (left-stick step), `Linear`, and `Bezier{p1,p2}` — an arbitrary `cubic-bezier(x1,y1,x2,y2)` timing function. Named easing presets (the CSS eases plus the sine/quad/cubic/quart/quint/expo/circ/back families) are not schema variants: the authoring layer bakes them to their canonical `Bezier` params and recovers the name for display by exact-param reverse lookup against the append-only table in `src/shared/easing.ts` (params in that table are never retuned — a changed feel is a new id). **Procedural** segments: `Elastic{dir, amplitude, period}` and `Bounce{dir}` — oscillating curves a single cubic segment cannot express, evaluated closed-form in the eval leaf; they have parameters instead of handles. There are no per-keyframe in/out handles; velocity continuity through a keyframe is produced by the authoring-side Smooth command, which bakes matching tangents into the two adjacent segments (a procedural neighbour reads as the identity diagonal for this purpose).
+A keyframe's shape is two **tangents**, one per side. `out` shapes the segment leaving the key and `in` the segment arriving; each is a point `{x, y}` in the owning segment's unit square — fractions of that segment's time span and value span, the CSS `cubic-bezier` lineage — plus a mode. A Spline segment `a → b` evaluates as `unit_bezier(a.out.x, a.out.y, b.in.x, b.in.y)`. `in` is stored **un-mirrored**: it is the arriving cubic's second control point exactly as the engine consumes it, not the handle the user sees (that sits at `in − (1, 1)` from the key, and the mirroring is the curve graph's presentation only). Exactness is the reason — `1 − (1 − 0.58)` is not `0.58` in f64, and preset recovery, the linked-scale twin compare and the Rust↔TS goldens all rest on exact equality — so there is zero arithmetic between store and engine. The identity sides are `(1/3, 1/3)` for `out` and `(2/3, 2/3)` for `in`, written as the expressions `1 / 3` and `2 / 3` in both languages, never as decimal literals. The first key's `in` and the last key's `out` are stored but read by no segment (the last key's `in` is what `Continue` extrapolation reads).
+
+`mode` is per side. **Free** is the numbers as written. **Auto** is clamped monotone — the slope through the key taken from its neighbours, flat at an extremum, an endpoint or a sign change, `y` clamped to `[0, 1]` so a value never overshoots (Blender's Auto Clamped) — and it is solved when the track is **written**, in the actor's normalization beside frame-snap / sort / dedupe-last-wins, never in the engine: stored tangents are always explicit, so the curve graph, `get_param_track`, the wasm preview and the native export read the same numbers. `continuity` is `Smooth | Broken` and is maintained by that same normalization rather than stored as a constraint: when both sides are Free and both adjacent segments are Spline, Smooth re-derives `in.y` from the out-side's slope ("out wins" — main cannot know which handle moved, and the renderer writes both sides itself on an in-handle drag, so the rule fires only when a neighbour's edit changed the segment's Δv/Δt). Trim, split and move never re-solve; explicit numbers are what keep the motion byte-identical across a cut.
+
+`segment` on the left key names the class of `kf[i] → kf[i+1]`. **Spline** reads the two tangents. **Hold** (left-stick step — no cubic represents it), **Linear** (its own class, so its glyph needs no f64 test against the diagonal), and the procedural **Elastic{dir, amplitude, period}** / **Bounce{dir}** — oscillating curves a single cubic cannot express, evaluated closed-form in the eval leaf, parameters instead of handles — ignore them, and the sides adjacent to such a segment hold the identity. Named easing presets (the CSS eases plus the sine/quad/cubic/quart/quint/expo/circ/back families) are not schema variants: the authoring layer bakes a preset to its canonical `(p1, p2)`, which land as `left.out` / `right.in`, both Free, with `left.segment = Spline`, and recovers the name for display by exact reverse lookup over `(this.out, next.in)` against the append-only table in `src/shared/easing.ts` (params in that table are never retuned — a changed feel is a new id). Applying a preset to `A → B` leaves `B.out` untouched, so an Auto key downstream stays smooth. `Interpolation` in that module names the easing of ONE segment as a value — what the table holds and what `set_keyframe_easing` takes — and `segmentEasing` / `applySegmentEasing` bridge it to the record.
+
+Outside its first and last key a track follows `extrapolate { before, after }`, each `Hold | Loop | PingPong | Offset | Continue`, independent, default `Hold / Hold` (the end value — the clamp). The period is `last.t − first.t`; a single-key track never extrapolates. **Loop** returns to `first.value` at `last + period`, a visible jump when first ≠ last that nothing bridges (After Effects' `loopOut("cycle")`, Blender's Cycles). **PingPong** runs odd periods backwards. **Offset** adds `n · (last − first)` per period in the value type's interpolation space (`Rgba`: OkLab, clamped at the u8 conversion). **Continue** extends a line at the last segment's end velocity; a Hold or procedural last segment gives slope 0.
+
+There is no migration to this record: v1 is redefined in place under § Versioning's pre-release rule, and `parseProject` **refuses** the old shape — a key carrying `interp` or lacking any of `in` / `out` / `continuity` / `segment`, or a keyframed track lacking `extrapolate` — with a named error rather than a default (the additive-field rule: a defaulted tangent is not a blank screen but silently different motion). ADR 0058.
 
 Animatable params, by kind: the visual kinds carry `x`, `y`, `scale_x`,
 `scale_y`, `rotation_deg`, `anchor_x`, `anchor_y` and `opacity`; Audio carries
@@ -1173,7 +1192,7 @@ the UI uses the same actor via backend commands.
 | `set_layers_enabled(layer_ids, enabled)` | sets `enabled` on exactly the layers named — the UI hands it a link's members when the toggle fans out; a locked track refuses the whole set, a layer's own lock does not |
 | `update_layer(layer_id, patch)` | envelope-only patch (label, time range, enabled, locked) |
 | `update_layer_params(layer_id, patch)` | kind-specific params |
-| `update_layer_param_track(layer_id, param_key, track)` / `update_layer_param_tracks(layer_id, entries)` | replace one / several `Animated<f64>` tracks; normalized (frame-snap / sort / dedupe-last-wins), recorded, rejects empty-keyframed / unknown-param / locked-track |
+| `update_layer_param_track(layer_id, param_key, track)` / `update_layer_param_tracks(layer_id, entries)` | replace one / several `Animated<f64>` tracks; normalized (frame-snap / sort / dedupe-last-wins / Auto-tangent solve), recorded, rejects empty-keyframed / unknown-param / locked-track |
 | `update_param_tracks_multi(entries)` | the cross-**layer** form of the batch above: every `(layer_id, param_key, track)` entry names its own layer, and the whole set is **one** recorded entry however many layers it spans — so one undo reverts the lot. Same normalization and rejections per entry; the scale-link invariant is checked once per distinct layer after every entry has landed, never mid-batch |
 | `move_layer(layer_id, new_track_id, new_t_start_us, escape_link?)` | rejects on overlap; link-aware (see `features.md#links`): a fan-out that would touch a locked member rejects whole with `LinkLockedMember` |
 | `move_layers_to_composition(layer_ids, to_composition_id, anchor_layer_id, anchor_t_start_us, to_track_id?)` | the move across compositions (ADR 0054; [features.md §Groups](features.md#groups)): the set — one or more layers of ONE composition — leaves it and lands in `to_composition_id`, `anchor_layer_id` at `anchor_t_start_us`, an ABSOLUTE time on the destination's clock, every other member keeping its phase. The root is an ordinary destination. Lanes are assigned per SOURCE track: `to_track_id` omitted bounces to the nearest free lane else spawns, `"spawn"` always takes a fresh one, and a named lane is refused rather than bounced when it is locked or occupied. Both endpoints re-snap at the DESTINATION's rate, so a cross-rate round trip is not identity. Refuses whole before any write: `CrossCompositionSet`, `LayerNotFound`, `CompositionNotFound`, `TrackNotFound`, `TrackLocked`, `GroupLockedMember`, `CompositionCycle`, `LayerOverlap`, and `InvalidArgument` for an empty set, an anchor outside it, a destination the set is already in, or a landing before composition time 0 |
@@ -1208,10 +1227,15 @@ Keyframe authoring is exposed to agents as a small family of MCP tools —
 low-level `set_param_track`. These are the one place the surface is **not**
 1:1 with a same-named command: they are handler-side helpers that read the
 layer, apply a pure transform, and write the whole track back through
-`update_layer_param_track`. Keyframe times in / out are timeline-absolute
-(converted to layer-local at the boundary). The transform math is shared
-with the timeline UI and locked Rust↔TS by a golden fixture. See
-[`mcp.md`](mcp.md).
+`update_layer_param_track`. They expose the keyframe record itself:
+`get_param_track` returns, per key, `{ id, t_us, t_local_us, value, in, out,
+continuity, segment, preset_id? }` plus the track's `extrapolate`, and
+`set_param_track` takes the same shape; `set_keyframe_easing` writes the
+segment leaving a key (`this.out`, `next.in`, `this.segment`, both sides
+Free); `smooth_keyframes` sets Auto on the key(s) it names. Keyframe times
+in / out are timeline-absolute (converted to layer-local at the boundary).
+The transform math is shared with the timeline UI and locked Rust↔TS by a
+golden fixture. See [`mcp.md`](mcp.md).
 
 ## On-disk format: workspace folder
 

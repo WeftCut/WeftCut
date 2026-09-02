@@ -1,51 +1,99 @@
 {
-  "comment": "Golden vectors for Animated<Rgba>::value_at. Expected mixed-color values are anchored to Chromium 149 color-mix(in oklab) output (external authority). Rust native/src/state/animated.rs::golden_color_vectors_match_fixture and TS both assert this fixture. Edit only with a matching change on BOTH sides.",
+  "comment": "Golden vectors for Animated<Rgba>::value_at. Expected mixed-color values are anchored to Chromium 149 color-mix(in oklab) output (external authority); the Offset case is hand-derived from the clamp rule. Rust native/src/state/animated.rs::golden_color_vectors_match_fixture and TS both assert this fixture. Edit only with a matching change on BOTH sides.",
   "default": { "r": 0, "g": 0, "b": 0, "a": 255 },
   "cases": [
     {
       "name": "static_color",
       "track": { "mode": "Static", "value": { "r": 0, "g": 255, "b": 0, "a": 255 } },
       "samples": [
-        { "t_us": 0,      "expect": { "r": 0, "g": 255, "b": 0, "a": 255 } },
+        { "t_us": 0, "expect": { "r": 0, "g": 255, "b": 0, "a": 255 } },
         { "t_us": 999999, "expect": { "r": 0, "g": 255, "b": 0, "a": 255 } }
       ]
     },
     {
       "name": "single_key",
-      "track": { "mode": "Keyframed", "value": [
-        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": { "r": 0, "g": 0, "b": 255, "a": 255 }, "interp": { "kind": "Linear" } }
-      ]},
+      "track": {
+        "mode": "Keyframed",
+        "value": [
+          { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": { "r": 0, "g": 0, "b": 255, "a": 255 }, "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" }, "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" }, "continuity": "Broken", "segment": { "kind": "Linear" } }
+        ],
+        "extrapolate": { "before": "Hold", "after": "Hold" }
+      },
       "samples": [
         { "t_us": 500000, "expect": { "r": 0, "g": 0, "b": 255, "a": 255 } }
       ]
     },
     {
       "name": "clamp_before_and_after",
-      "track": { "mode": "Keyframed", "value": [
-        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 5000000,  "value": { "r": 255, "g": 0, "b": 0, "a": 255 }, "interp": { "kind": "Linear" } },
-        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": { "r": 0, "g": 255, "b": 0, "a": 255 }, "interp": { "kind": "Linear" } }
-      ]},
+      "track": {
+        "mode": "Keyframed",
+        "value": [
+          {
+            "id": "00000000-0000-7000-8000-000000000001",
+            "t_us": 5000000,
+            "value": { "r": 255, "g": 0, "b": 0, "a": 255 },
+            "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" },
+            "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" },
+            "continuity": "Broken",
+            "segment": { "kind": "Linear" }
+          },
+          {
+            "id": "00000000-0000-7000-8000-000000000002",
+            "t_us": 10000000,
+            "value": { "r": 0, "g": 255, "b": 0, "a": 255 },
+            "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" },
+            "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" },
+            "continuity": "Broken",
+            "segment": { "kind": "Linear" }
+          }
+        ],
+        "extrapolate": { "before": "Hold", "after": "Hold" }
+      },
       "samples": [
-        { "t_us": 0,        "expect": { "r": 255, "g": 0,   "b": 0, "a": 255 } },
-        { "t_us": 15000000, "expect": { "r": 0,   "g": 255, "b": 0, "a": 255 } }
+        { "t_us": 0, "expect": { "r": 255, "g": 0, "b": 0, "a": 255 } },
+        { "t_us": 15000000, "expect": { "r": 0, "g": 255, "b": 0, "a": 255 } }
       ]
     },
     {
       "name": "hold_left",
-      "track": { "mode": "Keyframed", "value": [
-        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0,       "value": { "r": 255, "g": 0, "b": 0, "a": 255 }, "interp": { "kind": "Hold" } },
-        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 1000000, "value": { "r": 0, "g": 255, "b": 0, "a": 255 }, "interp": { "kind": "Linear" } }
-      ]},
+      "track": {
+        "mode": "Keyframed",
+        "value": [
+          { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": { "r": 255, "g": 0, "b": 0, "a": 255 }, "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" }, "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" }, "continuity": "Broken", "segment": { "kind": "Hold" } },
+          {
+            "id": "00000000-0000-7000-8000-000000000002",
+            "t_us": 1000000,
+            "value": { "r": 0, "g": 255, "b": 0, "a": 255 },
+            "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" },
+            "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" },
+            "continuity": "Broken",
+            "segment": { "kind": "Linear" }
+          }
+        ],
+        "extrapolate": { "before": "Hold", "after": "Hold" }
+      },
       "samples": [
         { "t_us": 500000, "expect": { "r": 255, "g": 0, "b": 0, "a": 255 } }
       ]
     },
     {
       "name": "red_to_green",
-      "track": { "mode": "Keyframed", "value": [
-        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0,       "value": { "r": 255, "g": 0,   "b": 0, "a": 255 }, "interp": { "kind": "Linear" } },
-        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 1000000, "value": { "r": 0,   "g": 255, "b": 0, "a": 255 }, "interp": { "kind": "Linear" } }
-      ]},
+      "track": {
+        "mode": "Keyframed",
+        "value": [
+          { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": { "r": 255, "g": 0, "b": 0, "a": 255 }, "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" }, "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" }, "continuity": "Broken", "segment": { "kind": "Linear" } },
+          {
+            "id": "00000000-0000-7000-8000-000000000002",
+            "t_us": 1000000,
+            "value": { "r": 0, "g": 255, "b": 0, "a": 255 },
+            "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" },
+            "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" },
+            "continuity": "Broken",
+            "segment": { "kind": "Linear" }
+          }
+        ],
+        "extrapolate": { "before": "Hold", "after": "Hold" }
+      },
       "samples": [
         { "t_us": 250000, "expect": { "r": 237, "g": 115, "b": 0, "a": 255 } },
         { "t_us": 500000, "expect": { "r": 208, "g": 168, "b": 0, "a": 255 } },
@@ -54,32 +102,92 @@
     },
     {
       "name": "blue_to_yellow",
-      "track": { "mode": "Keyframed", "value": [
-        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0,       "value": { "r": 0,   "g": 0,   "b": 255, "a": 255 }, "interp": { "kind": "Linear" } },
-        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 1000000, "value": { "r": 255, "g": 255, "b": 0,   "a": 255 }, "interp": { "kind": "Linear" } }
-      ]},
+      "track": {
+        "mode": "Keyframed",
+        "value": [
+          { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": { "r": 0, "g": 0, "b": 255, "a": 255 }, "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" }, "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" }, "continuity": "Broken", "segment": { "kind": "Linear" } },
+          {
+            "id": "00000000-0000-7000-8000-000000000002",
+            "t_us": 1000000,
+            "value": { "r": 255, "g": 255, "b": 0, "a": 255 },
+            "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" },
+            "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" },
+            "continuity": "Broken",
+            "segment": { "kind": "Linear" }
+          }
+        ],
+        "extrapolate": { "before": "Hold", "after": "Hold" }
+      },
       "samples": [
         { "t_us": 500000, "expect": { "r": 108, "g": 171, "b": 199, "a": 255 } }
       ]
     },
     {
       "name": "red_to_transparent",
-      "track": { "mode": "Keyframed", "value": [
-        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0,       "value": { "r": 255, "g": 0, "b": 0, "a": 255 }, "interp": { "kind": "Linear" } },
-        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 1000000, "value": { "r": 0,   "g": 0, "b": 0, "a": 0   }, "interp": { "kind": "Linear" } }
-      ]},
+      "track": {
+        "mode": "Keyframed",
+        "value": [
+          { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": { "r": 255, "g": 0, "b": 0, "a": 255 }, "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" }, "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" }, "continuity": "Broken", "segment": { "kind": "Linear" } },
+          { "id": "00000000-0000-7000-8000-000000000002", "t_us": 1000000, "value": { "r": 0, "g": 0, "b": 0, "a": 0 }, "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" }, "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" }, "continuity": "Broken", "segment": { "kind": "Linear" } }
+        ],
+        "extrapolate": { "before": "Hold", "after": "Hold" }
+      },
       "samples": [
         { "t_us": 500000, "expect": { "r": 255, "g": 0, "b": 0, "a": 128 } }
       ]
     },
     {
       "name": "gray_to_white",
-      "track": { "mode": "Keyframed", "value": [
-        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0,       "value": { "r": 128, "g": 128, "b": 128, "a": 255 }, "interp": { "kind": "Linear" } },
-        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 1000000, "value": { "r": 255, "g": 255, "b": 255, "a": 255 }, "interp": { "kind": "Linear" } }
-      ]},
+      "track": {
+        "mode": "Keyframed",
+        "value": [
+          {
+            "id": "00000000-0000-7000-8000-000000000001",
+            "t_us": 0,
+            "value": { "r": 128, "g": 128, "b": 128, "a": 255 },
+            "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" },
+            "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" },
+            "continuity": "Broken",
+            "segment": { "kind": "Linear" }
+          },
+          {
+            "id": "00000000-0000-7000-8000-000000000002",
+            "t_us": 1000000,
+            "value": { "r": 255, "g": 255, "b": 255, "a": 255 },
+            "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" },
+            "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" },
+            "continuity": "Broken",
+            "segment": { "kind": "Linear" }
+          }
+        ],
+        "extrapolate": { "before": "Hold", "after": "Hold" }
+      },
       "samples": [
         { "t_us": 500000, "expect": { "r": 189, "g": 189, "b": 189, "a": 255 } }
+      ]
+    },
+    {
+      "name": "offset_black_to_white_clamps_at_u8",
+      "comment": "Black → white over [0, 1 s], Offset on both sides. 2.5 s = period 2, u = 0.5 s: the mid gray plus 2·(white − black) in premultiplied OkLab has L ≈ 2.5 → every channel clamps to 255. −0.5 s = period −1, u = 0.5 s: L ≈ 0.5 − 1 → clamps to 0. Alpha is 1 throughout (1 + n·0).",
+      "track": {
+        "mode": "Keyframed",
+        "value": [
+          { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": { "r": 0, "g": 0, "b": 0, "a": 255 }, "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" }, "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" }, "continuity": "Broken", "segment": { "kind": "Linear" } },
+          {
+            "id": "00000000-0000-7000-8000-000000000002",
+            "t_us": 1000000,
+            "value": { "r": 255, "g": 255, "b": 255, "a": 255 },
+            "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" },
+            "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" },
+            "continuity": "Broken",
+            "segment": { "kind": "Linear" }
+          }
+        ],
+        "extrapolate": { "before": "Offset", "after": "Offset" }
+      },
+      "samples": [
+        { "t_us": 2500000, "expect": { "r": 255, "g": 255, "b": 255, "a": 255 } },
+        { "t_us": -500000, "expect": { "r": 0, "g": 0, "b": 0, "a": 255 } }
       ]
     }
   ]

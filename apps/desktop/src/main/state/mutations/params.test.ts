@@ -181,9 +181,9 @@ describe('Text box patch', () => {
 })
 
 describe('applyUpdateLayerParamTrack', () => {
-  const kfTrack = () => ({ mode: 'Keyframed' as const, value: [
-    { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 0, interp: { kind: 'Linear' as const } },
-    { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: 1, interp: { kind: 'Linear' as const } },
+  const kfTrack = () => ({ mode: 'Keyframed' as const, extrapolate: { before: 'Hold' as const, after: 'Hold' as const }, value: [
+    { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' as const }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' as const }, continuity: 'Broken' as const, segment: { kind: 'Linear' as const } },
+    { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' as const }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' as const }, continuity: 'Broken' as const, segment: { kind: 'Linear' as const } },
   ] })
   function textLayer(): { p: Project; id: string } {
     const g = seededGen(); const p = blankProject(g, 'kf')
@@ -199,7 +199,7 @@ describe('applyUpdateLayerParamTrack', () => {
   })
   it('empty Keyframed track → EmptyKeyframeTrack', () => {
     const { p, id } = textLayer()
-    expectCmd(() => applyUpdateLayerParamTrack(p, id, 'opacity', { mode: 'Keyframed', value: [] }), 'EmptyKeyframeTrack')
+    expectCmd(() => applyUpdateLayerParamTrack(p, id, 'opacity', { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [] }), 'EmptyKeyframeTrack')
   })
   it('unknown param key → UnknownKeyframeParam', () => {
     const { p, id } = textLayer()
@@ -215,7 +215,7 @@ describe('applyUpdateLayerParamTrack', () => {
   it('locked track → TrackLocked (checked before normalize)', () => {
     const { p, id } = textLayer()
     root(p).tracks[1].locked = true
-    expectCmd(() => applyUpdateLayerParamTrack(p, id, 'opacity', { mode: 'Keyframed', value: [] }), 'TrackLocked')
+    expectCmd(() => applyUpdateLayerParamTrack(p, id, 'opacity', { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [] }), 'TrackLocked')
   })
 })
 
@@ -492,9 +492,9 @@ describe('authored precision at the write seam', () => {
   it('quantizes every keyframe of a track write, not just the first', () => {
     const g = seededGen(); const p = blankProject(g, 'q')
     const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('t', root(p)), 0, 2_000_000)
-    applyUpdateLayerParamTrack(p, id, 'x', { mode: 'Keyframed', value: [
-      { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 10.373737, interp: { kind: 'Linear' } },
-      { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: 20.982, interp: { kind: 'Linear' } },
+    applyUpdateLayerParamTrack(p, id, 'x', { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [
+      { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 10.373737, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } },
+      { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: 20.982, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } },
     ] })
     const t = layerOf(p, id).params as TextParams
     expect((t.transform.x.value as { value: number }[]).map((k) => k.value)).toEqual([10.4, 21])
@@ -569,9 +569,9 @@ describe('applyUpdateLayerParams — a Group layer', () => {
 
   it('keyframes opacity and transform through the lens every visual kind shares', () => {
     const { p, refLayerId } = groupedProject()
-    const track = { mode: 'Keyframed' as const, value: [
-      { id: '00000000-0000-0000-0000-0000000000e1', t_us: 0, value: 0, interp: { kind: 'Linear' as const } },
-      { id: '00000000-0000-0000-0000-0000000000e2', t_us: 1_000_000, value: 1, interp: { kind: 'Linear' as const } },
+    const track = { mode: 'Keyframed' as const, extrapolate: { before: 'Hold' as const, after: 'Hold' as const }, value: [
+      { id: '00000000-0000-0000-0000-0000000000e1', t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' as const }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' as const }, continuity: 'Broken' as const, segment: { kind: 'Linear' as const } },
+      { id: '00000000-0000-0000-0000-0000000000e2', t_us: 1_000_000, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' as const }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' as const }, continuity: 'Broken' as const, segment: { kind: 'Linear' as const } },
     ] }
     applyUpdateLayerParamTrack(p, refLayerId, 'opacity', track)
     applyUpdateLayerParamTrack(p, refLayerId, 'scale_y', track)

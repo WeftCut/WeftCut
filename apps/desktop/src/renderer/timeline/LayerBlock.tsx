@@ -765,7 +765,7 @@ export function LayerBlock({
         ? [{
             id: k.id,
             x: keyframeXWithinClip(k.t_us, clipDurationUs, layerWidthPx),
-            glyph: interpGlyphClass(k.interp.kind),
+            glyph: interpGlyphClass(k.segment.kind),
           }]
         : [],
     );

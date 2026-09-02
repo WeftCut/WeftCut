@@ -10,15 +10,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
-import type { AnimTrack, Interpolation } from "../ipc";
+import type { AnimTrack, Interpolation, Keyframe } from "../ipc";
 import {
   EASING_PRESETS,
+  applySegmentEasing,
   presetIdForInterp,
+  segmentEasing,
   type EasingPreset,
   type EasingPresetId,
 } from "../../shared/easing";
+import { IN_IDENTITY, inIdentity, outIdentity } from "../../shared/keyframe";
 import { useKeyframeSelectionStore } from "../keyframe/selectionStore";
-import { applyInterp, smoothKeys, type KeyframeGroupEdit } from "./keyframeBatch";
+import { applySegmentEasingKeys, setAutoKeys, type KeyframeGroupEdit } from "./keyframeBatch";
 import { clearEasingPreview, setEasingPreview } from "../keyframe/easingPreviewStore";
 import { isSplineInterp } from "../keyframe/curve";
 import { computeValueRange, segmentPolyline, type CurveGeom } from "../keyframe/curveGraph";
@@ -71,16 +74,24 @@ const THUMB_H = 26;
 /// overshoot included via computeValueRange. Computed lazily on first gallery
 /// open, safely after the renderer bootstrap awaited initEval().
 const thumbCache = new Map<EasingPresetId, string>();
+/// A unit segment (0 → 1 over 1 s) carrying `e` — the two keys a preset writes.
+function unitSegment(e: Interpolation): [Keyframe<number>, Keyframe<number>] {
+  const base = (id: string, t_us: number, value: number): Keyframe<number> => ({
+    id, t_us, value, in: inIdentity(), out: outIdentity(), continuity: "Broken", segment: { kind: "Linear" },
+  });
+  const [a, b] = applySegmentEasing(base("a", 0, 0), base("b", 1_000_000, 1), e);
+  return [a, b!];
+}
 function thumbPoints(p: EasingPreset): string {
   const hit = thumbCache.get(p.id);
   if (hit) return hit;
-  const a = { t_us: 0, value: 0, interp: p.interp };
-  const b = { t_us: 1_000_000, value: 1, interp: { kind: "Linear" as const } };
+  const [a, b] = unitSegment(p.interp);
   const { vmin, vmax } = computeValueRange([a, b]);
   const g: CurveGeom = { pxPerSec: THUMB_W, layerTStartUs: 0, height: THUMB_H, vmin, vmax };
   const pts = segmentPolyline(
     { aTUs: a.t_us, aVal: a.value, bTUs: b.t_us, bVal: b.value },
-    p.interp,
+    a,
+    b,
     g,
     32,
   )
@@ -262,6 +273,22 @@ function ElasticParamRows({
   );
 }
 
+/// The easing of the segment LEAVING `kfId`, as the menu reads it. The last key
+/// has no such segment: its stored class is still reported (so a Hold last key
+/// keeps Smooth disabled), with the identity arriving side standing in for a
+/// Spline — there is no right key to read one from.
+function easingLeaving(keys: readonly Keyframe<number>[], kfId: string): Interpolation {
+  const i = keys.findIndex((k) => k.id === kfId);
+  const k = keys[i];
+  if (!k) return { kind: "Linear" };
+  const next = keys[i + 1];
+  if (next) return segmentEasing(k, next);
+  if (k.segment.kind === "Spline") {
+    return { kind: "Bezier", p1: [k.out.x, k.out.y], p2: [IN_IDENTITY.x, IN_IDENTITY.y] };
+  }
+  return segmentEasing(k, k);
+}
+
 export function EasingMenu({
   x, y, track, kfId, onApply, onClose,
 }: {
@@ -293,7 +320,7 @@ export function EasingMenu({
   const current: Interpolation | null = mixed
     ? null
     : track.mode === "Keyframed"
-      ? (track.value.find((k) => k.id === kfId)?.interp ?? { kind: "Linear" as const })
+      ? easingLeaving(track.value, kfId)
       : { kind: "Linear" as const };
   const isHold = current?.kind === "Hold";
   // Which entry the current params ARE (display-layer identity): exact reverse
@@ -316,7 +343,7 @@ export function EasingMenu({
   );
 
   const applyToSelection = (interp: Interpolation) => {
-    onApply(applyInterp(interp));
+    onApply(applySegmentEasingKeys(interp));
     onClose();
   };
 
@@ -358,7 +385,7 @@ export function EasingMenu({
                 data-testid="easing-smooth"
                 disabled={isHold}
                 {...(isHold ? { "data-disabled": "" } : {})}
-                onClick={() => { onApply(smoothKeys); onClose(); }}
+                onClick={() => { onApply(setAutoKeys); onClose(); }}
               >
                 <span className="app-menu-item-check" aria-hidden />
                 <span className="app-menu-item-label">{t("keyframe.smooth")}</span>
@@ -396,7 +423,7 @@ export function EasingMenu({
                   interp={current}
                   // Full interp from the sliders' drag-local state; the popover
                   // stays open so a gesture on the other slider can follow.
-                  onCommitInterp={(interp) => onApply(applyInterp(interp))}
+                  onCommitInterp={(interp) => onApply(applySegmentEasingKeys(interp))}
                 />
               )}
               <div

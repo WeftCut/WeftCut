@@ -2,7 +2,8 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { act, cleanup, render, fireEvent } from "@testing-library/react";
 import "../i18n"; // initialize i18next so the procedural badge label resolves
-import type { AnimTrack, Interpolation } from "../ipc";
+import type { AnimTrack, Interpolation, Keyframe } from "../ipc";
+import { applySegmentEasing } from "../../shared/easing";
 import { clearEasingPreview, setEasingPreview } from "../keyframe/easingPreviewStore";
 import { KeyframeCurveGraph } from "./KeyframeCurveGraph";
 
@@ -17,13 +18,20 @@ afterEach(() => {
   clearEasingPreview();
 });
 
-const track: Extract<AnimTrack<number>, { mode: "Keyframed" }> = {
-  mode: "Keyframed",
-  value: [
-    { id: "k0", t_us: 0, value: 0, interp: { kind: "Bezier", p1: [0.42, 0], p2: [0.58, 1] } },
-    { id: "k1", t_us: 1_000_000, value: 1, interp: { kind: "Linear" } },
-  ],
-};
+const baseKeys: Keyframe<number>[] = [
+  { id: "k0", t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+  { id: "k1", t_us: 1_000_000, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+];
+
+/// Same two keys with the k0 → k1 segment carrying `interp` — written the way a
+/// commit writes it (class + leaving side on k0, arriving side on k1).
+function trackWith(interp: Interpolation): Extract<AnimTrack<number>, { mode: "Keyframed" }> {
+  const [k0, k1] = applySegmentEasing(baseKeys[0]!, baseKeys[1], interp);
+  return { mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" }, value: [k0, k1!] };
+}
+
+// The default track: a CSS ease-in-out Spline from k0 to k1.
+const track = trackWith({ kind: "Bezier", p1: [0.42, 0], p2: [0.58, 1] });
 
 function renderGraph(over: Partial<React.ComponentProps<typeof KeyframeCurveGraph>> = {}) {
   return render(
@@ -37,7 +45,7 @@ function renderGraph(over: Partial<React.ComponentProps<typeof KeyframeCurveGrap
       isSelected={() => false}
       onSelectSeek={vi.fn()}
       onRetime={vi.fn()}
-      onSetInterp={vi.fn()}
+      onSetSegmentCoeffs={vi.fn()}
       onOpenMenu={vi.fn()}
       {...over}
     />,
@@ -102,9 +110,9 @@ describe("KeyframeCurveGraph", () => {
     // the test track has keys k0 (owns the only segment) -> k1
     expect(onOpenMenu).toHaveBeenCalledWith(5, 6, "k0");
   });
-  it("commits a tangent-handle drag as a single deferred onSetInterp (one undo step)", () => {
+  it("commits a tangent-handle drag as a single deferred onSetSegmentCoeffs (one undo step)", () => {
     const onSetInterp = vi.fn();
-    const { container } = renderGraph({ onSetInterp });
+    const { container } = renderGraph({ onSetSegmentCoeffs: onSetInterp });
     const handle = container.querySelector('[data-testid="kf-handle"]')!;
     fireEvent.pointerDown(handle, { button: 0, clientX: 20, clientY: 40 });
     fireEvent.pointerMove(window, { clientX: 30, clientY: 35 });
@@ -113,24 +121,15 @@ describe("KeyframeCurveGraph", () => {
     // No commit mid-drag.
     expect(onSetInterp).not.toHaveBeenCalled();
     fireEvent.pointerUp(window);
-    // Exactly one commit on release → one undo step, carrying the final coeffs.
+    // Exactly one commit on release → one undo step, carrying the final cubic
+    // (the owning key's out then the next key's in, un-mirrored).
     expect(onSetInterp).toHaveBeenCalledTimes(1);
     expect(onSetInterp.mock.calls[0]![0]).toBe("k0");
-    expect(onSetInterp.mock.calls[0]![1].kind).toBe("Bezier");
+    const coeffs = onSetInterp.mock.calls[0]![1] as number[];
+    expect(coeffs).toHaveLength(4);
+    expect(coeffs.every((c) => Number.isFinite(c))).toBe(true);
   });
 });
-
-/// Same two keys as `track` with k0's interp swapped — each case states only
-/// the segment class under test.
-function trackWith(interp: Interpolation): Extract<AnimTrack<number>, { mode: "Keyframed" }> {
-  return {
-    mode: "Keyframed",
-    value: [
-      { id: "k0", t_us: 0, value: 0, interp },
-      { id: "k1", t_us: 1_000_000, value: 1, interp: { kind: "Linear" } },
-    ],
-  };
-}
 
 const ELASTIC: Interpolation = { kind: "Elastic", dir: "Out", amplitude: 1, period: 0.3 };
 const BOUNCE: Interpolation = { kind: "Bounce", dir: "InOut" };
@@ -189,7 +188,7 @@ describe("KeyframeCurveGraph — interp glyph coding on dots", () => {
     container.querySelector(`.kf-sublane-diamond[data-kf-id="${id}"]`)!.className;
 
   it("an eased keyframe renders as a circle (kf-interp-eased)", () => {
-    // The default track's k0 is Bezier — eased glyph; k1 is Linear — bare diamond.
+    // The default track's k0 leaves on a Spline — eased glyph; k1 is Linear — bare diamond.
     const { container } = renderGraph();
     expect(dotClass(container, "k0")).toContain("kf-interp-eased");
     expect(dotClass(container, "k1")).not.toContain("kf-interp-eased");

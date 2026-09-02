@@ -487,7 +487,7 @@ describe('applyGroupsUngroup', () => {
     expect(expectCmd(() => applyGroupsUngroup(faded, gen, r.layerId))).toEqual({ error: 'GroupNotPlain', layer: r.layerId, reason: 'opacity' })
 
     const keyed = structuredClone(p)
-    ;(layerOf(root(keyed), r.layerId).params as CompositionRefParams).opacity = { mode: 'Keyframed', value: [{ id: 'k', t_us: 0, value: 1, interp: { kind: 'Linear' } }] }
+    ;(layerOf(root(keyed), r.layerId).params as CompositionRefParams).opacity = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [{ id: 'k', t_us: 0, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } }] }
     expect(expectCmd(() => applyGroupsUngroup(keyed, gen, r.layerId))).toEqual({ error: 'GroupNotPlain', layer: r.layerId, reason: 'opacity' })
 
     const blurred = structuredClone(p)
@@ -507,8 +507,8 @@ describe('applyGroupsUngroup', () => {
     const p = blankProject(gen, 't')
     addMedia(p, 10 * S)
     const vid = applyAddLayer(p, gen, root(p).tracks[0].id, videoParams(0, 3 * S), 0, 3 * S)
-    layerOf(root(p), vid).params = { ...videoParams(0, 3 * S), opacity: { mode: 'Keyframed', value: [
-      { id: 'k1', t_us: 500_000, value: 0, interp: { kind: 'Linear' } }, { id: 'k2', t_us: 1_500_000, value: 1, interp: { kind: 'Linear' } }] } }
+    layerOf(root(p), vid).params = { ...videoParams(0, 3 * S), opacity: { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [
+      { id: 'k1', t_us: 500_000, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } }, { id: 'k2', t_us: 1_500_000, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } }] } }
     const tail = applyAddLayer(p, gen, root(p).tracks[1].id, color(), 2_500_000, 3 * S)
     const r = applyGroupsCreate(p, gen, [vid, tail], null)
     // Trim the Group layer by hand to the window [1 s, 2 s), shown at t = 2 s.
