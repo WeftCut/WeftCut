@@ -102,10 +102,7 @@ pub fn availability(backend: VlmBackend, cfg: Option<&BackendConfig>) -> Availab
 }
 
 /// Convenience: look a backend's config entry up by its stable tag.
-pub fn entry<'a>(
-    cfg: &'a HashMap<String, BackendConfig>,
-    backend: VlmBackend,
-) -> Option<&'a BackendConfig> {
+pub fn entry(cfg: &HashMap<String, BackendConfig>, backend: VlmBackend) -> Option<&BackendConfig> {
     cfg.get(backend.as_str())
 }
 

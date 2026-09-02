@@ -350,6 +350,7 @@ async fn compute_finest_level(
     let mut leftover = [0u8; 4];
     let mut leftover_len = 0usize;
 
+    #[allow(clippy::too_many_arguments)]
     fn consume(
         sample: f32,
         channels: usize,
@@ -566,8 +567,7 @@ pub fn read_peaks_file(path: &std::path::Path) -> Result<PeaksFile> {
         .levels
         .iter()
         .enumerate()
-        .filter(|(_, l)| l.peaks_per_second(header.sample_rate) >= TARGET_PEAKS_PER_SECOND)
-        .last()
+        .rfind(|(_, l)| l.peaks_per_second(header.sample_rate) >= TARGET_PEAKS_PER_SECOND)
         .map(|(i, l)| (i, *l))
         .unwrap_or((0, header.levels[0]));
 

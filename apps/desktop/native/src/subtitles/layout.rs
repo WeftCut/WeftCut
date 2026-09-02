@@ -117,8 +117,8 @@ fn anchor_for(an: u8, w: f64, h: f64) -> ((f64, f64), f64, f64) {
         _ => (0.5, w / 2.0),
     };
     let (ay, y) = match an {
-        7 | 8 | 9 => (0.0, my),
-        4 | 5 | 6 => (0.5, h / 2.0),
+        7..=9 => (0.0, my),
+        4..=6 => (0.5, h / 2.0),
         _ => (1.0, h - my),
     };
     ((ax, ay), x, y)
@@ -208,8 +208,10 @@ mod tests {
 
     #[test]
     fn an8_top_center_anchors_top() {
-        let mut s = CueStyle::default();
-        s.align = Some(8);
+        let s = CueStyle {
+            align: Some(8),
+            ..CueStyle::default()
+        };
         let p = cue_to_text_params(&cue(s), 1920, 1080);
         assert_eq!(static_anchor(&p.transform), (0.5, 0.0));
     }

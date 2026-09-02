@@ -81,11 +81,11 @@ pub fn availability(backend: SpeechBackend, cfg: Option<&BackendConfig>) -> Avai
             }) => {
                 if !binary.exists() {
                     Availability::NeedsBinary
-                } else if !model.exists() {
-                    Availability::NeedsModel
-                } else if backend == SpeechBackend::FunAsr
-                    && tokens.as_deref().map_or(true, |t| !t.exists())
+                } else if !model.exists()
+                    || (backend == SpeechBackend::FunAsr
+                        && tokens.as_deref().is_none_or(|t| !t.exists()))
                 {
+                    // FunASR's tokens file counts as part of its model.
                     Availability::NeedsModel
                 } else {
                     Availability::Available

@@ -730,6 +730,7 @@ impl NativeDecode {
     /// so an unknown string falls back to NV12 defensively (mirrors `lane`) —
     /// the renderer dispatches per frame, never on what it asked for.
     #[napi]
+    #[allow(clippy::too_many_arguments)]
     pub fn preview_sw_open(
         &self,
         stream_id: String,

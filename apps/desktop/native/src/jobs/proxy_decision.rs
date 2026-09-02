@@ -223,7 +223,7 @@ fn source_is_safe_to_bypass(media: &MediaItem, source_gop_secs: Option<f64>) -> 
 /// source is transcoded to a short GOP rather than remuxed (remux would carry
 /// the unknown GOP through).
 pub fn gop_is_scrub_friendly(source_gop_secs: Option<f64>) -> bool {
-    source_gop_secs.map_or(false, |g| g <= MAX_BYPASS_GOP_SECONDS)
+    source_gop_secs.is_some_and(|g| g <= MAX_BYPASS_GOP_SECONDS)
 }
 
 pub fn codec_is_h264(codec: &str) -> bool {

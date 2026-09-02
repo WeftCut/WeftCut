@@ -432,6 +432,7 @@ fn serve_request(
 /// messages, so the thread simply sleeps until the next command. Each wake-up
 /// then drains the channel non-blockingly and coalesces latest-wins before
 /// serving — see the loop body.
+#[allow(clippy::too_many_arguments)]
 fn session_thread(
     stream_id: String,
     path: String,
@@ -813,11 +814,11 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/tiny_prores.mov"
         );
-        let info = reg.open("s1".into(), p.into()).expect("open");
+        let info = reg.open("s1", p).expect("open");
         assert_eq!(info.width, 320);
-        let _ = reg.request_frame_at("s1".into(), 0);
+        let _ = reg.request_frame_at("s1", 0);
         std::thread::sleep(std::time::Duration::from_millis(300));
-        let _ = reg.close("s1".into());
+        let _ = reg.close("s1");
         let frames = got.lock().unwrap();
         assert!(!frames.is_empty(), "expected at least one frame poke");
         // The delivered frame carries a sensible pts_us (seek(0) -> first
@@ -966,10 +967,10 @@ mod tests {
             }
         }));
         let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
-        reg.open("m1".into(), p.into()).expect("open");
-        let _ = reg.request_frame_at("m1".into(), 800_000); // ~frame 24, mid-GOP
+        reg.open("m1", p).expect("open");
+        let _ = reg.request_frame_at("m1", 800_000); // ~frame 24, mid-GOP
         std::thread::sleep(std::time::Duration::from_millis(500));
-        let _ = reg.close("m1".into());
+        let _ = reg.close("m1");
         let pts = got.lock().unwrap();
         assert!(!pts.is_empty(), "expected at least one frame poke");
         // FIRST delivered frame covers target 800_000, NOT the keyframe at ~500_000.
@@ -1012,8 +1013,8 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/tiny_prores.mov"
         );
-        reg.open("s1".into(), p.into()).expect("open");
-        let _ = reg.request_frame_at("s1".into(), 0);
+        reg.open("s1", p).expect("open");
+        let _ = reg.request_frame_at("s1", 0);
         let saw_panic_poke = wait_for(|| {
             errors
                 .lock()
@@ -1029,7 +1030,7 @@ mod tests {
         drop(errs);
         // The poisoned sink lock did not cascade: the registry still tears down
         // cleanly (join reaps the thread that broke out after the caught panic).
-        reg.close("s1".into())
+        reg.close("s1")
             .expect("registry usable after a caught decode panic");
     }
 
@@ -1042,12 +1043,12 @@ mod tests {
         let reg = PreviewSwRegistry::new();
         reg.set_frame_sink(Box::new(|_| {}));
         let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
-        reg.open("c1".into(), p.into()).expect("open");
+        reg.open("c1", p).expect("open");
         for i in 0..5000 {
             // Alternate targets so every request is a real seek + forward-decode
             // burst (800_000 is mid-GOP: keyframe at ~500_000 + ~9 discards).
             let target = if i % 2 == 0 { 0 } else { 800_000 };
-            reg.request_frame_at("c1".into(), target).expect("request");
+            reg.request_frame_at("c1", target).expect("request");
         }
         let start = std::time::Instant::now();
         // With a bounded grace, a plain Ok from close() could mean DETACHED —
@@ -1056,7 +1057,7 @@ mod tests {
         // Reaped, so this test still guards preemption itself (thread exited
         // AND was joined).
         let outcome = reg
-            .close_with_grace("c1".into(), std::time::Duration::from_secs(2))
+            .close_with_grace("c1", std::time::Duration::from_secs(2))
             .expect("close");
         let elapsed = start.elapsed();
         assert_eq!(
@@ -1093,17 +1094,16 @@ mod tests {
             }
         }));
         let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
-        reg.open("lw1".into(), p.into()).expect("open");
+        reg.open("lw1", p).expect("open");
         // N-1 superseded requests at target 0 (burst pts ~0..135_000), then
         // ONE final request at 800_000 (burst pts >= 700_000, proven by
         // `long_gop_request_forward_decodes_to_target`). The two targets are
         // distinguishable by pts range with a wide dead zone between.
         const N: usize = 100;
         for _ in 0..(N - 1) {
-            reg.request_frame_at("lw1".into(), 0).expect("request");
+            reg.request_frame_at("lw1", 0).expect("request");
         }
-        reg.request_frame_at("lw1".into(), 800_000)
-            .expect("request");
+        reg.request_frame_at("lw1", 800_000).expect("request");
         // Poll (not one fixed sleep) until the final target's burst lands, so
         // a slow box waits longer instead of flaking; the timeout only trips
         // if the final request is never served at all.
@@ -1119,7 +1119,7 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        let _ = reg.close("lw1".into());
+        let _ = reg.close("lw1");
         let pts = got.lock().unwrap();
         assert!(
             pts.iter().any(|&v| (700_000..=900_000).contains(&v)),
@@ -1152,18 +1152,17 @@ mod tests {
             }
         }));
         let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
-        reg.open("fw1".into(), p.into()).expect("open");
+        reg.open("fw1", p).expect("open");
         const TICKS: i64 = 30;
         const STEP_US: i64 = 1_000_000 / 30;
         for i in 0..TICKS {
-            reg.request_frame_at("fw1".into(), i * STEP_US)
-                .expect("request");
+            reg.request_frame_at("fw1", i * STEP_US).expect("request");
             // Space the ticks so most are served rather than coalesced away —
             // this is a playback cadence, not a scrub storm.
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
-        let _ = reg.close("fw1".into());
+        let _ = reg.close("fw1");
         let pts = got.lock().unwrap();
         assert!(!pts.is_empty(), "no frames delivered");
         let mut sorted = pts.clone();
@@ -1206,10 +1205,10 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/tiny_prores.mov"
         );
-        reg.open("hz1".into(), p.into()).expect("open");
-        let _ = reg.request_frame_at("hz1".into(), 0);
+        reg.open("hz1", p).expect("open");
+        let _ = reg.request_frame_at("hz1", 0);
         std::thread::sleep(std::time::Duration::from_millis(400));
-        let _ = reg.close("hz1".into());
+        let _ = reg.close("hz1");
         let pts = got.lock().unwrap();
         assert_eq!(
             *pts,
@@ -1235,13 +1234,13 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/tiny_prores.mov"
         );
-        reg.open("bw1".into(), p.into()).expect("open");
-        let _ = reg.request_frame_at("bw1".into(), 750_000);
+        reg.open("bw1", p).expect("open");
+        let _ = reg.request_frame_at("bw1", 750_000);
         std::thread::sleep(std::time::Duration::from_millis(300));
         let after_forward = got.lock().unwrap().len();
-        let _ = reg.request_frame_at("bw1".into(), 0);
+        let _ = reg.request_frame_at("bw1", 0);
         std::thread::sleep(std::time::Duration::from_millis(300));
-        let _ = reg.close("bw1".into());
+        let _ = reg.close("bw1");
         let pts = got.lock().unwrap();
         assert_eq!(
             pts[..after_forward].first().copied(),
@@ -1276,14 +1275,14 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/tiny_prores.mov"
         );
-        reg.open("eof1".into(), p.into()).expect("open");
+        reg.open("eof1", p).expect("open");
         // 875_000 is the last frame of the 1 s fixture; the three ticks after it
         // are past the material.
         for t in [875_000, 908_000, 941_000, 974_000] {
-            let _ = reg.request_frame_at("eof1".into(), t);
+            let _ = reg.request_frame_at("eof1", t);
             std::thread::sleep(std::time::Duration::from_millis(120));
         }
-        let _ = reg.close("eof1".into());
+        let _ = reg.close("eof1");
         let pts = frames.lock().unwrap();
         assert_eq!(
             *pts,
@@ -1319,16 +1318,16 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/tiny_prores.mov"
         );
-        reg.open("feof1".into(), p.into()).expect("open");
+        reg.open("feof1", p).expect("open");
         // The fixture is 1 s; 5 s is > FORWARD_CONTINUE_US past its tail, and
         // the tail frame itself is past-discarded — the request yields only an
         // Eof poke. The +33 ms ticks after it stay within the continue window
         // of the advanced frontier, so the drained cursor must absorb them.
         for t in [5_000_000, 5_033_000, 5_066_000, 5_099_000] {
-            let _ = reg.request_frame_at("feof1".into(), t);
+            let _ = reg.request_frame_at("feof1", t);
             std::thread::sleep(std::time::Duration::from_millis(120));
         }
-        let _ = reg.close("feof1".into());
+        let _ = reg.close("feof1");
         let pts = frames.lock().unwrap();
         assert!(
             pts.is_empty(),
@@ -1366,9 +1365,9 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/tiny_prores.mov"
         );
-        reg.open("w1".into(), p.into())
+        reg.open("w1", p)
             .expect("re-open of a detached id must succeed");
-        reg.close("w1".into()).expect("close the re-opened session");
+        reg.close("w1").expect("close the re-opened session");
     }
 
     #[test]
@@ -1382,11 +1381,9 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/tiny_prores.mov"
         );
-        reg.open("r1".into(), p.into()).expect("open");
-        let _ = reg.request_frame_at("r1".into(), 0);
-        let outcome = reg
-            .close_with_grace("r1".into(), CLOSE_GRACE)
-            .expect("close");
+        reg.open("r1", p).expect("open");
+        let _ = reg.request_frame_at("r1", 0);
+        let outcome = reg.close_with_grace("r1", CLOSE_GRACE).expect("close");
         assert_eq!(outcome, CloseOutcome::Reaped);
     }
 }

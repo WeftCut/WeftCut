@@ -164,28 +164,28 @@ pub fn build_args(
         image.push(f.path.as_os_str());
     }
 
-    let mut args: Vec<OsString> = Vec::with_capacity(18);
-    args.push("-m".into());
-    args.push(model.as_os_str().to_owned());
-    args.push("--mmproj".into());
-    args.push(mmproj.as_os_str().to_owned());
-    args.push("--image".into());
-    args.push(image);
-    args.push("-p".into());
-    args.push(prompt.into());
-    args.push("--temp".into());
-    args.push(TEMP.into());
-    args.push("-n".into());
-    args.push(N_PREDICT.into());
-    args.push("-ngl".into());
-    args.push(NGL.into());
-    args.push("-c".into());
-    args.push(CTX.into());
-    args.push("--repeat-penalty".into());
-    args.push(REPEAT_PENALTY.into());
-    args.push("--repeat-last-n".into());
-    args.push(REPEAT_LAST_N.into());
-    args
+    vec![
+        "-m".into(),
+        model.as_os_str().to_owned(),
+        "--mmproj".into(),
+        mmproj.as_os_str().to_owned(),
+        "--image".into(),
+        image,
+        "-p".into(),
+        prompt.into(),
+        "--temp".into(),
+        TEMP.into(),
+        "-n".into(),
+        N_PREDICT.into(),
+        "-ngl".into(),
+        NGL.into(),
+        "-c".into(),
+        CTX.into(),
+        "--repeat-penalty".into(),
+        REPEAT_PENALTY.into(),
+        "--repeat-last-n".into(),
+        REPEAT_LAST_N.into(),
+    ]
 }
 
 /// A generous hang-guard timeout — NOT the expected runtime, a ceiling that

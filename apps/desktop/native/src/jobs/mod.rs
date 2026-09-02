@@ -1228,7 +1228,7 @@ mod tests {
         let events: Arc<dyn EventSink> = Arc::new(sink.clone());
         let slot = LogBusSlot::new();
         let dir = tempfile::tempdir().unwrap();
-        slot.install(LogBus::spawn(&dir.path().to_path_buf(), events.clone()));
+        slot.install(LogBus::spawn(dir.path(), events.clone()));
 
         let media = media_named(None, "/media/intro.mp4");
         emit_job_error(&events, &slot, &media, JobKind::Waveform, "boom".into());

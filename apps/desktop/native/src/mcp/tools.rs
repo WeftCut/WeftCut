@@ -431,6 +431,7 @@ pub(super) async fn import_media(
 /// peaks into segments where every value is strictly below `threshold_amp` and
 /// total duration ≥ `min_silence_us`.
 #[cfg(feature = "jobs")]
+#[allow(clippy::too_many_arguments)]
 fn detect_silences_in_peaks(
     peaks: &[f32],
     threshold_amp: f32,
@@ -549,9 +550,7 @@ mod tests {
         // 200 peaks (= 2s) total. Quiet from peak 50 (= 500ms) to peak 150
         // (= 1500ms), so silence duration = 1000ms.
         let mut peaks = flat_peaks(200, 0.5);
-        for i in 50..150 {
-            peaks[i] = 0.001;
-        }
+        peaks[50..150].fill(0.001);
         let regions = detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0, 100, 1);
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].t_start_us, 50 * US_PER_PEAK);
@@ -564,15 +563,9 @@ mod tests {
         // 200 peaks (= 2s). Three quiet runs of 30 peaks each (= 300ms).
         // With min_silence_us=500_000 (500ms) none should be returned.
         let mut peaks = flat_peaks(200, 0.5);
-        for i in 0..30 {
-            peaks[i] = 0.0;
-        }
-        for i in 80..110 {
-            peaks[i] = 0.0;
-        }
-        for i in 160..190 {
-            peaks[i] = 0.0;
-        }
+        peaks[0..30].fill(0.0);
+        peaks[80..110].fill(0.0);
+        peaks[160..190].fill(0.0);
         let regions = detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0, 100, 1);
         assert!(regions.is_empty(), "expected no regions, got {regions:?}");
 
@@ -587,9 +580,7 @@ mod tests {
         // Quiet from peak 100 to the end (peak 200). Runs to EOF — make
         // sure the closing branch flushes the pending region.
         let mut peaks = flat_peaks(200, 0.5);
-        for i in 100..200 {
-            peaks[i] = 0.0;
-        }
+        peaks[100..200].fill(0.0);
         let regions = detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0, 100, 1);
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].t_start_us, 100 * US_PER_PEAK);
@@ -602,9 +593,7 @@ mod tests {
         // Layer placed at timeline t=5s. Source [0, 2s]. Silence at source
         // [0.5s, 1.5s] → timeline [5.5s, 6.5s].
         let mut peaks = flat_peaks(200, 0.5);
-        for i in 50..150 {
-            peaks[i] = 0.0;
-        }
+        peaks[50..150].fill(0.0);
         let regions =
             detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 5_000_000, 100, 1);
         assert_eq!(regions.len(), 1);

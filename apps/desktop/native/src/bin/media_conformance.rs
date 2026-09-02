@@ -199,8 +199,8 @@ fn sample_patch(img: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>, p: &Patch) 
     for yy in y0..y1 {
         for xx in x0..x1 {
             let px = img.get_pixel(xx, yy);
-            for c in 0..3 {
-                acc[c] += px.0[c] as u64;
+            for (sum, &ch) in acc.iter_mut().zip(&px.0) {
+                *sum += ch as u64;
             }
             count += 1;
         }
@@ -776,8 +776,8 @@ fn analyze_gradient(
     let mut rows: [Vec<u16>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     for x in 0..img.width() {
         let px = img.get_pixel(x, y);
-        for c in 0..3 {
-            rows[c].push(px.0[c]);
+        for (row, &ch) in rows.iter_mut().zip(&px.0) {
+            row.push(ch);
         }
     }
     let banding = [
@@ -1313,14 +1313,14 @@ mod tests {
         let sr = AUDIO_SAMPLE_RATE;
         let total = (secs as f64 * sr) as usize + offset_samples;
         let mut pcm = vec![0.0f32; total];
-        for i in 0..total {
+        for (i, sample) in pcm.iter_mut().enumerate() {
             let t = i as f64 / sr;
             let seg = ((i.saturating_sub(offset_samples)) as f64 / sr).floor() as usize;
             if seg >= secs {
                 continue;
             }
             let f = audio_expected_freq(seg);
-            pcm[i] = (2.0 * std::f64::consts::PI * f * t).sin() as f32 * 0.8;
+            *sample = (2.0 * std::f64::consts::PI * f * t).sin() as f32 * 0.8;
         }
         pcm
     }
@@ -1351,9 +1351,10 @@ mod tests {
     fn analyze_audio_flags_a_dropped_second() {
         let mut pcm = synth_pcm(10, 0);
         let sr = AUDIO_SAMPLE_RATE;
-        for i in (5.0 * sr) as usize..(6.0 * sr) as usize {
+        let (lo, hi) = ((5.0 * sr) as usize, (6.0 * sr) as usize);
+        for (i, sample) in (lo..hi).zip(&mut pcm[lo..hi]) {
             let t = i as f64 / sr;
-            pcm[i] = (2.0 * std::f64::consts::PI * audio_expected_freq(6) * t).sin() as f32 * 0.8;
+            *sample = (2.0 * std::f64::consts::PI * audio_expected_freq(6) * t).sin() as f32 * 0.8;
         }
         let r = analyze_audio(&pcm);
         assert!(
@@ -1372,14 +1373,14 @@ mod tests {
         let sr = AUDIO_SAMPLE_RATE;
         let total = (stretch * secs as f64 * sr) as usize;
         let mut pcm = vec![0.0f32; total];
-        for i in 0..total {
+        for (i, sample) in pcm.iter_mut().enumerate() {
             let t = i as f64 / sr;
             let seg = (i as f64 / (sr * stretch)).floor() as usize;
             if seg >= secs {
                 continue;
             }
             let f = audio_expected_freq(seg);
-            pcm[i] = (2.0 * std::f64::consts::PI * f * t).sin() as f32 * 0.8;
+            *sample = (2.0 * std::f64::consts::PI * f * t).sin() as f32 * 0.8;
         }
         pcm
     }
@@ -1541,7 +1542,7 @@ mod tests {
     fn banding_quantized_ramp_has_wide_plateaus() {
         // simulate 8-bit content stretched over 1024 samples: 256 levels, each
         // repeated 4x -> distinct 256, max plateau 4
-        let row: Vec<u16> = (0..1024u16).map(|i| ((i / 4) << 8) as u16).collect();
+        let row: Vec<u16> = (0..1024u16).map(|i| (i / 4) << 8).collect();
         let b = banding_stats(&row);
         assert_eq!(b.distinct_levels, 256);
         assert_eq!(b.max_plateau, 4);

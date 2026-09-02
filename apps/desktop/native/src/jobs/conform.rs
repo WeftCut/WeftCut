@@ -166,7 +166,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     }
 
     let bytes_per_frame = out_channels as u64 * 4;
-    if total_bytes % bytes_per_frame != 0 {
+    if !total_bytes.is_multiple_of(bytes_per_frame) {
         // Truncate a torn trailing frame rather than fail — ffmpeg's f32le
         // stream is frame-aligned in practice; this is belt-and-braces.
         total_bytes -= total_bytes % bytes_per_frame;

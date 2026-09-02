@@ -415,11 +415,7 @@ pub async fn export_video_sink_finish(state: &VideoSinkState) -> Result<SinkStat
     let copy_ms = shared.copy_ns.load(Ordering::Relaxed) / 1_000_000;
     let write_ms = shared.write_ns.load(Ordering::Relaxed) / 1_000_000;
     let mb = bytes / 1_048_576;
-    let write_mbps = if write_ms > 0 {
-        mb * 1000 / write_ms
-    } else {
-        0
-    };
+    let write_mbps = (mb * 1000).checked_div(write_ms).unwrap_or(0);
     info!(
         "video sink finished: {frames} frames, {mb} MB; copy {copy_ms} ms, write {write_ms} ms ({write_mbps} MB/s stdin)"
     );
@@ -592,7 +588,7 @@ mod tests {
         let slot = LogBusSlot::new();
         let workspace = tempfile::tempdir().expect("tempdir");
         slot.install(crate::logs::LogBus::spawn(
-            &workspace.path().to_path_buf(),
+            workspace.path(),
             std::sync::Arc::new(crate::events::VecEventSink::new()),
         ));
         let mut args = args_8bit("h264");

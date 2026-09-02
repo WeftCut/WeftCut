@@ -43,7 +43,7 @@ fn parse_time_range(line: &str) -> Option<(i64, i64)> {
     let (lhs, rhs) = line.split_once("-->")?;
     let a = parse_ts(lhs.trim())?;
     // The RHS may carry SRT position overrides after the timestamp; take token 0.
-    let rhs0 = rhs.trim().split_whitespace().next()?;
+    let rhs0 = rhs.split_whitespace().next()?;
     let b = parse_ts(rhs0)?;
     Some((a, b))
 }

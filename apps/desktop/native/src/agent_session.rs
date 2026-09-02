@@ -61,7 +61,7 @@ impl AgentSessionSlot {
     /// for the displaced one.
     pub fn begin(&self, session: AgentSession) -> Option<AgentSession> {
         let mut guard = self.inner.write().expect("agent_session slot poisoned");
-        std::mem::replace(&mut *guard, Some(session))
+        (*guard).replace(session)
     }
 
     /// Clear the session. Returns the prior value (if any) so the

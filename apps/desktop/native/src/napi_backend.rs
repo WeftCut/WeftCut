@@ -601,7 +601,7 @@ impl Backend {
         format: Option<String>,
     ) -> napi::Result<String> {
         let fmt = format
-            .map(|f| crate::subtitles::SubFormat::from_str(&f))
+            .map(|f| f.parse::<crate::subtitles::SubFormat>())
             .transpose()
             .map_err(Error::from_reason)?;
         let (cues, simplified) =

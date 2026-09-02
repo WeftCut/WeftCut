@@ -4,7 +4,7 @@
 //! soon as it exists; export must continue to ignore it and wait for either a
 //! bypassed source or the full proxy.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
@@ -115,14 +115,13 @@ async fn run_remux(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn run_fast_transcode(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
+async fn run_fast_transcode(media: &MediaItem, tmp: &Path) -> Result<()> {
     let scale_filter = format!("scale=-2:'min(ih,{QUICK_PROXY_HEIGHT_CAP})'");
     // Short GOP so this preview proxy is scrub-friendly (ADR 0008), matching
     // the full proxy. The quick proxy is the scrub source for DirectExport /
     // long-GOP-demoted sources.
     let gop = crate::jobs::proxy::PROXY_GOP_FRAMES.to_string();
     let input = media.path_abs.clone();
-    let tmp = tmp.clone();
 
     let color_args = crate::jobs::proxy::source_color_args(media);
     let output = hwaccel::output_with_hw_decode_fallback("quick proxy", |hw, cmd| {
@@ -163,7 +162,7 @@ async fn run_fast_transcode(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
         // Source color tags → VUI AND (with +write_colr) the mp4 colr atom;
         // see `proxy::source_color_args`.
         cmd.args(&color_args);
-        cmd.arg(&tmp)
+        cmd.arg(tmp)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());

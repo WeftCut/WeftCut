@@ -40,8 +40,8 @@ pub struct SpeechCapabilities {
 }
 
 /// One row for the Settings → Transcription/Speech panel: a backend's identity
-/// + static facts + its LIVE availability + whether the resolver would pick it
-/// right now (`selected`). The non-secret local paths/hints are merged in by
+/// and static facts, its LIVE availability, and whether the resolver would pick
+/// it right now (`selected`). The non-secret local paths/hints are merged in by
 /// Electron main from the TS store — they are NOT echoed here.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]

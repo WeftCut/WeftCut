@@ -21,7 +21,7 @@
 //!     so re-emitting tracing events inside `emit` would recurse.
 
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -72,7 +72,7 @@ impl LogBus {
     /// Spawn a fresh bus rooted at `<workspace>/Logs/`. Creates the dir
     /// if needed. Returns immediately; the writer task runs in the
     /// background.
-    pub fn spawn(workspace: &PathBuf, events: Arc<dyn EventSink>) -> Self {
+    pub fn spawn(workspace: &Path, events: Arc<dyn EventSink>) -> Self {
         let logs_dir = workspace.join("Logs");
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (writer_tx, writer_rx) = mpsc::channel(WRITER_CAPACITY);

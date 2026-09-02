@@ -35,6 +35,11 @@ pub enum Animated<T: Clone> {
     Keyframed(imbl::Vector<Keyframe<T>>),
 }
 
+/// `normalize_keyframes` refused an empty `Keyframed` track: a keyframed
+/// property must hold at least one key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EmptyKeyframedTrack;
+
 impl<T: Clone> Animated<T> {
     pub fn r#static(v: T) -> Self {
         Self::Static(v)
@@ -110,14 +115,17 @@ impl<T: Clone> Animated<T> {
     /// stable sort preserves input order among equal keys, so the dedupe keeps
     /// whichever key appears LAST in the input vector — the caller must supply
     /// keys with the most-recent write last (the write path appends the edited
-    /// key, so a duplicate snapped time resolves last-write-wins). Returns
-    /// `Err(())` for an empty `Keyframed` track (a keyframed property must hold
-    /// at least one key — the caller turns this into a `CommandError`).
-    /// `Static` is unchanged and always `Ok`.
-    pub fn normalize_keyframes(&mut self, snap: impl Fn(TimeUs) -> TimeUs) -> Result<(), ()> {
+    /// key, so a duplicate snapped time resolves last-write-wins). Refuses an
+    /// empty `Keyframed` track with [`EmptyKeyframedTrack`] (a keyframed
+    /// property must hold at least one key). `Static` is unchanged and always
+    /// `Ok`.
+    pub fn normalize_keyframes(
+        &mut self,
+        snap: impl Fn(TimeUs) -> TimeUs,
+    ) -> Result<(), EmptyKeyframedTrack> {
         if let Animated::Keyframed(kfs) = self {
             if kfs.is_empty() {
-                return Err(());
+                return Err(EmptyKeyframedTrack);
             }
             let mut v: Vec<Keyframe<T>> = kfs
                 .iter()

@@ -744,13 +744,11 @@ mod tests {
         .expect("pan law fixture parses");
         for c in &f.coeff_cases {
             let got = pan_coeffs(c.pan, c.channels);
-            for i in 0..4 {
+            for (i, (g, e)) in got.iter().zip(&c.expect).enumerate() {
                 assert!(
-                    (got[i] - c.expect[i]).abs() < 1e-5,
-                    "coeff `{}` idx {i}: got {}, expect {}",
-                    c.name,
-                    got[i],
-                    c.expect[i]
+                    (g - e).abs() < 1e-5,
+                    "coeff `{}` idx {i}: got {g}, expect {e}",
+                    c.name
                 );
             }
         }
@@ -758,13 +756,11 @@ mod tests {
             let [ka, kb, kc, kd] = pan_coeffs(a.pan, a.channels);
             let (l, r) = (a.r#in[0], a.r#in[1]);
             let out = [ka * l + kb * r, kc * l + kd * r];
-            for i in 0..2 {
+            for (i, (g, e)) in out.iter().zip(&a.expect).enumerate() {
                 assert!(
-                    (out[i] - a.expect[i]).abs() < 1e-5,
-                    "apply `{}` ch {i}: got {}, expect {}",
-                    a.name,
-                    out[i],
-                    a.expect[i]
+                    (g - e).abs() < 1e-5,
+                    "apply `{}` ch {i}: got {g}, expect {e}",
+                    a.name
                 );
             }
         }

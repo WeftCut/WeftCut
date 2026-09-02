@@ -608,7 +608,7 @@ mod tests {
             media_id,
         });
         let slot = LogBusSlot::new();
-        let bus = crate::logs::LogBus::spawn(&ws.path().to_path_buf(), sink.clone());
+        let bus = crate::logs::LogBus::spawn(ws.path(), sink.clone());
         slot.install(bus.clone());
 
         let queue = ImportQueue::new(sink.clone(), slot);

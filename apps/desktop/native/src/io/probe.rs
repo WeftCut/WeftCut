@@ -163,6 +163,7 @@ pub fn probe_max_keyframe_gap_secs(path: &Path) -> Option<f64> {
 ///   - 1 timestamp  → `Some(window)` — only one keyframe in the scan window,
 ///     so the GOP is at least the window length: definitely "long".
 ///   - ≥2           → `Some(max consecutive gap)`.
+///
 /// Pure + testable; `probe_max_keyframe_gap_secs` is the ffprobe wrapper.
 fn max_keyframe_gap_secs(timestamps: &[f64], window_secs: f64) -> Option<f64> {
     match timestamps.len() {

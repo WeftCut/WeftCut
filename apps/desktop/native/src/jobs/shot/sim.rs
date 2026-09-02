@@ -84,36 +84,32 @@ pub(crate) fn phash(img: &RgbImage) -> u64 {
         FilterType::Triangle,
     );
     let mut luma = [[0f64; PHASH_DCT_SIZE]; PHASH_DCT_SIZE];
-    for y in 0..PHASH_DCT_SIZE {
-        for x in 0..PHASH_DCT_SIZE {
+    for (y, row) in luma.iter_mut().enumerate() {
+        for (x, cell) in row.iter_mut().enumerate() {
             let p = small.get_pixel(x as u32, y as u32);
-            luma[y][x] = 0.299 * p[0] as f64 + 0.587 * p[1] as f64 + 0.114 * p[2] as f64;
+            *cell = 0.299 * p[0] as f64 + 0.587 * p[1] as f64 + 0.114 * p[2] as f64;
         }
     }
     let freq = dct_2d(&luma);
+    // The low-frequency corner in row-major order: the DC term ([0][0]) is its
+    // first element, and each coefficient's index is its bit position.
+    let low_freq = || {
+        freq.iter()
+            .take(PHASH_LOW_FREQ)
+            .flat_map(|row| row.iter().take(PHASH_LOW_FREQ).copied())
+    };
 
-    // Median over the low-freq block EXCLUDING the DC term ([0][0]): its
-    // magnitude dwarfs the AC coefficients and would drag the threshold. DC is
-    // still hashed below — it always lands above the median, so its bit is a
+    // Median over the low-freq block EXCLUDING the DC term: its magnitude
+    // dwarfs the AC coefficients and would drag the threshold. DC is still
+    // hashed below — it always lands above the median, so its bit is a
     // constant that contributes nothing to the Hamming distance between hashes.
-    let mut ac = Vec::with_capacity(PHASH_LOW_FREQ * PHASH_LOW_FREQ - 1);
-    for v in 0..PHASH_LOW_FREQ {
-        for u in 0..PHASH_LOW_FREQ {
-            if u != 0 || v != 0 {
-                ac.push(freq[v][u]);
-            }
-        }
-    }
+    let mut ac: Vec<f64> = low_freq().skip(1).collect();
     let median = median(&mut ac);
 
     let mut hash = 0u64;
-    let mut bit = 0u32;
-    for v in 0..PHASH_LOW_FREQ {
-        for u in 0..PHASH_LOW_FREQ {
-            if freq[v][u] > median {
-                hash |= 1u64 << bit;
-            }
-            bit += 1;
+    for (bit, coef) in low_freq().enumerate() {
+        if coef > median {
+            hash |= 1u64 << bit;
         }
     }
     hash

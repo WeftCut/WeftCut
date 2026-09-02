@@ -415,14 +415,12 @@ mod tests {
             let e = sample_pan(&c.pan, c.span_us);
             for s in &c.samples {
                 let got = pan_coeffs_at(&e, c.channels, s.t_us);
-                for i in 0..4 {
+                for (i, (g, e)) in got.iter().zip(&s.expect).enumerate() {
                     assert!(
-                        (got[i] - s.expect[i]).abs() < 1e-5,
-                        "coeff-env `{}` t={} idx{i}: got {}, expect {}",
+                        (g - e).abs() < 1e-5,
+                        "coeff-env `{}` t={} idx{i}: got {g}, expect {e}",
                         c.name,
-                        s.t_us,
-                        got[i],
-                        s.expect[i]
+                        s.t_us
                     );
                 }
             }

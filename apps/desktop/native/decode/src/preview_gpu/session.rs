@@ -402,6 +402,8 @@ const LATE_FRAME_DROP_US: i64 = 100_000;
 /// leads the anchor by up to one lookahead) would read as a backward jump and
 /// re-seek forever.
 const BACKWARD_DIVERGENCE_US: i64 = 2 * LOOKAHEAD_US;
+// The backstop only fires beyond the pre-buffer lead it must tolerate.
+const _: () = assert!(BACKWARD_DIVERGENCE_US > LOOKAHEAD_US);
 
 /// What a forward gap must exceed before seeking beats decoding through it.
 ///
@@ -1194,6 +1196,7 @@ fn init_session(
 
 /// The session thread body: open + build the pool, report the result back to
 /// `open`, then run the message/pump loop until `Close` (or the sender drops).
+#[allow(clippy::too_many_arguments)]
 fn session_thread(
     stream_id: String,
     path: String,
@@ -1758,8 +1761,6 @@ mod tests {
             anchor + LOOKAHEAD_US,
             3_000_000
         ));
-        // The backstop only fires beyond the pre-buffer lead it must tolerate.
-        assert!(BACKWARD_DIVERGENCE_US > LOOKAHEAD_US);
     }
 
     #[test]

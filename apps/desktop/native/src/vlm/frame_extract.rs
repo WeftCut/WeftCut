@@ -162,6 +162,6 @@ mod tests {
     fn plan_anchors_are_window_relative() {
         // Anchors do not include the source offset — they are 0-based.
         let a = plan_anchors(10_000_000, 12_000_000, 1.0);
-        assert!(a.iter().all(|&t| t >= 0 && t <= 2_000_000));
+        assert!(a.iter().all(|&t| (0..=2_000_000).contains(&t)));
     }
 }

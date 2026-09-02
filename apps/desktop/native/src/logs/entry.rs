@@ -22,9 +22,11 @@ use uuid::Uuid;
 /// hidden by default.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum LogLevel {
     Trace,
     Debug,
+    #[default]
     Info,
     Warn,
     Error,
@@ -34,6 +36,7 @@ pub enum LogLevel {
 /// escape hatch so a new category can land without a backend release.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "name")]
+#[derive(Default)]
 pub enum LogCategory {
     Shortcut,
     Mcp,
@@ -41,6 +44,7 @@ pub enum LogCategory {
     Export,
     Import,
     Project,
+    #[default]
     System,
     Agent,
     Other(String),
@@ -56,9 +60,13 @@ pub enum LogCategory {
 // {"client":"x"}}, which the UI renders as "Agent · [object Object]".
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
+#[derive(Default)]
 pub enum LogSource {
     User,
-    Agent { client: String },
+    Agent {
+        client: String,
+    },
+    #[default]
     System,
 }
 
@@ -119,24 +127,6 @@ pub struct LogEntryInput {
     pub op_state: Option<OpState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
-}
-
-impl Default for LogLevel {
-    fn default() -> Self {
-        Self::Info
-    }
-}
-
-impl Default for LogCategory {
-    fn default() -> Self {
-        Self::System
-    }
-}
-
-impl Default for LogSource {
-    fn default() -> Self {
-        Self::System
-    }
 }
 
 impl LogEntry {

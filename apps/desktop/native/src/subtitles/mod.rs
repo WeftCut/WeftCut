@@ -16,10 +16,12 @@ pub enum SubFormat {
     Ass,
 }
 
-impl SubFormat {
-    /// Parse a format tag string ("srt", "ass", "vtt", case-insensitive).
-    /// Returns Err for unknown tags; None input → use `sniff`.
-    pub fn from_str(s: &str) -> Result<Self, String> {
+/// Parse a format tag string ("srt", "ass", "vtt", case-insensitive).
+/// Returns Err for unknown tags; None input → use `sniff`.
+impl std::str::FromStr for SubFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, String> {
         match s.to_ascii_lowercase().as_str() {
             "srt" => Ok(SubFormat::Srt),
             "ass" => Ok(SubFormat::Ass),

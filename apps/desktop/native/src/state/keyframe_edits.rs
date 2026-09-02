@@ -51,8 +51,7 @@ pub fn upsert(
     }
     let inherited = keys
         .iter()
-        .filter(|k| k.t_us < t_us)
-        .next_back()
+        .rfind(|k| k.t_us < t_us)
         .map(|k| k.interp)
         .unwrap_or(DEFAULT_INTERP);
     keys.push(Keyframe {
@@ -140,13 +139,7 @@ fn interp_to_coeffs(interp: Interpolation) -> [f64; 4] {
 }
 
 fn clamp01(v: f64) -> f64 {
-    if v < 0.0 {
-        0.0
-    } else if v > 1.0 {
-        1.0
-    } else {
-        v
-    }
+    v.clamp(0.0, 1.0)
 }
 
 /// Monotone-clamped tangent (value per microsecond) at interior key `i`; 0 at a
