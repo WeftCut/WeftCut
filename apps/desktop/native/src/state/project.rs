@@ -136,6 +136,23 @@ pub struct ProjectSettings {
     /// follow the global preference. See `project_settings_patch_convention`.
     #[serde(default)]
     pub proxy_overrides: std::collections::HashMap<String, bool>,
+    /// The Shots Panel's reviewed detection parameters, or `None` for the
+    /// detector's own defaults. **TS owns and reads it** (`state/model.ts`
+    /// `ShotReviewSettings`); Rust only round-trips it. Declared anyway because
+    /// serde drops what no field names, and this one sits outside the
+    /// `compositions` subtree the fixture test compares, so an unnamed field
+    /// would vanish silently on the way through.
+    #[serde(default)]
+    pub shot_review: Option<ShotReviewSettings>,
+}
+
+/// Twin of TS `ShotReviewSettings`: the threshold and minimum shot length a
+/// review settled on. `sensitivity` is an `f32` like `ShotOpts::sensitivity`,
+/// so the value a project stores is the value the detector would be handed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ShotReviewSettings {
+    pub sensitivity: f32,
+    pub min_shot_us: i64,
 }
 
 fn default_auto_pair_audio_on_import() -> bool {
@@ -181,7 +198,37 @@ impl Default for ProjectSettings {
             auto_pair_audio_on_import: true,
             prefer_proxies: false,
             proxy_overrides: Default::default(),
+            shot_review: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod shot_review_tests {
+    use super::*;
+
+    /// A project written before the field existed carries no `shot_review`; it
+    /// reads as the detector's defaults, the same `null` TS backfills.
+    #[test]
+    fn missing_shot_review_reads_as_none() {
+        let p = Project::new_blank("t");
+        let mut v = serde_json::to_value(&p).unwrap();
+        v["settings"].as_object_mut().unwrap().remove("shot_review");
+        let back: Project = serde_json::from_value(v).unwrap();
+        assert_eq!(back.settings.shot_review, None);
+    }
+
+    #[test]
+    fn shot_review_round_trips_the_pair_ts_writes() {
+        let mut p = Project::new_blank("t");
+        let reviewed = ShotReviewSettings {
+            sensitivity: 0.35,
+            min_shot_us: 750_000,
+        };
+        p.settings.shot_review = Some(reviewed.clone());
+        let json = serde_json::to_string(&p).unwrap();
+        let back: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.settings.shot_review, Some(reviewed));
     }
 }
 

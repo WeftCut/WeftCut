@@ -51,7 +51,8 @@ pub use layer::{
 pub use marker::Marker;
 pub use media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata, VideoStreamMeta};
 pub use project::{
-    Project, ProjectMetadata, ProjectSettings, ProjectSettingsPatch, TrackFlagsPatch,
+    Project, ProjectMetadata, ProjectSettings, ProjectSettingsPatch, ShotReviewSettings,
+    TrackFlagsPatch,
 };
 pub use time::{snap_frame_ceil, snap_frame_floor, Rational, TimeUs, US_PER_MS, US_PER_SEC};
 pub use track::{Track, TrackRole};
