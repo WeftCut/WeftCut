@@ -19,9 +19,18 @@ import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers
 // texture import → createImageBitmap), and asserts every delivered bitmap's
 // barcode matches its pts-derived index.
 //
-// Local-only (needs the Windows @weftcut/native-decode component + a GPU whose
-// d3d11va decodes HEVC): gated on WEFTCUT_DECODE_E2E=1 like decode-engine.spec.
+// Local-only (needs the @weftcut/native-decode component + a GPU whose HW lane
+// decodes 8-bit HEVC): gated on WEFTCUT_DECODE_E2E=1 like decode-engine.spec.
 // Requires a VITE_WEFTCUT_E2E=1 build (the __weftcutTest hook surface).
+//
+// NOT Windows-bound, though the race above is: the driver asks for
+// `forceLane: 'hardware'` and the assertions read `lane === 'hardware'`, so
+// this runs on whatever HW lane the host resolves — videotoolbox and nvdec /
+// vaapi included, all of which admit 8-bit HEVC (shared/hwLaneEligibility.ts).
+// On a copy-back platform it is a weaker test of the shared-texture coherence
+// race specifically and a full-strength test of presentation order generally.
+// A macOS hardware pass skipped it outright reading the old "d3d11va" wording
+// as a platform gate; it is a fixture gate (see below).
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CLIP = path.resolve(__dirname, '../fixtures/decode-bench/order-hevc-648.mp4')
@@ -288,9 +297,12 @@ async function readLargestConcurrentForFixture(
 test.describe('ffmpeg engine hardware lane preview presents frames in order (Electron) @serial', () => {
   test.skip(
     process.env.WEFTCUT_DECODE_E2E !== '1',
-    'ffmpeg hardware-lane order guard is local-only (needs the native-decode component + a GPU that d3d11va-decodes HEVC); set WEFTCUT_DECODE_E2E=1 to run',
+    'ffmpeg hardware-lane order guard is local-only (needs the native-decode component + a GPU whose HW lane decodes 8-bit HEVC); set WEFTCUT_DECODE_E2E=1 to run',
   )
-  test.skip(!existsSync(CLIP), `index-encoded fixture not found at ${CLIP} (generate via e2e/scripts/gen-order-fixture.mjs)`)
+  test.skip(
+    !existsSync(CLIP),
+    `index-encoded fixture not found at ${CLIP} — build it with \`node scripts/gen-order-fixture.mjs\` from apps/desktop/e2e. Neither \`npm run fixtures\` nor CI produces it: CI generates only the two software-lane bench rows (electron-ci.yml, \`--only dnxhr-1080,mpeg2-1080\`), so on a fresh hardware bench this spec skips until that one command is run`,
+  )
 
   // Swept across pool sizes because the reorder corrupted frame N with the
   // frame POOL_SIZE ahead (decoded = expected + pool_size): a fix that only held
@@ -463,8 +475,8 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
       const hw = r.sessions.slice(0, cap)
       const spilled = r.sessions[cap]!
       // Every session within this fixture's admitted shape opens cleanly on the hardware lane
-      // (the real HW probe passes for this HEVC 8-bit fixture on a GPU that
-      // d3d11va-decodes it). Asserted per session, with its index in the message,
+      // (the real HW probe passes for this HEVC 8-bit fixture on any lane that
+      // admits it). Asserted per session, with its index in the message,
       // so ONE session landing on the wrong lane is identifiable from the failure.
       for (const s of hw) {
         expect(s.ready, `session ${s.index} (within the ${cap}-session budget) should open`).toBe(true)

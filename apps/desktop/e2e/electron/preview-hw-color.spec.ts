@@ -32,7 +32,16 @@ const SEEK_US = 500_000
 // Windows-bound BY THE LANE, not by the addon: d3d11va is the only zero-copy
 // GPU lane, and it is Windows-only. The component probe stays platform-generic
 // (DECODE_ADDON) so a future lane here needs no filename surgery.
-const COMPONENT_PRESENT = process.platform === 'win32' && DECODE_COMPONENT_PRESENT
+//
+// The two conditions stay SEPARATE because ANDing them prints a false reason.
+// `!(win32 && present)` on a Mac whose addon IS built reported "native-decode
+// component not built (…index.darwin-arm64.node)", and a macOS hardware report
+// duly filed this spec's skip as a broken platform probe rather than as the
+// lane being absent — the same conflation that had cost preview-sw-color its
+// coverage on two of three legs. A skip reason is read by people who were not
+// here, so each condition says its own name.
+const LANE_PLATFORM = process.platform === 'win32'
+const COMPONENT_PRESENT = DECODE_COMPONENT_PRESENT
 
 // Patch-center ceiling in 8-bit code units. The chain pays the H.264 chart's
 // own quantization, its 4:2:0 chroma siting, and the shader's RGBA8 rounding
@@ -172,6 +181,10 @@ async function runChartLeg(label: string, fixture: string): Promise<void> {
 }
 
 test.describe('preview shared-texture HW saturated-chart color gate (Electron)', () => {
+  test.skip(
+    !LANE_PLATFORM,
+    `d3d11va — the zero-copy shared-texture lane this spec gates — exists only on Windows; this is ${process.platform}. The copy-back lanes' own colour coverage is tracked in #7 §3, NOT satisfied by this skip`,
+  )
   test.skip(!COMPONENT_PRESENT, `native-decode component not built (${DECODE_ADDON}) — the app cannot open native GPU sessions`)
 
   for (const enc of ['709ltd', '601ltd', '709full', '601full'] as const) {
