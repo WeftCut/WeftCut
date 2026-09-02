@@ -980,14 +980,56 @@ each run is also two status-log rows under one `op_id`
 ([status-log.md](status-log.md)). Log rows carry the script's length, never
 the script.
 
-`cut-silences`, the third authored speech prompt, has no entry: its apply
-step is a ripple delete this editor does not have, and a row that deletes
-equal-length gaps would sound like it did nothing.
-
 Code: `renderer/speech/` (eligibility, placement arithmetic, the two
 dialogs), `renderer/commands/speechCommands.ts`; the main-process bridge is
 `callClipComputeTool` in `main/mcp/server.ts` and the `clipCompute` route in
 `main/state/router.ts`.
+
+## Detect silences
+
+The third authored prompt, `/cut-silences`, reaches a person as **Detect
+silences…** — on the same audio-bearing clips as auto-caption (context menu,
+Edit menu, palette; an `ACTION_DEFS` entry scoped to the timeline selection
+with no default key), and it does exactly what the prompt now does: measure
+and mark, never cut. Cutting needs a ripple delete this editor does not have,
+and split → split → delete leaves a gap exactly as long as what it removed,
+which is audibly identical to doing nothing.
+
+The dialog carries the recipe's two parameters — the peak amplitude a sample
+must stay under (shown with its dBFS equivalent, since that is the unit an
+audio person reasons in) and the shortest gap worth marking, in
+milliseconds. Every change re-detects, live: `detect_silences` walks the
+pre-computed waveform peaks and decodes nothing, so a control that re-runs
+per keystroke costs a cache read. The preview is a list, not a review Panel,
+on purpose — verifying a silent range means listening to it, which costs more
+than marking the set and deleting the marks you disagree with; what the list
+answers is how much of the clip is silence and where (a count, a total, the
+ranges as wall-clock times). A clip with nothing under the threshold says so
+and the button greys; nothing is written.
+
+**Mark silences** lands one region marker per range, in the clip's own
+composition (a clip inside a Group marks the Group's timeline), anchored to
+the clip at the source instant its range begins ([ADR 0056](adr/0056-following-a-clip-is-a-marker-field.md)):
+a trim past a range hibernates its mark and re-extending revives it, and
+deleting the clip takes them all. One commit, one undo for the whole set.
+Silence marks are amber, a class apart from the shot-cut blue, because the two
+producers routinely sit on the same clip and hue is the only channel left to
+tell "the picture changes here" from "nobody is speaking through here". The
+detection re-runs inside the same call at the dialog's parameters, so what
+lands is the set the preview showed.
+
+A fresh import's waveform may still be generating. That is a state, not a
+failure: the dialog shows *Waiting for the waveform…*, listens for the
+`media:job_complete` event with kind `waveform` for its own source, and
+retries when it fires — the same instruction the authored recipe gives an
+agent. Every run is two status-log rows under one `op_id`; a failure closes
+the op and stays inline, so the parameters tuned survive a fix.
+
+Code: `renderer/silence/` (the dialog and its prompt store),
+`renderer/commands/silenceCommands.ts`; the shared audio-clip gate lives in
+`renderer/speech/autoCaptionEligibility.ts`; the write is the `mark_silences`
+hybrid in `main/state/hybrids.ts`, renderer-only because an agent already
+has `detect_silences` and `add_markers`.
 
 ## Global search palette
 

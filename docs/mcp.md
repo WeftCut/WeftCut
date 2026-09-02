@@ -496,8 +496,15 @@ construction. `apply_subtitles` and `synthesize_speech` are renderer hybrid
 channels (`main/state/router.ts` `HYBRID_CHANNELS`) reaching the same
 `runHybrid` arms; either caller lands one commit, and the only difference is
 that the MCP path wraps the string result as a `ToolResult` text block.
-`analyze_clip` stays agent-only — the renderer's shot surfaces read the
-whole-source report instead ([features.md](features.md)).
+Three hybrids are renderer-only and have no MCP tool at all —
+`drop_shot_markers`, `apply_shot_cuts` (the Shots Panel's reviewed-list
+verbs) and `mark_silences` (the *Detect silences…* dialog's write) — because
+an agent already composes each from tools it has: `analyze_clip` or the
+`media://{id}/analysis` view plus `split_layer` / `add_markers`, and
+`detect_silences` plus `add_markers`; a second tool over one detection would
+only be a way for the two surfaces to drift. `analyze_clip` stays agent-only —
+the renderer's shot surfaces read the whole-source report instead
+([features.md](features.md)).
 
 **Tool gating:** the `tool_table!` macro registers tools at compile
 time, and the catalog has no per-session filter today, so unconfigured
