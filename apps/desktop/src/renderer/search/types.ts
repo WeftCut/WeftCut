@@ -7,7 +7,8 @@ export type SearchEntryType =
   | "track"
   | "clip"
   | "caption"
-  | "marker";
+  | "marker"
+  | "description";
 
 export interface MediaUsage {
   layerId: string;
@@ -31,7 +32,18 @@ export type SearchPayload =
   | { type: "caption"; layerId: string; tStartUs: number }
   /// `compositionId`: a marker sits on one composition's timeline, and the
   /// palette has to open that timeline before it can seek there.
-  | { type: "marker"; markerId: string; tUs: number; compositionId: string };
+  | { type: "marker"; markerId: string; tUs: number; compositionId: string }
+  /// One described segment as it lands on ONE placement of its source: the
+  /// clip to select, and where on that clip's timeline the described stretch
+  /// begins. `compositionId` names the clock `tStartUs` is on — the clip may
+  /// have moved to another composition since the index was built, and a time
+  /// from the old one names no instant of the new one.
+  | {
+      type: "description";
+      layerId: string;
+      tStartUs: number;
+      compositionId: string;
+    };
 
 export interface SearchEntry {
   /// `${type}:${id}` — stable React list key.

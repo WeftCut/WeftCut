@@ -29,7 +29,6 @@ import {
 } from "../ipc";
 import {
   hydrateDescription,
-  resetDescriptionsStore,
   useDescribing,
   useDescription,
 } from "../describe/descriptionsStore";
@@ -642,13 +641,17 @@ export function ShotsPanel() {
 
   // Mount wiring. The defaults read is what the store reduces at, and the reset
   // on unmount is why a reopened Panel never shows an abandoned review.
+  //
+  // Descriptions are deliberately NOT reset here: prose is a fact about a
+  // source for as long as the project holds it, the search index carries the
+  // same map, and a corpus that emptied whenever this Panel closed would be one
+  // nobody could search. `descriptionsStore.ts` states where its lifetime ends.
   useEffect(() => {
     void loadShotDefaults();
     const unwire = wireShotReviewPrefs();
     return () => {
       unwire();
       resetShotsStore();
-      resetDescriptionsStore();
       resetFrameLoader();
     };
   }, []);

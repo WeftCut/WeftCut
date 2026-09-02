@@ -1,10 +1,37 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Both halves of the description path, so this file can assert the one that
+// matters: the index reads the cache and never spends a model.
+const mocks = vi.hoisted(() => ({
+  getMediaDescription: vi.fn(),
+  describeClip: vi.fn(),
+}));
+
+vi.mock("../ipc", async (importActual) => ({
+  ...(await importActual<typeof import("../ipc")>()),
+  getMediaDescription: mocks.getMediaDescription,
+  describeClip: mocks.describeClip,
+}));
+
 import { registerCommandProvider } from "../commands/registry";
+import { resetDescriptionsStore } from "../describe/descriptionsStore";
 import i18n from "../i18n";
-import type { ProjectSummary } from "../ipc";
+import type { DescriptionCache, MediaSummary, ProjectSummary } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
 import { useSearchIndexStore, wireSearchIndex } from "./searchIndexStore";
 import { summaryFixture } from "../testing/summaryFixture";
+
+/// A source of the given kind. `mus.mp3` is here so the description sweep can
+/// be shown to skip it: `describe_clip` reads a picture stream and refuses
+/// every other kind, so probing one would be a round trip that cannot answer.
+function media(over: { id: string; label: string; kind: string }): MediaSummary {
+  return {
+    id: over.id, label: over.label, path: `C:/x/${over.label}`, kind: over.kind,
+    duration_us: 5_000_000, width: 1920, height: 1080, size_bytes: 1,
+    available: true, decode_route: { kind: "Original" } as never,
+    codec: "h264", pix_fmt: "yuv420p",
+  };
+}
 
 // Same fixture shape as buildEntries.test.ts — copied in (one media m1, one
 // track t1 with clip l1). Varies media label per test via a parameter.
@@ -13,12 +40,8 @@ function fixtureSummary(label = "beach.mp4"): ProjectSummary {
     project_id: "p1",
     name: "fixture",
     media: [
-      {
-        id: "m1", label, path: `C:/x/${label}`, kind: "Video",
-        duration_us: 5_000_000, width: 1920, height: 1080, size_bytes: 1,
-        available: true, decode_route: { kind: "Original" } as never,
-        codec: "h264", pix_fmt: "yuv420p",
-      },
+      media({ id: "m1", label, kind: "Video" }),
+      media({ id: "m-audio", label: "mus.mp3", kind: "Audio" }),
     ],
     history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
     audio_roles: [],
@@ -64,12 +87,16 @@ let teardown: (() => void) | null = null;
 
 beforeEach(() => {
   vi.useFakeTimers();
+  mocks.getMediaDescription.mockReset().mockResolvedValue(null);
+  mocks.describeClip.mockReset();
+  resetDescriptionsStore();
   useProjectStore.getState().apply(null);
 });
 
 afterEach(() => {
   teardown?.();
   teardown = null;
+  resetDescriptionsStore();
   vi.useRealTimers();
 });
 
@@ -151,5 +178,47 @@ describe("searchIndexStore", () => {
     // Restore — i18n locale (and its localStorage cache, where present) is
     // process-global; don't leak zh-CN into other suites.
     await i18n.changeLanguage("en-US");
+  });
+
+  // The load-bearing rule of the description entries: they are indexed from
+  // what is already on disk. Nothing on this path may spend a model.
+  it("indexes the cached descriptions of the pool's video sources", async () => {
+    const cache: DescriptionCache = {
+      covered_ranges: [[0, 2_000_000]],
+      segments: [
+        { t_start_us: 0, t_end_us: 1_000_000, text: "a hallway", tags: ["interior"] },
+      ],
+    };
+    mocks.getMediaDescription.mockResolvedValue(cache);
+    teardown = wireSearchIndex();
+    useProjectStore.getState().apply(fixtureSummary());
+
+    await flushDebounce();
+    // The read lands after the summary's own rebuild, and marks the index
+    // dirty in its own right — hence a second debounce window.
+    await flushDebounce();
+    const entries = useSearchIndexStore.getState().entries;
+    expect(entries.some((e) => e.key === "description:l1:0")).toBe(true);
+    expect(mocks.describeClip).not.toHaveBeenCalled();
+  });
+
+  it("sweeps video sources only", async () => {
+    teardown = wireSearchIndex();
+    useProjectStore.getState().apply(fixtureSummary());
+    await flushDebounce();
+    expect(mocks.getMediaDescription).toHaveBeenCalledWith("m1");
+    expect(mocks.getMediaDescription).toHaveBeenCalledTimes(1);
+  });
+
+  // Nothing described is the ordinary state: the sweep still runs, and the
+  // corpus simply carries no rows of that type.
+  it("indexes no description entry for a project with none", async () => {
+    teardown = wireSearchIndex();
+    useProjectStore.getState().apply(fixtureSummary());
+    await flushDebounce();
+    await flushDebounce();
+    expect(
+      useSearchIndexStore.getState().entries.some((e) => e.type === "description"),
+    ).toBe(false);
   });
 });

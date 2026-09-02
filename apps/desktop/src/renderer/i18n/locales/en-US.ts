@@ -2117,7 +2117,7 @@ const enUS = {
     running: "Describing…",
   },
   search: {
-    placeholder: "Search commands, media, clips, captions…",
+    placeholder: "Search commands, media, clips, captions, descriptions…",
     no_results: "No results for “{{query}}”",
     group_command: "Commands",
     group_media: "Media",
@@ -2126,6 +2126,7 @@ const enUS = {
     group_clip: "Clips",
     group_caption: "Captions",
     group_marker: "Markers",
+    group_description: "Descriptions",
     reveal_in_pool: "Reveal in media pool",
     unused: "Not on the timeline",
     missing_badge: "missing",

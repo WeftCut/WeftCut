@@ -1,9 +1,16 @@
-// What is described, per source — the state behind the shot rows' text column.
+// What is described, per source — the state behind the shot rows' text column
+// and behind the search index's description entries.
 //
 // Deliberately separate from `projectStore`, for `shotsStore`'s reason: a
 // description belongs to a source rather than to the project, and folding it
 // into the summary would strap the read onto the refetch that runs on every
 // edit whether a Panel is open or not.
+//
+// LIFETIME IS THE PROJECT'S, not any Panel's: the palette indexes these, and a
+// search corpus that emptied whenever the Shots Panel closed would be a corpus
+// nobody could rely on. Invalidation is therefore per source and belongs to
+// `syncDescriptions` — a relink points one media id at different footage, and
+// that, not a Panel unmount, is what makes an answer wrong.
 //
 // THE RULE THIS MODULE EXISTS TO ENFORCE: reading a description never computes
 // one. `hydrateDescription` goes through `getMediaDescription`, which reports a
@@ -36,9 +43,20 @@ export const useDescriptionsStore = create<DescriptionsState>(() => ({
   ...INITIAL,
 }));
 
-/// One coordinator for the reads, so a slower answer for a source the user has
-/// navigated away from cannot publish over the newest one.
+/// One coordinator for the SUBJECT reads, so a slower answer for a source the
+/// user has navigated away from cannot publish over the newest one.
 const reads = new LatestRequestCoordinator();
+
+/// Sources with a read in the air. The idempotence guard the rest of this
+/// module states over `segments` only closes once an answer has landed, so
+/// without this a Panel selecting a clip while the index is sweeping the pool
+/// would probe the same source twice.
+const inFlight = new Set<string>();
+
+/// The file each answered source pointed at when it was last looked at.
+/// `segments` is keyed by media id, and a relink keeps the id while changing
+/// the footage — see `syncDescriptions`, which owns that rule.
+const readAtPath = new Map<string, string>();
 
 function put(
   mediaId: string,
@@ -57,6 +75,8 @@ function put(
 /// cost a cache probe and not a model run.
 export async function hydrateDescription(mediaId: string): Promise<void> {
   if (useDescriptionsStore.getState().segments.has(mediaId)) return;
+  if (inFlight.has(mediaId)) return;
+  inFlight.add(mediaId);
   try {
     await reads.run(
       () => getMediaDescription(mediaId),
@@ -69,7 +89,63 @@ export async function hydrateDescription(mediaId: string): Promise<void> {
     // legible without it, and the dialog is where a describe failure belongs.
     console.warn("[descriptionsStore] description read failed", err);
     put(mediaId, null);
+  } finally {
+    inFlight.delete(mediaId);
   }
+}
+
+/// Bring the store in line with the project's video sources: what the search
+/// index needs, which is every source's cached prose rather than one Panel's
+/// subject. `sources` maps media id to the file that id points at now.
+///
+/// THE RELINK RULE LIVES HERE, with the key it is about. A relink keeps the
+/// media id and changes the footage, and the description cache belongs to the
+/// file — so a source whose path has moved under us forgets its answer and
+/// reads again, and a source that has left the project is dropped rather than
+/// indexed forever. An id nobody has recorded a path for yet is left alone: a
+/// first sight is not a relink.
+///
+/// NOT through `reads`: that coordinator lets only the newest request publish,
+/// which is right for one subject replacing another and wrong for a fan-out —
+/// every answer here is about a different source and lands under its own key,
+/// so all of them must publish. `inFlight` is the guard a fan-out does need.
+///
+/// NEVER calls `describeClip`, for `hydrateDescription`'s reason: the palette
+/// must cost a cache probe per source and not a model run.
+export async function syncDescriptions(
+  sources: ReadonlyMap<string, string>,
+): Promise<void> {
+  const stale = [...readAtPath].filter(([id, path]) => sources.get(id) !== path);
+  if (stale.length > 0) {
+    // One new map for the whole batch: each `setState` is a store tick, and
+    // the index marks itself dirty on every one of them.
+    const next = new Map(useDescriptionsStore.getState().segments);
+    for (const [id] of stale) {
+      next.delete(id);
+      readAtPath.delete(id);
+    }
+    useDescriptionsStore.setState({ segments: next });
+  }
+  for (const [id, path] of sources) readAtPath.set(id, path);
+  await Promise.all(
+    [...sources.keys()].map(async (mediaId) => {
+      if (useDescriptionsStore.getState().segments.has(mediaId)) return;
+      if (inFlight.has(mediaId)) return;
+      inFlight.add(mediaId);
+      try {
+        const cache = await getMediaDescription(mediaId);
+        put(mediaId, cache === null ? null : cache.segments);
+      } catch (err) {
+        // Same answer a failed subject read gives — nothing is known to be on
+        // disk, so nothing is indexed. Recorded and not surfaced: a palette
+        // missing a row it could not have known about is not a refusal.
+        console.warn("[descriptionsStore] description sweep read failed", err);
+        put(mediaId, null);
+      } finally {
+        inFlight.delete(mediaId);
+      }
+    }),
+  );
 }
 
 /// Re-read one source past the idempotence guard — what a finished DEFAULT-view
@@ -112,11 +188,18 @@ export function setDescribing(mediaId: string | null): void {
   useDescriptionsStore.setState({ describing: mediaId });
 }
 
-/// Back to the pre-open state. The map is keyed by media id and a relink points
-/// that id at different footage, so a Panel that closes forgets rather than
-/// trusting the join across a reopen.
+/// Forget everything — the state every test of this module starts from, and
+/// the hook a hard project boundary would take.
+///
+/// NOT a Panel-close hook, and no production caller needs it today: the palette
+/// indexes what is held here, so the map outlives the Shots Panel by design,
+/// and a project switch already cleans itself through `syncDescriptions` —
+/// none of the outgoing project's sources appear among the incoming one's, so
+/// each is dropped by the same rule that catches a relink.
 export function resetDescriptionsStore(): void {
   reads.invalidate();
+  inFlight.clear();
+  readAtPath.clear();
   // `INITIAL.segments` is never mutated — every write above builds a new map —
   // so restoring it by reference keeps the selectors from re-rendering on a
   // reset that changed nothing.

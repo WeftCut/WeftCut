@@ -1,6 +1,7 @@
 import { TEXT_NAME_MAX, textSnippet } from "../../shared/textSnippet";
+import { segmentsForSpan } from "../describe/segmentsForSpan";
 import { formatTimecode } from "../frames";
-import type { ProjectSummary } from "../ipc";
+import type { DescSegment, LayerSummary, ProjectSummary } from "../ipc";
 import { compositionRefCounts } from "../lib/compositionRefs";
 import { groupDisplayName, groupOrdinals, layerDisplayName } from "../lib/layerName";
 import { trackDisplayName } from "../lib/trackName";
@@ -30,7 +31,22 @@ export interface LocaleInput {
   tEn: (key: string, values: Record<string, unknown>) => string;
 }
 
+/// The cached prose of every source the index carries, by media id — the shape
+/// `descriptionsStore` holds it in. A present `null` is "known to have none",
+/// an absent key "nobody has read this yet"; both contribute no entries, which
+/// is why this file never has to tell them apart.
+export type DescriptionsInput = ReadonlyMap<
+  string,
+  readonly DescSegment[] | null
+>;
+
 const CAPTION_SNIPPET_MAX = 80;
+
+/// Display budget for a description row's label. Unlike `CAPTION_SNIPPET_MAX`
+/// this caps only what is SHOWN: model prose runs well past a subtitle line,
+/// and the phrase someone half-remembers is as likely to sit in a sentence's
+/// tail as its head, so the segment stays a haystack whole.
+const DESCRIPTION_SNIPPET_MAX = 80;
 
 function withPinyin(haystacks: string[]): string[] {
   const out = [...haystacks];
@@ -41,10 +57,89 @@ function withPinyin(haystacks: string[]): string[] {
   return out;
 }
 
+/// One entry per described segment of the source this clip places, so a phrase
+/// found in the prose lands on a clip that actually shows it.
+///
+/// A described source with NO placement contributes nothing. Every row here
+/// answers Enter by selecting a clip and parking the playhead on it, and a
+/// source sitting only in the pool has neither — the `media` entry is what
+/// finds that one, by file name.
+///
+/// Placed twice, described once: the join runs per PLACEMENT, so the same
+/// segment yields one row per clip that shows it, each with its own time.
+function descriptionEntries(
+  layer: LayerSummary,
+  params: { media_id: string; src_in_us: number; src_out_us: number },
+  clipLabel: string,
+  compositionId: string,
+  descriptions: DescriptionsInput,
+  tc: (us: number) => string,
+): SearchEntry[] {
+  const segments = segmentsForSpan(
+    descriptions.get(params.media_id) ?? null,
+    params.src_in_us,
+    params.src_out_us,
+  );
+  const out: SearchEntry[] = [];
+  for (const seg of segments) {
+    const text = seg.text.replace(/\s+/g, " ").trim();
+    // The prose IS the label, so a segment without any is a segment with
+    // nothing to find — the view a caption takes of a blank Text layer.
+    if (!text) continue;
+    const label = textSnippet(text, DESCRIPTION_SNIPPET_MAX);
+    // Source into timeline 1:1 with no speed factor: the mapping `shotRows`
+    // and marker anchoring already use, and description is refused outright on
+    // a re-timed clip (`describe/describeEligibility.ts`), so a second mapping
+    // rule here would exist only for footage that has no prose to place.
+    //
+    // Floored at the clip's own start because a segment may STRADDLE the
+    // window — `segmentsForSpan` keeps a straddler deliberately — and the
+    // source before the window is on no timeline to seek to.
+    const tStartUs =
+      layer.t_start_us + Math.max(0, seg.t_start_us - params.src_in_us);
+    const tags = seg.tags.map((tag) => tag.trim()).filter((tag) => tag !== "");
+    const haystacks = withPinyin([label]);
+    const detailFrom = haystacks.length;
+    if (text !== label) haystacks.push(...withPinyin([text]));
+    // Tags are haystacks beside the prose, not decoration: `describe_clip`
+    // produces them precisely as short filterable keywords — subjects,
+    // setting, camera motion, shot type.
+    if (tags.length > 0) haystacks.push(...withPinyin(tags));
+    // One line for everything the row does not otherwise show, so a hit on a
+    // tag and a hit deep in the sentence each display the words that matched.
+    const behind = [...(text === label ? [] : [text]), ...tags].join(" · ");
+    out.push({
+      key: `description:${layer.id}:${seg.t_start_us}`,
+      type: "description",
+      label,
+      // The CLIP and not its track: the label is prose, so the row has to say
+      // which clip it is about, and two clips of one source share a track as
+      // readily as they share a name.
+      context: `${clipLabel} · ${tc(tStartUs)}`,
+      haystacks,
+      ...(haystacks.length > detailFrom
+        ? { detail: { text: behind, from: detailFrom } }
+        : {}),
+      payload: {
+        type: "description",
+        layerId: layer.id,
+        tStartUs,
+        compositionId,
+      },
+    });
+  }
+  return out;
+}
+
+/// `descriptions` defaults to empty because that is the ordinary state: a
+/// project whose sources have never been described contributes no entries of
+/// that type, and reading one is a cache probe the caller owns — no argument
+/// this function receives can start a model run.
 export function buildEntries(
   summary: ProjectSummary | null,
   commands: CommandInput[],
   locale: LocaleInput,
+  descriptions: DescriptionsInput = new Map(),
 ): SearchEntry[] {
   const entries: SearchEntry[] = [];
 
@@ -186,6 +281,18 @@ export function buildEntries(
           ),
           payload: { type: "clip", layerId: layer.id, tStartUs: layer.t_start_us },
         });
+        if (layer.params.kind === "VideoClip") {
+          entries.push(
+            ...descriptionEntries(
+              layer,
+              layer.params,
+              clipLabel,
+              comp.id,
+              descriptions,
+              tc,
+            ),
+          );
+        }
       }
     }
   }

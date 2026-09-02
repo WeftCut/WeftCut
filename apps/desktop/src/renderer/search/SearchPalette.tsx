@@ -10,7 +10,12 @@ import { formatTimecode } from "../frames";
 import { logEmit } from "../ipc";
 import { resolveAccelerator } from "../shortcuts/match";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
-import { jumpToLayer, jumpToTimeUs, revealInMediaPool } from "../state/navigation";
+import {
+  jumpToLayer,
+  jumpToTimeUs,
+  revealInMediaPool,
+  revealLayerWithoutSeek,
+} from "../state/navigation";
 import { focusedRootUs } from "../state/playheadProjection";
 import { useOpenComposition } from "../state/projectStore";
 import { openComposition, focusedCompositionId } from "../state/compositionAnchorStore";
@@ -43,7 +48,7 @@ function logStaleTarget(): void {
 }
 
 /// The global search palette (Mod+K): fuzzy-ranked commands/media/tracks/
-/// clips/captions/markers in one Spotlight-style overlay. Mounted
+/// clips/captions/markers/descriptions in one Spotlight-style overlay. Mounted
 /// conditionally by App.tsx (mount == open, same convention as every other
 /// dialog in the app); the Dialog's `onOpenChange` is the single Esc/
 /// backdrop path and unwinds one level (media sub-list → results → closed)
@@ -157,6 +162,27 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
         // composition is open by now — so the moment to park the film on is
         // that time projected up through the anchor the open gave it.
         jumpToTimeUs(focusedRootUs(p.tUs));
+        onClose();
+        return;
+      case "description":
+        // The clip first, and it carries the composition hop: a description is
+        // prose about one clip, so selecting that clip is half the answer and
+        // the timeline it lives on has to be the open one before the other
+        // half means anything.
+        if (!revealLayerWithoutSeek(p.layerId)) {
+          logStaleTarget();
+          onClose();
+          return;
+        }
+        // Then the described stretch itself, rather than the clip's start —
+        // the whole point of the row is where in the clip that content is.
+        // Skipped when the clip has moved to another composition since the
+        // index was built: `tStartUs` is on the recorded one's clock and names
+        // no instant of the timeline now open, and a wrong seek is worse than
+        // none when the selection already landed.
+        if (p.compositionId === focusedCompositionId()) {
+          jumpToTimeUs(focusedRootUs(p.tStartUs));
+        }
         onClose();
         return;
     }

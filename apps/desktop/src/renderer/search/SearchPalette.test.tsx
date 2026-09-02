@@ -7,6 +7,7 @@ vi.mock("../state/navigation", () => ({
   jumpToLayer: vi.fn(() => true),
   jumpToTimeUs: vi.fn(),
   revealInMediaPool: vi.fn(() => true),
+  revealLayerWithoutSeek: vi.fn(() => true),
 }));
 
 vi.mock("../ipc", async (importActual) => ({
@@ -16,13 +17,18 @@ vi.mock("../ipc", async (importActual) => ({
 
 import { logEmit } from "../ipc";
 import i18n from "../i18n"; // also a side-effect: init global i18next (en-US fallback)
-import { jumpToLayer, jumpToTimeUs, revealInMediaPool } from "../state/navigation";
+import {
+  jumpToLayer,
+  jumpToTimeUs,
+  revealInMediaPool,
+  revealLayerWithoutSeek,
+} from "../state/navigation";
 import { registerCommandProvider } from "../commands/registry";
 import { useSearchIndexStore } from "./searchIndexStore";
 import { buildEntries } from "./buildEntries";
 import { pinyinHaystacks } from "./pinyin";
 import { SearchPalette } from "./SearchPalette";
-import type { ProjectSummary } from "../ipc";
+import type { DescSegment, ProjectSummary } from "../ipc";
 import { rootOf, summaryFixture } from "../testing/summaryFixture";
 import { useProjectStore } from "../state/projectStore";
 
@@ -363,5 +369,67 @@ describe("SearchPalette", () => {
     expect(jumpToTimeUs).toHaveBeenCalledWith(5_000_000);
     expect(runSpy).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+/// One described stretch half a second into l1's source window, whose words
+/// appear nowhere else in the fixture — so a query reaching this row can only
+/// have come through the prose or its tags.
+const DESC_SEGMENTS: readonly DescSegment[] = [
+  {
+    t_start_us: 500_000,
+    t_end_us: 1_500_000,
+    text: "a wide shot of the city skyline at dusk",
+    tags: ["establishing", "exterior"],
+  },
+];
+
+describe("SearchPalette — descriptions", () => {
+  beforeEach(() => {
+    const summary = fixtureSummary();
+    // The clip's own composition has to be the open one for the seek to be
+    // direct, and a project is loaded whenever the palette can be opened.
+    useProjectStore.getState().apply(summary);
+    useSearchIndexStore.setState({
+      entries: buildEntries(summary, [], LOCALE, new Map([["m1", DESC_SEGMENTS]])),
+      version: 1,
+    });
+  });
+
+  function descriptionRow(): HTMLElement {
+    const row = screen
+      .getAllByRole("option")
+      .find((el) => el.textContent?.includes("skyline"));
+    expect(row).toBeTruthy();
+    return row!;
+  }
+
+  it("selects the described clip and parks the playhead on the stretch", async () => {
+    const onClose = vi.fn();
+    render(<SearchPalette onClose={onClose} />);
+    await userEvent.keyboard("skyline");
+    await userEvent.click(descriptionRow());
+    // The clip, not the timecode alone: a description is prose about one clip,
+    // and the selection is what makes it the clip being worked on.
+    expect(revealLayerWithoutSeek).toHaveBeenCalledWith("l1");
+    // l1 starts at 2 s and the segment 500 ms into its source window, so the
+    // instant offered is inside the clip and not its head.
+    expect(jumpToTimeUs).toHaveBeenCalledWith(2_500_000);
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("finds a stretch by a tag, and shows the tag that matched", async () => {
+    render(<SearchPalette onClose={vi.fn()} />);
+    await userEvent.keyboard("establishing");
+    const row = descriptionRow();
+    // Which clip and when stay in front of the words, as on a marker's row.
+    expect(row.textContent).toContain("beach.mp4 · 00:00:02:15 · ");
+    expect(row.textContent).toContain("establishing");
+  });
+
+  it("groups descriptions under their own header", async () => {
+    render(<SearchPalette onClose={vi.fn()} />);
+    await userEvent.keyboard("skyline");
+    expect(await screen.findByText("Descriptions")).toBeTruthy();
   });
 });

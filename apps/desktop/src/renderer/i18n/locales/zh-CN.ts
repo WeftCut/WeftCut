@@ -1870,7 +1870,7 @@ const zhCN: Resources = {
     running: "正在描述…",
   },
   search: {
-    placeholder: "搜索命令、素材、片段、字幕…",
+    placeholder: "搜索命令、素材、片段、字幕、画面描述…",
     no_results: "没有与“{{query}}”匹配的结果",
     group_command: "命令",
     group_media: "素材",
@@ -1879,6 +1879,7 @@ const zhCN: Resources = {
     group_clip: "片段",
     group_caption: "字幕",
     group_marker: "标记",
+    group_description: "画面描述",
     reveal_in_pool: "在素材库中显示",
     unused: "未在时间线上使用",
     missing_badge: "缺失",

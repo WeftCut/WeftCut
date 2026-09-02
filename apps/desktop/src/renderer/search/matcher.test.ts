@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { rankEntries } from "./matcher";
+import enUS, { type Resources } from "../i18n/locales/en-US";
+import zhCN from "../i18n/locales/zh-CN";
+import { GROUP_ORDER, rankEntries } from "./matcher";
 import { pinyinHaystacks } from "./pinyin";
 import type { SearchEntry, SearchEntryType } from "./types";
 
@@ -85,5 +87,45 @@ describe("rankEntries", () => {
   it("browse mode floors the command cap at 8 even when limitPerGroup is smaller", () => {
     const cmds = Array.from({ length: 10 }, (_, i) => mk("command", `command ${i}`));
     expect(rankEntries("", cmds, 3).get("command")).toHaveLength(8);
+  });
+});
+
+/// Every entry type, exhaustive BY CONSTRUCTION: a `Record` over the union
+/// means a new `SearchEntryType` cannot be declared without a type error right
+/// here, and the assertions below then name what it still owes — a place in the
+/// display order, and a group header in each locale. A type with neither is
+/// indexed and invisible: the ranker groups by type and the palette renders
+/// nothing but the groups it can head.
+const CATALOGUE: Record<SearchEntryType, true> = {
+  command: true,
+  media: true,
+  group: true,
+  track: true,
+  clip: true,
+  caption: true,
+  marker: true,
+  description: true,
+};
+
+/// Widened to a dynamic lookup, so one loop can ask both locales for a key it
+/// composes. zh-CN is typed as `Resources`, so a MISSING key is already a
+/// compile error there; what this reaches is the en-US side, where a key can be
+/// added and forgotten.
+function groupHeaders(locale: Resources): Record<string, unknown> {
+  return locale.search;
+}
+
+describe("the entry-type catalogue", () => {
+  it("puts every type in the display order exactly once", () => {
+    expect([...GROUP_ORDER].sort()).toEqual(Object.keys(CATALOGUE).sort());
+  });
+
+  it("gives every type a non-empty group header in both locales", () => {
+    for (const type of Object.keys(CATALOGUE)) {
+      for (const locale of [enUS, zhCN]) {
+        expect(groupHeaders(locale)[`group_${type}`]).toEqual(expect.any(String));
+        expect(groupHeaders(locale)[`group_${type}`]).not.toBe("");
+      }
+    }
   });
 });

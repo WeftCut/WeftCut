@@ -2,8 +2,14 @@ import { describe, expect, it } from "vitest";
 import { buildEntries } from "./buildEntries";
 import { pinyinHaystacks } from "./pinyin";
 import type { SearchEntry } from "./types";
-import type { ProjectSummary } from "../ipc";
-import { compositionFixture, summaryFixture } from "../testing/summaryFixture";
+import type {
+  AnimTrack,
+  DescSegment,
+  LayerSummary,
+  MediaSummary,
+  ProjectSummary,
+} from "../ipc";
+import { compositionFixture, ROOT_ID, summaryFixture } from "../testing/summaryFixture";
 
 /// 10 s 30 fps summary: video track (clip at 2 s), caption track (one real
 /// Text layer + one whitespace-only Text layer), a B-Roll track whose clip
@@ -317,5 +323,193 @@ describe("buildEntries", () => {
     const out = buildEntries(fixtureSummary(), [], LOCALE);
     expect(out.some((e) => e.key === "marker:mk5")).toBe(false);
     expect(out.some((e) => e.label.includes("dormant"))).toBe(false);
+  });
+});
+
+// ===== Descriptions ========================================================
+// Its own fixture rather than more layers on the one above: every assertion
+// here is about the source→placement join, so the summary has to state exactly
+// how many times each described source is placed — and widening the shared
+// fixture would change what its media-usage assertions are counting.
+
+/// Prose that runs past the row's display budget, so the label truncates and
+/// the tail is reachable only as a haystack of its own.
+const LONG_TEXT =
+  "a wide shot of the city skyline at dusk, the camera drifting slowly right across the rooftops";
+
+const SEGMENTS: Record<string, DescSegment[]> = {
+  // Placed twice, described once.
+  dm1: [
+    { t_start_us: 0, t_end_us: 1_000_000, text: LONG_TEXT, tags: ["skyline", "exterior"] },
+    {
+      t_start_us: 1_000_000,
+      t_end_us: 2_000_000,
+      text: "无人机掠过海岸线",
+      tags: ["航拍"],
+    },
+  ],
+  // Placed once, by a clip whose window opens INSIDE this segment.
+  dm2: [
+    {
+      t_start_us: 1_000_000,
+      t_end_us: 3_000_000,
+      text: "two people talking to camera",
+      tags: ["interview"],
+    },
+  ],
+  // Described, and on no timeline.
+  dm3: [{ t_start_us: 0, t_end_us: 1_000_000, text: "an empty corridor", tags: [] }],
+};
+
+const DESCRIPTIONS = new Map<string, readonly DescSegment[] | null>(
+  Object.entries(SEGMENTS),
+);
+
+function describedMedia(id: string): MediaSummary {
+  return {
+    id, label: `${id}.mp4`, path: `C:/x/${id}.mp4`, kind: "Video",
+    duration_us: 5_000_000, width: 1920, height: 1080, size_bytes: 1,
+    available: true, decode_route: { kind: "Original" } as never,
+    codec: "h264", pix_fmt: "yuv420p",
+  };
+}
+
+function videoClip(over: {
+  id: string;
+  mediaId: string;
+  tStartUs: number;
+  srcInUs: number;
+  srcOutUs: number;
+}): LayerSummary {
+  const num = (value: number): AnimTrack<number> => ({ mode: "Static", value });
+  return {
+    id: over.id, label: null,
+    t_start_us: over.tStartUs,
+    t_end_us: over.tStartUs + (over.srcOutUs - over.srcInUs),
+    kind: "VideoClip", color_hint: "", enabled: true, locked: false, effects: [],
+    params: {
+      kind: "VideoClip", media_id: over.mediaId, media_label: `${over.mediaId}.mp4`,
+      src_in_us: over.srcInUs, src_out_us: over.srcOutUs,
+      x: num(0), y: num(0), scale_x: num(1), scale_y: num(1), scale_linked: true,
+      rotation_deg: num(0), anchor_x: num(0.5), anchor_y: num(0.5), opacity: num(1),
+      speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0,
+    },
+  };
+}
+
+/// dm1 placed twice — `dl1` shows its whole described stretch, `dl2` only the
+/// first second of it — and dm2 placed once by a clip that opens half a second
+/// into its only segment. dm3 is in the pool and nowhere else.
+function descriptionSummary(): ProjectSummary {
+  return summaryFixture({
+    media: [describedMedia("dm1"), describedMedia("dm2"), describedMedia("dm3")],
+    root: {
+      duration_us: 20_000_000,
+      tracks: [
+        {
+          id: "dt1", kind: "Video", label: "A-Roll", enabled: true, locked: false,
+          muted: false, solo: false, role: "a-roll", transient: false,
+          layers: [
+            videoClip({ id: "dl1", mediaId: "dm1", tStartUs: 2_000_000, srcInUs: 0, srcOutUs: 2_000_000 }),
+            videoClip({ id: "dl3", mediaId: "dm2", tStartUs: 8_000_000, srcInUs: 1_500_000, srcOutUs: 3_000_000 }),
+          ],
+        },
+        {
+          id: "dt2", kind: "Video", label: "B-Roll", enabled: true, locked: false,
+          muted: false, solo: false, role: "b-roll", transient: false,
+          layers: [
+            videoClip({ id: "dl2", mediaId: "dm1", tStartUs: 500_000, srcInUs: 0, srcOutUs: 1_000_000 }),
+          ],
+        },
+      ],
+    },
+  });
+}
+
+function descriptionEntriesOf(descriptions = DESCRIPTIONS): SearchEntry[] {
+  return buildEntries(descriptionSummary(), [], LOCALE, descriptions).filter(
+    (e) => e.type === "description",
+  );
+}
+
+describe("buildEntries — descriptions", () => {
+  it("finds a described stretch by a phrase written only in the prose", () => {
+    const e = byKey(descriptionEntriesOf(), "description:dl1:0");
+    // The label stops at the row's budget; the sentence is indexed whole, so a
+    // word past that budget still reaches it.
+    expect(e.label.endsWith("...")).toBe(true);
+    expect(e.label).not.toContain("rooftops");
+    expect(e.haystacks.some((h) => h.includes("rooftops"))).toBe(true);
+    // Which clip, and where in it. This segment opens at the clip's own source
+    // in-point, so it lands on the clip's start.
+    expect(e.context).toBe("dm1.mp4 · 00:00:02:00");
+    expect(e.payload).toEqual({
+      type: "description",
+      layerId: "dl1",
+      tStartUs: 2_000_000,
+      compositionId: ROOT_ID,
+    });
+  });
+
+  it("indexes every tag beside the prose", () => {
+    const e = byKey(descriptionEntriesOf(), "description:dl1:0");
+    expect(e.haystacks).toContain("skyline");
+    expect(e.haystacks).toContain("exterior");
+    // A tag hit is told apart from a label hit the way a marker's note is, and
+    // the row's one detail line carries both kinds of text it doesn't show.
+    expect(e.haystacks.slice(e.detail!.from)).toContain("skyline");
+    expect(e.detail!.text).toBe(`${LONG_TEXT} · skyline · exterior`);
+  });
+
+  it("one segment yields one entry per placement, each on its own clip", () => {
+    const out = descriptionEntriesOf();
+    const on = (layerId: string) =>
+      out.filter((e) => e.payload.type === "description" && e.payload.layerId === layerId);
+    // dl1 shows the whole described stretch; dl2 shows only its first second,
+    // so the second segment is not on that clip at all.
+    expect(on("dl1")).toHaveLength(2);
+    expect(on("dl2")).toHaveLength(1);
+    // Same prose, a different clip, a different instant.
+    expect(on("dl2")[0]!.label).toBe(byKey(out, "description:dl1:0").label);
+    expect(on("dl2")[0]!.payload).toMatchObject({ layerId: "dl2", tStartUs: 500_000 });
+  });
+
+  it("a described source nothing places contributes no entry", () => {
+    // There is no clip to select and no instant to land on, so such a row
+    // would have no answer to Enter; dm3 is findable as media, by file name.
+    const out = buildEntries(descriptionSummary(), [], LOCALE, DESCRIPTIONS);
+    expect(out.some((e) => e.label.includes("empty corridor"))).toBe(false);
+    expect(out.some((e) => e.key === "media:dm3")).toBe(true);
+  });
+
+  it("a segment straddling the clip's in-point lands on the clip's start", () => {
+    // The join keeps a straddler deliberately, and the source ahead of the
+    // window is on no timeline — so the instant offered is where THIS clip
+    // begins showing that content.
+    const e = byKey(descriptionEntriesOf(), "description:dl3:1000000");
+    expect(e.payload).toMatchObject({ layerId: "dl3", tStartUs: 8_000_000 });
+    expect(e.context).toBe("dm2.mp4 · 00:00:08:00");
+  });
+
+  it("zh-CN prose and tags match by pinyin, like every other text-bearing row", () => {
+    const e = byKey(descriptionEntriesOf(), "description:dl1:1000000");
+    const prose = pinyinHaystacks("无人机掠过海岸线")!;
+    expect(e.haystacks).toContain(prose.full);
+    expect(e.haystacks).toContain(prose.initials);
+    const tag = pinyinHaystacks("航拍")!;
+    expect(e.haystacks).toContain(tag.full);
+    expect(e.haystacks).toContain(tag.initials);
+  });
+
+  it("a source read back as not described, or never read, contributes nothing", () => {
+    // `null` is an answer and an absent key is not, but neither is prose — the
+    // index has no reason to tell the two apart.
+    expect(descriptionEntriesOf(new Map([["dm1", null]]))).toHaveLength(0);
+    expect(descriptionEntriesOf(new Map())).toHaveLength(0);
+    // And empty is the default: no argument to this function can ask for prose
+    // that has not already been read.
+    expect(
+      buildEntries(descriptionSummary(), [], LOCALE).some((e) => e.type === "description"),
+    ).toBe(false);
   });
 });

@@ -25,6 +25,9 @@ export const GROUP_ORDER: SearchEntryType[] = [
   "clip",
   "caption",
   "marker",
+  // Last, because these are the only rows nobody wrote: a model's prose about
+  // a shot ranks behind everything the editor named, typed or marked.
+  "description",
 ];
 
 // fuzzysort v3 scores are 0..1. Floor keeps low-quality scatter matches
