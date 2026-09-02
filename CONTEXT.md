@@ -342,6 +342,18 @@ _Avoid_: orphan (a detached marker is an ordinary free marker, not a casualty);
 unlink, unpin, release; link (that is the propagation relationship between
 layers)
 
+**Silence mark**:
+An anchored REGION marker written by *Detect silences…* — one per range the
+waveform peaks stayed under the threshold for, spanning the range, labelled
+"Silence" and amber so it reads apart from the shot-cut blue on the same clip.
+A fact about the material, so it hibernates when a trim passes it and leaves
+with the clip. Marking is where the silence recipe stops here: removing a
+range needs a ripple delete this editor does not have. UI word: Detect
+silences / 检测静默.
+_Avoid_: cut silences (nothing is cut), silence region as a marker kind (it is
+an ordinary marker with `end_t_us`), gap (that is the vacated span a deletion
+leaves on the timeline)
+
 ## Shots
 
 **Shot**:
@@ -394,6 +406,32 @@ FEWER cuts — so no control is labelled with it: the human control is a line
 over the candidates, and its meaning is its position.
 _Avoid_: sensitivity in UI copy, detection strength, granularity (that is the
 minimum shot length, a different knob that fixes a different error)
+
+## Descriptions
+
+**Description**:
+What a video-understanding model said about a stretch of one SOURCE: a list of
+described segments, each a source-absolute span with prose and short tags,
+cached per source and (sampling, focus, engine) and read back by media id. It
+belongs to the source the way a shot report does, so a shot row and a palette
+entry join it by time intersection alone — a segment that straddles a detected
+boundary belongs to both shots. Prose has no right answer to check it against,
+so it is never reviewed or edited, only read where it is useful and searched.
+UI word: Describe content / 描述内容; a row with none reads Not described /
+未描述.
+_Avoid_: caption or subtitle (spoken words, a Text layer), summary, scene
+description in UI copy (the Rust struct is `SceneDescription`, but "scene" is
+the word this glossary keeps away from shots), transcript
+
+**Default view**:
+The one description of a source that `media://{id}/description` serves and
+therefore the only one the shot rows and the search index can read back across
+sessions: the resolver's default engine at the default sampling (1.0 frames per
+second) and focus (general). A run at other settings is cached under its own
+key and readable for the session it was made in; the describe dialog says which
+of the two a run will be.
+_Avoid_: cached description (every run is cached; only this one is read back),
+baseline
 
 ## Links and Groups
 
