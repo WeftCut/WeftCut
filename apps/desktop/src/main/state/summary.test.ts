@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { Animated, Layer, LayerParams, Marker, MediaItem, Rgba, Track } from './model'
 import {
-  layerKind, deriveTrackKindLabel, layerColorHint, hslToHex, markerColorHint, markerHibernating, mediaLabel, layerParamsView,
+  layerKind, deriveTrackKindLabel, layerColorHint, hslToHex, markerColorHint, markerHibernating, markerShownEnd, mediaLabel, layerParamsView,
   buildProjectSummary,
 } from './summary'
 import { seededGen } from './ids'
@@ -68,16 +68,17 @@ describe('markerColorHint / mediaLabel', () => {
   })
 })
 
-describe('markerHibernating', () => {
-  // A one-second window into the middle of a source, so a src_us can sit
-  // before it, inside it, on its exclusive end, and past it.
-  const clipParams = { kind: 'VideoClip', media: 'm', src_in_us: 1_000_000, src_out_us: 2_000_000,
-    transform: xf(), opacity: stat(1), speed: 1, flip_h: false, flip_v: false,
-    fade_in_us: 0, fade_out_us: 0, crop: null } as unknown as LayerParams
-  const comp = (layers: Layer[]) => ({ ...root(mkProject()), tracks: [track(layers)] })
-  const marker = (anchor: { layer: string; src_us: number } | null): Marker =>
-    ({ id: 'mk', t_us: 0, end_t_us: null, label: '', note: '', color: { r: 0, g: 0, b: 0, a: 255 }, anchor })
+// A one-second window into the middle of a source, so a src_us can sit before
+// it, inside it, on its exclusive end, and past it. The clip itself runs
+// [0, 1 s) on the timeline (`layer()`).
+const clipParams = { kind: 'VideoClip', media: 'm', src_in_us: 1_000_000, src_out_us: 2_000_000,
+  transform: xf(), opacity: stat(1), speed: 1, flip_h: false, flip_v: false,
+  fade_in_us: 0, fade_out_us: 0, crop: null } as unknown as LayerParams
+const comp = (layers: Layer[]) => ({ ...root(mkProject()), tracks: [track(layers)] })
+const marker = (anchor: { layer: string; src_us: number } | null): Marker =>
+  ({ id: 'mk', t_us: 0, end_t_us: null, label: '', note: '', color: { r: 0, g: 0, b: 0, a: 255 }, anchor })
 
+describe('markerHibernating', () => {
   it('a free marker never hibernates', () => {
     expect(markerHibernating(comp([layer('l', clipParams)]), marker(null))).toBe(false)
   })
@@ -99,6 +100,35 @@ describe('markerHibernating', () => {
   it('an anchor on a kind with no source window hibernates', () => {
     const colorLayer = colorParams({ r: 0, g: 0, b: 0, a: 255 }, 16, 16)
     expect(markerHibernating(comp([layer('l', colorLayer)]), marker({ layer: 'l', src_us: 0 }))).toBe(true)
+  })
+})
+
+describe('markerShownEnd', () => {
+  // A region opening at 0.5 s on the clip [0, 1 s), awake unless said otherwise.
+  const awake = { layer: 'l', src_us: 1_500_000 }
+  const region = (anchor: { layer: string; src_us: number } | null, endTUs: number | null): Marker =>
+    ({ ...marker(anchor), t_us: 500_000, end_t_us: endTUs })
+  const c = comp([layer('l', clipParams)])
+
+  it('a point shows no end', () => {
+    expect(markerShownEnd(c, region(awake, null))).toBeNull()
+  })
+  it('an awake region ending past its clip is drawn only to the clip end; the model keeps the span', () => {
+    const m = region(awake, 1_800_000)
+    expect(markerShownEnd(c, m)).toBe(1_000_000)
+    expect(m.end_t_us).toBe(1_800_000)
+  })
+  it('an awake region inside its clip is shown whole', () => {
+    expect(markerShownEnd(c, region(awake, 900_000))).toBe(900_000)
+  })
+  it('a free region is shown whole past every clip — it describes the timeline, not a clip', () => {
+    expect(markerShownEnd(c, region(null, 1_800_000))).toBe(1_800_000)
+  })
+  it('a hibernating region is left as stored — it is painted nowhere', () => {
+    expect(markerShownEnd(c, region({ layer: 'l', src_us: 500_000 }, 1_800_000))).toBe(1_800_000)
+  })
+  it('a clip end snapped onto the region start is no cut — a zero-length region would read as a point', () => {
+    expect(markerShownEnd(c, { ...region(awake, 1_800_000), t_us: 1_000_000 })).toBe(1_800_000)
   })
 })
 

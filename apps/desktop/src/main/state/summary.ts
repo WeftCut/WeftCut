@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/summary.ts
-import type { Animated, Composition, Effect, Link, Layer, LayerParams, Marker, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid, VAlign } from './model'
+import type { Animated, Composition, Effect, Link, Layer, LayerParams, Marker, MarkerAnchor, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid, VAlign } from './model'
 import type { HistoryStatus } from './history'
 import { hasSourceWindow } from './mutations/helpers'
 import type { DecodeRoute } from '../../shared/decode-route'
@@ -136,15 +136,47 @@ export function markerColorHint(c: Rgba): string { return rgbaHex(c) }
  *  can never disagree with the reconcile about which markers are asleep. */
 export function markerHibernating(c: Composition, m: Marker): boolean {
   if (m.anchor === null) return false
-  const anchor = m.anchor
+  const layer = anchorLayer(c, m.anchor)
+  if (layer === undefined || !hasSourceWindow(layer.params)) return true
+  return m.anchor.src_us < layer.params.src_in_us || m.anchor.src_us >= layer.params.src_out_us
+}
+
+/** The layer of `c` an anchor names, or `undefined` when it lives elsewhere or
+ *  nowhere. Shared by the two marker projections so they cannot resolve one
+ *  anchor to two layers. */
+function anchorLayer(c: Composition, anchor: MarkerAnchor): Layer | undefined {
   for (const track of c.tracks) {
-    for (const layer of track.layers) {
-      if (layer.id !== anchor.layer) continue
-      if (!hasSourceWindow(layer.params)) return true
-      return anchor.src_us < layer.params.src_in_us || anchor.src_us >= layer.params.src_out_us
-    }
+    const layer = track.layers.find((l) => l.id === anchor.layer)
+    if (layer !== undefined) return layer
   }
-  return true
+  return undefined
+}
+
+/** The end a region marker SHOWS, or `null` for a point.
+ *
+ *  An anchored region's stored `end_t_us` is the span it was given — by hand,
+ *  or by a producer such as *Detect silences* — and `reconcileMarkers` carries
+ *  it at the same frame delta as the start. The model never clips it: a trim
+ *  that shortens the clip into the region and is then undone or re-extended has
+ *  to give the whole span back, exactly as hibernation gives a whole marker
+ *  back, and a clipped `end_t_us` would have nothing to grow back from. So the
+ *  clip happens HERE, in the projection, and only while the marker is awake:
+ *  the region is drawn as far as its clip still runs, `min(end_t_us, t_end_us)`,
+ *  because the frames past the clip's out point are no longer the material the
+ *  region describes. Every reader of the raw model keeps the drawn span.
+ *
+ *  Untouched: a free region, which describes the timeline and not a clip; a
+ *  hibernating one, which is painted nowhere; and the one degenerate awake case
+ *  where the clip's end has snapped onto the marker's own frame
+ *  (`t_end_us <= t_us`, reachable only by rounding a frame short of
+ *  hibernation), because a zero-length region would read as a point that is
+ *  not one. */
+export function markerShownEnd(c: Composition, m: Marker): number | null {
+  if (m.end_t_us === null || m.end_t_us === undefined) return null
+  if (m.anchor === null || markerHibernating(c, m)) return m.end_t_us
+  const layer = anchorLayer(c, m.anchor)
+  if (layer === undefined || layer.t_end_us <= m.t_us) return m.end_t_us
+  return Math.min(m.end_t_us, layer.t_end_us)
 }
 
 /** Explicit label, else path basename, else the whole path. */
@@ -246,7 +278,11 @@ export interface HistoryView { cursor: number; len: number; can_undo: boolean; c
 export interface RoleMixView { role: string; gain_db: number; muted: boolean; solo: boolean }
 export interface LinkSummary { id: string; label: string | null; layer_ids: string[] }
 export interface MarkerSummary {
-  id: string; t_us: number; end_t_us: number | null
+  id: string; t_us: number
+  /** The region's SHOWN end, null for a point. An awake anchored region is
+   *  narrowed to its clip's out point here (`markerShownEnd`); the model keeps
+   *  the span it was given. */
+  end_t_us: number | null
   /** The short name — lane text and `Ctrl+K` row. */
   label: string
   /** The long text (model.ts `Marker.note`). Projected beside `label` rather
@@ -381,7 +417,7 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
       })),
     })),
     markers: c.markers.map((m: Marker): MarkerSummary => ({
-      id: m.id, t_us: m.t_us, end_t_us: m.end_t_us, label: m.label, note: m.note,
+      id: m.id, t_us: m.t_us, end_t_us: markerShownEnd(c, m), label: m.label, note: m.note,
       color_hint: markerColorHint(m.color),
       anchor_layer: m.anchor === null ? null : m.anchor.layer,
       anchor_src_us: m.anchor === null ? null : m.anchor.src_us,

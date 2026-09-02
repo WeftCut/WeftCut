@@ -12,7 +12,7 @@ import type { Layer, Marker, Project } from './model'
 import { createActor, type ActorLogEntry } from './actor'
 import { reconcileMarkers, reconcileTransitions, validate } from './validate'
 import { ValidationFailure } from './errors'
-import { markerHibernating } from './summary'
+import { buildProjectSummary, markerHibernating } from './summary'
 import { applyAddLayer, applyAddMarker, colorParams } from './mutations/add'
 import { mediaItemTemplate, videoClipParams } from './mutations/media'
 import { applyAddTransition } from './mutations/transitions'
@@ -360,6 +360,22 @@ describe('reconcile-on-commit: anchored markers follow their clip', () => {
     expect(actor.dispatch('trim_layer', { layer: clip, edge: 'in', new_t_us: 1_500_000 }).ok).toBe(true)
     expect(asleep(actor.snapshot(), ids[0])).toBe(false)
     expect(markerAt(actor.snapshot(), ids[0]).t_us).toBe(2_000_000)
+  })
+
+  it('a tail trim into a region narrows the shown end to the clip end and keeps the drawn span, so re-extending shows it whole', () => {
+    // Region [1.5 s, 2.5 s) on the clip [1 s, 3 s); the trim ends the clip at 2 s, inside it.
+    const { actor, clip, ids } = anchoredFixture([{ srcUs: 2_500_000, endTUs: 2_500_000 }])
+    const shownEnd = (): number | null => {
+      const p = actor.snapshot()
+      const summary = buildProjectSummary(p, actor.historyStatus(), () => true)
+      return summary.compositions[p.root_id].markers.find((m) => m.id === ids[0])!.end_t_us
+    }
+    expect(actor.dispatch('trim_layer', { layer: clip, edge: 'out', new_t_us: 2_000_000 }).ok).toBe(true)
+    expect(asleep(actor.snapshot(), ids[0])).toBe(false)
+    expect(shownEnd()).toBe(2_000_000)
+    expect(markerAt(actor.snapshot(), ids[0]).end_t_us).toBe(2_500_000)
+    expect(actor.dispatch('trim_layer', { layer: clip, edge: 'out', new_t_us: 3_000_000 }).ok).toBe(true)
+    expect(shownEnd()).toBe(2_500_000)
   })
 
   it('trimming the IN point past a mark hibernates it; re-extending revives it on the exact frame it named', () => {

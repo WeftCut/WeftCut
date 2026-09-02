@@ -899,11 +899,14 @@ a clip can carry its own cuts instead of being split by them.
 *hibernates*: the clip no longer shows the frame the mark names, so it is kept,
 painted nowhere, and revived on exactly that frame the moment the window covers
 it again. It is a derived condition recomputed every commit, never a stored
-flag, which is what makes undoing the trim enough to wake it. Deleting the clip
-is the other case and behaves differently — the marker is dropped, with a
-status-log row saying so. Detach is the deliberate exit: it turns the mark back
-into an ordinary free marker at the time it currently sits on, for when the note
-is worth keeping but the following is not.
+flag, which is what makes undoing the trim enough to wake it. A *region* whose
+clip is trimmed to end inside it is drawn only as far as the clip still runs;
+the span it was given stays in the model, so re-extending the clip shows the
+whole region again. Deleting the clip is the other case and behaves differently
+— the marker is dropped, with a status-log row saying so. Detach is the
+deliberate exit: it turns the mark back into an ordinary free marker at the time
+it currently sits on, for when the note is worth keeping but the following is
+not.
 
 **Finding them.** `Shift+M` and `Mod+Shift+M` walk to the next and previous mark
 of the timeline holding the keyboard, matching on where a mark *begins* — a

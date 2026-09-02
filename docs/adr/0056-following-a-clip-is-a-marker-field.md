@@ -181,7 +181,10 @@ every marker was free, and it survives for those.
 - **A region marker's end follows the same delta as its start.** One anchor means
   one mapping, so the span the user drew is carried rather than re-derived;
   holding the end still while the start follows would stretch the region and
-  eventually invert it.
+  eventually invert it. The span is also what the model keeps when a trim
+  shortens the clip into the region: the summary projection narrows the shown
+  end to the clip's out point (`markerShownEnd`), and re-extending the clip
+  shows the whole span again.
 - **Free markers are unchanged in every respect** — model, behaviour, ordering,
   and the composition they belong to across a move. Nothing about the feature
   reaches a project that never attaches one.
