@@ -134,6 +134,10 @@ export interface E2EHook {
     settings?: Partial<ExportSettings>;
     range?: { startUs: number; endUs: number };
     audioPatches?: AudioPatch[];
+    /// How long the pre-export readiness wait may take (see
+    /// waitForMediaExportReady). Driven from the Node side so it can carry
+    /// WEFTCUT_E2E_STALL_SCALE, which nothing inside the renderer can read.
+    readyTimeoutMs?: number;
   }): Promise<void>;
   /// Import `mediaAbsPath` and place it 1:1 at `tStartUs` (default 0) on a
   /// fresh track — the same IPC chain the UI uses — WITHOUT exporting.
@@ -1255,6 +1259,7 @@ export function installExportHook(
     settings,
     range,
     audioPatches,
+    readyTimeoutMs = 120000,
   }) => {
     const mediaId = await importMedia(mediaAbsPath);
     const trackId = await addTrack();
@@ -1272,7 +1277,16 @@ export function installExportHook(
     // deliberately NOT pre-waited: the export's own audio gate
     // (`ensure_export_audio_conform` + conform job events) owns that wait,
     // and pre-waiting here would shadow the very path these specs gate.
-    await waitForMediaExportReady(mediaId, 60000);
+    //
+    // The budget defaults to the same 120 s `waitMediaExportReady` uses for the
+    // identical wait, and the driver scales it (driver.ts §STALL_MS). It was a
+    // hardcoded 60 s — the ONE wait in the export path that no knob reached,
+    // and lower than the 120 s `pending` stall budget written to contain it, so
+    // it fired first by construction on any loaded machine. A macOS bench hit
+    // exactly that: this gate green in isolation, timed out at 60 s in a
+    // 4-worker slice, with a message that reads like a product defect
+    // ("decodability/proxy decision never produced a playback path").
+    await waitForMediaExportReady(mediaId, readyTimeoutMs);
     if (audioPatches && audioPatches.length > 0) {
       const summary = await projectSummary();
       const audioLayerIds: string[] = [];

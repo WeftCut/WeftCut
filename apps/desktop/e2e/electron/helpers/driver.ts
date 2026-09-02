@@ -495,10 +495,14 @@ type ExportPhase = 'pending' | 'starting' | 'preparing' | 'progress' | 'finalizi
 /// were measured against; WEFTCUT_E2E_NO_STALL_PROBE=1 disables the probe and
 /// restores the old deadline-only wait.
 const STALL_MS: Record<ExportPhase, number> = {
-  /// Bounded by the hooks' own waits — importMedia plus
-  /// waitForMediaExportReady's internal 60 s cap. Nothing in here reports
-  /// sub-progress, so this budget covers a genuinely blind window.
-  pending: 120_000,
+  /// Bounded by the hooks' own waits — importMedia plus the readiness wait
+  /// (READY_MS). Nothing in here reports sub-progress, so this budget covers a
+  /// genuinely blind window, and it must strictly CONTAIN READY_MS: the inner
+  /// wait is the detector here, because "decodability/proxy decision never
+  /// produced a playback path" names the stuck step and "phase pending stopped
+  /// ticking" cannot. It did not contain it before — 120 s outer against a
+  /// hardcoded 60 s inner — so the less informative half always won.
+  pending: 180_000,
   /// Worker boot through the first encoded frame: no tick until frame 1.
   starting: 90_000,
   /// The readiness gate. `labels` re-ticks as each source resolves, so the gap
@@ -510,6 +514,15 @@ const STALL_MS: Record<ExportPhase, number> = {
   /// name ticks (ExportPanel's FinalizeStep).
   finalizing: 180_000,
 }
+
+/// The export hook's own pre-export readiness wait, handed to `exportClip` as
+/// `readyTimeoutMs` (see e2eHook.ts). It lives out here rather than in the
+/// renderer for one reason: WEFTCUT_E2E_STALL_SCALE is a Node-side env var, and
+/// a budget the scale knob cannot reach is a budget that fails first on every
+/// machine slower than the CI legs — which is exactly what the hardcoded 60 s
+/// did on a 4-worker macOS slice. Same value as `waitMediaExportReady`'s own
+/// default for the identical wait; kept strictly under STALL_MS.pending.
+const READY_MS = 120_000
 
 /// How long one liveness sample may take before the renderer counts as
 /// unresponsive, and how long it may stay that way before that IS the failure.
@@ -614,6 +627,13 @@ export async function driveExport(
 ): Promise<DriveResult> {
   const hook = opts.hook ?? 'exportClip'
   const timeout = opts.timeout ?? 170000
+  // The hook's own pre-export readiness wait is the one budget that lives in
+  // the RENDERER, where WEFTCUT_E2E_STALL_SCALE cannot be read — so it is
+  // scaled here and passed in. Callers may still pin it explicitly.
+  const args_ =
+    hook === 'exportClip' && !('readyTimeoutMs' in args)
+      ? { ...args, readyTimeoutMs: Math.round(READY_MS * stallScale()) }
+      : args
   await waitForHook(page, hook)
   await page.evaluate(
     ({ h, a }) => {
@@ -626,7 +646,7 @@ export async function driveExport(
           ;(window as any).__e2eExportDone = { ok: false, error: String(e) }
         })
     },
-    { h: hook, a: args },
+    { h: hook, a: args_ },
   )
   const done =
     process.env.WEFTCUT_E2E_NO_STALL_PROBE === '1'
