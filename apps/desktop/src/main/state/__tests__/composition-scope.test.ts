@@ -144,18 +144,20 @@ describe('composition scope — renderer channels', () => {
 })
 
 // A hybrid writes through the actor like anything else, so the same rule binds
-// it — and `drop_shot_markers` is the arm where the scope is never NAMED at all:
-// it is renderer-only (absent from mcp/mutationTools.ts's HYBRID_TOOLS, so the
-// MCP `composition_id` sweep above cannot reach it) and its caller passes only a
-// layer id. The composition it writes into has to be derived from that layer, or
+// it — and the shot-marker arms are where the scope is never NAMED at all: they
+// are renderer-only (absent from mcp/mutationTools.ts's HYBRID_TOOLS, so the MCP
+// `composition_id` sweep above cannot reach them) and their caller passes only a
+// layer id. The composition they write into has to be derived from that layer, or
 // the cuts — computed against the layer's own fps and origin — land somewhere
 // they do not describe.
 describe('composition scope — hybrids', () => {
   const VID = '00000000-0000-0000-0000-0000000000dd'
 
-  /** HybridDeps whose only live member is `analyzeShots`, returning one
-   *  whole-source report cut at `boundariesUs`. Everything else throws: the shot
-   *  arm must reach no other compute, and a silent stub would hide it if it did. */
+  /** HybridDeps whose only live members are the shot scan and its reduce, the
+   *  first returning one whole-source report cut at `boundariesUs` and the
+   *  second echoing it (the real reduce is Rust's). Everything else throws: the
+   *  shot arm must reach no other compute, and a silent stub would hide it if it
+   *  did. */
   function shotDeps(actor: ActorHandle, boundariesUs: number[], endUs: number): HybridDeps {
     const bounds = [0, ...boundariesUs, endUs]
     const shots = bounds.slice(0, -1).map((t, i) => ({ t_start_us: t, t_end_us: bounds[i + 1], keyframe_t_us: t }))
@@ -164,7 +166,9 @@ describe('composition scope — hybrids', () => {
       actor,
       compute: {
         probeMedia: unused, hashMediaSource: unused, parseSubtitles: unused, synthesizeSpeechCompute: unused,
-        analyzeShots: async () => JSON.stringify({ shots, cut_scores: [] }),
+        analyzeShotsFloor: async () => JSON.stringify({ shots, cut_scores: [] }),
+        reduceShotReport: (reportJson: string) => reportJson,
+        shotDefaultOpts: () => ({ sensitivity: 0.4, min_shot_us: 500_000 }),
       },
       enqueueDerivatives: unused, enqueueWorkspaceCopy: unused, workspaceDir: unused, readFile: unused,
       snapshotComposition: unused,

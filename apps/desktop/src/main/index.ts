@@ -670,7 +670,13 @@ app.whenReady().then(async () => {
     hashMediaSource: (p: string) => backend!.hashMediaSource(p),
     parseSubtitles: (body: string, format: string | null) => backend!.parseSubtitles(body, format),
     synthesizeSpeechCompute: (argsJson: string) => backend!.synthesizeSpeechCompute(argsJson),
-    analyzeShots: (mediaJson: string, optsJson: string) => backend!.analyzeShots(mediaJson, optsJson),
+    analyzeShotsFloor: (mediaJson: string) => backend!.analyzeShotsFloor(mediaJson),
+    reduceShotReport: (reportJson: string, sensitivity: number, minShotUs: number, inUs: number, outUs: number) =>
+      backend!.reduceShotReport(reportJson, sensitivity, minShotUs, inUs, outUs),
+    shotFloorReportCached: (mediaJson: string) => backend!.shotFloorReportCached(mediaJson),
+    shotFloorSensitivity: () => backend!.shotFloorSensitivity(),
+    shotDefaultOpts: () =>
+      JSON.parse(backend!.shotDefaultOpts()) as import('./state/hybrids.js').ShotDefaultOpts,
   }
 
   // Load built-in Motif sources once (manifest + relocated index.html) for the
@@ -877,7 +883,7 @@ app.whenReady().then(async () => {
   // channel set that selects for it. Awaited here beside the host rather than
   // imported at module top so `backend:invoke` closes over both without pulling
   // the MCP SDK into the entry chunk.
-  const { callClipComputeTool } = await import('./mcp/server.js')
+  const { callClipComputeTool, readMediaFrameDataUrl } = await import('./mcp/server.js')
   const { CLIP_COMPUTE_CHANNELS } = await import('./state/router.js')
 
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
@@ -1045,20 +1051,66 @@ app.whenReady().then(async () => {
       })
       return null
     }
-    // "Analyze shots" (media-pool drive-by): warm the deterministic shot report
-    // for one media through the existing shot-analysis napi — the SAME VSHOT
-    // cache the agent's analyze_clip / auto_split_by_shot read, so a later agent
-    // call is a hit. Handled here rather than via SINGLE_MEDIA_CHANNELS because
-    // it calls the direct `analyzeShots` napi (whole-source report) rather than a
-    // Rust `invoke` arm; the TS actor (sole state owner) resolves the MediaItem.
-    // Returns the detected shot count for a status line.
+    // "Analyze shots" (media-pool drive-by): warm the floor scan for one media —
+    // the SAME whole-source pass the review surface and both apply verbs read,
+    // so opening the review surface on this clip afterwards is a cache hit
+    // rather than a second decode. The count it reports comes from a reduce at
+    // the detection defaults over the whole source — the threshold
+    // `analyze_clip` reports at — so the number stays comparable with the
+    // agent's. Handled here rather than via SINGLE_MEDIA_CHANNELS because it
+    // calls direct napi methods rather than a Rust `invoke` arm; the TS actor
+    // (sole state owner) resolves the MediaItem.
     if (tsHost && channel === 'analyze_shots') {
       const { mediaId } = (args ?? {}) as { mediaId?: string }
       const pool = tsHost.actor.snapshot().media_pool as Record<string, import('./state/model.js').MediaItem>
       const item = pool[mediaId ?? '']
       if (!item) throw new Error(`media ${mediaId ?? ''} not found`)
-      const report = JSON.parse(await backend!.analyzeShots(JSON.stringify(item), '{}')) as { shots?: unknown[] }
-      return { shots: report.shots?.length ?? 0 }
+      const scanned = await backend!.analyzeShotsFloor(JSON.stringify(item))
+      // Whole-source window. The scan above already refuses a source with no
+      // probed duration, so the fallback is unreachable rather than a quiet zero.
+      const durationUs = item.metadata.duration_us ?? 0
+      const defaults = computeFacade.shotDefaultOpts()
+      const reduced = JSON.parse(backend!.reduceShotReport(
+        scanned, defaults.sensitivity, defaults.min_shot_us, 0, durationUs,
+      )) as { shots?: unknown[] }
+      return { shots: reduced.shots?.length ?? 0 }
+    }
+    // The review surface's reads. Each is read-only and thin by design: the
+    // floor scan and its cache probe need the MediaItem the actor owns, the
+    // sensitivity and the reduce need nothing at all, and the cover frame rides
+    // the MCP resource path so one extraction convention serves both surfaces.
+    if (tsHost && (channel === 'analyze_shots_floor' || channel === 'shot_floor_report_cached')) {
+      const { media_id } = (args ?? {}) as { media_id?: string }
+      const pool = tsHost.actor.snapshot().media_pool as Record<string, import('./state/model.js').MediaItem>
+      const item = pool[media_id ?? '']
+      if (!item) throw new Error(`media ${media_id ?? ''} not found`)
+      const itemJson = JSON.stringify(item)
+      // Rust guarantees this one only stats the sidecar — a selection change
+      // must never be able to start a whole-source decode.
+      if (channel === 'shot_floor_report_cached') return await backend!.shotFloorReportCached(itemJson)
+      return JSON.parse(await backend!.analyzeShotsFloor(itemJson))
+    }
+    if (tsHost && channel === 'get_media_frame') {
+      const a = (args ?? {}) as { media_id?: string; t_us?: number }
+      const host = tsHost
+      return await readMediaFrameDataUrl(backend!, () => host, a.media_id ?? '', a.t_us ?? 0)
+    }
+    if (channel === 'shot_floor_sensitivity') return backend!.shotFloorSensitivity()
+    if (channel === 'reduce_shot_report') {
+      const a = (args ?? {}) as { report?: unknown; sensitivity?: number; min_shot_us?: number; in_us?: number; out_us?: number }
+      // The window is refused rather than defaulted: an inverted or zero-length
+      // one reduces to no shots at all, which would read as "this clip has a
+      // single shot" instead of as the mistake it is.
+      if (typeof a.in_us !== 'number' || typeof a.out_us !== 'number')
+        throw new Error('reduce_shot_report: in_us and out_us are required')
+      const defaults = computeFacade.shotDefaultOpts()
+      return JSON.parse(backend!.reduceShotReport(
+        JSON.stringify(a.report ?? {}),
+        a.sensitivity ?? defaults.sensitivity,
+        a.min_shot_us ?? defaults.min_shot_us,
+        a.in_us,
+        a.out_us,
+      ))
     }
     // Clip compute (transcribe_clip / detect_silences / describe_clip): the
     // renderer's half of the human entries, and it goes through the MCP host's

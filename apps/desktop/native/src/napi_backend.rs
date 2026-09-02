@@ -107,20 +107,30 @@ struct AnalyzeShotsOpts {
     passes: Option<Vec<String>>,
 }
 
+/// The wire shape of `Backend::shot_default_opts`. An `f32` field on purpose:
+/// serde formats it as the literal it was declared as (`0.4`), where a widening
+/// to `f64` would print the binary expansion.
+#[cfg(feature = "jobs")]
+#[derive(serde::Serialize)]
+struct ShotDefaultOpts {
+    sensitivity: f32,
+    min_shot_us: i64,
+}
+
 /// Parse + validate the `analyze_shots` opts JSON into a `ShotOpts`, applying
-/// the EXACT defaults the `analyze_clip` tool uses (sensitivity 0.4,
-/// min_shot_us 500000, all passes on) so the two share one VSHOT entry per
-/// (source, params). Pure + total (no I/O), so it is unit-tested directly.
+/// the EXACT defaults the `analyze_clip` tool uses (`jobs::shot`'s
+/// `DEFAULT_SENSITIVITY` / `DEFAULT_MIN_SHOT_US`, all passes on) so the two
+/// share one VSHOT entry per (source, params). Pure + total (no I/O), so it is unit-tested directly.
 /// Errors are plain strings (the napi method maps them to `Error::from_reason`).
 #[cfg(feature = "jobs")]
 fn parse_shot_opts(opts_json: &str) -> std::result::Result<crate::jobs::shot::ShotOpts, String> {
     let raw: AnalyzeShotsOpts =
         serde_json::from_str(opts_json).map_err(|e| format!("parse shot opts: {e}"))?;
-    let sensitivity = raw.sensitivity.unwrap_or(0.4);
+    let sensitivity = raw.sensitivity.unwrap_or(crate::jobs::shot::DEFAULT_SENSITIVITY);
     if !(0.0..=1.0).contains(&sensitivity) {
         return Err(format!("sensitivity {sensitivity} must be in [0.0, 1.0]"));
     }
-    let min_shot_us = raw.min_shot_us.unwrap_or(500_000);
+    let min_shot_us = raw.min_shot_us.unwrap_or(crate::jobs::shot::DEFAULT_MIN_SHOT_US);
     if min_shot_us <= 0 {
         return Err(format!("min_shot_us {min_shot_us} must be positive"));
     }
@@ -391,6 +401,22 @@ impl Backend {
     #[cfg(feature = "jobs")]
     pub fn shot_floor_sensitivity(&self) -> f64 {
         crate::jobs::shot::FLOOR_SENSITIVITY as f64
+    }
+
+    /// The detection defaults as JSON `{ sensitivity, min_shot_us }` — what any
+    /// caller that leaves either parameter out gets, on every path
+    /// (`jobs::shot::DEFAULT_SENSITIVITY` / `DEFAULT_MIN_SHOT_US`). Exposed for
+    /// the same reason as `shot_floor_sensitivity`: the TS side needs the
+    /// numbers (a split's `drop_short_us` falls back to the spacing default),
+    /// and a literal there would be a twin of these two constants.
+    #[napi]
+    #[cfg(feature = "jobs")]
+    pub fn shot_default_opts(&self) -> String {
+        serde_json::to_string(&ShotDefaultOpts {
+            sensitivity: crate::jobs::shot::DEFAULT_SENSITIVITY,
+            min_shot_us: crate::jobs::shot::DEFAULT_MIN_SHOT_US,
+        })
+        .expect("two numbers serialize")
     }
 
     /// The WHOLE-source floor scan for `media`, from the VSHOT cache
@@ -882,8 +908,20 @@ mod tests {
     #[test]
     fn parse_shot_opts_defaults_and_validation() {
         let d = parse_shot_opts("{}").unwrap();
-        assert_eq!(d.sensitivity, 0.4);
-        assert_eq!(d.min_shot_us, 500_000);
+        assert_eq!(d.sensitivity, crate::jobs::shot::DEFAULT_SENSITIVITY);
+        assert_eq!(d.min_shot_us, crate::jobs::shot::DEFAULT_MIN_SHOT_US);
+        // What TS receives when it asks for the defaults is exactly what an
+        // omitted parameter resolves to here — the one place the two agree.
+        let wire: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&ShotDefaultOpts {
+                sensitivity: d.sensitivity,
+                min_shot_us: d.min_shot_us,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(wire["sensitivity"], serde_json::json!(0.4));
+        assert_eq!(wire["min_shot_us"], serde_json::json!(500_000));
         assert!(d.stats && d.events, "default = all passes on");
 
         // Explicit fields override; passes narrows the per-shot sampling.

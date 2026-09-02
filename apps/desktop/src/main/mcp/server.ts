@@ -216,6 +216,32 @@ function openCommitWindow(actor: ActorHandle): McpCommitWindow {
   }
 }
 
+/** One media frame as a `data:` URL the renderer can put straight in an `img`
+ *  src, read through the SAME `media://{id}/frame/{t_us}` resource an agent
+ *  reads: Rust extracts the frame once and caches it per `(file_hash, t_us)`,
+ *  so the shot-review surface's cover frames cost one extract each however
+ *  often they are re-shown.
+ *
+ *  Exported for the renderer's frame channel (`index.ts`), the way
+ *  `callClipComputeTool` is — a second extraction call site would be a second
+ *  cache key convention waiting to disagree with this one.
+ *
+ *  `t_us` is truncated because the resource path parses an integer; a
+ *  fractional microsecond would be refused as a malformed URI rather than
+ *  rounded. */
+export async function readMediaFrameDataUrl(
+  backend: Backend,
+  getTsHost: () => TsActorHost | null,
+  mediaId: string,
+  tUs: number,
+): Promise<string> {
+  const uri = `media://${mediaId}/frame/${Math.trunc(tUs)}`
+  const res = await handleReadResource(backend, getTsHost, uri)
+  const content = (res as { contents?: Array<{ blob?: string; mimeType?: string }> }).contents?.[0]
+  if (typeof content?.blob !== 'string') throw new Error(`${uri} returned no image`)
+  return `data:${content.mimeType ?? 'image/jpeg'};base64,${content.blob}`
+}
+
 /** `withLog`'s `observe` seam for one session: which tools' commits may be
  *  attributed to their call, and the actor to watch for them.
  *

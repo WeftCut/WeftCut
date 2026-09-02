@@ -287,6 +287,15 @@ fn pick_source(cache: &CacheLayout, media: &MediaItem) -> (std::path::PathBuf, &
 /// anything below needs a fresh whole-source scan.
 pub const FLOOR_SENSITIVITY: f32 = 0.05;
 
+/// The detection defaults every caller that leaves the parameters out gets —
+/// the `analyze_clip` tool, the pool's warm-up count and the zero-argument
+/// clip-menu verbs alike. TS reads them through `Backend::shot_default_opts`
+/// rather than mirroring them: a second copy of two numbers is exactly the
+/// drift that would make a default-parameter apply land where no
+/// `analyze_clip` report says a cut is.
+pub const DEFAULT_SENSITIVITY: f32 = 0.4;
+pub const DEFAULT_MIN_SHOT_US: i64 = 500_000;
+
 /// The one whole-source pass the shot-review surface and the canonical cut-list
 /// producer read: [`FLOOR_SENSITIVITY`], timing only.
 ///
@@ -302,7 +311,7 @@ pub const FLOOR_SENSITIVITY: f32 = 0.05;
 /// whatever spacing a caller asks for — so it is a fixed constant here, not a
 /// knob.
 pub fn floor_opts() -> ShotOpts {
-    ShotOpts { sensitivity: FLOOR_SENSITIVITY, min_shot_us: 500_000, stats: false, events: false }
+    ShotOpts { sensitivity: FLOOR_SENSITIVITY, min_shot_us: DEFAULT_MIN_SHOT_US, stats: false, events: false }
 }
 
 /// The WHOLE-source shot report for `media` under `opts`, from the VSHOT cache —

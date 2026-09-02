@@ -8,7 +8,7 @@
 // and the MCP handler (server.ts) call via the host's `hybridDeps`. One arm
 // per hybrid tool.
 import type { ActorHandle } from './actor'
-import type { Layer, MediaItem, VideoClipParams } from './model'
+import type { Composition, Layer, MediaItem, VideoClipParams } from './model'
 import { eachLayer, rootComposition } from './model'
 import { snapFrameRound } from './snap'
 
@@ -26,19 +26,40 @@ export interface ComputeNapi {
   parseSubtitles(body: string, format: string | null): Promise<string>
   /** synthesize_speech: TTS + cache + probe → {media_item, …} JSON. */
   synthesizeSpeechCompute(argsJson: string): Promise<string>
-  /** auto_split_by_shot: the WHOLE-source shot report JSON `{shots,cut_scores}`
-   *  (source-absolute time) for a serialized MediaItem under detection-opts JSON
-   *  (`{sensitivity?,min_shot_us?,passes?}`), from the VSHOT cache — the same
-   *  content-addressed report the `analyze_clip` tool reads, so a prior
-   *  analyze_clip at matching params is a hit. Optional: a build without the shot
-   *  compute wired (some test harnesses) omits it, and the arm throws an
-   *  actionable error rather than silently no-op. */
-  analyzeShots?(mediaJson: string, optsJson: string): Promise<string>
+  /** The WHOLE-source floor scan for a serialized MediaItem: `ShotReport` JSON
+   *  `{shots,cut_scores}` in source-absolute time, from the VSHOT cache
+   *  (computed and written through on a miss). The one expensive shot call —
+   *  a single decode per source serves every threshold at or above the floor,
+   *  and `reduceShotReport` re-derives the rest without touching a file.
+   *
+   *  Optional, like the three below: a build without the shot compute wired
+   *  (some test harnesses) omits them, and the caller throws an actionable error
+   *  rather than silently no-op. */
+  analyzeShotsFloor?(mediaJson: string): Promise<string>
+  /** Re-derive a shot list from an already-scanned report at `sensitivity` /
+   *  `minShotUs`, viewed through `[inUs, outUs]`. Synchronous because it is
+   *  pure. Sole producer of the canonical cut list, which is what keeps markers
+   *  on exactly the frames splits land on. */
+  reduceShotReport?(reportJson: string, sensitivity: number, minShotUs: number, inUs: number, outUs: number): string
+  /** Whether a source's floor scan is already on disk. A probe, never a scan:
+   *  the review surface asks it on every selection change, and clicking a clip
+   *  must not be able to start a whole-source decode. */
+  shotFloorReportCached?(mediaJson: string): Promise<boolean>
+  /** The threshold the floor scan runs at — the lower bound any threshold
+   *  control can offer, since nothing below it was ever emitted. Read from the
+   *  scan rather than kept as a TS literal, which would be free to drift from
+   *  the reports already on disk. */
+  shotFloorSensitivity?(): number
+  /** The detection defaults (`{ sensitivity, min_shot_us }`) every omitted
+   *  parameter resolves to, on the agent's path and the human's alike. Read
+   *  rather than mirrored, for the same reason as `shotFloorSensitivity`. */
+  shotDefaultOpts?(): ShotDefaultOpts
 }
 
-/** The subset of a whole-source `jobs::shot::ShotReport` the split/marker
- *  orchestration reads: shot spans (source-absolute) whose interior boundaries
- *  become cuts. Mirrors native `Shot` / `ShotReport` serde. */
+/** The subset of a `jobs::shot::ShotReport` the split/marker orchestration
+ *  reads: shot spans (source-absolute) whose interior boundaries become cuts.
+ *  Mirrors native `Shot` / `ShotReport` serde. The renderer reads the full
+ *  shape (scores, stats, flags) through its own mirror in `renderer/ipc`. */
 interface ShotReportShot { t_start_us: number; t_end_us: number; keyframe_t_us: number }
 interface ShotReport { shots: ShotReportShot[]; cut_scores: Array<{ t_us: number; score: number }> }
 
@@ -99,84 +120,214 @@ async function applySubtitleBody(
   return { track_id: r.value as string, simplified }
 }
 
-/** One detected shot boundary as the PAIR it is: `tUs` is where the cut lands on
- *  the timeline, `srcUs` where it was detected in the source. Kept together
- *  because the snap-then-drop filter in `resolveShotCuts` decides which cuts
- *  survive by their TIMELINE time — a separately-filtered source list would
- *  eventually tie an anchor to a boundary that never became a cut. */
-interface ShotCut { tUs: number; srcUs: number }
+/** The detection defaults as Rust states them (`Backend::shot_default_opts`):
+ *  what `reduce` gets for a parameter every human surface may leave out, and
+ *  the threshold `analyze_clip` reports at. Read from the addon rather than
+ *  mirrored as TS literals, so a default-parameter apply cannot drift from
+ *  where the tool says the cuts are. */
+export interface ShotDefaultOpts { sensitivity: number; min_shot_us: number }
 
-/** Resolve a VideoClip layer's detected shot boundaries as cut times in the
- *  layer's OWN composition, shared by `auto_split_by_shot` (splits) and
- *  `dropShotMarkers` (markers) so both mark/split the exact same places from ONE
- *  cached report.
- *
- *  Flow: resolve the layer + its media from the actor snapshot → Rust
- *  `analyzeShots` (whole-source report, VSHOT-cached, shared with analyze_clip)
- *  → keep each interior shot boundary strictly inside the layer's
- *  `[src_in_us, src_out_us]` source window → map source→timeline at speed=1
- *  (variable speed deferred, matching `split_layer` itself) → snap each cut to
- *  the composition frame grid, then drop any that lands on the layer bounds or a
- *  prior cut. The snap-then-drop is load-bearing: the timeline is frame-
- *  quantized and `applySplitLayer` rejects a split whose SNAPPED time is not
- *  strictly interior, so two source cuts less than one frame apart would
- *  otherwise abort the whole multi-split — and markers must land on the same
- *  frames the splits do. Throws (never silently no-ops) on a missing/non-video
- *  layer, missing media, or an un-wired compute.
- *
- *  Every number here is expressed in the LAYER'S composition — the frame grid is
- *  its `fps`, the origin is the layer's own `t_start_us` — so `compositionId`
- *  rides out beside the cuts. A layer-addressed write derives that scope itself
- *  and ignores it; anything else (markers) has to be scoped with it, or it lands
- *  in the root carrying times that mean nothing there. */
-async function resolveShotCuts(
-  layerId: string,
-  minShotUs: number | undefined,
-  deps: HybridDeps,
-): Promise<{ layer: Layer; media: MediaItem; params: VideoClipParams; compositionId: string; cuts: ShotCut[] }> {
-  const analyze = deps.compute.analyzeShots
-  if (!analyze) throw new Error('auto_split_by_shot: shot analysis is not available in this build')
-  const snap = deps.actor.snapshot()
-  let layer: Layer | undefined
-  let comp = rootComposition(snap)
-  for (const e of eachLayer(snap)) {
-    if (e.layer.id === layerId) { layer = e.layer; comp = e.composition; break }
-  }
-  if (!layer) throw new Error(`auto_split_by_shot: layer ${layerId} not found`)
-  if (layer.params.kind !== 'VideoClip')
-    throw new Error(`auto_split_by_shot: layer ${layerId} is not a VideoClip — shots are a video concept`)
-  const params = layer.params
-  const media = (snap.media_pool as Record<string, MediaItem>)[params.media]
-  if (!media) throw new Error(`auto_split_by_shot: layer ${layerId} references missing media ${params.media}`)
-
-  const opts: Record<string, unknown> = {}
-  if (typeof minShotUs === 'number') opts.min_shot_us = minShotUs
-  const report = JSON.parse(await analyze(JSON.stringify(media), JSON.stringify(opts))) as ShotReport
-
-  const seen = new Set<number>()
-  const cuts: ShotCut[] = []
-  for (const s of report.shots) {
-    const c = s.t_start_us
-    if (c <= params.src_in_us || c >= params.src_out_us) continue // strictly interior only
-    // Map source→timeline (speed=1), then snap to the frame grid the split uses.
-    const t = snapFrameRound(layer.t_start_us + (c - params.src_in_us), comp.fps.num, comp.fps.den)
-    // Drop cuts that snap onto the layer bounds or a prior cut: a zero-length
-    // split is invalid (SplitOutsideLayer) and a repeated frame is a no-op.
-    if (t <= layer.t_start_us || t >= layer.t_end_us || seen.has(t)) continue
-    seen.add(t)
-    cuts.push({ tUs: t, srcUs: c })
-  }
-  cuts.sort((a, b) => a.tUs - b.tUs)
-  return { layer, media, params, compositionId: comp.id, cuts }
+/** The defaults, or a loud throw where the shot compute is not wired — the
+ *  same rule the scan and the reduce follow. */
+function shotDefaults(deps: HybridDeps): ShotDefaultOpts {
+  const read = deps.compute.shotDefaultOpts
+  if (!read) throw new Error('shot cuts: shot detection is not available in this build')
+  return read()
 }
 
-/** Materialize a VideoClip layer's detected shot boundaries as timeline markers
- *  in ONE coalesced commit — the human "Analyze shots" surface. Reads the SAME
- *  cached shot report + source→timeline mapping as `auto_split_by_shot`, so the
- *  markers land exactly where the tool would split (acceptance: markers stay
- *  consistent with the tool's cuts). The marks go into the CLIP'S composition,
- *  which is the only one their times are expressed in. Returns the new marker
- *  ids; `[]` when the clip has no interior cut.
+/** One shot boundary as the PAIR it is: `tUs` is where the cut lands on the
+ *  timeline, `srcUs` where it was detected in the source. Kept together because
+ *  the snap-then-drop filter in `cutsToTimeline` decides which cuts survive by
+ *  their TIMELINE time — a separately-filtered source list would eventually tie
+ *  an anchor to a boundary that never became a cut. */
+export interface ShotCut { tUs: number; srcUs: number }
+
+/** What either apply verb needs to arrive at a cut list.
+ *
+ *  `cuts_src_us` present means the caller already decided the boundaries — a
+ *  reviewed list with rows vetoed — and the detector is not consulted at all.
+ *  Absent means detect at `sensitivity` / `min_shot_us`, each falling back to
+ *  the detection default; that is the path the zero-argument clip-menu entries
+ *  take.
+ *
+ *  A third verb — split, then delete the spans the user unchecked, in one
+ *  commit — needs no field beyond these: it is `split_layer_multi` over the
+ *  same `cuts_src_us`, and the spans to drop are the gaps between consecutive
+ *  kept boundaries, which the list already names. */
+export interface ShotCutSpec {
+  layer_id: string
+  /** Source-absolute microseconds, ascending. Arrives UNCHECKED and is refused
+   *  by `shotCutList`: only the resolved layer knows which times are interior
+   *  to its own source window, and a refusal has to happen before any dispatch
+   *  so a malformed list can never be half-applied. */
+  cuts_src_us?: unknown
+  sensitivity?: number
+  min_shot_us?: number
+  /** Delete any resulting segment shorter than this within the SAME commit.
+   *  Split-only — a marker has no length to be short. */
+  drop_short_us?: number
+}
+
+/** Resolve the VideoClip layer a shot operation names, together with the media
+ *  it reads and the composition its times are expressed in. Throws (never
+ *  silently no-ops) on a missing or non-video layer, or on media the pool has
+ *  lost. */
+function resolveShotLayer(
+  layerId: string,
+  deps: HybridDeps,
+): { layer: Layer; media: MediaItem; params: VideoClipParams; composition: Composition } {
+  const snap = deps.actor.snapshot()
+  let layer: Layer | undefined
+  let composition = rootComposition(snap)
+  for (const e of eachLayer(snap)) {
+    if (e.layer.id === layerId) { layer = e.layer; composition = e.composition; break }
+  }
+  if (!layer) throw new Error(`shot cuts: layer ${layerId} not found`)
+  if (layer.params.kind !== 'VideoClip')
+    throw new Error(`shot cuts: layer ${layerId} is not a VideoClip — shots are a video concept`)
+  const params = layer.params
+  const media = (snap.media_pool as Record<string, MediaItem>)[params.media]
+  if (!media) throw new Error(`shot cuts: layer ${layerId} references missing media ${params.media}`)
+  return { layer, media, params, composition }
+}
+
+/** Turn source-time boundaries into the cuts a split can actually take: map
+ *  source→timeline at speed=1 (variable speed deferred, matching `split_layer`
+ *  itself), snap each to the composition's frame grid, then drop any that lands
+ *  on a layer bound or on a frame a previous cut already claimed.
+ *
+ *  The ONLY place either apply verb quantizes, and that is what makes "markers
+ *  land on exactly the frames splits land on" structural instead of a
+ *  convention two call sites happen to share. The snap-then-drop order is
+ *  load-bearing: the timeline is frame-quantized and `applySplitLayer` rejects a
+ *  split whose SNAPPED time is not strictly interior, so two source boundaries
+ *  less than one frame apart would otherwise abort the whole multi-split.
+ *
+ *  The layer-bound drop is also what enforces "strictly inside the clip" — at
+ *  speed 1 the source window `[src_in_us, src_out_us]` maps onto exactly
+ *  `[t_start_us, t_end_us]`, so a boundary outside the window cannot survive
+ *  the bound check either. */
+export function cutsToTimeline(
+  srcCutsUs: readonly number[],
+  layer: Pick<Layer, 't_start_us' | 't_end_us'>,
+  params: Pick<VideoClipParams, 'src_in_us'>,
+  fps: { num: number; den: number },
+): ShotCut[] {
+  const seen = new Set<number>()
+  const cuts: ShotCut[] = []
+  for (const srcUs of srcCutsUs) {
+    const t = snapFrameRound(layer.t_start_us + (srcUs - params.src_in_us), fps.num, fps.den)
+    if (t <= layer.t_start_us || t >= layer.t_end_us || seen.has(t)) continue
+    seen.add(t)
+    cuts.push({ tUs: t, srcUs })
+  }
+  cuts.sort((a, b) => a.tUs - b.tUs)
+  return cuts
+}
+
+/** Detect a VideoClip layer's shot boundaries as cut times in the layer's OWN
+ *  composition: one whole-source floor scan (VSHOT-cached, so a second call on
+ *  the same source skips ffmpeg) narrowed by the pure Rust `reduce` to the
+ *  layer's window at the asked-for threshold and spacing, then mapped onto the
+ *  frame grid by `cutsToTimeline`.
+ *
+ *  A consumer of `reduce`, never a second producer: re-implementing the
+ *  score filter and the min-spacing merge here would twin the invariant the
+ *  Rust unit tests already pin.
+ *
+ *  Every number returned is expressed in the LAYER'S composition — the frame
+ *  grid is its `fps`, the origin is the layer's own `t_start_us` — so
+ *  `compositionId` rides out beside the cuts. A layer-addressed write derives
+ *  that scope itself and ignores it; anything else (markers) has to be scoped
+ *  with it, or it lands in the root carrying times that mean nothing there. */
+async function resolveShotCuts(
+  layerId: string,
+  opts: { sensitivity?: number; minShotUs?: number },
+  deps: HybridDeps,
+): Promise<{ compositionId: string; cuts: ShotCut[] }> {
+  const scan = deps.compute.analyzeShotsFloor
+  const reduce = deps.compute.reduceShotReport
+  if (!scan || !reduce) throw new Error('shot cuts: shot detection is not available in this build')
+  const { layer, media, params, composition } = resolveShotLayer(layerId, deps)
+  const defaults = shotDefaults(deps)
+  const scanned = await scan(JSON.stringify(media))
+  const reduced = JSON.parse(reduce(
+    scanned,
+    opts.sensitivity ?? defaults.sensitivity,
+    opts.minShotUs ?? defaults.min_shot_us,
+    params.src_in_us,
+    params.src_out_us,
+  )) as ShotReport
+  // Every span's opening time is a candidate boundary; the window edges among
+  // them are dropped by cutsToTimeline's bound check rather than filtered twice.
+  const srcCuts = reduced.shots.map((s) => s.t_start_us)
+  return { compositionId: composition.id, cuts: cutsToTimeline(srcCuts, layer, params, composition.fps) }
+}
+
+/** Structured refusal for a caller-supplied cut list, shaped so the renderer's
+ *  `parseCommandError` can name the field and show the detail. */
+function refuseCuts(detail: string): never {
+  throw new Error(JSON.stringify({ error: 'InvalidArgument', field: 'cuts_src_us', detail }))
+}
+
+/** Validate a caller-filtered list of source-time boundaries against the
+ *  layer's own window: finite numbers, strictly ascending, each strictly
+ *  interior. Refuses on the FIRST offender and names its index, because a list
+ *  the user assembled row by row is worth pointing at rather than silently
+ *  pruning — and because the refusal has to land before any dispatch, so a bad
+ *  list is never half applied. */
+function validateExplicitCuts(raw: unknown, params: VideoClipParams): number[] {
+  if (!Array.isArray(raw))
+    refuseCuts(`cuts_src_us must be an array of source-time microseconds, got ${typeof raw}`)
+  const cuts: number[] = []
+  for (let i = 0; i < raw.length; i++) {
+    const v: unknown = raw[i]
+    if (typeof v !== 'number' || !Number.isFinite(v))
+      refuseCuts(`cuts_src_us[${i}] is ${String(v)} — every entry must be a finite number`)
+    if (i > 0 && v <= cuts[i - 1])
+      refuseCuts(`cuts_src_us[${i}] (${v}) must be greater than cuts_src_us[${i - 1}] (${cuts[i - 1]}) — the list must ascend strictly`)
+    if (v <= params.src_in_us || v >= params.src_out_us)
+      refuseCuts(`cuts_src_us[${i}] (${v}) is outside the clip's source window (${params.src_in_us}, ${params.src_out_us})`)
+    cuts.push(v)
+  }
+  return cuts
+}
+
+/** THE canonical cut list, and the only producer of one: an explicit list the
+ *  caller reviewed, or the detector's at the given/default parameters. Both
+ *  apply verbs go through here, so a split and a mark of the same request
+ *  cannot disagree about where the boundaries are. */
+async function shotCutList(spec: ShotCutSpec, deps: HybridDeps): Promise<{ compositionId: string; cuts: ShotCut[] }> {
+  if (spec.cuts_src_us === undefined || spec.cuts_src_us === null) {
+    return resolveShotCuts(spec.layer_id, { sensitivity: spec.sensitivity, minShotUs: spec.min_shot_us }, deps)
+  }
+  const { layer, params, composition } = resolveShotLayer(spec.layer_id, deps)
+  const srcCuts = validateExplicitCuts(spec.cuts_src_us, params)
+  return { compositionId: composition.id, cuts: cutsToTimeline(srcCuts, layer, params, composition.fps) }
+}
+
+/** Split a VideoClip layer at its shot boundaries in ONE commit (one undo
+ *  entry), returning the segment ids in timeline order. No interior boundary
+ *  means the clip is a single shot: nothing is dispatched and the unchanged
+ *  layer id comes back, so the answer is idempotent rather than an error. */
+export async function splitByShotCuts(spec: ShotCutSpec, deps: HybridDeps): Promise<string[]> {
+  // No `composition_id` on the dispatch and none wanted: split_layer_multi is
+  // layer-addressed, so it derives the scope from the id it is given.
+  const { cuts } = await shotCutList(spec, deps)
+  if (cuts.length === 0) return [spec.layer_id]
+  const r = deps.actor.dispatch('split_layer_multi', {
+    layer: spec.layer_id,
+    at_t_us_list: cuts.map((c) => c.tUs),
+    drop_short_us: spec.drop_short_us ?? null,
+  })
+  if (!r.ok) throw new Error(JSON.stringify(r.error))
+  return r.value as string[]
+}
+
+/** Materialize a VideoClip layer's shot boundaries as timeline markers in ONE
+ *  coalesced commit. Marks go into the CLIP'S composition, the only one their
+ *  times are expressed in. Returns the new marker ids; `[]` when there is no
+ *  interior boundary.
  *
  *  Every mark is ANCHORED to the clip it was derived from, at the source time
  *  its own cut was detected at. A shot mark asserts "this clip cuts here", so it
@@ -184,11 +335,14 @@ async function resolveShotCuts(
  *  instant that happened to coincide once. `reconcileMarkers` then supplies the
  *  two consequences that claim implies for free: trimming past a mark hibernates
  *  it (and re-extending revives it), and deleting the clip takes its marks with
- *  it. */
-export async function dropShotMarkers(layerId: string, deps: HybridDeps, minShotUs?: number): Promise<string[]> {
-  const { compositionId, cuts } = await resolveShotCuts(layerId, minShotUs, deps)
+ *  it.
+ *
+ *  The colour is the `add_markers` arm's shot-marker default, left unpassed on
+ *  purpose so one style serves every producer of shot marks. */
+export async function markShotCuts(spec: ShotCutSpec, deps: HybridDeps): Promise<string[]> {
+  const { compositionId, cuts } = await shotCutList(spec, deps)
   if (cuts.length === 0) return []
-  const markers = cuts.map((c, i) => ({ t_us: c.tUs, label: `Cut ${i + 1}`, anchor: { layer: layerId, src_us: c.srcUs } }))
+  const markers = cuts.map((c, i) => ({ t_us: c.tUs, label: `Cut ${i + 1}`, anchor: { layer: spec.layer_id, src_us: c.srcUs } }))
   const r = deps.actor.dispatch('add_markers', { markers, composition_id: compositionId })
   if (!r.ok) throw new Error(JSON.stringify(r.error))
   return r.value as string[]
@@ -201,9 +355,11 @@ export async function dropShotMarkers(layerId: string, deps: HybridDeps, minShot
  *  listed in `mcp/mutationTools.ts` `HYBRID_TOOLS` must return a STRING — a
  *  media id (import_media), the bare caption track id (import_media's
  *  `.srt` branch), the id plus a styling note (apply_subtitles), or a JSON
- *  string (synthesize_speech, auto_split_by_shot). `drop_shot_markers` is the
- *  one arm with no MCP tool at all, so it returns the object its IPC caller
- *  reads directly.
+ *  string (synthesize_speech, auto_split_by_shot). `drop_shot_markers` and
+ *  `apply_shot_cuts` have no MCP tool at all, so they return the object their
+ *  IPC caller reads directly — `apply_shot_cuts` a union discriminated by the
+ *  `mode` it was asked for, since what a split produces (segments) and what a
+ *  mark produces (markers) are not the same kind of thing.
  *
  *  Several of these arms are reachable from BOTH sides (`router.ts`
  *  `HYBRID_CHANNELS`): the renderer's speech dialogs call `apply_subtitles`
@@ -303,45 +459,55 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
     }
     case 'auto_split_by_shot': {
       // Convenience composite (reproducible with analyze_clip + split_layer):
-      // Rust detects the source's shot cuts (VSHOT cache, shared with
-      // analyze_clip); the TS host clips them to this layer's window, maps them
-      // to timeline time, and splits at every in-window cut in ONE commit
+      // the detector's boundaries for this layer, split in ONE commit
       // (split_layer_multi → single undo). Returns a JSON STRING
       // `{ layer_ids }` — the new segment ids in timeline order.
       const layerId = args.layer_id
       if (typeof layerId !== 'string' || layerId.length === 0)
         throw new Error('auto_split_by_shot: layer_id is required')
       const minShotUs = typeof args.min_shot_us === 'number' ? args.min_shot_us : undefined
-      const dropShort = args.drop_short === true
-
-      // No `composition_id` on the dispatch below and none wanted: split_layer_multi
-      // is layer-addressed, so it derives the scope from the id it is given.
-      const { cuts } = await resolveShotCuts(layerId, minShotUs, deps)
-      // No interior cut ⇒ the clip is a single shot; nothing to split. Return
-      // the (unchanged) layer id so the agent gets a stable, idempotent answer.
-      if (cuts.length === 0) return JSON.stringify({ layer_ids: [layerId] })
-
-      // drop_short deletes any resulting segment shorter than min_shot_us
-      // (default 500000, matching the detection default) as part of the SAME
-      // commit — so drop + split are one undo.
-      const dropShortUs = dropShort ? (minShotUs ?? 500_000) : null
-      const r = deps.actor.dispatch('split_layer_multi', {
-        layer: layerId, at_t_us_list: cuts.map((c) => c.tUs), drop_short_us: dropShortUs,
-      })
-      if (!r.ok) throw new Error(JSON.stringify(r.error))
-      return JSON.stringify({ layer_ids: r.value as string[] })
+      // drop_short deletes any resulting segment shorter than min_shot_us as
+      // part of the SAME commit — so drop + split are one undo. The tool's own
+      // argument is a boolean, so the length it resolves to is decided here.
+      const dropShortUs = args.drop_short === true ? (minShotUs ?? shotDefaults(deps).min_shot_us) : undefined
+      const layerIds = await splitByShotCuts({ layer_id: layerId, min_shot_us: minShotUs, drop_short_us: dropShortUs }, deps)
+      return JSON.stringify({ layer_ids: layerIds })
     }
     case 'drop_shot_markers': {
-      // The human twin of auto_split_by_shot: the SAME cuts, marked instead of
-      // cut. Renderer-only (no MCP def) — an agent that wants markers has
-      // add_markers, and a second tool over one report would only be a way for
-      // the two surfaces to drift.
+      // The zero-argument marker entry: apply_shot_cuts in 'mark' mode at the
+      // detection defaults, and nothing more — which is why it takes the same
+      // path rather than owning a second producer of cut times. Renderer-only
+      // (no MCP def), like apply_shot_cuts itself: an agent that wants markers
+      // has add_markers, and a second tool over one report would only be a way
+      // for the two surfaces to drift.
       const layerId = args.layerId
       if (typeof layerId !== 'string' || layerId.length === 0)
         throw new Error('drop_shot_markers: layerId is required')
       const minShotUs = typeof args.minShotUs === 'number' ? args.minShotUs : undefined
-      const ids = await dropShotMarkers(layerId, deps, minShotUs)
+      const ids = await markShotCuts({ layer_id: layerId, min_shot_us: minShotUs }, deps)
       return { markers: ids.length }
+    }
+    case 'apply_shot_cuts': {
+      // The reviewed-list channel: one canonical cut list, two verbs over it.
+      // Renderer-only, so the answer is an object rather than the MCP arms'
+      // string.
+      const layerId = args.layer_id
+      if (typeof layerId !== 'string' || layerId.length === 0)
+        throw new Error('apply_shot_cuts: layer_id is required')
+      const mode = args.mode
+      if (mode !== 'split' && mode !== 'mark')
+        throw new Error(JSON.stringify({ error: 'InvalidArgument', field: 'mode',
+          detail: `mode must be "split" or "mark", got ${String(args.mode)}` }))
+      const spec: ShotCutSpec = {
+        layer_id: layerId,
+        cuts_src_us: args.cuts_src_us,
+        sensitivity: typeof args.sensitivity === 'number' ? args.sensitivity : undefined,
+        min_shot_us: typeof args.min_shot_us === 'number' ? args.min_shot_us : undefined,
+        drop_short_us: typeof args.drop_short_us === 'number' ? args.drop_short_us : undefined,
+      }
+      return mode === 'split'
+        ? { mode: 'split', layer_ids: await splitByShotCuts(spec, deps) }
+        : { mode: 'mark', marker_ids: await markShotCuts(spec, deps) }
     }
     default:
       throw new Error(`runHybrid: unhandled tool ${tool}`)

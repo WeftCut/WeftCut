@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   routeChannel,
   HYBRID_CHANNELS, SLICE_INJECTED_READS, PURE_NATIVE, PERSISTENCE, MOTIF_CHANNELS,
-  CLIP_COMPUTE_CHANNELS,
+  CLIP_COMPUTE_CHANNELS, DIRECT_NAPI_READS,
 } from './router'
 import { PRODUCTION_OPS } from './commands'
 
@@ -38,9 +38,12 @@ const ALL_CHANNELS: readonly string[] = [
   'export_video_sink_cancel', 'import_cancel', 'import_queue_list', 'report_audio_meter',
   'settings_get_api_key_status', 'settings_test_provider',
   // hybrids (native-compute → TS-write)
-  'import_media', 'drop_shot_markers', 'apply_subtitles', 'synthesize_speech',
+  'import_media', 'drop_shot_markers', 'apply_shot_cuts', 'apply_subtitles', 'synthesize_speech',
   // clip compute (actor-resolved { layer, media } slice, no actor write)
   'detect_silences', 'transcribe_clip', 'describe_clip',
+  // direct-napi reads (served by an index.ts intercept, never by the router)
+  'analyze_shots', 'analyze_shots_floor', 'shot_floor_report_cached',
+  'shot_floor_sensitivity', 'reduce_shot_report', 'get_media_frame',
   // slice-injected native reads (receive their state slice as a call argument)
   'export_project_audio_only', 'ensure_export_audio_conform', 'ensure_conform', 'ensure_full_proxy',
   'generate_quick_proxy',
@@ -61,7 +64,7 @@ const ALL_CHANNELS: readonly string[] = [
  *  config-store + pure-native — NONE touch the project actor for writes. The
  *  gate asserts no channel routes to rust outside this set. */
 const RUST_ALLOWLIST: ReadonlySet<string> = new Set<string>([
-  ...PURE_NATIVE, ...PERSISTENCE, ...SLICE_INJECTED_READS,
+  ...PURE_NATIVE, ...PERSISTENCE, ...SLICE_INJECTED_READS, ...DIRECT_NAPI_READS,
 ])
 
 describe('router partition gate', () => {
@@ -98,6 +101,7 @@ describe('router partition gate', () => {
     const buckets: Array<[string, ReadonlySet<string>]> = [
       ['PURE_NATIVE', PURE_NATIVE], ['PERSISTENCE', PERSISTENCE],
       ['SLICE_INJECTED_READS', SLICE_INJECTED_READS],
+      ['DIRECT_NAPI_READS', DIRECT_NAPI_READS],
       ['HYBRID_CHANNELS', HYBRID_CHANNELS],
       ['CLIP_COMPUTE_CHANNELS', CLIP_COMPUTE_CHANNELS],
       ['MOTIF_CHANNELS', MOTIF_CHANNELS],
@@ -176,6 +180,23 @@ describe('routeChannel', () => {
   })
   it('routes import_media to hybrid', () => {
     expect(routeChannel('import_media').kind).toBe('hybrid')
+  })
+  // One canonical cut list, two verbs over it: both marker channels are hybrids
+  // for the same reason — Rust scans and reduces, the actor commits — and
+  // `drop_shot_markers` is `apply_shot_cuts` in 'mark' mode at the defaults.
+  it('routes both shot-apply channels to hybrid', () => {
+    expect(routeChannel('apply_shot_cuts').kind).toBe('hybrid')
+    expect(routeChannel('drop_shot_markers').kind).toBe('hybrid')
+  })
+  // The shot-review reads reach a direct napi method rather than an `invoke`
+  // arm, so index.ts intercepts them before the router is consulted. They are
+  // classified anyway: the gate's value is a complete manifest, and a channel
+  // nobody listed is a channel nobody checked.
+  it('classifies every direct-napi read as read-only, never a mutation', () => {
+    for (const ch of DIRECT_NAPI_READS) {
+      expect(routeChannel(ch).kind, ch).toBe('rust')
+      expect(PRODUCTION_OPS.has(ch), ch).toBe(false)
+    }
   })
   // The write halves of the two speech recipes, reached by the renderer's
   // auto-caption and voiceover dialogs under the same names the agent uses —

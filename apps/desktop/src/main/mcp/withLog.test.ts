@@ -66,7 +66,7 @@ function tsHostStub(compute: Record<string, unknown> = {}) {
   const reject = vi.fn(async () => { throw new Error('compute stub') })
   const hybridDeps = {
     actor,
-    compute: { probeMedia: reject, hashMediaSource: reject, parseSubtitles: reject, synthesizeSpeechCompute: reject, analyzeShots: reject, ...compute },
+    compute: { probeMedia: reject, hashMediaSource: reject, parseSubtitles: reject, synthesizeSpeechCompute: reject, analyzeShotsFloor: reject, reduceShotReport: reject, shotDefaultOpts: reject, ...compute },
     enqueueDerivatives: vi.fn(async () => {}),
     enqueueWorkspaceCopy: vi.fn(async () => {}),
     workspaceDir: () => null,

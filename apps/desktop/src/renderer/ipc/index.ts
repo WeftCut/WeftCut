@@ -2070,6 +2070,22 @@ export async function getMediaThumbnail(mediaId: string): Promise<string> {
   return invoke<string>("get_media_thumbnail", { mediaId });
 }
 
+/// One frame of a source at `tUs` (source-absolute microseconds) as a `data:`
+/// URL, ready for an `img` src. Served through the same
+/// `media://{id}/frame/{t_us}` resource an agent reads, so the extraction is
+/// cached per `(source, t_us)` and re-showing a frame is a cache read rather
+/// than a second decode.
+///
+/// Unlike `getMediaThumbnail` this is an ON-DEMAND extract at a time the caller
+/// chooses, not a pick from the evenly-spaced thumbnail set — which is why a
+/// shot's cover frame cannot be served by the pool thumbnail.
+export async function getMediaFrame(
+  mediaId: string,
+  tUs: number,
+): Promise<string> {
+  return invoke<string>("get_media_frame", { media_id: mediaId, t_us: tUs });
+}
+
 /// Ask the backend to generate the full export proxy for a media item
 /// (decode-failure recovery / per-clip generate). Idempotent on the backend.
 export async function ensureFullProxy(mediaId: string): Promise<void> {
@@ -2119,6 +2135,147 @@ export async function analyzeShots(mediaId: string): Promise<number | null> {
 export async function dropShotMarkers(layerId: string): Promise<number> {
   const r = await invoke<{ markers: number }>("drop_shot_markers", { layerId });
   return r?.markers ?? 0;
+}
+
+/// A per-shot event flag. Mirrors Rust `ShotFlag` (serde lowercase).
+export type ShotFlag = "black" | "freeze" | "fade";
+
+/// One candidate cut: the source-absolute time a new shot could begin, plus the
+/// raw detector confidence. Mirrors Rust `Cut`, named here for the field it
+/// arrives in (`ShotReport.cut_scores`) because a bare `Cut` in an editor reads
+/// as an edit operation rather than as a measurement.
+///
+/// A candidate, not a decision: which of these become boundaries is what a
+/// threshold decides.
+export interface CutScore {
+  t_us: number;
+  score: number;
+}
+
+/// One shot — the span between two accepted boundaries. Mirrors Rust `Shot`.
+///
+/// `brightness` / `motion` / `sharpness` are absent unless the scan that
+/// produced this span also sampled frames, and `flags` is empty on the same
+/// condition. A span the reduce merged or truncated is a DIFFERENT shot from any
+/// the scan measured, so its numbers are absent rather than inherited from a
+/// neighbour — absent must render as absent, never as zero.
+export interface Shot {
+  index: number;
+  t_start_us: number;
+  t_end_us: number;
+  /// A representative cover-frame time (the span midpoint), the argument
+  /// `getMediaFrame` takes for this shot's still.
+  keyframe_t_us: number;
+  brightness?: number | null;
+  motion?: number | null;
+  sharpness?: number | null;
+  flags: ShotFlag[];
+}
+
+/// The shot list plus the raw candidate signal, both clipped to the analyzed
+/// window. Mirrors Rust `ShotReport`. Times are SOURCE-absolute: a report
+/// belongs to a source, while every apply step belongs to a layer.
+export interface ShotReport {
+  shots: Shot[];
+  cut_scores: CutScore[];
+}
+
+/// The threshold the floor scan runs at — the lowest a threshold control can
+/// offer, because nothing below it was ever emitted.
+export async function shotFloorSensitivity(): Promise<number> {
+  return invoke<number>("shot_floor_sensitivity");
+}
+
+/// The whole-source floor scan for one media. EXPENSIVE the first time (a full
+/// decode pass) and a cache hit afterwards, so call it behind a deliberate
+/// action, never on selection — ask `shotFloorReportCached` first.
+export async function analyzeShotsFloor(mediaId: string): Promise<ShotReport> {
+  return invoke<ShotReport>("analyze_shots_floor", { media_id: mediaId });
+}
+
+/// Whether a source's floor scan is already on disk. A probe: it stats the
+/// cached report and never starts a scan, which is what makes it safe on every
+/// selection change.
+export async function shotFloorReportCached(
+  mediaId: string,
+): Promise<boolean> {
+  return invoke<boolean>("shot_floor_report_cached", { media_id: mediaId });
+}
+
+/// Re-derive a shot list from an already-scanned report at a threshold and
+/// minimum shot length, viewed through `[inUs, outUs]`. Pure and cheap — no
+/// decode, no file touched — so a threshold can be dragged live.
+///
+/// `sensitivity` reads backwards on purpose: it is a THRESHOLD, so a higher
+/// value yields FEWER cuts. It survives as a field name only; a control shows
+/// the line's position over the candidates it crosses.
+///
+/// A value below `shotFloorSensitivity()` cannot invent candidates the scan
+/// never emitted — the answer is simply the scan's own set.
+export async function reduceShotReport(
+  report: ShotReport,
+  params: {
+    sensitivity: number;
+    minShotUs: number;
+    inUs: number;
+    outUs: number;
+  },
+): Promise<ShotReport> {
+  return invoke<ShotReport>("reduce_shot_report", {
+    report,
+    sensitivity: params.sensitivity,
+    min_shot_us: params.minShotUs,
+    in_us: params.inUs,
+    out_us: params.outUs,
+  });
+}
+
+/// Apply shot boundaries to one VideoClip layer. Snake_case because these are
+/// the hybrid arm's own argument names and it reads them straight off the
+/// forwarded object.
+///
+/// `cuts_src_us` is the reviewed list — source-absolute microseconds, strictly
+/// ascending, each strictly inside the clip's source window. Omit it and the
+/// detector supplies the boundaries at `sensitivity` / `min_shot_us`, each
+/// falling back to the detection default; that is the path a zero-argument
+/// entry takes. A malformed list is refused whole (structured `InvalidArgument`
+/// on `cuts_src_us`, naming the offending index) and nothing is written.
+///
+/// A further verb — split, then delete the spans the reviewer unchecked, in one
+/// commit — is addable without a new field here: it is the same list plus the
+/// same `drop_short_us` commit shape, so it arrives as a third `mode`.
+export interface ApplyShotCutsArgs {
+  layer_id: string;
+  mode: "split" | "mark";
+  cuts_src_us?: number[];
+  sensitivity?: number;
+  min_shot_us?: number;
+  /// Delete any resulting segment shorter than this within the SAME commit.
+  /// Split-only — a marker has no length to be short.
+  drop_short_us?: number;
+}
+
+/// What one apply produced, discriminated by the verb asked for: segments are
+/// not markers, and a caller that has to sniff which it got would be a caller
+/// free to mis-read one as the other.
+///
+/// `split` with no interior boundary answers with the unchanged layer id and
+/// `mark` with an empty list — an idempotent no-op that writes no history
+/// entry, rather than an error.
+export type ApplyShotCutsResult =
+  | { mode: "split"; layer_ids: string[] }
+  | { mode: "mark"; marker_ids: string[] };
+
+/// Split at, or mark, a clip's shot boundaries in ONE commit (one undo entry).
+/// Both verbs consume the same canonical cut list, so a split and a mark of the
+/// same request land on identical frames.
+///
+/// THROWS, like every write here: a swallowed failure would leave the timeline
+/// looking untouched with no reason given.
+export async function applyShotCuts(
+  args: ApplyShotCutsArgs,
+): Promise<ApplyShotCutsResult> {
+  return invoke<ApplyShotCutsResult>("apply_shot_cuts", { ...args });
 }
 
 // ============================================================

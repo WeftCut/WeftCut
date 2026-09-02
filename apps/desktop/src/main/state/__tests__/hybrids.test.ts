@@ -5,7 +5,7 @@ import { blankProject, type MediaItem } from '../model'
 import { mediaItemTemplate, videoClipParams } from '../mutations/media'
 import { applyAddLayer } from '../mutations/add'
 import { markerHibernating } from '../summary'
-import { runHybrid, dropShotMarkers, type HybridDeps } from '../hybrids'
+import { runHybrid, markShotCuts, cutsToTimeline, type HybridDeps } from '../hybrids'
 import { applyWorkspacePathsEvent } from '../jobs-writeback'
 import { root, withGroup } from './fixtures/project'
 
@@ -57,7 +57,9 @@ function makeDeps(actor: ActorHandle, opts: { workspaceDir?: string | null; file
       hashMediaSource,
       parseSubtitles,
       synthesizeSpeechCompute: vi.fn(async () => '{}'),
-      analyzeShots: vi.fn(async () => JSON.stringify({ shots: [], cut_scores: [] })),
+      analyzeShotsFloor: vi.fn(async () => JSON.stringify({ shots: [], cut_scores: [] })),
+      reduceShotReport: vi.fn((reportJson: string) => reportJson),
+      shotDefaultOpts: vi.fn(() => ({ ...RUST_SHOT_DEFAULTS })),
     },
     enqueueDerivatives,
     enqueueWorkspaceCopy,
@@ -389,9 +391,9 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
   })
 })
 
-// ── auto_split_by_shot + shot markers ───────────────────────────────────────
+// ── The canonical cut list and its two apply verbs ──────────────────────────
 
-/** A whole-source ShotReport JSON as compute.analyzeShots returns it: shots are
+/** A whole-source ShotReport JSON as the floor scan returns it: shots are
  *  the spans between `boundariesUs` (source-absolute), clipped to `[0,endUs]`. */
 function shotReport(boundariesUs: number[], endUs: number): string {
   const bounds = [0, ...boundariesUs, endUs]
@@ -399,6 +401,27 @@ function shotReport(boundariesUs: number[], endUs: number): string {
   for (let i = 0; i < bounds.length - 1; i++)
     shots.push({ t_start_us: bounds[i], t_end_us: bounds[i + 1], keyframe_t_us: (bounds[i] + bounds[i + 1]) / 2 })
   return JSON.stringify({ shots, cut_scores: boundariesUs.map((t) => ({ t_us: t, score: 0.5 })) })
+}
+
+/** Point the shot compute at one whole-source report and hand back both spies.
+ *
+ *  The reduce ECHOES its input rather than reducing: the real one is Rust's,
+ *  unit-tested there, and re-implementing it here would twin exactly the
+ *  invariant the split exists to keep single. What these tests own is the TS
+ *  half — which window and which parameters the reduce is asked for, and where
+ *  its answer lands on the frame grid. */
+/** What the fake addon answers for the detection defaults. The values are the
+ *  fake's, not a mirror of Rust's: the tests below pin that an omitted parameter
+ *  resolves to WHATEVER the addon states, which is the whole point of reading
+ *  them rather than declaring them. */
+const RUST_SHOT_DEFAULTS = { sensitivity: 0.4, min_shot_us: 500_000 }
+
+function withShotReport(deps: HybridDeps, boundariesUs: number[], endUs: number) {
+  const analyzeShotsFloor = vi.fn(async () => shotReport(boundariesUs, endUs))
+  const reduceShotReport = vi.fn((reportJson: string) => reportJson)
+  deps.compute.analyzeShotsFloor = analyzeShotsFloor
+  deps.compute.reduceShotReport = reduceShotReport
+  return { analyzeShotsFloor, reduceShotReport }
 }
 
 /** Fresh project with a VideoClip layer on the A-roll track: full-window at the
@@ -437,7 +460,7 @@ describe('runHybrid: auto_split_by_shot', () => {
   it('splits a VideoClip at every in-window cut in ONE history entry and returns the segment ids', async () => {
     const { actor, layerId } = withVideoLayer(6_000_000)
     const deps = makeDeps(actor)
-    deps.compute.analyzeShots = vi.fn(async () => shotReport([2_000_000, 4_000_000], 6_000_000))
+    withShotReport(deps, [2_000_000, 4_000_000], 6_000_000)
     const lenBefore = actor.historyStatus().len
     const result = await runHybrid('auto_split_by_shot', { layer_id: layerId }, deps)
     // Single-undo acceptance: the whole multi-split is ONE recorded commit.
@@ -450,19 +473,24 @@ describe('runHybrid: auto_split_by_shot', () => {
     ])
   })
 
-  it('passes min_shot_us through to the compute opts (cache-shared params)', async () => {
+  it('passes min_shot_us through to the reduce, at the default threshold', async () => {
     const { actor, layerId } = withVideoLayer(6_000_000)
     const deps = makeDeps(actor)
-    deps.compute.analyzeShots = vi.fn(async () => shotReport([3_000_000], 6_000_000))
+    const { reduceShotReport } = withShotReport(deps, [3_000_000], 6_000_000)
     await runHybrid('auto_split_by_shot', { layer_id: layerId, min_shot_us: 1_000_000 }, deps)
-    const optsJson = (deps.compute.analyzeShots as ReturnType<typeof vi.fn>).mock.calls[0][1] as string
-    expect(JSON.parse(optsJson)).toEqual({ min_shot_us: 1_000_000 })
+    // The scan is threshold-independent, so the tool's spacing argument reaches
+    // the reduce rather than the scan's opts — and the threshold it is reduced
+    // at is the detection default, which is what keeps this tool landing where
+    // analyze_clip reports cuts.
+    expect(reduceShotReport.mock.calls[0].slice(1)).toEqual([
+      RUST_SHOT_DEFAULTS.sensitivity, 1_000_000, 0, 6_000_000,
+    ])
   })
 
   it('returns the single unchanged layer id (no commit) when there is no interior cut', async () => {
     const { actor, layerId } = withVideoLayer(6_000_000)
     const deps = makeDeps(actor)
-    deps.compute.analyzeShots = vi.fn(async () => shotReport([], 6_000_000)) // one whole-clip shot
+    withShotReport(deps, [], 6_000_000) // one whole-clip shot
     const lenBefore = actor.historyStatus().len
     const result = await runHybrid('auto_split_by_shot', { layer_id: layerId }, deps)
     expect(actor.historyStatus().len - lenBefore).toBe(0)
@@ -473,7 +501,7 @@ describe('runHybrid: auto_split_by_shot', () => {
     const { actor, layerId } = withVideoLayer(6_000_000)
     const deps = makeDeps(actor)
     // Cuts at 2.0s then 2.3s → a 0.3s sliver segment; drop_short removes it.
-    deps.compute.analyzeShots = vi.fn(async () => shotReport([2_000_000, 2_300_000], 6_000_000))
+    withShotReport(deps, [2_000_000, 2_300_000], 6_000_000)
     const lenBefore = actor.historyStatus().len
     const result = await runHybrid('auto_split_by_shot', { layer_id: layerId, min_shot_us: 500_000, drop_short: true }, deps)
     expect(actor.historyStatus().len - lenBefore).toBe(1) // still ONE commit (split + drop)
@@ -485,12 +513,12 @@ describe('runHybrid: auto_split_by_shot', () => {
 
   it('collapses sub-frame-spaced cuts to one split instead of throwing', async () => {
     // Two source boundaries less than one frame apart snap to the SAME timeline
-    // frame. Without the snap+dedup in resolveShotCuts (and the guard in
+    // frame. Without the snap+dedup in cutsToTimeline (and the guard in
     // split_layer_multi) the second split would hit SplitOutsideLayer and abort
     // the whole auto_split. Expect one effective cut → two segments, one commit.
     const { actor, layerId } = withVideoLayer(6_000_000)
     const deps = makeDeps(actor)
-    deps.compute.analyzeShots = vi.fn(async () => shotReport([2_000_000, 2_000_100], 6_000_000))
+    withShotReport(deps, [2_000_000, 2_000_100], 6_000_000)
     const lenBefore = actor.historyStatus().len
     const result = await runHybrid('auto_split_by_shot', { layer_id: layerId }, deps)
     expect(actor.historyStatus().len - lenBefore).toBe(1)
@@ -513,21 +541,31 @@ describe('runHybrid: auto_split_by_shot', () => {
     await expect(runHybrid('auto_split_by_shot', { layer_id: add.value as string }, deps)).rejects.toThrow(/VideoClip/)
   })
 
-  it('throws (not silent no-op) when analyzeShots is not wired into the build', async () => {
+  it('throws (not silent no-op) when the shot compute is not wired into the build', async () => {
     const { actor, layerId } = withVideoLayer()
     const deps = makeDeps(actor)
-    deps.compute.analyzeShots = undefined
+    deps.compute.analyzeShotsFloor = undefined
+    await expect(runHybrid('auto_split_by_shot', { layer_id: layerId }, deps)).rejects.toThrow(/not available/)
+    // The reduce is half of the same capability, so losing either one has to
+    // refuse — a scan with nothing to narrow it is not a usable detector.
+    deps.compute.analyzeShotsFloor = vi.fn(async () => shotReport([], 6_000_000))
+    deps.compute.reduceShotReport = undefined
+    await expect(runHybrid('auto_split_by_shot', { layer_id: layerId }, deps)).rejects.toThrow(/not available/)
+    // And the defaults: an omitted parameter with nothing to resolve it to must
+    // refuse rather than reach for a number of its own.
+    deps.compute.reduceShotReport = vi.fn((reportJson: string) => reportJson)
+    deps.compute.shotDefaultOpts = undefined
     await expect(runHybrid('auto_split_by_shot', { layer_id: layerId }, deps)).rejects.toThrow(/not available/)
   })
 })
 
-describe('dropShotMarkers (human shot-marker surface)', () => {
+describe('markShotCuts (the mark verb)', () => {
   it('drops a marker at each cut in ONE commit, at the SAME times auto_split_by_shot splits', async () => {
     const { actor, layerId } = withVideoLayer(6_000_000)
     const deps = makeDeps(actor)
-    deps.compute.analyzeShots = vi.fn(async () => shotReport([2_000_000, 4_000_000], 6_000_000))
+    withShotReport(deps, [2_000_000, 4_000_000], 6_000_000)
     const lenBefore = actor.historyStatus().len
-    const ids = await dropShotMarkers(layerId, deps)
+    const ids = await markShotCuts({ layer_id: layerId }, deps)
     expect(actor.historyStatus().len - lenBefore).toBe(1) // single undo entry
     expect(ids).toHaveLength(2)
     // Consistency with the tool: markers land at the interior cut times (2s, 4s),
@@ -538,21 +576,22 @@ describe('dropShotMarkers (human shot-marker surface)', () => {
   it('is a no-op (no markers, no commit) when the clip has no interior cut', async () => {
     const { actor, layerId } = withVideoLayer(6_000_000)
     const deps = makeDeps(actor)
-    deps.compute.analyzeShots = vi.fn(async () => shotReport([], 6_000_000))
+    withShotReport(deps, [], 6_000_000)
     const lenBefore = actor.historyStatus().len
-    const ids = await dropShotMarkers(layerId, deps)
+    const ids = await markShotCuts({ layer_id: layerId }, deps)
     expect(ids).toEqual([])
     expect(actor.historyStatus().len - lenBefore).toBe(0)
     expect(root(actor.snapshot()).markers).toEqual([])
   })
 
-  // The renderer reaches dropShotMarkers through the hybrid route, so the arm
-  // that adapts its camelCase IPC args is covered too — a rename on either side
-  // would otherwise fail only in the running app.
+  // The clip menu's zero-argument entry reaches this verb through the
+  // drop_shot_markers arm, so the arm that adapts its camelCase IPC args is
+  // covered too — a rename on either side would otherwise fail only in the
+  // running app.
   it('is reachable as the drop_shot_markers hybrid arm, returning a marker COUNT', async () => {
     const { actor, layerId } = withVideoLayer(6_000_000)
     const deps = makeDeps(actor)
-    deps.compute.analyzeShots = vi.fn(async () => shotReport([2_000_000, 4_000_000], 6_000_000))
+    withShotReport(deps, [2_000_000, 4_000_000], 6_000_000)
     // An object, not a JSON string: this arm is renderer-only (absent from
     // HYBRID_TOOLS), so server.ts's stringify contract does not apply to it.
     expect(await runHybrid('drop_shot_markers', { layerId }, deps)).toEqual({ markers: 2 })
@@ -567,8 +606,8 @@ describe('dropShotMarkers (human shot-marker surface)', () => {
   it("marks the CLIP'S composition: a clip inside a Group marks the Group, and the root gains nothing", async () => {
     const { actor, groupId, layerId } = withVideoLayerInGroup(6_000_000)
     const deps = makeDeps(actor)
-    deps.compute.analyzeShots = vi.fn(async () => shotReport([2_000_000, 4_000_000], 6_000_000))
-    expect(await dropShotMarkers(layerId, deps)).toHaveLength(2)
+    withShotReport(deps, [2_000_000, 4_000_000], 6_000_000)
+    expect(await markShotCuts({ layer_id: layerId }, deps)).toHaveLength(2)
     const inner = actor.snapshot().compositions[groupId]
     // The cut times were computed against the Group's fps and the clip's own
     // t_start_us, so the Group is the only timeline they mean anything on.
@@ -584,8 +623,8 @@ describe('dropShotMarkers (human shot-marker surface)', () => {
     // that merely copied t_us would be off by exactly that offset.
     const { actor, layerId } = withVideoLayer(10_000_000, { srcInUs: 1_000_000, srcOutUs: 7_000_000, tStartUs: 2_000_000 })
     const deps = makeDeps(actor)
-    deps.compute.analyzeShots = vi.fn(async () => shotReport([3_000_000, 5_000_000], 10_000_000))
-    expect(await dropShotMarkers(layerId, deps)).toHaveLength(2)
+    withShotReport(deps, [3_000_000, 5_000_000], 10_000_000)
+    expect(await markShotCuts({ layer_id: layerId }, deps)).toHaveLength(2)
     expect(root(actor.snapshot()).markers.map((m) => [m.t_us, m.anchor])).toEqual([
       [4_000_000, { layer: layerId, src_us: 3_000_000 }],
       [6_000_000, { layer: layerId, src_us: 5_000_000 }],
@@ -595,10 +634,10 @@ describe('dropShotMarkers (human shot-marker surface)', () => {
   it('a whole anchored set is ONE undo, restoring the project exactly', async () => {
     const { actor, layerId } = withVideoLayer(6_000_000)
     const deps = makeDeps(actor)
-    deps.compute.analyzeShots = vi.fn(async () => shotReport([2_000_000, 4_000_000], 6_000_000))
+    withShotReport(deps, [2_000_000, 4_000_000], 6_000_000)
     const before = JSON.stringify(actor.snapshot())
     const lenBefore = actor.historyStatus().len
-    await dropShotMarkers(layerId, deps)
+    await markShotCuts({ layer_id: layerId }, deps)
     expect(actor.historyStatus().len - lenBefore).toBe(1)
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     expect(JSON.stringify(actor.snapshot())).toBe(before)
@@ -607,8 +646,8 @@ describe('dropShotMarkers (human shot-marker surface)', () => {
   it('shot marks travel with the clip when it moves', async () => {
     const { actor, track, layerId } = withVideoLayer(10_000_000, { srcInUs: 1_000_000, srcOutUs: 7_000_000, tStartUs: 2_000_000 })
     const deps = makeDeps(actor)
-    deps.compute.analyzeShots = vi.fn(async () => shotReport([3_000_000, 5_000_000], 10_000_000))
-    await dropShotMarkers(layerId, deps)
+    withShotReport(deps, [3_000_000, 5_000_000], 10_000_000)
+    await markShotCuts({ layer_id: layerId }, deps)
     expect(actor.dispatch('move_layer', { layer: layerId, to_track: track, t_start_us: 5_000_000 }).ok).toBe(true)
     expect(root(actor.snapshot()).markers.map((m) => m.t_us)).toEqual([7_000_000, 9_000_000])
   })
@@ -616,8 +655,8 @@ describe('dropShotMarkers (human shot-marker surface)', () => {
   it('trimming the out-point past a shot mark hibernates it; re-extending revives it on the same frame', async () => {
     const { actor, layerId } = withVideoLayer(6_000_000)
     const deps = makeDeps(actor)
-    deps.compute.analyzeShots = vi.fn(async () => shotReport([2_000_000, 4_000_000], 6_000_000))
-    await dropShotMarkers(layerId, deps)
+    withShotReport(deps, [2_000_000, 4_000_000], 6_000_000)
+    await markShotCuts({ layer_id: layerId }, deps)
     expect(actor.dispatch('trim_layer', { layer: layerId, edge: 'out', new_t_us: 3_000_000 }).ok).toBe(true)
     const trimmed = root(actor.snapshot())
     // Hibernation is a KEPT marker the clip no longer shows — its time freezes
@@ -635,10 +674,179 @@ describe('dropShotMarkers (human shot-marker surface)', () => {
   it('deleting the clip takes its shot marks with it', async () => {
     const { actor, layerId } = withVideoLayer(6_000_000)
     const deps = makeDeps(actor)
-    deps.compute.analyzeShots = vi.fn(async () => shotReport([2_000_000, 4_000_000], 6_000_000))
-    await dropShotMarkers(layerId, deps)
+    withShotReport(deps, [2_000_000, 4_000_000], 6_000_000)
+    await markShotCuts({ layer_id: layerId }, deps)
     expect(actor.dispatch('delete_layer', { layer: layerId }).ok).toBe(true)
     expect(root(actor.snapshot()).markers).toEqual([])
+  })
+})
+
+/** The interior boundaries a split produced, read off the segments it returned
+ *  (which come back in timeline order) rather than off track order. */
+function boundariesOf(actor: ActorHandle, layerIds: string[]): number[] {
+  const byId = new Map(root(actor.snapshot()).tracks.flatMap((t) => t.layers).map((l) => [l.id, l]))
+  return layerIds.slice(1).map((id) => byId.get(id)!.t_start_us)
+}
+
+describe('runHybrid: apply_shot_cuts', () => {
+  // The acceptance the whole channel exists for, asserted directly rather than
+  // inferred from a shared call site: two projects in the same state, one list,
+  // both verbs. `withVideoLayer` mints deterministic ids, so the two runs name
+  // the same layer.
+  it('splits and marks the SAME explicit list onto identical frames', async () => {
+    const cutsSrcUs = [1_510_000, 3_020_000, 4_490_000]
+    const a = withVideoLayer(6_000_000)
+    const b = withVideoLayer(6_000_000)
+    expect(a.layerId).toBe(b.layerId)
+    const split = await runHybrid('apply_shot_cuts',
+      { layer_id: a.layerId, mode: 'split', cuts_src_us: cutsSrcUs }, makeDeps(a.actor)) as { layer_ids: string[] }
+    const mark = await runHybrid('apply_shot_cuts',
+      { layer_id: b.layerId, mode: 'mark', cuts_src_us: cutsSrcUs }, makeDeps(b.actor)) as { marker_ids: string[] }
+    const boundaries = boundariesOf(a.actor, split.layer_ids)
+    expect(boundaries).toEqual(root(b.actor.snapshot()).markers.map((m) => m.t_us))
+    // And the frames are the GRID's, not the caller's: none of these three
+    // source times sits on a 30fps boundary, so an unsnapped path would agree
+    // with itself while landing off-grid.
+    expect(boundaries).not.toEqual(cutsSrcUs)
+    expect(mark.marker_ids).toHaveLength(3)
+  })
+
+  it('splits at exactly the surviving times of a filtered list, and consults no detector', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    const { analyzeShotsFloor } = withShotReport(deps, [2_000_000, 3_000_000, 4_000_000], 6_000_000)
+    // The reviewer kept the outer two boundaries and vetoed the middle one.
+    const r = await runHybrid('apply_shot_cuts',
+      { layer_id: layerId, mode: 'split', cuts_src_us: [2_000_000, 4_000_000] }, deps) as { layer_ids: string[] }
+    expect(boundariesOf(actor, r.layer_ids)).toEqual([2_000_000, 4_000_000])
+    // An explicit list is the answer, not a hint: re-deriving it would let a
+    // stale threshold reinstate the row the reviewer removed.
+    expect(analyzeShotsFloor).not.toHaveBeenCalled()
+  })
+
+  it('is an idempotent no-op with no history entry when the list is empty', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    const lenBefore = actor.historyStatus().len
+    expect(await runHybrid('apply_shot_cuts', { layer_id: layerId, mode: 'split', cuts_src_us: [] }, deps))
+      .toEqual({ mode: 'split', layer_ids: [layerId] })
+    expect(await runHybrid('apply_shot_cuts', { layer_id: layerId, mode: 'mark', cuts_src_us: [] }, deps))
+      .toEqual({ mode: 'mark', marker_ids: [] })
+    expect(actor.historyStatus().len - lenBefore).toBe(0)
+    expect(root(actor.snapshot()).markers).toEqual([])
+  })
+
+  it('is the same no-op when the detector finds no interior boundary', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withShotReport(deps, [], 6_000_000)
+    const lenBefore = actor.historyStatus().len
+    expect(await runHybrid('apply_shot_cuts', { layer_id: layerId, mode: 'mark' }, deps))
+      .toEqual({ mode: 'mark', marker_ids: [] })
+    expect(actor.historyStatus().len - lenBefore).toBe(0)
+  })
+
+  // A list assembled row by row is worth pointing at. Each case refuses with the
+  // structured shape the renderer's parseCommandError reads, names the offending
+  // index, and — the part that matters — writes nothing: a half-applied set of
+  // splits is not something an undo can be trusted to describe.
+  it.each([
+    ['unsorted', [3_000_000, 2_000_000]],
+    ['duplicated', [2_000_000, 2_000_000]],
+    ['at the window edge', [0, 2_000_000]],
+    ['past the window end', [2_000_000, 6_000_000]],
+    ['not a number', [2_000_000, Number.NaN]],
+    ['not even an array', 'nope'],
+  ])('refuses a list that is %s, and writes nothing', async (_name, cutsSrcUs) => {
+    for (const mode of ['split', 'mark'] as const) {
+      const { actor, layerId } = withVideoLayer(6_000_000)
+      const deps = makeDeps(actor)
+      const lenBefore = actor.historyStatus().len
+      const err = await runHybrid('apply_shot_cuts', { layer_id: layerId, mode, cuts_src_us: cutsSrcUs }, deps)
+        .then(() => null, (e: Error) => JSON.parse(e.message) as { error: string; field: string; detail: string })
+      expect(err?.error).toBe('InvalidArgument')
+      expect(err?.field).toBe('cuts_src_us')
+      expect(err?.detail.length).toBeGreaterThan(0)
+      expect(actor.historyStatus().len - lenBefore).toBe(0)
+      expect(root(actor.snapshot()).markers).toEqual([])
+      expect(root(actor.snapshot()).tracks.flatMap((t) => t.layers).map((l) => l.id)).toEqual([layerId])
+    }
+  })
+
+  it('refuses an unknown mode rather than guessing a verb', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    await expect(runHybrid('apply_shot_cuts', { layer_id: layerId, mode: 'discard' }, deps))
+      .rejects.toThrow(/"field":"mode"/)
+  })
+
+  // Nothing caught the loss of this argument before: resolveShotCuts built the
+  // detection opts without it, so every threshold a caller asked for silently
+  // became the default.
+  it('passes sensitivity through to the reduce', async () => {
+    const { actor, layerId } = withVideoLayer(10_000_000, { srcInUs: 1_000_000, srcOutUs: 7_000_000, tStartUs: 2_000_000 })
+    const deps = makeDeps(actor)
+    const { reduceShotReport } = withShotReport(deps, [3_000_000], 10_000_000)
+    await runHybrid('apply_shot_cuts', { layer_id: layerId, mode: 'mark', sensitivity: 0.12, min_shot_us: 250_000 }, deps)
+    // Threshold, spacing, then the LAYER's source window — the reduce is asked
+    // for the clip's view, not the whole source's.
+    expect(reduceShotReport.mock.calls[0].slice(1)).toEqual([0.12, 250_000, 1_000_000, 7_000_000])
+  })
+
+  it('falls back to the detection defaults when neither parameter is given', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    const { reduceShotReport } = withShotReport(deps, [2_000_000], 6_000_000)
+    await runHybrid('apply_shot_cuts', { layer_id: layerId, mode: 'split' }, deps)
+    expect(reduceShotReport.mock.calls[0].slice(1)).toEqual([
+      RUST_SHOT_DEFAULTS.sensitivity, RUST_SHOT_DEFAULTS.min_shot_us, 0, 6_000_000,
+    ])
+  })
+
+  it('drops short segments inside the same commit as the split', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    const lenBefore = actor.historyStatus().len
+    const r = await runHybrid('apply_shot_cuts',
+      { layer_id: layerId, mode: 'split', cuts_src_us: [2_000_000, 2_300_000], drop_short_us: 500_000 }, deps) as { layer_ids: string[] }
+    expect(actor.historyStatus().len - lenBefore).toBe(1)
+    expect(r.layer_ids).toHaveLength(2)
+  })
+
+  it('marks a clip inside a Group on the GROUP, with anchors at the source times given', async () => {
+    const { actor, groupId, layerId } = withVideoLayerInGroup(6_000_000)
+    const deps = makeDeps(actor)
+    const r = await runHybrid('apply_shot_cuts',
+      { layer_id: layerId, mode: 'mark', cuts_src_us: [2_000_000, 4_000_000] }, deps) as { marker_ids: string[] }
+    expect(r.marker_ids).toHaveLength(2)
+    const inner = actor.snapshot().compositions[groupId]
+    expect(inner.markers.map((m) => [m.t_us, m.label, m.anchor])).toEqual([
+      [2_000_000, 'Cut 1', { layer: layerId, src_us: 2_000_000 }],
+      [4_000_000, 'Cut 2', { layer: layerId, src_us: 4_000_000 }],
+    ])
+    expect(root(actor.snapshot()).markers).toEqual([])
+  })
+})
+
+describe('cutsToTimeline', () => {
+  const layer = { t_start_us: 2_000_000, t_end_us: 8_000_000 }
+  const params = { src_in_us: 1_000_000 }
+  const fps = { num: 30, den: 1 }
+
+  it('offsets source→timeline and snaps to the frame grid', () => {
+    // 3.51s source → 4.51s timeline → the nearest 30fps frame (135) at 4.5s.
+    expect(cutsToTimeline([3_510_000], layer, params, fps)).toEqual([{ tUs: 4_500_000, srcUs: 3_510_000 }])
+  })
+
+  it('collapses boundaries that snap onto one frame, keeping the first', () => {
+    expect(cutsToTimeline([3_500_000, 3_510_000], layer, params, fps))
+      .toEqual([{ tUs: 4_500_000, srcUs: 3_500_000 }])
+  })
+
+  it('drops boundaries that land on or outside the layer bounds', () => {
+    // 1s source is the window's own start and 7s its end; a zero-length split is
+    // invalid, so neither can survive as a cut.
+    expect(cutsToTimeline([1_000_000, 7_000_000, 9_000_000], layer, params, fps)).toEqual([])
   })
 })
 

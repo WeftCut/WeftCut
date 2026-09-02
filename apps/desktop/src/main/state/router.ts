@@ -2,9 +2,9 @@
 // Pure splitter: the TS actor is authoritative; this splits every renderer channel.
 // SAFETY INVARIANT (router.test.ts partition gate): every renderer channel is
 // classified into exactly one bucket, and no project-touching channel routes to
-// 'rust' (the curated PURE_NATIVE ∪ PERSISTENCE ∪ SLICE_INJECTED_READS allowlist is
-// read-only / config-store / pure-native). An unclassified channel routes to
-// {kind:'reject'} so the gate fails loud.
+// 'rust' (the curated PURE_NATIVE ∪ PERSISTENCE ∪ SLICE_INJECTED_READS ∪
+// DIRECT_NAPI_READS allowlist is read-only / config-store / pure-native). An
+// unclassified channel routes to {kind:'reject'} so the gate fails loud.
 import { PRODUCTION_OPS } from './commands'
 
 export type Route =
@@ -30,9 +30,11 @@ export type Route =
 /** Hybrid Rust-compute → TS-write channels. install_motif and
  *  acknowledge_motif_staleness ride the motif route instead.
  *
- *  `drop_shot_markers` is a hybrid by definition — Rust `analyzeShots` computes
- *  the cuts, the TS actor writes the markers — which is why it routes here and
- *  not through an index.ts intercept like the read-only `analyze_shots`.
+ *  `drop_shot_markers` and `apply_shot_cuts` are hybrids by definition — Rust
+ *  scans and reduces the shot report, the TS actor writes the splits or the
+ *  markers — which is why they route here and not through an index.ts intercept
+ *  like the read-only shot channels. The first is the second at the detection
+ *  defaults in 'mark' mode; both are renderer-only, with no MCP tool.
  *
  *  `apply_subtitles` and `synthesize_speech` are the write halves of the two
  *  authored speech recipes, and the renderer's auto-caption and voiceover
@@ -42,7 +44,23 @@ export type Route =
  *  Either caller lands the same single commit; the MCP path differs only in
  *  wrapping the string result as a `ToolResult` text block (server.ts). */
 export const HYBRID_CHANNELS: ReadonlySet<string> = new Set([
-  'import_media', 'drop_shot_markers', 'apply_subtitles', 'synthesize_speech',
+  'import_media', 'drop_shot_markers', 'apply_shot_cuts', 'apply_subtitles', 'synthesize_speech',
+])
+
+/** Read-only channels whose Rust entry point is a direct napi method (or the
+ *  MCP resource path), not an `invoke` arm — so `index.ts` serves each from its
+ *  own intercept and the router is never consulted for them. They are
+ *  classified anyway, because the partition gate's value is a COMPLETE manifest:
+ *  a channel absent from it is a channel nobody checked. Routing to `rust`
+ *  records the property that matters — no actor write — and the fallthrough
+ *  refuses the channel by name rather than reaching project state.
+ *
+ *  `shot_floor_report_cached` is a disk probe that Rust guarantees never starts
+ *  a scan, which is what lets the review surface ask it on every selection
+ *  change. */
+export const DIRECT_NAPI_READS: ReadonlySet<string> = new Set([
+  'analyze_shots', 'analyze_shots_floor', 'shot_floor_report_cached',
+  'shot_floor_sensitivity', 'reduce_shot_report', 'get_media_frame',
 ])
 
 /** Native clip read/compute channels: no actor write, but the stateless Rust
@@ -129,7 +147,7 @@ export function routeChannel(channel: string): Route {
     case 'recents_most_recent':
     case 'recents_last_new_project_parent': return { kind: 'recents' }
   }
-  if (PURE_NATIVE.has(channel) || PERSISTENCE.has(channel) || SLICE_INJECTED_READS.has(channel))
+  if (PURE_NATIVE.has(channel) || PERSISTENCE.has(channel) || SLICE_INJECTED_READS.has(channel) || DIRECT_NAPI_READS.has(channel))
     return { kind: 'rust' }
   return { kind: 'reject', reason: 'unclassified channel — classify in router.ts' }
 }
