@@ -20,10 +20,8 @@ use std::path::Path;
 pub async fn extract_tar_bz2(archive_path: String, dest_dir: String) -> Result<u32, String> {
     // Decompression is CPU-bound for seconds — keep it off the async runtime.
     tokio::task::spawn_blocking(move || {
-        std::fs::create_dir_all(&dest_dir)
-            .map_err(|e| format!("create {dest_dir}: {e}"))?;
-        let file = File::open(&archive_path)
-            .map_err(|e| format!("open {archive_path}: {e}"))?;
+        std::fs::create_dir_all(&dest_dir).map_err(|e| format!("create {dest_dir}: {e}"))?;
+        let file = File::open(&archive_path).map_err(|e| format!("open {archive_path}: {e}"))?;
         let decoder = bzip2::read::BzDecoder::new(file);
         let mut archive = tar::Archive::new(decoder);
         let mut written: u32 = 0;
@@ -100,7 +98,10 @@ mod tests {
             std::fs::read(dest.join("bundle/bin/tool.exe")).unwrap(),
             b"exe-bytes"
         );
-        assert_eq!(std::fs::read(dest.join("bundle/tokens.txt")).unwrap(), b"a b c");
+        assert_eq!(
+            std::fs::read(dest.join("bundle/tokens.txt")).unwrap(),
+            b"a b c"
+        );
     }
 
     #[tokio::test]

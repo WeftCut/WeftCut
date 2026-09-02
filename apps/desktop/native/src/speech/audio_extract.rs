@@ -19,8 +19,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use anyhow::{Context, Result};
 use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
+use anyhow::{Context, Result};
 use tokio::process::Command;
 
 use crate::process::NoConsoleWindow;

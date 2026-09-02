@@ -559,7 +559,8 @@ mod tests {
             serde_json::to_value(e).unwrap(),
             serde_json::json!({ "kind": "Elastic", "dir": "InOut", "amplitude": 1.0, "period": 0.3 })
         );
-        let b: Interpolation = serde_json::from_str(r#"{ "kind": "Bounce", "dir": "In" }"#).unwrap();
+        let b: Interpolation =
+            serde_json::from_str(r#"{ "kind": "Bounce", "dir": "In" }"#).unwrap();
         assert_eq!(b, Interpolation::Bounce { dir: EaseDir::In });
     }
 

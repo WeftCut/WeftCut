@@ -624,7 +624,10 @@ mod tests {
             .and_then(|d| d.get("encoder"))
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        assert!(!encoder.is_empty(), "details.encoder must carry the resolved name");
+        assert!(
+            !encoder.is_empty(),
+            "details.encoder must carry the resolved name"
+        );
         // The binary that answered the probes travels with the encoder name:
         // an encoder that "failed" because an exe-adjacent shadow build lacks
         // it (issue #7 boundary #7) is otherwise indistinguishable from one the

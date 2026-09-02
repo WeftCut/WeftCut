@@ -341,7 +341,10 @@ mod tests {
             !desc.contains("tighten"),
             "catalog blurb must not promise tightening: {desc}"
         );
-        assert!(desc.contains("mark"), "catalog blurb must say what it does: {desc}");
+        assert!(
+            desc.contains("mark"),
+            "catalog blurb must say what it does: {desc}"
+        );
     }
 
     #[test]

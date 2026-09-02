@@ -759,8 +759,7 @@ impl NativeDecode {
             _ => SwOutFormat::Nv12,
         };
         let out_scale = scale_div.map_or(OutScale::FULL, OutScale::from_divisor);
-        let output_cadence =
-            cadence_div.map_or(OutputCadence::FULL, OutputCadence::from_divisor);
+        let output_cadence = cadence_div.map_or(OutputCadence::FULL, OutputCadence::from_divisor);
         // Check-then-insert under ONE guard: a reused LIVE stream id must be
         // refused before the insert, or the live session's sink is replaced
         // right before the open below fails with "already open" — silencing a

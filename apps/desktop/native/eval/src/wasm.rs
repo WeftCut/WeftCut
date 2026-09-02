@@ -149,7 +149,9 @@ fn decode_interp(interp: i32, p1x: f64, p1y: f64, p2x: f64, p2y: f64) -> Interpo
             amplitude: p1y,
             period: p2x,
         },
-        6 => Interpolation::Bounce { dir: decode_dir(p1x) },
+        6 => Interpolation::Bounce {
+            dir: decode_dir(p1x),
+        },
         _ => {
             debug_assert!(false, "unknown interp code");
             Interpolation::Linear

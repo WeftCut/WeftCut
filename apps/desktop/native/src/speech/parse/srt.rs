@@ -200,7 +200,9 @@ mod tests {
 
     #[test]
     fn malformed_srt_is_a_parse_error() {
-        let err = SrtParser.parse("not a subtitle at all").expect_err("should fail");
+        let err = SrtParser
+            .parse("not a subtitle at all")
+            .expect_err("should fail");
         assert!(matches!(err, SpeechError::Parse(_)));
     }
 

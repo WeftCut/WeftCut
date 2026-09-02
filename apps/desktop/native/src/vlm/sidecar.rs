@@ -36,8 +36,8 @@ use super::parser::RawDescription;
 const TEMP: &str = "0.1";
 const N_PREDICT: &str = "768";
 const NGL: &str = "999"; // offload all layers when the build has a GPU backend
-// MUST cap: the default follows the model's ~256K native ctx and OOMs the KV
-// cache even with free VRAM; 8192 fits the downscaled frames + generation.
+                         // MUST cap: the default follows the model's ~256K native ctx and OOMs the KV
+                         // cache even with free VRAM; 8192 fits the downscaled frames + generation.
 const CTX: &str = "8192";
 // At low temp the model degenerates into repeating the last segment until `-n`,
 // truncating the JSON; the penalty curbs the loop (the parser salvages the rest).
@@ -78,7 +78,13 @@ impl LlamaMtmdSidecar {
         device: Option<String>,
         style: OutputStyle,
     ) -> Self {
-        Self { binary, model, mmproj, device, style }
+        Self {
+            binary,
+            model,
+            mmproj,
+            device,
+            style,
+        }
     }
 }
 
@@ -118,8 +124,12 @@ pub fn build_prompt(frames: &[TimedFrame], focus: Focus) -> String {
             .to_string(),
     );
     lines.push("Rules:".to_string());
-    lines.push("- t_start and t_end MUST be chosen from the frame timestamps listed above.".to_string());
-    lines.push("- Merge adjacent frames that show the same action/scene into one segment.".to_string());
+    lines.push(
+        "- t_start and t_end MUST be chosen from the frame timestamps listed above.".to_string(),
+    );
+    lines.push(
+        "- Merge adjacent frames that show the same action/scene into one segment.".to_string(),
+    );
     lines.push(match focus {
         Focus::General => {
             "- tags: short visual keywords (subjects, setting, camera motion, shot type)."
@@ -229,11 +239,16 @@ mod tests {
     use super::*;
 
     fn frame(t_us: i64, name: &str) -> TimedFrame {
-        TimedFrame { t_us, path: PathBuf::from(name) }
+        TimedFrame {
+            t_us,
+            path: PathBuf::from(name),
+        }
     }
 
     fn as_strings(args: &[OsString]) -> Vec<String> {
-        args.iter().map(|a| a.to_string_lossy().into_owned()).collect()
+        args.iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
     }
     fn after(args: &[String], flag: &str) -> String {
         let i = args.iter().position(|a| a == flag).expect("flag present");
@@ -242,7 +257,11 @@ mod tests {
 
     #[test]
     fn images_are_one_comma_separated_arg() {
-        let frames = vec![frame(0, "a.png"), frame(1_000_000, "b.png"), frame(2_000_000, "c.png")];
+        let frames = vec![
+            frame(0, "a.png"),
+            frame(1_000_000, "b.png"),
+            frame(2_000_000, "c.png"),
+        ];
         let args = build_args(Path::new("/m.gguf"), Path::new("/mm.gguf"), &frames, "P");
         let s = as_strings(&args);
         // Exactly one --image flag, value is the comma-joined list.
@@ -253,7 +272,12 @@ mod tests {
     #[test]
     fn encodes_every_spike_landmine() {
         let frames = vec![frame(0, "a.png")];
-        let s = as_strings(&build_args(Path::new("/m.gguf"), Path::new("/mm.gguf"), &frames, "P"));
+        let s = as_strings(&build_args(
+            Path::new("/m.gguf"),
+            Path::new("/mm.gguf"),
+            &frames,
+            "P",
+        ));
         assert_eq!(after(&s, "-m"), "/m.gguf");
         assert_eq!(after(&s, "--mmproj"), "/mm.gguf");
         assert_eq!(after(&s, "-c"), "8192"); // capped context (KV-OOM guard)
@@ -328,7 +352,10 @@ mod tests {
             OutputStyle::Qwen3VlJson,
         );
         let raw = sidecar
-            .describe(DescribeRequest { frames, focus: Focus::General })
+            .describe(DescribeRequest {
+                frames,
+                focus: Focus::General,
+            })
             .await
             .expect("describe");
         let segs = parse_raw(raw).expect("parse");

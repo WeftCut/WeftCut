@@ -164,7 +164,7 @@ mod tests {
         assert_eq!(seg.words[0].t_end_us, 320_000); // ends where "我" starts
         assert_eq!(seg.words[1].text, "我");
         assert_eq!(seg.words[1].t_start_us, 320_000); // 0.32 s → µs
-        // Last token has no successor → zero-width end at its own start.
+                                                      // Last token has no successor → zero-width end at its own start.
         assert_eq!(seg.words[5].text, "绍");
         assert_eq!(seg.words[5].t_start_us, 1_520_000);
         assert_eq!(seg.words[5].t_end_us, 1_520_000);
@@ -192,8 +192,7 @@ mod tests {
 
     #[test]
     fn language_tag_is_carried_when_present() {
-        let json =
-            r#"{"lang":"zh","text":"好","timestamps":[0.0],"tokens":["好"]}"#;
+        let json = r#"{"lang":"zh","text":"好","timestamps":[0.0],"tokens":["好"]}"#;
         let t = FunAsrParser.parse(json).expect("parse");
         assert_eq!(t.language.as_deref(), Some("zh"));
     }

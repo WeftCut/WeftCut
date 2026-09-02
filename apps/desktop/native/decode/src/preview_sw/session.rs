@@ -38,9 +38,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use super::decoder::{
-    DecodeAccel, OutScale, OutputCadence, SwFrame, SwOutFormat, SwVideoStream,
-};
+use super::decoder::{DecodeAccel, OutScale, OutputCadence, SwFrame, SwOutFormat, SwVideoStream};
 use crate::recover::{panic_message, LockExt};
 
 /// How far PAST the request target this lane keeps frames decoded before it
@@ -446,14 +444,13 @@ fn session_thread(
     sink: FrameSink,
     shutdown: Arc<AtomicBool>,
 ) {
-    let mut stream =
-        match SwVideoStream::open_with_accel(&path, out_format, accel, out_scale) {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = init_tx.send(Err(e));
-                return;
-            }
-        };
+    let mut stream = match SwVideoStream::open_with_accel(&path, out_format, accel, out_scale) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = init_tx.send(Err(e));
+            return;
+        }
+    };
     stream.set_output_cadence(output_cadence);
     let info = PreviewSwOpenInfo {
         width: stream.out_width,
@@ -527,10 +524,7 @@ fn session_thread(
                 &sink,
                 SwFramePoke::Error {
                     stream_id: stream_id.clone(),
-                    message: format!(
-                        "preview-sw decode panicked: {}",
-                        panic_message(&*payload)
-                    ),
+                    message: format!("preview-sw decode panicked: {}", panic_message(&*payload)),
                 },
             );
             break;
@@ -921,12 +915,18 @@ mod tests {
         let reg = PreviewSwRegistry::new();
         reg.set_frame_sink(Box::new(move |poke| {
             if let SwFramePoke::Frame { frame, .. } = poke {
-                g2.lock()
-                    .unwrap()
-                    .push((frame.width, frame.height, frame.format, frame.data.len()));
+                g2.lock().unwrap().push((
+                    frame.width,
+                    frame.height,
+                    frame.format,
+                    frame.data.len(),
+                ));
             }
         }));
-        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_hevc10.mp4");
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_hevc10.mp4"
+        );
         let info = reg
             .open_with_accel_and_cadence(
                 "vtp10",
@@ -1014,8 +1014,13 @@ mod tests {
         );
         reg.open("s1".into(), p.into()).expect("open");
         let _ = reg.request_frame_at("s1".into(), 0);
-        let saw_panic_poke =
-            wait_for(|| errors.lock().unwrap().iter().any(|m| m.contains("panicked")));
+        let saw_panic_poke = wait_for(|| {
+            errors
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|m| m.contains("panicked"))
+        });
         let errs = errors.lock().unwrap();
         assert!(
             saw_panic_poke,
@@ -1097,7 +1102,8 @@ mod tests {
         for _ in 0..(N - 1) {
             reg.request_frame_at("lw1".into(), 0).expect("request");
         }
-        reg.request_frame_at("lw1".into(), 800_000).expect("request");
+        reg.request_frame_at("lw1".into(), 800_000)
+            .expect("request");
         // Poll (not one fixed sleep) until the final target's burst lands, so
         // a slow box waits longer instead of flaking; the timeout only trips
         // if the final request is never served at all.
@@ -1279,7 +1285,11 @@ mod tests {
         }
         let _ = reg.close("eof1".into());
         let pts = frames.lock().unwrap();
-        assert_eq!(*pts, vec![875_000], "the tail frame was re-delivered: {pts:?}");
+        assert_eq!(
+            *pts,
+            vec![875_000],
+            "the tail frame was re-delivered: {pts:?}"
+        );
         assert_eq!(
             eofs.load(std::sync::atomic::Ordering::SeqCst),
             1,

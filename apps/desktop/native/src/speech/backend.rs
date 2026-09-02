@@ -155,7 +155,10 @@ mod tests {
             let caps = b.capabilities();
             assert!(caps.transcription, "{b:?} should transcribe");
             assert!(!caps.tts, "{b:?} has no TTS");
-            assert!(caps.exact_word_timing, "{b:?} reports engine-exact word times");
+            assert!(
+                caps.exact_word_timing,
+                "{b:?} reports engine-exact word times"
+            );
             assert_eq!(b.locality(), Locality::Local, "{b:?} is local");
         }
     }

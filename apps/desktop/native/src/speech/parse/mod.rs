@@ -150,7 +150,10 @@ mod tests {
 
     #[test]
     fn format_tag_matches_variant() {
-        assert_eq!(RawTranscript::Srt(String::new()).format(), TranscriptFormat::Srt);
+        assert_eq!(
+            RawTranscript::Srt(String::new()).format(),
+            TranscriptFormat::Srt
+        );
         assert_eq!(
             RawTranscript::WhisperJson(String::new()).format(),
             TranscriptFormat::WhisperJson,

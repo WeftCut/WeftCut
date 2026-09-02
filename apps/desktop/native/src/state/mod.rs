@@ -38,16 +38,16 @@ pub use audio_role::{AudioRole, RoleFlagsPatch, RoleMixSettings};
 pub use color::{ColorSpace, Rgba};
 pub use composition::Composition;
 pub use effect::{Effect, EffectPatch};
-pub use link::{index_links, Link};
 pub use ids::{
-    new_id, CheckpointId, CompositionId, EffectId, KeyframeId, LayerId, LinkId, MarkerId,
-    MediaId, OpId, TrackId, TransitionId,
+    new_id, CheckpointId, CompositionId, EffectId, KeyframeId, LayerId, LinkId, MarkerId, MediaId,
+    OpId, TrackId, TransitionId,
 };
 pub use layer::{
     AudioParams, ColorParams, CompositionRefParams, FontSpec, ImageOverlayParams, Layer,
     LayerParams, MotifParams, Outline, Shadow, TextAlign, TextAnimPreset, TextParams, VAlign,
     VideoClipParams,
 };
+pub use link::{index_links, Link};
 pub use marker::Marker;
 pub use media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata, VideoStreamMeta};
 pub use project::{
@@ -73,10 +73,8 @@ mod tests {
         let root_id = uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000005").unwrap();
         let group_id = uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000006").unwrap();
         let ref_layer_id = uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000007").unwrap();
-        let group_track_id =
-            uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000008").unwrap();
-        let group_layer_id =
-            uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000009").unwrap();
+        let group_track_id = uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000008").unwrap();
+        let group_layer_id = uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000009").unwrap();
 
         let media = MediaItem {
             id: media_id,

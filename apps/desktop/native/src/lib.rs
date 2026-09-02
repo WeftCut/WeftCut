@@ -34,10 +34,10 @@ mod speech;
 // Video-understanding sidecar (scene description). Twin of `speech/`; gated on
 // the same `speech` feature — it reuses `jobs` ffmpeg (frame sampling) and the
 // `speech::http` cloud client, both of which `speech` already pulls in.
-#[cfg(feature = "speech")]
-mod vlm;
 #[cfg(feature = "export")]
 mod export;
+#[cfg(feature = "speech")]
+mod vlm;
 // Public because the `media_conformance` bin spawns ffmpeg too and must
 // resolve it through the same owner (issue #7 boundary #7) — see ffmpeg/mod.rs.
 #[cfg(any(feature = "jobs", feature = "export"))]

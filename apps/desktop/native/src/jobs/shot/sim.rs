@@ -138,7 +138,9 @@ fn structural_similarity(a: &RgbImage, b: &RgbImage) -> f64 {
 /// Separable 2D DCT-II: rows then columns. Full `PHASH_DCT_SIZE`² transform even
 /// though only the low-freq corner is read — the grid is tiny (~65k mults), so
 /// the naive form is cheaper to keep correct than a partial one.
-fn dct_2d(input: &[[f64; PHASH_DCT_SIZE]; PHASH_DCT_SIZE]) -> [[f64; PHASH_DCT_SIZE]; PHASH_DCT_SIZE] {
+fn dct_2d(
+    input: &[[f64; PHASH_DCT_SIZE]; PHASH_DCT_SIZE],
+) -> [[f64; PHASH_DCT_SIZE]; PHASH_DCT_SIZE] {
     let mut rows = [[0f64; PHASH_DCT_SIZE]; PHASH_DCT_SIZE];
     for y in 0..PHASH_DCT_SIZE {
         rows[y] = dct_1d(&input[y]);
@@ -229,7 +231,10 @@ mod tests {
         // A proxy-grade rescale barely moves the low-freq bits.
         let a = pattern(320, 240, 0.0);
         let d = hamming(phash(&a), phash(&rescaled(&a)));
-        assert!(d <= PHASH_MAX_HAMMING, "scaled/resampled hamming too large: {d}");
+        assert!(
+            d <= PHASH_MAX_HAMMING,
+            "scaled/resampled hamming too large: {d}"
+        );
     }
 
     #[test]
@@ -237,7 +242,11 @@ mod tests {
         let a = pattern(256, 192, 0.0);
         let c = compare_frames(&a, &a);
         assert_eq!(c.phash_hamming, 0);
-        assert!((c.ssim - 1.0).abs() < 1e-6, "identical ssim should be ~1.0, got {}", c.ssim);
+        assert!(
+            (c.ssim - 1.0).abs() < 1e-6,
+            "identical ssim should be ~1.0, got {}",
+            c.ssim
+        );
         assert!(c.similar);
     }
 
@@ -247,7 +256,11 @@ mod tests {
         // the proxy-vs-source comparison at one timestamp.
         let a = pattern(320, 240, 0.0);
         let c = compare_frames(&a, &rescaled(&a));
-        assert!(c.phash_hamming <= PHASH_MAX_HAMMING, "hamming {}", c.phash_hamming);
+        assert!(
+            c.phash_hamming <= PHASH_MAX_HAMMING,
+            "hamming {}",
+            c.phash_hamming
+        );
         assert!(c.ssim >= SSIM_MIN, "ssim {}", c.ssim);
         assert!(c.similar);
     }
@@ -258,7 +271,10 @@ mod tests {
         let a = pattern(256, 256, 0.0);
         let b = pattern(256, 256, std::f64::consts::PI);
         let c = compare_frames(&a, &b);
-        assert!(!c.similar, "phase-shifted patterns must not be similar: {c:?}");
+        assert!(
+            !c.similar,
+            "phase-shifted patterns must not be similar: {c:?}"
+        );
     }
 
     #[test]

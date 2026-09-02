@@ -478,7 +478,13 @@ fn spawn_conform(
             }
             Err(e) => {
                 warn!("conform job failed for {media_id}: {e:#}");
-                emit_job_error(&events, &log_slot, &media, JobKind::Conform, format!("{e:#}"));
+                emit_job_error(
+                    &events,
+                    &log_slot,
+                    &media,
+                    JobKind::Conform,
+                    format!("{e:#}"),
+                );
             }
         }
     });

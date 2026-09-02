@@ -33,8 +33,8 @@ pub(crate) mod sim;
 /// per-(source, tier) sidecar. Owns the one measurement function; [`attach_stats`]
 /// is its other caller.
 pub(crate) mod stats;
-use async_trait::async_trait;
 use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
+use async_trait::async_trait;
 use image::RgbImage;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
@@ -317,7 +317,12 @@ pub const DEFAULT_MIN_SHOT_US: i64 = 500_000;
 /// whatever spacing a caller asks for — so it is a fixed constant here, not a
 /// knob.
 pub fn floor_opts() -> ShotOpts {
-    ShotOpts { sensitivity: FLOOR_SENSITIVITY, min_shot_us: DEFAULT_MIN_SHOT_US, stats: false, events: false }
+    ShotOpts {
+        sensitivity: FLOOR_SENSITIVITY,
+        min_shot_us: DEFAULT_MIN_SHOT_US,
+        stats: false,
+        events: false,
+    }
 }
 
 /// The WHOLE-source shot report for `media` under `opts`, from the VSHOT cache —
@@ -341,7 +346,10 @@ pub async fn cached_source_report(
     if crate::cache::cached_ok(&path) {
         match read_report(&path) {
             Ok(report) => return Ok(report),
-            Err(e) => tracing::warn!("VSHOT cache {} unreadable, recomputing: {e:#}", path.display()),
+            Err(e) => tracing::warn!(
+                "VSHOT cache {} unreadable, recomputing: {e:#}",
+                path.display()
+            ),
         }
     }
 
@@ -705,8 +713,10 @@ fn var_laplacian(img: &RgbImage) -> f64 {
     let mut vals = Vec::with_capacity(((w - 2) * (h - 2)) as usize);
     for y in 1..h - 1 {
         for x in 1..w - 1 {
-            vals.push(luma(x - 1, y) + luma(x + 1, y) + luma(x, y - 1) + luma(x, y + 1)
-                - 4.0 * luma(x, y));
+            vals.push(
+                luma(x - 1, y) + luma(x + 1, y) + luma(x, y - 1) + luma(x, y + 1)
+                    - 4.0 * luma(x, y),
+            );
         }
     }
     let n = vals.len() as f64;
@@ -734,8 +744,7 @@ fn motion_between(a: &RgbImage, b: &RgbImage) -> f64 {
 /// A fade is a monotonic luma ramp across the shot that starts or ends near
 /// black and spans a meaningful range.
 fn is_fade(l_start: f64, l_mid: f64, l_end: f64) -> bool {
-    let monotonic =
-        (l_start <= l_mid && l_mid <= l_end) || (l_start >= l_mid && l_mid >= l_end);
+    let monotonic = (l_start <= l_mid && l_mid <= l_end) || (l_start >= l_mid && l_mid >= l_end);
     let span = (l_end - l_start).abs();
     let touches_black = l_start.min(l_end) < FADE_DARK_LUMA;
     monotonic && span >= FADE_MIN_DELTA && touches_black
@@ -776,7 +785,11 @@ mod tests {
         let shots = build_shots(&[2_000_000, 4_000_000], 0, 6_000_000, 500_000);
         assert_eq!(
             shots,
-            vec![(0, 2_000_000), (2_000_000, 4_000_000), (4_000_000, 6_000_000)]
+            vec![
+                (0, 2_000_000),
+                (2_000_000, 4_000_000),
+                (4_000_000, 6_000_000)
+            ]
         );
     }
 
@@ -786,7 +799,11 @@ mod tests {
         let shots = build_shots(&[2_000_000, 2_100_000, 4_000_000], 0, 6_000_000, 500_000);
         assert_eq!(
             shots,
-            vec![(0, 2_000_000), (2_000_000, 4_000_000), (4_000_000, 6_000_000)]
+            vec![
+                (0, 2_000_000),
+                (2_000_000, 4_000_000),
+                (4_000_000, 6_000_000)
+            ]
         );
     }
 
@@ -843,7 +860,12 @@ mod tests {
     // ── VSHOT cache: (de)serialize + source-keyed path + window clip ─────────
 
     fn opts(sensitivity: f32, min_shot_us: i64, stats: bool, events: bool) -> ShotOpts {
-        ShotOpts { sensitivity, min_shot_us, stats, events }
+        ShotOpts {
+            sensitivity,
+            min_shot_us,
+            stats,
+            events,
+        }
     }
 
     /// A whole-source report: shot0 [0,2s] (black), shot1 [2s,6s], one cut at 2s.
@@ -871,7 +893,10 @@ mod tests {
                     flags: vec![],
                 },
             ],
-            cut_scores: vec![Cut { t_us: 2_000_000, score: 0.5 }],
+            cut_scores: vec![Cut {
+                t_us: 2_000_000,
+                score: 0.5,
+            }],
         }
     }
 
@@ -909,7 +934,10 @@ mod tests {
 
     #[test]
     fn shot_flag_serde_uses_lowercase_tags() {
-        assert_eq!(serde_json::to_string(&ShotFlag::Freeze).unwrap(), "\"freeze\"");
+        assert_eq!(
+            serde_json::to_string(&ShotFlag::Freeze).unwrap(),
+            "\"freeze\""
+        );
         let f: ShotFlag = serde_json::from_str("\"fade\"").unwrap();
         assert_eq!(f, ShotFlag::Fade);
     }
@@ -917,13 +945,34 @@ mod tests {
     #[test]
     fn cache_key_depends_on_source_tier_and_every_param() {
         let base = cache_key("h", "quick", &opts(0.4, 500_000, true, true));
-        assert_eq!(base, cache_key("h", "quick", &opts(0.4, 500_000, true, true))); // deterministic
-        assert_ne!(base, cache_key("h2", "quick", &opts(0.4, 500_000, true, true))); // source hash
-        assert_ne!(base, cache_key("h", "orig", &opts(0.4, 500_000, true, true))); // source tier
-        assert_ne!(base, cache_key("h", "quick", &opts(0.2, 500_000, true, true))); // sensitivity
-        assert_ne!(base, cache_key("h", "quick", &opts(0.4, 1_000_000, true, true))); // min_shot_us
-        assert_ne!(base, cache_key("h", "quick", &opts(0.4, 500_000, false, true))); // stats pass
-        assert_ne!(base, cache_key("h", "quick", &opts(0.4, 500_000, true, false))); // events pass
+        assert_eq!(
+            base,
+            cache_key("h", "quick", &opts(0.4, 500_000, true, true))
+        ); // deterministic
+        assert_ne!(
+            base,
+            cache_key("h2", "quick", &opts(0.4, 500_000, true, true))
+        ); // source hash
+        assert_ne!(
+            base,
+            cache_key("h", "orig", &opts(0.4, 500_000, true, true))
+        ); // source tier
+        assert_ne!(
+            base,
+            cache_key("h", "quick", &opts(0.2, 500_000, true, true))
+        ); // sensitivity
+        assert_ne!(
+            base,
+            cache_key("h", "quick", &opts(0.4, 1_000_000, true, true))
+        ); // min_shot_us
+        assert_ne!(
+            base,
+            cache_key("h", "quick", &opts(0.4, 500_000, false, true))
+        ); // stats pass
+        assert_ne!(
+            base,
+            cache_key("h", "quick", &opts(0.4, 500_000, true, false))
+        ); // events pass
     }
 
     #[test]
@@ -933,11 +982,19 @@ mod tests {
         let clipped = clip_report(&sample_report(), 1_000_000, 5_000_000);
         assert_eq!(clipped.shots.len(), 2);
         assert_eq!(
-            (clipped.shots[0].index, clipped.shots[0].t_start_us, clipped.shots[0].t_end_us),
+            (
+                clipped.shots[0].index,
+                clipped.shots[0].t_start_us,
+                clipped.shots[0].t_end_us
+            ),
             (0, 1_000_000, 2_000_000)
         );
         assert_eq!(
-            (clipped.shots[1].index, clipped.shots[1].t_start_us, clipped.shots[1].t_end_us),
+            (
+                clipped.shots[1].index,
+                clipped.shots[1].t_start_us,
+                clipped.shots[1].t_end_us
+            ),
             (1, 2_000_000, 5_000_000)
         );
         assert_eq!(clipped.shots[0].brightness, Some(0.5));
@@ -995,7 +1052,9 @@ mod tests {
         // No proxy exists for this media in the temp cache, so pick_source uses
         // the original → tier "orig"; pre-seed the sidecar at that exact key.
         let path = cache.shot(&cache_key(&media.file_hash_blake3, "orig", &o));
-        write_json_atomic(&path, &sample_report(), "shot report").await.unwrap();
+        write_json_atomic(&path, &sample_report(), "shot report")
+            .await
+            .unwrap();
         assert!(crate::cache::cached_ok(&path));
 
         // HIT: reads the sidecar, never spawns ffmpeg (path /nonexistent.mp4).
@@ -1019,7 +1078,10 @@ mod tests {
         let err = cached_source_report(&cache, &media, &opts(0.4, 500_000, true, true))
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("no known duration"), "got: {err:#}");
+        assert!(
+            err.to_string().contains("no known duration"),
+            "got: {err:#}"
+        );
     }
 
     // ── Floor scan + reduce: one decode, any threshold above the floor ───────
@@ -1028,11 +1090,26 @@ mod tests {
     /// thresholds — the shape a floor scan produces.
     fn floor_cuts() -> Vec<Cut> {
         vec![
-            Cut { t_us: 1_000_000, score: 0.08 },
-            Cut { t_us: 3_000_000, score: 0.90 },
-            Cut { t_us: 5_000_000, score: 0.25 },
-            Cut { t_us: 8_000_000, score: 0.55 },
-            Cut { t_us: 10_000_000, score: 0.12 },
+            Cut {
+                t_us: 1_000_000,
+                score: 0.08,
+            },
+            Cut {
+                t_us: 3_000_000,
+                score: 0.90,
+            },
+            Cut {
+                t_us: 5_000_000,
+                score: 0.25,
+            },
+            Cut {
+                t_us: 8_000_000,
+                score: 0.55,
+            },
+            Cut {
+                t_us: 10_000_000,
+                score: 0.12,
+            },
         ]
     }
 
@@ -1053,10 +1130,17 @@ mod tests {
                 brightness: Some(index as f64 / 10.0),
                 motion: Some(0.2),
                 sharpness: Some(4.0),
-                flags: if index == 0 { vec![ShotFlag::Black] } else { vec![] },
+                flags: if index == 0 {
+                    vec![ShotFlag::Black]
+                } else {
+                    vec![]
+                },
             })
             .collect();
-        let cut_scores = cuts.into_iter().filter(|c| c.t_us > 0 && c.t_us < out_us).collect();
+        let cut_scores = cuts
+            .into_iter()
+            .filter(|c| c.t_us > 0 && c.t_us < out_us)
+            .collect();
         ShotReport { shots, cut_scores }
     }
 
@@ -1069,7 +1153,9 @@ mod tests {
     /// Count every file under `root`, recursively, so a probe can be asserted to
     /// leave the cache tree alone.
     fn file_count(root: &Path) -> usize {
-        let Ok(entries) = std::fs::read_dir(root) else { return 0 };
+        let Ok(entries) = std::fs::read_dir(root) else {
+            return 0;
+        };
         let mut n = 0;
         for e in entries.flatten() {
             if e.path().is_dir() {
@@ -1131,7 +1217,10 @@ mod tests {
         let report = scanned_report(floor_cuts(), 12_000_000, 500_000);
         let r = reduce(&report, 0.2, 500_000, 0, 12_000_000);
         assert_eq!(
-            r.shots.iter().map(|s| (s.index, s.t_start_us, s.t_end_us)).collect::<Vec<_>>(),
+            r.shots
+                .iter()
+                .map(|s| (s.index, s.t_start_us, s.t_end_us))
+                .collect::<Vec<_>>(),
             vec![
                 (0, 0, 3_000_000),
                 (1, 3_000_000, 5_000_000),
@@ -1163,7 +1252,10 @@ mod tests {
         let report = scanned_report(floor_cuts(), 12_000_000, 500_000);
         let r = reduce(&report, FLOOR_SENSITIVITY, 500_000, 3_000_000, 9_000_000);
         assert_eq!(
-            r.shots.iter().map(|s| (s.index, s.t_start_us, s.t_end_us)).collect::<Vec<_>>(),
+            r.shots
+                .iter()
+                .map(|s| (s.index, s.t_start_us, s.t_end_us))
+                .collect::<Vec<_>>(),
             vec![
                 (0, 3_000_000, 5_000_000),
                 (1, 5_000_000, 8_000_000),
@@ -1213,13 +1305,19 @@ mod tests {
         // No proxy exists in the temp cache → pick_source takes the original,
         // tier "orig"; seed the sidecar at exactly that key.
         let path = cache.shot(&cache_key(&media.file_hash_blake3, "orig", &floor_opts()));
-        write_json_atomic(&path, &sample_report(), "shot report").await.unwrap();
+        write_json_atomic(&path, &sample_report(), "shot report")
+            .await
+            .unwrap();
         let seeded = file_count(tmp.path());
         assert!(is_report_cached(&cache, &media, &floor_opts()));
 
         // The probe is keyed, so the analyze_clip default entry is a separate
         // question — the floor scan neither answers for it nor disturbs it.
-        assert!(!is_report_cached(&cache, &media, &opts(0.4, 500_000, true, true)));
+        assert!(!is_report_cached(
+            &cache,
+            &media,
+            &opts(0.4, 500_000, true, true)
+        ));
         assert_eq!(file_count(tmp.path()), seeded, "a probe writes nothing");
     }
 }

@@ -11,14 +11,14 @@ use serde::Serialize;
 pub mod speech;
 // Gated on `speech` for the same reason `vlm/` itself is: the video-understanding
 // subsystem reuses that feature's ffmpeg frame sampling + HTTP client.
-#[cfg(feature = "speech")]
-pub mod vlm;
 pub mod content;
 #[cfg(feature = "export")]
 pub mod export;
 #[cfg(feature = "jobs")]
 pub mod media;
 pub mod prefs;
+#[cfg(feature = "speech")]
+pub mod vlm;
 
 #[cfg(feature = "speech")]
 #[derive(Serialize, Clone)]

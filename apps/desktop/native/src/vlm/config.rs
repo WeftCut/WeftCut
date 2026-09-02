@@ -76,7 +76,12 @@ pub enum Availability {
 pub fn availability(backend: VlmBackend, cfg: Option<&BackendConfig>) -> Availability {
     match backend.locality() {
         Locality::Local => match cfg {
-            Some(BackendConfig::Local { binary, model, mmproj, .. }) => {
+            Some(BackendConfig::Local {
+                binary,
+                model,
+                mmproj,
+                ..
+            }) => {
                 if !binary.exists() {
                     Availability::NeedsBinary
                 } else if !model.exists() || !mmproj.exists() {
@@ -124,7 +129,11 @@ mod tests {
         assert_eq!(
             availability(
                 VlmBackend::ByoEndpoint,
-                Some(&BackendConfig::Endpoint { url: "  ".into(), api_key: None, model: None }),
+                Some(&BackendConfig::Endpoint {
+                    url: "  ".into(),
+                    api_key: None,
+                    model: None
+                }),
             ),
             Availability::NeedsEndpoint,
         );
@@ -162,16 +171,28 @@ mod tests {
         };
 
         // Nothing on disk → binary is the first gap.
-        assert_eq!(availability(VlmBackend::Qwen3Vl, Some(&cfg)), Availability::NeedsBinary);
+        assert_eq!(
+            availability(VlmBackend::Qwen3Vl, Some(&cfg)),
+            Availability::NeedsBinary
+        );
         // Binary present, model missing → NeedsModel.
         std::fs::write(&binary, b"#!/bin/sh\n").unwrap();
-        assert_eq!(availability(VlmBackend::Qwen3Vl, Some(&cfg)), Availability::NeedsModel);
+        assert_eq!(
+            availability(VlmBackend::Qwen3Vl, Some(&cfg)),
+            Availability::NeedsModel
+        );
         // Model present, mmproj missing → still NeedsModel (bundle incomplete).
         std::fs::write(&model, b"\x00").unwrap();
-        assert_eq!(availability(VlmBackend::Qwen3Vl, Some(&cfg)), Availability::NeedsModel);
+        assert_eq!(
+            availability(VlmBackend::Qwen3Vl, Some(&cfg)),
+            Availability::NeedsModel
+        );
         // All three present → Available.
         std::fs::write(&mmproj, b"\x00").unwrap();
-        assert_eq!(availability(VlmBackend::Qwen3Vl, Some(&cfg)), Availability::Available);
+        assert_eq!(
+            availability(VlmBackend::Qwen3Vl, Some(&cfg)),
+            Availability::Available
+        );
     }
 
     #[test]

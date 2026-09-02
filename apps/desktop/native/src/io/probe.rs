@@ -11,8 +11,8 @@ use std::process::{Command, Stdio};
 use crate::process::NoConsoleWindow;
 use std::time::UNIX_EPOCH;
 
-use anyhow::{Context, Result};
 use crate::ffmpeg::{ffprobe_is_installed, ffprobe_path};
+use anyhow::{Context, Result};
 use serde::Deserialize;
 use tracing::warn;
 

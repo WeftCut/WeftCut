@@ -93,7 +93,11 @@ impl SidecarRun {
             }
         };
 
-        exit_result(output.status.success(), output.status.code(), &output.stderr)?;
+        exit_result(
+            output.status.success(),
+            output.status.code(),
+            &output.stderr,
+        )?;
         let body = read_body(&self.output, &output.stdout).await?;
         Ok(wrap(self.format, body))
     }
@@ -292,7 +296,10 @@ mod tests {
             .await
             .expect_err("missing file");
         let msg = format!("{err}");
-        assert!(msg.contains("nope.json"), "error should name the path: {msg}");
+        assert!(
+            msg.contains("nope.json"),
+            "error should name the path: {msg}"
+        );
     }
 
     #[test]
@@ -304,6 +311,8 @@ mod tests {
         // 60 + 10*10 = 160 s.
         assert_eq!(scaled_timeout_from_bytes(44 + 320_000).as_secs(), 160);
         // Longer clip → strictly larger ceiling (monotonic).
-        assert!(scaled_timeout_from_bytes(44 + 3_200_000) > scaled_timeout_from_bytes(44 + 320_000));
+        assert!(
+            scaled_timeout_from_bytes(44 + 3_200_000) > scaled_timeout_from_bytes(44 + 320_000)
+        );
     }
 }

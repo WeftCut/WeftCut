@@ -265,7 +265,9 @@ mod tests {
 
     #[test]
     fn invalid_json_is_a_parse_error() {
-        let err = WhisperJsonParser.parse("{not json").expect_err("should fail");
+        let err = WhisperJsonParser
+            .parse("{not json")
+            .expect_err("should fail");
         assert!(matches!(err, SpeechError::Parse(_)));
     }
 }

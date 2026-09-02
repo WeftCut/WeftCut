@@ -82,10 +82,12 @@ pub async fn settings_get_vlm_backends(
     cfg: HashMap<String, BackendConfig>,
 ) -> Result<Vec<VlmBackendStatus>, String> {
     // "auto" / unknown / absent → None (automatic); a known tag → that backend.
-    let preferred_backend = preferred
-        .as_deref()
-        .filter(|s| *s != "auto")
-        .and_then(|s| VlmBackend::all().iter().copied().find(|bk| bk.as_str() == s));
+    let preferred_backend = preferred.as_deref().filter(|s| *s != "auto").and_then(|s| {
+        VlmBackend::all()
+            .iter()
+            .copied()
+            .find(|bk| bk.as_str() == s)
+    });
     let selected = select_backend(preferred_backend, &cfg);
     Ok(VlmBackend::all()
         .iter()
@@ -113,7 +115,11 @@ mod tests {
     }
 
     fn endpoint(url: &str) -> BackendConfig {
-        BackendConfig::Endpoint { url: url.into(), api_key: None, model: None }
+        BackendConfig::Endpoint {
+            url: url.into(),
+            api_key: None,
+            model: None,
+        }
     }
 
     /// A local config whose three files exist, so it reports `Available`.
@@ -124,14 +130,24 @@ mod tests {
         for p in [&binary, &model, &mmproj] {
             std::fs::write(p, b"\x00").unwrap();
         }
-        BackendConfig::Local { binary, model, mmproj, device: None }
+        BackendConfig::Local {
+            binary,
+            model,
+            mmproj,
+            device: None,
+        }
     }
 
     #[tokio::test]
     async fn empty_config_lists_every_backend_with_its_own_gap_and_nothing_selected() {
-        let rows = settings_get_vlm_backends(None, HashMap::new()).await.unwrap();
+        let rows = settings_get_vlm_backends(None, HashMap::new())
+            .await
+            .unwrap();
         assert_eq!(rows.len(), VlmBackend::all().len());
-        assert!(!rows.iter().any(|r| r.selected), "nothing configured => no row selected");
+        assert!(
+            !rows.iter().any(|r| r.selected),
+            "nothing configured => no row selected"
+        );
         // Each locality names the piece IT is missing, not a generic "unavailable".
         let by = |tag: &str| rows.iter().find(|r| r.backend == tag).unwrap();
         assert_eq!(by("qwen3_vl").availability, "needs_binary");
@@ -145,11 +161,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cfg = cfg_of(vec![
             ("qwen3_vl", present_local(dir.path())),
-            ("byo_endpoint", endpoint("http://localhost:8080/v1/chat/completions")),
+            (
+                "byo_endpoint",
+                endpoint("http://localhost:8080/v1/chat/completions"),
+            ),
         ]);
         // Automatic: DEFAULT_ORDER is local-first, so the on-device engine wins.
         let rows = settings_get_vlm_backends(None, cfg.clone()).await.unwrap();
-        assert_eq!(rows.iter().find(|r| r.selected).map(|r| r.backend.as_str()), Some("qwen3_vl"));
+        assert_eq!(
+            rows.iter().find(|r| r.selected).map(|r| r.backend.as_str()),
+            Some("qwen3_vl")
+        );
         // An explicit preference that IS available wins.
         let rows = settings_get_vlm_backends(Some("byo_endpoint".into()), cfg.clone())
             .await
@@ -159,15 +181,25 @@ mod tests {
             Some("byo_endpoint"),
         );
         // "auto" is what the TS store spells; it must read as NO preference.
-        let rows = settings_get_vlm_backends(Some("auto".into()), cfg).await.unwrap();
-        assert_eq!(rows.iter().find(|r| r.selected).map(|r| r.backend.as_str()), Some("qwen3_vl"));
+        let rows = settings_get_vlm_backends(Some("auto".into()), cfg)
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.iter().find(|r| r.selected).map(|r| r.backend.as_str()),
+            Some("qwen3_vl")
+        );
     }
 
     #[tokio::test]
     async fn a_preference_that_is_unavailable_falls_through_to_what_is() {
-        let cfg = cfg_of(vec![("byo_endpoint", endpoint("http://h/v1/chat/completions"))]);
+        let cfg = cfg_of(vec![(
+            "byo_endpoint",
+            endpoint("http://h/v1/chat/completions"),
+        )]);
         // qwen3_vl preferred but unconfigured => the walk continues to the endpoint.
-        let rows = settings_get_vlm_backends(Some("qwen3_vl".into()), cfg).await.unwrap();
+        let rows = settings_get_vlm_backends(Some("qwen3_vl".into()), cfg)
+            .await
+            .unwrap();
         assert_eq!(
             rows.iter().find(|r| r.selected).map(|r| r.backend.as_str()),
             Some("byo_endpoint"),

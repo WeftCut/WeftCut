@@ -292,7 +292,10 @@ mod tests {
         };
         assert_eq!(kfs.len(), 3);
         assert_eq!(kfs[1].t_us, 1_000_000);
-        assert_eq!(kfs[1].interp, EASE_IN_BAKED, "inherits preceding key interp");
+        assert_eq!(
+            kfs[1].interp, EASE_IN_BAKED,
+            "inherits preceding key interp"
+        );
     }
 
     #[test]

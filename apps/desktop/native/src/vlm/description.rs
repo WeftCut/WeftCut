@@ -151,7 +151,12 @@ mod tests {
     use super::*;
 
     fn seg(a: i64, b: i64, text: &str) -> DescSegment {
-        DescSegment { t_start_us: a, t_end_us: b, text: text.into(), tags: vec![] }
+        DescSegment {
+            t_start_us: a,
+            t_end_us: b,
+            text: text.into(),
+            tags: vec![],
+        }
     }
 
     #[test]
@@ -185,7 +190,11 @@ mod tests {
         assert_eq!(c.segments.len(), 1);
 
         // Adjacent window folds into one contiguous covered range.
-        c.merge_window(2_000_000, 4_000_000, vec![seg(2_000_000, 4_000_000, "second")]);
+        c.merge_window(
+            2_000_000,
+            4_000_000,
+            vec![seg(2_000_000, 4_000_000, "second")],
+        );
         assert_eq!(c.covered_ranges, vec![[0, 4_000_000]]);
         assert_eq!(c.segments.len(), 2);
 
@@ -213,11 +222,29 @@ mod tests {
     #[test]
     fn cache_key_is_sensitive_to_every_input() {
         let base = cache_key("h", VlmBackend::Qwen3Vl, "m", 1000, Focus::General);
-        assert_eq!(base, cache_key("h", VlmBackend::Qwen3Vl, "m", 1000, Focus::General));
-        assert_ne!(base, cache_key("h2", VlmBackend::Qwen3Vl, "m", 1000, Focus::General));
-        assert_ne!(base, cache_key("h", VlmBackend::MiniCpmV, "m", 1000, Focus::General));
-        assert_ne!(base, cache_key("h", VlmBackend::Qwen3Vl, "m2", 1000, Focus::General));
-        assert_ne!(base, cache_key("h", VlmBackend::Qwen3Vl, "m", 2000, Focus::General));
-        assert_ne!(base, cache_key("h", VlmBackend::Qwen3Vl, "m", 1000, Focus::ShotType));
+        assert_eq!(
+            base,
+            cache_key("h", VlmBackend::Qwen3Vl, "m", 1000, Focus::General)
+        );
+        assert_ne!(
+            base,
+            cache_key("h2", VlmBackend::Qwen3Vl, "m", 1000, Focus::General)
+        );
+        assert_ne!(
+            base,
+            cache_key("h", VlmBackend::MiniCpmV, "m", 1000, Focus::General)
+        );
+        assert_ne!(
+            base,
+            cache_key("h", VlmBackend::Qwen3Vl, "m2", 1000, Focus::General)
+        );
+        assert_ne!(
+            base,
+            cache_key("h", VlmBackend::Qwen3Vl, "m", 2000, Focus::General)
+        );
+        assert_ne!(
+            base,
+            cache_key("h", VlmBackend::Qwen3Vl, "m", 1000, Focus::ShotType)
+        );
     }
 }

@@ -10,11 +10,11 @@ use reqwest::StatusCode;
 use serde::Serialize;
 use tokio::fs;
 
+use crate::speech::backend::SpeechBackend;
 use crate::speech::error::SpeechError;
 use crate::speech::http::{
     bearer_auth, retry_delay_for_status, shared_client, MAX_RETRY_ATTEMPTS, RETRY_TOTAL_BUDGET,
 };
-use crate::speech::backend::SpeechBackend;
 use crate::speech::parse::RawTranscript;
 use crate::speech::synthesizer::{AudioFormat, SynthesizeRequest, SynthesizeResponse, Synthesizer};
 use crate::speech::transcriber::{TranscribeRequest, Transcriber};
@@ -400,8 +400,11 @@ mod tests {
 
     #[test]
     fn maps_429_to_rate_limited_with_retry_after() {
-        let err =
-            map_status_to_speech_error(StatusCode::TOO_MANY_REQUESTS, Some(20), "rate limit".into());
+        let err = map_status_to_speech_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            Some(20),
+            "rate limit".into(),
+        );
         match err {
             SpeechError::RateLimited {
                 provider: SpeechBackend::OpenAi,

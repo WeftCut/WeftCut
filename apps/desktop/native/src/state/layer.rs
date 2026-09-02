@@ -343,9 +343,7 @@ pub(crate) fn resolve_animated_f64<'a>(
             _ => None,
         },
         LayerParams::Color(_) => None,
-        LayerParams::CompositionRef(p) => {
-            transform_or_opacity_ref(&p.transform, &p.opacity, key)
-        }
+        LayerParams::CompositionRef(p) => transform_or_opacity_ref(&p.transform, &p.opacity, key),
     }
 }
 

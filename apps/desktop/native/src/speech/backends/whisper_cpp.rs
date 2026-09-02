@@ -143,7 +143,9 @@ mod tests {
     use super::*;
 
     fn as_strings(args: &[OsString]) -> Vec<String> {
-        args.iter().map(|a| a.to_string_lossy().into_owned()).collect()
+        args.iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
     }
 
     fn pos(args: &[String], flag: &str) -> Option<usize> {
@@ -161,8 +163,14 @@ mod tests {
             None,
         );
         let s = as_strings(&args);
-        assert!(s.contains(&"-ojf".to_string()), "want_word_timing → -ojf: {s:?}");
-        assert!(!s.contains(&"-osrt".to_string()), "must not also pass -osrt: {s:?}");
+        assert!(
+            s.contains(&"-ojf".to_string()),
+            "want_word_timing → -ojf: {s:?}"
+        );
+        assert!(
+            !s.contains(&"-osrt".to_string()),
+            "must not also pass -osrt: {s:?}"
+        );
     }
 
     #[test]
@@ -176,8 +184,14 @@ mod tests {
             None,
         );
         let s = as_strings(&args);
-        assert!(s.contains(&"-osrt".to_string()), "no word timing → -osrt: {s:?}");
-        assert!(!s.contains(&"-ojf".to_string()), "must not pass -ojf: {s:?}");
+        assert!(
+            s.contains(&"-osrt".to_string()),
+            "no word timing → -osrt: {s:?}"
+        );
+        assert!(
+            !s.contains(&"-ojf".to_string()),
+            "must not pass -ojf: {s:?}"
+        );
     }
 
     #[test]

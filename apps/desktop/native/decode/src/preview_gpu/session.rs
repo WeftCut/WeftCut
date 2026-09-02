@@ -1073,7 +1073,6 @@ unsafe fn convert_frame_into_slot(
     Ok(CopyOutcome::Copied)
 }
 
-
 /// Fire a poke through the shared sink if one is set. The mutex is held across
 /// the call so concurrent sessions serialise (the addon's sink is a
 /// non-blocking event enqueue, so this can't deadlock or stall).
@@ -1156,8 +1155,7 @@ fn init_session(
             });
         }
 
-        let slot_textures: Vec<ID3D11Texture2D> =
-            pool.iter().map(|s| s.texture.clone()).collect();
+        let slot_textures: Vec<ID3D11Texture2D> = pool.iter().map(|s| s.texture.clone()).collect();
         let convert = ConvertPass::new(&device, width, height, matrix, full_range, &slot_textures)?;
 
         let free = vec![true; pool.len()];
@@ -1629,7 +1627,11 @@ mod tests {
         assert!(!is_late_frame(1_000_000, 0, 1_000_000));
         // Frames inside the A/V tolerance still get delivered: showing a slightly
         // stale frame beats showing nothing, which is why the margin isn't zero.
-        assert!(!is_late_frame(1_000_000, F30, 1_000_000 + LATE_FRAME_DROP_US));
+        assert!(!is_late_frame(
+            1_000_000,
+            F30,
+            1_000_000 + LATE_FRAME_DROP_US
+        ));
         // Past the tolerance, drop: nothing downstream would ever bind it.
         assert!(is_late_frame(
             1_000_000,
@@ -1673,8 +1675,14 @@ mod tests {
             SEEK_FORWARD_THRESHOLD_US
         );
         // A repeated / out-of-order key pts is not an interval.
-        assert_eq!(fold_key_interval(1_000_000, 5_000_000, 5_000_000), 1_000_000);
-        assert_eq!(fold_key_interval(1_000_000, 5_000_000, 4_000_000), 1_000_000);
+        assert_eq!(
+            fold_key_interval(1_000_000, 5_000_000, 5_000_000),
+            1_000_000
+        );
+        assert_eq!(
+            fold_key_interval(1_000_000, 5_000_000, 4_000_000),
+            1_000_000
+        );
         // EWMA converges toward a real 3 s GOP from the 1 s seed rather than jumping.
         let mut k = SEEK_FORWARD_THRESHOLD_US;
         let mut last = 0;
@@ -1713,7 +1721,7 @@ mod tests {
     #[test]
     fn needs_seek_covers_cold_start_backward_and_forward_jumps() {
         const K: i64 = 3_000_000; // long-GOP source
-        // Cold start: a near-zero target is cheaper to reach by forward decode.
+                                  // Cold start: a near-zero target is cheaper to reach by forward decode.
         assert!(!needs_seek(0, i64::MIN, i64::MIN, K));
         assert!(needs_seek(90_000_000, i64::MIN, i64::MIN, K));
         // Backward move relative to the previous anchor.
@@ -1792,8 +1800,13 @@ mod tests {
             return;
         };
         reg.request_frame_at("s1", 0).expect("request_frame_at");
-        let saw_panic_poke =
-            wait_for(|| errors.lock().unwrap().iter().any(|m| m.contains("panicked")));
+        let saw_panic_poke = wait_for(|| {
+            errors
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|m| m.contains("panicked"))
+        });
         let errs = errors.lock().unwrap();
         assert!(
             saw_panic_poke,

@@ -134,7 +134,10 @@ mod tests {
                     t_start_us: 1_000_000,
                     t_end_us: 2_500_000,
                     text: "Hello world".into(),
-                    words: vec![word(1_000_000, 1_750_000, "Hello"), word(1_750_000, 2_500_000, "world")],
+                    words: vec![
+                        word(1_000_000, 1_750_000, "Hello"),
+                        word(1_750_000, 2_500_000, "world"),
+                    ],
                 },
                 Segment {
                     t_start_us: 3_000_000,
@@ -185,7 +188,13 @@ mod tests {
             serde_json::to_string(&WordTiming::InterpolatedFromCue).unwrap(),
             "\"interpolated_from_cue\"",
         );
-        assert_eq!(serde_json::to_string(&WordTiming::Exact).unwrap(), "\"exact\"");
-        assert_eq!(serde_json::to_string(&WordTiming::None).unwrap(), "\"none\"");
+        assert_eq!(
+            serde_json::to_string(&WordTiming::Exact).unwrap(),
+            "\"exact\""
+        );
+        assert_eq!(
+            serde_json::to_string(&WordTiming::None).unwrap(),
+            "\"none\""
+        );
     }
 }

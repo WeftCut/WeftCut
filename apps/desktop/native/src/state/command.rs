@@ -130,7 +130,10 @@ pub enum ValidationError {
     RootMissing { root_id: CompositionId },
 
     #[error("compositions[{key}] carries id {id}")]
-    CompositionIdMismatch { key: CompositionId, id: CompositionId },
+    CompositionIdMismatch {
+        key: CompositionId,
+        id: CompositionId,
+    },
 
     #[error("layer {layer} references missing composition {composition}")]
     CompositionMissing {
@@ -218,9 +221,19 @@ pub enum CommandError {
     #[error("composition {composition} not found")]
     CompositionNotFound { composition: CompositionId },
     #[error("layer {layer} cannot move from composition {from} to {to} — a layer changes composition only through pre-compose or ungroup")]
-    CrossCompositionMove { layer: LayerId, from: CompositionId, to: CompositionId },
-    #[error("layer {layer} lives in composition {composition}; this op needs every layer in {expected}")]
-    CrossCompositionSet { layer: LayerId, composition: CompositionId, expected: CompositionId },
+    CrossCompositionMove {
+        layer: LayerId,
+        from: CompositionId,
+        to: CompositionId,
+    },
+    #[error(
+        "layer {layer} lives in composition {composition}; this op needs every layer in {expected}"
+    )]
+    CrossCompositionSet {
+        layer: LayerId,
+        composition: CompositionId,
+        expected: CompositionId,
+    },
     /// Returned when `separate_audio_to_new_track` is invoked on a non-Audio
     /// layer.
     #[error("layer {layer} is not a {expected} layer")]
@@ -262,9 +275,7 @@ pub enum CommandError {
     TrackLocked { track: TrackId },
     #[error("split point {at_t}us is outside layer {layer} bounds")]
     SplitOutsideLayer { layer: LayerId, at_t: TimeUs },
-    #[error(
-        "link op on layer {touched} blocked: member {locked_layer} of link {link} is locked"
-    )]
+    #[error("link op on layer {touched} blocked: member {locked_layer} of link {link} is locked")]
     LinkLockedMember {
         link: LinkId,
         locked_layer: LayerId,

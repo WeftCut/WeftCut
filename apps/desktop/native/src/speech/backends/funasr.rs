@@ -120,7 +120,9 @@ mod tests {
     use super::*;
 
     fn as_strings(args: &[OsString]) -> Vec<String> {
-        args.iter().map(|a| a.to_string_lossy().into_owned()).collect()
+        args.iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
     }
 
     #[test]
@@ -158,12 +160,7 @@ mod tests {
 
     #[test]
     fn threads_some_adds_num_threads_eq_flag() {
-        let args = build_args(
-            Path::new("m"),
-            Path::new("tk"),
-            Path::new("w"),
-            Some(8),
-        );
+        let args = build_args(Path::new("m"), Path::new("tk"), Path::new("w"), Some(8));
         let s = as_strings(&args);
         assert!(
             s.contains(&"--num-threads=8".to_string()),
@@ -180,5 +177,4 @@ mod tests {
             "no threads → no --num-threads: {s:?}"
         );
     }
-
 }

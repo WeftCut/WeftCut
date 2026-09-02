@@ -1291,8 +1291,7 @@ mod tests {
             let (dw, dh) = OutScale::from_divisor(div).dims_for(W, H);
             assert_eq!((dw % 2, dh % 2), (0, 0), "downscale must stay even");
             let scaled = super::frame_to_i420p10(&src, W, H, dw, dh, &mut scratch).unwrap();
-            let expected =
-                (dw * dh * 2 + 2 * ((dw >> 1) * (dh >> 1) * 2)) as usize; // = w*h*3, adapter layout
+            let expected = (dw * dh * 2 + 2 * ((dw >> 1) * (dh >> 1) * 2)) as usize; // = w*h*3, adapter layout
             assert_eq!(scaled.len(), expected, "div {div} packed length");
         }
         // Full resolution stays the pre-scaling shape.
@@ -1392,9 +1391,15 @@ mod tests {
         let fresh_a = super::frame_to_nv12(&a, W, H, W, H, &mut VideoFrame::empty()).unwrap();
         let fresh_b = super::frame_to_nv12(&b, W, H, W, H, &mut VideoFrame::empty()).unwrap();
 
-        assert_ne!(fresh_a, fresh_b, "sources must differ for this to prove anything");
+        assert_ne!(
+            fresh_a, fresh_b,
+            "sources must differ for this to prove anything"
+        );
         assert_eq!(reused_a, fresh_a);
-        assert_eq!(reused_b, fresh_b, "second frame through a reused scratch drifted");
+        assert_eq!(
+            reused_b, fresh_b,
+            "second frame through a reused scratch drifted"
+        );
 
         // Same for the 10-bit lane, and through the SAME scratch the 8-bit lane
         // just used — the format change must force a reallocation.
@@ -1576,7 +1581,10 @@ mod tests {
     #[test]
     fn videotoolbox_probe_confirms_hw_decode_for_hevc_main10() {
         use super::{probe_hw_first_frame, DecodeAccel};
-        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_hevc10.mp4");
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_hevc10.mp4"
+        );
         probe_hw_first_frame(p, DecodeAccel::VideoToolbox)
             .expect("VideoToolbox HEVC Main10 probe must confirm a hw surface");
     }
@@ -1592,7 +1600,10 @@ mod tests {
     #[test]
     fn videotoolbox_copyback_ships_i420p10_transport_shape() {
         use super::DecodeAccel;
-        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_hevc10.mp4");
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_hevc10.mp4"
+        );
         let mut s = SwVideoStream::open_with_accel(
             p,
             SwOutFormat::I420p10,
@@ -1620,7 +1631,10 @@ mod tests {
             frames += 1;
         }
         assert_eq!(frames, 12, "fixture carries 12 frames (12 fps x 1 s)");
-        assert!(luma_varies, "decoded luma is uniform — black/garbage frames");
+        assert!(
+            luma_varies,
+            "decoded luma is uniform — black/garbage frames"
+        );
     }
 
     // The same I420P10 session shape for ProRes — the codec the

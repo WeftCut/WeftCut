@@ -307,7 +307,7 @@ mod tests {
     fn missing_names_only_the_unmeasured_spans() {
         let cache = seeded();
         let asked = [
-            (0, 2_000_000),      // cached
+            (0, 2_000_000),         // cached
             (2_000_000, 3_000_000), // fresh
             (3_000_000, 6_000_000), // fresh
             (2_000_000, 6_000_000), // cached
@@ -330,7 +330,11 @@ mod tests {
     #[test]
     fn missing_deduplicates_and_keeps_request_order() {
         let cache = SpanStatsCache::default();
-        let asked = [(4_000_000, 5_000_000), (0, 1_000_000), (4_000_000, 5_000_000)];
+        let asked = [
+            (4_000_000, 5_000_000),
+            (0, 1_000_000),
+            (4_000_000, 5_000_000),
+        ];
         assert_eq!(
             cache.missing(&asked),
             vec![(4_000_000, 5_000_000), (0, 1_000_000)]
@@ -340,7 +344,10 @@ mod tests {
     #[test]
     fn merge_replaces_a_same_span_entry_and_keeps_the_order_sorted() {
         let mut cache = seeded();
-        cache.merge(vec![stats(1_000_000, 2_000_000, 0.5), stats(0, 2_000_000, 0.9)]);
+        cache.merge(vec![
+            stats(1_000_000, 2_000_000, 0.5),
+            stats(0, 2_000_000, 0.9),
+        ]);
         assert_eq!(
             cache
                 .entries
@@ -362,7 +369,8 @@ mod tests {
             flags: vec![ShotFlag::Black, ShotFlag::Fade],
             ..stats(6_000_000, 7_000_000, 0.0)
         }]);
-        let back: SpanStatsCache = serde_json::from_slice(&serde_json::to_vec(&cache).unwrap()).unwrap();
+        let back: SpanStatsCache =
+            serde_json::from_slice(&serde_json::to_vec(&cache).unwrap()).unwrap();
         assert_eq!(back, cache);
         assert_eq!(
             back.lookup(&[(6_000_000, 7_000_000)])[0].map(|s| s.flags.clone()),
@@ -376,9 +384,12 @@ mod tests {
         assert_eq!(base, cache_key("h", "quick")); // deterministic
         assert_ne!(base, cache_key("h2", "quick")); // source hash
         assert_ne!(base, cache_key("h", "orig")); // source tier
-        // And it is NOT the VSHOT key: a report and the spans measured out of it
-        // live in different namespaces under different keys.
-        assert_ne!(base, super::super::cache_key("h", "quick", &super::super::floor_opts()));
+                                                  // And it is NOT the VSHOT key: a report and the spans measured out of it
+                                                  // live in different namespaces under different keys.
+        assert_ne!(
+            base,
+            super::super::cache_key("h", "quick", &super::super::floor_opts())
+        );
     }
 
     /// An empty request is answered without resolving a source, reading a
@@ -407,7 +418,10 @@ mod tests {
         }))
         .unwrap();
 
-        assert!(attach_span_stats(&cache, &media, &[]).await.unwrap().is_empty());
+        assert!(attach_span_stats(&cache, &media, &[])
+            .await
+            .unwrap()
+            .is_empty());
         assert!(!crate::cache::cached_ok(
             &cache.shot_stats(&cache_key("cafef00d", "orig"))
         ));

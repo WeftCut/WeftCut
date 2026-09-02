@@ -89,32 +89,49 @@ fn construct_describer(
     cfg: Option<&BackendConfig>,
 ) -> Option<Box<dyn SceneDescriber>> {
     match (b, cfg) {
-        (VlmBackend::Qwen3Vl, Some(BackendConfig::Local { binary, model, mmproj, device })) => {
-            Some(Box::new(LlamaMtmdSidecar::new(
-                binary.clone(),
-                model.clone(),
-                mmproj.clone(),
-                device.clone(),
-                OutputStyle::Qwen3VlJson,
-            )))
-        }
-        (VlmBackend::MiniCpmV, Some(BackendConfig::Local { binary, model, mmproj, device })) => {
-            Some(Box::new(LlamaMtmdSidecar::new(
-                binary.clone(),
-                model.clone(),
-                mmproj.clone(),
-                device.clone(),
-                OutputStyle::MiniCpmVText,
-            )))
-        }
-        (VlmBackend::ByoEndpoint, Some(BackendConfig::Endpoint { url, api_key, model })) => {
-            Some(Box::new(OpenAiCompatDescriber::new(
-                url.clone(),
-                api_key.clone(),
-                model.clone().unwrap_or_else(|| "default".into()),
-                VlmBackend::ByoEndpoint,
-            )))
-        }
+        (
+            VlmBackend::Qwen3Vl,
+            Some(BackendConfig::Local {
+                binary,
+                model,
+                mmproj,
+                device,
+            }),
+        ) => Some(Box::new(LlamaMtmdSidecar::new(
+            binary.clone(),
+            model.clone(),
+            mmproj.clone(),
+            device.clone(),
+            OutputStyle::Qwen3VlJson,
+        ))),
+        (
+            VlmBackend::MiniCpmV,
+            Some(BackendConfig::Local {
+                binary,
+                model,
+                mmproj,
+                device,
+            }),
+        ) => Some(Box::new(LlamaMtmdSidecar::new(
+            binary.clone(),
+            model.clone(),
+            mmproj.clone(),
+            device.clone(),
+            OutputStyle::MiniCpmVText,
+        ))),
+        (
+            VlmBackend::ByoEndpoint,
+            Some(BackendConfig::Endpoint {
+                url,
+                api_key,
+                model,
+            }),
+        ) => Some(Box::new(OpenAiCompatDescriber::new(
+            url.clone(),
+            api_key.clone(),
+            model.clone().unwrap_or_else(|| "default".into()),
+            VlmBackend::ByoEndpoint,
+        ))),
         _ => None,
     }
 }
@@ -141,7 +158,10 @@ mod tests {
     use std::path::PathBuf;
 
     fn cfg_with(entries: &[(&str, BackendConfig)]) -> HashMap<String, BackendConfig> {
-        entries.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+        entries
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect()
     }
 
     /// A local config with all three files present on disk.
@@ -152,7 +172,12 @@ mod tests {
         for p in [&binary, &model, &mmproj] {
             std::fs::write(p, b"\x00").unwrap();
         }
-        BackendConfig::Local { binary, model, mmproj, device: None }
+        BackendConfig::Local {
+            binary,
+            model,
+            mmproj,
+            device: None,
+        }
     }
 
     #[test]
@@ -193,7 +218,10 @@ mod tests {
         // NOT substitute it — that is the privacy rule: an explicit local choice
         // never turns into a frame upload. It errors naming the gap + the
         // omit-`backend` remedy.
-        let cfg = cfg_with(&[("byo_endpoint", present_endpoint("http://h/v1/chat/completions"))]);
+        let cfg = cfg_with(&[(
+            "byo_endpoint",
+            present_endpoint("http://h/v1/chat/completions"),
+        )]);
         let Err(err) = resolve_scene_describer_exact(VlmBackend::Qwen3Vl, &cfg) else {
             panic!("must not substitute the endpoint for an explicit local request");
         };
@@ -215,7 +243,10 @@ mod tests {
     fn endpoint_constructs_and_an_explicit_preference_outranks_a_local_engine() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = cfg_with(&[
-            ("byo_endpoint", present_endpoint("http://localhost:8080/v1/chat/completions")),
+            (
+                "byo_endpoint",
+                present_endpoint("http://localhost:8080/v1/chat/completions"),
+            ),
             ("qwen3_vl", present_local(dir.path())),
         ]);
         assert!(resolve_scene_describer_exact(VlmBackend::ByoEndpoint, &cfg).is_ok());
@@ -236,9 +267,15 @@ mod tests {
             mmproj: PathBuf::from("/m/mmproj.gguf"),
             device: None,
         };
-        assert_eq!(model_label(VlmBackend::Qwen3Vl, Some(&cfg)), "Qwen3VL-4B-Instruct-Q4_K_M");
         assert_eq!(
-            model_label(VlmBackend::ByoEndpoint, Some(&present_endpoint("http://h/v1"))),
+            model_label(VlmBackend::Qwen3Vl, Some(&cfg)),
+            "Qwen3VL-4B-Instruct-Q4_K_M"
+        );
+        assert_eq!(
+            model_label(
+                VlmBackend::ByoEndpoint,
+                Some(&present_endpoint("http://h/v1"))
+            ),
             "qwen2-vl",
         );
         // No config at all → the backend tag, so the envelope is never blank.

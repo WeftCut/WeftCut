@@ -90,7 +90,8 @@ pub(crate) async fn read_resource(
         // `read_description_resource`.
         #[cfg(feature = "speech")]
         if let Some(id_part) = tail.strip_suffix("/description") {
-            return read_description_resource(b, uri, id_part, state.media, &state.vlm_config).await;
+            return read_description_resource(b, uri, id_part, state.media, &state.vlm_config)
+                .await;
         }
         // /analysis — always computable, computes on miss; see
         // `read_analysis_resource`.
@@ -266,7 +267,13 @@ async fn read_description_resource(
     })?;
     let model = vlm::resolve::model_label(backend, vlm_config.get(backend.as_str()));
     // Default view params mirror describe_clip's defaults (fps 1.0, general).
-    let key = vlm::cache_key(&media.file_hash_blake3, backend, &model, 1000, vlm::Focus::General);
+    let key = vlm::cache_key(
+        &media.file_hash_blake3,
+        backend,
+        &model,
+        1000,
+        vlm::Focus::General,
+    );
     let path = b.cache.description(&key);
     crate::cache::touch_if_stale(&path);
     if !crate::cache::cached_ok(&path) {
@@ -311,7 +318,9 @@ async fn read_analysis_resource(
     })?;
     if !matches!(media.kind, crate::state::MediaKind::Video) {
         return Err(McpToolError::invalid_request(
-            format!("media {media_id} is not a video — media://{{id}}/analysis needs a video source"),
+            format!(
+                "media {media_id} is not a video — media://{{id}}/analysis needs a video source"
+            ),
             None,
         ));
     }

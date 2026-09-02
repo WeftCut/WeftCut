@@ -38,7 +38,12 @@ pub struct OpenAiCompatDescriber {
 
 impl OpenAiCompatDescriber {
     pub fn new(url: String, api_key: Option<String>, model: String, provider: VlmBackend) -> Self {
-        Self { url, api_key, model, provider }
+        Self {
+            url,
+            api_key,
+            model,
+            provider,
+        }
     }
 }
 
@@ -50,7 +55,10 @@ impl SceneDescriber for OpenAiCompatDescriber {
         let mut encoded = Vec::with_capacity(req.frames.len());
         for f in &req.frames {
             let bytes = tokio::fs::read(&f.path).await.map_err(VlmError::Io)?;
-            encoded.push((f.t_us, base64::engine::general_purpose::STANDARD.encode(&bytes)));
+            encoded.push((
+                f.t_us,
+                base64::engine::general_purpose::STANDARD.encode(&bytes),
+            ));
         }
         let body = build_request_body(&self.model, &encoded, req.focus);
 
@@ -75,7 +83,9 @@ impl SceneDescriber for OpenAiCompatDescriber {
 impl OpenAiCompatDescriber {
     fn map_status(&self, status: StatusCode, body: String) -> VlmError {
         match status {
-            StatusCode::UNAUTHORIZED => VlmError::InvalidKey { provider: self.provider },
+            StatusCode::UNAUTHORIZED => VlmError::InvalidKey {
+                provider: self.provider,
+            },
             StatusCode::TOO_MANY_REQUESTS => VlmError::RateLimited {
                 provider: self.provider,
                 retry_after_s: None,
@@ -98,7 +108,10 @@ pub fn build_request_body(model: &str, frames: &[(i64, String)], focus: Focus) -
     // per-frame markers are emitted as structured parts instead of `<__media__>`.
     let timed: Vec<TimedFrame> = frames
         .iter()
-        .map(|(t, _)| TimedFrame { t_us: *t, path: Default::default() })
+        .map(|(t, _)| TimedFrame {
+            t_us: *t,
+            path: Default::default(),
+        })
         .collect();
     let instruction = trailing_instruction(&build_prompt(&timed, focus));
 
@@ -150,7 +163,10 @@ mod tests {
 
     #[test]
     fn request_body_interleaves_frames_and_carries_the_instruction() {
-        let frames = vec![(0i64, "AAAA".to_string()), (2_500_000i64, "BBBB".to_string())];
+        let frames = vec![
+            (0i64, "AAAA".to_string()),
+            (2_500_000i64, "BBBB".to_string()),
+        ];
         let body = build_request_body("gpt-4o", &frames, Focus::General);
         let content = body["messages"][0]["content"].as_array().unwrap();
         // lead text + (text + image) * 2 + instruction = 6 parts.
@@ -173,7 +189,10 @@ mod tests {
         let payload = json!({
             "choices": [{ "message": { "content": "[{\"t_start\":0}]" } }]
         });
-        assert_eq!(extract_content(&payload).as_deref(), Some("[{\"t_start\":0}]"));
+        assert_eq!(
+            extract_content(&payload).as_deref(),
+            Some("[{\"t_start\":0}]")
+        );
         assert_eq!(extract_content(&json!({ "choices": [] })), None);
     }
 }

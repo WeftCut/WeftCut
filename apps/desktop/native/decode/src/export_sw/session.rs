@@ -1124,8 +1124,13 @@ mod tests {
         reg.open("s", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
             .expect("open");
         reg.decode_range("s", 0, 875_000).unwrap();
-        let saw_panic_poke =
-            wait_for(|| errors.lock().unwrap().iter().any(|m| m.contains("panicked")));
+        let saw_panic_poke = wait_for(|| {
+            errors
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|m| m.contains("panicked"))
+        });
         let errs = errors.lock().unwrap();
         assert!(
             saw_panic_poke,

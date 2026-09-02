@@ -45,9 +45,8 @@ pub struct Backend {
     /// `set_local_backend`). Read synchronously by the speech resolver. Always
     /// compiled (feature-independent) so main can push keys regardless of the
     /// addon's feature set.
-    pub(crate) speech_config: std::sync::Mutex<
-        std::collections::HashMap<String, crate::speech::config::BackendConfig>,
-    >,
+    pub(crate) speech_config:
+        std::sync::Mutex<std::collections::HashMap<String, crate::speech::config::BackendConfig>>,
 }
 
 /// Build the config-dir-rooted stores + cache layout + log slot, install the
@@ -126,11 +125,15 @@ struct ShotDefaultOpts {
 fn parse_shot_opts(opts_json: &str) -> std::result::Result<crate::jobs::shot::ShotOpts, String> {
     let raw: AnalyzeShotsOpts =
         serde_json::from_str(opts_json).map_err(|e| format!("parse shot opts: {e}"))?;
-    let sensitivity = raw.sensitivity.unwrap_or(crate::jobs::shot::DEFAULT_SENSITIVITY);
+    let sensitivity = raw
+        .sensitivity
+        .unwrap_or(crate::jobs::shot::DEFAULT_SENSITIVITY);
     if !(0.0..=1.0).contains(&sensitivity) {
         return Err(format!("sensitivity {sensitivity} must be in [0.0, 1.0]"));
     }
-    let min_shot_us = raw.min_shot_us.unwrap_or(crate::jobs::shot::DEFAULT_MIN_SHOT_US);
+    let min_shot_us = raw
+        .min_shot_us
+        .unwrap_or(crate::jobs::shot::DEFAULT_MIN_SHOT_US);
     if min_shot_us <= 0 {
         return Err(format!("min_shot_us {min_shot_us} must be positive"));
     }
@@ -149,7 +152,12 @@ fn parse_shot_opts(opts_json: &str) -> std::result::Result<crate::jobs::shot::Sh
             }
         }
     }
-    Ok(crate::jobs::shot::ShotOpts { sensitivity, min_shot_us, stats, events })
+    Ok(crate::jobs::shot::ShotOpts {
+        sensitivity,
+        min_shot_us,
+        stats,
+        events,
+    })
 }
 
 /// One span the on-demand stats pass is asked about, as the renderer sends it.
@@ -181,7 +189,10 @@ fn parse_span_requests(
     let mut spans = Vec::with_capacity(raw.len());
     for (i, span) in raw.iter().enumerate() {
         if span.t_start_us < 0 {
-            return Err(format!("spans[{i}].t_start_us {} must not be negative", span.t_start_us));
+            return Err(format!(
+                "spans[{i}].t_start_us {} must not be negative",
+                span.t_start_us
+            ));
         }
         if span.t_end_us <= span.t_start_us {
             return Err(format!(
@@ -286,16 +297,19 @@ impl Backend {
         threads: Option<u32>,
         tokens: Option<String>,
     ) {
-        self.speech_config.lock().expect("speech_config poisoned").insert(
-            backend,
-            crate::speech::config::BackendConfig::Local {
-                binary: std::path::PathBuf::from(binary),
-                model: std::path::PathBuf::from(model),
-                tokens: tokens.map(std::path::PathBuf::from),
-                device,
-                threads,
-            },
-        );
+        self.speech_config
+            .lock()
+            .expect("speech_config poisoned")
+            .insert(
+                backend,
+                crate::speech::config::BackendConfig::Local {
+                    binary: std::path::PathBuf::from(binary),
+                    model: std::path::PathBuf::from(model),
+                    tokens: tokens.map(std::path::PathBuf::from),
+                    device,
+                    threads,
+                },
+            );
     }
 
     /// Remove a local engine's config entry (its paths were cleared in
@@ -804,7 +818,8 @@ impl Backend {
                     archive_path: String,
                     dest_dir: String,
                 }
-                let a: ExtractArchiveArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                let a: ExtractArchiveArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::content::extract_tar_bz2(a.archive_path, a.dest_dir).await)
             }
             #[cfg(feature = "jobs")]
@@ -949,7 +964,10 @@ impl Backend {
             "settings_get_vlm_backends" => {
                 let a: crate::commands::vlm::VlmBackendsArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::vlm::settings_get_vlm_backends(a.preferred, a.vlm_config).await)
+                ser(
+                    crate::commands::vlm::settings_get_vlm_backends(a.preferred, a.vlm_config)
+                        .await,
+                )
             }
             other => Err(format!("unknown command: '{other}'")),
         }
@@ -1034,7 +1052,9 @@ mod tests {
         .unwrap();
         assert_eq!(ok, vec![(0, 2_000_000), (2_000_000, 6_000_000)]);
         // An empty request is legal and asks for nothing.
-        assert!(parse_span_requests("[]", Some(6_000_000)).unwrap().is_empty());
+        assert!(parse_span_requests("[]", Some(6_000_000))
+            .unwrap()
+            .is_empty());
 
         assert!(parse_span_requests("{}", Some(6_000_000)).is_err()); // not an array
         assert!(parse_span_requests("not json", None).is_err());
@@ -1043,12 +1063,12 @@ mod tests {
         assert!(parse_span_requests(r#"[{"t_start_us":10,"t_end_us":10}]"#, None).is_err());
         assert!(parse_span_requests(r#"[{"t_start_us":10,"t_end_us":5}]"#, None).is_err());
         // Past the end of a source whose duration IS known …
-        let past = parse_span_requests(
-            r#"[{"t_start_us":0,"t_end_us":7000000}]"#,
-            Some(6_000_000),
-        )
-        .unwrap_err();
-        assert!(past.contains("spans[0]") && past.contains("duration"), "got: {past}");
+        let past = parse_span_requests(r#"[{"t_start_us":0,"t_end_us":7000000}]"#, Some(6_000_000))
+            .unwrap_err();
+        assert!(
+            past.contains("spans[0]") && past.contains("duration"),
+            "got: {past}"
+        );
         // … and accepted where there is no measured end to compare against.
         assert!(parse_span_requests(r#"[{"t_start_us":0,"t_end_us":7000000}]"#, None).is_ok());
     }
@@ -1067,14 +1087,17 @@ mod tests {
         );
 
         // Two candidates straddling 0.5 → one boundary, so two shots in [0,6s].
-        let report =
-            r#"{"shots":[],"cut_scores":[{"t_us":2000000,"score":0.9},{"t_us":4000000,"score":0.1}]}"#;
+        let report = r#"{"shots":[],"cut_scores":[{"t_us":2000000,"score":0.9},{"t_us":4000000,"score":0.1}]}"#;
         let out = b
             .reduce_shot_report(report.to_string(), 0.5, 500_000, 0, 6_000_000)
             .unwrap();
         let reduced: crate::jobs::shot::ShotReport = serde_json::from_str(&out).unwrap();
         assert_eq!(
-            reduced.shots.iter().map(|s| (s.t_start_us, s.t_end_us)).collect::<Vec<_>>(),
+            reduced
+                .shots
+                .iter()
+                .map(|s| (s.t_start_us, s.t_end_us))
+                .collect::<Vec<_>>(),
             vec![(0, 2_000_000), (2_000_000, 6_000_000)]
         );
         assert_eq!(reduced.cut_scores.len(), 1);
@@ -1394,7 +1417,10 @@ mod tests {
         let openai = rows.iter().find(|r| r["backend"] == "openai").unwrap();
         assert_eq!(openai["locality"], "cloud");
         assert_eq!(openai["availability"], "available");
-        assert_eq!(openai["selected"], true, "auto resolves to the only available backend");
+        assert_eq!(
+            openai["selected"], true,
+            "auto resolves to the only available backend"
+        );
         assert_eq!(openai["capabilities"]["transcription"], true);
         assert_eq!(openai["capabilities"]["tts"], true);
         // SRT-only cloud → interpolated word times; the Settings badge keys

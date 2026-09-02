@@ -67,7 +67,9 @@ pub async fn sample_frames(
             "ffmpeg not installed; cannot sample frames for description".into(),
         ));
     }
-    tokio::fs::create_dir_all(out_dir).await.map_err(VlmError::Io)?;
+    tokio::fs::create_dir_all(out_dir)
+        .await
+        .map_err(VlmError::Io)?;
 
     let mut frames = Vec::with_capacity(anchors.len());
     for (i, &anchor_us) in anchors.iter().enumerate() {
@@ -115,7 +117,9 @@ pub async fn sample_frames(
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| VlmError::FrameExtract(format!("spawn ffmpeg for frame @{abs_s}s: {e}")))?;
+            .map_err(|e| {
+                VlmError::FrameExtract(format!("spawn ffmpeg for frame @{abs_s}s: {e}"))
+            })?;
 
         if !output.status.success() || !crate::cache::cached_ok(&path) {
             let stderr = String::from_utf8_lossy(&output.stderr);

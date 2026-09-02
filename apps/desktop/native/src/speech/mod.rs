@@ -408,7 +408,10 @@ mod tests {
         };
         let msg = format!("{err}");
         assert!(msg.contains("binary was not found"), "names the gap: {msg}");
-        assert!(msg.contains("omit `backend`"), "names the fallback remedy: {msg}");
+        assert!(
+            msg.contains("omit `backend`"),
+            "names the fallback remedy: {msg}"
+        );
     }
 
     #[test]

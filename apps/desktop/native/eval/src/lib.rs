@@ -962,7 +962,10 @@ mod tests {
             (0.75, 1.0078125),
             (0.875, 1.00276213586401),
         ] {
-            assert!((elastic_in_out(t, 1.0, 0.3) - expect).abs() < 1e-12, "t={t}");
+            assert!(
+                (elastic_in_out(t, 1.0, 0.3) - expect).abs() < 1e-12,
+                "t={t}"
+            );
         }
     }
 
@@ -975,14 +978,20 @@ mod tests {
             (0.5, 0.9985191860018086),
             (0.75, 0.9974132827633736),
         ] {
-            assert!((elastic_out(t, 1.5, 0.45) - expect).abs() < 1e-12, "out t={t}");
+            assert!(
+                (elastic_out(t, 1.5, 0.45) - expect).abs() < 1e-12,
+                "out t={t}"
+            );
         }
         for (t, expect) in [
             (0.25, -0.00811098896464634),
             (0.5, 0.04639696369674468),
             (0.75, -0.2337134222575655),
         ] {
-            assert!((elastic_in(t, 1.5, 0.45) - expect).abs() < 1e-12, "in t={t}");
+            assert!(
+                (elastic_in(t, 1.5, 0.45) - expect).abs() < 1e-12,
+                "in t={t}"
+            );
         }
         for (t, expect) in [
             (0.25, 0.02319848184837234),
@@ -1090,7 +1099,10 @@ mod tests {
         assert!((eval_f64(&kfs, 2_500_000, 0.0) - 9.116116523516816).abs() < 1e-9);
         // u = 0.1 → 1.25: overshoot flows through the lerp unclamped.
         let over = eval_f64(&kfs, 1_000_000, 0.0);
-        assert!((over - 12.5).abs() < 1e-9, "overshoot extrapolates, got {over}");
+        assert!(
+            (over - 12.5).abs() < 1e-9,
+            "overshoot extrapolates, got {over}"
+        );
     }
 
     #[test]
@@ -1378,7 +1390,11 @@ mod tests {
                     i,
                     "{num}/{den} frame {i} → {t} did not round-trip"
                 );
-                assert_eq!(frame_index_floor(t, num, den), i, "{num}/{den} floor at {t}");
+                assert_eq!(
+                    frame_index_floor(t, num, den),
+                    i,
+                    "{num}/{den} floor at {t}"
+                );
                 assert_eq!(frame_index_ceil(t, num, den), i, "{num}/{den} ceil at {t}");
                 if let Some((pi, pt)) = prev {
                     assert!(t > pt, "{num}/{den}: frame {i} ({t}) <= frame {pi} ({pt})");
@@ -1396,7 +1412,12 @@ mod tests {
             let mut probes = vec![0_i64, 1, US_24H];
             for i in [0_i64, 1, 2, 3, 107_892, 5_183_999] {
                 let t = time_us_at_frame(i, num, den);
-                probes.extend([t - 1, t, t + 1, t + (US_PER_SEC * den as i64) / (2 * num as i64)]);
+                probes.extend([
+                    t - 1,
+                    t,
+                    t + 1,
+                    t + (US_PER_SEC * den as i64) / (2 * num as i64),
+                ]);
             }
             for t in probes.into_iter().filter(|t| *t >= 0) {
                 let lo = snap_frame_floor(t, num, den);
@@ -1404,8 +1425,16 @@ mod tests {
                 let hi = snap_frame_ceil(t, num, den);
                 assert!(lo <= mid && mid <= hi, "{num}/{den} t={t}: {lo}/{mid}/{hi}");
                 assert!(lo <= t && t <= hi, "{num}/{den} t={t} not bracketed");
-                assert_eq!(snap_frame_floor(lo, num, den), lo, "{num}/{den} floor t={t}");
-                assert_eq!(snap_frame_round(mid, num, den), mid, "{num}/{den} round t={t}");
+                assert_eq!(
+                    snap_frame_floor(lo, num, den),
+                    lo,
+                    "{num}/{den} floor t={t}"
+                );
+                assert_eq!(
+                    snap_frame_round(mid, num, den),
+                    mid,
+                    "{num}/{den} round t={t}"
+                );
                 assert_eq!(snap_frame_ceil(hi, num, den), hi, "{num}/{den} ceil t={t}");
             }
         }
@@ -1514,14 +1543,44 @@ mod tests {
                 );
             };
             for f in &case.frame_times {
-                at("time_us_at_frame", time_us_at_frame(f.frame, n, d), f.expect, f.frame);
+                at(
+                    "time_us_at_frame",
+                    time_us_at_frame(f.frame, n, d),
+                    f.expect,
+                    f.frame,
+                );
             }
             for s in &case.samples {
-                at("floor_frame", frame_index_floor(s.t_us, n, d), s.floor_frame, s.t_us);
-                at("round_frame", frame_index_round(s.t_us, n, d), s.round_frame, s.t_us);
-                at("ceil_frame", frame_index_ceil(s.t_us, n, d), s.ceil_frame, s.t_us);
-                at("floor_us", snap_frame_floor(s.t_us, n, d), s.floor_us, s.t_us);
-                at("round_us", snap_frame_round(s.t_us, n, d), s.round_us, s.t_us);
+                at(
+                    "floor_frame",
+                    frame_index_floor(s.t_us, n, d),
+                    s.floor_frame,
+                    s.t_us,
+                );
+                at(
+                    "round_frame",
+                    frame_index_round(s.t_us, n, d),
+                    s.round_frame,
+                    s.t_us,
+                );
+                at(
+                    "ceil_frame",
+                    frame_index_ceil(s.t_us, n, d),
+                    s.ceil_frame,
+                    s.t_us,
+                );
+                at(
+                    "floor_us",
+                    snap_frame_floor(s.t_us, n, d),
+                    s.floor_us,
+                    s.t_us,
+                );
+                at(
+                    "round_us",
+                    snap_frame_round(s.t_us, n, d),
+                    s.round_us,
+                    s.t_us,
+                );
                 at("ceil_us", snap_frame_ceil(s.t_us, n, d), s.ceil_us, s.t_us);
             }
         }

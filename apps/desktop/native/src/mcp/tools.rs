@@ -228,7 +228,9 @@ pub(super) async fn analyze_clip(
         LayerParams::VideoClip(p) => (p.media, p.src_in_us, p.src_out_us),
         _ => {
             return Err(McpToolError::invalid_params(
-                format!("layer {layer_id} kind is not analyzable for shots — pass a VideoClip layer"),
+                format!(
+                    "layer {layer_id} kind is not analyzable for shots — pass a VideoClip layer"
+                ),
                 None,
             ));
         }
@@ -330,10 +332,7 @@ pub(super) struct CompareFramesArgs {
 /// whose media is a video (same guards as `analyze_clip`). `side` ("a" / "b") is
 /// folded into every error so the agent knows which frame is at fault.
 #[cfg(feature = "jobs")]
-fn resolve_frame_ref(
-    r: &FrameRef,
-    side: &str,
-) -> Result<(std::path::PathBuf, i64), McpToolError> {
+fn resolve_frame_ref(r: &FrameRef, side: &str) -> Result<(std::path::PathBuf, i64), McpToolError> {
     let layer_id = parse_uuid(&r.layer_id, &format!("{side}.layer_id"))?;
     let layer = r.layer.as_ref().ok_or_else(|| {
         McpToolError::invalid_params(format!("{side}: layer {layer_id} not found"), None)
@@ -355,7 +354,9 @@ fn resolve_frame_ref(
     })?;
     if !matches!(media.kind, crate::state::MediaKind::Video) {
         return Err(McpToolError::invalid_params(
-            format!("{side}: media {media_id} is not a video — compare_frames needs a video source"),
+            format!(
+                "{side}: media {media_id} is not a video — compare_frames needs a video source"
+            ),
             None,
         ));
     }
@@ -730,12 +731,24 @@ pub(crate) struct SynthesizeSpeechArgs {
     pub speed: Option<f32>,
     /// Optional Audio track id. If omitted, lands on the first existing Audio
     /// track or auto-creates one labeled "Voiceover".
-    #[cfg_attr(not(feature = "test-noop"), expect(dead_code, reason = "placement is applied TS-side; kept for wire-schema stability"))]
+    #[cfg_attr(
+        not(feature = "test-noop"),
+        expect(
+            dead_code,
+            reason = "placement is applied TS-side; kept for wire-schema stability"
+        )
+    )]
     #[serde(default)]
     pub target_track_id: Option<String>,
     /// Optional timeline start in microseconds. Defaults to the composition's
     /// current `duration_us` so the voiceover appends at the end.
-    #[cfg_attr(not(feature = "test-noop"), expect(dead_code, reason = "placement is applied TS-side; kept for wire-schema stability"))]
+    #[cfg_attr(
+        not(feature = "test-noop"),
+        expect(
+            dead_code,
+            reason = "placement is applied TS-side; kept for wire-schema stability"
+        )
+    )]
     #[serde(default)]
     pub t_start_us: Option<i64>,
 }
@@ -901,9 +914,7 @@ fn map_speech_error(e: speech::SpeechError) -> McpToolError {
         E::RateLimited { .. } | E::Provider { .. } | E::Network(_) => {
             McpToolError::internal_error(message, None)
         }
-        E::Io(_) | E::AudioExtract(_) | E::Parse(_) => {
-            McpToolError::internal_error(message, None)
-        }
+        E::Io(_) | E::AudioExtract(_) | E::Parse(_) => McpToolError::internal_error(message, None),
         // Local CLI-sidecar failures (whisper.cpp / FunASR): the message already
         // carries the exit code + engine stderr / the spawn cause / the timeout.
         E::EngineExit { .. } | E::Spawn { .. } | E::Timeout { .. } => {
@@ -1272,10 +1283,12 @@ pub(super) async fn describe_clip(
                 })?,
         ),
     };
-    let preferred = args
-        .preferred_backend
-        .as_deref()
-        .and_then(|tag| vlm::VlmBackend::all().iter().copied().find(|b| b.as_str() == tag));
+    let preferred = args.preferred_backend.as_deref().and_then(|tag| {
+        vlm::VlmBackend::all()
+            .iter()
+            .copied()
+            .find(|b| b.as_str() == tag)
+    });
 
     let cfg = &args.vlm_config;
     let (used_backend, describer) = match explicit {
@@ -1299,7 +1312,13 @@ pub(super) async fn describe_clip(
     let focus = vlm::Focus::parse(args.focus.as_deref());
     let fps_milli = (fps * 1000.0).round() as u32;
 
-    let key = vlm::cache_key(&resolved.source_hash, used_backend, &model, fps_milli, focus);
+    let key = vlm::cache_key(
+        &resolved.source_hash,
+        used_backend,
+        &model,
+        fps_milli,
+        focus,
+    );
     let dest = b.cache.description(&key);
 
     // Range-lazy: load the prior cache; if the window is already covered, reuse
@@ -1311,11 +1330,8 @@ pub(super) async fn describe_clip(
 
     if !cache.covers(resolved.source_in_us, resolved.source_out_us) {
         // Uncovered → sample the window's frames and describe it once.
-        let anchors = vlm::frame_extract::plan_anchors(
-            resolved.source_in_us,
-            resolved.source_out_us,
-            fps,
-        );
+        let anchors =
+            vlm::frame_extract::plan_anchors(resolved.source_in_us, resolved.source_out_us, fps);
         let tmp = tempfile::Builder::new()
             .prefix("weftcut-vlm")
             .tempdir()
@@ -1338,9 +1354,9 @@ pub(super) async fn describe_clip(
         vlm::shift_segments(&mut fresh, resolved.source_in_us);
 
         cache.merge_window(resolved.source_in_us, resolved.source_out_us, fresh);
-        write_description_atomic(&dest, &cache)
-            .await
-            .map_err(|e| McpToolError::internal_error(format!("persist description: {e:#}"), None))?;
+        write_description_atomic(&dest, &cache).await.map_err(|e| {
+            McpToolError::internal_error(format!("persist description: {e:#}"), None)
+        })?;
     }
 
     let result = vlm::SceneDescription {

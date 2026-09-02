@@ -137,10 +137,12 @@ pub async fn settings_get_speech_backends(
 ) -> Result<Vec<SpeechBackendStatus>, String> {
     let cfg = b.speech_config.lock().expect("speech_config poisoned");
     // "auto" / unknown / absent → None (automatic); a known tag → that backend.
-    let preferred_backend = preferred
-        .as_deref()
-        .filter(|s| *s != "auto")
-        .and_then(|s| SpeechBackend::all().iter().copied().find(|bk| bk.as_str() == s));
+    let preferred_backend = preferred.as_deref().filter(|s| *s != "auto").and_then(|s| {
+        SpeechBackend::all()
+            .iter()
+            .copied()
+            .find(|bk| bk.as_str() == s)
+    });
     let selected = speech::resolve_selected_transcriber_backend(preferred_backend, &cfg);
     Ok(SpeechBackend::all()
         .iter()

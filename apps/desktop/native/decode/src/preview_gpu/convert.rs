@@ -19,14 +19,13 @@ use windows::Win32::Graphics::Direct3D::{
     ID3DBlob, D3D11_SRV_DIMENSION_TEXTURE2D, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
 };
 use windows::Win32::Graphics::Direct3D11::{
-    ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader, ID3D11Query,
-    ID3D11RenderTargetView, ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D,
-    ID3D11VertexShader, D3D11_ASYNC_GETDATA_DONOTFLUSH, D3D11_BIND_SHADER_RESOURCE,
-    D3D11_BOX, D3D11_COMPARISON_NEVER, D3D11_FILTER_MIN_MAG_MIP_POINT, D3D11_FLOAT32_MAX,
-    D3D11_QUERY_DATA_TIMESTAMP_DISJOINT, D3D11_QUERY_DESC, D3D11_QUERY_TIMESTAMP,
-    D3D11_QUERY_TIMESTAMP_DISJOINT, D3D11_SAMPLER_DESC, D3D11_SHADER_RESOURCE_VIEW_DESC,
-    D3D11_SHADER_RESOURCE_VIEW_DESC_0, D3D11_TEX2D_SRV, D3D11_TEXTURE2D_DESC,
-    D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_USAGE_DEFAULT, D3D11_VIEWPORT,
+    ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader, ID3D11Query, ID3D11RenderTargetView,
+    ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader,
+    D3D11_ASYNC_GETDATA_DONOTFLUSH, D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_COMPARISON_NEVER,
+    D3D11_FILTER_MIN_MAG_MIP_POINT, D3D11_FLOAT32_MAX, D3D11_QUERY_DATA_TIMESTAMP_DISJOINT,
+    D3D11_QUERY_DESC, D3D11_QUERY_TIMESTAMP, D3D11_QUERY_TIMESTAMP_DISJOINT, D3D11_SAMPLER_DESC,
+    D3D11_SHADER_RESOURCE_VIEW_DESC, D3D11_SHADER_RESOURCE_VIEW_DESC_0, D3D11_TEX2D_SRV,
+    D3D11_TEXTURE2D_DESC, D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_USAGE_DEFAULT, D3D11_VIEWPORT,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_FORMAT_NV12, DXGI_FORMAT_R8G8_UNORM, DXGI_FORMAT_R8_UNORM, DXGI_SAMPLE_DESC,
@@ -38,8 +37,14 @@ pub struct YuvCoef {
     pub kr: f64,
     pub kb: f64,
 }
-pub const BT709: YuvCoef = YuvCoef { kr: 0.2126, kb: 0.0722 };
-pub const BT601: YuvCoef = YuvCoef { kr: 0.299, kb: 0.114 };
+pub const BT709: YuvCoef = YuvCoef {
+    kr: 0.2126,
+    kb: 0.0722,
+};
+pub const BT601: YuvCoef = YuvCoef {
+    kr: 0.299,
+    kb: 0.114,
+};
 
 /// Matrix tag → coefficients. MUST stay the same selection rule as the
 /// renderer's `coefForMatrix` (yuv10.ts): smpte170m and bt470bg are both
@@ -208,7 +213,10 @@ impl ConvertPass {
                 MipLevels: 1,
                 ArraySize: 1,
                 Format: DXGI_FORMAT_NV12,
-                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                SampleDesc: DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
                 Usage: D3D11_USAGE_DEFAULT,
                 BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
                 CPUAccessFlags: 0,
@@ -222,7 +230,10 @@ impl ConvertPass {
 
             // Per-plane typed views over the one NV12 staging texture.
             let tex2d = D3D11_SHADER_RESOURCE_VIEW_DESC_0 {
-                Texture2D: D3D11_TEX2D_SRV { MostDetailedMip: 0, MipLevels: 1 },
+                Texture2D: D3D11_TEX2D_SRV {
+                    MostDetailedMip: 0,
+                    MipLevels: 1,
+                },
             };
             let y_desc = D3D11_SHADER_RESOURCE_VIEW_DESC {
                 Format: DXGI_FORMAT_R8_UNORM,
@@ -434,7 +445,10 @@ impl ConvertPass {
 
         context.VSSetShader(&self.vs, None);
         context.PSSetShader(&self.ps, None);
-        context.PSSetShaderResources(0, Some(&[Some(self.srv_y.clone()), Some(self.srv_uv.clone())]));
+        context.PSSetShaderResources(
+            0,
+            Some(&[Some(self.srv_y.clone()), Some(self.srv_uv.clone())]),
+        );
         context.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
         context.OMSetRenderTargets(Some(&[Some(rtv)]), None);
         let viewport = D3D11_VIEWPORT {

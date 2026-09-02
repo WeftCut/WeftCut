@@ -73,7 +73,12 @@ pub fn availability(backend: SpeechBackend, cfg: Option<&BackendConfig>) -> Avai
             _ => Availability::NeedsKey,
         },
         Locality::Local => match cfg {
-            Some(BackendConfig::Local { binary, model, tokens, .. }) => {
+            Some(BackendConfig::Local {
+                binary,
+                model,
+                tokens,
+                ..
+            }) => {
                 if !binary.exists() {
                     Availability::NeedsBinary
                 } else if !model.exists() {
@@ -100,7 +105,10 @@ mod tests {
     #[test]
     fn cloud_available_iff_api_key_present() {
         assert_eq!(
-            availability(SpeechBackend::OpenAi, Some(&BackendConfig::ApiKey("sk-x".into()))),
+            availability(
+                SpeechBackend::OpenAi,
+                Some(&BackendConfig::ApiKey("sk-x".into()))
+            ),
             Availability::Available,
         );
         assert_eq!(

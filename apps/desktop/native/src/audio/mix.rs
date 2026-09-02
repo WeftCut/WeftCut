@@ -922,7 +922,14 @@ mod tests {
             .collect();
         let frames = (plan.window_end_frame - plan.window_start_frame) as usize;
         let mut out = vec![0f32; frames * 2];
-        mix_block(plan, &mut readers, plan.window_start_frame, frames, &mut out).unwrap();
+        mix_block(
+            plan,
+            &mut readers,
+            plan.window_start_frame,
+            frames,
+            &mut out,
+        )
+        .unwrap();
         out
     }
 
@@ -1041,10 +1048,17 @@ mod tests {
         assert_eq!((l.src_in_frame, l.src_out_frame), (0, FRAMES_PER_S));
         assert_eq!(l.head_frame, 0, "no window cut into the layer");
         let out = mix_all(&plan);
-        assert_eq!(left_at(&out, us_to_frame(7 * S / 4) - 1), 0.0, "silent before");
+        assert_eq!(
+            left_at(&out, us_to_frame(7 * S / 4) - 1),
+            0.0,
+            "silent before"
+        );
         let half = std::f32::consts::FRAC_PI_4.cos();
         let mid = left_at(&out, us_to_frame(7 * S / 4) + FRAMES_PER_S / 2);
-        assert!((mid - 0.5 * half).abs() < 1e-4, "source frame 24000 at root 2.25 s, got {mid}");
+        assert!(
+            (mid - 0.5 * half).abs() < 1e-4,
+            "source frame 24000 at root 2.25 s, got {mid}"
+        );
     }
 
     /// Group trimmed shorter than its content: the audio stops exactly at the
@@ -1060,12 +1074,25 @@ mod tests {
             vec![
                 composition_of(
                     root_id,
-                    vec![track_of(vec![ref_layer(group_id, 2 * S, 5 * S / 2, 0, S / 2)])],
+                    vec![track_of(vec![ref_layer(
+                        group_id,
+                        2 * S,
+                        5 * S / 2,
+                        0,
+                        S / 2,
+                    )])],
                     3 * S,
                 ),
                 composition_of(
                     group_id,
-                    vec![track_of(vec![audio_layer(media, AudioRole::Music, 0, S, 0, S)])],
+                    vec![track_of(vec![audio_layer(
+                        media,
+                        AudioRole::Music,
+                        0,
+                        S,
+                        0,
+                        S,
+                    )])],
                     S,
                 ),
             ],
@@ -1074,11 +1101,26 @@ mod tests {
         let plan = plan_for_project(&project, None).unwrap();
         let l = &plan.layers[0];
         assert_eq!(l.start_frame, 2 * FRAMES_PER_S);
-        assert_eq!(l.end_frame(), 5 * FRAMES_PER_S / 2, "ends at the ref's out point");
-        assert_eq!(l.src_out_frame, FRAMES_PER_S / 2, "source retreats by the cut tail");
+        assert_eq!(
+            l.end_frame(),
+            5 * FRAMES_PER_S / 2,
+            "ends at the ref's out point"
+        );
+        assert_eq!(
+            l.src_out_frame,
+            FRAMES_PER_S / 2,
+            "source retreats by the cut tail"
+        );
         let out = mix_all(&plan);
-        assert!(left_at(&out, 5 * FRAMES_PER_S / 2 - 1) > 0.3, "last frame inside sounds");
-        assert_eq!(left_at(&out, 5 * FRAMES_PER_S / 2), 0.0, "first frame past the out point is silent");
+        assert!(
+            left_at(&out, 5 * FRAMES_PER_S / 2 - 1) > 0.3,
+            "last frame inside sounds"
+        );
+        assert_eq!(
+            left_at(&out, 5 * FRAMES_PER_S / 2),
+            0.0,
+            "first frame past the out point is silent"
+        );
     }
 
     /// `src_in_us > 0` on the ref: the layer's head is never heard and the
@@ -1094,12 +1136,25 @@ mod tests {
             vec![
                 composition_of(
                     root_id,
-                    vec![track_of(vec![ref_layer(group_id, 2 * S, 5 * S / 2, S / 2, S)])],
+                    vec![track_of(vec![ref_layer(
+                        group_id,
+                        2 * S,
+                        5 * S / 2,
+                        S / 2,
+                        S,
+                    )])],
                     3 * S,
                 ),
                 composition_of(
                     group_id,
-                    vec![track_of(vec![audio_layer(media, AudioRole::Music, 0, S, 0, S)])],
+                    vec![track_of(vec![audio_layer(
+                        media,
+                        AudioRole::Music,
+                        0,
+                        S,
+                        0,
+                        S,
+                    )])],
                     S,
                 ),
             ],
@@ -1107,15 +1162,30 @@ mod tests {
         );
         let plan = plan_for_project(&project, None).unwrap();
         let l = &plan.layers[0];
-        assert_eq!(l.start_frame, 2 * FRAMES_PER_S, "sounds from the ref's start, not 1.5 s");
-        assert_eq!(l.src_in_frame, FRAMES_PER_S / 2, "source advances by the cut head");
+        assert_eq!(
+            l.start_frame,
+            2 * FRAMES_PER_S,
+            "sounds from the ref's start, not 1.5 s"
+        );
+        assert_eq!(
+            l.src_in_frame,
+            FRAMES_PER_S / 2,
+            "source advances by the cut head"
+        );
         assert_eq!(l.src_out_frame, FRAMES_PER_S);
         assert_eq!(l.head_frame, FRAMES_PER_S / 2);
         let out = mix_all(&plan);
-        assert_eq!(left_at(&out, 2 * FRAMES_PER_S - 1), 0.0, "the skipped head is silent");
+        assert_eq!(
+            left_at(&out, 2 * FRAMES_PER_S - 1),
+            0.0,
+            "the skipped head is silent"
+        );
         let half = std::f32::consts::FRAC_PI_4.cos();
         let first = left_at(&out, 2 * FRAMES_PER_S);
-        assert!((first - 0.5 * half).abs() < 1e-4, "reads source frame 24000, got {first}");
+        assert!(
+            (first - 0.5 * half).abs() < 1e-4,
+            "reads source frame 24000, got {first}"
+        );
     }
 
     /// The fade is the layer's, sampled over its own span: a ref window that
@@ -1137,7 +1207,13 @@ mod tests {
             vec![
                 composition_of(
                     root_id,
-                    vec![track_of(vec![ref_layer(group_id, 2 * S, 5 * S / 2, S / 2, S)])],
+                    vec![track_of(vec![ref_layer(
+                        group_id,
+                        2 * S,
+                        5 * S / 2,
+                        S / 2,
+                        S,
+                    )])],
                     3 * S,
                 ),
                 composition_of(group_id, vec![track_of(vec![fading])], S),
@@ -1148,7 +1224,10 @@ mod tests {
         let out = mix_all(&plan);
         let half = std::f32::consts::FRAC_PI_4.cos();
         let first = left_at(&out, 2 * FRAMES_PER_S);
-        assert!((first - 0.5 * half).abs() < 2e-3, "fade at its midpoint, got {first}");
+        assert!(
+            (first - 0.5 * half).abs() < 2e-3,
+            "fade at its midpoint, got {first}"
+        );
     }
 
     #[test]
@@ -1168,16 +1247,35 @@ mod tests {
                     composition_of(root_id, vec![t], 4 * S),
                     composition_of(
                         group_id,
-                        vec![track_of(vec![audio_layer(media, AudioRole::Music, 0, S, 0, S)])],
+                        vec![track_of(vec![audio_layer(
+                            media,
+                            AudioRole::Music,
+                            0,
+                            S,
+                            0,
+                            S,
+                        )])],
                         S,
                     ),
                 ],
                 vec![audio_media(media, conform.clone())],
             )
         };
-        assert_eq!(plan_for_project(&build(true, true), None).unwrap().layers.len(), 1);
-        assert!(plan_for_project(&build(false, true), None).unwrap().layers.is_empty());
-        assert!(plan_for_project(&build(true, false), None).unwrap().layers.is_empty());
+        assert_eq!(
+            plan_for_project(&build(true, true), None)
+                .unwrap()
+                .layers
+                .len(),
+            1
+        );
+        assert!(plan_for_project(&build(false, true), None)
+            .unwrap()
+            .layers
+            .is_empty());
+        assert!(plan_for_project(&build(true, false), None)
+            .unwrap()
+            .layers
+            .is_empty());
         // The readiness gate agrees: nothing to conform for a silenced Group.
         std::fs::remove_file(&conform).unwrap();
         assert_eq!(conform_waiting_media(&build(true, true), None), vec![media]);
@@ -1232,7 +1330,14 @@ mod tests {
                 ),
                 composition_of(
                     group_id,
-                    vec![track_of(vec![audio_layer(media, AudioRole::Music, 0, S, 0, S)])],
+                    vec![track_of(vec![audio_layer(
+                        media,
+                        AudioRole::Music,
+                        0,
+                        S,
+                        0,
+                        S,
+                    )])],
                     S,
                 ),
             ],

@@ -243,8 +243,8 @@ mod tests {
 
     #[test]
     fn no_array_is_a_parse_error() {
-        let err = parse_raw(RawDescription::JsonArray("the model refused".into()))
-            .expect_err("no array");
+        let err =
+            parse_raw(RawDescription::JsonArray("the model refused".into())).expect_err("no array");
         assert!(matches!(err, VlmError::Parse(_)));
     }
 

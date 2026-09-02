@@ -272,7 +272,10 @@ fn split_png_stream(buf: &[u8]) -> Result<Vec<Vec<u8>>> {
     let mut out = Vec::new();
     let mut i = 0usize;
     while i < buf.len() {
-        anyhow::ensure!(buf[i..].starts_with(SIG), "PNG signature expected at byte {i}");
+        anyhow::ensure!(
+            buf[i..].starts_with(SIG),
+            "PNG signature expected at byte {i}"
+        );
         let start = i;
         i += SIG.len();
         loop {
