@@ -61,6 +61,16 @@ cargo fmt --check --all --manifest-path native/Cargo.toml
 cargo clippy --manifest-path native/Cargo.toml --workspace --all-targets -- -D warnings
 ```
 
+### The addon is rebuilt by nothing but `napi:build`
+
+`npm run build:e2e` and the dev server rebuild the TS bundle only; the addon the
+app loads (`native/index.*.node`) changes only when `npm run napi:build` runs.
+After any change under `native/`, run it before an e2e spec or a dev-app check.
+A stale addon is not detected at launch — it fails the first call whose wire
+shape changed, refusing to deserialize a project it no longer recognises, and
+that failure is reported by whichever feature happened to cross the boundary
+first, so it reads as a bug in that feature.
+
 ## Why not one directory
 
 - **Unit tests are colocated on purpose.** They sit beside the module (short
