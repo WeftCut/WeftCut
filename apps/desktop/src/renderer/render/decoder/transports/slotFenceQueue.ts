@@ -38,6 +38,7 @@
 
 import type { HwBarrierMode } from "../../../../shared/ipc";
 import type { FenceHandoffStats } from "./handoffTimings";
+import { webgpuDeviceOf } from "../../webgpuDevice";
 
 /// One in-flight completion probe over one delivered bitmap.
 export interface SlotFenceProbe {
@@ -296,10 +297,6 @@ export class SlotFenceQueue {
   }
 }
 
-/// Minimal structural view of a Pixi renderer, so this module needs no pixi
-/// import: the WebGPU renderer exposes `gpu.device`, the WebGL one does not.
-type MaybeWebgpuRenderer = { gpu?: { device?: GPUDevice | null } | null };
-
 /// The completion probe on a WebGPU device: copy one pixel out of the bitmap on
 /// the queue Pixi presents from, then ask that queue when its submitted work is
 /// done.
@@ -366,7 +363,7 @@ class WebgpuSlotFence implements SlotFenceBackend {
 /// which is slow but correct and reports itself as `readback` rather than
 /// blending in.
 export function slotFenceBackendForRenderer(renderer: unknown): SlotFenceBackend | null {
-  const device = (renderer as MaybeWebgpuRenderer | null)?.gpu?.device;
+  const device = webgpuDeviceOf(renderer);
   return device ? new WebgpuSlotFence(device) : null;
 }
 
