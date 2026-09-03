@@ -135,8 +135,34 @@ jobs:
       # Electron through Playwright's `_electron` with no executablePath — it
       # resolves `require('electron')` — so skipping this fails the whole suite
       # at launch, long after everything else has gone green.
+      #
+      # The release zip (~100 MB per OS) is cached by @electron/get's own
+      # download cache, pointed at a workspace path via electron_config_cache so
+      # actions/cache can see it. Keyed on the pinned version, so a bump busts
+      # it. Split restore/save for the reason the ffmpeg-lgpl pair below gives.
+      - name: Read pinned Electron version
+        id: electron-version
+        shell: bash
+        run: echo "v=$(node -p "require('./package.json').devDependencies.electron")" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Electron download cache
+        id: cache-electron
+        uses: actions/cache/restore@v6
+        with:
+          path: .cache/electron
+          key: electron-${{ runner.os }}-${{ steps.electron-version.outputs.v }}
+
       - name: Install Electron binary
+        env:
+          electron_config_cache: ${{ github.workspace }}/.cache/electron
         run: npm run electron:install
+
+      - name: Save Electron download cache
+        if: steps.cache-electron.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .cache/electron
+          key: ${{ steps.cache-electron.outputs.cache-primary-key }}
 
       # Cache the fetched ffmpeg/ffprobe so repeat runs skip the CDN download —
       # ffmpeg:fetch no-ops when the binaries already exist. Keyed on the OS and
