@@ -14,6 +14,14 @@ import {
   type ProjectSummary,
 } from "./ipc";
 import {
+  clipboardSlot,
+  copyLayer,
+  copySelectedKeyframes,
+  pasteKeyframesAtPlayhead,
+} from "./keyframe/clipboard";
+import { hasKeyframeSelection } from "./keyframe/selectionStore";
+import { deleteSelectedKeyframes } from "./timeline/keyframeBatch";
+import {
   adjacentFrameBoundaryUs,
   displayedFrameStartUs,
   inclusiveOutBoundaryUs,
@@ -217,9 +225,6 @@ export function App({ onCloseProject }: AppProps) {
   // docs/preview.md). The transport buttons here delegate to its imperative
   // handle (play / pause / seek); playhead state flows back up via callbacks.
   const previewRef = useRef<PreviewSurfaceHandle | null>(null);
-  // Timeline-local clipboard. It intentionally remembers the copied layer,
-  // independent of later selection changes; App remounts for each project.
-  const copiedLayerIdRef = useRef<string | null>(null);
   const [workspaceController, setWorkspaceController] =
     useState<DockWorkspaceController | null>(null);
   const [workspaceSnapshot, setWorkspaceSnapshot] =
@@ -590,10 +595,17 @@ export function App({ onCloseProject }: AppProps) {
     );
   }, [workspaceController]);
 
-  // Delete the WHOLE layer selection — one op, one undo entry, however many
-  // clips and lanes it spans. Never the primary alone: every gesture that builds
-  // a multi-selection (a marquee sweep, Shift+click, Select All) would then leave
+  // Delete the WHOLE selection — one op, one undo entry, however many clips and
+  // lanes it spans. Never the primary alone: every gesture that builds a
+  // multi-selection (a marquee sweep, Shift+click, Select All) would then leave
   // all but one of its clips alive.
+  //
+  // KEYFRAMES FIRST, and the whole dispatch lives here rather than in a raw
+  // capture-phase listener that preempted this one: the Keyboard panel lists
+  // one action per key, and a Delete row that lied about what the key does was
+  // the reason the precedence needed hiding in the first place. The keyframe
+  // selection is read across EVERY composition, since layer ids are unique
+  // project-wide and the keys need not sit in the timeline holding focus.
   //
   // The selection is read from the store, not from a captured value, for the
   // reason `handleMoveToNewTrack` below states: App does not re-render on a
@@ -601,11 +613,15 @@ export function App({ onCloseProject }: AppProps) {
   // this callback was last built. No-ops on an empty selection (the
   // `useShortcuts` dispatcher fires the handler regardless).
   //
-  // The op takes the selection VERBATIM — delete never fans out over a link
-  // (docs/features.md § Links), and it does not need to: selection is what
+  // The layer op takes the selection VERBATIM — delete never fans out over a
+  // link (docs/features.md § Links), and it does not need to: selection is what
   // carries the link, so a swept or clicked member already brought its
   // siblings along.
   const deleteSelected = useCallback(async () => {
+    if (hasKeyframeSelection()) {
+      if (await deleteSelectedKeyframes()) await refresh();
+      return;
+    }
     const layerIds = [...layerIdsOf(currentSelection())];
     if (layerIds.length === 0) return;
     try {
@@ -617,17 +633,25 @@ export function App({ onCloseProject }: AppProps) {
     }
   }, [refresh]);
 
+  // Copy and paste share ONE slot, and it holds whichever kind was copied last
+  // (`keyframe/clipboard.ts`) — so the same pair of keys never needs the user to
+  // know which of two clipboards they are addressing.
   const copySelected = useCallback(() => {
-    if (primaryLayerId) copiedLayerIdRef.current = primaryLayerId;
+    if (copySelectedKeyframes()) return;
+    if (primaryLayerId) copyLayer(primaryLayerId);
   }, [primaryLayerId]);
 
   const pasteAtPlayhead = useCallback(async () => {
-    const sourceLayerId = copiedLayerIdRef.current;
-    if (!sourceLayerId) return;
+    const slot = clipboardSlot();
+    if (slot === null) return;
+    if (slot.kind === "keyframes") {
+      if (await pasteKeyframesAtPlayhead(slot.groups)) await refresh();
+      return;
+    }
     try {
       // Projected: the paste lands in the timeline holding the keyboard, on
       // that timeline's own clock.
-      const pastedLayerId = await pasteLayer(sourceLayerId, focusedPlayheadUs());
+      const pastedLayerId = await pasteLayer(slot.layerId, focusedPlayheadUs());
       setPendingRevealLayerId(pastedLayerId);
       await refresh();
     } catch (err) {

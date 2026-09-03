@@ -93,9 +93,9 @@ function layer(kind: string, params: Record<string, unknown>): LayerSummary {
 describe("layerFrameAt", () => {
   it("resolves the transform at the layer-local time and carries the kind's origin", () => {
     const l = layer("Text", {
-      x: { mode: "Keyframed", value: [
-        { id: "k0", t_us: 0, value: 0, interp: { kind: "Linear" } },
-        { id: "k1", t_us: 1_000_000, value: 100, interp: { kind: "Linear" } },
+      x: { mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" }, value: [
+        { id: "k0", t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+        { id: "k1", t_us: 1_000_000, value: 100, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
       ] } as AnimTrack<number>,
       y: stat(50),
       scale_x: stat(2),

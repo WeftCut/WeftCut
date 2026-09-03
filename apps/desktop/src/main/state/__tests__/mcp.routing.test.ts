@@ -473,7 +473,7 @@ describe('MCP adapter routing — set_keyframe (dedicated)', () => {
       param_key: 'opacity',
       t_us: 2_000_000,
       value: 0.5,
-      interp: { kind: 'Linear' },
+      in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' },
     }))
     expect(r.ok).toBe(true)
 
@@ -495,7 +495,7 @@ describe('MCP adapter routing — set_keyframe (dedicated)', () => {
       param_key: 'opacity',
       t_us: 1_000_000,
       value: 0.5,
-      interp: { kind: 'Linear' },
+      in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' },
     }))
     expect(r.ok).toBe(false)
     if (r.ok) return
@@ -518,6 +518,66 @@ describe('MCP adapter routing — set_keyframe (dedicated)', () => {
       value: 0.5,
       interp: { kind: 'Squiggly' },
     }))
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.code).toBe('invalid_params')
+  })
+})
+
+// ── Dedicated-exec: set_keyframe_tangents / set_extrapolation ─────────────────
+
+describe('MCP adapter routing — set_keyframe_tangents / set_extrapolation (dedicated)', () => {
+  /** Text layer with a 2-key opacity track; returns the first key's id. */
+  function keyedText(a: ReturnType<typeof freshActor>): { layerId: string; keyframeId: string } {
+    const addR = a.dispatch('add_layer', { kind: 'text', track: aRollId(a), t_start_us: 0, t_end_us: 4_000_000 })
+    expect(addR.ok).toBe(true)
+    if (!addR.ok) throw new Error('setup failed')
+    const layerId = addR.value as string
+    for (const [t, v] of [[0, 0], [2_000_000, 1]] as const)
+      expect(a.mcpCall('set_keyframe', JSON.stringify({ layer_id: layerId, param_key: 'opacity', t_us: t, value: v })).ok).toBe(true)
+    const gr = a.mcpCall('get_param_track', JSON.stringify({ layer_id: layerId, param_key: 'opacity' }))
+    if (!gr.ok) throw new Error('get_param_track failed')
+    const parsed = JSON.parse(gr.result.content[0].text) as { keyframes: Array<{ id: string }> }
+    return { layerId, keyframeId: parsed.keyframes[0].id }
+  }
+
+  it('set_keyframe_tangents routes: the side lands on the key and the track stays Keyframed', () => {
+    const a = freshActor()
+    const { layerId, keyframeId } = keyedText(a)
+    const r = a.mcpCall('set_keyframe_tangents', JSON.stringify({ layer_id: layerId, param_key: 'opacity', keyframe_id: keyframeId, out: { x: 0.25, y: 0.1 } }))
+    expect(r.ok).toBe(true)
+    const gr = a.mcpCall('get_param_track', JSON.stringify({ layer_id: layerId, param_key: 'opacity' }))
+    expect(gr.ok).toBe(true)
+    if (!gr.ok) return
+    const parsed = JSON.parse(gr.result.content[0].text) as { mode: string; keyframes: Array<{ out: unknown }> }
+    expect(parsed.mode).toBe('Keyframed')
+    expect(parsed.keyframes[0].out).toEqual({ x: 0.25, y: 0.1, mode: 'Free' })
+  })
+
+  it('set_keyframe_tangents with a malformed keyframe_id → structured invalid_params error, no throw', () => {
+    const a = freshActor()
+    const { layerId } = keyedText(a)
+    const r = a.mcpCall('set_keyframe_tangents', JSON.stringify({ layer_id: layerId, param_key: 'opacity', keyframe_id: 'first', out: { x: 0.25, y: 0.1 } }))
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.code).toBe('invalid_params')
+  })
+
+  it('set_extrapolation routes: the side lands on the track', () => {
+    const a = freshActor()
+    const { layerId } = keyedText(a)
+    const r = a.mcpCall('set_extrapolation', JSON.stringify({ layer_id: layerId, param_key: 'opacity', after: 'Offset' }))
+    expect(r.ok).toBe(true)
+    const gr = a.mcpCall('get_param_track', JSON.stringify({ layer_id: layerId, param_key: 'opacity' }))
+    expect(gr.ok).toBe(true)
+    if (!gr.ok) return
+    const parsed = JSON.parse(gr.result.content[0].text) as { extrapolate: { before: string; after: string } }
+    expect(parsed.extrapolate).toEqual({ before: 'Hold', after: 'Offset' })
+  })
+
+  it('set_extrapolation with a malformed layer_id → structured invalid_params error, no throw', () => {
+    const a = freshActor()
+    const r = a.mcpCall('set_extrapolation', JSON.stringify({ layer_id: 42, param_key: 'opacity', after: 'Loop' }))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')

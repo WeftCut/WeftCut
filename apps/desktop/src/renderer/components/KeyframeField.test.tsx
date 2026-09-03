@@ -9,8 +9,8 @@ import { KeyframeField } from "./KeyframeField";
 afterEach(cleanup);
 
 const keyed = (t_us: number, value: number): AnimTrack<number> => ({
-  mode: "Keyframed",
-  value: [{ id: "a", t_us, value, interp: { kind: "Linear" } }],
+  mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+  value: [{ id: "a", t_us, value, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }],
 });
 
 describe("KeyframeField (no stopwatch / timeline mode)", () => {

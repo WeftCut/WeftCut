@@ -2,7 +2,7 @@
   "cases": [
     {
       "name": "static_minus6_no_fades",
-      "gain_db": { "mode": "Static", "value": -6.0 },
+      "gain_db": { "mode": "Static", "value": -6 },
       "fade_in_us": 0,
       "fade_out_us": 0,
       "span_us": 10000000,
@@ -13,17 +13,17 @@
     },
     {
       "name": "unity_with_one_second_fades",
-      "gain_db": { "mode": "Static", "value": 0.0 },
+      "gain_db": { "mode": "Static", "value": 0 },
       "fade_in_us": 1000000,
       "fade_out_us": 1000000,
       "span_us": 10000000,
       "samples": [
-        { "t_us": 0, "expect": 0.0 },
+        { "t_us": 0, "expect": 0 },
         { "t_us": 500000, "expect": 0.5 },
-        { "t_us": 1000000, "expect": 1.0 },
-        { "t_us": 5000000, "expect": 1.0 },
+        { "t_us": 1000000, "expect": 1 },
+        { "t_us": 5000000, "expect": 1 },
         { "t_us": 9500000, "expect": 0.5 },
-        { "t_us": 10000000, "expect": 0.0 }
+        { "t_us": 10000000, "expect": 0 }
       ]
     },
     {
@@ -31,19 +31,10 @@
       "gain_db": {
         "mode": "Keyframed",
         "value": [
-          {
-            "id": "00000000-0000-7000-8000-000000000001",
-            "t_us": 0,
-            "value": -20.0,
-            "interp": { "kind": "Linear" }
-          },
-          {
-            "id": "00000000-0000-7000-8000-000000000002",
-            "t_us": 1000000,
-            "value": 0.0,
-            "interp": { "kind": "Linear" }
-          }
-        ]
+          { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": -20, "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" }, "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" }, "continuity": "Broken", "segment": { "kind": "Linear" } },
+          { "id": "00000000-0000-7000-8000-000000000002", "t_us": 1000000, "value": 0, "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" }, "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" }, "continuity": "Broken", "segment": { "kind": "Linear" } }
+        ],
+        "extrapolate": { "before": "Hold", "after": "Hold" }
       },
       "fade_in_us": 0,
       "fade_out_us": 0,
@@ -51,7 +42,7 @@
       "samples": [
         { "t_us": 0, "expect": 0.1 },
         { "t_us": 500000, "expect": 0.31622776601683794 },
-        { "t_us": 1000000, "expect": 1.0 }
+        { "t_us": 1000000, "expect": 1 }
       ]
     },
     {
@@ -59,25 +50,16 @@
       "gain_db": {
         "mode": "Keyframed",
         "value": [
-          {
-            "id": "00000000-0000-7000-8000-000000000003",
-            "t_us": 0,
-            "value": 0.0,
-            "interp": { "kind": "Hold" }
-          },
-          {
-            "id": "00000000-0000-7000-8000-000000000004",
-            "t_us": 505000,
-            "value": -20.0,
-            "interp": { "kind": "Hold" }
-          }
-        ]
+          { "id": "00000000-0000-7000-8000-000000000003", "t_us": 0, "value": 0, "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" }, "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" }, "continuity": "Broken", "segment": { "kind": "Hold" } },
+          { "id": "00000000-0000-7000-8000-000000000004", "t_us": 505000, "value": -20, "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" }, "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" }, "continuity": "Broken", "segment": { "kind": "Linear" } }
+        ],
+        "extrapolate": { "before": "Hold", "after": "Hold" }
       },
       "fade_in_us": 0,
       "fade_out_us": 0,
       "span_us": 1000000,
       "samples": [
-        { "t_us": 500000, "expect": 1.0 },
+        { "t_us": 500000, "expect": 1 },
         { "t_us": 510000, "expect": 0.1 }
       ]
     }
@@ -85,15 +67,21 @@
   "pan_cases": [
     {
       "name": "static pan center",
-      "pan": { "mode": "Static", "value": 0.0 },
+      "pan": { "mode": "Static", "value": 0 },
       "span_us": 1000000,
-      "samples": [ { "t_us": 0, "expect": 0.0 }, { "t_us": 500000, "expect": 0.0 } ]
+      "samples": [
+        { "t_us": 0, "expect": 0 },
+        { "t_us": 500000, "expect": 0 }
+      ]
     },
     {
       "name": "static pan -0.8 clamped passthrough",
       "pan": { "mode": "Static", "value": -0.8 },
       "span_us": 1000000,
-      "samples": [ { "t_us": 0, "expect": -0.8 }, { "t_us": 999000, "expect": -0.8 } ]
+      "samples": [
+        { "t_us": 0, "expect": -0.8 },
+        { "t_us": 999000, "expect": -0.8 }
+      ]
     }
   ],
   "pan_coeff_env_cases": [
@@ -103,8 +91,8 @@
       "channels": 2,
       "span_us": 1000000,
       "samples": [
-        { "t_us": 0,      "expect": [1.0, 0.95105654, 0.0, 0.309017] },
-        { "t_us": 500000, "expect": [1.0, 0.95105654, 0.0, 0.309017] }
+        { "t_us": 0, "expect": [1, 0.95105654, 0, 0.309017] },
+        { "t_us": 500000, "expect": [1, 0.95105654, 0, 0.309017] }
       ]
     }
   ]

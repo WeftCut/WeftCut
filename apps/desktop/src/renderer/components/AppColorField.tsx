@@ -2,6 +2,24 @@ import { Pipette } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { pickColor } from "../colorpick/pickColor";
+import type { Rgba } from "../ipc";
+
+/// The `Rgba` ↔ hex bridge every caller of this field needs, kept beside the
+/// field because the hex string IS its value contract. Alpha never crosses:
+/// `<input type="color">` edits the RGB triplet only, so the caller supplies
+/// the alpha to carry through.
+export function rgbaToHex(c: Rgba): string {
+  return `#${[c.r, c.g, c.b].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/// A malformed hex reads as white rather than throwing: the value comes from a
+/// DOM input, and a layer that briefly looks wrong beats a render that crashes.
+export function hexToRgba(hex: string, a: number): Rgba {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m || !m[1]) return { r: 255, g: 255, b: 255, a };
+  const n = parseInt(m[1], 16);
+  return { r: (n >> 16) & 0xff, g: (n >> 8) & 0xff, b: n & 0xff, a };
+}
 
 export interface AppColorFieldProps {
   /// Hex string, e.g. "#aabbcc". The native picker edits the RGB triplet only.

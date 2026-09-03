@@ -391,7 +391,7 @@ describe("keyframeAbsoluteX", () => {
 });
 
 describe("trackKeyframeProperties", () => {
-  const kfTrack = { mode: "Keyframed" as const, value: [{ id: "k", t_us: 0, value: 1, interp: { kind: "Linear" as const } }] };
+  const kfTrack = { mode: "Keyframed" as const, extrapolate: { before: "Hold" as const, after: "Hold" as const }, value: [{ id: "k", t_us: 0, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Free" as const }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" as const }, continuity: "Broken" as const, segment: { kind: "Linear" as const } }] };
   const staticTrack = { mode: "Static" as const, value: 1 };
   it("returns the union of keyframed params across the track's layers, in descriptor order", () => {
     const track = {

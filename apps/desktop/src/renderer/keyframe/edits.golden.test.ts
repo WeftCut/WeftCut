@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { AnimTrack, Interpolation, Keyframe } from "../ipc";
+import type { AnimTrack, Continuity, Extrapolate, Interpolation, Keyframe, Tangent } from "../ipc";
 import {
   upsertKeyframe,
   removeKeyframe,
   retimeKeyframe,
-  setKeyframeInterp,
-  smoothKeyframe,
+  setSegmentEasing,
+  setAuto,
+  setTangent,
+  setContinuity,
+  setExtrapolation,
 } from "./edits";
+import { solveAutoTangents } from "../../shared/tangents";
+import { extrapolationEq, segmentEqExact } from "../../shared/keyframe";
 import fixture from "./keyframeEditsGolden.fixture.json";
 
 type Track = AnimTrack<number>;
@@ -18,32 +23,46 @@ interface Case {
   expect: Track;
 }
 
+/// The `solve` op runs the shared write-time solver the way main does — over
+/// the track's keys with the identity scalar.
+function solve(track: Track): Track {
+  if (track.mode !== "Keyframed") return track;
+  return { ...track, value: solveAutoTangents(track.value, (v) => v) };
+}
+
 function applyOp(track: Track, op: string, args: Record<string, unknown>): Track {
   switch (op) {
     case "upsert":
-      return upsertKeyframe(track, args.t_us as number, args.value as number);
+      return upsertKeyframe(track, args.t_us as number, args.value as number, args.easing as Interpolation | undefined);
     case "remove":
       return removeKeyframe(track, args.id as string, args.fallback as number);
     case "retime":
       return retimeKeyframe(track, args.id as string, args.new_t_us as number);
-    case "set_interp":
-      return setKeyframeInterp(track, args.id as string, args.interp as Interpolation);
-    case "smooth_one":
-      return smoothKeyframe(track, args.id as string);
+    case "set_segment_easing":
+      return setSegmentEasing(track, args.id as string, args.easing as Interpolation);
+    case "set_auto":
+      return setAuto(track, args.ids as string[]);
+    case "set_tangent":
+      return setTangent(track, args.id as string, args.side as "in" | "out", { x: args.x as number, y: args.y as number });
+    case "set_continuity":
+      return setContinuity(track, args.id as string, args.continuity as Continuity);
+    case "set_extrapolation":
+      return setExtrapolation(track, { before: args.before as Extrapolate | undefined, after: args.after as Extrapolate | undefined });
+    case "solve":
+      return solve(track);
     default:
       throw new Error(`unknown op ${op}`);
   }
 }
 
 const NEAR = 1e-9;
-function interpEq(a: Interpolation, b: Interpolation) {
-  expect(a.kind).toBe(b.kind);
-  if (a.kind === "Bezier" && b.kind === "Bezier") {
-    expect(Math.abs(a.p1[0] - b.p1[0])).toBeLessThan(NEAR);
-    expect(Math.abs(a.p1[1] - b.p1[1])).toBeLessThan(NEAR);
-    expect(Math.abs(a.p2[0] - b.p2[0])).toBeLessThan(NEAR);
-    expect(Math.abs(a.p2[1] - b.p2[1])).toBeLessThan(NEAR);
-  }
+/// `x` exact (an identity expression or a fixture literal on both sides), `y`
+/// within 1e-9 (a solved value), mode exact — the same rule the Rust runner
+/// applies.
+function tangentEq(got: Tangent, want: Tangent, what: string) {
+  expect(got.x, `${what}.x`).toBe(want.x);
+  expect(Math.abs(got.y - want.y), `${what}.y`).toBeLessThan(NEAR);
+  expect(got.mode, `${what}.mode`).toBe(want.mode);
 }
 
 function assertTrackEqIgnoringIds(got: Track, want: Track) {
@@ -53,20 +72,27 @@ function assertTrackEqIgnoringIds(got: Track, want: Track) {
     return;
   }
   if (got.mode === "Keyframed" && want.mode === "Keyframed") {
+    expect(extrapolationEq(got.extrapolate, want.extrapolate), "extrapolate").toBe(true);
     expect(got.value.length).toBe(want.value.length);
     got.value.forEach((g: Keyframe<number>, i: number) => {
       const w = want.value[i]!;
-      expect(g.t_us).toBe(w.t_us);
-      expect(Math.abs(g.value - w.value)).toBeLessThan(NEAR);
-      interpEq(g.interp, w.interp);
+      const at = `key[${i}] t=${w.t_us}`;
+      expect(g.t_us, at).toBe(w.t_us);
+      expect(Math.abs(g.value - w.value), `${at}.value`).toBeLessThan(NEAR);
+      tangentEq(g.in, w.in, `${at}.in`);
+      tangentEq(g.out, w.out, `${at}.out`);
+      expect(g.continuity, `${at}.continuity`).toBe(w.continuity);
+      expect(segmentEqExact(g.segment, w.segment), `${at}.segment`).toBe(true);
     });
     return;
   }
   throw new Error("mode mismatch");
 }
 
+// Same fixture as `native/src/state/keyframe_edits.rs::golden_vectors_match_fixture`;
+// a change that passes one language and fails the other is a Rust↔TS drift.
 describe("keyframe edits golden", () => {
-  for (const c of fixture.cases as Case[]) {
+  for (const c of fixture.cases as unknown as Case[]) {
     it(c.name, () => {
       const got = applyOp(c.input, c.op, c.args);
       assertTrackEqIgnoringIds(got, c.expect);

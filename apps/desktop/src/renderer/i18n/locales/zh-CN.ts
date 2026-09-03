@@ -71,6 +71,17 @@ const zhCN: Resources = {
     procedural_badge: "参数曲线",
     smooth: "平滑",
     easing_library: "缓动预设库…",
+    // 切线手柄右键菜单：关键帧的连续性。
+    continuity_smooth: "平滑",
+    continuity_broken: "断开",
+    // 首/末关键帧上的外推子菜单，五种模式 (keyframe.extrapolate_<id>)。
+    extrapolate_before: "起点前外推",
+    extrapolate_after: "终点后外推",
+    extrapolate_hold: "保持",
+    extrapolate_loop: "循环",
+    extrapolate_ping_pong: "往返",
+    extrapolate_offset: "偏移累加",
+    extrapolate_continue: "延续",
     // 预设库行标签,与 interp_* 的家族译名保持一致。
     family_classic: "基础",
     family_sine: "正弦",
@@ -539,10 +550,11 @@ const zhCN: Resources = {
     review_shots: "查看镜头…",
     toggle_link_selected: "链接 / 取消链接所选图层",
     toggle_link_override: "切换忽略链接",
-    nudge_audio_sample_back: "音频前移 1 个采样",
-    nudge_audio_sample_forward: "音频后移 1 个采样",
-    nudge_audio_ms_back: "音频前移 1 毫秒",
-    nudge_audio_ms_forward: "音频后移 1 毫秒",
+    // 一个键、两种对象：标签只说手势本身，下面的说明才交代各自选中什么时做什么。
+    nudge_back: "微移到更早",
+    nudge_forward: "微移到更晚",
+    nudge_large_back: "大幅微移到更早",
+    nudge_large_forward: "大幅微移到更晚",
     resync_audio_to_video: "音频重新对齐到视频",
     seek_frame_back: "后退一帧",
     seek_frame_forward: "前进一帧",
@@ -562,6 +574,17 @@ const zhCN: Resources = {
     clear_range: "清除入出点",
     open_search: "全局搜索…",
     search: "搜索",
+  },
+  // 设置 → 键盘里每一行标签下面那句说明。只有按“当前选中的是什么”分派的动作
+  // 才有：它们的标签只能说出两件事里的一件，规则本身就写在这句里。
+  hints: {
+    nudge_back: "把选中的关键帧前移一帧；没有选中关键帧时，把选中的音频前移一个采样。",
+    nudge_forward: "把选中的关键帧后移一帧；没有选中关键帧时，把选中的音频后移一个采样。",
+    nudge_large_back: "把选中的关键帧前移十帧；没有选中关键帧时，把选中的音频前移一毫秒。",
+    nudge_large_forward: "把选中的关键帧后移十帧；没有选中关键帧时，把选中的音频后移一毫秒。",
+    delete_selected: "有选中的关键帧时删除关键帧，否则删除选中的片段。",
+    copy_selected: "有选中的关键帧时复制关键帧，否则复制选中的片段。",
+    paste_at_playhead: "把复制的关键帧粘贴到选中片段的播放头处，否则粘贴复制的片段。",
   },
   modal: {
     close: "关闭",
@@ -1627,6 +1650,8 @@ const zhCN: Resources = {
     cleared: "已清空日志",
     center_layer_unstaged: "预览尚未装载该图层，无法居中——其尺寸未知",
     cross_composition_copy: "不能跨时间线复制片段——松开 Alt 即可将其移动过去",
+    paste_keyframes_no_target: "请先选中一个片段，再粘贴关键帧",
+    paste_keyframes_skipped: "已跳过 {{params}}——选中的片段没有这些属性",
     auto_caption_started: "正在转写“{{clip}}”",
     auto_caption_done: "已添加 {{cues}} 条字幕（{{engine}}）",
     shots_analyze_started: "正在分析“{{clip}}”的镜头",

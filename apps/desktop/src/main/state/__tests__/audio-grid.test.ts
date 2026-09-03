@@ -325,7 +325,7 @@ describe('audio grid — the 48 kHz mix lattice', () => {
     const raw = sample(gridIndex(frame(V_START_FRAME()), AUDIO_GRID) + 3)
     expect(snapFrameRound(raw, FPS.num, FPS.den)).not.toBe(raw)
 
-    const kf = (t: number) => ({ mode: 'Keyframed' as const, value: [{ id: 'k1', t_us: t, value: 0.5, interp: { kind: 'Linear' as const } }] })
+    const kf = (t: number) => ({ mode: 'Keyframed' as const, extrapolate: { before: 'Hold' as const, after: 'Hold' as const }, value: [{ id: 'k1', t_us: t, value: 0.5, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' as const }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' as const }, continuity: 'Broken' as const, segment: { kind: 'Linear' as const } }] })
     expect(actor.dispatch('update_layer_param_track', { layer: audioLayer, param_key: 'gain_db', track: kf(raw) }).ok).toBe(true)
     const audioParams = findLayer(actor.snapshot(), audioLayer).params
     if (audioParams.kind !== 'Audio' || audioParams.gain_db.mode !== 'Keyframed') throw new Error('expected a keyframed audio gain')

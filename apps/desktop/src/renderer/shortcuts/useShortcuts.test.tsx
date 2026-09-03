@@ -298,17 +298,17 @@ describe("useShortcuts — NLE-style global accelerators", () => {
 
   it("keeps unscoped actions alive in every region", () => {
     const togglePlay = vi.fn();
-    const nudgeAudioMsForward = vi.fn();
-    render(<Harness handlers={{ togglePlay, nudgeAudioMsForward }} />);
+    const resyncAudioToVideo = vi.fn();
+    render(<Harness handlers={{ togglePlay, resyncAudioToVideo }} />);
 
-    // Transport is global by design. So is the audio slip: nudging sync while
-    // WATCHING the preview is the workflow Alt+Arrow exists for, which is why
-    // it is the one timeline-selection action left unscoped.
+    // Transport is global by design. So is the re-sync: it zeroes a derived
+    // offset the user is JUDGING against the preview, and a value with no field
+    // to type into needs its key alive wherever that judging happens.
     setActiveRegion("preview");
     dispatchKey(document.body, " ");
-    dispatchBinding(document.body, "Alt+Shift+ArrowRight");
+    dispatchBinding(document.body, "Alt+Shift+S");
     expect(togglePlay).toHaveBeenCalledTimes(1);
-    expect(nudgeAudioMsForward).toHaveBeenCalledTimes(1);
+    expect(resyncAudioToVideo).toHaveBeenCalledTimes(1);
   });
 
   it("dispatches project undo/redo but leaves text-field undo to the platform", () => {

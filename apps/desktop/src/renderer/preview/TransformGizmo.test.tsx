@@ -242,8 +242,8 @@ describe("TransformGizmoHost", () => {
     useProjectStore.getState().apply(
       fixture({
         x: {
-          mode: "Keyframed",
-          value: [{ id: "k1", t_us: 0, value: 10, interp: { kind: "Linear" } }],
+          mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+          value: [{ id: "k1", t_us: 0, value: 10, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }],
         } as AnimTrack<number>,
       }),
     );
@@ -563,8 +563,8 @@ describe("TransformGizmo rotation handle", () => {
     useProjectStore.getState().apply(
       fixture({
         rotation_deg: {
-          mode: "Keyframed",
-          value: [{ id: "k1", t_us: 0, value: 30, interp: { kind: "Linear" } }],
+          mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+          value: [{ id: "k1", t_us: 0, value: 30, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }],
         } as AnimTrack<number>,
       }),
     );
@@ -738,8 +738,8 @@ describe("TransformGizmo anchor target", () => {
     useProjectStore.getState().apply(
       fixture({
         anchor_x: {
-          mode: "Keyframed",
-          value: [{ id: "k1", t_us: 0, value: 0.25, interp: { kind: "Linear" } }],
+          mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+          value: [{ id: "k1", t_us: 0, value: 0.25, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }],
         } as AnimTrack<number>,
       }),
     );
@@ -894,14 +894,14 @@ describe("TransformGizmo scale handles", () => {
     useProjectStore.getState().apply(
       fixture({
         scale_x: {
-          mode: "Keyframed",
-          value: [{ id: "k1", t_us: 0, value: 1, interp: { kind: "Linear" } }],
+          mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+          value: [{ id: "k1", t_us: 0, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }],
         } as AnimTrack<number>,
         scale_y: {
-          mode: "Keyframed",
+          mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
           value: [
-            { id: "k2", t_us: 0, value: 1, interp: { kind: "Linear" } },
-            { id: "k3", t_us: 900_000, value: 9, interp: { kind: "Linear" } },
+            { id: "k2", t_us: 0, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+            { id: "k3", t_us: 900_000, value: 9, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
           ],
         } as AnimTrack<number>,
       }),
@@ -991,8 +991,8 @@ describe("TransformGizmo scale handles", () => {
     useProjectStore.getState().apply(
       fixture({
         scale_x: {
-          mode: "Keyframed",
-          value: [{ id: "k1", t_us: 0, value: 1, interp: { kind: "Linear" } }],
+          mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+          value: [{ id: "k1", t_us: 0, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }],
         } as AnimTrack<number>,
       }),
     );

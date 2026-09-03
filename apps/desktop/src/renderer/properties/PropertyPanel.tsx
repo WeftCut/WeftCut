@@ -9,7 +9,7 @@ import {
   useAudioUnits,
   type AudioUnits,
 } from "../state/audioUnitsStore";
-import { AppColorField } from "../components/AppColorField";
+import { AppColorField, hexToRgba, rgbaToHex } from "../components/AppColorField";
 import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
@@ -33,13 +33,13 @@ import {
   type AudioRole,
   type CompositionSummary,
   type LayerParamsPatch,
+  type AnimTrack,
   type LayerSummary,
   type LinkSummary,
   type Rgba,
   type TrackSummary,
-  trackStatic,
 } from "../ipc";
-import { X, Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, GAIN_DB, PAN } from "../keyframe/descriptors";
+import { X, Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, GAIN_DB, PAN, COLOR_TEXT, COLOR_FILL, type RgbaParamDescriptor } from "../keyframe/descriptors";
 import { groupDisplayName, layerDisplayName } from "../lib/layerName";
 import { trackDisplayName } from "../lib/trackName";
 import { refusalText, tryMutate } from "../errors/tryMutate";
@@ -51,17 +51,21 @@ import {
 } from "../timeline/groupEligibility";
 import { openComposition } from "../state/compositionAnchorStore";
 import { isShrunk, TEXT_BOX_MIN_PX } from "../render/textBox";
+import { AnimatableField, displayValue } from "../components/AnimatableField";
+import { updateLayerParamTrack } from "../ipc";
+import { autoKeyTrack } from "../keyframe/autoKey";
+import { collapseToStaticRgba } from "../keyframe/edits";
+import { resolveAnimatedColor } from "../render/animated";
 import { InspectorAnimField } from "./InspectorAnimField";
 import { LinkLabelField } from "./LinkLabelField";
 import { ScaleFields } from "./ScaleFields";
 import { TEXT_BOX_MODES, textBoxModeOf, textBoxPatchFor, type TextBoxMode } from "./textBoxMode";
 import { useTextFit } from "./useTextFit";
 
-// Animatable rows (transform/opacity for visual kinds, gain_db/pan for audio)
-// render via `InspectorAnimField`; every other row (fades/flip/mute/content/
-// font, Text color, Motif props) commits scalars through `updateLayerParams`.
-const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
-const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
+// Animatable rows render through a stopwatch wrapper: the numeric ones via
+// `InspectorAnimField`, the two colours via `InspectorColorField`. Every other
+// row (fades/flip/mute/content/font, Motif props) commits scalars through
+// `updateLayerParams`.
 import { getMotif, subscribeMotifCatalog, motifCatalogRevision } from "../render/motifs/catalog";
 import {
   useCompositionRefCounts,
@@ -600,7 +604,7 @@ function KindFields({
     case "Text":
       return (
         <>
-          <TextFields layer={layer} v={layer.params} commit={commit} />
+          <TextFields layer={layer} v={layer.params} commit={commit} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
           <TransformSection layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
         </>
       );
@@ -615,7 +619,7 @@ function KindFields({
       // Core is just the transform section; fades wait in the advanced bucket.
       return <TransformSection layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
     case "Color":
-      return <ColorFields layer={layer} v={layer.params} commit={commit} />;
+      return <ColorFields layer={layer} v={layer.params} commit={commit} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
     case "Audio":
       return <AudioFields layer={layer} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
     case "Motif":
@@ -675,6 +679,82 @@ function commitLayerParams(layerId: string, onMutated: () => Promise<void>): Com
       await onMutated();
     }
   };
+}
+
+/// The animatable colour row, shared by the Text section (glyph colour) and the
+/// Color section (fill): the swatch and its eyedropper inside the same
+/// stopwatch wrapper the f64 rows use, so a colour turns on, off and keys
+/// exactly like opacity does.
+///
+/// The stopwatch decides where a pick lands: lit, it becomes a keyframe at the
+/// playhead through `updateLayerParamTrack`; unlit, it stays the static
+/// `update_layer_params` patch, so a layer nobody animates never grows a track.
+/// Both paths debounce for the same reason — the native picker fires `onChange`
+/// continuously while the user drags inside it.
+function InspectorColorField({
+  layerId,
+  track,
+  desc,
+  tInLayerUs,
+  playheadInSpan,
+  commitStatic,
+  onMutated,
+}: {
+  layerId: string;
+  track: AnimTrack<Rgba>;
+  desc: RgbaParamDescriptor;
+  tInLayerUs: number;
+  playheadInSpan: boolean;
+  /// Where a pick goes while the stopwatch is unlit — the kind's own params
+  /// patch, which is the one thing the two sections do differently.
+  commitStatic: (color: Rgba) => Promise<void>;
+  onMutated: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const label = t(desc.labelKey);
+  const shown = displayValue(track, tInLayerUs, desc.fallback, resolveAnimatedColor);
+  // Local draft while a pick is in flight: null = idle, so the swatch follows
+  // the playhead, undo and the stopwatch again the moment a new track arrives.
+  const [draft, setDraft] = useState<Rgba | null>(null);
+  useEffect(() => setDraft(null), [layerId, track]);
+  const value = draft ?? shown;
+
+  const commitColor = useDebouncedCommit<Rgba>(async (next) => {
+    if (track.mode === "Keyframed") {
+      await tryMutate(
+        () => updateLayerParamTrack(layerId, desc.paramKey, autoKeyTrack(track, tInLayerUs, next)).then(onMutated),
+        "Edit keyframes",
+      );
+    } else {
+      await commitStatic(next);
+    }
+  });
+
+  return (
+    <AnimatableField
+      layerId={layerId}
+      paramKey={desc.paramKey}
+      label={label}
+      track={track}
+      fallback={desc.fallback}
+      collapse={collapseToStaticRgba}
+      tInLayerUs={tInLayerUs}
+      playheadInSpan={playheadInSpan}
+      onMutated={onMutated}
+    >
+      <AppColorField
+        value={rgbaToHex(value)}
+        ariaLabel={label}
+        // The native picker edits RGB only, so alpha rides through from what is
+        // on screen rather than being reset to opaque on every pick.
+        onValueChange={(hex) => {
+          const next = hexToRgba(hex, value.a);
+          setDraft(next);
+          commitColor(next);
+        }}
+      />
+    </AnimatableField>
+  );
 }
 
 /// Unified transform Section for the visual kinds (Text, VideoClip,
@@ -848,16 +928,21 @@ function TextFields({
   layer,
   v,
   commit,
+  tInLayerUs,
+  playheadInSpan,
+  onMutated,
 }: {
   layer: LayerSummary;
   v: Extract<LayerSummary["params"], { kind: "Text" }>;
   commit: Commit;
+  tInLayerUs: number;
+  playheadInSpan: boolean;
+  onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
   const [content, setContent] = useState(v.content);
   const [family, setFamily] = useState(v.font_family);
   const [size, setSize] = useState(v.font_size_px);
-  const [color, setColor] = useState(() => trackStatic(v.color, WHITE));
   const [boxW, setBoxW] = useState<number | null>(v.box_w);
   const [boxH, setBoxH] = useState<number | null>(v.box_h);
   const [leading, setLeading] = useState(v.line_height);
@@ -879,14 +964,12 @@ function TextFields({
     setContent(v.content);
     setFamily(v.font_family);
     setSize(v.font_size_px);
-    setColor(trackStatic(v.color, WHITE));
     setBoxW(v.box_w);
     setBoxH(v.box_h);
     setLeading(v.line_height);
     setTracking(v.letter_spacing);
   }, [layer.id, v]);
 
-  const debouncedCommit = useDebouncedCommit<LayerParamsPatch>(commit);
   // Fixed is the only mode that can shrink, so it is the only one worth
   // sampling — see `useTextFit` for why this can't be a plain render-time read.
   const fit = useTextFit(layer.id, textBoxModeOf(v.box_w, v.box_h) === "fixed");
@@ -937,17 +1020,15 @@ function TextFields({
       {shrinkNotice === null ? null : (
         <p className="meta" data-testid="text-shrink-notice">{shrinkNotice}</p>
       )}
-      <Field label={t("property_panel.color")}>
-        <AppColorField
-          value={rgbaToHex(color)}
-          ariaLabel={t("property_panel.color")}
-          onValueChange={(v) => {
-            const next = hexToRgba(v, color.a);
-            setColor(next);
-            debouncedCommit({ kind: "Text", color: next });
-          }}
-        />
-      </Field>
+      <InspectorColorField
+        layerId={layer.id}
+        track={v.color}
+        desc={COLOR_TEXT}
+        tInLayerUs={tInLayerUs}
+        playheadInSpan={playheadInSpan}
+        commitStatic={(color) => commit({ kind: "Text", color })}
+        onMutated={onMutated}
+      />
       <TextBoxFields
         layerId={layer.id}
         boxW={v.box_w}
@@ -1668,23 +1749,29 @@ function ColorFields({
   layer,
   v,
   commit,
+  tInLayerUs,
+  playheadInSpan,
+  onMutated,
 }: {
   layer: LayerSummary;
   v: Extract<LayerSummary["params"], { kind: "Color" }>;
   commit: Commit;
+  tInLayerUs: number;
+  playheadInSpan: boolean;
+  onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
   return (
     <PropSection layerKind={layer.kind} sectionId="color" title={t("property_panel.color")}>
-      <Field label={t("property_panel.color")}>
-        <AppColorField
-          value={rgbaToHex(trackStatic(v.color, BLACK))}
-          ariaLabel={t("property_panel.color")}
-          onValueChange={(hex) =>
-            commit({ kind: "Color", color: hexToRgba(hex, trackStatic(v.color, BLACK).a) })
-          }
-        />
-      </Field>
+      <InspectorColorField
+        layerId={layer.id}
+        track={v.color}
+        desc={COLOR_FILL}
+        tInLayerUs={tInLayerUs}
+        playheadInSpan={playheadInSpan}
+        commitStatic={(color) => commit({ kind: "Color", color })}
+        onMutated={onMutated}
+      />
       <Field label={t("property_panel.width")}>
         <AppNumberField
           value={v.width}
@@ -1825,24 +1912,6 @@ const FONT_FAMILIES = [
   "Verdana",
   "Tahoma",
 ];
-
-function rgbaToHex(c: Rgba): string {
-  return `#${[c.r, c.g, c.b]
-    .map((n) => n.toString(16).padStart(2, "0"))
-    .join("")}`;
-}
-
-function hexToRgba(hex: string, a: number): Rgba {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m || !m[1]) return { r: 255, g: 255, b: 255, a };
-  const n = parseInt(m[1], 16);
-  return {
-    r: (n >> 16) & 0xff,
-    g: (n >> 8) & 0xff,
-    b: n & 0xff,
-    a,
-  };
-}
 
 /**
  * Hook: returns a debounced commit function. Continuous-input controls

@@ -5,11 +5,11 @@ import type { AnimTrack } from "../ipc";
 import type { LayerSummary, TrackSummary } from "../ipc";
 
 const track3: AnimTrack<number> = {
-  mode: "Keyframed",
+  mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
   value: [
-    { id: "a", t_us: 0, value: 0, interp: { kind: "Linear" } },
-    { id: "b", t_us: 1_000_000, value: 1, interp: { kind: "Linear" } },
-    { id: "c", t_us: 2_000_000, value: 0, interp: { kind: "Linear" } },
+    { id: "a", t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+    { id: "b", t_us: 1_000_000, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+    { id: "c", t_us: 2_000_000, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
   ],
 };
 const staticTrack: AnimTrack<number> = { mode: "Static", value: 0.5 };
@@ -41,7 +41,7 @@ const layer = (id: string, opacityMode: "Static" | "Keyframed"): LayerSummary =>
     params: {
       opacity:
         opacityMode === "Keyframed"
-          ? { mode: "Keyframed", value: [{ id: `${id}k`, t_us: 0, value: 1, interp: { kind: "Linear" } }] }
+          ? { mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" }, value: [{ id: `${id}k`, t_us: 0, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }] }
           : { mode: "Static", value: 1 },
     },
   }) as unknown as LayerSummary;
@@ -71,7 +71,7 @@ describe("resolveNavLayer", () => {
     expect(resolveNavLayer(tr, "opacity", "L1")).toBeNull();
   });
   it("a LINKED layer is never a scale_y candidate (its twin belongs to the composite lane)", () => {
-    const kf = { mode: "Keyframed", value: [{ id: "k", t_us: 0, value: 1, interp: { kind: "Linear" } }] };
+    const kf = { mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" }, value: [{ id: "k", t_us: 0, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } }] };
     const linked = { id: "LK", params: { scale_linked: true, scale_y: kf } } as unknown as LayerSummary;
     const unlinked = { id: "UN", params: { scale_linked: false, scale_y: kf } } as unknown as LayerSummary;
     // Sole-candidate resolution skips the linked layer entirely…

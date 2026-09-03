@@ -12,7 +12,7 @@ import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { tryMutate } from "../errors/tryMutate";
 import { useOpenComposition } from "../state/projectStore";
-import { AppColorField } from "../components/AppColorField";
+import { AppColorField, hexToRgba, rgbaToHex } from "../components/AppColorField";
 import { AppNumberField } from "../components/AppNumberField";
 import {
   updateLayerParams,
@@ -180,7 +180,7 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
               value={rgbaToHex(color)}
               ariaLabel={t("property_panel.color")}
               onValueChange={(hex) => {
-                const next = hexToRgba(hex, color);
+                const next = hexToRgba(hex, color.a);
                 setColor(next);
                 if (colorDebounceRef.current) clearTimeout(colorDebounceRef.current);
                 colorDebounceRef.current = setTimeout(() => {
@@ -202,15 +202,4 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
 function fmtTc(us: number): string {
   const s = Math.floor(us / 1_000_000);
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-}
-
-function rgbaToHex(c: Rgba): string {
-  return `#${[c.r, c.g, c.b].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
-}
-
-function hexToRgba(hex: string, fallback: Rgba): Rgba {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m || !m[1]) return fallback;
-  const n = parseInt(m[1], 16);
-  return { r: (n >> 16) & 0xff, g: (n >> 8) & 0xff, b: n & 0xff, a: fallback.a };
 }

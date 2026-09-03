@@ -1,11 +1,11 @@
 import type { SyntheticEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { StepBack, StepForward, CircleSmall } from "lucide-react";
-import type { AnimTrack, Keyframe, TrackSummary } from "../ipc";
-import { readParamTrack } from "../keyframe/descriptors";
+import type { Keyframe, TrackSummary } from "../ipc";
+import { readParamTrack, type ParamTrack } from "../keyframe/descriptors";
 import { keyAt, prevKeyAt, nextKeyAt, resolveNavLayer } from "../keyframe/nav";
-import { upsertKeyframe, removeKeyframe } from "../keyframe/edits";
-import { resolveAnimated } from "../render/animated";
+import { upsertKeyframe, removeKeyframe, type TrackValue } from "../keyframe/edits";
+import { resolveParamTrack } from "../keyframe/autoKey";
 import { snapFrameRound } from "../frames";
 import { transportSeek } from "../state/playbackStore";
 import { selectKeyframe } from "../keyframe/selectionStore";
@@ -22,6 +22,10 @@ function stopPropagation(e: SyntheticEvent): void {
 /// toggles a key at the frame-snapped playhead.
 /// Pure-frontend — every mutation goes through `onCommitParamTrack`
 /// (→ updateLayerParamTrack), one click = one undo step.
+///
+/// Value-type agnostic: the added key holds whatever the track resolves to at
+/// the playhead, so a colour row toggles a colour key through the OkLab leaf
+/// exactly as a numeric row toggles a number.
 export function KeyframeNavigator({
   track,
   paramKey,
@@ -33,18 +37,22 @@ export function KeyframeNavigator({
 }: {
   track: TrackSummary;
   paramKey: string;
-  fallback: number;
+  /// The param's unkeyed value, and the witness for its value type
+  /// (`resolveParamTrack`).
+  fallback: TrackValue;
   currentTimeUs: number;
   fpsNum: number;
   fpsDen: number;
-  onCommitParamTrack: (layerId: string, paramKey: string, t: AnimTrack<number>) => void;
+  /// The timeline's one commit sink, typed over the value union: a colour row
+  /// hands it a colour track.
+  onCommitParamTrack: (layerId: string, paramKey: string, t: ParamTrack) => void;
 }) {
   const { t } = useTranslation();
   // Atomic primitive selector (per the zustand composite-selector rule).
   const focusedLayerId = useKeyframeFocusStore((s) => s.layerId);
 
   const layer = resolveNavLayer(track, paramKey, focusedLayerId);
-  const trk = layer ? readParamTrack(layer.params, paramKey) : null;
+  const trk: ParamTrack | null = layer ? readParamTrack(layer.params, paramKey) : null;
   const keyed = trk && trk.mode === "Keyframed" ? trk : null;
 
   // 0 is a safe dummy when there's no target layer — every query below guards
@@ -56,7 +64,7 @@ export function KeyframeNavigator({
   const prev = keyed ? prevKeyAt(keyed, tLocalUs) : null;
   const next = keyed ? nextKeyAt(keyed, tLocalUs) : null;
 
-  const seekTo = (kf: Keyframe<number>) => {
+  const seekTo = (kf: Keyframe<TrackValue>) => {
     if (!layer) return;
     selectKeyframe({ layerId: layer.id, paramKey, kfId: kf.id });
     setKeyframeFocus(layer.id, paramKey);
@@ -71,7 +79,7 @@ export function KeyframeNavigator({
       onCommitParamTrack(
         layer.id,
         paramKey,
-        upsertKeyframe(keyed, tLocalUs, resolveAnimated(keyed, tLocalUs, fallback)),
+        upsertKeyframe(keyed, tLocalUs, resolveParamTrack(keyed, tLocalUs, fallback)),
       );
     }
   };

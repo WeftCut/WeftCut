@@ -32,7 +32,7 @@ describe('layerColorHint (commands/mod.rs:629)', () => {
     expect(layerColorHint(layer('x', color({ r: 0x12, g: 0x34, b: 0x56, a: 255 })))).toBe('#123456')
   })
   it('Color layer with a keyframed color uses the first keyframe value', () => {
-    const kf: LayerParams = { kind: 'Color', color: { mode: 'Keyframed', value: [{ id: 'k', t_us: 0, value: { r: 1, g: 2, b: 3, a: 255 }, interp: { kind: 'Linear' } }] }, width: 16, height: 16 }
+    const kf: LayerParams = { kind: 'Color', color: { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [{ id: 'k', t_us: 0, value: { r: 1, g: 2, b: 3, a: 255 }, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } }] }, width: 16, height: 16 }
     expect(layerColorHint(layer('x', kf))).toBe('#010203')
   })
   it('det-mode id (leading bytes 00 00) → hue 0 → #cb4d4d for a non-Color layer', () => {

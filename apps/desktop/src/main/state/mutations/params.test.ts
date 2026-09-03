@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
-import { blankProject, type BlendMode, type Layer, type LayerParams, type MotifParams, type Project, type TextParams } from '../model'
+import { blankProject, type BlendMode, type Layer, type LayerParams, type MotifParams, type Project, type Rgba, type TextParams } from '../model'
 import { applyAddLayer, colorParams, textParamsDefault } from './add'
 import { videoClipParams, audioParams } from './media'
 import { isCommandFailure } from '../errors'
-import { applyUpdateLayerParams, applyUpdateLayerParamTrack, resolveAnimatedF64, type LayerParamsPatch } from './params'
+import { applyUpdateLayerParams, applyUpdateLayerParamTrack, resolveAnimatedF64, resolveAnimatedRgba, type LayerParamsPatch } from './params'
 // Reaching across into the renderer is deliberate and is the POINT of the gate at
 // the bottom of this file: the two lists have to agree, and only a test that sees
 // both can prove it. `descriptors.ts` is pure data with type-only imports, so it
@@ -181,9 +181,9 @@ describe('Text box patch', () => {
 })
 
 describe('applyUpdateLayerParamTrack', () => {
-  const kfTrack = () => ({ mode: 'Keyframed' as const, value: [
-    { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 0, interp: { kind: 'Linear' as const } },
-    { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: 1, interp: { kind: 'Linear' as const } },
+  const kfTrack = () => ({ mode: 'Keyframed' as const, extrapolate: { before: 'Hold' as const, after: 'Hold' as const }, value: [
+    { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' as const }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' as const }, continuity: 'Broken' as const, segment: { kind: 'Linear' as const } },
+    { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' as const }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' as const }, continuity: 'Broken' as const, segment: { kind: 'Linear' as const } },
   ] })
   function textLayer(): { p: Project; id: string } {
     const g = seededGen(); const p = blankProject(g, 'kf')
@@ -199,7 +199,7 @@ describe('applyUpdateLayerParamTrack', () => {
   })
   it('empty Keyframed track → EmptyKeyframeTrack', () => {
     const { p, id } = textLayer()
-    expectCmd(() => applyUpdateLayerParamTrack(p, id, 'opacity', { mode: 'Keyframed', value: [] }), 'EmptyKeyframeTrack')
+    expectCmd(() => applyUpdateLayerParamTrack(p, id, 'opacity', { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [] }), 'EmptyKeyframeTrack')
   })
   it('unknown param key → UnknownKeyframeParam', () => {
     const { p, id } = textLayer()
@@ -215,7 +215,113 @@ describe('applyUpdateLayerParamTrack', () => {
   it('locked track → TrackLocked (checked before normalize)', () => {
     const { p, id } = textLayer()
     root(p).tracks[1].locked = true
-    expectCmd(() => applyUpdateLayerParamTrack(p, id, 'opacity', { mode: 'Keyframed', value: [] }), 'TrackLocked')
+    expectCmd(() => applyUpdateLayerParamTrack(p, id, 'opacity', { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [] }), 'TrackLocked')
+  })
+})
+
+// ── The colour lens ───────────────────────────────────────────────────────────
+// `color` is the one param whose track carries Rgba, so the write path forks by
+// KEY: the lens, the value check and the tangent solve all pick a side from it.
+// These pin the fork itself — that both kinds land, that neither type can reach
+// the other's lens, and that a mismatch says which type the param takes.
+describe('applyUpdateLayerParamTrack — a colour track', () => {
+  const RED = { r: 255, g: 0, b: 0, a: 255 }
+  const GREEN = { r: 0, g: 255, b: 0, a: 255 }
+  const colorTrack = (values: readonly Rgba[] = [RED, GREEN]) => ({
+    mode: 'Keyframed' as const, extrapolate: { before: 'Hold' as const, after: 'Hold' as const },
+    value: values.map((value, i) => ({
+      id: `00000000-0000-0000-0000-00000000000${i + 1}`, t_us: i * 1_000_000, value,
+      in: { x: 2 / 3, y: 2 / 3, mode: 'Free' as const }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' as const },
+      continuity: 'Broken' as const, segment: { kind: 'Linear' as const },
+    })),
+  })
+  function layerOfKind(kind: 'Text' | 'Color'): { p: Project; id: string } {
+    const g = seededGen(); const p = blankProject(g, 'kf')
+    const params = kind === 'Text' ? textParamsDefault('t', root(p)) : colorParams(RED, 16, 9)
+    const id = applyAddLayer(p, g, root(p).tracks[1].id, params, 0, 2_000_000)
+    return { p, id }
+  }
+
+  for (const kind of ['Text', 'Color'] as const) {
+    it(`keyframes ${kind}.color and reads back the Rgba values`, () => {
+      const { p, id } = layerOfKind(kind)
+      applyUpdateLayerParamTrack(p, id, 'color', colorTrack())
+      const stored = resolveAnimatedRgba(layerOf(p, id), 'color')
+      expect(stored?.mode).toBe('Keyframed')
+      expect((stored?.value as { value: Rgba }[]).map((k) => k.value)).toEqual([RED, GREEN])
+    })
+  }
+
+  it('a number sent to color is refused, naming the type the param takes', () => {
+    const { p, id } = layerOfKind('Color')
+    const before = structuredClone(layerOf(p, id))
+    try {
+      applyUpdateLayerParamTrack(p, id, 'color', { mode: 'Static', value: 0.5 })
+      throw new Error('expected InvalidArgument')
+    } catch (e) {
+      expect(isCommandFailure(e)).toBe(true)
+      if (!isCommandFailure(e)) throw e
+      expect(e.err).toMatchObject({ error: 'InvalidArgument', field: 'track' })
+      expect((e.err as { detail: string }).detail).toContain("param 'color' takes {r,g,b,a} values")
+      expect((e.err as { detail: string }).detail).toContain('got a number')
+    }
+    expect(layerOf(p, id)).toEqual(before)
+  })
+
+  it('a colour sent to a scalar param is refused with the mirror message', () => {
+    const { p, id } = layerOfKind('Text')
+    try {
+      applyUpdateLayerParamTrack(p, id, 'opacity', { mode: 'Static', value: RED })
+      throw new Error('expected InvalidArgument')
+    } catch (e) {
+      expect(isCommandFailure(e)).toBe(true)
+      if (!isCommandFailure(e)) throw e
+      const detail = (e.err as { detail: string }).detail
+      expect(detail).toContain("param 'opacity' takes number values")
+      expect(detail).toContain('an {r,g,b,a} colour')
+    }
+  })
+
+  it('an out-of-range or fractional channel is refused, not clamped', () => {
+    const { p, id } = layerOfKind('Color')
+    for (const bad of [{ r: 256, g: 0, b: 0, a: 255 }, { r: 1.5, g: 0, b: 0, a: 255 }, { r: 0, g: 0, b: 0 } as unknown as Rgba]) {
+      expectCmd(() => applyUpdateLayerParamTrack(p, id, 'color', { mode: 'Static', value: bad }), 'InvalidArgument')
+    }
+  })
+
+  it('a colour key on a kind with no colour track is UnknownKeyframeParam', () => {
+    const g = seededGen(); const p = blankProject(g, 'kf')
+    const id = applyAddLayer(p, g, root(p).tracks[0].id, videoClipParams(MID, 0, 1_000_000), 0, 1_000_000)
+    expectCmd(() => applyUpdateLayerParamTrack(p, id, 'color', colorTrack()), 'UnknownKeyframeParam')
+  })
+
+  it('an empty colour track is EmptyKeyframeTrack, before the value check', () => {
+    const { p, id } = layerOfKind('Color')
+    expectCmd(() => applyUpdateLayerParamTrack(p, id, 'color', { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [] }), 'EmptyKeyframeTrack')
+  })
+
+  it('Auto sides on a colour key solve to the identity coordinates', () => {
+    const { p, id } = layerOfKind('Color')
+    const track = colorTrack()
+    for (const k of track.value) {
+      k.in = { x: 0.1, y: 0.9, mode: 'Auto' as unknown as 'Free' }
+      k.out = { x: 0.1, y: 0.9, mode: 'Auto' as unknown as 'Free' }
+      k.segment = { kind: 'Spline' as unknown as 'Linear' }
+    }
+    applyUpdateLayerParamTrack(p, id, 'color', track)
+    const stored = resolveAnimatedRgba(layerOf(p, id), 'color')
+    const keys = stored?.value as { in: { x: number; y: number }; out: { x: number; y: number } }[]
+    // No scalar axis to take a slope on, so both sides land on the linear
+    // parametrisation's own control points rather than a solved slope.
+    expect(keys[0].out).toEqual({ x: 1 / 3, y: 1 / 3, mode: 'Auto' })
+    expect(keys[1].in).toEqual({ x: 2 / 3, y: 2 / 3, mode: 'Auto' })
+  })
+
+  it('a colour patch through update_layer_params still collapses the track to Static', () => {
+    const { p, id } = layerOfKind('Color')
+    applyUpdateLayerParamTrack(p, id, 'color', colorTrack())
+    applyUpdateLayerParams(p, id, { kind: 'Color', color: GREEN }, new MotifCatalog())
+    expect(resolveAnimatedRgba(layerOf(p, id), 'color')).toEqual({ mode: 'Static', value: GREEN })
   })
 })
 
@@ -233,15 +339,18 @@ describe('animatable params are writable on both sides of the IPC boundary', () 
   for (const kind of KINDS) {
     for (const linked of [false, true]) {
       it(`${kind}${linked ? ' (scale-linked)' : ''}: every offered key resolves to a writable slot`, () => {
-        const keys = new Set<string>()
-        for (const d of animatableParams(kind, linked)) {
-          keys.add(d.paramKey)
-          // A composite descriptor writes to its fan-out keys, not just its own.
-          for (const k of d.fanOutKeys ?? []) keys.add(k)
-        }
         const layer = layerForKind(kind)
-        for (const key of keys) {
-          expect(resolveAnimatedF64(layer, key), `${kind}.${key} must be readable`).not.toBeNull()
+        const descs = animatableParams(kind, linked)
+        expect(descs.length, `${kind} must offer at least one animatable param`).toBeGreaterThan(0)
+        for (const d of descs) {
+          // The descriptor's value kind picks the read side, exactly as the param
+          // key picks the lens in applyUpdateLayerParamTrack — a colour descriptor
+          // resolved through the f64 reader would answer null and read as a gap.
+          const resolve = d.valueKind === 'rgba' ? resolveAnimatedRgba : resolveAnimatedF64
+          // A composite descriptor writes to its fan-out keys, not just its own.
+          for (const key of [d.paramKey, ...(d.fanOutKeys ?? [])]) {
+            expect(resolve(layer, key), `${kind}.${key} must be readable`).not.toBeNull()
+          }
         }
       })
     }
@@ -250,7 +359,11 @@ describe('animatable params are writable on both sides of the IPC boundary', () 
   it('and rejects a key no kind offers, so the gate above is not vacuous', () => {
     expect(resolveAnimatedF64(layerForKind('VideoClip'), 'anchor_z')).toBeNull()
     expect(resolveAnimatedF64(layerForKind('Audio'), 'anchor_x')).toBeNull()
-    expect(animatableParams('Color')).toEqual([])
+    // The colour lens is just as narrow as the f64 one, in both directions: only
+    // Text and Color carry a colour track, and `color` is not an f64 slot.
+    expect(resolveAnimatedRgba(layerForKind('VideoClip'), 'color')).toBeNull()
+    expect(resolveAnimatedRgba(layerForKind('Text'), 'opacity')).toBeNull()
+    expect(resolveAnimatedF64(layerForKind('Color'), 'color')).toBeNull()
   })
 
   /** A minimal Layer of `kind`, built through the production param factories so
@@ -492,9 +605,9 @@ describe('authored precision at the write seam', () => {
   it('quantizes every keyframe of a track write, not just the first', () => {
     const g = seededGen(); const p = blankProject(g, 'q')
     const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('t', root(p)), 0, 2_000_000)
-    applyUpdateLayerParamTrack(p, id, 'x', { mode: 'Keyframed', value: [
-      { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 10.373737, interp: { kind: 'Linear' } },
-      { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: 20.982, interp: { kind: 'Linear' } },
+    applyUpdateLayerParamTrack(p, id, 'x', { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [
+      { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 10.373737, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } },
+      { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: 20.982, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } },
     ] })
     const t = layerOf(p, id).params as TextParams
     expect((t.transform.x.value as { value: number }[]).map((k) => k.value)).toEqual([10.4, 21])
@@ -569,9 +682,9 @@ describe('applyUpdateLayerParams — a Group layer', () => {
 
   it('keyframes opacity and transform through the lens every visual kind shares', () => {
     const { p, refLayerId } = groupedProject()
-    const track = { mode: 'Keyframed' as const, value: [
-      { id: '00000000-0000-0000-0000-0000000000e1', t_us: 0, value: 0, interp: { kind: 'Linear' as const } },
-      { id: '00000000-0000-0000-0000-0000000000e2', t_us: 1_000_000, value: 1, interp: { kind: 'Linear' as const } },
+    const track = { mode: 'Keyframed' as const, extrapolate: { before: 'Hold' as const, after: 'Hold' as const }, value: [
+      { id: '00000000-0000-0000-0000-0000000000e1', t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' as const }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' as const }, continuity: 'Broken' as const, segment: { kind: 'Linear' as const } },
+      { id: '00000000-0000-0000-0000-0000000000e2', t_us: 1_000_000, value: 1, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' as const }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' as const }, continuity: 'Broken' as const, segment: { kind: 'Linear' as const } },
     ] }
     applyUpdateLayerParamTrack(p, refLayerId, 'opacity', track)
     applyUpdateLayerParamTrack(p, refLayerId, 'scale_y', track)

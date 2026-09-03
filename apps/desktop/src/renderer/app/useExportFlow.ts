@@ -69,6 +69,16 @@ import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { rootCompositionOf, useProjectStore } from "../state/projectStore";
 import { resolveDecode } from "../render/decodeRoute";
 
+/// The status-bar detail for an exception out of a readiness gate. A proxy or
+/// conform failure names its media through `prepareDetail`; any other
+/// exception — a napi deserialization error, an IPC fault — is reported as
+/// itself, because dressing it as a media failure with an empty label hides
+/// the cause behind "Couldn't prepare  for export".
+function gateFailureDetail(e: unknown, prepareDetail: (mediaId: string) => string): string {
+  if (e instanceof ExportProxyFailed) return prepareDetail(e.mediaId);
+  return e instanceof Error ? e.message : String(e);
+}
+
 /// Owns the export lifecycle: the export panel/dialog state, the window
 /// close-guard, taskbar-progress + native-notification mirrors, and the
 /// three-stage export pipeline itself. The refs in `deps` still live in
@@ -296,11 +306,11 @@ export function useExportFlow(deps: {
           setExportState(null);
           return;
         }
-        const id = e instanceof ExportProxyFailed ? e.mediaId : "";
-        const label = store.mediaById.get(id)?.label ?? id;
         setExportState({
           kind: "error",
-          detail: t("export.failed_prepare", { labels: label }),
+          detail: gateFailureDetail(e, (id) =>
+            t("export.failed_prepare", { labels: store.mediaById.get(id)?.label ?? id }),
+          ),
         });
         return;
       } finally {
@@ -431,11 +441,11 @@ export function useExportFlow(deps: {
             setExportState(null);
             return;
           }
-          const id = e instanceof ExportProxyFailed ? e.mediaId : "";
-          const label = store.mediaById.get(id)?.label ?? id;
           setExportState({
             kind: "error",
-            detail: t("export.failed_prepare", { labels: label }),
+            detail: gateFailureDetail(e, (id) =>
+              t("export.failed_prepare", { labels: store.mediaById.get(id)?.label ?? id }),
+            ),
           });
           return;
         }
@@ -472,11 +482,11 @@ export function useExportFlow(deps: {
             setExportState(null);
             return;
           }
-          const id = e instanceof ExportProxyFailed ? e.mediaId : "";
-          const label = store.mediaById.get(id)?.label ?? id;
           setExportState({
             kind: "error",
-            detail: t("export.failed_prepare", { labels: label }),
+            detail: gateFailureDetail(e, (id) =>
+              t("export.failed_prepare", { labels: store.mediaById.get(id)?.label ?? id }),
+            ),
           });
           return;
         } finally {

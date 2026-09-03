@@ -3,11 +3,15 @@ import {
   EASING_PRESETS,
   ELASTIC_DEFAULT_AMPLITUDE,
   ELASTIC_DEFAULT_PERIOD,
+  applySegmentEasing,
   cloneInterp,
   interpEqExact,
   presetIdForInterp,
+  presetIdForSegment,
+  segmentEasing,
   type Interpolation,
 } from './easing'
+import { inIdentity, outIdentity, type Keyframe } from './keyframe'
 
 describe('canonical preset table', () => {
   it('holds the full spec table (36 entries, unique ids)', () => {
@@ -110,5 +114,80 @@ describe('interpEqExact / cloneInterp', () => {
     expect(interpEqExact(e, { kind: 'Elastic', dir: 'In', amplitude: 1.5, period: 0.3 })).toBe(false)
     expect(interpEqExact(e, { kind: 'Elastic', dir: 'In', amplitude: 1, period: 0.45 })).toBe(false)
     expect(interpEqExact({ kind: 'Bounce', dir: 'In' }, { kind: 'Bounce', dir: 'InOut' })).toBe(false)
+  })
+})
+
+describe('segment-easing bridges (segmentEasing / applySegmentEasing / presetIdForSegment)', () => {
+  const base = (id: string, t_us: number, value: number): Keyframe<number> => ({
+    id, t_us, value, in: inIdentity(), out: outIdentity(), continuity: 'Broken', segment: { kind: 'Linear' },
+  })
+  const pair = (e: Interpolation): [Keyframe<number>, Keyframe<number>] => {
+    const [a, b] = applySegmentEasing(base('a', 0, 0), base('b', 1_000_000, 1), e)
+    return [a, b!]
+  }
+
+  // The property the un-mirrored `in` exists for: a preset written onto two keys
+  // reads back as the SAME id with no arithmetic in between, so exact f64 equality
+  // holds for every table entry.
+  it('applying every preset to a two-key track reads back as the same id, exactly', () => {
+    for (const p of EASING_PRESETS) {
+      const [a, b] = pair(p.interp)
+      expect(segmentEasing(a, b), p.id).toEqual(p.interp)
+      expect(presetIdForSegment(a, b), p.id).toBe(p.id)
+    }
+  })
+
+  it('still reads back after a JSON wire hop (f64 round-trips exactly)', () => {
+    for (const p of EASING_PRESETS) {
+      const [a, b] = pair(p.interp).map((k) => JSON.parse(JSON.stringify(k)) as Keyframe<number>) as [Keyframe<number>, Keyframe<number>]
+      expect(presetIdForSegment(a, b), p.id).toBe(p.id)
+    }
+  })
+
+  it('a Bezier lands as Spline + out = p1 on the left key and in = p2 on the right, both Free', () => {
+    const [a, b] = pair({ kind: 'Bezier', p1: [0.42, 0], p2: [0.58, 1] })
+    expect(a.segment).toEqual({ kind: 'Spline' })
+    expect(a.out).toEqual({ x: 0.42, y: 0, mode: 'Free' })
+    expect(a.in).toEqual(inIdentity())
+    expect(b.in).toEqual({ x: 0.58, y: 1, mode: 'Free' })
+    expect(b.out).toEqual(outIdentity())
+    expect(b.segment).toEqual({ kind: 'Linear' })
+  })
+
+  it('a non-Spline easing lands as the class on the left key with identity sides on both', () => {
+    for (const e of [
+      { kind: 'Hold' }, { kind: 'Linear' },
+      { kind: 'Elastic', dir: 'InOut', amplitude: 1.25, period: 0.4 }, { kind: 'Bounce', dir: 'In' },
+    ] as Interpolation[]) {
+      const auto = { ...base('a', 0, 0), out: { x: 0.9, y: 0.1, mode: 'Auto' as const } }
+      const [a, b] = applySegmentEasing(auto, { ...base('b', 1_000_000, 1), in: { x: 0.1, y: 0.9, mode: 'Auto' } }, e)
+      expect(a.segment, e.kind).toEqual(e)
+      expect(a.out, e.kind).toEqual(outIdentity())
+      expect(b!.in, e.kind).toEqual(inIdentity())
+    }
+  })
+
+  it('with no right key only the left key is written', () => {
+    const [a, b] = applySegmentEasing(base('a', 0, 0), undefined, { kind: 'Bezier', p1: [0.2, 0.8], p2: [0.8, 0.2] })
+    expect(b).toBeUndefined()
+    expect(a.segment).toEqual({ kind: 'Spline' })
+    expect(a.out).toEqual({ x: 0.2, y: 0.8, mode: 'Free' })
+  })
+
+  it('returns new key objects, leaves the inputs untouched and keeps canonical key order', () => {
+    const left = base('a', 0, 0)
+    const right = base('b', 1_000_000, 1)
+    const [a, b] = applySegmentEasing(left, right, { kind: 'Hold' })
+    expect(a).not.toBe(left)
+    expect(b).not.toBe(right)
+    expect(left.segment).toEqual({ kind: 'Linear' })
+    expect(Object.keys(a)).toEqual(['id', 't_us', 'value', 'in', 'out', 'continuity', 'segment'])
+    expect(Object.keys(b!)).toEqual(['id', 't_us', 'value', 'in', 'out', 'continuity', 'segment'])
+  })
+
+  it('segmentEasing reports a hand-tuned Spline as a Bezier no preset names', () => {
+    const [a, b] = pair({ kind: 'Bezier', p1: [0.42, 0.001], p2: [1, 1] })
+    expect(segmentEasing(a, b)).toEqual({ kind: 'Bezier', p1: [0.42, 0.001], p2: [1, 1] })
+    expect(presetIdForSegment(a, b)).toBeUndefined()
   })
 })

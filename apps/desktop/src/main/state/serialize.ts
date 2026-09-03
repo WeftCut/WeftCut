@@ -355,6 +355,72 @@ function normalizeOrdinals(o: Record<string, unknown>): void {
   o.next_group_ordinal = typeof counter === 'number' && Number.isInteger(counter) && counter > next - 1 ? counter : next
 }
 
+/** The keyframe record is REFUSED, never defaulted, when it predates per-key
+ *  tangents (ADR 0058): v1 is redefined in place with no migration step, so a
+ *  key carrying the retired per-segment `interp`, a key lacking one of `in` /
+ *  `out` / `continuity` / `segment`, or a Keyframed track lacking `extrapolate`
+ *  cannot be opened. The additive-field rule (an absent field reaching a
+ *  consumer as `undefined` is a blank screen) applies with no honest default to
+ *  offer — inventing tangents would silently change the motion the file
+ *  describes. Enum and finiteness checks ride along so a hand-edited value fails
+ *  here, in one message, rather than deep in the engine.
+ *
+ *  Wire-shaped and defensive like the passes beside it (runs BEFORE the cast to
+ *  Project): a slot that is not an object, or a `value` that is not an array, is
+ *  left for validate. Walks exactly the Animated slots the model declares — the
+ *  transform tracks, opacity, color, gain_db, pan and every effect param. */
+function refuseRetiredKeyframeShape(o: Record<string, unknown>): void {
+  const TANGENT_MODES = new Set(['Auto', 'Free'])
+  const CONTINUITIES = new Set(['Smooth', 'Broken'])
+  const SEGMENT_KINDS = new Set(['Spline', 'Hold', 'Linear', 'Elastic', 'Bounce'])
+  const EXTRAPOLATES = new Set(['Hold', 'Loop', 'PingPong', 'Offset', 'Continue'])
+  const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
+  const refuse = (path: string, what: string): never => {
+    throw new Error(`parseProject: ${path} ${what} — this project predates per-key tangents (ADR 0058) and cannot be opened`)
+  }
+  const checkTangent = (path: string, id: string, side: 'in' | 'out', t: unknown) => {
+    if (!isObj(t) || typeof t.x !== 'number' || !Number.isFinite(t.x) || typeof t.y !== 'number' || !Number.isFinite(t.y) || !TANGENT_MODES.has(t.mode as string))
+      refuse(path, `keyframe ${id} has an invalid "${side}" tangent (needs finite x, y and mode "Auto" | "Free")`)
+  }
+  const checkTrack = (path: string, track: unknown) => {
+    if (!isObj(track) || track.mode !== 'Keyframed' || !Array.isArray(track.value)) return
+    if (track.extrapolate === undefined) refuse(path, 'is a Keyframed track without "extrapolate"')
+    const ex = track.extrapolate
+    if (!isObj(ex) || !EXTRAPOLATES.has(ex.before as string) || !EXTRAPOLATES.has(ex.after as string))
+      refuse(path, 'has an invalid "extrapolate" (before / after must be Hold | Loop | PingPong | Offset | Continue)')
+    for (const k of track.value as unknown[]) {
+      if (!isObj(k)) continue
+      const id = typeof k.id === 'string' ? k.id : '<no id>'
+      if ('interp' in k) refuse(path, `keyframe ${id} carries the retired per-segment "interp" field`)
+      for (const field of ['in', 'out', 'continuity', 'segment'] as const) if (k[field] === undefined) refuse(path, `keyframe ${id} lacks "${field}"`)
+      checkTangent(path, id, 'in', k.in)
+      checkTangent(path, id, 'out', k.out)
+      if (!CONTINUITIES.has(k.continuity as string)) refuse(path, `keyframe ${id} has an invalid "continuity" (Smooth | Broken)`)
+      if (!isObj(k.segment) || !SEGMENT_KINDS.has(k.segment.kind as string))
+        refuse(path, `keyframe ${id} has an invalid "segment" (kind must be Spline | Hold | Linear | Elastic | Bounce)`)
+    }
+  }
+  for (const comp of wireCompositions(o)) {
+    for (const track of (comp.tracks as Array<{ layers?: unknown }> | undefined) ?? []) {
+      for (const layer of (track?.layers as Array<Record<string, unknown>> | undefined) ?? []) {
+        if (layer === null || typeof layer !== 'object') continue
+        const lid = typeof layer.id === 'string' ? layer.id : '<no id>'
+        const p = layer.params
+        if (isObj(p)) {
+          const t = p.transform
+          if (isObj(t)) for (const k of ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y']) checkTrack(`layer ${lid} transform.${k}`, t[k])
+          for (const k of ['opacity', 'color', 'gain_db', 'pan']) if (k in p) checkTrack(`layer ${lid} ${k}`, p[k])
+        }
+        for (const e of (layer.effects as unknown[] | undefined) ?? []) {
+          if (!isObj(e) || !isObj(e.params)) continue
+          const eid = typeof e.id === 'string' ? e.id : '<no id>'
+          for (const [k, v] of Object.entries(e.params)) checkTrack(`layer ${lid} effects[${eid}].params.${k}`, v)
+        }
+      }
+    }
+  }
+}
+
 /** The object values of `o.compositions` on the WIRE shape — root and Groups
  *  alike. Non-object entries are skipped here and rejected by parseProject's
  *  shape check, so the repair passes never coerce one. */
@@ -439,6 +505,11 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
     for (const arr of ['tracks', 'markers', 'transitions', 'links'] as const)
       if (!Array.isArray((c as Record<string, unknown>)[arr])) throw new Error(`parseProject: compositions[${k}].${arr} must be an array`)
   }
+  // The keyframe record has no default and no conversion: a project holding the
+  // retired per-segment `interp`, or a Keyframed track without `extrapolate`, is
+  // refused here with a structured error — see the function. Before the twin
+  // repair below, which dereferences the record.
+  refuseRetiredKeyframeShape(o)
   // Additive settings fields (prefer_proxies/proxy_overrides/shot_review, added
   // later WITHOUT a schema bump) deserialize as absent on projects saved before
   // they existed.

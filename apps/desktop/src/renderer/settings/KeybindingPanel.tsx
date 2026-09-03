@@ -186,7 +186,14 @@ export function KeybindingPanel({
             const atDefault = isAtDefault(effective, id);
             return (
               <tr key={id} className="keybindings-row">
-                <td className="keybindings-label">{t(def.labelKey)}</td>
+                <td className="keybindings-label">
+                  {t(def.labelKey)}
+                  {/* The dispatch rule, for the actions whose label can only
+                      name one of the two things the key does. */}
+                  {def.hintKey && (
+                    <div className="keybindings-hint">{t(def.hintKey)}</div>
+                  )}
+                </td>
                 <td className="keybindings-chords">
                   {chords.length === 0 && (
                     <span className="keybindings-empty">

@@ -9,18 +9,18 @@
 //! reads, just one i32 per color instead of four channel scalars.
 //!
 //! Single-threaded by construction (one wasm instance, no threads), so the
-//! `static mut` track buffer needs no synchronization. `Rational` is NOT here —
+//! `static mut` track buffers need no synchronization. `Rational` is NOT here —
 //! the snap fn takes `(num, den)` primitives (it stays in the napi crate).
 // NOTE: the generic `crate::eval` is NOT imported here — this module exports its
-// own `extern "C" fn eval` (the scalar shim), so the color path calls
-// `crate::eval::<Rgba8>` fully-qualified to dodge the name collision.
+// own `extern "C" fn eval` (the scalar shim), so both paths call
+// `crate::eval::<T>` fully-qualified to dodge the name collision.
 use crate::{
-    db_to_linear as db_to_linear_impl, eval_f64, fade_multiplier as fade_multiplier_impl,
+    db_to_linear as db_to_linear_impl, fade_multiplier as fade_multiplier_impl,
     frame_count as frame_count_impl, frame_index_ceil as frame_index_ceil_impl,
     frame_index_floor as frame_index_floor_impl, frame_index_round as frame_index_round_impl,
     pan_coeffs as pan_coeffs_impl, role_audible as role_audible_impl, snap_frame_ceil,
     snap_frame_floor, snap_frame_round, time_us_at_frame as time_us_at_frame_impl,
-    us_to_frame as us_to_frame_impl, EaseDir, Interpolation, Kf, Rgba8,
+    us_to_frame as us_to_frame_impl, EaseDir, Extrapolate, Extrapolation, Kf, Rgba8, Segment,
 };
 
 /// Max keyframes held resident for ONE animated property (an `Animated<T>` /
@@ -32,10 +32,17 @@ use crate::{
 /// would make preview diverge from export. TS `loadTrack` (MAX_KEYFRAMES) warns.
 const MAXKF: usize = 256;
 
+// Resident SCALAR track: one slot per `Kf` field, parallel arrays so each
+// `set_kf` call stores primitives only.
 static mut T: [i64; MAXKF] = [0; MAXKF];
 static mut V: [f64; MAXKF] = [0.0; MAXKF];
-static mut IT: [Interpolation; MAXKF] = [Interpolation::Linear; MAXKF];
+static mut OX: [f64; MAXKF] = [0.0; MAXKF];
+static mut OY: [f64; MAXKF] = [0.0; MAXKF];
+static mut IX: [f64; MAXKF] = [0.0; MAXKF];
+static mut IY: [f64; MAXKF] = [0.0; MAXKF];
+static mut SEG: [Segment; MAXKF] = [Segment::Linear; MAXKF];
 static mut N: usize = 0;
+static mut EX: Extrapolation = Extrapolation::HOLD;
 
 // Resident COLOR track, PARALLEL to the scalar one above (independent buffer;
 // `loadColorTrack` in the TS layer caches it under its own handle). Values are
@@ -43,8 +50,13 @@ static mut N: usize = 0;
 // crosses the scalars-only ABI as one i32 — see the module header.
 static mut TC: [i64; MAXKF] = [0; MAXKF];
 static mut VC: [u32; MAXKF] = [0; MAXKF];
-static mut ITC: [Interpolation; MAXKF] = [Interpolation::Linear; MAXKF];
+static mut OXC: [f64; MAXKF] = [0.0; MAXKF];
+static mut OYC: [f64; MAXKF] = [0.0; MAXKF];
+static mut IXC: [f64; MAXKF] = [0.0; MAXKF];
+static mut IYC: [f64; MAXKF] = [0.0; MAXKF];
+static mut SEGC: [Segment; MAXKF] = [Segment::Linear; MAXKF];
 static mut NC: usize = 0;
+static mut EXC: Extrapolation = Extrapolation::HOLD;
 
 /// `snap_frame_round(t_us, num/den)` — round to the nearest frame boundary.
 #[no_mangle]
@@ -106,7 +118,7 @@ pub extern "C" fn us_to_frame(us: f64, rate: i32) -> f64 {
 }
 
 /// `0=In, 1=Out, 2=InOut`. Anything else is a code-table drift: debug assert +
-/// `In` (the same deliberate-fallback policy as `decode_interp`).
+/// `In` (the same deliberate-fallback policy as `decode_segment`).
 fn decode_dir(code: f64) -> EaseDir {
     match code as i32 {
         0 => EaseDir::In,
@@ -119,75 +131,105 @@ fn decode_dir(code: f64) -> EaseDir {
     }
 }
 
-/// ABI interp code + param slots → `Interpolation` (shared by `set_kf` and
+/// ABI segment code + param slots → `Segment` (shared by `set_kf` and
 /// `set_kf_rgba`).
 ///
-/// Code table — KEEP in lockstep with TS `renderer/eval/index.ts::interpCode`:
-///   0 = Hold, 1 = Linear, 4 = Bezier, 5 = Elastic, 6 = Bounce.
+/// Code table — KEEP in lockstep with TS `renderer/eval/index.ts::encodeSegment`:
+///   0 = Hold, 1 = Linear, 4 = Spline, 5 = Elastic, 6 = Bounce.
 /// Codes 2/3 are RETIRED (the removed named EaseIn/EaseOut variants) and must
 /// never be reassigned — a stale caller sending them must not get a different
 /// curve than it asked for.
 ///
-/// Param-slot layout by code (slots unused by a code are ignored):
-///   4 Bezier:  p1 = (p1x, p1y), p2 = (p2x, p2y)
-///   5 Elastic: p1x = dir (see `decode_dir`), p1y = amplitude, p2x = period
-///   6 Bounce:  p1x = dir
+/// Param-slot layout by code (slots unused by a code are ignored; the Spline
+/// tangents ride in their own `out_x/out_y/in_x/in_y` slots, not here):
+///   5 Elastic: s0 = dir (see `decode_dir`), s1 = amplitude, s2 = period
+///   6 Bounce:  s0 = dir
 ///
 /// Unknown codes (incl. the retired 2/3) fall back to Linear — visible motion
 /// rather than a silently wrong curve — and trip a debug assert so a code-table
 /// drift fails loudly in debug builds.
-fn decode_interp(interp: i32, p1x: f64, p1y: f64, p2x: f64, p2y: f64) -> Interpolation {
-    match interp {
-        0 => Interpolation::Hold,
-        1 => Interpolation::Linear,
-        4 => Interpolation::Bezier {
-            p1: (p1x, p1y),
-            p2: (p2x, p2y),
+fn decode_segment(seg: i32, s0: f64, s1: f64, s2: f64) -> Segment {
+    match seg {
+        0 => Segment::Hold,
+        1 => Segment::Linear,
+        4 => Segment::Spline,
+        5 => Segment::Elastic {
+            dir: decode_dir(s0),
+            amplitude: s1,
+            period: s2,
         },
-        5 => Interpolation::Elastic {
-            dir: decode_dir(p1x),
-            amplitude: p1y,
-            period: p2x,
-        },
-        6 => Interpolation::Bounce {
-            dir: decode_dir(p1x),
+        6 => Segment::Bounce {
+            dir: decode_dir(s0),
         },
         _ => {
-            debug_assert!(false, "unknown interp code");
-            Interpolation::Linear
+            debug_assert!(false, "unknown segment code");
+            Segment::Linear
         }
     }
 }
 
-/// Set the resident track length (number of keyframes uploaded via `set_kf`).
-#[no_mangle]
-pub extern "C" fn set_n(n: i32) {
-    let n = (n as usize).min(MAXKF);
-    unsafe {
-        N = n;
+/// ABI extrapolate code → `Extrapolate`. KEEP in lockstep with TS
+/// `renderer/eval/index.ts::encodeExtrapolate`:
+///   0 = Hold, 1 = Loop, 2 = PingPong, 3 = Offset, 4 = Continue.
+/// Unknown codes fall back to Hold (the clamp — no motion invented) and trip a
+/// debug assert, mirroring `decode_segment`.
+fn decode_extrapolate(code: i32) -> Extrapolate {
+    match code {
+        0 => Extrapolate::Hold,
+        1 => Extrapolate::Loop,
+        2 => Extrapolate::PingPong,
+        3 => Extrapolate::Offset,
+        4 => Extrapolate::Continue,
+        _ => {
+            debug_assert!(false, "unknown extrapolate code");
+            Extrapolate::Hold
+        }
     }
 }
 
-/// Upload one keyframe into the resident buffer. Interp codes and the
-/// param-slot layout are documented at `decode_interp`.
+/// Set the resident track length (number of keyframes uploaded via `set_kf`)
+/// and the track's extrapolation codes (`decode_extrapolate`).
+#[no_mangle]
+pub extern "C" fn set_n(n: i32, before: i32, after: i32) {
+    let n = (n as usize).min(MAXKF);
+    let ex = Extrapolation {
+        before: decode_extrapolate(before),
+        after: decode_extrapolate(after),
+    };
+    unsafe {
+        N = n;
+        EX = ex;
+    }
+}
+
+/// Upload one keyframe into the resident buffer. `out_x/out_y` is the leaving
+/// handle, `in_x/in_y` the arriving one (un-mirrored, see `Kf`); segment codes
+/// and the `s0..s2` slot layout are documented at `decode_segment`.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn set_kf(
     i: i32,
     t_us: f64,
     value: f64,
-    interp: i32,
-    p1x: f64,
-    p1y: f64,
-    p2x: f64,
-    p2y: f64,
+    out_x: f64,
+    out_y: f64,
+    in_x: f64,
+    in_y: f64,
+    seg: i32,
+    s0: f64,
+    s1: f64,
+    s2: f64,
 ) {
-    let it = decode_interp(interp, p1x, p1y, p2x, p2y);
+    let segment = decode_segment(seg, s0, s1, s2);
     let i = (i as usize).min(MAXKF - 1);
     unsafe {
         T[i] = t_us as i64;
         V[i] = value;
-        IT[i] = it;
+        OX[i] = out_x;
+        OY[i] = out_y;
+        IX[i] = in_x;
+        IY[i] = in_y;
+        SEG[i] = segment;
     }
 }
 
@@ -199,48 +241,65 @@ pub extern "C" fn eval(t_us: f64, default: f64) -> f64 {
         let mut buf: [Kf; MAXKF] = [Kf {
             t_us: 0,
             value: 0.0,
-            interp: Interpolation::Linear,
+            out: (0.0, 0.0),
+            in_: (0.0, 0.0),
+            segment: Segment::Linear,
         }; MAXKF];
         for i in 0..n {
             buf[i] = Kf {
                 t_us: T[i],
                 value: V[i],
-                interp: IT[i],
+                out: (OX[i], OY[i]),
+                in_: (IX[i], IY[i]),
+                segment: SEG[i],
             };
         }
-        eval_f64(&buf[..n], t_us as i64, default)
+        crate::eval::<f64>(&buf[..n], EX, t_us as i64, default)
     }
 }
 
-/// Set the resident COLOR track length (keyframes uploaded via `set_kf_rgba`).
+/// Set the resident COLOR track length (keyframes uploaded via `set_kf_rgba`)
+/// and its extrapolation codes.
 #[no_mangle]
-pub extern "C" fn set_n_rgba(n: i32) {
+pub extern "C" fn set_n_rgba(n: i32, before: i32, after: i32) {
     let n = (n as usize).min(MAXKF);
+    let ex = Extrapolation {
+        before: decode_extrapolate(before),
+        after: decode_extrapolate(after),
+    };
     unsafe {
         NC = n;
+        EXC = ex;
     }
 }
 
 /// Upload one COLOR keyframe. `packed` layout is documented at the color-track
-/// buffer above; interp codes + param slots at `decode_interp`.
+/// buffer above; tangent slots as `set_kf`; segment codes at `decode_segment`.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn set_kf_rgba(
     i: i32,
     t_us: f64,
     packed: i32,
-    interp: i32,
-    p1x: f64,
-    p1y: f64,
-    p2x: f64,
-    p2y: f64,
+    out_x: f64,
+    out_y: f64,
+    in_x: f64,
+    in_y: f64,
+    seg: i32,
+    s0: f64,
+    s1: f64,
+    s2: f64,
 ) {
-    let it = decode_interp(interp, p1x, p1y, p2x, p2y);
+    let segment = decode_segment(seg, s0, s1, s2);
     let i = (i as usize).min(MAXKF - 1);
     unsafe {
         TC[i] = t_us as i64;
         VC[i] = packed as u32;
-        ITC[i] = it;
+        OXC[i] = out_x;
+        OYC[i] = out_y;
+        IXC[i] = in_x;
+        IYC[i] = in_y;
+        SEGC[i] = segment;
     }
 }
 
@@ -266,17 +325,21 @@ pub extern "C" fn eval_rgba_packed(t_us: f64, default_packed: i32) -> i32 {
                 b: 0,
                 a: 0,
             },
-            interp: Interpolation::Linear,
+            out: (0.0, 0.0),
+            in_: (0.0, 0.0),
+            segment: Segment::Linear,
         }; MAXKF];
         for i in 0..n {
             buf[i] = Kf {
                 t_us: TC[i],
                 value: unpack(VC[i]),
-                interp: ITC[i],
+                out: (OXC[i], OYC[i]),
+                in_: (IXC[i], IYC[i]),
+                segment: SEGC[i],
             };
         }
         let def = unpack(default_packed as u32);
-        let out = crate::eval::<Rgba8>(&buf[..n], t_us as i64, def);
+        let out = crate::eval::<Rgba8>(&buf[..n], EXC, t_us as i64, def);
         (((out.r as u32) << 24) | ((out.g as u32) << 16) | ((out.b as u32) << 8) | (out.a as u32))
             as i32
     }

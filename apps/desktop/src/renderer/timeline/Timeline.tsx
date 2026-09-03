@@ -27,7 +27,6 @@ import {
   updateLayerParamTracks,
   updateParamTracksMulti,
   updateTransition,
-  type AnimTrack,
   type LinkSummary,
   type KeybindingsMap,
   type LayerSummary,
@@ -38,9 +37,10 @@ import {
 } from "../ipc";
 import { mediaReadiness, type ProxyState } from "../panels/mediaReadiness";
 import { findPanelLayer } from "../panels/panelLayer";
-import { scaleFanOutFor } from "../keyframe/descriptors";
+import { scaleFanOutFor, type ParamTrack } from "../keyframe/descriptors";
 import { fanOutEntries } from "../keyframe/fanOut";
-import { formatTimecode, snapFrameRound } from "../frames";
+import { formatTimecode, snapFrameRound, timeUsAtFrame } from "../frames";
+import { retimeGroupsOf, translateSelection } from "../keyframe/batchRetime";
 import {
   useDisplayMode,
   useFollowPlayheadEnabled,
@@ -163,15 +163,17 @@ import {
 import {
   clearKeyframeSelection,
   getSelectedKeyframes,
+  hasKeyframeSelection,
   setKeyframeSelection,
-  useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
 import {
   KeyframeBatchContext,
   batchParamTrackEntries,
-  removeKeys,
+  expandScaleFanOut,
+  type KeyframeBatch,
   type KeyframeBatchCommit,
-  type ParamTrackEntry,
+  type KeyframeBatchFold,
+  type KeyframeEntriesCommit,
 } from "./keyframeBatch";
 import { resolveAccelerator } from "../shortcuts/match";
 import { subSelectionDeleteYields } from "./subSelectionDelete";
@@ -578,7 +580,7 @@ export function Timeline({
 
   // ── Sub-frame audio slip (ADR 0038) ────────────────────────────────────────
   // Why keys are the authoring surface at all: see the ADR 0038 note on
-  // `ACTION_DEFS.nudgeAudioSampleBack`.
+  // `ACTION_DEFS.nudgeBack`.
   //
   // `escapeLink: true` on every one of them: the whole point is to move the audio
   // WITHOUT its video partner. That is also what creates the implicit sync offset
@@ -629,14 +631,40 @@ export function Timeline({
     [],
   );
 
-  const nudgeAudio = useCallback(
-    (steps: number) => () => void slipSelectedAudio((l) => nudgedStartUs(l, steps)),
+  /// The keyframe half of the nudge: the selection translates by whole frames,
+  /// under the same walls and the same pass/replace rule a group drag obeys.
+  ///
+  /// An effect event rather than a callback because the batch commit it lands
+  /// through is declared with the rest of the keyframe wiring further down, and
+  /// a dependency array naming it would read the binding before its
+  /// initializer runs.
+  const nudgeKeyframes = useEffectEvent((frames: number) => {
+    const { entries } = translateSelection(
+      retimeGroupsOf({ selected: getSelectedKeyframes(), tracks }),
+      timeUsAtFrame(frames, fpsNum, fpsDen),
+      { num: fpsNum, den: fpsDen },
+    );
+    if (entries.length > 0) commitKeyframeEntries(entries);
+  });
+
+  /// Alt+Arrow dispatches on which selection is armed, keyframes first — the
+  /// precedence Delete already has. With no keyframe selection it is the
+  /// sub-frame audio slip, unchanged, which is why the two tiers carry both a
+  /// frame count and a sample count.
+  const nudge = useCallback(
+    (frames: number, samples: number) => () => {
+      if (hasKeyframeSelection()) {
+        nudgeKeyframes(frames);
+        return;
+      }
+      void slipSelectedAudio((l) => nudgedStartUs(l, samples));
+    },
     [slipSelectedAudio],
   );
-  const handleNudgeAudioSampleBack = useMemo(() => nudgeAudio(-NUDGE_SAMPLE), [nudgeAudio]);
-  const handleNudgeAudioSampleForward = useMemo(() => nudgeAudio(NUDGE_SAMPLE), [nudgeAudio]);
-  const handleNudgeAudioMsBack = useMemo(() => nudgeAudio(-NUDGE_MS), [nudgeAudio]);
-  const handleNudgeAudioMsForward = useMemo(() => nudgeAudio(NUDGE_MS), [nudgeAudio]);
+  const handleNudgeBack = useMemo(() => nudge(-1, -NUDGE_SAMPLE), [nudge]);
+  const handleNudgeForward = useMemo(() => nudge(1, NUDGE_SAMPLE), [nudge]);
+  const handleNudgeLargeBack = useMemo(() => nudge(-10, -NUDGE_MS), [nudge]);
+  const handleNudgeLargeForward = useMemo(() => nudge(10, NUDGE_MS), [nudge]);
   const handleResyncAudioToVideo = useCallback(
     () => void slipSelectedAudio((l, members) => resyncStartUs(l, members)),
     [slipSelectedAudio],
@@ -684,10 +712,10 @@ export function Timeline({
       selectAll: handleSelectAll,
       deselectAll,
       toggleLinkSelected: handleToggleLinkSelected,
-      nudgeAudioSampleBack: handleNudgeAudioSampleBack,
-      nudgeAudioSampleForward: handleNudgeAudioSampleForward,
-      nudgeAudioMsBack: handleNudgeAudioMsBack,
-      nudgeAudioMsForward: handleNudgeAudioMsForward,
+      nudgeBack: handleNudgeBack,
+      nudgeForward: handleNudgeForward,
+      nudgeLargeBack: handleNudgeLargeBack,
+      nudgeLargeForward: handleNudgeLargeForward,
       resyncAudioToVideo: handleResyncAudioToVideo,
       zoomTimelineIn: handleZoomTimelineIn,
       zoomTimelineOut: handleZoomTimelineOut,
@@ -735,28 +763,28 @@ export function Timeline({
       run: handleToggleLinkSelected,
     },
     {
-      id: "nudgeAudioSampleBack",
-      actionId: "nudgeAudioSampleBack",
-      labelKey: ACTION_DEFS.nudgeAudioSampleBack.labelKey,
-      run: handleNudgeAudioSampleBack,
+      id: "nudgeBack",
+      actionId: "nudgeBack",
+      labelKey: ACTION_DEFS.nudgeBack.labelKey,
+      run: handleNudgeBack,
     },
     {
-      id: "nudgeAudioSampleForward",
-      actionId: "nudgeAudioSampleForward",
-      labelKey: ACTION_DEFS.nudgeAudioSampleForward.labelKey,
-      run: handleNudgeAudioSampleForward,
+      id: "nudgeForward",
+      actionId: "nudgeForward",
+      labelKey: ACTION_DEFS.nudgeForward.labelKey,
+      run: handleNudgeForward,
     },
     {
-      id: "nudgeAudioMsBack",
-      actionId: "nudgeAudioMsBack",
-      labelKey: ACTION_DEFS.nudgeAudioMsBack.labelKey,
-      run: handleNudgeAudioMsBack,
+      id: "nudgeLargeBack",
+      actionId: "nudgeLargeBack",
+      labelKey: ACTION_DEFS.nudgeLargeBack.labelKey,
+      run: handleNudgeLargeBack,
     },
     {
-      id: "nudgeAudioMsForward",
-      actionId: "nudgeAudioMsForward",
-      labelKey: ACTION_DEFS.nudgeAudioMsForward.labelKey,
-      run: handleNudgeAudioMsForward,
+      id: "nudgeLargeForward",
+      actionId: "nudgeLargeForward",
+      labelKey: ACTION_DEFS.nudgeLargeForward.labelKey,
+      run: handleNudgeLargeForward,
     },
     {
       id: "resyncAudioToVideo",
@@ -1096,10 +1124,10 @@ export function Timeline({
   );
 
   // Delete/Backspace removes the selected transition chip. Capture phase +
-  // stopImmediatePropagation preempts the app-level delete-selected-layer
-  // shortcut (same pattern as the keyframe Delete below); armed only while a
-  // chip is selected, and never while typing in a field or while another panel
-  // owns the keyboard (`subSelectionDeleteYields`).
+  // stopImmediatePropagation preempts the app-level `deleteSelected`, which
+  // knows nothing about chips; armed only while a chip is selected, and never
+  // while typing in a field or while another panel owns the keyboard
+  // (`subSelectionDeleteYields`).
   useEffect(() => {
     if (selectedTransitionId === null) return;
     const onKey = (ev: KeyboardEvent) => {
@@ -1160,9 +1188,9 @@ export function Timeline({
   );
 
   const onCommitParamTrack = useCallback(
-    async (layerId: string, paramKey: string, track: AnimTrack<number>) => {
+    async (layerId: string, paramKey: string, track: ParamTrack) => {
       try {
-        // Every timeline keyframe edit (value field, diamond drag, interp
+        // Every timeline keyframe edit (value field, diamond drag, easing
         // menu, curve editor, navigator) funnels through here. A scale write
         // on a LINKED layer fans out to both axes in one batch — otherwise
         // the result-based invariant would read the single-axis write as
@@ -1182,30 +1210,28 @@ export function Timeline({
     [onMutated, tracks],
   );
 
-  // Every MULTI-key keyframe operation's commit: `keyframeBatch.ts` folds the
-  // selection into one entry per (layerId, paramKey), and the whole set goes as
-  // `updateParamTracksMulti` rather than the per-layer batch — a swept selection
-  // spans layers and N layers must still cost ONE undo entry.
+  // Every MULTI-key keyframe operation folds the selection into one entry per
+  // (layerId, paramKey) (`keyframeBatch.ts`); the menus preview an armed row
+  // through this fold alone, and commit through the commit below.
+  const foldKeyframeBatch = useCallback<KeyframeBatchFold>(
+    (edit) => batchParamTrackEntries({ selected: getSelectedKeyframes(), tracks, edit }),
+    [tracks],
+  );
+
+  // The commit every keyframe gesture lands through: the whole set goes as
+  // `updateParamTracksMulti` rather than the per-layer batch — a swept
+  // selection spans layers and N layers must still cost ONE undo entry.
   //
-  // The scale fan-out is `onCommitParamTrack`'s, repeated here for its reason:
-  // the main-side twin invariant reads a lone `scale_x` write as divergence and
-  // silently unlinks the layer.
-  const commitKeyframeBatch = useCallback<KeyframeBatchCommit>(
-    (edit) => {
-      const entries = batchParamTrackEntries({
-        selected: getSelectedKeyframes(),
-        tracks,
-        edit,
-      }).flatMap<ParamTrackEntry>(([layerId, paramKey, next]) => {
-        const layer = findPanelLayer(tracks, layerId);
-        const fanOut = scaleFanOutFor(paramKey, layer?.params ?? null);
-        if (fanOut === null) return [[layerId, paramKey, next]];
-        return fanOutEntries(fanOut, next).map(([key, track]) => [layerId, key, track]);
-      });
-      if (entries.length === 0) return;
+  // Precomputed entries rather than a fold, because the retime gestures compute
+  // a whole next track per group from measured pointer travel and have nothing
+  // for a fold to apply (`keyframe/batchRetime.ts`).
+  const commitKeyframeEntries = useCallback<KeyframeEntriesCommit>(
+    (entries) => {
+      const expanded = expandScaleFanOut(entries, (id) => findPanelLayer(tracks, id));
+      if (expanded.length === 0) return;
       void (async () => {
         try {
-          await updateParamTracksMulti(entries);
+          await updateParamTracksMulti(expanded);
           await onMutated();
         } catch (e) {
           logMutationFailure(e, "Edit keyframes");
@@ -1214,36 +1240,20 @@ export function Timeline({
     },
     [onMutated, tracks],
   );
-
-  // Delete/Backspace removes the selected KEYFRAMES. Capture phase +
-  // stopImmediatePropagation preempts the app-level delete-selected-layer
-  // shortcut (same shape as the transition chip's handler above); winning that
-  // race is the sub-selection model, and bypassing the dispatcher is why the
-  // stand-down rules come back in through `subSelectionDeleteYields`.
-  //
-  // LANDMINE: this handler belongs to the Timeline and must not move back down
-  // to `KeyframeLane` or `LayerBlock`. A per-track or per-layer handler was
-  // correct only while a selection could not span layers; a marquee arms
-  // several at once, and whichever registered first would stop the event dead
-  // having deleted its own subset — several ops, several undo entries, and
-  // which subset survives decided by mount order.
-  const keyframeSelectionSize = useKeyframeSelectionStore((s) => s.selected.size);
-  const deleteSelectedKeyframes = useEffectEvent(() => {
-    commitKeyframeBatch(removeKeys);
-    clearKeyframeSelection();
-  });
-  useEffect(() => {
-    if (keyframeSelectionSize === 0) return;
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key !== "Delete" && ev.key !== "Backspace") return;
-      if (subSelectionDeleteYields(ev.target)) return;
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      deleteSelectedKeyframes();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [keyframeSelectionSize]);
+  const commitKeyframeBatch = useCallback<KeyframeBatchCommit>(
+    (edit) => commitKeyframeEntries(foldKeyframeBatch(edit)),
+    [commitKeyframeEntries, foldKeyframeBatch],
+  );
+  const keyframeBatch = useMemo<KeyframeBatch>(
+    () => ({
+      commit: commitKeyframeBatch,
+      commitEntries: commitKeyframeEntries,
+      fold: foldKeyframeBatch,
+      tracks,
+      fps: { num: fpsNum, den: fpsDen },
+    }),
+    [commitKeyframeBatch, commitKeyframeEntries, foldKeyframeBatch, tracks, fpsNum, fpsDen],
+  );
 
   const onRename = useCallback((layerId: string) => {
     setContextMenu(null);
@@ -1596,10 +1606,10 @@ export function Timeline({
         linkFanout: linkFanoutActive(),
       });
       setLayerSelection(primary, ids);
-      // So the Delete that follows reaches the clips just swept: whenever a
-      // keyframe is selected, the keyframe Delete handler above answers first
-      // and stops the event dead, and a stale selection there would eat this
-      // one's. The chip's own pointerdown clears it for the same reason.
+      // So the Delete that follows reaches the clips just swept: `deleteSelected`
+      // takes the keyframe selection whenever one stands, and a stale one would
+      // eat this Delete. The chip's own pointerdown clears it for the same
+      // reason.
       if (ids.length > 0) clearKeyframeSelection();
     },
     [
@@ -1654,7 +1664,7 @@ export function Timeline({
 
   return (
     <MarqueeAnchorContext.Provider value={marqueeAnchor}>
-    <KeyframeBatchContext.Provider value={commitKeyframeBatch}>
+    <KeyframeBatchContext.Provider value={keyframeBatch}>
     <div
       ref={rootRef}
       className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto ${
@@ -1812,7 +1822,6 @@ export function Timeline({
                 onCommitLabel={onCommitLabel}
                 onCommitLinkLabel={onCommitLinkLabel}
                 onCommitGroupLabel={onCommitGroupLabel}
-                onCommitParamTrack={onCommitParamTrack}
                 onMediaDrop={onMediaDrop}
                 isRevealed={track.id === (revealedTrackId ?? null)}
                 isResizing={heightDrag !== null}

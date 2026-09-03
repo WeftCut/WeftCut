@@ -32,7 +32,7 @@ import { useLayerBakePhase } from "./motifBakeStatusStore";
 import { useGroupMarkerCount } from "./groupMarkerCount";
 import { formatSyncOffset } from "./audioSlip";
 import { useAudioSyncOffset } from "./audioSyncOffsetStore";
-import type { AnimTrack, LayerSummary } from "../ipc";
+import type { Extrapolate, LayerSummary } from "../ipc";
 import {
   useEditingGroupId,
   useEditingLayerId,
@@ -50,8 +50,15 @@ import {
 import { currentSelection, layerIdsOf } from "../state/selectionStore";
 import { useFocusedParamFor } from "../keyframe/focusStore";
 import { readParamTrack } from "../keyframe/descriptors";
-import { interpGlyphClass } from "../keyframe/curve";
-import { retimeKeyframe } from "../keyframe/edits";
+import {
+  EXTRAP_GLYPH_GAP_PX,
+  extrapolateClass,
+  extrapolateGlyph,
+  extrapolateLabelKey,
+  interpGlyphClass,
+} from "../keyframe/curve";
+import { useTrackPreview } from "../keyframe/easingPreviewStore";
+import { useKeyframeDrag } from "../keyframe/useKeyframeDrag";
 import { EasingMenu } from "./EasingMenu";
 import { useKeyframeBatchCommit } from "./keyframeBatch";
 import { transportSeek } from "../state/playbackStore";
@@ -347,7 +354,6 @@ export function LayerBlock({
   onCommitLabel,
   onCommitLinkLabel,
   onCommitGroupLabel,
-  onCommitParamTrack,
   fpsNum,
   fpsDen,
 }: {
@@ -410,10 +416,6 @@ export function LayerBlock({
   /// different things: that one is this clip's own label, this one is the name
   /// every clip placing the composition shows.
   onCommitGroupLabel: (compositionId: string, label: string | null) => void;
-  /// Persist a keyframe track edit — a diamond retime. Wired by Timeline to
-  /// `updateLayerParamTrack + onMutated`. The multi-key operations do NOT come
-  /// through here: they commit the whole selection at once (`keyframeBatch.ts`).
-  onCommitParamTrack: (layerId: string, paramKey: string, track: AnimTrack<number>) => void;
   fpsNum: number;
   fpsDen: number;
 }) {
@@ -466,10 +468,15 @@ export function LayerBlock({
   // Which of THIS layer+param's keyframes are selected. Reads the shared
   // selection store so the chip diamonds and the sub-lane ones agree.
   const isKfSelected = useIsKeyframeSelected(layer.id, focusedParam);
+  // A gesture's preview of the focused property — a menu row armed over the
+  // selection, a retime in flight — drawn in place of the committed track.
+  // Read untyped in the value: the row draws times and segment classes only,
+  // so a colour preview moves its diamonds the same as a numeric one.
+  const kfPreview = useTrackPreview(layer.id, focusedParam);
   const commitKeyframeBatch = useKeyframeBatchCommit();
+  const beginKeyframeDrag = useKeyframeDrag();
   const [interpMenu, setInterpMenu] = useState<{ x: number; y: number; kfId: string } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const dragTUsRef = useRef<number | null>(null);
   useEffect(() => {
     if (isEditing) {
       setDraft(
@@ -488,8 +495,9 @@ export function LayerBlock({
   }, [isEditing, isEditingGroupName, layer.id, layer.label, groupLabel(layer)]);
 
   // Drop the diamond selection when this layer is no longer the primary
-  // selection, so the Timeline's capture-phase keyframe Delete can't stay armed
-  // after the user moves on (Delete then reverts to deleting the layer).
+  // selection, so a keyframe selection cannot stay armed after the user moves
+  // on — `deleteSelected` takes keyframes whenever any are selected, and Delete
+  // has to revert to deleting the layer.
   useEffect(() => {
     if (!isPrimary) clearKeyframeSelection();
   }, [isPrimary]);
@@ -752,23 +760,37 @@ export function LayerBlock({
   // positions stay consistent with `layerWidthPx` during a trim drag; the
   // actor re-bases keyframes on commit, so this is just the in-flight preview.
   const clipDurationUs = liveEnd - liveStart;
-  const diamonds = (() => {
+  const { diamonds, extrapMarks } = (() => {
+    const none = {
+      diamonds: [] as { id: string; x: number; glyph: string }[],
+      extrapMarks: [] as { side: "before" | "after"; x: number; mode: Extrapolate }[],
+    };
     // When the track is expanded the keyframes render in the sub-lanes
     // below (KeyframeLane), so the collapsed in-clip diamonds are hidden.
-    if (isTrackExpanded) return [] as { id: string; x: number; glyph: string }[];
-    if (!focusedParam) return [] as { id: string; x: number; glyph: string }[];
-    const track = readParamTrack(layer.params, focusedParam);
-    if (!track || track.mode !== "Keyframed") return [];
-    return track.value.flatMap((k) =>
-      // collapsed mode hides out-of-range keys (kept in data)
-      k.t_us >= 0 && k.t_us <= clipDurationUs
-        ? [{
-            id: k.id,
-            x: keyframeXWithinClip(k.t_us, clipDurationUs, layerWidthPx),
-            glyph: interpGlyphClass(k.interp.kind),
-          }]
-        : [],
+    if (isTrackExpanded || !focusedParam) return none;
+    const track = kfPreview ?? readParamTrack(layer.params, focusedParam);
+    if (!track || track.mode !== "Keyframed") return none;
+    // collapsed mode hides out-of-range keys (kept in data)
+    const inRange = (k: { t_us: number }) => k.t_us >= 0 && k.t_us <= clipDurationUs;
+    const xOf = (k: { t_us: number }) => keyframeXWithinClip(k.t_us, clipDurationUs, layerWidthPx);
+    const diamonds = track.value.flatMap((k) =>
+      inRange(k) ? [{ id: k.id, x: xOf(k), glyph: interpGlyphClass(k.segment.kind) }] : [],
     );
+    // A non-Hold side is announced by one mark beside its end key — only when
+    // that key is drawn (an end key past the clip edge has nothing visible to
+    // extrapolate from) and only with two or more keys (one never extrapolates).
+    const extrapMarks: typeof none.extrapMarks = [];
+    if (track.value.length > 1) {
+      const first = track.value[0]!;
+      const last = track.value[track.value.length - 1]!;
+      if (track.extrapolate.before !== "Hold" && inRange(first)) {
+        extrapMarks.push({ side: "before", x: xOf(first) - EXTRAP_GLYPH_GAP_PX, mode: track.extrapolate.before });
+      }
+      if (track.extrapolate.after !== "Hold" && inRange(last)) {
+        extrapMarks.push({ side: "after", x: xOf(last) + EXTRAP_GLYPH_GAP_PX, mode: track.extrapolate.after });
+      }
+    }
+    return { diamonds, extrapMarks };
   })();
 
   return (
@@ -1072,30 +1094,21 @@ export function LayerBlock({
             const rect = e.currentTarget.getBoundingClientRect();
             const hitId = keyframeHitTest(diamonds, e.clientX - rect.left, 6);
             if (!hitId) return;
-            e.stopPropagation();
             const key = paramTrack.value.find((k) => k.id === hitId);
             if (!key) return;
-            selectKeyframe({ layerId: layer.id, paramKey: focusedParam, kfId: hitId });
-            transportSeek(layer.t_start_us + key.t_us);
-            // begin drag-retime
-            const startClientX = e.clientX;
-            const startTUs = key.t_us;
-            const onMove = (me: PointerEvent) => {
-              const dxUs = ((me.clientX - startClientX) / pxPerSec) * 1_000_000;
-              const nextTUs = Math.max(0, Math.min(clipDurationUs, startTUs + dxUs));
-              dragTUsRef.current = nextTUs;
-            };
-            const onUp = () => {
-              window.removeEventListener("pointermove", onMove);
-              window.removeEventListener("pointerup", onUp);
-              const nextTUs = dragTUsRef.current;
-              dragTUsRef.current = null;
-              if (nextTUs != null && nextTUs !== startTUs) {
-                onCommitParamTrack(layer.id, focusedParam, retimeKeyframe(paramTrack, hitId, nextTUs));
-              }
-            };
-            window.addEventListener("pointermove", onMove);
-            window.addEventListener("pointerup", onUp);
+            e.stopPropagation();
+            // Pressing a diamond parks the transport on it, whether or not the
+            // press goes on to drag: the row is the collapsed track's only
+            // handle, so landing on a key IS how you get to that moment.
+            beginKeyframeDrag({
+              layerId: layer.id,
+              paramKey: focusedParam,
+              kfId: hitId,
+              clientX: e.clientX,
+              pxPerSec,
+              altKey: e.altKey,
+              onPress: () => transportSeek(layer.t_start_us + key.t_us),
+            });
           }}
         >
           {diamonds.map((d) => (
@@ -1105,6 +1118,18 @@ export function LayerBlock({
               style={{ left: d.x }}
               data-kf-id={d.id}
             />
+          ))}
+          {extrapMarks.map((m) => (
+            <span
+              key={`extrap-${m.side}`}
+              className={extrapolateClass(m.mode)}
+              data-testid="kf-extrap"
+              data-side={m.side}
+              title={t(extrapolateLabelKey(m.mode))}
+              style={{ left: m.x }}
+            >
+              {extrapolateGlyph(m.mode)}
+            </span>
           ))}
         </div>
       )}

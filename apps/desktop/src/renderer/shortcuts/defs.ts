@@ -46,10 +46,10 @@ export type ActionId =
   | "reviewShots"
   | "toggleLinkSelected"
   | "toggleLinkOverride"
-  | "nudgeAudioSampleBack"
-  | "nudgeAudioSampleForward"
-  | "nudgeAudioMsBack"
-  | "nudgeAudioMsForward"
+  | "nudgeBack"
+  | "nudgeForward"
+  | "nudgeLargeBack"
+  | "nudgeLargeForward"
   | "resyncAudioToVideo"
   | "seekFrameBack"
   | "seekFrameForward"
@@ -71,6 +71,13 @@ export type ActionId =
 export interface ActionDef {
   defaultKeys: string[];
   labelKey: string;
+  /// A second, muted line under the label in Settings → Keyboard. For the
+  /// actions whose handler DISPATCHES on which selection is armed, where the
+  /// label can only name one of the two things the key does: without the hint
+  /// the panel is not merely terse, it is wrong about half the presses.
+  /// Nothing else earns one — a label that already says what the key does
+  /// gains nothing from a sentence repeating it.
+  hintKey?: string;
   /// While an `<input>` / `<textarea>` / `contentEditable` is focused,
   /// chord bindings (Ctrl/Meta/Alt) fire by default and bare keys don't
   /// (derived at `resolveEntries`). Set only to force the opposite for
@@ -146,13 +153,13 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // a Select All reaching them would arm a Delete for clips that are off screen.
   selectAll:       { defaultKeys: ["Mod+A"],               labelKey: "actions.select_all",   fireWhenEditing: false, scope: TIMELINE_SELECTION },
   deselectAll:     { defaultKeys: ["Mod+Shift+A"],         labelKey: "actions.deselect_all", fireWhenEditing: false, scope: TIMELINE_SELECTION },
-  deleteSelected:  { defaultKeys: ["Delete", "Backspace"], labelKey: "actions.delete_selected", scope: TIMELINE_SELECTION },
+  deleteSelected:  { defaultKeys: ["Delete", "Backspace"], labelKey: "actions.delete_selected", hintKey: "hints.delete_selected", scope: TIMELINE_SELECTION },
   // Clipboard actions belong to the timeline, not an active text editor. The
   // explicit false preserves native copy/paste inside inputs and text fields;
   // `scope` is the coarser statement of the same idea — with the preview or the
   // media pool focused, Ctrl+C is not "copy my timeline selection".
-  copySelected:    { defaultKeys: ["Mod+C"],               labelKey: "actions.copy_selected", fireWhenEditing: false, scope: TIMELINE_SELECTION },
-  pasteAtPlayhead: { defaultKeys: ["Mod+V"],               labelKey: "actions.paste_at_playhead", fireWhenEditing: false, scope: TIMELINE_SELECTION },
+  copySelected:    { defaultKeys: ["Mod+C"],               labelKey: "actions.copy_selected", hintKey: "hints.copy_selected", fireWhenEditing: false, scope: TIMELINE_SELECTION },
+  pasteAtPlayhead: { defaultKeys: ["Mod+V"],               labelKey: "actions.paste_at_playhead", hintKey: "hints.paste_at_playhead", fireWhenEditing: false, scope: TIMELINE_SELECTION },
   // Cut at the playhead — the one edit that earns a chord outright, and the
   // Blade's keyboard half (the tool can only cut where the pointer is). `Mod+B`
   // rather than Premiere's `Mod+K` because `Mod+K` is the search palette here;
@@ -324,19 +331,23 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // Handled in App so the catalogue lists it, timeline-scoped because it only
   // changes what timeline gestures do.
   toggleLinkOverride:     { defaultKeys: ["Alt+Shift+G"],  labelKey: "actions.toggle_link_override", scope: TIMELINE_SELECTION },
-  // Sub-frame audio slip (ADR 0038). Deliberately UNSCOPED, unlike its
-  // structural siblings above: nudging audio sync while watching and listening
-  // to the preview is the workflow these keys exist for, and scoping Alt+Arrow
-  // to the timeline would kill it exactly when it is most useful. Two tiers because ONE SAMPLE is 0.042 px at the
-  // 2000 px/s zoom ceiling — sample precision is unreachable by dragging, so keys and
-  // numbers are the entry points, and a single-sample step alone would be unusable
-  // for a real ~ms sync fix. Alt+Arrow is free (bare arrows are the playhead seek).
-  // Repeatable so holding the key walks; each press steps by an INDEX, so 10 000
-  // presses out and back land on the original sample exactly.
-  nudgeAudioSampleBack:    { defaultKeys: ["Alt+ArrowLeft"],        labelKey: "actions.nudge_audio_sample_back",    repeatable: true },
-  nudgeAudioSampleForward: { defaultKeys: ["Alt+ArrowRight"],       labelKey: "actions.nudge_audio_sample_forward", repeatable: true },
-  nudgeAudioMsBack:        { defaultKeys: ["Alt+Shift+ArrowLeft"],  labelKey: "actions.nudge_audio_ms_back",        repeatable: true },
-  nudgeAudioMsForward:     { defaultKeys: ["Alt+Shift+ArrowRight"], labelKey: "actions.nudge_audio_ms_forward",     repeatable: true },
+  // Nudge — one key, two subjects: a keyframe selection moves by frames, and
+  // with none armed the same key slips the selected audio (ADR 0038). The pair
+  // of tiers serves both, because ONE SAMPLE is 0.042 px at the 2000 px/s zoom
+  // ceiling — sample precision is unreachable by dragging, so keys and numbers
+  // are the entry points, and a single-sample step alone would be unusable for
+  // a real ~ms sync fix. Alt+Arrow is free (bare arrows are the playhead seek).
+  // Repeatable so holding the key walks; each audio press steps by an INDEX, so
+  // 10 000 presses out and back land on the original sample exactly.
+  //
+  // `TIMELINE_SELECTION` even though the audio slip alone would rather be
+  // global — you slip sync while watching the preview — because the keyframe
+  // subject is a timeline sub-selection whose Delete is already scoped, and one
+  // key cannot be scoped for one of its subjects and not the other.
+  nudgeBack:         { defaultKeys: ["Alt+ArrowLeft"],        labelKey: "actions.nudge_back",         hintKey: "hints.nudge_back",         repeatable: true, scope: TIMELINE_SELECTION },
+  nudgeForward:      { defaultKeys: ["Alt+ArrowRight"],       labelKey: "actions.nudge_forward",      hintKey: "hints.nudge_forward",      repeatable: true, scope: TIMELINE_SELECTION },
+  nudgeLargeBack:    { defaultKeys: ["Alt+Shift+ArrowLeft"],  labelKey: "actions.nudge_large_back",   hintKey: "hints.nudge_large_back",   repeatable: true, scope: TIMELINE_SELECTION },
+  nudgeLargeForward: { defaultKeys: ["Alt+Shift+ArrowRight"], labelKey: "actions.nudge_large_forward", hintKey: "hints.nudge_large_forward", repeatable: true, scope: TIMELINE_SELECTION },
   // Zero the derived sync offset — the companion to the nudges, since the offset is
   // geometry with no field to reset.
   resyncAudioToVideo:      { defaultKeys: ["Alt+Shift+S"],          labelKey: "actions.resync_audio_to_video" },

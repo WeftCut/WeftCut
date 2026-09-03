@@ -503,6 +503,18 @@
   width: 1%;
 }
 
+/* The dispatch rule under an action's label. Wraps and is width-capped, unlike
+   the label above it: the column is shrink-to-fit and nowrap, so a sentence
+   left to inherit that would push the chord chips off the panel. */
+.keybindings-hint {
+  margin-top: 2px;
+  max-width: 34ch;
+  white-space: normal;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  line-height: 1.35;
+}
+
 .keybindings-chords {
   display: flex;
   flex-wrap: wrap;

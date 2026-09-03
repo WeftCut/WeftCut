@@ -78,8 +78,8 @@ describe('applyUpdateEffect', () => {
     const eid = applyAddEffect(p, gen, layerId, 'blur')
     applyUpdateEffect(p, layerId, eid, { params: {
       strength: sp(8.123456789),
-      feather: { mode: 'Keyframed', value: [
-        { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 0.98765, interp: { kind: 'Linear' } },
+      feather: { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [
+        { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 0.98765, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } },
       ] },
     } })
     const params = effectsOf(p, layerId)[0].params

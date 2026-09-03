@@ -1249,10 +1249,33 @@
    centering, and selection styling stay shared with the base .kf-diamond. */
 .kf-diamond.kf-interp-hold { transform: translateX(-50%); border-radius: 1px; }
 .kf-diamond.kf-interp-eased { transform: translateX(-50%); border-radius: 50%; }
-/* The easing command menu reuses .app-menu-item chrome on plain buttons inside
-   a Popover — no Base UI Menu, so no data-highlighted; :hover restores the
-   highlight the Menu primitive would provide. */
-.easing-command-menu .app-menu-item:hover:not(:disabled) { background: var(--hover-neutral-strong); }
+/* Extrapolation mark beside a track's end key (renderer/keyframe/curve.ts
+   picks the glyph per mode). Centred on the point the surface gives it: the
+   sub-lane sets `top` to the key's value row, the in-clip row pins it to the
+   diamond row's middle. Same domain accent as a selected diamond. */
+.kf-extrap {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 9px;
+  line-height: 1;
+  color: var(--keyframe);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.kf-diamond-row .kf-extrap { top: 50%; }
+/* Tangent handles in the expanded curve editor. A Free side takes the --ring
+   accent; an Auto side — solved by main, not authored — is greyed and still
+   grabbable, because the grab is what converts the key to Free (After Effects'
+   auto → continuous bezier). A key's two stems read as one through-line when
+   its continuity is Smooth and as two independent stems when Broken. */
+.kf-handle { fill: var(--ring, #6b6bff); }
+.kf-handle.kf-handle-auto { fill: var(--muted-foreground, #9ca3af); opacity: 0.6; }
+.kf-handle-stem { stroke: var(--ring, #6b6bff); stroke-width: 1; opacity: 0.7; }
+.kf-handle-stem.kf-handle-stem-auto { stroke: var(--muted-foreground, #9ca3af); opacity: 0.5; }
+.kf-handle-stem.kf-handle-stem-broken { stroke-dasharray: 3 2; }
+/* The track outside its key range, sampled through the same engine as the
+   segments and dashed so it reads as consequence, not authored curve. */
+.kf-curve-extrap { stroke-dasharray: 4 3; opacity: 0.6; }
 /* Parameter-curve badge on procedural (Elastic/Bounce) segments in the
    expanded curve editor. These segments have no tangent handles by design —
    the badge plus the --keyframe curve tint say "edit parameters, not
