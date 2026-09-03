@@ -50,6 +50,9 @@ eval wasm, starts Vite, and launches the Electron window.
 
 ## macOS
 
+macOS 13 (Ventura) or newer; the bundled Electron runtime dropped macOS 12.
+Only 64-bit builds ship (arm64 and x64) — that holds on every OS.
+
 1. **Xcode Command Line Tools**: `xcode-select --install`.
 2. **Rust**:
    ```sh

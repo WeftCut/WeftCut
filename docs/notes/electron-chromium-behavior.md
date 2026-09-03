@@ -4,6 +4,18 @@ Measured 2026-06-19 on Electron 42.4.1 / Chromium 148.0.7778.265 (Windows 11, RT
 
 Re-verify on the next Chromium major bump, or on hardware that breaks an entry's stated assumption.
 
+## Re-verification on Electron 44.1.1 / Chromium 152.0.7977.65 (Linux x64, NVIDIA Ampere + Intel iHD VAAPI, X11), 2026-09-03
+
+Re-run through the repository's own gates rather than the original bare-page harness, so each line says what the evidence actually is.
+
+- ✅ **Canceled `pointerdown` cancels the focus move** — `focus-regions.spec.ts` ("a pointerdown the target cancels still releases the field") passes.
+- ✅ **Offscreen window is a full citizen of the window list** — the motif capture host (`webPreferences.offscreen`) still captures and the quit accounting still passes (`determinism.spec.ts`, `motif-export.spec.ts`, `windows.test.ts`).
+- ✅ **WebGPU on Linux needs `--enable-features=Vulkan`** — bare-page probe on 44: `navigator.gpu` present, `requestAdapter()` → `null` without the feature, `nvidia / ampere` with it. The F16 parity gate (`effects-f16-parity`) passes on the real device.
+- ✅ **Buffer-defined `VideoFrame` → owned-shader conversion** — the ProRes fidelity gate (`preview-sw-conformance`, SSIM 0.997) and the saturated-chart colour gates (`preview-sw-color` / `preview-hw-color` nvdec + vaapi, worst patch error 1–2 of tolerance 8) pass. This proves the owned conversion still yields correct colour; it does not re-measure whether Chromium's `drawImage` of a buffer frame still applies BT.601.
+- ✅ **`prefer-hardware` encode rule** — `export_codecs.spec.ts` (AV1, HEVC, WebCodecs H.264, native H.264) passes with the hint omitted for non-H.264 codecs. Again evidence that the rule still produces working exports, not a fresh negative probe.
+- 🆕 **WebCodecs hardware *decode* is refused outright on Linux/NVIDIA** — `import-probe.spec.ts` on 152: `VideoDecoder.configure({ hardwareAcceleration: "prefer-hardware" })` throws `OperationError: Unsupported configuration` in both the main thread and a worker; `prefer-software` configures, produces I420, and all four import paths (`drawImage`, `createImageBitmap`, `texImage2D`, `copyTo`) read lit. On 148 the hardware configuration was accepted and produced BGRA frames that read black through every path. The product consequence is unchanged — `preferSoftware` / `hwExportDecodeAllowed` stay, and there is still no WebCodecs-side hardware decode on Linux — but the failure mode moved from "silent black frames" to "config rejected", which is the safer one.
+- ⏳ **Not re-verified on 44** — Pointer Lock (no gate), inline foreignObject taint (no gate), EyeDropper widget behavior (Windows), the macOS menu-accelerator table (manual check below), Windows D3D11 shared textures (`preview-gpu-order`, off CI). Those entries still describe Electron 42.
+
 ## Pointer Lock works (WebView2 verdict overturned)
 
 `element.requestPointerLock()` locks fine on a visible, focused window. A *hidden* window forces `pointerlockerror` — that is a probe-harness artifact, not an engine limit.

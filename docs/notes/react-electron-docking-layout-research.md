@@ -9,7 +9,7 @@ secondary-window surfaces?
 
 ## Repository constraints
 
-- The renderer is React 19.2 under `React.StrictMode`, Electron 42, ESM,
+- The renderer is React 19.2 under `React.StrictMode`, Electron 44, ESM,
   TypeScript 6 with strict options, and an Electron sandbox with no Node globals.
 - Timeline and preview sizing depends
   on `min-width: 0`, `min-height: 0`, and explicit overflow boundaries; a dock

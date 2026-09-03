@@ -114,6 +114,9 @@ mac:
   target: [dmg]
   category: public.app-category.video
   icon: build/icon.png
+  # Electron 44 dropped macOS 12; the bundled runtime will not start below 13,
+  # so the DMG declares the same floor instead of failing at launch.
+  minimumSystemVersion: "13.0"
   identity: null   # unsigned in S6; ad-hoc signature, but the icon is now a real master
   extraResources:
     # LGPL §6 obligations for @weftcut/native-decode's ffmpeg runtime. The
