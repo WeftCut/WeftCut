@@ -22,6 +22,8 @@ import {
 } from "../keyframe/curve";
 import { useNumberTrackPreview } from "../keyframe/easingPreviewStore";
 import { setTangent } from "../keyframe/edits";
+import { selectKeyframe } from "../keyframe/selectionStore";
+import { useKeyframeDrag } from "../keyframe/useKeyframeDrag";
 import {
   computeValueRange, extrapolationSampleCount, handleDragToCoeff, sampleExtrapolation,
   samplesToPolyline, segmentHandles, segmentPolyline, timeToXPx, valueToY,
@@ -45,8 +47,7 @@ export function KeyframeCurveGraph({
   height,
   editable,
   isSelected,
-  onSelectSeek,
-  onRetime,
+  onFocusSeek,
   onSetTangent,
   onSetContinuity,
   onOpenMenu,
@@ -63,10 +64,10 @@ export function KeyframeCurveGraph({
   /// Is this curve's key `kfId` selected? A predicate rather than an id
   /// because the selection is a set; asking per key keeps the render path O(1).
   isSelected: (kfId: string) => boolean;
-  /// click a dot (no drag): select it + seek the transport to its time.
-  onSelectSeek: (kfId: string) => void;
-  /// drag a dot horizontally: retime to a new layer-local µs (caller commits).
-  onRetime: (kfId: string, newTUsLocal: number) => void;
+  /// Press a dot: park the transport on its time and make its property the
+  /// focused one. SELECTION is not this callback's business — the drag hook
+  /// owns it, so that a press inside a swept group keeps the group.
+  onFocusSeek: (kfId: string) => void;
   /// drag a handle: key `kfId`'s `side` becomes this Free point (the caller
   /// commits through `setTangent`, once per gesture).
   onSetTangent: (kfId: string, side: TangentSide, xy: { x: number; y: number }) => void;
@@ -78,6 +79,7 @@ export function KeyframeCurveGraph({
 }) {
   const { t } = useTranslation();
   const svgRef = useRef<SVGSVGElement>(null);
+  const beginKeyframeDrag = useKeyframeDrag();
   const teardownRef = useRef<(() => void) | null>(null);
 
   useEffect(() => () => teardownRef.current?.(), []);
@@ -205,25 +207,21 @@ export function KeyframeCurveGraph({
     window.addEventListener("pointerup", up);
   }
 
-  function dragDot(kfId: string, startTUs: number, e: React.PointerEvent) {
+  /// A dot press hands the gesture to the shared drag: it moves the whole
+  /// keyframe selection, so nothing about it is per-curve except the axis scale
+  /// the geometry ref keeps current across a mid-drag zoom.
+  function dragDot(kfId: string, e: React.PointerEvent) {
     if (e.button !== 0) return;
     e.stopPropagation();
-    onSelectSeek(kfId);
-    const startClientX = e.clientX;
-    let nextTUs: number | null = null;
-    const move = (me: PointerEvent) => {
-      const dxUs = ((me.clientX - startClientX) / geomRef.current.pxPerSec) * 1_000_000;
-      nextTUs = Math.max(0, Math.min(clipDurationUs, startTUs + dxUs));
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      teardownRef.current = null;
-      if (nextTUs != null && nextTUs !== startTUs) onRetime(kfId, nextTUs);
-    };
-    teardownRef.current = up;
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    beginKeyframeDrag({
+      layerId,
+      paramKey,
+      kfId,
+      clientX: e.clientX,
+      pxPerSec: geomRef.current.pxPerSec,
+      altKey: e.altKey,
+      onPress: () => onFocusSeek(kfId),
+    });
   }
 
   const first = renderKeys[0];
@@ -341,7 +339,7 @@ export function KeyframeCurveGraph({
             className={`kf-diamond kf-sublane-diamond${glyph ? ` ${glyph}` : ""}${isSelected(k.id) ? " is-selected" : ""}`}
             style={{ left: timeToXPx(k.t_us, geom), top: valueToY(k.value, geom) }}
             data-kf-id={k.id}
-            onPointerDown={(e) => dragDot(k.id, k.t_us, e)}
+            onPointerDown={(e) => dragDot(k.id, e)}
             onContextMenu={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -349,7 +347,10 @@ export function KeyframeCurveGraph({
               // it is left alone — the menu reaches every selected key, and
               // re-running the click path would seek away from what the user is
               // about to edit. The same rule the clip context menu applies.
-              if (!isSelected(k.id)) onSelectSeek(k.id);
+              if (!isSelected(k.id)) {
+                selectKeyframe({ layerId, paramKey, kfId: k.id });
+                onFocusSeek(k.id);
+              }
               onOpenMenu(e.clientX, e.clientY, k.id);
             }}
           />

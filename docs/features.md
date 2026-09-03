@@ -194,14 +194,56 @@ sub-lane row draws the curves of every layer on its track. A box tests each
 diamond's drawn centre — both axes in an expanded row, where the value axis is
 tall enough to aim in, and x alone in a collapsed one, where one glyph already
 covers some 40% of the axis (ADR 0051). Sweeping clips drops the keyframe
-selection, since a keyframe selection claims Delete ahead of the clips. Two
-operations act on the whole keyframe selection: Delete, and any easing choice
-from a diamond's context menu. Each is **one undo entry per gesture**, however
-many layers and properties the selection spans. The easing menu reports no
-current interpolation while several keys are selected — claiming the
-right-clicked key's easing for the rest would be unverifiable from the screen. Right-clicking a diamond already in the selection leaves the
+selection, since a keyframe selection claims Delete ahead of the clips. Every
+operation that acts on the whole keyframe selection — Delete, an easing choice
+from a diamond's context menu, a retime drag, a nudge, a paste — is **one undo
+entry per gesture**, however many layers and properties the selection spans. The
+easing menu reports no current interpolation while several keys are selected —
+claiming the right-clicked key's easing for the rest would be unverifiable from
+the screen. Right-clicking a diamond already in the selection leaves the
 selection and the playhead alone and acts on all of it; right-clicking one
 outside selects it first, the way the clip menu behaves.
+
+**Dragging a diamond moves the whole selection** by one shared delta, snapped
+once to the composition's frame grid — so a group keeps its shape instead of
+each key rounding on its own. Pressing an unselected diamond replaces the
+selection with it first, exactly as a clip click does. The group stops at the
+**tightest** `[0, duration]` wall across every selected key, each measured in its
+own layer: the alternative — letting each layer stop separately — silently
+deforms the very spacing the drag is moving. Unselected neighbours are passed
+without disturbing them, and a moved key landing on a stationary key's frame
+**replaces** it, which one undo restores. Neighbours are deliberately not walls:
+a group spanning layers would then stick on keys the user cannot see.
+
+**`Alt`-dragging an end key scales the selection in time** about the opposite
+end — After Effects' gesture. Times are scaled first and snapped after, since a
+scale is not a translation and there is no single delta a pre-snap could round.
+The factor is floored so adjacent selected keys stay at least one frame apart —
+a shrink can neither merge two keys nor flip their order — and capped by the same
+walls a drag obeys. Normalized tangents make the result shape-preserving for
+free. The gesture needs two distinct selected times to have a span at all;
+without them the `Alt`-drag is an ordinary move.
+
+**`Alt+Arrow` nudges**, one frame at a time, and `Alt+Shift+Arrow` ten — the
+After Effects tiers, repeatable, under the drag's rules. The key is dual-purpose:
+with no keyframe selected it falls through to the sub-frame audio slip, the
+precedence Delete has. Delete, Copy and Paste dispatch the same way — keyframes
+when any are selected, clips otherwise — and Settings → Keyboard prints that rule
+as a second line under each of those actions, because a label naming only one of
+the two things a key does is not terse, it is wrong about half the presses.
+
+**Copy and paste share one slot** with the clip clipboard, so `Mod+C` takes
+whichever of the two selections is armed and `Mod+V` puts back whatever was
+taken last. A keyframe copy is a serialized snapshot grouped by property, with
+layer identity dropped and times rebased so the earliest key sits at zero — the
+clip it came from can be trimmed, re-keyed or deleted before the paste. Pasting
+puts the earliest key at the focused timeline's playhead on **every selected
+clip**, matching by property name; a property the target's kind does not carry is
+skipped and named on the status bar. A Static target lifts to a Keyframed track
+holding **only** the pasted keys, because folding the old constant in as an extra
+key would invent a keyframe nobody authored; a Keyframed target keeps its own
+keys and the pasted ones replace what they land on. Keys past the target's end
+are retained rather than clipped, the rule trim and split already follow.
 
 **Still missing** (the conventions a traditional NLE also has): contiguous range
 selection between an anchor and a click, and the directional "select every clip
@@ -231,6 +273,31 @@ on; nothing pretends there are keys where there are none. Keyframe glyphs read
 the segment class at a glance: diamond = linear, square = hold, circle = eased.
 The record behind all of this is described in `data-model.md` § Animated values
 and the editor mechanics in `render.md` § Keyframe easing authoring.
+
+## Colour keyframing
+
+A Text layer's glyph colour and a Color layer's fill animate, and they animate
+through the same surfaces every other property uses. The inspector's colour row
+wears the stopwatch: unlit, a pick from the swatch or the eyedropper is the
+static value it has always been; lit, the same pick becomes a keyframe at the
+playhead, and the swatch then shows the colour the engine resolves there rather
+than the colour that was authored. Turning the stopwatch back off freezes what
+was on screen. Colours interpolate in OkLab, so red to green passes through a
+warm gold rather than the muddy olive a channel-wise average would give.
+
+On the timeline the property's sub-lane draws the track as a gradient strip —
+one sampled column per screen pixel, the clip's own span — with the keyframe
+diamonds over it. Everything a numeric lane offers except the value graph
+applies: selection and marquee, batch retime, delete, copy/paste, the easing
+menu and the whole preset library, extrapolation and its end-key marks. What the
+row does NOT have is a curve or tangent handles: a colour has no single axis to
+plot, so there is nothing for a handle to drag, and the easing of a segment is
+chosen from the menu instead. The expanded row's header carries the compact
+swatch and the keyframe navigator, exactly as a numeric row carries its number
+field.
+
+Shadow and outline colours stay static — one animatable colour per layer is the
+scope, and the strip is what it buys.
 
 ## Links
 

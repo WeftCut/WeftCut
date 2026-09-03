@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 //
-// Covers all three capture-phase Delete preemptors by contract: the keyframe
-// diamond, the keyframe lane, and the transition chip share this predicate
-// precisely so Delete cannot mean different things depending on which
-// sub-selection happens to be armed.
+// The capture-phase Delete preemptor's contract. It bypasses the shortcut
+// dispatcher to win the key from `deleteSelected`, so it has to reproduce that
+// action's stand-down rules by hand — and every rule it forgets becomes "Delete
+// does something different depending on which sub-selection happens to be
+// armed".
 
 import { afterEach, describe, expect, it } from "vitest";
 import { subSelectionDeleteYields } from "./subSelectionDelete";

@@ -32,7 +32,7 @@ import { useLayerBakePhase } from "./motifBakeStatusStore";
 import { useGroupMarkerCount } from "./groupMarkerCount";
 import { formatSyncOffset } from "./audioSlip";
 import { useAudioSyncOffset } from "./audioSyncOffsetStore";
-import type { AnimTrack, Extrapolate, Keyframe, LayerSummary } from "../ipc";
+import type { Extrapolate, Keyframe, LayerSummary } from "../ipc";
 import {
   useEditingGroupId,
   useEditingLayerId,
@@ -58,7 +58,7 @@ import {
   interpGlyphClass,
 } from "../keyframe/curve";
 import { useNumberTrackPreview } from "../keyframe/easingPreviewStore";
-import { retimeKeyframe } from "../keyframe/edits";
+import { useKeyframeDrag } from "../keyframe/useKeyframeDrag";
 import { EasingMenu } from "./EasingMenu";
 import { useKeyframeBatchCommit } from "./keyframeBatch";
 import { transportSeek } from "../state/playbackStore";
@@ -354,7 +354,6 @@ export function LayerBlock({
   onCommitLabel,
   onCommitLinkLabel,
   onCommitGroupLabel,
-  onCommitParamTrack,
   fpsNum,
   fpsDen,
 }: {
@@ -417,10 +416,6 @@ export function LayerBlock({
   /// different things: that one is this clip's own label, this one is the name
   /// every clip placing the composition shows.
   onCommitGroupLabel: (compositionId: string, label: string | null) => void;
-  /// Persist a keyframe track edit — a diamond retime. Wired by Timeline to
-  /// `updateLayerParamTrack + onMutated`. The multi-key operations do NOT come
-  /// through here: they commit the whole selection at once (`keyframeBatch.ts`).
-  onCommitParamTrack: (layerId: string, paramKey: string, track: AnimTrack<number>) => void;
   fpsNum: number;
   fpsDen: number;
 }) {
@@ -477,9 +472,9 @@ export function LayerBlock({
   // selection, a retime in flight — drawn in place of the committed track.
   const kfPreview = useNumberTrackPreview(layer.id, focusedParam);
   const commitKeyframeBatch = useKeyframeBatchCommit();
+  const beginKeyframeDrag = useKeyframeDrag();
   const [interpMenu, setInterpMenu] = useState<{ x: number; y: number; kfId: string } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const dragTUsRef = useRef<number | null>(null);
   useEffect(() => {
     if (isEditing) {
       setDraft(
@@ -498,8 +493,9 @@ export function LayerBlock({
   }, [isEditing, isEditingGroupName, layer.id, layer.label, groupLabel(layer)]);
 
   // Drop the diamond selection when this layer is no longer the primary
-  // selection, so the Timeline's capture-phase keyframe Delete can't stay armed
-  // after the user moves on (Delete then reverts to deleting the layer).
+  // selection, so a keyframe selection cannot stay armed after the user moves
+  // on — `deleteSelected` takes keyframes whenever any are selected, and Delete
+  // has to revert to deleting the layer.
   useEffect(() => {
     if (!isPrimary) clearKeyframeSelection();
   }, [isPrimary]);
@@ -1096,30 +1092,21 @@ export function LayerBlock({
             const rect = e.currentTarget.getBoundingClientRect();
             const hitId = keyframeHitTest(diamonds, e.clientX - rect.left, 6);
             if (!hitId) return;
-            e.stopPropagation();
             const key = paramTrack.value.find((k) => k.id === hitId);
             if (!key) return;
-            selectKeyframe({ layerId: layer.id, paramKey: focusedParam, kfId: hitId });
-            transportSeek(layer.t_start_us + key.t_us);
-            // begin drag-retime
-            const startClientX = e.clientX;
-            const startTUs = key.t_us;
-            const onMove = (me: PointerEvent) => {
-              const dxUs = ((me.clientX - startClientX) / pxPerSec) * 1_000_000;
-              const nextTUs = Math.max(0, Math.min(clipDurationUs, startTUs + dxUs));
-              dragTUsRef.current = nextTUs;
-            };
-            const onUp = () => {
-              window.removeEventListener("pointermove", onMove);
-              window.removeEventListener("pointerup", onUp);
-              const nextTUs = dragTUsRef.current;
-              dragTUsRef.current = null;
-              if (nextTUs != null && nextTUs !== startTUs) {
-                onCommitParamTrack(layer.id, focusedParam, retimeKeyframe(paramTrack, hitId, nextTUs));
-              }
-            };
-            window.addEventListener("pointermove", onMove);
-            window.addEventListener("pointerup", onUp);
+            e.stopPropagation();
+            // Pressing a diamond parks the transport on it, whether or not the
+            // press goes on to drag: the row is the collapsed track's only
+            // handle, so landing on a key IS how you get to that moment.
+            beginKeyframeDrag({
+              layerId: layer.id,
+              paramKey: focusedParam,
+              kfId: hitId,
+              clientX: e.clientX,
+              pxPerSec,
+              altKey: e.altKey,
+              onPress: () => transportSeek(layer.t_start_us + key.t_us),
+            });
           }}
         >
           {diamonds.map((d) => (

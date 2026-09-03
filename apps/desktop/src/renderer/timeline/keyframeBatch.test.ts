@@ -3,6 +3,8 @@ import {
   IDENTITY_EDIT,
   applySegmentEasingKeys,
   batchParamTrackEntries,
+  expandScaleFanOut,
+  projectTracks,
   removeKeys,
   selectedKeysOf,
   setAutoKeys,
@@ -10,6 +12,7 @@ import {
   type KeyframeGroupEdit,
   type ParamTrackEntry,
 } from "./keyframeBatch";
+import { compositionFixture, summaryFixture } from "../testing/summaryFixture";
 import type { AnimTrack, Keyframe, LayerSummary, Rgba, TrackSummary } from "../ipc";
 import type { TrackValue } from "../keyframe/edits";
 import type { SelectedKeyframe } from "../keyframe/selectionStore";
@@ -310,5 +313,52 @@ describe("edits are generic over the value type", () => {
     const auto = setAutoKeys(colour, ["a"], red);
     expect((auto as typeof colour).value[0]!.out.mode).toBe("Auto");
     expect((auto as typeof colour).value[0]!.value).toEqual(red);
+  });
+});
+
+describe("projectTracks / expandScaleFanOut", () => {
+  it("flattens every composition's tracks, since a layer id is unique project-wide", () => {
+    const summary = summaryFixture({
+      root: { tracks: [track("t1", [layer("l1", { opacity: keyed([kf("a", 0, 1)]) })]) ] },
+      groups: [
+        compositionFixture({
+          id: "comp-group",
+          tracks: [track("t2", [layer("l2", { opacity: keyed([kf("b", 0, 1)]) })])],
+        }),
+      ],
+    });
+
+    expect(projectTracks(summary).map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(projectTracks(null)).toEqual([]);
+  });
+
+  it("writes both scale axes for a linked layer and leaves every other key alone", () => {
+    const linked = layer("l1", { scale_x: keyed([kf("a", 0, 2)]), scale_linked: true });
+    const entries = expandScaleFanOut(
+      [
+        ["l1", "scale_x", keyed([kf("a", 0, 2)])],
+        ["l1", "opacity", keyed([kf("b", 0, 1)])],
+      ],
+      (id) => (id === "l1" ? linked : null),
+    );
+
+    expect(addressed(entries)).toEqual([
+      ["l1", "scale_x"],
+      ["l1", "scale_y"],
+      ["l1", "opacity"],
+    ]);
+    // The twin is a structural copy under fresh ids — main's invariant compares
+    // the tracks, not the identities.
+    expect(keysOf(entries[1]![2] as AnimTrack<number>)).not.toEqual(["a"]);
+  });
+
+  it("leaves an UNLINKED layer's scale write on the one axis it names", () => {
+    const unlinked = layer("l1", { scale_x: keyed([kf("a", 0, 2)]) });
+    const entries = expandScaleFanOut(
+      [["l1", "scale_x", keyed([kf("a", 0, 2)])]],
+      () => unlinked,
+    );
+
+    expect(addressed(entries)).toEqual([["l1", "scale_x"]]);
   });
 });

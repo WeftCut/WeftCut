@@ -44,6 +44,7 @@ import {
   useCompositionAnchorStore,
 } from "../state/compositionAnchorStore";
 import { registerTimelineSurface } from "./timelineSurfaces";
+import { deleteSelectedKeyframes } from "./keyframeBatch";
 import {
   clearKeyframeSelection,
   getSelectedKeyframes,
@@ -3216,7 +3217,7 @@ describe("Timeline marquee", () => {
     expect(selection()).toEqual({ primary: "keyed-1", ids: ["keyed-1"] });
   });
 
-  it("hands the Delete after a clip marquee to the clips, not a stale keyframe", () => {
+  it("leaves a clip marquee with no keyframe selection, so the next Delete takes clips", () => {
     const { container } = renderTimeline({
       tracks: [keyedTrack],
       selectedLayerId: "keyed-1",
@@ -3224,30 +3225,19 @@ describe("Timeline marquee", () => {
     fireEvent.click(container.querySelector('[data-testid="kf-lane-twirl"]')!);
     stubMarqueeLayout(container);
     stubLaneRows(container);
-    // Every sub-selection Delete stands down outside the timeline region
-    // (ADR 0041), so the region has to be armed for the race to exist at all.
-    setActiveRegion("timeline");
     const lane = container.querySelector('[data-testid="track-lane"]')!;
-    const kf = { layerId: "keyed-1", paramKey: "opacity", kfId: "kf-1" };
 
-    // Control: with the keyframe selection standing, Delete commits param
-    // tracks — the keyframe path won the race and the layer's Delete was eaten.
-    // Inside `act` both times, because the capture-phase handler is registered
-    // by an effect: without the flush the race would not be armed and the
-    // assertion below it would pass against anything.
-    act(() => selectKeyframe(kf));
-    fireEvent.keyDown(window, { key: "Delete" });
-    expect(ipcMocks.updateParamTracksMulti).toHaveBeenCalledTimes(1);
+    // `deleteSelected` chooses its subject by asking whether ANY keyframe is
+    // selected, so a stale keyframe selection surviving a clip sweep would aim
+    // the next Delete at keys the user stopped looking at.
+    act(() => selectKeyframe({ layerId: "keyed-1", paramKey: "opacity", kfId: "kf-1" }));
+    expect(getSelectedKeyframes()).toHaveLength(1);
 
-    act(() => selectKeyframe(kf));
-    ipcMocks.updateParamTracksMulti.mockClear();
     sweep(lane, [250, 130], [300, 200]);
     release([300, 200]);
 
     expect(selection()).toEqual({ primary: "keyed-1", ids: ["keyed-1"] });
     expect(getSelectedKeyframes()).toEqual([]);
-    fireEvent.keyDown(window, { key: "Delete" });
-    expect(ipcMocks.updateParamTracksMulti).not.toHaveBeenCalled();
   });
 
   it("restores the selection that stood at pointerdown on Escape", () => {
@@ -3347,31 +3337,29 @@ describe("Timeline marquee", () => {
     return rows;
   }
 
-  /// The app-level delete-selected-layer shortcut's stand-in: a BUBBLE-phase
-  /// window listener, which is the phase `useShortcuts` dispatches bare keys in.
-  /// The timeline's keyframe Delete is a capture-phase listener that calls
-  /// `stopImmediatePropagation`, so preemption means this never runs.
-  function armAppDeleteSpy() {
-    const spy = vi.fn();
-    window.addEventListener("keydown", spy);
-    return { spy, release: () => window.removeEventListener("keydown", spy) };
+  /// The app's Delete, aimed at whatever the case just swept. `deleteSelected`
+  /// routes a standing keyframe selection here, and the verb looks the selection
+  /// up across the whole PROJECT — so the store has to hold the tracks the
+  /// Timeline was rendered from. Restored afterwards: the store outlives a test
+  /// and the neighbouring cases render from props alone.
+  async function deleteSelectedLikeTheApp(tracks: TrackSummary[]) {
+    const before = useProjectStore.getState().summary;
+    useProjectStore.getState().apply(summaryFixture({ root: { tracks } }));
+    try {
+      await act(async () => {
+        await deleteSelectedKeyframes();
+      });
+    } finally {
+      useProjectStore.getState().apply(before);
+    }
   }
 
-  it("deletes every key a box swept across two layers in ONE op", () => {
+  it("deletes every key a box swept across two layers in ONE op", async () => {
     const { container } = renderTimeline({
       tracks: [twoLayerKeyTrack],
       selectedLayerId: "kl-a",
     });
     const [row] = expandAndStubSubLaneRows(container);
-    setActiveRegion("timeline");
-    const { spy: appDelete, release: releaseSpy } = armAppDeleteSpy();
-
-    // Positive control: with no keyframe selection standing, the keystroke
-    // reaches the app-level listener — so the assertion below is about the
-    // preemption and not about a listener that was never wired.
-    fireEvent.keyDown(window, { key: "Delete" });
-    expect(appDelete).toHaveBeenCalledTimes(1);
-    appDelete.mockClear();
 
     // Canvas x [50, 350) takes all four keys; the row's band is crossed at
     // canvas y 202.
@@ -3384,8 +3372,7 @@ describe("Timeline marquee", () => {
       "kl-b/b2",
     ]);
 
-    fireEvent.keyDown(window, { key: "Delete" });
-    releaseSpy();
+    await deleteSelectedLikeTheApp([twoLayerKeyTrack]);
 
     // One op for two layers — one undo entry — carrying an entry per
     // (layer, param), each emptied track collapsing to its OWN last value.
@@ -3394,18 +3381,16 @@ describe("Timeline marquee", () => {
       ["kl-a", "opacity", { mode: "Static", value: 0.25 }],
       ["kl-b", "opacity", { mode: "Static", value: 0.5 }],
     ]);
-    expect(appDelete).not.toHaveBeenCalled();
     expect(getSelectedKeyframes()).toEqual([]);
   });
 
-  it("still issues ONE op for a selection spanning two expanded tracks", () => {
+  it("still issues ONE op for a selection spanning two expanded tracks", async () => {
     const { container } = renderTimeline({
       tracks: twoKeyedTracks,
       selectedLayerId: "kl-1",
     });
     const rows = expandAndStubSubLaneRows(container);
     expect(rows).toHaveLength(2);
-    setActiveRegion("timeline");
 
     // Canvas y [202, 250) crosses both rows ([200, 224) and [230, 254)); canvas
     // x [50, 200) takes the one key each layer carries, at 80.
@@ -3413,7 +3398,7 @@ describe("Timeline marquee", () => {
     release([400, 350]);
     expect(getSelectedKeyframes().map((k) => k.kfId).sort()).toEqual(["one", "two"]);
 
-    fireEvent.keyDown(window, { key: "Delete" });
+    await deleteSelectedLikeTheApp(twoKeyedTracks);
 
     // The hazard this replaced: one armed handler per track, each stopping the
     // event dead after committing its own subset. Entry order reads DOWN the
@@ -4232,10 +4217,10 @@ describe("Timeline command provider with two Panels open", () => {
     "selectAll",
     "deselectAll",
     "toggleLinkSelected",
-    "nudgeAudioSampleBack",
-    "nudgeAudioSampleForward",
-    "nudgeAudioMsBack",
-    "nudgeAudioMsForward",
+    "nudgeBack",
+    "nudgeForward",
+    "nudgeLargeBack",
+    "nudgeLargeForward",
     "resyncAudioToVideo",
     "zoomTimelineIn",
     "zoomTimelineOut",

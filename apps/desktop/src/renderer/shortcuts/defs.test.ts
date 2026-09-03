@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { ACTION_DEFS, ACTION_IDS } from "./defs";
+import { ACTION_DEFS, ACTION_IDS, type ActionId } from "./defs";
 import { bindingsEqual, parseBinding } from "./match";
+import enUS from "../i18n/locales/en-US";
+import zhCN from "../i18n/locales/zh-CN";
 
 // The catalogue read as a whole, which nothing else in the suite does.
 //
@@ -41,5 +43,72 @@ describe("ACTION_DEFS", () => {
         expect(() => parseBinding(spec), `${id}: "${spec}"`).not.toThrow();
       }
     }
+  });
+});
+
+/// Every action whose handler chooses its subject from whichever selection is
+/// armed. Their labels can name only one of the two things the key does, so the
+/// panel is not merely terse without a hint — it is wrong about half the
+/// presses. Listed by hand: the dispatch happens inside a handler, and no shape
+/// in the catalogue can be read to derive it.
+const DUAL_DISPATCH_ACTIONS: ActionId[] = [
+  "nudgeBack",
+  "nudgeForward",
+  "nudgeLargeBack",
+  "nudgeLargeForward",
+  "deleteSelected",
+  "copySelected",
+  "pasteAtPlayhead",
+];
+
+/// Follows a dotted i18n key through a locale object; `null` when any step is
+/// missing or the leaf is not a string.
+function lookup(locale: unknown, key: string): string | null {
+  let node: unknown = locale;
+  for (const part of key.split(".")) {
+    if (typeof node !== "object" || node === null) return null;
+    node = (node as Record<string, unknown>)[part];
+  }
+  return typeof node === "string" ? node : null;
+}
+
+describe("keyboard-panel hints", () => {
+  it("gives every selection-dispatching action a hint", () => {
+    const missing = DUAL_DISPATCH_ACTIONS.filter((id) => !ACTION_DEFS[id].hintKey);
+    expect(missing).toEqual([]);
+  });
+
+  it("resolves every declared hint in both locales", () => {
+    // A missing key renders as the key itself, which reads as a bug report in
+    // the UI rather than failing anywhere — so the sweep is the only guard.
+    const unresolved: string[] = [];
+    for (const id of ACTION_IDS) {
+      const key = ACTION_DEFS[id].hintKey;
+      if (key === undefined) continue;
+      for (const [name, locale] of [
+        ["en-US", enUS],
+        ["zh-CN", zhCN],
+      ] as const) {
+        if (lookup(locale, key) === null) unresolved.push(`${name}: ${key}`);
+      }
+    }
+    expect(unresolved).toEqual([]);
+  });
+
+  it("resolves every action label in both locales", () => {
+    // The hint sweep above would pass a rename that dropped the LABEL key with
+    // it, and a label is what the row is identified by.
+    const unresolved: string[] = [];
+    for (const id of ACTION_IDS) {
+      for (const [name, locale] of [
+        ["en-US", enUS],
+        ["zh-CN", zhCN],
+      ] as const) {
+        if (lookup(locale, ACTION_DEFS[id].labelKey) === null) {
+          unresolved.push(`${name}: ${ACTION_DEFS[id].labelKey}`);
+        }
+      }
+    }
+    expect(unresolved).toEqual([]);
   });
 });

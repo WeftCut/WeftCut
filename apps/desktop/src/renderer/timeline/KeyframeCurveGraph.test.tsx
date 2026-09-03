@@ -5,6 +5,11 @@ import "../i18n"; // initialize i18next so the procedural badge label resolves
 import type { AnimTrack, Interpolation, Keyframe } from "../ipc";
 import { applySegmentEasing } from "../../shared/easing";
 import { clearTrackPreview, setTrackPreview } from "../keyframe/easingPreviewStore";
+import {
+  clearKeyframeSelection,
+  getSelectedKeyframes,
+  setKeyframeSelection,
+} from "../keyframe/selectionStore";
 import { KeyframeCurveGraph } from "./KeyframeCurveGraph";
 
 // jsdom 25 does not implement PointerEvent; polyfill it so fireEvent.pointerDown
@@ -16,6 +21,7 @@ if (typeof window !== "undefined" && !window.PointerEvent) {
 afterEach(() => {
   cleanup();
   clearTrackPreview();
+  clearKeyframeSelection();
 });
 
 type Keyframed = Extract<AnimTrack<number>, { mode: "Keyframed" }>;
@@ -47,8 +53,7 @@ function renderGraph(over: Partial<React.ComponentProps<typeof KeyframeCurveGrap
       height={72}
       editable={true}
       isSelected={() => false}
-      onSelectSeek={vi.fn()}
-      onRetime={vi.fn()}
+      onFocusSeek={vi.fn()}
       onSetTangent={vi.fn()}
       onSetContinuity={vi.fn()}
       onOpenMenu={vi.fn()}
@@ -83,20 +88,35 @@ describe("KeyframeCurveGraph", () => {
     expect(onOpenMenu).toHaveBeenCalledWith(42, 17, "k0");
   });
   it("leaves a dot that is already selected alone, so the menu keeps the whole selection", () => {
-    const onSelectSeek = vi.fn();
+    const onFocusSeek = vi.fn();
     const onOpenMenu = vi.fn();
-    const { container } = renderGraph({ onSelectSeek, onOpenMenu, isSelected: () => true });
+    const { container } = renderGraph({ onFocusSeek, onOpenMenu, isSelected: () => true });
     fireEvent.contextMenu(container.querySelector('.kf-sublane-diamond[data-kf-id="k0"]')!, { clientX: 42, clientY: 17 });
     expect(onOpenMenu).toHaveBeenCalledWith(42, 17, "k0");
     // Re-running the click path would narrow the selection to this one key and
     // seek away from what the menu is about to edit.
-    expect(onSelectSeek).not.toHaveBeenCalled();
+    expect(onFocusSeek).not.toHaveBeenCalled();
   });
-  it("left-click on a dot selects+seeks it", () => {
-    const onSelectSeek = vi.fn();
-    const { container } = renderGraph({ onSelectSeek });
+  it("pressing a dot selects it, then focuses and seeks to it", () => {
+    const onFocusSeek = vi.fn();
+    const { container } = renderGraph({ onFocusSeek });
     fireEvent.pointerDown(container.querySelector('.kf-sublane-diamond[data-kf-id="k0"]')!, { button: 0 });
-    expect(onSelectSeek).toHaveBeenCalledWith("k0");
+    expect(onFocusSeek).toHaveBeenCalledWith("k0");
+    // The selection is the DRAG's business now, not the callback's: pressing an
+    // unselected key replaces the selection with it, and pressing one already in
+    // a swept group leaves the group standing.
+    expect(getSelectedKeyframes()).toEqual([
+      { layerId: "L1", paramKey: "opacity", kfId: "k0" },
+    ]);
+  });
+  it("keeps a swept group when the press lands on a key already in it", () => {
+    const { container } = renderGraph({ isSelected: () => true });
+    setKeyframeSelection([
+      { layerId: "L1", paramKey: "opacity", kfId: "k0" },
+      { layerId: "L1", paramKey: "opacity", kfId: "k1" },
+    ]);
+    fireEvent.pointerDown(container.querySelector('.kf-sublane-diamond[data-kf-id="k0"]')!, { button: 0 });
+    expect(getSelectedKeyframes().map((k) => k.kfId)).toEqual(["k0", "k1"]);
   });
   it("marks every selected keyframe", () => {
     const { container } = renderGraph({ isSelected: (id) => id === "k1" });

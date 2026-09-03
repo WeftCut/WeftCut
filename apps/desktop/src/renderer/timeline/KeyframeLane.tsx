@@ -5,20 +5,33 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
-import type { AnimTrack, TrackSummary } from "../ipc";
-import { trackKeyframeProperties } from "./geometry";
+import type { AnimTrack, Rgba, TrackSummary } from "../ipc";
+import { keyframeAbsoluteX, trackKeyframeProperties } from "./geometry";
 import {
   readParamTrack,
+  readRgbaTrack,
   isHiddenTwinAxis,
   type ParamDescriptor,
+  type ParamTrack,
+  type RgbaParamDescriptor,
 } from "../keyframe/descriptors";
+import {
+  EXTRAP_GLYPH_GAP_PX,
+  extrapolateClass,
+  extrapolateGlyph,
+  extrapolateLabelKey,
+  interpGlyphClass,
+} from "../keyframe/curve";
+import { isNumberTrack, useTrackPreview } from "../keyframe/easingPreviewStore";
+import { useKeyframeDrag } from "../keyframe/useKeyframeDrag";
+import { ColorLane } from "./ColorLane";
 import {
   selectKeyframe,
   keyframeKey,
   useIsKeyframeSelected,
   useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
-import { retimeKeyframe, setContinuity, setTangent } from "../keyframe/edits";
+import { setContinuity, setTangent } from "../keyframe/edits";
 import { useKeyframeBatchCommit } from "./keyframeBatch";
 import { transportSeek } from "../state/playbackStore";
 import { useLocalPlayheadUsThrottled } from "../state/playheadProjection";
@@ -73,7 +86,7 @@ export function KeyframeLaneHeaders({
   fpsNum: number;
   fpsDen: number;
   visible: boolean;
-  onCommitParamTrack: (layerId: string, paramKey: string, t: AnimTrack<number>) => void;
+  onCommitParamTrack: (layerId: string, paramKey: string, t: ParamTrack) => void;
 }) {
   const { t } = useTranslation();
   // Panel-rate playhead subscription (tier 3, playheadStore.ts): navigator
@@ -132,7 +145,7 @@ export function KeyframeLane({
   track: TrackSummary;
   pxPerSec: number;
   registerSubLaneEl: RegisterSubLaneEl;
-  onCommitParamTrack: (layerId: string, paramKey: string, t: AnimTrack<number>) => void;
+  onCommitParamTrack: (layerId: string, paramKey: string, t: ParamTrack) => void;
 }) {
   const props = trackKeyframeProperties(track);
   const [interpMenu, setInterpMenu] = useState<{
@@ -232,7 +245,7 @@ function KeyframeSubLaneRow({
   focusedLayerId: string | null;
   registerSubLaneEl: RegisterSubLaneEl;
   onPointerDown: (e: ReactPointerEvent) => void;
-  onCommitParamTrack: (layerId: string, paramKey: string, t: AnimTrack<number>) => void;
+  onCommitParamTrack: (layerId: string, paramKey: string, t: ParamTrack) => void;
   onOpenInterpMenu: OpenInterpMenu;
 }) {
   const paramKey = desc.paramKey;
@@ -252,6 +265,23 @@ function KeyframeSubLaneRow({
     >
       {track.layers.map((layer) => {
         if (isHiddenTwinAxis(paramKey, layer.params)) return null;
+        if (desc.valueKind === "rgba") {
+          const rgba = readRgbaTrack(layer.params, desc);
+          if (!rgba || rgba.mode !== "Keyframed") return null;
+          return (
+            <ColorKeyLane
+              key={layer.id}
+              layerId={layer.id}
+              desc={desc}
+              track={rgba}
+              layerTStartUs={layer.t_start_us}
+              clipDurationUs={layer.t_end_us - layer.t_start_us}
+              pxPerSec={pxPerSec}
+              height={height}
+              onOpenInterpMenu={onOpenInterpMenu}
+            />
+          );
+        }
         const trk = readParamTrack(layer.params, paramKey);
         if (!trk || trk.mode !== "Keyframed") return null;
         return (
@@ -286,7 +316,7 @@ function LayerCurveLane({
   pxPerSec: number;
   height: number;
   editable: boolean;
-  onCommitParamTrack: (layerId: string, paramKey: string, t: AnimTrack<number>) => void;
+  onCommitParamTrack: (layerId: string, paramKey: string, t: ParamTrack) => void;
   onOpenInterpMenu: OpenInterpMenu;
 }) {
   const isSelected = useIsKeyframeSelected(layerId, paramKey);
@@ -301,16 +331,12 @@ function LayerCurveLane({
       height={height}
       editable={editable}
       isSelected={isSelected}
-      onSelectSeek={(kfId) => {
+      onFocusSeek={(kfId) => {
         const kf = track.value.find((k) => k.id === kfId);
         if (!kf) return;
-        selectKeyframe({ layerId, paramKey, kfId });
         setKeyframeFocus(layerId, paramKey);
         transportSeek(layerTStartUs + kf.t_us);
       }}
-      onRetime={(kfId, newTUs) =>
-        onCommitParamTrack(layerId, paramKey, retimeKeyframe(track, kfId, newTUs))
-      }
       onSetTangent={(kfId, side, xy) =>
         onCommitParamTrack(layerId, paramKey, setTangent(track, kfId, side, xy))
       }
@@ -319,5 +345,114 @@ function LayerCurveLane({
       }
       onOpenMenu={(cx, cy, kfId) => onOpenInterpMenu(cx, cy, layerId, paramKey, kfId)}
     />
+  );
+}
+
+type KeyframedRgba = Extract<AnimTrack<Rgba>, { mode: "Keyframed" }>;
+
+/// A colour row for one layer: the gradient strip (`ColorLane`) with the
+/// diamonds over it. A colour has no value axis, so there is no curve and no
+/// tangent handle, and the dots sit on the row's centre line — but every
+/// gesture a numeric row's dots carry is the same: the shared drag, the easing
+/// menu, the extrapolation marks. Both the strip and the dots draw an armed
+/// gesture's preview in place of the committed track, so a group retime moves
+/// the colour dots with the numeric ones.
+function ColorKeyLane({
+  layerId, desc, track, layerTStartUs, clipDurationUs, pxPerSec, height, onOpenInterpMenu,
+}: {
+  layerId: string;
+  desc: RgbaParamDescriptor;
+  track: KeyframedRgba;
+  layerTStartUs: number;
+  clipDurationUs: number;
+  pxPerSec: number;
+  height: number;
+  onOpenInterpMenu: OpenInterpMenu;
+}) {
+  const { t } = useTranslation();
+  const paramKey = desc.paramKey;
+  const isSelected = useIsKeyframeSelected(layerId, paramKey);
+  const beginKeyframeDrag = useKeyframeDrag();
+  const preview = useTrackPreview(layerId, paramKey);
+  const renderTrack: KeyframedRgba =
+    preview !== null && preview.mode === "Keyframed" && !isNumberTrack(preview)
+      ? (preview as KeyframedRgba)
+      : track;
+  const keys = renderTrack.value;
+  const xOf = (tUs: number) => keyframeAbsoluteX(layerTStartUs, tUs, pxPerSec);
+  const focusSeek = (kfId: string) => {
+    const kf = keys.find((k) => k.id === kfId);
+    if (!kf) return;
+    setKeyframeFocus(layerId, paramKey);
+    transportSeek(layerTStartUs + kf.t_us);
+  };
+  const first = keys[0];
+  const last = keys[keys.length - 1];
+  return (
+    <>
+      <ColorLane
+        track={track}
+        layerId={layerId}
+        paramKey={paramKey}
+        fallback={desc.fallback}
+        layerTStartUs={layerTStartUs}
+        clipDurationUs={clipDurationUs}
+        pxPerSec={pxPerSec}
+        height={height}
+      />
+      {keys.map((k) => {
+        const glyph = interpGlyphClass(k.segment.kind);
+        return (
+          <span
+            key={k.id}
+            className={`kf-diamond kf-sublane-diamond${glyph ? ` ${glyph}` : ""}${isSelected(k.id) ? " is-selected" : ""}`}
+            style={{ left: xOf(k.t_us) }}
+            data-kf-id={k.id}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              e.stopPropagation();
+              beginKeyframeDrag({
+                layerId,
+                paramKey,
+                kfId: k.id,
+                clientX: e.clientX,
+                pxPerSec,
+                altKey: e.altKey,
+                onPress: () => focusSeek(k.id),
+              });
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              // A right-click on a key already in the selection leaves the
+              // selection alone — the same rule the value graph's dots apply.
+              if (!isSelected(k.id)) {
+                selectKeyframe({ layerId, paramKey, kfId: k.id });
+                focusSeek(k.id);
+              }
+              onOpenInterpMenu(e.clientX, e.clientY, layerId, paramKey, k.id);
+            }}
+          />
+        );
+      })}
+      {first && last && keys.length > 1 && (["before", "after"] as const).map((side) => {
+        const mode = renderTrack.extrapolate[side];
+        if (mode === "Hold") return null;
+        const k = side === "before" ? first : last;
+        const dx = side === "before" ? -EXTRAP_GLYPH_GAP_PX : EXTRAP_GLYPH_GAP_PX;
+        return (
+          <span
+            key={`extrap-${side}`}
+            className={extrapolateClass(mode)}
+            data-testid="kf-extrap"
+            data-side={side}
+            title={t(extrapolateLabelKey(mode))}
+            style={{ left: xOf(k.t_us) + dx, top: height / 2 }}
+          >
+            {extrapolateGlyph(mode)}
+          </span>
+        );
+      })}
+    </>
   );
 }

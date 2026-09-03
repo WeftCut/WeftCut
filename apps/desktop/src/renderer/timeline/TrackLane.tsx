@@ -22,7 +22,6 @@ import {
   type TransitionResizeArgs,
 } from "./transitions";
 import type {
-  AnimTrack,
   LayerSummary,
   TrackSummary,
   TransitionSummary,
@@ -69,7 +68,6 @@ export function TrackLane({
   onCommitLabel,
   onCommitLinkLabel,
   onCommitGroupLabel,
-  onCommitParamTrack,
   isRevealed,
   isResizing,
   onHeightDragStart,
@@ -135,7 +133,6 @@ export function TrackLane({
   onCommitLabel: (layerId: string, label: string) => void;
   onCommitLinkLabel: (linkId: string, label: string | null) => void;
   onCommitGroupLabel: (compositionId: string, label: string | null) => void;
-  onCommitParamTrack: (layerId: string, paramKey: string, track: AnimTrack<number>) => void;
   /// Inline-reveal flag. The lane renders with extra chrome
   /// (dashed border / "hidden" badge) so the user knows this row is
   /// only here because they clicked a Playhead Panel row.
@@ -567,7 +564,6 @@ export function TrackLane({
             onCommitLabel={onCommitLabel}
             onCommitLinkLabel={onCommitLinkLabel}
             onCommitGroupLabel={onCommitGroupLabel}
-            onCommitParamTrack={onCommitParamTrack}
             fpsNum={fpsNum}
             fpsDen={fpsDen}
           />
@@ -599,7 +595,6 @@ export function TrackLane({
               onCommitLabel={onCommitLabel}
               onCommitLinkLabel={onCommitLinkLabel}
               onCommitGroupLabel={onCommitGroupLabel}
-              onCommitParamTrack={onCommitParamTrack}
               fpsNum={fpsNum}
               fpsDen={fpsDen}
             />,
