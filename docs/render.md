@@ -192,23 +192,49 @@ a different node ([ADR 0052](adr/0052-link-propagates-group-composes.md)).
 
 Easing is shown and edited directly on the timeline. Each animated property's
 keyframe sub-lane draws its value over time as a curve; focusing a property
-expands its lane and exposes tangent handles on each keyframe (left = the
-previous segment's outgoing control point, right = this segment's). Dragging a
-handle edits that segment's `cubic-bezier`. The curve follows the value, so
-which segment an easing governs is read directly from the picture.
+expands its lane and exposes a tangent handle on each side of a Spline key —
+left of a key its arriving side (`in`, the arriving cubic's own control point,
+drawn where it sits), right of it the leaving side (`out`). Dragging a handle
+rewrites that ONE side of that key through `setTangent`: the curve follows live
+from the returned track, and a single commit lands on release. A side main
+solves (mode Auto) is drawn greyed (`.kf-handle-auto`); grabbing it makes the
+key Free, the After Effects convention. A key whose continuity is Smooth rotates
+its other side to the same value slope while one is dragged, so the pair is
+already consistent when main's "out wins" re-solve reads it; right-clicking a
+handle offers Smooth / Broken for that key (`ContinuityMenu`). Outside the
+first and last key the track's extrapolation is drawn as a dashed tail
+(`.kf-curve-extrap`) sampled through the same `resolveAnimated` the preview
+runs — the engine owns Loop's jump, PingPong's mirror, Offset's climb and
+Continue's line — from the layer's start to the first key and from the last key
+to the layer's end, and the value range widens to hold it. No ghost diamonds: a
+non-Hold side is announced by one mark beside its end key (`↻ ↔ ⤴ →`,
+`EXTRAP_GLYPH_GAP_PX` from the diamond) on both the collapsed in-clip row and
+the sub-lane.
 
 Right-clicking a keyframe or segment opens a two-tier menu (`EasingMenu`).
-Tier 1 is the NLE-conventional command list — Linear / Hold / Ease In / Ease
-Out / Ease In-Out / Smooth — with the exact reverse lookup checkmarking the
-current state (a gallery-only preset checkmarks the "Easing library…" row
-instead). Tier 2, behind that row, is the full canonical preset table as a
-family-grouped grid of curve thumbnails, each sampled through the same wasm
-eval that draws the timeline curve; hovering a thumbnail previews it live on
-the owning segment via `easingPreviewStore`, and an Elastic keyframe's
-amplitude/period sliders sit at the top of the gallery. Keyframe markers also
-glyph-code their outgoing interpolation, per the Premiere convention: diamond =
-linear, square = hold, circle = eased (`interpGlyphClass`), on both the
-collapsed in-clip row and the sub-lane dots.
+Tier 1 is a Base UI menu with the NLE-conventional command list — Linear / Hold
+/ Ease In / Ease Out / Ease In-Out / Smooth — plus, on a track's first or last
+key, the Extrapolate before / after submenus. Linear and Hold write the segment
+class leaving each selected key; a named ease writes `this.out`, `next.in` and
+`Spline`, both sides Free; Smooth marks the selected keys Auto with Smooth
+continuity and leaves the numbers to main's write-time solve — self-maintaining,
+not a one-shot bake — and is checked when every selected key has an Auto side.
+The exact reverse lookup over `(this.out, next.in)` checkmarks the current
+preset (a gallery-only preset checkmarks the "Easing library…" row instead);
+with several keys selected the menu reports no current easing. Every row is a
+batch: the selection is folded per `(layerId, paramKey)` in `keyframeBatch.ts`
+and committed as one `update_param_tracks_multi`. Arming any row — pointer or
+keyboard — previews the same fold, run through the shared tangent solver, on
+every selected group via `easingPreviewStore`, a per-`(layerId, paramKey)` map
+the curve graph and the in-clip diamond row read in place of the committed
+track; the preview is dropped on commit, on leave and on close. Tier 2, behind
+the library row, is the full canonical preset table as a family-grouped grid of
+curve thumbnails, each sampled through the same wasm eval that draws the
+timeline curve; hovering a thumbnail previews it the same way, and an Elastic
+keyframe's amplitude/period sliders sit at the top of the gallery. Keyframe
+markers also glyph-code their outgoing segment class, per the Premiere
+convention: diamond = linear, square = hold, circle = eased (`interpGlyphClass`),
+on both the collapsed in-clip row and the sub-lane dots.
 
 Each expanded sub-lane header also carries an After Effects-style keyframe
 navigator — `◄ ◆ ►` — to the left of the property name. The arrows seek the

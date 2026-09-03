@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  liftToKeyframed, collapseToStatic, upsertKeyframe, removeKeyframe,
+  liftToKeyframed, collapseToStatic, collapseToStaticRgba, upsertKeyframe, removeKeyframe,
   retimeKeyframe, setSegmentEasing, setSegmentCoeffs, setAuto, setTangent, setContinuity, setExtrapolation,
 } from "./edits";
-import type { AnimTrack } from "../ipc";
+import type { AnimTrack, Rgba } from "../ipc";
 import { resolveAnimated } from "../render/animated";
 import { solveAutoTangents } from "../../shared/tangents";
 
@@ -240,5 +240,54 @@ describe("setTangent / setContinuity / setExtrapolation (the golden holds the nu
     const out = setExtrapolation(ramp, {});
     if (out.mode !== "Keyframed") throw new Error();
     expect(out.extrapolate).toEqual({ before: "Hold", after: "Hold" });
+  });
+});
+
+describe("the same edits over a colour track", () => {
+  const red: Rgba = { r: 255, g: 0, b: 0, a: 255 };
+  const green: Rgba = { r: 0, g: 255, b: 0, a: 255 };
+  const blue: Rgba = { r: 0, g: 0, b: 255, a: 255 };
+  const colourKey = (id: string, t_us: number, value: Rgba) => ({ ...mkKf(id, t_us, 0), value });
+  const track: AnimTrack<Rgba> = {
+    mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+    value: [
+      { ...colourKey("a", 0, red), segment: { kind: "Spline" as const } },
+      { ...colourKey("b", 1_000_000, green), continuity: "Smooth" as const, segment: { kind: "Spline" as const } },
+      colourKey("c", 2_000_000, blue),
+    ],
+  };
+
+  it("lifts, upserts, removes and retimes a colour like a number", () => {
+    const lifted = liftToKeyframed(red, 500_000);
+    if (lifted.mode !== "Keyframed") throw new Error();
+    expect(lifted.value[0]!.value).toEqual(red);
+    const up = upsertKeyframe(track, 1_500_000, blue);
+    if (up.mode !== "Keyframed") throw new Error();
+    expect(up.value.map((k) => k.t_us)).toEqual([0, 1_000_000, 1_500_000, 2_000_000]);
+    expect(up.value[2]!.value).toEqual(blue);
+    if (lifted.mode !== "Keyframed") throw new Error();
+    // The last key's own colour survives the collapse, not the fallback.
+    expect(removeKeyframe(lifted, lifted.value[0]!.id, green)).toEqual({ mode: "Static", value: red });
+    const re = retimeKeyframe(track, "a", 3_000_000);
+    if (re.mode !== "Keyframed") throw new Error();
+    expect(re.value.map((k) => k.id)).toEqual(["b", "c", "a"]);
+  });
+
+  it("a colour key has no slope, so a Smooth key's other side is freed but not rotated", () => {
+    const out = setTangent(track, "b", "out", { x: 0.5, y: 0.9 });
+    if (out.mode !== "Keyframed") throw new Error();
+    const b = out.value[1]!;
+    expect(b.out).toEqual({ x: 0.5, y: 0.9, mode: "Free" });
+    expect(b.in).toEqual({ x: 2 / 3, y: 2 / 3, mode: "Free" });
+    const smooth = setContinuity({ ...track, value: out.value }, "b", "Smooth");
+    if (smooth.mode !== "Keyframed") throw new Error();
+    expect(smooth.value[1]!.in).toEqual({ x: 2 / 3, y: 2 / 3, mode: "Free" });
+    expect(smooth.value[1]!.continuity).toBe("Smooth");
+  });
+
+  it("collapseToStaticRgba freezes the colour the track resolves to, through the colour leaf", () => {
+    expect(collapseToStaticRgba({ mode: "Static", value: red }, 0, blue)).toEqual({ mode: "Static", value: red });
+    expect(collapseToStaticRgba(track, 2_000_000, red)).toEqual({ mode: "Static", value: blue });
+    expect(collapseToStaticRgba(track, 0, blue)).toEqual({ mode: "Static", value: red });
   });
 });

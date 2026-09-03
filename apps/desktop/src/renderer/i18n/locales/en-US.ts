@@ -69,6 +69,18 @@ const enUS = {
     procedural_badge: "Procedural",
     smooth: "Smooth",
     easing_library: "Easing library…",
+    // Tangent-handle context menu: the key's continuity.
+    continuity_smooth: "Smooth",
+    continuity_broken: "Broken",
+    // Extrapolation submenus on a track's first / last key; the five modes
+    // (keyframe.extrapolate_<id>, see renderer/keyframe/curve.ts).
+    extrapolate_before: "Extrapolate before",
+    extrapolate_after: "Extrapolate after",
+    extrapolate_hold: "Hold",
+    extrapolate_loop: "Loop",
+    extrapolate_ping_pong: "Ping-pong",
+    extrapolate_offset: "Offset",
+    extrapolate_continue: "Continue",
     // Gallery row labels — one per canonical-table family (keyframe.family_<x>,
     // derived from the preset id's last segment; "classic" heads the table).
     family_classic: "Basic",

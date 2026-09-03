@@ -170,7 +170,9 @@ import {
   KeyframeBatchContext,
   batchParamTrackEntries,
   removeKeys,
+  type KeyframeBatch,
   type KeyframeBatchCommit,
+  type KeyframeBatchFold,
   type ParamTrackEntry,
 } from "./keyframeBatch";
 import { resolveAccelerator } from "../shortcuts/match";
@@ -1182,26 +1184,31 @@ export function Timeline({
     [onMutated, tracks],
   );
 
-  // Every MULTI-key keyframe operation's commit: `keyframeBatch.ts` folds the
-  // selection into one entry per (layerId, paramKey), and the whole set goes as
-  // `updateParamTracksMulti` rather than the per-layer batch — a swept selection
-  // spans layers and N layers must still cost ONE undo entry.
+  // Every MULTI-key keyframe operation folds the selection into one entry per
+  // (layerId, paramKey) (`keyframeBatch.ts`); the menus preview an armed row
+  // through this fold alone, and commit through the commit below.
+  const foldKeyframeBatch = useCallback<KeyframeBatchFold>(
+    (edit) => batchParamTrackEntries({ selected: getSelectedKeyframes(), tracks, edit }),
+    [tracks],
+  );
+
+  // The commit: the whole folded set goes as `updateParamTracksMulti` rather
+  // than the per-layer batch — a swept selection spans layers and N layers must
+  // still cost ONE undo entry.
   //
   // The scale fan-out is `onCommitParamTrack`'s, repeated here for its reason:
   // the main-side twin invariant reads a lone `scale_x` write as divergence and
   // silently unlinks the layer.
   const commitKeyframeBatch = useCallback<KeyframeBatchCommit>(
     (edit) => {
-      const entries = batchParamTrackEntries({
-        selected: getSelectedKeyframes(),
-        tracks,
-        edit,
-      }).flatMap<ParamTrackEntry>(([layerId, paramKey, next]) => {
-        const layer = findPanelLayer(tracks, layerId);
-        const fanOut = scaleFanOutFor(paramKey, layer?.params ?? null);
-        if (fanOut === null) return [[layerId, paramKey, next]];
-        return fanOutEntries(fanOut, next).map(([key, track]) => [layerId, key, track]);
-      });
+      const entries = foldKeyframeBatch(edit).flatMap<ParamTrackEntry>(
+        ([layerId, paramKey, next]) => {
+          const layer = findPanelLayer(tracks, layerId);
+          const fanOut = scaleFanOutFor(paramKey, layer?.params ?? null);
+          if (fanOut === null) return [[layerId, paramKey, next]];
+          return fanOutEntries(fanOut, next).map(([key, track]) => [layerId, key, track]);
+        },
+      );
       if (entries.length === 0) return;
       void (async () => {
         try {
@@ -1212,7 +1219,11 @@ export function Timeline({
         }
       })();
     },
-    [onMutated, tracks],
+    [foldKeyframeBatch, onMutated, tracks],
+  );
+  const keyframeBatch = useMemo<KeyframeBatch>(
+    () => ({ commit: commitKeyframeBatch, fold: foldKeyframeBatch }),
+    [commitKeyframeBatch, foldKeyframeBatch],
   );
 
   // Delete/Backspace removes the selected KEYFRAMES. Capture phase +
@@ -1654,7 +1665,7 @@ export function Timeline({
 
   return (
     <MarqueeAnchorContext.Provider value={marqueeAnchor}>
-    <KeyframeBatchContext.Provider value={commitKeyframeBatch}>
+    <KeyframeBatchContext.Provider value={keyframeBatch}>
     <div
       ref={rootRef}
       className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto ${

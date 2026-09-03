@@ -1342,9 +1342,11 @@ export async function updateLayerParamTracks(
 
 /// Cross-layer batch form — every entry names its own layer, and the whole set
 /// lands as ONE undo step no matter how many layers it spans. A batch confined
-/// to a single layer belongs in `updateLayerParamTracks` above.
+/// to a single layer belongs in `updateLayerParamTracks` above. An entry's
+/// value type follows its `paramKey` (`color` carries `Rgba`, everything else
+/// a number); the actor's lens for that key decides, not this signature.
 export async function updateParamTracksMulti(
-  entries: [layerId: string, paramKey: string, track: AnimTrack<number>][],
+  entries: [layerId: string, paramKey: string, track: AnimTrack<number | Rgba>][],
 ): Promise<void> {
   return invoke<void>("update_param_tracks_multi", { entries });
 }

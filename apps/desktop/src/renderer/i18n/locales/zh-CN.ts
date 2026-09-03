@@ -71,6 +71,17 @@ const zhCN: Resources = {
     procedural_badge: "参数曲线",
     smooth: "平滑",
     easing_library: "缓动预设库…",
+    // 切线手柄右键菜单：关键帧的连续性。
+    continuity_smooth: "平滑",
+    continuity_broken: "断开",
+    // 首/末关键帧上的外推子菜单，五种模式 (keyframe.extrapolate_<id>)。
+    extrapolate_before: "起点前外推",
+    extrapolate_after: "终点后外推",
+    extrapolate_hold: "保持",
+    extrapolate_loop: "循环",
+    extrapolate_ping_pong: "往返",
+    extrapolate_offset: "偏移累加",
+    extrapolate_continue: "延续",
     // 预设库行标签,与 interp_* 的家族译名保持一致。
     family_classic: "基础",
     family_sine: "正弦",

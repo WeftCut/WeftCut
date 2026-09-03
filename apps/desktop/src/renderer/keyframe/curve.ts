@@ -6,7 +6,7 @@
 // The preset gallery reads the canonical table (src/shared/easing.ts)
 // directly — this module owns no preset data.
 import type { Interpolation } from "../../shared/easing";
-import type { Segment } from "../../shared/keyframe";
+import type { Extrapolate, Segment } from "../../shared/keyframe";
 
 /// The segment kinds whose curve IS a cubic spline — the only kinds with
 /// draggable tangent handles. Procedural kinds (Elastic/Bounce) have no
@@ -35,6 +35,50 @@ export function interpGlyphClass(kind: Segment["kind"]): "" | "kf-interp-hold" |
 export function isProceduralSegment(seg: Segment): boolean {
   return seg.kind === "Elastic" || seg.kind === "Bounce";
 }
+
+/// Menu order for the extrapolation modes — the record's own order, `Hold`
+/// (the clamp) first.
+export const EXTRAPOLATE_MODES: readonly Extrapolate[] = ["Hold", "Loop", "PingPong", "Offset", "Continue"];
+
+/// One id per mode, shared by the i18n key (`keyframe.extrapolate_<id>`) and
+/// the glyph class (`kf-extrap-<id>`) so the two never spell a mode two ways.
+const EXTRAPOLATE_ID: Readonly<Record<Extrapolate, string>> = {
+  Hold: "hold",
+  Loop: "loop",
+  PingPong: "ping_pong",
+  Offset: "offset",
+  Continue: "continue",
+};
+
+export function extrapolateLabelKey(mode: Extrapolate): string {
+  return `keyframe.extrapolate_${EXTRAPOLATE_ID[mode]}`;
+}
+
+/// The mark drawn beside an end key whose side is not `Hold`: Loop cycles
+/// back, PingPong swings both ways, Offset climbs on, Continue runs straight.
+/// Hold draws nothing — the clamp is the default and needs no announcement.
+const EXTRAPOLATE_GLYPH: Readonly<Record<Extrapolate, string>> = {
+  Hold: "",
+  Loop: "↻",
+  PingPong: "↔",
+  Offset: "⤴",
+  Continue: "→",
+};
+
+export function extrapolateGlyph(mode: Extrapolate): string {
+  return EXTRAPOLATE_GLYPH[mode];
+}
+
+/// Classes of the mark: the shared `.kf-extrap` plus the per-mode variant.
+export function extrapolateClass(mode: Extrapolate): string {
+  return `kf-extrap kf-extrap-${EXTRAPOLATE_ID[mode]}`;
+}
+
+/// Distance (px) from an end key's centre to its extrapolation mark, on both
+/// the collapsed in-clip row and the sub-lane: clear of the 7px glyph, inside
+/// the reach of a 24px row. No ghost diamonds are drawn beyond the end key —
+/// the mark is the whole announcement.
+export const EXTRAP_GLYPH_GAP_PX = 8;
 
 /// Spline interp → cubic-bezier control coords for handle placement.
 /// Exhaustive over `SplineInterpolation` — no default arm, so a new kind is a

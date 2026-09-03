@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Interpolation, Keyframe } from "../ipc";
+import type { AnimTrack, Interpolation, Keyframe } from "../ipc";
 import { resolveAnimated } from "../render/animated";
 import { applySegmentEasing } from "../../shared/easing";
 import { HOLD_EXTRAPOLATION, inIdentity, outIdentity } from "../../shared/keyframe";
@@ -143,12 +143,69 @@ describe("segmentHandles", () => {
     const [a, b] = pair({ kind: "Bezier", p1: [0.25, 0.1], p2: [0.75, 0.9] });
     expect(segmentHandles(SEG, { ...a, segment: { kind: "Linear" } }, b, G2)).toBeNull();
   });
-  it("places p1 (the left key's out) and p2 (the right key's in, un-mirrored) in time/value px space", () => {
+  it("places out (the left key's leaving side) and in (the right key's arriving side, un-mirrored) in time/value px space", () => {
     const h = segmentHandles(SEG, ...pair({ kind: "Bezier", p1: [0.25, 0.1], p2: [0.75, 0.9] }), G2)!;
-    expect(h.p1.x).toBeCloseTo(25, 6);  // 0.25 of 100px width
-    expect(h.p1.y).toBeCloseTo(90, 6);  // value 0.1 → y = (1-0.1)*100
-    expect(h.p2.x).toBeCloseTo(75, 6);
-    expect(h.p2.y).toBeCloseTo(10, 6);  // value 0.9 → y = (1-0.9)*100
+    expect(h.out.x).toBeCloseTo(25, 6);  // 0.25 of 100px width
+    expect(h.out.y).toBeCloseTo(90, 6);  // value 0.1 → y = (1-0.1)*100
+    expect(h.in.x).toBeCloseTo(75, 6);
+    expect(h.in.y).toBeCloseTo(10, 6);  // value 0.9 → y = (1-0.9)*100
+  });
+  it("carries each side's mode so an Auto side can be drawn greyed", () => {
+    const [a, b] = pair({ kind: "Bezier", p1: [0.25, 0.1], p2: [0.75, 0.9] });
+    const h = segmentHandles(SEG, { ...a, out: { ...a.out, mode: "Auto" } }, b, G2)!;
+    expect(h.out.mode).toBe("Auto");
+    expect(h.in.mode).toBe("Free");
+  });
+});
+
+import {
+  extrapolationSampleCount, sampleExtrapolation, samplesToPolyline, SEGMENT_SAMPLES,
+} from "./curveGraph";
+
+describe("extrapolation sampling", () => {
+  const ramp: AnimTrack<number> = {
+    mode: "Keyframed",
+    value: pair({ kind: "Linear" }, 0, 10),
+    extrapolate: { before: "Hold", after: "Loop" },
+  };
+
+  it("samples the real track through the engine, so the tail is the engine's extrapolation", () => {
+    // 0 → 10 over 1 s, Loop after: at 1.5 s the cycle is halfway → 5; at exactly
+    // 2 s it returns to the first value → 0 (the documented jump).
+    const s = sampleExtrapolation(ramp, 1_000_000, 3_000_000, 0, 4);
+    expect(s.map((p) => p.tUs)).toEqual([1_000_000, 1_500_000, 2_000_000, 2_500_000, 3_000_000]);
+    expect(s.map((p) => p.v)).toEqual([10, 5, 0, 5, 0]);
+  });
+  it("meets the end key exactly and is empty over a non-positive span", () => {
+    expect(sampleExtrapolation(ramp, 1_000_000, 3_000_000, 0, 2)[0]).toEqual({ tUs: 1_000_000, v: 10 });
+    expect(sampleExtrapolation(ramp, 1_000_000, 1_000_000, 0, 8)).toEqual([]);
+    expect(sampleExtrapolation(ramp, 2_000_000, 1_000_000, 0, 8)).toEqual([]);
+  });
+  it("carries the per-segment density over the tail's span, clamped", () => {
+    // One 1 s segment; a 2 s tail is two segments' worth of samples.
+    expect(extrapolationSampleCount(2_000_000, 1_000_000, 1)).toBe(2 * SEGMENT_SAMPLES);
+    // Three keys over 2 s → 1 s per segment; a 500 ms tail is half a segment.
+    expect(extrapolationSampleCount(500_000, 2_000_000, 2)).toBe(SEGMENT_SAMPLES / 2);
+    expect(extrapolationSampleCount(1, 1_000_000, 1)).toBe(2);
+    expect(extrapolationSampleCount(1_000_000_000, 1_000_000, 1)).toBe(512);
+    expect(extrapolationSampleCount(1_000_000, 0, 1)).toBe(2);
+  });
+  it("maps samples into the same px space as the segments", () => {
+    const pts = samplesToPolyline([{ tUs: 1_000_000, v: 10 }, { tUs: 2_000_000, v: 0 }], { ...G2, vmin: 0, vmax: 10 });
+    expect(pts).toEqual([{ x: 100, y: 0 }, { x: 200, y: 100 }]);
+  });
+});
+
+describe("computeValueRange — with the tails", () => {
+  it("widens the range to hold the extra values a tail reaches", () => {
+    const keys = pair({ kind: "Linear" }, 0, 1);
+    const r = computeValueRange(keys, 0.1, 32, [3, -0.5]);
+    expect(r.vmax).toBeCloseTo(3 + 3.5 * 0.1, 9);
+    expect(r.vmin).toBeCloseTo(-0.5 - 3.5 * 0.1, 9);
+  });
+  it("is unchanged by extra values already inside the key range", () => {
+    const keys = pair({ kind: "Linear" }, 0, 1);
+    expect(computeValueRange(keys, 0.1, 32, [0.25, 0.75])).toEqual(computeValueRange(keys));
   });
 });
 

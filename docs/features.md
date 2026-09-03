@@ -207,6 +207,31 @@ outside selects it first, the way the clip menu behaves.
 selection between an anchor and a click, and the directional "select every clip
 forward on this track" tools.
 
+## Keyframe curves
+
+Focusing a property expands its sub-lane into a value graph with one tangent
+handle per side of every Spline key — the After Effects / Premiere graph editor,
+on the timeline itself. Dragging a handle reshapes that one side of that one
+key, live, and lands as a single undo step on release. A side the app solves
+for you (Auto — what the Smooth command asks for) draws greyed; grabbing it
+takes it over, the way AE turns an auto-bezier key into a continuous one. A key
+keeps its two sides at one slope while its continuity is Smooth and lets them
+differ when Broken; right-clicking a handle switches between the two.
+
+Right-clicking a key or a segment opens the easing menu: Linear, Hold, the three
+everyday eases, Smooth, and the whole preset library behind one row — every
+choice applied to the entire keyframe selection in one undo step, and every row
+previewed on the curves while it is armed. Smooth is not a bake: an Auto key is
+re-solved whenever a neighbour moves. On a track's first or last key the menu
+adds Extrapolate before / after — Hold (the default clamp), Loop, Ping-pong,
+Offset, Continue — the way AE's loopIn / loopOut and Blender's cycle modifier
+run a curve past its keys. The extrapolated stretch is drawn dashed out to the
+clip's ends, and a small mark beside the end key (↻ ↔ ⤴ →) says which mode is
+on; nothing pretends there are keys where there are none. Keyframe glyphs read
+the segment class at a glance: diamond = linear, square = hold, circle = eased.
+The record behind all of this is described in `data-model.md` § Animated values
+and the editor mechanics in `render.md` § Keyframe easing authoring.
+
 ## Links
 
 A `Link` is a project-level entity owning a flat set of member `LayerId`s —

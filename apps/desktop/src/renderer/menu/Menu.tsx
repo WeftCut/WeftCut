@@ -68,6 +68,18 @@ interface MenuItemProps {
   /// the destructive rows of the media pool's menu are the case. Not a place
   /// to re-style the shared row.
   className?: string;
+  /// `false` keeps the menu open on activation — for a row that swaps the
+  /// popup's own content (the easing menu's library row) rather than acting
+  /// and leaving. Default: the menu closes, as every other row does.
+  closeOnClick?: boolean;
+  /// Fires `true` when the row is armed — the pointer enters it, or keyboard
+  /// navigation focuses it — and `false` when it is not, for rows that preview
+  /// their effect while armed. Pointer and focus both count because a
+  /// `highlightItemOnHover={false}` menu arms rows by pointer without moving
+  /// focus onto them.
+  onArmedChange?: (armed: boolean) => void;
+  /// `data-testid` on the row.
+  testId?: string;
 }
 
 export function MenuItem({
@@ -78,6 +90,9 @@ export function MenuItem({
   checked,
   actionId,
   className,
+  closeOnClick,
+  onArmedChange,
+  testId,
 }: MenuItemProps) {
   // Show only the *first* effective binding for the action. The menu
   // has no room for multi-binding lists; the Settings → Keyboard panel
@@ -92,10 +107,16 @@ export function MenuItem({
       className={className ? `app-menu-item ${className}` : "app-menu-item"}
       title={hint}
       disabled={disabled ?? false}
+      closeOnClick={closeOnClick}
+      data-testid={testId}
       // Base UI closes the menu on activation before this runs, so an
       // async handler that throws can't keep the dropdown open.
       // Promise rejections are the caller's responsibility.
       onClick={() => void onSelect()}
+      onMouseEnter={() => onArmedChange?.(true)}
+      onMouseLeave={() => onArmedChange?.(false)}
+      onFocus={() => onArmedChange?.(true)}
+      onBlur={() => onArmedChange?.(false)}
     >
       <span className="app-menu-item-check" aria-hidden="true">
         {checked ? <CheckIcon size={12} /> : null}

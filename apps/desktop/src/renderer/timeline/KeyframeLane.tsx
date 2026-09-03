@@ -18,7 +18,7 @@ import {
   useIsKeyframeSelected,
   useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
-import { retimeKeyframe, setSegmentCoeffs } from "../keyframe/edits";
+import { retimeKeyframe, setContinuity, setTangent } from "../keyframe/edits";
 import { useKeyframeBatchCommit } from "./keyframeBatch";
 import { transportSeek } from "../state/playbackStore";
 import { useLocalPlayheadUsThrottled } from "../state/playheadProjection";
@@ -293,6 +293,8 @@ function LayerCurveLane({
   return (
     <KeyframeCurveGraph
       track={track}
+      layerId={layerId}
+      paramKey={paramKey}
       layerTStartUs={layerTStartUs}
       clipDurationUs={clipDurationUs}
       pxPerSec={pxPerSec}
@@ -309,8 +311,11 @@ function LayerCurveLane({
       onRetime={(kfId, newTUs) =>
         onCommitParamTrack(layerId, paramKey, retimeKeyframe(track, kfId, newTUs))
       }
-      onSetSegmentCoeffs={(kfId, coeffs) =>
-        onCommitParamTrack(layerId, paramKey, setSegmentCoeffs(track, kfId, coeffs))
+      onSetTangent={(kfId, side, xy) =>
+        onCommitParamTrack(layerId, paramKey, setTangent(track, kfId, side, xy))
+      }
+      onSetContinuity={(kfId, continuity) =>
+        onCommitParamTrack(layerId, paramKey, setContinuity(track, kfId, continuity))
       }
       onOpenMenu={(cx, cy, kfId) => onOpenInterpMenu(cx, cy, layerId, paramKey, kfId)}
     />

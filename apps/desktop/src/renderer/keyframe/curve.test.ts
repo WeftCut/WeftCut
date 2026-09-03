@@ -1,5 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { interpToCoeffs, handleToCoeff, coeffToHandle } from "./curve";
+import {
+  EXTRAPOLATE_MODES, EXTRAP_GLYPH_GAP_PX, coeffToHandle, extrapolateClass, extrapolateGlyph,
+  extrapolateLabelKey, handleToCoeff, interpGlyphClass, interpToCoeffs,
+} from "./curve";
+import en from "../i18n/locales/en-US";
+
+describe("interpGlyphClass", () => {
+  it("codes the segment class the NLE way: square = Hold, bare diamond = Linear, circle = every eased class", () => {
+    expect(interpGlyphClass("Hold")).toBe("kf-interp-hold");
+    expect(interpGlyphClass("Linear")).toBe("");
+    expect(interpGlyphClass("Spline")).toBe("kf-interp-eased");
+    expect(interpGlyphClass("Elastic")).toBe("kf-interp-eased");
+    expect(interpGlyphClass("Bounce")).toBe("kf-interp-eased");
+  });
+});
+
+describe("extrapolation marks", () => {
+  it("lists the five modes with Hold first, and Hold alone draws no glyph", () => {
+    expect(EXTRAPOLATE_MODES).toEqual(["Hold", "Loop", "PingPong", "Offset", "Continue"]);
+    expect(extrapolateGlyph("Hold")).toBe("");
+    expect(EXTRAPOLATE_MODES.filter((m) => m !== "Hold").map(extrapolateGlyph)).toEqual(["↻", "↔", "⤴", "→"]);
+  });
+  it("spells a mode one way in the class and the i18n key, and every key resolves", () => {
+    for (const mode of EXTRAPOLATE_MODES) {
+      const cls = extrapolateClass(mode);
+      expect(cls.startsWith("kf-extrap kf-extrap-")).toBe(true);
+      const id = cls.slice("kf-extrap kf-extrap-".length);
+      expect(extrapolateLabelKey(mode)).toBe(`keyframe.extrapolate_${id}`);
+      expect(typeof (en.keyframe as Record<string, unknown>)[`extrapolate_${id}`]).toBe("string");
+    }
+    expect(extrapolateClass("PingPong")).toBe("kf-extrap kf-extrap-ping_pong");
+  });
+  it("sits the mark clear of the 7px glyph inside a 24px row", () => {
+    expect(EXTRAP_GLYPH_GAP_PX).toBe(8);
+  });
+});
 
 describe("interpToCoeffs (spline-only)", () => {
   it("maps Linear and Hold to the identity diagonal", () => {
