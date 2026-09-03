@@ -19,7 +19,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Anchor, ChevronDown, ChevronRight } from "lucide-react";
-import { AppColorField } from "../components/AppColorField";
+import { AppColorField, hexToRgba } from "../components/AppColorField";
 import { AppInput } from "../components/AppInput";
 import { tryMutate } from "../errors/tryMutate";
 import { formatTimecode, formatWallClock } from "../frames";
@@ -31,7 +31,6 @@ import {
   type CompositionSummary,
   type MarkerSummary,
   type ProjectSummary,
-  type Rgba,
 } from "../ipc";
 import { groupDisplayName, layerDisplayName } from "../lib/layerName";
 import {
@@ -75,12 +74,6 @@ interface PanelSection {
   id: string;
   name: string;
   markers: PanelMarker[];
-}
-
-function hexToRgba(hex: string): Rgba {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  const n = m?.[1] === undefined ? 0 : parseInt(m[1], 16);
-  return { r: (n >> 16) & 0xff, g: (n >> 8) & 0xff, b: n & 0xff, a: OPAQUE };
 }
 
 /// Root first, then Groups by their stored ordinal. The root is not a Group and
@@ -214,7 +207,7 @@ function MarkerColorField({ marker }: { marker: MarkerSummary }) {
           // that comes back is what the swatch reads from then on.
           setDraft(null);
           void tryMutate(
-            () => setMarkerColor(marker.id, hexToRgba(hex)),
+            () => setMarkerColor(marker.id, hexToRgba(hex, OPAQUE)),
             "update_marker",
           );
         }, COLOR_COMMIT_QUIET_MS);
