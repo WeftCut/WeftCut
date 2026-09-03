@@ -30,7 +30,7 @@
   },
   "overrides": {
     "typed-rest-client": {
-      "qs": "^6.15.2"
+      "qs": "^6.16.0"
     }
   },
   "engines": {
