@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
-import type { Animated, AudioRole, Composition, Interpolation, LayerParams, MarkerAnchor, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid } from './model'
+import type { Animated, AudioRole, Composition, Continuity, Extrapolate, Interpolation, LayerParams, MarkerAnchor, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid } from './model'
 import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
@@ -37,7 +37,7 @@ import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
 import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult } from './mcp-commands'
-import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto } from './keyframeEdits'
+import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
@@ -1611,6 +1611,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const p = mcpDef('set_keyframe').parseDedicated!(a)
           const layer = p.layer as string
           const paramKey = p.param_key as string
+          // `value` is parsed by param_key (a colour for `color`); readLayerTrack
+          // resolves scalar params only, so a colour param is refused there as
+          // UnknownKeyframeParam and the scalar cast below never sees an Rgba.
           const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
           const easing = p.interp as Interpolation | undefined
           const next = upsertKeyframe(track, (p.t_us as number) - tStartUs, p.value as number, easing, idGen)
@@ -1698,6 +1701,42 @@ export function createActor(opts: ActorOptions): ActorHandle {
             ? { ...input, value: input.value.map((k) => ({ ...k, t_us: k.t_us - tStartUs })) }
             : input
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: shifted })
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          return { ok: true, result: toolEmpty() }
+        }
+        case 'set_keyframe_tangents': {
+          const p = mcpDef('set_keyframe_tangents').parseDedicated!(a)
+          const layer = p.layer as string
+          const keyframeId = p.keyframe_id as string
+          const paramKey = p.param_key as string
+          const { track } = readLayerTrack(current(), layer, paramKey)
+          if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
+          const inXy = p.in as { x: number; y: number } | null
+          const outXy = p.out as { x: number; y: number } | null
+          const continuity = p.continuity as Continuity | null
+          // Sides before continuity, `out` last among the sides: a Smooth
+          // request then re-derives `in` from the `out` just written, which is
+          // the "out wins" order the write-time solve settles the pair in.
+          let next = track
+          if (inXy) next = setTangent(next, keyframeId, 'in', inXy)
+          if (outXy) next = setTangent(next, keyframeId, 'out', outXy)
+          if (continuity) next = setContinuity(next, keyframeId, continuity)
+          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          return { ok: true, result: toolEmpty() }
+        }
+        case 'set_extrapolation': {
+          const p = mcpDef('set_extrapolation').parseDedicated!(a)
+          const layer = p.layer as string
+          const paramKey = p.param_key as string
+          const { track } = readLayerTrack(current(), layer, paramKey)
+          if (track.mode === 'Static')
+            throw new McpArgError(`param '${paramKey}' on layer ${layer} is Static — extrapolation applies to a keyframed track; add keys first (set_keyframe)`)
+          const next = setExtrapolation(track, {
+            before: (p.before as Extrapolate | null) ?? undefined,
+            after: (p.after as Extrapolate | null) ?? undefined,
+          })
+          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
         }

@@ -5,7 +5,7 @@ import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
 import { root } from './fixtures/project'
 
-const ALL_65_NAMES = new Set<string>([
+const ALL_67_NAMES = new Set<string>([
   // table-exec tools (44)
   'add_track', 'remove_track', 'rename_track', 'duplicate_layer', 'paste_layers', 'move_track',
   'update_layer', 'set_layers_enabled', 'update_layer_params', 'set_scale_linked',
@@ -18,7 +18,7 @@ const ALL_65_NAMES = new Set<string>([
   'update_marker', 'remove_marker', 'attach_marker', 'detach_marker',
   'remove_media', 'undo', 'redo',
   'set_role_gain', 'set_role_flags',
-  // dedicated-exec tools (21) — auto_split_by_shot is a TS-owned HYBRID def
+  // dedicated-exec tools (23) — auto_split_by_shot is a TS-owned HYBRID def
   // (routes 'hybrid', not an actor arm) that carries a parseDedicated for the
   // bijection required-scalar gate.
   'add_color_layer', 'add_video_layer', 'split_layer', 'add_marker',
@@ -26,13 +26,14 @@ const ALL_65_NAMES = new Set<string>([
   'lock_history', 'unlock_history',
   'set_keyframe', 'get_param_track', 'remove_keyframe', 'retime_keyframe',
   'set_keyframe_easing', 'smooth_keyframes', 'clear_keyframes', 'set_param_track',
+  'set_keyframe_tangents', 'set_extrapolation',
   'dry_run', 'checkpoint', 'list_checkpoints', 'restore_checkpoint', 'begin_agent_session',
   'auto_split_by_shot',
 ])
 
 describe('MCP tool table projections', () => {
-  it('MCP_TOOLS contains exactly the 65 tool names', () => {
-    expect(MCP_TOOLS).toEqual(ALL_65_NAMES)
+  it('MCP_TOOLS contains exactly the 67 tool names', () => {
+    expect(MCP_TOOLS).toEqual(ALL_67_NAMES)
   })
 
   it('MCP_TOOLS equals the set of def names', () => {
@@ -64,7 +65,7 @@ describe('MCP tool table projections', () => {
 
   it('dedicated-exec defs have no parseArgs', () => {
     const dedicated = MCP_TOOL_DEFS.filter((d) => d.exec === 'dedicated')
-    expect(dedicated.length).toBe(21)
+    expect(dedicated.length).toBe(23)
     for (const d of dedicated) {
       expect(d.parseArgs, `${d.name} should not have parseArgs`).toBeUndefined()
     }

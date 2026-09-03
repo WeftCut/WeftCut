@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseInterp, parseInterpOpt, parseEasing, parseAnimatedF64, parseRole, parseRgba, parseNum, parseObj, parseEffectPatch, parseMarkerPatch, parseTransitionPlacement, McpArgError, toolJson } from '../mcp-commands'
+import { parseInterp, parseInterpOpt, parseEasing, parseAnimatedF64, parseAnimatedTrack, parseTrackValue, parseTrackValueOpt, parseTangentXy, parseContinuity, parseExtrapolate, parseSegment, isColorParam, parseRole, parseRgba, parseNum, parseObj, parseEffectPatch, parseMarkerPatch, parseTransitionPlacement, McpArgError, toolJson } from '../mcp-commands'
 import { EASING_PRESETS } from '../../../shared/easing'
 
 describe('parseInterp', () => {
@@ -100,49 +100,181 @@ describe('parseEasing', () => {
   })
   it('rejects non-objects', () => { expect(() => parseEasing(null)).toThrow(McpArgError) })
 })
-describe('parseAnimatedF64', () => {
-  it('accepts Static', () => { expect(parseAnimatedF64({ mode: 'Static', value: 1 })).toEqual({ mode: 'Static', value: 1 }) })
+const SIDES = { in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken' }
+const keyed = (keys: unknown[], extrapolate?: unknown) =>
+  ({ mode: 'Keyframed', value: keys, ...(extrapolate === undefined ? {} : { extrapolate }) })
+const RED = { r: 255, g: 0, b: 0, a: 255 }
+const BLUE = { r: 0, g: 0, b: 255, a: 255 }
+
+describe('parseAnimatedTrack — a scalar param', () => {
+  const parse = (v: unknown) => parseAnimatedTrack(v, 'opacity')
+  it('accepts Static', () => { expect(parse({ mode: 'Static', value: 1 })).toEqual({ mode: 'Static', value: 1 }) })
   it('accepts Keyframed', () => {
-    const t = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [{ id: '00000000-0000-0000-0000-000000000001', t_us: 0, value: 0, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } }] }
-    expect(parseAnimatedF64(t)).toEqual(t)
+    const t = { mode: 'Keyframed', extrapolate: { before: 'Hold', after: 'Hold' }, value: [{ id: '00000000-0000-0000-0000-000000000001', t_us: 0, value: 0, ...SIDES, segment: { kind: 'Linear' } }] }
+    expect(parse(t)).toEqual(t)
   })
-  const SIDES = { in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken' }
-  const keyed = (keys: unknown[], extrapolate?: unknown) =>
-    ({ mode: 'Keyframed', value: keys, ...(extrapolate === undefined ? {} : { extrapolate }) })
   it('accepts Keyframed keys carrying the procedural kinds (Elastic defaults backfilled)', () => {
     const t = keyed([
       { id: '00000000-0000-0000-0000-000000000001', t_us: 0, value: 0, ...SIDES, segment: { kind: 'Elastic', dir: 'Out' } },
       { id: '00000000-0000-0000-0000-000000000002', t_us: 1, value: 1, ...SIDES, segment: { kind: 'Bounce', dir: 'In' } },
     ], { before: 'Hold', after: 'Hold' })
-    const parsed = parseAnimatedF64(t) as { value: Array<{ segment: unknown }> }
+    const parsed = parse(t) as { value: Array<{ segment: unknown }> }
     expect(parsed.value[0].segment).toEqual({ kind: 'Elastic', dir: 'Out', amplitude: 1, period: 0.3 })
     expect(parsed.value[1].segment).toEqual({ kind: 'Bounce', dir: 'In' })
   })
   it('accepts Spline and Auto sides verbatim, and defaults a missing extrapolate to Hold/Hold', () => {
     const k = { id: '00000000-0000-0000-0000-000000000001', t_us: 0, value: 0, in: { x: 0.5, y: 0.2, mode: 'Auto' }, out: { x: 0.42, y: 0, mode: 'Free' }, continuity: 'Smooth', segment: { kind: 'Spline' } }
-    expect(parseAnimatedF64(keyed([k]))).toEqual({ mode: 'Keyframed', value: [k], extrapolate: { before: 'Hold', after: 'Hold' } })
-    expect(parseAnimatedF64(keyed([k], { before: 'Loop', after: 'Continue' }))).toMatchObject({ extrapolate: { before: 'Loop', after: 'Continue' } })
+    expect(parse(keyed([k]))).toEqual({ mode: 'Keyframed', value: [k], extrapolate: { before: 'Hold', after: 'Hold' } })
+    expect(parse(keyed([k], { before: 'Loop', after: 'Continue' }))).toMatchObject({ extrapolate: { before: 'Loop', after: 'Continue' } })
   })
-  it('rejects a bad mode', () => { expect(() => parseAnimatedF64({ mode: 'Bogus', value: 1 })).toThrow(McpArgError) })
+  it('accepts a side at x = 0 and at x = 1 (the closed bounds)', () => {
+    const k = { id: 'x', t_us: 0, value: 0, in: { x: 1, y: 1, mode: 'Free' }, out: { x: 0, y: 0, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Spline' } }
+    expect(parse(keyed([k]))).toMatchObject({ value: [k] })
+  })
+  it('rejects a bad mode', () => { expect(() => parse({ mode: 'Bogus', value: 1 })).toThrow(McpArgError) })
+  it('rejects a colour where the scalar param wants a number, naming the one param that takes a colour', () => {
+    expect(() => parse({ mode: 'Static', value: RED })).toThrow(/Static value: param 'opacity' takes a number, got an object — \{r,g,b,a\} is the value type of param_key "color" only/)
+    expect(() => parse(keyed([{ id: 'x', t_us: 0, value: RED, ...SIDES, segment: { kind: 'Linear' } }]))).toThrow(/keyframe\[0\]\.value: param 'opacity' takes a number/)
+    expect(() => parse({ mode: 'Static', value: 'half' })).toThrow(/takes a number, got a string/)
+  })
   it('rejects a keyframe with a bad segment kind', () => {
-    expect(() => parseAnimatedF64(keyed([{ id: 'x', t_us: 0, value: 0, ...SIDES, segment: { kind: 'no' } }]))).toThrow(McpArgError)
+    expect(() => parse(keyed([{ id: 'x', t_us: 0, value: 0, ...SIDES, segment: { kind: 'no' } }]))).toThrow(McpArgError)
   })
   it('rejects a keyframe with the retired EaseIn kind', () => {
-    expect(() => parseAnimatedF64(keyed([{ id: 'x', t_us: 0, value: 0, ...SIDES, segment: { kind: 'EaseIn' } }]))).toThrow(McpArgError)
+    expect(() => parse(keyed([{ id: 'x', t_us: 0, value: 0, ...SIDES, segment: { kind: 'EaseIn' } }]))).toThrow(McpArgError)
   })
   it('rejects a Bezier segment kind — the cubic lives on the tangents', () => {
-    expect(() => parseAnimatedF64(keyed([{ id: 'x', t_us: 0, value: 0, ...SIDES, segment: { kind: 'Bezier', p1: [0, 0], p2: [1, 1] } }]))).toThrow(/Spline/)
+    expect(() => parse(keyed([{ id: 'x', t_us: 0, value: 0, ...SIDES, segment: { kind: 'Bezier', p1: [0, 0], p2: [1, 1] } }]))).toThrow(/Spline/)
   })
   it('rejects a keyframe still carrying the retired per-segment interp, naming the record', () => {
-    expect(() => parseAnimatedF64(keyed([{ id: 'x', t_us: 0, value: 0, interp: { kind: 'Linear' } }]))).toThrow(/retired per-segment "interp"/)
+    expect(() => parse(keyed([{ id: 'x', t_us: 0, value: 0, interp: { kind: 'Linear' } }]))).toThrow(/retired per-segment "interp"/)
+  })
+  it('rejects a side whose x leaves [0, 1], naming the side and the rule', () => {
+    const k = { id: 'x', t_us: 0, value: 0, ...SIDES, segment: { kind: 'Spline' } }
+    expect(() => parse(keyed([{ ...k, out: { x: 1.5, y: 0, mode: 'Free' } }]))).toThrow(/"out"\.x is 1\.5 — x is the fraction of the segment's time span and must be within \[0, 1\]; only y may overshoot/)
+    expect(() => parse(keyed([{ ...k, in: { x: -0.01, y: 1, mode: 'Auto' } }]))).toThrow(/"in"\.x is -0\.01/)
   })
   it('rejects a keyframe lacking a side, a non-finite tangent, a bad mode, continuity or extrapolate', () => {
     const k = { id: 'x', t_us: 0, value: 0, ...SIDES, segment: { kind: 'Linear' } }
-    expect(() => parseAnimatedF64(keyed([{ ...k, in: undefined }]))).toThrow(/lacks "in"/)
-    expect(() => parseAnimatedF64(keyed([{ ...k, out: { x: Number.NaN, y: 0, mode: 'Free' } }]))).toThrow(/finite/)
-    expect(() => parseAnimatedF64(keyed([{ ...k, out: { x: 0, y: 0, mode: 'Loose' } }]))).toThrow(/mode/)
-    expect(() => parseAnimatedF64(keyed([{ ...k, continuity: 'Kinked' }]))).toThrow(/continuity/)
-    expect(() => parseAnimatedF64(keyed([k], { before: 'Bogus', after: 'Hold' }))).toThrow(/extrapolate\.before/)
+    expect(() => parse(keyed([{ ...k, in: undefined }]))).toThrow(/lacks "in"/)
+    expect(() => parse(keyed([{ ...k, out: { x: Number.NaN, y: 0, mode: 'Free' } }]))).toThrow(/finite/)
+    expect(() => parse(keyed([{ ...k, out: { x: 0, y: 0, mode: 'Loose' } }]))).toThrow(/mode/)
+    expect(() => parse(keyed([{ ...k, continuity: 'Kinked' }]))).toThrow(/keyframe continuity must be 'Smooth' \| 'Broken', got Kinked/)
+    expect(() => parse(keyed([k], { before: 'Bogus', after: 'Hold' }))).toThrow(/extrapolate\.before must be one of 'Hold' \| 'Loop' \| 'PingPong' \| 'Offset' \| 'Continue', got Bogus/)
+  })
+})
+describe('parseAnimatedTrack — the color param', () => {
+  const parse = (v: unknown) => parseAnimatedTrack(v, 'color')
+  it('accepts a Static colour and a keyframed colour track with the wire Rgba as every value', () => {
+    expect(parse({ mode: 'Static', value: RED })).toEqual({ mode: 'Static', value: RED })
+    const t = keyed([
+      { id: '00000000-0000-0000-0000-000000000001', t_us: 0, value: RED, ...SIDES, segment: { kind: 'Linear' } },
+      { id: '00000000-0000-0000-0000-000000000002', t_us: 1_000_000, value: BLUE, ...SIDES, segment: { kind: 'Hold' } },
+    ], { before: 'Hold', after: 'Loop' })
+    expect(parse(t)).toEqual(t)
+  })
+  it('rejects a number where the colour param wants an {r,g,b,a}, at the track and at a key', () => {
+    expect(() => parse({ mode: 'Static', value: 0.5 })).toThrow(/Static value: param 'color' takes an \{r,g,b,a\} colour \(integers 0\.\.255\), got a number/)
+    expect(() => parse(keyed([{ id: 'x', t_us: 0, value: 1, ...SIDES, segment: { kind: 'Linear' } }]))).toThrow(/keyframe\[0\]\.value: param 'color' takes an \{r,g,b,a\} colour/)
+  })
+  it('rejects an out-of-range colour component (the wire Rgba is four integers 0..255)', () => {
+    expect(() => parse({ mode: 'Static', value: { r: 300, g: 0, b: 0, a: 255 } })).toThrow(/0\.\.255/)
+    expect(() => parse({ mode: 'Static', value: { r: 0.5, g: 0, b: 0, a: 255 } })).toThrow(McpArgError)
+  })
+})
+describe('parseAnimatedF64 (effect params — scalar whatever the param is named)', () => {
+  it('accepts a Static number and a keyframed number track', () => {
+    expect(parseAnimatedF64({ mode: 'Static', value: 8 })).toEqual({ mode: 'Static', value: 8 })
+    const t = keyed([{ id: 'x', t_us: 0, value: 0, ...SIDES, segment: { kind: 'Linear' } }], { before: 'Hold', after: 'Hold' })
+    expect(parseAnimatedF64(t)).toEqual(t)
+  })
+  it('rejects a colour value — an effect param named color is still a number', () => {
+    expect(() => parseAnimatedF64({ mode: 'Static', value: RED })).toThrow(/Static value must be a number/)
+  })
+})
+describe('isColorParam / parseTrackValue / parseTrackValueOpt', () => {
+  it('only the bare key "color" carries a colour; effect params of any name are scalar', () => {
+    expect(isColorParam('color')).toBe(true)
+    for (const k of ['opacity', 'x', 'scale_x', 'gain_db', 'effects[00000000-0000-7000-8000-000000000001].params[color]']) expect(isColorParam(k), k).toBe(false)
+  })
+  it('parses a number for a scalar param and an Rgba for color', () => {
+    expect(parseTrackValue(0.5, 'opacity', 'value')).toBe(0.5)
+    expect(parseTrackValue(-12, 'gain_db', 'value')).toBe(-12)
+    expect(parseTrackValue(RED, 'color', 'value')).toEqual(RED)
+  })
+  it('names the type the param takes on a mismatch, in the message', () => {
+    expect(() => parseTrackValue(RED, 'opacity', 'value')).toThrow(/value: param 'opacity' takes a number, got an object — \{r,g,b,a\} is the value type of param_key "color" only/)
+    expect(() => parseTrackValue(0.5, 'color', 'value')).toThrow(/value: param 'color' takes an \{r,g,b,a\} colour \(integers 0\.\.255\), got a number/)
+    expect(() => parseTrackValue('#f00', 'color', 'value')).toThrow(/got a string/)
+    expect(() => parseTrackValue([1, 2, 3, 4], 'color', 'value')).toThrow(/got an array/)
+    expect(() => parseTrackValue(undefined, 'opacity', 'value')).toThrow(/got nothing/)
+    expect(() => parseTrackValue(Number.NaN, 'opacity', 'value')).toThrow(/got a non-finite number/)
+    expect(() => parseTrackValue(null, 'opacity', 'value')).toThrow(/got null/)
+  })
+  it('the optional form treats undefined and null as absent and validates a present value', () => {
+    expect(parseTrackValueOpt(undefined, 'opacity', 'value')).toBeUndefined()
+    expect(parseTrackValueOpt(null, 'color', 'value')).toBeUndefined()
+    expect(parseTrackValueOpt(1, 'opacity', 'value')).toBe(1)
+    expect(() => parseTrackValueOpt('1', 'opacity', 'value')).toThrow(McpArgError)
+  })
+})
+describe('parseTangentXy', () => {
+  it('accepts x on the closed [0, 1] and any finite y, overshoot included', () => {
+    expect(parseTangentXy({ x: 0.42, y: 0 }, 'out')).toEqual({ x: 0.42, y: 0 })
+    expect(parseTangentXy({ x: 0, y: -0.6 }, 'out')).toEqual({ x: 0, y: -0.6 })
+    expect(parseTangentXy({ x: 1, y: 1.7 }, 'in')).toEqual({ x: 1, y: 1.7 })
+  })
+  it('rejects x outside [0, 1] rather than clamping it, naming the side and the rule', () => {
+    expect(() => parseTangentXy({ x: 1.2, y: 0 }, 'out')).toThrow(/out\.x is 1\.2 — x is the fraction of the segment's time span and must be within \[0, 1\]; only y may overshoot/)
+    expect(() => parseTangentXy({ x: -0.5, y: 0 }, 'in')).toThrow(/in\.x is -0\.5/)
+  })
+  it('rejects a missing or non-finite coordinate and a non-object, naming the field', () => {
+    expect(() => parseTangentXy({ x: 0.5 }, 'in')).toThrow(/in\.y must be a finite number/)
+    expect(() => parseTangentXy({ y: 0.5 }, 'in')).toThrow(/in\.x must be a number within \[0, 1\]/)
+    expect(() => parseTangentXy({ x: Number.NaN, y: 0 }, 'out')).toThrow(/out\.x must be a number within \[0, 1\]/)
+    expect(() => parseTangentXy({ x: 0.5, y: Number.POSITIVE_INFINITY }, 'out')).toThrow(/out\.y must be a finite number/)
+    expect(() => parseTangentXy([0.5, 0.5], 'in')).toThrow(/in must be a tangent \{x, y\}/)
+    expect(() => parseTangentXy('0.5,0.5', 'out')).toThrow(/out must be a tangent \{x, y\}/)
+  })
+})
+describe('parseContinuity', () => {
+  it('accepts the two continuities', () => {
+    expect(parseContinuity('Smooth')).toBe('Smooth')
+    expect(parseContinuity('Broken')).toBe('Broken')
+  })
+  it('rejects anything else naming both options, under the caller\'s field name', () => {
+    expect(() => parseContinuity('Kinked')).toThrow(/^continuity must be 'Smooth' \| 'Broken', got Kinked$/)
+    expect(() => parseContinuity('smooth', 'patch.continuity')).toThrow(/^patch\.continuity must be 'Smooth' \| 'Broken', got smooth$/)
+    expect(() => parseContinuity(undefined)).toThrow(McpArgError)
+  })
+})
+describe('parseExtrapolate', () => {
+  it('accepts the five modes', () => {
+    for (const m of ['Hold', 'Loop', 'PingPong', 'Offset', 'Continue']) expect(parseExtrapolate(m, 'after')).toBe(m)
+  })
+  it('rejects an unknown mode naming all five under the caller\'s field name', () => {
+    expect(() => parseExtrapolate('Cycle', 'after')).toThrow(/^after must be one of 'Hold' \| 'Loop' \| 'PingPong' \| 'Offset' \| 'Continue', got Cycle$/)
+    expect(() => parseExtrapolate('loop', 'before')).toThrow(/^before must be one of/)
+    expect(() => parseExtrapolate(3, 'before')).toThrow(McpArgError)
+  })
+})
+describe('parseSegment', () => {
+  it('accepts Spline (no params) and the four class kinds, backfilling Elastic defaults', () => {
+    expect(parseSegment({ kind: 'Spline' })).toEqual({ kind: 'Spline' })
+    expect(parseSegment({ kind: 'Hold' })).toEqual({ kind: 'Hold' })
+    expect(parseSegment({ kind: 'Linear' })).toEqual({ kind: 'Linear' })
+    expect(parseSegment({ kind: 'Elastic', dir: 'InOut' })).toEqual({ kind: 'Elastic', dir: 'InOut', amplitude: 1, period: 0.3 })
+    expect(parseSegment({ kind: 'Bounce', dir: 'Out' })).toEqual({ kind: 'Bounce', dir: 'Out' })
+  })
+  it('applies the Interpolation range checks to the procedural kinds', () => {
+    expect(() => parseSegment({ kind: 'Elastic', dir: 'Out', amplitude: 0.5 })).toThrow(/amplitude must be >= 1/)
+    expect(() => parseSegment({ kind: 'Elastic', dir: 'Out', period: 0 })).toThrow(/period must be > 0/)
+    expect(() => parseSegment({ kind: 'Bounce' })).toThrow(/'In' \| 'Out' \| 'InOut'/)
+  })
+  it('rejects Bezier (the cubic lives on the tangents), an unknown kind, and a non-object', () => {
+    expect(() => parseSegment({ kind: 'Bezier', p1: [0, 0], p2: [1, 1] })).toThrow(/send \{"kind":"Spline"\}/)
+    expect(() => parseSegment({ kind: 'Wobble' })).toThrow(McpArgError)
+    expect(() => parseSegment('Spline')).toThrow(/segment must be an object/)
   })
 })
 describe('parseRole', () => {

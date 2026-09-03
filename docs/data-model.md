@@ -1223,8 +1223,9 @@ the UI uses the same actor via backend commands.
 
 Keyframe authoring is exposed to agents as a small family of MCP tools —
 `get_param_track`, `set_keyframe`, `remove_keyframe`, `retime_keyframe`,
-`set_keyframe_easing`, `smooth_keyframes`, `clear_keyframes`, and the
-low-level `set_param_track`. These are the one place the surface is **not**
+`set_keyframe_easing`, `set_keyframe_tangents`, `smooth_keyframes`,
+`set_extrapolation`, `clear_keyframes`, and the low-level `set_param_track`.
+These are the one place the surface is **not**
 1:1 with a same-named command: they are handler-side helpers that read the
 layer, apply a pure transform, and write the whole track back through
 `update_layer_param_track`. They expose the keyframe record itself:
@@ -1232,7 +1233,9 @@ layer, apply a pure transform, and write the whole track back through
 continuity, segment, preset_id? }` plus the track's `extrapolate`, and
 `set_param_track` takes the same shape; `set_keyframe_easing` writes the
 segment leaving a key (`this.out`, `next.in`, `this.segment`, both sides
-Free); `smooth_keyframes` sets Auto on the key(s) it names. Keyframe times
+Free); `set_keyframe_tangents` writes one key's sides and continuity;
+`smooth_keyframes` sets Auto on the key(s) it names; `set_extrapolation`
+writes the track's `extrapolate`. Keyframe times
 in / out are timeline-absolute (converted to layer-local at the boundary).
 The transform math is shared with the timeline UI and locked Rust↔TS by a
 golden fixture. See [`mcp.md`](mcp.md).
