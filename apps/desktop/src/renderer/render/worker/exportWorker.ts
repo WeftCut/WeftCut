@@ -709,16 +709,19 @@ function cleanup({
   encoder?.dispose();
   compositor.dispose();
   pool.dispose();
+  // Read before `destroy`, which drops Pixi's reference to the device without
+  // destroying it. Left to die with the Worker, the device goes at an arbitrary
+  // moment during the next export's setup, where Chromium 152 stalls the
+  // renderer main thread on it. The `destroy()` is in `finally` so a throwing
+  // `app.destroy` — the torn-down state the catch anticipates — cannot skip it
+  // and leak the device it exists to reclaim. ADR 0059.
+  const device = webgpuDeviceOf(app.renderer);
   try {
-    // Read before `destroy`, which drops Pixi's reference to the device
-    // without destroying it. Left to die with the Worker, the device goes at
-    // an arbitrary moment during the next export's setup, where Chromium 152
-    // stalls the renderer main thread on it. ADR 0059.
-    const device = webgpuDeviceOf(app.renderer);
     app.destroy(true);
-    device?.destroy();
   } catch {
     // app may already be in a torn-down state; ignore.
+  } finally {
+    device?.destroy();
   }
 }
 

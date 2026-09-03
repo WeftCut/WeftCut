@@ -190,10 +190,37 @@ else in the source needed a migration; the accompanying changes are:
 The 44 AppImage no longer carries `libEGL.so` / `libGLESv2.so` (ANGLE is
 statically linked); `libvk_swiftshader.so` and `libvulkan.so.1` still ship.
 
+### Verified on Windows (RTX 3050 + Intel UHD 730, display on the RTX 3050)
+
+| Layer | Result |
+| --- | --- |
+| `npm run typecheck` / Vitest / `test:scripts` | green; 6677 passed; 59 passed |
+| `npm run e2e` (decode gates on, `--workers=4 --retries=1`) | 216 passed, 0 failed, 0 flaky, 10 skipped — every skip a macOS chrome/menu spec or a videotoolbox/vaapi/nvdec lane |
+| Windows persistent D3D11 shared textures | `preview-gpu-order` 8/8, `preview-hw-color` d3d11va 4/4, `preview-hw-conformance` d3d11va, `poc/shared-texture` full matrix including the RGBA byte-exact probe |
+| context loss / reopen stress | GPU-process crash under a live d3d11va session → close + reopen recovers the hardware lane; 8-round Preview close→reopen with a live session clean ×3 — after the device-teardown fix below |
+| `effects-f16-parity` (WebGPU on D3D12) | GATE PASSED on the real device |
+| `playback-perf` / `decode-bench`, 44 vs 42 in one sitting | no regression: h264-1080 hardware route at 1/3/5 tracks all SMOOTH, tick p99 ≤ 0.9 ms on both; WebCodecs decode hevc 871 vs 886 fps, h264 538 vs 551 |
+| 4K ProRes memory ratchet | passes |
+| `electron-builder --publish never` | NSIS built; both `afterPack` licensing gates held; both `.node` addons in `app.asar.unpacked`; the packaged app launches, copies the MCP shim to `<userData>/cli/`, and the shim's `info` runs under `ELECTRON_RUN_AS_NODE=1` |
+| Windows 11 corner mask | matches the 8px inset edge on a real-screen capture |
+
+**Found and fixed on Windows: Chromium 152 stalls the renderer when a WebGPU
+device dies out of order.** Pixi never destroys the device it created, so every
+closed Preview and every finished export left a live `GPUDevice` to the garbage
+collector. On Chromium 148 that is harmless; on 152 the renderer main thread blocks
+for 30–45 s when such a device dies while the next Application's first WebGPU work
+is in flight — Preview close→reopen with a live d3d11va session froze
+deterministically, and export start under four concurrent app instances wedged six
+to seven of 39 export tests per leg. ADR 0059 destroys the device right after
+Pixi's own teardown, in the Preview host and the export worker; the reopen probe
+then runs 8/8 ×3, the export set 39/39 ×2, and the full suite needs no retry. The
+engine fact is recorded in `electron-chromium-behavior.md`.
+
 ### Still verified only on Electron 42
 
-- Windows: persistent D3D11 shared textures under load (`preview-gpu-order`,
-  not in CI), `poc/shared-texture`, context-loss / reopen stress.
-- macOS: the manual menu-accelerator check in
-  `electron-chromium-behavior.md`.
-- The `playback-perf` / `decode-bench` numbers.
+- macOS: the manual menu-accelerator check in `electron-chromium-behavior.md`,
+  and every gate the hosted macOS runner skips — the videotoolbox lanes, the
+  traffic-light chrome and the application-menu specs — plus installing and
+  launching the dmg. They need a real Mac.
+- Lab-note entries without a gate: Pointer Lock, inline foreignObject taint, the
+  EyeDropper widget (Windows).
