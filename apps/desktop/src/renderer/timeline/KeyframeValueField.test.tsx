@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../i18n";
-import type { AnimTrack, TrackSummary } from "../ipc";
-import { OPACITY } from "../keyframe/descriptors";
+import type { AnimTrack, Rgba, TrackSummary } from "../ipc";
+import { COLOR_FILL, OPACITY } from "../keyframe/descriptors";
 import { KeyframeValueField } from "./KeyframeValueField";
 import { clearKeyframeFocus } from "../keyframe/focusStore";
 
@@ -104,5 +104,76 @@ describe("KeyframeValueField", () => {
       <KeyframeValueField track={tr} desc={OPACITY} currentTimeUs={0} fpsNum={30} fpsDen={1} onCommitParamTrack={vi.fn()} />,
     );
     expect(container.firstChild).toBeNull();
+  });
+});
+
+// ── The colour row ───────────────────────────────────────────────────────────
+// A colour has no number field, so the row swaps the widget rather than the
+// commit rule: the same auto-key at the same frame-snapped playhead, written
+// through the same sink.
+describe("KeyframeValueField on a colour param", () => {
+  const RED: Rgba = { r: 255, g: 0, b: 0, a: 255 };
+  const GREEN: Rgba = { r: 0, g: 255, b: 0, a: 255 };
+  const colorTrack: AnimTrack<Rgba> = {
+    mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+    value: [
+      { id: "a", t_us: 0, value: RED, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+      { id: "b", t_us: 1_000_000, value: GREEN, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+    ],
+  };
+  const colorClip = () =>
+    ({ layers: [{ id: "L1", kind: "Color", t_start_us: 0, t_end_us: 2_000_000, params: { kind: "Color", color: colorTrack } }] }) as unknown as TrackSummary;
+
+  function renderColorField(currentTimeUs: number, onCommit = vi.fn()) {
+    render(
+      <KeyframeValueField
+        track={colorClip()}
+        desc={COLOR_FILL}
+        currentTimeUs={currentTimeUs}
+        fpsNum={30}
+        fpsDen={1}
+        onCommitParamTrack={onCommit}
+      />,
+    );
+    return onCommit;
+  }
+
+  it("shows a swatch, not a number field, holding the colour at the playhead", () => {
+    renderColorField(0);
+    const swatch = screen.getByLabelText("Color") as HTMLInputElement;
+    expect(swatch.type).toBe("color");
+    expect(swatch.value).toBe("#ff0000");
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+  });
+
+  it("shows the OkLab mix mid-segment, the value the preview is showing", () => {
+    renderColorField(500_000);
+    const hex = (screen.getByLabelText("Color") as HTMLInputElement).value;
+    const n = parseInt(hex.slice(1), 16);
+    // The sRGB average of red and green would be #808000; the OkLab mix the
+    // engine returns is markedly lighter on both channels.
+    expect((n >> 16) & 0xff).toBeGreaterThan(190);
+    expect((n >> 8) & 0xff).toBeGreaterThan(150);
+    expect(n & 0xff).toBe(0);
+  });
+
+  it("commits a colour key at the frame-snapped playhead through onCommitParamTrack", () => {
+    const onCommit = renderColorField(500_000);
+    fireEvent.change(screen.getByLabelText("Color"), { target: { value: "#0000ff" } });
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    const [layerId, paramKey, next] = onCommit.mock.calls[0]!;
+    expect([layerId, paramKey]).toEqual(["L1", "color"]);
+    expect(next.value).toHaveLength(3);
+    expect(next.value.find((k: { t_us: number }) => k.t_us === 500_000).value).toEqual({ r: 0, g: 0, b: 255, a: 255 });
+  });
+
+  it("disables the swatch off the clip span", () => {
+    renderColorField(3_000_000);
+    expect((screen.getByLabelText("Color") as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it("drops the eyedropper — a pick belongs in the inspector row, not an 80px cell", () => {
+    renderColorField(0);
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });

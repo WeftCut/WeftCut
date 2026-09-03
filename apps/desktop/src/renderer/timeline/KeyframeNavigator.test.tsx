@@ -2,7 +2,7 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 import "../i18n"; // initialize i18next so t(key) resolves (mirrors EasingMenu.test)
-import type { AnimTrack, TrackSummary } from "../ipc";
+import type { AnimTrack, Rgba, TrackSummary } from "../ipc";
 import { KeyframeNavigator } from "./KeyframeNavigator";
 import { setKeyframeFocus, clearKeyframeFocus, useKeyframeFocusStore } from "../keyframe/focusStore";
 import { getSelectedKeyframes, clearKeyframeSelection } from "../keyframe/selectionStore";
@@ -176,5 +176,65 @@ describe("KeyframeNavigator ambiguous track", () => {
     expect(setBtn().disabled).toBe(true);
     expect(prevBtn().disabled).toBe(true);
     expect(nextBtn().disabled).toBe(true);
+  });
+});
+
+// ── The colour row ───────────────────────────────────────────────────────────
+// The navigator is value-agnostic: the toggle adds whatever the track resolves
+// to at the playhead, so a colour key gets the OkLab mix rather than a number.
+describe("KeyframeNavigator on a colour param", () => {
+  const RED: Rgba = { r: 255, g: 0, b: 0, a: 255 };
+  const GREEN: Rgba = { r: 0, g: 255, b: 0, a: 255 };
+  const colorTrack: AnimTrack<Rgba> = {
+    mode: "Keyframed", extrapolate: { before: "Hold", after: "Hold" },
+    value: [
+      { id: "a", t_us: 0, value: RED, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+      { id: "b", t_us: 1_000_000, value: GREEN, in: { x: 2 / 3, y: 2 / 3, mode: "Free" }, out: { x: 1 / 3, y: 1 / 3, mode: "Free" }, continuity: "Broken", segment: { kind: "Linear" } },
+    ],
+  };
+  const colorClip = () =>
+    ({ layers: [{ id: "L1", kind: "Color", t_start_us: 0, t_end_us: 2_000_000, params: { kind: "Color", color: colorTrack } }] }) as unknown as TrackSummary;
+
+  function renderColorNav(currentTimeUs: number, onCommit = vi.fn()) {
+    render(
+      <KeyframeNavigator
+        track={colorClip()}
+        paramKey="color"
+        fallback={RED}
+        currentTimeUs={currentTimeUs}
+        fpsNum={30}
+        fpsDen={1}
+        onCommitParamTrack={onCommit}
+      />,
+    );
+    return onCommit;
+  }
+
+  it("adds a key holding the colour the engine resolves at the playhead", () => {
+    const onCommit = renderColorNav(500_000);
+    fireEvent.click(setBtn());
+    const [, paramKey, next] = onCommit.mock.calls[0]!;
+    expect(paramKey).toBe("color");
+    const added = next.value.find((k: { t_us: number }) => k.t_us === 500_000);
+    // The OkLab mix, not a number and not the sRGB average (128, 128, 0).
+    expect(added.value.r).toBeGreaterThan(190);
+    expect(added.value.g).toBeGreaterThan(150);
+    expect(added.value.b).toBe(0);
+  });
+
+  it("removes the key under the playhead, colour and all", () => {
+    const onCommit = renderColorNav(1_000_000);
+    expect(setBtn().getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(setBtn());
+    const [, , next] = onCommit.mock.calls[0]!;
+    expect(next.value.map((k: { value: Rgba }) => k.value)).toEqual([RED]);
+  });
+
+  it("steps between colour keys exactly as it does between numeric ones", () => {
+    renderColorNav(500_000);
+    expect(prevBtn().disabled).toBe(false);
+    expect(nextBtn().disabled).toBe(false);
+    fireEvent.click(nextBtn());
+    expect(transportSeek).toHaveBeenCalledWith(1_000_000);
   });
 });

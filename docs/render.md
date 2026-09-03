@@ -257,6 +257,18 @@ inspector's value rows and this timeline field are one shared control,
 slider, readout — plus step and bounds); the inspector wraps it with the
 stopwatch, the timeline renders it compact without one.
 
+A colour property's row swaps the value graph for a gradient strip (`ColorLane`).
+The strip is a tiled `<canvas>` spanning the clip, one sample per DEVICE pixel
+column through the same `resolveAnimatedColor` the preview runs, so what the
+lane shows is what the frame shows, OkLab mix and all. It repaints when the
+track, an armed gesture's preview, the zoom, the scroll position or the device
+pixel ratio changes, and only for the tiles the viewport can see. Diamonds sit
+over it with the same glyph coding, selection, menus and extrapolation marks a
+numeric lane has; there are no tangent handles and no curve, because a colour
+has no single axis to plot. The row's header field is the compact swatch rather
+than a number field, bound to the same auto-key rule, and the navigator's middle
+diamond writes the colour the engine resolves at the playhead.
+
 ## Decoder pool
 
 `SourceDecoderPool` is two-tiered. Decoders + frame rings are keyed

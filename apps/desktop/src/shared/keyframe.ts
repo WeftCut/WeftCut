@@ -90,6 +90,18 @@ export type Animated<T> =
 export const OUT_IDENTITY: Readonly<{ x: number; y: number }> = { x: 1 / 3, y: 1 / 3 };
 export const IN_IDENTITY: Readonly<{ x: number; y: number }> = { x: 2 / 3, y: 2 / 3 };
 
+/// The value types a track can carry: a number for every scalar param, the wire
+/// `Rgba` for a colour. Which one a param key takes is `isColorParam`'s call.
+export type TrackValue = number | { r: number; g: number; b: number; a: number };
+
+/// The ONE home of "which value type this param key carries": `color` — the
+/// Text and Color layers' colour — carries `Rgba`; every other key (transform,
+/// opacity, the audio pair, effect params) carries a number. Main's lenses, the
+/// MCP parsers and the renderer's descriptors all read this one predicate.
+export function isColorParam(paramKey: string): boolean {
+  return paramKey === "color";
+}
+
 /// The default extrapolation — the end-key clamp on both sides. Frozen: a site
 /// that mints a track with the default may share it by reference (the curve
 /// graph's sampling tracks do), so an in-place write throws instead of silently

@@ -1,29 +1,44 @@
 import { describe, expect, it } from "vitest";
-import { animatableParams, readParamTrack, readScaleLinked } from "./descriptors";
-import type { AnimTrack, LayerSummary } from "../ipc";
+import {
+  animatableParams,
+  readNumberTrack,
+  readParamTrack,
+  readRgbaTrack,
+  readScaleLinked,
+  COLOR_FILL,
+  COLOR_TEXT,
+  OPACITY,
+} from "./descriptors";
+import type { AnimTrack, LayerSummary, Rgba } from "../ipc";
 
 describe("animatableParams", () => {
+  // The anchor pair is part of "the complete transform": it is a keyframeable
+  // Animated track on the wire like the rest (main/state/model.ts), so leaving
+  // it out here would silently deny it a stopwatch, a timeline lane and a
+  // curve — the whole point of storing it as a track.
+  const TRANSFORM = [
+    "x", "y", "scale_x", "scale_y", "rotation_deg", "anchor_x", "anchor_y", "opacity",
+  ];
   it("visual layers expose the complete transform plus opacity", () => {
-    // The anchor pair is part of "the complete transform": it is a keyframeable
-    // Animated track on the wire like the rest (main/state/model.ts), so leaving
-    // it out here would silently deny it a stopwatch, a timeline lane and a
-    // curve — the whole point of storing it as a track.
-    const complete = [
-      "x", "y", "scale_x", "scale_y", "rotation_deg", "anchor_x", "anchor_y", "opacity",
-    ];
-    for (const kind of ["VideoClip", "ImageOverlay", "Text", "Motif"]) {
-      expect(animatableParams(kind).map((d) => d.paramKey)).toEqual(complete);
+    for (const kind of ["VideoClip", "ImageOverlay", "Motif"]) {
+      expect(animatableParams(kind).map((d) => d.paramKey)).toEqual(TRANSFORM);
     }
+  });
+  it("Text adds the glyph colour after opacity", () => {
+    expect(animatableParams("Text").map((d) => d.paramKey)).toEqual([...TRANSFORM, "color"]);
   });
   it("Audio exposes gain_db + pan", () => {
     expect(animatableParams("Audio").map((d) => d.paramKey)).toEqual(["gain_db", "pan"]);
   });
-  it("Color has no animatable params", () => {
-    expect(animatableParams("Color")).toEqual([]);
+  it("Color exposes its fill colour and nothing else", () => {
+    expect(animatableParams("Color")).toEqual([COLOR_FILL]);
+  });
+  it("a kind with no animatable params at all still answers an empty list", () => {
+    expect(animatableParams("Nonesuch")).toEqual([]);
   });
   it("scaleLinked collapses the pair into ONE composite Scale for every visual kind", () => {
     for (const kind of ["VideoClip", "ImageOverlay", "Text", "Motif"]) {
-      const linked = animatableParams(kind, true);
+      const linked = animatableParams(kind, true).filter((d) => d.valueKind === "number");
       expect(linked.map((d) => d.paramKey)).toEqual([
         "x", "y", "scale_x", "rotation_deg", "anchor_x", "anchor_y", "opacity",
       ]);
@@ -33,6 +48,23 @@ describe("animatableParams", () => {
     }
     // Non-transform kinds ignore the flag.
     expect(animatableParams("Audio", true).map((d) => d.paramKey)).toEqual(["gain_db", "pan"]);
+    expect(animatableParams("Color", true)).toEqual([COLOR_FILL]);
+  });
+});
+
+describe("colour descriptors", () => {
+  it("carry the rgba value kind and no numeric widget metadata", () => {
+    for (const d of [COLOR_TEXT, COLOR_FILL]) {
+      expect(d.valueKind).toBe("rgba");
+      expect(d.paramKey).toBe("color");
+      expect(d.labelKey).toBe("property_panel.color");
+      expect(Object.keys(d).sort()).toEqual(["fallback", "labelKey", "paramKey", "valueKind"]);
+    }
+  });
+
+  it("fall back to each kind's own default fill — white glyphs, a black plate", () => {
+    expect(COLOR_TEXT.fallback).toEqual({ r: 255, g: 255, b: 255, a: 255 });
+    expect(COLOR_FILL.fallback).toEqual({ r: 0, g: 0, b: 0, a: 255 });
   });
 });
 
@@ -51,10 +83,28 @@ describe("readParamTrack", () => {
     expect(readParamTrack(params, "opacity")).toBe(track);
     expect(readParamTrack(params, "nope")).toBeNull();
   });
+
+  it("the descriptor-typed reads answer the same track, each for its own value kind", () => {
+    const opacity: AnimTrack<number> = { mode: "Static", value: 0.5 };
+    const color: AnimTrack<Rgba> = { mode: "Static", value: { r: 1, g: 2, b: 3, a: 255 } };
+    const params = { kind: "Text", opacity, color } as unknown as LayerSummary["params"];
+    expect(readNumberTrack(params, OPACITY)).toBe(opacity);
+    expect(readRgbaTrack(params, COLOR_TEXT)).toBe(color);
+    // A kind that carries neither answers null on both, so a caller cannot mistake
+    // an absent track for a static one.
+    const bare = { kind: "Color" } as unknown as LayerSummary["params"];
+    expect(readNumberTrack(bare, OPACITY)).toBeNull();
+    expect(readRgbaTrack(bare, COLOR_FILL)).toBeNull();
+  });
 });
 
-const byKey = (kind: string, key: string) =>
-  animatableParams(kind).find((d) => d.paramKey === key)!;
+/// The numeric descriptor for a key — narrowing here is what makes the widget
+/// assertions below type-check, and a colour key reaching this is the bug.
+const byKey = (kind: string, key: string) => {
+  const d = animatableParams(kind).find((x) => x.paramKey === key);
+  if (!d || d.valueKind !== "number") throw new Error(`${kind}.${key} is not a numeric param`);
+  return d;
+};
 
 describe("ParamDescriptor metadata", () => {
   it("opacity is a slider+readout, 0..1 step 0.01", () => {

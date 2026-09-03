@@ -4,6 +4,8 @@ import { formatParam, paramNumberFormat, type KfWidget } from "../keyframe/descr
 import { autoKeyTrack } from "../keyframe/autoKey";
 import { AppNumberField } from "./AppNumberField";
 import { AppSlider } from "./AppSlider";
+import { resolveAnimated } from "../render/animated";
+import { collapseToStatic } from "../keyframe/edits";
 import { AnimatableField, displayValue } from "./AnimatableField";
 
 // Sliders fire onValueChange continuously; debounce the recorded commit so a
@@ -54,7 +56,7 @@ export function KeyframeField({
   compact = false,
   onMutated,
 }: KeyframeFieldProps) {
-  const shown = displayValue(track, tInLayerUs, fallback);
+  const shown = displayValue(track, tInLayerUs, fallback, resolveAnimated);
   // Shared draft: null = idle (display `shown`, which tracks playhead/undo);
   // a number while a widget is mid-interaction. Every widget reads `value` and
   // writes the draft, so a slider drag and a sibling number field stay in sync.
@@ -145,6 +147,7 @@ export function KeyframeField({
         label={label}
         track={track}
         fallback={fallback}
+        collapse={collapseToStatic}
         tInLayerUs={tInLayerUs}
         playheadInSpan={playheadInSpan}
         onMutated={onMutated ?? (async () => {})}

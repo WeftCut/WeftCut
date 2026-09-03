@@ -896,13 +896,25 @@ There is no migration to this record: v1 is redefined in place under § Versioni
 
 Animatable params, by kind: the visual kinds carry `x`, `y`, `scale_x`,
 `scale_y`, `rotation_deg`, `anchor_x`, `anchor_y` and `opacity`; Audio carries
-`gain_db` and `pan`; Color carries none. Effect params are addressed as
-`effects[<id>].params[<key>]`. The list has ONE home per side —
-`animatableParams` in `renderer/keyframe/descriptors.ts` and
-`TRANSFORM_F64_KEYS` + `f64Lens` in `main/state/mutations/params.ts`, mirrored by
-`resolve_animated_f64` in `native/src/state/layer.rs`. A param missing from the
-descriptor list has no stopwatch, no timeline lane and no curve, however
-writable its track is.
+`gain_db` and `pan`; Text adds `color` and Color carries `color` alone. Effect
+params are addressed as `effects[<id>].params[<key>]`. The list has ONE home per
+side — `animatableParams` in `renderer/keyframe/descriptors.ts` and
+`TRANSFORM_F64_KEYS` + `f64Lens` / `rgbaLens` in
+`main/state/mutations/params.ts`, mirrored by `resolve_animated_f64` in
+`native/src/state/layer.rs`. A param missing from the descriptor list has no
+stopwatch, no timeline lane and no curve, however writable its track is.
+
+`color` is the one param whose track carries `Rgba` rather than a number, and
+the param KEY decides which: a track write picks `rgbaLens` or `f64Lens` from
+it, and a value of the other type is refused (`InvalidArgument` on `track`)
+rather than coerced. Everything between is shared — snap, sort, dedupe and the
+tangent solve are generic over the value — except that quantization is
+numbers-only (a channel is already an integer) and the Auto solve runs with no
+scalar projection, because a colour has no single axis to take a slope on: its
+Auto sides land on the identity coordinates with their mode kept, and the Smooth
+"out wins" rule does not apply. A Text layer's shadow and outline colours are
+plain `Rgba` fields, not tracks, and stay static by decision; wrapping one in an
+`Animated` later is the cheapest class of change and needs no migration.
 
 ## `Marker`
 

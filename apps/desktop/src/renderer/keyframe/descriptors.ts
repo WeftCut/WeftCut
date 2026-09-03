@@ -1,15 +1,26 @@
-// The frontend mirror of main's `f64Lens` (src/main/state/mutations/params.ts):
-// which params each layer kind can keyframe, in inspector order. The IPC view
-// flattens transform, so `params[paramKey]` is the `AnimTrack<number>`.
-import type { AnimTrack, LayerSummary } from "../ipc";
+// The frontend mirror of main's `f64Lens` / `rgbaLens`
+// (src/main/state/mutations/params.ts): which params each layer kind can
+// keyframe, in inspector order. The IPC view flattens transform, so
+// `params[paramKey]` is that param's `AnimTrack`.
+import type { AnimTrack, LayerSummary, Rgba } from "../ipc";
 
 export type KfWidget = "slider" | "number" | "readout";
 
-export interface ParamDescriptor {
-  /// Wire key understood by `updateLayerParamTrack` and main's `f64Lens`.
+interface ParamDescriptorBase {
+  /// Wire key understood by `updateLayerParamTrack` and main's lenses.
   paramKey: string;
   /// Existing i18n key (reuse the property-panel labels).
   labelKey: string;
+  /// Composite marker: commits fan the authored track out to every listed key
+  /// (structural twin copies, fresh ids) through the plural batch mutation, so
+  /// the whole write is one undo. Reads still come from `paramKey`.
+  fanOutKeys?: string[];
+}
+
+/// A param whose track carries numbers — every transform axis, opacity, the
+/// audio pair, and every effect param.
+export interface NumberParamDescriptor extends ParamDescriptorBase {
+  valueKind: "number";
   /// Static fallback used when a Keyframed track is empty / before its first key.
   fallback: number;
   /// Number-field / slider step (absent ⇒ default 1).
@@ -20,24 +31,40 @@ export interface ParamDescriptor {
   /// Default inspector presentation, rendered in order, all bound to one value.
   /// Consumers (e.g. the timeline) may override per call.
   widgets?: KfWidget[];
-  /// Composite marker: commits fan the authored track out to every listed key
-  /// (structural twin copies, fresh ids) through the plural batch mutation, so
-  /// the whole write is one undo. Reads still come from `paramKey`.
-  fanOutKeys?: string[];
 }
 
-export const X: ParamDescriptor = { paramKey: "x", labelKey: "property_panel.x", fallback: 0, step: 1, widgets: ["number"] };
-export const Y: ParamDescriptor = { paramKey: "y", labelKey: "property_panel.y", fallback: 0, step: 1, widgets: ["number"] };
-export const SCALE_X: ParamDescriptor = { paramKey: "scale_x", labelKey: "property_panel.scale_x", fallback: 1, step: 0.05, widgets: ["number"] };
-export const SCALE_Y: ParamDescriptor = { paramKey: "scale_y", labelKey: "property_panel.scale_y", fallback: 1, step: 0.05, widgets: ["number"] };
+/// A param whose track carries `Rgba`. There is exactly one — `color` on Text
+/// and Color — and it needs none of the numeric arm's widget metadata: a colour
+/// is authored by one swatch, has no step and no bounds beyond the channel
+/// range the mutation layer enforces.
+export interface RgbaParamDescriptor extends ParamDescriptorBase {
+  valueKind: "rgba";
+  fallback: Rgba;
+}
+
+/// Discriminated by `valueKind` so a numeric consumer that reads `fallback`,
+/// `step` or `widgets` has to narrow first, rather than silently handing an
+/// `Rgba` to a number field.
+export type ParamDescriptor = NumberParamDescriptor | RgbaParamDescriptor;
+
+/// A param's track with its value type left open — what a surface handed a
+/// param key rather than a descriptor works in. One `AnimTrack` over the value
+/// union, not a union of two tracks: the generic edits infer a single `T` from
+/// it, so `upsertKeyframe` / `removeKeyframe` stay one call each.
+export type ParamTrack = AnimTrack<number | Rgba>;
+
+export const X: NumberParamDescriptor = { valueKind: "number", paramKey: "x", labelKey: "property_panel.x", fallback: 0, step: 1, widgets: ["number"] };
+export const Y: NumberParamDescriptor = { valueKind: "number", paramKey: "y", labelKey: "property_panel.y", fallback: 0, step: 1, widgets: ["number"] };
+export const SCALE_X: NumberParamDescriptor = { valueKind: "number", paramKey: "scale_x", labelKey: "property_panel.scale_x", fallback: 1, step: 0.05, widgets: ["number"] };
+export const SCALE_Y: NumberParamDescriptor = { valueKind: "number", paramKey: "scale_y", labelKey: "property_panel.scale_y", fallback: 1, step: 0.05, widgets: ["number"] };
 /// The two keys the composite Scale writes — the single home for the pair
 /// (SCALE.fanOutKeys and the timeline's link-aware sink both read it here).
 const SCALE_PAIR = ["scale_x", "scale_y"];
 /// The collapsed "Scale" a linked layer shows instead of SCALE_X + SCALE_Y.
 /// Reads scale_x (linked ⇒ the tracks are twins, either side is truthful);
 /// writes fan out to both axes as one batch.
-export const SCALE: ParamDescriptor = { paramKey: "scale_x", labelKey: "property_panel.scale", fallback: 1, step: 0.05, widgets: ["number"], fanOutKeys: SCALE_PAIR };
-export const ROTATION: ParamDescriptor = { paramKey: "rotation_deg", labelKey: "property_panel.rotation", fallback: 0, step: 1, widgets: ["number"] };
+export const SCALE: NumberParamDescriptor = { valueKind: "number", paramKey: "scale_x", labelKey: "property_panel.scale", fallback: 1, step: 0.05, widgets: ["number"], fanOutKeys: SCALE_PAIR };
+export const ROTATION: NumberParamDescriptor = { valueKind: "number", paramKey: "rotation_deg", labelKey: "property_panel.rotation", fallback: 0, step: 1, widgets: ["number"] };
 /// The transform pivot, NORMALIZED (0.5 = centre, the fallback), not pixels:
 /// that is what the wire stores, and the inspector has no natural size to
 /// convert with — only the renderer's gizmo probe does. Deliberately UNBOUNDED
@@ -48,11 +75,17 @@ export const ROTATION: ParamDescriptor = { paramKey: "rotation_deg", labelKey: "
 /// or is a Text layer (its `x`/`y` IS the anchor point). That asymmetry is
 /// intentional and matches AE — the on-canvas target compensates `x`/`y` so the
 /// picture stays put, the number field does not.
-export const ANCHOR_X: ParamDescriptor = { paramKey: "anchor_x", labelKey: "property_panel.anchor_x", fallback: 0.5, step: 0.01, widgets: ["number"] };
-export const ANCHOR_Y: ParamDescriptor = { paramKey: "anchor_y", labelKey: "property_panel.anchor_y", fallback: 0.5, step: 0.01, widgets: ["number"] };
-export const OPACITY: ParamDescriptor = { paramKey: "opacity", labelKey: "property_panel.opacity", fallback: 1, step: 0.01, min: 0, max: 1, widgets: ["slider", "readout"] };
-export const GAIN_DB: ParamDescriptor = { paramKey: "gain_db", labelKey: "property_panel.gain_db", fallback: 0, step: 0.5, min: -30, max: 20, widgets: ["number"] };
-export const PAN: ParamDescriptor = { paramKey: "pan", labelKey: "property_panel.pan", fallback: 0, step: 0.05, min: -1, max: 1, widgets: ["slider"] };
+export const ANCHOR_X: NumberParamDescriptor = { valueKind: "number", paramKey: "anchor_x", labelKey: "property_panel.anchor_x", fallback: 0.5, step: 0.01, widgets: ["number"] };
+export const ANCHOR_Y: NumberParamDescriptor = { valueKind: "number", paramKey: "anchor_y", labelKey: "property_panel.anchor_y", fallback: 0.5, step: 0.01, widgets: ["number"] };
+export const OPACITY: NumberParamDescriptor = { valueKind: "number", paramKey: "opacity", labelKey: "property_panel.opacity", fallback: 1, step: 0.01, min: 0, max: 1, widgets: ["slider", "readout"] };
+export const GAIN_DB: NumberParamDescriptor = { valueKind: "number", paramKey: "gain_db", labelKey: "property_panel.gain_db", fallback: 0, step: 0.5, min: -30, max: 20, widgets: ["number"] };
+export const PAN: NumberParamDescriptor = { valueKind: "number", paramKey: "pan", labelKey: "property_panel.pan", fallback: 0, step: 0.05, min: -1, max: 1, widgets: ["slider"] };
+/// The two kinds that carry an animatable colour differ only in the value an
+/// unkeyed track falls back to — the same value each kind's factory creates a
+/// layer with, so an unset swatch shows what the layer actually looks like:
+/// white for glyphs, black for a fill.
+export const COLOR_TEXT: RgbaParamDescriptor = { valueKind: "rgba", paramKey: "color", labelKey: "property_panel.color", fallback: { r: 255, g: 255, b: 255, a: 255 } };
+export const COLOR_FILL: RgbaParamDescriptor = { valueKind: "rgba", paramKey: "color", labelKey: "property_panel.color", fallback: { r: 0, g: 0, b: 0, a: 255 } };
 
 /// `scaleLinked` collapses the scale pair into the composite SCALE descriptor —
 /// pass the layer's `scale_linked` so every consumer (inspector rows, timeline
@@ -62,7 +95,6 @@ export function animatableParams(kind: string, scaleLinked = false): ParamDescri
     case "VideoClip":
     case "Motif":
     case "ImageOverlay":
-    case "Text":
     // A Group carries the media-bearing transform set and nothing else: no
     // crop, no speed, no flip (ADR 0052 §4 leaves time-remapping out of v1), so
     // it lands on exactly the same rows as a video clip minus those.
@@ -70,10 +102,22 @@ export function animatableParams(kind: string, scaleLinked = false): ParamDescri
       return scaleLinked
         ? [X, Y, SCALE, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY]
         : [X, Y, SCALE_X, SCALE_Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY];
+    // Text is the transform set plus the glyph colour, which sits after opacity
+    // for the same reason opacity is last: it is the appearance of the layer,
+    // not its placement. The shadow and outline colours are static fields, not
+    // tracks, so they carry no descriptor.
+    case "Text":
+      return scaleLinked
+        ? [X, Y, SCALE, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, COLOR_TEXT]
+        : [X, Y, SCALE_X, SCALE_Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, COLOR_TEXT];
     case "Audio":
       return [GAIN_DB, PAN];
+    // A Color layer's fill is its only animatable param: it has no transform
+    // and no opacity of its own.
+    case "Color":
+      return [COLOR_FILL];
     default:
-      return []; // Color (Rgba only)
+      return [];
   }
 }
 
@@ -99,9 +143,10 @@ export function isHiddenTwinAxis(paramKey: string, params: LayerSummary["params"
 }
 
 /// Read the `AnimTrack<number>` for `paramKey` off the flattened params view.
-/// `null` if the kind doesn't carry that param. Call ONLY with keys from
-/// `animatableParams(kind)`: passing a non-f64 track key (e.g. `"color"`, which
-/// is `AnimTrack<Rgba>`) would return it mis-typed as `AnimTrack<number>`.
+/// `null` if the kind doesn't carry that param. Call ONLY with keys whose
+/// descriptor is `valueKind: "number"`: `"color"` is an `AnimTrack<Rgba>` and
+/// would come back mis-typed. Where the descriptor is in hand, prefer
+/// `readNumberTrack` / `readRgbaTrack`, which make the compiler check that.
 export function readParamTrack(
   params: LayerSummary["params"],
   paramKey: string,
@@ -111,6 +156,24 @@ export function readParamTrack(
     return v as AnimTrack<number>;
   }
   return null;
+}
+
+/// The descriptor-typed reads. Same lookup as `readParamTrack`, with the
+/// descriptor's `valueKind` standing in for the runtime check the flattened
+/// params view cannot give us: the caller has to hold the matching descriptor,
+/// so a colour track cannot reach a number field by naming its key.
+export function readNumberTrack(
+  params: LayerSummary["params"],
+  desc: NumberParamDescriptor,
+): AnimTrack<number> | null {
+  return readParamTrack(params, desc.paramKey);
+}
+
+export function readRgbaTrack(
+  params: LayerSummary["params"],
+  desc: RgbaParamDescriptor,
+): AnimTrack<Rgba> | null {
+  return readParamTrack(params, desc.paramKey) as AnimTrack<Rgba> | null;
 }
 
 // ── Numeric precision policy ───────────────────────────────────────────────

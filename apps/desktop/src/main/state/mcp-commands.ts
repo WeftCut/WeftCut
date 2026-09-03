@@ -163,15 +163,13 @@ export function parseExtrapolate(v: unknown, field: string): Extrapolate {
   return v as Extrapolate
 }
 
-/** A keyframe value on the wire: a number, or the wire `Rgba` for a colour
- *  param. Which one a `param_key` takes is `isColorParam`'s call. */
-export type TrackValue = number | Rgba
+/** A keyframe value on the wire and the rule for which param key takes which —
+ *  both single-sourced in the shared record module so main's lenses and this
+ *  parser cannot disagree. Re-exported for the tests and callers that read them
+ *  from here. */
+import { isColorParam, type TrackValue } from '../../shared/keyframe'
+export { isColorParam, type TrackValue }
 export type AnimatedTrack = Animated<number> | Animated<Rgba>
-
-/** The one place the value type of a param key is decided: `color` — the Text
- *  and Color layers' colour — carries `Rgba`; every other key (transform,
- *  opacity, the audio pair, effect params) carries a number. */
-export function isColorParam(paramKey: string): boolean { return paramKey === 'color' }
 
 const describeValue = (v: unknown): string =>
   v === undefined ? 'nothing' : v === null ? 'null' : Array.isArray(v) ? 'an array' : typeof v === 'object' ? 'an object'

@@ -1319,13 +1319,16 @@ export async function updateRoleFlags(
 }
 
 /// Write a whole keyframe track to a named animatable param on a layer.
-/// `paramKey` is one of the layer kind's animatable f64 fields
-/// (x/y/scale_x/scale_y/rotation_deg/opacity for visual kinds; gain_db/pan for audio).
-/// The actor normalizes (snap/sort/dedupe) and records the edit (one undo step).
+/// `paramKey` is one of the layer kind's animatable fields
+/// (x/y/scale_x/scale_y/rotation_deg/anchor_x/anchor_y/opacity for visual kinds;
+/// gain_db/pan for audio; `color` on Text and Color). The track's value type
+/// follows the key — `color` carries `Rgba`, everything else a number — and the
+/// actor's lens for that key decides, not this signature. The actor normalizes
+/// (snap/sort/dedupe) and records the edit (one undo step).
 export async function updateLayerParamTrack(
   layerId: string,
   paramKey: string,
-  track: AnimTrack<number>,
+  track: AnimTrack<number | Rgba>,
 ): Promise<void> {
   return invoke<void>("update_layer_param_track", { layerId, paramKey, track });
 }
@@ -1335,7 +1338,7 @@ export async function updateLayerParamTrack(
 /// and by the linked-scale fan-out: scale_x + a twin scale_y in one commit).
 export async function updateLayerParamTracks(
   layerId: string,
-  entries: [string, AnimTrack<number>][],
+  entries: [string, AnimTrack<number | Rgba>][],
 ): Promise<void> {
   return invoke<void>("update_layer_param_tracks", { layerId, entries });
 }

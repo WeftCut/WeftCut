@@ -2,10 +2,10 @@ import { useTranslation } from "react-i18next";
 import { KeyframeField } from "../components/KeyframeField";
 import { tryMutate } from "../errors/tryMutate";
 import { updateLayerParamTrack, updateLayerParamTracks, type LayerSummary } from "../ipc";
-import { readParamTrack, type ParamDescriptor } from "../keyframe/descriptors";
+import { readNumberTrack, type NumberParamDescriptor } from "../keyframe/descriptors";
 import { fanOutEntries } from "../keyframe/fanOut";
 
-/// Inspector adapter: maps a (layer, ParamDescriptor) pair onto the shared
+/// Inspector adapter: maps a (layer, NumberParamDescriptor) pair onto the shared
 /// KeyframeField with the stopwatch + the inspector commit path;
 /// widgets/step/min/max come from the descriptor (keyframe/descriptors.ts).
 ///
@@ -21,13 +21,13 @@ export function InspectorAnimField({
   onMutated,
 }: {
   layer: LayerSummary;
-  desc: ParamDescriptor;
+  desc: NumberParamDescriptor;
   tInLayerUs: number;
   playheadInSpan: boolean;
   onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const track = readParamTrack(layer.params, desc.paramKey) ?? { mode: "Static" as const, value: desc.fallback };
+  const track = readNumberTrack(layer.params, desc) ?? { mode: "Static" as const, value: desc.fallback };
   const fanOut = desc.fanOutKeys;
   return (
     <KeyframeField

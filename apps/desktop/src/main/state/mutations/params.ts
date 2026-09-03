@@ -5,6 +5,10 @@ import { authoredExtentPx, authoredValue, quantizeTrack } from '../quantize'
 import { checkTrackLock, applyDurationAutofit, requireLayer } from './helpers'
 import { normalizeKeyframes } from './animated'
 import { solveAutoTangents } from '../../../shared/tangents'
+// `isColorParam` is the ONE home of "which value type this param key
+// carries" — in the shared record module, so this lens layer and the MCP
+// parser read the same predicate and neither depends on the other.
+import { isColorParam, type TrackValue } from '../../../shared/keyframe'
 import type { MotifCatalog } from '../../../shared/motifs/catalog'
 import { resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
 
@@ -407,23 +411,96 @@ export function resolveAnimatedF64(layer: Layer, key: string): Animated<number> 
   return null
 }
 
+/** Colour sibling of `f64Lens`: the ONE animatable colour, `color` on a Text or
+ *  a Color layer.
+ *
+ *  A Text layer's shadow and outline colours are deliberately absent — they are
+ *  plain `Rgba` fields, not `Animated` tracks, so there is no slot for a lens to
+ *  resolve to and no key that reaches one. */
+function rgbaLens(layer: Layer, key: string): { set(v: Animated<Rgba>): void } | null {
+  if (key !== 'color') return null
+  const p = layer.params
+  if (p.kind === 'Text' || p.kind === 'Color') return { set: (v) => { p.color = v } }
+  return null
+}
+
+/** Read sibling of `rgbaLens` — the current `Animated<Rgba>` for a param key, or
+ *  null when this kind has no such track. */
+export function resolveAnimatedRgba(layer: Layer, key: string): Animated<Rgba> | null {
+  if (key !== 'color') return null
+  const p = layer.params
+  return p.kind === 'Text' || p.kind === 'Color' ? p.color : null
+}
+
 /** Locate the layer (LayerNotFound), resolve the param key
  *  (UnknownKeyframeParam), return its t_start_us + current track. Used by the MCP
  *  keyframe tools for timeline-absolute↔layer-local conversion. Read-only (no
- *  commit, no id mint). */
-export function readLayerTrack(p: Project, id: Uuid, paramKey: string): { tStartUs: number; track: Animated<number> } {
+ *  commit, no id mint).
+ *
+ *  The track's value type is decided by the KEY, so the union it answers is
+ *  already narrowed for the caller: `color` reads through `rgbaLens`' sibling,
+ *  every other key through `f64Lens`'. */
+export function readLayerTrack(p: Project, id: Uuid, paramKey: string): { tStartUs: number; track: Animated<TrackValue> } {
   const { layer } = requireLayer(p, id)
-  const track = resolveAnimatedF64(layer, paramKey)
+  const track: Animated<TrackValue> | null = isColorParam(paramKey)
+    ? resolveAnimatedRgba(layer, paramKey)
+    : resolveAnimatedF64(layer, paramKey)
   if (track === null) throw new CommandFailure({ error: 'UnknownKeyframeParam', layer: id, param_key: paramKey })
   return { tStartUs: layer.t_start_us, track }
 }
 
+/** A wire `Rgba`: four INTEGER channels in [0, 255]. Checked structurally
+ *  because a track arrives as untyped JSON from both edges — MCP parses it, the
+ *  renderer does not — and an `{r,g,b}` short of one channel reaches the OkLab
+ *  mix as NaN, which is a colour nothing renders. */
+function isWireRgba(v: unknown): v is Rgba {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false
+  const o = v as Record<string, unknown>
+  return (['r', 'g', 'b', 'a'] as const).every((ch) => {
+    const n = o[ch]
+    return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= 255
+  })
+}
+
+/** How a rejected value reads back to whoever sent it. The client drops
+ *  `error.data`, so the detail line is the only channel a caller can correct
+ *  itself from — name what arrived, not just that it was wrong. */
+function describeTrackValue(v: unknown): string {
+  if (v === null) return 'null'
+  if (Array.isArray(v)) return 'an array'
+  if (typeof v === 'object') return isWireRgba(v) ? 'an {r,g,b,a} colour' : 'an object'
+  return typeof v === 'number' && !Number.isFinite(v) ? 'a non-finite number' : `a ${typeof v}`
+}
+
+/** Refuse a track whose values are not the type its param key takes. The KEY
+ *  decides — `color` carries `{r,g,b,a}`, every other param a number — so a
+ *  caller that sent the wrong one is told which type the param it named takes,
+ *  rather than having the payload silently pick a lens for it. */
+function checkTrackValueType(paramKey: string, track: Animated<TrackValue>): void {
+  const wantRgba = isColorParam(paramKey)
+  const values = track.mode === 'Static' ? [track.value] : track.value.map((k) => k.value)
+  for (const v of values) {
+    if (wantRgba ? isWireRgba(v) : typeof v === 'number' && Number.isFinite(v)) continue
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'track',
+      detail: wantRgba
+        ? `param '${paramKey}' takes {r,g,b,a} values (integers 0..255), got ${describeTrackValue(v)}`
+        : `param '${paramKey}' takes number values, got ${describeTrackValue(v)}` })
+  }
+}
+
 /** update_layer_param_track (mutation half): lock-check →
- *  normalize (EmptyKeyframeTrack on empty) → locate → resolve, lazily inserting
- *  Static(0) for a missing slot of an EXISTING effect → re-resolve
- *  (UnknownKeyframeParam) → assign. NO autofit (a keyframe write never moves
- *  t_start/t_end). Keyframe param-tracks are Animated<f64> only. */
-export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: string, track: Animated<number>): void {
+ *  normalize (EmptyKeyframeTrack on empty) → value-type check → locate →
+ *  resolve, lazily inserting Static(0) for a missing slot of an EXISTING effect
+ *  → re-resolve (UnknownKeyframeParam) → assign. NO autofit (a keyframe write
+ *  never moves t_start/t_end).
+ *
+ *  Two value types, picked by the param key: `color` lands through `rgbaLens`,
+ *  every other key through `f64Lens`. Everything between — snap, sort, dedupe,
+ *  the tangent solve — is generic over the value; only quantization is
+ *  numbers-only (a channel is already an integer), and the Auto solve runs with
+ *  no scalar projection for colour, which sends its Auto sides to the identity
+ *  coordinates. */
+export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: string, track: Animated<TrackValue>): void {
   const { comp: c, layer } = checkTrackLock(p, id) // LayerNotFound / TrackLocked — BEFORE normalize
   // Located BEFORE normalize because the write-time grid depends on the layer's
   // kind: an audio envelope — gain_db, pan, and the audio-role automation —
@@ -438,23 +515,41 @@ export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: strin
   if (!normalizeKeyframes(track, (t) => snapOnGrid(t, gridForLayerKind(layer.params.kind, c.fps)))) {
     throw new CommandFailure({ error: 'EmptyKeyframeTrack', layer: id, param_key: paramKey })
   }
-  // Values, after the times. Here rather than beside `lens.set` because the lazy
-  // insert below WRITES to the project, and a refusal has to leave the project
-  // byte-identical — the same ordering rule applyParamsPatch's text-box mode
+  // Values, after the times. Both value steps — the type check here and the
+  // range quantization below — run before `lens.set`, because the lazy insert
+  // further down WRITES to the project and a refusal has to leave the project
+  // byte-identical, the same ordering rule applyParamsPatch's text-box mode
   // check spells out.
   //
-  // Running before the key is known valid is safe: an unrecognised key falls to
-  // the effect-param fallback, which carries no range and so cannot refuse, and
-  // `f64Lens` still answers UnknownKeyframeParam for it two lines down. Only keys
-  // that ARE in the table carry a range, and those are exactly the valid ones.
-  quantizeTrack(paramKey, track)
+  // Running before the key is known valid is safe: an unrecognised key is not a
+  // colour key, so it takes the scalar path, where the effect-param fallback
+  // carries no range and cannot refuse — and `f64Lens` still answers
+  // UnknownKeyframeParam for it further down. Only keys that ARE in the table
+  // carry a range, and those are exactly the valid ones.
+  checkTrackValueType(paramKey, track)
+  if (isColorParam(paramKey)) {
+    // `track` holds `Rgba` values — `checkTrackValueType` just proved it, and the
+    // narrowing is by param key, which no control-flow analysis can follow.
+    const rgba = track as Animated<Rgba>
+    // No `quantizeTrack`: a channel is already an integer, and the precision
+    // table is keyed by f64 param. The Auto solve runs with NO scalar
+    // projection — a colour has no single axis to take a slope on — which sends
+    // every Auto side to the identity coordinates and skips the Smooth rule.
+    if (rgba.mode === 'Keyframed') rgba.value = solveAutoTangents(rgba.value, null)
+    const colorLens = rgbaLens(layer, paramKey)
+    if (!colorLens) throw new CommandFailure({ error: 'UnknownKeyframeParam', layer: id, param_key: paramKey })
+    colorLens.set(rgba)
+    return
+  }
+  const scalar = track as Animated<number>
+  quantizeTrack(paramKey, scalar)
   // Tangents, after the values: every Auto side and every Smooth pair of Free
   // sides is solved HERE — after snap / sort / dedupe / quantize, so the stored
   // numbers describe the stored keys — and nowhere else. The engine never
   // solves, so preview, export, the curve graph and get_param_track all read
   // these same explicit coordinates; trim / split / move carry them through
   // unchanged, which is what keeps motion byte-identical across a cut.
-  if (track.mode === 'Keyframed') track.value = solveAutoTangents(track.value, (v) => v)
+  if (scalar.mode === 'Keyframed') scalar.value = solveAutoTangents(scalar.value, (v) => v)
   if (f64Lens(layer, paramKey) === null) {
     const eff = parseEffectParamKey(paramKey)
     if (eff) {
@@ -470,5 +565,5 @@ export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: strin
   }
   const lens = f64Lens(layer, paramKey)
   if (!lens) throw new CommandFailure({ error: 'UnknownKeyframeParam', layer: id, param_key: paramKey })
-  lens.set(track)
+  lens.set(scalar)
 }

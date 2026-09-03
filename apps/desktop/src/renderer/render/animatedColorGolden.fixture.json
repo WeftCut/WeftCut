@@ -167,6 +167,49 @@
       ]
     },
     {
+      "name": "eased_then_linear_three_keys",
+      "comment": "red -> green -> blue over [0, 1 s, 2 s]. The FIRST segment is the CSS ease_in_out cubic (out = (0.42, 0), in = (0.58, 1)); the second is Linear. That cubic is point-symmetric about (0.5, 0.5), so its eased progress at the segment's midpoint is exactly 0.5 -- which is why t = 0.5 s expects the SAME red/green OkLab midpoint the linear `red_to_green` case carries, and needs no new external anchor. The three key times pin the endpoints, where a segment class must never move the value.",
+      "track": {
+        "mode": "Keyframed",
+        "value": [
+          {
+            "id": "00000000-0000-7000-8000-000000000001",
+            "t_us": 0,
+            "value": { "r": 255, "g": 0, "b": 0, "a": 255 },
+            "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" },
+            "out": { "x": 0.42, "y": 0, "mode": "Free" },
+            "continuity": "Broken",
+            "segment": { "kind": "Spline" }
+          },
+          {
+            "id": "00000000-0000-7000-8000-000000000002",
+            "t_us": 1000000,
+            "value": { "r": 0, "g": 255, "b": 0, "a": 255 },
+            "in": { "x": 0.58, "y": 1, "mode": "Free" },
+            "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" },
+            "continuity": "Broken",
+            "segment": { "kind": "Linear" }
+          },
+          {
+            "id": "00000000-0000-7000-8000-000000000003",
+            "t_us": 2000000,
+            "value": { "r": 0, "g": 0, "b": 255, "a": 255 },
+            "in": { "x": 0.6666666666666666, "y": 0.6666666666666666, "mode": "Free" },
+            "out": { "x": 0.3333333333333333, "y": 0.3333333333333333, "mode": "Free" },
+            "continuity": "Broken",
+            "segment": { "kind": "Linear" }
+          }
+        ],
+        "extrapolate": { "before": "Hold", "after": "Hold" }
+      },
+      "samples": [
+        { "t_us": 0, "expect": { "r": 255, "g": 0, "b": 0, "a": 255 } },
+        { "t_us": 500000, "expect": { "r": 208, "g": 168, "b": 0, "a": 255 } },
+        { "t_us": 1000000, "expect": { "r": 0, "g": 255, "b": 0, "a": 255 } },
+        { "t_us": 2000000, "expect": { "r": 0, "g": 0, "b": 255, "a": 255 } }
+      ]
+    },
+    {
       "name": "offset_black_to_white_clamps_at_u8",
       "comment": "Black → white over [0, 1 s], Offset on both sides. 2.5 s = period 2, u = 0.5 s: the mid gray plus 2·(white − black) in premultiplied OkLab has L ≈ 2.5 → every channel clamps to 255. −0.5 s = period −1, u = 0.5 s: L ≈ 0.5 − 1 → clamps to 0. Alpha is 1 throughout (1 + n·0).",
       "track": {

@@ -1,4 +1,5 @@
-// Pure read-only queries over an AnimTrack<number> for the keyframe navigator.
+// Pure read-only queries over an AnimTrack for the keyframe navigator, generic
+// over the value type because every one of them reads `t_us` alone.
 // Distinct from the transforms in `edits.ts` (which return new tracks). Times
 // are layer-local microseconds; the caller pre-snaps to the frame grid. Static
 // tracks have no keys, so every query returns null for them.
@@ -6,16 +7,16 @@ import type { AnimTrack, Keyframe, LayerSummary, TrackSummary } from "../ipc";
 import { isHiddenTwinAxis, readParamTrack } from "./descriptors";
 
 /// The key whose t_us exactly equals tUs (caller pre-snaps), or null.
-export function keyAt(track: AnimTrack<number>, tUs: number): Keyframe<number> | null {
+export function keyAt<T>(track: AnimTrack<T>, tUs: number): Keyframe<T> | null {
   if (track.mode !== "Keyframed") return null;
   return track.value.find((k) => k.t_us === tUs) ?? null;
 }
 
 /// The latest key strictly before tUs (strict `<` so sitting on a key steps
 /// off it), or null. Does not assume the keys are sorted.
-export function prevKeyAt(track: AnimTrack<number>, tUs: number): Keyframe<number> | null {
+export function prevKeyAt<T>(track: AnimTrack<T>, tUs: number): Keyframe<T> | null {
   if (track.mode !== "Keyframed") return null;
-  let best: Keyframe<number> | null = null;
+  let best: Keyframe<T> | null = null;
   for (const k of track.value) {
     if (k.t_us < tUs && (best === null || k.t_us > best.t_us)) best = k;
   }
@@ -23,9 +24,9 @@ export function prevKeyAt(track: AnimTrack<number>, tUs: number): Keyframe<numbe
 }
 
 /// The earliest key strictly after tUs, or null.
-export function nextKeyAt(track: AnimTrack<number>, tUs: number): Keyframe<number> | null {
+export function nextKeyAt<T>(track: AnimTrack<T>, tUs: number): Keyframe<T> | null {
   if (track.mode !== "Keyframed") return null;
-  let best: Keyframe<number> | null = null;
+  let best: Keyframe<T> | null = null;
   for (const k of track.value) {
     if (k.t_us > tUs && (best === null || k.t_us < best.t_us)) best = k;
   }

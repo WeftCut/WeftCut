@@ -36,7 +36,7 @@ import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, ty
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 
@@ -1092,8 +1092,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // and scale_y entries, and a per-entry check would unlink every linked
         // fan-out write.
         case 'update_layer_params': commit(HISTORY_SUMMARY.layerUpdateParams, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { applyUpdateLayerParams(d, a.layer as Uuid, a.patch as LayerParamsPatch, motifCatalog); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
-        case 'update_layer_param_track': commit(HISTORY_SUMMARY.layerKeyframeParam, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { applyUpdateLayerParamTrack(d, a.layer as Uuid, a.param_key as string, a.track as Animated<number>); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
-        case 'update_layer_param_tracks': commit(HISTORY_SUMMARY.layerKeyframeParams, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { for (const [k, t] of a.entries as [string, Animated<number>][]) applyUpdateLayerParamTrack(d, a.layer as Uuid, k, t); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
+        case 'update_layer_param_track': commit(HISTORY_SUMMARY.layerKeyframeParam, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { applyUpdateLayerParamTrack(d, a.layer as Uuid, a.param_key as string, a.track as Animated<TrackValue>); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
+        case 'update_layer_param_tracks': commit(HISTORY_SUMMARY.layerKeyframeParams, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { for (const [k, t] of a.entries as [string, Animated<TrackValue>][]) applyUpdateLayerParamTrack(d, a.layer as Uuid, k, t); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
         // The cross-LAYER form of the batch above, and the keyframe marquee's op:
         // one sub-lane row draws the diamonds of every layer on its track, so a
         // swept selection spans layers and the per-layer form would spend an undo
@@ -1101,7 +1101,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // cannot name a multi-layer change. Empty `entries` leaves the draft
         // untouched, so commit's no-op guard records nothing.
         case 'update_param_tracks_multi': {
-          const entries = (a.entries as [Uuid, string, Animated<number>][]) ?? []
+          const entries = (a.entries as [Uuid, string, Animated<TrackValue>][]) ?? []
           const layers = [...new Set(entries.map(([layer]) => layer))]
           commit(HISTORY_SUMMARY.layerKeyframeParamsMulti, layerRefs(layers), { kind: 'Coarse' }, (d) => {
             for (const [layer, key, track] of entries) applyUpdateLayerParamTrack(d, layer, key, track)
@@ -1611,12 +1611,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const p = mcpDef('set_keyframe').parseDedicated!(a)
           const layer = p.layer as string
           const paramKey = p.param_key as string
-          // `value` is parsed by param_key (a colour for `color`); readLayerTrack
-          // resolves scalar params only, so a colour param is refused there as
-          // UnknownKeyframeParam and the scalar cast below never sees an Rgba.
+          // `value` and the track it lands in are both typed by param_key — a
+          // colour for `color`, a number everywhere else — so the pair arrives
+          // consistent and the write-time check in the mutation half is what
+          // refuses a caller that mixed them.
           const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
           const easing = p.interp as Interpolation | undefined
-          const next = upsertKeyframe(track, (p.t_us as number) - tStartUs, p.value as number, easing, idGen)
+          const next = upsertKeyframe(track, (p.t_us as number) - tStartUs, p.value as TrackValue, easing, idGen)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
@@ -1686,7 +1687,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const paramKey = p.param_key as string
           const { track } = readLayerTrack(current(), layer, paramKey)
           if (track.mode === 'Static') return { ok: true, result: toolEmpty() } // no-op, no commit
-          const value = (p.value as number | undefined) ?? track.value[0]?.value ?? 0
+          const value = (p.value as TrackValue | undefined) ?? track.value[0]?.value ?? 0
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: { mode: 'Static', value } })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
@@ -1696,8 +1697,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const layer = p.layer as string
           const paramKey = p.param_key as string
           const { tStartUs } = readLayerTrack(current(), layer, paramKey) // validate layer+param; current discarded
-          const input = p.track as Animated<number>
-          const shifted: Animated<number> = input.mode === 'Keyframed'
+          const input = p.track as Animated<TrackValue>
+          const shifted: Animated<TrackValue> = input.mode === 'Keyframed'
             ? { ...input, value: input.value.map((k) => ({ ...k, t_us: k.t_us - tStartUs })) }
             : input
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: shifted })
