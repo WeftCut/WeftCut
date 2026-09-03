@@ -16,7 +16,11 @@ import {
   type Tangent,
 } from "./keyframe";
 
-const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+/// `<=` / `>=` rather than `<` / `>` so a solved `-0` (a zero slope over a
+/// falling segment) is stored as `0`: the two are `===`-equal but not
+/// `Object.is`-equal, and a stored coordinate must survive a JSON round trip
+/// and an `Object.is` comparison unchanged. Same rule in the Rust twin.
+const clamp01 = (v: number) => (v <= 0 ? 0 : v >= 1 ? 1 : v);
 
 // ---------------------------------------------------------------------------
 // Side slopes, in value per microsecond over the side's own segment. The four

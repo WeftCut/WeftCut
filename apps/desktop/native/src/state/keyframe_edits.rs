@@ -418,8 +418,17 @@ pub fn set_extrapolation(
     )
 }
 
+/// `<=` / `>=` rather than `clamp` so a solved `-0.0` (a zero slope over a falling
+/// segment) is stored as `0.0`; the TS twin applies the same rule so both sides
+/// serialize and compare the coordinate identically.
 fn clamp01(v: f64) -> f64 {
-    v.clamp(0.0, 1.0)
+    if v <= 0.0 {
+        0.0
+    } else if v >= 1.0 {
+        1.0
+    } else {
+        v
+    }
 }
 
 // ---------------------------------------------------------------------------
