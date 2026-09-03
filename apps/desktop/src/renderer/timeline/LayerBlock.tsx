@@ -32,7 +32,7 @@ import { useLayerBakePhase } from "./motifBakeStatusStore";
 import { useGroupMarkerCount } from "./groupMarkerCount";
 import { formatSyncOffset } from "./audioSlip";
 import { useAudioSyncOffset } from "./audioSyncOffsetStore";
-import type { Extrapolate, Keyframe, LayerSummary } from "../ipc";
+import type { Extrapolate, LayerSummary } from "../ipc";
 import {
   useEditingGroupId,
   useEditingLayerId,
@@ -57,7 +57,7 @@ import {
   extrapolateLabelKey,
   interpGlyphClass,
 } from "../keyframe/curve";
-import { useNumberTrackPreview } from "../keyframe/easingPreviewStore";
+import { useTrackPreview } from "../keyframe/easingPreviewStore";
 import { useKeyframeDrag } from "../keyframe/useKeyframeDrag";
 import { EasingMenu } from "./EasingMenu";
 import { useKeyframeBatchCommit } from "./keyframeBatch";
@@ -470,7 +470,9 @@ export function LayerBlock({
   const isKfSelected = useIsKeyframeSelected(layer.id, focusedParam);
   // A gesture's preview of the focused property — a menu row armed over the
   // selection, a retime in flight — drawn in place of the committed track.
-  const kfPreview = useNumberTrackPreview(layer.id, focusedParam);
+  // Read untyped in the value: the row draws times and segment classes only,
+  // so a colour preview moves its diamonds the same as a numeric one.
+  const kfPreview = useTrackPreview(layer.id, focusedParam);
   const commitKeyframeBatch = useKeyframeBatchCommit();
   const beginKeyframeDrag = useKeyframeDrag();
   const [interpMenu, setInterpMenu] = useState<{ x: number; y: number; kfId: string } | null>(null);
@@ -769,8 +771,8 @@ export function LayerBlock({
     const track = kfPreview ?? readParamTrack(layer.params, focusedParam);
     if (!track || track.mode !== "Keyframed") return none;
     // collapsed mode hides out-of-range keys (kept in data)
-    const inRange = (k: Keyframe<number>) => k.t_us >= 0 && k.t_us <= clipDurationUs;
-    const xOf = (k: Keyframe<number>) => keyframeXWithinClip(k.t_us, clipDurationUs, layerWidthPx);
+    const inRange = (k: { t_us: number }) => k.t_us >= 0 && k.t_us <= clipDurationUs;
+    const xOf = (k: { t_us: number }) => keyframeXWithinClip(k.t_us, clipDurationUs, layerWidthPx);
     const diamonds = track.value.flatMap((k) =>
       inRange(k) ? [{ id: k.id, x: xOf(k), glyph: interpGlyphClass(k.segment.kind) }] : [],
     );

@@ -17,6 +17,7 @@ import type {
   LayerSummary,
   MarkerSummary,
   MediaSummary,
+  Rgba,
   TrackSummary,
 } from "../ipc";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
@@ -55,6 +56,7 @@ import {
   setKeyframeFocus,
   useKeyframeFocusStore,
 } from "../keyframe/focusStore";
+import { clearTrackPreview, setTrackPreview } from "../keyframe/easingPreviewStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "../state/playheadStore";
 import {
   setTimelineScrollLeftPx,
@@ -149,6 +151,7 @@ vi.mock("../ipc/compositionScoped", () => ({
 // gesture in flight would hand it to the next one.
 afterEach(() => {
   useLayerDragStore.getState().end();
+  clearTrackPreview();
 });
 
 const staticNum = (value: number) => ({ mode: "Static" as const, value });
@@ -4422,5 +4425,73 @@ describe("Timeline move promise", () => {
       ]),
     );
     await waitFor(() => expect(blockLeftPx()).toBe(atUs(1_000_000)));
+  });
+});
+
+describe("collapsed keyframe row", () => {
+  afterEach(() => {
+    cleanup();
+    clearKeyframeFocus();
+    clearLayerSelection();
+  });
+
+  const RED: Rgba = { r: 255, g: 0, b: 0, a: 255 };
+  const GREEN: Rgba = { r: 0, g: 255, b: 0, a: 255 };
+  const colorKey = (id: string, tUs: number, value: Rgba) => ({
+    id,
+    t_us: tUs,
+    value,
+    in: { x: 2 / 3, y: 2 / 3, mode: "Free" as const },
+    out: { x: 1 / 3, y: 1 / 3, mode: "Free" as const },
+    continuity: "Broken" as const,
+    segment: { kind: "Linear" as const },
+  });
+  const colorTrack = (keys: ReturnType<typeof colorKey>[]): AnimTrack<Rgba> => ({
+    mode: "Keyframed",
+    extrapolate: { before: "Hold", after: "Hold" },
+    value: keys,
+  });
+
+  /// A Color layer two seconds long: its fill is its only track, so the focused
+  /// property is a colour and the chip's diamonds come from an `Rgba` track.
+  const fillTrack: TrackSummary = {
+    ...track,
+    layers: [
+      {
+        ...tinyVideoLayer,
+        id: "fill-1",
+        kind: "Color",
+        t_end_us: 2_000_000,
+        params: {
+          kind: "Color",
+          color: colorTrack([colorKey("c0", 0, RED), colorKey("c1", 1_000_000, GREEN)]),
+        } as unknown as LayerSummary["params"],
+      },
+    ],
+  };
+
+  const diamondLeft = (container: HTMLElement, kfId: string): number =>
+    parseFloat(
+      container.querySelector<HTMLElement>(`.kf-diamond[data-kf-id="${kfId}"]`)!.style.left,
+    );
+
+  it("draws an armed COLOUR preview in place of the committed colour track", () => {
+    const { container } = renderTimeline({ tracks: [fillTrack], selectedLayerId: "fill-1" });
+    act(() => setKeyframeFocus("fill-1", "color"));
+    const committed = diamondLeft(container, "c1");
+    expect(committed).toBeGreaterThan(0);
+
+    // The later key moved from half-way to three-quarters of the clip, so its
+    // diamond sits 1.5× as far along the chip, whatever the zoom.
+    act(() =>
+      setTrackPreview(
+        "fill-1",
+        "color",
+        colorTrack([colorKey("c0", 0, RED), colorKey("c1", 1_500_000, GREEN)]),
+      ),
+    );
+
+    expect(diamondLeft(container, "c1")).toBeCloseTo(committed * 1.5, 3);
+    expect(diamondLeft(container, "c0")).toBe(0);
   });
 });
