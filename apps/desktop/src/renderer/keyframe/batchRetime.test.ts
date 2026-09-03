@@ -8,7 +8,7 @@ import {
   type Grid,
   type RetimeGroup,
 } from "./batchRetime";
-import type { AnimTrack, Keyframe, LayerSummary, TrackSummary } from "../ipc";
+import type { AnimTrack, Keyframe, LayerSummary, Rgba, TrackSummary } from "../ipc";
 import type { ParamTrackEntry } from "../timeline/keyframeBatch";
 
 type KeyframedTrack = Extract<AnimTrack<number>, { mode: "Keyframed" }>;
@@ -40,7 +40,7 @@ const keyed = (keys: Keyframe<number>[]): KeyframedTrack => ({
   value: keys,
 });
 
-function group(over: Partial<RetimeGroup> & { track: KeyframedTrack }): RetimeGroup {
+function group(over: Partial<RetimeGroup> & { track: RetimeGroup["track"] }): RetimeGroup {
   return {
     layerId: "L1",
     paramKey: "opacity",
@@ -288,5 +288,55 @@ describe("scaleSelection", () => {
   it("commits nothing when the clamped factor leaves every key where it was", () => {
     const g = group({ track: keyed([kf("a", 0), kf("b", frames(10))]) });
     expect(scaleSelection([g], 0, 1, GRID).entries).toEqual([]);
+  });
+});
+
+/// Both gestures read a key's time and never its value, so a colour group is
+/// retimed by the same arithmetic as a numeric one — which is what makes one
+/// selection across an `opacity` and a `color` track a single gesture.
+describe("colour groups", () => {
+  const RED: Rgba = { r: 255, g: 0, b: 0, a: 255 };
+  const GREEN: Rgba = { r: 0, g: 255, b: 0, a: 255 };
+  const colorKf = (id: string, tUs: number, value: Rgba): Keyframe<Rgba> => ({
+    ...kf(id, tUs),
+    value,
+  });
+  const colorKeyed = (keys: Keyframe<Rgba>[]): Extract<AnimTrack<Rgba>, { mode: "Keyframed" }> => ({
+    mode: "Keyframed",
+    extrapolate: { before: "Hold", after: "Hold" },
+    value: keys,
+  });
+  const valuesOf = (entry: ParamTrackEntry): unknown[] =>
+    entry[2].mode === "Keyframed" ? entry[2].value.map((k) => k.value) : [];
+
+  it("translates an opacity group and a colour group by one delta, values untouched", () => {
+    const opacity = group({ track: keyed([kf("o", frames(10), 0.5)]) });
+    const colour = group({
+      layerId: "text",
+      paramKey: "color",
+      track: colorKeyed([colorKf("c", frames(10), RED), colorKf("d", frames(20), GREEN)]),
+    });
+    const { entries, appliedDeltaUs } = translateSelection([opacity, colour], frames(5), GRID);
+
+    expect(appliedDeltaUs).toBe(frames(5));
+    expect(timesOf(entries[0]!)).toEqual([frames(10) + frames(5)]);
+    expect(timesOf(entries[1]!)).toEqual([frames(10) + frames(5), frames(20) + frames(5)]);
+    expect(valuesOf(entries[0]!)).toEqual([0.5]);
+    expect(valuesOf(entries[1]!)).toEqual([RED, GREEN]);
+  });
+
+  it("scales both groups about one anchor", () => {
+    const opacity = group({ track: keyed([kf("o0", 0), kf("o1", frames(10))]) });
+    const colour = group({
+      layerId: "text",
+      paramKey: "color",
+      track: colorKeyed([colorKf("c0", 0, RED), colorKf("c1", frames(10), GREEN)]),
+    });
+    const { entries, appliedK } = scaleSelection([opacity, colour], 0, 2, GRID);
+
+    expect(appliedK).toBe(2);
+    expect(timesOf(entries[0]!)).toEqual([0, frames(20)]);
+    expect(timesOf(entries[1]!)).toEqual([0, frames(20)]);
+    expect(valuesOf(entries[1]!)).toEqual([RED, GREEN]);
   });
 });

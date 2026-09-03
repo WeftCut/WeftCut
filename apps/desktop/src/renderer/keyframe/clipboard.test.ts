@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { keyframeSnapshot, pasteEntriesFor, type KeyframeClipGroup } from "./clipboard";
-import type { AnimTrack, Keyframe, LayerSummary, TrackSummary } from "../ipc";
+import type { AnimTrack, Keyframe, LayerSummary, Rgba, TrackSummary } from "../ipc";
 import type { ParamTrackEntry } from "../timeline/keyframeBatch";
 
 type Keyframed = Extract<AnimTrack<number>, { mode: "Keyframed" }>;
@@ -274,5 +274,78 @@ describe("pasteEntriesFor", () => {
     });
 
     expect(entries.map((e) => e[1])).toEqual(["scale_x"]);
+  });
+});
+
+/// The snapshot and the paste read a key's shape and the target kind's param
+/// list, never the value type — so a copied colour lands wherever `color` is
+/// carried and nowhere else.
+describe("colour keyframes", () => {
+  const RED: Rgba = { r: 255, g: 0, b: 0, a: 255 };
+  const GREEN: Rgba = { r: 0, g: 255, b: 0, a: 255 };
+  const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
+  const colorKf = (id: string, tUs: number, value: Rgba): Keyframe<Rgba> => ({
+    ...kf(id, tUs),
+    value,
+  });
+  const colorKeyed = (keys: Keyframe<Rgba>[]): AnimTrack<Rgba> => ({
+    mode: "Keyframed",
+    extrapolate: { before: "Hold", after: "Hold" },
+    value: keys,
+  });
+  /// A Color layer's fill, red at 0.2 s and green at 0.7 s.
+  const fill = layer(
+    "fill",
+    { color: colorKeyed([colorKf("c0", 200_000, RED), colorKf("c1", 700_000, GREEN)]) },
+    { kind: "Color" },
+  );
+  const copiedFill = () =>
+    keyframeSnapshot({
+      selected: [
+        { layerId: "fill", paramKey: "color", kfId: "c0" },
+        { layerId: "fill", paramKey: "color", kfId: "c1" },
+      ],
+      tracks: [trackOf([fill])],
+    });
+
+  it("snapshots a colour group rebased to its earliest key, values intact", () => {
+    const groups = copiedFill();
+
+    expect(groups.map((g) => g.paramKey)).toEqual(["color"]);
+    expect(groups[0]!.keys.map((k) => [k.t_us, k.value])).toEqual([
+      [0, RED],
+      [500_000, GREEN],
+    ]);
+  });
+
+  it("lifts a Text layer's Static colour to the pasted colour keys", () => {
+    const text = layer("text", { color: { mode: "Static", value: WHITE } }, { kind: "Text" });
+    const { entries, skipped } = pasteEntriesFor({
+      groups: copiedFill(),
+      layers: [text],
+      atUs: 1_000_000,
+      mkId: idGen(),
+    });
+
+    expect(skipped).toEqual([]);
+    expect(entries.map((e) => [e[0], e[1]])).toEqual([["text", "color"]]);
+    const track = entries[0]![2];
+    expect(track.mode === "Keyframed" && track.value.map((k) => [k.t_us, k.value])).toEqual([
+      [1_000_000, RED],
+      [1_500_000, GREEN],
+    ]);
+  });
+
+  it("skips colour on a kind that carries no colour track, and names it", () => {
+    const video = layer("V", { opacity: { mode: "Static", value: 1 } });
+    const { entries, skipped } = pasteEntriesFor({
+      groups: copiedFill(),
+      layers: [video],
+      atUs: 0,
+      mkId: idGen(),
+    });
+
+    expect(skipped).toEqual(["color"]);
+    expect(entries).toEqual([]);
   });
 });
