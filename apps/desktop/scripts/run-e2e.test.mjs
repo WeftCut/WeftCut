@@ -324,6 +324,21 @@ test('decode gates stay off under CI and honor an explicit opt-out', () => {
   assert.equal(noAddon.env.WEFTCUT_DECODE_E2E, undefined)
 })
 
+// electron-ci.yml's `decode_e2e` dispatch input is wired to this variable
+// precisely because the preflight cannot be argued into the gates: it returns
+// before defaulting when CI is set, so an explicit opt-IN has to pass through
+// untouched for the dispatch to run them at all. Asserted rather than assumed —
+// the opt-out above tests the same branch, but only the value that agrees with
+// the CI default, so it would still pass if the preflight overwrote a '1'.
+test('an explicit decode opt-IN survives CI, which is what the dispatch input rides on', () => {
+  const root = makeRoot()
+  const { env } = prepareE2EEnv(
+    { DISPLAY: ':0', CI: 'true', WEFTCUT_DECODE_E2E: '1' },
+    LINUX(root),
+  )
+  assert.equal(env.WEFTCUT_DECODE_E2E, '1')
+})
+
 test('a missing or flag-less build is a fatal preflight error', () => {
   const noOut = prepareE2EEnv({ DISPLAY: ':0' }, LINUX(makeRoot({ out: false })))
   assert.equal(noOut.errors.length, 1)

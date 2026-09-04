@@ -27,6 +27,12 @@ on:
         description: 'Run the unsigned packaging step'
         type: boolean
         default: true
+      # The one switch `e2e_args` cannot reach: the decode gates are selected by
+      # an environment variable, not by an argument (see the e2e step's env).
+      decode_e2e:
+        description: 'Run the WEFTCUT_DECODE_E2E decode gates (local-only by default)'
+        type: boolean
+        default: false
 
 # Least-privilege token: this workflow only reads the repo, builds, tests, and
 # uploads artifacts (the artifact API uses its own runtime token) — it never
@@ -398,6 +404,20 @@ jobs:
           # (worst measured 12/255). See e2e/README.md §SSIM floors.
           WEFTCUT_E2E_SSIM_FLOOR: ${{ matrix.os != 'macos-latest' && '0.62' || '' }}
           WEFTCUT_E2E_COLOR_FAITHFUL_MAX: ${{ matrix.os != 'macos-latest' && '16' || '' }}
+          # ~17 decode gates (decode-engine, export-native-wedges,
+          # export-prores-fidelity) are local-only, and this is the ONLY way to
+          # reach them from CI: run-e2e.mjs's preflight early-returns on `CI`
+          # (`scripts/run-e2e.mjs`, `'WEFTCUT_DECODE_E2E' in env || env.CI`), so
+          # no `e2e_args` value can turn them on — but that same `in env` test
+          # means an explicit value set HERE survives the preflight untouched.
+          # Off by default, including on a push: whether a GPU-less 4-vCPU
+          # runner holds them steady is an open measurement (#15 layer 1), and
+          # `decode-engine`'s ProRes-unsupported card is already known to be
+          # load-sensitive. Pair it with `e2e_args` naming the three spec files —
+          # a non-empty `e2e_args` also collapses the matrix to the single `all`
+          # slice, which is what keeps the measurement off the 4-worker
+          # contention that already produced one false product defect there.
+          WEFTCUT_DECODE_E2E: ${{ github.event_name == 'workflow_dispatch' && inputs.decode_e2e && '1' || '' }}
           E2E_ARGS: ${{ inputs.e2e_args }}
           PART: ${{ matrix.part }}
           # Not `OS`: that name is already Windows's own (`Windows_NT`), and this
