@@ -47,6 +47,10 @@ vi.mock("../ipc", () => ({
   logEmit: (input: LogEntryInput) => mocks.logEmit(input),
 }));
 
+import {
+  currentSelection,
+  setLayerSelection,
+} from "../state/selectionStore";
 import { shotRows, type ShotRow } from "./shotRows";
 import {
   applyShotVerb,
@@ -493,5 +497,85 @@ describe("which verbs a reviewed list can run", () => {
         "shots_panel.apply_running",
       );
     }
+  });
+});
+
+/// Which segment the user is left holding. The Panel's subject follows the
+/// selection, so this is also what it reviews next.
+describe("the selection an apply leaves behind", () => {
+  beforeEach(() => {
+    setLayerSelection(LAYER_ID, [LAYER_ID]);
+  });
+
+  it("adopts the first survivor when the discard threw the reviewed segment away", async () => {
+    mocks.applyShotCuts.mockResolvedValue({
+      mode: "discard",
+      layer_ids: ["seg-b", "seg-c"],
+    });
+
+    await applyShotVerb("discard", rowsWith(NONE, new Set([0])), "clip.mp4");
+    await settle();
+
+    // Off the answer, before any summary lands: `retainLayerSelection` then
+    // finds the survivor in place rather than an id it has to drop.
+    expect(currentSelection()).toEqual({
+      kind: "layers",
+      primary: "seg-b",
+      ids: new Set(["seg-b"]),
+    });
+  });
+
+  it("leaves the selection alone when the reviewed segment survived the discard", async () => {
+    mocks.applyShotCuts.mockResolvedValue({
+      mode: "discard",
+      layer_ids: [LAYER_ID, "seg-c"],
+    });
+
+    await applyShotVerb(
+      "discard",
+      rowsWith(NONE, new Set([2_000_000])),
+      "clip.mp4",
+    );
+    await settle();
+
+    expect(currentSelection()).toEqual({
+      kind: "layers",
+      primary: LAYER_ID,
+      ids: new Set([LAYER_ID]),
+    });
+  });
+
+  it("leaves the selection alone after a split, whose first segment keeps the id", async () => {
+    mocks.applyShotCuts.mockResolvedValue({
+      mode: "split",
+      layer_ids: [LAYER_ID, "seg-b", "seg-c"],
+    });
+
+    await applyShotVerb("split", rowsWith(), "clip.mp4");
+    await settle();
+
+    expect(currentSelection()).toEqual({
+      kind: "layers",
+      primary: LAYER_ID,
+      ids: new Set([LAYER_ID]),
+    });
+  });
+
+  it("leaves a clip the user selected mid-apply alone", async () => {
+    const answer = deferred<ApplyShotCutsResult>();
+    mocks.applyShotCuts.mockReturnValue(answer.promise);
+    void applyShotVerb("discard", rowsWith(NONE, new Set([0])), "clip.mp4");
+    await settle();
+    // The reviewed clip is no longer primary, so the survivor is not adopted:
+    // the press cannot reach back and take away a later pick.
+    setLayerSelection("other-layer", ["other-layer"]);
+    answer.resolve({ mode: "discard", layer_ids: ["seg-b", "seg-c"] });
+    await settle();
+
+    expect(currentSelection()).toEqual({
+      kind: "layers",
+      primary: "other-layer",
+      ids: new Set(["other-layer"]),
+    });
   });
 });

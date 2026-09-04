@@ -47,7 +47,11 @@ import {
   useCompositionAnchorStore,
 } from "../state/compositionAnchorStore";
 import { useProjectStore } from "../state/projectStore";
-import { setLayerSelection } from "../state/selectionStore";
+import {
+  currentSelection,
+  primaryLayerIdOf,
+  setLayerSelection,
+} from "../state/selectionStore";
 import { registerTimelinePanels } from "../workspace/timelinePanels";
 import {
   compositionFixture,
@@ -212,7 +216,8 @@ function fixtureAfterSplit(): ProjectSummary {
 
 /// The same project after a discard that threw the FIRST segment away: the id
 /// the review was about is gone, and only the second segment remains. The one
-/// apply outcome that leaves the selection with nothing to keep.
+/// apply outcome where the selection survives only because the store adopted
+/// the answer's first survivor.
 function fixtureAfterDiscardOfFirst(): ProjectSummary {
   return summaryFixture({
     root: {
@@ -802,7 +807,8 @@ describe("ShotsPanel — the apply bar", () => {
   });
 
   it("sends the unchecked row's index and cuts at its boundary anyway", async () => {
-    shots.applyShotCuts.mockResolvedValue({ mode: "discard", layer_ids: ["s1"] });
+    // Shot 1 stays checked, so the reviewed id is itself the first survivor.
+    shots.applyShotCuts.mockResolvedValue({ mode: "discard", layer_ids: ["l1"] });
     await review();
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Keep shot 2" }));
@@ -931,24 +937,36 @@ describe("ShotsPanel — the apply bar", () => {
     expect(screen.getByTestId("shots-apply")).toBeTruthy();
   });
 
-  it("falls to the select-a-clip state when a discard removed the reviewed segment", async () => {
+  it("reviews the first survivor when a discard removed the reviewed segment", async () => {
+    // Shot 1 unchecked: the FIRST segment goes, and the answer's only survivor
+    // is the fresh id `fixtureAfterDiscardOfFirst` leaves standing.
+    shots.applyShotCuts.mockResolvedValue({ mode: "discard", layer_ids: ["s2"] });
     await review();
 
-    fireEvent.click(verb("split"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Keep shot 1" }));
+    await waitFor(() => expect(verb("discard").disabled).toBe(false));
+    fireEvent.click(verb("discard"));
     await waitFor(() => expect(shots.applyShotCuts).toHaveBeenCalled());
-    // What `project:changed` delivers when the discard took the FIRST segment:
-    // `l1` is gone. `retainLayerSelection` drops the vanished primary, which is
-    // the only thing that has to happen for the Panel to land somewhere sane.
+
+    // Adopted off the answer, so when `project:changed` delivers a project
+    // without `l1`, `retainLayerSelection` finds `s2` in place and drops
+    // nothing.
+    await waitFor(() => expect(primaryLayerIdOf(currentSelection())).toBe("s2"));
     act(() => {
       useProjectStore.getState().apply(fixtureAfterDiscardOfFirst());
     });
 
+    // The Panel follows the selection onto the survivor's own source window.
+    await waitFor(() =>
+      expect(shots.reduceShotReport).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ inUs: 2_000_000, outUs: 6_000_000 }),
+      ),
+    );
     expect(
-      await screen.findByText("Select a video clip to review its shot cuts."),
-    ).toBeTruthy();
-    // No rows for a layer that no longer exists, and no apply bar over them.
-    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
-    expect(screen.queryByTestId("shots-apply")).toBeNull();
+      screen.queryByText("Select a video clip to review its shot cuts."),
+    ).toBeNull();
+    expect(screen.getByTestId("shots-apply")).toBeTruthy();
   });
 });
 

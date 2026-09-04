@@ -1116,14 +1116,17 @@ style, and the status bar reports what happened (Started → Ok/Err under one
 following the selection afterwards: a split leaves the clip's identity on its
 first segment, so that segment is what the Panel reviews next — one shot,
 with no candidate inside its window — and the other segments are a click
-away; a discard that removes the first segment leaves nothing selected and
-the Panel returns to its empty state; after a mark the review stands. A
-discarded take takes its link partners with it — every other member of the
-clip's link overlapping the rejected span goes in the same commit, so a
-rejected shot's paired audio leaves with the picture rather than staying behind
-as a sliver. The same reach covers the agent's `drop_short_us`. What sits wholly
-inside a kept segment — a lower-third over the surviving middle of a manual
-bundle — stays.
+away; a discard that removes the first segment selects the first surviving
+segment instead, so a successful apply never leaves the timeline without a
+selection or the Panel without a subject. That survivor alone and not its
+link: the answer names only the target's own segments, and the paired audio
+the same commit cut alongside it has an id no caller has seen yet. After a
+mark the review stands. A discarded take takes its link partners with it —
+every other member of the clip's link overlapping the rejected span goes in
+the same commit, so a rejected shot's paired audio leaves with the picture
+rather than staying behind as a sliver. The same reach covers the agent's
+`drop_short_us`. What sits wholly inside a kept segment — a lower-third over
+the surviving middle of a manual bundle — stays.
 
 **What is in each shot.** *Describe content…* — on a `VideoClip`'s context
 menu beside *Review shots…*, in the Edit menu and the palette — runs

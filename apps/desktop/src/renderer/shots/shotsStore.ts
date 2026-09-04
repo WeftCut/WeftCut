@@ -40,6 +40,11 @@ import {
 } from "../ipc";
 import { LatestRequestCoordinator } from "../state/latestRequest";
 import { useProjectStore } from "../state/projectStore";
+import {
+  currentSelection,
+  primaryLayerIdOf,
+  setLayerSelection,
+} from "../state/selectionStore";
 import { acceptedCutsSrcUs, spanKey, type ShotRow } from "./shotRows";
 
 /// The clip under review. A layer and not a media item: the report is
@@ -735,19 +740,37 @@ export async function applyShotVerb(
     // in place they would bite: the map is keyed by a span's SOURCE start, the
     // second segment's first row starts at exactly the boundary that was cut,
     // and it would come up already marked for discard.
-    //
-    // The subject itself is NOT cleared here; it is derived from the selection
-    // and follows it. A split keeps the reviewed id on the FIRST segment
-    // (`mutations/split.ts` `splitSingleLayer`: left reuses the original id), so
-    // the selection keeps it and the Panel re-reviews that segment on the next
-    // summary — a one-shot window with no candidate inside, which is the true
-    // answer for it, with the other segments one click away. A discard that
-    // deletes the first segment removes the id, `retainLayerSelection` drops
-    // it, and the Panel lands in its "select a video clip" state through the
-    // same path every other mutation takes. Neither case is forced from here:
-    // clearing the selection would take away what the user had selected, and
-    // adopting a segment would be a re-selection nothing else in the app does.
     if (result.mode !== "mark") forgetReviewDecisions(subject.mediaId);
+    // The subject is derived from the selection and follows it, so which segment
+    // the Panel reviews next is decided by where the clip's identity went. A
+    // split leaves it on the FIRST segment (`mutations/split.ts`
+    // `splitSingleLayer`: left reuses the original id), so the selection still
+    // resolves and the Panel re-reviews that segment — a one-shot window with no
+    // candidate inside, the other segments one click away. A discard that threw
+    // the first segment away deleted the selected id, and the next summary's
+    // `retainLayerSelection` would leave nothing selected; the first survivor is
+    // adopted instead, the way `groupSelected` adopts the Group that replaced
+    // its members, so a successful apply never leaves the timeline without a
+    // target or the Panel without a subject.
+    //
+    // The survivor ALONE, not its link: the answer names the target's own
+    // segments, and the paired audio the same commit cut alongside the survivor
+    // got a fresh id that is in neither the answer nor the renderer's mirror
+    // until the next summary. A one-member selection out of a link is what an
+    // Alt-click already produces, so this is a narrower selection, not an
+    // invalid one.
+    //
+    // Only while the reviewed clip is still the primary: the apply is awaited,
+    // and a clip the user clicked meanwhile is a selection this has no business
+    // replacing.
+    if (
+      result.mode === "discard" &&
+      !result.layer_ids.includes(subject.layerId) &&
+      primaryLayerIdOf(currentSelection()) === subject.layerId
+    ) {
+      const first = result.layer_ids[0];
+      if (first !== undefined) setLayerSelection(first, [first]);
+    }
     void logEmit({
       level: "info",
       category: { kind: "Project" },
