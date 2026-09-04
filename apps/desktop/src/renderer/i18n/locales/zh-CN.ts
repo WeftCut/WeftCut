@@ -1060,11 +1060,11 @@ const zhCN: Resources = {
     prompt_copied: "提示词已复制！",
     prompt_heading: "交给 Agent 配置",
     prompt_blurb: "适用于支持 MCP 的 Agent 客户端：复制提示词粘贴到对话中，即可让它自动完成配置。",
-    manual_heading: "或证明你是人类",
+    manual_heading: "证明你是人类",
     skill_heading: "让 Agent 学会 WeftCut",
     skill_blurb:
-      "WeftCut 自带一份 agent skill（会话规范 + Motif 编写契约），适用于 Claude 系客户端。复制提示词粘贴到对话中，Agent 会自行安装该文件夹。随应用更新自带副本也会刷新，升级后请再执行一次。",
-    copy_skill_prompt: "复制安装提示词",
+      "WeftCut 自带 Skill，包含会话规范与 Motifs 编写契约等使用指导，复制提示词给 Agent 进行安装。版本更新时 Skill 内容会一并更新，推荐每次升级后再次安装。",
+    copy_skill_prompt: "复制 skill 提示词",
     skill_copied: "提示词已复制！",
     agent_prompt: [
       "请为我配置 WeftCut MCP 服务，直接完成配置修改，不要只告诉我操作步骤。",
@@ -1108,7 +1108,7 @@ const zhCN: Resources = {
     refresh_hint: "重新生成 Bearer 令牌并保存",
     refresh_confirm: "重新生成 Bearer 令牌？正在使用旧令牌的代理需要更新其配置。",
     token_note:
-      "尚未启用令牌校验 — 仅本地回环绑定提供隔离。在正式认证就绪前，请勿对其它机器开放此端口。",
+      "MCP请求必须携带令牌，服务仅绑定本地使用。令牌存放在mcp_auth.json中，若泄露请使用「刷新令牌」轮换。",
     snippets_heading: "客户端配置片段",
     stdio_note:
       "此配置长期有效：应用重启、端口或令牌变更后均无需修改。应用未启动时 Agent 也可连接，并能直接唤起 WeftCut。",

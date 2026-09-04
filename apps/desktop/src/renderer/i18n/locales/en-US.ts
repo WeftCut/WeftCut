@@ -1241,11 +1241,11 @@ const enUS = {
     prompt_heading: "Let your agent set it up",
     prompt_blurb:
       "For agents that support MCP: copy the prompt and paste it into the chat — the agent configures itself.",
-    manual_heading: "Or prove you're human",
+    manual_heading: "Prove you're human",
     skill_heading: "Teach your agent WeftCut",
     skill_blurb:
-      "WeftCut ships an agent skill — session etiquette plus the Motif authoring contract — for Claude-style clients. Copy the prompt and paste it into the chat; the agent installs the folder itself. The shipped copy refreshes with every app update, so repeat this after upgrading.",
-    copy_skill_prompt: "Copy install prompt",
+      "WeftCut ships a Skill covering session etiquette, the Motif authoring contract and the rest of the usage guidance. Copy the prompt and hand it to your agent to install. The Skill updates with each release, so reinstalling after every upgrade is recommended.",
+    copy_skill_prompt: "Copy skill prompt",
     skill_copied: "Prompt copied!",
     agent_prompt: [
       "Configure the WeftCut MCP server for me. Make the configuration change directly; do not just describe the steps.",
@@ -1290,7 +1290,7 @@ const enUS = {
     refresh_confirm:
       "Generate a new bearer token? Any agent using the current token will need its config updated.",
     token_note:
-      "Token enforcement isn't on yet — localhost-only binding is the active isolation. Don't expose the port to other machines until proper auth ships.",
+      "MCP requests must carry the token, and the server binds to local use only. The token is stored in mcp_auth.json — if it leaks, use Refresh token to rotate it.",
     snippets_heading: "Client config snippets",
     stdio_note:
       "This configuration stays valid long-term: app restarts, port changes and token changes require no edits. Agents can also connect while WeftCut is closed, and launch it directly.",

@@ -21,9 +21,17 @@ export function loadOrInitAuth(): McpAuth {
   return { token: randomBytes(32).toString('hex'), port: 0 } // 0 → OS-pick at listen
 }
 
+/// Persist the token/port pair, owner-readable only.
+///
+/// `0600` is the only confidentiality lever this file has: the stdio shim is a
+/// plain Node process that re-reads it on every connect, so encrypting it
+/// (Electron `safeStorage`) would lock the shim out. `mode` is honored on
+/// creation alone, hence the explicit chmod for a rewrite. POSIX-only in
+/// effect — Windows maps the mode to the read-only bit and gains nothing.
 export function saveAuth(a: McpAuth): void {
   try {
-    fs.writeFileSync(AUTH_FILE(), JSON.stringify(a), 'utf8')
+    fs.writeFileSync(AUTH_FILE(), JSON.stringify(a), { encoding: 'utf8', mode: 0o600 })
+    fs.chmodSync(AUTH_FILE(), 0o600)
   } catch {
     /* best-effort */
   }

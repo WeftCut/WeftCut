@@ -57,7 +57,10 @@ WeftCut exposes itself as an MCP server. External agents (Claude Desktop, Cursor
 ## Authentication
 
 - Random 32-byte hex token generated on first launch, stored in
-  `<userData>/mcp_auth.json` alongside the auto-picked port.
+  `<userData>/mcp_auth.json` alongside the auto-picked port. The file is written
+  `0600`: it cannot be encrypted, because the stdio shim is a plain Node process
+  that re-reads it on every connect. Windows maps the mode to the read-only bit,
+  so the restriction is POSIX-only.
 - The token is **enforced** on every `/mcp` request: the main process owns the
   express middleware, so each request must carry `Authorization: Bearer <token>`
   or it's rejected with `401`. The compare is constant-time (`timingSafeEqual`)
@@ -70,9 +73,11 @@ WeftCut exposes itself as an MCP server. External agents (Claude Desktop, Cursor
   is left unrestricted so non-browser MCP clients still work.
 - No token visible in UI until the user opens the **Connect agent** panel —
   defends against video tutorials accidentally leaking it on stream.
-- A **Refresh** button in the Connect-agent panel rotates the bearer in place:
-  the server stays bound on the same port and `mcp_auth.json` is rewritten with
-  the new token.
+- A **Refresh** button rotates the bearer in place: the server stays bound on
+  the same port and `mcp_auth.json` is rewritten with the new token. It sits at
+  the top of the Connect-agent panel, in the callout that says when to reach for
+  it — rotation never puts the secret on screen, so unlike Reveal and Copy it
+  has no reason to sit behind the HTTP-direct disclosure.
 
 ## Connection UX
 
@@ -95,8 +100,8 @@ The app's **Connect agent** panel (Settings → Agent):
   paths are interchangeable. Windows paths are double-quoted so the command
   survives Git Bash as well as PowerShell.
 - **Advanced (collapsed): HTTP-direct** — the server URL
-  (`http://127.0.0.1:<port>/mcp`), the bearer token (masked until revealed,
-  rotatable in place), and the same per-client snippets in URL + header form.
+  (`http://127.0.0.1:<port>/mcp`), the bearer token (masked until revealed),
+  and the same per-client snippets in URL + header form.
   For clients that cannot spawn stdio servers; breaks whenever the app is
   closed and goes stale when the port or token changes.
 - **The agent skill** — the app ships a Claude-format skill that teaches a
@@ -593,7 +598,7 @@ filters by category (`Mcp`) and source (`Agent { client }`).
 
 ## Security
 
-- Localhost-only binding, bearer-enforced on every request, with DNS-rebinding protection on. Flipping the bind to `0.0.0.0` is gated behind a confirmation dialog.
+- Localhost-only binding, bearer-enforced on every request, with DNS-rebinding protection on. The bind is loopback-hardcoded — no setting exposes the port to another machine.
 - Shim configs carry no token — the shim reads it from `mcp_auth.json` at connect time, so the bearer never spreads into client config files.
 - Token surfaced in the connect panel's advanced section; the HTTP connect snippet (which embeds the token) is printed to stdout only in unpackaged dev / e2e runs, never in a packaged build.
 - Cloud-API keys live in the OS keyring, not in project files.

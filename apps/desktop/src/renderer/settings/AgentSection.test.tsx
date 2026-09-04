@@ -10,6 +10,8 @@
 // before build:cli) the HTTP snippet renders as primary, token masked until
 // revealed, copy always carrying the real token. The shipped agent skill gets
 // its own block, present only once a skill folder is staged (skills_dir set).
+// Token rotation sits above both layouts: it never puts the secret on screen,
+// so unlike Reveal and Copy it has no reason to hide behind the disclosure.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -181,7 +183,7 @@ describe("AgentSection", () => {
       screen.queryByRole("heading", { name: "Teach your agent WeftCut" }),
     ).toBeNull();
     expect(
-      screen.queryByRole("button", { name: "Copy install prompt" }),
+      screen.queryByRole("button", { name: "Copy skill prompt" }),
     ).toBeNull();
   });
 });
@@ -270,7 +272,7 @@ describe("AgentSection with the stdio shim installed", () => {
       await screen.findByRole("heading", { name: "Teach your agent WeftCut" }),
     ).toBeTruthy();
     await userEvent.click(
-      screen.getByRole("button", { name: "Copy install prompt" }),
+      screen.getByRole("button", { name: "Copy skill prompt" }),
     );
     const prompt = clipboard.writeText.mock.calls[0]?.[0] as string;
     expect(prompt).toContain(`"${INFO_SHIM.skills_dir}\\weftcut"`);
@@ -290,5 +292,26 @@ describe("AgentSection with the stdio shim installed", () => {
     expect(http).toContain("Bearer •••");
     expect(http).not.toContain(INFO.bearer_token);
     expect(screen.getByRole("button", { name: "Reveal token" })).toBeTruthy();
+  });
+
+  it("keeps Refresh token reachable while HTTP direct stays collapsed", async () => {
+    ipc.resetMcpToken.mockResolvedValue("rotated-token");
+    const confirmed = vi.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      render(<AgentSection />);
+      // The pairing IS the assertion: with the shim installed — the recommended
+      // path — Reveal is correctly out of reach, and rotation must not be, or a
+      // user whose token leaked has to find an "advanced" disclosure to
+      // invalidate it.
+      const refresh = await screen.findByRole("button", {
+        name: "Refresh token",
+      });
+      expect(screen.queryByRole("button", { name: "Reveal token" })).toBeNull();
+
+      await userEvent.click(refresh);
+      expect(ipc.resetMcpToken).toHaveBeenCalledTimes(1);
+    } finally {
+      confirmed.mockRestore();
+    }
   });
 });

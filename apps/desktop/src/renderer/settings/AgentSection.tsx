@@ -410,16 +410,6 @@ export function AgentSection() {
       >
         {revealed ? <EyeOffIcon size={12} /> : <EyeIcon size={12} />}
       </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        onClick={() => void refreshToken()}
-        disabled={refreshing}
-        title={t("connect.refresh_hint")}
-        aria-label={refreshing ? t("connect.refreshing") : t("connect.refresh")}
-      >
-        <RotateCcwIcon size={12} />
-      </Button>
     </div>
   );
 
@@ -446,7 +436,23 @@ export function AgentSection() {
   return (
     <>
       <p className="settings-blurb">{t("connect.blurb")}</p>
-      <p className="settings-warn">{t("connect.token_note")}</p>
+      {/* Rotation is a safety action, so it sits at the top level next to the
+          note that tells you when to reach for it. Reveal and Copy stay down
+          in the HTTP block on purpose: those two put the secret on screen,
+          and this panel is opened on streams. */}
+      <div className="connect-token-note">
+        <p>{t("connect.token_note")}</p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void refreshToken()}
+          disabled={refreshing}
+          title={t("connect.refresh_hint")}
+        >
+          <RotateCcwIcon size={13} />
+          {refreshing ? t("connect.refreshing") : t("connect.refresh")}
+        </Button>
+      </div>
 
       <section className="settings-section">
         <h3>{t("connect.prompt_heading")}</h3>

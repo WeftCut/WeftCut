@@ -13,7 +13,38 @@
 
 /* ---- Agent (MCP connect) section — lives in the Settings "Agent" tab ----
  * Layout follows the settings-panel idiom (`settings-section` + h3 + hairline
- * separation); only the client-tab strip and the snippet box are local. */
+ * separation); only the token-note callout, the client-tab strip and the
+ * snippet box are local. */
+
+/* The token posture note, with the one action its last clause names. Boxed
+ * rather than a bare `.settings-blurb` because it carries a control: the
+ * border is what scopes the button to the sentence that motivates it. Neutral
+ * (`--border-soft`), not `.settings-warn` — the amber callout reads as "known
+ * unfinished thing" everywhere else in Settings, and nothing here is. */
+.connect-token-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
+  background: var(--popover);
+}
+
+.connect-token-note p {
+  margin: 0;
+  font-size: var(--font-size-body);
+  color: var(--muted-foreground);
+  line-height: 1.45;
+}
+
+/* The note is long and the label is short: without this the flex line steals
+   width from the button and wraps it mid-word. */
+.connect-token-note button {
+  flex: none;
+}
 
 .connect-tabs {
   display: flex;
