@@ -212,9 +212,11 @@ for 30–45 s when such a device dies while the next Application's first WebGPU 
 is in flight — Preview close→reopen with a live d3d11va session froze
 deterministically, and export start under four concurrent app instances wedged six
 to seven of 39 export tests per leg. ADR 0059 destroys the device right after
-Pixi's own teardown, in the Preview host and the export worker; the reopen probe
-then runs 8/8 ×3, the export set 39/39 ×2, and the full suite needs no retry. The
-engine fact is recorded in `electron-chromium-behavior.md`.
+Pixi's own teardown, in the Preview host and the export worker; the committed
+reopen gate (`preview-reopen-stress.spec.ts`) then runs 8/8 ×3, the export set
+39/39 ×2, and the full suite needs no retry. Both gates are hardware-only and
+self-skip on the hosted CI runners. The engine fact is recorded in
+`electron-chromium-behavior.md`.
 
 ### Still verified only on Electron 42
 

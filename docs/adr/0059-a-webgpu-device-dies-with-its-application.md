@@ -27,8 +27,8 @@ Preview Panel with a live d3d11va shared-texture session freezes the app; starti
 an export while other exports and the preview are busy wedges the renderer.
 Electron 42 (Chromium 148) tolerates the same lifecycle.
 
-Varying the device's lifetime, and nothing else, on the reopen probe
-(`gpu-stress.probe.spec.ts`, 8 close→reopen rounds, three runs each):
+Varying the device's lifetime, and nothing else, on the reopen gate
+(`preview-reopen-stress.spec.ts`, 8 close→reopen rounds, three runs each):
 
 | device lifetime on Application destroy | result |
 | --- | --- |
@@ -94,8 +94,8 @@ before the next Application exists.
 ## Consequences
 
 - The preview's hook rides a public Pixi event (`Container` emits `destroyed`)
-  and the documented order of `Application.destroy()`; if either changes, the
-  reopen probe is the gate that notices.
+  and the documented order of `Application.destroy()`; if either changes,
+  `preview-reopen-stress.spec.ts` is the gate that notices.
 - Pending slot-fence probes hold the old device through `onSubmittedWorkDone`;
   a rejected or resolved promise both settle as signalled, so a destroyed device
   cannot strand a slot.
@@ -104,5 +104,13 @@ before the next Application exists.
   registered from `onInit`, which still fires for that Application, so its
   device follows the same rule — but at the next mount, not at close. Accepted:
   the window is the first few hundred milliseconds of a mount.
-- Removing either `destroy()` call reintroduces the Electron 44 freeze; the
-  reopen probe and the four-worker export set are the gates.
+- Removing either `destroy()` call reintroduces the Electron 44 freeze. Two
+  committed gates guard it, and BOTH need real hardware — neither runs on the
+  hosted CI runners: `preview-reopen-stress.spec.ts` (this ADR's direct gate,
+  the reopen + GPU-crash checks; d3d11va on Windows, videotoolbox on macOS,
+  nvdec/vaapi on Linux) and the export-conformance specs. Both are
+  `WEFTCUT_DECODE_E2E`-gated and self-skip where the lane is absent, so the
+  hosted CI legs skip them; run them on a shared-texture-capable Windows box or a
+  videotoolbox Mac. The export path's Face 2 freeze additionally needs the export
+  specs run at multiple workers — CI runs them at one and never exercises it — so
+  the four-worker local run on a real-GPU host is what catches that half.
