@@ -6,7 +6,7 @@
 // and NO filtering of the app's own writes (install/delete/amend emit
 // motifs:changed themselves; the debounced duplicate is harmless).
 // The debounce is unit-tested independently of the OS watch.
-import { mkdirSync, watch, type FSWatcher } from 'node:fs'
+import { mkdirSync, realpathSync, watch, type FSWatcher } from 'node:fs'
 
 /** Quiet window (ms): after a change, wait until this long passes with no
  *  further event, then fire once. Absorbs editor write bursts + multi-file writes. */
@@ -41,12 +41,22 @@ export interface MotifWatcher { close(): void }
  *  <id>/ dirs still fire). The e2e gate is local-only on a ship target. */
 export function spawnMotifWatcher(root: string, onChange: () => void): MotifWatcher {
   mkdirSync(root, { recursive: true })
+  // Watch the canonical long-name path, not the spelling the caller holds.
+  // Windows reports events under the long name, and libuv (1.52+, so Node
+  // 24.20+ and Electron 44+) asserts that every reported path starts with the
+  // directory it was handed: an 8.3 short-name root (`C:\Users\RUNNER~1\...`,
+  // which is what os.tmpdir() yields on GitHub's Windows runners) fails that
+  // check — an assert-abort of the whole process on Node builds, mangled
+  // relative paths on Electron's assert-free build. realpathSync.native is the
+  // one fs API that returns the long name.
+  let canonical = root
+  try { canonical = realpathSync.native(root) } catch { /* the given spelling still watches */ }
   const deb = new Debouncer(DEBOUNCE_QUIET_MS, onChange)
   let watcher: FSWatcher
   try {
-    watcher = watch(root, { recursive: true })
+    watcher = watch(canonical, { recursive: true })
   } catch {
-    watcher = watch(root)
+    watcher = watch(canonical)
   }
   watcher.on('change', () => deb.signal())
   watcher.on('error', () => deb.signal())
