@@ -447,8 +447,10 @@ export interface WeftcutApi {
   /// menu.ts). A no-op off macOS, where no application menu exists at all.
   /// Chosen items come back as the `menu:action` event.
   menu: { sync(projection: MenuProjection): Promise<void> }
-  /// Open a path or URL in the OS default handler (file manager / browser).
-  shell: { open(target: string): Promise<void> }
+  /// Open a path or URL in the OS default handler (file manager / browser), or
+  /// reveal a file in the file manager (selected on Windows / macOS; Linux
+  /// opens the containing folder — see main/openPath.ts).
+  shell: { open(target: string): Promise<void>; reveal(target: string): Promise<void> }
   /// Post a desktop notification (best-effort; no-op where unsupported).
   notification: { send(opts: NotificationOpts): Promise<void> }
   /// Process-tree resource snapshot (app.getAppMetrics(), main-side).

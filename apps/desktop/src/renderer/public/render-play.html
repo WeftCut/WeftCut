@@ -67,12 +67,16 @@
     <div class="video-host" id="host"></div>
     <script>
       // URL shape: render-play.html#src=<asset url>&path=<display path>
+      //            &title=<localized window title>
+      // The title travels in the hash because this page has no i18next; the
+      // opener (useExportFlow.ts) resolves it in the app's current locale.
       const params = new URLSearchParams(window.location.hash.slice(1));
       const src = params.get("src");
       const displayPath = params.get("path") ?? "";
+      const title = params.get("title") ?? document.title;
       const host = document.getElementById("host");
       document.getElementById("path-label").textContent = displayPath;
-      document.title = `WeftCut — Render & Play — ${displayPath}`;
+      document.title = `${title} — ${displayPath}`;
       if (!src) {
         host.innerHTML =
           '<div class="error">No video source. Open this window via the Pixi Export complete state.</div>';

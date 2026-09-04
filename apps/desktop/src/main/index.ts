@@ -32,7 +32,7 @@ import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw } from './previe
 import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw, closeAllExportSw } from './exportSw.js'
 import { loadNativeDecode } from './native-decode.js'
 import { MAIN_WINDOW_MINIMUM_SIZE, MAIN_WINDOW_GEOMETRY_DEFAULTS, MAIN_WINDOW_LABEL } from './mainWindowConfig.js'
-import { openPathRobust } from './openPath.js'
+import { openPathRobust, revealPathRobust } from './openPath.js'
 import {
   planMigration, runCopy, verify, rollback,
   writeMarker, readMarker, clearMarker, deleteOldCopy,
@@ -1439,6 +1439,15 @@ app.whenReady().then(async () => {
       const err = await openPathRobust(target)
       if (err) throw new Error(err)
     }
+  })
+
+  // Reveal a file in the OS file manager (selected in Explorer / Finder; Linux
+  // opens the containing folder — see revealPathRobust). Filesystem paths
+  // only: showItemInFolder never dispatches to a protocol handler, so unlike
+  // shell:open there is no scheme allowlist to enforce here.
+  ipcMain.handle('shell:reveal', async (_e, { target }: { target: string }) => {
+    const err = await revealPathRobust(target)
+    if (err) throw new Error(err)
   })
 
   // Best-effort desktop notification. Silently no-op where the OS reports no

@@ -916,6 +916,20 @@ exactly what the export will produce. It uses the same Worker + Rust
 audio + mux pipeline the normal export does — same code, same
 output.
 
+The export-complete dialog (`ExportPanel`) offers two actions beside
+Dismiss: "Play", which opens this popup, and a reveal button that
+shows the exported file in the OS file manager over the `shell:reveal`
+IPC. The reveal label names the file manager per OS the way Premiere
+and Resolve do ("Reveal in Finder" / "Reveal in Explorer"); on Linux it
+reads "Show in folder" because that is what happens there — Electron's
+`showItemInFolder` falls back to the in-process XDGOpen that wedges GTK
+file managers, so `main/openPath.ts` opens the containing folder through
+its detached `xdg-open` path instead of selecting the file. Main `stat`s
+the file first: `showItemInFolder` swallows a missing file silently, and
+the check turns "the user moved it" into a rejected promise the renderer
+logs. The popup page is static HTML with no i18next, so its window
+title travels in the URL hash, resolved by the opener in the app locale.
+
 ## Fixture suite
 
 `render/fixtures/runFixture.ts` is the reusable fixture runner. Each

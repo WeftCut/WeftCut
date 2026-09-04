@@ -137,6 +137,7 @@ const api: WeftcutApi = {
   // state, not the OS shell).
   shell: {
     open: (target: string): Promise<void> => ipcRenderer.invoke('shell:open', { target }) as Promise<void>,
+    reveal: (target: string): Promise<void> => ipcRenderer.invoke('shell:reveal', { target }) as Promise<void>,
   },
   notification: {
     send: (opts: NotificationOpts): Promise<void> => ipcRenderer.invoke('notification:send', opts) as Promise<void>,

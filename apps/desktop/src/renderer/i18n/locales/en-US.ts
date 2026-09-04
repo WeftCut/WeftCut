@@ -1074,6 +1074,16 @@ const enUS = {
     complete: "Exported to {{path}}",
     failed: "Export failed: {{detail}}",
     dismiss: "Dismiss",
+    play: "Play",
+    play_hint: "Open the exported file in a Render & Play window.",
+    // Named per OS the way Premiere / Resolve label it (see ExportPanel's
+    // REVEAL_KEY); Linux has no single file manager to name, and does not
+    // select the file (main/openPath.ts), so its label promises less.
+    reveal_windows: "Reveal in Explorer",
+    reveal_mac: "Reveal in Finder",
+    reveal_linux: "Show in folder",
+    reveal_hint: "Open the folder containing the exported file.",
+    render_play_title: "WeftCut — Render & Play",
     notify_done_title: "Export finished",
     notify_done_body: "Saved to {{path}}",
     notify_failed_title: "Export failed",

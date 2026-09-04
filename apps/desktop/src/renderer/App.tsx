@@ -517,6 +517,7 @@ export function App({ onCloseProject }: AppProps) {
     setCloseConfirmOpen,
     runExportWithSettings,
     openRenderPlayPopup,
+    revealExportedFile,
   } = useExportFlow({ previewRef, proxyStateRef, decodeProbeMemo });
 
   // ---- Menu-bar action handlers ----
@@ -1179,6 +1180,7 @@ export function App({ onCloseProject }: AppProps) {
             setExportDialogOpen(false);
           }}
           onPlay={openRenderPlayPopup}
+          onReveal={revealExportedFile}
         />
       )}
       {closeConfirmOpen && (

@@ -8,6 +8,7 @@ import {
   sendNotification,
 } from "@/bridge/notification";
 import { remove, writeFile } from "@/bridge/fs";
+import { reveal as revealInShell } from "@/bridge/shell";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createExportLogMirror } from "./exportLog";
@@ -97,6 +98,7 @@ export function useExportFlow(deps: {
   runExportWithSettings: (settings: ExportSettings, path: string,
     range?: { startUs: number; endUs: number }) => Promise<void>;
   openRenderPlayPopup: (path: string) => Promise<void>;
+  revealExportedFile: (path: string) => void;
 } {
   const { t } = useTranslation();
   const { previewRef, proxyStateRef, decodeProbeMemo } = deps;
@@ -855,28 +857,45 @@ export function useExportFlow(deps: {
   // Render & Play: open an Electron window pointing at the
   // exported MP4 via the weftcut-media:// protocol. The popup HTML lives at
   // /render-play.html (vite copies from public/); URL hash carries
-  // the asset URL + display path. Each invocation gets a unique
+  // the asset URL + display path + the localized window title (the page is
+  // static HTML with no i18next, so it takes the title from us rather than
+  // hard-coding English). Each invocation gets a unique
   // label so multiple plays can coexist (and so the capability
   // pattern `render-play-*` matches every variant).
-  const openRenderPlayPopup = useCallback(async (path: string) => {
-    const src = convertFileSrc(path);
-    const label = `render-play-${Date.now()}`;
-    const url =
-      `/render-play.html#src=${encodeURIComponent(src)}` +
-      `&path=${encodeURIComponent(path)}`;
-    try {
-      // Window load failures surface in the main-process console (win:* IPC is
-      // fire-and-forget; the secondary-window lifecycle isn't bridged back).
-      new SecondaryWindow(label, {
-        url,
-        title: "WeftCut — Render & Play",
-        width: 960,
-        height: 600,
-        resizable: true,
-      });
-    } catch (e) {
-      console.error("[weftcut/render-play] failed to open popup:", e);
-    }
+  const openRenderPlayPopup = useCallback(
+    async (path: string) => {
+      const src = convertFileSrc(path);
+      const label = `render-play-${Date.now()}`;
+      const title = t("export.render_play_title");
+      const url =
+        `/render-play.html#src=${encodeURIComponent(src)}` +
+        `&path=${encodeURIComponent(path)}` +
+        `&title=${encodeURIComponent(title)}`;
+      try {
+        // Window load failures surface in the main-process console (win:* IPC is
+        // fire-and-forget; the secondary-window lifecycle isn't bridged back).
+        new SecondaryWindow(label, {
+          url,
+          title,
+          width: 960,
+          height: 600,
+          resizable: true,
+        });
+      } catch (e) {
+        console.error("[weftcut/render-play] failed to open popup:", e);
+      }
+    },
+    [t],
+  );
+
+  // Reveal the exported file in the OS file manager. A failure (the file was
+  // moved after the export finished, no file manager on the box) is logged,
+  // not surfaced: the dialog already prints the full path, which is the
+  // fallback the user needs.
+  const revealExportedFile = useCallback((path: string) => {
+    void revealInShell(path).catch((e: unknown) => {
+      console.error("[weftcut/export] failed to reveal exported file:", e);
+    });
   }, []);
 
   return {
@@ -888,5 +907,6 @@ export function useExportFlow(deps: {
     setCloseConfirmOpen,
     runExportWithSettings,
     openRenderPlayPopup,
+    revealExportedFile,
   };
 }

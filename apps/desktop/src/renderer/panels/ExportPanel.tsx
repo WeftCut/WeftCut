@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 
 import { AppDialog } from "../components/AppDialog";
 import { Button } from "@/components/ui/button";
+import { rendererOS, type RendererOS } from "@/platform";
 
 export interface ExportProgress {
   progress: number;
@@ -45,10 +46,21 @@ const FINALIZE_STEP_KEY: Record<FinalizeStep, string> = {
   mux: "export.finalize_mux",
 };
 
+/// The reveal button names the file manager per OS ("Reveal in Finder",
+/// "Reveal in Explorer"), the way Premiere and Resolve label it. Spelled out
+/// for the same reason as FINALIZE_STEP_KEY: a new RendererOS is a compile
+/// error here, not a missing-key string at runtime.
+const REVEAL_KEY: Record<RendererOS, string> = {
+  windows: "export.reveal_windows",
+  mac: "export.reveal_mac",
+  linux: "export.reveal_linux",
+};
+
 export function ExportPanel({
   state,
   onClose,
   onPlay,
+  onReveal,
 }: {
   state: ExportState;
   onClose: () => void;
@@ -56,6 +68,9 @@ export function ExportPanel({
   /// button on the complete state. Clicking opens a popup window
   /// playing the just-exported file.
   onPlay?: (path: string) => void;
+  /// When set, the complete state also offers to reveal the exported file
+  /// in the OS file manager (label per OS, see REVEAL_KEY).
+  onReveal?: (path: string) => void;
 }) {
   const { t } = useTranslation();
   // Modal during work: no dismiss/close affordance until complete/error (the
@@ -153,16 +168,22 @@ export function ExportPanel({
                     {t("export.preparing_cancel")}
                   </Button>
                 )}
+                {state.kind === "complete" && onReveal && (
+                  <Button
+                    size="lg"
+                    onClick={() => onReveal(state.payload.outputPath)}
+                    title={t("export.reveal_hint")}
+                  >
+                    {t(REVEAL_KEY[rendererOS])}
+                  </Button>
+                )}
                 {state.kind === "complete" && onPlay && (
                   <Button
                     size="lg"
                     onClick={() => onPlay(state.payload.outputPath)}
-                    title={t("export.play_hint", {
-                      defaultValue:
-                        "Open the exported MP4 in a Render & Play popup.",
-                    })}
+                    title={t("export.play_hint")}
                   >
-                    {t("export.play", { defaultValue: "Play" })}
+                    {t("export.play")}
                   </Button>
                 )}
                 {dismissable && (
