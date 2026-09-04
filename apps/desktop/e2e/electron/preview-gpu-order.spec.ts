@@ -23,14 +23,27 @@ import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers
 // decodes 8-bit HEVC): gated on WEFTCUT_DECODE_E2E=1 like decode-engine.spec.
 // Requires a VITE_WEFTCUT_E2E=1 build (the __weftcutTest hook surface).
 //
-// NOT Windows-bound, though the race above is: the driver asks for
-// `forceLane: 'hardware'` and the assertions read `lane === 'hardware'`, so
-// this runs on whatever HW lane the host resolves — videotoolbox and nvdec /
-// vaapi included, all of which admit 8-bit HEVC (shared/hwLaneEligibility.ts).
-// On a copy-back platform it is a weaker test of the shared-texture coherence
-// race specifically and a full-strength test of presentation order generally.
-// A macOS hardware pass skipped it outright reading the old "d3d11va" wording
-// as a platform gate; it is a fixture gate (see below).
+// TWO GROUPS, because one driver flag decides which transport runs and the two
+// are not the same test:
+//
+//   * shared-texture (Windows d3d11va) — `forceLane: 'hardware'`, the reorder
+//     race above, the slot-pool sweep, the barrier latch, and the previewGpu
+//     admission budget. All four are `GpuTransport` concepts and the whole
+//     `previewGpu*` napi surface is `#[cfg(windows)]` (decode/src/lib.rs), so
+//     off Windows every one of these cells could only ever fail.
+//   * copy-back (Linux nvdec/vaapi, macOS videotoolbox) — the lane left
+//     UNFORCED so `pickInitialLane`'s real probe resolves it, exactly as
+//     production does and exactly as decode-bench's `native-copyback` strategy
+//     already did (docs/decode-bench.md §Unforced resolution). No slots, no
+//     barrier, no shared texture; the copy-back frame rides the same
+//     `SwTransport` the control does. That makes it a full-strength test of
+//     PRESENTATION ORDER on real hardware and no test at all of the
+//     shared-texture coherence race — which is the honest split.
+//
+// The header used to claim the whole spec was "NOT Windows-bound" while its
+// only driver call forced the Windows-only transport, so a Mac (2026-09-02) and
+// then a Linux box (2026-09-05) each ate 7 red cells proving the claim wrong.
+// It is true now because there are two drivers, not because the wording moved.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CLIP = path.resolve(__dirname, '../fixtures/decode-bench/order-hevc-648.mp4')
@@ -43,6 +56,13 @@ const CLIP_META = {
   height: 648,
   bits: 12,
 }
+
+// What `gen-order-fixture.mjs` encodes (libx265, `format=yuv420p`). Only the
+// unforced copy-back group needs them, and it needs them to be RIGHT: they feed
+// `pickInitialLane`'s eligibility check, and an 8-bit interframe codec is what
+// makes every copy-back lane admit this clip (shared/hwLaneEligibility.ts).
+const CLIP_CODEC = 'hevc'
+const CLIP_PIX_FMT = 'yuv420p'
 
 /// Enter the editor so a PREVIEW SURFACE exists before any hardware session runs.
 ///
@@ -89,6 +109,10 @@ interface OrderCheckResult {
   missing: number
   mismatches: OrderCheckMismatch[]
   barrierApplied?: string | null
+  /// Resolved lane. Informational for the forced shared-texture group; for the
+  /// unforced copy-back group these ARE the engagement proof.
+  lane?: string | null
+  hwLane?: string | null
   error?: string
 }
 
@@ -113,7 +137,7 @@ function expectBarrierRan(applied: string | null | undefined, where: string): vo
 
 async function runOrderCheck(
   page: Page,
-  strategy: 'native' | 'sw',
+  strategy: 'native' | 'native-copyback' | 'sw',
   poolSize?: number,
 ): Promise<OrderCheckResult> {
   await waitForHook(page, 'decodeBenchOrderCheck')
@@ -122,12 +146,21 @@ async function runOrderCheck(
       (window as unknown as {
         __weftcutTest: { decodeBenchOrderCheck(a: unknown): Promise<OrderCheckResult> }
       }).__weftcutTest.decodeBenchOrderCheck(args),
-    { sourcePath: CLIP, strategy, ...CLIP_META, ...(poolSize !== undefined ? { poolSize } : {}) },
+    {
+      sourcePath: CLIP,
+      strategy,
+      ...CLIP_META,
+      ...(poolSize !== undefined ? { poolSize } : {}),
+      // Only the unforced strategy reads these: `pickInitialLane`'s classKey has
+      // to match main's or its probe resolves a different lane than production
+      // would. The other two force the lane and ignore them.
+      ...(strategy === 'native-copyback' ? { codec: CLIP_CODEC, pixFmt: CLIP_PIX_FMT } : {}),
+    },
   )) as OrderCheckResult
 }
 
 function report(r: OrderCheckResult): string {
-  const head = `strategy=${r.strategy} pool=${r.poolSize} barrier=${r.barrierApplied ?? 'none-observed'} checked=${r.checked} missing=${r.missing} mismatches=${r.mismatches.length}${r.error ? ` error=${r.error}` : ''}`
+  const head = `strategy=${r.strategy} lane=${r.lane ?? '—'} hwLane=${r.hwLane ?? '—'} pool=${r.poolSize} barrier=${r.barrierApplied ?? 'none-observed'} checked=${r.checked} missing=${r.missing} mismatches=${r.mismatches.length}${r.error ? ` error=${r.error}` : ''}`
   const ex = r.mismatches
     .slice(0, 12)
     .map((m) => `  pts=${m.ptsUs} expected=${m.expectedIdx} decoded=${m.decodedIdx} (Δ=${m.decodedIdx - m.expectedIdx})`)
@@ -304,197 +337,284 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
     `index-encoded fixture not found at ${CLIP} — build it with \`node scripts/gen-order-fixture.mjs\` from apps/desktop/e2e. Neither \`npm run fixtures\` nor CI produces it: CI generates only the two software-lane bench rows (electron-ci.yml, \`--only dnxhr-1080,mpeg2-1080\`), so on a fresh hardware bench this spec skips until that one command is run`,
   )
 
-  // Swept across pool sizes because the reorder corrupted frame N with the
-  // frame POOL_SIZE ahead (decoded = expected + pool_size): a fix that only held
-  // at the production default (3) would be a coincidence, and a future pool
-  // change would silently reopen the hole. pool=1 is the tightest race (every
-  // slot read contends the very next frame).
-  for (const poolSize of [1, 3, 5]) {
-    test(`ffmpeg hardware lane (pool=${poolSize}): every delivered frame's pixels match its PTS (no reorder)`, async () => {
+  // ── shared-texture transport (Windows d3d11va) ───────────────────────────
+  // Every cell below forces the lane, and a forced hardware lane routes to
+  // `GpuTransport`. That transport IS the subject here — the slot pool, the
+  // read/ack race, the read-completion barrier, and the previewGpu admission
+  // budget are all its concepts and exist nowhere else. The addon builds it
+  // only on Windows (`#[cfg(windows)] mod preview_gpu`, decode/src/lib.rs:11;
+  // the non-Windows stub at backend.rs:638 returns "preview-gpu not built" from
+  // every entry point), and no feature flag turns it on.
+  //
+  // So this is a real platform gate, unlike the two above it. It is stated once
+  // here rather than per cell because the reason is one reason. Presentation
+  // order on the OTHER platforms' hardware is not conceded to it — that is the
+  // copy-back group below, which pays it on the lane those hosts actually have.
+  test.describe('shared-texture lane (d3d11va)', () => {
+    test.skip(
+      process.platform !== 'win32',
+      'the shared-texture transport is Windows-only (`previewGpu*` is `#[cfg(windows)]`; forcing the hardware lane elsewhere returns "preview-gpu not built") — presentation order on this host is covered by the copy-back group',
+    )
+    // Swept across pool sizes because the reorder corrupted frame N with the
+    // frame POOL_SIZE ahead (decoded = expected + pool_size): a fix that only held
+    // at the production default (3) would be a coincidence, and a future pool
+    // change would silently reopen the hole. pool=1 is the tightest race (every
+    // slot read contends the very next frame).
+    for (const poolSize of [1, 3, 5]) {
+      test(`ffmpeg hardware lane (pool=${poolSize}): every delivered frame's pixels match its PTS (no reorder)`, async () => {
+        test.setTimeout(180_000)
+        const { app, page } = await launchApp()
+        try {
+          await enterEditorWithPreview(page)
+          const r = await runOrderCheck(page, 'native', poolSize)
+          // eslint-disable-next-line no-console
+          console.log(`[preview-gpu-order] hardware lane pool=${poolSize} ->\n` + report(r))
+          expect(r.error, `order check errored: ${r.error}`).toBeUndefined()
+          // The clip has 300 frames; a functioning lane reads essentially all of
+          // them. A near-empty run means decode failed, not that order is "fine".
+          expect(r.checked, 'too few frames checked — hardware-lane decode did not run').toBeGreaterThan(200)
+          expectBarrierRan(r.barrierApplied, `hardware lane pool=${poolSize}`)
+          expect(
+            r.mismatches.length,
+            `hardware lane (pool=${poolSize}) presented ${r.mismatches.length} frame(s) whose pixels did not match their PTS (reorder):\n${report(r)}`,
+          ).toBe(0)
+        } finally {
+          await app.close()
+        }
+      })
+    }
+
+    // The single-session sweep above cannot speak for the case we ship. Three
+    // concurrent hardware sessions is production's problem shape, and the barrier
+    // behaves differently there: the synchronous readback measures ~19ms of drain at
+    // one session but ~5ms at three, because the sessions share one flush and
+    // per-session slack collapses as sessions are added. Any strategy whose
+    // ordering depends on GPU command-queue depth when it submits can therefore
+    // pass alone and reorder in company — and would ship green, since every other
+    // gate in this repo drives one session.
+    //
+    // Each session is asserted on its own: a merged count would let two passes
+    // bury one session's reorder, and "which session" is the first thing a
+    // failure has to answer. Barrier mode comes from WEFTCUT_HW_BARRIER, same as
+    // every test here.
+    test('ffmpeg hardware lane: 3 concurrent sessions each present frames in order (no reorder under contention)', async () => {
+      test.setTimeout(240_000)
+      const { app, page } = await launchApp()
+      try {
+        await enterEditorWithPreview(page)
+        const r = await runConcurrentOrderCheck(page, 3)
+        // eslint-disable-next-line no-console
+        console.log('[preview-gpu-order] 3 concurrent hardware sessions ->\n' + reportConcurrent(r))
+        expectConcurrentRunInOrder(r, 3)
+      } finally {
+        await app.close()
+      }
+    })
+
+    // The same probe at the largest concurrent shape this fixture's live budget
+    // admits. The fixed-three run
+    // above is not superseded by this one: three sessions still leave the most
+    // barrier slack of any multi-session shape (see the drain numbers above), which
+    // makes it the multi-session case most likely to HIDE a reorder. This run
+    // covers the shape production actually ships once the cap moves past three,
+    // where per-session slack is thinnest.
+    //
+    // The session count comes from the live budget rather than a literal because
+    // `decodeBenchConcurrentOrderCheck` refuses a shape exceeding either live
+    // constraint (see `readLargestConcurrentForFixture`) — a hard-coded count
+    // ahead of a budget change would fail the run,
+    // not skip it. While the cap is still three this run would only repeat the test
+    // above, so it skips.
+    //
+    // Same 240s as the fixed-three run: the hook's drive budget is ONE shared 90s
+    // wall clock for all sessions, deliberately unscaled (a run that cannot walk
+    // the clip in the single-session budget IS the capacity answer), so adding
+    // sessions does not extend the work this has to wait out.
+    test('ffmpeg hardware lane: largest admitted concurrent fixture shape presents frames in order', async () => {
+      test.setTimeout(240_000)
+      const { app, page } = await launchApp()
+      try {
+        const cap = await readLargestConcurrentForFixture(page, CLIP_META.width, CLIP_META.height)
+        test.skip(
+          cap <= 3,
+          `largest admitted fixture shape is ${cap} — this run would be identical to the 3-session test above`,
+        )
+        await enterEditorWithPreview(page)
+        const r = await runConcurrentOrderCheck(page, cap)
+        // eslint-disable-next-line no-console
+        console.log(`[preview-gpu-order] ${cap} concurrent hardware sessions (largest admitted fixture shape) ->\n` + reportConcurrent(r))
+        expectConcurrentRunInOrder(r, cap)
+      } finally {
+        await app.close()
+      }
+    })
+
+    // HW admission budget → downgrade (runtime seam), FORCED lane.
+    // Main admits this fixture up to the smaller of session slots and coded-area
+    // fits; the (cap+1)th open must reject with `hw-budget-exceeded` and surface it via
+    // onFatalError (the resolver's downgrade-off-tier-1 on that marker is
+    // unit-tested in ffmpegCapability.test.ts). This opens cap+1 real sessions with
+    // the lane FORCED (`forceLane: 'hardware'`), which bypasses `FfmpegSource`'s
+    // in-place HW→SW recovery by design (`_doEnsureReady`'s catch only recovers
+    // when `!forceLane`) — the bench harness needs this hard-fatal behavior for
+    // deterministic hardware-only measurement. See the REAL (unforced) fallback
+    // test below for the production in-place-recovery path.
+    test('ffmpeg hardware lane (forced): the over-budget concurrent session hits hw-budget-exceeded (budget → fatal)', async () => {
+      test.setTimeout(120_000)
+      const { app, page } = await launchApp()
+      try {
+        const cap = await readLargestConcurrentForFixture(page, CLIP_META.width, CLIP_META.height)
+        await waitForHook(page, 'decodeBenchBudgetProbe')
+        const r = (await page.evaluate(
+          (args) =>
+            (window as unknown as {
+              __weftcutTest: { decodeBenchBudgetProbe(a: unknown): Promise<{ outcomes: Array<{ index: number; ready: boolean; error: string | null; fatalReason: string | null }>; error?: string }> }
+            }).__weftcutTest.decodeBenchBudgetProbe(args),
+          {
+            sourcePath: CLIP,
+            width: CLIP_META.width,
+            height: CLIP_META.height,
+            count: cap + 1,
+          },
+        )) as { outcomes: Array<{ index: number; ready: boolean; error: string | null; fatalReason: string | null }>; error?: string }
+        // eslint-disable-next-line no-console
+        console.log(`[preview-gpu-order] budget (forced lane, cap=${cap}) ->\n` + JSON.stringify(r.outcomes, null, 2))
+        expect(r.error, `budget probe errored: ${r.error}`).toBeUndefined()
+        // Every open up to this fixture's largest admitted shape opens cleanly.
+        expect(r.outcomes.slice(0, cap).every((o) => o.ready), `first ${cap} hardware-lane sessions should open`).toBe(true)
+        // The (cap+1)th is rejected at the cap, and the budget reason reaches the
+        // handle's fatal path (what drives the resolver's sticky downgrade).
+        const overBudget = r.outcomes[cap]!
+        expect(overBudget.ready, `session ${cap} must NOT open (past the ${cap}-fixture admission shape)`).toBe(false)
+        expect(overBudget.error ?? '', 'the over-budget open should reject with hw-budget-exceeded').toContain('hw-budget-exceeded')
+        expect(overBudget.fatalReason ?? '', 'onFatalError should carry the budget reason').toContain('hw-budget-exceeded')
+      } finally {
+        await app.close()
+      }
+    })
+
+    // HW→SW in-place fallback — a REAL budget-rejection trigger, not
+    // an injected error. Opens the largest admitted fixture shape + 1 real ffmpeg-engine
+    // sources on this HW-eligible clip WITHOUT forcing a lane —
+    // `pickInitialLane`'s real GPU capability probe puts each on hardware
+    // exactly as production does (see decodeBench.ts's
+    // `decodeBenchHwFallbackProbe` doc comment). The over-budget one's HW `open()`
+    // genuinely trips `hw-budget-exceeded`; because nothing forced its lane,
+    // `FfmpegSource._doEnsureReady`'s catch engages the SAME in-place HW→SW
+    // recovery a runtime GPU error uses — the ring survives, `ensureReady()`
+    // resolves normally (not a fatal), and `currentLane()` reads "software"
+    // afterward.
+    //
+    // "No source-swap fired": this driver acquires ONE `FfmpegSource` per
+    // session directly off a private `SourceDecoderPool` (the same bench-style
+    // harness the order-check/budget-probe tests above use) — there is no live
+    // Compositor in the loop, so Compositor's swap machinery (`beginSwap`/
+    // `SwapState`) never runs here at all. The over-budget session's recovery
+    // happens INSIDE its one `FfmpegSource` instance (never disposed/re-acquired
+    // across the test), so "no swap" is inherent to how the probe drives it, not a
+    // separate counter to assert.
+    test('ffmpeg hardware lane: the first over-budget fixture session survives via in-place HW→SW fallback', async () => {
+      test.setTimeout(120_000)
+      const { app, page } = await launchApp()
+      try {
+        const cap = await readLargestConcurrentForFixture(page, CLIP_META.width, CLIP_META.height)
+        const r = await runHwFallbackProbe(page, cap + 1)
+        // eslint-disable-next-line no-console
+        console.log(`[preview-gpu-order] hw-fallback (unforced, cap=${cap}) ->\n` + JSON.stringify(r, null, 2))
+        expect(r.error, `hw-fallback probe errored: ${r.error}`).toBeUndefined()
+        expect(r.sessions.length).toBe(cap + 1)
+        const hw = r.sessions.slice(0, cap)
+        const spilled = r.sessions[cap]!
+        // Every session within this fixture's admitted shape opens cleanly on the hardware lane
+        // (the real HW probe passes for this HEVC 8-bit fixture on any lane that
+        // admits it). Asserted per session, with its index in the message,
+        // so ONE session landing on the wrong lane is identifiable from the failure.
+        for (const s of hw) {
+          expect(s.ready, `session ${s.index} (within the ${cap}-session budget) should open`).toBe(true)
+          expect(s.lane, `session ${s.index} (within the ${cap}-session budget) should open on the hardware lane, got "${s.lane}"`).toBe('hardware')
+        }
+        // The over-budget one trips the budget, but recovers IN PLACE — ensureReady
+        // still resolves (ready=true), and the final lane is software.
+        expect(spilled.ready, 'the over-budget session must recover, not fail, after the budget rejection').toBe(true)
+        expect(spilled.lane, 'the over-budget session must have fallen back to the software lane').toBe('software')
+        // And it keeps delivering real frames on the new (software) transport —
+        // the ring genuinely grows, not just a resolved promise.
+        expect(
+          r.lastRingPushCountAfter,
+          `over-budget session's ring never grew after fallback (before=${r.lastRingPushCountBefore} after=${r.lastRingPushCountAfter})`,
+        ).toBeGreaterThan(r.lastRingPushCountBefore)
+      } finally {
+        await app.close()
+      }
+    })
+
+  })
+
+  // ── copy-back transport (Linux nvdec/vaapi, macOS videotoolbox) ──────────
+  // The same barcode↔PTS check on the lane these hosts actually have. What
+  // differs from the group above is one flag: the lane is left UNFORCED, so
+  // `pickInitialLane`'s real one-frame probe resolves it the way production
+  // does, and the resolved HW frame is copied back and shipped over the SAME
+  // `SwTransport` the control uses. decode-bench's `native-copyback` strategy
+  // has driven exactly this since ADR 0034; this is that pattern, applied to the
+  // order check (docs/decode-bench.md §Unforced resolution).
+  //
+  // Deliberately ONE cell, not a mirror of the seven above:
+  //   * no pool sweep — a copy-back lane owns no slots to sweep, so poolSize is
+  //     not a variable here;
+  //   * no barrier assertion — there is no read-completion barrier to observe,
+  //     and this asserts `barrierApplied` is null so a future change that routes
+  //     this group through the shared-texture transport cannot pass unnoticed;
+  //   * no budget/concurrency cells — `previewGpu:budget` is the shared-texture
+  //     admission ledger, which a copy-back session never touches. Inventing a
+  //     count for it would gate on a number that means nothing on this lane.
+  //
+  // What it therefore proves, and the ONLY thing: this host's hardware lane
+  // presents frames in PTS order. It says nothing about the slot read/ack
+  // coherence race, which is the Windows group's alone.
+  test.describe('copy-back lane (nvdec / vaapi / videotoolbox)', () => {
+    test.skip(
+      process.platform === 'win32',
+      'Windows resolves d3d11va (shared texture), not a copy-back lane — the group above is its coverage',
+    )
+
+    test("copy-back hardware lane: every delivered frame's pixels match its PTS (no reorder)", async () => {
       test.setTimeout(180_000)
       const { app, page } = await launchApp()
       try {
         await enterEditorWithPreview(page)
-        const r = await runOrderCheck(page, 'native', poolSize)
+        const r = await runOrderCheck(page, 'native-copyback')
         // eslint-disable-next-line no-console
-        console.log(`[preview-gpu-order] hardware lane pool=${poolSize} ->\n` + report(r))
+        console.log('[preview-gpu-order] copy-back hardware lane ->\n' + report(r))
         expect(r.error, `order check errored: ${r.error}`).toBeUndefined()
-        // The clip has 300 frames; a functioning lane reads essentially all of
-        // them. A near-empty run means decode failed, not that order is "fine".
-        expect(r.checked, 'too few frames checked — hardware-lane decode did not run').toBeGreaterThan(200)
-        expectBarrierRan(r.barrierApplied, `hardware lane pool=${poolSize}`)
+        // Unforced by construction, so a host with no copy-back lane resolves to
+        // software and the driver returns that verdict without walking the clip.
+        // SKIP on it: a lane this box does not have is not a failure. Everything
+        // past here therefore runs only on real hardware.
+        test.skip(
+          r.lane !== 'hardware',
+          `no copy-back HW lane engaged on this host (lane=${r.lane ?? '—'}, hwLane=${r.hwLane ?? '—'}) — lane unavailable`,
+        )
+        // Engagement, asserted rather than assumed: reaching here means the lane
+        // read "hardware", and `hwLane` names WHICH one so the log says what was
+        // actually exercised (an operator can pin it with WEFTCUT_FORCE_HW_LANE).
+        expect(r.hwLane, `lane reported hardware but named no HW lane:\n${report(r)}`).not.toBeNull()
+        // The copy-back frame must NOT have come over the shared-texture
+        // transport — that has a barrier and this does not. A non-null barrier
+        // here means the group is silently testing the Windows path.
+        expect(
+          r.barrierApplied ?? null,
+          `copy-back run observed the "${r.barrierApplied}" shared-texture barrier — it did not run on the copy-back transport:\n${report(r)}`,
+        ).toBeNull()
+        expect(r.checked, 'too few frames checked — copy-back decode did not run').toBeGreaterThan(200)
         expect(
           r.mismatches.length,
-          `hardware lane (pool=${poolSize}) presented ${r.mismatches.length} frame(s) whose pixels did not match their PTS (reorder):\n${report(r)}`,
+          `copy-back hardware lane (${r.hwLane}) presented ${r.mismatches.length} frame(s) whose pixels did not match their PTS (reorder):\n${report(r)}`,
         ).toBe(0)
       } finally {
         await app.close()
       }
     })
-  }
-
-  // The single-session sweep above cannot speak for the case we ship. Three
-  // concurrent hardware sessions is production's problem shape, and the barrier
-  // behaves differently there: the synchronous readback measures ~19ms of drain at
-  // one session but ~5ms at three, because the sessions share one flush and
-  // per-session slack collapses as sessions are added. Any strategy whose
-  // ordering depends on GPU command-queue depth when it submits can therefore
-  // pass alone and reorder in company — and would ship green, since every other
-  // gate in this repo drives one session.
-  //
-  // Each session is asserted on its own: a merged count would let two passes
-  // bury one session's reorder, and "which session" is the first thing a
-  // failure has to answer. Barrier mode comes from WEFTCUT_HW_BARRIER, same as
-  // every test here.
-  test('ffmpeg hardware lane: 3 concurrent sessions each present frames in order (no reorder under contention)', async () => {
-    test.setTimeout(240_000)
-    const { app, page } = await launchApp()
-    try {
-      await enterEditorWithPreview(page)
-      const r = await runConcurrentOrderCheck(page, 3)
-      // eslint-disable-next-line no-console
-      console.log('[preview-gpu-order] 3 concurrent hardware sessions ->\n' + reportConcurrent(r))
-      expectConcurrentRunInOrder(r, 3)
-    } finally {
-      await app.close()
-    }
-  })
-
-  // The same probe at the largest concurrent shape this fixture's live budget
-  // admits. The fixed-three run
-  // above is not superseded by this one: three sessions still leave the most
-  // barrier slack of any multi-session shape (see the drain numbers above), which
-  // makes it the multi-session case most likely to HIDE a reorder. This run
-  // covers the shape production actually ships once the cap moves past three,
-  // where per-session slack is thinnest.
-  //
-  // The session count comes from the live budget rather than a literal because
-  // `decodeBenchConcurrentOrderCheck` refuses a shape exceeding either live
-  // constraint (see `readLargestConcurrentForFixture`) — a hard-coded count
-  // ahead of a budget change would fail the run,
-  // not skip it. While the cap is still three this run would only repeat the test
-  // above, so it skips.
-  //
-  // Same 240s as the fixed-three run: the hook's drive budget is ONE shared 90s
-  // wall clock for all sessions, deliberately unscaled (a run that cannot walk
-  // the clip in the single-session budget IS the capacity answer), so adding
-  // sessions does not extend the work this has to wait out.
-  test('ffmpeg hardware lane: largest admitted concurrent fixture shape presents frames in order', async () => {
-    test.setTimeout(240_000)
-    const { app, page } = await launchApp()
-    try {
-      const cap = await readLargestConcurrentForFixture(page, CLIP_META.width, CLIP_META.height)
-      test.skip(
-        cap <= 3,
-        `largest admitted fixture shape is ${cap} — this run would be identical to the 3-session test above`,
-      )
-      await enterEditorWithPreview(page)
-      const r = await runConcurrentOrderCheck(page, cap)
-      // eslint-disable-next-line no-console
-      console.log(`[preview-gpu-order] ${cap} concurrent hardware sessions (largest admitted fixture shape) ->\n` + reportConcurrent(r))
-      expectConcurrentRunInOrder(r, cap)
-    } finally {
-      await app.close()
-    }
-  })
-
-  // HW admission budget → downgrade (runtime seam), FORCED lane.
-  // Main admits this fixture up to the smaller of session slots and coded-area
-  // fits; the (cap+1)th open must reject with `hw-budget-exceeded` and surface it via
-  // onFatalError (the resolver's downgrade-off-tier-1 on that marker is
-  // unit-tested in ffmpegCapability.test.ts). This opens cap+1 real sessions with
-  // the lane FORCED (`forceLane: 'hardware'`), which bypasses `FfmpegSource`'s
-  // in-place HW→SW recovery by design (`_doEnsureReady`'s catch only recovers
-  // when `!forceLane`) — the bench harness needs this hard-fatal behavior for
-  // deterministic hardware-only measurement. See the REAL (unforced) fallback
-  // test below for the production in-place-recovery path.
-  test('ffmpeg hardware lane (forced): the over-budget concurrent session hits hw-budget-exceeded (budget → fatal)', async () => {
-    test.setTimeout(120_000)
-    const { app, page } = await launchApp()
-    try {
-      const cap = await readLargestConcurrentForFixture(page, CLIP_META.width, CLIP_META.height)
-      await waitForHook(page, 'decodeBenchBudgetProbe')
-      const r = (await page.evaluate(
-        (args) =>
-          (window as unknown as {
-            __weftcutTest: { decodeBenchBudgetProbe(a: unknown): Promise<{ outcomes: Array<{ index: number; ready: boolean; error: string | null; fatalReason: string | null }>; error?: string }> }
-          }).__weftcutTest.decodeBenchBudgetProbe(args),
-        {
-          sourcePath: CLIP,
-          width: CLIP_META.width,
-          height: CLIP_META.height,
-          count: cap + 1,
-        },
-      )) as { outcomes: Array<{ index: number; ready: boolean; error: string | null; fatalReason: string | null }>; error?: string }
-      // eslint-disable-next-line no-console
-      console.log(`[preview-gpu-order] budget (forced lane, cap=${cap}) ->\n` + JSON.stringify(r.outcomes, null, 2))
-      expect(r.error, `budget probe errored: ${r.error}`).toBeUndefined()
-      // Every open up to this fixture's largest admitted shape opens cleanly.
-      expect(r.outcomes.slice(0, cap).every((o) => o.ready), `first ${cap} hardware-lane sessions should open`).toBe(true)
-      // The (cap+1)th is rejected at the cap, and the budget reason reaches the
-      // handle's fatal path (what drives the resolver's sticky downgrade).
-      const overBudget = r.outcomes[cap]!
-      expect(overBudget.ready, `session ${cap} must NOT open (past the ${cap}-fixture admission shape)`).toBe(false)
-      expect(overBudget.error ?? '', 'the over-budget open should reject with hw-budget-exceeded').toContain('hw-budget-exceeded')
-      expect(overBudget.fatalReason ?? '', 'onFatalError should carry the budget reason').toContain('hw-budget-exceeded')
-    } finally {
-      await app.close()
-    }
-  })
-
-  // HW→SW in-place fallback — a REAL budget-rejection trigger, not
-  // an injected error. Opens the largest admitted fixture shape + 1 real ffmpeg-engine
-  // sources on this HW-eligible clip WITHOUT forcing a lane —
-  // `pickInitialLane`'s real GPU capability probe puts each on hardware
-  // exactly as production does (see decodeBench.ts's
-  // `decodeBenchHwFallbackProbe` doc comment). The over-budget one's HW `open()`
-  // genuinely trips `hw-budget-exceeded`; because nothing forced its lane,
-  // `FfmpegSource._doEnsureReady`'s catch engages the SAME in-place HW→SW
-  // recovery a runtime GPU error uses — the ring survives, `ensureReady()`
-  // resolves normally (not a fatal), and `currentLane()` reads "software"
-  // afterward.
-  //
-  // "No source-swap fired": this driver acquires ONE `FfmpegSource` per
-  // session directly off a private `SourceDecoderPool` (the same bench-style
-  // harness the order-check/budget-probe tests above use) — there is no live
-  // Compositor in the loop, so Compositor's swap machinery (`beginSwap`/
-  // `SwapState`) never runs here at all. The over-budget session's recovery
-  // happens INSIDE its one `FfmpegSource` instance (never disposed/re-acquired
-  // across the test), so "no swap" is inherent to how the probe drives it, not a
-  // separate counter to assert.
-  test('ffmpeg hardware lane: the first over-budget fixture session survives via in-place HW→SW fallback', async () => {
-    test.setTimeout(120_000)
-    const { app, page } = await launchApp()
-    try {
-      const cap = await readLargestConcurrentForFixture(page, CLIP_META.width, CLIP_META.height)
-      const r = await runHwFallbackProbe(page, cap + 1)
-      // eslint-disable-next-line no-console
-      console.log(`[preview-gpu-order] hw-fallback (unforced, cap=${cap}) ->\n` + JSON.stringify(r, null, 2))
-      expect(r.error, `hw-fallback probe errored: ${r.error}`).toBeUndefined()
-      expect(r.sessions.length).toBe(cap + 1)
-      const hw = r.sessions.slice(0, cap)
-      const spilled = r.sessions[cap]!
-      // Every session within this fixture's admitted shape opens cleanly on the hardware lane
-      // (the real HW probe passes for this HEVC 8-bit fixture on any lane that
-      // admits it). Asserted per session, with its index in the message,
-      // so ONE session landing on the wrong lane is identifiable from the failure.
-      for (const s of hw) {
-        expect(s.ready, `session ${s.index} (within the ${cap}-session budget) should open`).toBe(true)
-        expect(s.lane, `session ${s.index} (within the ${cap}-session budget) should open on the hardware lane, got "${s.lane}"`).toBe('hardware')
-      }
-      // The over-budget one trips the budget, but recovers IN PLACE — ensureReady
-      // still resolves (ready=true), and the final lane is software.
-      expect(spilled.ready, 'the over-budget session must recover, not fail, after the budget rejection').toBe(true)
-      expect(spilled.lane, 'the over-budget session must have fallen back to the software lane').toBe('software')
-      // And it keeps delivering real frames on the new (software) transport —
-      // the ring genuinely grows, not just a resolved promise.
-      expect(
-        r.lastRingPushCountAfter,
-        `over-budget session's ring never grew after fallback (before=${r.lastRingPushCountBefore} after=${r.lastRingPushCountAfter})`,
-      ).toBeGreaterThan(r.lastRingPushCountBefore)
-    } finally {
-      await app.close()
-    }
   })
 
   // Control: the ffmpeg engine's SOFTWARE lane shares the ring + the barcode

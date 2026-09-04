@@ -112,8 +112,12 @@ export function decodeBenchPhase(): string {
 
 export interface OrderCheckArgs {
   sourcePath: string; // absolute fixture path; served via weftcut-media://
-  strategy: BenchStrategy; // 'native' = native-hw (the suspect), 'sw' = control
-  /// Native-only pool size (slot count). Default 3 (the product default).
+  /// `native` = the shared-texture HW lane (the suspect; Windows-only, see
+  /// `BenchStrategy`), `native-copyback` = the copy-back HW lanes every other
+  /// platform has, `sw` = control.
+  strategy: BenchStrategy;
+  /// Shared-texture-lane pool size (slot count). Default 3 (the product
+  /// default). Meaningless on `native-copyback`, which owns no slots.
   poolSize?: number;
   fpsNum: number;
   fpsDen: number;
@@ -123,6 +127,11 @@ export interface OrderCheckArgs {
   height: number;
   /// Barcode stripe count (12 in the standard fixture).
   bits: number;
+  /// `native-copyback`-only: threaded to `pickInitialLane` so its real one-frame
+  /// HW probe resolves the advertised lane exactly as production does. Unused by
+  /// the other strategies, which force the lane and need no hint.
+  codec?: string | null;
+  pixFmt?: string | null;
 }
 
 export interface OrderCheckMismatch {
@@ -144,8 +153,18 @@ export interface OrderCheckResult {
   /// `'mixed'`), null off the hardware lane. Reported because a barcode check
   /// passes under EVERY correct barrier: a run whose configured variant silently
   /// fell back to another one is green and proves nothing about the variant it
-  /// was launched for. The caller compares this against what it pinned.
+  /// was launched for. The caller compares this against what it pinned. Null off
+  /// the shared-texture transport, `native-copyback` included — the copy-back
+  /// lanes ship bytes and have no read-completion barrier to observe.
   barrierApplied?: string | null;
+  /// The lane this run RESOLVED to ("hardware"/"software") and WHICH hardware
+  /// lane it was (`nvdec`|`vaapi`|`d3d11va`|`videotoolbox`; null on software).
+  /// `native` forces its lane, so these are informational there — but
+  /// `native-copyback` is unforced by construction, and for it they are the whole
+  /// engagement proof: a caller that ignores them can report a software walk as a
+  /// hardware pass.
+  lane?: string | null;
+  hwLane?: string | null;
   error?: string;
 }
 
@@ -203,11 +222,39 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
             height,
             ...(args.poolSize !== undefined ? { poolSize: args.poolSize } : {}),
           }
+        : strategy === "native-copyback"
+        ? {
+            // NO forceLane, and that is the whole point of this branch: forcing
+            // "hardware" routes to the Windows-only `GpuTransport`, which off
+            // Windows is a stub returning "preview-gpu not built" — the reason
+            // this driver's order check was unrunnable on Linux/macOS at all.
+            // Unforced, `pickInitialLane`'s real probe resolves the host's
+            // copy-back lane and it rides the same `SwTransport` the `sw` control
+            // does, so the SAME read loop below measures presentation order on
+            // hardware. `WEFTCUT_FORCE_HW_LANE` pins WHICH lane, from outside.
+            engine: "ffmpeg" as const,
+            sourcePath,
+            componentAvailable: true,
+            width,
+            height,
+            ...(args.codec != null ? { codec: args.codec } : {}),
+            ...(args.pixFmt != null ? { pixFmt: args.pixFmt } : {}),
+          }
         : strategy === "sw"
         ? { engine: "ffmpeg" as const, forceLane: "software" as const, sourcePath, componentAvailable: true }
         : {}),
     });
     await h.ensureReady();
+    const lane = readLane(h);
+    const hwLane = readHwLane(h);
+    // A host with no copy-back lane resolves to software here, because nothing
+    // forced the lane. Return that verdict immediately rather than walking the
+    // clip: a software walk proves nothing under a hardware label, and the
+    // caller is expected to SKIP on it (lane unavailable) rather than read the
+    // zero mismatches of a run that never touched hardware as a pass.
+    if (strategy === "native-copyback" && lane !== "hardware") {
+      return { strategy, poolSize, lane, hwLane, checked: 0, missing: 0, mismatches: [] };
+    }
     const frameDurUs = (1_000_000 * fpsDen) / fpsNum;
     const ptsOf = (i: number) => Math.round(i * frameDurUs);
     const canvas = new OffscreenCanvas(width, height);
@@ -265,6 +312,8 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
     return {
       strategy,
       poolSize,
+      lane,
+      hwLane,
       checked,
       missing,
       mismatches,
@@ -703,14 +752,19 @@ function readHwLane(h: BenchHandle): string | null {
   return (h as { currentHwLane?: () => string | null }).currentHwLane?.() ?? null;
 }
 
+/// Read the lane a bench handle resolved to ("hardware"/"software"), null for a
+/// WebCodecs handle. Duck-typed for the same reason as `readHwLane`.
+function readLane(h: BenchHandle): string | null {
+  return (h as { currentLane?: () => string }).currentLane?.() ?? null;
+}
+
 /// `native-copyback` must be on a genuine hardware lane; a software fallback
 /// (HW lane unavailable / the env pin found no candidate) is an INVALID HW
 /// measurement, not a slower one — return an error so it can never be reported
 /// as a HW number. Null for every other strategy (no guard).
 function copybackFallbackError(h: BenchHandle, strategy: BenchStrategy): BenchResult | null {
   if (strategy !== "native-copyback") return null;
-  const lane = (h as { currentLane?: () => string }).currentLane?.();
-  if (lane !== "hardware") {
+  if (readLane(h) !== "hardware") {
     return {
       kind: "error",
       error: "native-copyback: resolved to software (HW lane unavailable/unforced) — invalid HW measurement",
