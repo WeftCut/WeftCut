@@ -34,7 +34,7 @@ rustup target add wasm32-unknown-unknown
                  --add Microsoft.VisualStudio.Component.Windows11SDK.22621"
    ```
    ~6 GB. Required once. The first `napi build` (`cargo`) fails without it.
-3. **Node 22+** — `winget install -e --id OpenJS.NodeJS.LTS`.
+3. **Node 24+** — `winget install -e --id OpenJS.NodeJS.LTS`.
 
 Then from the repo root:
 ```powershell
@@ -58,7 +58,7 @@ Only 64-bit builds ship (arm64 and x64) — that holds on every OS.
    ```sh
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
-3. **Node 22+**: `brew install node`.
+3. **Node 24+**: `brew install node`.
 4. `npm install && npm run bootstrap && npm run dev`.
 
 ## Linux
@@ -74,7 +74,7 @@ Only 64-bit builds ship (arm64 and x64) — that holds on every OS.
    ```
    Electron supplies its own Chromium, so the old WebKitGTK / libsoup /
    appindicator system libraries are **no longer required**.
-3. **Node 22+** via your distro or nvm.
+3. **Node 24+** via your distro or nvm.
 4. `npm install && npm run bootstrap && npm run dev`.
 
 ## ffmpeg

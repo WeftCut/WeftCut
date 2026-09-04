@@ -71,7 +71,7 @@ boundary it checkpoints is one click away from being restored.
 
 ## Getting started
 
-Prerequisites: **Node 22+**, **Rust** (stable via `rustup`), and your
+Prerequisites: **Node 24+**, **Rust** (stable via `rustup`), and your
 platform's C++ build tools — per-OS install commands in
 [docs/setup.md](docs/setup.md).
 

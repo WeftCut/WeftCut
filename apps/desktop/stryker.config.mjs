@@ -13,17 +13,18 @@ export default {
   // anyway — ./tsconfig.json is a `files: []` orchestrator whose four
   // `references` are all relative and all copied into the sandbox, so they
   // resolve there untouched — but merely reaching it costs us the run: the
-  // preprocessor opens with `await import('typescript')`, and since the
-  // TypeScript 7 upgrade there is no `typescript` for it to find. Two reasons,
-  // both structural rather than transient:
-  //   1. Nothing hoists to the workspace root any more. @napi-rs/cli pins
-  //      typescript ^6 while the app is on ^7, so npm nests BOTH copies under
-  //      apps/desktop/node_modules — while @stryker-mutator/core hoists to the
-  //      repo root and resolves from there. ERR_MODULE_NOT_FOUND.
-  //   2. Hoisting one would not help. TypeScript 7's package exports only
-  //      `./lib/version.cjs` as its main entry, so `ts.parseConfigFileTextToJson`
-  //      is gone and the preprocessor would fail one line later instead.
-  // Stryker has no TypeScript 7 support yet; drop this line once it does.
+  // preprocessor opens with `await import('typescript')` and then calls
+  // `ts.parseConfigFileTextToJson`, and since the TypeScript 7 upgrade one of
+  // those two lines fails no matter where npm places @stryker-mutator/core:
+  //   1. Hoisted to the repo root, it finds no `typescript` at all — @napi-rs/cli
+  //      pins typescript ^6 while the app is on ^7, so npm nests BOTH copies
+  //      under apps/desktop/node_modules. ERR_MODULE_NOT_FOUND.
+  //   2. Nested beside the app, it finds TypeScript 7, whose package exports
+  //      only `./lib/version.cjs` as its main entry, so `parseConfigFileTextToJson`
+  //      is undefined and the preprocessor fails one line later instead.
+  // Stryker's sandbox preprocessor has no TypeScript 7 support (its
+  // typescript-checker plugin does, experimentally, but that is a different
+  // code path we don't use); drop this line once the preprocessor does.
   tsconfigFile: 'tsconfig.stryker-disabled.json',
 
   mutate: [
