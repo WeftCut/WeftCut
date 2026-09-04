@@ -2,7 +2,9 @@
 //
 // Covers the Settings "Agent" tab (AgentSection): a generic setup prompt for
 // agent self-configuration plus one copyable config snippet per agent client
-// (Codex / Claude / Cursor / generic). With the stdio shim installed
+// (Codex TOML / Claude / Cursor JSON, and raw connection facts under Generic —
+// MCP fixes the protocol, never the config file). Codex and Claude also get a
+// `mcp add` one-liner beside the snippet. With the stdio shim installed
 // (shim_path set) the stdio config is the primary snippet — no token in it —
 // and HTTP-direct moves behind an "advanced" disclosure; without it (dev
 // before build:cli) the HTTP snippet renders as primary, token masked until
@@ -55,10 +57,16 @@ beforeEach(async () => {
   });
 });
 
-/** Rendered snippet text (the <pre> content). */
+/** Rendered snippet text (the first <pre> in the panel). */
 async function snippetText(): Promise<string> {
   const pre = await screen.findByRole("tabpanel");
   return pre.querySelector("pre")?.textContent ?? "";
+}
+
+/** The CLI one-liner box (the second <pre>), null on tabs that have no CLI. */
+async function cliText(): Promise<string | null> {
+  const panel = await screen.findByRole("tabpanel");
+  return panel.querySelectorAll("pre")[1]?.textContent ?? null;
 }
 
 describe("AgentSection", () => {
@@ -122,8 +130,41 @@ describe("AgentSection", () => {
     expect(cursor.mcpServers.weftcut.type).toBeUndefined();
 
     await userEvent.click(screen.getByRole("tab", { name: "Generic" }));
-    const generic = JSON.parse((await snippetText()).trim());
-    expect(generic.mcpServers.weftcut.url).toBe(INFO.url);
+    const generic = await snippetText();
+    expect(generic).not.toContain("mcpServers");
+    expect(generic).toMatch(/^transport:\s+streamable HTTP$/m);
+    expect(generic).toMatch(/^url:\s+/m);
+    expect(generic).toContain(INFO.url);
+    expect(generic).toMatch(/^header:\s+Authorization: Bearer /m);
+  });
+
+  it("offers no CLI one-liner where the client has none", async () => {
+    render(<AgentSection />);
+    await snippetText();
+    // Claude Code can set a literal header; Codex's `mcp add --url` cannot,
+    // and Cursor/Generic have no MCP CLI at all.
+    expect(await cliText()).toBeNull();
+
+    await userEvent.click(screen.getByRole("tab", { name: "Cursor" }));
+    expect(await cliText()).toBeNull();
+
+    await userEvent.click(screen.getByRole("tab", { name: "Generic" }));
+    expect(await cliText()).toBeNull();
+  });
+
+  it("gives Claude an HTTP `mcp add` one-liner, token masked until revealed", async () => {
+    render(<AgentSection />);
+    await snippetText();
+    await userEvent.click(screen.getByRole("tab", { name: "Claude" }));
+    expect(await cliText()).toBe(
+      `claude mcp add -s user -t http weftcut ${INFO.url} ` +
+        '-H "Authorization: Bearer ••••••••••••••••"',
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Reveal token" }));
+    expect(await cliText()).toContain(
+      `-H "Authorization: Bearer ${INFO.bearer_token}"`,
+    );
   });
 
   it("reveals the token in the snippet on demand", async () => {
@@ -170,6 +211,45 @@ describe("AgentSection with the stdio shim installed", () => {
       args: [INFO_SHIM.shim_path],
       env: { ELECTRON_RUN_AS_NODE: "1", WEFTCUT_USERDATA: INFO_SHIM.user_data },
     });
+  });
+
+  it("the Generic tab shows the launch triple with no config wrapper", async () => {
+    render(<AgentSection />);
+    await snippetText();
+    await userEvent.click(screen.getByRole("tab", { name: "Generic" }));
+    const text = await snippetText();
+    expect(text).not.toContain("mcpServers");
+    expect(text).toMatch(/^transport:\s+stdio$/m);
+    expect(text).toContain(INFO_SHIM.exe_path);
+    expect(text).toContain(INFO_SHIM.shim_path);
+    expect(text).toMatch(/^env:\s+ELECTRON_RUN_AS_NODE=1$/m);
+    expect(text).toMatch(/^env:\s+WEFTCUT_USERDATA=C:\\ud$/m);
+  });
+
+  it("gives Codex and Claude an `mcp add` one-liner with the paths quoted", async () => {
+    render(<AgentSection />);
+    // shq quotes on whitespace *or* a backslash: unquoted, a POSIX shell would
+    // eat the Windows separators (C:\ud → C:ud) in Git Bash.
+    const launch = `"${INFO_SHIM.exe_path}" "${INFO_SHIM.shim_path}"`;
+    const userData = `"WEFTCUT_USERDATA=${INFO_SHIM.user_data}"`;
+
+    expect(await cliText()).toBe(
+      `codex mcp add weftcut --env ELECTRON_RUN_AS_NODE=1 --env ${userData} -- ${launch}`,
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: "Claude" }));
+    expect(await cliText()).toBe(
+      `claude mcp add weftcut -s user -e ELECTRON_RUN_AS_NODE=1 -e ${userData} -- ${launch}`,
+    );
+  });
+
+  it("copies the one-liner from its own button, not the snippet's", async () => {
+    render(<AgentSection />);
+    const cli = await cliText();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Copy command" }),
+    );
+    expect(clipboard.writeText).toHaveBeenCalledWith(cli);
   });
 
   it("the setup prompt describes the stdio transport and leaks no token", async () => {

@@ -1293,10 +1293,12 @@ const enUS = {
       "Token enforcement isn't on yet — localhost-only binding is the active isolation. Don't expose the port to other machines until proper auth ships.",
     snippets_heading: "Client config snippets",
     stdio_note:
-      "This config launches WeftCut's connection shim — it stays valid across app restarts, port changes, and token rotations, and keeps working while the app is closed (agents can start WeftCut with the launch_weftcut tool).",
+      "This configuration stays valid long-term: app restarts, port changes and token changes require no edits. Agents can also connect while WeftCut is closed, and launch it directly.",
     http_heading: "HTTP direct (advanced)",
     http_note:
-      "Connects straight to the running app's endpoint. It fails whenever the app is closed and goes stale when the port or token changes — prefer the shim config above unless your client cannot spawn stdio servers.",
+      "Connects directly to the running app. The connection drops once the app closes, and the configuration becomes invalid when the port or token changes. Unless your client does not support stdio, use the configuration above.",
+    cli_note: "Or run the following command in a terminal",
+    copy_command: "Copy command",
     tabs: {
       codex: "Codex",
       claude: "Claude",
@@ -1307,13 +1309,15 @@ const enUS = {
       codex: "Paste into ~/.codex/config.toml",
       claude: "Paste into .mcp.json (project) or ~/.claude.json",
       cursor: "Paste into ~/.cursor/mcp.json or a project's .cursor/mcp.json",
-      generic: "Works with any streamable-HTTP MCP client",
+      generic:
+        "Connection details — refer to your client's own docs to fill in each value.",
     },
     hint_stdio: {
       codex: "Paste into ~/.codex/config.toml",
       claude: "Paste into .mcp.json (project) or ~/.claude.json",
       cursor: "Paste into ~/.cursor/mcp.json or a project's .cursor/mcp.json",
-      generic: "Works with any MCP client that can spawn stdio servers",
+      generic:
+        "Connection details — refer to your client's own docs to fill in each value.",
     },
   },
   settings: {

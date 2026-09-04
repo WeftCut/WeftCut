@@ -42,6 +42,14 @@
   border-bottom-color: var(--primary);
 }
 
+/* One tab's content: the config snippet, plus the CLI one-liner for the
+ * clients whose command line can express the same entry. */
+.connect-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .connect-snippet-header {
   display: flex;
   align-items: center;

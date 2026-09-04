@@ -1111,10 +1111,12 @@ const zhCN: Resources = {
       "尚未启用令牌校验 — 仅本地回环绑定提供隔离。在正式认证就绪前，请勿对其它机器开放此端口。",
     snippets_heading: "客户端配置片段",
     stdio_note:
-      "此配置启动的是 WeftCut 自带的连接 shim — 应用重启、端口变动、令牌轮换后依然有效，应用未打开时也能连接（Agent 可通过 launch_weftcut 工具启动 WeftCut）。",
+      "此配置长期有效：应用重启、端口或令牌变更后均无需修改。应用未启动时 Agent 也可连接，并能直接唤起 WeftCut。",
     http_heading: "HTTP 直连（高级）",
     http_note:
-      "直接连接运行中应用的端点：应用关闭即失败，端口或令牌变动后配置作废。除非你的客户端无法启动 stdio 服务，否则请优先使用上方的 shim 配置。",
+      "直接连接运行中的应用。应用关闭后连接即中断，端口或令牌变更后配置随之失效。除非客户端不支持 stdio，否则建议优先使用上方的配置。",
+    cli_note: "或者在终端运行以下命令",
+    copy_command: "复制命令",
     tabs: {
       codex: "Codex",
       claude: "Claude",
@@ -1125,13 +1127,13 @@ const zhCN: Resources = {
       codex: "粘贴到 ~/.codex/config.toml",
       claude: "粘贴到 .mcp.json（项目级）或 ~/.claude.json",
       cursor: "粘贴到 ~/.cursor/mcp.json 或项目的 .cursor/mcp.json",
-      generic: "适用于任何 streamable-HTTP MCP 客户端",
+      generic: "连接信息，请参照具体客户端文档填写对应值",
     },
     hint_stdio: {
       codex: "粘贴到 ~/.codex/config.toml",
       claude: "粘贴到 .mcp.json（项目级）或 ~/.claude.json",
       cursor: "粘贴到 ~/.cursor/mcp.json 或项目的 .cursor/mcp.json",
-      generic: "适用于任何能启动 stdio 服务的 MCP 客户端",
+      generic: "连接信息，请参照具体客户端文档填写对应值",
     },
   },
   settings: {

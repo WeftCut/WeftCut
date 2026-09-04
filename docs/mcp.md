@@ -78,9 +78,22 @@ WeftCut exposes itself as an MCP server. External agents (Claude Desktop, Cursor
 
 The app's **Connect agent** panel (Settings → Agent):
 - **Primary: the stdio shim config**, one copyable snippet per client
-  (Codex TOML / Claude / Cursor / generic JSON) plus a self-configuration
-  prompt the user can paste into any MCP-capable agent. No token rides in
-  these — the shim resolves it at connect time.
+  (Codex TOML, Claude and Cursor JSON) plus a self-configuration prompt the
+  user can paste into any MCP-capable agent. No token rides in these — the
+  shim resolves it at connect time.
+- **The `Generic` tab is not a fourth format.** MCP standardises the protocol
+  and never the config file — `mcpServers` is a Claude Desktop convention the
+  JSON clients copied, not a spec artifact — so the tab for "some other
+  client" prints the connection facts unwrapped (`transport` / `command` /
+  `arg` / `env`, or `transport` / `url` / `header`) and points clients that do
+  take the `mcpServers` shape at the Cursor tab.
+- **A `mcp add` one-liner accompanies the snippet** wherever the client's CLI
+  can express the whole entry: Codex and Claude Code for stdio, Claude Code
+  alone for HTTP — `codex mcp add --url` takes only `--bearer-token-env-var`
+  (an env var *name*), never a literal header. Cursor ships no MCP CLI. Both
+  CLIs write exactly the JSON/TOML the adjacent snippet shows, so the two
+  paths are interchangeable. Windows paths are double-quoted so the command
+  survives Git Bash as well as PowerShell.
 - **Advanced (collapsed): HTTP-direct** — the server URL
   (`http://127.0.0.1:<port>/mcp`), the bearer token (masked until revealed,
   rotatable in place), and the same per-client snippets in URL + header form.
@@ -117,7 +130,19 @@ Shim snippet example (paths are machine-specific, generated at runtime from
 }
 ```
 
-HTTP-direct snippet example (the advanced path; Cursor has the same shape):
+The same entry from the `Generic` tab, and as the Codex one-liner beside it:
+```
+transport: stdio
+command:   C:\Users\u\AppData\Local\Programs\WeftCut\WeftCut.exe
+arg:       C:\Users\u\AppData\Roaming\WeftCut\cli\weftcut-mcp.cjs
+env:       ELECTRON_RUN_AS_NODE=1
+env:       WEFTCUT_USERDATA=C:\Users\u\AppData\Roaming\WeftCut
+```
+```sh
+codex mcp add weftcut --env ELECTRON_RUN_AS_NODE=1 --env "WEFTCUT_USERDATA=C:\Users\u\AppData\Roaming\WeftCut" -- "C:\Users\u\AppData\Local\Programs\WeftCut\WeftCut.exe" "C:\Users\u\AppData\Roaming\WeftCut\cli\weftcut-mcp.cjs"
+```
+
+HTTP-direct snippet example (the advanced path, in Cursor's shape):
 ```json
 {
   "mcpServers": {

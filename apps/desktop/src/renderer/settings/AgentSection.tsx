@@ -16,7 +16,9 @@ const REFRESH_INTERVAL_MS = 1000;
 const MASKED_TOKEN = "••••••••••••••••";
 
 /// Agent clients with a known MCP config format, in sidebar order. Each gets
-/// its own snippet tab; `generic` is the catch-all shape.
+/// its own snippet tab. `generic` is not a fourth format: MCP standardises the
+/// protocol, never the config file, so the tab for "some other client" shows
+/// the raw connection facts and leaves the wrapper to that client's docs.
 type ClientId = "codex" | "claude" | "cursor" | "generic";
 const CLIENTS: readonly ClientId[] = ["codex", "claude", "cursor", "generic"];
 
@@ -38,10 +40,36 @@ function stdioCfgFrom(info: McpInfoView): StdioCfg | null {
   };
 }
 
+/// Render `key: value` rows with the values column-aligned — what the
+/// `generic` tab shows in place of a config snippet. One row per arg and per
+/// env entry, so a value containing a space stays unambiguous.
+function factsBlock(rows: readonly (readonly [string, string])[]): string {
+  const width = Math.max(...rows.map(([k]) => k.length)) + 2;
+  return rows.map(([k, v]) => `${k}:`.padEnd(width) + v).join("\n");
+}
+
+/// Shell-quote one CLI argument. Whitespace forces quoting, and so does a
+/// backslash: a bare Windows path survives PowerShell but a POSIX shell eats
+/// the separators (`C:\ud` → `C:ud`), and Windows users do run these in Git
+/// Bash. Nothing needs escaping *inside* the quotes — these values are
+/// filesystem paths, a URL, and `KEY=value` pairs, none of which can carry a
+/// double quote, and a double-quoted backslash is literal in both shells.
+function shq(s: string): string {
+  return /[\s\\]/.test(s) ? `"${s}"` : s;
+}
+
 /// Ready-to-paste stdio config for one client. JSON.stringify doubles as the
 /// TOML basic-string encoder — TOML's escape set is a superset of JSON's, so
 /// Windows backslash paths survive both formats.
 function buildStdioSnippet(client: ClientId, cfg: StdioCfg): string {
+  if (client === "generic") {
+    return factsBlock([
+      ["transport", "stdio"],
+      ["command", cfg.command],
+      ...cfg.args.map((a) => ["arg", a] as const),
+      ...Object.entries(cfg.env).map(([k, v]) => ["env", `${k}=${v}`] as const),
+    ]);
+  }
   if (client === "codex") {
     const env = Object.entries(cfg.env)
       .map(([k, v]) => `${JSON.stringify(k)} = ${JSON.stringify(v)}`)
@@ -64,8 +92,15 @@ function buildStdioSnippet(client: ClientId, cfg: StdioCfg): string {
 /// - claude:  `.mcp.json` / `~/.claude.json`; a `url` entry is an error
 ///   without `"type": "http"`.
 /// - cursor:  `~/.cursor/mcp.json`; `url` + `headers`, no `type` field.
-/// - generic: same shape as cursor — the de-facto streamable-HTTP snippet.
+/// - generic: the endpoint and header alone, no wrapper.
 function buildHttpSnippet(client: ClientId, url: string, token: string): string {
+  if (client === "generic") {
+    return factsBlock([
+      ["transport", "streamable HTTP"],
+      ["url", url],
+      ["header", `Authorization: Bearer ${token}`],
+    ]);
+  }
   if (client === "codex") {
     return [
       "[mcp_servers.weftcut]",
@@ -78,6 +113,39 @@ function buildHttpSnippet(client: ClientId, url: string, token: string): string 
       ? { type: "http", url, headers: { Authorization: `Bearer ${token}` } }
       : { url, headers: { Authorization: `Bearer ${token}` } };
   return JSON.stringify({ mcpServers: { weftcut: server } }, null, 2);
+}
+
+/// Terminal one-liner that makes the client write its own config entry —
+/// offered alongside the snippet because it finds the config file itself and
+/// merges rather than replaces. `null` where no such command exists: Cursor
+/// ships no MCP CLI, and `generic` has none by definition. Flags verified
+/// against `codex mcp add --help` (0.152.0) and `claude mcp add --help`.
+function buildStdioCli(client: ClientId, cfg: StdioCfg): string | null {
+  const launch = [cfg.command, ...cfg.args].map(shq).join(" ");
+  const env = Object.entries(cfg.env).map(([k, v]) => `${k}=${v}`);
+  if (client === "codex") {
+    const flags = env.map((e) => `--env ${shq(e)}`).join(" ");
+    return `codex mcp add weftcut ${flags} -- ${launch}`;
+  }
+  if (client === "claude") {
+    const flags = env.map((e) => `-e ${shq(e)}`).join(" ");
+    return `claude mcp add weftcut -s user ${flags} -- ${launch}`;
+  }
+  return null;
+}
+
+/// HTTP-direct one-liner. Claude Code alone can express the whole entry:
+/// `codex mcp add --url` takes only `--bearer-token-env-var` (the *name* of an
+/// env var to read), never a literal header, so Codex's HTTP entry stays
+/// file-only and falls back to the snippet above it.
+function buildHttpCli(
+  client: ClientId,
+  url: string,
+  token: string,
+): string | null {
+  if (client !== "claude") return null;
+  const header = shq(`Authorization: Bearer ${token}`);
+  return `claude mcp add -s user -t http weftcut ${shq(url)} -H ${header}`;
 }
 
 /// Instruction that installs the shipped agent skill, addressed to the agent
@@ -106,10 +174,9 @@ export function AgentSection() {
   const [info, setInfo] = useState<McpInfoView | null>(null);
   const [client, setClient] = useState<ClientId>("codex");
   const [revealed, setRevealed] = useState(false);
-  const [stdioCopied, setStdioCopied] = useState(false);
-  const [httpCopied, setHttpCopied] = useState(false);
-  const [promptCopied, setPromptCopied] = useState(false);
-  const [skillCopied, setSkillCopied] = useState(false);
+  // Which copy button last fired, for its 1.5s "Copied!" flash. One key beats
+  // a boolean per button now that six of them share the behaviour.
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [httpOpen, setHttpOpen] = useState(false);
 
@@ -146,6 +213,11 @@ export function AgentSection() {
     [stdio, client],
   );
 
+  const stdioCli = useMemo(
+    () => (stdio ? buildStdioCli(client, stdio) : null),
+    [stdio, client],
+  );
+
   // Displayed HTTP snippet masks the token unless revealed; the copy below
   // always uses the real one.
   const httpSnippet = useMemo(() => {
@@ -157,28 +229,52 @@ export function AgentSection() {
     );
   }, [info, client, revealed]);
 
-  const copyStdio = async () => {
-    if (!stdio) return;
+  // Same masking rule as the snippet: the rendered command hides the token,
+  // the copy carries the real one.
+  const httpCli = useMemo(() => {
+    if (!info) return null;
+    return buildHttpCli(
+      client,
+      info.url,
+      revealed ? info.bearer_token : MASKED_TOKEN,
+    );
+  }, [info, client, revealed]);
+
+  /// Write to the clipboard and flash `key`'s button for 1.5s. The clear is
+  /// guarded so a later copy's flash isn't cut short by an earlier timer.
+  const copy = async (key: string, text: string) => {
     try {
-      await navigator.clipboard.writeText(buildStdioSnippet(client, stdio));
-      setStdioCopied(true);
-      window.setTimeout(() => setStdioCopied(false), 1500);
+      await navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      window.setTimeout(
+        () => setCopiedKey((k) => (k === key ? null : k)),
+        1500,
+      );
     } catch (e) {
       console.warn("clipboard copy failed:", e);
     }
   };
 
+  const copyStdio = async () => {
+    if (!stdio) return;
+    await copy("stdio", buildStdioSnippet(client, stdio));
+  };
+
+  const copyStdioCli = async () => {
+    if (!stdio) return;
+    const cli = buildStdioCli(client, stdio);
+    if (cli) await copy("stdio-cli", cli);
+  };
+
   const copyHttp = async () => {
     if (!info) return;
-    try {
-      await navigator.clipboard.writeText(
-        buildHttpSnippet(client, info.url, info.bearer_token),
-      );
-      setHttpCopied(true);
-      window.setTimeout(() => setHttpCopied(false), 1500);
-    } catch (e) {
-      console.warn("clipboard copy failed:", e);
-    }
+    await copy("http", buildHttpSnippet(client, info.url, info.bearer_token));
+  };
+
+  const copyHttpCli = async () => {
+    if (!info) return;
+    const cli = buildHttpCli(client, info.url, info.bearer_token);
+    if (cli) await copy("http-cli", cli);
   };
 
   // The prompt is generic — the agent figures out its own client config
@@ -196,24 +292,12 @@ export function AgentSection() {
           url: info.url,
           token: info.bearer_token,
         });
-    try {
-      await navigator.clipboard.writeText(prompt);
-      setPromptCopied(true);
-      window.setTimeout(() => setPromptCopied(false), 1500);
-    } catch (e) {
-      console.warn("clipboard copy failed:", e);
-    }
+    await copy("prompt", prompt);
   };
 
   const copySkillPrompt = async () => {
     if (!info?.skills_dir) return;
-    try {
-      await navigator.clipboard.writeText(buildSkillPrompt(info.skills_dir));
-      setSkillCopied(true);
-      window.setTimeout(() => setSkillCopied(false), 1500);
-    } catch (e) {
-      console.warn("clipboard copy failed:", e);
-    }
+    await copy("skill", buildSkillPrompt(info.skills_dir));
   };
 
   const refreshToken = async () => {
@@ -279,17 +363,44 @@ export function AgentSection() {
     </div>
   );
 
-  const httpActions = (copied: boolean) => (
-    <div className="connect-snippet-actions">
+  /// Copy-icon button that flashes a tick while `key` is the last thing copied.
+  /// `what` names the payload for screen readers when it isn't a config blob.
+  const copyButton = (key: string, onClick: () => void, what?: string) => {
+    const copied = copiedKey === key;
+    const label = copied ? t("connect.copied") : (what ?? t("connect.copy"));
+    return (
       <Button
         variant="ghost"
         size="icon-xs"
-        onClick={() => void copyHttp()}
-        title={copied ? t("connect.copied") : t("connect.copy")}
-        aria-label={copied ? t("connect.copied") : t("connect.copy")}
+        onClick={onClick}
+        title={label}
+        aria-label={label}
       >
         {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
       </Button>
+    );
+  };
+
+  /// The optional second box under a config snippet: the same entry as a
+  /// terminal command, rendered only for clients whose CLI can express it.
+  const cliBlock = (cli: string | null, key: string, onCopy: () => void) =>
+    cli ? (
+      <div className="connect-snippet">
+        <div className="connect-snippet-header">
+          <span>{t("connect.cli_note")}</span>
+          <div className="connect-snippet-actions">
+            {copyButton(key, onCopy, t("connect.copy_command"))}
+          </div>
+        </div>
+        <pre>
+          <code>{cli}</code>
+        </pre>
+      </div>
+    ) : null;
+
+  const httpActions = () => (
+    <div className="connect-snippet-actions">
+      {copyButton("http", () => void copyHttp())}
       <Button
         variant="ghost"
         size="icon-xs"
@@ -314,18 +425,21 @@ export function AgentSection() {
 
   const httpSnippetBlock = (section: string) => (
     <div
-      className="connect-snippet"
+      className="connect-panel"
       role="tabpanel"
       id={`connect-snippet-panel-${section}`}
       aria-labelledby={`connect-tab-${section}-${client}`}
     >
-      <div className="connect-snippet-header">
-        <span>{t(`connect.hint.${client}`)}</span>
-        {httpActions(httpCopied)}
+      <div className="connect-snippet">
+        <div className="connect-snippet-header">
+          <span>{t(`connect.hint.${client}`)}</span>
+          {httpActions()}
+        </div>
+        <pre>
+          <code>{httpSnippet}</code>
+        </pre>
       </div>
-      <pre>
-        <code>{httpSnippet}</code>
-      </pre>
+      {cliBlock(httpCli, "http-cli", () => void copyHttpCli())}
     </div>
   );
 
@@ -339,8 +453,12 @@ export function AgentSection() {
         <p className="settings-blurb">{t("connect.prompt_blurb")}</p>
         <div className="settings-key-input-row">
           <Button size="sm" onClick={() => void copyAgentPrompt()}>
-            {promptCopied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
-            {promptCopied
+            {copiedKey === "prompt" ? (
+              <CheckIcon size={13} />
+            ) : (
+              <CopyIcon size={13} />
+            )}
+            {copiedKey === "prompt"
               ? t("connect.prompt_copied")
               : t("connect.copy_prompt")}
           </Button>
@@ -353,8 +471,12 @@ export function AgentSection() {
           <p className="settings-blurb">{t("connect.skill_blurb")}</p>
           <div className="settings-key-input-row">
             <Button size="sm" onClick={() => void copySkillPrompt()}>
-              {skillCopied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
-              {skillCopied
+              {copiedKey === "skill" ? (
+                <CheckIcon size={13} />
+              ) : (
+                <CopyIcon size={13} />
+              )}
+              {copiedKey === "skill"
                 ? t("connect.skill_copied")
                 : t("connect.copy_skill_prompt")}
             </Button>
@@ -369,34 +491,23 @@ export function AgentSection() {
             <p className="settings-blurb">{t("connect.stdio_note")}</p>
             {clientTabs("stdio")}
             <div
-              className="connect-snippet"
+              className="connect-panel"
               role="tabpanel"
               id="connect-snippet-panel-stdio"
               aria-labelledby={`connect-tab-stdio-${client}`}
             >
-              <div className="connect-snippet-header">
-                <span>{t(`connect.hint_stdio.${client}`)}</span>
-                <div className="connect-snippet-actions">
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    onClick={() => void copyStdio()}
-                    title={stdioCopied ? t("connect.copied") : t("connect.copy")}
-                    aria-label={
-                      stdioCopied ? t("connect.copied") : t("connect.copy")
-                    }
-                  >
-                    {stdioCopied ? (
-                      <CheckIcon size={12} />
-                    ) : (
-                      <CopyIcon size={12} />
-                    )}
-                  </Button>
+              <div className="connect-snippet">
+                <div className="connect-snippet-header">
+                  <span>{t(`connect.hint_stdio.${client}`)}</span>
+                  <div className="connect-snippet-actions">
+                    {copyButton("stdio", () => void copyStdio())}
+                  </div>
                 </div>
+                <pre>
+                  <code>{stdioSnippet}</code>
+                </pre>
               </div>
-              <pre>
-                <code>{stdioSnippet}</code>
-              </pre>
+              {cliBlock(stdioCli, "stdio-cli", () => void copyStdioCli())}
             </div>
           </>
         ) : (
