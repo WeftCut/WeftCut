@@ -53,13 +53,18 @@ html, body, #root { height: 100%; margin: 0; }
  * dimension while separating WeftCut's near-black surface from a dark desktop.
  * Keep the edge neutral: blue remains reserved for focus and selection.
  * The 0.10/0.08 (focused/unfocused) alphas stay literal — this OS-adjacent
- * chrome keeps its own calibration instead of joining --border-on-dark. */
+ * chrome keeps its own calibration instead of joining --border-on-dark.
+ * The radius follows the frameless window's own rounded mask: Chromium rounds
+ * frameless windows at 8px on Linux and Windows 11, so a square hairline would
+ * visibly cut the corners. Maximized/fullscreen windows are square and the
+ * edge is hidden there anyway (below). */
 html.app-window-framed::after {
   content: "";
   position: fixed;
   inset: 0;
   z-index: 2147483647;
   pointer-events: none;
+  border-radius: 8px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10);
 }
 

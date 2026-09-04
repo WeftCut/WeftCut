@@ -22,6 +22,7 @@ target/
 
 # Project caches
 .vproj/cache/
+.cache/
 **/raster-cache/
 **/proxy-cache/
 

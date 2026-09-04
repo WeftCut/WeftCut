@@ -8,3 +8,8 @@ Re-verify an entry before relying on it when the engine major version changes (a
 - `canvas-raster-facts.md` — engine-independent rasterization/encoding facts: plain-SVG cleanliness, the "WebP lossless" myth, the adversarial-frame testing rule.
 - `linux-native-decode-spike.md` — spike bringing the Standard engine's software lane up on Linux: the LGPL-ffmpeg supply chain, and the `RTLD_DEEPBIND` fix for the Chromium-`libffmpeg.so` symbol collision (why the component was Windows-only).
 - `linux-lite-export-off-by-one-tail.md` — investigation handoff, resolved 2026-07-23 by non-reproduction: the Lite/webcodecs export leg once failed gate B's tail alignment on Linux (tail sample best-matched source+1); symptom, suspects, repro steps, and the closure evidence.
+- `electron-43-vs-44-upgrade-assessment.md` — the Electron 42→44 decision record: why 44 over 43, the breaking-change audit against this codebase, the build-tool (node-abi) preflight, and the qualification gates.
+- `webcodecs-cross-platform-tail-alignment-research.md` — cross-platform WebCodecs tail-alignment research (macOS decoder retention, Linux hardware BGRA frames reading black); closes the Linux tail question.
+- `napi-rs-multiplatform-testing.md` — how the two napi-rs addons are tested on all three OSes (`test-noop`, `dyn-symbols`, per-OS loader variables), with the macOS checklist.
+- `mcp-2026-07-28-spec-upgrade-assessment.md` — assessment of moving the MCP server to the 2026-07-28 protocol revision.
+- `react-electron-docking-layout-research.md` — docking-layout library research for the React/Electron renderer (why dockview).

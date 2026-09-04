@@ -4,6 +4,25 @@ Measured 2026-06-19 on Electron 42.4.1 / Chromium 148.0.7778.265 (Windows 11, RT
 
 Re-verify on the next Chromium major bump, or on hardware that breaks an entry's stated assumption.
 
+## Re-verification on Electron 44.1.1 / Chromium 152.0.7977.65 (Linux x64, NVIDIA Ampere + Intel iHD VAAPI, X11), 2026-09-03
+
+Re-run through the repository's own gates rather than the original bare-page harness, so each line says what the evidence actually is.
+
+- ✅ **Canceled `pointerdown` cancels the focus move** — `focus-regions.spec.ts` ("a pointerdown the target cancels still releases the field") passes.
+- ✅ **Offscreen window is a full citizen of the window list** — the motif capture host (`webPreferences.offscreen`) still captures and the quit accounting still passes (`determinism.spec.ts`, `motif-export.spec.ts`, `windows.test.ts`).
+- ✅ **WebGPU on Linux needs `--enable-features=Vulkan`** — bare-page probe on 44: `navigator.gpu` present, `requestAdapter()` → `null` without the feature, `nvidia / ampere` with it. The F16 parity gate (`effects-f16-parity`) passes on the real device.
+- ✅ **Buffer-defined `VideoFrame` → owned-shader conversion** — the ProRes fidelity gate (`preview-sw-conformance`, SSIM 0.997) and the saturated-chart colour gates (`preview-sw-color` / `preview-hw-color` nvdec + vaapi, worst patch error 1–2 of tolerance 8) pass. This proves the owned conversion still yields correct colour; it does not re-measure whether Chromium's `drawImage` of a buffer frame still applies BT.601.
+- ✅ **`prefer-hardware` encode rule** — `export_codecs.spec.ts` (AV1, HEVC, WebCodecs H.264, native H.264) passes with the hint omitted for non-H.264 codecs. Again evidence that the rule still produces working exports, not a fresh negative probe.
+- 🆕 **WebCodecs hardware *decode* is refused outright on Linux/NVIDIA** — `import-probe.spec.ts` on 152: `VideoDecoder.configure({ hardwareAcceleration: "prefer-hardware" })` throws `OperationError: Unsupported configuration` in both the main thread and a worker; `prefer-software` configures, produces I420, and all four import paths (`drawImage`, `createImageBitmap`, `texImage2D`, `copyTo`) read lit. On 148 the hardware configuration was accepted and produced BGRA frames that read black through every path. The product consequence is unchanged — `preferSoftware` / `hwExportDecodeAllowed` stay, and there is still no WebCodecs-side hardware decode on Linux — but the failure mode moved from "silent black frames" to "config rejected", which is the safer one.
+- ⏳ **Not re-verified on 44** — Pointer Lock (no gate), inline foreignObject taint (no gate), EyeDropper widget behavior (Windows), the macOS menu-accelerator table (manual check below). Those entries still describe Electron 42.
+
+## Re-verification on Electron 44.1.1 / Chromium 152 (Windows 11, RTX 3050 + Intel UHD 730, display on the RTX 3050)
+
+- ✅ **Windows persistent D3D11 shared textures** — `preview-gpu-order` 8/8, `preview-hw-color` d3d11va 4/4 (worst patch error 1–2 of tolerance 8), `preview-hw-conformance` d3d11va, `poc/shared-texture` full matrix including the RGBA byte-exact probe. `importSharedTexture` accepts the keyed-mutex slots unchanged.
+- ✅ **Context loss** — `chrome://gpucrash` under a live d3d11va session: the app survives, close + reopen Preview brings the hardware lane back with advancing frames.
+- ✅ **WebGPU on D3D12** — the F16 parity gate (`effects-f16-parity`, GLSL and WGSL) passes on the real device.
+- 🆕 **A WebGPU device that dies out of order stalls the renderer** — the section below; the product fix is ADR 0059.
+
 ## Pointer Lock works (WebView2 verdict overturned)
 
 `element.requestPointerLock()` locks fine on a visible, focused window. A *hidden* window forces `pointerlockerror` — that is a probe-harness artifact, not an engine limit.
@@ -198,6 +217,34 @@ Electron quick-start is a decision about document-based apps, not about this one
 fails `app-quit.spec.ts` on the macOS leg alone, and would drag back the `activate` handler
 that re-creates a window on zero — which can fire from a Dock click inside the `before-quit`
 flush and resurrect the window the quit has stopped waiting for.
+
+## A WebGPU device that dies out of order stalls the renderer (Chromium 152)
+
+Pixi's `GpuDeviceSystem.destroy()` drops its reference to the `GPUDevice` and never
+destroys it — its WebGL twin, `GlContextSystem.destroy()`, calls
+`WEBGL_lose_context.loseContext()` — so a destroyed WebGPU `Application` leaves a live
+device for the garbage collector. On Chromium 148 that is harmless. On Chromium 152 the
+renderer main thread blocks for 30–45 s inside `gpu.mojom.CommandBufferClient` handling,
+right after a burst of WebGPU return data, with every process at 0 % CPU and the main
+process answering — whenever such a device dies while the next Application's first
+WebGPU work is in flight. Measured on Windows with the d3d11va shared-texture lane live,
+eight Preview close→reopen rounds per run, three runs per row:
+
+| device lifetime on Application destroy | result |
+| --- | --- |
+| left to the garbage collector (Pixi default) | frozen in round 1–2, every run |
+| `device.destroy()` BEFORE Pixi's teardown (in the host's own cleanup) | frozen in round 1, every run |
+| `device.destroy()` right AFTER Pixi's teardown | clean, every run |
+| device held forever, or one device shared by every Application | clean, every run |
+
+Two product faces: Preview close→reopen with a live hardware session froze, and export
+start under four concurrent app instances wedged six to seven of 39 export tests per
+leg — each export worker's Application leaked its device the same way. The verdict is
+about ORDER, not about calling `destroy()`: the canvas swap chain and textures must be
+released on a live device, then the device destroyed, deterministically and before the
+next Application exists. WeftCut does this in the Preview host and the export worker
+(ADR 0059). WebGL is unaffected because Pixi loses the GL context deterministically. The
+same lifecycle is clean on Electron 42 and 43.
 
 ## Not re-probed (kept as known Blink behavior)
 

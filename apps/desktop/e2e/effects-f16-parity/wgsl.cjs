@@ -14,11 +14,12 @@
 const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 
-// Linux: WebGPU is gated behind the Vulkan feature in this Chromium
-// (148.0.7778.265 / Electron 42). Verified by probe: without it
-// `navigator.gpu` exists but `requestAdapter()` resolves null; with it the
-// adapter reports the real GPU. `--enable-unsafe-webgpu` alone would hand back
-// SwiftShader, which compiles WGSL but measures a software path.
+// Linux: WebGPU is gated behind the Vulkan feature in Electron's Chromium
+// (held from Electron 42 / Chromium 148 through 44 / Chromium 152, re-probed
+// on each). Without it `navigator.gpu` exists but `requestAdapter()` resolves
+// null; with it the adapter reports the real GPU. `--enable-unsafe-webgpu`
+// alone would hand back SwiftShader, which compiles WGSL but measures a
+// software path.
 app.commandLine.appendSwitch("enable-features", "Vulkan");
 
 let done = false;

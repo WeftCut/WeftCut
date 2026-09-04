@@ -82,6 +82,7 @@ import { PlaybackEngine } from "./PlaybackEngine";
 import { UnsupportedClipCard } from "./UnsupportedClipCard";
 import type { PixiExportResult, PixiPreviewHandle } from "./pixiPreviewFlag";
 import { runExport } from "./worker/runExport";
+import { webgpuDeviceOf } from "./webgpuDevice";
 import {
   clearMasterMeter,
   publishMasterMeter,
@@ -217,6 +218,17 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const handleInit = useCallback(
     (app: Application) => {
       applicationRef.current = app;
+      // The device dies one microtask after Pixi's own teardown, and not a
+      // moment sooner. @pixi/react destroys the Application asynchronously
+      // after this component's cleanup; inside that one synchronous
+      // `Application.destroy()` Pixi destroys the stage, then the renderer, and
+      // the stage's `destroyed` event is the public hook in between — the
+      // microtask lands after the renderer half. Destroying the device before
+      // Pixi has released the canvas swap chain and its textures reproduces the
+      // Electron 44 freeze exactly as leaving it to the garbage collector does.
+      // ADR 0059.
+      const device = webgpuDeviceOf(app.renderer);
+      app.stage.once("destroyed", () => queueMicrotask(() => device?.destroy()));
       // Before the log so it reports the buffer we actually got, and before
       // the first composite so the very first frame rasterizes at the user's
       // setting instead of full res and then re-rendering.

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("react-i18next", async (importOriginal) => ({
@@ -106,6 +106,9 @@ const openView = () =>
 
 // Workspace controls live one level down under the Workspaces submenu.
 const openWorkspaces = async () => {
+  // Base UI commits a selected item's close asynchronously. Wait for the
+  // previous popup to unmount before simulating the next user interaction.
+  await waitFor(() => expect(screen.queryByText("Workspaces")).toBeNull());
   openView();
   fireEvent.click(await screen.findByText("Workspaces"));
 };
