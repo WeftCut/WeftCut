@@ -53,7 +53,11 @@ npm run build:e2e                          # VITE_WEFTCUT_E2E=1 build — see be
   before its backward-seek assertion. `preview-sw-conformance`'s 4K ProRes
   memory-ratchet cell and `preview-gpu-order` also read this dir but stay out
   of CI: the first is a ~3.5 GB fixture driving a memory measurement a shared
-  runner cannot hold steady, the second needs a GPU that d3d11va-decodes HEVC.
+  runner cannot hold steady, the second needs a GPU whose hardware lane decodes
+  8-bit HEVC — d3d11va for its shared-texture group, a copy-back lane (nvdec /
+  vaapi / videotoolbox) for the group that runs everywhere else. Its fixture
+  comes from its own script, `node scripts/gen-order-fixture.mjs`, which neither
+  `npm run fixtures` nor the `--only` line above produces.
 - **The analyzer-backed gates need a built analyzer.** `lib/analyze.mjs` execs
   `native/target/debug/media_conformance`, which `npm run analyzer:build` writes.
   It is a build artifact like `out/` — rebuild it after changing the bin. Absent,

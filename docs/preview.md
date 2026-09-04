@@ -208,7 +208,10 @@ means for licensing.
   mid-read, delivering a later frame's pixels tagged with an earlier PTS
   (`preview-gpu-order.spec.ts` locks this: every frame carries a barcode of its
   index and every delivered bitmap must match its PTS-derived index, on one
-  session and on three concurrent ones). What has to wait is **recycling**, not
+  session and on three concurrent ones). That group is Windows-only, because the
+  slot pool it exercises is; the same spec runs the one-session barcode check on
+  the copy-back lanes with the lane left unforced, which covers presentation
+  order there and reaches no shared texture. What has to wait is **recycling**, not
   **delivery** — treating the two as one costs a display interval on the
   renderer thread for every frame of every session. So the preload hands the
   bitmap over immediately and delegates the ack to the renderer, which copies one
