@@ -1245,7 +1245,7 @@ const enUS = {
     skill_heading: "Teach your agent WeftCut",
     skill_blurb:
       "WeftCut ships a Skill covering session etiquette, the Motif authoring contract and the rest of the usage guidance. Copy the prompt and hand it to your agent to install. The Skill updates with each release, so reinstalling after every upgrade is recommended.",
-    copy_skill_prompt: "Copy skill prompt",
+    copy_skill_prompt: "Copy Skill prompt",
     skill_copied: "Prompt copied!",
     agent_prompt: [
       "Configure the WeftCut MCP server for me. Make the configuration change directly; do not just describe the steps.",

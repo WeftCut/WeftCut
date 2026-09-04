@@ -183,7 +183,7 @@ describe("AgentSection", () => {
       screen.queryByRole("heading", { name: "Teach your agent WeftCut" }),
     ).toBeNull();
     expect(
-      screen.queryByRole("button", { name: "Copy skill prompt" }),
+      screen.queryByRole("button", { name: "Copy Skill prompt" }),
     ).toBeNull();
   });
 });
@@ -272,7 +272,7 @@ describe("AgentSection with the stdio shim installed", () => {
       await screen.findByRole("heading", { name: "Teach your agent WeftCut" }),
     ).toBeTruthy();
     await userEvent.click(
-      screen.getByRole("button", { name: "Copy skill prompt" }),
+      screen.getByRole("button", { name: "Copy Skill prompt" }),
     );
     const prompt = clipboard.writeText.mock.calls[0]?.[0] as string;
     expect(prompt).toContain(`"${INFO_SHIM.skills_dir}\\weftcut"`);
