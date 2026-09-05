@@ -161,12 +161,11 @@ function wireFfmpeg(env, { platform, root, hasPathFfmpeg }, notes) {
   notes.push(`FFMPEG → ${path.relative(root, ffmpeg)} (bundled; dir prepended to PATH)`)
 }
 
-/** The local-only decode gates (decode-engine, export-native-wedges,
+/** The opt-in decode gates (decode-engine, export-native-wedges,
  * export-prores-fidelity, preview-gpu-order) skip unless WEFTCUT_DECODE_E2E=1.
  * On a dev machine with the native-decode component built that opt-in is the
  * real per-platform config, so default it on. Any explicit value (including
- * "0") and CI are left alone — CI builds the addon too but must keep these
- * gates off. */
+ * "0") and CI are left alone — the workflow owns CI's opt-in policy. */
 function wireDecodeGates(env, { platform, root }, notes) {
   if ('WEFTCUT_DECODE_E2E' in env || env.CI) return
   const addonFile = DECODE_ADDON_FILE[platform]

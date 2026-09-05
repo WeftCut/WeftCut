@@ -113,3 +113,5 @@ in CI: `determinism-artifacts/`, `test-results/`, `playwright-report/`,
 - `docs/conformance.md` — the Rust `media_conformance` analyzer behind the
   export/color/audio gates.
 - `docs/decode-bench.md` — the decode-strategy benchmark.
+- `docs/platform-codecs.md` — platform capability evidence, hosted-CI limits,
+  and where remaining hardware verification is tracked.

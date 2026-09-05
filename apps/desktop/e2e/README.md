@@ -30,7 +30,8 @@ npm run build:e2e                          # VITE_WEFTCUT_E2E=1 build — see be
     `PATH` alone; with no ffmpeg anywhere it warns and the SSIM/encoder legs
     degrade or skip as before.
   - `WEFTCUT_DECODE_E2E=1` is defaulted when the native-decode component is
-    built (local only — CI keeps the decode gates off). Opt out with
+    built locally. CI sets it explicitly on Linux nightly and on dispatches
+    with `decode_e2e=true`; push/PR runs leave it off. Opt out locally with
     `WEFTCUT_DECODE_E2E=0`.
   - On Linux a missing `DISPLAY` fails fast with instructions (`DISPLAY=:0` or
     `xvfb-run -a`) instead of Electron launch failures deep inside a spec.
@@ -78,6 +79,38 @@ npm run build:e2e                          # VITE_WEFTCUT_E2E=1 build — see be
   decode path. No build flag: routing is
   settings-driven — the default `decodeEngine: "auto"` routes WebCodecs-blind
   sources native whenever the native-decode component is present.
+
+### Native-decode CI coverage
+
+Linux nightly enables `decode-engine`, `export-native-wedges` and
+`export-prores-fidelity`. The existing slices own these files and Linux runs
+one worker per leg. Three scoped dispatches on `4c850942` each returned
+16 passed / 1 skipped in 17–21 minutes (#15); the one hardware-dependent
+decode-engine cell self-skips when its lane cannot engage.
+
+Windows and macOS retain explicit dispatch opt-in. Windows first needs the
+backward clip-reuse cell's increased budget verified (#37): the export took
+~42 seconds, but the following two SSIM searches took 800–870 seconds against
+the old 420-second total. That cell now allows 1,500 seconds; the export stall
+probe and each analyzer call's 600-second default cap still apply. Source
+ranges are already decoded in one ffmpeg pass per search, so this is not a
+request for another analyzer refactor.
+
+After pushing a candidate branch, verify that cell on Windows without retries
+or packaging:
+
+```bash
+gh workflow run electron-ci.yml --repo WeftCut/WeftCut --ref <branch> \
+  -f os=windows-latest -f package=false -f decode_e2e=true \
+  -f 'e2e_args=export-native-wedges.spec.ts --grep=backward --retries=0'
+```
+
+The broader replay uses
+`e2e_args=decode-engine.spec.ts export-native-wedges.spec.ts export-prores-fidelity.spec.ts --retries=0`.
+These gates add output-assembly coverage to the Rust session and Vitest routing
+tests already run on every push; they do not prove physical-GPU behaviour.
+Platform evidence and the remaining host requirements are recorded in
+[`docs/platform-codecs.md`](../../../docs/platform-codecs.md) and #35.
 
 ### Run
 

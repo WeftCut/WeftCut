@@ -25,8 +25,8 @@ jobs:
     # tests across hundreds of mutants); cap well under the 6h default.
     timeout-minutes: 60
     # OS-independent: the mutated code is pure-TS state logic. One leg (Linux) is
-    # enough — Linux builds the napi addon fine (only standalone cargo TESTS fail
-    # there, which this job doesn't run).
+    # enough. Standalone cargo tests run separately in electron-ci on every OS
+    # with test-noop; this job loads the production addon through Vitest.
     runs-on: ubuntu-latest
     defaults:
       run:

@@ -271,7 +271,10 @@ test.describe('native export decode wedge gates (Electron)', () => {
   // clip 2 = source head [0..4s] at t=4s; the re-seek to the earlier source
   // time must deliver the head frames, not stale tail frames.
   test('a backward clip-reuse jump re-seeks and delivers the earlier source frames', async () => {
-    test.setTimeout(420_000)
+    // Windows CI spends 800–870 s in the two wide SSIM searches after a
+    // ~42 s export (#37). Only this total budget grows; driveExport still
+    // detects stalls and each analyzer call retains its own 600 s cap.
+    test.setTimeout(1_500_000)
     const OUT_BACKWARD = path.join(tmpDir('weftcut-e2e-nw-out-'), 'backward.mp4')
     const { app, page } = await launchApp()
     try {

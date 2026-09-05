@@ -94,7 +94,10 @@ runs:
           apps/desktop/native/target/debug/media_conformance
           apps/desktop/native/target/debug/media_conformance.exe
           apps/desktop/src/renderer/eval/evalWasm.generated.ts
-        key: rustartifacts-${{ runner.os }}-${{ hashFiles('apps/desktop/native/**/*.rs', 'apps/desktop/native/**/Cargo.toml', 'apps/desktop/native/Cargo.lock', 'rust-toolchain.toml', 'apps/desktop/native/**/build.rs', 'apps/desktop/scripts/napi-build-decode.mjs', 'apps/desktop/scripts/build-eval-wasm.mjs') }}-${{ steps.rustc.outputs.ver }}
+        # The decode wrapper imports the LGPL fetcher, which selects the
+        # headers and co-located libraries. A change there must invalidate the
+        # addon even when no Rust source changed. Include the wasm helper too.
+        key: rustartifacts-${{ runner.os }}-${{ hashFiles('apps/desktop/native/**/*.rs', 'apps/desktop/native/**/Cargo.toml', 'apps/desktop/native/Cargo.lock', 'rust-toolchain.toml', 'apps/desktop/native/**/build.rs', 'apps/desktop/scripts/napi-build-decode.mjs', 'apps/desktop/scripts/fetch-ffmpeg-lgpl.mjs', 'apps/desktop/scripts/build-eval-wasm.mjs', 'apps/desktop/scripts/build-eval-wasm-lib.mjs') }}-${{ steps.rustc.outputs.ver }}
 
     # Third-party actions pinned to immutable commit SHAs (supply-chain
     # hardening); version in the trailing comment. Bump deliberately at a
