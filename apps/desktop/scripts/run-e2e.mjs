@@ -172,7 +172,7 @@ function wireDecodeGates(env, { platform, root }, notes) {
   if (!addonFile || !existsSync(path.join(root, 'native', 'decode', addonFile))) return
   env.WEFTCUT_DECODE_E2E = '1'
   notes.push(
-    'WEFTCUT_DECODE_E2E=1 (native-decode component present — set WEFTCUT_DECODE_E2E=0 to skip the local-only decode gates)',
+    'WEFTCUT_DECODE_E2E=1 (native-decode component present — set WEFTCUT_DECODE_E2E=0 to skip the decode gates)',
   )
 }
 

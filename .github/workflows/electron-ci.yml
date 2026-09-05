@@ -407,8 +407,9 @@ jobs:
           # Native-decode gates run on Linux nightly: #15 measured 3/3 green
           # (16 passed, one hardware-only skip; 17–21 min at one worker).
           # The regular slices still own the files, so only their owning leg
-          # runs each gate. Windows remains dispatch-only until #37's larger
-          # test budget has passed there; macOS remains dispatch/local-only.
+          # runs each gate. Windows/macOS retain explicit dispatch opt-in;
+          # their extra runtime is not part of the nightly budget. #37 records
+          # the Windows backward-cell analysis budget and its verification.
           # A push stays at the existing cost. Explicit dispatch opt-in works
           # on every OS; pair it with e2e_args to select the three spec files.
           # The preflight preserves this value, including the empty/off case.

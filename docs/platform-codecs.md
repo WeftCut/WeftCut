@@ -101,9 +101,12 @@ decode instability. Evidence:
 The workflow now selects these gates for **Linux nightly**, in the existing
 slices at one worker; push/PR cost stays unchanged. Windows and macOS still
 require dispatch opt-in. [#37](https://github.com/WeftCut/WeftCut/issues/37)
-tracks Windows validation of the backward cell's 1,500-second total budget.
-That covers the measured 800–870 seconds of analysis without changing the
-export stall detector or the analyzer's 600-second per-call default cap.
+tracks validation of the backward cell's 1,500-second total budget and the
+900-second limits on its two wide searches. The first candidate's
+[Windows replay](https://github.com/WeftCut/WeftCut/actions/runs/33942673085)
+completed the export in 47.5 s but hit the first analyzer call's 600-second
+default, so changing the total alone was insufficient. Ordinary analyzer
+calls keep that default; export stall detection and all assertions are unchanged.
 The analyzer already decodes each candidate range in one FFmpeg pass.
 See [the E2E guide](../apps/desktop/e2e/README.md#native-decode-ci-coverage)
 for the dispatch commands.

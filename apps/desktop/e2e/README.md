@@ -88,13 +88,14 @@ one worker per leg. Three scoped dispatches on `4c850942` each returned
 16 passed / 1 skipped in 17–21 minutes (#15); the one hardware-dependent
 decode-engine cell self-skips when its lane cannot engage.
 
-Windows and macOS retain explicit dispatch opt-in. Windows first needs the
-backward clip-reuse cell's increased budget verified (#37): the export took
-~42 seconds, but the following two SSIM searches took 800–870 seconds against
-the old 420-second total. That cell now allows 1,500 seconds; the export stall
-probe and each analyzer call's 600-second default cap still apply. Source
-ranges are already decoded in one ffmpeg pass per search, so this is not a
-request for another analyzer refactor.
+Windows and macOS retain explicit dispatch opt-in. The backward clip-reuse
+cell's export took ~42 seconds, but its two SSIM searches took 800–870 seconds
+against the old 420-second total (#37). A later Windows run also exceeded the
+first analyzer call's 600-second default. The cell now allows 1,500 seconds
+total and passes `timeoutMs: 900_000` to just its two wide searches. Other
+analyzer calls retain the 600-second default, and export stall detection is
+unchanged. Source ranges are already decoded in one ffmpeg pass per search;
+no search windows or assertions were reduced.
 
 After pushing a candidate branch, verify that cell on Windows without retries
 or packaging:
