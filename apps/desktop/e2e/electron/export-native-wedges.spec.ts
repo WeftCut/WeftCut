@@ -271,7 +271,11 @@ test.describe('native export decode wedge gates (Electron)', () => {
   // clip 2 = source head [0..4s] at t=4s; the re-seek to the earlier source
   // time must deliver the head frames, not stale tail frames.
   test('a backward clip-reuse jump re-seeks and delivers the earlier source frames', async () => {
-    test.setTimeout(420_000)
+    // Windows CI spends 800–870 s in these wide searches; a later run also
+    // exceeded the first call's 600 s default (#37). Give only these calls
+    // 900 s each within this total budget. driveExport still detects stalls.
+    test.setTimeout(1_500_000)
+    const analysisTimeoutMs = 900_000
     const OUT_BACKWARD = path.join(tmpDir('weftcut-e2e-nw-out-'), 'backward.mp4')
     const { app, page } = await launchApp()
     try {
@@ -305,11 +309,11 @@ test.describe('native export decode wedge gates (Electron)', () => {
 
       // Clip-2 region: output 150 (t=5s) maps to source 30 (offset −120) —
       // the re-seek to the EARLIER source time must deliver head frames.
-      const head = analyze({ output: OUT_BACKWARD, source: PRORES, samples: [150], window: 122 })
+      const head = analyze({ output: OUT_BACKWARD, source: PRORES, samples: [150], window: 122, timeoutMs: analysisTimeoutMs })
       expect(head.samples[0].best_match_index, 'output 150 best-matches source 30 (clip 2, source head)').toBe(30)
       // Clip-1 region: output 30 (t=1s) maps to source 210 (offset +180) —
       // the tail segment decoded first must not have been contaminated.
-      const tail = analyze({ output: OUT_BACKWARD, source: PRORES, samples: [30], window: 182 })
+      const tail = analyze({ output: OUT_BACKWARD, source: PRORES, samples: [30], window: 182, timeoutMs: analysisTimeoutMs })
       expect(tail.samples[0].best_match_index, 'output 30 best-matches source 210 (clip 1, source tail)').toBe(210)
     } finally {
       await app.close()

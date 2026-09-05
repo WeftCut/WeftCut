@@ -14,13 +14,11 @@ const BIN = path.join(
   process.platform === "win32" ? "media_conformance.exe" : "media_conformance",
 );
 
-// Backstop for a genuinely wedged child, NOT a cost budget. A cap set anywhere
-// near real cost turns a slow runner into a red build: the heaviest legitimate
-// call is a `--window` scan (62 candidate SSIMs — 3x the cost of the deepest
-// plain scan) and it measures ~250s on the GPU-less Windows leg, so 180s there
-// failed a test that was working. 600s is unreachable without an actual
-// wedge. What tells you where a spec's time went is the per-call log below, not
-// this. Per-leg override: WEFTCUT_ANALYZE_TIMEOUT_MS.
+// Default child-process deadline; per-leg override: WEFTCUT_ANALYZE_TIMEOUT_MS.
+// Wide SSIM searches can need more: #37's 245-candidate call exceeded 600 s
+// on Windows even after the export completed. Such callers pass timeoutMs
+// explicitly; the ordinary calls keep this default. A deadline firing alone
+// does not prove a wedge — the per-call logs show where the time went.
 const TIMEOUT_MS = Number(process.env.WEFTCUT_ANALYZE_TIMEOUT_MS) || 600_000;
 
 let warnedNoBin = false;
@@ -36,12 +34,12 @@ let warnedNoBin = false;
 // ubuntu/macOS) against a 0.4-3.6 s steady state, absorbed by a spec's own
 // timeout and invisible in the job log. The bin is a build artifact like `out/`
 // — rebuilding after a change to it is the caller's job, same contract.
-function spawnAnalyzer(args) {
+function spawnAnalyzer(args, timeoutMs) {
   if (existsSync(BIN))
     return spawnSync(BIN, args, {
       cwd: REPO,
       encoding: "utf8",
-      timeout: TIMEOUT_MS,
+      timeout: timeoutMs,
       killSignal: "SIGKILL",
     });
   if (!warnedNoBin) {
@@ -67,7 +65,7 @@ function spawnAnalyzer(args) {
 // (pass) AND 1 (regression); exit 2/3 (bad args / hard error) print only to
 // stderr. So we parse stdout first and only throw when there's no parseable
 // report. `mode` names the invocation in that error and nowhere else.
-function runAnalyzer(mode, args) {
+function runAnalyzer(mode, args, timeoutMs = TIMEOUT_MS) {
   const name = `media_conformance${mode ? ` ${mode}` : ""}`;
   // Cost drivers only: how deep the scan goes and how many candidates each
   // sample is matched against. Everything else in `args` is a path.
@@ -81,14 +79,14 @@ function runAnalyzer(mode, args) {
   // scan legible without profiling, which is how the cap above got calibrated.
   console.log(`[analyze] ${label} …`);
   const started = Date.now();
-  const r = spawnAnalyzer(args);
+  const r = spawnAnalyzer(args, timeoutMs);
   console.log(`[analyze] ${label} took ${((Date.now() - started) / 1000).toFixed(1)}s`);
-  // A child that never ran, or that TIMEOUT_MS killed, reports in `error` while
+  // A child that never ran, or that its deadline killed, reports in `error` while
   // `status` stays null — so this has to come before the parse, which would
   // otherwise blame an empty stdout for a process that was killed.
   if (r.error) {
     const why =
-      r.error.code === "ETIMEDOUT" ? `hung past ${TIMEOUT_MS}ms` : (r.error.code ?? r.error.message);
+      r.error.code === "ETIMEDOUT" ? `exceeded ${timeoutMs}ms` : (r.error.code ?? r.error.message);
     throw new Error(
       `${name} did not complete (${why}${r.signal ? `, killed by ${r.signal}` : ""}): ${r.stderr ?? ""}`,
     );
@@ -100,14 +98,14 @@ function runAnalyzer(mode, args) {
   }
 }
 
-export function analyze({ output, source, samples, ssimMin, audio, window }) {
+export function analyze({ output, source, samples, ssimMin, audio, window, timeoutMs = TIMEOUT_MS }) {
   const args = [
     "--output", output, "--source", source, "--samples", samples.join(","),
   ];
   if (ssimMin != null) args.push("--ssim-min", String(ssimMin));
   if (window != null) args.push("--window", String(window));
   if (audio) args.push("--audio");
-  return runAnalyzer("", args);
+  return runAnalyzer("", args, timeoutMs);
 }
 
 // Self-SSIM: compare pairs of indices WITHIN one output video (no source).
