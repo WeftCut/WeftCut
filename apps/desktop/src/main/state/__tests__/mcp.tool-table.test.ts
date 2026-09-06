@@ -5,9 +5,9 @@ import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
 import { root } from './fixtures/project'
 
-const ALL_67_NAMES = new Set<string>([
+const EXPECTED_TOOL_NAMES = new Set<string>([
+  // table-exec tools — counts are asserted below, not duplicated in labels.
   'set_position', 'translate_path',
-  // table-exec tools (44)
   'add_track', 'remove_track', 'rename_track', 'duplicate_layer', 'paste_layers', 'move_track',
   'update_layer', 'set_layers_enabled', 'update_layer_params', 'set_scale_linked',
   'move_layer', 'restack_layer', 'trim_layer', 'delete_layer',
@@ -19,7 +19,7 @@ const ALL_67_NAMES = new Set<string>([
   'update_marker', 'remove_marker', 'attach_marker', 'detach_marker',
   'remove_media', 'undo', 'redo',
   'set_role_gain', 'set_role_flags',
-  // dedicated-exec tools (23) — auto_split_by_shot is a TS-owned HYBRID def
+  // dedicated-exec tools — auto_split_by_shot is a TS-owned HYBRID def
   // (routes 'hybrid', not an actor arm) that carries a parseDedicated for the
   // bijection required-scalar gate.
   'add_color_layer', 'add_video_layer', 'split_layer', 'add_marker',
@@ -33,8 +33,8 @@ const ALL_67_NAMES = new Set<string>([
 ])
 
 describe('MCP tool table projections', () => {
-  it('MCP_TOOLS contains exactly the 67 tool names', () => {
-    expect(MCP_TOOLS).toEqual(ALL_67_NAMES)
+  it('MCP_TOOLS contains exactly the expected tool names', () => {
+    expect(MCP_TOOLS).toEqual(EXPECTED_TOOL_NAMES)
   })
 
   it('MCP_TOOLS equals the set of def names', () => {
@@ -80,8 +80,8 @@ describe('MCP tool table projections', () => {
     }
   })
 
-  // The tool description is the string the AGENT actually reads — the prose docs
-  // are for humans. When `jump_to` joined the revert paths both docs were
+  // MCP clients discover the runtime tool description; agents may also read
+  // the prose docs. Both must agree. When `jump_to` joined the revert paths both docs were
   // updated and this drifted, leaving the agent told it could still be reverted
   // by the one path the panel makes easiest.
   const REVERT_PATHS = 'undo / redo / jump_to / restore_checkpoint'

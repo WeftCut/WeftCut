@@ -290,7 +290,74 @@ crosses; crossing has its own op.
 - `paste_layers { layer_ids, t_start_us, target_track_id? }` → `{ clones: [{ source, clone }] }` — the whole-link duplicate, one recorded edit. `layer_ids[0]` is the **seed**: `t_start_us` is where its clone starts, and every other clone shifts by that same delta, each snapped on its own lattice (an audio member keeps a slipped A/V offset). `target_track_id` moves only the seed's clone; every other clone lands on its source's track. **All-or-nothing:** a locked or occupied destination for any member rejects the batch (`TrackLocked`, or `ValidationFailed`/`LayerOverlap` whose `b` names the source whose clone would collide) and nothing is created. Two or more clones are linked to each other, never to their sources. Pass a single id to copy one linked layer without its partners.
 - `set_layers_enabled { layer_ids, enabled }` — set `enabled` on exactly these layers in one recorded edit. Nothing is expanded here: to disable a linked pair together, pass both members. A layer's own `locked` does not block the toggle (visibility is not content); a layer on a locked track rejects the whole batch. One layer: `update_layer { patch: { enabled } }`.
 
+Position and motion paths:
+
+VideoClip, ImageOverlay, Text, Motif and CompositionRef (Group) layers have a
+`Transform.position` with exactly one active representation. `XY` keeps
+independent scalar `x`/`y` animation; `Path` stores timestamp-free geometry and
+a separate scalar `progress` animation. Text's evaluated position is its
+transform pivot (the text box's anchor); the other kinds use the unrotated
+top-left. Switching representations does not change that reference point.
+See [ADR 0060](adr/0060-position-has-xy-and-path-modes.md).
+
+- `set_position { layer_id, position }` — atomically replace the **complete**
+  position record in one undo entry. `position` is either
+  `{ mode: "XY", x: Animated<number>, y: Animated<number> }` or
+  `{ mode: "Path", path: { nodes: [...] }, progress: Animated<number> }`.
+  Keyframe `t_us` inside this record is **layer-local microseconds**, snapped
+  to the owning composition's frame grid, unlike the timeline-absolute times
+  on `set_keyframe` / `set_param_track`. Temporal Auto / Smooth tangents are
+  resolved on write. This tool replaces existing motion; it does **not** fit
+  or bake it automatically. For geometry edits, read and retain the current
+  progress record; there is no MCP `geometry_only` argument.
+- Each spatial node requires `{ id, point: {x,y}, inHandle: {x,y},
+  outHandle: {x,y}, segment: "Line" | "Cubic",
+  tangentMode: "Corner" | "Smooth" | "Auto" }`. Points are in composition
+  pixels; handles are relative pixel vectors, not temporal easing controls.
+  `segment` describes the span leaving the node. Corner handles are
+  independent; Smooth aligns their directions while retaining separate
+  lengths; Auto resolves handles from neighboring points on write. Use Cubic
+  spans where spatial handles should affect the route. Bounds: 1–128 nodes,
+  unique nonempty node ids, finite coordinates within ±10 million pixels.
+- `progress` uses fractions, **not percentages**: `0` is the start and `1` is
+  the end, traversed by distance rather than by node index. Values outside
+  that range extend the endpoint direction; zero-length geometry stays put.
+  At most 4096 progress keys; only `Hold`, `Loop` and `PingPong` extrapolation
+  are supported (`Offset` / `Continue` are refused).
+- `translate_path { layer_id, dx, dy }` — Path mode only. Move all nodes by
+  the finite relative displacement in composition pixels, retaining handles,
+  shape and the progress animation. One undo entry; no replacement XY track
+  is created. Use this for moving an existing route as a whole.
+- In Path mode, independent `x`/`y` writes through `update_layer_params` or
+  keyframe tools are **rejected**. Animate `param_key: "path_progress"`
+  instead; it is unavailable in XY mode. To return to XY, explicitly supply
+  XY tracks with `set_position` or use the UI's previewed conversion. UI
+  fitting/baking has no dedicated MCP conversion tool.
+
+Example `set_position` arguments for a stationary point at the start of a
+two-node line (replace `layer_id` with the target layer's id):
+
+```json
+{
+  "layer_id": "00000000-0000-7000-8000-000000000001",
+  "position": {
+    "mode": "Path",
+    "path": {
+      "nodes": [
+        { "id": "start", "point": { "x": 100, "y": 200 }, "inHandle": { "x": 0, "y": 0 }, "outHandle": { "x": 0, "y": 0 }, "segment": "Line", "tangentMode": "Corner" },
+        { "id": "end", "point": { "x": 500, "y": 200 }, "inHandle": { "x": 0, "y": 0 }, "outHandle": { "x": 0, "y": 0 }, "segment": "Line", "tangentMode": "Corner" }
+      ]
+    },
+    "progress": { "mode": "Static", "value": 0 }
+  }
+}
+```
+
+Then use `set_keyframe` with `param_key: "path_progress"`, values `0` and
+`1`, and two **timeline-absolute** `t_us` values to animate along the line.
+
 Effects (per-layer Pixi filter chains; catalog: `blur`, `chromakey`, `brightness`, `contrast`, `saturation`, `sharpen`):
+
 - In v1, effects render on all five visual layer kinds: VideoClip, ImageOverlay, Color, Text, and Motif.
 - `add_effect { layer_id, kind }` → `EffectId`. Append an effect to the end of the chain (applied last). Creates the effect with no params set; use `update_effect` to set a static value or `set_keyframe` to keyframe a param.
 - `brightness`, `contrast` and `saturation` each carry exactly one param, `amount`: a percentage offset from neutral in `[-100, 100]`, `0` = no change (`amount: 20` is "+20 %"). Brightness is a gain, so `0` preserves black; saturation desaturates on Rec.709 luma weights.
@@ -318,7 +385,18 @@ Keyframes (animate a layer param's `Animated<T>` track; times are timeline-absol
 - `clear_keyframes { layer_id, param_key, value? }` — collapse to Static (defaults to the first keyframe's value).
 - `set_param_track { layer_id, param_key, track }` — low-level: replace the whole track in the `get_param_track` record shape (keyframe `t_us` timeline-absolute; each tangent's `x` within `[0, 1]`; `extrapolate` defaults to Hold / Hold when omitted). Auto sides and the `in` side of a Smooth key are re-solved on write, so the coordinates sent for those are overwritten with the solved ones. Retiming many keys, or pasting a whole track, is one commit here.
 
-Valid `param_key`: VideoClip/ImageOverlay/Text/Motif → `x, y, scale_x, scale_y, rotation_deg, anchor_x, anchor_y, opacity`; Text/Color → `color`; Audio → `gain_db, pan`. Each write routes through the actor's `update_layer_param_track` (snap-to-frame, sort, dedupe, lock check, then the Auto / Smooth tangent solve). Unlike `update_layer_params`, these preserve/produce keyframes rather than wiping them. Keying only one scale axis of a scale-linked layer diverges the twin pair and auto-clears the link in the same commit (see `set_scale_linked`); write both axes identically to animate a linked layer's scale.
+Valid `param_key`: VideoClip/ImageOverlay/Text/Motif/CompositionRef →
+`scale_x, scale_y, rotation_deg, anchor_x, anchor_y, opacity`, plus `x, y` in
+**XY mode only**, or `path_progress` in **Path mode only**. In Path mode,
+`x`/`y` writes are rejected; `path_progress` values are fractions (0–1), not
+percentages, and its extrapolation is limited to Hold / Loop / PingPong.
+Text/Color → `color`; Audio → `gain_db, pan`. Each write routes through the
+actor's `update_layer_param_track` (snap-to-frame, sort, dedupe, lock check,
+then the Auto / Smooth tangent solve). Unlike `update_layer_params`, these
+preserve/produce keyframes rather than wiping them. Keying only one scale
+axis of a scale-linked layer diverges the twin pair and auto-clears the link
+in the same commit (see `set_scale_linked`); write both axes identically to
+animate a linked layer's scale.
 
 Links (see [features.md §Links](features.md#links)):
 - `links_create { layer_ids, label?, reassign? }` → `LinkId`

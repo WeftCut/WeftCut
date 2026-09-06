@@ -9,10 +9,12 @@ status: accepted
 Text is the only visual kind with no intrinsic size. Every consequence of that
 absence has hardened into a separate special case:
 
-- `Transform.x`/`y` means the **unrotated top-left** for VideoClip,
+- The evaluated `Transform.position` means the **unrotated top-left** for VideoClip,
   ImageOverlay and Motif, but the **anchor point itself** for Text, because
   measured glyph bounds move with the content and only an anchor-relative
-  origin is stable.
+  origin is stable. [ADR 0060](0060-position-has-xy-and-path-modes.md) replaces
+  the former direct transform axes with XY or Path position records without
+  changing this reference-point meaning.
 - `Compositor.naturalSizeOf` reports a texture's dimensions for the media
   kinds and `getLocalBounds()` for Text — so the on-canvas gizmo's box is
   whatever the glyphs happen to occupy.
@@ -44,10 +46,11 @@ layer's Scale scales the rendered result, and the box is a different property.
 one lane or two) and stops gating handle visibility for Text, whose box axes
 are independent by construction.
 
-`x`/`y` stays the anchor point for Text — the asymmetry above is not resolved,
+The evaluated position stays the anchor point for Text in both XY and Path
+modes — the asymmetry above is not resolved,
 because its cause survives in Auto width, where the box *is* the measured
 bounds and still moves with the content. What changes is the referent: with a
-box, `x`/`y` anchors the **box**, and `naturalSizeOf` reports the box when one
+box, the position anchors the **box**, and `naturalSizeOf` reports the box when one
 is set. Auto width degenerates to the previous behavior exactly.
 
 ### Three modes, derived from nullability
@@ -137,8 +140,8 @@ its own corpus.
 ### One default, at the center of the frame
 
 The three drifted factories collapse into `textParamsDefault(content, comp)`.
-A new text layer lands at the composition's center (`x = comp.width / 2`,
-`y = comp.height / 2` — the anchor point, centered by the default `0.5`
+A new text layer lands at the composition's center (a static XY position with
+`x = comp.width / 2`, `y = comp.height / 2` — the anchor point, centered by the default `0.5`
 anchor) instead of the top-left corner, in Auto width, at
 `"Liberation Sans, Noto Sans SC"` — the bundled pair, which makes the
 determinism guarantee true on the default path and renders CJK without tofu.
@@ -174,7 +177,7 @@ labelled the field legacy.
 - **Let Fixed overflow visibly and mark it, as Figma does.** Not chosen: the
   product call is that a box the user sized is a promise the text will fit;
   the overflow mark survives only at the 8 px floor.
-- **Unify Text's `x`/`y` onto the unrotated top-left now that it has a size.**
+- **Unify Text's position reference onto the unrotated top-left now that it has a size.**
   Rejected: the asymmetry's cause survives in Auto width, and centered
   auto-width text would drift left as it is typed. The cost — `anchorPivot.ts`,
   `originFor`, both `anchorCompensation` formulas and the data-model table —
@@ -191,7 +194,7 @@ labelled the field legacy.
   Auto width is a one-gesture-only state — any handle drag leaves it, as in
   Figma.
 - Vertical centering becomes reachable two ways, and they are orthogonal:
-  `anchor_y` places the box against `x`/`y`; the new `valign` places the text
+  `anchor_y` places the box against the evaluated position; the new `valign` places the text
   inside the box. The inspector must separate them (Transform section vs Text
   section) so they do not read as duplicates.
 - `line_height` and `letter_spacing` join `TextParams` — a multi-line box
