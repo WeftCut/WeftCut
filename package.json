@@ -1,6 +1,6 @@
 {
   "name": "weftcut",
-  "version": "0.0.0",
+  "version": "0.1.1",
   "private": true,
   "license": "MIT",
   "description": "Electron desktop video editor with an MCP tool surface for external AI agents",
@@ -17,6 +17,7 @@
     "apps/*"
   ],
   "scripts": {
+    "version:release": "node apps/desktop/scripts/release.mjs version",
     "bootstrap": "npm --workspace apps/desktop run bootstrap",
     "dev": "npm --workspace apps/desktop run dev",
     "build": "npm --workspace apps/desktop run build",

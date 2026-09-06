@@ -219,6 +219,16 @@ const enUS = {
     menu: "Dev",
     performance_monitor: "Performance Monitor",
   },
+  updates: {
+    disabled: 'Automatic updates are unavailable in this build. Download releases from the project page.',
+    idle: 'Ready to check for updates.',
+    checking: 'Checking for updates…',
+    current: 'You are up to date.',
+    downloading: 'Downloading {{version}}… {{percent}}%',
+    ready: '{{version}} is ready. It will install when you exit WeftCut normally. Finish your exports before closing.',
+    error: 'Could not check for or download the update. Try again, or download it from the releases page.',
+    releases: 'View Releases',
+  },
   help: {
     check_updates: "Check for Updates…",
     report_issue: "Report an Issue…",

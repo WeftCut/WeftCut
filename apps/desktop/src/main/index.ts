@@ -6,6 +6,8 @@ import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, Notification, protocol, shell } from 'electron'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
+import electronUpdater from 'electron-updater'
+import { createUpdates } from './updates.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
 import { setRuntimeSource, captureMotifFrameB64, setMotifStore, shutdownCaptureHost } from './motif/capture.js'
@@ -895,6 +897,15 @@ app.whenReady().then(async () => {
     platform: process.platform,
     arch: process.arch,
   }))
+  // Unpackaged dev/E2E runs and macOS never contact the release provider.
+  const updates = createUpdates(app.isPackaged && process.platform !== 'darwin'
+    ? electronUpdater.autoUpdater : null)
+  ipcMain.handle('updates:status', () => updates.status())
+  ipcMain.handle('updates:check', () => {
+    void updates.check()
+    return updates.status()
+  })
+  app.once('before-quit', () => updates.stop())
 
   // Clip compute for the renderer: the MCP host's own tool function plus the
   // channel set that selects for it. Awaited here beside the host rather than
@@ -1981,6 +1992,7 @@ app.whenReady().then(async () => {
   const win = await createWindow()
 
   win.once('ready-to-show', () => win.show())
+  updates.start()
 
   // LANDMINE: no `activate` handler re-creating a window on zero. The quit gate
   // (windows.ts) leaves no windowless app for one to serve, and a Dock click

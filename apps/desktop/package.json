@@ -1,7 +1,7 @@
 {
   "name": "@weftcut/desktop",
   "productName": "WeftCut",
-  "version": "0.0.0",
+  "version": "0.1.1",
   "description": "WeftCut video editor desktop app",
   "homepage": "https://github.com/WeftCut/WeftCut",
   "author": {
@@ -51,6 +51,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dockview-react": "8.2.0",
+    "electron-updater": "^6.8.9",
     "express": "^5.2.1",
     "fflate": "^0.8.3",
     "fuzzysort": "^4.0.2",
@@ -91,6 +92,7 @@
     "shadcn": "^4.20.1",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "yaml": "^2.9.0"
   }
 }

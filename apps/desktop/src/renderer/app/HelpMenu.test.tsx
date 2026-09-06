@@ -26,24 +26,33 @@ const VERSIONS = {
 function stubApi() {
   const open = vi.fn().mockResolvedValue(undefined);
   const versions = vi.fn().mockResolvedValue(VERSIONS);
+  const check = vi.fn().mockResolvedValue({ phase: "current" });
   (window as unknown as { api: unknown }).api = {
     shell: { open },
     app: { versions },
+    updates: { check, status: vi.fn().mockResolvedValue({ phase: "current" }) },
   };
-  return { open, versions };
+  return { open, versions, check };
 }
 
 afterEach(cleanup);
 
 describe("HelpMenu", () => {
-  it("sends the update check and issue reporter to the repo's pages", async () => {
-    const { open } = stubApi();
+  it("checks updates inside the app and offers the release page", async () => {
+    const { open, check } = stubApi();
     render(<HelpMenu />);
 
     fireEvent.click(screen.getByRole("button", { name: /Help/ }));
     fireEvent.click(await screen.findByText("Check for Updates…"));
+    expect(check).toHaveBeenCalledOnce();
+    expect(await screen.findByText("You are up to date.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "View Releases" }));
     expect(open).toHaveBeenCalledWith(RELEASES_URL);
+  });
 
+  it("sends the issue reporter to the repo's page", async () => {
+    const { open } = stubApi();
+    render(<HelpMenu />);
     fireEvent.click(screen.getByRole("button", { name: /Help/ }));
     fireEvent.click(await screen.findByText("Report an Issue…"));
     expect(open).toHaveBeenCalledWith(ISSUES_URL);

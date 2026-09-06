@@ -35,6 +35,7 @@ import type {
   ContentListRow,
 } from '../shared/content-download'
 import type { MenuProjection } from '../shared/menu'
+import type { UpdateStatus } from '../shared/updates'
 
 type Listener = (payload: unknown) => void
 
@@ -122,6 +123,11 @@ const api: WeftcutApi = {
   app: {
     notices: (): Promise<AppNotice[]> => ipcRenderer.invoke('app:notices') as Promise<AppNotice[]>,
     versions: (): Promise<AppVersions> => ipcRenderer.invoke('app:versions') as Promise<AppVersions>,
+  },
+
+  updates: {
+    status: (): Promise<UpdateStatus> => ipcRenderer.invoke('updates:status'),
+    check: (): Promise<UpdateStatus> => ipcRenderer.invoke('updates:check'),
   },
 
   menu: {

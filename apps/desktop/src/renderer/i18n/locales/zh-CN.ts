@@ -215,6 +215,16 @@ const zhCN: Resources = {
     menu: "开发",
     performance_monitor: "性能监视器",
   },
+  updates: {
+    disabled: '此构建不支持自动更新，可前往发版页面下载安装包。',
+    idle: '可以检查更新。',
+    checking: '正在检查更新…',
+    current: '当前已是最新版本。',
+    downloading: '正在下载 {{version}}… {{percent}}%',
+    ready: '{{version}} 已就绪，将在正常退出 WeftCut 后安装。请完成导出任务后再关闭应用。',
+    error: '检查或下载更新失败，请重试或前往发版页面手动下载。',
+    releases: '查看发版页面',
+  },
   help: {
     check_updates: "检查更新…",
     report_issue: "报告问题…",

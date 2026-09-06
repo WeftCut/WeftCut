@@ -1,6 +1,11 @@
 appId: dev.weftcut.desktop
 productName: WeftCut
 executableName: WeftCut
+publish:
+  provider: github
+  owner: WeftCut
+  repo: WeftCut
+  releaseType: release
 # Re-assert both ffmpeg lanes' licensing compliance from the packaged manifests
 # before the app is folded into a distributable: the native-decode runtime must
 # be LGPL-clean (§6 gate) and the ffmpeg sidecar must carry its GPLv3 text +

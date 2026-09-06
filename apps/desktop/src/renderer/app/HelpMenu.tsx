@@ -3,7 +3,8 @@ import { useTranslation } from "react-i18next";
 
 import { Menu, MenuItem, MenuSeparator } from "../menu/Menu";
 import { AboutDialog } from "./AboutDialog";
-import { ISSUES_URL, openExternal, RELEASES_URL } from "./links";
+import { ISSUES_URL, openExternal } from "./links";
+import { UpdateDialog } from "./UpdateDialog";
 
 /// The Help menu — update check + issue reporting (both external links until
 /// a real updater exists) and the About box. Self-contained: the About dialog
@@ -11,12 +12,13 @@ import { ISSUES_URL, openExternal, RELEASES_URL } from "./links";
 export function HelpMenu() {
   const { t } = useTranslation();
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [updatesOpen, setUpdatesOpen] = useState(false);
   return (
     <>
       <Menu label={t("menu.help")}>
         <MenuItem
           label={t("help.check_updates")}
-          onSelect={() => openExternal(RELEASES_URL)}
+          onSelect={() => setUpdatesOpen(true)}
         />
         <MenuItem
           label={t("help.report_issue")}
@@ -29,6 +31,7 @@ export function HelpMenu() {
         />
       </Menu>
       {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
+      {updatesOpen && <UpdateDialog onClose={() => setUpdatesOpen(false)} />}
     </>
   );
 }

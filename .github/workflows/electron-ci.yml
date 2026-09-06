@@ -34,14 +34,12 @@ on:
         type: boolean
         default: false
 
-# Least-privilege token: this workflow only reads the repo, builds, tests, and
-# uploads artifacts (the artifact API uses its own runtime token) — it never
-# writes repo contents, so read-only is enough.
+# Only the final release job can write repository contents.
 permissions:
   contents: read
 
-# Collapse redundant runs: a newer push to a branch/PR cancels the in-flight
-# 3-OS matrix instead of stacking another full build + e2e + package.
+# Collapse redundant PR/scheduled runs; main pushes finish in sequence so a
+# partially uploaded release cannot be interrupted by an unrelated commit.
 # event_name is in the key so the nightly @matrix sweep and a same-ref push
 # can never cancel each other — schedule/dispatch runs group only among
 # themselves.
@@ -49,10 +47,35 @@ concurrency:
   # run_id for dispatch: partial runs of DIFFERENT parts must coexist, not
   # cancel each other.
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'ref' }}
-  cancel-in-progress: true
+  # Let an in-flight main release finish. Later pushes retry an unpublished
+  # version, so coalescing pending runs cannot lose a version bump.
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
+  release-plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Validate package versions
+        run: node apps/desktop/scripts/release.mjs validate
+      - name: Plan unpublished version
+        id: plan
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'WeftCut/WeftCut'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node apps/desktop/scripts/release.mjs plan
+
   e2e:
+    needs: release-plan
     # A wedged offscreen capture / Electron has hung before (the swiftshader
     # case); cap the job instead of letting it run to the 6h default. Sized to
     # the `all` e2e slice, NOT to the split ones: a scoped dispatch can
@@ -62,8 +85,10 @@ jobs:
     # and hides which specs actually failed. Coverage cuts belong in the @matrix
     # tier (apps/desktop/e2e/README.md), not here.
     timeout-minutes: 90
-    # CONCURRENCY BUDGET — a push creates 19 jobs: 1 `checks` + 3 `rust-test` +
-    # this matrix's 14 + 1 `compare`. GitHub Free allows 20 concurrent, of which
+    # CONCURRENCY BUDGET — the build/test phase has 19 jobs: 1 `checks` + 3
+    # `rust-test` + this matrix's 14 + 1 `compare`. The short release-plan runs
+    # before this matrix; the release job waits for all gates. GitHub Free
+    # allows 20 concurrent, of which
     # 5 may be macOS, counted per billing entity across ALL repositories. macOS
     # is the binding constraint and this matrix sits ON it: 4 legs here + 1
     # `rust-test`. That is deliberate — measured, macOS needs its fourth leg to
@@ -524,7 +549,7 @@ jobs:
       # gate still names the cheapest one. A named number here would not survive
       # the next rebalance; the measurement does.
       - name: Package (unsigned)
-        if: (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'codecs' || matrix.part == 'all')
+        if: runner.os != 'macOS' && (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'codecs' || matrix.part == 'all')
         run: npm run build && npx electron-builder --publish never
 
       # Packaging is VERIFIED on every push by "Package (unsigned)" above; this
@@ -533,15 +558,48 @@ jobs:
       # job only needs determinism-*). Uploading ~2 GB on every push refills the
       # account artifact-storage quota, which then fails the essential (tiny)
       # determinism-* upload and reddens the whole matrix. So only keep an
-      # installer when explicitly wanted — a tag build or a manual dispatch —
+      # installer when needed for a release or a manual dispatch —
       # with short retention on top.
       - name: Upload installer
-        if: success() && (matrix.part == 'codecs' || matrix.part == 'all') && ((github.event_name == 'workflow_dispatch' && inputs.package) || startsWith(github.ref, 'refs/tags/'))
+        if: success() && runner.os != 'macOS' && (matrix.part == 'codecs' || matrix.part == 'all') && ((github.event_name == 'workflow_dispatch' && inputs.package) || needs.release-plan.outputs.publish == 'true')
         uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.os }}
           retention-days: 5
-          path: apps/desktop/release/*
+          if-no-files-found: error
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest*.yml
+
+  release:
+    needs: [release-plan, e2e, checks, rust-test, compare]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'WeftCut/WeftCut' && needs.release-plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: installer-*
+          path: release-assets
+          merge-multiple: true
+      - name: Validate and publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node apps/desktop/scripts/release.mjs publish release-assets
 
   # The OS-independent TS test work: the unit suite, the build-script suite, and
   # the two cheap gates the e2e legs also run.

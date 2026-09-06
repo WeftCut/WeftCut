@@ -69,7 +69,7 @@ export default defineConfig({
       // the regex keeps those subpaths external too, so Node resolves them from
       // node_modules at runtime rather than the bundler choking on the subpaths.
       rollupOptions: {
-        external: ['@weftcut/core', 'express', /^@modelcontextprotocol\/sdk(\/.*)?$/],
+        external: ['@weftcut/core', 'express', 'electron-updater', /^@modelcontextprotocol\/sdk(\/.*)?$/],
       },
     },
   },

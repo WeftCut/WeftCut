@@ -10,6 +10,8 @@
 // Types only — no runtime. `File` etc. resolve from DOM (both consumers are DOM
 // contexts); this file is never imported by the non-DOM main process.
 
+import type { UpdateStatus } from './updates'
+
 export type DialogOpenOpts = {
   title?: string
   multiple?: boolean
@@ -441,6 +443,7 @@ export interface WeftcutApi {
   /// Startup notices the renderer pulls on mount (see AppNotice), plus the
   /// version identity behind the Help → About dialog (see AppVersions).
   app: { notices(): Promise<AppNotice[]>; versions(): Promise<AppVersions> }
+  updates: { status(): Promise<UpdateStatus>; check(): Promise<UpdateStatus> }
   /// macOS native application menu. The renderer pushes what the CURRENT
   /// surface can run — labels resolved through i18next, accelerators from the
   /// effective keybindings — and main rebuilds the menu from it (src/shared/
