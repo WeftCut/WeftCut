@@ -1,11 +1,19 @@
-# Frozen schema fixtures
+# Schema fixtures
 
 One `v{n}.json` per **on-disk schema generation** — the input a migration step
 reads. `migrate.completeness.test.ts` walks each one through the chain
 (`state/migrate.ts`), then through `parseProject` + `validate`, and fails if a
 registered step has no fixture at its `from` version.
 
-## These files are frozen. Do not regenerate them.
+## Pre-release state
+
+The app has not shipped. The chain is empty and `v1.json` describes the current
+unreleased schema, including `transform.position`. Its shape may be refreshed
+in place while preserving ids, timestamps and authored values. ADR 0060 removed
+the premature v1 → v2 migration and its v2 fixture. Rust and TypeScript both
+round-trip the current v1 fixture; old development projects are not supported.
+
+## Released fixtures are frozen. Do not regenerate them.
 
 A fixture's whole job is to be a *shape from the past*. Regenerating one from the
 current model re-anchors it to today's shape, at which point the step it guards
@@ -21,15 +29,10 @@ would re-mint every uuid and timestamp for no gain, and the three pinned fields
 below cannot come from the actor at all. The byte-identity check in
 `migrate.completeness.test.ts` is what proves the position right.
 
-The v1 → v2 position migration starts the frozen chain (ADR 0060). `v2.json`
-was produced by wrapping the existing v1 transform axes in an XY position
-record without changing ids, values or keyframes. Rust's cross-language
-round-trip checks the current v2 fixture; TS upgrades and validates both.
-
 ## Provenance
 
 `v1.json` was produced once by driving the real actor (`state/actor.ts`) with a
-seeded id generator, then frozen. It holds two compositions: the root, built by
+seeded id generator, then updated mechanically for pre-release shape changes. It holds two compositions: the root, built by
 the scenario below, and a Group — a second `Composition` holding one `Color`
 layer, composed from the same mutation primitives pre-compose calls
 (`newComposition` + `applyAddLayer` + `applyDurationAutofit`) and referenced by

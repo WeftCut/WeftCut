@@ -4,14 +4,24 @@ import type { Resources } from "./en-US";
 // will fail to type-check if a key is missing or extra.
 const zhCN: Resources = {
   motion_path: {
-    start_frame:'起始帧（片段内）', end_frame:'结束帧（含）', every_frames:'每 N 帧采样', samples_used:'个采样点', range_error:'转换范围不能超出当前片段。',
+    node_mode:'空间节点', select_node:'请选择节点', mode_corner:'角点', mode_smooth:'平滑', mode_auto:'自动平滑', insert:'在节点后保形插点',
+    insert_hint:'双击路径可保形插点。相邻自动节点会转为平滑模式，以保留原有控制柄。',
+    start_frame:'起始帧（片段内）', end_frame:'结束帧（含）', every_frames:'最大采样间隔（帧）', samples_used:'个关键帧／属性', range_error:'转换范围不能超出当前片段。',
+    tolerance:'目标误差（像素）', nodes_used:'{{count}} 个路径节点',
+    jump_error:'范围内存在瞬间位置跳变，不能转换为连续路径。请分段转换或保留当前模式。',
+    conversion_range_error:'请选择不超过 16384 帧的有效范围，帧率须满足微秒精度。',
+    conversion_options_error:'目标误差至少为 0.05 像素，采样间隔须为正整数。',
+    conversion_capacity_error:'超出每属性 4096 个关键帧或检查预算，请缩短范围或增大采样间隔。',
+    node_limit:'达到 128 个路径节点上限，未达到误差目标。只能预览，请缩短范围或放宽目标。',
+    key_limit:'达到关键帧预算，未达到误差目标。只能预览，请缩短范围或放宽目标。',
+    frame_grid:'当前帧网格无法达到误差目标。只能预览，请放宽目标或保留当前模式。',
     create:'创建运动路径', edit:'编辑路径', show:'显示轨迹', done:'完成',
     add:'添加节点', curve:'直线／曲线', remove:'删除节点',
     anchor:'标记的锚点沿路径移动。选中节点可编辑控制柄。',
     corner:'标记的位置参考点（未旋转左上角）沿路径移动。',
     to_path:'将 XY 转为路径…', to_xy:'烘焙为 XY…', preview:'预览转换', apply:'应用转换', cancel:'取消',
-    samples:'路径采样数', error:'测量的位置误差：{{error}} 像素（检查 {{count}} 个时刻）',
-    conversion_note:'仅保留所选片段内帧范围，范围外保持端点位置。XY 转为可编辑折线路径；误差为采样实测值，不保证连续时间精度。烘焙保留采样帧位置，帧间为近似。',
+    error:'测量的位置误差：{{error}} 像素（检查 {{count}} 个时刻）',
+    conversion_note:'仅转换所选范围，范围外保持端点位置。XY 拟合为可编辑曲线；按误差目标自动加密时间关键帧。误差在帧、四分之一帧和关键边界实测，不保证连续时间精度。瞬间位置跳变会拒绝转换。',
   },
   app: {
     title: "WeftCut",

@@ -9,6 +9,7 @@ export interface PathNode {
     inHandle: Point;
     outHandle: Point;
     segment: 'Line' | 'Cubic';
+    tangentMode: 'Corner' | 'Smooth' | 'Auto';
 }
 export interface MotionPath {
     nodes: PathNode[];
@@ -101,6 +102,8 @@ export function positionProblem(value: unknown): string | null {
         ids.add(n.id);
         if (n.segment !== 'Line' && n.segment !== 'Cubic')
             return 'Path segments must be Line or Cubic';
+        if (!['Corner', 'Smooth', 'Auto'].includes(n.tangentMode))
+            return 'Path node tangentMode must be Corner, Smooth or Auto';
         for (const v of [n.point, n.inHandle, n.outHandle])
             if (!v || !Number.isFinite(v.x) || !Number.isFinite(v.y) || Math.abs(v.x) > 1e7 || Math.abs(v.y) > 1e7)
                 return 'Path coordinates must be finite and within 10 million pixels';

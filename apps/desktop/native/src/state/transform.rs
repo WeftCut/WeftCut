@@ -35,6 +35,14 @@ pub struct PathNode {
     #[serde(rename = "outHandle")]
     pub out_handle: Point,
     pub segment: PathSegment,
+    #[serde(rename = "tangentMode")]
+    pub tangent_mode: SpatialTangentMode,
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum SpatialTangentMode {
+    Corner,
+    Smooth,
+    Auto,
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum PathSegment {

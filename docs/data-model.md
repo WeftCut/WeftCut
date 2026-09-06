@@ -789,8 +789,11 @@ struct Transform {
 
 `PositionAnimation` is exactly one of `XY { x: Animated<f64>, y: Animated<f64> }`
 or `Path { path: { nodes }, progress: Animated<f64> }` (ADR 0060). A path node
-has a stable `id`, `point: {x,y}`, relative `inHandle`/`outHandle` vectors and an
-outgoing `segment: Line | Cubic`; geometry contains no timestamps. Progress
+has a stable `id`, `point: {x,y}`, relative `inHandle`/`outHandle` vectors, an
+outgoing `segment: Line | Cubic`, and `tangentMode: Corner | Smooth | Auto`;
+geometry contains no timestamps. Corner handles are independent; Smooth keeps
+them opposite with independent lengths; Auto derives them from adjacent chords.
+The authoring solver stores explicit resolved handles for every reader. Progress
 0–1 traverses the path by distance, with temporal easing on that scalar track.
 Path progress exposes `path_progress` to keyframe commands and supports
 Hold/Loop/PingPong extrapolation; independent `x`/`y` writes are rejected in
@@ -804,7 +807,12 @@ that displacement with scale/rotation/pivot writes in one undo entry. Splitting
 a path retains both the complete route and complete progress on each half,
 shifting only the right half's local key times. Displaying an XY trajectory
 does not convert it. Conversion previews do not write project state; applying
-one is a single complete-record replacement. See ADR 0060 for sampling limits.
+one is a single complete-record replacement. Shape-preserving insertion splits
+the selected span exactly and freezes adjacent Auto nodes as Smooth, retaining
+progress. Conversion fits editable cubics and adaptively refines temporal keys
+against a pixel error target. Jumping positions are refused; a missed target at
+node/key/frame-grid limits disables Apply. Error is measured, not guaranteed
+between checks. See ADR 0060 for sampling limits.
 
 The anchor pair is the **pivot**: what `rotation_deg` turns around and what a
 flip mirrors about, in normalized layer coordinates (`(0.5, 0.5)` = center, the
@@ -1487,11 +1495,13 @@ blind pass because the cut-over gate left no alternative, and the on-disk
 shape drifted across three generations while the version sat still. ADR 0047
 has the history.
 
-The current schema is **v2**. Its v1 → v2 step wraps each transform's original
-X/Y records in `position: { mode: "XY", x, y }`, preserving every authored
-number and key record. Both fixtures are frozen. ADR 0060 retires the earlier
-pre-release in-place cutover exception for this change so existing projects
-remain readable without changing their animation.
+The current schema is **v1, unreleased**, with an empty migration chain. There
+are no released projects to support. Shape changes, including the explicit
+`position: { mode: "XY", x, y }` / Path record, cut over in place and refresh
+the current v1 fixture. Legacy direct transform axes are refused, not migrated.
+ADR 0060 removes the initially added v1 → v2 compatibility step. The versioned
+chain and its synthetic tests remain ready for the first post-release change;
+the rules above apply once a released format needs preservation.
 
 A step imports **nothing** — not `SCHEMA_VERSION` (the target version is a
 parameter), not a model type, not `defaultSettings()`. It takes the wire

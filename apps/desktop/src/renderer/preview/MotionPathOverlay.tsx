@@ -8,6 +8,7 @@ import { containFit } from './gizmoGeometry';
 import { focusedPlayheadUs } from '../state/playheadProjection';
 import { logMutationFailure } from '../errors/tryMutate';
 import { transformOverrideFor } from '../render/transformOverrides';
+import { editPathNode, insertPathNode, nearestPathLocation } from '../../shared/pathGeometry';
 export function MotionPathOverlay({ layer, composition }: {
     layer: LayerSummary;
     composition: CompositionSummary;
@@ -87,7 +88,7 @@ export function MotionPathOverlay({ layer, composition }: {
     }, [current, layer.t_start_us, layer.t_end_us]);
     if (!source || (!editing && source.mode === 'XY'))
         return null;
-    const pointer = (e: React.PointerEvent): Point | null => {
+    const pointer = (e: {clientX: number; clientY: number}): Point | null => {
         const rect = getGizmoProbe()?.canvasRect();
         const fit = rect ? containFit(rect, composition.width, composition.height) : null;
         return fit ? { x: (e.clientX - fit.offX) / fit.scale, y: (e.clientY - fit.offY) / fit.scale } : null;
@@ -105,7 +106,9 @@ export function MotionPathOverlay({ layer, composition }: {
         const d = drag.current, p = pointer(e);
         if (!d || !p)
             return;
-        const next: PathPosition = { ...d.source, path: { nodes: d.source.path.nodes.map((n, i) => i !== d.node ? n : { ...n, [d.part]: d.part === 'point' ? p : { x: p.x - n.point.x, y: p.y - n.point.y } }) } };
+        const node = d.source.path.nodes[d.node]!;
+        const value = d.part === 'point' ? p : { x: p.x - node.point.x, y: p.y - node.point.y };
+        const next: PathPosition = { ...d.source, path: editPathNode(d.source.path, d.node, d.part, value) };
         live.current = next;
         setDraft(next);
         setPositionPreview(d.source, next);
@@ -132,11 +135,26 @@ export function MotionPathOverlay({ layer, composition }: {
         }
     };
     const handle = (node: number, part: 'point' | 'inHandle' | 'outHandle', p: Point) => <circle key={`${node}-${part}`} data-testid={`path-${node}-${part}`} data-handle-radius={part === 'point' ? 6 : 4} cx={p.x} cy={p.y} r={part === 'point' ? 6 : 4} fill={part === 'point' ? '#fff' : '#65d8ff'} stroke="#17394b" strokeWidth={1} vectorEffect="non-scaling-stroke" style={{ pointerEvents: editing && !busy ? 'all' : 'none', cursor: 'move' }} onPointerDown={e => begin(e, node, part)} onPointerMove={move} onPointerUp={e => void end(e)} onPointerCancel={e => void end(e)}/>;
+    const insertAt = async (e: React.MouseEvent) => {
+        if (!editing || busy || source.mode !== 'Path' || previewPosition(source) !== source) return;
+        const point = pointer(e); if (!point) return;
+        const location = nearestPathLocation(source.path, point);
+        if (!location || location.t < 0.0001 || location.t > 0.9999) return;
+        e.preventDefault(); e.stopPropagation();
+        const id = crypto.randomUUID();
+        try {
+            setBusy(true);
+            await setPosition(layer.id, { ...source, path: insertPathNode(source.path, location.segment, location.t, id) }, true);
+            usePathEditingStore.getState().setNode(id);
+        } catch(error) { logMutationFailure(error, 'Insert motion path node'); }
+        finally { setBusy(false); }
+    };
     return <svg ref={svg} data-testid="motion-path-overlay" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'hidden', visibility: 'hidden' }}>
     <g ref={group}>
       <path d={route} fill="none" stroke="#111" strokeWidth={4} vectorEffect="non-scaling-stroke"/>
       <path d={route} fill="none" stroke="#65d8ff" strokeWidth={2} vectorEffect="non-scaling-stroke"/>
-      {editing && current?.mode === 'Path' && current.path.nodes.map((n, i) => <g key={n.id}>
+      {editing && source.mode === 'Path' && current === source && <path data-testid="path-insert-hit" d={route} fill="none" stroke="transparent" strokeWidth={12} vectorEffect="non-scaling-stroke" style={{pointerEvents: busy ? 'none' : 'stroke', cursor: 'copy'}} onDoubleClick={e => void insertAt(e)}/>}
+      {editing && current?.mode === 'Path' && (draft || current === source) && current.path.nodes.map((n, i) => <g key={n.id}>
         {handle(i, 'point', n.point)}
         {n.id === selected && (['inHandle', 'outHandle'] as const).filter(part => (part === 'outHandle' ? n.segment === 'Cubic' && i < current.path.nodes.length - 1 : i > 0 && current.path.nodes[i - 1]!.segment === 'Cubic') && (n[part].x !== 0 || n[part].y !== 0)).map(part => { const p = { x: n.point.x + n[part].x, y: n.point.y + n[part].y }; return <g key={part}><line x1={n.point.x} y1={n.point.y} x2={p.x} y2={p.y} stroke="#65d8ff" strokeWidth={1} vectorEffect="non-scaling-stroke"/>{handle(i, part, p)}</g>; })}
       </g>)}

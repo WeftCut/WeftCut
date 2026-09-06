@@ -633,6 +633,14 @@ _Avoid_: node index, speed (speed is its rate of change)
 An explicit conversion of motion into independent XY keyframes at chosen sampling times; positions between those samples are an approximation.
 _Avoid_: lossless conversion, unlinking
 
+**Spatial node mode**:
+How a motion-path node's handles behave: Corner lets them move independently, Smooth keeps them aligned, and Auto derives a smooth direction from neighbouring points. This is distinct from the temporal easing of path progress.
+_Avoid_: keyframe easing, interpolation mode (without specifying space or time)
+
+**Shape-preserving insertion**:
+Adding a node by subdividing an existing path segment, without changing its geometric route or the progress animation.
+_Avoid_: append point, re-smoothing
+
 ## Motifs
 
 **Motif**:

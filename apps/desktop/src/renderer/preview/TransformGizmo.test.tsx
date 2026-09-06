@@ -197,7 +197,7 @@ async function box(): Promise<HTMLElement> {
 
 describe("TransformGizmoHost", () => {
   it('translates a whole path through relative commits and carries rapid gestures until the summary arrives', async () => {
-    const position:PathPosition={mode:'Path',path:{nodes:[0,100].map((x,i)=>({id:String(i),point:{x,y:0},inHandle:{x:0,y:0},outHandle:{x:0,y:0},segment:'Line'}))},progress:stat(0.5)};
+    const position:PathPosition={mode:'Path',path:{nodes:[0,100].map((x,i)=>({ tangentMode: 'Corner' as const,id:String(i),point:{x,y:0},inHandle:{x:0,y:0},outHandle:{x:0,y:0},segment:'Line'}))},progress:stat(0.5)};
     useProjectStore.getState().apply(fixture({position}));
     render(<TransformGizmoHost/>);
     const el=await box();

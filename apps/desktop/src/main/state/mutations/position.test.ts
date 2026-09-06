@@ -11,15 +11,62 @@ import { parseProjectJson, serializeProjectToJson } from '../persistence';
 import { evaluatePosition } from '../../../renderer/render/position';
 import { IN_IDENTITY, OUT_IDENTITY } from '../../../shared/keyframe';
 import { type PathPosition } from '../../../shared/position';
+import { insertPathNode, setPathNodeMode } from '../../../shared/pathGeometry';
+import { convertPosition } from '../../../renderer/render/positionConversion';
 function setup() {
     const gen = seededGen(), p = blankProject(gen, 'paths'), c = rootComposition(p), id = gen();
     c.duration_us = 2000000;
     const params = textParamsDefault('Path', c);
     c.tracks[0]!.layers.push({ id, label: null, t_start_us: 0, t_end_us: 2000000, enabled: true, locked: false, metadata: {}, effects: [], params });
-    const path: PathPosition = { mode: 'Path', path: { nodes: [0, 1].map(i => ({ id: gen(), point: { x: 100 * i, y: 200 * i }, inHandle: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 }, segment: 'Line' })) }, progress: { mode: 'Keyframed', extrapolate: { before: 'Loop', after: 'Loop' }, value: [0, 1].map(value => ({ id: gen(), t_us: value * 1000000, value, in: { ...IN_IDENTITY, mode: 'Free' }, out: { ...OUT_IDENTITY, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } })) } };
+    const path: PathPosition = { mode: 'Path', path: { nodes: [0, 1].map(i => ({ tangentMode: 'Corner' as const, id: gen(), point: { x: 100 * i, y: 200 * i }, inHandle: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 }, segment: 'Line' })) }, progress: { mode: 'Keyframed', extrapolate: { before: 'Loop', after: 'Loop' }, value: [0, 1].map(value => ({ id: gen(), t_us: value * 1000000, value, in: { ...IN_IDENTITY, mode: 'Free' }, out: { ...OUT_IDENTITY, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } })) } };
     return { p, c, id, params, path, gen };
 }
 describe('path authoring through state operations', () => {
+    it('commits fitted and baked records without changing the measured conversion', () => {
+        const { p, c, id, params, path } = setup();
+        c.fps = { num: 30000, den: 1001 };
+        c.duration_us = 2002000;
+        c.tracks[0]!.layers[0]!.t_end_us = 2002000;
+        const x = structuredClone(path.progress), y = structuredClone(path.progress);
+        if (x.mode !== 'Keyframed' || y.mode !== 'Keyframed') throw new Error('test setup');
+        for (const axis of [x, y]) {
+            axis.extrapolate = { before: 'Hold', after: 'Hold' };
+            axis.value[0]!.value = 0; axis.value[1]!.value = 300;
+            axis.value[1]!.t_us = 2002000;
+        }
+        y.value[0]!.segment = { kind: 'Spline' };
+        y.value[0]!.out.y = 0; y.value[1]!.in.y = 0;
+        applySetPosition(p, id, { mode: 'XY', x, y });
+        for (let direction = 0; direction < 2; direction++) {
+            const source = structuredClone(params.transform.position);
+            const conversion = convertPosition(source, { fpsNum: c.fps.num, fpsDen: c.fps.den, startFrame: 0, endFrame: 60, tolerancePx: 0.5, everyFrames: 10 });
+            expect(conversion.withinTolerance).toBe(true);
+            applySetPosition(p, id, conversion.position);
+            expect(params.transform.position).toEqual(conversion.position);
+            const serialized = serializeProjectToJson(p);
+            expect(serializeProjectToJson(parseProjectJson(serialized).project)).toEqual(serialized);
+        }
+    });
+    it('solves Auto on commit and inserts without changing progress or motion, with one-step undo', () => {
+        const {p,id,path,gen}=setup();
+        path.path.nodes[1]!.point={x:100,y:80};
+        path.path.nodes.push({...path.path.nodes[1]!,id:gen(),point:{x:200,y:0}});
+        path.path=setPathNodeMode(path.path,1,'Auto');
+        const actor=createActor({initial:p,idGen:gen});
+        expect(actor.dispatch('set_position',{layer:id,position:path}).ok).toBe(true);
+        const before=actor.snapshot();
+        const original=(rootComposition(before).tracks[0]!.layers[0]!.params as TextParams).transform.position as PathPosition;
+        const next={...original,path:insertPathNode(original.path,0,0.37,gen())};
+        expect(actor.dispatch('set_position',{layer:id,position:next,geometry_only:true}).ok).toBe(true);
+        const stored=(rootComposition(actor.snapshot()).tracks[0]!.layers[0]!.params as TextParams).transform.position as PathPosition;
+        expect(stored.progress).toEqual(original.progress);
+        for(let time=0;time<2000000;time+=10000){
+            const a=evaluatePosition(original,time),b=evaluatePosition(stored,time);
+            expect(Math.hypot(a.x-b.x,a.y-b.y)).toBeLessThan(0.05);
+        }
+        expect(actor.dispatch('undo',{}).ok).toBe(true);
+        expect(actor.snapshot()).toEqual(before);
+    });
     it('persists the path and rejects independent axis writes atomically', () => {
         const { p, id, params, path } = setup();
         applySetPosition(p, id, path);

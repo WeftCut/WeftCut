@@ -180,5 +180,5 @@ the new one would silently re-shape every existing curve.
   extrapolation is type-specific (Offset and Continue in OkLab, clamped at the byte).
 - **Spatial motion paths:** the proposed `Animated<Vec2>` direction is replaced
   by [ADR 0060](0060-position-has-xy-and-path-modes.md): independent XY remains
-  intact alongside an explicit geometry-plus-progress mode, introduced by the
-  v1 → v2 migration.
+  intact alongside an explicit geometry-plus-progress mode. Before the first
+  release this cuts over in place; no migration step is registered.

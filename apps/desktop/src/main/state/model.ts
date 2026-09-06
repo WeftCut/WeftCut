@@ -12,7 +12,7 @@ import type { PositionAnimation } from '../../shared/position'
  *
  *  This is the only home for the number: Rust deserializes projects but has no
  *  opinion about the version (`native/src/state/project.rs`). */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 1
 
 export type Uuid = string
 export type TimeUs = number

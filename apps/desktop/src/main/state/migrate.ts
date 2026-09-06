@@ -33,7 +33,7 @@
 
 /** The oldest on-disk schema version this build can upgrade FROM.
  *
- *  v1 is the first PUBLISHED format. Nothing before it was ever released — the
+ *  v1 is the initial format, not yet published. Nothing before it was released — the
  *  pre-release builds cut over rather than migrating (`docs/data-model.md`
  *  §Versioning) — so there is deliberately no step below this floor and a file
  *  claiming one is refused rather than guessed at. */
@@ -49,25 +49,10 @@ export interface MigrationStep {
 
 /** The chain, in ascending `from` order.
  *
- *  v1 → v2 wraps the legacy axes without changing their authored records.
+ *  Empty while unreleased: current schema changes cut over in place.
  *  `migrate.completeness.test.ts` fails the build if a `SCHEMA_VERSION` bump
  *  arrives without one (and without its committed fixture). */
-export const STEPS: readonly MigrationStep[] = [{
-  from: 1,
-  apply(wire) {
-    const compositions = wire.compositions as Record<string, { tracks: Array<{ layers: Array<{ params: { transform?: Record<string, unknown> } }> }> }>
-    for (const composition of Object.values(compositions)) {
-      for (const track of composition.tracks) for (const layer of track.layers) {
-        const t = layer.params.transform
-        if (!t) continue
-        if (!t.x || !t.y || 'position' in t) throw new Error('v1 position migration requires the original x/y tracks')
-        t.position = { mode: 'XY', x: t.x, y: t.y }
-        delete t.x
-        delete t.y
-      }
-    }
-  },
-}]
+export const STEPS: readonly MigrationStep[] = []
 
 export interface UpgradeOutcome {
   /** The wire object at the target version. Identical reference to the input

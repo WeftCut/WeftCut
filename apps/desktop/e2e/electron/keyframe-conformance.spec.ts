@@ -610,7 +610,7 @@ const motionPath: Scenario = {
     const group = await addRedGroup(page, SQUARE, SQUARE)
     await invokeCmd(page, 'set_position', { layerId: group.layerId, position: {
       mode: 'Path',
-      path: { nodes: [120, 180, 420].map((x, i) => ({
+      path: { nodes: [120, 180, 420].map((x, i) => ({ tangentMode: 'Corner' as const,
         id: `node-${i}`, point: { x, y: SQUARE_Y }, inHandle: { x: -20, y: 0 }, outHandle: { x: 20, y: 0 }, segment: i === 0 ? 'Cubic' : 'Line',
       })) },
       progress: { mode: 'Keyframed', value: [freeKey(0, 0, LINEAR), freeKey(2000000, 1, LINEAR)], extrapolate: { before: 'Hold', after: 'PingPong' } },

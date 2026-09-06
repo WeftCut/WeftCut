@@ -28,7 +28,7 @@ vi.mock('../persistence', async (importOriginal) => {
 
 const { openProject } = await import('../workspace-orchestrator')
 const { serializeProjectToJson, PROJECT_FILE, preUpgradeBackupFile } = await import('../persistence')
-const { blankProject } = await import('../model')
+const { blankProject, SCHEMA_VERSION } = await import('../model')
 const { seededGen } = await import('../ids')
 type OrchestratorDeps = import('../workspace-orchestrator').OrchestratorDeps
 type OrchestratorFs = import('../workspace-orchestrator').OrchestratorFs
@@ -96,7 +96,7 @@ describe('openProject — schema upgrade', () => {
     // emitted earlier lands in the doomed bus); before replaceState because if the
     // swap fails validation, "this was upgraded from v1" is the first clue.
     expect(calls).toEqual(['commitWorkspace', 'onSchemaUpgrade', 'replaceState', 'pushRecent'])
-    expect(reports).toEqual([{ from: 1, to: 2, backupFile: 'project.pre-v1.json' }])
+    expect(reports).toEqual([{ from: 1, to: SCHEMA_VERSION, backupFile: 'project.pre-v1.json' }])
   })
 
   it('never clobbers an existing backup — the oldest copy is the valuable one', async () => {
@@ -123,7 +123,7 @@ describe('openProject — schema upgrade', () => {
     await openProject(deps, '/ws')
 
     expect(calls).toContain('replaceState')                  // the open is not blocked
-    expect(reports[0]).toEqual({ from: 1, to: 2, backupFile: null })  // …but the row must not imply a safety net
+    expect(reports[0]).toEqual({ from: 1, to: SCHEMA_VERSION, backupFile: null })  // …but the row must not imply a safety net
   })
 
   it('writes nothing and reports nothing when the file was already current', async () => {

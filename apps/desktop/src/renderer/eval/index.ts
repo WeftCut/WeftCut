@@ -70,6 +70,7 @@ interface Exports {
 
 let ex: Exports | null = null
 
+/** Samples are packed [x, y, cumulative distance, segment-index + parameter]. */
 export interface CompiledPath { samples: Float64Array; directions: [number,number,number,number]; length: number }
 const pathCache = new WeakMap<MotionPath, CompiledPath>()
 let activePath: CompiledPath | null = null
@@ -79,9 +80,9 @@ export function compileMotionPath(path: MotionPath): CompiledPath {
   const e=E()
   path.nodes.forEach((n,i)=>e.path_node(i,n.point.x,n.point.y,n.inHandle.x,n.inHandle.y,n.outHandle.x,n.outHandle.y,n.segment==='Cubic'?1:0))
   const count=e.path_compile(path.nodes.length)
-  const samples=new Float64Array(e.memory.buffer,e.path_samples_ptr(),count*3).slice()
+  const samples=new Float64Array(e.memory.buffer,e.path_samples_ptr(),count*4).slice()
   const directions:[number,number,number,number]=[e.path_direction(0),e.path_direction(1),e.path_direction(2),e.path_direction(3)]
-  const result={samples,directions,length:samples[samples.length-1]!}
+  const result={samples,directions,length:samples[samples.length-2]!}
   pathCache.set(path,result); activePath=result
   return result
 }
@@ -89,7 +90,7 @@ export function evaluateMotionPath(path: MotionPath, progress:number): Point {
   const compiled=compileMotionPath(path); const e=E()
   if(activePath!==compiled) {
     new Float64Array(e.memory.buffer,e.path_samples_ptr(),compiled.samples.length).set(compiled.samples)
-    e.path_activate(compiled.samples.length/3,...compiled.directions)
+    e.path_activate(compiled.samples.length/4,...compiled.directions)
     activePath=compiled
   }
   return {x:e.path_eval(progress,0),y:e.path_eval(progress,1)}

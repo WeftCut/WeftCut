@@ -6,12 +6,15 @@ import { normalizeKeyframes } from './animated';
 import { snapFrameRound } from '../snap';
 import { solveAutoTangents } from '../../../shared/tangents';
 import { refuseRetiredKeyframeShape } from '../serialize';
+import { solvePathGeometry } from '../../../shared/pathGeometry';
 /** One atomic authoring command, shared by UI and MCP. */
 export function applySetPosition(project: Project, id: Uuid, input: PositionAnimation, geometryOnly = false): void {
     const { layer, comp } = checkTrackLock(project, id);
     if (!('transform' in layer.params))
         throw new CommandFailure({ error: 'InvalidArgument', field: 'position', detail: 'This layer has no position' });
     const position = structuredClone(input);
+    if (!position || typeof position !== 'object')
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'position', detail: 'Position requires a record' });
     if (geometryOnly) {
         if (position.mode !== 'Path' || layer.params.transform.position.mode !== 'Path')
             throw new CommandFailure({ error: 'InvalidArgument', field: 'position', detail: 'Geometry editing requires Path mode' });
@@ -20,6 +23,7 @@ export function applySetPosition(project: Project, id: Uuid, input: PositionAnim
     const problem = positionProblem(position);
     if (problem)
         throw new CommandFailure({ error: 'InvalidArgument', field: 'position', detail: problem });
+    if (position.mode === 'Path') position.path = solvePathGeometry(position.path);
     try {
         refuseRetiredKeyframeShape({ compositions: { c: { tracks: [{ layers: [{ id, params: { transform: { position } } }] }] } } });
     }

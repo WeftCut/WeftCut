@@ -34,8 +34,8 @@ const MAXKF: usize = 4096;
 
 static mut PATH_NODES: [crate::path::Node; crate::path::MAX_NODES] =
     [crate::path::Node::ZERO; crate::path::MAX_NODES];
-static mut PATH_SAMPLES: [[f64; 3]; crate::path::MAX_SAMPLES] =
-    [[0.0; 3]; crate::path::MAX_SAMPLES];
+static mut PATH_SAMPLES: [[f64; 4]; crate::path::MAX_SAMPLES] =
+    [[0.0; 4]; crate::path::MAX_SAMPLES];
 static mut PATH_COUNT: usize = 0;
 static mut PATH_START: crate::path::Point = crate::path::Point::ZERO;
 static mut PATH_END: crate::path::Point = crate::path::Point::ZERO;

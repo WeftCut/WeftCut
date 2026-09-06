@@ -2,14 +2,24 @@
 // to other locales. Keep keys grouped by feature area, not by component.
 const enUS = {
   motion_path: {
-    start_frame:'Start frame (local)', end_frame:'End frame (inclusive)', every_frames:'Sample every N frames', samples_used:'samples', range_error:'The range must stay within this clip.',
+    node_mode:'Spatial node', select_node:'Select a point', mode_corner:'Corner', mode_smooth:'Smooth', mode_auto:'Auto smooth', insert:'Insert after point',
+    insert_hint:'Double-click the path to insert without changing its shape. Adjacent Auto nodes become Smooth to preserve their handles.',
+    start_frame:'Start frame (local)', end_frame:'End frame (inclusive)', every_frames:'Maximum frame interval', samples_used:'keys per property', range_error:'The range must stay within this clip.',
+    tolerance:'Target error (pixels)', nodes_used:'{{count}} path nodes',
+    jump_error:'This range contains an instantaneous position jump. Convert separate ranges or keep the current mode.',
+    conversion_range_error:'Choose a valid range of at most 16384 frames with microsecond-compatible frame rate.',
+    conversion_options_error:'Use a target of at least 0.05 pixels and a positive integer frame interval.',
+    conversion_capacity_error:'Conversion exceeds 4096 keys per property or the check budget. Shorten the range or increase the interval.',
+    node_limit:'The 128-node budget cannot meet the target. Preview only: shorten the range or relax the target.',
+    key_limit:'The keyframe budget cannot meet the target. Preview only: shorten the range or relax the target.',
+    frame_grid:'The current frame grid cannot meet the target. Preview only: relax the target or keep the current mode.',
     create:'Create motion path', edit:'Edit path', show:'Show trajectory', done:'Done',
     add:'Add point', curve:'Line / curve', remove:'Remove point',
     anchor:'The marked anchor follows the path. Select a point to edit its handles.',
     corner:'The marked position reference (unrotated top-left) follows the path.',
     to_path:'Convert XY to path…', to_xy:'Bake to XY…', preview:'Preview conversion', apply:'Apply conversion', cancel:'Cancel',
-    samples:'Path samples', error:'Measured position error: {{error}} px ({{count}} checks)',
-    conversion_note:'Only the chosen local frame range is retained; outside it the result holds. XY conversion creates an editable polyline. Error is measured, not a continuous-time guarantee. Baking is exact at sampled frames, approximate between them.',
+    error:'Measured position error: {{error}} px ({{count}} checks)',
+    conversion_note:'Only the chosen range is retained; outside it the result holds. XY is fitted to editable curves; temporal keys are added to meet the error target. Error is checked at frames, quarter-frames and key boundaries, not guaranteed continuously. Instantaneous position jumps are refused.',
   },
   app: {
     title: "WeftCut",

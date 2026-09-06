@@ -410,7 +410,7 @@ export function refuseRetiredKeyframeShape(o: Record<string, unknown>): void {
         if (isObj(p)) {
           const t = p.transform
           if (isObj(t)) {
-            if ('x' in t || 'y' in t) refuse(`layer ${lid} position`, 'legacy axes require versioned migration')
+            if ('x' in t || 'y' in t) refuse(`layer ${lid} position`, 'position record required; pre-release legacy axes are unsupported')
             const problem=positionProblem(t.position)
             if(problem) refuse(`layer ${lid} position`,problem)
             const position=t.position as Record<string, unknown>

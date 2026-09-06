@@ -58,7 +58,7 @@ impl Node {
     };
 }
 
-fn flatten(p: [Point; 4], depth: u8, emit: &mut impl FnMut(Point)) {
+fn flatten(p: [Point; 4], depth: u8, t0: f64, t1: f64, emit: &mut impl FnMut(Point, f64)) {
     let chord = p[0].distance(p[3]);
     let polygon = p[0].distance(p[1]) + p[1].distance(p[2]) + p[2].distance(p[3]);
     // Distance from controls to the chord also bounds geometric deviation.
@@ -71,7 +71,7 @@ fn flatten(p: [Point; 4], depth: u8, emit: &mut impl FnMut(Point)) {
         polygon
     };
     if depth == 9 || (polygon - chord <= TOLERANCE && deviation <= TOLERANCE) {
-        emit(p[3]);
+        emit(p[3], t1);
         return;
     }
     let a = p[0].add(p[1]).mul(0.5);
@@ -80,25 +80,27 @@ fn flatten(p: [Point; 4], depth: u8, emit: &mut impl FnMut(Point)) {
     let d = a.add(b).mul(0.5);
     let e = b.add(c).mul(0.5);
     let m = d.add(e).mul(0.5);
-    flatten([p[0], a, d, m], depth + 1, emit);
-    flatten([m, e, c, p[3]], depth + 1, emit);
+    let tm = (t0 + t1) * 0.5;
+    flatten([p[0], a, d, m], depth + 1, t0, tm, emit);
+    flatten([m, e, c, p[3]], depth + 1, tm, t1, emit);
 }
 
-/// Emits (x, y, cumulative distance) triples. A caller provides storage.
-pub fn compile(nodes: &[Node], mut emit: impl FnMut([f64; 3])) -> (Point, Point) {
+/// Emits (x, y, cumulative distance, segment-index + parameter). The parameter
+/// lets authoring map fitted spatial points back to the SAME distance table.
+pub fn compile(nodes: &[Node], mut emit: impl FnMut([f64; 4])) -> (Point, Point) {
     let Some(first) = nodes.first() else {
         return (Point::ZERO, Point::ZERO);
     };
     let mut last = first.point;
     let mut length = 0.0;
-    emit([last.x, last.y, 0.0]);
-    for pair in nodes.windows(2) {
+    emit([last.x, last.y, 0.0, 0.0]);
+    for (index, pair) in nodes.windows(2).enumerate() {
         let a = pair[0];
         let b = pair[1];
-        let mut append = |p: Point| {
+        let mut append = |p: Point, t: f64| {
             length += last.distance(p);
             last = p;
-            emit([p.x, p.y, length]);
+            emit([p.x, p.y, length, index as f64 + t]);
         };
         if a.cubic {
             flatten(
@@ -109,10 +111,12 @@ pub fn compile(nodes: &[Node], mut emit: impl FnMut([f64; 3])) -> (Point, Point)
                     b.point,
                 ],
                 0,
+                0.0,
+                1.0,
                 &mut append,
             );
         } else {
-            append(b.point);
+            append(b.point, 1.0);
         }
     }
     let mut start = Point::ZERO;
@@ -164,7 +168,7 @@ pub fn compile(nodes: &[Node], mut emit: impl FnMut([f64; 3])) -> (Point, Point)
     (start, end)
 }
 
-pub fn evaluate(samples: &[[f64; 3]], progress: f64, start: Point, end: Point) -> Point {
+pub fn evaluate(samples: &[[f64; 4]], progress: f64, start: Point, end: Point) -> Point {
     let Some(a) = samples.first() else {
         return Point::ZERO;
     };
@@ -213,6 +217,20 @@ mod tests {
             point: Point { x, y },
             ..Node::ZERO
         }
+    }
+    #[test]
+    fn samples_retain_ordered_segment_parameters() {
+        let mut nodes = [line(0.0, 0.0), line(100.0, 0.0), line(150.0, 0.0)];
+        nodes[0].cubic = true;
+        nodes[0].outgoing = Point { x: 0.0, y: 100.0 };
+        nodes[1].incoming = Point { x: 0.0, y: 100.0 };
+        let mut samples = Vec::new();
+        compile(&nodes, |p| samples.push(p));
+        assert_eq!(samples[0][3], 0.0);
+        assert_eq!(samples.last().unwrap()[3], 2.0);
+        assert!(samples.iter().any(|s| s[3] > 0.0 && s[3] < 1.0));
+        assert!(samples.iter().any(|s| s[3] == 1.0));
+        assert!(samples.windows(2).all(|p| p[0][3] < p[1][3] && p[0][2] <= p[1][2]));
     }
     #[test]
     fn distance_uses_length_not_node_count() {
