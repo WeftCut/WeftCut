@@ -901,7 +901,12 @@ app.whenReady().then(async () => {
     platform: process.platform,
     arch: process.arch,
   }))
-  // Unpackaged dev/E2E runs and macOS never contact the release provider.
+  // Unpackaged dev/E2E runs never contact the release provider, and neither
+  // does macOS: its build is ad-hoc signed (electron-builder.yml §mac), and
+  // Squirrel.Mac installs only an update whose signature satisfies the running
+  // app's designated requirement — for ad-hoc that is this build's own code
+  // hash, so no later build can. The Help dialog says so and links the releases
+  // page.
   const updates = createUpdates(app.isPackaged && process.platform !== 'darwin'
     ? electronUpdater.autoUpdater : null)
   ipcMain.handle('updates:status', () => updates.status())

@@ -116,13 +116,37 @@ linux:
     - from: resources/ffmpeg-lgpl/linux/LIBVA-LICENSE.txt
       to: native-decode/LIBVA-LICENSE.txt
 mac:
+  # DMG only, arm64 only: the CI runner, the bundled ffmpeg sidecar
+  # (fetch-ffmpeg.mjs §mac) and the from-source LGPL libraries are all Apple
+  # Silicon, so there is no Intel build to offer. No zip target either — that
+  # exists to feed electron-updater, which macOS cannot use (below).
   target: [dmg]
   category: public.app-category.video
   icon: build/icon.png
+  artifactName: ${productName}-${version}-${arch}.${ext}
   # Electron 44 dropped macOS 12; the bundled runtime will not start below 13,
   # so the DMG declares the same floor instead of failing at launch.
   minimumSystemVersion: "13.0"
-  identity: null   # unsigned in S6; ad-hoc signature, but the icon is now a real master
+  # Ad-hoc signature (`codesign --sign -`): no Developer ID, no notarization —
+  # the project has no paid Apple developer account. Ad-hoc is deliberately NOT
+  # `identity: null`. electron-builder starts from Electron's own ad-hoc-signed
+  # bundle and then rewrites Info.plist, renames the helpers and adds app.asar,
+  # so skipping signing ships a signature whose seal no longer matches the
+  # bundle — Gatekeeper reports that as "damaged", and only `xattr` gets past
+  # it. Re-signing ad-hoc inside-out (osx-sign, through electron-builder's own
+  # "-" identity path) yields a self-consistent signature, which Gatekeeper
+  # treats as an unidentified developer instead: open once, then Privacy &
+  # Security → Open Anyway. The hardened runtime stays on; electron-builder's
+  # default entitlements carry the disable-library-validation flag that ad-hoc
+  # signing needs under it (its own warning names that flag).
+  #
+  # What ad-hoc cannot do is self-update: Squirrel.Mac installs only an update
+  # whose signature satisfies the running app's designated requirement, and an
+  # ad-hoc requirement is that build's own code hash, so no later build ever
+  # matches. main disables electron-updater on darwin (docs/releases.md); the
+  # release notes carry the Gatekeeper steps. A Developer ID lifts both limits.
+  identity: "-"
+  notarize: false
   extraResources:
     # LGPL §6 obligations for @weftcut/native-decode's ffmpeg runtime. The
     # .dylib themselves ride co-located beside the .node (files + asarUnpack

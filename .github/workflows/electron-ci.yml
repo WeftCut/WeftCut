@@ -530,7 +530,9 @@ jobs:
           retention-days: 14
           path: apps/desktop/e2e-report/**
 
-      # Sign-free packaging. Deliberately NOT `npm run package`: that script
+      # Certificate-free packaging: Windows and Linux ship unsigned, macOS signs
+      # ad-hoc (electron-builder.yml §mac) — no identity, so nothing secret rides
+      # this step. Deliberately NOT `npm run package`: that script
       # re-runs napi:build + napi:build:decode for a one-shot local package,
       # and both addons already built above (their .node artefacts persist in
       # node_modules/@weftcut/{core,native-decode}). Run the two remaining
@@ -549,19 +551,19 @@ jobs:
       # gate still names the cheapest one. A named number here would not survive
       # the next rebalance; the measurement does.
       - name: Package (unsigned)
-        if: runner.os != 'macOS' && (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'codecs' || matrix.part == 'all')
+        if: (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'codecs' || matrix.part == 'all')
         run: npm run build && npx electron-builder --publish never
 
       # Packaging is VERIFIED on every push by "Package (unsigned)" above; this
       # step only PERSISTS the resulting installer. Installers are large
       # (~0.4–0.9 GB per OS) and nothing downstream consumes them (the compare
-      # job only needs determinism-*). Uploading ~2 GB on every push refills the
-      # account artifact-storage quota, which then fails the essential (tiny)
-      # determinism-* upload and reddens the whole matrix. So only keep an
-      # installer when needed for a release or a manual dispatch —
+      # job only needs determinism-*). Uploading every OS's installer on every
+      # push refills the account artifact-storage quota, which then fails the
+      # essential (tiny) determinism-* upload and reddens the whole matrix. So
+      # only keep an installer when needed for a release or a manual dispatch —
       # with short retention on top.
       - name: Upload installer
-        if: success() && runner.os != 'macOS' && (matrix.part == 'codecs' || matrix.part == 'all') && ((github.event_name == 'workflow_dispatch' && inputs.package) || needs.release-plan.outputs.publish == 'true')
+        if: success() && (matrix.part == 'codecs' || matrix.part == 'all') && ((github.event_name == 'workflow_dispatch' && inputs.package) || needs.release-plan.outputs.publish == 'true')
         uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.os }}
@@ -571,6 +573,7 @@ jobs:
             apps/desktop/release/*.exe
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.deb
+            apps/desktop/release/*.dmg
             apps/desktop/release/*.blockmap
             apps/desktop/release/latest*.yml
 

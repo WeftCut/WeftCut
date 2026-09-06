@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
-import { validateVersion, planRelease, setVersion, readVersion, validateAssets } from './release.mjs'
+import { validateVersion, planRelease, setVersion, readVersion, validateAssets, releaseNotes } from './release.mjs'
 
 test('only increasing stable versions become releases; unpublished versions retry', () => {
   for (const bad of ['0.1.001', 'v0.1.1', '0.1.1-beta.1', '0.1.1+001', '1.2', null]) {
@@ -40,22 +40,42 @@ async function assets(t) {
   const data = Buffer.from('installer fixture')
   const sha512 = createHash('sha512').update(data).digest('base64')
   // Per-target arch names, as electron-builder writes them (release.mjs).
-  const files = [['exe', 'x64'], ['AppImage', 'x86_64'], ['deb', 'amd64']].map(([ext, arch]) => ({ url: `WeftCut-0.1.1-${arch}.${ext}`, size: data.length, sha512 }))
+  const files = [['exe', 'x64'], ['AppImage', 'x86_64'], ['deb', 'amd64'], ['dmg', 'arm64']].map(([ext, arch]) => ({ url: `WeftCut-0.1.1-${arch}.${ext}`, size: data.length, sha512 }))
   for (const file of files) await fs.writeFile(path.join(dir, file.url), data)
   await fs.writeFile(path.join(dir, 'WeftCut-0.1.1-x64.exe.blockmap'), 'blockmap fixture')
-  for (const [name, subset] of [['latest.yml', files.slice(0, 1)], ['latest-linux.yml', files.slice(1)]]) {
+  await fs.writeFile(path.join(dir, 'WeftCut-0.1.1-arm64.dmg.blockmap'), 'blockmap fixture')
+  for (const [name, subset] of [['latest.yml', files.slice(0, 1)], ['latest-linux.yml', files.slice(1, 3)], ['latest-mac.yml', files.slice(3)]]) {
     await fs.writeFile(path.join(dir, name), JSON.stringify({ version: '0.1.1', files: subset }))
   }
   return dir
 }
 
-test('release validation accepts complete Windows/Linux output', async t => {
-  assert.equal((await validateAssets(await assets(t), '0.1.1')).length, 6)
+test('release validation accepts complete Windows/Linux/macOS output', async t => {
+  assert.equal((await validateAssets(await assets(t), '0.1.1')).length, 9)
 })
 test('release validation refuses missing Linux output', async t => {
   const dir = await assets(t)
   await fs.unlink(path.join(dir, 'latest-linux.yml'))
   await assert.rejects(validateAssets(dir, '0.1.1'), /Missing release asset/)
+})
+test('release validation refuses missing macOS output', async t => {
+  // The DMG and its manifest are each required on their own: a leg that packaged
+  // but never uploaded, and a manifest that lists a DMG that is not there, both
+  // stop the release before a draft exists.
+  const withoutDmg = await assets(t)
+  await fs.unlink(path.join(withoutDmg, 'WeftCut-0.1.1-arm64.dmg'))
+  await assert.rejects(validateAssets(withoutDmg, '0.1.1'), /Missing release asset: WeftCut-0.1.1-arm64.dmg/)
+  const withoutManifest = await assets(t)
+  await fs.unlink(path.join(withoutManifest, 'latest-mac.yml'))
+  await assert.rejects(validateAssets(withoutManifest, '0.1.1'), /Missing release asset: latest-mac.yml/)
+})
+test('release notes name every installer the validator requires', () => {
+  const notes = releaseNotes('0.1.1')
+  for (const file of ['WeftCut-0.1.1-x64.exe', 'WeftCut-0.1.1-x86_64.AppImage', 'WeftCut-0.1.1-amd64.deb', 'WeftCut-0.1.1-arm64.dmg']) {
+    assert.ok(notes.includes(file), `notes omit ${file}`)
+  }
+  // The Gatekeeper escape hatch is the one line a blocked macOS user needs verbatim.
+  assert.ok(notes.includes('xattr -dr com.apple.quarantine /Applications/WeftCut.app'))
 })
 test('release validation refuses corrupt installer bytes', async t => {
   const dir = await assets(t)
@@ -66,6 +86,7 @@ test('release validation refuses stale manifests and unexpected assets', async t
   const dir = await assets(t)
   await fs.writeFile(path.join(dir, 'latest.yml'), JSON.stringify({ version: '0.1.0', files: [] }))
   await assert.rejects(validateAssets(dir, '0.1.1'), /Invalid version/)
-  await fs.writeFile(path.join(dir, 'WeftCut-0.1.1.dmg'), '')
+  // An Intel DMG has no leg that builds it; one appearing means a stray file.
+  await fs.writeFile(path.join(dir, 'WeftCut-0.1.1-x64.dmg'), '')
   await assert.rejects(validateAssets(dir, '0.1.1'), /Unexpected release asset/)
 })

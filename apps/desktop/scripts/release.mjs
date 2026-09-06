@@ -55,18 +55,30 @@ export async function setVersion(version, root = ROOT) {
   }
 }
 
+// One update manifest per OS, and the installers it must reference.
+// electron-builder expands `${arch}` per target: `x64` on Windows and `arm64` on
+// macOS (the Apple Silicon runner's host arch; there is no Intel build), but the
+// Linux targets keep their packaging conventions — `x86_64` for AppImage and
+// `amd64` for deb — even though both build with arch=x64.
+const MANIFESTS = {
+  'latest.yml': ['x64.exe'],
+  'latest-linux.yml': ['x86_64.AppImage', 'amd64.deb'],
+  'latest-mac.yml': ['arm64.dmg'],
+}
+const installersOf = version => Object.fromEntries(Object.entries(MANIFESTS)
+  .map(([manifest, suffixes]) => [manifest, suffixes.map(suffix => `WeftCut-${version}-${suffix}`)]))
+
 // Refuse a partial or stale release BEFORE creating/uploading a draft. Stream
 // hashes: an installer can approach 1 GB and must not be buffered into memory.
 export async function validateAssets(directory, version) {
   validateVersion(version)
   const { parse } = await import('yaml')
-  // electron-builder expands `${arch}` per target: `x64` on Windows, but the
-  // Linux targets keep their packaging conventions — `x86_64` for AppImage and
-  // `amd64` for deb — even though both build with arch=x64.
+  const installers = installersOf(version)
+  // The NSIS blockmap drives differential Windows updates, so it is required;
+  // electron-builder writes AppImage and DMG blockmaps too, but nothing
+  // consumes them (Linux updates download whole, macOS does not self-update).
   const required = [
-    `WeftCut-${version}-x64.exe`, `WeftCut-${version}-x64.exe.blockmap`,
-    `WeftCut-${version}-x86_64.AppImage`, `WeftCut-${version}-amd64.deb`,
-    'latest.yml', 'latest-linux.yml',
+    ...Object.values(installers).flat(), `WeftCut-${version}-x64.exe.blockmap`, ...Object.keys(installers),
   ]
   const names = await fs.readdir(directory)
   for (const file of required) {
@@ -74,16 +86,17 @@ export async function validateAssets(directory, version) {
       throw new Error(`Missing release asset: ${file}`)
     }
   }
-  const allowed = new Set([...required, `WeftCut-${version}-x86_64.AppImage.blockmap`])
+  const allowed = new Set([
+    ...required, `WeftCut-${version}-x86_64.AppImage.blockmap`, `WeftCut-${version}-arm64.dmg.blockmap`,
+  ])
   for (const name of names) {
     if (!allowed.has(name)) throw new Error(`Unexpected release asset: ${name}`)
   }
-  for (const manifest of ['latest.yml', 'latest-linux.yml']) {
+  for (const [manifest, expected] of Object.entries(installers)) {
     const info = parse(await fs.readFile(path.join(directory, manifest), 'utf8'))
     if (info?.version !== version || !Array.isArray(info.files) || !info.files.length) {
       throw new Error(`Invalid version/files in ${manifest}`)
     }
-    const expected = manifest === 'latest.yml' ? required.slice(0, 1) : required.slice(2, 4)
     const referenced = new Set()
     for (const file of info.files) {
       const name = decodeURIComponent(file.url)
@@ -99,6 +112,32 @@ export async function validateAssets(directory, version) {
     if (expected.some(name => !referenced.has(name))) throw new Error(`Incomplete ${manifest}`)
   }
   return names.map(name => path.join(directory, name))
+}
+
+// Prepended to every release's generated changelog (gh puts --notes ahead of
+// the notes it generates). The releases page is the only download page, and the
+// macOS steps are not guessable: the build is ad-hoc signed, not notarized, so
+// Gatekeeper blocks the first launch (electron-builder.yml §mac has the why).
+export function releaseNotes(version) {
+  const { 'latest.yml': [exe], 'latest-linux.yml': [appImage, deb], 'latest-mac.yml': [dmg] } = installersOf(version)
+  const code = text => '`' + text + '`'
+  return [
+    '## Install',
+    '',
+    `- **Windows** — run ${code(exe)}. The app keeps itself current: new versions download in the background and install when you quit.`,
+    `- **Linux** — ${code(appImage)} (mark it executable first) or ${code(deb)}. Self-updates like Windows.`,
+    `- **macOS (Apple Silicon, macOS 13 or newer)** — open ${code(dmg)} and drag WeftCut into Applications. ` +
+      'The build is ad-hoc signed and not notarized (WeftCut has no Apple Developer ID), so macOS blocks the first launch: ' +
+      'open the app once, click **Done**, then go to **System Settings → Privacy & Security** and click **Open Anyway**. ' +
+      'If macOS calls the app *damaged* instead, clear the download quarantine in Terminal and open it again:',
+    '',
+    '  ```sh',
+    '  xattr -dr com.apple.quarantine /Applications/WeftCut.app',
+    '  ```',
+    '',
+    '  macOS builds do not self-update; watch this page for new versions.',
+    '',
+  ].join('\n')
 }
 
 function gh(args) {
@@ -135,10 +174,11 @@ async function main() {
     // pipeline owns its version tags, created with the draft at this exact SHA.
     const remote = execFileSync('git', ['ls-remote', '--tags', 'origin', `refs/tags/${tag}`], { encoding: 'utf8' }).trim()
     if (remote) throw new Error(`Tag ${tag} already exists without a matching draft`)
-    gh(['release', 'create', tag, '--target', process.env.GITHUB_SHA, '--draft', '--title', `WeftCut ${version}`, '--generate-notes'])
+    gh(['release', 'create', tag, '--target', process.env.GITHUB_SHA, '--draft', '--title', `WeftCut ${version}`,
+      '--generate-notes', '--notes', releaseNotes(version)])
   }
   gh(['release', 'upload', tag, ...files, '--clobber'])
-  // The update provider sees the release only once BOTH OSes are complete.
+  // The update provider sees the release only once every OS is complete.
   gh(['release', 'edit', tag, '--draft=false', '--latest'])
   console.log(`Published ${tag}`)
 }
