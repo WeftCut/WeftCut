@@ -73,7 +73,7 @@ interface StoredTextParams {
   font: { size_px: number };
   box_w: number | null;
   box_h: number | null;
-  transform: { x: { value: number }; y: { value: number } };
+  transform: { position: { mode: "XY"; x: { value: number }; y: { value: number } } };
 }
 
 /// The title-safe band the preview actually DRAWS, converted back into
@@ -197,12 +197,12 @@ test("an unbroken transcript line is born with a wrap width inside the safe area
     const title = await titleSafeInCompPx(page, CANVAS);
     // A styleless cue is bottom-centre: `x` is the box's centre and `y` its
     // bottom, so containment is those two edges against the band.
-    const centreX = params.transform.x.value;
+    const centreX = params.transform.position.x.value;
     const halfW = params.box_w! / 2;
     console.log(
       `[caption] box [${(centreX - halfW).toFixed(1)}, ${(centreX + halfW).toFixed(1)}] inside ` +
         `title-safe [${title.x.toFixed(1)}, ${(title.x + title.w).toFixed(1)}], ` +
-        `baseline ${params.transform.y.value.toFixed(1)} vs ${(title.y + title.h).toFixed(1)}`,
+        `baseline ${params.transform.position.y.value.toFixed(1)} vs ${(title.y + title.h).toFixed(1)}`,
     );
     // A pixel of slack for the rect attributes' rounding through the contain
     // scale; the real margins here are ~19 composition px per side.
@@ -212,7 +212,7 @@ test("an unbroken transcript line is born with a wrap width inside the safe area
     // Auto height, so there is no box bottom to contain — but the baseline it
     // hangs from still has to be inside, or a caption sits legally wide and
     // illegally low.
-    expect(params.transform.y.value).toBeLessThanOrEqual(title.y + title.h + EPS_COMP_PX);
+    expect(params.transform.position.y.value).toBeLessThanOrEqual(title.y + title.h + EPS_COMP_PX);
   } finally {
     await app.close();
   }
