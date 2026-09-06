@@ -193,7 +193,11 @@ test("an unbroken transcript line is born with a wrap width inside the safe area
     const viewMenu = page.locator(".menu-trigger").nth(2);
     await viewMenu.click();
     await page.locator(".app-menu-item").filter({ hasText: /^Show safe areas$/ }).click();
-    await expect(page.getByTestId("safe-area-guides")).toBeAttached();
+    // Attached is not painted: the guides write their rect geometry from a rAF
+    // loop, and the band's <g> starts display:none with unsized rects, so a
+    // read straight after mount sees a 0×0 band on a slow runner. Wait for the
+    // title band to be drawn before measuring it.
+    await expect(page.getByTestId("safe-area-guide-title")).toBeVisible();
     const title = await titleSafeInCompPx(page, CANVAS);
     // A styleless cue is bottom-centre: `x` is the box's centre and `y` its
     // bottom, so containment is those two edges against the band.
