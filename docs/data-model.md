@@ -1385,14 +1385,19 @@ owns:
 ```
 
 `<dataRoot>/downloads/` holds content the app downloads on the user's behalf
-(ADR 0039; today: the whisper.cpp engine + Base model on Windows). Layout is
-`downloads/<itemId>/<version>/…` with a `manifest.json` written last as the
-install-complete marker; the catalog of downloadable items (pinned URLs +
-SHA-256 + byte counts) is `src/shared/content-catalog.ts`, the lifecycle is
-`src/main/contentDownload.ts` (pure, fs/http-injected), and the renderer
-drives it over the `content:*` IPC family. In-flight partial files live under
-`cache/content-partial/` — regenerable by definition, so the migration below
-never copies a torn download.
+(ADR 0039/0043/0055: speech engines + models and the Qwen3-VL set on Windows).
+Layout is `downloads/<itemId>/<version>/…` with a `manifest.json` written last
+as the install-complete marker; the catalog of downloadable items (pinned URLs
++ SHA-256 + byte counts) is `src/shared/content-catalog.ts`, the per-item
+lifecycle is `src/main/contentDownload.ts` (pure, fs/http-injected), and the
+main-owned queue that runs items one at a time is `src/main/contentQueue.ts`
+(ADR 0061); the renderer only enqueues, cancels, and renders over the
+`content:*` IPC family. In-flight partials live under `cache/content-partial/`
+as `<itemId>.part` plus a `<itemId>.part.json` sidecar naming the artifact the
+bytes belong to — that sidecar is what lets a drop, a cancel, or a quit resume
+from the on-disk size instead of restarting. The pending queue itself is
+`cache/content-queue.json`, re-enqueued at boot. Both are regenerable by
+definition, so the migration below never copies a torn download.
 
 `<dataRoot>/cache/` is the **app-level** backend cache (the second argument to
 the `Backend` constructor). Do not confuse it with the per-project

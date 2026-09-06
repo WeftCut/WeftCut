@@ -82,8 +82,11 @@ export interface ContentItem {
 }
 
 /// Install-state of one item on this machine, as reported by `content:list`.
+/// `queued` and `downloading` come from the main-process download queue (the
+/// item is on its way); the rest are read from disk.
 export type ContentItemStatus =
   | { state: "not_installed" }
+  | { state: "queued" }
   | { state: "downloading"; receivedBytes: number; totalBytes: number }
   /// `entryPath` is the ABSOLUTE path of the installed entry point;
   /// `installDir` the ABSOLUTE install root the SpeechConsumer field paths
@@ -102,27 +105,57 @@ export interface ContentListRow {
   status: ContentItemStatus;
 }
 
-/// One progress tick pushed on `evt:content:progress` while a download runs.
-/// `verify` covers the post-stream hash comparison, `extract` the zip stage.
+/// One progress tick from the downloader while an item is in flight. `resume`
+/// is the re-hash of bytes a previous attempt already landed (a resumed
+/// transfer reads its prefix once before appending), `verify` the post-stream
+/// hash comparison, `extract` the zip / tar.bz2 stage.
 export interface ContentDownloadProgress {
   itemId: string;
-  phase: "download" | "verify" | "extract" | "done" | "error";
+  phase: "resume" | "download" | "verify" | "extract" | "done" | "error";
   receivedBytes: number;
   totalBytes: number;
   /// Present on phase "error" only.
   error?: string;
 }
 
-/// Result of `content:download`. Mirrors DataRootMigrateResult: a user
-/// cancellation is its own quiet branch, never an error path.
+/// Terminal result of one item's download run. Mirrors DataRootMigrateResult:
+/// a user cancellation is its own quiet branch, never an error path.
 export type ContentDownloadResult =
   | { ok: true; entryPath: string }
   | { ok: false; cancelled: true }
   | { ok: false; error: string };
 
+/// Where one queued item stands. The in-flight states follow the downloader's
+/// phases (`resuming` = re-hashing bytes a previous attempt landed); `queued`
+/// waits its turn (downloads run one at a time); `error` lingers so the
+/// Settings row can show why, until the item is enqueued again or cancelled.
+export type ContentQueueState =
+  | "queued"
+  | "resuming"
+  | "downloading"
+  | "verifying"
+  | "extracting"
+  | "error";
+
+export interface ContentQueueEntry {
+  itemId: string;
+  state: ContentQueueState;
+  receivedBytes: number;
+  totalBytes: number;
+  /// Present on state "error" only.
+  error?: string;
+}
+
+/// The whole download queue, in run order. Pushed on `evt:content:queue` on
+/// every change and returned by `content:enqueue` / `content:queue`, so a
+/// freshly mounted Settings row needs no per-event reconciliation.
+export interface ContentQueueSnapshot {
+  entries: ContentQueueEntry[];
+}
+
 /// Event names pushed to the renderer (subscribe via api.on).
 export const CONTENT_EVENTS = {
-  progress: "content:progress",
+  queue: "content:queue",
 } as const;
 
 /// Derive this process's platform key. Returns null on platforms the catalog

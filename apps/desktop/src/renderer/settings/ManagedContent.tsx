@@ -3,12 +3,14 @@ import { useTranslation } from "react-i18next";
 import {
   CONTENT_EVENTS,
   contentCancel,
-  contentDownload,
+  contentEnqueue,
   contentList,
   contentOpenFolder,
+  contentQueue,
   contentRemove,
-  type ContentDownloadProgress,
   type ContentListRow,
+  type ContentQueueEntry,
+  type ContentQueueSnapshot,
 } from "../ipc";
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { Button } from "@/components/ui/button";
@@ -17,9 +19,16 @@ import { Button } from "@/components/ui/button";
 /// config row — a speech backend's `LocalBackendRow`, or (ADR 0055) a VLM
 /// backend's `VlmLocalRow`. Renders nothing unless the catalog covers this
 /// backend on this platform, so manual-path-only engines (MiniCPM-V today) and
-/// uncovered OSes see no change. One button downloads the whole missing set
-/// sequentially with inline progress and cancel; once everything is installed
-/// it collapses to a managed-content caption with Open folder / Remove.
+/// uncovered OSes see no change.
+///
+/// A PROJECTION of main-process state, nothing more: the download queue lives
+/// in main (contentQueue.ts), so this component can unmount mid-stream, remount
+/// later, or be reloaded without touching a transfer. It renders from two
+/// inputs — `content:list` rows (what is on disk) and the queue snapshot (what
+/// is on its way) — and owns no phase of its own. One button enqueues the whole
+/// missing set; while anything is pending the button becomes Cancel and each
+/// pending item shows its state beneath it; once everything is installed the
+/// row collapses to a managed-content caption with Open folder / Remove.
 /// Downloaded paths land in the row's pickers via the main-process auto-fill →
 /// `onChanged` re-fetch, never by this component writing config itself.
 ///
@@ -27,11 +36,6 @@ import { Button } from "@/components/ui/button";
 /// than one merged predicate because the two catalog shapes genuinely differ:
 /// a speech item names ONE backend, a VLM item names a LIST (one
 /// `llama-mtmd-cli` serves both local vision engines).
-
-type Phase =
-  | { kind: "idle" }
-  | { kind: "downloading"; itemId: string; received: number; total: number }
-  | { kind: "error"; message: string };
 
 export function ManagedContent({
   family,
@@ -46,48 +50,87 @@ export function ManagedContent({
 }) {
   const { t } = useTranslation();
   const [rows, setRows] = useState<ContentListRow[] | null>(null);
-  const [phase, setPhase] = useState<Phase>({ kind: "idle" });
+  const [queue, setQueue] = useState<ContentQueueSnapshot | null>(null);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   const [busy, setBusy] = useState(false);
-  /// The live progress subscription for the in-flight download only (the
-  /// DataLocationSection pattern) — dropped in the download's finally and on
-  /// unmount, even mid-stream.
-  const unlistenRef = useRef<UnlistenFn | null>(null);
+  /// Pending entries of THIS backend at the last snapshot — a drop means an
+  /// item finished (installed or cancelled) and both surfaces must re-read.
+  const pendingCountRef = useRef(0);
+
+  const isMine = (r: ContentListRow): boolean =>
+    family === "speech"
+      ? r.item.speech?.backend === backend
+      : (r.item.vlm?.backends.includes(backend as "qwen3_vl" | "minicpm_v") ??
+        false);
 
   const refresh = async () => {
     try {
       const all = await contentList();
-      setRows(
-        all.filter((r) =>
-          family === "speech"
-            ? r.item.speech?.backend === backend
-            : r.item.vlm?.backends.includes(
-                backend as "qwen3_vl" | "minicpm_v",
-              ),
-        ),
-      );
+      setRows(all.filter(isMine));
     } catch (e) {
       onError(String(e));
     }
   };
 
   useEffect(() => {
-    void refresh();
+    let disposed = false;
+    let unlisten: UnlistenFn | null = null;
+    void (async () => {
+      await refresh();
+      try {
+        const snapshot = await contentQueue();
+        if (!disposed) setQueue(snapshot);
+      } catch (e) {
+        onError(String(e));
+      }
+      unlisten = await listen<ContentQueueSnapshot>(
+        CONTENT_EVENTS.queue,
+        (e) => {
+          if (!disposed) setQueue(e.payload);
+        },
+      );
+      // Unmounted while the subscription was being set up.
+      if (disposed) unlisten();
+    })();
     return () => {
-      unlistenRef.current?.();
-      unlistenRef.current = null;
+      disposed = true;
+      unlisten?.();
     };
   }, [family, backend]);
+
+  // A finished item (installed OR cancelled) leaves the pending set; the disk
+  // rows and the parent's config view are both stale at that moment.
+  useEffect(() => {
+    if (!queue || !rows) return;
+    const ids = new Set(rows.map((r) => r.item.id));
+    const pending = queue.entries.filter(
+      (e) => ids.has(e.itemId) && e.state !== "error",
+    ).length;
+    const previous = pendingCountRef.current;
+    pendingCountRef.current = pending;
+    if (pending < previous) {
+      void (async () => {
+        await refresh();
+        await onChanged();
+      })();
+    }
+  }, [queue, rows]);
 
   if (rows === null) return null;
   const covered = rows.filter((r) => r.status.state !== "unavailable");
   if (covered.length === 0) return null;
 
+  const ids = new Set(covered.map((r) => r.item.id));
+  const entries = (queue?.entries ?? []).filter((e) => ids.has(e.itemId));
+  const active = entries.filter((e) => e.state !== "error");
+  const failed = entries.find((e) => e.state === "error");
   const missing = covered.filter(
     (r) => r.status.state === "not_installed" || r.status.state === "corrupt",
   );
   const hasCorrupt = covered.some((r) => r.status.state === "corrupt");
-  const allInstalled = missing.length === 0;
+  // Every covered row on disk — `downloading`/`queued` rows are NOT installed,
+  // so a set with its last item in flight never reads as complete.
+  const allInstalled = covered.every((r) => r.status.state === "installed");
   const prereqKeys = [
     ...new Set(
       covered
@@ -99,60 +142,18 @@ export function ManagedContent({
   const download = async () => {
     onError("");
     setBusy(true);
-    setPhase({ kind: "downloading", itemId: "", received: 0, total: 0 });
     try {
-      unlistenRef.current = await listen<ContentDownloadProgress>(
-        CONTENT_EVENTS.progress,
-        (e) => {
-          const p = e.payload;
-          if (p.phase === "done" || p.phase === "error") return;
-          setPhase((s) =>
-            s.kind === "downloading"
-              ? {
-                  kind: "downloading",
-                  itemId: p.itemId,
-                  received: p.receivedBytes,
-                  total: p.totalBytes,
-                }
-              : s,
-          );
-        },
-      );
-      for (const row of missing) {
-        setPhase({
-          kind: "downloading",
-          itemId: row.item.id,
-          received: 0,
-          total: 0,
-        });
-        const result = await contentDownload(row.item.id);
-        if (!result.ok) {
-          setPhase(
-            "cancelled" in result
-              ? { kind: "idle" }
-              : { kind: "error", message: result.error },
-          );
-          return;
-        }
-      }
-      setPhase({ kind: "idle" });
+      setQueue(await contentEnqueue(missing.map((r) => r.item.id)));
     } catch (e) {
-      setPhase({ kind: "error", message: String(e) });
+      onError(String(e));
     } finally {
-      unlistenRef.current?.();
-      unlistenRef.current = null;
       setBusy(false);
-      // Refresh both surfaces even on failure/cancel: a partial pair (engine
-      // yes, model no) must render truthfully.
-      await refresh();
-      await onChanged();
     }
   };
 
   const cancel = async () => {
-    if (phase.kind !== "downloading" || !phase.itemId) return;
     try {
-      await contentCancel(phase.itemId);
+      for (const e of active) await contentCancel(e.itemId);
     } catch (e) {
       onError(String(e));
     }
@@ -177,50 +178,52 @@ export function ManagedContent({
     }
   };
 
-  const downloadingLabelKey =
-    phase.kind === "downloading"
-      ? covered.find((r) => r.item.id === phase.itemId)?.item.labelKey
-      : undefined;
+  const labelOf = (id: string): string => {
+    const row = covered.find((r) => r.item.id === id);
+    return row ? t(`settings.${row.item.labelKey}`) : id;
+  };
   const mb = (n: number): string => (n / 1048576).toFixed(1);
+  const sizeOf = (e: ContentQueueEntry): string => {
+    if (e.totalBytes <= 0) return "";
+    return e.state === "queued"
+      ? ` · ${mb(e.totalBytes)} MB`
+      : ` · ${mb(e.receivedBytes)} / ${mb(e.totalBytes)} MB`;
+  };
+  const percent = (e: ContentQueueEntry): number =>
+    e.totalBytes > 0 ? Math.round((e.receivedBytes / e.totalBytes) * 100) : 0;
 
   return (
     <div className="settings-managed-content">
-      {phase.kind === "downloading" ? (
+      {active.length > 0 ? (
         <div className="settings-data-migrate" aria-live="polite">
-          <p className="settings-toggle-hint">
-            {t("settings.content_downloading", {
-              label: downloadingLabelKey
-                ? t(`settings.${downloadingLabelKey}`)
-                : "…",
-            })}
-            {phase.total > 0 &&
-              ` — ${mb(phase.received)} / ${mb(phase.total)} MB`}
-          </p>
           <div className="settings-key-input-row">
-            <div
-              className="progress-track"
-              role="progressbar"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              {...(phase.total > 0
-                ? {
-                    "aria-valuenow": Math.round(
-                      (phase.received / phase.total) * 100,
-                    ),
-                  }
-                : {})}
-            >
-              <div
-                className="progress-fill"
-                style={{
-                  width: `${phase.total > 0 ? Math.round((phase.received / phase.total) * 100) : 0}%`,
-                }}
-              />
-            </div>
             <Button size="sm" onClick={() => void cancel()}>
               {t("settings.content_cancel")}
             </Button>
           </div>
+          {active.map((e) => (
+            <div key={e.itemId}>
+              <p className="settings-toggle-hint">
+                {labelOf(e.itemId)} — {t(`settings.content_state_${e.state}`)}
+                {sizeOf(e)}
+              </p>
+              {(e.state === "downloading" || e.state === "resuming") && (
+                <div
+                  className="progress-track"
+                  role="progressbar"
+                  aria-label={labelOf(e.itemId)}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={percent(e)}
+                >
+                  <div
+                    className="progress-fill"
+                    style={{ width: `${percent(e)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       ) : allInstalled ? (
         <div className="settings-key-input-row">
@@ -261,14 +264,16 @@ export function ManagedContent({
         <>
           <div className="settings-key-input-row">
             <Button size="sm" disabled={busy} onClick={() => void download()}>
-              {phase.kind === "error"
+              {failed
                 ? t("settings.content_retry")
                 : hasCorrupt
                   ? t("settings.content_redownload")
                   : t("settings.content_download_pair")}
             </Button>
-            {phase.kind === "error" && (
-              <span className="settings-test-err">✗ {phase.message}</span>
+            {failed && (
+              <span className="settings-test-err">
+                ✗ {labelOf(failed.itemId)}: {failed.error}
+              </span>
             )}
           </div>
           {prereqKeys.map((k) => (

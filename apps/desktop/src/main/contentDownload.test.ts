@@ -10,14 +10,14 @@ import {
   itemStatus,
   speechAutofillPlan,
   vlmAutofillPlan,
-  sweepPartials,
+  sweepStalePartials,
 } from "./contentDownload";
 
 // The whole lifecycle runs against an in-memory fs and a scripted http stream
 // — no network, no real disk. What these tests pin is the CONTRACT the
-// packaged app relies on: a failed transfer retries, a hostile archive never
-// escapes staging, and an install is only "installed" once manifest.json
-// exists (written last).
+// packaged app relies on: a failed transfer retries AND resumes from the bytes
+// already on disk, a hostile archive never escapes staging, and an install is
+// only "installed" once manifest.json exists (written last).
 
 // ---------------------------------------------------------------------------
 // In-memory fs: paths are joined with "/" and stored flat; directories are
@@ -50,15 +50,31 @@ function memFs(): ContentFs & { files: Map<string, Uint8Array> } {
       const data = files.get(path);
       return data ? data.byteLength : null;
     },
+    listDir: (dir) => {
+      const names = new Set<string>();
+      for (const key of files.keys()) {
+        if (key.startsWith(dir + "/")) {
+          names.add(key.slice(dir.length + 1).split("/")[0] ?? "");
+        }
+      }
+      return [...names];
+    },
+    readText: (path) => {
+      const data = files.get(path);
+      return data ? new TextDecoder().decode(data) : null;
+    },
     writeText: (path, text) => {
       files.set(path, new TextEncoder().encode(text));
     },
     writeBytes: (path, data) => {
       files.set(path, data);
     },
-    openWrite: (path) => {
-      const chunks: Uint8Array[] = [];
-      files.set(path, new Uint8Array());
+    readChunks: (path) => streamOf(files.get(path) ?? new Uint8Array()),
+    openWrite: (path, mode) => {
+      const existing = files.get(path);
+      const chunks: Uint8Array[] =
+        mode === "append" && existing ? [existing] : [];
+      files.set(path, concat(chunks));
       return {
         write: (chunk) => {
           chunks.push(chunk);
@@ -94,28 +110,98 @@ async function* streamOf(
   }
 }
 
-// One deps bundle per test: payload-configurable http, optional zip entries,
-// optional scripted tar.bz2 extraction (entries the fake extractor "unpacks").
+/// Yields `data` in chunks up to `dropAfter` bytes, then fails the way a reset
+/// socket does — the shape every resume test starts from.
+async function* streamThenThrow(
+  data: Uint8Array,
+  dropAfter: number,
+  chunkSize = 4,
+): AsyncIterable<Uint8Array> {
+  for (let i = 0; i < data.byteLength; i += chunkSize) {
+    if (i >= dropAfter) throw new Error("ECONNRESET mid-stream");
+    yield data.slice(i, i + chunkSize);
+  }
+}
+
+/// Yields `data` up to `hangAfter` bytes, then never resolves again — a TCP
+/// connection that silently died. Only the stall watchdog gets out of this.
+async function* streamThenHang(
+  data: Uint8Array,
+  hangAfter: number,
+  chunkSize = 4,
+): AsyncIterable<Uint8Array> {
+  for (let i = 0; i < data.byteLength; i += chunkSize) {
+    if (i >= hangAfter) await new Promise<never>(() => {});
+    yield data.slice(i, i + chunkSize);
+  }
+}
+
+/// One scripted server answer. A bare payload is a 200 with that body; an
+/// object pins the status (and optionally the body); a function sees the
+/// requested range start and answers per call.
+type ScriptedAnswer =
+  | Uint8Array
+  | Error
+  | { status: number; stream?: AsyncIterable<Uint8Array> };
+type Scripted =
+  | ScriptedAnswer
+  | ((rangeStart: number | undefined) => ScriptedAnswer);
+
+/// A server that honours Range: the whole body on a plain GET, the tail as a
+/// 206 when a start offset is asked for.
+function rangeServer(data: Uint8Array): Scripted {
+  return (rangeStart) =>
+    rangeStart === undefined
+      ? data
+      : { status: 206, stream: streamOf(data.slice(rangeStart)) };
+}
+
+// One deps bundle per test: scripted http (one answer per fetch, in order),
+// optional zip entries, optional scripted tar.bz2 extraction (entries the fake
+// extractor "unpacks"). `requests` records the range start of every fetch so a
+// test can assert WHERE a retry resumed from.
 function makeDeps(opts: {
   fs?: ContentFs;
-  responses: Array<Uint8Array | Error>;
+  responses: Scripted[];
   zipEntries?: readonly ZipEntry[];
   tarEntries?: readonly ZipEntry[] | Error;
-}): ContentDeps & { fetches: number; extractCalls: string[][] } {
+  stallMs?: number;
+}): ContentDeps & {
+  fetches: number;
+  requests: Array<number | undefined>;
+  extractCalls: string[][];
+} {
   const fs = opts.fs ?? memFs();
   const bundle = {
     fetches: 0,
+    requests: [] as Array<number | undefined>,
     extractCalls: [] as string[][],
     fs,
     http: {
-      get: async (_url: string, _signal: AbortSignal) => {
-        const next = opts.responses[bundle.fetches];
+      get: async (
+        _url: string,
+        _signal: AbortSignal,
+        o?: { rangeStart?: number },
+      ) => {
+        const scripted = opts.responses[bundle.fetches];
         bundle.fetches += 1;
-        if (next === undefined) throw new Error("no scripted response left");
+        bundle.requests.push(o?.rangeStart);
+        if (scripted === undefined) throw new Error("no scripted response left");
+        const next =
+          typeof scripted === "function" ? scripted(o?.rangeStart) : scripted;
         if (next instanceof Error) throw next;
-        return streamOf(next);
+        if (next instanceof Uint8Array) {
+          return { status: 200, stream: streamOf(next) };
+        }
+        return {
+          status: next.status,
+          stream: next.stream ?? streamOf(new Uint8Array()),
+        };
       },
     },
+    // Retries never sleep in tests; the stall budget is per-test.
+    sleep: async () => {},
+    ...(opts.stallMs !== undefined ? { stallMs: opts.stallMs } : {}),
     readZipEntries: async () => opts.zipEntries ?? [],
     extractTarBz2: async (archivePath: string, destDir: string) => {
       bundle.extractCalls.push([archivePath, destDir]);
@@ -250,8 +336,8 @@ describe("downloadItem — transfer-stage failures retry, then fail loud", () =>
   });
 });
 
-describe("downloadItem — cancellation is quiet", () => {
-  it("aborting mid-stream returns cancelled (not error) and leaves no partial", async () => {
+describe("downloadItem — cancellation is quiet, and it is a pause", () => {
+  it("aborting mid-stream returns cancelled (not error), keeps the partial, and the next download resumes from it", async () => {
     const controller = new AbortController();
     const deps = makeDeps({ responses: [PAYLOAD] });
     let aborted = false;
@@ -269,12 +355,163 @@ describe("downloadItem — cancellation is quiet", () => {
       controller.signal,
     );
     expect(result).toEqual({ ok: false, cancelled: true });
+    // The 4 bytes that landed stay, with the sidecar that vouches for them.
     expect(
       deps.fs.statBytes("root/cache/content-partial/test-model.part"),
-    ).toBeNull();
+    ).toBe(4);
+    expect(
+      deps.fs.readText("root/cache/content-partial/test-model.part.json"),
+    ).toContain(sha256(PAYLOAD));
     expect(
       deps.fs.statBytes("root/downloads/test-model/rev1/manifest.json"),
     ).toBeNull();
+
+    // Second attempt, same disk: one Range request from byte 4, no restart.
+    const again = makeDeps({ fs: deps.fs, responses: [rangeServer(PAYLOAD)] });
+    const resumed = await downloadItem(again, rawItem(), "win32-x64", noProgress, live());
+    expect(resumed.ok).toBe(true);
+    expect(again.requests).toEqual([4]);
+    expect(
+      deps.fs.statBytes("root/downloads/test-model/rev1/model.bin"),
+    ).toBe(PAYLOAD.byteLength);
+    // Install consumed the partial and its sidecar.
+    expect(deps.fs.listDir("root/cache/content-partial")).toEqual([]);
+  });
+});
+
+describe("downloadItem — resume (a transfer failure never throws bytes away)", () => {
+  const partial = "root/cache/content-partial/test-model.part";
+  const sidecar = "root/cache/content-partial/test-model.part.json";
+  const metaFor = (payload: Uint8Array, version = "rev1") => ({
+    url: "https://example.com/model.bin",
+    sha256: sha256(payload),
+    bytes: payload.byteLength,
+    version,
+  });
+  function seedPartial(
+    deps: ContentDeps,
+    bytes: Uint8Array,
+    meta: ReturnType<typeof metaFor> = metaFor(PAYLOAD),
+  ): void {
+    deps.fs.writeBytes(partial, bytes);
+    deps.fs.writeText(sidecar, JSON.stringify(meta));
+  }
+
+  it("a mid-stream drop resumes with a Range request from the on-disk offset and re-hashes the prefix once", async () => {
+    const deps = makeDeps({
+      responses: [
+        { status: 200, stream: streamThenThrow(PAYLOAD, 8) },
+        rangeServer(PAYLOAD),
+      ],
+    });
+    const ticks: ContentDownloadProgress[] = [];
+    const result = await downloadItem(
+      deps,
+      rawItem(),
+      "win32-x64",
+      (p) => ticks.push(p),
+      live(),
+    );
+    expect(result.ok).toBe(true);
+    expect(deps.requests).toEqual([undefined, 8]);
+    // The resume phase walks exactly the 8 landed bytes, then download ticks
+    // continue the count instead of restarting it.
+    const phases = ticks.map((t) => t.phase);
+    const lastResume = phases.lastIndexOf("resume");
+    expect(ticks[lastResume]?.receivedBytes).toBe(8);
+    expect(ticks[lastResume + 1]?.phase).toBe("download");
+    expect(ticks[lastResume + 1]?.receivedBytes).toBe(12);
+    // Verified end to end: the payload installed and the sidecar is gone.
+    expect(
+      deps.fs.statBytes("root/downloads/test-model/rev1/model.bin"),
+    ).toBe(PAYLOAD.byteLength);
+    expect(deps.fs.statBytes(sidecar)).toBeNull();
+  });
+
+  it("a server that ignores the Range (200) restarts from zero instead of appending", async () => {
+    const deps = makeDeps({ responses: [PAYLOAD] });
+    seedPartial(deps, PAYLOAD.slice(0, 8));
+    const result = await downloadItem(deps, rawItem(), "win32-x64", noProgress, live());
+    expect(result.ok).toBe(true);
+    expect(deps.requests).toEqual([8]);
+    expect(
+      deps.fs.statBytes("root/downloads/test-model/rev1/model.bin"),
+    ).toBe(PAYLOAD.byteLength);
+  });
+
+  it("416 (range not satisfiable) discards the partial and fetches the whole file", async () => {
+    const deps = makeDeps({ responses: [{ status: 416 }, PAYLOAD] });
+    seedPartial(deps, PAYLOAD.slice(0, 8));
+    const result = await downloadItem(deps, rawItem(), "win32-x64", noProgress, live());
+    expect(result.ok).toBe(true);
+    expect(deps.requests).toEqual([8, undefined]);
+  });
+
+  it("a sidecar naming a different artifact does not vouch for the bytes: fresh start, no Range", async () => {
+    const deps = makeDeps({ responses: [rangeServer(PAYLOAD)] });
+    seedPartial(
+      deps,
+      PAYLOAD.slice(0, 8),
+      metaFor(new TextEncoder().encode("some-other-artifact")),
+    );
+    const result = await downloadItem(deps, rawItem(), "win32-x64", noProgress, live());
+    expect(result.ok).toBe(true);
+    expect(deps.requests).toEqual([undefined]);
+  });
+
+  it("a complete partial skips the network and goes straight to verify", async () => {
+    const deps = makeDeps({ responses: [] });
+    seedPartial(deps, PAYLOAD);
+    const ticks: ContentDownloadProgress[] = [];
+    const result = await downloadItem(
+      deps,
+      rawItem(),
+      "win32-x64",
+      (p) => ticks.push(p),
+      live(),
+    );
+    expect(result.ok).toBe(true);
+    expect(deps.fetches).toBe(0);
+    const phases = ticks.map((t) => t.phase);
+    expect(phases[0]).toBe("resume");
+    expect(phases).not.toContain("download");
+    expect(phases).toContain("verify");
+    expect(phases.at(-1)).toBe("done");
+  });
+
+  it("a complete but corrupt partial fails verification, is discarded, and the retry fetches whole", async () => {
+    const wrong = new TextEncoder().encode("not-the-model-bytes---");
+    expect(wrong.byteLength).toBe(PAYLOAD.byteLength);
+    const deps = makeDeps({ responses: [rangeServer(PAYLOAD)] });
+    seedPartial(deps, wrong);
+    const result = await downloadItem(deps, rawItem(), "win32-x64", noProgress, live());
+    expect(result.ok).toBe(true);
+    expect(deps.requests).toEqual([undefined]);
+  });
+
+  it("a stalled stream is cut by the watchdog and the retry resumes where it stopped", async () => {
+    const deps = makeDeps({
+      responses: [
+        { status: 200, stream: streamThenHang(PAYLOAD, 8) },
+        rangeServer(PAYLOAD),
+      ],
+      stallMs: 20,
+    });
+    const result = await downloadItem(deps, rawItem(), "win32-x64", noProgress, live());
+    expect(result.ok).toBe(true);
+    expect(deps.requests).toEqual([undefined, 8]);
+  });
+
+  it("a non-2xx answer is a transfer failure: retried to the cap, reported with its status", async () => {
+    const deps = makeDeps({
+      responses: [{ status: 503 }, { status: 503 }, { status: 503 }],
+    });
+    const result = await downloadItem(deps, rawItem(), "win32-x64", noProgress, live());
+    expect(deps.fetches).toBe(3);
+    expect(result.ok).toBe(false);
+    expect(result.ok ? "" : "error" in result ? result.error : "").toContain(
+      "HTTP 503",
+    );
   });
 });
 
@@ -442,17 +679,62 @@ describe("itemStatus", () => {
   });
 });
 
-describe("sweepPartials", () => {
-  it("clears crash leftovers and leaves the dir ready for the next stream", () => {
+describe("sweepStalePartials", () => {
+  const dir = "root/cache/content-partial";
+  const meta = (payload: Uint8Array, version = "rev1") =>
+    JSON.stringify({
+      url: "https://example.com/model.bin",
+      sha256: sha256(payload),
+      bytes: payload.byteLength,
+      version,
+    });
+
+  it("keeps a partial its sidecar vouches for and drops every other leftover", () => {
     const deps = makeDeps({ responses: [] });
-    deps.fs.writeBytes(
-      "root/cache/content-partial/test-model.part",
-      new Uint8Array([1]),
-    );
-    sweepPartials(deps);
-    expect(
-      deps.fs.statBytes("root/cache/content-partial/test-model.part"),
-    ).toBeNull();
+    // Resumable: matching sidecar, plausible size.
+    deps.fs.writeBytes(`${dir}/test-model.part`, PAYLOAD.slice(0, 8));
+    deps.fs.writeText(`${dir}/test-model.part.json`, meta(PAYLOAD));
+    // Orphan .part, orphan sidecar, a retired item's pair, and a stranger.
+    deps.fs.writeBytes(`${dir}/orphan.part`, new Uint8Array([1]));
+    deps.fs.writeText(`${dir}/lonely.part.json`, "{}");
+    deps.fs.writeBytes(`${dir}/retired.part`, new Uint8Array([1]));
+    deps.fs.writeText(`${dir}/retired.part.json`, meta(PAYLOAD));
+    deps.fs.writeBytes(`${dir}/junk.tmp`, new Uint8Array([1]));
+
+    sweepStalePartials(deps, [rawItem()], "win32-x64");
+    expect(deps.fs.listDir(dir).sort()).toEqual([
+      "test-model.part",
+      "test-model.part.json",
+    ]);
+  });
+
+  it("a sidecar for another catalog version does not vouch: the pair goes", () => {
+    const deps = makeDeps({ responses: [] });
+    deps.fs.writeBytes(`${dir}/test-model.part`, PAYLOAD.slice(0, 8));
+    deps.fs.writeText(`${dir}/test-model.part.json`, meta(PAYLOAD, "rev0"));
+    sweepStalePartials(deps, [rawItem()], "win32-x64");
+    expect(deps.fs.listDir(dir)).toEqual([]);
+  });
+
+  it("a partial past the pinned size is junk, and an empty one has nothing to resume", () => {
+    const deps = makeDeps({ responses: [] });
+    deps.fs.writeBytes(`${dir}/test-model.part`, concat([PAYLOAD, PAYLOAD]));
+    deps.fs.writeText(`${dir}/test-model.part.json`, meta(PAYLOAD));
+    sweepStalePartials(deps, [rawItem()], "win32-x64");
+    expect(deps.fs.listDir(dir)).toEqual([]);
+
+    deps.fs.writeBytes(`${dir}/test-model.part`, new Uint8Array());
+    deps.fs.writeText(`${dir}/test-model.part.json`, meta(PAYLOAD));
+    sweepStalePartials(deps, [rawItem()], "win32-x64");
+    expect(deps.fs.listDir(dir)).toEqual([]);
+  });
+
+  it("on a platform the catalog does not cover, nothing is kept", () => {
+    const deps = makeDeps({ responses: [] });
+    deps.fs.writeBytes(`${dir}/test-model.part`, PAYLOAD.slice(0, 8));
+    deps.fs.writeText(`${dir}/test-model.part.json`, meta(PAYLOAD));
+    sweepStalePartials(deps, [rawItem()], null);
+    expect(deps.fs.listDir(dir)).toEqual([]);
   });
 });
 

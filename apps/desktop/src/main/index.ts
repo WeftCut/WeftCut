@@ -45,9 +45,10 @@ import { randomUUID } from 'node:crypto'
 import { CONTENT_CATALOG } from '../shared/content-catalog.js'
 import {
   CONTENT_EVENTS, contentPlatformKey,
-  type ContentDownloadProgress, type ContentDownloadResult, type ContentListRow,
+  type ContentListRow, type ContentQueueSnapshot,
 } from '../shared/content-download.js'
-import { downloadItem, itemStatus, speechAutofillPlan, vlmAutofillPlan, sweepPartials, type ContentDeps } from './contentDownload.js'
+import { downloadItem, itemStatus, speechAutofillPlan, vlmAutofillPlan, sweepStalePartials, removePartial, type ContentDeps } from './contentDownload.js'
+import { ContentQueue } from './contentQueue.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -94,6 +95,9 @@ let workspaceStore: import('./workspace.js').WorkspaceStore | null = null
 // window creation happens later in that same closure, so the main window always
 // sees it. A null store degrades to "no geometry memory", never to a crash.
 let windowGeometryStore: import('./windowGeometry.js').WindowGeometryStore | null = null
+// The content download queue, module-scoped so before-quit can abort the
+// in-flight transfer (its partial stays; the persisted queue resumes it next boot).
+let contentQueue: ContentQueue | null = null
 
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
@@ -1648,10 +1652,19 @@ app.whenReady().then(async () => {
       statBytes: (p) => {
         try { const s = fs.statSync(p); return s.isFile() ? s.size : null } catch { return null }
       },
+      listDir: (d) => {
+        try { return fs.readdirSync(d) } catch { return [] }
+      },
+      readText: (p) => {
+        try { return fs.readFileSync(p, 'utf8') } catch { return null }
+      },
       writeText: (p, t) => { fs.writeFileSync(p, t, 'utf8') },
       writeBytes: (p, data) => { fs.writeFileSync(p, data) },
-      openWrite: (p) => {
-        const fd = fs.openSync(p, 'w')
+      // Large chunks: this is the resume prefix re-hash, a sequential pass over
+      // up to a few GB that should be disk-bound, not call-bound.
+      readChunks: (p) => fs.createReadStream(p, { highWaterMark: 4 << 20 }),
+      openWrite: (p, mode) => {
+        const fd = fs.openSync(p, mode === 'append' ? 'a' : 'w')
         return {
           write: (c: Uint8Array) => { fs.writeSync(fd, c) },
           close: () => { fs.closeSync(fd) },
@@ -1659,20 +1672,31 @@ app.whenReady().then(async () => {
       },
     },
     http: {
-      get: async (url, signal) => {
-        const res = await net.fetch(url, { signal })
-        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} for ${url}`)
+      get: async (url, signal, opts) => {
+        const headers: Record<string, string> = {}
+        if (opts?.rangeStart) headers['Range'] = `bytes=${opts.rangeStart}-`
+        const res = await net.fetch(url, { signal, headers })
+        if (!res.ok || !res.body) {
+          // A status the downloader rules on (416 → discard the partial,
+          // anything else → transfer failure). Whatever body came with it is
+          // irrelevant — release the connection and hand back the status.
+          void res.body?.cancel().catch(() => {})
+          return { status: res.status, stream: (async function* () {})() }
+        }
         const reader = res.body.getReader()
         // Manual reader loop instead of relying on ReadableStream's async
         // iterability — Electron's fetch Response body is a web stream whose
         // @@asyncIterator support varies by version; getReader() does not.
         return {
-          async *[Symbol.asyncIterator]() {
-            for (;;) {
-              const { done, value } = await reader.read()
-              if (done) return
-              yield value
-            }
+          status: res.status,
+          stream: {
+            async *[Symbol.asyncIterator]() {
+              for (;;) {
+                const { done, value } = await reader.read()
+                if (done) return
+                yield value
+              }
+            },
           },
         }
       },
@@ -1693,15 +1717,10 @@ app.whenReady().then(async () => {
     partialDir: path.join(dataRoot.cacheDir, 'content-partial'),
     now: () => new Date().toISOString(),
   }
-  // Crash leftovers from a previous run die here, before any new stream opens.
-  sweepPartials(contentDeps)
-
   const contentPlatform = contentPlatformKey(process.platform, process.arch)
-  // One in-flight download per item; a second content:download for the same id
-  // is rejected, not queued. contentProgressById backs the `downloading` rows
-  // in content:list so a window that (re)mounts mid-stream still sees them.
-  const contentInflight = new Map<string, AbortController>()
-  const contentProgressById = new Map<string, ContentDownloadProgress>()
+  // Leftovers from a previous run: partials the catalog still vouches for stay
+  // (they resume), everything else dies here, before any new stream opens.
+  sweepStalePartials(contentDeps, CONTENT_CATALOG, contentPlatform)
 
   // Fill blank speech-config fields from installed managed content — the ADR
   // 0039 consumer. The only-if-blank / whole-pair rules live in the pure
@@ -1745,10 +1764,114 @@ app.whenReady().then(async () => {
   autofillSpeechFromContent()
   autofillVlmFromContent()
 
+  // The download queue (contentQueue.ts) is the one owner of "what is on its
+  // way", so the Settings row is a projection that can unmount mid-stream and a
+  // renderer reload changes nothing. Items run one at a time; each run is a
+  // resumable downloadItem. Four sinks are bound here:
+  //  - the whole snapshot to the renderer on `evt:content:queue` (download
+  //    ticks are throttled to ~4 Hz inside the queue),
+  //  - autofill after every install — each plan is a no-op for items it does
+  //    not claim, so neither consumer needs to know which family just landed,
+  //  - one LogBus op per item (Started → Progress at ≤1 Hz → Ok/Err under one
+  //    op_id, so the status bar collapses it to one row; the message carries
+  //    the percentage, which is the progress surface OUTSIDE Settings),
+  //  - the pending-id list persisted under cache/, which is what lets a quit
+  //    mid-download pick up where it stopped at the next boot.
+  const contentQueueFile = path.join(dataRoot.cacheDir, 'content-queue.json')
+  const readPersistedQueue = (): string[] => {
+    try {
+      const raw = JSON.parse(fs.readFileSync(contentQueueFile, 'utf8')) as unknown
+      return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : []
+    } catch { return [] }
+  }
+  // Emitted through backend.invoke directly — the ts-actor-host emitLog seam
+  // omits op_id/op_state — and swallowed on failure: pre-workspace there IS no
+  // bus (docs/status-log.md), and a log failure must never touch a download.
+  const emitContentOp = (
+    opId: string,
+    opState: { state: 'Started' | 'Ok' | 'Err' } | { state: 'Progress'; progress: number },
+    message: string,
+    level: 'info' | 'error' = 'info',
+  ): void => {
+    try {
+      void backend!.invoke('log_emit', JSON.stringify({
+        input: {
+          level,
+          category: { kind: 'Job' },
+          source: { kind: 'User' },
+          message,
+          op_id: opId,
+          op_state: opState,
+        },
+      })).catch(() => {})
+    } catch { /* no bus yet */ }
+  }
+  const contentOpIds = new Map<string, string>()
+  const contentLastLogAt = new Map<string, number>()
+
+  const queue = new ContentQueue({
+    catalog: CONTENT_CATALOG,
+    isInstalled: (item) => itemStatus(contentDeps, item, contentPlatform).state === 'installed',
+    totalBytesOf: (item) => (contentPlatform ? item.platforms[contentPlatform]?.bytes : undefined) ?? 0,
+    download: (item, onProgress, signal) =>
+      downloadItem(contentDeps, item, contentPlatform, onProgress, signal),
+    onChange: (snapshot) => emitToRenderer(CONTENT_EVENTS.queue, snapshot),
+    onInstalled: () => {
+      autofillSpeechFromContent()
+      autofillVlmFromContent()
+    },
+    onItemEvent: (item, ev) => {
+      const opId = contentOpIds.get(item.id)
+      switch (ev.kind) {
+        case 'started': {
+          const fresh = randomUUID()
+          contentOpIds.set(item.id, fresh)
+          contentLastLogAt.set(item.id, 0)
+          emitContentOp(fresh, { state: 'Started' }, `Downloading ${item.id}`)
+          break
+        }
+        case 'progress': {
+          if (!opId) break
+          const nowMs = Date.now()
+          if (nowMs - (contentLastLogAt.get(item.id) ?? 0) < 1000) break
+          contentLastLogAt.set(item.id, nowMs)
+          emitContentOp(
+            opId,
+            { state: 'Progress', progress: ev.ratio },
+            `Downloading ${item.id} ${Math.round(ev.ratio * 100)}%`,
+          )
+          break
+        }
+        case 'ok':
+          if (opId) emitContentOp(opId, { state: 'Ok' }, `Downloaded ${item.id}`)
+          contentOpIds.delete(item.id)
+          break
+        case 'cancelled':
+          // Cancel keeps the partial, so to the log this is a pause, and it
+          // closes the op cleanly — not an error.
+          if (opId) emitContentOp(opId, { state: 'Ok' }, `Paused download of ${item.id}`)
+          contentOpIds.delete(item.id)
+          break
+        case 'error':
+          if (opId) emitContentOp(opId, { state: 'Err' }, `Download failed for ${item.id}: ${ev.message}`, 'error')
+          contentOpIds.delete(item.id)
+          break
+      }
+    },
+    onPendingChanged: (ids) => {
+      try { fs.writeFileSync(contentQueueFile, JSON.stringify(ids), 'utf8') } catch (e) {
+        console.warn('[main] content queue persist failed', e)
+      }
+    },
+    now: () => Date.now(),
+  })
+  contentQueue = queue
+
   ipcMain.handle('content:list', (): ContentListRow[] =>
     CONTENT_CATALOG.map((item) => {
-      const live = contentProgressById.get(item.id)
-      if (live && live.phase !== 'done' && live.phase !== 'error') {
+      const live = queue.entryOf(item.id)
+      if (live?.state === 'queued') return { item, status: { state: 'queued' } }
+      if (live && live.state !== 'error') {
         return {
           item,
           status: {
@@ -1758,82 +1881,18 @@ app.whenReady().then(async () => {
           },
         }
       }
+      // An error entry reads from disk like any other row; the snapshot
+      // carries the message the row shows next to its Retry button.
       return { item, status: itemStatus(contentDeps, item, contentPlatform) }
     }))
 
-  ipcMain.handle('content:download', async (_e, { id }: { id: string }): Promise<ContentDownloadResult> => {
-    const item = CONTENT_CATALOG.find((i) => i.id === id)
-    if (!item) return { ok: false, error: `unknown content id: ${id}` }
-    if (contentInflight.has(id)) return { ok: false, error: 'already downloading' }
-    const controller = new AbortController()
-    contentInflight.set(id, controller)
+  ipcMain.handle('content:queue', (): ContentQueueSnapshot => queue.snapshot())
 
-    // One LogBus op per download (Started → throttled Progress → Ok/Err under
-    // one op_id, so the status bar collapses it to one row). Emitted through
-    // backend.invoke directly — the ts-actor-host emitLog seam omits
-    // op_id/op_state — and swallowed on failure: pre-workspace there IS no
-    // bus (docs/status-log.md), and a log failure must never abort a download.
-    const opId = randomUUID()
-    const emitOp = (
-      opState: { state: 'Started' | 'Ok' | 'Err' } | { state: 'Progress'; progress: number },
-      message: string,
-      level: 'info' | 'error' = 'info',
-    ): void => {
-      try {
-        void backend!.invoke('log_emit', JSON.stringify({
-          input: {
-            level,
-            category: { kind: 'Job' },
-            source: { kind: 'User' },
-            message,
-            op_id: opId,
-            op_state: opState,
-          },
-        })).catch(() => {})
-      } catch { /* no bus yet */ }
-    }
-
-    let lastEvt = 0
-    let lastLog = 0
-    const onProgress = (p: ContentDownloadProgress): void => {
-      contentProgressById.set(id, p)
-      const nowMs = Date.now()
-      // Phase transitions always reach the renderer; per-chunk download ticks
-      // are throttled to ~4 Hz (they can arrive thousands per second).
-      if (p.phase !== 'download' || nowMs - lastEvt >= 250) {
-        lastEvt = nowMs
-        emitToRenderer(CONTENT_EVENTS.progress, p)
-      }
-      if (p.phase === 'download' && p.totalBytes > 0 && nowMs - lastLog >= 1000) {
-        lastLog = nowMs
-        emitOp({ state: 'Progress', progress: p.receivedBytes / p.totalBytes }, `Downloading ${item.id}`)
-      }
-    }
-
-    emitOp({ state: 'Started' }, `Downloading ${item.id}`)
-    try {
-      const result = await downloadItem(contentDeps, item, contentPlatform, onProgress, controller.signal)
-      if (result.ok) {
-        emitOp({ state: 'Ok' }, `Downloaded ${item.id}`)
-        // Both consumers run on every install: each plan is a no-op for items
-        // it does not claim, so neither needs to know which family just landed.
-        autofillSpeechFromContent()
-        autofillVlmFromContent()
-      } else if ('cancelled' in result) {
-        // A user cancel closes the op cleanly — it is not an error.
-        emitOp({ state: 'Ok' }, `Cancelled download of ${item.id}`)
-      } else {
-        emitOp({ state: 'Err' }, `Download failed for ${item.id}: ${result.error}`, 'error')
-      }
-      return result
-    } finally {
-      contentInflight.delete(id)
-      contentProgressById.delete(id)
-    }
-  })
+  ipcMain.handle('content:enqueue', (_e, { ids }: { ids: string[] }): ContentQueueSnapshot =>
+    queue.enqueue(ids))
 
   ipcMain.handle('content:cancel', (_e, { id }: { id: string }) => {
-    contentInflight.get(id)?.abort()
+    queue.cancel(id)
   })
 
   // Remove every installed version of an item. Files only — speech config is
@@ -1842,9 +1901,24 @@ app.whenReady().then(async () => {
   ipcMain.handle('content:remove', (_e, { id }: { id: string }) => {
     const item = CONTENT_CATALOG.find((i) => i.id === id)
     if (!item) throw new Error(`unknown content id: ${id}`)
-    if (contentInflight.has(id)) throw new Error('download in progress')
+    if (queue.isPending(id)) throw new Error('download in progress')
     contentDeps.fs.rm(path.join(dataRoot.downloadsDir, item.id))
+    // "Remove" means the user is done with this content: a paused partial has
+    // no business surviving it.
+    removePartial(contentDeps, item.id)
   })
+
+  // Resume what the previous run left pending. Installed entries are skipped by
+  // enqueue itself; ids the catalog no longer knows are dropped here rather
+  // than thrown at — a catalog that retired an item must never wedge boot.
+  const persisted = readPersistedQueue().filter((id) => CONTENT_CATALOG.some((i) => i.id === id))
+  if (persisted.length > 0) {
+    const restored = queue.enqueue(persisted)
+    if (restored.entries.length === 0) {
+      // Everything named was already installed — clear the stale list.
+      try { fs.writeFileSync(contentQueueFile, '[]', 'utf8') } catch { /* cache only */ }
+    }
+  }
 
   ipcMain.handle('content:openFolder', async () => {
     const err = await openPathRobust(dataRoot.downloadsDir)
@@ -2017,6 +2091,10 @@ app.on('window-all-closed', () => app.quit())
 let quitFlushed = false
 app.on('before-quit', (event) => {
   motifWatcher?.close(); motifWatcher = null
+  // Abort an in-flight content download so its file handle closes at a chunk
+  // boundary. The partial and the persisted queue both stay: the next boot
+  // resumes exactly there. Idempotent, so the re-entrant before-quit is fine.
+  contentQueue?.shutdown()
   // Before Electron starts closing windows: a capture that outlives them rebuilds
   // the offscreen host and wedges the quit (see shutdownCaptureHost).
   shutdownCaptureHost()

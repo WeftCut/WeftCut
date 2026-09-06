@@ -3090,19 +3090,21 @@ export async function dataRootDismissCleanup(): Promise<void> {
 // Main-process actions (not backend/Rust commands) — thin wrappers over
 // window.api.content.* (see src/preload/index.ts). Types are single-sourced in
 // src/shared/content-download.ts and re-exported here for call sites. The
-// running download's progress arrives on the `content:progress` event
-// (CONTENT_EVENTS.progress) — subscribe via the bridge event surface.
+// download queue lives in main; every change to it arrives as a whole snapshot
+// on the `content:queue` event (CONTENT_EVENTS.queue) — subscribe via the
+// bridge event surface.
 
 import type {
-  ContentDownloadResult,
   ContentListRow,
+  ContentQueueSnapshot,
 } from "../../shared/content-download";
 export type {
-  ContentDownloadProgress,
-  ContentDownloadResult,
   ContentItem,
   ContentItemStatus,
   ContentListRow,
+  ContentQueueEntry,
+  ContentQueueSnapshot,
+  ContentQueueState,
 } from "../../shared/content-download";
 export { CONTENT_EVENTS } from "../../shared/content-download";
 
@@ -3111,14 +3113,21 @@ export async function contentList(): Promise<ContentListRow[]> {
   return window.api.content.list();
 }
 
-/// Start one item's download; resolves with the terminal result (cancellation
-/// is its own quiet branch). Progress arrives on `content:progress`.
-export async function contentDownload(id: string): Promise<ContentDownloadResult> {
-  return window.api.content.download(id);
+/// The download queue as it stands — what a freshly mounted row renders from
+/// until the first `content:queue` event arrives.
+export async function contentQueue(): Promise<ContentQueueSnapshot> {
+  return window.api.content.queue();
 }
 
-/// Abort an in-flight download; the matching contentDownload() call resolves
-/// `{ ok: false, cancelled: true }` and the partial file is deleted.
+/// Queue items for download (installed and already-pending ids are skipped by
+/// main). Returns at once with the new snapshot; downloads run one at a time
+/// in the background and outlive this renderer.
+export async function contentEnqueue(ids: string[]): Promise<ContentQueueSnapshot> {
+  return window.api.content.enqueue(ids);
+}
+
+/// Stop one item: in flight → abort (the partial is KEPT, so a later download
+/// resumes from it), queued → drop, error → dismiss.
 export async function contentCancel(id: string): Promise<void> {
   return window.api.content.cancel(id);
 }
