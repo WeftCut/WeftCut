@@ -230,7 +230,9 @@ mod tests {
         assert_eq!(samples.last().unwrap()[3], 2.0);
         assert!(samples.iter().any(|s| s[3] > 0.0 && s[3] < 1.0));
         assert!(samples.iter().any(|s| s[3] == 1.0));
-        assert!(samples.windows(2).all(|p| p[0][3] < p[1][3] && p[0][2] <= p[1][2]));
+        assert!(samples
+            .windows(2)
+            .all(|p| p[0][3] < p[1][3] && p[0][2] <= p[1][2]));
     }
     #[test]
     fn distance_uses_length_not_node_count() {

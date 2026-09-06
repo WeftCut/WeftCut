@@ -19,11 +19,14 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
+// Spatial motion paths: node list -> flattened polyline plus the distance
+// lookup that moves a layer along it. Native and wasm32 share one compiler.
+pub mod path;
+
 // Resident-ABI scalar exports for the renderer. wasm32 only (the native crate
 // links the leaf as an rlib and calls the functions below directly).
 #[cfg(target_arch = "wasm32")]
 mod wasm;
-pub mod path;
 
 // ===========================================================================
 // Frame grid. Time is `i64` microseconds (the napi crate aliases `TimeUs = i64`
