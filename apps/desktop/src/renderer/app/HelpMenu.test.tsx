@@ -50,6 +50,21 @@ describe("HelpMenu", () => {
     expect(open).toHaveBeenCalledWith(RELEASES_URL);
   });
 
+  it("shows a progress bar while an update downloads", async () => {
+    stubApi();
+    const downloading = { phase: "downloading", version: "1.2.4", percent: 42 };
+    const api = (window as unknown as { api: { updates: Record<string, unknown> } }).api;
+    api.updates.check = vi.fn().mockResolvedValue(downloading);
+    api.updates.status = vi.fn().mockResolvedValue(downloading);
+    render(<HelpMenu />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Help/ }));
+    fireEvent.click(await screen.findByText("Check for Updates…"));
+    expect(await screen.findByText("Downloading 1.2.4… 42%")).toBeTruthy();
+    const bar = screen.getByRole("progressbar");
+    expect(bar.getAttribute("aria-valuenow")).toBe("42");
+  });
+
   it("sends the issue reporter to the repo's page", async () => {
     const { open } = stubApi();
     render(<HelpMenu />);

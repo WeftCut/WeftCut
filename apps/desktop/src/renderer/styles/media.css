@@ -711,8 +711,10 @@
 }
 
 /* Guarded media removal confirmation. Referencing layers are named with their
-   track + start time before the force path becomes available. */
-.media-remove-dialog {
+   track + start time before the force path becomes available. Compound
+   selector on purpose: media.css is imported before settings.css, so a lone
+   .media-remove-dialog loses the width to .settings-panel. */
+.settings-panel.media-remove-dialog {
   width: min(520px, calc(100vw - 32px));
 }
 

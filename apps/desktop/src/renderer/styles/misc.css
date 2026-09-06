@@ -221,3 +221,10 @@
   display: flex;
   justify-content: center;
 }
+
+/* Help → Check for Updates: the message-and-actions dialog width the other
+   small confirm dialogs use. Compound selector: misc.css is imported before
+   settings.css, so a lone .update-dialog would lose to .settings-panel. */
+.settings-panel.update-dialog {
+  width: min(440px, calc(100vw - 32px));
+}

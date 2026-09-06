@@ -55,8 +55,10 @@
   font-family: inherit;
 }
 
-/* Compact the reused settings-panel skin down to a confirmation size. */
-.export-experimental-confirm {
+/* Compact the reused settings-panel skin down to a confirmation size. Compound
+   selector on purpose: export.css is imported before settings.css, so a lone
+   .export-experimental-confirm loses the width to .settings-panel. */
+.settings-panel.export-experimental-confirm {
   width: min(440px, calc(100vw - 32px));
 }
 
