@@ -60,9 +60,12 @@ export async function setVersion(version, root = ROOT) {
 export async function validateAssets(directory, version) {
   validateVersion(version)
   const { parse } = await import('yaml')
+  // electron-builder expands `${arch}` per target: `x64` on Windows, but the
+  // Linux targets keep their packaging conventions — `x86_64` for AppImage and
+  // `amd64` for deb — even though both build with arch=x64.
   const required = [
     `WeftCut-${version}-x64.exe`, `WeftCut-${version}-x64.exe.blockmap`,
-    `WeftCut-${version}-x64.AppImage`, `WeftCut-${version}-x64.deb`,
+    `WeftCut-${version}-x86_64.AppImage`, `WeftCut-${version}-amd64.deb`,
     'latest.yml', 'latest-linux.yml',
   ]
   const names = await fs.readdir(directory)
@@ -71,7 +74,7 @@ export async function validateAssets(directory, version) {
       throw new Error(`Missing release asset: ${file}`)
     }
   }
-  const allowed = new Set([...required, `WeftCut-${version}-x64.AppImage.blockmap`])
+  const allowed = new Set([...required, `WeftCut-${version}-x86_64.AppImage.blockmap`])
   for (const name of names) {
     if (!allowed.has(name)) throw new Error(`Unexpected release asset: ${name}`)
   }

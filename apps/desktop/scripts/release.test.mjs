@@ -39,7 +39,8 @@ async function assets(t) {
   t.after(() => fs.rm(dir, { recursive: true, force: true }))
   const data = Buffer.from('installer fixture')
   const sha512 = createHash('sha512').update(data).digest('base64')
-  const files = ['exe', 'AppImage', 'deb'].map(ext => ({ url: `WeftCut-0.1.1-x64.${ext}`, size: data.length, sha512 }))
+  // Per-target arch names, as electron-builder writes them (release.mjs).
+  const files = [['exe', 'x64'], ['AppImage', 'x86_64'], ['deb', 'amd64']].map(([ext, arch]) => ({ url: `WeftCut-0.1.1-${arch}.${ext}`, size: data.length, sha512 }))
   for (const file of files) await fs.writeFile(path.join(dir, file.url), data)
   await fs.writeFile(path.join(dir, 'WeftCut-0.1.1-x64.exe.blockmap'), 'blockmap fixture')
   for (const [name, subset] of [['latest.yml', files.slice(0, 1)], ['latest-linux.yml', files.slice(1)]]) {
