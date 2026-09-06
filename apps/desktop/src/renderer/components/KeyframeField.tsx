@@ -93,9 +93,9 @@ export function KeyframeField({
   // props (AppNumberField/AppSlider), so spread these only when set — omitting
   // a prop and passing it `undefined` are identical at runtime.
   const numBounds = {
-    ...(step !== undefined ? { step } : {}),
-    ...(min !== undefined ? { min } : {}),
-    ...(max !== undefined ? { max } : {}),
+    ...(step !== undefined ? { step:step*(paramKey==='path_progress'?100:1) } : {}),
+    ...(min !== undefined ? { min:min*(paramKey==='path_progress'?100:1) } : {}),
+    ...(max !== undefined ? { max:max*(paramKey==='path_progress'?100:1) } : {}),
   };
   const sldStep = step !== undefined ? { step } : {};
 
@@ -105,7 +105,7 @@ export function KeyframeField({
         return (
           <AppNumberField
             key={`number-${i}`}
-            value={value}
+            value={value*(paramKey==='path_progress'?100:1)}
             {...numBounds}
             format={paramNumberFormat(paramKey)}
             disabled={inputsDisabled}
@@ -114,7 +114,7 @@ export function KeyframeField({
             // commit on blur/Enter (the inspector-proven pattern). A sibling
             // slider drives `draft`, so this field still reflects it live.
             onValueChange={() => {}}
-            onCommit={commit}
+            onCommit={(v)=>commit(v/(paramKey==='path_progress'?100:1))}
           />
         );
       case "slider":

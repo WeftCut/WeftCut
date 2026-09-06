@@ -18,6 +18,8 @@ import type {
 } from "../ipc";
 import { resolveAnimated, resolveAnimatedColor } from "./animated";
 import { DEFAULT_ANCHOR } from "./anchorPivot";
+import { evaluatePosition, previewPosition } from './position';
+import { evaluateMotionPath } from '../eval';
 
 /// The transform tracks every visual view resolves, so a new one can't be added
 /// to some kinds and forgotten on others.
@@ -81,12 +83,15 @@ const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
 /// function rather than a copy per kind, so the anchor pair can't diverge into
 /// a silent kind-specific pivot difference.
 function resolveTransform(
-  v: Pick<VideoClipView, TransformTrackKey>,
+  v: Pick<VideoClipView, TransformTrackKey | 'position' | 'path_progress'>,
   tInLayerUs: number,
 ): ResolvedTransform {
   return {
-    x: resolveAnimated(v.x, tInLayerUs, 0),
-    y: resolveAnimated(v.y, tInLayerUs, 0),
+    ...(v.position && previewPosition(v.position)!==v.position
+      ? evaluatePosition(previewPosition(v.position),tInLayerUs)
+      : v.position?.mode==='Path'
+        ? evaluateMotionPath(v.position.path,resolveAnimated(v.path_progress??v.position.progress,tInLayerUs,0))
+        : { x: resolveAnimated(v.x,tInLayerUs,0), y: resolveAnimated(v.y,tInLayerUs,0) }),
     scale_x: resolveAnimated(v.scale_x, tInLayerUs, 1),
     scale_y: resolveAnimated(v.scale_y, tInLayerUs, 1),
     rotation_deg: resolveAnimated(v.rotation_deg, tInLayerUs, 0),

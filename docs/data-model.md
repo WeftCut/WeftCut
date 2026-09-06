@@ -777,8 +777,7 @@ as on any layer.
 
 ```rust
 struct Transform {
-    x: Animated<f64>,                 // canvas pixels
-    y: Animated<f64>,
+    position: PositionAnimation,      // canvas-pixel position reference
     scale_x: Animated<f64>,
     scale_y: Animated<f64>,
     rotation_deg: Animated<f64>,
@@ -787,6 +786,25 @@ struct Transform {
     scale_linked: bool,               // uniform-scale intent; default true
 }
 ```
+
+`PositionAnimation` is exactly one of `XY { x: Animated<f64>, y: Animated<f64> }`
+or `Path { path: { nodes }, progress: Animated<f64> }` (ADR 0060). A path node
+has a stable `id`, `point: {x,y}`, relative `inHandle`/`outHandle` vectors and an
+outgoing `segment: Line | Cubic`; geometry contains no timestamps. Progress
+0–1 traverses the path by distance, with temporal easing on that scalar track.
+Path progress exposes `path_progress` to keyframe commands and supports
+Hold/Loop/PingPong extrapolation; independent `x`/`y` writes are rejected in
+Path mode. Geometry-only edits retain progress verbatim. Full position records
+frame-snap and solve temporal Auto tangents but retain floating-point value
+precision, including baked samples. XY remains the default.
+
+`set_position` replaces the complete record atomically; `translate_path` moves
+all nodes by a relative displacement. The UI's `update_path_transform` combines
+that displacement with scale/rotation/pivot writes in one undo entry. Splitting
+a path retains both the complete route and complete progress on each half,
+shifting only the right half's local key times. Displaying an XY trajectory
+does not convert it. Conversion previews do not write project state; applying
+one is a single complete-record replacement. See ADR 0060 for sampling limits.
 
 The anchor pair is the **pivot**: what `rotation_deg` turns around and what a
 flip mirrors about, in normalized layer coordinates (`(0.5, 0.5)` = center, the
@@ -1469,10 +1487,11 @@ blind pass because the cut-over gate left no alternative, and the on-disk
 shape drifted across three generations while the version sat still. ADR 0047
 has the history.
 
-Until first release there is no chain to extend: an incompatible change
-rewrites the shape in place — `SCHEMA_VERSION` stays 1, `STEPS` stays empty —
-and regenerates `fixtures/projects/v1.json`; the migration chain begins with
-the first post-release bump (ADR 0052).
+The current schema is **v2**. Its v1 → v2 step wraps each transform's original
+X/Y records in `position: { mode: "XY", x, y }`, preserving every authored
+number and key record. Both fixtures are frozen. ADR 0060 retires the earlier
+pre-release in-place cutover exception for this change so existing projects
+remain readable without changing their animation.
 
 A step imports **nothing** — not `SCHEMA_VERSION` (the target version is a
 parameter), not a model type, not `defaultSettings()`. It takes the wire

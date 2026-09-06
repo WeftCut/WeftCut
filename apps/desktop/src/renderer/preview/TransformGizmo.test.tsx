@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { initEval } from '../eval';
+import { translatePath, type PathPosition } from '../../shared/position';
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import type { AnimTrack, LayerParamsView, ProjectSummary } from "../ipc";
@@ -29,12 +31,15 @@ const commit = vi.fn(async () => {});
 /// in `commit` — which makes "did this drag write the box or the scale?" a
 /// question about which mock was called.
 const patchCommit = vi.fn(async () => {});
+const pathCommit = vi.fn(async () => {});
+beforeAll(initEval);
 vi.mock("../ipc", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../ipc")>();
   return {
     ...actual,
     updateLayerParamTracks: (...args: unknown[]) => commit(...(args as [])),
     updateLayerParams: (...args: unknown[]) => patchCommit(...(args as [])),
+    updatePathTransform: (...args: unknown[]) => pathCommit(...(args as [])),
   };
 });
 
@@ -165,6 +170,7 @@ function setSnap(enabled: boolean, strengthPx = 12): void {
 beforeEach(() => {
   commit.mockClear();
   patchCommit.mockClear();
+  pathCommit.mockClear();
   stagedSize = { w: 640, h: 360 };
   stagedFit = null;
   fitOfBox = null;
@@ -190,6 +196,23 @@ async function box(): Promise<HTMLElement> {
 }
 
 describe("TransformGizmoHost", () => {
+  it('translates a whole path through relative commits and carries rapid gestures until the summary arrives', async () => {
+    const position:PathPosition={mode:'Path',path:{nodes:[0,100].map((x,i)=>({id:String(i),point:{x,y:0},inHandle:{x:0,y:0},outHandle:{x:0,y:0},segment:'Line'}))},progress:stat(0.5)};
+    useProjectStore.getState().apply(fixture({position}));
+    render(<TransformGizmoHost/>);
+    const el=await box();
+    for(let i=0;i<2;i++){
+      fireEvent.pointerDown(el,{button:0,clientX:100,clientY:100});
+      fireEvent.pointerMove(el,{clientX:120,clientY:110});
+      fireEvent.pointerUp(el,{clientX:120,clientY:110});
+    }
+    expect(pathCommit).toHaveBeenNthCalledWith(1,'l1',40,20,[]);
+    expect(pathCommit).toHaveBeenNthCalledWith(2,'l1',40,20,[]);
+    expect(commit).not.toHaveBeenCalled();
+    await waitFor(()=>expect(transformOverrideFor('l1')).toMatchObject({dx:80,dy:40}));
+    act(()=>useProjectStore.getState().apply(fixture({position:translatePath(position,80,40)})));
+    await waitFor(()=>expect(transformOverrideFor('l1')).toBeUndefined());
+  });
   it("draws the layer footprint in client pixels", async () => {
     render(<TransformGizmoHost />);
     const el = await box();

@@ -49,12 +49,25 @@ export interface MigrationStep {
 
 /** The chain, in ascending `from` order.
  *
- *  EMPTY at v1, and that is the correct state — not an unfinished one. The
- *  format has shipped exactly one generation, so there is nothing to upgrade
- *  from yet. The first entry lands with the first post-v1 schema change, and
+ *  v1 → v2 wraps the legacy axes without changing their authored records.
  *  `migrate.completeness.test.ts` fails the build if a `SCHEMA_VERSION` bump
  *  arrives without one (and without its committed fixture). */
-export const STEPS: readonly MigrationStep[] = []
+export const STEPS: readonly MigrationStep[] = [{
+  from: 1,
+  apply(wire) {
+    const compositions = wire.compositions as Record<string, { tracks: Array<{ layers: Array<{ params: { transform?: Record<string, unknown> } }> }> }>
+    for (const composition of Object.values(compositions)) {
+      for (const track of composition.tracks) for (const layer of track.layers) {
+        const t = layer.params.transform
+        if (!t) continue
+        if (!t.x || !t.y || 'position' in t) throw new Error('v1 position migration requires the original x/y tracks')
+        t.position = { mode: 'XY', x: t.x, y: t.y }
+        delete t.x
+        delete t.y
+      }
+    }
+  },
+}]
 
 export interface UpgradeOutcome {
   /** The wire object at the target version. Identical reference to the input

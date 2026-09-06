@@ -3,6 +3,16 @@ import type { Resources } from "./en-US";
 // 简体中文 (zh-CN). Mirrors the en-US shape one-to-one — the `Resources` type
 // will fail to type-check if a key is missing or extra.
 const zhCN: Resources = {
+  motion_path: {
+    start_frame:'起始帧（片段内）', end_frame:'结束帧（含）', every_frames:'每 N 帧采样', samples_used:'个采样点', range_error:'转换范围不能超出当前片段。',
+    create:'创建运动路径', edit:'编辑路径', show:'显示轨迹', done:'完成',
+    add:'添加节点', curve:'直线／曲线', remove:'删除节点',
+    anchor:'标记的锚点沿路径移动。选中节点可编辑控制柄。',
+    corner:'标记的位置参考点（未旋转左上角）沿路径移动。',
+    to_path:'将 XY 转为路径…', to_xy:'烘焙为 XY…', preview:'预览转换', apply:'应用转换', cancel:'取消',
+    samples:'路径采样数', error:'测量的位置误差：{{error}} 像素（检查 {{count}} 个时刻）',
+    conversion_note:'仅保留所选片段内帧范围，范围外保持端点位置。XY 转为可编辑折线路径；误差为采样实测值，不保证连续时间精度。烘焙保留采样帧位置，帧间为近似。',
+  },
   app: {
     title: "WeftCut",
     core_status: "核心：{{status}}",
@@ -1431,6 +1441,7 @@ const zhCN: Resources = {
     },
   },
   property_panel: {
+    path_progress: '路径进度（%）',
     heading: "属性",
     empty: "选择一个图层以编辑其属性。",
     envelope: "图层",

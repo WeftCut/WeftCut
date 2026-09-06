@@ -6,6 +6,8 @@
 // (serde): the wire JSON is identical, key order included. ADR 0058 is the
 // decision record; docs/data-model.md § Animated values describes the wire.
 import type { EaseDir } from "./easing";
+/** Resident Wasm capacity; mirrors MAXKF in native/eval/src/wasm.rs. */
+export const MAX_RESIDENT_KEYFRAMES = 4096;
 
 /// Who owns a side's coordinates: `Auto` sides are re-solved by main's write
 /// normalization (`tangents.ts`) on every track write; `Free` sides are

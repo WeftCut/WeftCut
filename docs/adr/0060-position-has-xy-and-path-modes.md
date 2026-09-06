@@ -1,0 +1,13 @@
+# Position has XY and path modes, not two synchronized representations
+
+Keep independent X/Y animation and add an explicitly chosen path mode: timestamp-free spatial geometry plus a scalar distance-progress track. Arbitrary independent axis easing cannot generally be represented by a small synchronized set of spatial keys without changing the motion; one active representation avoids hidden lossy conversions and competing sources of truth.
+
+This replaces ADR 0058's proposed `Animated<Vec2>` direction. Schema v2 wraps existing axes without rewriting their key records; v1 stays frozen and upgrades through the existing versioned chain. Preserving existing projects is worth starting that chain now rather than using ADR 0052's pre-release in-place cutover exception.
+
+## Consequences
+
+- Space and time have separate handles: spatial handles are relative pixel vectors on path nodes; progress uses the existing scalar temporal tangents and easing. Progress 0/1 denotes the ends, not a node index. Geometry editing preserves the progress record verbatim.
+- A bounded adaptive arc-length table, implemented in the Rust eval leaf and cached by immutable geometry in Wasm consumers, is shared by preview and the export worker. Overshoot extends the endpoint direction; zero-length geometry stays put. The initial open-path model supports Line/Cubic spans and Hold/Loop/PingPong progress extrapolation.
+- Positions retain the existing per-kind reference: Text's transform pivot, otherwise the unrotated top-left. No automatic orientation is implied. Normal dragging translates the complete path; path editing moves points/handles and commits once per gesture. Trim and split retain complete geometry and progress, rebasing local time without reshaping the curve.
+- Conversion is explicit, previewable and undoable. XY sampling produces an editable polyline; baking produces independent linear XY keys at selected frame anchors. Both discard motion outside the chosen range and hold its endpoints. Report measured positional error at frames, quarter-frames and authored jump boundaries, never a continuous-time error guarantee or lossless round trip.
+- Initial bounds: 128 spatial nodes, 4096 progress keys or keys per baked axis, 16384 frames per conversion range. Oversized conversions are refused with an actionable message rather than silently truncated. The existing general Wasm track buffer is raised to 4096 and evaluates resident key records directly rather than copying the capacity-sized buffer on every call; unrelated programmatic tracks beyond that retain the documented overflow limitation.

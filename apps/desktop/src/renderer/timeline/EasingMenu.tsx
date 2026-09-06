@@ -351,11 +351,13 @@ function easingLeaving(keys: readonly Keyframe<number>[], kfId: string): Interpo
 /// one. Arming a mode previews the track under it (the curve graph draws the
 /// tails from the previewed track's own `extrapolate`).
 function ExtrapolateSubMenu({
+  pathSelected,
   side,
   current,
   onArm,
   onPick,
 }: {
+  pathSelected: boolean;
   side: "before" | "after";
   current: Extrapolate;
   onArm: PreviewEdit;
@@ -365,7 +367,7 @@ function ExtrapolateSubMenu({
   const patchFor = (mode: Extrapolate) => (side === "before" ? { before: mode } : { after: mode });
   return (
     <SubMenu label={t(`keyframe.extrapolate_${side}`)}>
-      {EXTRAPOLATE_MODES.map((mode) => (
+      {EXTRAPOLATE_MODES.filter(mode => !pathSelected || (mode !== "Continue" && mode !== "Offset")).map((mode) => (
         <MenuItem
           key={mode}
           testId={`easing-extrap-${side}-${mode}`}
@@ -508,7 +510,7 @@ export function EasingMenu({
               />
               {(showBefore || showAfter) && <MenuSeparator />}
               {showBefore && (
-                <ExtrapolateSubMenu
+                <ExtrapolateSubMenu pathSelected={[...selected.values()].some(k => k.paramKey === "path_progress")}
                   side="before"
                   current={extrapolate.before}
                   onArm={arm}
@@ -516,7 +518,7 @@ export function EasingMenu({
                 />
               )}
               {showAfter && (
-                <ExtrapolateSubMenu
+                <ExtrapolateSubMenu pathSelected={[...selected.values()].some(k => k.paramKey === "path_progress")}
                   side="after"
                   current={extrapolate.after}
                   onArm={arm}

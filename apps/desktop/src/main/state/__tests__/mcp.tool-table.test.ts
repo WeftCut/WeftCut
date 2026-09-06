@@ -6,6 +6,7 @@ import { blankProject } from '../model'
 import { root } from './fixtures/project'
 
 const ALL_67_NAMES = new Set<string>([
+  'set_position', 'translate_path',
   // table-exec tools (44)
   'add_track', 'remove_track', 'rename_track', 'duplicate_layer', 'paste_layers', 'move_track',
   'update_layer', 'set_layers_enabled', 'update_layer_params', 'set_scale_linked',
@@ -73,7 +74,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(44)
+    expect(table.length).toBe(46)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }

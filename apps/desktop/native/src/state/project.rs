@@ -62,7 +62,7 @@ impl Project {
         let root = Composition::from_skeleton(root_id, None, tracks);
         Self {
             // TS owns the real number (see the field doc); this is a fixture.
-            schema_version: 1,
+            schema_version: 2,
             project_id,
             metadata: ProjectMetadata {
                 name: name.into(),

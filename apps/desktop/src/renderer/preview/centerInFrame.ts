@@ -15,6 +15,7 @@
 
 import type { AnimTrack, LayerSummary } from "../ipc";
 import { resolveAnimated } from "../render/animated";
+import { evaluatePosition, previewPosition } from '../render/position';
 import { DEFAULT_ANCHOR } from "../render/anchorPivot";
 import { layerQuad, type LayerQuadInput, type Pt, type TransformOrigin } from "./gizmoGeometry";
 import { quadAabb } from "./previewSnap";
@@ -44,6 +45,7 @@ export function transformOriginFor(kind: string): TransformOrigin {
 /// `LayerParamsView` is a discriminated union and this is deliberately
 /// kind-agnostic past the `TRANSFORMABLE_KINDS` gate.
 interface TransformFields {
+  position?: import('../../shared/position').PositionAnimation;
   kind: string;
   x?: AnimTrack<number>;
   y?: AnimTrack<number>;
@@ -76,8 +78,7 @@ export function layerFrameAt(
   const p = layer.params as unknown as TransformFields;
   const tLocalUs = tUs - layer.t_start_us;
   return {
-    x: resolveAnimated(p.x, tLocalUs, 0),
-    y: resolveAnimated(p.y, tLocalUs, 0),
+    ...(p.position && (p.position.mode==='Path'||previewPosition(p.position)!==p.position) ? evaluatePosition(previewPosition(p.position),tLocalUs) : {x:resolveAnimated(p.x,tLocalUs,0),y:resolveAnimated(p.y,tLocalUs,0)}),
     anchorX: resolveAnimated(p.anchor_x, tLocalUs, DEFAULT_ANCHOR),
     anchorY: resolveAnimated(p.anchor_y, tLocalUs, DEFAULT_ANCHOR),
     naturalW: size.w,

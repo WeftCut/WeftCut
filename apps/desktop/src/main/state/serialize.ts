@@ -1,6 +1,7 @@
 import { SCHEMA_VERSION, defaultSettings, type Animated, type Link, type Project } from './model'
 import { frameGrid, gridForLayerKind, snapOnGrid, snapUpOnGrid, type Grid } from './snap'
 import { scaleTracksTwins } from './mutations/scaleLink'
+import { positionProblem } from '../../shared/position'
 
 function serializeLink(g: Link): unknown {
   const out: Record<string, unknown> = { id: g.id, members: [...g.members].sort() }
@@ -369,7 +370,7 @@ function normalizeOrdinals(o: Record<string, unknown>): void {
  *  Project): a slot that is not an object, or a `value` that is not an array, is
  *  left for validate. Walks exactly the Animated slots the model declares — the
  *  transform tracks, opacity, color, gain_db, pan and every effect param. */
-function refuseRetiredKeyframeShape(o: Record<string, unknown>): void {
+export function refuseRetiredKeyframeShape(o: Record<string, unknown>): void {
   const TANGENT_MODES = new Set(['Auto', 'Free'])
   const CONTINUITIES = new Set(['Smooth', 'Broken'])
   const SEGMENT_KINDS = new Set(['Spline', 'Hold', 'Linear', 'Elastic', 'Bounce'])
@@ -408,7 +409,14 @@ function refuseRetiredKeyframeShape(o: Record<string, unknown>): void {
         const p = layer.params
         if (isObj(p)) {
           const t = p.transform
-          if (isObj(t)) for (const k of ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y']) checkTrack(`layer ${lid} transform.${k}`, t[k])
+          if (isObj(t)) {
+            if ('x' in t || 'y' in t) refuse(`layer ${lid} position`, 'legacy axes require versioned migration')
+            const problem=positionProblem(t.position)
+            if(problem) refuse(`layer ${lid} position`,problem)
+            const position=t.position as Record<string, unknown>
+            for (const k of position.mode==='XY'?['x','y']:['progress']) checkTrack(`layer ${lid} position.${k}`, position[k])
+            for (const k of ['scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y']) checkTrack(`layer ${lid} transform.${k}`, t[k])
+          }
           for (const k of ['opacity', 'color', 'gain_db', 'pan']) if (k in p) checkTrack(`layer ${lid} ${k}`, p[k])
         }
         for (const e of (layer.effects as unknown[] | undefined) ?? []) {

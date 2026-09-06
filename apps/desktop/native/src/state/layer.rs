@@ -293,8 +293,7 @@ pub(crate) fn for_each_animated_f64(
 }
 
 fn visit_transform_f64(t: &mut Transform, f: &mut impl FnMut(&mut Animated<f64>)) {
-    f(&mut t.x);
-    f(&mut t.y);
+    t.position.visit(f);
     f(&mut t.scale_x);
     f(&mut t.scale_y);
     f(&mut t.rotation_deg);
@@ -353,8 +352,7 @@ fn transform_or_opacity_ref<'a>(
     key: &str,
 ) -> Option<&'a Animated<f64>> {
     match key {
-        "x" => Some(&t.x),
-        "y" => Some(&t.y),
+        "x" | "y" | "path_progress" => t.position.track(key),
         "scale_x" => Some(&t.scale_x),
         "scale_y" => Some(&t.scale_y),
         "rotation_deg" => Some(&t.rotation_deg),
@@ -394,8 +392,7 @@ fn transform_or_opacity<'a>(
     key: &str,
 ) -> Option<&'a mut Animated<f64>> {
     match key {
-        "x" => Some(&mut t.x),
-        "y" => Some(&mut t.y),
+        "x" | "y" | "path_progress" => t.position.track_mut(key),
         "scale_x" => Some(&mut t.scale_x),
         "scale_y" => Some(&mut t.scale_y),
         "rotation_deg" => Some(&mut t.rotation_deg),

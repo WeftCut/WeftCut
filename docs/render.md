@@ -121,15 +121,23 @@ the TS suite (`animated.golden.test.ts`, through wasm) and the Rust leaf
 test both assert the wasm/native engine reproduces it, spline and
 procedural cases alike.
 
-**Known limit:** the wasm preview holds at most 256 keyframes **per animated
+**Known limit:** the wasm evaluator holds at most 4096 keyframes **per animated
 property** (one `AnimTrack` — e.g. a single layer's opacity or x, NOT a whole
 track or clip; mirrors `MAXKF` in `native/eval/src/wasm.rs`). It is a
-static-allocation backstop for the no_std wasm, not a product limit — manual
-authoring stays in the single digits. Beyond 256 the preview truncates while
+static-allocation backstop for the no_std wasm. Path-to-XY baking refuses a
+conversion beyond this bound. Beyond 4096 a programmatic track truncates while
 native export still evaluates every keyframe, so the two would diverge;
 `loadTrack` (`MAX_KEYFRAMES`) emits a one-time `console.warn` if a property ever
-exceeds it. Revisit (an upstream per-property cap, or a linear-memory upload
-path) only if dense/programmatic keyframes are ever generated.
+exceeds it. A general paged or dynamic track buffer remains future work.
+
+Position resolves through one XY-or-Path interface. Paths compile Line/Cubic
+geometry to a distance table in the Rust eval leaf (adaptive subdivision,
+0.01 px flatness target, depth limit 9). The Wasm adapter caches that table by
+immutable geometry and restores it when another layer used the resident buffer.
+Progress changes reuse the geometry. Preview and the export worker use the same
+resolver; editor-only position previews live outside the project and outside
+the export worker. The tolerance is a subdivision target, not a global error
+bound at arbitrarily large coordinates.
 
 ### Compositions: the recursive composite
 

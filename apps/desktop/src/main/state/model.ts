@@ -2,6 +2,7 @@
 import type { IdGen } from './ids'
 import type { DecodeRoute } from '../../shared/decode-route'
 import type { Animated } from '../../shared/keyframe'
+import type { PositionAnimation } from '../../shared/position'
 
 /** The on-disk `project.json` schema version this build reads and writes.
  *
@@ -11,7 +12,7 @@ import type { Animated } from '../../shared/keyframe'
  *
  *  This is the only home for the number: Rust deserializes projects but has no
  *  opinion about the version (`native/src/state/project.rs`). */
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 export type Uuid = string
 export type TimeUs = number
@@ -30,7 +31,7 @@ export type { EaseDir, Interpolation } from '../../shared/easing'
 export type { Animated, Continuity, Extrapolate, Extrapolation, Keyframe, Segment, Tangent, TangentMode } from '../../shared/keyframe'
 
 export interface Transform {
-  x: Animated<number>; y: Animated<number>
+  position: PositionAnimation
   scale_x: Animated<number>; scale_y: Animated<number>
   rotation_deg: Animated<number>
   /** Normalized transform PIVOT (0.5 = centre on that axis) — what rotation

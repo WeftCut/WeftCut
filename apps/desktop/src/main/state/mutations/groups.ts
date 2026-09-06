@@ -173,7 +173,7 @@ export function applyGroupsAddMembers(p: Project, idGen: IdGen, layerIds: readon
     anchor.layer.t_start_us + gp.src_in_us - ref.layer.t_start_us, null)
 }
 
-const ANIMATED_TRANSFORM_KEYS = ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y'] as const
+const ANIMATED_TRANSFORM_KEYS = ['scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y'] as const
 function isStatic(a: Animated<number>, value: number): boolean { return a.mode === 'Static' && a.value === value }
 
 /** Why a Group layer is not plain, or null when it is. Plain = identity
@@ -183,6 +183,7 @@ export function groupNotPlainReason(layer: Layer): GroupNotPlainReason | null {
   const pa = layer.params as CompositionRefParams
   const ident: Transform = defaultTransform()
   const identity = ANIMATED_TRANSFORM_KEYS.every((k) => isStatic(pa.transform[k], (ident[k] as { value: number }).value))
+    && pa.transform.position.mode === 'XY' && isStatic(pa.transform.position.x, 0) && isStatic(pa.transform.position.y, 0)
     && pa.transform.scale_linked === ident.scale_linked
   if (!identity) return 'transform'
   if (!isStatic(pa.opacity, 1)) return 'opacity'

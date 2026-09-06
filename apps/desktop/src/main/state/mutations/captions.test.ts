@@ -25,8 +25,8 @@ describe('cueToTextParams (mirror subtitles/layout.rs)', () => {
     expect(p.outline).not.toBeNull()
     expect(p.shadow).not.toBeNull()
     expect(staticAnchor(p)).toEqual([0.5, 1.0]) // an2 bottom-center
-    expect(p.transform.x).toEqual({ mode: 'Static', value: 960 }) // w/2
-    expect((p.transform.y as { value: number }).value).toBeCloseTo(1080 - 1080 * 0.08, 5) // h - 8%
+    expect(p.transform.position.x).toEqual({ mode: 'Static', value: 960 }) // w/2
+    expect((p.transform.position.y as { value: number }).value).toBeCloseTo(1080 - 1080 * 0.08, 5) // h - 8%
     expect(p.align).toBe('Center')
     // Nullability IS the resize mode, so (set, null) is Auto height: the cue
     // wraps inside the safe area — the defect a machine transcript's single
@@ -50,7 +50,7 @@ describe('cueToTextParams (mirror subtitles/layout.rs)', () => {
   })
   it('explicit pos overrides the computed base position', () => {
     const p = cueToTextParams(cue({ align: 5, pos: [100, 200] }), 1920, 1080)
-    expect([p.transform.x, p.transform.y]).toEqual([{ mode: 'Static', value: 100 }, { mode: 'Static', value: 200 }])
+    expect([p.transform.position.x, p.transform.position.y]).toEqual([{ mode: 'Static', value: 100 }, { mode: 'Static', value: 200 }])
   })
   // The box wraps; it never relocates. An ASS cue carrying both \an and an
   // explicit \pos keeps its 9-grid alignment and its absolute position, and gets
@@ -58,7 +58,7 @@ describe('cueToTextParams (mirror subtitles/layout.rs)', () => {
   it('an + explicit pos survive the box', () => {
     const p = cueToTextParams(cue({ align: 1, pos: [100, 200] }), 1920, 1080)
     expect(staticAnchor(p)).toEqual([0.0, 1.0])
-    expect([p.transform.x, p.transform.y]).toEqual([{ mode: 'Static', value: 100 }, { mode: 'Static', value: 200 }])
+    expect([p.transform.position.x, p.transform.position.y]).toEqual([{ mode: 'Static', value: 100 }, { mode: 'Static', value: 200 }])
     expect(p.align).toBe('Left')
     expect([p.box_w, p.box_h]).toEqual([1613, null])
   })
@@ -74,12 +74,12 @@ describe('cueToTextParams (mirror subtitles/layout.rs)', () => {
     // happen to come out clean (1080 → 993.6), which is exactly why an unrounded
     // path could ship unnoticed.
     const p = cueToTextParams(cue(), 1920, 1081)
-    expect((p.transform.y as { value: number }).value).toBe(994.5)
+    expect((p.transform.position.y as { value: number }).value).toBe(994.5)
   })
 
   it('an explicit \\pos is rounded like any other authored position', () => {
     const p = cueToTextParams(cue({ align: 1, pos: [100.373737, 200.06] }), 1920, 1080)
-    expect([p.transform.x, p.transform.y]).toEqual([
+    expect([p.transform.position.x, p.transform.position.y]).toEqual([
       { mode: 'Static', value: 100.4 },
       { mode: 'Static', value: 200.1 },
     ])

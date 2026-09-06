@@ -1,4 +1,6 @@
 import type { Animated, Keyframe, LayerParams, Rgba } from '../model'
+import type { Transform } from '../model'
+import { visitPositionTracks } from '../../../shared/position'
 
 /** Mirror native/src/state/layer.rs:for_each_animated_f64 — every Animated<f64>
  *  track stored on the params (opacity + the 7 transform tracks for visual kinds;
@@ -18,8 +20,8 @@ export function forEachAnimatedF64(p: LayerParams, fn: (a: Animated<number>) => 
 /** The anchor pair is in this walk, not just in the param-key resolvers: trim and
  *  split rebase keyframe TIMES through here, so leaving it out would strand an
  *  animated pivot at the pre-trim times while every other track moved. */
-function forEachTransformF64(t: { x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; rotation_deg: Animated<number>; anchor_x: Animated<number>; anchor_y: Animated<number> }, fn: (a: Animated<number>) => void): void {
-  fn(t.x); fn(t.y); fn(t.scale_x); fn(t.scale_y); fn(t.rotation_deg); fn(t.anchor_x); fn(t.anchor_y)
+function forEachTransformF64(t: Transform, fn: (a: Animated<number>) => void): void {
+  visitPositionTracks(t.position, fn); fn(t.scale_x); fn(t.scale_y); fn(t.rotation_deg); fn(t.anchor_x); fn(t.anchor_y)
 }
 
 /** Mirror native/src/state/layer.rs:for_each_animated_rgba — the color track on

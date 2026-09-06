@@ -75,7 +75,7 @@ describe('quantize', () => {
 // resolves outside the transform, so adding an eighth transform track without a
 // `d` fails here rather than silently inheriting the effect-param fallback.
 describe('precision table covers every writable f64 param', () => {
-  const EXPECTED = new Set([...TRANSFORM_F64_KEYS, 'opacity', 'gain_db', 'pan'])
+  const EXPECTED = new Set([...TRANSFORM_F64_KEYS, 'opacity', 'gain_db', 'pan', 'path_progress'])
 
   it('declares exactly the keys f64Lens resolves — no gaps, no strays', () => {
     expect(new Set(Object.keys(PARAM_PRECISION))).toEqual(EXPECTED)

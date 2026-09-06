@@ -6,14 +6,23 @@
 // scalar-only calls. `initEval()` must be awaited before any wrapper is called
 // (the renderer bootstrap does so).
 import { EVAL_WASM_BASE64 } from './evalWasm.generated'
+import type { MotionPath, Point } from '../../shared/position'
 import {
   HOLD_EXTRAPOLATION,
+  MAX_RESIDENT_KEYFRAMES,
   type Extrapolate,
   type Extrapolation,
   type Segment,
 } from '../../shared/keyframe'
 
 interface Exports {
+  memory: WebAssembly.Memory
+  path_node(i:number,x:number,y:number,ix:number,iy:number,ox:number,oy:number,cubic:number): void
+  path_compile(n:number): number
+  path_samples_ptr(): number
+  path_direction(axis:number): number
+  path_activate(n:number,sx:number,sy:number,ex:number,ey:number): void
+  path_eval(progress:number,axis:number): number
   snap_round(tUs: number, num: number, den: number): number
   snap_floor(tUs: number, num: number, den: number): number
   snap_ceil(tUs: number, num: number, den: number): number
@@ -60,6 +69,31 @@ interface Exports {
 }
 
 let ex: Exports | null = null
+
+export interface CompiledPath { samples: Float64Array; directions: [number,number,number,number]; length: number }
+const pathCache = new WeakMap<MotionPath, CompiledPath>()
+let activePath: CompiledPath | null = null
+export function compileMotionPath(path: MotionPath): CompiledPath {
+  const cached=pathCache.get(path); if(cached) return cached
+  if(path.nodes.length<1 || path.nodes.length>128) throw new Error('A path requires 1–128 nodes')
+  const e=E()
+  path.nodes.forEach((n,i)=>e.path_node(i,n.point.x,n.point.y,n.inHandle.x,n.inHandle.y,n.outHandle.x,n.outHandle.y,n.segment==='Cubic'?1:0))
+  const count=e.path_compile(path.nodes.length)
+  const samples=new Float64Array(e.memory.buffer,e.path_samples_ptr(),count*3).slice()
+  const directions:[number,number,number,number]=[e.path_direction(0),e.path_direction(1),e.path_direction(2),e.path_direction(3)]
+  const result={samples,directions,length:samples[samples.length-1]!}
+  pathCache.set(path,result); activePath=result
+  return result
+}
+export function evaluateMotionPath(path: MotionPath, progress:number): Point {
+  const compiled=compileMotionPath(path); const e=E()
+  if(activePath!==compiled) {
+    new Float64Array(e.memory.buffer,e.path_samples_ptr(),compiled.samples.length).set(compiled.samples)
+    e.path_activate(compiled.samples.length/3,...compiled.directions)
+    activePath=compiled
+  }
+  return {x:e.path_eval(progress,0),y:e.path_eval(progress,1)}
+}
 
 /// `(segment code, s0, s1, s2)` — the wasm `set_kf`/`set_kf_rgba` slots for one
 /// keyframe's segment class. The Spline tangents ride in their own four slots
@@ -243,7 +277,7 @@ export interface Kf {
  * limit: manual authoring never approaches it. Known limit: beyond this the wasm
  * preview truncates while native export evaluates every keyframe, so they can
  * diverge — see docs/render.md. */
-export const MAX_KEYFRAMES = 256
+export const MAX_KEYFRAMES = MAX_RESIDENT_KEYFRAMES
 
 let loadedHandle = -1
 let loadedN = 0

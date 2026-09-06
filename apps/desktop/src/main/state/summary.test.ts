@@ -11,7 +11,7 @@ import { mkProject, root, withGroup, groupedProject } from './__tests__/fixtures
 import { applyAddLayer, colorParams } from './mutations/add'
 
 const stat = <T>(value: T) => ({ mode: 'Static' as const, value })
-const xf = () => ({ x: stat(0), y: stat(0), scale_x: stat(1), scale_y: stat(1), rotation_deg: stat(0), anchor_x: stat(0.5), anchor_y: stat(0.5), scale_linked: true })
+const xf = () => ({ position: { mode: 'XY' as const, x: stat(0), y: stat(0) },  scale_x: stat(1), scale_y: stat(1), rotation_deg: stat(0), anchor_x: stat(0.5), anchor_y: stat(0.5), scale_linked: true })
 function layer(id: string, params: LayerParams): Layer {
   return { id, label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {}, params, effects: [] }
 }

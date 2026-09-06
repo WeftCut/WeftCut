@@ -1,3 +1,4 @@
+import { positionView, type PositionAnimation } from '../../shared/position'
 // apps/desktop/src/main/state/summary.ts
 import type { Animated, Composition, Effect, Link, Layer, LayerParams, Marker, MarkerAnchor, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid, VAlign } from './model'
 import type { HistoryStatus } from './history'
@@ -8,19 +9,19 @@ import type { DecodeRoute } from '../../shared/decode-route'
 //    (renderer/ipc/index.ts declares the same shapes; keep the two in step) ──
 export interface VideoClipView {
   kind: 'VideoClip'; media_id: string; media_label: string; src_in_us: number; src_out_us: number
-  x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
+  position?: PositionAnimation; path_progress?: Animated<number>; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
   anchor_x: Animated<number>; anchor_y: Animated<number>
   speed: number; flip_h: boolean; flip_v: boolean; fade_in_us: number; fade_out_us: number
 }
 export interface ImageOverlayView {
   kind: 'ImageOverlay'; media_id: string; media_label: string
-  x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
+  position?: PositionAnimation; path_progress?: Animated<number>; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
   anchor_x: Animated<number>; anchor_y: Animated<number>
   fade_in_us: number; fade_out_us: number
 }
 export interface TextView {
   kind: 'Text'; content: string; font_family: string; font_size_px: number; weight: number; italic: boolean
-  color: Animated<Rgba>; align: TextAlign; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; anchor_x: Animated<number>; anchor_y: Animated<number>
+  color: Animated<Rgba>; align: TextAlign; position?: PositionAnimation; path_progress?: Animated<number>; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; anchor_x: Animated<number>; anchor_y: Animated<number>
   opacity: Animated<number>; shadow: Shadow | null; outline: Outline | null
   /** Layout box, plain scalars (never `Animated` — see `TextParams.box_w`).
    *  Which fields are set IS the resize mode, so both nulls must survive the
@@ -36,7 +37,7 @@ export interface AudioView {
 }
 export interface MotifView {
   kind: 'Motif'; motif_id: string
-  x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
+  position?: PositionAnimation; path_progress?: Animated<number>; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
   anchor_x: Animated<number>; anchor_y: Animated<number>
   src_in_us: number; props: Record<string, unknown>
 }
@@ -45,7 +46,7 @@ export interface MotifView {
 export interface CompositionRefView {
   kind: 'CompositionRef'; composition_id: string; composition_label: string | null
   src_in_us: number; src_out_us: number
-  x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
+  position?: PositionAnimation; path_progress?: Animated<number>; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
   anchor_x: Animated<number>; anchor_y: Animated<number>
 }
 export type LayerParamsView = VideoClipView | ImageOverlayView | TextView | ColorView | AudioView | MotifView | CompositionRefView
@@ -201,7 +202,7 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
     case 'VideoClip': {
       const t = params.transform
       return { kind: 'VideoClip', media_id: params.media, media_label: mediaLabelFor(params.media, pool),
-        src_in_us: params.src_in_us, src_out_us: params.src_out_us, x: t.x, y: t.y, scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
+        src_in_us: params.src_in_us, src_out_us: params.src_out_us, ...positionView(t.position), scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
         anchor_x: t.anchor_x, anchor_y: t.anchor_y,
         opacity: params.opacity, speed: params.speed, flip_h: params.flip_h, flip_v: params.flip_v,
         fade_in_us: params.fade_in_us, fade_out_us: params.fade_out_us }
@@ -209,7 +210,7 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
     case 'ImageOverlay': {
       const t = params.transform
       return { kind: 'ImageOverlay', media_id: params.media, media_label: mediaLabelFor(params.media, pool),
-        x: t.x, y: t.y, scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg, opacity: params.opacity,
+        ...positionView(t.position), scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg, opacity: params.opacity,
         anchor_x: t.anchor_x, anchor_y: t.anchor_y,
         fade_in_us: params.fade_in_us, fade_out_us: params.fade_out_us }
     }
@@ -217,7 +218,7 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
       const t = params.transform
       return { kind: 'Text', content: params.content, font_family: params.font.family, font_size_px: params.font.size_px,
         weight: params.font.weight, italic: params.font.italic, color: params.color, align: params.align,
-        x: t.x, y: t.y, scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
+        ...positionView(t.position), scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
         anchor_x: t.anchor_x, anchor_y: t.anchor_y, opacity: params.opacity,
         shadow: params.shadow, outline: params.outline,
         box_w: params.box_w, box_h: params.box_h, valign: params.valign,
@@ -231,7 +232,7 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
         fade_in_us: params.fade_in_us, fade_out_us: params.fade_out_us, mute: params.mute, role: params.role }
     case 'Motif': {
       const t = params.transform
-      return { kind: 'Motif', motif_id: params.motif_id, x: t.x, y: t.y, scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
+      return { kind: 'Motif', motif_id: params.motif_id, ...positionView(t.position), scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
         anchor_x: t.anchor_x, anchor_y: t.anchor_y,
         opacity: params.opacity, src_in_us: params.src_in_us, props: params.props }
     }
@@ -239,7 +240,7 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
       const t = params.transform
       return { kind: 'CompositionRef', composition_id: params.composition, composition_label: compositions[params.composition]?.label ?? null,
         src_in_us: params.src_in_us, src_out_us: params.src_out_us,
-        x: t.x, y: t.y, scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg, opacity: params.opacity,
+        ...positionView(t.position), scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg, opacity: params.opacity,
         anchor_x: t.anchor_x, anchor_y: t.anchor_y }
     }
   }

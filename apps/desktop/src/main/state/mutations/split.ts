@@ -41,14 +41,16 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   const rightCapped = false
   if (hasSourceWindow(right.params)) right.params.src_in_us += splitOffset
   else if (right.params.kind === 'Motif' && rightCapped) right.params.src_in_us += splitOffset
-  forEachAnimatedF64(right.params, (a) => splitTrackHalf(a, splitOffset, true))
+  const rightProgress='transform' in right.params && right.params.transform.position.mode==='Path'?right.params.transform.position.progress:null
+  forEachAnimatedF64(right.params, (a) => { if(a===rightProgress) shiftKeyframes(a,-splitOffset); else splitTrackHalf(a, splitOffset, true) })
   forEachAnimatedRgba(right.params, (a) => splitTrackHalf(a, splitOffset, true))
 
   // LEFT half — reuses original id, [original.t_start, atTUs].
   const left = cloneLayer(original)
   left.t_end_us = atTUs
   if (hasSourceWindow(left.params)) left.params.src_out_us = left.params.src_in_us + splitOffset
-  forEachAnimatedF64(left.params, (a) => splitTrackHalf(a, splitOffset, false))
+  const leftProgress='transform' in left.params && left.params.transform.position.mode==='Path'?left.params.transform.position.progress:null
+  forEachAnimatedF64(left.params, (a) => { if(a!==leftProgress) splitTrackHalf(a, splitOffset, false) })
   forEachAnimatedRgba(left.params, (a) => splitTrackHalf(a, splitOffset, false))
 
   track.layers[li] = left

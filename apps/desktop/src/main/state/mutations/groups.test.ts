@@ -475,7 +475,7 @@ describe('applyGroupsUngroup', () => {
     const r = applyGroupsCreate(p, gen, [v, w], null)
 
     const moved = structuredClone(p)
-    ;(layerOf(root(moved), r.layerId).params as CompositionRefParams).transform.x = { mode: 'Static', value: 10 }
+    ;(layerOf(root(moved), r.layerId).params as CompositionRefParams).transform.position.x = { mode: 'Static', value: 10 }
     expect(expectCmd(() => applyGroupsUngroup(moved, gen, r.layerId))).toEqual({ error: 'GroupNotPlain', layer: r.layerId, reason: 'transform' })
 
     const unlinked = structuredClone(p)

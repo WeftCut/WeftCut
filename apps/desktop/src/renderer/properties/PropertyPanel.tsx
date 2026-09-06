@@ -39,7 +39,7 @@ import {
   type Rgba,
   type TrackSummary,
 } from "../ipc";
-import { X, Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, GAIN_DB, PAN, COLOR_TEXT, COLOR_FILL, type RgbaParamDescriptor } from "../keyframe/descriptors";
+import { ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, GAIN_DB, PAN, COLOR_TEXT, COLOR_FILL, type RgbaParamDescriptor } from "../keyframe/descriptors";
 import { groupDisplayName, layerDisplayName } from "../lib/layerName";
 import { trackDisplayName } from "../lib/trackName";
 import { refusalText, tryMutate } from "../errors/tryMutate";
@@ -59,6 +59,7 @@ import { resolveAnimatedColor } from "../render/animated";
 import { InspectorAnimField } from "./InspectorAnimField";
 import { LinkLabelField } from "./LinkLabelField";
 import { ScaleFields } from "./ScaleFields";
+import { PositionFields } from './PositionFields';
 import { TEXT_BOX_MODES, textBoxModeOf, textBoxPatchFor, type TextBoxMode } from "./textBoxMode";
 import { useTextFit } from "./useTextFit";
 
@@ -782,10 +783,7 @@ function TransformSection({
   return (
     <PropSection layerKind={layer.kind} sectionId="transform" title={t("property_panel.transform")}>
       <InspectorAnimField layer={layer} desc={OPACITY} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      <div className="prop-field-pair">
-        <InspectorAnimField layer={layer} desc={X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-        <InspectorAnimField layer={layer} desc={Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      </div>
+      <PositionFields layer={layer} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated}/>
       {/* Scale keeps the axis-pair row, but `ScaleFields` owns what fills it:
           one collapsed "Scale" + closed chain while linked, Scale X / Scale Y
           + open chain while not. `.prop-field-pair > .scale-link-row` gives the

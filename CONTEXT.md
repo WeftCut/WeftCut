@@ -611,6 +611,28 @@ set, so a linked clip edits alone without the link being dissolved — Reaper's
 Link override / 链接覆盖.
 _Avoid_: unlink mode, solo edit, temporary unlink
 
+## Position animation
+
+**XY mode**:
+Position authored through independent horizontal and vertical animation, each with its own timing and easing.
+_Avoid_: pathless mode, simple mode
+
+**Path mode**:
+Position authored as a spatial route and a separate progress animation along that route.
+_Avoid_: linked XY, vector keyframes
+
+**Motion path**:
+The spatial route followed by a layer's position reference, independent of when the layer reaches each place.
+_Avoid_: trajectory (the observed motion over time), timing curve
+
+**Path progress**:
+Distance travelled along the motion path as a fraction of its length; its animation controls when the layer reaches each place.
+_Avoid_: node index, speed (speed is its rate of change)
+
+**Position baking**:
+An explicit conversion of motion into independent XY keyframes at chosen sampling times; positions between those samples are an approximation.
+_Avoid_: lossless conversion, unlinking
+
 ## Motifs
 
 **Motif**:

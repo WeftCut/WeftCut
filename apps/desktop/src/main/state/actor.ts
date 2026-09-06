@@ -39,6 +39,8 @@ import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resol
 import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
+import { applySetPosition, applyTranslatePath } from './mutations/position'
+import type { PositionAnimation } from '../../shared/position'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 
@@ -1092,6 +1094,16 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // and scale_y entries, and a per-entry check would unlink every linked
         // fan-out write.
         case 'update_layer_params': commit(HISTORY_SUMMARY.layerUpdateParams, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { applyUpdateLayerParams(d, a.layer as Uuid, a.patch as LayerParamsPatch, motifCatalog); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
+        case 'set_position': commit(HISTORY_SUMMARY.layerKeyframeParams, [{kind:'Layer',id:a.layer as Uuid}], {kind:'Layer',id:a.layer as Uuid},d=>applySetPosition(d,a.layer as Uuid,a.position as PositionAnimation,a.geometry_only===true)); return {ok:true,value:null}
+        case 'translate_path': commit(HISTORY_SUMMARY.layerKeyframeParams, [{kind:'Layer',id:a.layer as Uuid}], {kind:'Layer',id:a.layer as Uuid},d=>applyTranslatePath(d,a.layer as Uuid,a.dx as number,a.dy as number)); return {ok:true,value:null}
+        case 'update_path_transform': commit(HISTORY_SUMMARY.layerKeyframeParams,[{kind:'Layer',id:a.layer as Uuid}],{kind:'Layer',id:a.layer as Uuid},d=>{
+          applyTranslatePath(d,a.layer as Uuid,a.dx as number,a.dy as number)
+          for(const [key,track] of a.entries as [string,Animated<number>][]) {
+            if(!['scale_x','scale_y','rotation_deg','anchor_x','anchor_y'].includes(key)) throw new CommandFailure({error:'InvalidArgument',field:'entries',detail:'Only scale, rotation and anchor tracks may accompany path translation'})
+            applyUpdateLayerParamTrack(d,a.layer as Uuid,key,track)
+          }
+          enforceScaleLinkInvariant(d,a.layer as Uuid)
+        }); return {ok:true,value:null}
         case 'update_layer_param_track': commit(HISTORY_SUMMARY.layerKeyframeParam, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { applyUpdateLayerParamTrack(d, a.layer as Uuid, a.param_key as string, a.track as Animated<TrackValue>); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
         case 'update_layer_param_tracks': commit(HISTORY_SUMMARY.layerKeyframeParams, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { for (const [k, t] of a.entries as [string, Animated<TrackValue>][]) applyUpdateLayerParamTrack(d, a.layer as Uuid, k, t); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
         // The cross-LAYER form of the batch above, and the keyframe marquee's op:

@@ -68,8 +68,7 @@ pub fn cue_to_text_params(cue: &Cue, comp_w: u32, comp_h: u32) -> TextParams {
         color: Animated::Static(primary),
         align: align_for(an),
         transform: Transform {
-            x: Animated::Static(x),
-            y: Animated::Static(y),
+            position: crate::state::transform::PositionAnimation::xy(x, y),
             anchor_x: Animated::Static(anchor_x),
             anchor_y: Animated::Static(anchor_y),
             ..Default::default()
@@ -155,7 +154,10 @@ mod tests {
         assert!(p.shadow.is_some());
         // an2: bottom-center → anchor (0.5, 1.0), x = w/2, y = h - 8%
         assert_eq!(static_anchor(&p.transform), (0.5, 1.0));
-        match (&p.transform.x, &p.transform.y) {
+        match (
+            p.transform.position.track("x").unwrap(),
+            p.transform.position.track("y").unwrap(),
+        ) {
             (Animated::Static(x), Animated::Static(y)) => {
                 assert_eq!(*x, 960.0);
                 assert!((*y - (1080.0 - 1080.0 * 0.08)).abs() < 0.5);
@@ -185,7 +187,7 @@ mod tests {
         // heights happen to come out clean (1080 -> 993.6), which is exactly why an
         // unrounded path could ship unnoticed.
         let p = cue_to_text_params(&cue(CueStyle::default()), 1920, 1081);
-        match &p.transform.y {
+        match p.transform.position.track("y").unwrap() {
             Animated::Static(y) => assert_eq!(*y, 994.5),
             _ => panic!("static y expected"),
         }
@@ -200,7 +202,10 @@ mod tests {
             ..CueStyle::default()
         };
         let p = cue_to_text_params(&cue(s), 1920, 1080);
-        match (&p.transform.x, &p.transform.y) {
+        match (
+            p.transform.position.track("x").unwrap(),
+            p.transform.position.track("y").unwrap(),
+        ) {
             (Animated::Static(x), Animated::Static(y)) => assert_eq!((*x, *y), (100.4, 200.1)),
             _ => panic!("static xy expected"),
         }
@@ -228,7 +233,10 @@ mod tests {
         };
         let p = cue_to_text_params(&cue(s), 1920, 1080);
         assert_eq!(static_anchor(&p.transform), (0.0, 1.0));
-        match (&p.transform.x, &p.transform.y) {
+        match (
+            p.transform.position.track("x").unwrap(),
+            p.transform.position.track("y").unwrap(),
+        ) {
             (Animated::Static(x), Animated::Static(y)) => assert_eq!((*x, *y), (100.0, 200.0)),
             _ => panic!("static xy expected"),
         }

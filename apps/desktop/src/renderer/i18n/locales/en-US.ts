@@ -1,6 +1,16 @@
 // English (US) is the source locale. New keys land here first, then propagate
 // to other locales. Keep keys grouped by feature area, not by component.
 const enUS = {
+  motion_path: {
+    start_frame:'Start frame (local)', end_frame:'End frame (inclusive)', every_frames:'Sample every N frames', samples_used:'samples', range_error:'The range must stay within this clip.',
+    create:'Create motion path', edit:'Edit path', show:'Show trajectory', done:'Done',
+    add:'Add point', curve:'Line / curve', remove:'Remove point',
+    anchor:'The marked anchor follows the path. Select a point to edit its handles.',
+    corner:'The marked position reference (unrotated top-left) follows the path.',
+    to_path:'Convert XY to path…', to_xy:'Bake to XY…', preview:'Preview conversion', apply:'Apply conversion', cancel:'Cancel',
+    samples:'Path samples', error:'Measured position error: {{error}} px ({{count}} checks)',
+    conversion_note:'Only the chosen local frame range is retained; outside it the result holds. XY conversion creates an editable polyline. Error is measured, not a continuous-time guarantee. Baking is exact at sampled frames, approximate between them.',
+  },
   app: {
     title: "WeftCut",
     core_status: "core: {{status}}",
@@ -1626,6 +1636,8 @@ const enUS = {
     },
   },
   property_panel: {
+    // Spatial progress is a scalar track, displayed as a percentage.
+    path_progress: 'Path progress (%)',
     heading: "Properties",
     empty: "Select a layer to edit its properties.",
     envelope: "Layer",

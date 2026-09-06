@@ -23,6 +23,7 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 // links the leaf as an rlib and calls the functions below directly).
 #[cfg(target_arch = "wasm32")]
 mod wasm;
+pub mod path;
 
 // ===========================================================================
 // Frame grid. Time is `i64` microseconds (the napi crate aliases `TimeUs = i64`

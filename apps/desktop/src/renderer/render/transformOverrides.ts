@@ -55,6 +55,7 @@ const listeners = new Set<() => void>();
 function emit(): void {
   for (const l of listeners) l();
 }
+export function invalidatePositionPreview():void { emit(); }
 
 export function setTransformOverride(layerId: string, delta: TransformDelta): void {
   const prev = deltas.get(layerId);

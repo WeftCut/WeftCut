@@ -315,8 +315,9 @@ mod tests {
     /// two sides already differ by design (Rust emits `Option` media-metadata
     /// fields TS omits, and its timestamps drop the `.000` TS writes).
     #[test]
-    fn ts_fixture_v1_deserialises_and_round_trips() {
-        let text = include_str!("../../../fixtures/projects/v1.json");
+    fn ts_fixture_v2_deserialises_and_round_trips() {
+        // The TS load path upgrades v1 before it crosses the native seam.
+        let text = include_str!("../../../fixtures/projects/v2.json");
         let p: Project = serde_json::from_str(text).expect("fixture deserialises");
         assert_eq!(p.compositions.len(), 2, "root + one pre-composed Group");
         assert!(p.compositions.contains_key(&p.root_id));

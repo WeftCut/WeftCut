@@ -71,7 +71,7 @@ export function cueToTextParams(cue: Cue, compW: number, compH: number): TextPar
     font: { family: s.font_family ?? DEFAULT_CAPTION_FONT_FAMILY, size_px: size, weight: s.bold ? 700 : 400, italic: s.italic ?? false },
     color: { mode: 'Static', value: primary },
     align: alignFor(an),
-    transform: { ...defaultTransform(), x: { mode: 'Static', value: x }, y: { mode: 'Static', value: y }, anchor_x: { mode: 'Static', value: anchorX }, anchor_y: { mode: 'Static', value: anchorY } },
+    transform: { ...defaultTransform(), position: { mode: 'XY', x: { mode: 'Static', value: x }, y: { mode: 'Static', value: y } }, anchor_x: { mode: 'Static', value: anchorX }, anchor_y: { mode: 'Static', value: anchorY } },
     opacity: { mode: 'Static', value: 1 },
     shadow: { color: BLACK, offset_x: shadowOff, offset_y: shadowOff, blur: shadowOff },
     outline: { color: s.outline_color ?? BLACK, width: outlineW },

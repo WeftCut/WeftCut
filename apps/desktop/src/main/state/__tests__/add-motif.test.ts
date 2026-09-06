@@ -74,8 +74,8 @@ describe('actor.command("add_motif") — no track_id', () => {
     expect(p.src_in_us).toBe(0)
     // identity transform
     expect(p.transform).toEqual({
-      x: { mode: 'Static', value: 0 },
-      y: { mode: 'Static', value: 0 },
+      position: { mode: 'XY' as const, x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 } },
+
       scale_x: { mode: 'Static', value: 1 },
       scale_y: { mode: 'Static', value: 1 },
       rotation_deg: { mode: 'Static', value: 0 },

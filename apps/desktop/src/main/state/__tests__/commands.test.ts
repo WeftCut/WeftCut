@@ -45,7 +45,7 @@ describe('PRODUCTION_OPS', () => {
       'separate_audio_to_new_track', 'set_composition', 'set_role_gain', 'set_scale_linked', 'split_layer_linked',
       'trim_layer', 'update_effect', 'update_layer', 'update_layer_param_track', 'update_marker',
       'update_layer_param_tracks', 'update_layer_params', 'update_param_tracks_multi', 'update_project_settings',
-      'update_role_flags', 'update_track_flags', 'update_transition',
+      'update_role_flags', 'update_track_flags', 'update_transition', 'set_position', 'translate_path', 'update_path_transform',
     ].sort()
     expect([...PRODUCTION_OPS].sort()).toEqual(expected)
   })
@@ -192,7 +192,7 @@ describe('prodTextParams', () => {
     // x/y are the ANCHOR point for Text, so half the composition plus the 0.5
     // default anchor is the layer centred; a 0/0 default would leave three
     // quarters of it off-canvas at the top-left corner.
-    expect([p.transform.x, p.transform.y]).toEqual([{ mode: 'Static', value: 960 }, { mode: 'Static', value: 540 }])
+    expect([p.transform.position.x, p.transform.position.y]).toEqual([{ mode: 'Static', value: 960 }, { mode: 'Static', value: 540 }])
     expect([p.box_w, p.box_h, p.valign]).toEqual([null, null, 'Middle'])
   })
 

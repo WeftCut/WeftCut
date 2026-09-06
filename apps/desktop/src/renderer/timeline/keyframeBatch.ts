@@ -1,3 +1,4 @@
+import { readPositionMode } from '../keyframe/descriptors';
 // The one funnel every MULTI-target keyframe operation goes through: group a
 // selection by (layerId, paramKey), fold each group's edit into one next
 // `AnimTrack`, and hand the whole set to `updateParamTracksMulti` so a selection
@@ -166,7 +167,7 @@ export function selectionGroups(args: {
     const track = readParamTrack(layer.params, group.paramKey);
     if (track === null || track.mode !== "Keyframed") continue;
     const fallback =
-      animatableParams(layer.kind).find((d) => d.paramKey === group.paramKey)?.fallback ?? 0;
+      animatableParams(layer.kind, false, readPositionMode(layer.params)).find((d) => d.paramKey === group.paramKey)?.fallback ?? 0;
     groups.push({ ...group, layer, track, fallback });
   }
   return groups;

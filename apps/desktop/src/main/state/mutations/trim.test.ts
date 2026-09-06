@@ -21,7 +21,7 @@ function video(id: string, media: string, t0: number, t1: number, srcIn: number,
   const params: LayerParams = {
     kind: 'VideoClip', media, src_in_us: srcIn, src_out_us: srcOut,
     transform: {
-      x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 },
+      position: { mode: 'XY' as const, x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 } },
       scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 },
       rotation_deg: { mode: 'Static', value: 0 }, anchor_x: { mode: 'Static', value: 0.5 }, anchor_y: { mode: 'Static', value: 0.5 }, scale_linked: true,
     },

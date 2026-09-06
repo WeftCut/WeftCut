@@ -1,3 +1,4 @@
+import { readPositionMode } from './descriptors';
 // The app's ONE copy slot, holding either a clip or a set of keyframes.
 //
 // One slot rather than two, because Ctrl+C and Ctrl+V are one pair of keys: two
@@ -146,7 +147,7 @@ export function pasteEntriesFor(args: {
   // does to the scale pair below.
   const byAddress = new Map<string, ParamTrackEntry>();
   for (const layer of args.layers) {
-    const carried = new Set(animatableParams(layer.kind).map((d) => d.paramKey));
+    const carried = new Set(animatableParams(layer.kind, false, readPositionMode(layer.params)).map((d) => d.paramKey));
     for (const group of args.groups) {
       if (!carried.has(group.paramKey)) {
         skipped.add(group.paramKey);

@@ -29,7 +29,7 @@ describe('applyUpdateLayerParams (field merge)', () => {
     const id = applyAddLayer(p, g, root(p).tracks[1].id, textParamsDefault('hi', root(p)), 0, 1_000_000)
     applyUpdateLayerParams(p, id, { kind: 'Text', content: 'world', opacity: 0.5, x: 10 }, new MotifCatalog())
     const t = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Text' }>
-    expect([t.content, t.opacity, t.transform.x]).toEqual(['world', { mode: 'Static', value: 0.5 }, { mode: 'Static', value: 10 }])
+    expect([t.content, t.opacity, t.transform.position.x]).toEqual(['world', { mode: 'Static', value: 0.5 }, { mode: 'Static', value: 10 }])
   })
   it('Color patch sets color + width', () => {
     const g = seededGen(); const p = blankProject(g, 'p')
@@ -386,7 +386,7 @@ describe('animatable params are writable on both sides of the IPC boundary', () 
 // local helper for the hand-built Motif layer (mirrors add.ts defaultTransform)
 function textParamsDefaultTransform() {
   const s = (v: number) => ({ mode: 'Static' as const, value: v })
-  return { x: s(0), y: s(0), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor_x: s(0.5), anchor_y: s(0.5), scale_linked: true }
+  return { position: { mode: 'XY' as const, x: s(0), y: s(0) },  scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor_x: s(0.5), anchor_y: s(0.5), scale_linked: true }
 }
 
 describe('applyUpdateLayerParams — Motif content-window clamp', () => {
@@ -509,7 +509,7 @@ describe('authored precision at the write seam', () => {
     applyUpdateLayerParams(p, id, { kind: 'VideoClip',
       x: 10.373737373737374, y: -20.9499, scale_x: 1.0416666, scale_y: 0.98765 }, new MotifCatalog())
     const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
-    expect([staticOf(v.transform.x), staticOf(v.transform.y)]).toEqual([10.4, -20.9])
+    expect([staticOf(v.transform.position.x), staticOf(v.transform.position.y)]).toEqual([10.4, -20.9])
     expect([staticOf(v.transform.scale_x), staticOf(v.transform.scale_y)]).toEqual([1.042, 0.988])
   })
 
@@ -517,7 +517,7 @@ describe('authored precision at the write seam', () => {
     const { p, id } = visualLayer()
     applyUpdateLayerParams(p, id, { kind: 'VideoClip', x: 1921 / 2 }, new MotifCatalog())
     const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
-    expect(staticOf(v.transform.x)).toBe(960.5)
+    expect(staticOf(v.transform.position.x)).toBe(960.5)
   })
 
   it('refuses an out-of-range opacity and writes NOTHING', () => {
@@ -527,7 +527,7 @@ describe('authored precision at the write seam', () => {
     // The whole point of resolving every numeric before the first assignment: a
     // refused patch leaves the project byte-identical, so `x` never landed.
     const v = layerOf(p, id).params as Extract<Layer['params'], { kind: 'VideoClip' }>
-    expect(staticOf(v.transform.x)).toBe(0)
+    expect(staticOf(v.transform.position.x)).toBe(0)
   })
 
   it('accepts an opacity that rounds INTO range', () => {
@@ -610,7 +610,7 @@ describe('authored precision at the write seam', () => {
       { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: 20.982, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } },
     ] })
     const t = layerOf(p, id).params as TextParams
-    expect((t.transform.x.value as { value: number }[]).map((k) => k.value)).toEqual([10.4, 21])
+    expect((t.transform.position.x!.value as { value: number }[]).map((k) => k.value)).toEqual([10.4, 21])
   })
 
   it('refuses an out-of-range keyframe BEFORE the lazy effect-slot insert', () => {
@@ -642,7 +642,7 @@ describe('applyUpdateLayerParams — a Group layer', () => {
     const { p, refLayerId } = groupedProject()
     applyUpdateLayerParams(p, refLayerId, { kind: 'CompositionRef', x: 12, scale_x: 2, opacity: 0.25, src_in_us: 100_000 }, new MotifCatalog())
     const g = refOf(p, refLayerId)
-    expect([g.transform.x, g.transform.scale_x, g.opacity, g.src_in_us]).toEqual([
+    expect([g.transform.position.x, g.transform.scale_x, g.opacity, g.src_in_us]).toEqual([
       { mode: 'Static', value: 12 }, { mode: 'Static', value: 2 }, { mode: 'Static', value: 0.25 }, 100_000,
     ])
   })

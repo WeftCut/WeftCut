@@ -151,6 +151,9 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   groups_rename: (a) => ({ op: 'groups_rename', args: { composition: a.compositionId, label: a.label ?? null } }),
   compositions_delete: (a) => ({ op: 'compositions_delete', args: { composition: a.compositionId } }),
   update_layer_params: (a) => ({ op: 'update_layer_params', args: { layer: a.layerId, patch: a.patch } }),
+  set_position: (a) => ({op:'set_position',args:{layer:a.layerId,position:a.position,geometry_only:a.geometryOnly===true}}),
+  translate_path: (a) => ({op:'translate_path',args:{layer:a.layerId,dx:a.dx,dy:a.dy}}),
+  update_path_transform: (a) => ({op:'update_path_transform',args:{layer:a.layerId,dx:a.dx,dy:a.dy,entries:a.entries}}),
   update_layer_param_track: (a) => ({ op: 'update_layer_param_track', args: { layer: a.layerId, param_key: a.paramKey, track: a.track } }),
   update_layer_param_tracks: (a) => ({ op: 'update_layer_param_tracks', args: { layer: a.layerId, entries: a.entries } }),
   // Cross-layer batch: the layer id rides INSIDE each entry, so there is no
@@ -220,6 +223,8 @@ export const PRODUCTION_OPS = new Set<string>([
   'links_create', 'links_dissolve', 'links_rename',
   'groups_create', 'groups_add_members', 'move_layers_to_composition', 'groups_ungroup', 'groups_rename', 'compositions_delete', 'add_group_layer',
   'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks', 'update_param_tracks_multi', 'set_scale_linked',
+  'set_position', 'translate_path',
+  'update_path_transform',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'set_composition', 'fit_composition_to_layers',
   'update_track_flags', 'rename_track', 'set_role_gain', 'update_role_flags',

@@ -90,7 +90,12 @@ export const COLOR_FILL: RgbaParamDescriptor = { valueKind: "rgba", paramKey: "c
 /// `scaleLinked` collapses the scale pair into the composite SCALE descriptor —
 /// pass the layer's `scale_linked` so every consumer (inspector rows, timeline
 /// lanes, curve graph, search) shows ONE Scale for a linked layer.
-export function animatableParams(kind: string, scaleLinked = false): ParamDescriptor[] {
+export const PATH_PROGRESS: NumberParamDescriptor = {valueKind:'number',paramKey:'path_progress',labelKey:'property_panel.path_progress',fallback:0,step:0.01,widgets:['number']};
+export function readPositionMode(params: LayerSummary['params']): 'XY'|'Path' {
+  return 'position' in params && params.position?.mode==='Path'?'Path':'XY';
+}
+export function animatableParams(kind: string, scaleLinked = false, positionMode: 'XY'|'Path' = 'XY'): ParamDescriptor[] {
+  const position = positionMode==='Path'?[PATH_PROGRESS]:[X,Y];
   switch (kind) {
     case "VideoClip":
     case "Motif":
@@ -100,16 +105,16 @@ export function animatableParams(kind: string, scaleLinked = false): ParamDescri
     // it lands on exactly the same rows as a video clip minus those.
     case "CompositionRef":
       return scaleLinked
-        ? [X, Y, SCALE, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY]
-        : [X, Y, SCALE_X, SCALE_Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY];
+        ? [...position, SCALE, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY]
+        : [...position, SCALE_X, SCALE_Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY];
     // Text is the transform set plus the glyph colour, which sits after opacity
     // for the same reason opacity is last: it is the appearance of the layer,
     // not its placement. The shadow and outline colours are static fields, not
     // tracks, so they carry no descriptor.
     case "Text":
       return scaleLinked
-        ? [X, Y, SCALE, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, COLOR_TEXT]
-        : [X, Y, SCALE_X, SCALE_Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, COLOR_TEXT];
+        ? [...position, SCALE, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, COLOR_TEXT]
+        : [...position, SCALE_X, SCALE_Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, COLOR_TEXT];
     case "Audio":
       return [GAIN_DB, PAN];
     // A Color layer's fill is its only animatable param: it has no transform
@@ -151,6 +156,7 @@ export function readParamTrack(
   params: LayerSummary["params"],
   paramKey: string,
 ): AnimTrack<number> | null {
+  if(readPositionMode(params)==='Path' && (paramKey==='x'||paramKey==='y')) return null;
   const v = (params as unknown as Record<string, unknown>)[paramKey];
   if (v && typeof v === "object" && "mode" in (v as object)) {
     return v as AnimTrack<number>;
@@ -224,6 +230,7 @@ export interface ParamPrecision {
  *  claims to align. `d = 1` is the only value that both expresses `.5` and
  *  survives a decimal formatter. */
 export const PARAM_PRECISION: Readonly<Record<string, ParamPrecision>> = {
+  path_progress: { d: 8 },
   x: { d: 1 },
   y: { d: 1 },
   scale_x: { d: 3 },

@@ -30,17 +30,104 @@ use crate::{
 /// handful per property). LANDMINE: this caps the wasm PREVIEW only — native
 /// export's `value_at` evaluates the full keyframe vector, so a >MAXKF property
 /// would make preview diverge from export. TS `loadTrack` (MAX_KEYFRAMES) warns.
-const MAXKF: usize = 256;
+const MAXKF: usize = 4096;
+
+static mut PATH_NODES: [crate::path::Node; crate::path::MAX_NODES] =
+    [crate::path::Node::ZERO; crate::path::MAX_NODES];
+static mut PATH_SAMPLES: [[f64; 3]; crate::path::MAX_SAMPLES] =
+    [[0.0; 3]; crate::path::MAX_SAMPLES];
+static mut PATH_COUNT: usize = 0;
+static mut PATH_START: crate::path::Point = crate::path::Point::ZERO;
+static mut PATH_END: crate::path::Point = crate::path::Point::ZERO;
+
+#[no_mangle]
+pub extern "C" fn path_node(
+    i: usize,
+    x: f64,
+    y: f64,
+    ix: f64,
+    iy: f64,
+    ox: f64,
+    oy: f64,
+    cubic: i32,
+) {
+    if i >= crate::path::MAX_NODES {
+        return;
+    }
+    unsafe {
+        PATH_NODES[i] = crate::path::Node {
+            point: crate::path::Point { x, y },
+            incoming: crate::path::Point { x: ix, y: iy },
+            outgoing: crate::path::Point { x: ox, y: oy },
+            cubic: cubic != 0,
+        };
+    }
+}
+#[no_mangle]
+pub extern "C" fn path_compile(n: usize) -> usize {
+    if n == 0 || n > crate::path::MAX_NODES {
+        return 0;
+    }
+    unsafe {
+        let nodes = core::slice::from_raw_parts(core::ptr::addr_of!(PATH_NODES).cast(), n);
+        PATH_COUNT = 0;
+        let (start, end) = crate::path::compile(nodes, |p| {
+            PATH_SAMPLES[PATH_COUNT] = p;
+            PATH_COUNT += 1;
+        });
+        PATH_START = start;
+        PATH_END = end;
+        PATH_COUNT
+    }
+}
+#[no_mangle]
+pub extern "C" fn path_samples_ptr() -> *mut f64 {
+    core::ptr::addr_of_mut!(PATH_SAMPLES).cast()
+}
+#[no_mangle]
+pub extern "C" fn path_direction(axis: usize) -> f64 {
+    unsafe {
+        match axis {
+            0 => PATH_START.x,
+            1 => PATH_START.y,
+            2 => PATH_END.x,
+            _ => PATH_END.y,
+        }
+    }
+}
+#[no_mangle]
+pub extern "C" fn path_activate(n: usize, sx: f64, sy: f64, ex: f64, ey: f64) {
+    unsafe {
+        PATH_COUNT = n.min(crate::path::MAX_SAMPLES);
+        PATH_START = crate::path::Point { x: sx, y: sy };
+        PATH_END = crate::path::Point { x: ex, y: ey };
+    }
+}
+#[no_mangle]
+pub extern "C" fn path_eval(progress: f64, axis: usize) -> f64 {
+    unsafe {
+        let samples =
+            core::slice::from_raw_parts(core::ptr::addr_of!(PATH_SAMPLES).cast(), PATH_COUNT);
+        let p = crate::path::evaluate(samples, progress, PATH_START, PATH_END);
+        if axis == 0 {
+            p.x
+        } else {
+            p.y
+        }
+    }
+}
 
 // Resident SCALAR track: one slot per `Kf` field, parallel arrays so each
 // `set_kf` call stores primitives only.
-static mut T: [i64; MAXKF] = [0; MAXKF];
-static mut V: [f64; MAXKF] = [0.0; MAXKF];
-static mut OX: [f64; MAXKF] = [0.0; MAXKF];
-static mut OY: [f64; MAXKF] = [0.0; MAXKF];
-static mut IX: [f64; MAXKF] = [0.0; MAXKF];
-static mut IY: [f64; MAXKF] = [0.0; MAXKF];
-static mut SEG: [Segment; MAXKF] = [Segment::Linear; MAXKF];
+// Store the leaf's records at upload time. Increasing the baking capacity must
+// not initialize/copy MAXKF records on every scalar evaluation of a tiny track.
+static mut KEYFRAMES: [Kf; MAXKF] = [Kf {
+    t_us: 0,
+    value: 0.0,
+    out: (0.0, 0.0),
+    in_: (0.0, 0.0),
+    segment: Segment::Spline,
+}; MAXKF];
 static mut N: usize = 0;
 static mut EX: Extrapolation = Extrapolation::HOLD;
 
@@ -48,13 +135,18 @@ static mut EX: Extrapolation = Extrapolation::HOLD;
 // `loadColorTrack` in the TS layer caches it under its own handle). Values are
 // packed RGBA8 (`(r<<24)|(g<<16)|(b<<8)|a`, r in the HIGH byte) so a color
 // crosses the scalars-only ABI as one i32 — see the module header.
-static mut TC: [i64; MAXKF] = [0; MAXKF];
-static mut VC: [u32; MAXKF] = [0; MAXKF];
-static mut OXC: [f64; MAXKF] = [0.0; MAXKF];
-static mut OYC: [f64; MAXKF] = [0.0; MAXKF];
-static mut IXC: [f64; MAXKF] = [0.0; MAXKF];
-static mut IYC: [f64; MAXKF] = [0.0; MAXKF];
-static mut SEGC: [Segment; MAXKF] = [Segment::Linear; MAXKF];
+static mut COLOR_KEYFRAMES: [Kf<Rgba8>; MAXKF] = [Kf {
+    t_us: 0,
+    value: Rgba8 {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 0,
+    },
+    out: (0.0, 0.0),
+    in_: (0.0, 0.0),
+    segment: Segment::Spline,
+}; MAXKF];
 static mut NC: usize = 0;
 static mut EXC: Extrapolation = Extrapolation::HOLD;
 
@@ -223,13 +315,13 @@ pub extern "C" fn set_kf(
     let segment = decode_segment(seg, s0, s1, s2);
     let i = (i as usize).min(MAXKF - 1);
     unsafe {
-        T[i] = t_us as i64;
-        V[i] = value;
-        OX[i] = out_x;
-        OY[i] = out_y;
-        IX[i] = in_x;
-        IY[i] = in_y;
-        SEG[i] = segment;
+        KEYFRAMES[i] = Kf {
+            t_us: t_us as i64,
+            value,
+            out: (out_x, out_y),
+            in_: (in_x, in_y),
+            segment,
+        };
     }
 }
 
@@ -237,24 +329,10 @@ pub extern "C" fn set_kf(
 #[no_mangle]
 pub extern "C" fn eval(t_us: f64, default: f64) -> f64 {
     unsafe {
-        let n = N;
-        let mut buf: [Kf; MAXKF] = [Kf {
-            t_us: 0,
-            value: 0.0,
-            out: (0.0, 0.0),
-            in_: (0.0, 0.0),
-            segment: Segment::Linear,
-        }; MAXKF];
-        for i in 0..n {
-            buf[i] = Kf {
-                t_us: T[i],
-                value: V[i],
-                out: (OX[i], OY[i]),
-                in_: (IX[i], IY[i]),
-                segment: SEG[i],
-            };
-        }
-        crate::eval::<f64>(&buf[..n], EX, t_us as i64, default)
+        // N is clamped at upload; no callback or mutation can overlap this
+        // synchronous read in a single-threaded Wasm instance.
+        let keys = core::slice::from_raw_parts(core::ptr::addr_of!(KEYFRAMES).cast(), N);
+        crate::eval::<f64>(keys, EX, t_us as i64, default)
     }
 }
 
@@ -293,13 +371,19 @@ pub extern "C" fn set_kf_rgba(
     let segment = decode_segment(seg, s0, s1, s2);
     let i = (i as usize).min(MAXKF - 1);
     unsafe {
-        TC[i] = t_us as i64;
-        VC[i] = packed as u32;
-        OXC[i] = out_x;
-        OYC[i] = out_y;
-        IXC[i] = in_x;
-        IYC[i] = in_y;
-        SEGC[i] = segment;
+        let u = packed as u32;
+        COLOR_KEYFRAMES[i] = Kf {
+            t_us: t_us as i64,
+            value: Rgba8 {
+                r: (u >> 24) as u8,
+                g: (u >> 16) as u8,
+                b: (u >> 8) as u8,
+                a: u as u8,
+            },
+            out: (out_x, out_y),
+            in_: (in_x, in_y),
+            segment,
+        };
     }
 }
 
@@ -310,36 +394,15 @@ pub extern "C" fn set_kf_rgba(
 #[no_mangle]
 pub extern "C" fn eval_rgba_packed(t_us: f64, default_packed: i32) -> i32 {
     unsafe {
-        let n = NC;
         let unpack = |u: u32| Rgba8 {
             r: (u >> 24) as u8,
             g: (u >> 16) as u8,
             b: (u >> 8) as u8,
             a: u as u8,
         };
-        let mut buf: [Kf<Rgba8>; MAXKF] = [Kf {
-            t_us: 0,
-            value: Rgba8 {
-                r: 0,
-                g: 0,
-                b: 0,
-                a: 0,
-            },
-            out: (0.0, 0.0),
-            in_: (0.0, 0.0),
-            segment: Segment::Linear,
-        }; MAXKF];
-        for i in 0..n {
-            buf[i] = Kf {
-                t_us: TC[i],
-                value: unpack(VC[i]),
-                out: (OXC[i], OYC[i]),
-                in_: (IXC[i], IYC[i]),
-                segment: SEGC[i],
-            };
-        }
         let def = unpack(default_packed as u32);
-        let out = crate::eval::<Rgba8>(&buf[..n], EXC, t_us as i64, def);
+        let keys = core::slice::from_raw_parts(core::ptr::addr_of!(COLOR_KEYFRAMES).cast(), NC);
+        let out = crate::eval::<Rgba8>(keys, EXC, t_us as i64, def);
         (((out.r as u32) << 24) | ((out.g as u32) << 16) | ((out.b as u32) << 8) | (out.a as u32))
             as i32
     }

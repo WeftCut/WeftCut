@@ -5,10 +5,11 @@ import { authoredExtentPx, authoredValue, quantizeTrack } from '../quantize'
 import { checkTrackLock, applyDurationAutofit, requireLayer } from './helpers'
 import { normalizeKeyframes } from './animated'
 import { solveAutoTangents } from '../../../shared/tangents'
+import { positionTrack, setPositionTrack } from '../../../shared/position'
 // `isColorParam` is the ONE home of "which value type this param key
 // carries" — in the shared record module, so this lens layer and the MCP
 // parser read the same predicate and neither depends on the other.
-import { isColorParam, type TrackValue } from '../../../shared/keyframe'
+import { isColorParam, MAX_RESIDENT_KEYFRAMES, type TrackValue } from '../../../shared/keyframe'
 import type { MotifCatalog } from '../../../shared/motifs/catalog'
 import { resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
 
@@ -101,6 +102,7 @@ const BLEND_MODES: readonly BlendMode[] = ['Normal', 'Multiply', 'Screen', 'Over
  *  overwrites any keyframe track). Motif props merge field-wise (never replace). */
 export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
   const p = layer.params
+  if ('transform' in p && p.transform.position.mode === 'Path' && ('x' in patch || 'y' in patch)) throw new CommandFailure({ error:'InvalidArgument',field:'position',detail:'This layer follows a path. Translate or edit its path, or explicitly bake to XY.' })
   if (p.kind !== patch.kind) {
     throw new CommandFailure({ error: 'LayerParamsKindMismatch', layer: layer.id, actual: p.kind, patch: patch.kind })
   }
@@ -179,8 +181,8 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (patch.font_family !== undefined) t.font.family = patch.font_family
       if (patch.font_size_px !== undefined) t.font.size_px = patch.font_size_px
       if (patch.color !== undefined) t.color = stat(patch.color)
-      if (xP !== undefined) t.transform.x = stat(xP)
-      if (yP !== undefined) t.transform.y = stat(yP)
+      if (xP !== undefined) setPositionTrack(t.transform.position, 'x', stat(xP))
+      if (yP !== undefined) setPositionTrack(t.transform.position, 'y', stat(yP))
       if (opacityP !== undefined) t.opacity = stat(opacityP)
       if (patch.align !== undefined) t.align = patch.align
       if (patch.valign !== undefined) t.valign = patch.valign
@@ -205,8 +207,8 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       }
       if (patch.src_in_us !== undefined) v.src_in_us = patch.src_in_us
       if (patch.src_out_us !== undefined) v.src_out_us = patch.src_out_us
-      if (a.x !== undefined) v.transform.x = stat(a.x)
-      if (a.y !== undefined) v.transform.y = stat(a.y)
+      if (a.x !== undefined) setPositionTrack(v.transform.position, 'x', stat(a.x))
+      if (a.y !== undefined) setPositionTrack(v.transform.position, 'y', stat(a.y))
       if (a.scale_x !== undefined) v.transform.scale_x = stat(a.scale_x)
       if (a.scale_y !== undefined) v.transform.scale_y = stat(a.scale_y)
       if (a.opacity !== undefined) v.opacity = stat(a.opacity)
@@ -220,8 +222,8 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
     case 'ImageOverlay': {
       const i = p as ImageOverlayParams
       const a = authoredTransform(patch)
-      if (a.x !== undefined) i.transform.x = stat(a.x)
-      if (a.y !== undefined) i.transform.y = stat(a.y)
+      if (a.x !== undefined) setPositionTrack(i.transform.position, 'x', stat(a.x))
+      if (a.y !== undefined) setPositionTrack(i.transform.position, 'y', stat(a.y))
       if (a.scale_x !== undefined) i.transform.scale_x = stat(a.scale_x)
       if (a.scale_y !== undefined) i.transform.scale_y = stat(a.scale_y)
       if (a.opacity !== undefined) i.opacity = stat(a.opacity)
@@ -232,8 +234,8 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
     case 'Motif': {
       const m = p as MotifParams
       const a = authoredTransform(patch)
-      if (a.x !== undefined) m.transform.x = stat(a.x)
-      if (a.y !== undefined) m.transform.y = stat(a.y)
+      if (a.x !== undefined) setPositionTrack(m.transform.position, 'x', stat(a.x))
+      if (a.y !== undefined) setPositionTrack(m.transform.position, 'y', stat(a.y))
       if (a.scale_x !== undefined) m.transform.scale_x = stat(a.scale_x)
       if (a.scale_y !== undefined) m.transform.scale_y = stat(a.scale_y)
       if (a.opacity !== undefined) m.opacity = stat(a.opacity)
@@ -254,8 +256,8 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       }
       if (patch.src_in_us !== undefined) g.src_in_us = patch.src_in_us
       if (patch.src_out_us !== undefined) g.src_out_us = patch.src_out_us
-      if (a.x !== undefined) g.transform.x = stat(a.x)
-      if (a.y !== undefined) g.transform.y = stat(a.y)
+      if (a.x !== undefined) setPositionTrack(g.transform.position, 'x', stat(a.x))
+      if (a.y !== undefined) setPositionTrack(g.transform.position, 'y', stat(a.y))
       if (a.scale_x !== undefined) g.transform.scale_x = stat(a.scale_x)
       if (a.scale_y !== undefined) g.transform.scale_y = stat(a.scale_y)
       if (a.opacity !== undefined) g.opacity = stat(a.opacity)
@@ -383,6 +385,7 @@ function f64Lens(layer: Layer, key: string): { set(v: Animated<number>): void } 
   // opacity. A Group joins by having exactly that pair and nothing else
   // animatable (ADR 0052 §4), so it needs no arm of its own here.
   if (key === 'opacity') return { set: (v) => { p.opacity = v } }
+  if (key === 'x' || key === 'y' || key === 'path_progress') return positionTrack(p.transform.position, key) ? { set: (v) => { setPositionTrack(p.transform.position, key, v) } } : null
   if (TRANSFORM_F64_KEYS.includes(key)) return { set: (v) => { (p.transform as unknown as Record<string, Animated<number>>)[key] = v } }
   return null
 }
@@ -407,6 +410,7 @@ export function resolveAnimatedF64(layer: Layer, key: string): Animated<number> 
   // VideoClip | ImageOverlay | Text | Motif | CompositionRef — transform +
   // opacity, the read sibling of `f64Lens`' one arm for all five.
   if (key === 'opacity') return p.opacity
+  if (key === 'x' || key === 'y' || key === 'path_progress') return positionTrack(p.transform.position, key)
   if (TRANSFORM_F64_KEYS.includes(key)) return (p.transform as unknown as Record<string, Animated<number>>)[key] ?? null
   return null
 }
@@ -542,6 +546,8 @@ export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: strin
     return
   }
   const scalar = track as Animated<number>
+  if (paramKey==='path_progress' && scalar.mode==='Keyframed' && scalar.value.length>MAX_RESIDENT_KEYFRAMES) throw new CommandFailure({error:'InvalidArgument',field:'path_progress',detail:`Path progress supports at most ${MAX_RESIDENT_KEYFRAMES} keys`})
+  if (paramKey==='path_progress' && scalar.mode==='Keyframed' && ![scalar.extrapolate.before,scalar.extrapolate.after].every(v=>['Hold','Loop','PingPong'].includes(v))) throw new CommandFailure({error:'InvalidArgument',field:'extrapolate',detail:'Path progress supports Hold, Loop and PingPong'})
   quantizeTrack(paramKey, scalar)
   // Tangents, after the values: every Auto side and every Smooth pair of Free
   // sides is solved HERE — after snap / sort / dedupe / quantize, so the stored

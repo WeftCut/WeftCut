@@ -603,7 +603,29 @@ const pingPongRotation: Scenario = {
 }
 
 // ── The gate ─────────────────────────────────────────────────────────────────
-const SCENARIOS: Scenario[] = [autoX, loopOpacity, pingPongRotation]
+const motionPath: Scenario = {
+  name: 'motion-path',
+  times: { '0.0s': 0, '0.5s': 500000, '1.0s': 1000000, '1.5s': 1500000, '2.5s': 2500000 },
+  async author(page) {
+    const group = await addRedGroup(page, SQUARE, SQUARE)
+    await invokeCmd(page, 'set_position', { layerId: group.layerId, position: {
+      mode: 'Path',
+      path: { nodes: [120, 180, 420].map((x, i) => ({
+        id: `node-${i}`, point: { x, y: SQUARE_Y }, inHandle: { x: -20, y: 0 }, outHandle: { x: 20, y: 0 }, segment: i === 0 ? 'Cubic' : 'Line',
+      })) },
+      progress: { mode: 'Keyframed', value: [freeKey(0, 0, LINEAR), freeKey(2000000, 1, LINEAR)], extrapolate: { before: 'Hold', after: 'PingPong' } },
+    } })
+  },
+  check(timeName, frame) {
+    const run = squareRun(frame)
+    if (typeof run === 'string') return [run]
+    const progress = Number.parseFloat(timeName) / 2
+    const want = 120 + 300 * (progress <= 1 ? progress : 2 - progress) + SQUARE / 2
+    return Math.abs(run.centre - want) <= CENTRE_TOL && Math.abs(run.length - SQUARE) <= 4 ? [] : [`path square centre ${run.centre}, length ${run.length}; expected ${want}, ${SQUARE}`]
+  },
+  compare: autoX.compare,
+}
+const SCENARIOS: Scenario[] = [autoX, loopOpacity, pingPongRotation, motionPath]
 
 for (const sc of SCENARIOS) {
   test(`keyframe conformance: ${sc.name} — preview and export pass identical assertions at the sampled frames`, async () => {

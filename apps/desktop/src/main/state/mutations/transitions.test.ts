@@ -91,7 +91,7 @@ describe('extendLayerTEnd / shrinkLayerTEnd', () => {
       id: 'x', label: null, t_start_us: 0, t_end_us: 2_000_000, enabled: true, locked: false,
       metadata: {}, effects: [],
       params: { kind: 'VideoClip', media: 'm', src_in_us: 0, src_out_us: 2_000_000,
-        transform: { x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 },
+        transform: { position: { mode: 'XY' as const, x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 } },
           scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 },
           rotation_deg: { mode: 'Static', value: 0 }, anchor_x: { mode: 'Static', value: 0.5 }, anchor_y: { mode: 'Static', value: 0.5 }, scale_linked: true },
         opacity: { mode: 'Static', value: 1 }, crop: null, flip_h: false, flip_v: false,

@@ -43,7 +43,7 @@ describe('animated traversal', () => {
     const text: LayerParams = {
       kind: 'Text', content: 'x', font: {} as any, color: { mode: 'Static', value: { r: 0, g: 0, b: 0, a: 255 } },
       align: 'left' as any,
-      transform: { x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 }, scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor_x: { mode: 'Static', value: 0 }, anchor_y: { mode: 'Static', value: 0 } } as any,
+      transform: { position: { mode: 'XY' as const, x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 } },  scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor_x: { mode: 'Static', value: 0 }, anchor_y: { mode: 'Static', value: 0 } } as any,
       opacity: { mode: 'Static', value: 1 }, shadow: null, outline: null,
       intro: null, outro: null,
       box_w: null, box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0,

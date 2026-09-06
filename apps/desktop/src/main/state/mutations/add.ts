@@ -6,6 +6,7 @@ import { applyDurationAutofit, compositionOf, locateTrack, scopeComposition } fr
 import { snapMarkerTimes } from './markers'
 import { CommandFailure } from '../errors'
 import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
+import { staticPosition } from '../../../shared/position'
 
 /** THE Color constructor — every creation path funnels here, including the two
  *  MCP ones that take the size straight off an agent's JSON (`actor.ts`
@@ -31,13 +32,12 @@ export function colorParams(color: Rgba, width: number, height: number): LayerPa
  *  Premiere and After Effects place theirs, because an offset makes "duplicate a
  *  title and keyframe it" land somewhere the user did not ask for. */
 export function textParamsDefault(content: string, comp: { width: number; height: number }): TextParams {
-  const s = (v: number) => ({ mode: 'Static' as const, value: v })
   return {
     kind: 'Text', content,
     font: { family: DEFAULT_CAPTION_FONT_FAMILY, size_px: 72, weight: 400, italic: false },
     color: { mode: 'Static', value: { r: 255, g: 255, b: 255, a: 255 } },
     align: 'Center',
-    transform: { ...defaultTransform(), x: s(comp.width / 2), y: s(comp.height / 2) },
+    transform: { ...defaultTransform(), position: staticPosition(comp.width / 2, comp.height / 2) },
     opacity: { mode: 'Static', value: 1 },
     shadow: null, outline: null, intro: null, outro: null,
     box_w: null, box_h: null, valign: 'Middle', line_height: 0, letter_spacing: 0,
@@ -45,7 +45,7 @@ export function textParamsDefault(content: string, comp: { width: number; height
 }
 export function defaultTransform() {
   const s = (v: number) => ({ mode: 'Static' as const, value: v })
-  return { x: s(0), y: s(0), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor_x: s(0.5), anchor_y: s(0.5), scale_linked: true }
+  return { position: staticPosition(), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor_x: s(0.5), anchor_y: s(0.5), scale_linked: true }
 }
 
 /** Snaps both edges onto the new layer's OWN grid — the 48 kHz sample lattice for an

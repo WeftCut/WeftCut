@@ -36,6 +36,11 @@ import { autoKeyTrack } from "../keyframe/autoKey";
 import { readParamTrack, readScaleLinked, scaleFanOutFor } from "../keyframe/descriptors";
 import { fanOutEntries } from "../keyframe/fanOut";
 import { resolveAnimated } from "../render/animated";
+import { evaluatePosition } from '../render/position';
+import { usePathEditingStore } from '../state/pathEditingStore';
+import { MotionPathOverlay } from './MotionPathOverlay';
+import { translatePath, type PathPosition } from '../../shared/position';
+import { updatePathTransform } from '../ipc';
 import { DEFAULT_ANCHOR } from "../render/anchorPivot";
 import { isShrunk, TEXT_BOX_MIN_PX } from "../render/textBox";
 import {
@@ -266,6 +271,7 @@ function otherLayerBoxes(
 }
 
 export function TransformGizmoHost() {
+  const editingLayerId=usePathEditingStore(s=>s.layerId);
   const primaryLayerId = usePrimaryLayerId();
   // The FOCUSED composition: the selection is one of its layers, and the
   // inspector stays with the keyboard even when the preview is pointed
@@ -291,7 +297,8 @@ export function TransformGizmoHost() {
   if (!found || !TRANSFORMABLE_KINDS.has(found.params.kind)) return null;
   // Keyed on the layer id so switching selection remounts with fresh drag
   // state instead of carrying a half-finished gesture across layers.
-  return <TransformGizmo key={found.id} layer={found} composition={composition} />;
+  const path='position' in found.params&&found.params.position?.mode==='Path';
+  return <><MotionPathOverlay key={`path-${found.id}`} layer={found} composition={composition}/>{!(path&&editingLayerId===found.id)&&<TransformGizmo key={found.id} layer={found} composition={composition}/>}</>;
 }
 
 interface DragBase {
@@ -438,6 +445,7 @@ type TrackLedger = ReadonlyMap<string, AnimTrack<number>>;
 interface CommitBase {
   layer: LayerSummary;
   ledger: TrackLedger;
+  path?: PathPosition | null;
 }
 
 /// The layer's track for `key` — LEDGER FIRST, then the mirror, then a Static
@@ -464,6 +472,8 @@ function resolveBase(
   fallback: number,
   tInLayerUs: number,
 ): number {
+  const p=base.layer.params;
+  if((key==='x'||key==='y')&&'position' in p&&p.position?.mode==='Path')return evaluatePosition(base.path??p.position,tInLayerUs)[key];
   return resolveAnimated(paramTrack(base, key, fallback), tInLayerUs, fallback);
 }
 
@@ -478,6 +488,7 @@ function bumpTrack(
   tInLayerUs: number,
   delta: number,
 ): AnimTrack<number> {
+  if((key==='x'||key==='y')&&'position' in base.layer.params&&base.layer.params.position?.mode==='Path') return {mode:'Static',value:delta};
   return autoKeyTrack(
     paramTrack(base, key, fallback),
     tInLayerUs,
@@ -561,6 +572,9 @@ const NO_DELTA: TransformDelta = { dx: 0, dy: 0 };
 /// carry into the base, with no jump.
 function mergedDelta(base: CommitBase, d: TransformDelta, tLocalUs: number): TransformDelta {
   const carry = (key: string, fallback: number): number => {
+    const p=base.layer.params;
+    if((key==='x'||key==='y')&&base.path&&'position' in p&&p.position?.mode==='Path')
+      return evaluatePosition(base.path,tLocalUs)[key]-evaluatePosition(p.position,tLocalUs)[key];
     const written = base.ledger.get(key);
     if (!written) return 0;
     const live = readParamTrack(base.layer.params, key) ?? { mode: "Static", value: fallback };
@@ -677,6 +691,7 @@ function TransformGizmo({
   /// and the carry the override has to hold so the picture does not fall back to
   /// the stale mirror value mid-burst (`mergedDelta`).
   const pendingRef = useRef(new Map<string, AnimTrack<number>>());
+  const pendingPathRef = useRef<PathPosition|null>(null);
   /// The Text box this gizmo has COMMITTED but the mirror does not carry yet, or
   /// null when the mirror is the only authority. The box's answer to
   /// `pendingRef`, retired by the same rule.
@@ -712,6 +727,7 @@ function TransformGizmo({
   const commitBase = (): CommitBase => ({
     layer: layerRef.current,
     ledger: pendingRef.current,
+    path: pendingPathRef.current,
   });
 
   /// The box this gizmo believes the layer carries — LEDGER first, then the
@@ -747,7 +763,7 @@ function TransformGizmo({
     // Nothing committed-but-unseen ⇒ the override IS the gesture. A separate
     // path so the common case writes only the channels its own gesture owns
     // rather than seven mostly-zero ones.
-    if (pendingRef.current.size === 0) {
+    if (pendingRef.current.size === 0 && !pendingPathRef.current) {
       // `drag ||` keeps the delta gestures' rule exactly as it was; the box also
       // has to survive PAST its gesture, until its summary retires the ledger.
       if (drag || !isNoDelta(d)) setTransformOverride(l.id, d);
@@ -773,6 +789,25 @@ function TransformGizmo({
     entries: Array<[string, AnimTrack<number>]>,
     what: string,
   ): void => {
+    const params=layerRef.current.params;
+    if('position' in params&&params.position?.mode==='Path') {
+      const value=(key:string)=>{const a=entries.find(([k])=>k===key)?.[1];return a?.mode==='Static'?a.value:0};
+      const dx=value('x'),dy=value('y');
+      const previous=pendingPathRef.current;
+      const next=translatePath(previous??params.position,dx,dy);
+      pendingPathRef.current=next;
+      const tracks=entries.filter(([key])=>key!=='x'&&key!=='y');
+      for(const [key,track] of tracks)pendingRef.current.set(key,track);
+      inFlightRef.current+=1;
+      updatePathTransform(layerId,dx,dy,tracks)
+        .catch(err=>{
+          if(pendingPathRef.current===next)pendingPathRef.current=previous;
+          for(const [key,track] of tracks)if(pendingRef.current.get(key)===track)pendingRef.current.delete(key);
+          logMutationFailure(err,`Path ${what}`);
+        })
+        .finally(()=>{inFlightRef.current-=1;applyOverride(dragRef.current)});
+      return;
+    }
     for (const [key, track] of entries) pendingRef.current.set(key, track);
     inFlightRef.current += 1;
     updateLayerParamTracks(layerId, entries)
@@ -834,6 +869,7 @@ function TransformGizmo({
   useEffect(() => {
     if (inFlightRef.current === 0 && !dragRef.current) {
       pendingRef.current.clear();
+      pendingPathRef.current=null;
       boxLedgerRef.current = null;
     }
     applyOverride(dragRef.current);

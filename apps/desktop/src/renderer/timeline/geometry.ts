@@ -1,3 +1,4 @@
+import { readPositionMode } from '../keyframe/descriptors';
 import { DEFAULT_TIMELINE_PX_PER_SEC } from "../../shared/view-state";
 import type {
   LinkSummary,
@@ -504,7 +505,7 @@ export function trackKeyframeProperties(track: TrackSummary): ParamDescriptor[] 
   // unlinked neighbour on the same track still contributes scale_x/scale_y.
   const seen = new Set<string>();
   for (const layer of track.layers) {
-    for (const desc of animatableParams(layer.kind, readScaleLinked(layer.params))) {
+    for (const desc of animatableParams(layer.kind, readScaleLinked(layer.params), readPositionMode(layer.params))) {
       if (seen.has(desc.paramKey)) continue;
       const t = readParamTrack(layer.params, desc.paramKey);
       if (t && t.mode === "Keyframed") {
@@ -521,7 +522,7 @@ export function trackKeyframeProperties(track: TrackSummary): ParamDescriptor[] 
     if (!seen.has(key)) continue;
     let picked: ParamDescriptor | null = null;
     for (const layer of track.layers) {
-      const d = animatableParams(layer.kind, readScaleLinked(layer.params)).find((x) => x.paramKey === key);
+      const d = animatableParams(layer.kind, readScaleLinked(layer.params), readPositionMode(layer.params)).find((x) => x.paramKey === key);
       if (!d) continue;
       picked ??= d;
       const t = readParamTrack(layer.params, key);

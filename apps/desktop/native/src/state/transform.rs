@@ -5,10 +5,81 @@ use serde::{Deserialize, Serialize};
 use super::animated::Animated;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "mode", deny_unknown_fields)]
+pub enum PositionAnimation {
+    XY {
+        x: Animated<f64>,
+        y: Animated<f64>,
+    },
+    Path {
+        path: MotionPath,
+        progress: Animated<f64>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MotionPath {
+    pub nodes: Vec<PathNode>,
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PathNode {
+    pub id: String,
+    pub point: Point,
+    #[serde(rename = "inHandle")]
+    pub in_handle: Point,
+    #[serde(rename = "outHandle")]
+    pub out_handle: Point,
+    pub segment: PathSegment,
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum PathSegment {
+    Line,
+    Cubic,
+}
+
+impl PositionAnimation {
+    pub fn xy(x: f64, y: f64) -> Self {
+        Self::XY {
+            x: Animated::Static(x),
+            y: Animated::Static(y),
+        }
+    }
+    pub fn track(&self, key: &str) -> Option<&Animated<f64>> {
+        match (self, key) {
+            (Self::XY { x, .. }, "x") => Some(x),
+            (Self::XY { y, .. }, "y") => Some(y),
+            (Self::Path { progress, .. }, "path_progress") => Some(progress),
+            _ => None,
+        }
+    }
+    pub fn track_mut(&mut self, key: &str) -> Option<&mut Animated<f64>> {
+        match (self, key) {
+            (Self::XY { x, .. }, "x") => Some(x),
+            (Self::XY { y, .. }, "y") => Some(y),
+            (Self::Path { progress, .. }, "path_progress") => Some(progress),
+            _ => None,
+        }
+    }
+    pub fn visit(&mut self, f: &mut impl FnMut(&mut Animated<f64>)) {
+        match self {
+            Self::XY { x, y } => {
+                f(x);
+                f(y);
+            }
+            Self::Path { progress, .. } => f(progress),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Transform {
     /// Canvas-space pixel offset.
-    pub x: Animated<f64>,
-    pub y: Animated<f64>,
+    pub position: PositionAnimation,
     pub scale_x: Animated<f64>,
     pub scale_y: Animated<f64>,
     pub rotation_deg: Animated<f64>,
@@ -45,8 +116,7 @@ fn centre_anchor() -> Animated<f64> {
 impl Default for Transform {
     fn default() -> Self {
         Self {
-            x: Animated::Static(0.0),
-            y: Animated::Static(0.0),
+            position: PositionAnimation::xy(0.0, 0.0),
             scale_x: Animated::Static(1.0),
             scale_y: Animated::Static(1.0),
             rotation_deg: Animated::Static(0.0),

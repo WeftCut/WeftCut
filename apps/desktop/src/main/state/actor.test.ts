@@ -1130,7 +1130,7 @@ describe('dispatch: params', () => {
   }
   const transformOfLayer = (actor: ReturnType<typeof textActor>['actor'], layerId: string) =>
     root(actor.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)!.params as {
-      transform: { x: { mode: string }; y: { mode: string }; scale_x: unknown; scale_y: unknown; scale_linked: boolean }
+      transform: { position: { mode: 'XY'; x: { mode: string }; y: { mode: string } }; scale_x: unknown; scale_y: unknown; scale_linked: boolean }
       opacity: { mode: string }
     }
 
@@ -1143,8 +1143,8 @@ describe('dispatch: params', () => {
       [id, 'x', kfTrack(10)], [id, 'opacity', kfTrack(1)], [other, 'y', kfTrack(20)],
     ] }).ok).toBe(true)
     const first = transformOfLayer(actor, id)
-    expect([first.transform.x.mode, first.opacity.mode]).toEqual(['Keyframed', 'Keyframed'])
-    expect(transformOfLayer(actor, other).transform.y.mode).toBe('Keyframed')
+    expect([first.transform.position.x.mode, first.opacity.mode]).toEqual(['Keyframed', 'Keyframed'])
+    expect(transformOfLayer(actor, other).transform.position.y.mode).toBe('Keyframed')
     expect(actor.historyStatus().len - lenBefore).toBe(1) // three writes, two layers, ONE entry
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     expect(JSON.stringify(actor.snapshot())).toBe(before)
@@ -2066,7 +2066,7 @@ describe('creation defaults follow the target composition', () => {
     const added = group(actor.snapshot(), groupId).tracks[0].layers.at(-1)!
     expect(added.params.kind).toBe('Text')
     if (added.params.kind !== 'Text') return
-    expect([added.params.transform.x, added.params.transform.y]).toEqual([
+    expect([added.params.transform.position.x, added.params.transform.position.y]).toEqual([
       { mode: 'Static', value: 320 },
       { mode: 'Static', value: 180 },
     ])
@@ -2085,7 +2085,7 @@ describe('creation defaults follow the target composition', () => {
     actor.dispatch('add_layer', { track: rootTrackId, kind: 'text', t_start_us: 2_000_000, t_end_us: 3_000_000 })
     const added = root(actor.snapshot()).tracks[0].layers.at(-1)!
     if (added.params.kind !== 'Text') throw new Error('expected a Text layer')
-    expect(added.params.transform.x).toEqual({ mode: 'Static', value: 960 })
+    expect(added.params.transform.position.x).toEqual({ mode: 'Static', value: 960 })
   })
 
   it('reports the unknown track rather than sizing against a guess', () => {

@@ -178,6 +178,7 @@ the new one would silently re-shape every existing curve.
 - **A value type with no scalar order has no slope to solve.** Colour's Auto
   sides resolve to the identity numbers with their mode kept; only its
   extrapolation is type-specific (Offset and Continue in OkLab, clamped at the byte).
-- **Spatial motion paths remain the one future chain step.** `Animated<Vec2>`
-  merges two tracks rather than adding fields, and no in-place redefinition
-  covers that.
+- **Spatial motion paths:** the proposed `Animated<Vec2>` direction is replaced
+  by [ADR 0060](0060-position-has-xy-and-path-modes.md): independent XY remains
+  intact alongside an explicit geometry-plus-progress mode, introduced by the
+  v1 → v2 migration.

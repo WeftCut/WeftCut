@@ -85,6 +85,20 @@ describe('upgradeWire', () => {
 })
 
 describe('the shipped chain', () => {
+  it('wraps independent axes in every composition without rewriting or mutating their records', () => {
+    const x={mode:'Keyframed',value:[{id:'x-key',t_us:12345,value:1.23456789,in:{x:0.123,y:-2,mode:'Free'},out:{x:0.789,y:4,mode:'Free'},segment:{kind:'Hold'},continuity:'Broken'}],extrapolate:{before:'Continue',after:'Offset'}}
+    const y={mode:'Static',value:-9.87654321}
+    const wire={schema_version:1,compositions:{root:{tracks:[{layers:[{params:{transform:{x,y,scale_x:{mode:'Static',value:1}}}}]}]},group:{tracks:[{layers:[{params:{transform:{x:y,y:x}}}]}]}}}
+    const original=structuredClone(wire)
+    const result=upgradeWire(wire,1,2).wire as unknown as {compositions:Record<string,{tracks:Array<{layers:Array<{params:{transform:Record<string,unknown>}}>}>}>}
+    const root=result.compositions.root!.tracks[0]!.layers[0]!.params.transform
+    const group=result.compositions.group!.tracks[0]!.layers[0]!.params.transform
+    expect(root.position).toEqual({mode:'XY',x,y})
+    expect(group.position).toEqual({mode:'XY',x:y,y:x})
+    expect(root).not.toHaveProperty('x');expect(root).not.toHaveProperty('y')
+    expect(root.scale_x).toEqual({mode:'Static',value:1})
+    expect(wire).toEqual(original)
+  })
   it('starts at v1 — the first published format', () => {
     expect(MIN_SCHEMA_VERSION).toBe(1)
   })

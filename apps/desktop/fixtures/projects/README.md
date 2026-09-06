@@ -21,12 +21,10 @@ would re-mint every uuid and timestamp for no gain, and the three pinned fields
 below cannot come from the actor at all. The byte-identity check in
 `migrate.completeness.test.ts` is what proves the position right.
 
-Until first release the rule has nothing to guard: `STEPS` is empty, so there is
-no step to test against a past shape, and an incompatible shape change instead
-rewrites the shape in place — `SCHEMA_VERSION` stays 1 — and regenerates
-`v1.json` by driving the actor through the scenario below. The frozen rule
-applies from the first post-release bump, when a step exists to be tested
-against a past shape (ADR 0052).
+The v1 → v2 position migration starts the frozen chain (ADR 0060). `v2.json`
+was produced by wrapping the existing v1 transform axes in an XY position
+record without changing ids, values or keyframes. Rust's cross-language
+round-trip checks the current v2 fixture; TS upgrades and validates both.
 
 ## Provenance
 

@@ -7,6 +7,17 @@
 // aliases src/renderer, hence the relative paths to `../../shared/`.
 
 import { invoke } from "@/bridge/ipc";
+import type { PositionAnimation } from '../../shared/position';
+
+export function setPosition(layerId: string, position: PositionAnimation, geometryOnly = false): Promise<void> {
+  return invoke<void>('set_position', { layerId, position, geometryOnly });
+}
+export function translatePositionPath(layerId: string, dx: number, dy: number): Promise<void> {
+  return invoke<void>('translate_path', { layerId, dx, dy });
+}
+export function updatePathTransform(layerId: string, dx: number, dy: number, entries: [string, AnimTrack<number>][]): Promise<void> {
+  return invoke<void>('update_path_transform', { layerId, dx, dy, entries });
+}
 
 import type { ExportSettings } from "../render/exportSettings";
 import type { MotifManifest } from "../render/motifs/catalog";
@@ -259,6 +270,8 @@ export interface CompositionRefView {
   /// enforced: `src_out_us` may overhang its duration (ADR 0052 §6).
   src_in_us: number;
   src_out_us: number;
+  position?: PositionAnimation;
+  path_progress?: AnimTrack<number>;
   x: AnimTrack<number>;
   y: AnimTrack<number>;
   scale_x: AnimTrack<number>;
@@ -272,6 +285,8 @@ export interface CompositionRefView {
 
 export interface MotifView {
   motif_id: string;
+  position?: PositionAnimation;
+  path_progress?: AnimTrack<number>;
   x: AnimTrack<number>;
   y: AnimTrack<number>;
   scale_x: AnimTrack<number>;
@@ -299,6 +314,8 @@ export interface VideoClipView {
   media_label: string;
   src_in_us: number;
   src_out_us: number;
+  position?: PositionAnimation;
+  path_progress?: AnimTrack<number>;
   x: AnimTrack<number>;
   y: AnimTrack<number>;
   scale_x: AnimTrack<number>;
@@ -327,6 +344,8 @@ export interface VideoClipView {
 export interface ImageOverlayView {
   media_id: string;
   media_label: string;
+  position?: PositionAnimation;
+  path_progress?: AnimTrack<number>;
   x: AnimTrack<number>;
   y: AnimTrack<number>;
   scale_x: AnimTrack<number>;
@@ -353,6 +372,8 @@ export interface TextView {
   anchor_x: AnimTrack<number>;
   anchor_y: AnimTrack<number>;
   color: AnimTrack<Rgba>;
+  position?: PositionAnimation;
+  path_progress?: AnimTrack<number>;
   x: AnimTrack<number>;
   y: AnimTrack<number>;
   scale_x: AnimTrack<number>;

@@ -2,6 +2,7 @@ import { snapFrameRound } from "../frames";
 import {
   logEmit,
   updateLayerParamTracks,
+  translatePositionPath,
   type AppSettings,
   type LayerSummary,
 } from "../ipc";
@@ -302,7 +303,9 @@ async function centerPrimaryLayer(axis: "x" | "y"): Promise<void> {
   const next = autoKeyTrack(track, tInLayerUs, resolveAnimated(track, tInLayerUs, 0) + delta);
   // Uncaught on purpose: the registry funnel turns a rejection into the one
   // `Shortcut`/Error row with the refusal's curated copy (commands/registry.ts).
-  await updateLayerParamTracks(layer.id, [[axis, next]]);
+  if('position' in layer.params&&layer.params.position?.mode==='Path') {
+    await translatePositionPath(layer.id,axis==='x'?shift.x:0,axis==='y'?shift.y:0);
+  } else await updateLayerParamTracks(layer.id, [[axis, next]]);
 }
 
 /// "Move to a new track" is offered only when one fresh lane could actually hold
