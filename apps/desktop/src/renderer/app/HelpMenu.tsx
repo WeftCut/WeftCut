@@ -6,8 +6,8 @@ import { AboutDialog } from "./AboutDialog";
 import { ISSUES_URL, openExternal } from "./links";
 import { UpdateDialog } from "./UpdateDialog";
 
-/// The Help menu — update check + issue reporting (both external links until
-/// a real updater exists) and the About box. Self-contained: the About dialog
+/// The Help menu — the in-app update check (UpdateDialog), issue reporting
+/// (an external link) and the About box. Self-contained: the dialog open
 /// state lives here, so AppMenuBar stays prop-driven chrome.
 export function HelpMenu() {
   const { t } = useTranslation();

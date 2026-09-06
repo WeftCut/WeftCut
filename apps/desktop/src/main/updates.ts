@@ -4,7 +4,7 @@ import type { UpdateStatus } from '../shared/updates.js'
 // No Electron runtime import: exercise the update lifecycle without launching
 // the editor. The actual provider comes from the packaged app-update.yml.
 type Updater = Pick<AppUpdater,
-  'on' | 'checkForUpdates' | 'autoDownload' | 'autoInstallOnAppQuit' |
+  'on' | 'checkForUpdates' | 'autoDownload' | 'autoInstallOnAppQuit' | 'disableWebInstaller' |
   'allowPrerelease' | 'allowDowngrade' | 'logger'>
 
 export function createUpdates(updater: Updater | null) {
@@ -19,6 +19,10 @@ export function createUpdates(updater: Updater | null) {
     // Uses Electron's quit event, AFTER the existing async before-quit autosave.
     // Never call quitAndInstall: that bypasses the editor's normal exit flow.
     updater.autoInstallOnAppQuit = true
+    // Releases ship the full NSIS installer, never electron-builder's web
+    // installer stub; saying so keeps electron-updater from warning about it and
+    // from changing behaviour when its default flips.
+    updater.disableWebInstaller = true
     updater.allowPrerelease = false
     updater.allowDowngrade = false
     updater.on('checking-for-update', () => { status = { phase: 'checking' } })

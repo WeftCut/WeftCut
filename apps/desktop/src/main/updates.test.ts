@@ -4,7 +4,7 @@ import { createUpdates } from './updates.js'
 
 function setup() {
   const engine = Object.assign(new EventEmitter(), {
-    checkForUpdates: vi.fn(), autoDownload: false, autoInstallOnAppQuit: false,
+    checkForUpdates: vi.fn(), autoDownload: false, autoInstallOnAppQuit: false, disableWebInstaller: false,
     allowPrerelease: true, allowDowngrade: true, logger: null,
   })
   const updates = createUpdates(engine as unknown as NonNullable<Parameters<typeof createUpdates>[0]>)
@@ -40,6 +40,7 @@ describe('application updates', () => {
     expect(engine.checkForUpdates).toHaveBeenCalledTimes(1)
     expect(updates.status()).toEqual({ phase: 'ready', version: '0.1.2' })
     expect(engine.autoInstallOnAppQuit).toBe(true)
+    expect(engine.disableWebInstaller).toBe(true)
     expect(engine.allowPrerelease).toBe(false)
     expect(engine.allowDowngrade).toBe(false)
   })
