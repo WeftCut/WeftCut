@@ -69,6 +69,53 @@ describe('mapCommandError — grid and bounds rules are self-correcting', () => 
   })
 })
 
+describe('mapCommandError — ripple delete names the span and the way out', () => {
+  // The four refusals differ only in WHICH entity blocked, and each has a
+  // different remedy, so a bare variant name is useless to an agent. What must
+  // survive: the entity id, the half-open span in µs (the hole is the layer's
+  // clipped footprint, not its length), and the next call.
+  const HOLE = { s: 2_000_000, e: 5_000_000 }
+
+  it('offers both ways past a layer starting inside the span', () => {
+    const out = mapCommandError({ error: 'RippleInsideHole', layer: 'L1', hole: HOLE })
+    expect(out.code).toBe('invalid_params')
+    expect(out.message).toContain('[2000000, 5000000) µs')
+    expect(out.data).toMatchObject({
+      error: 'RippleInsideHole', layer: 'L1', hole_us: [2_000_000, 5_000_000],
+      options: [
+        { action: 'add_to_set_then_retry', layer_ids: ['L1'] },
+        { action: 'delete_without_ripple', tool: 'delete_layer' },
+      ],
+    })
+  })
+
+  it('names both layers and the track of a landing collision', () => {
+    const out = mapCommandError({ error: 'RippleCollision', moving: 'M1', blocking: 'B1', track: 'T1' })
+    // "never makes room" is the TransitionRestoreCollision precedent restated:
+    // without it an agent retries the identical call expecting a shove.
+    expect(out.message).toContain('never makes room')
+    for (const id of ['M1', 'B1', 'T1']) expect(out.message).toContain(id)
+    expect(out.data).toEqual({ error: 'RippleCollision', moving: 'M1', blocking: 'B1', track: 'T1' })
+  })
+
+  it('points a straddling link at the unlink retry', () => {
+    const out = mapCommandError({ error: 'RippleLinkStraddles', link: 'K1', hole: HOLE })
+    expect(out.message).toContain('[2000000, 5000000) µs')
+    expect(out.data).toEqual({
+      error: 'RippleLinkStraddles', link: 'K1', hole_us: [2_000_000, 5_000_000],
+      options: [{ action: 'unlink_then_retry', link_id: 'K1' }],
+    })
+  })
+
+  it('says the lock reading is lenient so an upstream lock is not chased', () => {
+    const out = mapCommandError({ error: 'RippleLockedLayer', layer: 'L9' })
+    expect(out.message).toContain('L9')
+    expect(out.message).toContain('locked: false')
+    expect(out.message).toMatch(/upstream of the cut is fine/)
+    expect(out.data).toEqual({ error: 'RippleLockedLayer', layer: 'L9' })
+  })
+})
+
 describe('dryRunErrorString', () => {
   it('carries the corrected value into dry-run prose', () => {
     // A dry run is exactly where an agent is still able to fix the op cheaply.
@@ -81,5 +128,19 @@ describe('dryRunErrorString', () => {
   it('falls back to the rule name for everything else', () => {
     expect(dryRunErrorString(validationFailed({ rule: 'DuplicateLayerId', layer: 'L1' })))
       .toBe('validation failed: DuplicateLayerId')
+  })
+
+  it('reads as prose for the ripple refusals rather than the bare variant name', () => {
+    // These reach an agent mid-plan, where the whole point is to fix the op
+    // before spending a wet call — the generic `return e.error` would print
+    // 'RippleInsideHole' and name nothing.
+    expect(dryRunErrorString({ error: 'RippleInsideHole', layer: 'L1', hole: { s: 2_000_000, e: 5_000_000 } }))
+      .toBe('layer L1 starts inside the span [2000000, 5000000) µs the ripple would close — add it to layer_ids, or delete without rippling')
+    expect(dryRunErrorString({ error: 'RippleCollision', moving: 'M1', blocking: 'B1', track: 'T1' }))
+      .toBe('layer M1 would ripple left onto layer B1 on track T1')
+    expect(dryRunErrorString({ error: 'RippleLinkStraddles', link: 'K1', hole: { s: 0, e: 1_000_000 } }))
+      .toBe('link K1 has members on both sides of the span [0, 1000000) µs the ripple would close')
+    expect(dryRunErrorString({ error: 'RippleLockedLayer', layer: 'L9' }))
+      .toBe('layer L9 is locked and would have to move')
   })
 })

@@ -474,6 +474,12 @@ export function dryRunErrorString(e: CommandError): string {
   if (e.error === 'TransitionRestoreCollision') return `removing the transition would move layer ${e.layer} back onto occupied space`
   if (e.error === 'TransitionParticipantsShareLink') return `layers ${e.from} and ${e.to} share a link, so the incoming layer cannot move to open the overlap`
   if (e.error === 'TransitionUnsupportedLayerKind') return `transitions are for visual layers only: layer ${e.layer} is ${e.kind}`
+  // Ripple delete: what a refusal is about is the SPAN being closed, not the
+  // deleted layer's length, so the two variants carrying a hole print it.
+  if (e.error === 'RippleInsideHole') return `layer ${e.layer} starts inside the span [${e.hole.s}, ${e.hole.e}) µs the ripple would close — add it to layer_ids, or delete without rippling`
+  if (e.error === 'RippleCollision') return `layer ${e.moving} would ripple left onto layer ${e.blocking} on track ${e.track}`
+  if (e.error === 'RippleLinkStraddles') return `link ${e.link} has members on both sides of the span [${e.hole.s}, ${e.hole.e}) µs the ripple would close`
+  if (e.error === 'RippleLockedLayer') return `layer ${e.layer} is locked and would have to move`
   return e.error
 }
 
@@ -615,6 +621,35 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
   if (e.error === 'TransitionUnsupportedLayerKind') {
     return { code: 'invalid_params', message: `transitions are for visual layers only: layer ${e.layer} is ${e.kind} (audio crossfades are not supported yet)`, data: {
       error: 'TransitionUnsupportedLayerKind', layer: e.layer, kind: e.kind,
+    } }
+  }
+  // ── Ripple delete (ADR 0062). Each message spells the span as [s, e) µs — the
+  // hole is the deleted layer's footprint clipped to its neighbours, not its
+  // length, so an agent that assumed the length would otherwise read the refusal
+  // against the wrong numbers. Every one is pre-write: the retry costs nothing. ──
+  if (e.error === 'RippleInsideHole') {
+    return { code: 'invalid_params', message: `layer ${e.layer} starts inside the span [${e.hole.s}, ${e.hole.e}) µs that ripple delete would close, and the span has to come out clean. Options: add ${e.layer} to layer_ids, so its own hole merges into this one and both close in a single ripple; or call delete_layer instead, which removes the layers and leaves the span open. A layer that merely reaches into the span from before ${e.hole.s} is anchored ahead of the cut and does not block.`, data: {
+      error: 'RippleInsideHole', layer: e.layer, hole_us: [e.hole.s, e.hole.e],
+      options: [
+        { action: 'add_to_set_then_retry', layer_ids: [e.layer] },
+        { action: 'delete_without_ripple', tool: 'delete_layer' },
+      ],
+    } }
+  }
+  if (e.error === 'RippleCollision') {
+    return { code: 'invalid_params', message: `layer ${e.moving} would shift left onto layer ${e.blocking} on track ${e.track}: ripple delete never makes room, so move or delete ${e.blocking} first, or narrow layer_ids so the span it closes is shorter. A transition's overlap is authorized only while both its participants shift by the same amount.`, data: {
+      error: 'RippleCollision', moving: e.moving, blocking: e.blocking, track: e.track,
+    } }
+  }
+  if (e.error === 'RippleLinkStraddles') {
+    return { code: 'invalid_params', message: `link ${e.link} has members on both sides of the span [${e.hole.s}, ${e.hole.e}) µs — one starts before it, another at or after it — and a link means those layers move together, so shifting only the downstream half is not on offer. Options: dissolve the link (links_dissolve) or drop the downstream member from it (links_remove_members) and retry; or add the straddling members to layer_ids so the whole link goes with the cut.`, data: {
+      error: 'RippleLinkStraddles', link: e.link, hole_us: [e.hole.s, e.hole.e],
+      options: [{ action: 'unlink_then_retry', link_id: e.link }],
+    } }
+  }
+  if (e.error === 'RippleLockedLayer') {
+    return { code: 'invalid_params', message: `layer ${e.layer} is locked and would have to move: ripple delete shifts everything that starts at or after the span it closes. Unlock it (update_layer { patch: { locked: false } }) and retry, or narrow layer_ids so nothing downstream of ${e.layer} is removed. Only a layer that actually shifts blocks — a locked layer upstream of the cut is fine.`, data: {
+      error: 'RippleLockedLayer', layer: e.layer,
     } }
   }
   // ── Groups (ADR 0052). Each message says what was refused AND why, because the
@@ -920,9 +955,13 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, edge: { type: 'string' }, new_t_us: { type: 'integer' }, escape_link: { type: ['boolean', 'null'] } }, required: ['edge', 'layer_id', 'new_t_us'] },
     parseArgs: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: parseStr(a.edge, 'edge'), new_t_us: parseNum(a.new_t_us, 'new_t_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false) } }) },
   { name: 'delete_layer', exec: 'table',
-    description: 'Delete a layer. If this empties a non-reserved, unlocked track, the track is deleted in the same history entry (one undo restores both). A/B-roll and other role-stamped tracks stay.',
+    description: 'Delete a layer. The span it held is left EMPTY and nothing downstream moves; `ripple_delete_layers` is the one that closes it. If this empties a non-reserved, unlocked track, the track is deleted in the same history entry (one undo restores both). A/B-roll and other role-stamped tracks stay.',
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' } }, required: ['layer_id'] },
     parseArgs: (a) => ({ op: 'delete_layer', args: { layer: parseUuid(a.layer_id, 'layer_id') } }) },
+  { name: 'ripple_delete_layers', exec: 'table',
+    description: "Delete a SET of layers AND close the span each one vacated, so the film gets shorter (ADR 0062). The span closed for a layer is its own footprint CLIPPED to its remaining same-class neighbours on its own track — a transition participant's authorized overlap is therefore never part of the hole — and touching or overlapping holes merge into one. Every remaining layer that starts at or after a hole then shifts LEFT by that hole's length, on EVERY track of the composition and each on its own lattice, so a linked A/V pair stays in sync; pass both members of a pair and their two holes merge into one shift. What stays: a gap that already sat beside the deleted layer (it just travels left with everything else), a layer that STARTS before the hole (reaching into it is fine — it is anchored ahead of the cut), free markers, and the playhead. Markers anchored to a mover follow it; markers anchored to a deleted layer go with it. Refuses whole, before any write, always naming the entity: `RippleInsideHole` — a remaining layer starts inside the span, so add it to `layer_ids` (its own hole merges in) or use `delete_layer` to leave the span open; `RippleCollision` — a mover would land on a layer that is not moving, so move or delete the blocking layer (the system never makes room); `RippleLinkStraddles` — a link has members on both sides of the span and a link means they move together, so unlink them or add the straddling members to `layer_ids`; `RippleLockedLayer` / `TrackLocked` — a layer or track that would have to move is locked, so unlock it. Locks read leniently: only a layer that actually shifts blocks, so a locked logo at the head does not disable ripple for the rest of the film. The set is ONE composition's (`CrossCompositionSet` otherwise) and must hold at least one id. Recorded — one undo restores every moved layer too.",
+    inputSchema: { type: 'object', properties: { layer_ids: { type: 'array', items: { type: 'string' } } }, required: ['layer_ids'] },
+    parseArgs: (a) => ({ op: 'ripple_delete_layers', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) } }) },
   // ── table-exec: links ───────────────────────────────────────────────────
   { name: 'links_create', exec: 'table',
     description: 'Create a new link from >=2 distinct layer ids. Optional `label`. If any layer is already in another link, the op fails unless `reassign=true`, which removes them from their prior link(s) first (auto-dissolving any link that falls below 2 members). Returns the new link id.',

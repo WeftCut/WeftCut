@@ -49,7 +49,8 @@ descriptions:
 - Voiceover: `synthesize_speech` appends a spoken script to the timeline
   (also `/voiceover`).
 - Rough cut: `analyze_clip` or `auto_split_by_shot`, then trim and delete
-  segments.
+  segments — `ripple_delete_layers` instead of `delete_layer` when the gap a
+  cut leaves should close behind it.
 
 ## Motifs (animated overlays)
 
