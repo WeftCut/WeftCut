@@ -38,6 +38,41 @@ export const SHOT_CUTS = SHOT_CUT_SCORES.map((score, index) => ({
   score,
 }))
 
+/// The denoise fixture's shape: pink noise for its whole length with a
+/// noise-ONLY head, then a steady tone. The head is the span a noise profile is
+/// sampled from and the tone is what a denoise pass must leave alone, so the
+/// two spans together ARE the fixture's contract.
+const NOISY_SPEECH_SECONDS = 12
+const NOISY_SPEECH_TONE_START_SECONDS = 2
+const NOISY_SPEECH_TONE_HZ = 440
+/// Peak amplitude of the tone, 10^(-12/20) — a −12 dBFS peak, −15.05 dBFS RMS.
+/// Written as an explicit amplitude inside an `aevalsrc` expression rather than
+/// `sine` + `volume`: `sine` has no amplitude option and its own output level is
+/// a build detail (the shipped 7.1.1 emits ±0.125), which a fixture's measured
+/// contract cannot rest on.
+const NOISY_SPEECH_TONE_AMPLITUDE = '0.251189'
+/// Pink noise at this amplitude measures −40 dBFS RMS, 25 dB under the tone
+/// window: loud enough that a denoise pass moves it far further than any codec
+/// noise in an exported mix, quiet enough that removing it leaves the tone
+/// window's level unchanged.
+const NOISY_SPEECH_NOISE_AMPLITUDE = 0.05
+/// Seeded, so the noise — and therefore every level measured off this file — is
+/// the same on every machine and every run.
+const NOISY_SPEECH_NOISE_SEED = 7
+
+/// What the denoise fixture measures, recorded into the fixture manifest so a
+/// consumer reads the spans and their levels from next to the media rather than
+/// restating them, and so an ffmpeg release that moves either level reddens the
+/// fixture suite instead of the gate that consumes the fixture.
+export const NOISY_SPEECH_LEVELS = {
+  durationUs: NOISY_SPEECH_SECONDS * 1_000_000,
+  toneStartUs: NOISY_SPEECH_TONE_START_SECONDS * 1_000_000,
+  /// The noise-only span a denoise effect samples its profile from.
+  profile: { inUs: 200_000, outUs: 1_800_000, rmsDbfs: -40.04 },
+  /// A window well past the head, dominated by the tone.
+  tone: { inUs: 4_000_000, outUs: 6_000_000, rmsDbfs: -15.0 },
+}
+
 const PATCH_VALUES = [
   [255, 0, 0], [0, 255, 0], [0, 0, 255], [0, 255, 255], [255, 0, 255],
   [255, 255, 0], [255, 255, 255], [0, 0, 0], [16, 16, 16], [235, 235, 235],
@@ -96,10 +131,12 @@ export function outputName({
   aformat,
   audioTiming,
   audioTimingLong,
+  noisySpeech,
   ptsOffsetMs,
 }) {
   if (imageset) return 'test_chart_320x240.png'
   if (audiotones) return `test_tones_10s.${aformat ?? 'wav'}`
+  if (noisySpeech) return 'noisy-speech.wav'
   if (audioTiming) {
     const offsetMs = ptsOffsetMs ?? 0
     return offsetMs === 0
@@ -521,6 +558,35 @@ function generateLongAudioTiming(outputDir, run, io) {
   run(args, { cwd: outputDir })
 }
 
+function generateNoisySpeech(outputDir, run, io) {
+  const output = 'noisy-speech.wav'
+  const toneSeconds = NOISY_SPEECH_SECONDS - NOISY_SPEECH_TONE_START_SECONDS
+  const args = [
+    '-y', '-hide_banner', '-loglevel', 'error',
+    '-f', 'lavfi', '-i',
+    `anoisesrc=c=pink:a=${NOISY_SPEECH_NOISE_AMPLITUDE}:s=${NOISY_SPEECH_NOISE_SEED}`
+      + `:r=${AUDIO_SAMPLE_RATE}:d=${NOISY_SPEECH_SECONDS}`,
+    '-f', 'lavfi', '-i',
+    `aevalsrc=exprs=${NOISY_SPEECH_TONE_AMPLITUDE}*sin(2*PI*${NOISY_SPEECH_TONE_HZ}*t)`
+      + `:s=${AUDIO_SAMPLE_RATE}:d=${toneSeconds}`,
+    // `adelay` prepends real silence rather than shifting PTS, which is what
+    // makes the head noise-ONLY; `normalize=0` keeps `amix` from halving both
+    // inputs, so each span's level is the one measured above.
+    '-filter_complex',
+    `[1:a]adelay=delays=${NOISY_SPEECH_TONE_START_SECONDS * 1000}:all=1[tone];`
+      + '[0:a][tone]amix=inputs=2:duration=first:normalize=0[a]',
+    '-map', '[a]',
+    '-c:a', 'pcm_s16le', '-ar', String(AUDIO_SAMPLE_RATE), '-ac', '1',
+    output,
+  ]
+
+  io.log(
+    `Generating ${output} (${NOISY_SPEECH_SECONDS}s pink noise, `
+      + `${NOISY_SPEECH_TONE_HZ}Hz tone from ${NOISY_SPEECH_TONE_START_SECONDS}s)`,
+  )
+  run(args, { cwd: outputDir })
+}
+
 function generateColor(entry, outputDir, run, io) {
   const encoding = COLOR_ENCODINGS[entry.color]
   if (!encoding) {
@@ -838,6 +904,7 @@ export function generateFixture(entry, {
   if (entry.audiotones) return generateAudioTones(entry, outputDir, ffmpeg, io)
   if (entry.audioTiming) return generateAudioTiming(entry, outputDir, ffmpeg, io)
   if (entry.audioTimingLong) return generateLongAudioTiming(outputDir, ffmpeg, io)
+  if (entry.noisySpeech) return generateNoisySpeech(outputDir, ffmpeg, io)
   if (entry.color) return generateColor(entry, outputDir, ffmpeg, io)
   if (entry.colorProres) return generateColorProres(entry, outputDir, ffmpeg, io)
   if (entry.h264Interframe) return generateH264Interframe(outputDir, ffmpeg, io)
@@ -922,6 +989,7 @@ const BOOLEAN_FLAGS = new Map([
   ['--audiotones', 'audiotones'],
   ['--audio-timing', 'audioTiming'],
   ['--audio-timing-long', 'audioTimingLong'],
+  ['--noisy-speech', 'noisySpeech'],
   ['--eostail', 'eostail'],
   ['--color-prores', 'colorProres'],
   ['--gradient', 'gradient'],
@@ -980,6 +1048,7 @@ Generate one deterministic fixture in the current directory.
   --audiotones --aformat wav|mp3|flac|m4a|ogg
   --audio-timing [--pts-offset-ms N]
   --audio-timing-long
+  --noisy-speech
   --color 709ltd|601ltd|709full|601full
   --color-prores [--color-prores-enc 709ltd|601ltd]
   --gradient | --gradient-h264 | --gradient-h264-bf

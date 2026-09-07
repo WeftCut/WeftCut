@@ -6,7 +6,14 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:f
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { SHOT_CUTS, generateFixture, outputName, recipeOf, writeFileAtomic } from "./generate.mjs";
+import {
+  NOISY_SPEECH_LEVELS,
+  SHOT_CUTS,
+  generateFixture,
+  outputName,
+  recipeOf,
+  writeFileAtomic,
+} from "./generate.mjs";
 
 export { outputName } from "./generate.mjs";
 
@@ -94,6 +101,11 @@ export const MATRIX = [
   // Long sparse marker fixture: catches accumulated timebase drift at the
   // 62/15/7-ish peaks/s LODs selected by 80/15/8 px/s timelines.
   { audioTimingLong: true },
+  // Pink noise throughout with a noise-ONLY head and a steady tone after it —
+  // the one fixture a noise profile can be sampled from and a denoise bake
+  // measured against (audio-denoise.spec.ts). Its two spans and their levels
+  // ride in the manifest; see `NOISY_SPEECH_LEVELS` in generate.mjs.
+  { noisySpeech: true },
   // animated gif — multi-frame, so probe::detect_kind classifies it IMAGE (an
   // animated image the renderer loops; no proxy); media-gif-animated.spec.ts
   // asserts that routing plus the animate/loop/export behavior.
@@ -119,9 +131,12 @@ function readManifest(manifestPath) {
 /// What an entry's media is expected to measure, beyond existing. Recorded
 /// alongside the recipe hash so a consumer reads its expectations from the
 /// manifest next to the media rather than restating them, and so the fixture
-/// suite is where a shifted measurement is caught. Only the shot entry has any.
+/// suite is where a shifted measurement is caught. Only the shot and denoise
+/// entries have any.
 function measurementsOf(entry) {
-  return entry.shotCuts ? { sceneCuts: SHOT_CUTS } : {};
+  if (entry.shotCuts) return { sceneCuts: SHOT_CUTS };
+  if (entry.noisySpeech) return { audioLevels: NOISY_SPEECH_LEVELS };
+  return {};
 }
 
 /// Bring `mediaDir` up to date with the recipes and record what it now holds.

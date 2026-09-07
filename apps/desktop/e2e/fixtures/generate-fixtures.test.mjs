@@ -129,6 +129,50 @@ function sceneCandidates(mediaPath) {
   return candidates
 }
 
+/// The denoise fixture's levels are asserted to a wide dB tolerance on purpose:
+/// what a consumer depends on is the SHAPE — a quiet noise-only head and a much
+/// louder tone after it — and pink noise is stochastic even under a fixed seed.
+/// A tolerance this size still catches the failures that matter (a lost tone, a
+/// missing or leaked noise bed, a mis-scaled `amix`), which all move a level by
+/// far more than a dB.
+const AUDIO_LEVEL_TOL_DB = 1.0
+/// How far the tone window must sit above the noise-only head. The gate that
+/// consumes this fixture asserts the tone SURVIVES a denoise pass, which is only
+/// meaningful while the tone dominates its window by a wide margin.
+const NOISY_SPEECH_MIN_SNR_DB = 20
+
+/// `mediaPath` decoded to mono f32 at 48 kHz — the same interpretation the
+/// analyzer's envelope mode reads an export under.
+function monoPcm48k(mediaPath) {
+  const probe = spawnSync(
+    'ffmpeg',
+    [
+      '-hide_banner', '-loglevel', 'error', '-i', mediaPath,
+      '-vn', '-ac', '1', '-ar', '48000', '-f', 'f32le', '-',
+    ],
+    { maxBuffer: 1 << 28 },
+  )
+  assert.equal(probe.error, undefined)
+  assert.equal(probe.status, 0, `ffmpeg failed:\n${probe.stderr}`)
+
+  const samples = new Float32Array(probe.stdout.length / 4)
+  for (let index = 0; index < samples.length; index += 1) {
+    samples[index] = probe.stdout.readFloatLE(index * 4)
+  }
+  return samples
+}
+
+/// RMS of `[inUs, outUs)` in dBFS.
+function rmsDbfs(samples, inUs, outUs) {
+  const lo = Math.round((inUs / 1_000_000) * 48_000)
+  const hi = Math.min(samples.length, Math.round((outUs / 1_000_000) * 48_000))
+  assert.ok(hi > lo, `empty window ${inUs}-${outUs}us in ${samples.length} samples`)
+
+  let sumSquares = 0
+  for (let index = lo; index < hi; index += 1) sumSquares += samples[index] ** 2
+  return 20 * Math.log10(Math.sqrt(sumSquares / (hi - lo)))
+}
+
 async function withCapturedLogs(run) {
   const original = console.log
   const lines = []
@@ -513,6 +557,62 @@ test('the shot fixture yields exactly the cuts and scores its manifest records',
         `cut ${index} at ${cut.timeUs}us: score`,
       )
     }
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('the denoise fixture measures the levels its manifest records', async (t) => {
+  if (!ffmpegOnPath()) {
+    t.skip('no ffmpeg on PATH, so the fixture cannot be produced either')
+    return
+  }
+  const parent = mkdtempSync(path.join(tmpdir(), 'weftcut fixture denoise '))
+  const outputDir = path.join(parent, 'media with spaces')
+  const entry = { noisySpeech: true }
+  const name = outputName(entry)
+
+  try {
+    // Real encode, then re-measure. The levels are what the denoise gate's
+    // before/after comparison rests on, and they are produced by ffmpeg's own
+    // generators — so only ffmpeg can say whether a release has moved them, and
+    // that has to redden the fixture suite rather than the gate downstream.
+    await withCapturedLogs(() => ensureFixtures(outputDir, { matrix: [entry] }))
+
+    const manifest = JSON.parse(readFileSync(path.join(outputDir, 'manifest.json'), 'utf8'))
+    const levels = manifest.entries[name].audioLevels
+    assert.ok(levels, `${name} records no expected levels`)
+    const samples = monoPcm48k(path.join(outputDir, name))
+
+    assert.equal(
+      Math.round((samples.length / 48_000) * 1_000_000),
+      levels.durationUs,
+      `${name} duration`,
+    )
+    const profile = rmsDbfs(samples, levels.profile.inUs, levels.profile.outUs)
+    const tone = rmsDbfs(samples, levels.tone.inUs, levels.tone.outUs)
+    assert.ok(
+      Math.abs(profile - levels.profile.rmsDbfs) <= AUDIO_LEVEL_TOL_DB,
+      `noise-only head: recorded ${levels.profile.rmsDbfs} dBFS, measured ${profile.toFixed(2)}`,
+    )
+    assert.ok(
+      Math.abs(tone - levels.tone.rmsDbfs) <= AUDIO_LEVEL_TOL_DB,
+      `tone window: recorded ${levels.tone.rmsDbfs} dBFS, measured ${tone.toFixed(2)}`,
+    )
+    assert.ok(
+      tone - profile >= NOISY_SPEECH_MIN_SNR_DB,
+      `tone must sit >=${NOISY_SPEECH_MIN_SNR_DB} dB over the head, measured ${(tone - profile).toFixed(2)}`,
+    )
+
+    // The head really is noise-ONLY: the tone starts after it, so the span just
+    // past the tone's start is louder than the span just before it.
+    const beforeTone = rmsDbfs(samples, levels.toneStartUs - 500_000, levels.toneStartUs)
+    const afterTone = rmsDbfs(samples, levels.toneStartUs, levels.toneStartUs + 500_000)
+    assert.ok(
+      afterTone - beforeTone >= NOISY_SPEECH_MIN_SNR_DB,
+      `the tone must begin at ${levels.toneStartUs}us: measured ${beforeTone.toFixed(2)} dBFS `
+        + `before and ${afterTone.toFixed(2)} dBFS after`,
+    )
   } finally {
     rmSync(parent, { recursive: true, force: true })
   }
