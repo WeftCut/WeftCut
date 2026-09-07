@@ -213,7 +213,8 @@ function requireTransition(p: Project, id: Uuid): { comp: Composition; transitio
  *    layer (and its link siblings) moves LEFT by the frame-rounded duration —
  *    both participants play exactly their trimmed ranges; `extended_us = 0`.
  *    Colliding shifted siblings bounce lanes (bounceCollidingSiblings); the
- *    vacated span stays a gap (no ripple).
+ *    vacated span stays a gap (no implicit ripple — closing a span is the
+ *    explicit ripple delete's job, ADR 0062).
  *  - exact-adjacent cut, `placement: 'extend'`: the explicit tail borrow —
  *    pre-checked
  *    against the outgoing tail handle, positions untouched;

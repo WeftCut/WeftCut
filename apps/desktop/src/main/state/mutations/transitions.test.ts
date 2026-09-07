@@ -201,7 +201,7 @@ describe('applyAddTransition overlap-placement refusals (all pre-id-mint, never 
 })
 
 describe('applyAddTransition overlap placement: geometry consequences', () => {
-  it('no ripple: the vacated span stays a gap — no other layer moves', () => {
+  it('no implicit ripple: the vacated span stays a gap — no other layer moves', () => {
     const { p, gen, a1, a2 } = twoAdjacent()
     const c = applyAddLayer(p, gen, root(p).tracks[0].id, color(), 4_000_000, 6_000_000) // downstream, unlinked
     const d = applyAddLayer(p, gen, root(p).tracks[1].id, color(), 0, 3_000_000) // other lane

@@ -395,7 +395,7 @@ describe('applyGroupsAddMembers', () => {
     expect(() => validate(p)).not.toThrow()
   })
 
-  it('is the new ripple: a second placement of the destination keeps its window when the move lengthens the composition', () => {
+  it('a second placement of the destination keeps its window when the move lengthens the composition — overhang, never a ripple into the parent', () => {
     const { p, gen, comp, g, x, y } = withDest()
     const twin = applyDuplicateLayer(p, gen, g, 5 * S)
     const twinBefore = structuredClone(layerOf(root(p), twin))

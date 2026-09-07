@@ -41,7 +41,13 @@ placement policy), and overlapping audio sums across the window. Two
 structured refusals, pre-id-mint: participants sharing a group (the move
 would drag both, so the overlap cannot open), and any moved member crossing
 t = 0. The span the incoming layer vacates stays a gap: groups are the user's
-mechanism for "these move together"; there is no ripple.
+mechanism for "these move together"; there is no implicit ripple.
+
+> **Note.** "No ripple" here means no *implicit* one — a placement never
+> moves layers the user did not touch. The explicit command that closes a
+> vacated span on request is
+> [ADR 0062](0062-ripple-is-an-explicit-command-over-placement.md); the
+> placement rule above stands unchanged beside it.
 
 ### `extended_us` records the borrow
 
@@ -82,7 +88,9 @@ split-inside-window atomic block stands.
 - **Ripple downstream content to close the vacated gap.** Rejected: in a
   free-placement timeline, groups already express "moves together"
   explicitly; an implicit multi-track ripple desyncs against spanning layers
-  and moves layers the user never touched.
+  and moves layers the user never touched. (An *explicit* ripple, invoked by
+  name, is a different thing and is
+  [ADR 0062](0062-ripple-is-an-explicit-command-over-placement.md).)
 - **A placement enum instead of a counter.** Rejected: two-edge dragging
   produces mixed provenance; the counter's arithmetic covers every sequence
   of gestures with two numbers and keeps every state reachable and invertible.
