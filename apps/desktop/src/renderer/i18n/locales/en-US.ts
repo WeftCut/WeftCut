@@ -1122,6 +1122,9 @@ const enUS = {
     preparing_cancel: "Cancel",
     failed_prepare:
       "Couldn't prepare {{labels}} for export — the file may be corrupt or unsupported. Re-import it and try again.",
+    failed_audio_fx:
+      'audio effect "{{effect}}" on "{{layer}}": {{message}}',
+    failed_audio_fx_chain: 'audio effects on "{{layer}}": {{message}}',
     no_video_material:
       "No video to export: the selected range has no visible layers.",
     no_audio_material:

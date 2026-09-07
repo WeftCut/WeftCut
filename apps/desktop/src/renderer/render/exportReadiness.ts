@@ -1,11 +1,25 @@
 // Export-readiness gate. Decides, for the video sources an export will decode,
 // which are ready, which need a proxy that is still encoding (wait), and which
 // have failed. Shares its probe memo with the import-time sweep so a capable
-// machine probes each source at most once per session.
+// machine probes each source at most once per session. The audio halves — the
+// conform tracker and the effect-chain gate — live here too, on the property
+// that unites all of it: nothing may render until its inputs exist.
+//
+// Owns the decisions, not the UI: every panel transition and every translated
+// string is the caller's (`app/useExportFlow.ts`).
 //
 // See docs/data-model.md#mediaitem and docs/render.md#export-source-resolution.
 
-import { MEDIA_JOB_EVENTS, type MediaJobEvent, type MediaSummary } from "../ipc";
+import {
+  AUDIO_FX_STATUS_EVENT,
+  MEDIA_JOB_EVENTS,
+  type AudioFxStatusEvent,
+  type EnsureExportAudioFxResult,
+  type LayerFxState,
+  type MediaJobEvent,
+  type MediaSummary,
+} from "../ipc";
+import { deriveStatus } from "../state/audioFxStore";
 import type { WebcodecsDecodeVerdict } from "./decoder/probeSourceDecodable";
 import { resolveDecode } from "./decodeRoute";
 
@@ -285,4 +299,232 @@ export function waitForProxies(ids: string[], deps: WaitDeps): Promise<void> {
     unsubStore = deps.subscribeStore(check);
     check(); // initial snapshot — a proxy may have finished before we subscribed
   });
+}
+
+// ===== Audio effect chains (ADR 0063) ======================================
+// The export mixer reads a layer's BAKED conform sibling wherever one is
+// desired, so the gate has to wait for those bakes exactly as it waits for
+// conforms. It never falls back to the raw conform: playing something other
+// than what the user heard is the worst outcome an export can have (spec
+// Decision 9), so a failed bake is an export error naming the layer and the
+// effect. See docs/audio.md § Clip effects.
+
+export class ExportAudioFxFailed extends Error {
+  constructor(
+    public readonly layerId: string,
+    public readonly effectId: string | null,
+    public readonly kind: string | null,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ExportAudioFxFailed";
+  }
+}
+
+export interface AudioFxTracker {
+  /// Resolves once the status listener is registered. Call
+  /// `ensureExportAudioFx` only AFTER this — a bake completing between the
+  /// command and the registration would otherwise be missed and the wait would
+  /// hang. Same rule as `ConformTracker.ready`.
+  ready: Promise<void>;
+  /// The last state pushed for a layer, or undefined if none has arrived.
+  stateOf(layerId: string): LayerFxState | undefined;
+  /// Subscribe to any state arrival; returns an unsubscribe.
+  subscribe(cb: () => void): () => void;
+  dispose(): void;
+}
+
+/// Accumulates `audio_fx:status` pushes by layer id. Each push carries the
+/// layer's FULL state, so the newest one is the whole truth and this needs no
+/// merge — and no store read: the durable mirror would serve the same values,
+/// but a tracker the caller owns can be created, awaited and disposed around
+/// one gate without racing another consumer's project switch.
+export function createAudioFxTracker(listen: ListenLike): AudioFxTracker {
+  const states = new Map<string, LayerFxState>();
+  const subs = new Set<() => void>();
+  let unlisten: (() => void) | null = null;
+  let disposed = false;
+  const ready = listen<AudioFxStatusEvent>(AUDIO_FX_STATUS_EVENT, (e) => {
+    states.set(e.payload.layer_id, e.payload.state);
+    for (const cb of subs) cb();
+  }).then((u) => {
+    if (disposed) u();
+    else unlisten = u;
+  });
+  return {
+    ready,
+    stateOf: (layerId) => states.get(layerId),
+    subscribe(cb) {
+      subs.add(cb);
+      return () => {
+        subs.delete(cb);
+      };
+    },
+    dispose() {
+      disposed = true;
+      subs.clear();
+      unlisten?.();
+    },
+  };
+}
+
+/// A layer the export no longer has to wait for: the artifact its desired
+/// signature names is on disk, or its effective chain went empty mid-wait (an
+/// effect disabled or made incomplete) and it plays the raw conform again.
+///
+/// An UNKNOWN layer is deliberately NOT satisfied even though a missing entry
+/// reduces to `none`: `ensureExportAudioFx` named it, so the baker owes a push,
+/// and reading "nothing reported yet" as "nothing to do" would let the export
+/// run ahead of the bake.
+function fxSatisfied(state: LayerFxState | undefined): boolean {
+  if (!state) return false;
+  const status = deriveStatus(state);
+  return status === "ready" || status === "none";
+}
+
+export interface AudioFxWaitDeps {
+  stateOf: (layerId: string) => LayerFxState | undefined;
+  subscribe: (cb: () => void) => () => void;
+  signal: AbortSignal;
+}
+
+/// Resolves once every layer's desired bake has landed; rejects
+/// ExportAudioFxFailed on a still-unsatisfied layer's failure, ExportCancelled
+/// when the signal aborts.
+export function waitForAudioFx(
+  layerIds: string[],
+  deps: AudioFxWaitDeps,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const pending = new Set(layerIds);
+    let unsub = (): void => {};
+    const cleanup = () => {
+      unsub();
+      deps.signal.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(new ExportCancelled());
+    };
+    const check = () => {
+      // Satisfied wins over failed, per layer: the baker keeps the last error
+      // attached until a bake supersedes it, so a layer that has since gone
+      // ready still carries the failure that preceded it.
+      for (const id of [...pending]) {
+        if (fxSatisfied(deps.stateOf(id))) pending.delete(id);
+      }
+      if (pending.size === 0) {
+        cleanup();
+        resolve();
+        return;
+      }
+      for (const id of pending) {
+        const error = deps.stateOf(id)?.error;
+        if (error) {
+          cleanup();
+          reject(
+            new ExportAudioFxFailed(
+              id,
+              error.effect_id,
+              error.kind,
+              error.message,
+            ),
+          );
+          return;
+        }
+      }
+    };
+    if (deps.signal.aborted) {
+      reject(new ExportCancelled());
+      return;
+    }
+    deps.signal.addEventListener("abort", onAbort);
+    unsub = deps.subscribe(check);
+    check(); // a bake may have landed between the command and this wait
+  });
+}
+
+export type AudioFxGateOutcome =
+  | { kind: "ok" }
+  | { kind: "cancelled" }
+  | { kind: "error"; detail: string };
+
+export interface AudioFxGateDeps {
+  listen: ListenLike;
+  /// `ensureExportAudioFx` — flushes the bake debounce and reports what the mix
+  /// is waiting on. A null bound means the whole project.
+  ensure: (range: {
+    startUs: number | null;
+    endUs: number | null;
+  }) => Promise<EnsureExportAudioFxResult>;
+  range: { startUs: number | null; endUs: number | null };
+  /// Display name for one layer, and for one effect kind (its catalog i18n
+  /// name; a kind the catalog doesn't know is named by its bare `kind`).
+  layerName: (layerId: string) => string;
+  effectName: (kind: string | null) => string | null;
+  /// One failure, already named — the translated sentence the status bar shows.
+  /// `effect` is null when the failure belongs to the CHAIN rather than to one
+  /// effect (a missing conform, an ffmpeg refusal of the composed graph): the
+  /// error says so instead of blaming an arbitrary card.
+  failureDetail: (parts: {
+    effect: string | null;
+    layer: string;
+    message: string;
+  }) => string;
+  /// Show the "preparing" panel for these layers and hand back the signal its
+  /// Cancel button aborts.
+  onWaiting: (labels: string[]) => AbortSignal;
+}
+
+/// The audio-effect half of the export gate, shared by the audio-only and the
+/// full-export paths so the two cannot drift. Listener first, then the command,
+/// then the wait; every failure, whether the command reported it or the wait
+/// raised it, becomes the same named error.
+export async function runAudioFxGate(
+  deps: AudioFxGateDeps,
+): Promise<AudioFxGateOutcome> {
+  const detailFor = (f: {
+    layer_id: string;
+    kind: string | null;
+    error: string;
+  }): string =>
+    deps.failureDetail({
+      effect: deps.effectName(f.kind),
+      layer: deps.layerName(f.layer_id),
+      message: f.error,
+    });
+  const tracker = createAudioFxTracker(deps.listen);
+  try {
+    await tracker.ready;
+    const result = await deps.ensure(deps.range);
+    if (result.failed.length > 0) {
+      return { kind: "error", detail: result.failed.map(detailFor).join("; ") };
+    }
+    if (result.waiting.length === 0) return { kind: "ok" };
+    const signal = deps.onWaiting(result.waiting.map(deps.layerName));
+    await waitForAudioFx(result.waiting, {
+      stateOf: (id) => tracker.stateOf(id),
+      subscribe: (cb) => tracker.subscribe(cb),
+      signal,
+    });
+    return { kind: "ok" };
+  } catch (e) {
+    if (e instanceof ExportCancelled) return { kind: "cancelled" };
+    if (e instanceof ExportAudioFxFailed) {
+      return {
+        kind: "error",
+        detail: detailFor({
+          layer_id: e.layerId,
+          kind: e.kind,
+          error: e.message,
+        }),
+      };
+    }
+    return {
+      kind: "error",
+      detail: e instanceof Error ? e.message : String(e),
+    };
+  } finally {
+    tracker.dispose();
+  }
 }

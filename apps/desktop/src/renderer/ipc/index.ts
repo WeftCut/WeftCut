@@ -24,6 +24,22 @@ import type { MotifManifest } from "../render/motifs/catalog";
 import type { DecodeRoute } from "../render/decodeRoute";
 import type { RecentEntry } from "../../shared/recents";
 export type { RecentEntry } from "../../shared/recents";
+import type {
+  AudioFxSnapshot,
+  EnsureExportAudioFxResult,
+} from "../../shared/audioEffects/status";
+export {
+  AUDIO_FX_STATUS_EVENT,
+  parseFxWaveformKey,
+} from "../../shared/audioEffects/status";
+export type {
+  AudioFxError,
+  AudioFxReady,
+  AudioFxSnapshot,
+  AudioFxStatusEvent,
+  EnsureExportAudioFxResult,
+  LayerFxState,
+} from "../../shared/audioEffects/status";
 import type { Animated } from "../../shared/keyframe";
 
 /// One composition's timeline — the root and every Group share this shape
@@ -2080,9 +2096,18 @@ export interface WaveformLevels {
 }
 
 /// Header-only read of the media's peaks LOD table. Rejects "not_ready" until
-/// the waveform job has produced the peaks file.
-export async function getWaveformLevels(mediaId: string): Promise<WaveformLevels> {
-  return invoke<WaveformLevels>("get_waveform_levels", { mediaId });
+/// the waveform job has produced the peaks file — and likewise when
+/// `waveformKey` names a baked sibling main can no longer resolve, which is
+/// what lets a caller degrade to the raw waveform instead of drawing another
+/// clip's peaks. See `waveformKey` on `getWaveformTile`.
+export async function getWaveformLevels(
+  mediaId: string,
+  waveformKey?: string,
+): Promise<WaveformLevels> {
+  return invoke<WaveformLevels>("get_waveform_levels", {
+    mediaId,
+    ...(waveformKey === undefined ? {} : { waveformKey }),
+  });
 }
 
 export interface WaveformTile {
@@ -2096,15 +2121,23 @@ export interface WaveformTile {
 
 /// Read `count` (min,max,rms) windows for one channel of one LOD level, starting at
 /// `startPeak`. The range is clamped to the level's peak count backend-side.
+///
+/// `waveformKey` selects WHICH of the media's peaks files is read: omitted (or
+/// any value that isn't an `fx:` key) reads the raw conform's own, an `fx:` key
+/// reads the baked effect-chain sibling it names (`shared/audioEffects/status.ts`
+/// `fxWaveformKey`). `mediaId` is still required either way — main resolves the
+/// media item and only overrides the path.
 export async function getWaveformTile(
   mediaId: string,
   level: number,
   channel: number,
   startPeak: number,
   count: number,
+  waveformKey?: string,
 ): Promise<WaveformTile> {
   return invoke<WaveformTile>("get_waveform_tile", {
     mediaId, level, channel, startPeak, count,
+    ...(waveformKey === undefined ? {} : { waveformKey }),
   });
 }
 
@@ -2662,6 +2695,42 @@ export async function ensureExportAudioConform(range: {
     startUs: range.startUs,
     endUs: range.endUs,
   });
+}
+
+// ── Audio effect chains (ADR 0063) ─────────────────────────────────────────
+// Three reads answered by main's baker, the sole holder of bake state. That
+// state is a DERIVATION — nothing about it rides the project summary — so
+// these calls are the only way the renderer can learn it.
+
+/// The baker's whole per-layer map: the audio-fx mirror's seed at boot and
+/// after a project switch. Every later change arrives out-of-band on
+/// `AUDIO_FX_STATUS_EVENT`.
+export async function audioFxSnapshot(): Promise<AudioFxSnapshot> {
+  return invoke<AudioFxSnapshot>("audio_fx_snapshot", {});
+}
+
+/// Export-readiness audio-effect gate: flushes the bake debounce for the
+/// layers the mix will read, then reports the ones whose artifact has yet to
+/// land and the ones whose bake failed. A null bound means the whole project.
+///
+/// Register the `AUDIO_FX_STATUS_EVENT` listener BEFORE calling
+/// (`createAudioFxTracker`) — a bake that lands in between would otherwise be
+/// missed and the wait would hang, the same rule the conform gate follows.
+export async function ensureExportAudioFx(range: {
+  startUs: number | null;
+  endUs: number | null;
+}): Promise<EnsureExportAudioFxResult> {
+  return invoke<EnsureExportAudioFxResult>("ensure_export_audio_fx", {
+    startUs: range.startUs,
+    endUs: range.endUs,
+  });
+}
+
+/// Tell the baker that an artifact it published as ready is gone (a waveform
+/// read came back `not_ready`), so it re-checks the disk and re-bakes. The
+/// answer arrives as an `AUDIO_FX_STATUS_EVENT` push, not as a return value.
+export async function audioFxReverify(layerId: string): Promise<void> {
+  await invoke<null>("audio_fx_reverify", { layerId });
 }
 
 /// Push the preview master-bus meter reading to Rust (~2 Hz while playing)

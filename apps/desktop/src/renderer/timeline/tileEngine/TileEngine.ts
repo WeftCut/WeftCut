@@ -2,7 +2,16 @@ import { listen } from "@/bridge/events";
 import { MEDIA_JOB_EVENTS } from "../../ipc";
 
 export interface TileKey {
+  /// The media the tile belongs TO. Subscription and invalidation identity: a
+  /// `media:job_complete` frees every slot under this id, and `subscribe`
+  /// notifies per id.
   mediaId: string;
+  /// WHICH artifact of that media the tile was read from, when it isn't the
+  /// media's own default one — a waveform tile read from a baked effect-chain
+  /// sibling carries its `fx:` key here (ADR 0063). Part of the slot identity,
+  /// so two artifacts of one media never share a slot; undefined for every
+  /// producer that has only one artifact per media.
+  sourceKey?: string | undefined;
   kind: string;
   lod: number;
   index: number;
@@ -43,7 +52,7 @@ export const DEFAULT_TILE_BUDGET_BYTES = 192 * 1024 * 1024;
 export const ERROR_RETRY_COOLDOWN_MS = 5000;
 
 function keyStr(k: TileKey): string {
-  return `${k.mediaId} ${k.kind} ${k.lod} ${k.index}`;
+  return `${k.mediaId} ${k.sourceKey ?? ""} ${k.kind} ${k.lod} ${k.index}`;
 }
 
 interface Slot<T> {

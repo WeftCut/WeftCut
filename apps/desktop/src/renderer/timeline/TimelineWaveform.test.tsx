@@ -47,6 +47,16 @@ vi.mock("./tileEngine/TileEngine", () => {
 /// because "immediate" (mount / mediaId change / engine notification) fetches
 /// intentionally involve no `setTimeout` for `vi.advanceTimersByTimeAsync` to
 /// hook into.
+/// The source object the strip hands the producer for a media with no baked
+/// effect-chain sibling: the waveform key IS the media id.
+function raw(mediaId: string): {
+  mediaId: string;
+  waveformKey: string;
+  layerId: string | undefined;
+} {
+  return { mediaId, waveformKey: mediaId, layerId: undefined };
+}
+
 async function flushMicrotasks(turns = 10): Promise<void> {
   await act(async () => {
     for (let i = 0; i < turns; i++) {
@@ -179,7 +189,7 @@ describe("TimelineWaveform", () => {
 
     await waitFor(() => {
       expect(ensureWaveformWindow).toHaveBeenCalledWith(
-        "media-1",
+        raw("media-1"),
         0,
         0,
         1_000_000,
@@ -349,8 +359,8 @@ describe("TimelineWaveform", () => {
         "ready",
       );
     });
-    expect(ensureWaveformWindow).toHaveBeenCalledWith("stereo-1", 0, 0, 2_000_000, 80);
-    expect(ensureWaveformWindow).toHaveBeenCalledWith("stereo-1", 1, 0, 2_000_000, 80);
+    expect(ensureWaveformWindow).toHaveBeenCalledWith(raw("stereo-1"), 0, 0, 2_000_000, 80);
+    expect(ensureWaveformWindow).toHaveBeenCalledWith(raw("stereo-1"), 1, 0, 2_000_000, 80);
   });
 
   it("caps the effective channel count at mediaChannels when the source is really mono", async () => {
@@ -385,8 +395,8 @@ describe("TimelineWaveform", () => {
         "ready",
       );
     });
-    expect(ensureWaveformWindow).toHaveBeenCalledWith("mono-1", 0, 0, 2_000_000, 80);
-    expect(ensureWaveformWindow).not.toHaveBeenCalledWith("mono-1", 1, 0, 2_000_000, 80);
+    expect(ensureWaveformWindow).toHaveBeenCalledWith(raw("mono-1"), 0, 0, 2_000_000, 80);
+    expect(ensureWaveformWindow).not.toHaveBeenCalledWith(raw("mono-1"), 1, 0, 2_000_000, 80);
   });
 
   it("does not query the engine while disabled", () => {
@@ -465,7 +475,7 @@ describe("TimelineWaveform", () => {
         await vi.advanceTimersByTimeAsync(1);
         await flushMicrotasks();
         expect(ensureWaveformWindow).toHaveBeenCalledTimes(2);
-        expect(ensureWaveformWindow).toHaveBeenLastCalledWith("m", 0, 0, 2_000_000, 160);
+        expect(ensureWaveformWindow).toHaveBeenLastCalledWith(raw("m"), 0, 0, 2_000_000, 160);
         expect(wrapper.getAttribute("data-state")).toBe("ready");
       } finally {
         vi.useRealTimers();
@@ -527,7 +537,7 @@ describe("TimelineWaveform", () => {
         await vi.advanceTimersByTimeAsync(WAVEFORM_REFETCH_DEBOUNCE_MS);
         await flushMicrotasks();
         expect(ensureWaveformWindow).toHaveBeenCalledTimes(2);
-        expect(ensureWaveformWindow).toHaveBeenLastCalledWith("m", 0, 0, 2_000_000, 240);
+        expect(ensureWaveformWindow).toHaveBeenLastCalledWith(raw("m"), 0, 0, 2_000_000, 240);
       } finally {
         vi.useRealTimers();
       }
@@ -577,7 +587,7 @@ describe("TimelineWaveform", () => {
         expect(wrapper.getAttribute("data-state")).not.toBe("ready");
         // Called without advancing any timers: mediaId changes are immediate.
         await flushMicrotasks();
-        expect(ensureWaveformWindow).toHaveBeenCalledWith("media-b", 0, 0, 2_000_000, 80);
+        expect(ensureWaveformWindow).toHaveBeenCalledWith(raw("media-b"), 0, 0, 2_000_000, 80);
         expect(wrapper.getAttribute("data-state")).not.toBe("ready");
       } finally {
         vi.useRealTimers();
@@ -762,8 +772,8 @@ describe("TimelineWaveform", () => {
 
       // Segment 0 spans px [0, 2048); one segment width of margin clamps to
       // [0, 4096) -> us [0, round(4096/5760 * 60e6)) — NOT the full span.
-      expect(ensureWaveformWindow).toHaveBeenCalledWith("m-vis-fetch", 0, 0, 42_666_667, 96);
-      expect(ensureWaveformWindow).not.toHaveBeenCalledWith("m-vis-fetch", 0, 0, 60_000_000, 96);
+      expect(ensureWaveformWindow).toHaveBeenCalledWith(raw("m-vis-fetch"), 0, 0, 42_666_667, 96);
+      expect(ensureWaveformWindow).not.toHaveBeenCalledWith(raw("m-vis-fetch"), 0, 0, 60_000_000, 96);
     });
 
     it("refetches the union window immediately when another segment becomes visible", async () => {
@@ -782,7 +792,7 @@ describe("TimelineWaveform", () => {
         await flushMicrotasks();
         expect(ensureWaveformWindow).toHaveBeenCalledTimes(2);
         // Segments 0 and 2 visible -> union clamps to the whole strip.
-        expect(ensureWaveformWindow).toHaveBeenLastCalledWith("m-vis-union", 0, 0, 60_000_000, 96);
+        expect(ensureWaveformWindow).toHaveBeenLastCalledWith(raw("m-vis-union"), 0, 0, 60_000_000, 96);
       } finally {
         vi.useRealTimers();
       }
@@ -838,7 +848,7 @@ describe("TimelineWaveform", () => {
       await flushMicrotasks();
       // Fallback pin: the environment every other test in this file runs in —
       // the mount pass covers the full strip immediately.
-      expect(ensureWaveformWindow).toHaveBeenCalledWith("m-vis-fallback", 0, 0, 60_000_000, 96);
+      expect(ensureWaveformWindow).toHaveBeenCalledWith(raw("m-vis-fallback"), 0, 0, 60_000_000, 96);
     });
   });
 

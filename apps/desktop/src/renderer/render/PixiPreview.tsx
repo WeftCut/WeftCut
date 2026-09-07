@@ -54,6 +54,7 @@ import {
   slotFenceBackendForRenderer,
 } from "./decoder/transports/slotFenceQueue";
 import { proxyIntent } from "../state/proxyPreferenceStore";
+import { layerFxState, readyAudioPath } from "../state/audioFxStore";
 import { resolveDecodeEngine } from "./decoder/decodeEngine";
 import {
   playbackRenderResolution,
@@ -319,7 +320,15 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       };
       const lookupMedia = (mediaId: string): MediaSummary | undefined =>
         useProjectStore.getState().mediaById.get(mediaId);
-      const conformAssetUrl = (mediaId: string): string | null => {
+      // The audio a layer's mixer reads: the baked effect-chain sibling when
+      // one is ready for THIS layer, else the media's raw conform PCM (null
+      // while the conform job hasn't landed). Keyed by LAYER and not by media
+      // on purpose — two layers can share one media and carry different
+      // chains, so a per-media answer would play one layer's effects on the
+      // other. See ADR 0063.
+      const audioSourceUrl = (layerId: string, mediaId: string): string | null => {
+        const baked = readyAudioPath(layerFxState(layerId));
+        if (baked !== null) return convertFileSrc(baked);
         const m = useProjectStore.getState().mediaById.get(mediaId);
         const p = m?.conform_path;
         return p ? convertFileSrc(p) : null;
@@ -347,7 +356,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         originalAssetUrl,
         sourceColor,
         mediaById: lookupMedia,
-        conformAssetUrl,
+        audioSourceUrl,
       });
       // Playback resolution: seed the pool BEFORE the first `ensureClip` so the
       // very first source opens at the user's setting instead of full res and

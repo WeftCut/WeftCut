@@ -4,12 +4,24 @@ import {
   sourcesNeedingPreviewProbe,
   prepareExportMedia,
   waitForProxies,
+  createAudioFxTracker,
   createConformTracker,
+  runAudioFxGate,
+  waitForAudioFx,
   ExportCancelled,
   ExportProxyFailed,
+  type AudioFxGateDeps,
+  type AudioFxTracker,
+  type AudioFxWaitDeps,
+  type ListenLike,
   type ProbeState,
 } from "./exportReadiness";
-import { MEDIA_JOB_EVENTS, type MediaSummary } from "../ipc";
+import {
+  MEDIA_JOB_EVENTS,
+  type AudioFxStatusEvent,
+  type LayerFxState,
+  type MediaSummary,
+} from "../ipc";
 
 // Route helpers, named for the readiness state they encode.
 const directExport = (quick: string | null = null) =>
@@ -285,5 +297,318 @@ describe("createConformTracker", () => {
     await t.ready;
     t.dispose();
     expect(h.unlisten).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("audio effect-chain gate", () => {
+  /// Fake `listen`: records the handler and the ORDER of registration against
+  /// the command call, which is the property the gate has to get right.
+  const makeListen = (log?: string[]) => {
+    const handlers: Array<(e: { payload: AudioFxStatusEvent }) => void> = [];
+    const unlisten = vi.fn();
+    const listen = (<T,>(event: string, cb: (e: { payload: T }) => void) => {
+      log?.push(`listen ${event}`);
+      handlers.push(cb as (e: { payload: AudioFxStatusEvent }) => void);
+      return Promise.resolve(unlisten);
+    }) as ListenLike;
+    const push = (layerId: string, s: LayerFxState) => {
+      for (const h of handlers) h({ payload: { layer_id: layerId, state: s } });
+    };
+    return { listen, push, unlisten, handlers };
+  };
+
+  const SIG = "a".repeat(64);
+  const fxState = (over: Partial<LayerFxState> = {}): LayerFxState => ({
+    desired_sig: null,
+    ready: null,
+    pending: null,
+    error: null,
+    ...over,
+  });
+  const readyFor = (sig: string): LayerFxState =>
+    fxState({
+      desired_sig: sig,
+      ready: {
+        sig,
+        media_hash: "deadbeef",
+        audio_path: "/cache/audio/x.fx.conform",
+        peaks_path: null,
+      },
+    });
+  const failedFor = (message: string, kind: string | null = "audio.denoise"): LayerFxState =>
+    fxState({
+      desired_sig: SIG,
+      error: { message, effect_id: "e1", kind },
+    });
+  const signal = () => new AbortController().signal;
+
+  describe("createAudioFxTracker", () => {
+    it("keeps the last state pushed per layer and notifies subscribers", async () => {
+      const h = makeListen();
+      const t = createAudioFxTracker(h.listen);
+      await t.ready;
+      const seen = vi.fn();
+      t.subscribe(seen);
+      h.push("L1", fxState({ pending: SIG, desired_sig: SIG }));
+      h.push("L1", readyFor(SIG));
+      expect(seen).toHaveBeenCalledTimes(2);
+      expect(t.stateOf("L1")?.ready?.sig).toBe(SIG);
+      expect(t.stateOf("L2")).toBeUndefined();
+      t.dispose();
+      expect(h.unlisten).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("waitForAudioFx", () => {
+    const deps = (t: AudioFxTracker, sig: AbortSignal): AudioFxWaitDeps => ({
+      stateOf: (id) => t.stateOf(id),
+      subscribe: (cb) => t.subscribe(cb),
+      signal: sig,
+    });
+
+    it("resolves once every layer's desired artifact has landed", async () => {
+      const h = makeListen();
+      const t = createAudioFxTracker(h.listen);
+      await t.ready;
+      const p = waitForAudioFx(["L1", "L2"], deps(t, signal()));
+      h.push("L1", readyFor(SIG));
+      h.push("L2", readyFor(SIG));
+      await expect(p).resolves.toBeUndefined();
+      t.dispose();
+    });
+
+    it("counts a bake that landed before the wait started", async () => {
+      const h = makeListen();
+      const t = createAudioFxTracker(h.listen);
+      await t.ready;
+      h.push("L1", readyFor(SIG));
+      await expect(
+        waitForAudioFx(["L1"], deps(t, signal())),
+      ).resolves.toBeUndefined();
+      t.dispose();
+    });
+
+    // An effect disabled mid-wait empties the chain: the layer plays the raw
+    // conform and there is nothing left to wait for.
+    it("treats an emptied chain as satisfied", async () => {
+      const h = makeListen();
+      const t = createAudioFxTracker(h.listen);
+      await t.ready;
+      const p = waitForAudioFx(["L1"], deps(t, signal()));
+      h.push("L1", fxState());
+      await expect(p).resolves.toBeUndefined();
+      t.dispose();
+    });
+
+    it("does not resolve for a layer that has reported nothing yet", async () => {
+      const h = makeListen();
+      const t = createAudioFxTracker(h.listen);
+      await t.ready;
+      let settled = false;
+      const p = waitForAudioFx(["L1"], deps(t, signal()));
+      void p.then(() => {
+        settled = true;
+      });
+      h.push("L2", readyFor(SIG));
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      h.push("L1", readyFor(SIG));
+      await expect(p).resolves.toBeUndefined();
+      t.dispose();
+    });
+
+    it("rejects ExportAudioFxFailed carrying the layer, effect and kind", async () => {
+      const h = makeListen();
+      const t = createAudioFxTracker(h.listen);
+      await t.ready;
+      const p = waitForAudioFx(["L1"], deps(t, signal()));
+      h.push("L1", failedFor("afftdn refused the graph"));
+      await expect(p).rejects.toMatchObject({
+        name: "ExportAudioFxFailed",
+        layerId: "L1",
+        effectId: "e1",
+        kind: "audio.denoise",
+        message: "afftdn refused the graph",
+      });
+      t.dispose();
+    });
+
+    // The baker keeps the last failure attached until a bake supersedes it, so
+    // a state that is both ready and errored is a SUCCESS.
+    it("ignores a stale error on a layer whose artifact is ready", async () => {
+      const h = makeListen();
+      const t = createAudioFxTracker(h.listen);
+      await t.ready;
+      h.push("L1", {
+        ...readyFor(SIG),
+        error: { message: "the previous attempt", effect_id: "e1", kind: null },
+      });
+      await expect(
+        waitForAudioFx(["L1"], deps(t, signal())),
+      ).resolves.toBeUndefined();
+      t.dispose();
+    });
+
+    it("rejects ExportCancelled when the signal aborts", async () => {
+      const ctrl = new AbortController();
+      const h = makeListen();
+      const t = createAudioFxTracker(h.listen);
+      await t.ready;
+      const p = waitForAudioFx(["L1"], deps(t, ctrl.signal));
+      ctrl.abort();
+      await expect(p).rejects.toBeInstanceOf(ExportCancelled);
+      t.dispose();
+    });
+  });
+
+  describe("runAudioFxGate", () => {
+    /// Drains enough microtask turns for the gate to get past `tracker.ready`
+    /// and the command and into the wait.
+    const reachTheWait = async (): Promise<void> => {
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+    };
+    const gateDeps = (
+      over: Partial<AudioFxGateDeps> & { listen: ListenLike },
+    ): AudioFxGateDeps => ({
+      range: { startUs: 0, endUs: 1_000_000 },
+      ensure: async () => ({ waiting: [], failed: [] }),
+      layerName: (id) => `layer(${id})`,
+      effectName: (kind) => (kind === null ? null : `name(${kind})`),
+      failureDetail: ({ effect, layer, message }) =>
+        effect === null
+          ? `audio effects on "${layer}": ${message}`
+          : `audio effect "${effect}" on "${layer}": ${message}`,
+      onWaiting: () => new AbortController().signal,
+      ...over,
+    });
+
+    // The whole reason the gate owns the ordering: a bake that completes
+    // between the command and the registration would never be seen, and the
+    // wait would hang forever.
+    it("registers the status listener before calling the command", async () => {
+      const log: string[] = [];
+      const h = makeListen(log);
+      const out = await runAudioFxGate(
+        gateDeps({
+          listen: h.listen,
+          ensure: async () => {
+            log.push("ensure");
+            return { waiting: [], failed: [] };
+          },
+        }),
+      );
+      expect(out).toEqual({ kind: "ok" });
+      expect(log).toEqual(["listen audio_fx:status", "ensure"]);
+      expect(h.unlisten).toHaveBeenCalledTimes(1);
+    });
+
+    it("names the layer and the effect in a reported failure", async () => {
+      const h = makeListen();
+      const out = await runAudioFxGate(
+        gateDeps({
+          listen: h.listen,
+          ensure: async () => ({
+            waiting: [],
+            failed: [
+              {
+                layer_id: "L1",
+                effect_id: "e1",
+                kind: "audio.denoise",
+                error: "ffmpeg exited 1",
+              },
+            ],
+          }),
+        }),
+      );
+      expect(out).toEqual({
+        kind: "error",
+        detail:
+          'audio effect "name(audio.denoise)" on "layer(L1)": ffmpeg exited 1',
+      });
+    });
+
+    // A failure that belongs to the chain rather than to one effect must not
+    // blame an arbitrary card.
+    it("names no effect for a chain-level failure", async () => {
+      const h = makeListen();
+      const out = await runAudioFxGate(
+        gateDeps({
+          listen: h.listen,
+          ensure: async () => ({
+            waiting: [],
+            failed: [
+              { layer_id: "L1", effect_id: null, kind: null, error: "no conform" },
+            ],
+          }),
+        }),
+      );
+      expect(out).toEqual({
+        kind: "error",
+        detail: 'audio effects on "layer(L1)": no conform',
+      });
+    });
+
+    it("shows the preparing panel with layer labels, then waits", async () => {
+      const h = makeListen();
+      const onWaiting = vi.fn(() => new AbortController().signal);
+      const pending = runAudioFxGate(
+        gateDeps({
+          listen: h.listen,
+          ensure: async () => ({ waiting: ["L1"], failed: [] }),
+          onWaiting,
+        }),
+      );
+      await reachTheWait();
+      expect(onWaiting).toHaveBeenCalledWith(["layer(L1)"]);
+      h.push("L1", readyFor(SIG));
+      expect(await pending).toEqual({ kind: "ok" });
+    });
+
+    it("turns a failure raised DURING the wait into the same named error", async () => {
+      const h = makeListen();
+      const pending = runAudioFxGate(
+        gateDeps({
+          listen: h.listen,
+          ensure: async () => ({ waiting: ["L1"], failed: [] }),
+        }),
+      );
+      await reachTheWait();
+      h.push("L1", failedFor("bake aborted"));
+      expect(await pending).toEqual({
+        kind: "error",
+        detail: 'audio effect "name(audio.denoise)" on "layer(L1)": bake aborted',
+      });
+    });
+
+    it("reports a cancel as cancelled, not as an error", async () => {
+      const h = makeListen();
+      const ctrl = new AbortController();
+      const pending = runAudioFxGate(
+        gateDeps({
+          listen: h.listen,
+          ensure: async () => ({ waiting: ["L1"], failed: [] }),
+          onWaiting: () => ctrl.signal,
+        }),
+      );
+      await reachTheWait();
+      ctrl.abort();
+      expect(await pending).toEqual({ kind: "cancelled" });
+    });
+
+    it("reports an IPC fault as itself rather than dressing it as a bake failure", async () => {
+      const h = makeListen();
+      const out = await runAudioFxGate(
+        gateDeps({
+          listen: h.listen,
+          ensure: async () => {
+            throw new Error("the audio-fx baker is not started yet");
+          },
+        }),
+      );
+      expect(out).toEqual({
+        kind: "error",
+        detail: "the audio-fx baker is not started yet",
+      });
+    });
   });
 });

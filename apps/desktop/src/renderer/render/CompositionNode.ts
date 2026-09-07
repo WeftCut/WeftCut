@@ -268,7 +268,9 @@ export interface CompositionNodeHost {
   originalAssetUrl(mediaId: string): string | null;
   sourceColor(mediaId: string): VideoColorSpaceInit | undefined;
   mediaById(mediaId: string): MediaSummary | undefined;
-  conformAssetUrl(mediaId: string): string | null;
+  /// The audio artifact one LAYER's mixer reads — its baked effect-chain
+  /// sibling, else the media's raw conform PCM; null while neither exists.
+  audioSourceUrl(layerId: string, mediaId: string): string | null;
   /// Export-only pre-baked Motif frames for `instanceKey(path, layerId)`;
   /// undefined in preview and for an unbaked layer.
   motifFrames(key: string): readonly ImageBitmap[] | undefined;
@@ -394,6 +396,11 @@ interface ActiveAudio {
   layerId: string;
   mediaId: string;
   mixer: AudioMixer;
+  /// The artifact `mixer` was opened on. `AudioMixer` opens its `ConformSource`
+  /// once, so a bake landing (or an effect being disabled) is served by
+  /// disposing the mixer and building a new one at the same placement — see
+  /// `ensureAudio`.
+  sourceUrl: string;
   /// Change detection for `updateView`: the params object reference is
   /// stable between `setComposition` calls, so per-tick comparison is one
   /// identity check; on a new summary the JSON guard avoids tearing down
@@ -1868,19 +1875,29 @@ export class CompositionNode {
   // Audio
   // ============================================================
 
+  /// The mixer for one Audio layer, built on first need and rebuilt whenever
+  /// the artifact it should be reading changes.
+  ///
+  /// Resolved on EVERY tick rather than once: an effect-chain bake landing, or
+  /// the chain being emptied, swaps the layer's audio under a live mixer. The
+  /// rebuild is a dispose + construct at the same placement — `AudioMixer`
+  /// opens its `ConformSource` once and the playback anchor is engine-owned, so
+  /// nothing clock-shaped lives in the mixer to preserve, and the new one's
+  /// trim-gain micro-fade covers the seam.
   private ensureAudio(layer: LayerSummary): ActiveAudio | null {
     if (layer.params.kind !== "Audio") return null;
     const graph = this.host.audioGraph();
     if (graph === null) return null;
     const existing = this.audios.get(layer.id);
-    if (existing) return existing;
     const mediaId = layer.params.media_id;
-    // The mixer Range-reads the media's conform PCM — no decode in the
-    // renderer. `null` until the conform job lands: the layer stays
-    // silent and we retry on a later tick (the media summary updates
-    // when the job completes).
-    const url = this.host.conformAssetUrl(mediaId);
+    // The mixer Range-reads PCM — no decode in the renderer. `null` until the
+    // conform job lands: the layer stays silent and we retry on a later tick
+    // (the media summary updates when the job completes). A url that goes null
+    // under a LIVE mixer keeps that mixer: the audio it already holds is the
+    // closest thing to the truth there is, and silence would be a worse answer.
+    const url = this.host.audioSourceUrl(layer.id, mediaId);
     if (!url) {
+      if (existing) return existing;
       if (!this.conformWarned.has(mediaId)) {
         this.conformWarned.add(mediaId);
         // eslint-disable-next-line no-console
@@ -1891,6 +1908,11 @@ export class CompositionNode {
       return null;
     }
     this.conformWarned.delete(mediaId);
+    if (existing) {
+      if (existing.sourceUrl === url) return existing;
+      existing.mixer.dispose();
+      this.audios.delete(layer.id);
+    }
     const placed = placeLayer(layer, this.offsetUs, this.windowStartUs, this.windowEndUs);
     const mixer = new AudioMixer(
       {
@@ -1906,6 +1928,7 @@ export class CompositionNode {
       layerId: layer.id,
       mediaId,
       mixer,
+      sourceUrl: url,
       lastParamsRef: layer.params,
       lastParamsJson:
         JSON.stringify(layer.params) + `|${placed.tStartUs}|${placed.tEndUs}`,

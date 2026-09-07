@@ -1,8 +1,13 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { LayerFxState } from "../../shared/audioEffects/status";
+import type {
+  AudioFxSnapshot,
+  AudioFxStatusEvent,
+  LayerFxState,
+} from "../../shared/audioEffects/status";
 import {
   applyStatus,
+  bootAudioFxStore,
   clear,
   deriveStatus,
   hydrate,
@@ -26,6 +31,11 @@ function ready(sig: string, peaks = "/cache/audio/waveforms/h.fx.peaks") {
 
 function state(over: Partial<LayerFxState> = {}): LayerFxState {
   return { desired_sig: null, ready: null, pending: null, error: null, ...over };
+}
+
+/// Drains the microtask turns a chained seed read needs to settle.
+async function flush(): Promise<void> {
+  for (let i = 0; i < 4; i++) await Promise.resolve();
 }
 
 describe("audioFxStore mirror", () => {
@@ -131,5 +141,142 @@ describe("readyPeaksKey", () => {
   it("is null when the artifact carries no peaks path", () => {
     const s = state({ desired_sig: SIG_A, ready: ready(SIG_A, "") });
     expect(readyPeaksKey(s)).toBeNull();
+  });
+});
+
+describe("bootAudioFxStore", () => {
+  /// A `listen` that hands the test the handler it registered, so a push can be
+  /// delivered at an exact point relative to the seed read.
+  function fakeListen() {
+    const handlers: Array<(e: { payload: AudioFxStatusEvent }) => void> = [];
+    const unlisten = vi.fn();
+    const events: string[] = [];
+    return {
+      handlers,
+      unlisten,
+      events,
+      listen: async (
+        event: string,
+        handler: (e: { payload: AudioFxStatusEvent }) => void,
+      ) => {
+        events.push(event);
+        handlers.push(handler);
+        return unlisten;
+      },
+    };
+  }
+
+  it("seeds from the snapshot, then applies pushes", async () => {
+    const l = fakeListen();
+    const unsub = await bootAudioFxStore({
+      listen: l.listen,
+      snapshot: async () => ({ L1: state({ desired_sig: SIG_A }) }),
+    });
+    expect(l.events).toEqual(["audio_fx:status"]);
+    expect(layerFxState("L1")?.desired_sig).toBe(SIG_A);
+
+    l.handlers[0]!({
+      payload: { layer_id: "L2", state: state({ desired_sig: SIG_B }) },
+    });
+    expect(layerFxState("L2")?.desired_sig).toBe(SIG_B);
+
+    unsub();
+    expect(l.unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  // The listener goes up BEFORE the seed read, so a push can land while the
+  // snapshot is in flight. The snapshot is the older value of the two, so the
+  // push has to win — and it cannot simply be dropped, because nothing re-sends
+  // it.
+  it("keeps a push that arrives while the snapshot is in flight", async () => {
+    const l = fakeListen();
+    let releaseSnapshot: (() => void) | null = null;
+    const snapshotGate = new Promise<void>((r) => {
+      releaseSnapshot = r;
+    });
+    const booting = bootAudioFxStore({
+      listen: l.listen,
+      snapshot: async () => {
+        await snapshotGate;
+        return { L1: state({ desired_sig: SIG_A }) };
+      },
+    });
+    await Promise.resolve();
+    l.handlers[0]!({
+      payload: { layer_id: "L1", state: state({ desired_sig: SIG_B }) },
+    });
+    releaseSnapshot!();
+    const unsub = await booting;
+
+    expect(layerFxState("L1")?.desired_sig).toBe(SIG_B);
+    unsub();
+  });
+
+  it("keeps listening when the snapshot read fails", async () => {
+    const l = fakeListen();
+    const unsub = await bootAudioFxStore({
+      listen: l.listen,
+      snapshot: async () => {
+        throw new Error("the audio-fx baker is not started yet");
+      },
+    });
+    l.handlers[0]!({
+      payload: { layer_id: "L1", state: state({ desired_sig: SIG_A }) },
+    });
+    expect(layerFxState("L1")?.desired_sig).toBe(SIG_A);
+    unsub();
+  });
+
+  // The baker rebuilds its map from scratch on a project switch, so a layer of
+  // the closed project left here would still name its artifact.
+  it("re-seeds on a project switch and unsubscribes both wires", async () => {
+    const l = fakeListen();
+    let snapshot: AudioFxSnapshot = { OLD: state({ desired_sig: SIG_A }) };
+    let onSwitch: (() => void) | null = null;
+    const unsubProject = vi.fn();
+    const unsub = await bootAudioFxStore({
+      listen: l.listen,
+      snapshot: async () => snapshot,
+      onProjectSwitch: (cb) => {
+        onSwitch = cb;
+        return unsubProject;
+      },
+    });
+    expect(Object.keys(useAudioFxStore.getState().layers)).toEqual(["OLD"]);
+
+    snapshot = { NEW: state({ desired_sig: SIG_B }) };
+    onSwitch!();
+    await flush();
+    expect(Object.keys(useAudioFxStore.getState().layers)).toEqual(["NEW"]);
+
+    unsub();
+    expect(l.unlisten).toHaveBeenCalledTimes(1);
+    expect(unsubProject).toHaveBeenCalledTimes(1);
+  });
+
+  // Closing a project takes the baker's answer away with it; the entries left
+  // behind would name artifacts of a project nothing is playing any more.
+  it("empties the mirror when the re-seed finds no project", async () => {
+    const l = fakeListen();
+    let fail = false;
+    let onSwitch: (() => void) | null = null;
+    const unsub = await bootAudioFxStore({
+      listen: l.listen,
+      snapshot: async () => {
+        if (fail) throw new Error("no project");
+        return { L1: state({ desired_sig: SIG_A }) };
+      },
+      onProjectSwitch: (cb) => {
+        onSwitch = cb;
+        return () => {};
+      },
+    });
+    expect(layerFxState("L1")).toBeDefined();
+
+    fail = true;
+    onSwitch!();
+    await flush();
+    expect(useAudioFxStore.getState().layers).toEqual({});
+    unsub();
   });
 });

@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next";
 import { createExportLogMirror } from "./exportLog";
 import {
   ensureExportAudioConform,
+  ensureExportAudioFx,
   ensureFullProxy,
   exportProjectAudioOnly,
   muxExport,
@@ -21,6 +22,7 @@ import {
   type MediaJobEvent,
   projectSummary,
   type MediaSummary,
+  type ProjectSummary,
 } from "../ipc";
 import { type ProxyState } from "../panels/mediaReadiness";
 import { classifyWebcodecsDecodability } from "../render/decoder/probeSourceDecodable";
@@ -59,12 +61,15 @@ import { exportBakeMotifs } from "../render/exportBake";
 import { getMotif } from "../render/motifs/catalog";
 import {
   prepareExportMedia,
+  runAudioFxGate,
   waitForProxies,
   createConformTracker,
   ExportCancelled,
   ExportProxyFailed,
+  type AudioFxGateOutcome,
   type ProbeState,
 } from "../render/exportReadiness";
+import { getAudioEffect } from "../../shared/audioEffects/catalog";
 import { type ExportState } from "../panels/ExportPanel";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { rootCompositionOf, useProjectStore } from "../state/projectStore";
@@ -78,6 +83,28 @@ import { resolveDecode } from "../render/decodeRoute";
 function gateFailureDetail(e: unknown, prepareDetail: (mediaId: string) => string): string {
   if (e instanceof ExportProxyFailed) return prepareDetail(e.mediaId);
   return e instanceof Error ? e.message : String(e);
+}
+
+/// The name an export error gives one layer: its own label, else the source it
+/// was cut from, else the id. `lib/layerName.ts`'s ladder minus the rungs no
+/// Audio layer reaches — and minus the `t` a module-level helper cannot have,
+/// which is why a kind name is never reached here.
+///
+/// Walks the compositions rather than `forEachLayer`: a layer can be muted or
+/// sit on a disabled track and still have a failed bake to report, and the walk
+/// skips exactly those.
+function audioLayerLabel(summary: ProjectSummary | null, layerId: string): string {
+  for (const comp of Object.values(summary?.compositions ?? {})) {
+    for (const track of comp.tracks) {
+      for (const layer of track.layers) {
+        if (layer.id !== layerId) continue;
+        const own = layer.label?.trim();
+        if (own) return own;
+        return layer.params.kind === "Audio" ? layer.params.media_label : layerId;
+      }
+    }
+  }
+  return layerId;
 }
 
 /// Owns the export lifecycle: the export panel/dialog state, the window
@@ -222,6 +249,42 @@ export function useExportFlow(deps: {
     })();
   }, [exportState, t]);
 
+  // The audio-effect gate, wired once for both export paths (audio-only and
+  // full). Everything translated is bound here; the decisions are
+  // `runAudioFxGate`'s. `proj` is the summary the export ran its other gates
+  // against, so a layer renamed mid-export is still named as the export saw it.
+  const audioFxGate = useCallback(
+    (
+      proj: ProjectSummary | null,
+      range: { startUs: number | null; endUs: number | null },
+    ): Promise<AudioFxGateOutcome> =>
+      runAudioFxGate({
+        listen,
+        ensure: (r) => ensureExportAudioFx(r),
+        range,
+        layerName: (id) => audioLayerLabel(proj, id),
+        effectName: (kind) => {
+          if (kind === null) return null;
+          const descriptor = getAudioEffect(kind);
+          return descriptor ? t(descriptor.nameI18nKey) : kind;
+        },
+        failureDetail: ({ effect, layer, message }) =>
+          effect === null
+            ? t("export.failed_audio_fx_chain", { layer, message })
+            : t("export.failed_audio_fx", { effect, layer, message }),
+        onWaiting: (labels) => {
+          const ctrl = new AbortController();
+          setExportState({
+            kind: "preparing",
+            labels,
+            onCancel: () => ctrl.abort(),
+          });
+          return ctrl.signal;
+        },
+      }),
+    [t],
+  );
+
   // Pixi/WebCodecs export. Three-stage pipeline:
   //
   //   1. PreviewSurface handle suspends the preview compositor and drives
@@ -317,6 +380,17 @@ export function useExportFlow(deps: {
         return;
       } finally {
         tracker.dispose();
+      }
+      // The mixer reads a baked sibling wherever a chain is desired, so the
+      // conform gate above is only half the audio wait.
+      const fx = await audioFxGate(proj, { startUs, endUs });
+      if (fx.kind === "cancelled") {
+        setExportState(null);
+        return;
+      }
+      if (fx.kind === "error") {
+        setExportState({ kind: "error", detail: fx.detail });
+        return;
       }
       try {
         setExportState({ kind: "starting" });
@@ -493,6 +567,18 @@ export function useExportFlow(deps: {
           return;
         } finally {
           tracker.dispose();
+        }
+        // ---- Audio effect-chain gate --------------------------------------
+        // Same two-part wait as the audio-only path: the conform above, then
+        // the bakes that read it.
+        const fx = await audioFxGate(proj, { startUs, endUs });
+        if (fx.kind === "cancelled") {
+          setExportState(null);
+          return;
+        }
+        if (fx.kind === "error") {
+          setExportState({ kind: "error", detail: fx.detail });
+          return;
         }
       }
     }
@@ -840,7 +926,7 @@ export function useExportFlow(deps: {
       payload: { outputPath: path, durationUs },
     });
     },
-    [t, previewRef, proxyStateRef, decodeProbeMemo, exportLog],
+    [t, audioFxGate, previewRef, proxyStateRef, decodeProbeMemo, exportLog],
   );
 
   // E2E-only: mirror the export phase onto window so a WebDriver diagnostic can

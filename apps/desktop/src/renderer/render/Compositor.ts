@@ -172,11 +172,15 @@ export interface CompositorInit {
   sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
   /// Lookup for media-side codec dimensions.
   mediaById: (mediaId: string) => MediaSummary | undefined;
-  /// Resolver for the asset URL of a media item's conform PCM (VCONF).
-  /// Drives the buffer-scheduled preview audio mixer; `null` while the
-  /// conform job hasn't completed (the layer stays silent). Optional:
-  /// the export Worker omits it (export audio mixes in Rust).
-  conformAssetUrl?: (mediaId: string) => string | null;
+  /// Resolver for the asset URL a LAYER's audio mixer reads: its baked
+  /// effect-chain sibling when one is ready, else the media's raw conform PCM
+  /// (VCONF). Drives the buffer-scheduled preview audio mixer; `null` while the
+  /// conform job hasn't completed (the layer stays silent). Optional: the
+  /// export Worker omits it (export audio mixes in Rust).
+  ///
+  /// Per layer AND media: the layer decides which artifact, the media is what
+  /// the raw fallback resolves against. See ADR 0063.
+  audioSourceUrl?: (layerId: string, mediaId: string) => string | null;
   /// Optional decoder pool override. Defaults to a preview-tuned
   /// `SourceDecoderPool` with per-frame lookahead + ring eviction. The
   /// export Worker injects an `ExportDecoderPool` that drives decoding
@@ -238,7 +242,7 @@ export class Compositor {
   private originalAssetUrl: (mediaId: string) => string | null;
   private sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
   private mediaById: (mediaId: string) => MediaSummary | undefined;
-  private conformAssetUrl: (mediaId: string) => string | null;
+  private audioSourceUrl: (layerId: string, mediaId: string) => string | null;
   /// Master audio bus (preview mode only; null in the export Worker).
   private audioGraph: AudioGraph | null = null;
   /// The engine's clock anchor, forwarded each tick (null while paused
@@ -388,7 +392,7 @@ export class Compositor {
     this.compositionWidth = init.width;
     this.compositionHeight = init.height;
     this.mode = init.mode;
-    this.conformAssetUrl = init.conformAssetUrl ?? ((): string | null => null);
+    this.audioSourceUrl = init.audioSourceUrl ?? ((): string | null => null);
     this.underrun = new UnderrunTracker({ onChange: init.onUnderrun });
     this.app.stage.addChild(this.stage);
     this.host = {
@@ -407,7 +411,7 @@ export class Compositor {
       originalAssetUrl: (id) => this.originalAssetUrl(id),
       sourceColor: (id) => this.sourceColor(id),
       mediaById: (id) => this.mediaById(id),
-      conformAssetUrl: (id) => this.conformAssetUrl(id),
+      audioSourceUrl: (layerId, mediaId) => this.audioSourceUrl(layerId, mediaId),
       motifFrames: (key) => this.motifFrames.get(key),
       ensureTenBitIngest: () => this.ensureTenBitIngest(),
       ensureNv12Ingest: () => this.ensureNv12Ingest(),

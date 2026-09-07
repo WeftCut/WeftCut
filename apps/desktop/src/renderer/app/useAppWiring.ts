@@ -7,8 +7,10 @@ import {
   agentSessionBegin,
   agentSessionEnd,
   agentSessionGet,
+  audioFxSnapshot,
   keybindingsGet,
   type AgentSession,
+  type AudioFxStatusEvent,
   type KeybindingsMap,
   motifStalenessReport,
   type MotifStaleEntry,
@@ -17,7 +19,8 @@ import {
 import { tryMutate } from "../errors/tryMutate";
 import { wireLogStream } from "../logs/store";
 import { wireSearchIndex } from "../search/searchIndexStore";
-import { wireProjectStore } from "../state/projectStore";
+import { bootAudioFxStore } from "../state/audioFxStore";
+import { useProjectStore, wireProjectStore } from "../state/projectStore";
 import { wireProxyPrefStore } from "../state/proxyPreferenceStore";
 import { wireAppSettingsStream } from "../settings/appSettingsStore";
 import { wireDecodeComponent } from "../settings/decodeComponentStore";
@@ -173,6 +176,36 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
     let cancelled = false;
     (async () => {
       const u = await wireAppSettingsStream();
+      if (cancelled) {
+        u();
+        return;
+      }
+      unlisten = u;
+    })();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  // Audio-effect bake mirror (ADR 0063). Seeded from the baker's snapshot and
+  // kept live by `audio_fx:status`; the preview's audio source, the timeline's
+  // waveform key and the effect card's status line all read it. Wired here
+  // rather than under the panel that shows it: playback reads the same mirror,
+  // so it has to be live whether or not any inspector is open.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    (async () => {
+      const u = await bootAudioFxStore({
+        listen: (event, handler) =>
+          listen<AudioFxStatusEvent>(event, handler),
+        snapshot: () => audioFxSnapshot(),
+        onProjectSwitch: (cb) =>
+          useProjectStore.subscribe((s, prev) => {
+            if (s.summary?.project_id !== prev.summary?.project_id) cb();
+          }),
+      });
       if (cancelled) {
         u();
         return;

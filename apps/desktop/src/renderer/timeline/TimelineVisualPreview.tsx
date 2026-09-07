@@ -5,6 +5,7 @@ import { TimelineFilmstrip } from "./TimelineFilmstrip";
 import { TimelineWaveform } from "./TimelineWaveform";
 import { trackStatic, type LayerSummary, type Rgba } from "../ipc";
 import { useMediaPosterSrc } from "../panels/MediaThumbnail";
+import { useReadyPeaksKey } from "../state/audioFxStore";
 import {
   useFirstVideoMediaIdIn,
   useMediaById,
@@ -135,6 +136,9 @@ export function TimelineVisualPreview({
     layer.params.kind === "CompositionRef" ? layer.params.composition_id : null,
   );
   const groupPosterSrc = useMediaPosterSrc(groupPosterMediaId, "video");
+  // Audio-effect bake state for THIS layer, whatever its kind: a hook cannot
+  // be conditional, and a non-audio layer simply has no entry.
+  const readyPeaksKey = useReadyPeaksKey(layer.id);
   if (!canRenderPreview) return null;
   const layerTheme = timelineLayerTheme(layer.params.kind, layer.color_hint);
 
@@ -160,6 +164,12 @@ export function TimelineVisualPreview({
         return (
           <TimelineWaveform
             mediaId={layer.params.media_id}
+            // The processed waveform wherever a bake is ready for this layer,
+            // else the raw conform's — the picture follows what plays
+            // (ADR 0063). Read through the store hook, so a bake landing
+            // re-renders the strip on its own.
+            waveformKey={readyPeaksKey ?? layer.params.media_id}
+            layerId={layer.id}
             srcInUs={layer.params.src_in_us}
             srcOutUs={layer.params.src_out_us}
             layerWidthPx={layerWidthPx}

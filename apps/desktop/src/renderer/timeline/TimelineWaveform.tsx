@@ -6,6 +6,7 @@ import {
   ensureWaveformWindow,
   getWaveformChannelCount,
   registerWaveformProducer,
+  type WaveformSource,
   type WaveformWindow,
 } from "./tileEngine/WaveformTileProducer";
 
@@ -22,8 +23,8 @@ export const STEREO_LANES_MIN_PX = 28;
 
 /// Param-churn (pxPerSec / src window) re-fetch delay: coalesces a burst of
 /// zoom-wheel or trim-drag frames into one assembly run instead of one per
-/// intermediate value. Mount, mediaId changes, visibility changes, and engine
-/// `subscribe` notifications bypass this and fetch immediately — see
+/// intermediate value. Mount, waveform-key changes, visibility changes, and
+/// engine `subscribe` notifications bypass this and fetch immediately — see
 /// `useWindowData`.
 export const WAVEFORM_REFETCH_DEBOUNCE_MS = 120;
 
@@ -126,17 +127,17 @@ const INITIAL_WINDOW_DATA: WindowData = {
 
 /// Runs one channel-count + window(s) assembly for the VISIBLE window
 /// [winLoUs, winHiUs) at pxPerSec. Pulled out of the hook so both the
-/// immediate callers (mount, mediaId change, visibility change, engine
+/// immediate callers (mount, waveform-key change, visibility change, engine
 /// `subscribe` notifications) and the debounced param-churn caller share the
 /// exact same resolution logic.
 function assembleWindowData(
-  mediaId: string,
+  source: WaveformSource,
   winLoUs: number,
   winHiUs: number,
   pxPerSec: number,
   mediaChannels: number | undefined,
 ): Promise<WindowData> {
-  return getWaveformChannelCount(mediaId)
+  return getWaveformChannelCount(source)
     // A rejection here (e.g. the waveform file isn't generated yet) must
     // never throw into render; fall back to the mono path, which will
     // independently surface "not_ready"/"pending" from ensureWaveformWindow.
@@ -153,8 +154,8 @@ function assembleWindowData(
           : headerChannels;
       if (channels === 2) {
         return Promise.all([
-          ensureWaveformWindow(mediaId, 0, winLoUs, winHiUs, pxPerSec),
-          ensureWaveformWindow(mediaId, 1, winLoUs, winHiUs, pxPerSec),
+          ensureWaveformWindow(source, 0, winLoUs, winHiUs, pxPerSec),
+          ensureWaveformWindow(source, 1, winLoUs, winHiUs, pxPerSec),
         ]).then(([r0, r1]): WindowData => {
           // Ready only once BOTH channels resolve; a mismatched
           // pending/not_ready pair prefers not_ready (more definitive).
@@ -167,7 +168,7 @@ function assembleWindowData(
           return { state: "ready", channels: 2, win0: r0, win1: r1, winLoUs, winHiUs };
         });
       }
-      return ensureWaveformWindow(mediaId, 0, winLoUs, winHiUs, pxPerSec).then((r0): WindowData => {
+      return ensureWaveformWindow(source, 0, winLoUs, winHiUs, pxPerSec).then((r0): WindowData => {
         if (r0 === "not_ready") return { state: "not_ready", channels: 1, win0: null, win1: null, winLoUs, winHiUs };
         if (r0 === "pending") return { state: "pending", channels: 1, win0: null, win1: null, winLoUs, winHiUs };
         return { state: "ready", channels: 1, win0: r0, win1: null, winLoUs, winHiUs };
@@ -177,6 +178,8 @@ function assembleWindowData(
 
 function useWindowData(
   mediaId: string,
+  waveformKey: string,
+  layerId: string | undefined,
   winLoUs: number,
   winHiUs: number,
   hasWindow: boolean,
@@ -186,18 +189,19 @@ function useWindowData(
   visibilityVersion: number,
 ): WindowData {
   const [result, setResult] = useState<WindowData>(INITIAL_WINDOW_DATA);
-  // Tracks mediaId across renders so the effect can tell a genuine media
-  // swap (different content — fetch immediately, drop the stale window) from
-  // param churn on the SAME media (zoom/trim — debounce, keep the stale
-  // window on screen, stretched, while the new geometry assembles).
-  const prevMediaIdRef = useRef<string | undefined>(undefined);
+  // Tracks the WAVEFORM KEY across renders so the effect can tell a genuine
+  // content swap (a different media, or a bake landing on this one — fetch
+  // immediately, drop the stale window) from param churn on the same content
+  // (zoom/trim — debounce, keep the stale window on screen, stretched, while
+  // the new geometry assembles).
+  const prevKeyRef = useRef<string | undefined>(undefined);
   const prevVisibilityVersionRef = useRef(0);
 
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    const isNewMedia = prevMediaIdRef.current !== mediaId;
-    prevMediaIdRef.current = mediaId;
+    const isNewContent = prevKeyRef.current !== waveformKey;
+    prevKeyRef.current = waveformKey;
     const visibilityChanged = prevVisibilityVersionRef.current !== visibilityVersion;
     prevVisibilityVersionRef.current = visibilityVersion;
 
@@ -219,11 +223,20 @@ function useWindowData(
       // No segment visible -> nothing to assemble; the stale window (if any)
       // keeps rendering for whatever scrolls back in until the next pass.
       if (!hasWindow) return;
-      void assembleWindowData(mediaId, winLoUs, winHiUs, pxPerSec, mediaChannels).then(apply);
+      void assembleWindowData(
+        { mediaId, waveformKey, layerId },
+        winLoUs,
+        winHiUs,
+        pxPerSec,
+        mediaChannels,
+      ).then(apply);
     };
+    // By MEDIA, not by waveform key: a tile arrival notifies the media it
+    // belongs to (`TileKey.mediaId`), and a baked strip wants the raw
+    // waveform's notifications too — that is what it falls back to.
     const unsub = tileEngine.subscribe(mediaId, run);
 
-    if (isNewMedia) {
+    if (isNewContent) {
       setResult(INITIAL_WINDOW_DATA);
       run();
       return () => { cancelled = true; unsub(); };
@@ -239,7 +252,18 @@ function useWindowData(
 
     const timer = setTimeout(run, WAVEFORM_REFETCH_DEBOUNCE_MS);
     return () => { cancelled = true; unsub(); clearTimeout(timer); };
-  }, [mediaId, winLoUs, winHiUs, hasWindow, pxPerSec, enabled, mediaChannels, visibilityVersion]);
+  }, [
+    mediaId,
+    waveformKey,
+    layerId,
+    winLoUs,
+    winHiUs,
+    hasWindow,
+    pxPerSec,
+    enabled,
+    mediaChannels,
+    visibilityVersion,
+  ]);
   return result;
 }
 
@@ -375,6 +399,8 @@ function drawTile(
 
 export function TimelineWaveform({
   mediaId,
+  waveformKey,
+  layerId,
   srcInUs,
   srcOutUs,
   layerWidthPx,
@@ -386,6 +412,14 @@ export function TimelineWaveform({
   mediaChannels,
 }: {
   mediaId: string;
+  /// Which of the media's peaks files to draw: `mediaId` for the raw conform,
+  /// an `fx:` key for the layer's baked effect-chain sibling. Defaults to the
+  /// raw conform, so a caller with no chain to consider passes nothing.
+  waveformKey?: string;
+  /// The layer this strip belongs to. Only used to ask the baker to re-verify
+  /// a baked sibling that has gone missing, so it is optional in exactly the
+  /// case where there is no sibling.
+  layerId?: string;
   srcInUs: number;
   srcOutUs: number;
   layerWidthPx: number;
@@ -421,6 +455,8 @@ export function TimelineWaveform({
 
   const { state, channels, win0, win1, winLoUs, winHiUs } = useWindowData(
     mediaId,
+    waveformKey ?? mediaId,
+    layerId,
     fetchWindow?.loUs ?? 0,
     fetchWindow?.hiUs ?? 0,
     fetchWindow !== null,

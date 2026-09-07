@@ -2,17 +2,18 @@
 // layer id, plus the pure reductions of it every consumer needs — the card's
 // status line, the preview's audio source, the timeline's waveform key.
 //
-// Boundary: this module subscribes to nothing and derives nothing the baker
-// already decided. The `audio_fx:status` listener and the boot snapshot request
-// live in the renderer's IPC layer, which calls `hydrate` / `applyStatus` /
-// `clear`. Bake state is never persisted (spec Decision 8) — a stored path
-// outlives the file it names. See ADR 0063 and docs/audio.md § Clip effects.
+// Boundary: this module derives nothing the baker already decided, and reaches
+// the IPC layer only through the callbacks `bootAudioFxStore` is handed — the
+// reductions and the mirror itself stay pure. Bake state is never persisted
+// (spec Decision 8) — a stored path outlives the file it names. See ADR 0063
+// and docs/audio.md § Clip effects.
 //
 // React subscribers must use the ATOMIC selector hooks below (per
 // `feedback_zustand_composite_selector` — never build an object in a selector).
 
 import { create } from "zustand";
 import {
+  AUDIO_FX_STATUS_EVENT,
   fxWaveformKey,
   type AudioFxError,
   type AudioFxSnapshot,
@@ -102,3 +103,68 @@ export const useReadyPeaksKey = (layerId: string): string | null =>
 
 export const useReadyAudioPath = (layerId: string): string | null =>
   useAudioFxStore((s) => readyAudioPath(s.layers[layerId]));
+
+// ===== Boot wiring =========================================================
+
+export interface AudioFxBootDeps {
+  /// Event subscription resolving to an unlisten fn — `@/bridge/events`'
+  /// `listen`, narrowed to the one payload this mirror reads.
+  listen: (
+    event: string,
+    handler: (e: { payload: AudioFxStatusEvent }) => void,
+  ) => Promise<() => void>;
+  /// The baker's whole map (`audioFxSnapshot`).
+  snapshot: () => Promise<AudioFxSnapshot>;
+  /// Subscribe to project IDENTITY changes, resolving to an unsubscribe. When
+  /// wired, a switch re-seeds: the baker rebuilds its map from scratch on load,
+  /// and a layer of the closed project left in this mirror would otherwise
+  /// still name its artifact (`proxyPreferenceStore` re-hydrates on the same
+  /// signal, for the same reason).
+  onProjectSwitch?: (cb: () => void) => () => void;
+}
+
+/// Seed the mirror and keep it live. Call once at app boot; returns the
+/// unsubscribe.
+///
+/// The listener is registered BEFORE the seed read and pushes that arrive while
+/// the read is in flight are re-applied ON TOP of it: the snapshot is the older
+/// value of the two, so letting it win would resurrect a state the baker has
+/// already superseded, and skipping the pre-seed window entirely would drop the
+/// push for good (nothing re-sends it).
+export async function bootAudioFxStore(
+  deps: AudioFxBootDeps,
+): Promise<() => void> {
+  let seeded = false;
+  const duringSeed = new Map<string, LayerFxState>();
+  const unlisten = await deps.listen(AUDIO_FX_STATUS_EVENT, (e) => {
+    if (!seeded) duringSeed.set(e.payload.layer_id, e.payload.state);
+    applyStatus(e.payload);
+  });
+  const seed = async (reseeding: boolean): Promise<void> => {
+    let snapshot: AudioFxSnapshot;
+    try {
+      snapshot = await deps.snapshot();
+    } catch {
+      // No project open, or the baker isn't started. On a SWITCH that means the
+      // previous project's entries have to go: they name artifacts of a project
+      // nothing is playing any more. At boot there is nothing to drop, and
+      // whatever the live pushes delivered stands.
+      if (reseeding) clear();
+      seeded = true;
+      return;
+    }
+    seeded = true;
+    hydrate({ ...snapshot, ...Object.fromEntries(duringSeed) });
+    duringSeed.clear();
+  };
+  await seed(false);
+  const unsubProject = deps.onProjectSwitch?.(() => {
+    seeded = false;
+    duringSeed.clear();
+    void seed(true);
+  });
+  return () => {
+    unlisten();
+    unsubProject?.();
+  };
+}
