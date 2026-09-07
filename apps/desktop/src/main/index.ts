@@ -17,6 +17,7 @@ import { builtinAssetDir } from './motif/builtinAssets.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry, quitIfLastUserWindowClosed } from './windows.js'
 import type { SecondaryWinOpts } from './windowConfig.js'
 import { shouldClearApplicationMenu } from './inputPolicy.js'
+import { WINDOWS_APP_USER_MODEL_ID } from './appIdentity.js'
 import { buildApplicationMenuTemplate, sanitizeMenuProjection } from './appMenu.js'
 import type { MenuProjection } from '../shared/menu.js'
 import { broadcastEvent } from './broadcast.js'
@@ -230,12 +231,19 @@ async function createWindow(): Promise<BrowserWindow> {
     // option; the e2e window-chrome spec guards the resulting capability.
     fullscreenable: true,
     ...MAIN_WINDOW_MINIMUM_SIZE,
-    // Dev only: electron-vite runs the bare electron.exe, whose taskbar/Alt-Tab
-    // icon is Electron's default. The PACKAGED app gets its icon from
-    // electron-builder (embedded in the exe + installer — see
-    // electron-builder.yml), and build/ is not bundled into the app, so we point
-    // at the raster master only in dev, where the repo tree is on disk.
-    ...(isDev ? { icon: path.join(import.meta.dirname, '../../build/icon.png') } : {}),
+    // Every UNPACKAGED run — `electron-vite dev`, `npm run preview`, Playwright
+    // e2e and the perf scripts launching out/main/index.js — executes the bare
+    // electron.exe, whose window/Alt-Tab icon is Electron's default. The PACKAGED
+    // app gets its icon from electron-builder (embedded in the exe + installer —
+    // see electron-builder.yml), and build/ is not bundled into the app, so point
+    // at the raster master whenever we are not packaged: the repo tree is on disk
+    // in all of those cases. Gated on app.isPackaged rather than the dev-server
+    // env var (isDev), which only `electron-vite dev` sets — the e2e/perf launches
+    // used to fall through and show the Electron atom.
+    // NOTE (Windows): this decides the window/Alt-Tab icon. The TASKBAR button
+    // may ignore it — once the AppUserModelID set below matches a Start Menu
+    // shortcut, the shell draws that app record's cached icon instead.
+    ...(app.isPackaged ? {} : { icon: path.join(import.meta.dirname, '../../build/icon.png') }),
     // Show immediately. A frameless (`frame:false`) window combined with
     // `show:false` + a deferred `ready-to-show` show does NOT reliably surface
     // on Windows (ready-to-show may not fire) — the window stays hidden. With a
@@ -380,9 +388,15 @@ async function warnIfElevatedWindows(win: BrowserWindow): Promise<void> {
 
 app.whenReady().then(async () => {
   // Windows taskbar identity: without an explicit AppUserModelID a run groups
-  // under generic "electron.exe" and won't adopt our window icon. Match the
-  // packaged appId (electron-builder.yml) so dev and prod share one identity.
-  app.setAppUserModelId('dev.weftcut.desktop')
+  // under generic "electron.exe" and won't adopt our window icon. The value MUST
+  // match the appId electron-builder stamps onto the Start Menu / Desktop
+  // shortcuts (WinShell::SetLnkAUMI) — otherwise Windows can't link the window to
+  // the shortcut and the taskbar falls back to a blank icon. Single source of
+  // truth in ./appIdentity, asserted equal to electron-builder.yml by its test;
+  // build/installer.nsh re-stamps the shortcut with the same value on every
+  // in-place update so a rewritten exe never orphans the identity. Dev shares the
+  // packaged identity on purpose (one taskbar grouping across dev and prod).
+  app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID)
 
   // WeftCut's UI is dark-only (base.css pins `color-scheme: dark`), so declare
   // that to the OS instead of inheriting the system appearance. macOS draws the

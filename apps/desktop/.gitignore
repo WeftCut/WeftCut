@@ -38,6 +38,9 @@ release/
 !build/
 build/*
 !build/icon.png
+# Custom NSIS include (auto-detected by electron-builder as build/installer.nsh):
+# re-stamps the shortcut AppUserModelID on every install/update. Tracked source.
+!build/installer.nsh
 
 # determinism-artifacts/ — per-OS PNG captures; compared in CI, never committed
 determinism-artifacts/

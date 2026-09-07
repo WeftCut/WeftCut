@@ -52,6 +52,18 @@ Developer ID: Squirrel.Mac installs only a build whose signature satisfies the
 running app's designated requirement, and an ad-hoc signature pins that to the
 running build's own code hash. Prereleases and downgrades are off.
 
+On Windows the taskbar icon and window grouping come from the app's
+AppUserModelID, which the installer stamps onto the Start Menu and Desktop
+shortcuts. The runtime value (`src/main/appIdentity.ts`) must equal
+electron-builder's `appId`; a unit test pins them together, and this value stays
+stable across releases so pinned shortcuts and notifications survive updates.
+electron-builder's stock installer only re-stamps a shortcut when it recreates or
+renames one, so an in-place update that keeps a same-named shortcut could leave a
+rewritten exe with a stale identity and a blank taskbar icon. `build/installer.nsh`
+re-asserts the AppUserModelID on every install and update to prevent that. A
+machine whose per-identity taskbar record was already corrupted by an earlier
+update is only reliably cleared by uninstalling and reinstalling.
+
 Before declaring updates verified, install the actual 0.1.1 Windows/Linux
 packages, publish a higher patch, and exercise checking, downloading and normal
 exit installation. Confirm the saved project reopens and the app reports the

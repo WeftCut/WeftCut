@@ -75,7 +75,9 @@ extraResources:
 # canonical brand SVG (src/renderer/public/icons/icon.svg) by `npm run
 # gen:icons`. electron-builder derives the multi-resolution Windows .ico, the
 # macOS .icns, and the Linux png set from this one master — re-run gen:icons
-# after any palette tweak to the SVG.
+# after any palette tweak to the SVG. The derived multi-resolution .ico is what
+# the exe embeds and what the Windows taskbar draws; the in-app window icon
+# (src/main/index.ts, set whenever !app.isPackaged) is the runtime backstop.
 win:
   target: [nsis]
   icon: build/icon.png
@@ -91,6 +93,10 @@ win:
       to: native-decode/LICENSE.txt
     - from: resources/ffmpeg-lgpl/win/manifest.json
       to: native-decode/manifest.json
+# build/installer.nsh (auto-detected, no `include:` key needed) adds a
+# customInstall macro that re-stamps the shortcut AppUserModelID on every install
+# AND in-place update — the stock macros skip it when a kept shortcut's name is
+# unchanged, which is what leaves the taskbar icon blank after an auto-update.
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
