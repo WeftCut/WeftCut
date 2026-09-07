@@ -366,6 +366,16 @@ describe('parseEffectPatch', () => {
   it('rejects a malformed param value naming the param', () => {
     expect(() => parseEffectPatch({ params: { strength: 8 } })).toThrow(/params\['strength'\]/)
   })
+  // A null INSIDE params is a removal, not a malformed track — the only way to
+  // put a param back to unset (see EffectPatch). A null params/enabled FIELD
+  // still means "don't touch", which is the case above.
+  it('passes a null param value through as a removal', () => {
+    expect(parseEffectPatch({ params: { profile_in_us: null, strength: { mode: 'Static', value: 12 } } }))
+      .toEqual({ params: { profile_in_us: null, strength: { mode: 'Static', value: 12 } } })
+  })
+  it('names null as accepted in the unknown-key hint', () => {
+    expect(() => parseEffectPatch({ nope: 1 })).toThrow(/\| null/)
+  })
 })
 
 describe('parseMarkerPatch', () => {

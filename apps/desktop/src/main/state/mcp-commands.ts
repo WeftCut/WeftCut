@@ -262,12 +262,16 @@ export function parseObj(v: unknown, field: string): Record<string, unknown> {
 
 /** Strict update_effect patch — mirrors EffectPatch (mutations/effects.ts).
  *  Unknown keys and malformed values reject; applyUpdateEffect would otherwise
- *  silently skip them. */
+ *  silently skip them.
+ *
+ *  A `null` inside `params` is the one null that is NOT "don't touch": it is a
+ *  removal, and it passes through so the caller can put a param back to unset.
+ *  A null `params` / `enabled` field still means "don't touch". */
 export function parseEffectPatch(v: unknown): EffectPatch {
   const o = parseObj(v, 'patch')
   for (const k of Object.keys(o)) {
     if (k !== 'enabled' && k !== 'params')
-      throw new McpArgError(`invalid patch: unknown key '${k}' — expected { enabled?: boolean, params?: { "<param>": { "mode": "Static", "value": <number> } } }`)
+      throw new McpArgError(`invalid patch: unknown key '${k}' — expected { enabled?: boolean, params?: { "<param>": { "mode": "Static", "value": <number> } | null } }`)
   }
   const out: EffectPatch = {}
   if (o.enabled !== undefined && o.enabled !== null) {
@@ -276,8 +280,9 @@ export function parseEffectPatch(v: unknown): EffectPatch {
   }
   if (o.params !== undefined && o.params !== null) {
     const p = parseObj(o.params, 'patch.params')
-    const params: Record<string, Animated<number>> = {}
+    const params: Record<string, Animated<number> | null> = {}
     for (const [k, pv] of Object.entries(p)) {
+      if (pv === null) { params[k] = null; continue } // removal, not a malformed track
       try { params[k] = parseAnimatedF64(pv) }
       catch (e) { throw new McpArgError(`invalid patch: params['${k}']: ${e instanceof McpArgError ? e.mcpMessage : String(e)}`) }
     }
@@ -1066,13 +1071,13 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'add_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), kind: parseStr(a.kind, 'kind') } }),
     shapeResult: (v) => toolText(v as string) },
   { name: 'update_effect', exec: 'table',
-    description: 'Update an effect: patch is `{ enabled?, params? }` where params is `{ paramKey: { "mode": "Static", "value": <number> } }` (v1 params are scalar). For keyframed params use set_keyframe with param_key "effects[<effect_id>].params[<key>]". An unparseable patch (non-object, unknown key, malformed param value) rejects with invalid_params — it never partially applies.',
+    description: 'Update an effect: patch is `{ enabled?, params? }` where params is `{ paramKey: { "mode": "Static", "value": <number> } }` (v1 params are scalar). A `null` param value removes the key (back to unset/default). For keyframed params use set_keyframe with param_key "effects[<effect_id>].params[<key>]". An unparseable patch (non-object, unknown key, malformed param value) rejects with invalid_params — it never partially applies.',
     inputSchema: { type: 'object', properties: { effect_id: { type: 'string' }, layer_id: { type: 'string' }, patch: {
       type: 'object',
-      description: 'Effect patch. Only fields you set are applied; `params` merges key-by-key.',
+      description: 'Effect patch. Only fields you set are applied; `params` merges key-by-key, and a null value removes its key.',
       properties: {
         enabled: { type: ['boolean', 'null'] },
-        params: { type: 'object', description: 'Param key → AnimTrack. v1 effect params are scalar, e.g. {"strength": {"mode":"Static","value":8}}.', additionalProperties: ANIM_TRACK_F64_SCHEMA },
+        params: { type: 'object', description: 'Param key → AnimTrack, or null to remove the key. v1 effect params are scalar, e.g. {"strength": {"mode":"Static","value":8}}.', additionalProperties: { anyOf: [ANIM_TRACK_F64_SCHEMA, { type: 'null' }] } },
       },
     } }, required: ['effect_id', 'layer_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id'), patch: parseEffectPatch(a.patch) } }) },

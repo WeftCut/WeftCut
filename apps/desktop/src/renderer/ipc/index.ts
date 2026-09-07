@@ -214,12 +214,14 @@ export interface EffectView {
   params: Record<string, AnimTrack<number>>;
 }
 
-/// Partial update for an effect — mirrors Rust `EffectPatch`. The UI uses only
-/// `enabled` through this path; param edits (incl. keyframes) go through
-/// `updateLayerParamTrack` with key `effects[<id>].params[<key>]`.
+/// Partial update for an effect — mirrors main's `EffectPatch`. Ordinary param
+/// edits (incl. keyframes) go through `updateLayerParamTrack` with key
+/// `effects[<id>].params[<key>]`; the UI reaches for `params` here only to UNSET
+/// one, which a `null` value does and the param-track path cannot express (it
+/// lazily creates a slot and never drops one).
 export interface EffectPatch {
   enabled?: boolean;
-  params?: Record<string, AnimTrack<number>>;
+  params?: Record<string, AnimTrack<number> | null>;
 }
 
 export interface LayerSummary {

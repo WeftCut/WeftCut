@@ -58,13 +58,46 @@ describe('applyUpdateEffect', () => {
     applyUpdateEffect(p, layerId, eid, { enabled: false })
     expect(effectsOf(p, layerId)[0].enabled).toBe(false)
   })
-  it('merges params key-by-key (insert + overwrite, no deletion)', () => {
+  it('merges params key-by-key (insert + overwrite)', () => {
     const { p, gen, layerId } = withLayer()
     const eid = applyAddEffect(p, gen, layerId, 'blur')
     applyUpdateEffect(p, layerId, eid, { params: { radius: sp(8), sigma: sp(2) } })
     applyUpdateEffect(p, layerId, eid, { params: { radius: sp(12) } }) // overwrite radius, keep sigma
     expect(effectsOf(p, layerId)[0].params).toEqual({ radius: sp(12), sigma: sp(2) })
   })
+  // A `null` VALUE inside `params` is the one null that is not "don't touch":
+  // absent IS a param's unset state (the catalog default stands in), and a
+  // sample region has no default to stand in — so "back to unset" has to be
+  // expressible, and this is the only command that can express it.
+  it('a null param value removes the key', () => {
+    const { p, gen, layerId } = withLayer()
+    const eid = applyAddEffect(p, gen, layerId, 'blur')
+    applyUpdateEffect(p, layerId, eid, { params: { radius: sp(8), sigma: sp(2) } })
+    applyUpdateEffect(p, layerId, eid, { params: { radius: null } })
+    expect(effectsOf(p, layerId)[0].params).toEqual({ sigma: sp(2) })
+  })
+
+  it('removing an absent key is a no-op, not a failure — a reset is idempotent', () => {
+    const { p, gen, layerId } = withLayer()
+    const eid = applyAddEffect(p, gen, layerId, 'blur')
+    applyUpdateEffect(p, layerId, eid, { params: { radius: null } })
+    expect(effectsOf(p, layerId)[0].params).toEqual({})
+    applyUpdateEffect(p, layerId, eid, { params: { radius: sp(8) } })
+    applyUpdateEffect(p, layerId, eid, { params: { radius: null } })
+    applyUpdateEffect(p, layerId, eid, { params: { radius: null } })
+    expect(effectsOf(p, layerId)[0].params).toEqual({})
+  })
+
+  // The shape reset-parameters sends: every non-region param back to its
+  // default and the region pair unset, in ONE patch so it is one undo.
+  it('a mixed patch sets and removes in the same call', () => {
+    const { p, gen, layerId } = withLayer()
+    const eid = applyAddEffect(p, gen, layerId, 'blur')
+    applyUpdateEffect(p, layerId, eid, { params: { strength: sp(30), in_us: sp(200_000), out_us: sp(1_800_000) } })
+    applyUpdateEffect(p, layerId, eid, { params: { strength: sp(12), in_us: null, out_us: null } })
+    expect(effectsOf(p, layerId)[0].params).toEqual({ strength: sp(12) })
+  })
+
   it('null/absent fields are "do not touch"', () => {
     const { p, gen, layerId } = withLayer()
     const eid = applyAddEffect(p, gen, layerId, 'blur')
@@ -221,6 +254,21 @@ describe('audio effect rules', () => {
     }
     // Nothing applied — not the track, and not the `enabled` that rode along.
     expect(effectsOf(p, audioId)[0]).toEqual({ id: eid, kind: 'audio.denoise', enabled: true, params: { strength: sp(20) } })
+  })
+
+  // The static-only rule judges a TRACK. A removal carries none, so unsetting
+  // an audio param is always allowed — which is what lets the denoise card's
+  // reset put its sample region back to "needs a region".
+  it('unsetting an audio.* param is allowed and keeps the rest of the patch', () => {
+    const { p, gen, audioId } = avProject()
+    const eid = applyAddEffect(p, gen, audioId, 'audio.denoise')
+    applyUpdateEffect(p, audioId, eid, { params: {
+      strength: sp(20), profile_in_us: sp(200_000), profile_out_us: sp(1_800_000),
+    } })
+    applyUpdateEffect(p, audioId, eid, { params: {
+      strength: sp(12), margin: sp(8), profile_in_us: null, profile_out_us: null,
+    } })
+    expect(effectsOf(p, audioId)[0].params).toEqual({ strength: sp(12), margin: sp(8) })
   })
 
   it('applyUpdateEffect refuses a Keyframed track ANYWHERE in the patch', () => {

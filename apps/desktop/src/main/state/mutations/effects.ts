@@ -5,11 +5,19 @@ import { CommandFailure } from '../errors'
 import { quantizeEffectTrack } from '../quantize'
 import { isAudioKind } from '../../../shared/audioEffects/catalog'
 
-/** Mirrors native/src/state/effect.rs:29-33 EffectPatch. Absent/null = "don't
- *  touch"; `params` MERGES key-by-key (insert/overwrite, no deletion). */
+/** Mirrors native/src/state/effect.rs:29-33 EffectPatch. An absent/null FIELD
+ *  is "don't touch"; `params` merges key-by-key, and a `null` VALUE inside it
+ *  removes that key.
+ *
+ *  Removal exists because absent IS a param's unset state — the catalog default
+ *  stands in for a missing key (`staticParams`), and a sample region has no
+ *  default to stand in, so "back to unset" is not expressible as a value. This
+ *  is the only command that can unset an effect param: the
+ *  `effects[..].params[..]` param-track path lazily CREATES a slot and never
+ *  drops one. */
 export interface EffectPatch {
   enabled?: boolean | null
-  params?: Record<string, Animated<number>> | null
+  params?: Record<string, Animated<number> | null> | null
 }
 
 /** Locate the layer's effect chain or throw LayerNotFound. */
@@ -54,8 +62,8 @@ export function applyAddEffect(p: Project, idGen: IdGen, layerId: Uuid, kind: st
   return id
 }
 
-/** Replace `enabled` when present; merge `params`
- *  key-by-key when present. LayerNotFound → EffectNotFound →
+/** Replace `enabled` when present; merge `params` key-by-key when present, a
+ *  `null` value removing its key. LayerNotFound → EffectNotFound →
  *  AudioEffectParamStatic. */
 export function applyUpdateEffect(p: Project, layerId: Uuid, effectId: Uuid, patch: EffectPatch): void {
   const e = effectsOrThrow(p, layerId).find((x) => x.id === effectId)
@@ -63,8 +71,11 @@ export function applyUpdateEffect(p: Project, layerId: Uuid, effectId: Uuid, pat
   if (patch.params && typeof patch.params === 'object') {
     // Whole patch checked before ANY of it is written, and before `enabled`:
     // a refusal has to leave the project byte-identical, so the static-only
-    // rule cannot run interleaved with the merge below.
-    for (const [k, v] of Object.entries(patch.params)) checkAudioEffectParamStatic(e, k, v)
+    // rule cannot run interleaved with the merge below. A removal carries no
+    // track to judge, so unsetting an `audio.*` param is always allowed.
+    for (const [k, v] of Object.entries(patch.params)) {
+      if (v !== null) checkAudioEffectParamStatic(e, k, v)
+    }
   }
   if (typeof patch.enabled === 'boolean') e.enabled = patch.enabled
   if (patch.params && typeof patch.params === 'object') {
@@ -72,6 +83,13 @@ export function applyUpdateEffect(p: Project, layerId: Uuid, effectId: Uuid, pat
     // `effects[..].params[..]` path — so quantization has to happen at both or the
     // stored precision would depend on which command an agent happened to use.
     for (const [k, v] of Object.entries(patch.params)) {
+      // Deleting an absent key is a no-op, never a failure: a reset then says
+      // "these params are unset" without having to know which of them were
+      // written, and is idempotent.
+      if (v === null) {
+        delete e.params[k]
+        continue
+      }
       quantizeEffectTrack(v)
       e.params[k] = v
     }

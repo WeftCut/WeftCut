@@ -680,6 +680,25 @@ describe('dispatch: effect chain', () => {
     expect(actor.dispatch('remove_effect', { layer: l, effect: e1 }).ok).toBe(true)
     expect(fx(actor, l).map((e) => e.id)).toEqual([e2])
   })
+  // `update_effect` is the only command that can UNSET a param — the
+  // `effects[..].params[..]` param-track path lazily creates a slot and never
+  // drops one — so the removal has to be undoable like any other edit, and set
+  // + unset in one patch has to be ONE undo (that is what reset-parameters is).
+  it('update_effect sets and unsets in one commit; undo restores the removed key', () => {
+    const { actor, l } = setup()
+    const e = (actor.dispatch('add_effect', { layer: l, kind: 'blur' }) as { ok: true; value: string }).value
+    const st = (v: number) => ({ mode: 'Static', value: v })
+    expect(actor.dispatch('update_effect', { layer: l, effect: e, patch: { params: { strength: st(30), radius: st(4) } } }).ok).toBe(true)
+    const before = actor.historyStatus().len
+
+    expect(actor.dispatch('update_effect', { layer: l, effect: e, patch: { params: { strength: st(12), radius: null } } }).ok).toBe(true)
+    expect(fx(actor, l)[0].params).toEqual({ strength: st(12) })
+    expect(actor.historyStatus().len).toBe(before + 1) // one patch, one entry
+
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(fx(actor, l)[0].params).toEqual({ strength: st(30), radius: st(4) })
+  })
+
   it('add_effect on a missing layer fails LayerNotFound but burns the id', () => {
     const { actor, l } = setup()
     const r = actor.dispatch('add_effect', { layer: '00000000-0000-0000-0000-000000000000', kind: 'blur' })

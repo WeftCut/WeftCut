@@ -186,6 +186,8 @@ describe("EffectsSection", () => {
       ["effects[E1].params[strength]", { mode: "Static", value: 8 }],
       ["effects[E1].params[extra]", { mode: "Static", value: 2 }],
     ]);
+    // A visual effect has no unsettable param, so it never needs update_effect.
+    expect(updateEffect).not.toHaveBeenCalled();
   });
 
   it("cards start expanded; the collapse toggle hides and restores the param rows", async () => {
@@ -504,9 +506,10 @@ describe("audio chain", () => {
     expect(useAudioRegionFocusStore.getState().focus).toBeNull();
   });
 
-  // Reset means "back to the defaults", and an absent region has no default —
-  // see resetParams on why the pair is exempt rather than zeroed.
-  it("reset restores the static params and leaves the sample region alone", async () => {
+  // Reset puts the region back to UNSET, not to a default: an absent key is
+  // what "no region yet" is, and only `update_effect` can express a removal —
+  // one call, so the whole reset is one undo.
+  it("reset defaults the static params and unsets the region in ONE update_effect", async () => {
     render(
       <EffectsSection
         catalog={audioCatalogForUi}
@@ -518,10 +521,16 @@ describe("audio chain", () => {
     );
     await openCardMenu(0);
     await userEvent.click(screen.getByTestId("effect-reset-0"));
-    expect(updateLayerParamTracks).toHaveBeenCalledTimes(1);
-    expect(updateLayerParamTracks).toHaveBeenCalledWith("L1", [
-      ["effects[E1].params[strength]", { mode: "Static", value: 12 }],
-      ["effects[E1].params[margin]", { mode: "Static", value: 8 }],
-    ]);
+    expect(updateEffect).toHaveBeenCalledTimes(1);
+    expect(updateEffect).toHaveBeenCalledWith("L1", "E1", {
+      params: {
+        strength: { mode: "Static", value: 12 },
+        margin: { mode: "Static", value: 8 },
+        profile_in_us: null,
+        profile_out_us: null,
+      },
+    });
+    // The param-track batch is the visual chain's path and cannot remove a key.
+    expect(updateLayerParamTracks).not.toHaveBeenCalled();
   });
 });

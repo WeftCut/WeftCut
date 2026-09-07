@@ -13,7 +13,7 @@ import {
   MoreHorizontal,
   Pipette,
 } from "lucide-react";
-import { AUDIO_EFFECTS } from "../../shared/audioEffects/catalog";
+import { AUDIO_EFFECTS, isAudioKind } from "../../shared/audioEffects/catalog";
 import { AppSwitch } from "../components/AppSwitch";
 import {
   addEffect,
@@ -203,23 +203,30 @@ function EffectRow({
   /// Deliberately writes Static tracks: "reset" means back to the default
   /// value, so any keyframes on those params are discarded (one Ctrl+Z away).
   ///
-  /// A sample region is EXEMPT. Its unset state is an absent key, and the
-  /// command layer merges effect params key-by-key with no deletion, so the only
-  /// thing reset could write is a degenerate span — which reads "region too
-  /// short" rather than "needs a region" and throws away a region the user
-  /// painted by hand. Leaving the pair alone is the reversible half of that.
+  /// A sample region resets to UNSET, not to a value: an absent key is what
+  /// "no region yet" is, and a default pair would be a degenerate span the card
+  /// would report as "too short" instead of asking for one. Only `update_effect`
+  /// can express a removal (`null` per key) — the param-track batch lazily
+  /// creates a slot and never drops one — so the audio chain resets through it,
+  /// and the visual chain, which has no unsettable param, keeps the batch.
   const resetParams = () => {
     const spec = descriptor?.params ?? {};
-    const regionKeys = descriptor?.region
-      ? [descriptor.region.inKey, descriptor.region.outKey]
-      : [];
-    const entries: [string, AnimTrack<number>][] = Object.entries(spec)
-      .filter(([key]) => !regionKeys.includes(key))
-      .map(([key, s]) => [
-        `effects[${effect.id}].params[${key}]`,
-        { mode: "Static", value: s.default },
-      ]);
-    if (entries.length === 0) return Promise.resolve();
+    if (Object.keys(spec).length === 0) return Promise.resolve();
+    if (isAudioKind(effect.kind)) {
+      const region = descriptor?.region;
+      const params: Record<string, AnimTrack<number> | null> = {};
+      for (const [key, s] of Object.entries(spec)) {
+        params[key] =
+          key === region?.inKey || key === region?.outKey
+            ? null
+            : { mode: "Static", value: s.default };
+      }
+      return updateEffect(layer.id, effect.id, { params });
+    }
+    const entries: [string, AnimTrack<number>][] = Object.entries(spec).map(([key, s]) => [
+      `effects[${effect.id}].params[${key}]`,
+      { mode: "Static", value: s.default },
+    ]);
     return updateLayerParamTracks(layer.id, entries);
   };
 

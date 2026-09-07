@@ -162,6 +162,22 @@ describe('update_effect — strict patch (issue 02)', () => {
     expect(effectParams(a, layerId)).toEqual({})
   })
 
+  // The reset-parameters shape: some params set, some unset, in ONE patch.
+  it('a null param value removes the key; removing an absent key succeeds', () => {
+    const { a, layerId, effectId } = actorWithEffect()
+    expect(a.mcpCall('update_effect', JSON.stringify({
+      layer_id: layerId, effect_id: effectId,
+      patch: { params: { strength: { mode: 'Static', value: 8 }, radius: { mode: 'Static', value: 4 } } },
+    })).ok).toBe(true)
+
+    const r = a.mcpCall('update_effect', JSON.stringify({
+      layer_id: layerId, effect_id: effectId,
+      patch: { params: { strength: { mode: 'Static', value: 12 }, radius: null, never_set: null } },
+    }))
+    expect(r.ok).toBe(true)
+    expect(effectParams(a, layerId)).toEqual({ strength: { mode: 'Static', value: 12 } })
+  })
+
   it('a valid patch applies enabled + params', () => {
     const { a, layerId, effectId } = actorWithEffect()
     const r = a.mcpCall('update_effect', JSON.stringify({
