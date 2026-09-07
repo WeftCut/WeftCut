@@ -330,6 +330,119 @@ describe('dispatch: split + links', () => {
     expect(JSON.stringify(actor.snapshot())).toBe(before)
   })
 
+  // ripple — the rejects leave through applyRippleDeleteLayers instead of the
+  // plain delete loop, so what they vacated closes inside the split's own commit
+  // (ADR 0062). The flag is off by default: everything above still leaves holes.
+  /** `splittableClip` over a COUNTING id generator — the refusal case is the one
+   *  place the number of ids a rolled-back recipe spent is the assertion. */
+  function countedClip() {
+    const inner = seededGen()
+    let minted = 0
+    const idGen = () => { minted += 1; return inner() }
+    const initial = blankProject(idGen, 'd')
+    const track = root(initial).tracks[0].id
+    const bRoll = root(initial).tracks[1].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const VID = '00000000-0000-0000-0000-0000000000cc'
+    actor.dispatch('add_media', { id: VID, kind: 'Video', duration_us: 6_000_000 })
+    const add = actor.dispatch('add_layer', { track, kind: 'video', media: VID, src_in_us: 0, src_out_us: 6_000_000, t_start_us: 0, t_end_us: 6_000_000 })
+    return { actor, track, bRoll, layer: (add as { ok: true; value: unknown }).value as string, minted: () => minted }
+  }
+
+  it('split_layer_multi with ripple abuts the kept segments and moves the paired audio in lockstep', () => {
+    const { actor, track, layer } = linkedPair()
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    // Three cuts → four segments; the head and the tail are thrown away. Their
+    // audio goes with them through the same fan-out the plain discard uses, and
+    // the two survivors close up against 0 instead of sitting where they were.
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [1_000_000, 2_000_000, 4_000_000], discard_segments: [0, 3], ripple: true })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(spansOfKind(actor, track, 'VideoClip')).toEqual([[0, 1_000_000], [1_000_000, 3_000_000]])
+    expect(spansOfKind(actor, track, 'Audio')).toEqual([[0, 1_000_000], [1_000_000, 3_000_000]])
+    // Abutting is the point, so it is asserted as the relation and not only as
+    // the numbers: every kept segment starts where the previous one ended.
+    for (const kind of ['VideoClip', 'Audio'] as const) {
+      const spans = spansOfKind(actor, track, kind)
+      for (let i = 1; i < spans.length; i++) expect(spans[i][0]).toBe(spans[i - 1][1])
+    }
+    // Unchanged by the flag: the surviving target segments, in timeline order.
+    expect(r.value as string[]).toEqual(layersOf(actor, track).filter((l) => l.params.kind === 'VideoClip').map((l) => l.id))
+    // Split, two deletes, two fan-out deletes and the sweep are ONE entry, and
+    // the row says the gaps were closed rather than merely that shots were cut.
+    expect(actor.historyStatus().len - lenBefore).toBe(1)
+    expect(actor.historyView(1).ops[0]).toMatchObject({ summary: 'Split layer and closed the gaps', label_key: 'history.layer.split_and_ripple' })
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
+  it('split_layer_multi with ripple closes the hole a drop_short_us sliver leaves too', () => {
+    const { actor, track, layer } = splittableClip()
+    // The 0.3 s sliver between the two cuts is under the floor; with the ripple
+    // on, the tail does not merely lose its neighbour, it moves up to take the
+    // space — the composition ends 0.3 s earlier than the clip did.
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [2_000_000, 2_300_000], drop_short_us: 500_000, ripple: true })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value as string[]).toHaveLength(2)
+    expect(layersOf(actor, track).map((l) => [l.t_start_us, l.t_end_us])).toEqual([[0, 2_000_000], [2_000_000, 5_700_000]])
+    expect(root(actor.snapshot()).duration_us).toBe(5_700_000)
+  })
+
+  it('split_layer_multi without ripple still leaves the holes open under the shot-split label', () => {
+    const { actor, track, layer } = splittableClip()
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [1_000_000, 2_000_000, 4_000_000], discard_segments: [0, 3] })
+    expect(r.ok).toBe(true)
+    expect(layersOf(actor, track).map((l) => [l.t_start_us, l.t_end_us])).toEqual([[1_000_000, 2_000_000], [2_000_000, 4_000_000]])
+    expect(actor.historyView(1).ops[0]).toMatchObject({ label_key: 'history.layer.split_by_shots' })
+  })
+
+  it('split_layer_multi with ripple names the layer standing in a discarded segment and leaves the clip unsplit', () => {
+    const { actor, track, bRoll, layer, minted } = countedClip()
+    // A lower third that starts half a second into the segment being thrown
+    // away: the hole it would sit in has to be clean, so the ripple refuses and
+    // says which layer is in the way.
+    const addC = actor.dispatch('add_layer', { track: bRoll, kind: 'color', t_start_us: 500_000, t_end_us: 1_500_000 })
+    expect(addC.ok).toBe(true)
+    const third = (addC as { ok: true; value: unknown }).value as string
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    const mintedBefore = minted()
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [1_000_000, 2_000_000, 4_000_000], discard_segments: [0], ripple: true })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error).toEqual({ error: 'RippleInsideHole', layer: third, hole: { s: 0, e: 1_000_000 } })
+    // The refusal is the planner's and it is raised inside the recipe, so
+    // produce discards the draft whole: the clip is one layer again, not three
+    // segments missing a delete.
+    expect(layersOf(actor, track).map((l) => [l.t_start_us, l.t_end_us])).toEqual([[0, 6_000_000]])
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+    expect(actor.historyStatus().len - lenBefore).toBe(0)
+    // The plan can only be computed once the segments exist, so the splits run
+    // first and their right-half ids are spent even though the rollback throws
+    // the halves away: one per applied cut. No op_id joins them — commit mints
+    // that after validate, which a thrown recipe never reaches.
+    expect(minted() - mintedBefore).toBe(3)
+  })
+
+  it('split_layer_multi with ripple discards an INTERIOR segment of a LINKED clip and closes up behind it', () => {
+    const { actor, track, layer } = linkedPair()
+    const before = JSON.stringify(actor.snapshot())
+    // Every piece a split makes joins the target's link, so a hole in the middle
+    // of the clip has link members before it and after it. That is not a link
+    // torn apart — the pieces before the cut end exactly at it — and the
+    // planner lets the pieces after it close up, each V/A pair in lockstep.
+    // This is the silence cut's shape: a middle slice out, the rest tightens.
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [1_000_000, 2_000_000, 4_000_000], discard_segments: [1, 3], ripple: true })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(spansOfKind(actor, track, 'VideoClip')).toEqual([[0, 1_000_000], [1_000_000, 3_000_000]])
+    expect(spansOfKind(actor, track, 'Audio')).toEqual([[0, 1_000_000], [1_000_000, 3_000_000]])
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
   it('add_markers drops every marker in ONE commit (one undo reverts all)', () => {
     const idGen = seededGen()
     const initial = blankProject(idGen, 'd')

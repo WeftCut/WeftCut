@@ -964,11 +964,31 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // whole op through applyDeleteLayer's own checkTrackLock and the commit
         // rolls back atomically, which IS § Links' "locks reject the whole op":
         // no special casing here.
+        // `ripple` (default false) changes only how the rejects leave: the doomed
+        // pieces go to applyRippleDeleteLayers as ONE set instead of through the
+        // per-layer delete loop, so the split and the closing of the gaps it threw
+        // away are one undo (ADR 0062). The set is every named segment, every
+        // segment `drop_short_us` prunes, AND the fan-out partners of each —
+        // collected before a single delete runs, for the same reason the loop
+        // reads its link early: a two-member link dissolves under the first
+        // delete and the second read would find no siblings. One set and not one
+        // ripple per segment, because a ripple measures its holes against what
+        // remains and merges the touching ones; run segment by segment, the
+        // second call would measure against a timeline the first had already
+        // re-timed and two adjacent rejects would close as two holes instead of
+        // the one they are. The refusals here are the planner's, raised pre-write
+        // inside the ripple — but the ripple can only be planned once the splits
+        // exist, so they land AFTER them: produce discards the draft, leaving the
+        // clip unsplit and recording nothing, while the ids the split halves drew
+        // from idGen stay spent (one per applied cut, plus one per linked sibling
+        // that spans it). Unavoidable without simulating the whole split, and
+        // harmless — ids are opaque and only ever compared for equality.
         // Returns the ordered target segment layer ids that survived.
         case 'split_layer_multi': {
           const layer = a.layer as Uuid
           const ats = (a.at_t_us_list as number[]) ?? []
           const dropShortUs = parseNumOpt(a.drop_short_us, 'drop_short_us') ?? null
+          const ripple = (a.ripple as boolean | undefined) ?? false
           // Refused BEFORE the commit opens: a split whose deletes turned out to
           // be unaskable is not a state any undo entry could describe.
           let discardIdx: number[] = []
@@ -977,7 +997,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             if (!parsed.ok) return { ok: false, error: { error: 'InvalidArgument', field: 'discard_segments', detail: parsed.detail } }
             discardIdx = parsed.value
           }
-          return { ok: true, value: commit(HISTORY_SUMMARY.layerSplitByShots, layerRefs, { kind: 'Coarse' }, (d) => {
+          return { ok: true, value: commit(ripple ? HISTORY_SUMMARY.layerSplitAndRipple : HISTORY_SUMMARY.layerSplitByShots, layerRefs, { kind: 'Coarse' }, (d) => {
             let currentId = layer
             const ids: Uuid[] = []
             // Which segment actually carries each NOMINAL index — the numbering
@@ -1008,6 +1028,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             if (dropShortUs === null && discarded.size === 0) return ids
             const kept: Uuid[] = []
             const targets = new Set(ids)
+            const doomed = new Set<Uuid>()
             for (const id of ids) {
               const loc = locateLayer(d, id)
               const seg = loc?.layer ?? null
@@ -1021,6 +1042,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
                 const s = locateLayer(d, sid)?.layer
                 return s !== undefined && s.t_start_us < seg.t_end_us && s.t_end_us > seg.t_start_us
               })
+              if (ripple) { doomed.add(id); for (const sid of partners) doomed.add(sid); continue }
               applyDeleteLayer(d, id)
               // Defensive re-locate: no partner should overlap two rejected
               // segments, since a member spanning a cut was split at it — but a
@@ -1028,6 +1050,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
               // apply, so the list is checked rather than trusted.
               for (const sid of partners) if (locateLayer(d, sid)) applyDeleteLayer(d, sid)
             }
+            // Nothing but the ripple branch above fills `doomed`, and it can
+            // still come out empty — `drop_short_us` with no segment under the
+            // floor. The ripple refuses an empty set (nothing to close), so the
+            // splits alone are the whole edit.
+            if (doomed.size > 0) applyRippleDeleteLayers(d, [...doomed])
             return kept
           }) }
         }
