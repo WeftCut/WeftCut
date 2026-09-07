@@ -28,7 +28,8 @@ const noop = () => {};
 // op), including the palette action itself.
 const handlers: HandlerMap = {
   save: noop, saveAs: noop, closeProject: noop, undo: noop, redo: noop,
-  togglePlay: noop, deleteSelected: noop, copySelected: noop, pasteAtPlayhead: noop,
+  togglePlay: noop, deleteSelected: noop, rippleDeleteSelected: noop,
+  copySelected: noop, pasteAtPlayhead: noop,
   splitAtPlayhead: noop,
   importMedia: noop, export: noop,
   selectTool: noop, toggleBladeMode: noop, toggleLog: noop, focusLogSearch: noop,
@@ -332,6 +333,46 @@ describe("buildAppCommands", () => {
       seed([track("t1", [layer("a", 0, 1_000_000)])]);
       setLayerSelection("a", ["a"]);
       expect(predicate()).toBe(true);
+    });
+  });
+
+  // Ripple delete gates where plain Delete does not: the ripple can be
+  // genuinely impossible, and the palette is one of the four surfaces that has
+  // to say so. Read live for moveToNewTrack's reason — the commands are built
+  // before the selection is made in both cases below.
+  describe("rippleDeleteSelected enabled", () => {
+    const predicate = () =>
+      buildAppCommands(handlers, menu, flags).find(
+        (d) => d.id === "rippleDeleteSelected",
+      )!.enabled!();
+
+    afterEach(() => {
+      clearLayerSelection();
+      useProjectStore.getState().apply(null);
+    });
+
+    it("is disabled with an empty selection", () => {
+      seed([track("t1", [layer("a", 0, 1_000_000)])]);
+      expect(predicate()).toBe(false);
+    });
+
+    it("is enabled for a clip whose span closes cleanly", () => {
+      seed([
+        track("t1", [layer("a", 0, 1_000_000), layer("b", 1_000_000, 2_000_000)]),
+      ]);
+      setLayerSelection("a", ["a"]);
+      expect(predicate()).toBe(true);
+    });
+
+    // The planner's verdict, not a selection check: a clip STARTING inside the
+    // span being closed has nowhere honest to go, so the palette row greys.
+    it("is disabled when a clip starts inside the span being closed", () => {
+      seed([
+        track("t1", [layer("a", 0, 1_000_000), layer("b", 1_000_000, 2_000_000)]),
+        track("t2", [layer("c", 500_000, 800_000)]),
+      ]);
+      setLayerSelection("a", ["a"]);
+      expect(predicate()).toBe(false);
     });
   });
 

@@ -225,6 +225,32 @@ describe("transition chip", () => {
     expect(transitionIdOf(currentSelection())).toBeNull();
   });
 
+  it("Shift+Delete over a selected chip degrades to the chip's plain delete", async () => {
+    // The ripple's chord has no span to close over a chip, so the preemptor
+    // claims it too (`subSelectionDeleteKey`) and the transition goes exactly as
+    // under bare Delete. The app-level handlers never see the key: the listener
+    // stops immediate propagation, which is the same guarantee bare Delete has.
+    setActiveRegion("timeline");
+    const onMutated = vi.fn().mockResolvedValue(undefined);
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+      onMutated,
+    });
+    const chip = container.querySelector(
+      '[data-testid="transition-chip"]',
+    ) as HTMLElement;
+    fireEvent.pointerDown(chip, { button: 0 });
+    expect(transitionIdOf(currentSelection())).toBe("tr-1");
+
+    fireEvent.keyDown(window, { key: "Delete", shiftKey: true });
+    await waitFor(() => {
+      expect(ipcMocks.removeTransition).toHaveBeenCalledWith("tr-1");
+      expect(onMutated).toHaveBeenCalled();
+    });
+    expect(transitionIdOf(currentSelection())).toBeNull();
+  });
+
   it("Delete does nothing when no chip is selected", () => {
     renderTimeline({
       tracks: [makeTrack([extendedA, layerB])],

@@ -132,6 +132,123 @@ describe("formatCommandError — curated tier", () => {
     expect(out.message).toContain("0.43s");
   });
 
+  // Ripple delete's four. They are read in two places — the status bar after
+  // the fact, and a greyed row's tooltip before it
+  // (`timeline/rippleEligibility.ts`) — so what is pinned here is the sentence
+  // both surfaces get, names resolved.
+  describe("ripple delete", () => {
+    it("RippleInsideHole names the blocking clip and omits the span", () => {
+      seedStore();
+      const out = formatCommandError({
+        error: "RippleInsideHole",
+        layer: "l-a",
+        hole: { s: 0, e: 2_000_000 },
+      });
+      expect(out.message).toBe(
+        "Ripple delete blocked: Interview A starts inside the span being closed — add it to the selection, or delete without ripple.",
+      );
+      // The hole is deliberately not interpolated: a pair of timecodes mid-line
+      // reads as the clip's own range, and the remedy does not depend on them.
+      expect(out.i18n_args).toEqual({ layer: "Interview A" });
+    });
+
+    it("RippleCollision names both clips", () => {
+      seedStore();
+      const out = formatCommandError({
+        error: "RippleCollision",
+        moving: "l-b",
+        blocking: "l-a",
+        track: "t-1",
+      });
+      expect(out.message).toBe(
+        "Ripple delete blocked: Ember.mp4 would land on Interview A.",
+      );
+    });
+
+    it("RippleLockedLayer names the locked clip", () => {
+      seedStore();
+      const out = formatCommandError({ error: "RippleLockedLayer", layer: "l-a" });
+      expect(out.message).toBe(
+        "Ripple delete blocked: Interview A is locked and would have to move.",
+      );
+    });
+
+    // A link has no derived name to fall back on — the timeline draws an
+    // unlabelled one as a tint across the clips it holds — so the clips are
+    // what the sentence can point at.
+    it("RippleLinkStraddles falls back from a missing label to the members", () => {
+      const summary = summaryFixture({
+        media: [{ id: "m-1", label: "Aurora.mp4" }] as unknown as ProjectSummary["media"],
+        root: {
+          duration_us: 2_000_000,
+          links: [{ id: "lk-1", label: null, layer_ids: ["l-a", "l-b"] }],
+          tracks: [
+            {
+              id: "t-1",
+              kind: "Video",
+              label: "B-Roll",
+              enabled: true,
+              locked: false,
+              muted: false,
+              solo: false,
+              role: null,
+              transient: false,
+              layers: [
+                {
+                  id: "l-a", label: "Interview A", t_start_us: 0, t_end_us: 2_000_000,
+                  kind: "Video", color_hint: "", enabled: true, locked: false,
+                  params: { kind: "Color" }, effects: [],
+                },
+                {
+                  id: "l-b", label: "Interview A audio", t_start_us: 0, t_end_us: 2_000_000,
+                  kind: "Audio", color_hint: "", enabled: true, locked: false,
+                  params: { kind: "Color" }, effects: [],
+                },
+              ],
+            },
+          ] as unknown as CompositionSummary["tracks"],
+        },
+      });
+      useProjectStore.getState().apply(summary);
+      expect(
+        formatCommandError({
+          error: "RippleLinkStraddles",
+          link: "lk-1",
+          hole: { s: 0, e: 1_000_000 },
+        }).message,
+      ).toBe(
+        "Ripple delete blocked: link Interview A + Interview A audio has members on both sides of the cut.",
+      );
+      // A labelled link is named by its label tab, which is what the timeline
+      // shows.
+      const labelled = summaryFixture({
+        root: {
+          ...summary.compositions[summary.root_id]!,
+          links: [{ id: "lk-1", label: "A-roll pair", layer_ids: ["l-a", "l-b"] }],
+        },
+      });
+      useProjectStore.getState().apply(labelled);
+      expect(
+        formatCommandError({
+          error: "RippleLinkStraddles",
+          link: "lk-1",
+          hole: { s: 0, e: 1_000_000 },
+        }).message,
+      ).toContain("link A-roll pair");
+    });
+
+    it("degrades an unresolvable link to a short id, never a raw uuid", () => {
+      seedStore();
+      expect(
+        formatCommandError({
+          error: "RippleLinkStraddles",
+          link: "99999999-aaaa-4bbb-8ccc-000000000000",
+          hole: { s: 0, e: 1 },
+        }).message,
+      ).toContain("link #99999999");
+    });
+  });
+
   it("FpsLockedByContent picks the history phrasing via i18next context", () => {
     seedStore();
     const current = { num: 30, den: 1 };

@@ -37,6 +37,10 @@ import {
 } from "./groupEligibility";
 import { linkFanoutActive } from "./linkEligibility";
 import {
+  rippleDeleteReason,
+  useRippleDeleteState,
+} from "./rippleEligibility";
+import {
   moveDestinations,
   useMoveToCompositionState,
   type DestinationState,
@@ -73,10 +77,16 @@ import {
 /// a Group at all — two ordinary clips inside one, carried back out into the
 /// film — and a kind gate would put the row exactly where that selection can
 /// never see it.
+///
+/// `rippleDeleteSelected` sits directly under `deleteSelected` and in no section
+/// of its own: the two are the same act with and without the gap closing, and
+/// separating them would hide the choice at the moment it is being made.
+/// Premiere lists the pair adjacently for the same reason.
 export const LAYER_MENU_COMMAND_IDS = [
   "copySelected",
   "pasteAtPlayhead",
   "deleteSelected",
+  "rippleDeleteSelected",
   "---",
   "splitAtPlayhead",
   "moveToNewTrack",
@@ -120,12 +130,10 @@ export const GROUP_MENU_COMMAND_IDS = [
 ///
 /// The silence row joins as *detect and mark*, not as *cut silences*, and the
 /// distinction is the reason the tier still holds two entries rather than three:
-/// cutting needs a ripple delete this timeline does not have, and split →
-/// split → delete leaves a gap exactly as long as what it removed, which is
-/// audibly identical to doing nothing. Ripple delete is its own issue with its
-/// own open questions (link siblings, Groups, transitions' deliberately vacated
-/// gaps), and it must not grow as a side effect of a silence feature. Until it
-/// exists, what the human gets is the measurement.
+/// MEASURING is the half every silence recipe shares — mark the ranges, tighten
+/// them, remove them — so the row that opens the surface is the measurement, and
+/// what becomes of the ranges is a decision made inside it rather than by which
+/// row was clicked.
 export const ANALYSIS_MENU_COMMAND_IDS = [
   "autoCaptionSelected",
   "detectSilencesSelected",
@@ -368,6 +376,14 @@ export function LayerContextMenu({
     : undefined;
   const addToGroupHint =
     addToGroup === "add_to_group" ? undefined : t(ADD_TO_GROUP_REASON[addToGroup]);
+  // The *Ripple delete* row's tooltip. Subscribed like the rows below it, and
+  // with one reason of its own: the sentence NAMES the layer, link or lane that
+  // blocks, so a selection change under an open popup would otherwise leave a
+  // greyed row pointing at a clip the ripple has moved on from. The sentence
+  // itself is the curated refusal copy the status bar shows when the actor
+  // refuses for real (`timeline/rippleEligibility.ts`).
+  const rippleDelete = useRippleDeleteState();
+  const rippleDeleteHint = rippleDeleteReason(rippleDelete, t);
   // The *Auto-caption* row's tooltip. Subscribed so a greyed row re-labels
   // under an open popup — a transcription started elsewhere flips the state.
   const autoCaption = useAutoCaptionState();
@@ -484,6 +500,13 @@ export function LayerContextMenu({
                       : {})}
                   />
                 )
+              ) : id === "rippleDeleteSelected" ? (
+                <CommandContextItem
+                  key={id}
+                  id={id}
+                  onRun={onClose}
+                  {...(rippleDeleteHint ? { hint: rippleDeleteHint } : {})}
+                />
               ) : (
                 <CommandContextItem key={id} id={id} onRun={onClose} />
               ),

@@ -70,6 +70,15 @@ export const EDIT_MENU: MenuSection = {
     // you point, reach for this to cut where you are.
     "splitAtPlayhead",
     "---",
+    // The two deletes, as a pair and in Premiere's order: Clear, then Ripple
+    // Delete. The menu carried NEITHER before this pair — Delete was a key and a
+    // context-menu row and nothing else — and adding the ripple alone would have
+    // put the rarer of the two on the discoverable surface while the everyday one
+    // stayed hidden. Adjacent because the choice between them is made at the same
+    // moment: remove the clip, or remove it and close the gap.
+    "deleteSelected",
+    "rippleDeleteSelected",
+    "---",
     // Z-order rearrangement, and the only route to a new lane that needs no
     // pointer. Its home is Edit rather than a clip-scoped or top-level section:
     // there is no clip menu, and a new section would pull in `AppMenuBar` and

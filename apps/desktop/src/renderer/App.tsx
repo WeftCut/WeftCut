@@ -11,6 +11,7 @@ import {
   projectSaveAs,
   projectSummary,
   projectUndo,
+  rippleDeleteLayers,
   type ProjectSummary,
 } from "./ipc";
 import {
@@ -634,6 +635,36 @@ export function App({ onCloseProject }: AppProps) {
     }
   }, [refresh]);
 
+  // The same delete, plus the closing of what it vacated: everything after the
+  // freed span, on every track of that composition, moves left (ADR 0062).
+  //
+  // The precedence is `deleteSelected`'s, line for line, and that is the point
+  // of the key rather than an accident of sharing a handler shape: a keyframe
+  // selection has no ripple meaning, and a "stronger delete" that silently does
+  // nothing is the confusing outcome. So it DEGRADES — keys go, and the span
+  // stays. The transition chip's own degrade happens one layer up, in
+  // Timeline's capture-phase listener, which claims both spellings of the key.
+  //
+  // No pre-flight check here even though `timeline/rippleEligibility.ts` can
+  // predict the refusal: the mirror can be two round trips behind, so the
+  // prediction greys the surfaces and the ACTOR is the authority. A refusal it
+  // did not see coming lands on the status bar with the same curated line.
+  const rippleDeleteSelected = useCallback(async () => {
+    if (hasKeyframeSelection()) {
+      if (await deleteSelectedKeyframes()) await refresh();
+      return;
+    }
+    const layerIds = [...layerIdsOf(currentSelection())];
+    if (layerIds.length === 0) return;
+    try {
+      await rippleDeleteLayers(layerIds);
+      clearLayerSelection();
+      await refresh();
+    } catch (err) {
+      logMutationFailure(err, "Ripple delete");
+    }
+  }, [refresh]);
+
   // Copy and paste share ONE slot, and it holds whichever kind was copied last
   // (`keyframe/clipboard.ts`) — so the same pair of keys never needs the user to
   // know which of two clipboards they are addressing.
@@ -699,6 +730,7 @@ export function App({ onCloseProject }: AppProps) {
     redo: () => run(projectRedo),
     togglePlay,
     deleteSelected,
+    rippleDeleteSelected,
     copySelected,
     pasteAtPlayhead,
     // Self-contained (it reads the project, playhead and selection stores and

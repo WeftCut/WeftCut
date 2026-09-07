@@ -176,7 +176,10 @@ import {
   type KeyframeEntriesCommit,
 } from "./keyframeBatch";
 import { resolveAccelerator } from "../shortcuts/match";
-import { subSelectionDeleteYields } from "./subSelectionDelete";
+import {
+  subSelectionDeleteKey,
+  subSelectionDeleteYields,
+} from "./subSelectionDelete";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { logMutationFailure } from "../errors/tryMutate";
 import {
@@ -1123,15 +1126,17 @@ export function Timeline({
     [onMutated],
   );
 
-  // Delete/Backspace removes the selected transition chip. Capture phase +
-  // stopImmediatePropagation preempts the app-level `deleteSelected`, which
-  // knows nothing about chips; armed only while a chip is selected, and never
-  // while typing in a field or while another panel owns the keyboard
-  // (`subSelectionDeleteYields`).
+  // Delete/Backspace removes the selected transition chip, and `Shift` with
+  // either does the same — a ripple has no span to close over a chip, so the
+  // stronger key degrades to this one (`subSelectionDeleteKey`). Capture phase +
+  // stopImmediatePropagation preempts the app-level `deleteSelected` and
+  // `rippleDeleteSelected`, which know nothing about chips; armed only while a
+  // chip is selected, and never while typing in a field or while another panel
+  // owns the keyboard (`subSelectionDeleteYields`).
   useEffect(() => {
     if (selectedTransitionId === null) return;
     const onKey = (ev: KeyboardEvent) => {
-      if (ev.key !== "Delete" && ev.key !== "Backspace") return;
+      if (!subSelectionDeleteKey(ev)) return;
       if (subSelectionDeleteYields(ev.target)) return;
       ev.preventDefault();
       ev.stopImmediatePropagation();

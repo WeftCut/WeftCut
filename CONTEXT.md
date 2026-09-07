@@ -105,8 +105,8 @@ The default arrangement of every `add_transition`: the incoming layer moves
 left by the frame-rounded duration (link siblings following on their own
 lattices), so both participants play exactly their trimmed ranges — no
 default touches the user's cut (ADR 0048). The vacated span stays a gap
-(links, not ripple, express "these move together"), and a shifted sibling
-that collides on its lane bounces to a free one.
+(links, not an implicit ripple, express "these move together"), and a shifted
+sibling that collides on its lane bounces to a free one.
 _Avoid_: start-at-cut, auto-extend, handle-checked add, silent extend fallback
 
 **extended_us / borrowed handle**:
@@ -353,6 +353,20 @@ The placement verdict meaning *no track can take this, so make one* — the four
 collision, so a selection that would overlap itself on the one new track still
 refuses.
 _Avoid_: auto-create, insert track, overflow
+
+**Ripple delete**:
+Delete that also closes what the deletion vacated — *Ripple delete* / *波纹删除*
+in the UI, `Shift+Delete` on the keyboard, where bare `Delete` stays the lift.
+The **hole** is the span a deleted layer vacated *on its own track*: its own
+footprint clipped to its remaining same-class neighbours, so a transition
+partner's overlap is not double-counted and a gap that already sat beside the
+clip is not closed. Every layer on every track of the composition that starts at
+or after the hole moves left by the total length of the holes ahead of it; a
+layer that would start *inside* a hole refuses instead of sliding, as does a
+collision, a link with members on both sides, and a locked layer or lane that
+would have to move (ADR 0062).
+_Avoid_: close gap (a gesture on a selected gap, not built), ripple trim,
+implicit ripple
 
 ## Markers
 

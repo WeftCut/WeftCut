@@ -2540,11 +2540,10 @@ export async function synthesizeSpeech(
 // ============================================================
 // Silence — detect and mark
 // ============================================================
-// The two halves of the authored `cut-silences` recipe this editor can honour:
-// find the silent ranges, and mark them. The apply half of that recipe needs a
-// ripple delete which does not exist here, so nothing below removes anything —
-// what lands is a region marker per range, on the waveform the timeline already
-// draws.
+// Measuring and marking: find the silent ranges, and put one region marker per
+// range on the waveform the timeline already draws. NOTHING below removes
+// anything — the measurement is the half every silence recipe shares, and what
+// becomes of the ranges is a separate call made by whoever asked for them.
 //
 // Both THROW, like every write and every dialog-driven read here: the dialog
 // shows the message inline and logs a row.

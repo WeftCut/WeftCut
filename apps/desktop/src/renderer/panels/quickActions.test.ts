@@ -62,6 +62,7 @@ function state(over: Partial<QuickActionState> = {}): QuickActionState {
     linkOverride: false,
     groupSelection: "needs_selection",
     ungroupSelection: "needs_one_group",
+    rippleDeleteReason: undefined,
     ...over,
   };
 }
@@ -298,6 +299,35 @@ describe("quickActions catalogue", () => {
       item?.iconFor?.(state({ linkToggle: "link" })),
     );
     expect(item?.iconFor?.(state({ linkToggle: "link" }))).toBe(item?.icon);
+  });
+
+  // The one hint in the catalogue that is not a key. A refusal names clips the
+  // locale has never heard of, so the panel resolves the sentence and the item
+  // passes it through as `{ text }` — the alternative was `t()` on an already
+  // composed sentence, which i18next would have read as a namespaced key.
+  it("passes the ripple's refusal through as text, and its label as a key", () => {
+    const item = QUICK_ACTION_SECTIONS.flatMap((s) => s.items).find(
+      (i) => i.id === "rippleDeleteSelected",
+    );
+    expect(item?.hint?.(state())).toBe("actions.ripple_delete_selected");
+    expect(
+      item?.hint?.(state({ rippleDeleteReason: "Ripple delete blocked: X." })),
+    ).toEqual({ text: "Ripple delete blocked: X." });
+  });
+
+  // Command mode: it fires and forgets, so `aria-pressed` would promise a state
+  // it does not have. It sits beside the split for the section's own reason —
+  // both are edits that need no pointer.
+  it("puts the ripple in the momentary edit section, after the split", () => {
+    const section = QUICK_ACTION_SECTIONS.find((s) =>
+      s.items.some((i) => i.id === "rippleDeleteSelected"),
+    );
+    expect(section?.id).toBe("edit");
+    expect(section?.mode).toBe("command");
+    const ids = section!.items.map((i) => i.id);
+    expect(ids.indexOf("splitAtPlayhead")).toBeLessThan(
+      ids.indexOf("rippleDeleteSelected"),
+    );
   });
 
   // The strip could hide markers it had no way to create until this row

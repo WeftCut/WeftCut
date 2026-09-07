@@ -298,6 +298,13 @@ const zhCN: Resources = {
       "先将组的不透明度恢复为 1——解组无法将它传给组内图层",
     ungroup_not_plain_effects:
       "先移除组上的效果——解组无法将它们传给组内图层",
+    // 波纹删除。这里只有两条：其余的理由都是规划器返回的拒绝，句子来自
+    // errors.ripple_* 那份策展文案——和通道真的拒绝时状态栏显示的是同一句，
+    // 不留第二份措辞（见 timeline/rippleEligibility.ts）。
+    ripple_needs_selection: "选中要删除并闭合其后间隙的片段",
+    // 这一条不是拒绝，而是优先级规则露了出来：这个键此刻会去删关键帧，
+    // 所以直说，而不是假装波纹删除只是暂时不可用。
+    ripple_keyframes: "当前选中的是关键帧——这个键会删除它们。取消选择后才会对片段做波纹删除",
     // 加入组。只有片段右键菜单会显示这几条，但它们和上面是同一类句子，分开放就会漂移。
     // 与解组不同，这里的选择失败不合并成一条：目标组和要加入的片段是两件要分别去选的事。
     add_to_group_needs_selection: "选中要加入的片段，以及要加入的那个组片段",
@@ -530,6 +537,9 @@ const zhCN: Resources = {
     select_all: "全选片段",
     deselect_all: "取消全部选择",
     delete_selected: "删除选中的图层",
+    // Premiere 中文版的说法。保持短：它同时要出现在 16 px 工具条按钮的提示里，
+    // 以及右键菜单里紧挨着"删除"的那一行——两个标签的对比本身就是解释。
+    ripple_delete_selected: "波纹删除",
     copy_selected: "复制选中的片段",
     paste_at_playhead: "在播放头粘贴片段",
     split_at_playhead: "在播放头切割",
@@ -613,6 +623,8 @@ const zhCN: Resources = {
     nudge_large_back: "把选中的关键帧前移十帧；没有选中关键帧时，把选中的音频前移一毫秒。",
     nudge_large_forward: "把选中的关键帧后移十帧；没有选中关键帧时，把选中的音频后移一毫秒。",
     delete_selected: "有选中的关键帧时删除关键帧，否则删除选中的片段。",
+    ripple_delete_selected:
+      "和删除键一样，选中的关键帧和选中的转场先拿到这个键；否则删除选中的片段，并把其后的一切左移。",
     copy_selected: "有选中的关键帧时复制关键帧，否则复制选中的片段。",
     paste_at_playhead: "把复制的关键帧粘贴到选中片段的播放头处，否则粘贴复制的片段。",
   },
@@ -887,6 +899,14 @@ const zhCN: Resources = {
     transition_participants_share_link:
       "“{{from}}”与“{{to}}”已链接——移动其中一个会带动另一个，重叠无法打开。请先取消链接。",
     transition_layers_not_adjacent: "“{{from}}”与“{{to}}”必须相邻才能添加转场。",
+    // 波纹删除的四条。全部以同样四个字开头：这些句子要在两个地方读到——事后的
+    // 状态栏，以及事前变灰那一行的悬停提示——统一的开头才让提示读起来是"波纹
+    // 删除为什么关着"，而不是一句关于某个片段的话。
+    ripple_inside_hole:
+      "波纹删除受阻：“{{layer}}”起点落在要闭合的区间内——把它一并选中，或改用普通删除。",
+    ripple_collision: "波纹删除受阻：“{{moving}}”会落到“{{blocking}}”上。",
+    ripple_link_straddles: "波纹删除受阻：链接 {{link}} 在切口两侧都有成员。",
+    ripple_locked_layer: "波纹删除受阻：“{{layer}}”已锁定，但它必须移动。",
     fps_locked_by_content:
       "帧率保持 {{current}} fps——时间线上仍有 {{layers}} 个片段。",
     fps_locked_by_content_history:
@@ -1907,8 +1927,8 @@ const zhCN: Resources = {
     running: "正在生成…",
   },
   // 静默对话框。两个实时参数加一份预览，参数集直接来自已写好的 `cut-silences`
-  // 提示词；没有额外发明，也没有它的删除那一步——那一步需要本编辑器
-  // 尚不具备的涟漪删除。
+  // 提示词，没有额外发明。这里的文案覆盖测量与标记；对话框要拿这些区间做什么，
+  // 由它自己的动作按钮命名。
   silence: {
     title: "检测静默",
     clip: "片段",

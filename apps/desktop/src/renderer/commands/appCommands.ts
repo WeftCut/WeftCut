@@ -37,6 +37,7 @@ import {
   canUngroupSelection,
 } from "../timeline/groupEligibility";
 import { canMoveSelectionToRoot } from "../timeline/moveToCompositionEligibility";
+import { canRippleDeleteSelection } from "../timeline/rippleEligibility";
 import { canDescribeSelection } from "./describeCommands";
 import { canOpenSelectedGroup } from "./groupCommands";
 import { canDetectSilencesSelection } from "./silenceCommands";
@@ -374,6 +375,14 @@ export function buildAppCommands(
     // so the flag would go stale the moment the user pressed `I`. This
     // predicate is evaluated inside `listCommands()`, so it always reads live.
     clearRange: () => hasMarkedRange(),
+    // Ripple delete, live-read for `clearRange`'s reason and gated where plain
+    // Delete is not: the ripple can be genuinely impossible — a clip starting
+    // inside the span, a landing that would collide, a locked lane that would
+    // have to move — and the same predicate that greys this entry names which
+    // one on the surfaces that can show a sentence
+    // (`timeline/rippleEligibility.ts`). Plain Delete stays ungated because it
+    // always has an answer.
+    rippleDeleteSelected: canRippleDeleteSelection,
     // The Group commands, live-read for the same reason and through the one
     // predicate every surface shares (`timeline/groupEligibility.ts`,
     // `timeline/moveToCompositionEligibility.ts`), so the Edit menu row, the

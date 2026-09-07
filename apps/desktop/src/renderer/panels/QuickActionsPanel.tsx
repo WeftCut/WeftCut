@@ -30,6 +30,10 @@ import { useHasMarkedRange } from "../state/rangeStore";
 import { useLinkToggleState } from "../timeline/linkEligibility";
 import { useGroupState, useUngroupState } from "../timeline/groupEligibility";
 import {
+  rippleDeleteReason,
+  useRippleDeleteState,
+} from "../timeline/rippleEligibility";
+import {
   QUICK_ACTION_SECTIONS,
   resolveIcon,
   type QuickActionItem,
@@ -198,8 +202,16 @@ function QuickActionButton({
   const active = item.active?.(state) ?? false;
   const disabled = command.enabled?.() === false;
   // A state-bearing hint where the item has one (the display-mode button needs
-  // "showing X, click for Y"); otherwise the command's own label.
-  const label = t(item.hint ? item.hint(state) : command.labelKey);
+  // "showing X, click for Y"); otherwise the command's own label. A hint that
+  // came back as `{ text }` is already a sentence — a refusal naming clips the
+  // locale has never heard of — so it is rendered as-is rather than looked up.
+  const hint = item.hint?.(state);
+  const label =
+    hint === undefined
+      ? t(command.labelKey)
+      : typeof hint === "string"
+        ? t(hint)
+        : hint.text;
   // Same override shape as the hint: a state-bearing glyph where the item
   // declares one, its static icon otherwise.
   const Icon = resolveIcon(item, state);
@@ -283,6 +295,11 @@ export function QuickActionsPanel({
   // name a precondition that changes with the selection.
   const groupSelection = useGroupState();
   const ungroupSelection = useUngroupState();
+  // Ripple delete's verdict, subscribed for the same reason and resolved to a
+  // sentence here rather than in the catalogue: the refusal names clips, so the
+  // string needs both `t` and the project mirror, and only this component has
+  // the first (`panels/quickActions.ts` says why the field is a sentence).
+  const rippleDelete = rippleDeleteReason(useRippleDeleteState(), t);
   const orientation = useStripOrientation(geometry, docked);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useHorizontalWheel(scrollRef, orientation === "horizontal");
@@ -315,6 +332,7 @@ export function QuickActionsPanel({
     linkOverride,
     groupSelection,
     ungroupSelection,
+    rippleDeleteReason: rippleDelete,
   };
 
   // Buttons resolve against the command registry, so a command whose provider

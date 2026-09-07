@@ -14,6 +14,21 @@ import zhCN from "../i18n/locales/zh-CN";
 // is visible from a feature test of either action.
 
 describe("ACTION_DEFS", () => {
+  // The pair the whole clash sweep below exists for, called out by name because
+  // it is the one place a modifier is the ONLY thing separating two actions: a
+  // `Shift` dropped from either spelling of the ripple's chord would silently
+  // give the key back to the plain delete.
+  it("separates the two deletes by Shift, on both spellings", () => {
+    expect(ACTION_DEFS.deleteSelected.defaultKeys).toEqual([
+      "Delete",
+      "Backspace",
+    ]);
+    expect(ACTION_DEFS.rippleDeleteSelected.defaultKeys).toEqual([
+      "Shift+Delete",
+      "Shift+Backspace",
+    ]);
+  });
+
   it("gives no default chord to two actions at once", () => {
     const bound = ACTION_IDS.flatMap((id) =>
       ACTION_DEFS[id].defaultKeys.map((spec) => ({ id, spec })),
@@ -57,6 +72,7 @@ const DUAL_DISPATCH_ACTIONS: ActionId[] = [
   "nudgeLargeBack",
   "nudgeLargeForward",
   "deleteSelected",
+  "rippleDeleteSelected",
   "copySelected",
   "pasteAtPlayhead",
 ];

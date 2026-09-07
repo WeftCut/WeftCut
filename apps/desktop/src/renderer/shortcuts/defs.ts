@@ -18,6 +18,7 @@ export type ActionId =
   | "selectAll"
   | "deselectAll"
   | "deleteSelected"
+  | "rippleDeleteSelected"
   | "copySelected"
   | "pasteAtPlayhead"
   | "splitAtPlayhead"
@@ -154,6 +155,12 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   selectAll:       { defaultKeys: ["Mod+A"],               labelKey: "actions.select_all",   fireWhenEditing: false, scope: TIMELINE_SELECTION },
   deselectAll:     { defaultKeys: ["Mod+Shift+A"],         labelKey: "actions.deselect_all", fireWhenEditing: false, scope: TIMELINE_SELECTION },
   deleteSelected:  { defaultKeys: ["Delete", "Backspace"], labelKey: "actions.delete_selected", hintKey: "hints.delete_selected", scope: TIMELINE_SELECTION },
+  // Delete that also CLOSES the span — Premiere's default chord, and bare
+  // Delete stays the lift: Premiere, Resolve and CapCut all keep it that way,
+  // and a new feature does not repurpose a key every existing user already
+  // presses. Both spellings for `deleteSelected`'s reason — a full keyboard
+  // sends `Delete`, a laptop's `Fn`-less one sends `Backspace`.
+  rippleDeleteSelected: { defaultKeys: ["Shift+Delete", "Shift+Backspace"], labelKey: "actions.ripple_delete_selected", hintKey: "hints.ripple_delete_selected", scope: TIMELINE_SELECTION },
   // Clipboard actions belong to the timeline, not an active text editor. The
   // explicit false preserves native copy/paste inside inputs and text fields;
   // `scope` is the coarser statement of the same idea — with the preview or the
@@ -287,12 +294,11 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // right-click the clip you mean.
   //
   autoCaptionSelected:    { defaultKeys: [],               labelKey: "actions.auto_caption_selected", scope: TIMELINE_SELECTION },
-  // The `cut-silences` recipe's first half, and only its first half: the label
-  // says *detect* because the apply step that would CUT needs a ripple delete
-  // this editor does not have, and split-split-delete leaves a hole exactly as
-  // long as what it removed — audibly identical to doing nothing. What lands
-  // instead is a region marker per silent range, on the waveform the timeline
-  // already draws.
+  // The label says *detect* because MEASURING is the half every silence recipe
+  // shares — mark the ranges, tighten them, cut them out — and what to do with
+  // the ranges is the dialog's decision, not this row's. What this one lands is
+  // a region marker per silent range, on the waveform the timeline already
+  // draws.
   //
   // Catalogued, scoped and unbound for `autoCaptionSelected`'s three reasons:
   // it acts on the timeline selection, a user who does this to every clip has

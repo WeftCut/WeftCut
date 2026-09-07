@@ -16,6 +16,7 @@
 import {
   Bookmark,
   BookmarkPlus,
+  FoldHorizontal,
   FoldVertical,
   Group,
   Link,
@@ -50,6 +51,15 @@ import {
 /// Lucide's own props are the shared shape rather than a narrower invention,
 /// so every stock icon stays assignable without a cast.
 export type QuickActionIcon = ComponentType<LucideProps>;
+
+/// A tooltip the item has already resolved, for the one kind of hint a key
+/// cannot carry: a refusal sentence names the layer, link or lane that blocks,
+/// and those names come from the project mirror rather than from the locale.
+/// Everything else stays a plain i18n key, which is what keeps the catalogue a
+/// pure data table.
+export interface QuickActionHintText {
+  text: string;
+}
 
 /// The store-derived inputs every `active`/`hint` predicate reads. Snapshotted
 /// once at the top of the panel component so the per-item predicates stay pure
@@ -91,6 +101,14 @@ export interface QuickActionState {
   /// Whether the selection can be ungrouped, or which condition failed
   /// (`useUngroupState`).
   ungroupSelection: UngroupState;
+  /// Why Ripple delete is unavailable, ALREADY RESOLVED — or undefined when it
+  /// is live. The one field here that is a sentence rather than a state, and for
+  /// the `QuickActionHintText` reason: a refused ripple names the layer, link or
+  /// lane that blocks, and only the panel's `t` and the project mirror together
+  /// can produce that string (`timeline/rippleEligibility.ts`). Keeping the
+  /// state here instead would push the resolution into the predicate, which is
+  /// the pure function this whole snapshot exists to preserve.
+  rippleDeleteReason: string | undefined;
 }
 
 export interface QuickActionItem {
@@ -109,8 +127,10 @@ export interface QuickActionItem {
   active?: (state: QuickActionState) => boolean;
   /// State-bearing tooltip / aria-label key, for buttons whose meaning depends
   /// on the current value ("showing X, click for Y"). Omit to use the
-  /// command's own `labelKey`.
-  hint?: (state: QuickActionState) => string;
+  /// command's own `labelKey`. A `QuickActionHintText` instead of a key is the
+  /// escape valve for a sentence the locale cannot hold on its own — see that
+  /// type.
+  hint?: (state: QuickActionState) => string | QuickActionHintText;
 }
 
 export interface QuickActionSection {
@@ -282,6 +302,27 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
         // a gap, exactly as `Ctrl+K` does in Premiere.
         id: "splitAtPlayhead",
         icon: SquareSplitHorizontal,
+      },
+      {
+        // Delete AND close the gap (ADR 0062). Only the ripple gets a button:
+        // plain Delete is the key every editor already presses, and a strip slot
+        // spent restating it would buy nothing. `FoldHorizontal` is the glyph
+        // because that is literally the edit — two sides drawn together along the
+        // timeline's own axis, where the Group pair's `FoldVertical` folds rows.
+        //
+        // Gated, unlike `splitAtPlayhead` above it, and affordably so: the
+        // verdict depends on the SELECTION and the mirror, not on the playhead,
+        // so the strip subscribes to two stores that tick on edits rather than
+        // on frames.
+        id: "rippleDeleteSelected",
+        icon: FoldHorizontal,
+        // The `clearRange` rule, with the reason resolved upstream: a greyed
+        // button names the precondition instead of restating a label that
+        // cannot be acted on.
+        hint: (s) =>
+          s.rippleDeleteReason === undefined
+            ? "actions.ripple_delete_selected"
+            : { text: s.rippleDeleteReason },
       },
       {
         // One button for both directions, as the key is one key: the glyph

@@ -51,6 +51,12 @@ export interface RefusalContext {
   t: (key: string, values?: Record<string, unknown>) => string;
   layer(id: string): string;
   track(id: string): string;
+  /// A link, named the way the timeline shows it: its label tab if it has one,
+  /// otherwise its MEMBERS. Unlike a layer or a lane, a link has no derived
+  /// name to fall back on — the timeline draws an unlabelled one as a tint
+  /// across the clips it holds — so the clips are the only thing a user could
+  /// look for.
+  link(id: string): string;
   media(id: string): string;
   timecode(us: number): string;
   seconds(us: number): string;
@@ -79,6 +85,26 @@ export function liveRefusalContext(
       // The header's own name, or a refusal reads as being about a lane the
       // user cannot find.
       return track && owner ? trackDisplayName(track, owner.tracks, t) : shortId(id);
+    },
+    link(id) {
+      // Searched across every composition, like `track` above and for the same
+      // reason: a link's members all live in one composition, but the refusal
+      // need not be about the one on screen.
+      const compositions = useProjectStore.getState().summary?.compositions ?? {};
+      const link = Object.values(compositions)
+        .flatMap((c) => c.links)
+        .find((candidate) => candidate.id === id);
+      if (!link) return shortId(id);
+      const label = link.label?.trim();
+      if (label) return label;
+      const layers = useProjectStore.getState().layerById;
+      const members = link.layer_ids
+        .map((memberId) => {
+          const layer = layers.get(memberId);
+          return layer ? layerDisplayName(layer, t) : shortId(memberId);
+        })
+        .join(" + ");
+      return members.length > 0 ? members : shortId(id);
     },
     media(id) {
       const media = useProjectStore.getState().mediaById.get(id);
@@ -174,12 +200,37 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
     key: "errors.track_locked",
     args: (e, ctx) => ({ track: ctx.track(e.track) }),
   },
-  // Filed generic until the ripple renderer surface lands and brings the curated
-  // copy (these are reachable from the editor, so `generic` is a placeholder).
-  RippleInsideHole: { tier: "generic" },
-  RippleCollision: { tier: "generic" },
-  RippleLinkStraddles: { tier: "generic" },
-  RippleLockedLayer: { tier: "generic" },
+  // Ripple delete's four (ADR 0062). Curated because every one of them is
+  // reachable from a key, and because these lines have a second job no other
+  // curated entry has: `timeline/rippleEligibility.ts` composes them from the
+  // PREDICTED refusal to grey the row before the gesture is sent, so the
+  // sentence the user reads in the tooltip and the sentence the status bar shows
+  // when the actor refuses for real are the same sentence.
+  //
+  // `hole` is deliberately not interpolated. It is the span being closed, and a
+  // pair of timecodes in the middle of the line would be read as the layer's own
+  // range — which it is not — while the remedy ("add it to the selection") does
+  // not depend on the numbers.
+  RippleInsideHole: {
+    tier: "curated",
+    key: "errors.ripple_inside_hole",
+    args: (e, ctx) => ({ layer: ctx.layer(e.layer) }),
+  },
+  RippleCollision: {
+    tier: "curated",
+    key: "errors.ripple_collision",
+    args: (e, ctx) => ({ moving: ctx.layer(e.moving), blocking: ctx.layer(e.blocking) }),
+  },
+  RippleLinkStraddles: {
+    tier: "curated",
+    key: "errors.ripple_link_straddles",
+    args: (e, ctx) => ({ link: ctx.link(e.link) }),
+  },
+  RippleLockedLayer: {
+    tier: "curated",
+    key: "errors.ripple_locked_layer",
+    args: (e, ctx) => ({ layer: ctx.layer(e.layer) }),
+  },
   SplitOutsideLayer: {
     tier: "curated",
     key: "errors.split_outside_layer",

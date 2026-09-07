@@ -314,6 +314,17 @@ const enUS = {
       "Reset the group's opacity to 1 first — ungrouping cannot carry it onto the layers inside",
     ungroup_not_plain_effects:
       "Remove the group's effects first — ungrouping cannot carry them onto the layers inside",
+    // Ripple delete. Only TWO reasons live here: the rest of them are refusals
+    // the planner returns, and their sentences are the curated refusal copy
+    // under `errors.ripple_*` — the same line the status bar shows when the
+    // actor refuses for real, so there is no second wording to keep in step
+    // (`timeline/rippleEligibility.ts`).
+    ripple_needs_selection: "Select the clips to remove and close the gap after",
+    // Not a refusal but the precedence rule showing through: the key is about to
+    // do the keyframe delete, so the row says so rather than pretending the
+    // ripple is merely unavailable.
+    ripple_keyframes:
+      "Keyframes are selected — this key deletes them. Deselect them to ripple the clips instead",
     // Add to Group. Only the clip's context menu shows these, but they are the
     // same kind of sentence as the two above and drift if kept apart. Its shape
     // failures stay separate rather than collapsing the way Ungroup's do: the
@@ -599,6 +610,10 @@ const enUS = {
     select_all: "Select all clips",
     deselect_all: "Deselect all",
     delete_selected: "Delete selected layer",
+    // Premiere's own English term. Kept short because it also sits on a 16 px
+    // strip button's tooltip and on a context-menu row beside plain Delete,
+    // where the contrast between the two labels is the whole explanation.
+    ripple_delete_selected: "Ripple delete",
     copy_selected: "Copy selected layer",
     paste_at_playhead: "Paste layer at playhead",
     split_at_playhead: "Split at playhead",
@@ -648,9 +663,10 @@ const enUS = {
     // and what a user is reaching for is the captions, not the transcript.
     // Ellipsis on both because both raise a dialog first.
     auto_caption_selected: "Auto-caption clip…",
-    // "Detect silences" and not "Cut silences": nothing is removed. The row
-    // measures and marks, because cutting needs a ripple delete this timeline
-    // does not have (`timeline/LayerContextMenu.tsx` carries the whole reason).
+    // "Detect silences" and not "Cut silences": nothing is removed by the row
+    // itself. Measuring is the half every silence recipe shares, and what
+    // becomes of the ranges is decided inside the dialog
+    // (`timeline/LayerContextMenu.tsx` carries the whole reason).
     detect_silences_selected: "Detect silences…",
     // "Describe content" and not "Describe clip": what the model reads is
     // what is IN the footage, and the row's answer lands as prose on the shot
@@ -704,6 +720,8 @@ const enUS = {
       "Moves the selected keyframes ten frames later; with no keyframes selected, slips the selected audio one millisecond.",
     delete_selected:
       "Deletes the selected keyframes when any are selected, else the selected clips.",
+    ripple_delete_selected:
+      "Selected keyframes and a selected transition take this key first, as they do for Delete; otherwise the selected clips go and everything after them moves left.",
     copy_selected:
       "Copies the selected keyframes when any are selected, else the selected clip.",
     paste_at_playhead:
@@ -1047,6 +1065,19 @@ const enUS = {
       "“{{from}}” and “{{to}}” are in the same link — moving one drags the other, so the overlap can't open. Unlink them first.",
     transition_layers_not_adjacent:
       "“{{from}}” and “{{to}}” must touch to add a transition.",
+    // Ripple delete's four. Every one opens with the same four words, because
+    // these lines are read in two places — the status bar after the fact, and a
+    // greyed row's tooltip before it — and the shared opening is what makes the
+    // tooltip legible as "this is why the ripple is off" rather than as a
+    // sentence about a clip.
+    ripple_inside_hole:
+      "Ripple delete blocked: {{layer}} starts inside the span being closed — add it to the selection, or delete without ripple.",
+    ripple_collision:
+      "Ripple delete blocked: {{moving}} would land on {{blocking}}.",
+    ripple_link_straddles:
+      "Ripple delete blocked: link {{link}} has members on both sides of the cut.",
+    ripple_locked_layer:
+      "Ripple delete blocked: {{layer}} is locked and would have to move.",
     fps_locked_by_content:
       "Frame rate stays {{current}} fps — the timeline still holds {{layers}} clip(s).",
     fps_locked_by_content_history:
@@ -2168,9 +2199,9 @@ const enUS = {
     running: "Generating…",
   },
   // The silence dialog. Two live parameters and a preview, straight from the
-  // authored `cut-silences` prompt's parameter set — nothing invented beyond it,
-  // and nothing from its apply step, which needs a ripple delete this editor
-  // does not have.
+  // authored `cut-silences` prompt's parameter set — nothing invented beyond it.
+  // The copy here covers the measurement and the marking; what the dialog offers
+  // to DO with the ranges is named by its own action buttons.
   silence: {
     title: "Detect silences",
     clip: "Clip",
