@@ -8,6 +8,10 @@ import type {
 } from "../ipc";
 import { displayedFrameStartUs, inclusiveOutBoundaryUs } from "../frames";
 import {
+  layerOverlapClass as sharedOverlapClass,
+  type OverlapClass,
+} from "../grid";
+import {
   animatableParams,
   readParamTrack,
   readScaleLinked,
@@ -102,29 +106,23 @@ export interface VisualTrack {
   isRoleSectionStart: boolean;
 }
 
-/// Layer-overlap class. Visual-class layers (VideoClip, ImageOverlay, Color,
-/// Motif, Text, CompositionRef) can't overlap each other on a track; Audio
-/// can't overlap Audio. Visual + Audio CAN coexist at the same time — that's
-/// the AE-style "combined row" trigger.
-export type LayerOverlapClass = "visual" | "audio";
+/// Layer-overlap class, under the timeline's own name. Visual + Audio CAN
+/// coexist at the same time — that is the AE-style "combined row" trigger. The
+/// rule itself (and why a Group is visual) lives at `grid.ts`, the one seam the
+/// actor's overlap scan and the ripple planner read it from too.
+export type LayerOverlapClass = OverlapClass;
 
-/// The rule itself, keyed on nothing but the kind: everything that is not Audio
-/// is visual. Stated that way rather than as an allowlist of visual kinds, so a
-/// Group — a composition placed as one layer, which may hold audio INSIDE it and
-/// still composites as a picture — falls on the visual side by construction
-/// (ADR 0052 §4).
-///
-/// Split out from `layerOverlapClass` for the one caller that has no layer to
-/// hand it: a Panel previewing a drop from ANOTHER composition holds no summary
-/// for the clips being carried, only their kinds (`layerDragStore.ts`).
+/// Kind-keyed form, for the one caller that has no layer to hand it: a Panel
+/// previewing a drop from ANOTHER composition holds no summary for the clips
+/// being carried, only their kinds (`layerDragStore.ts`).
 export function overlapClassForKind(
   kind: LayerParamsView["kind"],
 ): LayerOverlapClass {
-  return kind === "Audio" ? "audio" : "visual";
+  return sharedOverlapClass({ kind });
 }
 
 export function layerOverlapClass(layer: LayerSummary): LayerOverlapClass {
-  return overlapClassForKind(layer.params.kind);
+  return sharedOverlapClass(layer.params);
 }
 
 /// The two source-window affordances a media-bearing clip can carry at its

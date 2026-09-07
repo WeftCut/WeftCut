@@ -174,6 +174,12 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
     key: "errors.track_locked",
     args: (e, ctx) => ({ track: ctx.track(e.track) }),
   },
+  // Filed generic until the ripple renderer surface lands and brings the curated
+  // copy (these are reachable from the editor, so `generic` is a placeholder).
+  RippleInsideHole: { tier: "generic" },
+  RippleCollision: { tier: "generic" },
+  RippleLinkStraddles: { tier: "generic" },
+  RippleLockedLayer: { tier: "generic" },
   SplitOutsideLayer: {
     tier: "curated",
     key: "errors.split_outside_layer",

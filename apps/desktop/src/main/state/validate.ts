@@ -2,7 +2,7 @@
 import type { Composition, Layer, LayerParams, Project, Track, Transition, Uuid } from './model'
 import { eachLayer } from './model'
 import { ValidationFailure, type ValidationError } from './errors'
-import { frameGrid, gridForLayerKind, isCanonicalOnGrid, snapFrameRound, snapOnGrid, type Grid } from './snap'
+import { frameGrid, gridForLayerKind, isCanonicalOnGrid, layerOverlapClass, snapFrameRound, snapOnGrid, type Grid } from './snap'
 // The `src_in_us`/`src_out_us` family, from the mutations layer. No cycle: this
 // is a leaf helper module (model + errors + snap + animated), and nothing it
 // reaches imports back here — the mutation modules that DO import validate
@@ -18,15 +18,10 @@ import { markerHibernating } from './summary'
 
 function fail(err: ValidationError): never { throw new ValidationFailure(err) }
 
-type OverlapClass = 'visual' | 'audio'
-/** Exported for the batch mutations that must refuse a collision BEFORE
- *  touching the draft (`applyPasteLayers`) — the same class split the track
- *  rule below enforces, so a pre-check and the validator cannot disagree.
- *  A CompositionRef is visual: a Group clip composites like any clip, and may
- *  be a transition participant for the same reason. */
-export function layerOverlapClass(params: LayerParams): OverlapClass {
-  return params.kind === 'Audio' ? 'audio' : 'visual'
-}
+/** Re-exported so the batch mutations that must refuse a collision BEFORE
+ *  touching the draft keep their `../validate` import; the rule itself lives at
+ *  `renderer/grid.ts`, the one seam the ripple planner reads it from too. */
+export { layerOverlapClass }
 /** Canonical unordered layer-pair key for the authorized-overlap map. */
 function pairKey(a: Uuid, b: Uuid): string { return a < b ? `${a}|${b}` : `${b}|${a}` }
 

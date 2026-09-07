@@ -29,6 +29,7 @@ export {
   frameGrid,
   gridIndex,
   isCanonicalOnGrid,
+  layerOverlapClass,
   shiftOnGrids,
   snapDownOnGrid,
   snapOnGrid,
@@ -37,6 +38,7 @@ export {
   timeUsAtGridIndex,
   type Grid,
   type GridDomain,
+  type OverlapClass,
   type ShiftMember,
 } from '../../renderer/grid'
 

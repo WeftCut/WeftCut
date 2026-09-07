@@ -73,6 +73,28 @@ export function gridForLayerKind(kind: string, fps: RateLike): Grid {
   return kind === 'Audio' ? AUDIO_GRID : frameGrid(fps)
 }
 
+/** Which layers may not sit on top of each other on one track. */
+export type OverlapClass = 'visual' | 'audio'
+
+/** THE same-class rule: visual-class layers may not overlap visual, audio may not
+ *  overlap audio, and the two classes coexist freely at the same time (the
+ *  combined row the timeline draws).
+ *
+ *  Stated as "everything that is not Audio is visual" rather than as an allowlist
+ *  of visual kinds, so a CompositionRef falls on the visual side by construction:
+ *  a Group clip composites like any clip — it may hold audio INSIDE it and still
+ *  be a picture — and may be a transition participant for the same reason
+ *  (ADR 0052 §4).
+ *
+ *  Beside `gridForLayerKind`, and structural for the same reason it takes a plain
+ *  `string` kind: the actor's overlap scan reads it off a `LayerParams`, its batch
+ *  pre-checks off a clone plan, and the ripple planner off its own view. Two
+ *  copies of "what counts as the same class" is exactly the drift a shared seam
+ *  prevents. */
+export function layerOverlapClass(params: { kind: string }): OverlapClass {
+  return params.kind === 'Audio' ? 'audio' : 'visual'
+}
+
 /** Nearest lattice point (half-up) — the snap every mutator uses. */
 export function snapOnGrid(tUs: number, g: Grid): number {
   return snapFrameRound(tUs, g.num, g.den)

@@ -134,6 +134,34 @@ export type CommandError =
   | { error: 'TrackNotEmpty'; track: Uuid }
   | { error: 'TrackNotRemovable'; track: Uuid }
   | { error: 'TrackLocked'; track: Uuid }
+  // ── Ripple delete (ADR 0062). A ripple closes the span a deletion vacated, so
+  // every refusal below is about the span — `hole` is the half-open `[s, e)`
+  // interval being closed, which is the deleted layer's own footprint clipped to
+  // its remaining neighbours, NOT the layer's length. All four are predicted
+  // BEFORE any write: the planner is pure and the renderer runs it against its
+  // mirror to grey the row with the same sentence. ──
+  // A remaining layer STARTS inside the span. The hole must be clean, so the
+  // ripple refuses instead of sliding the layer onto its neighbour: the remedy
+  // is to add it to the selection (its own hole then merges in) or to delete
+  // without ripple. A layer that merely reaches into the span from before `s` is
+  // anchored ahead of the cut and does not refuse.
+  | { error: 'RippleInsideHole'; layer: Uuid; hole: { s: TimeUs; e: TimeUs } }
+  // A landing is occupied: `moving` shifted left onto `blocking` on `track`. When
+  // both shifted, `moving` is the later-starting one. The system never makes
+  // room (the `TransitionRestoreCollision` precedent); a transition's overlap is
+  // authorized only while both its participants shift by the same amount.
+  | { error: 'RippleCollision'; moving: Uuid; blocking: Uuid; track: Uuid }
+  // A link with members on BOTH sides of the span: one before `s`, one at or
+  // after `e`. A link means "these move together", so shifting only the
+  // downstream half is not on offer and there is no out-of-sync badge to fall
+  // back on. Members inside the deleted set are ignored — they are gone.
+  | { error: 'RippleLinkStraddles'; link: Uuid; hole: { s: TimeUs; e: TimeUs } }
+  // A locked layer would have to move. The lock reading is lenient throughout:
+  // only a layer that actually shifts blocks, so locking a logo at the head does
+  // not disable ripple for the rest of the film. A locked TRACK holding a mover
+  // is the plain `TrackLocked`, and a locked track with nothing downstream does
+  // not block at all.
+  | { error: 'RippleLockedLayer'; layer: Uuid }
   | { error: 'SplitOutsideLayer'; layer: Uuid; at_t: TimeUs }
   | { error: 'LinkLockedMember'; link: Uuid; locked_layer: Uuid; touched: Uuid }
   | { error: 'TrimEdgeOutOfRange'; layer: Uuid; new_t: TimeUs; cur_start: TimeUs; cur_end: TimeUs }
