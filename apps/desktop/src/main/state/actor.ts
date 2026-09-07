@@ -13,6 +13,7 @@ import { applyMoveLayer, applyMoveLayersToNewTrack } from './mutations/move'
 import { applyRestackLayer, type RestackPosition } from './mutations/restack'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
+import { applyRippleDeleteLayers, type RippleDeleteResult } from './mutations/ripple'
 import { applyDuplicateLayer, applyPasteLayer, applyPasteLayers, pasteLayerInterval } from './mutations/duplicate'
 import { applySplitLayer, parseDiscardSegments } from './mutations/split'
 import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, applyLinksRename, linkSiblingsExcluding } from './mutations/links'
@@ -869,6 +870,26 @@ export function createActor(opts: ActorOptions): ActorHandle {
             if (layers.length > 0) requireSameComposition(d, layers)
             for (const layer of layers) applyDeleteLayer(d, layer)
           })
+          return { ok: true, value: null }
+        }
+        // ripple_delete_layers — the selection's delete AND the closing of what
+        // it vacated, on every track of the one composition it lives in (ADR
+        // 0062). The same verbatim set delete_layers takes; what the ripple adds
+        // is the sweep, and the sweep is why the two cannot share an entry: one
+        // commit, one undo, so the layers, the landings, the transitions
+        // reconcile dropped and the markers it re-derived come back together.
+        //
+        // Every refusal is PRE-WRITE — the planner runs off untouched state
+        // inside the recipe and throws before the first splice, so a refused
+        // ripple burns no op_id and leaves the draft byte-identical. The empty
+        // set is refused here instead, above the commit: unlike delete_layers
+        // there is nothing to record and no hole to close, so `InvalidArgument`
+        // says what a silent no-op would hide.
+        case 'ripple_delete_layers': {
+          const layers = [...new Set((a.layers as Uuid[]) ?? [])]
+          if (layers.length === 0) return { ok: false, error: { error: 'InvalidArgument', field: 'layers', detail: 'at least one layer is required' } }
+          commit(HISTORY_SUMMARY.layerRippleDelete, (r: RippleDeleteResult) => layerRefs([...r.deleted, ...r.moved]), { kind: 'Coarse' },
+            (d) => applyRippleDeleteLayers(d, layers))
           return { ok: true, value: null }
         }
         case 'duplicate_layer': return { ok: true, value: commit(HISTORY_SUMMARY.layerDuplicate, layerRef, { kind: 'Coarse' }, (d) => applyDuplicateLayer(d, idGen, a.layer as Uuid, parseNum(a.t_offset_us, 't_offset_us'))) }

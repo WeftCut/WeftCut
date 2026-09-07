@@ -1647,6 +1647,20 @@ export async function deleteLayers(layerIds: string[]): Promise<void> {
   return invoke<void>("delete_layers", { layerIds });
 }
 
+/// `deleteLayers` that also CLOSES what the set vacated: every layer downstream
+/// of the freed span, on every track of that composition, moves left, and the
+/// film gets shorter. Takes the selection verbatim for the same reason
+/// `deleteLayers` does, and lands as ONE undo step (ADR 0062).
+///
+/// Refuses rather than making room — a layer starting inside the span, a
+/// landing that would collide, a link with members on both sides, a locked
+/// layer or lane that would have to move. `renderer/ripple/plan.ts` predicts all
+/// four off the mirror so the gesture can be greyed with the reason before it is
+/// sent; the actor enforces them, and its refusal is the authority.
+export async function rippleDeleteLayers(layerIds: string[]): Promise<void> {
+  return invoke<void>("ripple_delete_layers", { layerIds });
+}
+
 // ============================================================
 // Transitions (spec § Command surface — three recorded, undoable ops)
 // ============================================================
