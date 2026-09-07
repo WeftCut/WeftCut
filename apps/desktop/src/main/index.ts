@@ -177,6 +177,34 @@ function enumerateDrmRenderNodes(): string[] {
   }
 }
 
+/// Content-Type for a `weftcut-media://` body, keyed by file extension. The
+/// exact container type is cosmetic — what matters is that it is NOT text, so
+/// Chromium's loader skips the main-thread `TextResourceDecoder` pass over the
+/// body (see the header comment at the `weftcut-media` handler). A container
+/// mediabunny does not recognise still falls back to `application/octet-stream`,
+/// which is equally non-text.
+function mediaMimeForExt(ext: string): string {
+  switch (ext.toLowerCase()) {
+    case '.mp4':
+    case '.m4v':
+      return 'video/mp4'
+    case '.mov':
+      return 'video/quicktime'
+    case '.webm':
+      return 'video/webm'
+    case '.mkv':
+      return 'video/x-matroska'
+    case '.m4a':
+      return 'audio/mp4'
+    case '.mp3':
+      return 'audio/mpeg'
+    case '.wav':
+      return 'audio/wav'
+    default:
+      return 'application/octet-stream'
+  }
+}
+
 async function createWindow(): Promise<BrowserWindow> {
   // Last session's position/size, validated against the monitors attached RIGHT
   // NOW (windowGeometry.ts). Spread into the constructor rather than applied
@@ -2036,6 +2064,17 @@ app.whenReady().then(async () => {
       'Accept-Ranges': 'bytes',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Expose-Headers': 'Content-Range, Content-Length',
+      // A DEFINITE binary Content-Type is load-bearing for performance, not just
+      // correctness. With this header absent, Chromium's loader for the
+      // `standard`+`supportFetchAPI` scheme sniffs the body and runs a
+      // `TextResourceDecoder` over the WHOLE range on the RENDERER MAIN THREAD —
+      // measured at ~77 ms per 8 MiB mediabunny read on a 4K source (a
+      // `contentTracing` capture named it: ResponseBodyLoader::DidFinishLoadingBody
+      // → TextResourceDecoder::Decode {data_len: 8388608}), which is the periodic
+      // ~0.9 s preview stutter on the WebCodecs 4K lane. Tagging the body binary
+      // skips that decode entirely. `application/octet-stream` is the safe
+      // default; the container-specific types are cosmetic once it is non-text.
+      'Content-Type': mediaMimeForExt(path.extname(abs)),
     }
 
     if (range) {
