@@ -1985,6 +1985,7 @@ const enUS = {
       delete: "Deleted layer",
       delete_multi: "Deleted layers",
       ripple_delete: "Ripple deleted layers",
+      split_and_ripple: "Split layer and closed the gaps",
       update: "Updated layer",
       update_params: "Updated layer params",
       keyframe_param: "Keyframed layer param",

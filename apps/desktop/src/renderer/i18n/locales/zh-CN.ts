@@ -1758,6 +1758,7 @@ const zhCN: Resources = {
       delete: "删除图层",
       delete_multi: "批量删除图层",
       ripple_delete: "波纹删除图层",
+      split_and_ripple: "分割图层并闭合间隙",
       update: "修改图层",
       update_params: "修改图层参数",
       keyframe_param: "设置关键帧",
