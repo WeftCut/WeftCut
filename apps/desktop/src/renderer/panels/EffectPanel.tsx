@@ -2,6 +2,7 @@
 // only the existing visual effect chain; kind-specific Layer fields remain in
 // AttributePanel.
 
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { type TrackSummary } from "../ipc";
@@ -22,7 +23,12 @@ export function EffectPanel({
   onMutated,
 }: EffectPanelProps) {
   const { t } = useTranslation();
-  const layer = findPanelLayer(tracks, selectedLayerId);
+  // A scan of every track's layers, so it is memoised rather than re-run on
+  // each unrelated re-render — the same shape `AttributePanel` uses.
+  const layer = useMemo(
+    () => findPanelLayer(tracks, selectedLayerId),
+    [tracks, selectedLayerId],
+  );
 
   // Every selection state gets an explicit Panel body: the chain is never an
   // unexplained blank area, and an Audio selection never implies an

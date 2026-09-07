@@ -12,9 +12,11 @@ import {
   useCompositionAnchorStore,
 } from "./compositionAnchorStore";
 import {
+  anchorFrameOf,
   focusedPlayheadUs,
   focusedRootUs,
   playheadClockUs,
+  playheadClockUsIn,
   playheadLocalUs,
   previewClockUs,
   previewLocalUs,
@@ -176,6 +178,20 @@ describe("reading the moment", () => {
     setPlayheadTimeUs(13 * S);
     expect(focusedPlayheadUs()).toBe(1 * S);
     expect(focusedRootUs(2 * S)).toBe(14 * S);
+  });
+
+  it("answers the same with a hoisted frame as with a resolved one", () => {
+    openComposition(G1, "late");
+    const frame = anchorFrameOf(G1);
+    for (const rootUs of [3 * S, 13 * S, 17 * S]) {
+      setPlayheadTimeUs(rootUs);
+      expect(playheadClockUsIn(G1, frame)).toBe(playheadClockUs(G1));
+    }
+    // No frame is the orphan answer, and the unbound row's is zero — the same
+    // fallback the resolving twin reaches through.
+    setPlayheadTimeUs(13 * S);
+    expect(playheadClockUsIn(ORPHAN, null)).toBe(orphanPlayheadUs(ORPHAN));
+    expect(playheadClockUsIn(null, null)).toBe(0);
   });
 });
 

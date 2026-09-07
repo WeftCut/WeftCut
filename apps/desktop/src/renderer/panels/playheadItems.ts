@@ -78,6 +78,9 @@ export function buildPlayheadItems(
   const items: PlayheadItem[] = [];
   for (const [trackIndex, track] of tracks.entries()) {
     if (track.role !== null) continue;
+    // Once per track: the label resolves an ordinal by scanning `tracks`, so
+    // per-layer it would cost layers × tracks.
+    const trackLabel = trackDisplayName(track, tracks, t);
     for (const layer of track.layers) {
       if (layer.t_end_us <= lo || layer.t_start_us >= hi) continue;
       const spans =
@@ -95,7 +98,7 @@ export function buildPlayheadItems(
         linkSize: link?.layer_ids.length ?? 0,
         linkMembers: [],
         trackId: track.id,
-        trackLabel: trackDisplayName(track, tracks, t),
+        trackLabel,
         trackKind: track.kind,
         trackIndex,
         offsetUs: offset,

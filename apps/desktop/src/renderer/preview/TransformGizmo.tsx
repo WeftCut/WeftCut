@@ -51,7 +51,7 @@ import {
 } from "../render/transformOverrides";
 import { usePreviewRenderTargetId } from "../state/compositionAnchorStore";
 import { useOpenComposition } from "../state/projectStore";
-import { focusedPlayheadUs } from "../state/playheadProjection";
+import { focusedPlayheadUs, useFocusedPlayheadReader } from "../state/playheadProjection";
 import { usePrimaryLayerId } from "../state/selectionStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { layerFrameAt, TRANSFORMABLE_KINDS } from "./centerInFrame";
@@ -83,6 +83,7 @@ import {
   type ScaleHandleId,
 } from "./gizmoGeometry";
 import { getGizmoProbe, type GizmoProbe } from "./gizmoProbeRegistry";
+import { observeClientRect } from "./layoutRectCache";
 import {
   quadAabb,
   snapMove,
@@ -169,6 +170,11 @@ const GUIDE_UNDER_WIDTH_PX = 3;
 const BOX_STROKE = "var(--ring)";
 const BOX_STROKE_SHRUNK = "var(--warning)";
 const BOX_STROKE_OVERFLOW = "var(--destructive)";
+
+/// The draw loop's signature for "nothing is on screen". A word, so it can
+/// never collide with a geometry signature — every reason to hide collapses to
+/// one DOM state, so a run of hidden frames costs one write.
+const HIDDEN = "hidden";
 
 /// The one kind whose resize handles write a layout BOX instead of `scale`
 /// (ADR 0049). Named rather than inlined: several separate decisions here turn on
@@ -686,6 +692,13 @@ function TransformGizmo({
   // Read only at pointerdown, to build the frozen snap target set.
   const compositionRef = useRef(composition);
   compositionRef.current = composition;
+  /// The moment, for the rAF loop, with the anchor walk already hoisted out of
+  /// it — `focusedPlayheadUs` resolves an anchor per call, which is exactly what
+  /// `playheadProjection.ts` bars from the per-frame path. The event-time
+  /// callers below keep calling it directly.
+  const reader = useFocusedPlayheadReader();
+  const readerRef = useRef(reader);
+  readerRef.current = reader;
   /// Tracks committed by this gizmo whose `project:changed` → refetch has not
   /// come back yet. Two readers: the NEXT gesture's commit base (`paramTrack`),
   /// and the carry the override has to hold so the picture does not fall back to
@@ -882,6 +895,21 @@ function TransformGizmo({
 
   useEffect(() => {
     let frame = 0;
+    const svgEl = svgRef.current;
+    if (!svgEl) return;
+    /// The overlay's own client origin, cached.
+    ///
+    /// LANDMINE: the timeline playhead writes `style.left` every frame of
+    /// playback, so a `getBoundingClientRect()` here forces a synchronous
+    /// reflow of the whole document once per frame — the tax that grows with
+    /// every open track and Panel. Invalidation is
+    /// `preview/layoutRectCache.ts`' job, Dock moves included.
+    const ownRect = observeClientRect(svgEl);
+    /// What the last WRITTEN frame was drawn from, so an unchanged gizmo — a
+    /// parked playhead, or a static layer during playback — writes nothing at
+    /// all. `tUs` is deliberately absent: it reaches the picture only through
+    /// `geom` and through visibility, both of which are here.
+    let drawn: string | null = null;
     /// Position, show and cursor the eight resize handles for an already-mapped
     /// box. `edges` decides whether the four midpoint handles exist at all: a
     /// `scale_linked` layer keeps its CORNERS only, because one axis of it cannot
@@ -940,6 +968,8 @@ function TransformGizmo({
         if (guideYRef.current) guideYRef.current.style.display = "none";
       };
       const hide = (): void => {
+        if (drawn === HIDDEN) return;
+        drawn = HIDDEN;
         show(false);
         hideGuides();
         for (const el of handleEls.current.values()) el.style.display = "none";
@@ -947,7 +977,7 @@ function TransformGizmo({
       if (!probe) return hide();
       const l = layerRef.current;
       const comp = compRef.current;
-      const tUs = focusedPlayheadUs();
+      const tUs = readerRef.current();
       if (tUs < l.t_start_us || tUs >= l.t_end_us) return hide();
       const rect = probe.canvasRect();
       // For Text this is the BOX when one is set and the measured glyph bounds
@@ -983,34 +1013,20 @@ function TransformGizmo({
       // The SVG is inset:0 inside the preview panel, so subtract its own client
       // origin to land in its coordinate system. A pure translation, so the
       // handle's screen-space gap survives it unchanged.
-      const own = svg.getBoundingClientRect();
+      const own = ownRect.rect();
       const local = (c: Pt): Pt => ({ x: c.x - own.left, y: c.y - own.top });
       const corners = layerQuad(geom).map((corner) => local(compToClient(corner, fit)));
-      box.setAttribute("points", corners.map((c) => `${c.x},${c.y}`).join(" "));
       // Client, not SVG-local: pointer events speak client coordinates.
       const pivotClient = compToClient(layerPivot(geom), fit);
       pivotRef.current = pivotClient;
-      // The reticle's parts are drawn once around (0,0) and the whole group is
-      // translated — one attribute write per frame instead of six.
-      const pivotLocal = local(pivotClient);
-      anchor.setAttribute("transform", `translate(${pivotLocal.x} ${pivotLocal.y})`);
       const handle = rotateHandle(corners, ROTATE_GAP_PX);
       if (!handle) return hide();
-      stalk.setAttribute("x1", String(handle.root.x));
-      stalk.setAttribute("y1", String(handle.root.y));
-      stalk.setAttribute("x2", String(handle.knob.x));
-      stalk.setAttribute("y2", String(handle.knob.y));
-      // Translated, never rotated, and that is deliberate: the disc is round so
-      // it needs no angle, and the glyph inside it is a LABEL — turning it with
-      // the box would leave it upside-down at 180°, which is the one thing an
-      // icon must not do.
-      knob.setAttribute("transform", `translate(${handle.knob.x} ${handle.knob.y})`);
       // A Text box's two axes are independent BY CONSTRUCTION — the modes are
       // read off which of them is set (ADR 0049) — so `scale_linked` has no say
       // over its handles and all eight stay grabbable on a fresh text layer,
       // whose `scale_linked` is `true`. The flag keeps its other job untouched:
       // one Scale lane vs two in the inspector.
-      placeScaleHandles(corners, boxed || !readScaleLinked(l.params));
+      const edges = boxed || !readScaleLinked(l.params);
       // The stroke reports what the renderer did with the text INSIDE the box,
       // which only a Text layer has an answer for. Shrink and overflow are
       // deliberately different states: shrinking is the feature working, overflow
@@ -1023,14 +1039,35 @@ function TransformGizmo({
           : isShrunk(textFit)
             ? BOX_STROKE_SHRUNK
             : BOX_STROKE;
+      // Guides: a statement about the gesture, drawn from the frozen target the
+      // solver picked (composition space) rather than from the box — so they
+      // stay put while the layer slides onto them.
+      const live = guidesRef.current;
+      // Everything above is arithmetic and the two refs the pointer handlers
+      // read; everything below writes to the DOM. Same inputs ⇒ every write
+      // would be a no-op that still dirties layout for the next reader.
+      const signature = `${geom.x},${geom.y},${geom.anchorX},${geom.anchorY},${geom.naturalW},${geom.naturalH},${geom.scaleX},${geom.scaleY},${geom.rotationDeg},${geom.origin};${fit.scale},${fit.offX},${fit.offY};${own.left},${own.top};${comp.width}x${comp.height};${edges ? 1 : 0};${stroke};${live.x},${live.y}`;
+      if (signature === drawn) return;
+      drawn = signature;
+      box.setAttribute("points", corners.map((c) => `${c.x},${c.y}`).join(" "));
+      // The reticle's parts are drawn once around (0,0) and the whole group is
+      // translated — one attribute write per frame instead of six.
+      const pivotLocal = local(pivotClient);
+      anchor.setAttribute("transform", `translate(${pivotLocal.x} ${pivotLocal.y})`);
+      stalk.setAttribute("x1", String(handle.root.x));
+      stalk.setAttribute("y1", String(handle.root.y));
+      stalk.setAttribute("x2", String(handle.knob.x));
+      stalk.setAttribute("y2", String(handle.knob.y));
+      // Translated, never rotated, and that is deliberate: the disc is round so
+      // it needs no angle, and the glyph inside it is a LABEL — turning it with
+      // the box would leave it upside-down at 180°, which is the one thing an
+      // icon must not do.
+      knob.setAttribute("transform", `translate(${handle.knob.x} ${handle.knob.y})`);
+      placeScaleHandles(corners, edges);
       if (boxStrokeRef.current !== stroke) {
         boxStrokeRef.current = stroke;
         box.style.stroke = stroke;
       }
-      // Guides last: they are a statement about the gesture, drawn from the
-      // frozen target the solver picked (composition space) rather than from the
-      // box — so they stay put while the layer slides onto them.
-      const live = guidesRef.current;
       const paintGuide = (el: SVGGElement | null, a: Pt, b: Pt): void => {
         if (!el) return;
         const p1 = local(compToClient(a, fit));
@@ -1059,7 +1096,10 @@ function TransformGizmo({
       show(true);
     };
     frame = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      ownRect.dispose();
+    };
   }, []);
 
   useEffect(() => {

@@ -19,7 +19,7 @@
 // subscriber the playback loop has, so the cheapest tier that fits is the only
 // tier allowed.
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 
 import { lastFrameAnchorUs } from "../frames";
 import type { ProjectSummary } from "../ipc";
@@ -143,7 +143,17 @@ export function localClockUsOf(compositionId: string | null, rootUs: number): nu
 /// parameter worth now" stay answerable from a Panel whose Group has scrolled
 /// off the film — where a drawn playhead would have to admit it has no position.
 export function playheadClockUs(compositionId: string | null): number {
-  const frame = anchorFrameOf(compositionId);
+  return playheadClockUsIn(compositionId, anchorFrameOf(compositionId));
+}
+
+/// The same reading with the frame already in hand — `localPlayheadIn`'s twin
+/// for the clock rather than the drawn read-out. Split out so a per-frame
+/// caller can hoist the anchor walk (`useFocusedPlayheadReader`) instead of
+/// paying for one per frame.
+export function playheadClockUsIn(
+  compositionId: string | null,
+  frame: AnchorFrame | null,
+): number {
   if (frame === null) {
     return compositionId === null ? 0 : orphanPlayheadUs(compositionId);
   }
@@ -154,6 +164,26 @@ export function playheadClockUs(compositionId: string | null): number {
 /// playhead" in the timeline holding the keyboard.
 export function focusedPlayheadUs(): number {
   return playheadClockUs(focusedId());
+}
+
+/// `focusedPlayheadUs` for a caller that asks every frame (tier 2): the anchor
+/// walk happens in React, and the returned reader is arithmetic over one number.
+/// A rAF loop calling `focusedPlayheadUs` directly resolves an anchor per frame,
+/// which this module's header forbids.
+///
+/// The reader is stable while the project, the editing target and its anchor
+/// are, so a loop may park it in a ref instead of re-arming on every render.
+export function useFocusedPlayheadReader(): () => number {
+  const summary = useProjectStore((s) => s.summary);
+  const focused = useFocusedCompositionId();
+  // The normalisation `focusedId()` applies: an id the summary has lost reads as
+  // the root for the tick it takes the anchor store to fall back.
+  const compositionId = compositionOrRoot(summary, focused)?.id ?? null;
+  const frame = useAnchorFrame(compositionId);
+  return useCallback(
+    () => playheadClockUsIn(compositionId, frame),
+    [compositionId, frame],
+  );
 }
 
 /// The moment at which `compositionId` reads `localUs`, or null when it has no

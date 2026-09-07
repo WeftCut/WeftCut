@@ -4,8 +4,9 @@ import { usePathEditingStore } from '../state/pathEditingStore';
 import { type PositionAnimation, type PathPosition, type Point } from '../../shared/position';
 import { evaluatePosition, setPositionPreview, previewPosition, subscribePositionPreviews, positionPreviewRevision } from '../render/position';
 import { getGizmoProbe } from './gizmoProbeRegistry';
+import { observeClientRect, type ClientRectCache } from './layoutRectCache';
 import { containFit } from './gizmoGeometry';
-import { focusedPlayheadUs } from '../state/playheadProjection';
+import { useFocusedPlayheadReader } from '../state/playheadProjection';
 import { logMutationFailure } from '../errors/tryMutate';
 import { transformOverrideFor } from '../render/transformOverrides';
 import { editPathNode, insertPathNode, nearestPathLocation } from '../../shared/pathGeometry';
@@ -28,6 +29,19 @@ export function MotionPathOverlay({ layer, composition }: {
     const current = draft ?? (source ? previewPosition(source) : null);
     const live = useRef(current);
     live.current = current;
+    // The anchor walk is hoisted here; the loop only does arithmetic. Resolving
+    // an anchor inside a rAF loop is what `playheadProjection.ts` forbids.
+    const reader = useFocusedPlayheadReader();
+    const readerRef = useRef(reader);
+    readerRef.current = reader;
+    /// Stands in for the MARKUP in the draw loop's signature, so a render is
+    /// always followed by a written frame. Freshly mounted nodes carry their
+    /// DECLARED attributes — a handle circle's unscaled `r`, the svg's own
+    /// `visibility: hidden` — and the loop is what turns those into the live
+    /// values, so it may not skip a frame just because the geometry held still.
+    /// Nothing here re-renders per frame, so a counter is enough.
+    const renderRef = useRef(0);
+    renderRef.current += 1;
     useEffect(() => () => { if (source)
         setPositionPreview(source, null); }, [source]);
     useEffect(() => {
@@ -47,6 +61,26 @@ export function MotionPathOverlay({ layer, composition }: {
     }, []);
     useEffect(() => {
         let raf = 0;
+        /// The svg mounts and unmounts UNDER this loop — the component returns
+        /// null while there is no path to draw, and that decision does not
+        /// restart the effect — so the cached box follows whichever element is
+        /// there now. Cached at all because a layout read on the per-frame path
+        /// lands in the same frame as the timeline playhead's `style.left`
+        /// write and reflows the whole document (`layoutRectCache.ts`).
+        let ownCache: ClientRectCache | null = null;
+        let observed: SVGSVGElement | null = null;
+        const ownRect = (el: SVGSVGElement): DOMRect => {
+            if (observed !== el || !ownCache) {
+                ownCache?.dispose();
+                ownCache = observeClientRect(el);
+                observed = el;
+            }
+            return ownCache.rect();
+        };
+        /// What the last written frame was drawn from. Identical inputs write
+        /// nothing: a DOM write between the playhead's own write and the next
+        /// read is what turns a still overlay into a reflow.
+        let drawn: string | null = null;
         const draw = () => {
             raf = requestAnimationFrame(draw);
             const rect = getGizmoProbe()?.canvasRect();
@@ -57,22 +91,30 @@ export function MotionPathOverlay({ layer, composition }: {
             const fit = containFit(rect, composition.width, composition.height);
             if (!fit)
                 return;
-            const own = root.getBoundingClientRect();
+            const own = ownRect(root);
             const delta = transformOverrideFor(layer.id);
+            const now = readerRef.current();
+            const visible = now >= layer.t_start_us && now < layer.t_end_us;
+            const at = live.current ? evaluatePosition(live.current, now - layer.t_start_us) : null;
+            const signature = `${renderRef.current};${rect.left},${rect.top},${rect.width},${rect.height};${own.left},${own.top};${fit.scale},${fit.offX},${fit.offY};${delta?.dx ?? 0},${delta?.dy ?? 0};${visible ? 1 : 0};${at ? `${at.x},${at.y}` : ''}`;
+            if (signature === drawn)
+                return;
+            drawn = signature;
             g.setAttribute('transform', `translate(${fit.offX - own.left + (delta?.dx ?? 0) * fit.scale} ${fit.offY - own.top + (delta?.dy ?? 0) * fit.scale}) scale(${fit.scale})`);
             for (const circle of g.querySelectorAll<SVGCircleElement>('[data-handle-radius]'))
                 circle.setAttribute('r', String(Number(circle.dataset.handleRadius) / fit.scale));
-            const now = focusedPlayheadUs();
-            root.style.visibility = now >= layer.t_start_us && now < layer.t_end_us ? 'visible' : 'hidden';
-            if (live.current && marker.current) {
-                const p = evaluatePosition(live.current, now - layer.t_start_us);
-                marker.current.setAttribute('cx', String(p.x));
-                marker.current.setAttribute('cy', String(p.y));
+            root.style.visibility = visible ? 'visible' : 'hidden';
+            if (at && marker.current) {
+                marker.current.setAttribute('cx', String(at.x));
+                marker.current.setAttribute('cy', String(at.y));
                 marker.current.setAttribute('r', String(5 / fit.scale));
             }
         };
         draw();
-        return () => cancelAnimationFrame(raf);
+        return () => {
+            cancelAnimationFrame(raf);
+            ownCache?.dispose();
+        };
     }, [composition.width, composition.height, layer.id, layer.t_start_us, layer.t_end_us]);
     const route = useMemo(() => {
         if (!current)

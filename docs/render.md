@@ -474,6 +474,17 @@ store's header):
 When adding any UI that follows the playhead, start at tier 1 and only
 move down the list when the UI genuinely needs to repaint continuously.
 
+A per-frame loop must never READ layout. The timeline playhead dirties
+`style.left` on every frame, so a `getBoundingClientRect()` or `clientWidth`
+from a rAF loop in the same frame forces a synchronous reflow of the whole
+document — a cost that grows with every open track and Panel. The preview
+overlays (the transform gizmo, the motion path, the safe-area guides) therefore
+read a CACHED rect (`preview/layoutRectCache.ts`, invalidated by element and
+window resizes, an ancestor's scroll, a pointer-down and a Dock relayout) and
+hoist their anchor frame with `useFocusedPlayheadReader` instead of resolving
+one per frame. They also compare the frame's inputs against the last drawn ones
+and skip the DOM writes when nothing moved.
+
 Enforcement: `apps/desktop/e2e/scripts/memory-ratchet.mjs` (local-only —
 the phenomenon is dev-bundle-specific, so the prod-built e2e suite
 cannot see it; needs the dev server on port 1420). It replays a 90 s

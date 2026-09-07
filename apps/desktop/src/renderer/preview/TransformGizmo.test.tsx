@@ -14,6 +14,7 @@ import {
 } from "../render/transformOverrides";
 import { TEXT_BOX_MIN_PX, type TextFit } from "../render/textBox";
 import { clearGizmoProbe, registerGizmoProbe, type GizmoProbe } from "./gizmoProbeRegistry";
+import { bumpPreviewLayoutEpoch } from "./layoutRectCache";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { TransformGizmoHost } from "./TransformGizmo";
 import { rootOf, summaryFixture } from "../testing/summaryFixture";
@@ -195,6 +196,13 @@ async function box(): Promise<HTMLElement> {
   return el;
 }
 
+/// Let the overlay's own rAF loop run `n` more times.
+async function frames(n: number): Promise<void> {
+  for (let i = 0; i < n; i += 1) {
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  }
+}
+
 describe("TransformGizmoHost", () => {
   it('translates a whole path through relative commits and carries rapid gestures until the summary arrives', async () => {
     const position:PathPosition={mode:'Path',path:{nodes:[0,100].map((x,i)=>({ tangentMode: 'Corner' as const,id:String(i),point:{x,y:0},inHandle:{x:0,y:0},outHandle:{x:0,y:0},segment:'Line'}))},progress:stat(0.5)};
@@ -218,6 +226,20 @@ describe("TransformGizmoHost", () => {
     const el = await box();
     // 640×360 media at scale 1 in a half-scale canvas ⇒ a 320×180 box at (0,0).
     expect(el.getAttribute("points")).toBe("0,0 320,0 320,180 0,180");
+  });
+
+  // The loop runs in the same frame as the timeline playhead's `style.left`
+  // write, so a layout read here is a full-document reflow per frame.
+  it("reads its own layout once and only again after a layout change", async () => {
+    render(<TransformGizmoHost />);
+    const el = await box();
+    const svg = el.parentElement!;
+    const reads = vi.spyOn(svg, "getBoundingClientRect");
+    await frames(3);
+    expect(reads).not.toHaveBeenCalled();
+    bumpPreviewLayoutEpoch();
+    await frames(2);
+    expect(reads).toHaveBeenCalledTimes(1);
   });
 
   it("renders nothing for a kind without a transform", () => {

@@ -47,6 +47,7 @@ import {
   registerGizmoProbe,
   type GizmoProbe,
 } from "../preview/gizmoProbeRegistry";
+import { observeClientRect, type ClientRectCache } from "../preview/layoutRectCache";
 import { quickProxyPath } from "./decodeRoute";
 import {
   setSlotFenceBackend,
@@ -143,6 +144,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const meterTimerRef = useRef<number | null>(null);
   const samplerRef = useRef<PreviewSampler | null>(null);
   const gizmoProbeRef = useRef<GizmoProbe | null>(null);
+  /// The canvas box the gizmo probe hands out, cached because its readers are
+  /// per-frame rAF loops (`preview/layoutRectCache.ts`). Lives beside the probe
+  /// and retires with it.
+  const canvasRectRef = useRef<ClientRectCache | null>(null);
   const unsubOverridesRef = useRef<(() => void) | null>(null);
   const unsubRoleOverridesRef = useRef<(() => void) | null>(null);
   const unsubTransformOverridesRef = useRef<(() => void) | null>(null);
@@ -474,8 +479,15 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
       // On-canvas gizmo: geometry only (no pixels), same register-on-init /
       // identity-guarded-clear lifecycle as the sampler above.
+      // Cached, unlike the sampler's own `canvasRect` above: the gizmo's readers
+      // are rAF loops running alongside the timeline playhead's `style.left`
+      // write, where a live read costs a full-document reflow every frame. The
+      // sampler reads at event time, where a fresh box is the point.
+      canvasRectRef.current?.dispose();
+      canvasRectRef.current = observeClientRect(app.canvas as HTMLCanvasElement);
+      const canvasRect = canvasRectRef.current;
       const gizmoProbe: GizmoProbe = {
-        canvasRect: () => (app.canvas as HTMLCanvasElement).getBoundingClientRect(),
+        canvasRect: () => canvasRect.rect(),
         naturalSizeOf: (layerId) => compositor.naturalSizeOf(layerId),
         textFitOf: (layerId) => compositor.textFitOf(layerId),
       };
@@ -826,6 +838,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       samplerRef.current = null;
       if (gizmoProbeRef.current) clearGizmoProbe(gizmoProbeRef.current);
       gizmoProbeRef.current = null;
+      canvasRectRef.current?.dispose();
+      canvasRectRef.current = null;
       unsubOverridesRef.current?.();
       unsubOverridesRef.current = null;
       unsubRoleOverridesRef.current?.();

@@ -20,6 +20,7 @@ import { usePreviewRenderTargetId } from "../state/compositionAnchorStore";
 import { useComposition } from "../state/projectStore";
 import { compToClient, containFit } from "./gizmoGeometry";
 import { getGizmoProbe } from "./gizmoProbeRegistry";
+import { observeClientRect } from "./layoutRectCache";
 
 /// The delivery margins every broadcaster's spec is a restatement of, written as
 /// the FRACTION of the frame the rectangle keeps: action-safe drops 3.5% per
@@ -54,6 +55,10 @@ const SAFE_AREA_DASH = "6 4";
 const SAFE_AREA_UNDER_COLOR = "rgba(0, 0, 0, 0.5)";
 const SAFE_AREA_UNDER_WIDTH_PX = 3;
 
+/// The draw loop's signature for "nothing is on screen" — a word, so it can
+/// never collide with a geometry signature.
+const HIDDEN = "hidden";
+
 /// Mounts the overlay only while the preference is on and a composition exists
 /// — the two things the rectangles are defined in terms of. Keyed on neither
 /// selection nor playhead: a safe area does not move.
@@ -78,6 +83,17 @@ function SafeAreaGuides({ composition }: { composition: CompositionSummary }) {
 
   useEffect(() => {
     let frame = 0;
+    const svgEl = svgRef.current;
+    if (!svgEl) return;
+    // Cached: a per-frame layout read lands in the same frame as the timeline
+    // playhead's `style.left` write and reflows the document (see
+    // `layoutRectCache.ts`).
+    const ownRect = observeClientRect(svgEl);
+    /// What the last written frame was drawn from, so a still overlay — the
+    /// normal case, since a safe area only moves when the panel does — costs no
+    /// DOM write at all. `HIDDEN` is a state, not a geometry, so it collapses a
+    /// run of hidden frames the same way.
+    let drawn: string | null = null;
     /// Write one band's geometry onto both of its rects — the dark under-stroke
     /// and the bright line share a rectangle and differ only in stroke.
     const paint = (
@@ -94,14 +110,14 @@ function SafeAreaGuides({ composition }: { composition: CompositionSummary }) {
         rect.setAttribute("height", String(r.h));
       }
     };
+    const hide = (): void => {
+      if (drawn === HIDDEN) return;
+      drawn = HIDDEN;
+      if (actionRef.current) actionRef.current.style.display = "none";
+      if (titleRef.current) titleRef.current.style.display = "none";
+    };
     const draw = (): void => {
       frame = requestAnimationFrame(draw);
-      const svg = svgRef.current;
-      if (!svg) return;
-      const hide = (): void => {
-        if (actionRef.current) actionRef.current.style.display = "none";
-        if (titleRef.current) titleRef.current.style.display = "none";
-      };
       // The canvas box, not the panel's: the canvas is contain-sized inside the
       // panel, and the guides belong to the frame.
       const rect = getGizmoProbe()?.canvasRect();
@@ -111,7 +127,10 @@ function SafeAreaGuides({ composition }: { composition: CompositionSummary }) {
       if (!fit) return hide();
       // The SVG is inset:0 in the preview panel, so its own client origin comes
       // off the mapped point — a pure translation, like the gizmo's `local`.
-      const own = svg.getBoundingClientRect();
+      const own = ownRect.rect();
+      const signature = `${rect.left},${rect.top},${rect.width},${rect.height};${own.left},${own.top};${comp.width}x${comp.height}`;
+      if (signature === drawn) return;
+      drawn = signature;
       const bandRect = (fraction: number) => {
         const r = safeAreaRect(fraction, comp.width, comp.height);
         const at = compToClient({ x: r.x, y: r.y }, fit);
@@ -126,7 +145,10 @@ function SafeAreaGuides({ composition }: { composition: CompositionSummary }) {
       paint(titleRef.current, bandRect(TITLE_SAFE_FRACTION));
     };
     frame = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      ownRect.dispose();
+    };
   }, []);
 
   return (

@@ -69,6 +69,7 @@ import {
 } from "../ipc";
 import { type ProxyState } from "../panels/mediaReadiness";
 import { type OptimizeInfo } from "../panels/importOptimize";
+import { bumpPreviewLayoutEpoch } from "../preview/layoutRectCache";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { useFocusedPlayheadUsThrottled } from "../state/playheadProjection";
 import {
@@ -1496,6 +1497,7 @@ export function DockWorkspace({
   const rootCompositionId = useProjectStore((s) => s.summary?.root_id ?? null);
 
   const openTimelinesRef = useRef<(() => void) | null>(null);
+  const previewLayoutRef = useRef<(() => void) | null>(null);
 
   const onReady = useCallback(({ api }: DockviewReadyEvent) => {
     let adapter = adapterRef.current;
@@ -1537,6 +1539,14 @@ export function DockWorkspace({
         focusComposition(parsed.instance);
       }
     });
+    // The preview overlays read a CACHED canvas box, because their loops run
+    // per frame (`preview/layoutRectCache.ts`). Moving a Panel is the one mover
+    // no observer on the canvas can see — a relayout can leave the box the same
+    // size at a new origin — so the Dock says so itself. Re-subscribed rather
+    // than added to, for the same StrictMode reason as above.
+    previewLayoutRef.current?.();
+    const previewLayout = api.onDidLayoutChange(() => bumpPreviewLayoutEpoch());
+    previewLayoutRef.current = () => previewLayout.dispose();
     // Read live rather than from the render above: the Dock is ready before
     // this component's own effects run, and the baseline layout it is about to
     // build should be bound straight away wherever the summary already exists.
@@ -1579,6 +1589,8 @@ export function DockWorkspace({
     () => () => {
       openTimelinesRef.current?.();
       openTimelinesRef.current = null;
+      previewLayoutRef.current?.();
+      previewLayoutRef.current = null;
       adapterRef.current?.dispose();
       adapterRef.current = null;
       onControllerReady?.(null);
