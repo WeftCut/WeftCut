@@ -15,7 +15,8 @@ export interface AudioFxReady {
   sig: string;
   media_hash: string;
   audio_path: string;
-  peaks_path: string;
+  /** `null` while the waveform sibling has not been built yet (audio is ready, the picture is not). */
+  peaks_path: string | null;
 }
 
 /// Why a bake failed. `effect_id` / `kind` are null when the failure belongs to

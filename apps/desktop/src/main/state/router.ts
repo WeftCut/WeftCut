@@ -23,6 +23,7 @@ export type Route =
   | { kind: 'recents' }       // recent-projects list + prefs, owned in TS main (config-dir)
   | { kind: 'hybrid'; tool: string } // native-compute → TS-write
   | { kind: 'clipCompute' }   // native clip read/compute over an actor-resolved slice
+  | { kind: 'audioFx' }       // audio-fx baker read/gate, served in main by the baker
   | { kind: 'motif'; tool: string }  // TS Motif authoring/read/install
   | { kind: 'reject'; reason: string }
   | { kind: 'rust' }
@@ -103,6 +104,21 @@ export const CLIP_COMPUTE_CHANNELS: ReadonlySet<string> = new Set([
   'detect_silences', 'transcribe_clip', 'describe_clip',
 ])
 
+/** The audio-fx baker's own channels, served in `index.ts` by the baker — the
+ *  sole holder of bake state, which is a derivation and never project state
+ *  (ADR 0063). All three are reads of that map or of the disk behind it:
+ *  `audio_fx_snapshot` for a boot-time or late subscriber, `ensure_export_audio_fx`
+ *  for the export gate (it flushes the debounce and reports what the mix is
+ *  waiting on), `audio_fx_reverify` for a consumer that found a ready artifact
+ *  evicted. None writes the project actor.
+ *
+ *  Their own route kind rather than a fold into `rust`, because the answer comes
+ *  from main and the four bake PRIMITIVES (`PURE_NATIVE` below) are what reach
+ *  Rust. */
+export const AUDIO_FX_CHANNELS: ReadonlySet<string> = new Set([
+  'audio_fx_snapshot', 'ensure_export_audio_fx', 'audio_fx_reverify',
+])
+
 /** Motif catalog-read + authoring + install + staleness channels, served in TS
  *  by runMotifTool. */
 export const MOTIF_CHANNELS: ReadonlySet<string> = new Set([
@@ -119,10 +135,18 @@ export const SLICE_INJECTED_READS: ReadonlySet<string> = new Set([
   'get_media_thumbnail', 'get_waveform_peaks',
 ])
 
-/** Native compute with NO project actor access. */
+/** Native compute with NO project actor access.
+ *
+ *  The four audio-fx bake primitives (`measure_conform_rms`, `bake_audio_fx`,
+ *  `cancel_audio_fx`, `build_peaks_for_vconf`) belong here on the property that
+ *  matters — they take explicit paths and a finished ffmpeg graph, so they read
+ *  no project state at all (ADR 0063). Main's baker is their only caller; they
+ *  are classified anyway because this manifest's value is completeness, and a
+ *  channel nobody listed is a channel nobody checked. */
 export const PURE_NATIVE: ReadonlySet<string> = new Set([
   'ping', 'mux_export', 'export_video_sink_start', 'export_video_sink_finish', 'export_video_sink_cancel',
   'import_cancel', 'import_queue_list', 'report_audio_meter', 'settings_get_api_key_status', 'settings_test_provider',
+  'measure_conform_rms', 'bake_audio_fx', 'cancel_audio_fx', 'build_peaks_for_vconf',
 ])
 
 /** Backend stores (config-dir), not the project actor. */
@@ -134,6 +158,7 @@ export function routeChannel(channel: string): Route {
   if (PRODUCTION_OPS.has(channel)) return { kind: 'command' }
   if (HYBRID_CHANNELS.has(channel)) return { kind: 'hybrid', tool: channel }
   if (CLIP_COMPUTE_CHANNELS.has(channel)) return { kind: 'clipCompute' }
+  if (AUDIO_FX_CHANNELS.has(channel)) return { kind: 'audioFx' }
   if (MOTIF_CHANNELS.has(channel)) return { kind: 'motif', tool: channel }
   switch (channel) {
     case 'project_summary': return { kind: 'summary' }

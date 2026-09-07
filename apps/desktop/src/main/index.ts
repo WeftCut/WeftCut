@@ -27,8 +27,10 @@ import { resolveSystemFont } from './fonts/resolveSystemFont.js'
 import { collectMetrics } from './metrics.js'
 import { isAllowed } from './fsGuard.js'
 import { applyDerivativesEvent, applyWorkspacePathsEvent } from './state/jobs-writeback.js'
-import { SINGLE_MEDIA_CHANNELS, resolveSingleMediaArgs } from './state/single-media-forward.js'
+import { SINGLE_MEDIA_CHANNELS, WAVEFORM_KEY_CHANNELS, resolveSingleMediaArgs, resolveWaveformKeyArg } from './state/single-media-forward.js'
 import { EXPORT_PROJECT_CHANNELS, injectProjectArgs } from './state/export-project-forward.js'
+import { createAudioFxBaker, exportWindowFromArgs, type AudioFxBaker } from './audioFx/baker.js'
+import { createFxCacheLayout, createNodeAudioFxFs, fxCacheRoot } from './audioFx/fxPaths.js'
 import { openPreviewGpu, requestFrameAtPreviewGpu, consumeAckPreviewGpu, closePreviewGpu, takeTimingsPreviewGpu, hwBudget } from './previewGpu.js'
 import { recordFrameReadySent, recordConsumeAck, takeMainTimings } from './previewGpuTiming.js'
 import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw } from './previewSw.js'
@@ -86,6 +88,10 @@ function emitToRenderer(event: string, payload: unknown): void {
 // `startMcpHost` resolves.
 let mcpHostRef: import('./mcp/index.js').McpHost | null = null
 let tsHost: import('./state/ts-actor-host.js').TsActorHost | null = null
+// Audio-effect bake orchestrator (ADR 0063). Module-scoped for the same reason
+// as `tsHost`: the `backend:invoke` handler and the before-quit hook both reach
+// it, and it does not exist until whenReady has built the actor it subscribes to.
+let audioFxBaker: AudioFxBaker | null = null
 let motifWatcher: MotifWatcher | null = null
 // Held at module scope so the before-quit handler can flush the debounced
 // Workspace-layout write before the process exits.
@@ -823,6 +829,33 @@ app.whenReady().then(async () => {
   tsHost.start()
   console.log('[main] TS state actor authoritative; MCP host starting')
 
+  // One JSON round trip to a stateless Rust bake primitive. `args` is `unknown`
+  // rather than a record so each call site's own wire shape (snake_case, as the
+  // four bake channels deserialize) types itself.
+  const audioFxCall = async <T>(channel: string, args: unknown): Promise<T> =>
+    JSON.parse(await backend!.invoke(channel, JSON.stringify(args))) as T
+
+  // Audio-effect bakes (ADR 0063). Constructed after the host because it
+  // subscribes to the actor immediately; the cache root is resolved PER CALL
+  // because it moves with the workspace, so a layout captured here would name
+  // files in the previous project's cache.
+  audioFxBaker = createAudioFxBaker({
+    actor: tsHost.actor,
+    backend: {
+      measureConformRms: (a) => audioFxCall('measure_conform_rms', a),
+      bakeAudioFx: (a) => audioFxCall('bake_audio_fx', a),
+      cancelAudioFx: (a) => audioFxCall('cancel_audio_fx', a),
+      buildPeaksForVconf: (a) => audioFxCall('build_peaks_for_vconf', a),
+      ensureConform: async (item) => { await audioFxCall('ensure_conform', { item }) },
+    },
+    cacheLayout: createFxCacheLayout({
+      cacheRoot: () => fxCacheRoot(wsCache, dataRoot.cacheDir, path.join),
+      join: path.join,
+    }),
+    fs: createNodeAudioFxFs(),
+    emit: (event, payload) => emitToRenderer(event, payload),
+  })
+
   // Motif file watch: on any disk change under <dataRoot>/motifs/, refresh
   // the actor catalog (so a disk-written Motif is placeable via add_motif)
   // AND emit motifs:changed (renderer resync → ?v= host buster).
@@ -963,7 +996,7 @@ app.whenReady().then(async () => {
   // imported at module top so `backend:invoke` closes over both without pulling
   // the MCP SDK into the entry chunk.
   const { callClipComputeTool, readMediaFrameDataUrl, readMediaDescription } = await import('./mcp/server.js')
-  const { CLIP_COMPUTE_CHANNELS } = await import('./state/router.js')
+  const { AUDIO_FX_CHANNELS, CLIP_COMPUTE_CHANNELS } = await import('./state/router.js')
 
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
     // Motif runtime registration: renderer sends its clock-takeover source once
@@ -1238,18 +1271,41 @@ app.whenReady().then(async () => {
       )
       return toolResultPayload(result)
     }
+    // Audio-effect bake state (ADR 0063): three reads served by the baker, the
+    // sole holder of that state — it is a derivation, never project state, so
+    // there is nowhere else it could be answered from.
+    if (AUDIO_FX_CHANNELS.has(channel)) {
+      if (!audioFxBaker) throw new Error(`${channel}: the audio-fx baker is not started yet`)
+      const a = (args ?? {}) as Record<string, unknown>
+      if (channel === 'audio_fx_snapshot') return audioFxBaker.snapshot()
+      if (channel === 'ensure_export_audio_fx') return await audioFxBaker.ensureExportAudioFx(exportWindowFromArgs(a))
+      const layerId = typeof a.layer_id === 'string' ? a.layer_id
+        : typeof a.layerId === 'string' ? a.layerId : ''
+      await audioFxBaker.reverify(layerId)
+      return null
+    }
     // Single-media compute: the TS actor owns state, so resolve the MediaItem
     // here and forward it — the Rust fns take it as a call argument.
     if (tsHost && SINGLE_MEDIA_CHANNELS.has(channel)) {
       const pool = tsHost.actor.snapshot().media_pool as Record<string, import('./state/model.js').MediaItem>
-      const resolved = resolveSingleMediaArgs((args ?? {}) as { mediaId?: string }, pool)
+      // A waveform read may ask for a BAKED clip's peaks, which live under a
+      // signature-keyed name the media item never carries — only the baker can
+      // turn that key into a path.
+      const raw = (args ?? {}) as Record<string, unknown>
+      const withWaveform = WAVEFORM_KEY_CHANNELS.has(channel)
+        ? resolveWaveformKeyArg(raw, (key) => audioFxBaker?.resolveWaveformKey(key) ?? null)
+        : raw
+      const resolved = resolveSingleMediaArgs(withWaveform as { mediaId?: string }, pool)
       const json = await backend!.invoke(channel, JSON.stringify(resolved))
       return JSON.parse(json)
     }
     // Audio export: the TS actor owns state, so inject the full project here
-    // and forward it — the Rust fns take it as a call argument.
+    // and forward it — the Rust fns take it as a call argument. The mix channel
+    // also gets the baker's per-layer baked sources.
     if (tsHost && EXPORT_PROJECT_CHANNELS.has(channel)) {
-      const merged = injectProjectArgs((args ?? {}) as Record<string, unknown>, tsHost.actor.snapshot())
+      const merged = injectProjectArgs(
+        (args ?? {}) as Record<string, unknown>, tsHost.actor.snapshot(), channel, audioFxBaker,
+      )
       const json = await backend!.invoke(channel, JSON.stringify(merged))
       return JSON.parse(json)
     }
@@ -1257,7 +1313,16 @@ app.whenReady().then(async () => {
     // Consulted AFTER main-only intercepts above, BEFORE the Rust fallthrough.
     if (tsHost) {
       const route = (await import('./state/router.js')).routeChannel(channel)
-      if (route.kind !== 'rust') return await tsHost.handleInvoke(channel, (args ?? {}) as Record<string, unknown>)
+      if (route.kind !== 'rust') {
+        const result = await tsHost.handleInvoke(channel, (args ?? {}) as Record<string, unknown>)
+        // A workspace swap re-keys everything the baker holds (layer ids on
+        // open/new) and re-points the cache root (all three), so its map is
+        // rebuilt from the snapshot that is now current.
+        if (route.kind === 'open' || route.kind === 'newWorkspace' || route.kind === 'saveAs') {
+          audioFxBaker?.reset()
+        }
+        return result
+      }
     }
     const json = await backend!.invoke(channel, JSON.stringify(args ?? {}))
     return JSON.parse(json)
@@ -2153,6 +2218,9 @@ app.on('before-quit', (event) => {
   // boundary. The partial and the persisted queue both stay: the next boot
   // resumes exactly there. Idempotent, so the re-entrant before-quit is fine.
   contentQueue?.shutdown()
+  // Abort in-flight bakes and stop watching the actor: an ffmpeg child that
+  // outlives the quit holds the artifact's temp file open.
+  audioFxBaker?.dispose(); audioFxBaker = null
   // Before Electron starts closing windows: a capture that outlives them rebuilds
   // the offscreen host and wedges the quit (see shutdownCaptureHost).
   shutdownCaptureHost()

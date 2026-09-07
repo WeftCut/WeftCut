@@ -568,6 +568,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       // during a refactor would otherwise read as "the tool returned nothing".
       case 'clipCompute': return reject(`router bug: ${channel} reached the TS host but is a clip-compute channel`)
       case 'rust': return reject(`router bug: ${channel} reached the TS host but is a Rust channel`)
+      case 'audioFx': return reject(`router bug: ${channel} reached the TS host but is served by the audio-fx baker in main`)
     }
   }
 

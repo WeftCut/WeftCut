@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   routeChannel,
   HYBRID_CHANNELS, SLICE_INJECTED_READS, PURE_NATIVE, PERSISTENCE, MOTIF_CHANNELS,
-  CLIP_COMPUTE_CHANNELS, DIRECT_NAPI_READS,
+  CLIP_COMPUTE_CHANNELS, DIRECT_NAPI_READS, AUDIO_FX_CHANNELS,
 } from './router'
 import { PRODUCTION_OPS } from './commands'
 
@@ -37,6 +37,9 @@ const ALL_CHANNELS: readonly string[] = [
   'ping', 'mux_export', 'export_video_sink_start', 'export_video_sink_finish',
   'export_video_sink_cancel', 'import_cancel', 'import_queue_list', 'report_audio_meter',
   'settings_get_api_key_status', 'settings_test_provider',
+  'measure_conform_rms', 'bake_audio_fx', 'cancel_audio_fx', 'build_peaks_for_vconf',
+  // audio-fx baker route (main-served: the baker holds the derived bake state)
+  'audio_fx_snapshot', 'ensure_export_audio_fx', 'audio_fx_reverify',
   // hybrids (native-compute → TS-write)
   'import_media', 'drop_shot_markers', 'apply_shot_cuts', 'mark_silences', 'remove_silences',
   'apply_subtitles', 'synthesize_speech',
@@ -85,6 +88,8 @@ describe('router partition gate', () => {
       expect(routeChannel(ch).kind, ch).toBe('clipCompute')
     for (const ch of MOTIF_CHANNELS)
       expect(routeChannel(ch).kind, ch).toBe('motif')
+    for (const ch of AUDIO_FX_CHANNELS)
+      expect(routeChannel(ch).kind, ch).toBe('audioFx')
   })
 
   it('an unclassified channel routes to reject (single-writer backstop)', () => {
@@ -107,6 +112,7 @@ describe('router partition gate', () => {
       ['DIRECT_NAPI_READS', DIRECT_NAPI_READS],
       ['HYBRID_CHANNELS', HYBRID_CHANNELS],
       ['CLIP_COMPUTE_CHANNELS', CLIP_COMPUTE_CHANNELS],
+      ['AUDIO_FX_CHANNELS', AUDIO_FX_CHANNELS],
       ['MOTIF_CHANNELS', MOTIF_CHANNELS],
       ['PRODUCTION_OPS', PRODUCTION_OPS as ReadonlySet<string>],
       ['SPECIAL', SPECIAL],
@@ -222,6 +228,23 @@ describe('routeChannel', () => {
   // `analyze_shots` instead.
   it('leaves analyze_clip unclassified as a renderer channel', () => {
     expect(routeChannel('analyze_clip').kind).toBe('reject')
+  })
+  // The baker's three channels are answered in main from its derived map, so
+  // they must reach neither the command route (no undo entry, no dirty flag)
+  // nor rust (the map only exists here).
+  it('routes the three audio-fx baker channels to their own main-served kind', () => {
+    for (const ch of ['audio_fx_snapshot', 'ensure_export_audio_fx', 'audio_fx_reverify']) {
+      expect(routeChannel(ch), ch).toEqual({ kind: 'audioFx' })
+      expect(PRODUCTION_OPS.has(ch), ch).toBe(false)
+    }
+  })
+  // The bake primitives take explicit paths and a finished graph — no project
+  // state, in either direction.
+  it('routes the four audio-fx bake primitives to rust with no actor access', () => {
+    for (const ch of ['measure_conform_rms', 'bake_audio_fx', 'cancel_audio_fx', 'build_peaks_for_vconf']) {
+      expect(routeChannel(ch).kind, ch).toBe('rust')
+      expect(PURE_NATIVE.has(ch), ch).toBe(true)
+    }
   })
   it('routes motif authoring/read/install/staleness channels to the motif route', () => {
     for (const ch of ['list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft', 'create_edit_draft', 'import_motif', 'delete_motif', 'install_motif', 'motif_staleness_report', 'acknowledge_motif_staleness'])
