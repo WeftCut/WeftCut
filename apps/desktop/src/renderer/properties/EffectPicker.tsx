@@ -10,7 +10,10 @@ import { useTranslation } from "react-i18next";
 import { Popover } from "@base-ui/react/popover";
 import { Plus } from "lucide-react";
 import { AppInput } from "../components/AppInput";
-import type { EffectDescriptor } from "../render/effects/effectRegistry";
+import {
+  effectI18nBase,
+  type UiEffectDescriptor,
+} from "../render/effects/effectRegistry";
 import {
   filterEffects,
   groupEffects,
@@ -19,15 +22,15 @@ import {
 
 /// Translate the catalog into picker rows. Kept separate from the component so
 /// the label/description fallbacks live in one place: an effect with no
-/// `effects.<kind>.desc` string simply shows no description line.
-function useCatalogItems(catalog: EffectDescriptor[]): EffectPickItem[] {
+/// `desc` string simply shows no description line.
+function useCatalogItems(catalog: UiEffectDescriptor[]): EffectPickItem[] {
   const { t } = useTranslation();
   return useMemo(
     () =>
       catalog.map((d) => ({
         kind: d.kind,
         label: t(d.nameI18nKey, { defaultValue: d.kind }),
-        desc: t(`effects.${d.kind}.desc`, { defaultValue: "" }),
+        desc: t(d.descI18nKey ?? `${effectI18nBase(d)}.desc`, { defaultValue: "" }),
         category: d.category,
         categoryLabel: t(`effects.category.${d.category}`, {
           defaultValue: d.category,
@@ -153,7 +156,7 @@ export function EffectPicker({
   onPick,
   disabled,
 }: {
-  catalog: EffectDescriptor[];
+  catalog: UiEffectDescriptor[];
   onPick: (kind: string) => void;
   disabled?: boolean;
 }) {

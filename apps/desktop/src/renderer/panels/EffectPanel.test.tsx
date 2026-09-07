@@ -4,26 +4,36 @@ import { cleanup, render, screen } from "@testing-library/react";
 import "../i18n";
 import type { LayerSummary, TrackSummary } from "../ipc";
 
-vi.mock("../properties/EffectsSection", () => ({
-  EffectsSection: ({
-    layer,
-    tInLayerUs,
-    playheadInSpan,
-  }: {
-    layer: LayerSummary;
-    tInLayerUs: number;
-    playheadInSpan: boolean;
-  }) => (
-    <div
-      data-testid="effect-chain"
-      data-layer-id={layer.id}
-      data-relative-time={tInLayerUs}
-      data-in-span={String(playheadInSpan)}
-    >
-      {layer.effects.length} effect
-    </div>
-  ),
-}));
+// The stub surfaces the wired props, `catalog` included — which catalog a layer
+// edits is this Panel's one decision. The real `audioCatalogForUi` comes through
+// so the assertion below is against the shipped audio catalog, not a fixture.
+vi.mock("../properties/EffectsSection", async () => {
+  const { AUDIO_EFFECTS } = await import("../../shared/audioEffects/catalog");
+  return {
+    audioCatalogForUi: Object.values(AUDIO_EFFECTS),
+    EffectsSection: ({
+      layer,
+      catalog,
+      tInLayerUs,
+      playheadInSpan,
+    }: {
+      layer: LayerSummary;
+      catalog: Array<{ kind: string }>;
+      tInLayerUs: number;
+      playheadInSpan: boolean;
+    }) => (
+      <div
+        data-testid="effect-chain"
+        data-layer-id={layer.id}
+        data-relative-time={tInLayerUs}
+        data-in-span={String(playheadInSpan)}
+        data-kinds={catalog.map((d) => d.kind).join(",")}
+      >
+        {layer.effects.length} effect
+      </div>
+    ),
+  };
+});
 
 import { EffectPanel } from "./EffectPanel";
 
@@ -99,7 +109,9 @@ describe("EffectPanel boundary", () => {
     expect(screen.queryByTestId("effect-chain")).toBeNull();
   });
 
-  it("shows an explicit unsupported state for an Audio selection with no chain surface", () => {
+  // An audio effect is an offline bake and a visual one a realtime filter: two
+  // lifecycles on one card surface, and the layer's kind picks the catalog.
+  it("renders an Audio Layer's chain with the audio catalog", () => {
     render(
       <EffectPanel
         tracks={[trackWithLayer("Audio")]}
@@ -110,7 +122,23 @@ describe("EffectPanel boundary", () => {
     );
 
     expect(screen.getByRole("complementary", { name: "Effects" })).toBeTruthy();
-    expect(screen.getByText("Audio layers don't support effects.")).toBeTruthy();
-    expect(screen.queryByTestId("effect-chain")).toBeNull();
+    const chain = screen.getByTestId("effect-chain");
+    expect(chain.getAttribute("data-layer-id")).toBe("layer-1");
+    expect(chain.getAttribute("data-kinds")).toBe("audio.denoise");
+  });
+
+  it("offers no audio kinds to a visual Layer", () => {
+    render(
+      <EffectPanel
+        tracks={[trackWithLayer("Color")]}
+        selectedLayerId="layer-1"
+        currentTimeUs={0}
+        onMutated={async () => {}}
+      />,
+    );
+
+    const kinds = (screen.getByTestId("effect-chain").getAttribute("data-kinds") ?? "").split(",");
+    expect(kinds.length).toBeGreaterThan(0);
+    expect(kinds.some((k) => k.startsWith("audio."))).toBe(false);
   });
 });

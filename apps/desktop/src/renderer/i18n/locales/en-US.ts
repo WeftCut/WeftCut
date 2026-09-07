@@ -1626,7 +1626,6 @@ const enUS = {
   effects: {
     heading: "Effects",
     empty: "Select a layer to edit its effects.",
-    unsupported_audio: "Audio layers don't support effects.",
     add: "Add effect",
     empty_chain: "No effects on this layer yet.",
     order_hint: "Applied top to bottom.",
@@ -1648,6 +1647,30 @@ const enUS = {
       keying: "Keying",
       color: "Color",
       stylize: "Stylize",
+      audio: "Audio",
+    },
+    audio: {
+      select_region: "Select region",
+      select_region_too_short: "This clip is shorter than the shortest region the filter can sample.",
+      source_in: "Source in",
+      source_out: "Source out",
+      region_needed: "Drag a noise-only region on the clip to sample.",
+      region_too_short: "The sample region is too short to learn a noise profile.",
+      region_offscreen: "The sample region falls outside the part of the media this clip plays.",
+      status: {
+        pending: "Processing…",
+        failed: "Failed: {{error}}",
+      },
+    },
+    audio_denoise: {
+      name: "Denoise",
+      desc: "Remove steady background noise",
+      params: {
+        strength: "Strength",
+        margin: "Sensitivity",
+        profile_in_us: "Sample region start",
+        profile_out_us: "Sample region end",
+      },
     },
     blur: {
       name: "Blur",

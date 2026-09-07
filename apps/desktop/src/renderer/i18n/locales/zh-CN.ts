@@ -1420,7 +1420,6 @@ const zhCN: Resources = {
   effects: {
     heading: "效果",
     empty: "选择一个图层以编辑其效果。",
-    unsupported_audio: "音频图层不支持效果。",
     add: "添加效果",
     empty_chain: "该图层还没有效果。",
     order_hint: "自上而下依次作用。",
@@ -1442,6 +1441,30 @@ const zhCN: Resources = {
       keying: "抠像",
       color: "调色",
       stylize: "风格化",
+      audio: "音频",
+    },
+    audio: {
+      select_region: "选区",
+      select_region_too_short: "此片段短于滤镜可采样的最短区间。",
+      source_in: "源入点",
+      source_out: "源出点",
+      region_needed: "需要采样区间",
+      region_too_short: "区间过短",
+      region_offscreen: "区间在当前可见范围之外",
+      status: {
+        pending: "处理中",
+        failed: "失败：{{error}}",
+      },
+    },
+    audio_denoise: {
+      name: "降噪",
+      desc: "去除稳定的背景噪声",
+      params: {
+        strength: "强度",
+        margin: "灵敏度",
+        profile_in_us: "采样区间起点",
+        profile_out_us: "采样区间终点",
+      },
     },
     blur: {
       name: "模糊",

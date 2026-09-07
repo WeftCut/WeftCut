@@ -1,19 +1,19 @@
 // @vitest-environment jsdom
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const { addEffect, updateEffect, moveEffect, removeEffect, getDescriptor } = vi.hoisted(() => ({
+const { addEffect, updateEffect, moveEffect, removeEffect, logEmit } = vi.hoisted(() => ({
   addEffect: vi.fn(async () => "new-id"),
   updateEffect: vi.fn(async () => {}),
   moveEffect: vi.fn(async () => {}),
   removeEffect: vi.fn(async () => {}),
-  getDescriptor: vi.fn((): unknown => null),
+  logEmit: vi.fn(async () => {}),
 }));
 const { updateLayerParamTracks } = vi.hoisted(() => ({
   updateLayerParamTracks: vi.fn(async (_layerId: string, _entries: [string, unknown][]) => {}),
 }));
-vi.mock("../ipc", () => ({ addEffect, updateEffect, moveEffect, removeEffect, updateLayerParamTracks }));
+vi.mock("../ipc", () => ({ addEffect, updateEffect, moveEffect, removeEffect, updateLayerParamTracks, logEmit }));
 // `initReactI18next` is part of the mock because the real i18n singleton
 // (`../i18n`, reached through errors/tryMutate's refusal copy) calls
 // `.use(initReactI18next)` at import time — a mock missing it fails the whole
@@ -22,13 +22,17 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (k: string, o?: { defaultValue?: string }) => o?.defaultValue ?? k }),
   initReactI18next: { type: "3rdParty", init: () => {} },
 }));
-vi.mock("../render/effects/effectRegistry", () => ({
-  listEffects: () => [{ kind: "blur", nameI18nKey: "effects.blur.name", category: "blur" }],
-  getDescriptor,
-}));
 vi.mock("./EffectParamField", () => ({
   EffectParamFields: ({ effect }: { effect: EffectView }) => (
     <div data-testid={`effect-params-${effect.id}`} />
+  ),
+}));
+// The region row renders for real (it is what the focus-store lifecycle below
+// is about), so only its number widget is stubbed — Base UI's NumberField has
+// no business in these tests.
+vi.mock("../components/AppNumberField", () => ({
+  AppNumberField: ({ value, ariaLabel }: { value: number | null; ariaLabel?: string }) => (
+    <input readOnly aria-label={ariaLabel} value={String(value)} />
   ),
 }));
 // The picker's own ranking/keyboard behaviour is covered in EffectPicker.test;
@@ -42,7 +46,11 @@ vi.mock("./EffectPicker", () => ({
     catalog: Array<{ kind: string }>;
     onPick: (kind: string) => void;
   }) => (
-    <button data-testid="effect-add" onClick={() => onPick(catalog[0]!.kind)}>
+    <button
+      data-testid="effect-add"
+      data-kinds={catalog.map((d) => d.kind).join(",")}
+      onClick={() => onPick(catalog[0]!.kind)}
+    >
       add
     </button>
   ),
@@ -74,8 +82,11 @@ vi.mock("../components/AppSwitch", () => ({
   ),
 }));
 
-import { EffectsSection } from "./EffectsSection";
+import { audioCatalogForUi, EffectsSection } from "./EffectsSection";
 import type { EffectView, LayerSummary } from "../ipc";
+import type { UiEffectDescriptor } from "../render/effects/effectRegistry";
+import { useAudioRegionFocusStore } from "../state/audioRegionFocusStore";
+import { useAudioRegionArmStore } from "../timeline/audioRegionArmStore";
 
 // jsdom has no PointerEvent constructor; MouseEvent carries the same client
 // coordinates the pointer sequence needs.
@@ -85,6 +96,17 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
+
+// The section is data-driven off its `catalog` prop, so the tests hand it one
+// instead of standing in for the registry.
+const CATALOG: UiEffectDescriptor[] = [
+  {
+    kind: "blur",
+    nameI18nKey: "effects.blur.name",
+    category: "blur",
+    params: { strength: { default: 8 }, extra: { default: 2 } },
+  },
+];
 
 function layerWith(effects: EffectView[]): LayerSummary {
   return { id: "L1", effects } as unknown as LayerSummary;
@@ -106,26 +128,26 @@ async function openCardMenu(index: number) {
 
 describe("EffectsSection", () => {
   it("renders one row per effect, named from the catalog", () => {
-    render(<EffectsSection layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    render(<EffectsSection catalog={CATALOG} layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     // effects.blur.name has no translation in the mock → falls back to defaultValue "blur".
     expect(within(screen.getByTestId("effect-row-0")).getByText("blur")).toBeTruthy();
   });
 
   it("picking a kind in the add picker calls addEffect with it", async () => {
-    render(<EffectsSection layer={layerWith([])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    render(<EffectsSection catalog={CATALOG} layer={layerWith([])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     await userEvent.click(screen.getByTestId("effect-add"));
     expect(addEffect).toHaveBeenCalledWith("L1", "blur");
   });
 
   it("an empty chain states so, and shows no order hint", () => {
-    render(<EffectsSection layer={layerWith([])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    render(<EffectsSection catalog={CATALOG} layer={layerWith([])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     expect(screen.getByText("effects.empty_chain")).toBeTruthy();
     expect(screen.queryByText("effects.order_hint")).toBeNull();
   });
 
   it("numbers the cards by chain position and states the apply direction", () => {
     render(
-      <EffectsSection layer={layerWith([blur("E1"), blur("E2")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
+      <EffectsSection catalog={CATALOG} layer={layerWith([blur("E1"), blur("E2")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
     );
     expect(within(screen.getByTestId("effect-row-0")).getByText("1")).toBeTruthy();
     expect(within(screen.getByTestId("effect-row-1")).getByText("2")).toBeTruthy();
@@ -133,13 +155,13 @@ describe("EffectsSection", () => {
   });
 
   it("toggling enable calls updateEffect with the negated flag", async () => {
-    render(<EffectsSection layer={layerWith([blur("E1", true)])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    render(<EffectsSection catalog={CATALOG} layer={layerWith([blur("E1", true)])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     await userEvent.click(screen.getByTestId("effect-enable-0"));
     expect(updateEffect).toHaveBeenCalledWith("L1", "E1", { enabled: false });
   });
 
   it("remove calls removeEffect", async () => {
-    render(<EffectsSection layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    render(<EffectsSection catalog={CATALOG} layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     await openCardMenu(0);
     await userEvent.click(screen.getByTestId("effect-remove-0"));
     expect(removeEffect).toHaveBeenCalledWith("L1", "E1");
@@ -147,7 +169,7 @@ describe("EffectsSection", () => {
 
   it("up is disabled at index 0; down moves to index+1", async () => {
     render(
-      <EffectsSection layer={layerWith([blur("E1"), blur("E2")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
+      <EffectsSection catalog={CATALOG} layer={layerWith([blur("E1"), blur("E2")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
     );
     const up = await openCardMenu(0);
     expect(up.getAttribute("aria-disabled")).toBe("true");
@@ -156,11 +178,7 @@ describe("EffectsSection", () => {
   });
 
   it("reset writes every catalog param back to its default as ONE batch", async () => {
-    getDescriptor.mockReturnValue({
-      kind: "blur",
-      params: { strength: { default: 8 }, extra: { default: 2 } },
-    });
-    render(<EffectsSection layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    render(<EffectsSection catalog={CATALOG} layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     await openCardMenu(0);
     await userEvent.click(screen.getByTestId("effect-reset-0"));
     expect(updateLayerParamTracks).toHaveBeenCalledTimes(1);
@@ -171,7 +189,7 @@ describe("EffectsSection", () => {
   });
 
   it("cards start expanded; the collapse toggle hides and restores the param rows", async () => {
-    render(<EffectsSection layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    render(<EffectsSection catalog={CATALOG} layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     const toggle = screen.getByTestId("effect-collapse-0");
     expect(screen.getByTestId("effect-params-E1")).toBeTruthy();
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
@@ -187,12 +205,12 @@ describe("EffectsSection", () => {
 
   it("collapse state follows the card across a reorder, not the row position", async () => {
     const { rerender } = render(
-      <EffectsSection layer={layerWith([blur("E1"), blur("E2")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
+      <EffectsSection catalog={CATALOG} layer={layerWith([blur("E1"), blur("E2")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
     );
     await userEvent.click(screen.getByTestId("effect-collapse-0")); // collapse E1
 
     rerender(
-      <EffectsSection layer={layerWith([blur("E2"), blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
+      <EffectsSection catalog={CATALOG} layer={layerWith([blur("E2"), blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
     );
     expect(screen.getByTestId("effect-params-E2")).toBeTruthy();
     expect(screen.queryByTestId("effect-params-E1")).toBeNull();
@@ -225,7 +243,7 @@ describe("pointer reorder", () => {
   }
 
   function renderThreeRows() {
-    render(<EffectsSection layer={three()} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    render(<EffectsSection catalog={CATALOG} layer={three()} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     mockRowRects([0, 40, 80]);
   }
 
@@ -314,8 +332,10 @@ describe("effect color pick", () => {
     enabled: true,
     params: {},
   });
-  const chromaDescriptor = {
+  const chromaDescriptor: UiEffectDescriptor = {
     kind: "chromakey",
+    nameI18nKey: "effects.chromakey.name",
+    category: "keying",
     colorGroups: [{ params: ["keyR", "keyG", "keyB"] }],
     params: {
       keyR: { default: 0 },
@@ -323,10 +343,10 @@ describe("effect color pick", () => {
       keyB: { default: 0 },
     },
   };
+  const chromaCatalog = [chromaDescriptor];
 
   it("commits a pick as ONE batched three-track write", async () => {
-    getDescriptor.mockReturnValue(chromaDescriptor);
-    render(<EffectsSection layer={layerWith([chroma("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    render(<EffectsSection catalog={chromaCatalog} layer={layerWith([chroma("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     await userEvent.click(screen.getByTestId("effect-colorpick-0"));
     expect(pickColor).toHaveBeenCalledWith(
       expect.objectContaining({ excludeEffectId: "E1" }),
@@ -343,12 +363,11 @@ describe("effect color pick", () => {
   });
 
   it("hover routes through transient overrides", async () => {
-    getDescriptor.mockReturnValue(chromaDescriptor);
     pickColor.mockImplementationOnce((async (opts?: { onHover?: (hex: string) => void }) => {
       opts?.onHover?.("#ff0000");
       return null; // then cancel
     }) as never);
-    render(<EffectsSection layer={layerWith([chroma("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    render(<EffectsSection catalog={chromaCatalog} layer={layerWith([chroma("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     await userEvent.click(screen.getByTestId("effect-colorpick-0"));
     expect(setTransientOverrides).toHaveBeenCalledWith("E1", { keyR: 1, keyG: 0, keyB: 0 });
     expect(clearTransientOverrides).toHaveBeenCalledWith("E1");
@@ -356,7 +375,6 @@ describe("effect color pick", () => {
   });
 
   it("commit is skipped when the effect vanished mid-session", async () => {
-    getDescriptor.mockReturnValue(chromaDescriptor);
     let resolvePick!: (r: { hex: string; source: "composition" } | null) => void;
     pickColor.mockImplementationOnce(
       (() =>
@@ -365,16 +383,145 @@ describe("effect color pick", () => {
         })) as never,
     );
     const { rerender } = render(
-      <EffectsSection layer={layerWith([chroma("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
+      <EffectsSection catalog={chromaCatalog} layer={layerWith([chroma("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
     );
     await userEvent.click(screen.getByTestId("effect-colorpick-0"));
 
     // The effect is deleted from the track mid-session — its row unmounts —
     // before the pending pick settles.
-    rerender(<EffectsSection layer={layerWith([])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    rerender(<EffectsSection catalog={chromaCatalog} layer={layerWith([])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
 
     resolvePick({ hex: "#0000ff", source: "composition" });
     await vi.waitFor(() => expect(clearTransientOverrides).toHaveBeenCalledWith("E1"));
     expect(updateLayerParamTracks).not.toHaveBeenCalled();
+  });
+});
+
+describe("audio chain", () => {
+  const denoise = (id: string, params: EffectView["params"] = {}): EffectView => ({
+    id,
+    kind: "audio.denoise",
+    enabled: true,
+    params,
+  });
+  const region = {
+    profile_in_us: { mode: "Static" as const, value: 200_000 },
+    profile_out_us: { mode: "Static" as const, value: 1_800_000 },
+  };
+  function audioLayer(effects: EffectView[]): LayerSummary {
+    return {
+      id: "L1",
+      t_start_us: 0,
+      t_end_us: 10_000_000,
+      effects,
+      params: { kind: "Audio", src_in_us: 0 },
+    } as unknown as LayerSummary;
+  }
+
+  beforeEach(() => {
+    useAudioRegionFocusStore.setState({ focus: null });
+    useAudioRegionArmStore.setState({ armed: null });
+  });
+
+  // The two catalogs are two lifecycles: a bake cannot run on a picture and a
+  // Pixi filter cannot run on a waveform, so neither picker may offer the other.
+  it("offers only the audio catalog on an Audio layer", () => {
+    render(
+      <EffectsSection
+        catalog={audioCatalogForUi}
+        layer={audioLayer([])}
+        tInLayerUs={0}
+        playheadInSpan
+        onMutated={onMutated}
+      />,
+    );
+    expect(screen.getByTestId("effect-add").getAttribute("data-kinds")).toBe("audio.denoise");
+  });
+
+  it("offers no audio kinds on a visual layer", () => {
+    render(
+      <EffectsSection catalog={CATALOG} layer={layerWith([])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
+    );
+    const kinds = screen.getByTestId("effect-add").getAttribute("data-kinds") ?? "";
+    expect(kinds.split(",").some((k) => k.startsWith("audio."))).toBe(false);
+  });
+
+  it("names the denoise card from the audio catalog and gives it a region row", () => {
+    render(
+      <EffectsSection
+        catalog={audioCatalogForUi}
+        layer={audioLayer([denoise("E1", region)])}
+        tInLayerUs={0}
+        playheadInSpan
+        onMutated={onMutated}
+      />,
+    );
+    // The stub `t` answers with the fallback, which for a card name is the kind
+    // — so this is the catalog's own `nameI18nKey` being asked for.
+    expect(within(screen.getByTestId("effect-row-0")).getByText("audio.denoise")).toBeTruthy();
+    expect(screen.getByTestId("audio-region-in")).toBeTruthy();
+    expect(screen.getByTestId("audio-region-out")).toBeTruthy();
+    expect(screen.getByTestId("audio-region-select")).toBeTruthy();
+  });
+
+  it("a visual card has no region row", () => {
+    render(<EffectsSection catalog={CATALOG} layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    expect(screen.queryByTestId("audio-region-select")).toBeNull();
+  });
+
+  // The band is drawable only while the card that owns it is expanded, so the
+  // collapse toggle is what releases the focus — no second toggle to explain.
+  it("claims the region focus while expanded and releases it on collapse", async () => {
+    render(
+      <EffectsSection
+        catalog={audioCatalogForUi}
+        layer={audioLayer([denoise("E1", region)])}
+        tInLayerUs={0}
+        playheadInSpan
+        onMutated={onMutated}
+      />,
+    );
+    expect(useAudioRegionFocusStore.getState().focus).toEqual({ layerId: "L1", effectId: "E1" });
+
+    await userEvent.click(screen.getByTestId("effect-collapse-0"));
+    expect(useAudioRegionFocusStore.getState().focus).toBeNull();
+
+    await userEvent.click(screen.getByTestId("effect-collapse-0"));
+    expect(useAudioRegionFocusStore.getState().focus).toEqual({ layerId: "L1", effectId: "E1" });
+  });
+
+  it("releases the region focus when the card unmounts", () => {
+    const { unmount } = render(
+      <EffectsSection
+        catalog={audioCatalogForUi}
+        layer={audioLayer([denoise("E1", region)])}
+        tInLayerUs={0}
+        playheadInSpan
+        onMutated={onMutated}
+      />,
+    );
+    unmount();
+    expect(useAudioRegionFocusStore.getState().focus).toBeNull();
+  });
+
+  // Reset means "back to the defaults", and an absent region has no default —
+  // see resetParams on why the pair is exempt rather than zeroed.
+  it("reset restores the static params and leaves the sample region alone", async () => {
+    render(
+      <EffectsSection
+        catalog={audioCatalogForUi}
+        layer={audioLayer([denoise("E1", region)])}
+        tInLayerUs={0}
+        playheadInSpan
+        onMutated={onMutated}
+      />,
+    );
+    await openCardMenu(0);
+    await userEvent.click(screen.getByTestId("effect-reset-0"));
+    expect(updateLayerParamTracks).toHaveBeenCalledTimes(1);
+    expect(updateLayerParamTracks).toHaveBeenCalledWith("L1", [
+      ["effects[E1].params[strength]", { mode: "Static", value: 12 }],
+      ["effects[E1].params[margin]", { mode: "Static", value: 8 }],
+    ]);
   });
 });

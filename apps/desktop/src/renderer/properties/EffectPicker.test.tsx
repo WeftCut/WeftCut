@@ -82,3 +82,31 @@ describe("EffectPickerList", () => {
     expect(onPick).toHaveBeenCalledWith("chromakey");
   });
 });
+
+describe("audio group", () => {
+  // An Audio layer's picker is handed the audio catalog alone, so the `audio`
+  // category has to exist in EFFECT_CATEGORY_ORDER or its rows would be
+  // silently dropped — `groupEffects` renders only the orders it knows.
+  const audioItems: EffectPickItem[] = [
+    {
+      kind: "audio.denoise",
+      label: "Denoise",
+      desc: "Remove steady background noise",
+      category: "audio",
+      categoryLabel: "Audio",
+    },
+  ];
+
+  it("groups an audio kind under its own header", () => {
+    render(<EffectPickerList items={audioItems} onPick={vi.fn()} />);
+    expect(screen.getByText("Audio", { selector: ".effect-picker-group" })).toBeTruthy();
+    expect(screen.getByTestId("effect-pick-audio.denoise")).toBeTruthy();
+  });
+
+  it("finds an audio kind by name", async () => {
+    const onPick = vi.fn();
+    render(<EffectPickerList items={audioItems} onPick={onPick} />);
+    await userEvent.type(screen.getByRole("searchbox"), "denoise{Enter}");
+    expect(onPick).toHaveBeenCalledWith("audio.denoise");
+  });
+});

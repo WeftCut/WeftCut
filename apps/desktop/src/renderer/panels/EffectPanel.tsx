@@ -1,13 +1,20 @@
-// Contextual per-Layer effect-chain Panel. This boundary deliberately owns
-// only the existing visual effect chain; kind-specific Layer fields remain in
-// AttributePanel.
+// Contextual per-Layer effect-chain Panel. This boundary owns the chain and
+// nothing else; kind-specific Layer fields remain in AttributePanel.
+//
+// Which catalog a layer edits is decided HERE, once: an Audio layer's effects
+// are offline bakes (`src/shared/audioEffects`, ADR 0063) and a visual layer's
+// are realtime Pixi filters. Two lifecycles, one card surface.
 
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { type TrackSummary } from "../ipc";
-import { EffectsSection } from "../properties/EffectsSection";
-import { findPanelLayer, isVisualKind } from "./panelLayer";
+import {
+  audioCatalogForUi,
+  EffectsSection,
+} from "../properties/EffectsSection";
+import { listEffects } from "../render/effects/effectRegistry";
+import { findPanelLayer } from "./panelLayer";
 
 export interface EffectPanelProps {
   tracks: TrackSummary[];
@@ -30,18 +37,15 @@ export function EffectPanel({
     [tracks, selectedLayerId],
   );
 
-  // Every selection state gets an explicit Panel body: the chain is never an
-  // unexplained blank area, and an Audio selection never implies an
-  // add-effect surface exists.
-  if (!layer || !isVisualKind(layer.params.kind)) {
+  // An empty selection gets an explicit Panel body, so the chain is never an
+  // unexplained blank area.
+  if (!layer) {
     return (
       <aside
         className="property-panel effect-panel"
         aria-label={t("effects.heading")}
       >
-        <p className="placeholder">
-          {layer ? t("effects.unsupported_audio") : t("effects.empty")}
-        </p>
+        <p className="placeholder">{t("effects.empty")}</p>
       </aside>
     );
   }
@@ -57,6 +61,7 @@ export function EffectPanel({
     >
       <EffectsSection
         layer={layer}
+        catalog={layer.params.kind === "Audio" ? audioCatalogForUi : listEffects()}
         tInLayerUs={tInLayerUs}
         playheadInSpan={playheadInSpan}
         onMutated={onMutated}

@@ -13,7 +13,8 @@
 import { describe, expect, it } from "vitest";
 import en from "../../i18n/locales/en-US";
 import zh from "../../i18n/locales/zh-CN";
-import { listEffects, type EffectDescriptor } from "./effectRegistry";
+import { AUDIO_EFFECTS } from "../../../shared/audioEffects/catalog";
+import { effectI18nBase, listEffects, type EffectDescriptor } from "./effectRegistry";
 
 const LOCALES = { "en-US": en, "zh-CN": zh };
 
@@ -58,10 +59,10 @@ describe("effect catalog localisation", () => {
     }
   });
 
-  // `EffectPicker` labels from `nameI18nKey` while `EffectsSection` titles the
-  // card from the kind, so a descriptor that points `nameI18nKey` elsewhere
-  // makes the picker and the card name the same effect two different things —
-  // and puts a key outside this guard's reach.
+  // Every key above is derived from the KIND, while the UI derives them from
+  // `nameI18nKey` (`effectI18nBase`). A visual descriptor that points its name
+  // key elsewhere therefore puts its whole namespace outside this guard's
+  // reach — which is allowed for an audio kind, and checked separately below.
   it("derives every entry's nameI18nKey from its kind", () => {
     for (const d of CATALOG) expect(d.nameI18nKey, d.kind).toBe(`effects.${d.kind}.name`);
   });
@@ -96,6 +97,74 @@ describe("effect catalog localisation", () => {
         bothWays(loc, `effects.${entry.kind}.name`,
           (h) => { delete h.effects[entry.kind].name; });
       });
+    }
+  });
+});
+
+// The audio catalog is the same guard over the other lifecycle's entries. It
+// needs its own derivation for one reason: an `audio.*` kind carries a dot, so
+// its strings live under `effects.audio_denoise.*` rather than under a
+// three-level `effects.audio.denoise.*` — which is exactly what `effectI18nBase`
+// exists to resolve, and what the shared `effects.audio.*` block below would
+// otherwise collide with.
+describe("audio effect catalog localisation", () => {
+  const CATALOG = Object.values(AUDIO_EFFECTS);
+
+  /// The card's own copy plus the region row's, which is shared by every audio
+  /// effect that carries a region rather than repeated per kind.
+  const SHARED_KEYS = [
+    "effects.audio.select_region",
+    "effects.audio.select_region_too_short",
+    "effects.audio.source_in",
+    "effects.audio.source_out",
+    "effects.audio.region_needed",
+    "effects.audio.region_too_short",
+    "effects.audio.region_offscreen",
+    "effects.audio.status.pending",
+    "effects.audio.status.failed",
+  ];
+
+  it("has entries to check", () => {
+    expect(CATALOG.length).toBeGreaterThan(0);
+  });
+
+  it("resolves every entry's name, description, category and param labels in both locales", () => {
+    for (const [locale, loc] of Object.entries(LOCALES)) {
+      for (const d of CATALOG) {
+        const base = effectI18nBase(d);
+        const keys = [
+          `${base}.name`,
+          `${base}.desc`,
+          `effects.category.${d.category}`,
+          ...Object.keys(d.params).map((k) => `${base}.params.${k}`),
+        ];
+        expect(missingKeys(loc, keys), `${locale} / ${d.kind}`).toEqual([]);
+      }
+    }
+  });
+
+  it("resolves the region row's shared copy in both locales", () => {
+    for (const [locale, loc] of Object.entries(LOCALES)) {
+      expect(missingKeys(loc, SHARED_KEYS), locale).toEqual([]);
+    }
+  });
+
+  // The card and the picker read `descI18nKey` and `nameI18nKey`; the param
+  // labels are derived from the latter. A descriptor whose two keys sit under
+  // different namespaces would put half its copy outside this guard's reach.
+  it("keeps each entry's name and description under one namespace", () => {
+    for (const d of CATALOG) {
+      const base = effectI18nBase(d);
+      expect(d.nameI18nKey, d.kind).toBe(`${base}.name`);
+      expect(d.descI18nKey, d.kind).toBe(`${base}.desc`);
+    }
+  });
+
+  // The state the whole feature exists to avoid: `effects.unsupported_audio`
+  // told the user Audio layers have no effects. Both locales must be rid of it.
+  it("no longer claims Audio layers have no effects", () => {
+    for (const [locale, loc] of Object.entries(LOCALES)) {
+      expect(at(loc, "effects.unsupported_audio"), locale).toBeUndefined();
     }
   });
 });

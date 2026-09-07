@@ -13,6 +13,7 @@ import {
   MoreHorizontal,
   Pipette,
 } from "lucide-react";
+import { AUDIO_EFFECTS } from "../../shared/audioEffects/catalog";
 import { AppSwitch } from "../components/AppSwitch";
 import {
   addEffect,
@@ -26,7 +27,7 @@ import {
 } from "../ipc";
 import { refusalText } from "../errors/tryMutate";
 import { usePointerReorder } from "../hooks/usePointerReorder";
-import { listEffects, getDescriptor } from "../render/effects/effectRegistry";
+import type { UiEffectDescriptor } from "../render/effects/effectRegistry";
 import { autoKeyTrack } from "../keyframe/autoKey";
 import { hexToRgb01 } from "../colorpick/pixel";
 import { pickColor } from "../colorpick/pickColor";
@@ -34,24 +35,42 @@ import {
   clearTransientOverrides,
   setTransientOverrides,
 } from "../render/effects/effectOverrides";
+import { AudioRegionRow } from "./AudioRegionRow";
 import { EffectParamFields } from "./EffectParamField";
 import { EffectPicker } from "./EffectPicker";
 
 interface Props {
   layer: LayerSummary;
+  /// The kinds this layer can carry — the realtime registry for a visual layer,
+  /// `audioCatalogForUi` for an Audio one. Chosen by EffectPanel, because the
+  /// two catalogs are two lifecycles and a layer only ever has one of them.
+  catalog: UiEffectDescriptor[];
   /// Playhead relative to the layer's t_start; forwarded to the keyframe rows.
   tInLayerUs: number;
   playheadInSpan: boolean;
   onMutated: () => Promise<void>;
 }
 
-/// Per-layer effect chain editor. Data-driven off the effect catalog
-/// (`listEffects`): the add picker, the row names, and the param rows all come
-/// from the registry, so a new filter is zero UI change. Rendered by
-/// EffectPanel for visual Layer kinds only.
-export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }: Props) {
+/// The audio catalog in the shape the inspector reads. Audio descriptors carry
+/// bake machinery this surface has no use for (`buildStage`, `measurements`), so
+/// they are narrowed rather than passed whole: the section then cannot come to
+/// depend on a field only one of the two catalogs has.
+export const audioCatalogForUi: UiEffectDescriptor[] = Object.values(AUDIO_EFFECTS).map(
+  (d) => ({
+    kind: d.kind,
+    nameI18nKey: d.nameI18nKey,
+    descI18nKey: d.descI18nKey,
+    category: d.category,
+    params: d.params,
+    ...(d.region ? { region: d.region } : {}),
+  }),
+);
+
+/// Per-layer effect chain editor. Data-driven off the `catalog` prop: the add
+/// picker, the row names, and the param rows all come from it, so a new effect
+/// of either lifecycle is zero UI change.
+export function EffectsSection({ layer, catalog, tInLayerUs, playheadInSpan, onMutated }: Props) {
   const { t } = useTranslation();
-  const catalog = listEffects();
   const [err, setErr] = useState<string | null>(null);
 
   // A pick session (EffectRow.pickColorGroup) is modal and long-lived. If its
@@ -101,6 +120,7 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
               key={eff.id}
               layer={layer}
               effect={eff}
+              descriptor={catalog.find((d) => d.kind === eff.kind) ?? null}
               index={i}
               count={count}
               tInLayerUs={tInLayerUs}
@@ -135,6 +155,7 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
 function EffectRow({
   layer,
   effect,
+  descriptor,
   index,
   count,
   tInLayerUs,
@@ -147,6 +168,9 @@ function EffectRow({
 }: {
   layer: LayerSummary;
   effect: EffectView;
+  /// This kind's catalog entry, or null for a kind the catalog doesn't know —
+  /// the card still renders (reorder, disable, remove) with no params.
+  descriptor: UiEffectDescriptor | null;
   index: number;
   count: number;
   tInLayerUs: number;
@@ -167,22 +191,34 @@ function EffectRow({
   // effect id), so it follows the card across reorders and never enters the
   // persisted Workspace document.
   const [collapsed, setCollapsed] = useState(false);
-  const name = t(`effects.${effect.kind}.name`, { defaultValue: effect.kind });
-  const descriptor = getDescriptor(effect.kind);
+  const name = descriptor
+    ? t(descriptor.nameI18nKey, { defaultValue: effect.kind })
+    : effect.kind;
   const run = (fn: () => Promise<unknown>) => () => {
     setErr(null);
     fn().then(onMutated).catch((e) => setErr(refusalText(e)));
   };
 
-  /// Reset every catalog param to its registry default as ONE undoable batch.
+  /// Reset every catalog param to its default as ONE undoable batch.
   /// Deliberately writes Static tracks: "reset" means back to the default
   /// value, so any keyframes on those params are discarded (one Ctrl+Z away).
+  ///
+  /// A sample region is EXEMPT. Its unset state is an absent key, and the
+  /// command layer merges effect params key-by-key with no deletion, so the only
+  /// thing reset could write is a degenerate span — which reads "region too
+  /// short" rather than "needs a region" and throws away a region the user
+  /// painted by hand. Leaving the pair alone is the reversible half of that.
   const resetParams = () => {
     const spec = descriptor?.params ?? {};
-    const entries: [string, AnimTrack<number>][] = Object.entries(spec).map(([key, s]) => [
-      `effects[${effect.id}].params[${key}]`,
-      { mode: "Static", value: s.default },
-    ]);
+    const regionKeys = descriptor?.region
+      ? [descriptor.region.inKey, descriptor.region.outKey]
+      : [];
+    const entries: [string, AnimTrack<number>][] = Object.entries(spec)
+      .filter(([key]) => !regionKeys.includes(key))
+      .map(([key, s]) => [
+        `effects[${effect.id}].params[${key}]`,
+        { mode: "Static", value: s.default },
+      ]);
     if (entries.length === 0) return Promise.resolve();
     return updateLayerParamTracks(layer.id, entries);
   };
@@ -212,7 +248,7 @@ function EffectRow({
     const liveEffect = live.layer.effects.find((f) => f.id === effect.id);
     if (!liveEffect) return; // deleted mid-session → cancel (spec error table)
     const rgb = hexToRgb01(result.hex);
-    const spec = getDescriptor(liveEffect.kind)?.params ?? {};
+    const spec = descriptor?.params ?? {};
     const entries: [string, AnimTrack<number>][] = params.map((p, i) => [
       `effects[${effect.id}].params[${p}]`,
       autoKeyTrack(
@@ -343,10 +379,19 @@ function EffectRow({
           <EffectParamFields
             layer={layer}
             effect={effect}
+            descriptor={descriptor}
             tInLayerUs={tInLayerUs}
             playheadInSpan={playheadInSpan}
             onMutated={onMutated}
           />
+          {descriptor?.region && (
+            <AudioRegionRow
+              layer={layer}
+              effect={effect}
+              region={descriptor.region}
+              onMutated={onMutated}
+            />
+          )}
         </div>
       )}
       {err && <p className="settings-error">{err}</p>}
