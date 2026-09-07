@@ -151,10 +151,14 @@ export type CommandError =
   // room (the `TransitionRestoreCollision` precedent); a transition's overlap is
   // authorized only while both its participants shift by the same amount.
   | { error: 'RippleCollision'; moving: Uuid; blocking: Uuid; track: Uuid }
-  // A link with members on BOTH sides of the span: one before `s`, one at or
-  // after `e`. A link means "these move together", so shifting only the
-  // downstream half is not on offer and there is no out-of-sync badge to fall
-  // back on. Members inside the deleted set are ignored — they are gone.
+  // A link with a member REACHING ACROSS the cut — starting before `s` and ending
+  // after it — while another member starts at or after `e`. A link means "these
+  // move together", so shifting only the downstream half is not on offer and
+  // there is no out-of-sync badge to fall back on. A member that ends at or
+  // before `s` is wholly upstream and does not count: a split leaves every piece
+  // of a linked clip in one link, and closing the gap between the pieces before
+  // the cut and the pieces after it is what the ripple is for. Members inside
+  // the deleted set are ignored — they are gone.
   | { error: 'RippleLinkStraddles'; link: Uuid; hole: { s: TimeUs; e: TimeUs } }
   // A locked layer would have to move. The lock reading is lenient throughout:
   // only a layer that actually shifts blocks, so locking a logo at the head does

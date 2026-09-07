@@ -642,7 +642,7 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
     } }
   }
   if (e.error === 'RippleLinkStraddles') {
-    return { code: 'invalid_params', message: `link ${e.link} has members on both sides of the span [${e.hole.s}, ${e.hole.e}) µs — one starts before it, another at or after it — and a link means those layers move together, so shifting only the downstream half is not on offer. Options: dissolve the link (links_dissolve) or drop the downstream member from it (links_remove_members) and retry; or add the straddling members to layer_ids so the whole link goes with the cut.`, data: {
+    return { code: 'invalid_params', message: `link ${e.link} has members on both sides of the span [${e.hole.s}, ${e.hole.e}) µs — one reaches across the span's start, another starts at or after its end — and a link means those layers move together, so shifting only the downstream half is not on offer (a member that ends at or before the span is wholly upstream and does not count). Options: dissolve the link (links_dissolve) or drop the downstream member from it (links_remove_members) and retry; or add the straddling members to layer_ids so the whole link goes with the cut.`, data: {
       error: 'RippleLinkStraddles', link: e.link, hole_us: [e.hole.s, e.hole.e],
       options: [{ action: 'unlink_then_retry', link_id: e.link }],
     } }

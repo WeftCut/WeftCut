@@ -161,22 +161,30 @@ export function planRipple(view: RippleView, deleted: readonly Uuid[]): RipplePl
       return { ok: false, refusal: { error: 'RippleInsideHole', layer: offender.id, hole: { s: h.s, e: h.e } } }
   }
 
-  // 6 — a link is "these move together", so a link with a member on each side of
-  // a hole has no landing that honours it. Members inside `deleted` are ignored:
-  // they are gone, and a link left below two members dissolves as it does for a
-  // plain delete.
+  // 6 — a link is "these move together", so a link with a member REACHING ACROSS
+  // the cut — starting before `s` and ending after it — while another member
+  // starts at or after `e` has no landing that honours it: the reaching member
+  // stays (it is anchored ahead of the cut) and the downstream one moves, and a
+  // J-cut's audio drifts off its picture. A member that ENDS at or before `s` is
+  // not the same case: it is wholly upstream, and closing the span only brings
+  // the downstream member nearer to it. That is what a split does to a linked
+  // clip — every piece stays in one link — so deleting a middle piece leaves the
+  // pieces before the cut and the pieces after it in one link, and the ripple
+  // must be allowed to close exactly that gap. Members inside `deleted` are
+  // ignored: they are gone, and a link left below two members dissolves as it
+  // does for a plain delete.
   for (const h of holes) {
     for (const link of view.links) {
-      let before = false
+      let reaching = false
       let after = false
       for (const member of link.members) {
         if (doomed.has(member)) continue
         const placed = index.get(member)
         if (placed === undefined) continue
-        if (placed.layer.t_start_us < h.s) before = true
+        if (placed.layer.t_start_us < h.s) { if (placed.layer.t_end_us > h.s) reaching = true }
         else if (placed.layer.t_start_us >= h.e) after = true
       }
-      if (before && after)
+      if (reaching && after)
         return { ok: false, refusal: { error: 'RippleLinkStraddles', link: link.id, hole: { s: h.s, e: h.e } } }
     }
   }

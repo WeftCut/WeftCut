@@ -251,14 +251,28 @@ describe("landings that are already occupied", () => {
 });
 
 describe("links and locks", () => {
-  it("refuses a link with one member before the span and one after it", () => {
+  it("refuses a link with a member reaching across the cut and one after it", () => {
+    // A J-cut: the audio Z runs [0,5) under the cut at 4 s, its picture Y sits
+    // downstream. Closing [4,6) would move Y and not Z, and the pair drifts.
     const view = viewOf(
-      [track("TV", [vis("W", 0, 4), vis("X", 4, 6)]), track("TB", [vis("Y", 6, 8)])],
-      { links: [{ id: "L", members: ["W", "Y"] }] },
+      [track("TV", [vis("W", 0, 4), vis("X", 4, 6)]), track("TB", [vis("Y", 6, 8)]), track("TA", [aud("Z", 0, 5)])],
+      { links: [{ id: "L", members: ["Z", "Y"] }] },
     );
     expect(refused(planRipple(view, ["X"]))).toEqual({
       error: "RippleLinkStraddles", link: "L", hole: { s: sec(4), e: sec(6) },
     });
+  });
+
+  it("lets a link whose upstream member ends at the cut close the gap — a split clip's own pieces", () => {
+    // Splitting a linked clip leaves every piece in one link. W [0,4) ends
+    // exactly where X's span begins, so it is wholly upstream: bringing Y up to
+    // it is the ripple's purpose, not a link torn apart.
+    const view = viewOf(
+      [track("TV", [vis("W", 0, 4), vis("X", 4, 6)]), track("TB", [vis("Y", 6, 8)])],
+      { links: [{ id: "L", members: ["W", "Y"] }] },
+    );
+    const plan = accepted(planRipple(view, ["X"]));
+    expect(plan.moves.map(shape)).toEqual([["Y", "TB", sec(4), sec(6)]]);
   });
 
   it("refuses a locked track only when something on it would have to move", () => {

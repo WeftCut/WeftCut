@@ -436,9 +436,23 @@ describe('dispatch: ripple_delete_layers refuses rather than making room', () =>
     refuses(x, actor, [b], { error: 'RippleCollision', moving: tail, blocking: title, track: x.bRoll })
   })
 
-  it('names a link with members on both sides of the cut', () => {
+  it('lets a link close up when its upstream member ends at or before the cut', () => {
+    // The shape a split leaves: pieces before the cut and pieces after it in one
+    // link. Bringing the tail up to the head is the ripple's purpose.
     const { x, b } = threeUp()
     const head = color(x, x.bRoll, sec(0), sec(1))
+    const tail = color(x, x.bRoll, sec(5), sec(6))
+    applyLinksCreate(x.p, x.gen, [head, tail], null, false)
+    const actor = x.open()
+    expect(ripple(actor, [b]).ok).toBe(true)
+    const rc = root(actor.snapshot())
+    expect(spanOf(rc, head)).toEqual([sec(0), sec(1)])
+    expect(spanOf(rc, tail)).toEqual([sec(3), sec(4)])
+  })
+
+  it('names a link whose member reaches across the cut while another member would move', () => {
+    const { x, b } = threeUp()
+    const head = color(x, x.bRoll, sec(0), sec(3)) // runs under the cut at 2 s
     const tail = color(x, x.bRoll, sec(5), sec(6))
     const link = applyLinksCreate(x.p, x.gen, [head, tail], null, false)
     const actor = x.open()
