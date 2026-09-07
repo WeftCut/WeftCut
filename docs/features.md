@@ -305,7 +305,9 @@ A `Link` is a project-level entity owning a flat set of member `LayerId`s —
 a layer is in at most one link, no nesting. Moving, trimming, splitting,
 duplicating, or toggling `enabled` on a member fans the edit out to the other
 members under the rules below; everything else (keyframes, opacity, gain,
-delete) stays local. A link has
+delete) stays local — delete and [ripple delete](#ripple-delete) both take
+exactly the set they are handed, because the selection already carries the
+link. A link has
 no rendering significance — the renderer composes every member
 independently — and no identity beyond its accent: it says "these travel
 together", which is Premiere's Link with any number of members. One
@@ -777,6 +779,95 @@ therefore N undo steps. Collapsing them would need a new actor op;
 `split_layer_multi` is the other axis (one layer, many times — the shot-split
 path).
 
+## Ripple delete
+
+`Shift+Delete` (or `Shift+Backspace`) removes the selected clips **and closes
+the span they vacated**: everything after it, on every track of the
+composition, moves left and the film gets shorter. Bare `Delete` stays the
+lift — the clip goes and its span stays empty — as in Premiere and Resolve.
+Both sit together on the Edit menu, in a clip's context menu (*Ripple delete*
+directly under *Delete*), in the search palette, and the ripple has a Quick
+Actions button. With keyframes or a transition chip selected the key degrades
+to the plain delete, so the precedence order is the one Delete already has
+([ADR 0062](adr/0062-ripple-is-an-explicit-command-over-placement.md)).
+
+**The hole is what the clip actually vacated on its own track.** Its footprint,
+clipped to its remaining same-class neighbours:
+`[max(start, prev.end), min(end, next.start))`. Two consequences fall out. A
+transition participant can be rippled — the overlap the transition authorized
+belongs to the partner and is not part of the hole, so the downstream clip
+lands on the partner's exit frame instead of colliding with its tail. And a gap
+that already sat beside the clip is not closed; it moves left with everything
+after it, which keeps the span an overlap placement vacated a gap. With no
+transition the rule degrades to "shift by the clip's length".
+
+**Several clips: remove, measure, merge, sweep.** The whole selection comes
+out first, each hole is measured against what remains, touching or overlapping
+holes across tracks merge into one, and every remaining layer that starts at
+or after a hole shifts left by the total length of the holes ahead of it — one
+snap of the summed delta per mover, each on its own lattice, so a slipped A/V
+offset survives exactly as it does under a link move. A linked video and its
+audio yield one hole and one shift; two adjacent slices yield one longer hole.
+One commit, one undo, one history row.
+
+**Who moves, who stays, who blocks.** A layer starting at or after the hole's
+end moves; a layer starting before the hole stays, whether or not it reaches
+across the cut — a spanning title is anchored ahead of it. A layer that
+*starts inside* the hole and is not selected refuses (`RippleInsideHole`): the
+hole must come out clean, and the remedy composes — add that clip to the
+selection and its own hole merges in. A landing on a layer that is not moving
+refuses (`RippleCollision`); a transition authorizes its overlap only while
+both participants shift by the same amount, and the system never makes room.
+Locks read leniently: only a layer or lane that would actually move blocks
+(`RippleLockedLayer` / `TrackLocked`), so locking a logo at the head does not
+disable the ripple for the rest of the film.
+
+**Links.** A split leaves every piece of a linked clip in one link, so
+deleting a middle piece always leaves link members before the hole and after
+it — that is the ripple's headline case and it is allowed: the pieces before
+the cut end at it, and bringing the pieces after it up to them is the point.
+The refusal (`RippleLinkStraddles`) is for a member that *reaches across* the
+cut — starts before the hole and ends after its start — while another member
+would move: a J-cut whose audio would drift off its picture. Because a plain
+click on a linked clip selects the whole link, picking one piece of a split
+clip is an `Alt`-click (and `Alt`+`Shift`-click adds its partner).
+
+**Transitions, markers, time.** A transition with both participants downstream
+travels intact; at a fractional frame rate the microsecond distance of a frame
+depends on where it sits, so the stored `duration_us` is re-derived from the
+landed overlap and the borrowed tail is re-measured as the same count of
+frames — a pure-placement overlap still borrows nothing afterwards. A
+transition with one participant deleted is dropped by the commit's reconcile,
+as under a plain delete. Anchored markers follow their clips through the same
+reconcile and a deleted clip's markers go with it; free markers, the playhead
+and the in/out range stay at their absolute times ([Markers](#markers)).
+Keyframes are clip-relative and need nothing. Composition duration follows the
+autofit rule ([ADR 0005](adr/0005-composition-duration-autofits-to-layers-unless-pinned.md)):
+unpinned shrinks, pinned keeps its length. Inside a Group the Group's own
+timeline shrinks and every parent `CompositionRef` keeps its placement and
+window (the overhang [Groups](#groups) tolerates); in a parent a Group clip is
+one more body that moves or stays, and the ripple never reaches inside it.
+
+**Predicted, then enforced.** One pure planner (`renderer/ripple/plan.ts`)
+computes the plan or the refusal. The mutation applies it, and the renderer
+runs the same function against its mirror so the context-menu row, the strip
+button and the menu entry are greyed *with the reason* before the key is
+pressed — the tooltip sentence and the status-bar line a real refusal prints
+are one curated wording. The mirror can lag the actor by a round trip, so the
+actor stays the authority: a refusal it did not predict lands on the status
+bar through the usual refusal funnel. No toast, no dialog.
+
+**For agents** the same edit is `ripple_delete_layers { layer_ids }`
+([mcp.md](mcp.md)); `split_layer_multi` carries a `ripple` flag so a split and
+the closing of what it discarded are one undo, which is what
+[Detect silences](#detect-silences)' *Remove* and the `/cut-silences` prompt
+stand on.
+
+Code: `renderer/ripple/plan.ts` (the planner), `main/state/mutations/ripple.ts`
+(the sweep and the transition re-derivation), `renderer/timeline/rippleEligibility.ts`
+(the one predicate behind every surface), `renderer/errors/formatCommandError.ts`
+(the four curated refusals).
+
 ## Track placement
 
 **There is no add, remove or reorder surface for a track**, and that is the whole
@@ -1217,14 +1308,14 @@ dialogs), `renderer/commands/speechCommands.ts`; the main-process bridge is
 The third authored prompt, `/cut-silences`, reaches a person as **Detect
 silences…** — on the same audio-bearing clips as auto-caption (context menu,
 Edit menu, palette; an `ACTION_DEFS` entry scoped to the timeline selection
-with no default key), and it does exactly what the prompt now does: measure
-and mark, never cut. Cutting needs a ripple delete this editor does not have,
-and split → split → delete leaves a gap exactly as long as what it removed,
-which is audibly identical to doing nothing.
+with no default key), and it offers exactly what the prompt offers: measure,
+then either mark the gaps or cut them out. The row keeps the name *Detect
+silences…* because the measurement is the half both verbs share, and the
+dialog is where both of them live.
 
 The dialog carries the recipe's two parameters — the peak amplitude a sample
 must stay under (shown with its dBFS equivalent, since that is the unit an
-audio person reasons in) and the shortest gap worth marking, in
+audio person reasons in) and the shortest gap worth acting on, in
 milliseconds. Every change re-detects, live: `detect_silences` walks the
 pre-computed waveform peaks and decodes nothing, so a control that re-runs
 per keystroke costs a cache read. The preview is a list, not a review Panel,
@@ -1232,7 +1323,7 @@ on purpose — verifying a silent range means listening to it, which costs more
 than marking the set and deleting the marks you disagree with; what the list
 answers is how much of the clip is silence and where (a count, a total, the
 ranges as wall-clock times). A clip with nothing under the threshold says so
-and the button greys; nothing is written.
+and both buttons grey; nothing is written.
 
 **Mark silences** lands one region marker per range, in the clip's own
 composition (a clip inside a Group marks the Group's timeline), anchored to
@@ -1245,6 +1336,24 @@ tell "the picture changes here" from "nobody is speaking through here". The
 detection re-runs inside the same call at the dialog's parameters, so what
 lands is the set the preview showed.
 
+**Remove** is the other verb over the same detection: every silent stretch is
+cut out of the clip and the gap it vacated closes behind it, so the clip — and
+the film — get shorter ([ADR 0062](adr/0062-ripple-is-an-explicit-command-over-placement.md)).
+One commit, one undo: the undo restores the whole clip, not a split clip
+missing its quiet parts. A stretch touching the clip's head or tail is trimmed
+off whole rather than split at the clip's own edge, a linked audio partner goes
+with each removed slice, and two touching stretches close as the one hole they
+are. Refusals arrive before any write and the clip comes back unsplit, so a
+rejected press leaves nothing to clean up: the ripple planner's four — a layer
+on another track starting inside a silent stretch, a collision, a link
+straddling one, a locked mover — each name the layer that blocked, and a clip
+that is silent end to end is refused as the delete it would be. All of them
+land in the dialog's own error slot, beside the ranges and the parameters that
+produced them, so the fix is to move that clip and press again. Both verbs
+reach the same tools an agent has: Mark is the renderer-only `mark_silences`
+hybrid, Remove is `remove_silences`, which is advertised
+([mcp.md](mcp.md)).
+
 A fresh import's waveform may still be generating. That is a state, not a
 failure: the dialog shows *Waiting for the waveform…*, listens for the
 `media:job_complete` event with kind `waveform` for its own source, and
@@ -1254,9 +1363,11 @@ the op and stays inline, so the parameters tuned survive a fix.
 
 Code: `renderer/silence/` (the dialog and its prompt store),
 `renderer/commands/silenceCommands.ts`; the shared audio-clip gate lives in
-`renderer/speech/autoCaptionEligibility.ts`; the write is the `mark_silences`
-hybrid in `main/state/hybrids.ts`, renderer-only because an agent already
-has `detect_silences` and `add_markers`.
+`renderer/speech/autoCaptionEligibility.ts`; the two writes are the
+`mark_silences` and `remove_silences` hybrids in `main/state/hybrids.ts`. Only
+the first is renderer-only — an agent already composes a mark from
+`detect_silences` and `add_markers`, while the cut is one recorded edit no
+sequence of tools reproduces.
 
 ## Global search palette
 
