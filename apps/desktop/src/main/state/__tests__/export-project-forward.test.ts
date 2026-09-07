@@ -35,6 +35,21 @@ describe('injectProjectArgs — baked audio sources', () => {
     expect(baker.layerAudioSources).toHaveBeenCalledWith(p, { start_us: 1_000, end_us: 5_000 })
   })
 
+  // The forward and the baker's export gate read the window with one shared
+  // helper, so a caller that spells the bounds either way selects the same
+  // layers on both paths.
+  it('reads the camelCase and snake_case spellings of the window identically', () => {
+    injectProjectArgs(
+      { startUs: 1_000, endUs: 5_000 }, p, 'export_project_audio_only', baker,
+    )
+    injectProjectArgs(
+      { start_us: 1_000, end_us: 5_000 }, p, 'export_project_audio_only', baker,
+    )
+    const [camel, snake] = baker.layerAudioSources.mock.calls
+    expect(camel).toEqual([p, { start_us: 1_000, end_us: 5_000 }])
+    expect(snake).toEqual(camel)
+  })
+
   it('passes a null window when either bound is absent (the whole project)', () => {
     injectProjectArgs({ startUs: null, endUs: null }, p, 'export_project_audio_only', baker)
     expect(baker.layerAudioSources).toHaveBeenCalledWith(p, null)

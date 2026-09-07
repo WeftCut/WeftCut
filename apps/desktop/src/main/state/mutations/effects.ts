@@ -5,9 +5,10 @@ import { CommandFailure } from '../errors'
 import { quantizeEffectTrack } from '../quantize'
 import { isAudioKind } from '../../../shared/audioEffects/catalog'
 
-/** Mirrors native/src/state/effect.rs:29-33 EffectPatch. An absent/null FIELD
- *  is "don't touch"; `params` merges key-by-key, and a `null` VALUE inside it
- *  removes that key.
+/** Diverges from Rust's `EffectPatch` (`native/src/state/effect.rs`): a `null`
+ *  param value removes the key, which the Rust shape cannot express. An
+ *  absent/null FIELD is "don't touch"; `params` merges key-by-key, and a `null`
+ *  VALUE inside it removes that key.
  *
  *  Removal exists because absent IS a param's unset state — the catalog default
  *  stands in for a missing key (`staticParams`), and a sample region has no

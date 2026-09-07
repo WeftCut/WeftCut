@@ -281,6 +281,70 @@ describe("waveform tile producer (shared engine)", () => {
       expect(vi.mocked(audioFxReverify)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(audioFxReverify)).toHaveBeenCalledWith("layer-2");
     });
+
+    // One media accumulates a baked key per settled param edit, and
+    // invalidation only ever names the MEDIA. Both per-key caches therefore
+    // have to be reachable from the media id, or a regenerated waveform serves
+    // a stale baked level table and the reverify stamps never expire.
+    it("sweeps every baked key of the invalidated media, and only that media's", async () => {
+      const mediaId = "m-fx-sweep";
+      const other = "m-fx-sweep-other";
+      const keyA = "fx:cafe01.fx-1111111111111111";
+      const keyB = "fx:cafe01.fx-2222222222222222";
+      const keyC = "fx:cafe02.fx-3333333333333333";
+      vi.mocked(getWaveformLevels).mockImplementation(async () => levelsFor(1000));
+      vi.mocked(getWaveformLevels).mockClear();
+      const levelCallsFor = (key: string): number =>
+        vi.mocked(getWaveformLevels).mock.calls.filter((c) => c[1] === key).length;
+
+      const a = { mediaId, waveformKey: keyA, layerId: "sweep-a" };
+      const b = { mediaId, waveformKey: keyB, layerId: "sweep-b" };
+      const c = { mediaId: other, waveformKey: keyC, layerId: "sweep-c" };
+      for (const source of [a, b, c]) {
+        expect(await getWaveformChannelCount(source)).toBe(1);
+        expect(await getWaveformChannelCount(source)).toBe(1);
+      }
+      expect([levelCallsFor(keyA), levelCallsFor(keyB), levelCallsFor(keyC)]).toEqual([1, 1, 1]);
+
+      engine.invalidateMedia(mediaId, WAVEFORM_KIND);
+      for (const source of [a, b, c]) {
+        expect(await getWaveformChannelCount(source)).toBe(1);
+      }
+      expect([levelCallsFor(keyA), levelCallsFor(keyB), levelCallsFor(keyC)]).toEqual([2, 2, 1]);
+    });
+
+    it("drops the reverify stamps of the invalidated media, so a missing sibling is re-checked at once", async () => {
+      const mediaId = "m-fx-stamps";
+      const other = "m-fx-stamps-other";
+      const gone = (hash: string, tag: string): string => `fx:${hash}.fx-${tag}`;
+      // Every baked key reads as evicted; the raw conform answers, which is the
+      // fallback these calls return.
+      vi.mocked(getWaveformLevels).mockImplementation(
+        async (_mediaId, waveformKey) => {
+          if (waveformKey !== undefined) throw new Error("not_ready");
+          return levelsFor(1000);
+        },
+      );
+      vi.mocked(audioFxReverify).mockClear();
+      const reverifiesOf = (layerId: string): number =>
+        vi.mocked(audioFxReverify).mock.calls.filter((c) => c[0] === layerId).length;
+
+      const a = { mediaId, waveformKey: gone("cafe03", "4444444444444444"), layerId: "stamp-a" };
+      const b = { mediaId, waveformKey: gone("cafe03", "5555555555555555"), layerId: "stamp-b" };
+      const c = { mediaId: other, waveformKey: gone("cafe04", "6666666666666666"), layerId: "stamp-c" };
+      for (const source of [a, b, c]) {
+        expect(await getWaveformChannelCount(source)).toBe(1);
+        // Inside the cooldown: the fan-out a real strip produces asks once.
+        expect(await getWaveformChannelCount(source)).toBe(1);
+      }
+      expect([reverifiesOf("stamp-a"), reverifiesOf("stamp-b"), reverifiesOf("stamp-c")]).toEqual([1, 1, 1]);
+
+      engine.invalidateMedia(mediaId, WAVEFORM_KIND);
+      for (const source of [a, b, c]) {
+        expect(await getWaveformChannelCount(source)).toBe(1);
+      }
+      expect([reverifiesOf("stamp-a"), reverifiesOf("stamp-b"), reverifiesOf("stamp-c")]).toEqual([2, 2, 1]);
+    });
   });
 });
 

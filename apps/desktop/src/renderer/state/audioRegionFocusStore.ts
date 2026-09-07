@@ -12,44 +12,73 @@
 
 import { create } from "zustand";
 
-/// The one card whose region is drawable. Exactly one: two visible bands would
-/// give a drag on the clip two possible owners.
+/// One mounted card, and — when it is the newest — the one band the timeline
+/// draws. Exactly one is drawable at a time: two visible bands would give a
+/// drag on the clip two possible owners.
 export interface RegionFocus {
   layerId: string;
   effectId: string;
 }
 
 interface State {
-  focus: RegionFocus | null;
+  /// Every mounted card, oldest first. A STACK rather than a single slot
+  /// because one layer can have two expanded cards: collapsing the newer one
+  /// must hand the band back to the older one that is still on screen, not
+  /// blank it.
+  mounted: readonly RegionFocus[];
 }
 
-export const useAudioRegionFocusStore = create<State>(() => ({ focus: null }));
+export const useAudioRegionFocusStore = create<State>(() => ({ mounted: [] }));
 
-/// Claim the band. Idempotent for an unchanged pair, so a card that republishes
-/// on every render never notifies the timeline.
+function indexOf(
+  mounted: readonly RegionFocus[],
+  layerId: string,
+  effectId: string,
+): number {
+  return mounted.findIndex(
+    (entry) => entry.layerId === layerId && entry.effectId === effectId,
+  );
+}
+
+const newest = (mounted: readonly RegionFocus[]): RegionFocus | null =>
+  mounted.at(-1) ?? null;
+
+/// Mount a card, or raise an already-mounted one to the top. Idempotent for a
+/// pair that is already newest, so a card that republishes on every render
+/// never notifies the timeline. Raising REUSES the stored entry, which is what
+/// keeps `useRegionFocus`' identity stable across such a republish.
 export function setRegionFocus(focus: RegionFocus): void {
-  const current = useAudioRegionFocusStore.getState().focus;
-  if (current?.layerId === focus.layerId && current.effectId === focus.effectId) return;
-  useAudioRegionFocusStore.setState({ focus });
+  const { mounted } = useAudioRegionFocusStore.getState();
+  const at = indexOf(mounted, focus.layerId, focus.effectId);
+  if (at !== -1 && at === mounted.length - 1) return;
+  const entry = at === -1 ? focus : mounted[at]!;
+  const rest =
+    at === -1
+      ? mounted
+      : [...mounted.slice(0, at), ...mounted.slice(at + 1)];
+  useAudioRegionFocusStore.setState({ mounted: [...rest, entry] });
 }
 
-/// Release the band, but only if this pair still holds it. A card's unmount
-/// cleanup can run AFTER the next card's claim (layer switched, effect
-/// reordered), and an unconditional clear would then blank the band that just
-/// legitimately opened.
+/// Unmount one card. The band falls to whichever card is next-newest, so a
+/// collapse never blanks a sibling that is still open. A pair that is not
+/// mounted is inert: a card's unmount cleanup can run AFTER the next card's
+/// claim (layer switched, effect reordered).
 export function clearRegionFocus(layerId: string, effectId: string): void {
-  const current = useAudioRegionFocusStore.getState().focus;
-  if (!current || current.layerId !== layerId || current.effectId !== effectId) return;
-  useAudioRegionFocusStore.setState({ focus: null });
+  const { mounted } = useAudioRegionFocusStore.getState();
+  const at = indexOf(mounted, layerId, effectId);
+  if (at === -1) return;
+  useAudioRegionFocusStore.setState({
+    mounted: [...mounted.slice(0, at), ...mounted.slice(at + 1)],
+  });
 }
 
 /// Subscribe. Returns the STORED object, never a fresh one, so this stays an
 /// atomic selector despite handing back a pair.
 export const useRegionFocus = (): RegionFocus | null =>
-  useAudioRegionFocusStore((s) => s.focus);
+  useAudioRegionFocusStore((s) => newest(s.mounted));
 
 /// Imperative read for event-time callers (the timeline's pointer handlers)
 /// that must not subscribe.
 export function regionFocus(): RegionFocus | null {
-  return useAudioRegionFocusStore.getState().focus;
+  return newest(useAudioRegionFocusStore.getState().mounted);
 }

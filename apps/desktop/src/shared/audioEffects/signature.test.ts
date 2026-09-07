@@ -105,10 +105,27 @@ describe("canonicalChain", () => {
     expect(b).toContain("strength=12.001000");
   });
 
-  it("omits a param the layer never wrote — absent means the catalog default", () => {
+  it("prints the catalog default for a param the layer never wrote", () => {
     const canonical = canonicalOf(fx("e1", REGION));
     expect(canonical).toBe(
-      "v1|abc123|1|audio.denoise@1{profile_in_us=200000.000000,profile_out_us=1800000.000000}",
+      "v1|abc123|1|audio.denoise@1{margin=8.000000,profile_in_us=200000.000000,profile_out_us=1800000.000000,strength=12.000000}",
+    );
+  });
+
+  // The bake reads the RESOLVED params, so an unset param and one stored at its
+  // default render the same audio — two signatures would mean two runs of
+  // ffmpeg and two byte-identical files under the disk LRU.
+  it("names one artifact whether the default was written or left unset", () => {
+    const unset = canonicalOf(fx("e1", REGION));
+    expect(canonicalOf(fx("e1", { ...REGION, strength: 12 }))).toBe(unset);
+    expect(canonicalOf(fx("e1", { ...REGION, strength: 13 }))).not.toBe(unset);
+  });
+
+  // A key the descriptor does not declare reaches no filter, so it cannot name
+  // a different bake — a hand-edited project must not fork the cache.
+  it("ignores a stored param the descriptor does not declare", () => {
+    expect(canonicalOf(fx("e1", { ...REGION, nonsense: 3 }))).toBe(
+      canonicalOf(fx("e1", REGION)),
     );
   });
 

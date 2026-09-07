@@ -43,7 +43,10 @@ vi.mock("../components/AppNumberField", () => ({
 import { AudioRegionRow } from "./AudioRegionRow";
 import type { AnimTrack, EffectView, LayerSummary } from "../ipc";
 import { clear as clearAudioFx, hydrate } from "../state/audioFxStore";
-import { useAudioRegionFocusStore } from "../state/audioRegionFocusStore";
+import {
+  regionFocus,
+  useAudioRegionFocusStore,
+} from "../state/audioRegionFocusStore";
 import { useAudioRegionArmStore } from "../timeline/audioRegionArmStore";
 
 const REGION = { inKey: "profile_in_us", outKey: "profile_out_us", minUs: 250_000 };
@@ -100,7 +103,7 @@ function readyFx() {
 
 beforeEach(() => {
   clearAudioFx();
-  useAudioRegionFocusStore.setState({ focus: null });
+  useAudioRegionFocusStore.setState({ mounted: [] });
   useAudioRegionArmStore.setState({ armed: null });
 });
 
@@ -294,8 +297,8 @@ describe("AudioRegionRow arming", () => {
 describe("AudioRegionRow band focus", () => {
   it("claims the band while on screen and releases it on unmount", () => {
     const { unmount } = renderRow(denoise());
-    expect(useAudioRegionFocusStore.getState().focus).toEqual({ layerId: "L1", effectId: "E1" });
+    expect(regionFocus()).toEqual({ layerId: "L1", effectId: "E1" });
     unmount();
-    expect(useAudioRegionFocusStore.getState().focus).toBeNull();
+    expect(regionFocus()).toBeNull();
   });
 });

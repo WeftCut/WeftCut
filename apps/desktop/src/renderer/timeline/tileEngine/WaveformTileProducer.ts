@@ -119,8 +119,23 @@ interface TileValue {
 // (media:job_complete) gets a fresh table, so the producer's `invalidate` hook
 // below must drop the entry.
 const levelsCache = new Map<string, Promise<WaveformLevels>>();
+
+/// Every waveform key seen for a media id, including the media id itself. The
+/// per-key maps below cannot be swept without it: invalidation arrives as a
+/// media id, while a media's baked keys are unbounded — each debounced param
+/// edit mints a fresh signature — so an `fx:` entry would otherwise be neither
+/// findable nor ever evictable. Rebuilt lazily, so dropping a media's set is
+/// always safe.
+const keysByMedia = new Map<string, Set<string>>();
+
 function fetchLevels(source: WaveformSource): Promise<WaveformLevels> {
   const cacheKey = source.waveformKey;
+  let keys = keysByMedia.get(source.mediaId);
+  if (!keys) {
+    keys = new Set<string>();
+    keysByMedia.set(source.mediaId, keys);
+  }
+  keys.add(cacheKey);
   let p = levelsCache.get(cacheKey);
   if (!p) {
     p = getWaveformLevels(source.mediaId, fxKeyOf(source)).catch((e) => {
@@ -134,6 +149,21 @@ function fetchLevels(source: WaveformSource): Promise<WaveformLevels> {
 
 /// When each waveform key last had a reverify asked for it.
 const reverifiedAtMs = new Map<string, number>();
+
+/// Forget everything derived from one media's peaks: the raw conform's own
+/// entries plus every baked sibling `keysByMedia` recorded for it. Both maps
+/// are keyed by waveform key, so a regenerated waveform that only dropped the
+/// media-id entry would keep serving a stale baked level table — and would
+/// leave the reverify stamps with no eviction at all.
+function dropMediaLevels(mediaId: string): void {
+  for (const key of keysByMedia.get(mediaId) ?? []) {
+    levelsCache.delete(key);
+    reverifiedAtMs.delete(key);
+  }
+  levelsCache.delete(mediaId);
+  reverifiedAtMs.delete(mediaId);
+  keysByMedia.delete(mediaId);
+}
 
 /// A baked sibling the backend can't resolve — evicted by the cache LRU, or
 /// deleted under us — reads as `not_ready`, exactly like a media whose waveform
@@ -178,7 +208,7 @@ export function registerWaveformProducer(engine: TileEngine = tileEngine): void 
       return { peaksPerSecond: tile.peaksPerSecond, min: tile.min, max: tile.max, rms: tile.rms };
     },
     bytes: (v) => (v.min.length + v.max.length + v.rms.length) * 8,
-    invalidate: (mediaId) => { levelsCache.delete(mediaId); },
+    invalidate: (mediaId) => { dropMediaLevels(mediaId); },
   });
 }
 

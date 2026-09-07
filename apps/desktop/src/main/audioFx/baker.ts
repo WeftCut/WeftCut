@@ -31,6 +31,7 @@ import {
   type LayerFxState,
 } from '../../shared/audioEffects/status'
 import { chainSignature } from './signature'
+import type { FxWindow } from './exportWindow'
 import { cachedOk, conformCachedOk, touchDue, touchIfStale, type AudioFxFs, type FxCacheLayout } from './fxPaths'
 import { eachLayer } from '../state/model'
 import type { ActorHandle, ChangeEvent, DiffHint } from '../state/actor'
@@ -52,13 +53,6 @@ const JOB_KEY_PREFIX = 'audio_fx:'
 /// build — the timeline keeps drawing the raw waveform until this fills in, and
 /// `resolveWaveformKey` answers `not_ready` meanwhile.
 const PEAKS_PENDING: string | null = null
-
-/// A µs range of the root composition, as the export gate and the mix planner
-/// window it.
-export interface FxWindow {
-  start_us: number
-  end_us: number
-}
 
 /// The Rust primitives, as the baker calls them. A typed facade rather than a
 /// raw `invoke` so the state machine holds no JSON plumbing and a test can hand
@@ -186,16 +180,10 @@ function messageOf(err: unknown): string {
   return typeof err === 'string' ? err : String(err)
 }
 
-/// The window an export-gate call carries. Accepts the camelCase the sibling
-/// conform gate already receives from the renderer and the snake_case wire
-/// alias, the same liberality the widened Rust channels have. Null — the whole
-/// project — unless BOTH bounds are numbers.
-export function exportWindowFromArgs(args: Record<string, unknown>): FxWindow | null {
-  const start = args['startUs'] ?? args['start_us']
-  const end = args['endUs'] ?? args['end_us']
-  if (typeof start !== 'number' || typeof end !== 'number') return null
-  return { start_us: start, end_us: end }
-}
+/// Re-exported: the export gate's caller reaches the window parser through the
+/// baker it is already importing, while `./exportWindow` stays the one
+/// definition the state actor's forward shares.
+export { exportWindowFromArgs, type FxWindow } from './exportWindow'
 
 export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
   const { actor, backend, cacheLayout, fs, emit } = deps
@@ -519,6 +507,10 @@ export function createAudioFxBaker(deps: AudioFxBakerDeps): AudioFxBaker {
     conformAsked.delete(d.mediaId)
 
     if (conformCachedOk(fs, d.destPath)) {
+      // Discovering the artifact is a read too, and mtime IS the disk-LRU
+      // clock: a project opened and played without an edit never reaches the
+      // already-ready branch above, so the refresh cannot wait for it.
+      touchIfStale(fs, d.destPath, now())
       supersede(layerId, d.sig)
       entry.failedSig = null
       const peaksPath = cachedOk(fs, d.peaksPath) ? d.peaksPath : PEAKS_PENDING

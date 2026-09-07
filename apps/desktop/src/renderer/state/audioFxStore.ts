@@ -66,9 +66,10 @@ export function deriveStatus(state: LayerFxState | undefined): AudioFxStatus {
 ///
 /// Stale-while-revalidate (spec Decision 9): the last ready artifact keeps
 /// playing while a new bake runs and after one fails, so this deliberately
-/// ignores both `pending` and `error`. Only an EMPTY effective chain — a null
-/// desire — drops back to the raw conform, because then there is nothing the
-/// user asked to hear.
+/// ignores both `pending` and `error`. Two states drop back to the raw
+/// conform: an EMPTY effective chain — a null desire, nothing the user asked to
+/// hear — and a layer that has never had a ready artifact at all, whose first
+/// bake is still running or has failed with nothing better to play.
 export function readyAudioPath(state: LayerFxState | undefined): string | null {
   if (!state || state.desired_sig === null || !state.ready) return null;
   return state.ready.audio_path;
@@ -100,9 +101,6 @@ export const useAudioFxError = (layerId: string): AudioFxError | null =>
 
 export const useReadyPeaksKey = (layerId: string): string | null =>
   useAudioFxStore((s) => readyPeaksKey(s.layers[layerId]));
-
-export const useReadyAudioPath = (layerId: string): string | null =>
-  useAudioFxStore((s) => readyAudioPath(s.layers[layerId]));
 
 // ===== Boot wiring =========================================================
 

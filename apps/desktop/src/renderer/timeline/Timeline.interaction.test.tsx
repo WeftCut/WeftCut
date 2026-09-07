@@ -4559,7 +4559,7 @@ describe("Timeline sample-region gesture", () => {
     clearLayerSelection();
     setActiveRegion(null);
     useAudioRegionArmStore.setState({ armed: null });
-    useAudioRegionFocusStore.setState({ focus: null });
+    useAudioRegionFocusStore.setState({ mounted: [] });
     ipcMocks.updateLayerParamTracks.mockClear();
     ipcMocks.moveLayer.mockClear();
     useAppSettingsStore.setState((s) => ({
@@ -4573,7 +4573,7 @@ describe("Timeline sample-region gesture", () => {
   afterEach(() => {
     cleanup();
     useAudioRegionArmStore.setState({ armed: null });
-    useAudioRegionFocusStore.setState({ focus: null });
+    useAudioRegionFocusStore.setState({ mounted: [] });
   });
 
   it("an armed clip takes the press as a region drag, not a select or a move", async () => {

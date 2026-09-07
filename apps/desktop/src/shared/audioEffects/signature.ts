@@ -18,7 +18,7 @@ import type { EffectiveChain } from "./catalog";
 /// instead — that is what keeps one effect's edit from invalidating the rest.
 const CANONICAL_VERSION = "v1";
 
-/// One stored param value, printed. Fixed 6 decimals: `toString()` reaches
+/// One resolved param value, printed. Fixed 6 decimals: `toString()` reaches
 /// exponent form for small magnitudes and `toLocaleString` a comma separator,
 /// and either would make the same chain hash differently somewhere else. Six
 /// is double the authored effect-param precision, so two values that differ in
@@ -31,10 +31,8 @@ function canonicalNumber(v: number): string {
 /// `v1|{media_hash}|{conform_version}|{kind}@{version}{k=v,…};{kind}@{version}{…}`
 ///
 /// Params sorted by key so a client that writes `margin` before `strength`
-/// gets the same artifact; values as stored (already quantized by the mutation
-/// layer) so the signature names what will be rendered; the effect `id`
-/// excluded so two layers configured alike share one bake; chain order kept
-/// because it is the render order.
+/// gets the same artifact; the effect `id` excluded so two layers configured
+/// alike share one bake; chain order kept because it is the render order.
 ///
 /// The braces around the param list are LITERAL — they delimit one effect's
 /// params from the next effect's kind, so no separator is ambiguous.
@@ -48,14 +46,16 @@ export function canonicalChain(
 ): string | null {
   if (chain.length === 0) return null;
   const parts = chain.map((entry) => {
-    // Only `Static` values are representable, and only Static can exist: a
-    // `Keyframed` track on an `audio.*` param is refused at both write entries
-    // (spec Decision 11). One hand-edited past that gate is skipped rather than
-    // sampled — its absence reads as unset, which is what the catalog's
-    // defaults already mean.
-    const params = Object.entries(entry.effect.params)
-      .filter(([, track]) => track.mode === "Static")
-      .map(([key, track]) => [key, track.value as number] as const)
+    // The RESOLVED params (`staticParams`), not the stored tracks: the bake
+    // reads this view, so a layer that never wrote `strength` and one that
+    // wrote the catalog default must name one artifact, not two byte-identical
+    // ones. Keys the descriptor does not declare are dropped for the same
+    // reason — nothing renders them, so they cannot name a different bake.
+    const params = Object.keys(entry.descriptor.params)
+      .flatMap((key) => {
+        const value = entry.params[key];
+        return value === undefined ? [] : [[key, value] as const];
+      })
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .map(([key, value]) => `${key}=${canonicalNumber(value)}`)
       .join(",");

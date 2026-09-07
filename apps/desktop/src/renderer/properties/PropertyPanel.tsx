@@ -90,8 +90,6 @@ import { PropSection } from "./PropSection";
 import { useLayerBakeStatus } from "../timeline/motifBakeStatusStore";
 import { findPanelLayer } from "../panels/panelLayer";
 
-export { isVisualKind } from "../panels/panelLayer";
-
 export interface AttributePanelProps {
   tracks: TrackSummary[];
   selectedLayerId: string | null;

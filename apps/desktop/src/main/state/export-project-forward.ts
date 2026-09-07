@@ -1,5 +1,6 @@
 import type { Project } from './model'
 import { serializeProject } from './serialize'
+import { exportWindowFromArgs, type FxWindow } from '../audioFx/exportWindow'
 
 /** Audio-export channels whose Rust fn takes the full project as a call argument;
  *  the TS actor (the sole state owner) serializes and forwards it. */
@@ -15,10 +16,7 @@ const AUDIO_MIX_CHANNEL = 'export_project_audio_only'
 /** What the baker contributes to an audio-only export. Structural so the
  *  forward does not depend on the baker module — `AudioFxBaker` satisfies it. */
 export interface AudioFxSources {
-  layerAudioSources(
-    project: Project,
-    window?: { start_us: number; end_us: number } | null,
-  ): Record<string, string>
+  layerAudioSources(project: Project, window?: FxWindow | null): Record<string, string>
 }
 
 /** Inject the wire-shape project into the export-channel args. `serializeProject`
@@ -41,17 +39,7 @@ export function injectProjectArgs(
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...args, project: serializeProject(snapshot) }
   if (channel !== AUDIO_MIX_CHANNEL || !audioFx) return merged
-  const sources = audioFx.layerAudioSources(snapshot, exportWindow(args))
+  const sources = audioFx.layerAudioSources(snapshot, exportWindowFromArgs(args))
   if (Object.keys(sources).length > 0) merged.layerAudioSources = sources
   return merged
-}
-
-/** The export range, as the renderer sends it (`startUs`/`endUs`, either one
- *  null for "the whole project"). Both must be numbers or there is no window —
- *  a half-specified one is what Rust already treats as none. */
-function exportWindow(args: Record<string, unknown>): { start_us: number; end_us: number } | null {
-  const start = args['startUs']
-  const end = args['endUs']
-  if (typeof start !== 'number' || typeof end !== 'number') return null
-  return { start_us: start, end_us: end }
 }

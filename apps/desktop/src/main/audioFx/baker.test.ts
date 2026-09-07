@@ -477,7 +477,7 @@ describe('an emptied chain', () => {
 // ── the cached-artifact short-circuit ────────────────────────────────────────
 
 describe('an artifact already on disk', () => {
-  it('readies without baking and refreshes the LRU mtime', async () => {
+  it('readies without baking and refreshes the LRU mtime on the discovery itself', async () => {
     const h = oneLayerSetup()
     const sig = h.sig
     h.disk.addConform(destOf(sig), 0)
@@ -488,7 +488,23 @@ describe('an artifact already on disk', () => {
     expect(h.stateOf('L1')?.ready).toEqual({
       sig, media_hash: HASH, audio_path: destOf(sig), peaks_path: peaksOf(sig),
     })
-    // A short-circuit is a read, and mtime IS the disk-LRU clock.
+    // Opening a project and playing it is exactly one settle, so a refresh that
+    // waited for a second one would leave the artifact being played as the
+    // oldest unit in the cache.
+    expect(h.disk.touched).toContain(destOf(sig))
+  })
+
+  it('keeps refreshing the mtime of an artifact already readied but never re-derived', async () => {
+    const h = oneLayerSetup()
+    const sig = h.sig
+    h.disk.addConform(destOf(sig))
+    h.disk.addPeaks(peaksOf(sig))
+    h.change(h.project())
+    await h.timers.advance()
+    expect(h.disk.touched).not.toContain(destOf(sig))
+    // Age the artifact out under a state that already reads `ready`: the
+    // short-circuit is a read as much as the discovery was.
+    h.disk.addConform(destOf(sig), 0)
     h.change(h.project())
     await h.timers.advance()
     expect(h.disk.touched).toContain(destOf(sig))

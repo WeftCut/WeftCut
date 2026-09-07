@@ -77,6 +77,8 @@ export function AudioRegionRow({
   // The band is drawable exactly while this row is on screen: the row lives in
   // the card body, which the collapse toggle unmounts, so mount/unmount already
   // IS "mounted and expanded" (spec Decision 12) and needs no second flag.
+  // Two expanded cards therefore both register, and the store draws the band
+  // for the newest — collapsing it hands the band back to the other one.
   useEffect(() => {
     setRegionFocus({ layerId: layer.id, effectId: effect.id });
     return () => clearRegionFocus(layer.id, effect.id);

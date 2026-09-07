@@ -85,7 +85,10 @@ vi.mock("../components/AppSwitch", () => ({
 import { audioCatalogForUi, EffectsSection } from "./EffectsSection";
 import type { EffectView, LayerSummary } from "../ipc";
 import type { UiEffectDescriptor } from "../render/effects/effectRegistry";
-import { useAudioRegionFocusStore } from "../state/audioRegionFocusStore";
+import {
+  regionFocus,
+  useAudioRegionFocusStore,
+} from "../state/audioRegionFocusStore";
 import { useAudioRegionArmStore } from "../timeline/audioRegionArmStore";
 
 // jsdom has no PointerEvent constructor; MouseEvent carries the same client
@@ -421,7 +424,7 @@ describe("audio chain", () => {
   }
 
   beforeEach(() => {
-    useAudioRegionFocusStore.setState({ focus: null });
+    useAudioRegionFocusStore.setState({ mounted: [] });
     useAudioRegionArmStore.setState({ armed: null });
   });
 
@@ -483,13 +486,13 @@ describe("audio chain", () => {
         onMutated={onMutated}
       />,
     );
-    expect(useAudioRegionFocusStore.getState().focus).toEqual({ layerId: "L1", effectId: "E1" });
+    expect(regionFocus()).toEqual({ layerId: "L1", effectId: "E1" });
 
     await userEvent.click(screen.getByTestId("effect-collapse-0"));
-    expect(useAudioRegionFocusStore.getState().focus).toBeNull();
+    expect(regionFocus()).toBeNull();
 
     await userEvent.click(screen.getByTestId("effect-collapse-0"));
-    expect(useAudioRegionFocusStore.getState().focus).toEqual({ layerId: "L1", effectId: "E1" });
+    expect(regionFocus()).toEqual({ layerId: "L1", effectId: "E1" });
   });
 
   it("releases the region focus when the card unmounts", () => {
@@ -503,7 +506,7 @@ describe("audio chain", () => {
       />,
     );
     unmount();
-    expect(useAudioRegionFocusStore.getState().focus).toBeNull();
+    expect(regionFocus()).toBeNull();
   });
 
   // Reset puts the region back to UNSET, not to a default: an absent key is
