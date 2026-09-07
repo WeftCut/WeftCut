@@ -4,7 +4,9 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 
 const { updateLayerParamTracks, logEmit } = vi.hoisted(() => ({
-  updateLayerParamTracks: vi.fn(async () => {}),
+  updateLayerParamTracks: vi.fn(
+    async (_layerId: string, _entries: [string, unknown][]) => {},
+  ),
   logEmit: vi.fn(async () => {}),
 }));
 vi.mock("../ipc", () => ({ updateLayerParamTracks, logEmit }));
@@ -189,15 +191,73 @@ describe("AudioRegionRow bounds", () => {
     ]);
   });
 
-  it("an unwritten sibling commits as zero rather than staying absent", () => {
+  const typeBound = (bound: "in" | "out", seconds: string) =>
+    fireEvent.change(
+      within(screen.getByTestId(`audio-region-${bound}`)).getByRole("textbox"),
+      { target: { value: seconds } },
+    );
+
+  const committed = () => updateLayerParamTracks.mock.calls[0]?.[1];
+
+  // A field can only say one number, and half a region reads as no region at
+  // all — so the sibling is derived rather than left absent or zeroed.
+  it("derives the missing out bound from a first in edit", () => {
     renderRow(denoise());
-    fireEvent.change(within(screen.getByTestId("audio-region-out")).getByRole("textbox"), {
-      target: { value: "1.5" },
-    });
-    expect(updateLayerParamTracks).toHaveBeenCalledWith("L1", [
-      ["effects[E1].params[profile_in_us]", { mode: "Static", value: 0 }],
-      ["effects[E1].params[profile_out_us]", { mode: "Static", value: 1_500_000 }],
+    typeBound("in", "2.5");
+    expect(committed()).toEqual([
+      ["effects[E1].params[profile_in_us]", { mode: "Static", value: 2_500_000 }],
+      ["effects[E1].params[profile_out_us]", { mode: "Static", value: 2_750_000 }],
     ]);
+  });
+
+  it("derives the missing in bound from a first out edit", () => {
+    renderRow(denoise());
+    typeBound("out", "3");
+    expect(committed()).toEqual([
+      ["effects[E1].params[profile_in_us]", { mode: "Static", value: 2_750_000 }],
+      ["effects[E1].params[profile_out_us]", { mode: "Static", value: 3_000_000 }],
+    ]);
+  });
+
+  // The derived pair lands inside the part of the media this clip plays, even
+  // when the typed number does not: the span is [2 s, 5 s) here.
+  it("slides a derived pair back inside the clip's span", () => {
+    renderRow(denoise());
+    typeBound("out", "1.5");
+    expect(committed()).toEqual([
+      ["effects[E1].params[profile_in_us]", { mode: "Static", value: 2_000_000 }],
+      ["effects[E1].params[profile_out_us]", { mode: "Static", value: 2_250_000 }],
+    ]);
+  });
+
+  // Never an inverted pair and never one shorter than the filter can learn
+  // from: the typed bound stops a whole minimum span short of its sibling.
+  it("holds a typed bound a whole minimum span away from its sibling", () => {
+    renderRow(denoise({ inUs: 2_200_000, outUs: 3_000_000 }));
+    typeBound("in", "4");
+    expect(committed()).toEqual([
+      ["effects[E1].params[profile_in_us]", { mode: "Static", value: 2_750_000 }],
+      ["effects[E1].params[profile_out_us]", { mode: "Static", value: 3_000_000 }],
+    ]);
+  });
+
+  // A trim can leave a region the clip no longer reaches; a later field edit
+  // rebuilds the pair around what was typed instead of keeping the stale half.
+  it("rebuilds the pair when the stored sibling is outside the clip's span", () => {
+    renderRow(denoise({ inUs: 10_000_000, outUs: 11_000_000 }));
+    typeBound("out", "3");
+    expect(committed()).toEqual([
+      ["effects[E1].params[profile_in_us]", { mode: "Static", value: 2_750_000 }],
+      ["effects[E1].params[profile_out_us]", { mode: "Static", value: 3_000_000 }],
+    ]);
+  });
+
+  // The arm button is disabled on a clip this short; the fields refuse for the
+  // same reason — no pair inside that span is one the bake would accept.
+  it("writes nothing on a clip shorter than the minimum span", () => {
+    renderRow(denoise(), audioLayer(200_000));
+    typeBound("in", "2.1");
+    expect(updateLayerParamTracks).not.toHaveBeenCalled();
   });
 });
 

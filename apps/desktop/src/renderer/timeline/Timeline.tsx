@@ -60,6 +60,10 @@ import {
 } from "./audioSlip";
 import { deriveAudioSyncOffsets, setAudioSyncOffsets } from "./audioSyncOffsetStore";
 import {
+  disarmRegionSelect,
+  useArmedRegionSelect,
+} from "./audioRegionArmStore";
+import {
   canToggleLinkSelection,
   enclosingLink,
   linkFanoutActive,
@@ -878,6 +882,12 @@ export function Timeline({
   // this root would re-render every lane, sub-lane and chip per pointermove.
   // This root subscribes to the one bit it draws.
   const isLayerDragging = useIsLayerDragging(compositionId);
+  // The sample-region one-shot, armed from a denoise card. Two bits reach this
+  // root: the cursor that says only the target clip will take the press, and
+  // the Escape / press-elsewhere paths that spend the arm. The gesture itself
+  // belongs to the clip block (`LayerBlock` → `useAudioRegionDrag`), and this
+  // subscription flips twice per arm, not at event rate.
+  const armedRegion = useArmedRegionSelect();
   const { setDrag, pendingPlacements, pendingLayerById, dragLayerById } =
     useLayerDrag({
       compositionId,
@@ -1463,6 +1473,21 @@ export function Timeline({
     [bladeCutTimeFromClientX, onMutated],
   );
 
+  // Esc disarms the sample-region one-shot. Its own effect rather than a branch
+  // of the blade handler below: the two modes are independent, and this one is
+  // armed from the inspector, so a timeline that never entered blade mode still
+  // has to answer for it. Window level, and mounted only while armed.
+  useEffect(() => {
+    if (armedRegion === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      disarmRegionSelect();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [armedRegion]);
+
   // Esc exits blade mode. Bound at the window level so it fires regardless
   // of focus, and attached only while blade mode is on.
   const onExitBladeEvent = useEffectEvent(onExitBlade);
@@ -1680,7 +1705,33 @@ export function Timeline({
       // a compound clip's timeline the same way, and it is the one signal that
       // reads without leaving the timeline: the tab says which composition this
       // is, the tint says how deep it sits, and neither can be scrolled past.
-      style={insideGroup ? { backgroundColor: groupDepthTint } : undefined}
+      //
+      // The armed cursor is inline rather than a `cursor-*` class: three of
+      // those are already conditional on this element, and Tailwind's emit
+      // order — not the class list's — would decide which one won.
+      style={{
+        ...(insideGroup ? { backgroundColor: groupDepthTint } : {}),
+        ...(armedRegion !== null ? { cursor: "not-allowed" } : {}),
+      }}
+      // Capture phase, because the clip blocks stop every press they take: the
+      // one press that must NOT spend the arm is a press on the armed clip, and
+      // only a handler that runs before the block's own can tell the two apart.
+      // Nothing else about the press changes — it goes on to be handled
+      // normally.
+      onPointerDownCapture={
+        armedRegion === null
+          ? undefined
+          : (e) => {
+              const block = (e.target as Element | null)?.closest?.(
+                "[data-layer-id]",
+              );
+              if (
+                block?.getAttribute("data-layer-id") !== armedRegion.layerId
+              ) {
+                disarmRegionSelect();
+              }
+            }
+      }
     >
       {/* Renders nothing. A leaf so the trim preview's per-frame seek stays a
           leaf subscription — read here, it would re-render every lane. */}

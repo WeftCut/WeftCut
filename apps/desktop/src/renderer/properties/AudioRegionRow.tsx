@@ -25,6 +25,11 @@ import {
   clearRegionFocus,
   setRegionFocus,
 } from "../state/audioRegionFocusStore";
+import {
+  resolveHandleDrag,
+  resolveRegionDrag,
+  type RegionBound,
+} from "../timeline/audioRegionGeometry";
 import { armRegionSelect } from "../timeline/audioRegionArmStore";
 
 const US_PER_SEC = 1_000_000;
@@ -50,7 +55,7 @@ function storedBound(track: AnimTrack<number> | undefined): number | null {
 /// can introduce after the fact (the bake itself stays valid — bounds are source
 /// time precisely so trim never invalidates it, spec Decision 3).
 function sourceSpan(layer: LayerSummary): { startUs: number; endUs: number } {
-  const startUs = layer.params.kind === "Audio" ? layer.params.src_in_us : 0;
+  const startUs = "src_in_us" in layer.params ? layer.params.src_in_us : 0;
   return { startUs, endUs: startUs + (layer.t_end_us - layer.t_start_us) };
 }
 
@@ -79,6 +84,48 @@ export function AudioRegionRow({
 
   const inUs = storedBound(effect.params[region.inKey]);
   const outUs = storedBound(effect.params[region.outKey]);
+  const span = sourceSpan(layer);
+
+  /// The pair one typed bound produces.
+  ///
+  /// A field can only say one number, so the sibling either SURVIVES the edit —
+  /// held `minUs` away and inside the clip's span, the same rule the band's
+  /// handles obey — or is DERIVED from the typed bound when it is absent, stale
+  /// (a trim moved the clip off it) or too crowded to leave room. Neither an
+  /// inverted nor a too-short pair is ever written: both read as "no region" to
+  /// the bake, so committing one would be a silent refusal.
+  ///
+  /// `null` when the clip plays less audio than the filter can learn from — no
+  /// pair inside that span exists, and the arm button is already disabled there.
+  const pairFromEdit = (
+    bound: RegionBound,
+    typedUs: number,
+  ): { inUs: number; outUs: number } | null => {
+    const clip = { tStartUs: span.startUs, tEndUs: span.endUs, minUs: region.minUs };
+    const sibling = bound === "in" ? outUs : inUs;
+    if (sibling !== null) {
+      const movedUs = resolveHandleDrag({ ...clip, bound, newUs: typedUs, otherUs: sibling });
+      const pair =
+        bound === "in"
+          ? { inUs: movedUs, outUs: sibling }
+          : { inUs: sibling, outUs: movedUs };
+      if (
+        pair.outUs - pair.inUs >= region.minUs &&
+        pair.inUs >= span.startUs &&
+        pair.outUs <= span.endUs
+      ) {
+        return pair;
+      }
+    }
+    // Grown away from the typed bound, exactly as the timeline's gesture grows a
+    // too-short drag around its press point — so a first edit to either field
+    // lands a whole region rather than a key its sibling cannot complete.
+    return resolveRegionDrag({
+      ...clip,
+      pressUs: typedUs,
+      releaseUs: bound === "in" ? typedUs : typedUs - 1,
+    });
+  };
 
   /// Both bounds, always, as ONE batch: an edit to either field is one undo
   /// entry, and a region typed into an empty card lands as a pair rather than a
@@ -100,7 +147,13 @@ export function AudioRegionRow({
     );
   };
 
-  const span = sourceSpan(layer);
+  /// One field's edit, as the whole pair it implies.
+  const commitBound = (bound: RegionBound, typedUs: number) => {
+    const pair = pairFromEdit(bound, typedUs);
+    if (pair === null) return;
+    commit(pair.inUs, pair.outUs);
+  };
+
   const clipTooShort = layer.t_end_us - layer.t_start_us < region.minUs;
 
   /// Why nothing is baking, in the order the user can act on: a region problem
@@ -147,7 +200,7 @@ export function AudioRegionRow({
             // Enter — the inspector-proven pattern, and the only one that keeps
             // one edit to one undo entry.
             onValueChange={() => {}}
-            onCommit={(v) => commit(Math.round(v * US_PER_SEC), outUs ?? 0)}
+            onCommit={(v) => commitBound("in", Math.round(v * US_PER_SEC))}
           />
         </div>
       </div>
@@ -161,7 +214,7 @@ export function AudioRegionRow({
             format={SECONDS_FORMAT}
             ariaLabel={t("effects.audio.source_out")}
             onValueChange={() => {}}
-            onCommit={(v) => commit(inUs ?? 0, Math.round(v * US_PER_SEC))}
+            onCommit={(v) => commitBound("out", Math.round(v * US_PER_SEC))}
           />
         </div>
       </div>

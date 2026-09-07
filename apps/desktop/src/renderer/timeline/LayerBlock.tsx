@@ -11,6 +11,7 @@ import {
   Sparkles,
   Type,
 } from "lucide-react";
+import { getAudioEffect } from "../../shared/audioEffects/catalog";
 import { TEXT_NAME_MAX, textSnippet } from "../../shared/textSnippet";
 import { adjacentFrameBoundaryUs, formatTimecode } from "../frames";
 import { groupDisplayName, layerDisplayName } from "../lib/layerName";
@@ -27,6 +28,11 @@ import {
   type LayerSlice,
   type LinkTab as LinkTabInfo,
 } from "./geometry";
+import { AudioRegionBand } from "./AudioRegionBand";
+import { compUsFromSourceUs } from "./audioRegionGeometry";
+import { useArmedRegionSelect } from "./audioRegionArmStore";
+import { useAudioRegionDrag } from "./hooks/useAudioRegionDrag";
+import { useRegionFocus } from "../state/audioRegionFocusStore";
 import { TimelineVisualPreview } from "./TimelineVisualPreview";
 import { useLayerBakePhase } from "./motifBakeStatusStore";
 import { useGroupMarkerCount } from "./groupMarkerCount";
@@ -464,6 +470,15 @@ export function LayerBlock({
   // Null for every other kind, and for a Group whose composition the summary no
   // longer carries — `sourceWindowTail` reads that as "draw neither affordance".
   const groupSourceDurationUs = useCompositionDurationUs(groupCompositionId);
+  // The sample-region gesture, instantiated per block: only one clip can be
+  // under a region drag and only that clip draws the band, so its preview
+  // re-renders this block and nothing else.
+  const regionDrag = useAudioRegionDrag();
+  const armedRegion = useArmedRegionSelect();
+  const regionFocus = useRegionFocus();
+  // Measured at a handle's press for the band's px↔µs mapping. The handle's own
+  // element cannot answer it — the mapping is the CLIP's.
+  const blockElRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState("");
   // Which of THIS layer+param's keyframes are selected. Reads the shared
   // selection store so the chip diamonds and the sub-lane ones agree.
@@ -563,6 +578,9 @@ export function LayerBlock({
   const width = ((liveEnd - liveStart) / 1_000_000) * pxPerSec;
   const label = layerDisplayName(layer, t, groupOrdinals);
 
+  /// The clip's head in SOURCE time — 0 for the kinds that window no source.
+  const srcInUs = "src_in_us" in layer.params ? layer.params.src_in_us : 0;
+
   // Source copies are normally filtered out for cross-track drag/pending
   // states. If one still renders during a transitional frame, keep it
   // non-interactive and visually secondary.
@@ -636,6 +654,22 @@ export function LayerBlock({
       return;
     }
     const blockRect = e.currentTarget.getBoundingClientRect();
+    // An armed card outranks select and move both: while its "Select region"
+    // has armed THIS clip, a press on it paints the noise-profile span and
+    // nothing else (spec Decision 12). The gesture claims the event itself, so
+    // a press it took reaches none of the paths below.
+    if (
+      regionDrag.startRegionDrag(e, {
+        layerId: layer.id,
+        tStartUs: layer.t_start_us,
+        tEndUs: layer.t_end_us,
+        srcInUs,
+        pxPerSec,
+        blockLeftPx: blockRect.left,
+      })
+    ) {
+      return;
+    }
     const zone = edgeZoneFor(e.clientX, blockRect);
     const kind: DragKind =
       zone === "left" ? "trim-start" : zone === "right" ? "trim-end" : "move";
@@ -685,7 +719,7 @@ export function LayerBlock({
   // window's, not the Group's, so it is asked kind-agnostically: a media clip
   // whose file was replaced by a shorter one is the same picture.
   const sourceTail = sourceWindowTail({
-    srcInUs: "src_in_us" in layer.params ? layer.params.src_in_us : 0,
+    srcInUs,
     srcOutUs: "src_out_us" in layer.params ? layer.params.src_out_us : 0,
     sourceDurationUs: groupSourceDurationUs,
   });
@@ -793,8 +827,61 @@ export function LayerBlock({
     return { diamonds, extrapMarks };
   })();
 
+  /// The card whose sample region this clip may draw, with everything the band
+  /// needs to read it: the armed payload while a card has armed this clip (it
+  /// carries both param keys already), else the focused card's effect looked up
+  /// in the audio catalog.
+  const regionCard = (() => {
+    if (previewOnly) return null;
+    if (armedRegion?.layerId === layer.id) return armedRegion;
+    if (regionFocus?.layerId !== layer.id) return null;
+    const effect = layer.effects.find(
+      (candidate) => candidate.id === regionFocus.effectId,
+    );
+    const region = effect ? getAudioEffect(effect.kind)?.region : undefined;
+    return effect && region ? { effectId: effect.id, ...region } : null;
+  })();
+
+  /// The band lives exactly as long as the open card (spec Decision 12), so a
+  /// collapse takes it away. A gesture in flight is the one thing that outlives
+  /// the card: its preview has to keep drawing until the commit lands.
+  const regionBandCard =
+    regionCard !== null &&
+    (regionFocus?.layerId === layer.id || regionDrag.preview !== null)
+      ? regionCard
+      : null;
+
+  /// While a card has armed this clip, the press means "paint the region" — the
+  /// cursor says so, and inline so no other `cursor-*` utility on the block can
+  /// win the emit order. Never on a clip the gesture would refuse.
+  const armedHere =
+    regionCard !== null &&
+    armedRegion?.layerId === layer.id &&
+    !layer.locked &&
+    !trackLocked;
+
+  /// The region's stored bounds on the timeline's own axis — what a handle drag
+  /// must know to hold one bound a minimum span from the other. Null while
+  /// either is unwritten, which is when there is no band to grab.
+  const regionBoundsCompUs = (card: {
+    effectId: string;
+    inKey: string;
+    outKey: string;
+  }): { inUs: number; outUs: number } | null => {
+    const effect = layer.effects.find((candidate) => candidate.id === card.effectId);
+    const inTrack = effect?.params[card.inKey];
+    const outTrack = effect?.params[card.outKey];
+    if (inTrack?.mode !== "Static" || outTrack?.mode !== "Static") return null;
+    const map = { tStartUs: layer.t_start_us, srcInUs };
+    return {
+      inUs: compUsFromSourceUs(inTrack.value, map),
+      outUs: compUsFromSourceUs(outTrack.value, map),
+    };
+  };
+
   return (
     <div
+      ref={blockElRef}
       data-drag-validity={
         isDragging && dragState?.kind === "move" ? dragValidity : undefined
       }
@@ -853,8 +940,9 @@ export function LayerBlock({
             : "0 4px 12px rgb(251 191 36 / 0.38)"
           : undefined,
         opacity: movedAcrossTracks ? 0.3 : layer.enabled ? 1 : 0.45,
-        cursor:
-          dragIsInvalid
+        cursor: armedHere
+          ? "crosshair"
+          : dragIsInvalid
             ? "not-allowed"
             : !layer.locked && !trackLocked && !bladeMode && !isDragging && edgeHover !== null
             ? "ew-resize"
@@ -914,6 +1002,46 @@ export function LayerBlock({
         layerHeightPx={sliceHeight}
         pxPerSec={pxPerSec}
       />
+      {regionBandCard && (
+        <AudioRegionBand
+          layer={layer}
+          effectId={regionBandCard.effectId}
+          inKey={regionBandCard.inKey}
+          outKey={regionBandCard.outKey}
+          minUs={regionBandCard.minUs}
+          pxPerSec={pxPerSec}
+          // The block's left edge follows the LIVE clip head through a trim or
+          // move preview while the stored region stays on the committed one;
+          // this offset is what keeps the band over its own audio for the
+          // length of that gesture, and is 0 the rest of the time.
+          blockLeftPx={((layer.t_start_us - liveStart) / 1_000_000) * pxPerSec}
+          visibleLoUs={srcInUs}
+          visibleHiUs={srcInUs + (layer.t_end_us - layer.t_start_us)}
+          preview={regionDrag.preview}
+          onHandlePointerDown={(e, bound) => {
+            const bounds = regionBoundsCompUs(regionBandCard);
+            if (bounds === null) return;
+            regionDrag.startHandleDrag(
+              e,
+              {
+                layerId: layer.id,
+                tStartUs: layer.t_start_us,
+                tEndUs: layer.t_end_us,
+                srcInUs,
+                pxPerSec,
+                // Measured at the press, in the coordinates the press reports.
+                blockLeftPx: blockElRef.current?.getBoundingClientRect().left ?? 0,
+                effectId: regionBandCard.effectId,
+                inKey: regionBandCard.inKey,
+                outKey: regionBandCard.outKey,
+                minUs: regionBandCard.minUs,
+                ...bounds,
+              },
+              bound,
+            );
+          }}
+        />
+      )}
       {dragIsInvalid && (
         <span
           className={`pointer-events-none absolute inset-0 z-[1] rounded ${

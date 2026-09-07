@@ -70,6 +70,14 @@ import { registerTransport, releaseTransport } from "../state/playbackStore";
 import { registerRevealTrack } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
 import {
+  setRegionFocus,
+  useAudioRegionFocusStore,
+} from "../state/audioRegionFocusStore";
+import {
+  armRegionSelect,
+  useAudioRegionArmStore,
+} from "./audioRegionArmStore";
+import {
   compositionFixture,
   groupLayerFixture,
   summaryFixture,
@@ -99,6 +107,7 @@ const ipcMocks = vi.hoisted(() => ({
   getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
   linksCreate: vi.fn().mockResolvedValue("link-created"),
   updateLayerParamTrack: vi.fn().mockResolvedValue(undefined),
+  updateLayerParamTracks: vi.fn().mockResolvedValue(undefined),
   updateParamTracksMulti: vi.fn().mockResolvedValue(undefined),
   logEmit: vi.fn().mockResolvedValue(undefined),
   viewStateGet: vi.fn().mockResolvedValue({
@@ -134,6 +143,7 @@ vi.mock("../ipc", async (importOriginal) => {
     getWaveformPeaks: ipcMocks.getWaveformPeaks,
     linksCreate: ipcMocks.linksCreate,
     updateLayerParamTrack: ipcMocks.updateLayerParamTrack,
+    updateLayerParamTracks: ipcMocks.updateLayerParamTracks,
     updateParamTracksMulti: ipcMocks.updateParamTracksMulti,
     logEmit: ipcMocks.logEmit,
     viewStateGet: ipcMocks.viewStateGet,
@@ -4493,5 +4503,162 @@ describe("collapsed keyframe row", () => {
 
     expect(diamondLeft(container, "c1")).toBeCloseTo(committed * 1.5, 3);
     expect(diamondLeft(container, "c0")).toBe(0);
+  });
+});
+
+describe("Timeline sample-region gesture", () => {
+  const ARM = {
+    layerId: "audio-1",
+    effectId: "fx-1",
+    inKey: "profile_in_us",
+    outKey: "profile_out_us",
+    minUs: 250_000,
+  };
+
+  /// A 2 s audio clip playing its media from 0.5 s, carrying a denoise effect
+  /// whose sample region is already written. At 80 px/s the block is 160 px
+  /// wide, so a press 40 px in is half a second into the clip and one second
+  /// into its media — the two axes never share a number here.
+  const audioLayer: LayerSummary = {
+    ...layer,
+    id: "audio-1",
+    label: "Voice",
+    kind: "Audio",
+    t_start_us: 0,
+    t_end_us: 2_000_000,
+    params: {
+      kind: "Audio",
+      media_id: "media-audio",
+      media_label: "voice.wav",
+      src_in_us: 500_000,
+      src_out_us: 2_500_000,
+      gain_db: staticNum(0),
+      pan: staticNum(0),
+      fade_in_us: 0,
+      fade_out_us: 0,
+      mute: false,
+      role: "dialogue",
+    },
+    effects: [
+      {
+        id: "fx-1",
+        kind: "audio.denoise",
+        enabled: true,
+        params: {
+          strength: staticNum(12),
+          margin: staticNum(8),
+          profile_in_us: staticNum(1_000_000),
+          profile_out_us: staticNum(1_500_000),
+        },
+      },
+    ],
+  };
+  const audioTrack: TrackSummary = { ...track, layers: [audioLayer] };
+
+  beforeEach(() => {
+    clearLayerSelection();
+    setActiveRegion(null);
+    useAudioRegionArmStore.setState({ armed: null });
+    useAudioRegionFocusStore.setState({ focus: null });
+    ipcMocks.updateLayerParamTracks.mockClear();
+    ipcMocks.moveLayer.mockClear();
+    useAppSettingsStore.setState((s) => ({
+      settings: {
+        ...s.settings,
+        display_mode: "AllTracks",
+        tail_snap_enabled: false,
+      },
+    }));
+  });
+  afterEach(() => {
+    cleanup();
+    useAudioRegionArmStore.setState({ armed: null });
+    useAudioRegionFocusStore.setState({ focus: null });
+  });
+
+  it("an armed clip takes the press as a region drag, not a select or a move", async () => {
+    const { getByText } = renderTimeline({ tracks: [audioTrack] });
+    act(() => armRegionSelect(ARM));
+    const block = getByText("Voice").closest(".timeline-layer") as HTMLElement;
+    expect(block.style.cursor).toBe("crosshair");
+
+    fireEvent.pointerDown(block, { button: 0, clientX: 40, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 120, clientY: 30 });
+    await act(async () => {
+      fireEvent.pointerUp(window, { clientX: 120, clientY: 30 });
+    });
+
+    // Both bounds as ONE batch, in source µs: the press at 0.5 s of the clip is
+    // 1 s of the media, the release at 1.5 s is 2 s.
+    expect(ipcMocks.updateLayerParamTracks).toHaveBeenCalledTimes(1);
+    expect(ipcMocks.updateLayerParamTracks).toHaveBeenCalledWith("audio-1", [
+      ["effects[fx-1].params[profile_in_us]", { mode: "Static", value: 1_000_000 }],
+      ["effects[fx-1].params[profile_out_us]", { mode: "Static", value: 2_000_000 }],
+    ]);
+    expect(useAudioRegionArmStore.getState().armed).toBeNull();
+    // The press belonged to the region and to nothing else.
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
+  });
+
+  it("a press on another clip spends the arm and is otherwise handled normally", () => {
+    const mixed: TrackSummary = {
+      ...track,
+      layers: [audioLayer, { ...linkedLayer, id: "other-1", label: "Other" }],
+    };
+    const { getByText } = renderTimeline({ tracks: [mixed] });
+    act(() => armRegionSelect(ARM));
+    const other = getByText("Other").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(other, { button: 0, clientX: 200, clientY: 30 });
+    fireEvent.pointerUp(window, { clientX: 200, clientY: 30 });
+
+    expect(useAudioRegionArmStore.getState().armed).toBeNull();
+    expect(ipcMocks.updateLayerParamTracks).not.toHaveBeenCalled();
+    expect(primaryLayerIdOf(currentSelection())).toBe("other-1");
+  });
+
+  it("Escape spends the arm", () => {
+    renderTimeline({ tracks: [audioTrack] });
+    act(() => armRegionSelect(ARM));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(useAudioRegionArmStore.getState().armed).toBeNull();
+  });
+
+  // Spec Decision 12: the band's visibility follows the card the user already
+  // has open, so there is no toggle of its own to explain.
+  it("draws the band only while a card claims this clip", () => {
+    renderTimeline({ tracks: [audioTrack] });
+    expect(screen.queryByTestId("audio-region-band")).toBeNull();
+
+    act(() => setRegionFocus({ layerId: "audio-1", effectId: "fx-1" }));
+    const band = screen.getByTestId("audio-region-band");
+    // The stored region covers [1 s, 1.5 s) of the media, which this clip plays
+    // at [0.5 s, 1 s) — 40 px in at 80 px/s, and 40 px wide.
+    expect(band.style.left).toBe("40px");
+    expect(band.style.width).toBe("40px");
+
+    act(() => setRegionFocus({ layerId: "some-other-layer", effectId: "fx-1" }));
+    expect(screen.queryByTestId("audio-region-band")).toBeNull();
+  });
+
+  it("an edge handle moves its own bound and leaves the clip alone", async () => {
+    renderTimeline({ tracks: [audioTrack] });
+    act(() => setRegionFocus({ layerId: "audio-1", effectId: "fx-1" }));
+    const handle = screen.getByTestId("audio-region-handle-out");
+
+    fireEvent.pointerDown(handle, { button: 0, clientX: 80, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 120, clientY: 30 });
+    await act(async () => {
+      fireEvent.pointerUp(window, { clientX: 120, clientY: 30 });
+    });
+
+    expect(ipcMocks.updateLayerParamTracks).toHaveBeenCalledWith("audio-1", [
+      ["effects[fx-1].params[profile_out_us]", { mode: "Static", value: 2_000_000 }],
+    ]);
+    // The handle sits inside the block: without its own claim on the press the
+    // clip would have been selected and a move armed under the edge drag.
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
   });
 });
