@@ -51,12 +51,28 @@ const PLACEMENTS: readonly VoiceoverPlacement[] = ["append", "playhead"];
 /// the agent path.
 ///
 /// Rendered by App rather than by a Panel — see `voiceoverPrompt.ts`.
+/// Open/close gate ONLY. Splitting the frame-rate `usePlayheadTimeUs()`
+/// subscription into `VoiceoverDialogInner` (mounted just while open) keeps the
+/// dialog — which App renders unconditionally — off the per-frame path during
+/// ordinary playback. Left in the outer body, that subscription re-rendered the
+/// whole 290-line component 30-60×/s for a dialog nobody could see, the exact
+/// "frame-rate value above a leaf" the tier rules forbid (docs/render.md
+/// §Playhead updates). `open` changes rarely, so this component almost never
+/// re-renders.
 export function VoiceoverDialog() {
-  const { t } = useTranslation();
   const open = useVoiceoverPromptStore((s) => s.open);
+  if (!open) return null;
+  return <VoiceoverDialogInner />;
+}
+
+function VoiceoverDialogInner() {
+  const { t } = useTranslation();
   const summary = useProjectSummary();
   // Root time, which is the clock both placements are expressed in — the
   // composition's `duration_us` and `playheadStore` agree on it (ADR 0053).
+  // Only subscribed while the dialog is open (this component is mounted by the
+  // gate above), so playback pays for it only when the placement preview needs
+  // it.
   const playheadUs = usePlayheadTimeUs();
   const [script, setScript] = useState("");
   const [voice, setVoice] = useState<string>(VOICEOVER_VOICES[0]);
@@ -70,23 +86,19 @@ export function VoiceoverDialog() {
   const tracks = voiceoverTrackOptions(root);
   const fallbackTrackId = defaultVoiceoverTrackId(root);
 
-  // Fresh draft per opening. The track resets to the arm's own default rather
-  // than to the last choice: the default is a fact about the project, and a
-  // remembered id can name a track a later edit removed.
+  // Fresh draft per opening. This component mounts only while the dialog is
+  // open (the gate above), so a mount IS an opening — the track resets to the
+  // arm's own default rather than to the last choice: the default is a fact
+  // about the project, and a remembered id can name a track a later edit
+  // removed.
   useEffect(() => {
-    if (open) {
-      setScript("");
-      setVoice(VOICEOVER_VOICES[0]);
-      setSpeed(VOICEOVER_SPEED_DEFAULT);
-      setPlacement("append");
-      setTrackId(fallbackTrackId);
-      setGenerating(false);
-      setError("");
-    }
+    setTrackId(fallbackTrackId);
     // `fallbackTrackId` is deliberately out of the deps: it is the SEED of an
     // editable field, and re-seeding on a project tick would move the user's
-    // chosen track out from under them mid-edit.
-  }, [open]);
+    // chosen track out from under them mid-edit. The other fields seed straight
+    // from `useState`, since a fresh mount already gives them their defaults.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const trackOptions = useMemo(
     () =>
@@ -96,8 +108,6 @@ export function VoiceoverDialog() {
       })),
     [tracks, t],
   );
-
-  if (!open) return null;
 
   const chars = script.length;
   const overBy = chars - VOICEOVER_SCRIPT_MAX;
