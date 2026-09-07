@@ -1016,7 +1016,7 @@ function TextFields({
       {/* The authored size stays the one editable number (ADR 0049 keeps exactly
           one font size in state); this reports what the box let through. */}
       {shrinkNotice === null ? null : (
-        <p className="meta" data-testid="text-shrink-notice">{shrinkNotice}</p>
+        <p className="prop-hint" data-testid="text-shrink-notice">{shrinkNotice}</p>
       )}
       <InspectorColorField
         layerId={layer.id}
@@ -1320,7 +1320,7 @@ function MotifFields({
       <BakeStatusLine layerId={layer.id} />
       <TransformSection layer={layer} scaleLinked={v.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       {motif === null ? (
-        <p className="meta">{t("property_panel.unknown_motif")}</p>
+        <p className="prop-hint">{t("property_panel.unknown_motif")}</p>
       ) : motif.hasParamsUi ? (
         // The Motif ships its own page — it owns the whole props surface,
         // including labels, grouping and order. The fallback form below stays
@@ -1417,7 +1417,7 @@ function MotifLifecycleRow({
   if (pending) {
     return (
       <div className="prop-motif-lifecycle">
-        <p className="meta">{pending.message}</p>
+        <p className="prop-hint">{pending.message}</p>
         <Button size="sm" disabled={busy} onClick={run(async () => { await pending.action(); setPending(null); })}>
           {t("property_panel.motif_confirm")}
         </Button>
@@ -1614,7 +1614,7 @@ function MotifSourcePanel({ motifId }: { motifId: string }) {
 
   return (
     <div className="prop-motif-source">
-      <p className="meta">{t("property_panel.motif_source_hint")}</p>
+      <p className="prop-hint">{t("property_panel.motif_source_hint")}</p>
       <textarea
         className="prop-motif-source-text"
         aria-label={t("property_panel.motif_source")}

@@ -13,10 +13,6 @@
   height: 100%;
 }
 
-.meta {
-  color: var(--muted-foreground);
-}
-
 .app-top-chrome {
   min-width: 0;
 }

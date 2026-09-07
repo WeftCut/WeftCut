@@ -868,6 +868,17 @@
   color: var(--muted-foreground);
 }
 
+/* A line of prose among the fields — a notice ("the box shrank this to 24px")
+   or an instruction ("edit, then Apply"). Caption size like every other
+   secondary line in the panel; the muted color alone would leave the
+   paragraph at the root font size, louder than the controls it explains. */
+.prop-hint {
+  margin: 0;
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-body);
+  color: var(--muted-foreground);
+}
+
 .prop-field {
   display: grid;
   /* `minmax(0, 1fr)` (NOT plain `1fr`) so the control column can shrink
