@@ -97,6 +97,22 @@ const REPLAY_AFTER_WARMUP = argv.includes("--replay-after-warmup");
 /// sweeping it is the decisive diagnostic for whether a lane's wall is
 /// latency-bound (a smaller frame changes nothing) or throughput-bound.
 const PLAYBACK_RESOLUTION = arg("playback-resolution", "full");
+/// Attribution instruments, both opt-in because both perturb the cell they
+/// measure — a traced or probed cell is a DIAGNOSTIC, never a comparison row.
+///   --trace       records a Chromium trace (renderer main thread, its IO
+///                 thread, the GPU process) for the first `--trace-s` seconds of
+///                 the measured window via `contentTracing`, so a main-thread
+///                 stall that LoAF/longtask cannot attribute can be read off the
+///                 task that spans it. Analyse with `trace-gaps.mjs` beside this
+///                 file.
+///   --ui-probe    measures what the user actually feels: the round-trip of a
+///                 REAL input event (Playwright `mouse.move` → CDP → renderer
+///                 input ack) every 100 ms, and the interval between successive
+///                 timeline-playhead DOM moves. Both live on the same main thread
+///                 as the preview loop, so a blocked thread shows in both.
+const TRACE = argv.includes("--trace");
+const TRACE_S = Number(arg("trace-s", "8"));
+const UI_PROBE = argv.includes("--ui-probe");
 /// Consecutive FAIL cells that end a leg's sweep. Two, not one: a single cell
 /// can fail on a transient (a background job that outlived the quiet gate), and
 /// stopping on it would under-report the ceiling.
@@ -443,6 +459,112 @@ async function drainStallProbes(page) {
     }
     return { longFrames: w.__pbperfLongFrames ?? null, timer };
   });
+}
+
+// ── Attribution instruments (--trace / --ui-probe) ──────────────────────────
+/// What the trace records. `toplevel` + `sequence_manager` name every task the
+/// renderer main thread runs and its source; `disabled-by-default-toplevel.ipc`
+/// adds the mojo interface behind an IPC-dispatched task; `gpu`/`viz`/`cc` cover
+/// the GPU process and the compositor so a main-thread wait can be lined up
+/// against what the GPU process was doing at that instant; `v8`/`blink` name our
+/// own JS and any GC pause. Everything else is excluded to keep 8 s well under
+/// the buffer.
+const TRACE_CONFIG = {
+  recording_mode: "record-until-full",
+  trace_buffer_size_in_kb: 1_000_000,
+  included_categories: [
+    "toplevel", "toplevel.flow", "sequence_manager", "scheduler", "renderer.scheduler",
+    "mojom", "ipc", "gpu", "viz", "cc", "media", "blink", "blink.user_timing", "v8", "v8.execute",
+    "base", "disabled-by-default-toplevel.ipc", "disabled-by-default-ipc.flow",
+    "disabled-by-default-v8.gc",
+  ],
+  excluded_categories: ["*"],
+};
+
+/// In-page half of --ui-probe: one rAF loop that watches the timeline playhead's
+/// `style.left` and records every change with its timestamp. The interval
+/// between changes is the playhead's visible cadence — 33.3 ms at a 30 fps
+/// composition on any display — and its tail is the stutter the user sees.
+async function installUiProbes(page) {
+  return page.evaluate(() => {
+    const w = window;
+    const el = document.querySelector('[data-testid="timeline-playhead"]');
+    const st = { hasEl: el !== null, rafTs: [], changeTs: [], lastLeft: null, handle: 0 };
+    w.__pbperfUi = st;
+    const loop = (t) => {
+      if (st.rafTs.length < 20_000) st.rafTs.push(t);
+      const left = el ? el.style.left : null;
+      if (left !== st.lastLeft) {
+        st.lastLeft = left;
+        if (st.changeTs.length < 20_000) st.changeTs.push(t);
+      }
+      st.handle = requestAnimationFrame(loop);
+    };
+    st.handle = requestAnimationFrame(loop);
+    return { hasEl: st.hasEl };
+  });
+}
+
+function percentileSummary(vals) {
+  const s = vals.slice().sort((a, b) => a - b);
+  const at = (q) => (s.length === 0 ? 0 : s[Math.min(s.length - 1, Math.max(0, Math.ceil(q * s.length) - 1))]);
+  return { n: s.length, p50Ms: at(0.5), p95Ms: at(0.95), p99Ms: at(0.99), maxMs: s.length ? s[s.length - 1] : 0,
+    nOver50: s.filter((g) => g > 50).length, nOver100: s.filter((g) => g > 100).length };
+}
+
+async function drainUiProbes(page) {
+  const raw = await page.evaluate(() => {
+    const st = window.__pbperfUi;
+    if (!st) return null;
+    cancelAnimationFrame(st.handle);
+    return { hasEl: st.hasEl, rafTs: st.rafTs, changeTs: st.changeTs };
+  });
+  if (!raw) return null;
+  const gaps = (ts) => ts.slice(1).map((t, i) => t - ts[i]);
+  const rafGaps = gaps(raw.rafTs);
+  const moveGaps = gaps(raw.changeTs);
+  const spanS = raw.rafTs.length > 1 ? (raw.rafTs[raw.rafTs.length - 1] - raw.rafTs[0]) / 1000 : 0;
+  return {
+    hasEl: raw.hasEl,
+    uiRaf: percentileSummary(rafGaps),
+    playheadMove: { ...percentileSummary(moveGaps), movesPerS: spanS > 0 ? raw.changeTs.length / spanS : 0,
+      // Kept with timestamps so a stall can be lined up against the trace.
+      worst: raw.changeTs.slice(1).map((t, i) => ({ atMs: t, gapMs: t - raw.changeTs[i] }))
+        .sort((a, b) => b.gapMs - a.gapMs).slice(0, 20) },
+  };
+}
+
+/// Harness half of --ui-probe: a real pointer move through CDP every 100 ms,
+/// timed from dispatch to the renderer's input ack. The target is the static
+/// ruler corner so hovering changes nothing on screen. Idle baseline on this
+/// path is a few ms; a blocked main thread shows as the full block length.
+function startInputLatencyProbe(page) {
+  const samples = [];
+  let stop = false;
+  const run = async () => {
+    const box = await page.locator('[data-testid="timeline-ruler-corner"]').boundingBox().catch(() => null);
+    let i = 0;
+    while (!stop) {
+      const x = (box ? box.x : 2) + 2 + (i % 3);
+      const y = (box ? box.y : 2) + 2;
+      const t = performance.now();
+      try {
+        await page.mouse.move(x, y);
+        samples.push([t, performance.now() - t]);
+      } catch { /* window mid-teardown */ }
+      i++;
+      await sleep(100);
+    }
+  };
+  const done = run();
+  return {
+    async stop() {
+      stop = true;
+      await done;
+      return { ...percentileSummary(samples.map((s) => s[1])),
+        worst: samples.slice().sort((a, b) => b[1] - a[1]).slice(0, 20).map(([t, g]) => ({ atMs: t, gapMs: g })) };
+    },
+  };
 }
 
 /// Sum every fate counter across a cell's clips. The per-clip spread matters too
@@ -794,7 +916,35 @@ async function runCell(leg, tracks) {
       void readMetrics().then((m) => metricSamples.push(m)).catch(() => {});
     }, 500);
 
-    await sleep(WINDOW_S * 1000);
+    // ── Attribution instruments (opt-in) ──────────────────────────────────
+    // The trace covers the FIRST `TRACE_S` seconds of the window and stops while
+    // playback still runs, so the stop's cross-process flush never lands in a
+    // teardown. The UI probes span the whole window.
+    let tracePath = null;
+    let uiProbe = null;
+    const uiProbeInstall = UI_PROBE ? await installUiProbes(page) : null;
+    const inputProbe = UI_PROBE ? startInputLatencyProbe(page) : null;
+    if (TRACE) {
+      const tag = arg("tag", "") ? `-${arg("tag", "")}` : "";
+      tracePath = path.join(
+        RESULTS_DIR,
+        `trace-${leg.fixture}-${leg.route}${leg.barrier ? `-${leg.barrier}` : ""}-${tracks}t${tag}-${Date.now()}.json`,
+      );
+      await app.evaluate(({ contentTracing }, cfg) => contentTracing.startRecording(cfg), TRACE_CONFIG);
+      const traceMs = Math.min(TRACE_S, WINDOW_S) * 1000;
+      await sleep(traceMs);
+      const tStop = Date.now();
+      await app.evaluate(({ contentTracing }, p) => contentTracing.stopRecording(p), tracePath);
+      log(`  trace → ${path.basename(tracePath)} (${((Date.now() - tStop) / 1000).toFixed(1)} s to flush)`);
+      await sleep(Math.max(0, WINDOW_S * 1000 - traceMs));
+    } else {
+      await sleep(WINDOW_S * 1000);
+    }
+    if (UI_PROBE) {
+      const input = await inputProbe.stop();
+      const playhead = await drainUiProbes(page);
+      uiProbe = { install: uiProbeInstall, input, ...playhead };
+    }
 
     clearInterval(metricsTimer);
     metricsTimer = null;
@@ -981,6 +1131,9 @@ async function runCell(leg, tracks) {
       stallProbeSupport,
       longFrames,
       timerCadence,
+      // Diagnostic-only fields; null unless --trace / --ui-probe were passed.
+      trace: tracePath,
+      uiProbe,
       perClip,
       barrierWallShare,
       fenceSpinShare,
@@ -1048,7 +1201,7 @@ const report = {
   config: { windowS: WINDOW_S, warmupS: WARMUP_S, maxTracks: MAX_TRACKS, compFps: COMP_FPS,
     dropBudget: DROP_BUDGET, presentFloor: PRESENT_FLOOR, tracks: EXPLICIT_TRACKS,
     playbackResolution: PLAYBACK_RESOLUTION, barriers: BARRIERS,
-    replayUsed: REPLAY_AFTER_WARMUP },
+    replayUsed: REPLAY_AFTER_WARMUP, trace: TRACE, traceS: TRACE_S, uiProbe: UI_PROBE },
   legs: [],
 };
 // `--tag` keeps chunked runs (one invocation per codec, say) from overwriting
