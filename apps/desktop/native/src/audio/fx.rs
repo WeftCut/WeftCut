@@ -758,8 +758,12 @@ mod tests {
         cond()
     }
 
-    /// The catalog's denoise stage, mirrored from the spec so this DSP test
-    /// exercises the graph TS actually emits: split, trim the sample region,
+    /// The catalog's denoise stage, hand-mirrored from `DENOISE.buildStage` in
+    /// `shared/audioEffects/denoise.ts` — re-diff against that template when it
+    /// changes. The TS side's tests prove the SHIPPED text (pinned in
+    /// `shared/audioEffects/graph.test.ts`, smoke-run through ffmpeg in
+    /// `main/audioFx/graph.ffmpeg.test.ts`); this copy exists only so the Rust
+    /// tests can prove the DSP. The graph: split, trim the sample region,
     /// concat it in front so `afftdn` learns the profile before the real
     /// signal arrives, then trim the pre-roll back off.
     ///

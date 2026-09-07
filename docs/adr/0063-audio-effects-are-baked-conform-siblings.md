@@ -88,11 +88,13 @@ artifact may be written into the project.
   plain mirror of that map, and the waveform sibling's path stays null until it
   lands, because correct audio must not wait on a picture.
 - **Preview is stale-while-revalidate; export gates and waits; failure never
-  falls back silently.** The mixer plays the last ready artifact while a new
-  bake runs and after one fails, and only an empty chain returns it to the raw
-  conform; the swap rides the mixer's existing micro-fade. Export flushes the
-  bake debounce, waits for what is still coming, and turns anything that will
-  never land into an export error naming the effect, the layer and the message.
+  falls back silently.** A layer that already has a ready artifact keeps
+  playing it while a new bake runs and after one fails. An empty chain returns
+  the layer to the raw conform, and so does a layer that has never had a ready
+  artifact — a first bake still pending, or a first bake that failed. The swap
+  rides the mixer's existing micro-fade. Export flushes the bake debounce,
+  waits for what is still coming, and turns anything that will never land into
+  an export error naming the effect, the layer and the message.
 - **Re-baking is automatic, debounced per layer, and cancellable.** One live
   bake per signature — the last layer to leave a signature is what cancels it —
   and a failed signature is not retried on unrelated project changes; a consumer
@@ -182,10 +184,10 @@ artifact may be written into the project.
   through the app-managed content catalog
   ([ADR 0061](0061-content-downloads-are-a-main-owned-resumable-queue.md)); a
   conform format carrying a start frame, for span-limited bakes; per-role bus
-  effects (`RoleMixSettings.effects`, still inert in the data model); dragging
-  the band body to relocate a region instead of re-arming; keyframed audio
-  params, which `afftdn`'s runtime-commandable `nr` / `nf` would reach through
-  `asendcmd`; and a clip badge for bake state.
+  effects — the `RoleMixSettings.effects` insert that would make each role a
+  true processing bus; dragging the band body to relocate a region instead of
+  re-arming; keyframed audio params, which `afftdn`'s runtime-commandable `nr` /
+  `nf` would reach through `asendcmd`; and a clip badge for bake state.
 
 ## References
 

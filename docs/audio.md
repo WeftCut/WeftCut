@@ -270,9 +270,9 @@ to linear and multiplied into every member layer's gain envelope before
 the block loop, and role mute/solo simply filter which layers enter the
 plan. There is no separate summing stage per role — the per-block
 accumulator loop is unchanged from a track-less mix. A future per-role
-effect insert (`RoleMixSettings.effects`) is the deferred extension
-point that would turn the fold into a real bus with its own DSP; it is
-named in the data model and does nothing yet.
+effect insert — the `RoleMixSettings.effects` this design does not have —
+is the deferred extension point that would turn the fold into a real bus
+with its own DSP.
 
 Three control levels stack, each owning a different scope:
 
@@ -405,7 +405,8 @@ so a loud floor left at the filter's default makes the whole filter a no-op.
   many is cheaper than exporting audio the user never heard.
 - **Waveform.** A tile's identity is a `waveformKey` — a media id for the raw
   conform, or `fx:{media_hash}.fx-{sig16}` for a baked sibling.
-  `LayerBlock.tsx` picks the fx key when one is ready,
+  `timeline/TimelineVisualPreview.tsx` picks the fx key when one is ready
+  (`useReadyPeaksKey` → the block's `waveformKey`),
   `tileEngine/WaveformTileProducer.ts` keys tiles and level tables by it, and
   `state/single-media-forward.ts` resolves an `fx:` key to an explicit
   `waveformPath` before forwarding to Rust. An fx key is immutable per
@@ -426,9 +427,11 @@ desired one ⇒ **ready**; an error stands ⇒ **failed**; otherwise **pending**
 Ready wins over a stale error deliberately, because the last failure stays
 attached until the next bake supersedes it.
 
-- **Preview is stale-while-revalidate.** The last ready artifact keeps playing
-  while a new bake runs and after one fails; only an empty chain returns the
-  layer to the raw conform.
+- **Preview is stale-while-revalidate.** A layer that already has a ready
+  artifact keeps playing it while a new bake runs and after one fails. An empty
+  chain returns the layer to the raw conform, and so does a layer that has never
+  had a ready artifact — a first bake still pending, or a first bake that
+  failed.
 - `ready.peaks_path` is **null** while the waveform sibling has not landed —
   correct audio never waits on a picture, so the timeline keeps drawing the raw
   waveform until it fills in.

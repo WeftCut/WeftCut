@@ -111,6 +111,14 @@ pub(crate) async fn read_resource(
             // ConformMissing state reports inline instead of failing the read. The
             // TS host injects the full project — this resource is agent-triggered
             // and infrequent.
+            //
+            // Baked audio effects are INVISIBLE here: the plan is built with no
+            // per-layer override table, so a layer whose export audio will come
+            // from a baked `.fx-*` conform sibling still reports the raw
+            // `media.conform_path` (ADR 0063). The override table lives in the
+            // main-process audio-fx baker and is injected only on
+            // `export_project_audio_only`; this resource reports the
+            // un-overridden plan.
             let project = state.project.ok_or_else(|| {
                 McpToolError::internal_error(
                     "project://compiled requires the injected project (TS host)".to_string(),

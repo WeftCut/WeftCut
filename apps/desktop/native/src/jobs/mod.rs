@@ -38,7 +38,7 @@ use std::sync::Arc;
 
 use crate::events::EventSink;
 use tokio::sync::Semaphore;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::cache::CacheLayout;
 use crate::logs::{LogBusSlot, LogCategory, LogEntryInput, LogLevel, LogSource};
@@ -1069,10 +1069,13 @@ pub async fn spawn_audio_fx(
         Err(e) => e,
     };
 
-    warn!("audio fx bake failed for {media_id}: {error}");
     if error == AUDIO_FX_CANCELLED {
-        // Balance the started event so the status-bar counter doesn't leak,
-        // without an Err row for what the baker did on purpose.
+        // A supersede is the per-layer debounce working as designed, so it
+        // stays at debug: a warning here would fire on every ordinary edit.
+        // The event is still emitted, to balance the started one so the
+        // status-bar counter doesn't leak, but without an Err row for what the
+        // baker did on purpose.
+        debug!("audio fx bake superseded for {media_id}");
         emit(
             &events,
             EVENT_ERROR,
@@ -1083,6 +1086,7 @@ pub async fn spawn_audio_fx(
             },
         );
     } else {
+        warn!("audio fx bake failed for {media_id}: {error}");
         emit_job_error_named(
             &events,
             &log_slot,

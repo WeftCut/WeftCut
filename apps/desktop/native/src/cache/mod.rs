@@ -217,9 +217,11 @@ impl CacheLayout {
     /// processed waveform. `sig16` is the chain signature TS computes; it
     /// names the artifact and nothing here interprets it.
     ///
-    /// Unreferenced in this crate on purpose: the baker builds these names
-    /// (only it holds the signature) and hands the compute channels a
-    /// finished path. The helper keeps the layout stated once, here.
+    /// TWIN of `main/audioFx/fxPaths.ts` (`createFxCacheLayout`) — that copy is
+    /// the one that actually names files at runtime, because only the TS baker
+    /// holds a signature, which is why nothing in the lib build references this
+    /// one. `layout_paths_are_content_addressable` below and `fxPaths.test.ts`
+    /// pin the two copies to the same shapes.
     #[allow(dead_code)]
     pub fn waveform_fx(&self, media_hash: &str, sig16: &str) -> PathBuf {
         self.waveforms_dir()
@@ -239,8 +241,8 @@ impl CacheLayout {
     /// A media's conform with an effect chain baked in — same header, same
     /// rate/channels, same frame count, so every conform reader consumes it
     /// unchanged. One file per `(media, effective chain)`; `sig16` is the
-    /// chain signature TS computes. Unreferenced here for the same reason as
-    /// `waveform_fx`. See ADR 0063.
+    /// chain signature TS computes. Twinned with `main/audioFx/fxPaths.ts`, and
+    /// unreferenced here, for the same reasons as `waveform_fx`. See ADR 0063.
     #[allow(dead_code)]
     pub fn audio_fx_conform(&self, media_hash: &str, sig16: &str) -> PathBuf {
         self.audio_conform_dir()
