@@ -55,6 +55,10 @@ pub struct ExportAudioOnlyArgs {
     pub audio: crate::export::AudioEncodeSpec,
     pub start_us: Option<i64>,
     pub end_us: Option<i64>,
+    /// Baked effect-chain sources by layer id, injected by the audio-fx baker.
+    /// Absent for a project with no audio effects.
+    #[serde(default, alias = "layer_audio_sources")]
+    pub layer_audio_sources: Option<std::collections::HashMap<uuid::Uuid, String>>,
 }
 
 #[cfg(feature = "export")]

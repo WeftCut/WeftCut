@@ -11,7 +11,8 @@ mod encoder_registry;
 pub(crate) use encoder_registry::EncoderRegistry;
 pub mod videosink;
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
@@ -19,6 +20,7 @@ use anyhow::{Context, Result};
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use uuid::Uuid;
 
 use crate::process::NoConsoleWindow;
 use tracing::{info, warn};
@@ -75,8 +77,9 @@ pub async fn export_audio_only(
     output: &Path,
     audio: &AudioEncodeSpec,
     window_us: Option<(i64, i64)>,
+    layer_audio_sources: Option<&HashMap<Uuid, PathBuf>>,
 ) -> Result<bool> {
-    mix_and_encode(project, output, audio, window_us).await
+    mix_and_encode(project, output, audio, window_us, layer_audio_sources).await
 }
 
 /// The EventSink-free core of `export_audio_only`, separated for direct
@@ -86,6 +89,7 @@ async fn mix_and_encode(
     output: &Path,
     audio: &AudioEncodeSpec,
     window_us: Option<(i64, i64)>,
+    layer_audio_sources: Option<&HashMap<Uuid, PathBuf>>,
 ) -> Result<bool> {
     use crate::audio::mix::{mix_block, plan_for_project, MIX_BLOCK_FRAMES};
 
@@ -96,7 +100,8 @@ async fn mix_and_encode(
         );
     }
 
-    let plan = plan_for_project(project, window_us).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let plan = plan_for_project(project, window_us, layer_audio_sources)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     let total_frames = (plan.window_end_frame - plan.window_start_frame).max(0);
     if plan.layers.is_empty() || total_frames == 0 {
         // No audio layers (or an empty window) — produce nothing. The Pixi
@@ -467,7 +472,7 @@ mod tests {
             sample_rate: Some(48_000),
             channels: Some(2),
         };
-        let produced = super::mix_and_encode(&p, &out, &spec, None)
+        let produced = super::mix_and_encode(&p, &out, &spec, None, None)
             .await
             .expect("mix_and_encode");
         assert!(

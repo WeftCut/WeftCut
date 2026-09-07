@@ -152,12 +152,27 @@ pub struct WaveformTileArgs {
     pub channel: u32,
     pub start_peak: u32,
     pub count: u32,
+    /// See `WaveformLevelsArgs::waveform_path`.
+    #[serde(default, alias = "waveform_path")]
+    pub waveform_path: Option<PathBuf>,
 }
 
-pub async fn get_waveform_levels(item: MediaItem) -> Result<WaveformLevels, String> {
-    let path = item
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaveformLevelsArgs {
+    pub item: MediaItem,
+    /// Reads this peaks file instead of the media's own. The timeline draws
+    /// the PROCESSED waveform once an effect chain has baked (ADR 0063), and
+    /// its peaks live under a signature-keyed name the media item never
+    /// carries — artifact paths are derivations, never persisted state.
+    #[serde(default, alias = "waveform_path")]
+    pub waveform_path: Option<PathBuf>,
+}
+
+pub async fn get_waveform_levels(args: WaveformLevelsArgs) -> Result<WaveformLevels, String> {
+    let path = args
         .waveform_path
-        .clone()
+        .or_else(|| args.item.waveform_path.clone())
         .ok_or_else(|| "not_ready".to_string())?;
     crate::cache::touch_if_stale(&path);
     let header = tokio::task::spawn_blocking(move || crate::jobs::waveform::read_header(&path))
@@ -181,9 +196,9 @@ pub async fn get_waveform_levels(item: MediaItem) -> Result<WaveformLevels, Stri
 
 pub async fn get_waveform_tile(args: WaveformTileArgs) -> Result<WaveformTile, String> {
     let path = args
-        .item
         .waveform_path
         .clone()
+        .or_else(|| args.item.waveform_path.clone())
         .ok_or_else(|| "not_ready".to_string())?;
     crate::cache::touch_if_stale(&path);
     let WaveformTileArgs {
@@ -383,6 +398,113 @@ pub async fn ensure_conform(backend: &Backend, item: MediaItem) -> Result<(), St
     Ok(())
 }
 
+// ── Audio-effect bake primitives ────────────────────────────────────────────
+// Four stateless channels the audio-fx baker drives. They take explicit paths
+// and a finished ffmpeg graph: effect kinds, parameters, chain order and the
+// signature naming the artifact all live in TS (ADR 0063), so nothing below
+// reads `Layer.effects` or reconstructs a signature.
+
+#[derive(serde::Deserialize)]
+pub struct MeasureConformRmsArgs {
+    pub conform_path: PathBuf,
+    pub in_us: i64,
+    pub out_us: i64,
+}
+
+/// Level of a conform range, for deriving a denoise threshold from a
+/// user-drawn noise-sample region.
+pub async fn measure_conform_rms(
+    args: MeasureConformRmsArgs,
+) -> Result<crate::audio::fx::RmsReport, String> {
+    tokio::task::spawn_blocking(move || {
+        crate::audio::fx::measure_conform_rms(&args.conform_path, args.in_us, args.out_us)
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
+    .map_err(|e| format!("{e:#}"))
+}
+
+#[derive(serde::Deserialize)]
+pub struct BakeAudioFxArgs {
+    pub conform_path: PathBuf,
+    /// A complete filtergraph mapping its result to `[out]`.
+    pub filter_complex: String,
+    pub dest_path: PathBuf,
+    pub media_id: String,
+    pub job_key: String,
+}
+
+pub async fn bake_audio_fx(
+    backend: &Backend,
+    args: BakeAudioFxArgs,
+) -> Result<crate::jobs::AudioFxOutcome, String> {
+    let media_id = uuid::Uuid::parse_str(&args.media_id)
+        .map_err(|e| format!("bad media_id {}: {e}", args.media_id))?;
+    crate::jobs::spawn_audio_fx(
+        backend.events.clone(),
+        backend.log_slot.clone(),
+        backend.cache.clone(),
+        crate::jobs::AudioFxRequest {
+            media_id,
+            job_key: args.job_key,
+            conform_path: args.conform_path,
+            filter_complex: args.filter_complex,
+            dest: args.dest_path,
+        },
+    )
+    .await
+}
+
+#[derive(serde::Deserialize)]
+pub struct CancelAudioFxArgs {
+    pub job_key: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct CancelAudioFx {
+    /// False when nothing was live under that key — the bake already finished,
+    /// or the supersede lost the race with it.
+    pub cancelled: bool,
+}
+
+pub async fn cancel_audio_fx(args: CancelAudioFxArgs) -> Result<CancelAudioFx, String> {
+    Ok(CancelAudioFx {
+        cancelled: crate::audio::fx::cancel(&args.job_key),
+    })
+}
+
+#[derive(serde::Deserialize)]
+pub struct BuildPeaksForVconfArgs {
+    pub vconf_path: PathBuf,
+    pub dest_path: PathBuf,
+}
+
+#[derive(serde::Serialize)]
+pub struct PeaksBuilt {
+    pub path: PathBuf,
+}
+
+/// Peaks for a baked effect-chain sibling, so the timeline can draw the
+/// processed waveform.
+pub async fn build_peaks_for_vconf(
+    backend: &Backend,
+    args: BuildPeaksForVconfArgs,
+) -> Result<PeaksBuilt, String> {
+    let header =
+        crate::jobs::conform::read_header(&args.vconf_path).map_err(|e| format!("{e:#}"))?;
+    let path = crate::jobs::waveform::run_from_input(
+        &backend.cache,
+        crate::jobs::waveform::WaveformInput::Vconf {
+            path: &args.vconf_path,
+            channels: header.channels,
+        },
+        args.dest_path,
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))?;
+    Ok(PeaksBuilt { path })
+}
+
 pub async fn report_audio_meter(backend: &Backend, report: AudioMeterReport) -> Result<(), String> {
     *backend
         .audio_meter
@@ -495,6 +617,7 @@ mod mirror_tests {
             channel: 0,
             start_peak: 0,
             count: 3,
+            waveform_path: None,
         })
         .await
         .expect("get_waveform_tile");
@@ -507,6 +630,73 @@ mod mirror_tests {
         assert_eq!(tile.rms[0], 1000.0_f32 / 65535.0);
         assert_eq!(tile.rms[1], 2000.0_f32 / 65535.0);
         assert_eq!(tile.rms[2], 3000.0_f32 / 65535.0);
+    }
+
+    /// An explicit `waveform_path` outranks the media item's own. It is how
+    /// the timeline reads a baked chain's peaks, whose signature-keyed name
+    /// the item never carries (ADR 0063) — including for a media whose own
+    /// waveform job has not landed yet.
+    #[cfg(feature = "jobs")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_explicit_waveform_path_overrides_the_items_own() {
+        use crate::jobs::waveform::{write_peaks, LevelData};
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let peaks_path = tmp.path().join("hash.fx-0123456789abcdef.v4.peaks");
+        write_peaks(
+            &peaks_path,
+            1,
+            &[(
+                220,
+                LevelData {
+                    channels: 1,
+                    peak_count: 2,
+                    mins: vec![vec![-100, -200]],
+                    maxs: vec![vec![100, 200]],
+                    rmss: vec![vec![1000, 2000]],
+                },
+            )],
+        )
+        .await
+        .expect("write_peaks");
+
+        let sink = Arc::new(crate::events::VecEventSink::new());
+        let b =
+            crate::napi_backend::Backend::new_for_test(sink as Arc<dyn crate::events::EventSink>);
+        b.init().await.unwrap();
+        let item = mirror_only_item(uuid::Uuid::now_v7()); // waveform_path: None
+
+        let levels = b
+            .dispatch(
+                "get_waveform_levels",
+                &serde_json::json!({ "item": item, "waveformPath": peaks_path }).to_string(),
+            )
+            .await
+            .expect("levels from the explicit path");
+        assert!(
+            levels.contains("\"channels\":1"),
+            "unexpected levels payload: {levels}"
+        );
+
+        let tile = b
+            .dispatch(
+                "get_waveform_tile",
+                &serde_json::json!({
+                    "item": item,
+                    "level": 0,
+                    "channel": 0,
+                    "startPeak": 0,
+                    "count": 2,
+                    "waveformPath": peaks_path,
+                })
+                .to_string(),
+            )
+            .await
+            .expect("tile from the explicit path");
+        assert!(
+            tile.contains("\"min\":[") && !tile.contains("not_ready"),
+            "unexpected tile payload: {tile}"
+        );
     }
 
     fn filmstrip_test_item(

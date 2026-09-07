@@ -241,9 +241,16 @@ fn audible_audio_layers<'a>(
 
 /// Walk every audible Audio layer (see `audible_audio_layers`) and resolve
 /// envelopes into a `MixPlan`.
+///
+/// `overrides` redirects a layer to a baked effect-chain sibling of its
+/// media's conform (ADR 0063), keyed by layer id. An override whose file is
+/// absent falls back to the raw conform rather than failing: a bake is a
+/// derivation the LRU may drop, and an entry that outlives its file must not
+/// be able to break an export.
 pub fn plan_for_project(
     project: &Project,
     window_us: Option<(i64, i64)>,
+    overrides: Option<&std::collections::HashMap<Uuid, PathBuf>>,
 ) -> Result<MixPlan, PlanError> {
     let (w_start_us, w_end_us) = window_us.unwrap_or((0, project.root().duration_us));
     let mut layers = Vec::new();
@@ -257,11 +264,18 @@ pub fn plan_for_project(
             .label
             .clone()
             .unwrap_or_else(|| media.path_abs.display().to_string());
-        let conform_path = media
-            .conform_path
-            .clone()
+        let baked = overrides
+            .and_then(|m| m.get(&placed.layer.id))
             .filter(|c| crate::cache::cached_ok(c))
-            .ok_or_else(|| PlanError::ConformMissing(label.clone()))?;
+            .cloned();
+        let conform_path = match baked {
+            Some(path) => path,
+            None => media
+                .conform_path
+                .clone()
+                .filter(|c| crate::cache::cached_ok(c))
+                .ok_or_else(|| PlanError::ConformMissing(label.clone()))?,
+        };
         let span_us = p.src_out_us - p.src_in_us;
         let role_gain = role_gain_linear(&project.role_mix(p.role));
         let mut gain = sample_gain(
@@ -668,7 +682,7 @@ mod tests {
                 solo: false,
             },
         );
-        let plan = plan_for_project(&project, None).unwrap();
+        let plan = plan_for_project(&project, None, None).unwrap();
         assert_eq!(
             plan.layers.len(),
             1,
@@ -690,7 +704,7 @@ mod tests {
                 solo: true,
             },
         );
-        let plan = plan_for_project(&project, None).unwrap();
+        let plan = plan_for_project(&project, None, None).unwrap();
         assert_eq!(plan.layers.len(), 1, "only soloed Dialogue plays");
         assert_eq!(plan.layers[0].conform_path, tmp.path().join("a.conform"));
     }
@@ -708,7 +722,7 @@ mod tests {
                 solo: true,
             },
         );
-        let plan = plan_for_project(&project, None).unwrap();
+        let plan = plan_for_project(&project, None, None).unwrap();
         assert_eq!(
             plan.layers.len(),
             0,
@@ -730,7 +744,7 @@ mod tests {
                 solo: false,
             },
         );
-        let plan = plan_for_project(&project, None).unwrap();
+        let plan = plan_for_project(&project, None, None).unwrap();
         let dialogue = plan
             .layers
             .iter()
@@ -752,7 +766,7 @@ mod tests {
     fn legacy_no_audio_roles_plays_both_at_unity() {
         let tmp = TempDir::new().unwrap();
         let project = two_audio_tracks_project(tmp.path()); // empty audio_roles
-        let plan = plan_for_project(&project, None).unwrap();
+        let plan = plan_for_project(&project, None, None).unwrap();
         assert_eq!(plan.layers.len(), 2);
         for l in &plan.layers {
             assert!((l.gain.eval(0) - 1.0).abs() < 1e-3);
@@ -852,6 +866,43 @@ mod tests {
         assert!(conform_waiting_media(&project, None).is_empty());
     }
 
+    // ── plan_for_project baked-source overrides ─────────────────────────────
+
+    #[test]
+    fn override_redirects_only_the_named_layer() {
+        let tmp = TempDir::new().unwrap();
+        let project = two_audio_tracks_project(tmp.path());
+        let baked = tmp.path().join("a.fx-cafebabecafebabe.conform");
+        write_vconf(&baked, 1, &vec![0.1f32; 48_000]);
+        let layer_a = project.root().tracks[0].layers[0].id;
+
+        let overrides = std::collections::HashMap::from([(layer_a, baked.clone())]);
+        let plan = plan_for_project(&project, None, Some(&overrides)).unwrap();
+        assert_eq!(plan.layers.len(), 2);
+        assert_eq!(plan.layers[0].conform_path, baked);
+        assert_eq!(
+            plan.layers[1].conform_path,
+            tmp.path().join("b.conform"),
+            "an unlisted layer keeps its media's conform"
+        );
+    }
+
+    #[test]
+    fn override_whose_file_is_gone_falls_back_to_the_media_conform() {
+        let tmp = TempDir::new().unwrap();
+        let project = two_audio_tracks_project(tmp.path());
+        let layer_a = project.root().tracks[0].layers[0].id;
+        let evicted = tmp.path().join("a.fx-cafebabecafebabe.conform");
+
+        let overrides = std::collections::HashMap::from([(layer_a, evicted)]);
+        let plan = plan_for_project(&project, None, Some(&overrides)).unwrap();
+        assert_eq!(
+            plan.layers[0].conform_path,
+            tmp.path().join("a.conform"),
+            "a bake the LRU dropped must not break the export"
+        );
+    }
+
     // ── plan_for_project window gating ──────────────────────────────────────
 
     #[test]
@@ -864,7 +915,7 @@ mod tests {
         project.root_mut().tracks[1].layers[0].t_start_us = 2_000_000;
         project.root_mut().tracks[1].layers[0].t_end_us = 3_000_000;
         std::fs::remove_file(tmp.path().join("b.conform")).unwrap();
-        let plan = plan_for_project(&project, Some((0, 1_000_000))).unwrap();
+        let plan = plan_for_project(&project, Some((0, 1_000_000)), None).unwrap();
         assert_eq!(plan.layers.len(), 1, "only the in-window layer plans");
         assert_eq!(plan.layers[0].conform_path, tmp.path().join("a.conform"));
     }
@@ -874,7 +925,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let project = two_audio_tracks_project(tmp.path());
         std::fs::remove_file(tmp.path().join("b.conform")).unwrap();
-        let err = plan_for_project(&project, Some((0, 1_000_000))).unwrap_err();
+        let err = plan_for_project(&project, Some((0, 1_000_000)), None).unwrap_err();
         assert!(matches!(err, PlanError::ConformMissing(_)));
     }
 
@@ -886,13 +937,13 @@ mod tests {
         project.root_mut().tracks[1].layers[0].t_start_us = 1_000_000;
         project.root_mut().tracks[1].layers[0].t_end_us = 2_000_000;
         // Window [0, 1s): B's t_start == window end ⇒ B excluded.
-        let plan = plan_for_project(&project, Some((0, 1_000_000))).unwrap();
+        let plan = plan_for_project(&project, Some((0, 1_000_000)), None).unwrap();
         assert_eq!(plan.layers.len(), 1, "t_start == w_end is no overlap");
         // Window [2s, 3s): B's t_end == window start ⇒ both excluded.
-        let plan = plan_for_project(&project, Some((2_000_000, 3_000_000))).unwrap();
+        let plan = plan_for_project(&project, Some((2_000_000, 3_000_000)), None).unwrap();
         assert_eq!(plan.layers.len(), 0, "t_end == w_start is no overlap");
         // Window [1.5s, 2.5s): genuine partial overlap ⇒ B included.
-        let plan = plan_for_project(&project, Some((1_500_000, 2_500_000))).unwrap();
+        let plan = plan_for_project(&project, Some((1_500_000, 2_500_000)), None).unwrap();
         assert_eq!(plan.layers.len(), 1, "partial overlap plans the layer");
         assert_eq!(plan.layers[0].conform_path, tmp.path().join("b.conform"));
     }
@@ -996,8 +1047,8 @@ mod tests {
             ],
             vec![audio_media(media, conform)],
         );
-        let a = plan_for_project(&direct, None).unwrap();
-        let b = plan_for_project(&grouped, None).unwrap();
+        let a = plan_for_project(&direct, None, None).unwrap();
+        let b = plan_for_project(&grouped, None, None).unwrap();
         assert_eq!(a.layers.len(), 1);
         assert_eq!(b.layers.len(), 1);
         assert_same_placement(&a.layers[0], &b.layers[0]);
@@ -1040,7 +1091,7 @@ mod tests {
             ],
             vec![audio_media(media, conform)],
         );
-        let plan = plan_for_project(&project, None).unwrap();
+        let plan = plan_for_project(&project, None, None).unwrap();
         assert_eq!(plan.layers.len(), 1);
         let l = &plan.layers[0];
         assert_eq!(l.start_frame, us_to_frame(7 * S / 4));
@@ -1098,7 +1149,7 @@ mod tests {
             ],
             vec![audio_media(media, conform)],
         );
-        let plan = plan_for_project(&project, None).unwrap();
+        let plan = plan_for_project(&project, None, None).unwrap();
         let l = &plan.layers[0];
         assert_eq!(l.start_frame, 2 * FRAMES_PER_S);
         assert_eq!(
@@ -1160,7 +1211,7 @@ mod tests {
             ],
             vec![audio_media(media, conform)],
         );
-        let plan = plan_for_project(&project, None).unwrap();
+        let plan = plan_for_project(&project, None, None).unwrap();
         let l = &plan.layers[0];
         assert_eq!(
             l.start_frame,
@@ -1220,7 +1271,7 @@ mod tests {
             ],
             vec![audio_media(media, conform)],
         );
-        let plan = plan_for_project(&project, None).unwrap();
+        let plan = plan_for_project(&project, None, None).unwrap();
         let out = mix_all(&plan);
         let half = std::f32::consts::FRAC_PI_4.cos();
         let first = left_at(&out, 2 * FRAMES_PER_S);
@@ -1262,17 +1313,17 @@ mod tests {
             )
         };
         assert_eq!(
-            plan_for_project(&build(true, true), None)
+            plan_for_project(&build(true, true), None, None)
                 .unwrap()
                 .layers
                 .len(),
             1
         );
-        assert!(plan_for_project(&build(false, true), None)
+        assert!(plan_for_project(&build(false, true), None, None)
             .unwrap()
             .layers
             .is_empty());
-        assert!(plan_for_project(&build(true, false), None)
+        assert!(plan_for_project(&build(true, false), None, None)
             .unwrap()
             .layers
             .is_empty());
@@ -1308,7 +1359,7 @@ mod tests {
             ],
             vec![audio_media(media, conform)],
         );
-        let plan = plan_for_project(&project, None).unwrap();
+        let plan = plan_for_project(&project, None, None).unwrap();
         // The Group is entered once per depth 1..=MAX; the window never
         // shrinks, so only the guard could have ended the walk.
         assert_eq!(plan.layers.len(), MAX_COMPOSITION_DEPTH);

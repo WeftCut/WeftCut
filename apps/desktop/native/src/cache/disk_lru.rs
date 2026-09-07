@@ -1,5 +1,6 @@
 //! Disk-cache LRU sweep + filename-keyed hygiene for the cheap-to-regenerate
-//! derivative dirs: `filmstrip/`, `thumbnails/`, `waveforms/`.
+//! derivative dirs: `filmstrip/`, `thumbnails/`, `waveforms/`, plus the
+//! `.fx-*` effect-chain siblings inside `audio/`.
 //! Design: `docs/timeline-content-preview.md`.
 //!
 //! The filesystem is the database: a cache read refreshes mtime
@@ -11,10 +12,17 @@
 //! harmless (all deletes are best-effort).
 //!
 //! Nothing else under `Cache/` is swept — the rule is cheap-to-regenerate
-//! only. Every other dir is either expensive to rebuild (`proxies/`, `audio/`
-//! conform PCM, `shots/`, `shot-stats/`), re-pays an API cost on eviction (`voiceover/`,
-//! `transcribe-audio/`, `descriptions/`), or too small to be worth the risk
-//! (`frames/`, `inline-subs/`).
+//! only. Every other dir is either expensive to rebuild (`proxies/`, the
+//! canonical `audio/{hash}.conform` PCM, `shots/`, `shot-stats/`), re-pays an
+//! API cost on eviction (`voiceover/`, `transcribe-audio/`, `descriptions/`),
+//! or too small to be worth the risk (`frames/`, `inline-subs/`).
+//!
+//! `audio/` is the one dir swept in part: its `{hash}.fx-{sig}.conform`
+//! siblings ARE cheap to regenerate (one ffmpeg filter pass over the already
+//! decoded conform, ~300x realtime) while a 10-minute stereo bake costs
+//! ~230 MB, and every debounced effect-param edit mints a new signature — so
+//! without eviction they grow without bound. The canonical conform beside
+//! them stays excluded: rebuilding it is a full decode.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,7 +31,7 @@ use std::time::{Duration, SystemTime};
 
 use super::{CacheLayout, FilmstripSrc};
 
-/// Shared budget across the three swept dirs.
+/// Shared budget across everything the sweep collects.
 pub const DISK_CACHE_BUDGET_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// Eviction target once over budget (90% of it), so the next few writes
 /// don't immediately re-trigger a sweep.
@@ -60,8 +68,9 @@ impl SweepState {
     }
 }
 
-/// One evictable unit: a single file (peaks file, filmstrip tile) or a whole
-/// directory (a media's thumbnail set — the 10 posters live and die together).
+/// One evictable unit: a single file (peaks file, filmstrip tile, baked
+/// conform) or a whole directory (a media's thumbnail set — the 10 posters
+/// live and die together).
 struct Unit {
     path: PathBuf,
     bytes: u64,
@@ -76,6 +85,7 @@ pub fn sweep(layout: &CacheLayout, budget_bytes: u64, now: SystemTime) -> SweepR
     let mut units: Vec<Unit> = Vec::new();
 
     collect_waveforms(&layout.waveforms_dir(), now, &mut report, &mut units);
+    collect_audio_fx(&layout.audio_conform_dir(), now, &mut report, &mut units);
     collect_filmstrip(&layout.filmstrip_root(), now, &mut report, &mut units);
     collect_thumbnails(&layout.thumbnails_root(), now, &mut report, &mut units);
 
@@ -126,6 +136,41 @@ fn collect_waveforms(dir: &Path, now: SystemTime, report: &mut SweepReport, unit
         } else if name.ends_with(".peaks") && fs::remove_file(&path).is_ok() {
             report.units_deleted += 1;
             report.bytes_deleted += meta.len();
+        }
+    }
+}
+
+/// `{hash}.fx-{sig16}.conform` — a baked effect-chain sibling. The canonical
+/// `{hash}.conform` must NEVER match: it is the whole-file decode every mixer
+/// reads, and evicting it stalls playback and export behind a re-decode.
+fn is_fx_conform(name: &str) -> bool {
+    name.strip_suffix(".conform")
+        .and_then(|stem| stem.rsplit_once(".fx-"))
+        .is_some_and(|(hash, sig)| !hash.is_empty() && !sig.is_empty())
+}
+
+/// `audio/`: only the `.fx-*` siblings are LRU units, and only their `.tmp`
+/// leftovers are hygiene. Everything else in the dir — the canonical conform
+/// and its own in-progress temp — is left exactly as found.
+fn collect_audio_fx(dir: &Path, now: SystemTime, report: &mut SweepReport, units: &mut Vec<Unit>) {
+    for entry in read_dir_entries(dir) {
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path();
+        match name.strip_suffix(".tmp") {
+            Some(promoted) => {
+                if is_fx_conform(promoted) {
+                    delete_if_aged_tmp(&path, &meta, now, report);
+                }
+            }
+            None => {
+                if is_fx_conform(&name) {
+                    units.push(file_unit(path, &meta));
+                }
+            }
         }
     }
 }
@@ -296,7 +341,7 @@ fn prune_empty_dirs(root: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache::FilmstripSrc;
+    use crate::cache::{temp_path, FilmstripSrc};
     use std::fs;
     use tempfile::TempDir;
 
@@ -394,6 +439,79 @@ mod tests {
         assert!(!v3.exists(), "unreadable old-version peaks are orphans");
         assert!(v4.exists());
         assert_eq!(report.units_deleted, 1);
+    }
+
+    /// The filename rule that keeps the canonical conform out of the sweep.
+    #[test]
+    fn only_signature_tagged_conforms_are_fx_siblings() {
+        assert!(is_fx_conform("aaa.fx-0123456789abcdef.conform"));
+        assert!(
+            !is_fx_conform("aaa.conform"),
+            "the canonical conform is never an fx sibling"
+        );
+        assert!(!is_fx_conform("aaa.fx-.conform"), "an empty signature");
+        assert!(!is_fx_conform(".fx-0123456789abcdef.conform"), "no hash");
+        assert!(!is_fx_conform("aaa.fx-0123456789abcdef.peaks"));
+    }
+
+    /// Both audio-effect bake artifacts are evictable — the baked conform
+    /// regenerates from the conform beside it in one filter pass, and every
+    /// param edit mints another signature — while the canonical conform is
+    /// invisible to the sweep even when the budget is blown.
+    #[test]
+    fn fx_conforms_and_fx_peaks_are_lru_units_and_raw_conforms_are_not_swept() {
+        let (_tmp, l) = layout();
+        let now = SystemTime::now();
+        let sig = "0123456789abcdef";
+        let fx_peaks = l.waveform_fx("aaa", sig);
+        let fx_conform = l.audio_fx_conform("aaa", sig);
+        let raw_conform = l.audio_conform("aaa");
+        for p in [&fx_peaks, &fx_conform, &raw_conform] {
+            fs::write(p, vec![0u8; 400]).unwrap();
+            set_mtime(p, hours_ago(now, 5));
+        }
+
+        let report = sweep(&l, u64::MAX, now);
+        assert_eq!(report.units_deleted, 0, "under budget nothing is hygiene");
+        assert!(
+            fx_peaks.exists(),
+            "an fx peaks file is not an orphan version"
+        );
+        assert!(fx_conform.exists());
+
+        // 800 B of units (the two fx artifacts) against a 100 B budget: both
+        // go, and the raw conform is not even counted toward the total.
+        let report = sweep(&l, 100, now);
+        assert!(!fx_peaks.exists(), "fx peaks evict like any peaks unit");
+        assert!(!fx_conform.exists(), "fx conforms are units too");
+        assert_eq!(report.units_deleted, 2);
+        assert_eq!(report.bytes_deleted, 800);
+        assert!(
+            raw_conform.exists(),
+            "the canonical conform is a full decode — never evicted"
+        );
+    }
+
+    /// `.tmp` hygiene inside `audio/` follows the same age floor as the other
+    /// collectors, and stops at the fx siblings: the conform job's own temp is
+    /// not this sweep's to reap.
+    #[test]
+    fn aged_fx_conform_tmp_deleted_raw_conform_tmp_untouched() {
+        let (_tmp, l) = layout();
+        let now = SystemTime::now();
+        let aged = temp_path(&l.audio_fx_conform("aaa", "0123456789abcdef"));
+        let fresh = temp_path(&l.audio_fx_conform("bbb", "fedcba9876543210"));
+        let raw = temp_path(&l.audio_conform("aaa"));
+        fs::write(&aged, b"interrupted").unwrap();
+        fs::write(&fresh, b"mid-write").unwrap();
+        fs::write(&raw, b"conform job").unwrap();
+        set_mtime(&aged, hours_ago(now, 2));
+        set_mtime(&raw, hours_ago(now, 2));
+
+        sweep(&l, u64::MAX, now);
+        assert!(!aged.exists(), "interrupted-bake leftover");
+        assert!(fresh.exists(), "a mid-write bake is protected by the floor");
+        assert!(raw.exists(), "the conform job's temp is not swept here");
     }
 
     #[test]

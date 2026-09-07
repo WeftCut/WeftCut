@@ -228,6 +228,8 @@ pub enum JobKind {
     ProxyBypass,
     Waveform,
     Conform,
+    #[serde(rename = "audio_fx")]
+    AudioFx,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -259,6 +261,7 @@ fn job_kind_label(kind: JobKind) -> &'static str {
         JobKind::ProxyBypass => "Proxy-bypass",
         JobKind::Waveform => "Waveform",
         JobKind::Conform => "Audio-conform",
+        JobKind::AudioFx => "Audio effects",
     }
 }
 
@@ -290,11 +293,32 @@ fn emit_job_error(
     kind: JobKind,
     error: String,
 ) {
+    emit_job_error_named(
+        events,
+        log_slot,
+        media.id,
+        &media_display_name(media),
+        kind,
+        error,
+    );
+}
+
+/// `emit_job_error` for a job whose driver never holds the `MediaItem` — the
+/// audio-effect bake is addressed by artifact path, so `display` names the
+/// row's subject instead.
+fn emit_job_error_named(
+    events: &Arc<dyn EventSink>,
+    log_slot: &LogBusSlot,
+    media_id: MediaId,
+    display: &str,
+    kind: JobKind,
+    error: String,
+) {
     emit(
         events,
         EVENT_ERROR,
         &JobError {
-            media_id: media.id.to_string(),
+            media_id: media_id.to_string(),
             kind,
             error: error.clone(),
         },
@@ -303,14 +327,9 @@ fn emit_job_error(
         level: LogLevel::Error,
         category: LogCategory::Job,
         source: LogSource::System,
-        message: format!(
-            "{} job failed for {}: {}",
-            job_kind_label(kind),
-            media_display_name(media),
-            error
-        ),
+        message: format!("{} job failed for {display}: {error}", job_kind_label(kind)),
         details: Some(serde_json::json!({
-            "media_id": media.id.to_string(),
+            "media_id": media_id.to_string(),
             "kind": kind,
         })),
         ..Default::default()
@@ -941,6 +960,139 @@ fn spawn_waveform(
             }
         }
     });
+}
+
+/// One audio-effect bake: a finished ffmpeg graph over a media's conform,
+/// landing at `dest`. The chain behind `filter_complex` and the signature
+/// that named `dest` are TS's (ADR 0063); nothing here inspects either.
+pub struct AudioFxRequest {
+    pub media_id: MediaId,
+    /// Cancellation handle. The baker debounces edits and cancels the bake it
+    /// supersedes, one live bake per key.
+    pub job_key: String,
+    pub conform_path: std::path::PathBuf,
+    pub filter_complex: String,
+    pub dest: std::path::PathBuf,
+}
+
+/// The landed artifact. `frame_count` is read back off the promoted file, so
+/// it doubles as a header check of what the caller is about to play.
+#[derive(Debug, Clone, Serialize)]
+pub struct AudioFxOutcome {
+    pub path: std::path::PathBuf,
+    pub frame_count: u64,
+}
+
+/// What a cancelled bake reports. A supersede is routine, so this string is
+/// the one failure that does not earn a durable log row.
+const AUDIO_FX_CANCELLED: &str = "cancelled";
+
+/// Run one audio-effect bake to completion, emitting the same
+/// started/complete/error events every other derivative job does so the
+/// status-bar job counter includes bakes. Unlike the `enqueue_*` jobs this
+/// awaits its result: the baker chains a peaks build onto it and publishes
+/// the artifact paths itself.
+pub async fn spawn_audio_fx(
+    events: Arc<dyn EventSink>,
+    log_slot: LogBusSlot,
+    cache: CacheLayout,
+    req: AudioFxRequest,
+) -> Result<AudioFxOutcome, String> {
+    let AudioFxRequest {
+        media_id,
+        job_key,
+        conform_path,
+        filter_complex,
+        dest,
+    } = req;
+    emit(
+        &events,
+        EVENT_STARTED,
+        &JobStarted {
+            media_id: media_id.to_string(),
+            kind: JobKind::AudioFx,
+        },
+    );
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let bake_dest = dest.clone();
+    let handle = tokio::spawn(async move {
+        // The permit is acquired INSIDE the cancellable task so a cancel
+        // while the bake is still queued behind import derivatives aborts the
+        // wait too, rather than starting a doomed ffmpeg once a slot frees.
+        let outcome = match ffmpeg_sem().acquire().await {
+            Ok(permit) => {
+                let baked =
+                    crate::audio::fx::bake(&conform_path, &filter_complex, &bake_dest).await;
+                drop(permit);
+                baked.map_err(|e| format!("{e:#}"))
+            }
+            Err(_) => Err("ffmpeg semaphore closed".to_string()),
+        };
+        let _ = tx.send(outcome);
+    });
+    let _slot = crate::audio::fx::register_job(job_key, handle);
+
+    let result = match rx.await {
+        Ok(outcome) => outcome,
+        // The sender lives in the task; it can only vanish unsent if the task
+        // was aborted.
+        Err(_) => Err(AUDIO_FX_CANCELLED.to_string()),
+    };
+
+    let artifact = dest
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| dest.display().to_string());
+
+    let error = match result {
+        Ok(path) => match conform::read_header(&path) {
+            Ok(header) => {
+                cache.notify_write();
+                info!("audio fx bake ready for {media_id}");
+                emit(
+                    &events,
+                    EVENT_COMPLETE,
+                    &JobComplete {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::AudioFx,
+                        path: Some(path.display().to_string()),
+                    },
+                );
+                return Ok(AudioFxOutcome {
+                    path,
+                    frame_count: header.frame_count,
+                });
+            }
+            Err(e) => format!("baked artifact is unreadable: {e:#}"),
+        },
+        Err(e) => e,
+    };
+
+    warn!("audio fx bake failed for {media_id}: {error}");
+    if error == AUDIO_FX_CANCELLED {
+        // Balance the started event so the status-bar counter doesn't leak,
+        // without an Err row for what the baker did on purpose.
+        emit(
+            &events,
+            EVENT_ERROR,
+            &JobError {
+                media_id: media_id.to_string(),
+                kind: JobKind::AudioFx,
+                error: error.clone(),
+            },
+        );
+    } else {
+        emit_job_error_named(
+            &events,
+            &log_slot,
+            media_id,
+            &artifact,
+            JobKind::AudioFx,
+            error.clone(),
+        );
+    }
+    Err(error)
 }
 
 fn emit<T: Serialize>(events: &Arc<dyn EventSink>, event: &str, payload: &T) {

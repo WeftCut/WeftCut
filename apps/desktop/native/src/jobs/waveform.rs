@@ -3,7 +3,7 @@
 //! mipmap pyramid, and writes a compact binary file (VPEAKS) the timeline
 //! can scan in one mmap at whatever zoom-appropriate resolution it needs.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use crate::ffmpeg::{ffmpeg_is_installed, ffmpeg_path};
@@ -250,20 +250,41 @@ pub fn read_range(
     })
 }
 
+/// What a peaks build decodes from: a media file (ffmpeg auto-discovers the
+/// decoder) or a VCONF, whose raw f32 body needs the format spelled out.
+#[derive(Clone, Copy)]
+pub enum WaveformInput<'a> {
+    Media(&'a MediaItem),
+    Vconf { path: &'a Path, channels: u32 },
+}
+
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
+    let dest = cache.waveform(&media.file_hash_blake3);
+    run_from_input(cache, WaveformInput::Media(media), dest).await
+}
+
+/// Build a peaks pyramid from `input` into `dest`. Splitting the destination
+/// out of the input is what lets a baked effect-chain sibling get its own
+/// peaks file (`CacheLayout::waveform_fx`) through the same pipeline.
+pub async fn run_from_input(
+    cache: &CacheLayout,
+    input: WaveformInput<'_>,
+    dest: PathBuf,
+) -> Result<PathBuf> {
     if !ffmpeg_is_installed() {
         anyhow::bail!("ffmpeg not installed; cannot generate waveform");
     }
-    if !matches!(media.kind, MediaKind::Video | MediaKind::Audio) {
-        anyhow::bail!("waveform only valid for Video / Audio media");
-    }
-    if media.metadata.audio.is_none() && matches!(media.kind, MediaKind::Video) {
-        // Video file without an audio stream — surfaced as a hard error so the
-        // spawner can decide (it may still treat it as a no-op).
-        anyhow::bail!("video media has no audio stream");
+    if let WaveformInput::Media(media) = input {
+        if !matches!(media.kind, MediaKind::Video | MediaKind::Audio) {
+            anyhow::bail!("waveform only valid for Video / Audio media");
+        }
+        if media.metadata.audio.is_none() && matches!(media.kind, MediaKind::Video) {
+            // Video file without an audio stream — surfaced as a hard error so the
+            // spawner can decide (it may still treat it as a no-op).
+            anyhow::bail!("video media has no audio stream");
+        }
     }
 
-    let dest = cache.waveform(&media.file_hash_blake3);
     if cached_ok(&dest) {
         return Ok(dest);
     }
@@ -271,13 +292,34 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     let tmp = temp_path(&dest);
     let _ = tokio::fs::remove_file(&tmp).await;
 
-    let mut child = Command::new(ffmpeg_path())
-        .no_console_window()
+    let mut cmd = Command::new(ffmpeg_path());
+    cmd.no_console_window()
         // Reap on future-drop so no orphan keeps writing the shared temp; see
         // hwaccel.rs.
         .kill_on_drop(true)
-        .args(["-hide_banner", "-nostats", "-loglevel", "error", "-i"])
-        .arg(&media.path_abs)
+        .args(["-hide_banner", "-nostats", "-loglevel", "error"]);
+    match input {
+        WaveformInput::Media(media) => {
+            cmd.arg("-i").arg(&media.path_abs);
+        }
+        WaveformInput::Vconf { path, channels } => {
+            cmd.args([
+                "-skip_initial_bytes",
+                &super::conform::HEADER_LEN.to_string(),
+            ])
+            .args([
+                "-f",
+                "f32le",
+                "-ar",
+                &super::conform::CONFORM_SAMPLE_RATE.to_string(),
+                "-ac",
+                &channels.to_string(),
+            ])
+            .arg("-i")
+            .arg(path);
+        }
+    }
+    let mut child = cmd
         .args([
             "-vn",
             "-ac",

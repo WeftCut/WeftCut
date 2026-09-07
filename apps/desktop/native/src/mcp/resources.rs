@@ -117,7 +117,7 @@ pub(crate) async fn read_resource(
                     None,
                 )
             })?;
-            match crate::audio::mix::plan_for_project(&project, None) {
+            match crate::audio::mix::plan_for_project(&project, None, None) {
                 Ok(plan) => serde_json::json!({
                     "kind": "audio_mix_plan",
                     "sample_rate": crate::audio::mix::MIX_SAMPLE_RATE,

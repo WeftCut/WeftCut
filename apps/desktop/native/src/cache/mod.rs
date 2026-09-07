@@ -213,6 +213,19 @@ impl CacheLayout {
         self.waveforms_dir().join(format!("{hash}.v4.peaks"))
     }
 
+    /// Peaks for a baked effect-chain sibling, so the timeline can draw the
+    /// processed waveform. `sig16` is the chain signature TS computes; it
+    /// names the artifact and nothing here interprets it.
+    ///
+    /// Unreferenced in this crate on purpose: the baker builds these names
+    /// (only it holds the signature) and hands the compute channels a
+    /// finished path. The helper keeps the layout stated once, here.
+    #[allow(dead_code)]
+    pub fn waveform_fx(&self, media_hash: &str, sig16: &str) -> PathBuf {
+        self.waveforms_dir()
+            .join(format!("{media_hash}.fx-{sig16}.v4.peaks"))
+    }
+
     /// Canonical conformed PCM for a hashed media file — 48 kHz, f32le,
     /// interleaved, ≤2 channels. See `jobs::conform` for the header format.
     pub fn audio_conform_dir(&self) -> PathBuf {
@@ -221,6 +234,17 @@ impl CacheLayout {
 
     pub fn audio_conform(&self, hash: &str) -> PathBuf {
         self.audio_conform_dir().join(format!("{hash}.conform"))
+    }
+
+    /// A media's conform with an effect chain baked in — same header, same
+    /// rate/channels, same frame count, so every conform reader consumes it
+    /// unchanged. One file per `(media, effective chain)`; `sig16` is the
+    /// chain signature TS computes. Unreferenced here for the same reason as
+    /// `waveform_fx`. See ADR 0063.
+    #[allow(dead_code)]
+    pub fn audio_fx_conform(&self, media_hash: &str, sig16: &str) -> PathBuf {
+        self.audio_conform_dir()
+            .join(format!("{media_hash}.fx-{sig16}.conform"))
     }
 
     /// On-demand extracted frame, lazy-cached. Used by
@@ -504,6 +528,18 @@ mod tests {
         assert_eq!(
             layout.audio_conform("abc"),
             tmp.path().join("audio").join("abc.conform"),
+        );
+        assert_eq!(
+            layout.audio_fx_conform("abc", "0123456789abcdef"),
+            tmp.path()
+                .join("audio")
+                .join("abc.fx-0123456789abcdef.conform"),
+        );
+        assert_eq!(
+            layout.waveform_fx("abc", "0123456789abcdef"),
+            tmp.path()
+                .join("waveforms")
+                .join("abc.fx-0123456789abcdef.v4.peaks"),
         );
         assert_eq!(
             layout.frame("abc", 1_500_000),

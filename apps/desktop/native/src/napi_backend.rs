@@ -844,9 +844,9 @@ impl Backend {
             }
             #[cfg(feature = "jobs")]
             "get_waveform_levels" => {
-                let a: crate::commands::MediaItemArgs =
+                let a: crate::commands::media::WaveformLevelsArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::media::get_waveform_levels(a.item).await)
+                ser(crate::commands::media::get_waveform_levels(a).await)
             }
             #[cfg(feature = "jobs")]
             "get_waveform_tile" => {
@@ -878,6 +878,32 @@ impl Backend {
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::media::ensure_conform(self, a.item).await)
             }
+            // Audio-effect bake primitives (ADR 0063). Explicit paths + a
+            // finished ffmpeg graph in, artifact paths out — no state slice.
+            #[cfg(feature = "jobs")]
+            "measure_conform_rms" => {
+                let a: crate::commands::media::MeasureConformRmsArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::measure_conform_rms(a).await)
+            }
+            #[cfg(feature = "jobs")]
+            "bake_audio_fx" => {
+                let a: crate::commands::media::BakeAudioFxArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::bake_audio_fx(self, a).await)
+            }
+            #[cfg(feature = "jobs")]
+            "cancel_audio_fx" => {
+                let a: crate::commands::media::CancelAudioFxArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::cancel_audio_fx(a).await)
+            }
+            #[cfg(feature = "jobs")]
+            "build_peaks_for_vconf" => {
+                let a: crate::commands::media::BuildPeaksForVconfArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::build_peaks_for_vconf(self, a).await)
+            }
             #[cfg(feature = "jobs")]
             "report_audio_meter" => {
                 #[derive(serde::Deserialize)]
@@ -897,6 +923,7 @@ impl Backend {
                     a.audio,
                     a.start_us,
                     a.end_us,
+                    a.layer_audio_sources,
                 )
                 .await)
             }
@@ -1153,6 +1180,89 @@ mod tests {
         let args = serde_json::json!({ "item": item }).to_string();
         let err = b.dispatch("get_waveform_levels", &args).await.unwrap_err();
         assert_eq!(err, "not_ready");
+    }
+
+    /// The audio-fx channels' wire shapes. Every field name here is part of
+    /// the contract the baker calls with, and a rename would surface as a
+    /// generic parse failure at runtime rather than a build error — so the
+    /// arms are dispatched exactly as TS spells them.
+    #[cfg(feature = "jobs")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn audio_fx_channels_take_their_pinned_wire_shapes() {
+        let sink = std::sync::Arc::new(crate::events::VecEventSink::new());
+        let b = Backend::new_for_test(sink as std::sync::Arc<dyn crate::events::EventSink>);
+        b.init().await.unwrap();
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let conform = tmp.path().join("a.conform");
+        // 0.25 s mono at a constant 0.5 ⇒ −6.02 dBFS.
+        crate::audio::conform_reader::write_vconf(&conform, 1, &vec![0.5f32; 12_000]);
+
+        let out = b
+            .dispatch(
+                "measure_conform_rms",
+                &serde_json::json!({
+                    "conform_path": conform, "in_us": 0, "out_us": 250_000,
+                })
+                .to_string(),
+            )
+            .await
+            .expect("measure_conform_rms");
+        let report: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(report["frames"], 12_000);
+        assert!((report["rms_dbfs"].as_f64().unwrap() + 6.0206).abs() < 0.01);
+
+        // A silent range answers with a null level, not an error.
+        crate::audio::conform_reader::write_vconf(&tmp.path().join("s.conform"), 1, &[0f32; 4_800]);
+        let out = b
+            .dispatch(
+                "measure_conform_rms",
+                &serde_json::json!({
+                    "conform_path": tmp.path().join("s.conform"), "in_us": 0, "out_us": 100_000,
+                })
+                .to_string(),
+            )
+            .await
+            .expect("measure_conform_rms on silence");
+        assert_eq!(out, r#"{"rms_dbfs":null,"frames":4800}"#);
+
+        // Nothing live under the key ⇒ `false`, not a failure.
+        let out = b
+            .dispatch("cancel_audio_fx", r#"{"job_key":"audio-fx/not-live"}"#)
+            .await
+            .expect("cancel_audio_fx");
+        assert_eq!(out, r#"{"cancelled":false}"#);
+
+        // Both bake channels reject an unreadable input by naming the file —
+        // proof the args parsed and the failure is the file's, not serde's.
+        let err = b
+            .dispatch(
+                "bake_audio_fx",
+                &serde_json::json!({
+                    "conform_path": tmp.path().join("missing.conform"),
+                    "filter_complex": "[0:a]anull[out]",
+                    "dest_path": tmp.path().join("missing.fx-0000000000000000.conform"),
+                    "media_id": uuid::Uuid::now_v7().to_string(),
+                    "job_key": "audio-fx/parse-probe",
+                })
+                .to_string(),
+            )
+            .await
+            .expect_err("a missing conform cannot bake");
+        assert!(err.contains("missing.conform"), "unexpected error: {err}");
+
+        let err = b
+            .dispatch(
+                "build_peaks_for_vconf",
+                &serde_json::json!({
+                    "vconf_path": tmp.path().join("missing.conform"),
+                    "dest_path": tmp.path().join("missing.fx-0000000000000000.v4.peaks"),
+                })
+                .to_string(),
+            )
+            .await
+            .expect_err("a missing vconf has no peaks");
+        assert!(err.contains("missing.conform"), "unexpected error: {err}");
     }
 
     #[cfg(feature = "jobs")]

@@ -13,19 +13,30 @@ use crate::napi_backend::Backend;
 /// events; the JS orchestrator drives the panel. The TS host passes the full
 /// project — export is user-triggered and infrequent, so a one-shot
 /// full serialize is fine.
+///
+/// `layer_audio_sources` redirects individual layers to their baked
+/// effect-chain siblings (ADR 0063). The baker owns which layers have one and
+/// gates the export until every bake has landed, so an absent entry here
+/// means "no effects", never "not ready yet".
 pub async fn export_project_audio_only(
     project: crate::state::Project,
     output_path: String,
     audio: AudioEncodeSpec,
     start_us: Option<i64>,
     end_us: Option<i64>,
+    layer_audio_sources: Option<std::collections::HashMap<uuid::Uuid, String>>,
 ) -> Result<bool, String> {
     let path = PathBuf::from(output_path);
     let window = match (start_us, end_us) {
         (Some(s), Some(e)) => Some((s, e)),
         _ => None,
     };
-    export::export_audio_only(&project, &path, &audio, window)
+    let overrides = layer_audio_sources.map(|m| {
+        m.into_iter()
+            .map(|(layer, source)| (layer, PathBuf::from(source)))
+            .collect::<std::collections::HashMap<_, _>>()
+    });
+    export::export_audio_only(&project, &path, &audio, window, overrides.as_ref())
         .await
         .map_err(|e| format!("{e:#}"))
 }
