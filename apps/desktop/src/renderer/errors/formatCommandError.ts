@@ -274,6 +274,8 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
   UnknownKeyframeParam: { tier: "generic" },
   EffectNotFound: { tier: "generic" },
   EffectIndexOutOfRange: { tier: "generic" },
+  EffectKindNotApplicable: { tier: "generic" },
+  AudioEffectParamStatic: { tier: "generic" },
   FpsLockedByContent: {
     tier: "curated",
     key: "errors.fps_locked_by_content",

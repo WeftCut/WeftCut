@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
-import { blankProject, type BlendMode, type Layer, type LayerParams, type MotifParams, type Project, type Rgba, type TextParams } from '../model'
+import { blankProject, type Animated, type BlendMode, type Layer, type LayerParams, type MotifParams, type Project, type Rgba, type TextParams } from '../model'
 import { applyAddLayer, colorParams, textParamsDefault } from './add'
 import { videoClipParams, audioParams } from './media'
 import { isCommandFailure } from '../errors'
-import { applyUpdateLayerParams, applyUpdateLayerParamTrack, resolveAnimatedF64, resolveAnimatedRgba, type LayerParamsPatch } from './params'
+import { applyUpdateLayerParams, applyUpdateLayerParamTrack, readLayerTrack, resolveAnimatedF64, resolveAnimatedRgba, type LayerParamsPatch } from './params'
+import { upsertKeyframe } from '../../../renderer/keyframe/edits'
 // Reaching across into the renderer is deliberate and is the POINT of the gate at
 // the bottom of this file: the two lists have to agree, and only a test that sees
 // both can prove it. `descriptors.ts` is pure data with type-only imports, so it
@@ -695,5 +696,61 @@ describe('applyUpdateLayerParams — a Group layer', () => {
   it('rejects a patch aimed at the wrong kind', () => {
     const { p, innerId } = groupedProject()
     expectCmd(() => applyUpdateLayerParams(p, innerId, { kind: 'CompositionRef', x: 1 }, new MotifCatalog()), 'LayerParamsKindMismatch')
+  })
+})
+
+// ── Audio effect params are static (ADR 0063) ────────────────────────────────
+// `applyUpdateLayerParamTrack` is the funnel every keyframe tool dispatches
+// through — set_keyframe, remove_keyframe, retime_keyframe, the easing writers
+// — so the rule sits here once rather than at each of them.
+describe('applyUpdateLayerParamTrack — an audio effect param', () => {
+  const EID = '00000000-0000-0000-0000-0000000000e1'
+  const key = (param: string) => `effects[${EID}].params[${param}]`
+  const kfTrack = () => ({ mode: 'Keyframed' as const, extrapolate: { before: 'Hold' as const, after: 'Hold' as const }, value: [
+    { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 12, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' as const }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' as const }, continuity: 'Broken' as const, segment: { kind: 'Linear' as const } },
+  ] })
+  /** An Audio layer carrying one denoise effect, plus a VideoClip carrying a blur. */
+  function withEffects(kind: string, params: Record<string, unknown> = {}): { p: Project; id: string } {
+    const g = seededGen(); const p = blankProject(g, 'fx')
+    const id = applyAddLayer(p, g, root(p).tracks[0].id, audioParams(MID, 0, 3_000_000), 0, 3_000_000)
+    layerOf(p, id).effects.push({ id: EID, kind, enabled: true, params: params as never })
+    return { p, id }
+  }
+
+  it('writes a Static value', () => {
+    const { p, id } = withEffects('audio.denoise', { strength: { mode: 'Static', value: 12 } })
+    applyUpdateLayerParamTrack(p, id, key('strength'), { mode: 'Static', value: 20 })
+    expect(layerOf(p, id).effects[0].params.strength).toEqual({ mode: 'Static', value: 20 })
+  })
+
+  it('refuses a Keyframed track', () => {
+    const { p, id } = withEffects('audio.denoise', { strength: { mode: 'Static', value: 12 } })
+    expectCmd(() => applyUpdateLayerParamTrack(p, id, key('strength'), kfTrack()), 'AudioEffectParamStatic')
+    expect(layerOf(p, id).effects[0].params.strength).toEqual({ mode: 'Static', value: 12 })
+  })
+
+  // The lazy-slot path is the second way in: a param the effect has never held
+  // is inserted before the write, and that insert mutates the project — so the
+  // rule has to refuse ahead of it, not after.
+  it('refuses a Keyframed track on a slot that does not exist yet, and creates no slot', () => {
+    const { p, id } = withEffects('audio.denoise')
+    expectCmd(() => applyUpdateLayerParamTrack(p, id, key('strength'), kfTrack()), 'AudioEffectParamStatic')
+    expect(layerOf(p, id).effects[0].params).toEqual({})
+  })
+
+  // set_keyframe's own composition: read the track, upsert one key, dispatch
+  // update_layer_param_track. The lift to Keyframed is what the rule catches.
+  it('refuses the set_keyframe composition — a Static track lifted to Keyframed', () => {
+    const { p, id } = withEffects('audio.denoise', { strength: { mode: 'Static', value: 12 } })
+    const { tStartUs, track } = readLayerTrack(p, id, key('strength'))
+    const next = upsertKeyframe(track as Animated<number>, 1_000_000 - tStartUs, 20, undefined, () => '00000000-0000-0000-0000-0000000000f9')
+    expect(next.mode).toBe('Keyframed')
+    expectCmd(() => applyUpdateLayerParamTrack(p, id, key('strength'), next), 'AudioEffectParamStatic')
+  })
+
+  it('leaves a visual effect on an Audio-adjacent path alone', () => {
+    const { p, id } = withEffects('blur')
+    applyUpdateLayerParamTrack(p, id, key('strength'), kfTrack())
+    expect(layerOf(p, id).effects[0].params.strength.mode).toBe('Keyframed')
   })
 })

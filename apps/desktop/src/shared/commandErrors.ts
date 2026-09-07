@@ -199,6 +199,16 @@ export type CommandError =
   | { error: 'UnknownKeyframeParam'; layer: Uuid; param_key: string }
   | { error: 'EffectNotFound'; effect: Uuid }
   | { error: 'EffectIndexOutOfRange'; index: number; len: number }
+  // ── Audio effects (ADR 0063) ──
+  // The `audio.*` namespace and Audio layers are the same set: audio effects
+  // are offline conform bakes, visual effects are realtime Pixi filters, and
+  // the two share only the `Effect` struct. `layer_kind` is what was found, so
+  // the fix — a different layer, or a different kind — is readable from the
+  // refusal. Unknown NON-audio kinds are still accepted anywhere (ADR 0027).
+  | { error: 'EffectKindNotApplicable'; kind: string; layer_kind: string }
+  // An audio effect is a whole-clip operation, so its params are static only.
+  // Raised by both effect-param write entries, `set_keyframe` included.
+  | { error: 'AudioEffectParamStatic'; effect: Uuid; param: string }
   // ── Composition rate lock (spec R2-D1) ──
   // An fps change re-snaps every layer edge, Motif `src_in_us`, the composition
   // duration and every marker: each edit point moves by up to half a new frame and

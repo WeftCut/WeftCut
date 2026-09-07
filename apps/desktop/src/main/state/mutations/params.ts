@@ -3,6 +3,7 @@ import { CommandFailure } from '../errors'
 import { snapFrameFloor, snapFrameCeil, gridForLayerKind, snapOnGrid } from '../snap'
 import { authoredExtentPx, authoredValue, quantizeTrack } from '../quantize'
 import { checkTrackLock, applyDurationAutofit, requireLayer } from './helpers'
+import { checkAudioEffectParamStatic } from './effects'
 import { normalizeKeyframes } from './animated'
 import { solveAutoTangents } from '../../../shared/tangents'
 import { positionTrack, setPositionTrack } from '../../../shared/position'
@@ -531,6 +532,12 @@ export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: strin
   // UnknownKeyframeParam for it further down. Only keys that ARE in the table
   // carry a range, and those are exactly the valid ones.
   checkTrackValueType(paramKey, track)
+  // The static-only rule for `audio.*` effect params (ADR 0063), at the write
+  // entry `set_keyframe` / `remove_keyframe` / `retime_keyframe` all funnel
+  // through. Before the lazy slot insert below for the same reason as the two
+  // value steps: a refusal leaves the project byte-identical.
+  const audioEff = parseEffectParamKey(paramKey)
+  if (audioEff) checkAudioEffectParamStatic(layer.effects.find((x) => x.id === audioEff[0]), audioEff[1], track)
   if (isColorParam(paramKey)) {
     // `track` holds `Rgba` values — `checkTrackValueType` just proved it, and the
     // narrowing is by param key, which no control-flow analysis can follow.

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { seededGen, type IdGen } from '../ids'
 import { blankProject, type Project } from '../model'
 import { applyAddLayer, applyAddTrack, colorParams } from './add'
+import { audioParams, videoClipParams } from './media'
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect } from './effects'
 import { isCommandFailure } from '../errors'
 import { group, groupedProject, root } from '../__tests__/fixtures/project'
@@ -144,5 +145,95 @@ describe('effects inside a Group', () => {
     applyUpdateEffect(p, innerId, eid, { enabled: false })
     expect(group(p, groupId).tracks[0].layers[0].effects).toEqual([{ id: eid, kind: 'blur', enabled: false, params: {} }])
     expect(root(p)).toEqual(rootBefore)
+  })
+})
+
+// ── The audio namespace + static-only rules (ADR 0063) ───────────────────────
+// `audio.*` and Audio layers are the same set, and audio effect params are
+// static. Both rules live at the command layer because MCP and the UI reach the
+// same code site, and both refusals are pre-write: the project has to come out
+// byte-identical.
+describe('audio effect rules', () => {
+  const MID = '00000000-0000-0000-0000-0000000000aa'
+  const kfTrack = () => ({ mode: 'Keyframed' as const, extrapolate: { before: 'Hold' as const, after: 'Hold' as const }, value: [
+    { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 12, in: { x: 2 / 3, y: 2 / 3, mode: 'Free' as const }, out: { x: 1 / 3, y: 1 / 3, mode: 'Free' as const }, continuity: 'Broken' as const, segment: { kind: 'Linear' as const } },
+  ] })
+  /** One Audio layer and one VideoClip layer, on the two blank tracks. */
+  function avProject(): { p: Project; gen: IdGen; audioId: string; videoId: string } {
+    const gen = seededGen()
+    const p = blankProject(gen, 'av')
+    const audioId = applyAddLayer(p, gen, root(p).tracks[0].id, audioParams(MID, 0, 3_000_000), 0, 3_000_000)
+    const videoId = applyAddLayer(p, gen, root(p).tracks[1].id, videoClipParams(MID, 0, 3_000_000), 0, 3_000_000)
+    return { p, gen, audioId, videoId }
+  }
+
+  it('an Audio layer takes audio.* and refuses a visual kind', () => {
+    const { p, gen, audioId } = avProject()
+    const eid = applyAddEffect(p, gen, audioId, 'audio.denoise')
+    expect(effectsOf(p, audioId)).toEqual([{ id: eid, kind: 'audio.denoise', enabled: true, params: {} }])
+    expectCmd(() => applyAddEffect(p, gen, audioId, 'blur'), 'EffectKindNotApplicable')
+    expect(effectsOf(p, audioId)).toHaveLength(1)
+  })
+
+  it('a non-Audio layer refuses audio.* — catalogued or not', () => {
+    const { p, gen, videoId } = avProject()
+    expectCmd(() => applyAddEffect(p, gen, videoId, 'audio.denoise'), 'EffectKindNotApplicable')
+    // The rule is the NAMESPACE, not catalog membership: an audio kind this
+    // build has never heard of is still refused on a visual layer.
+    expectCmd(() => applyAddEffect(p, gen, videoId, 'audio.future'), 'EffectKindNotApplicable')
+    expect(effectsOf(p, videoId)).toEqual([])
+  })
+
+  // ADR 0027: main cannot read the pixi-dependent visual registry, so an
+  // unknown non-audio kind is accepted and resolved at render.
+  it('an unknown NON-audio kind still lands on a visual layer', () => {
+    const { p, gen, videoId } = avProject()
+    const eid = applyAddEffect(p, gen, videoId, 'some.unknown')
+    expect(effectsOf(p, videoId)).toEqual([{ id: eid, kind: 'some.unknown', enabled: true, params: {} }])
+  })
+
+  it('reports the layer kind that was found, and still burns the id', () => {
+    const { p, gen, videoId } = avProject()
+    try {
+      applyAddEffect(p, gen, videoId, 'audio.denoise')
+      throw new Error('expected EffectKindNotApplicable')
+    } catch (e) {
+      expect(isCommandFailure(e) && e.err).toEqual({ error: 'EffectKindNotApplicable', kind: 'audio.denoise', layer_kind: 'VideoClip' })
+    }
+    // Same id contract as every other add_effect refusal.
+    expect(applyAddEffect(p, gen, videoId, 'blur')).toBe('00000000-0000-0000-0000-000000000008')
+  })
+
+  it('LayerNotFound still precedes the namespace rule', () => {
+    const { p, gen } = avProject()
+    expectCmd(() => applyAddEffect(p, gen, 'ghost', 'audio.denoise'), 'LayerNotFound')
+  })
+
+  it('applyUpdateEffect refuses a Keyframed track on an audio.* param', () => {
+    const { p, gen, audioId } = avProject()
+    const eid = applyAddEffect(p, gen, audioId, 'audio.denoise')
+    applyUpdateEffect(p, audioId, eid, { params: { strength: sp(20) } })
+    try {
+      applyUpdateEffect(p, audioId, eid, { enabled: false, params: { strength: kfTrack() } })
+      throw new Error('expected AudioEffectParamStatic')
+    } catch (e) {
+      expect(isCommandFailure(e) && e.err).toEqual({ error: 'AudioEffectParamStatic', effect: eid, param: 'strength' })
+    }
+    // Nothing applied — not the track, and not the `enabled` that rode along.
+    expect(effectsOf(p, audioId)[0]).toEqual({ id: eid, kind: 'audio.denoise', enabled: true, params: { strength: sp(20) } })
+  })
+
+  it('applyUpdateEffect refuses a Keyframed track ANYWHERE in the patch', () => {
+    const { p, gen, audioId } = avProject()
+    const eid = applyAddEffect(p, gen, audioId, 'audio.denoise')
+    expectCmd(() => applyUpdateEffect(p, audioId, eid, { params: { strength: sp(20), margin: kfTrack() } }), 'AudioEffectParamStatic')
+    expect(effectsOf(p, audioId)[0].params).toEqual({})
+  })
+
+  it('a visual effect keeps its keyframed params', () => {
+    const { p, gen, videoId } = avProject()
+    const eid = applyAddEffect(p, gen, videoId, 'blur')
+    applyUpdateEffect(p, videoId, eid, { params: { strength: kfTrack() } })
+    expect(effectsOf(p, videoId)[0].params.strength.mode).toBe('Keyframed')
   })
 })

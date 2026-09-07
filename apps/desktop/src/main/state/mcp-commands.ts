@@ -658,6 +658,19 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
   if (e.error === 'GroupNotPlain') return { code: 'invalid_params', message: `Group layer ${e.layer} is not plain: its ${e.reason} is not the identity and ungroup would discard it silently. Reset the ${e.reason} on the Group layer first (update_layer_params / remove_effect), or keep the Group` }
   if (e.error === 'CompositionInUse') return { code: 'invalid_params', message: `composition ${e.composition} is still referenced by ${e.ref_count} Group layer(s); delete or ungroup them first (project://compositions lists ref_count)` }
   if (e.error === 'RootComposition') return { code: 'invalid_params', message: `composition ${e.composition} is the root: it has no name and export renders it, so it is never renamed or deleted` }
+  // ── Audio effects (ADR 0063). Both name the RULE, not just the violation:
+  // the client drops `data`, and each refusal is an agent's first encounter
+  // with a namespace and a static-only constraint the visual effects don't have. ──
+  if (e.error === 'EffectKindNotApplicable') {
+    return { code: 'invalid_params', message: `effect kind '${e.kind}' does not apply to a ${e.layer_kind} layer: the audio.* namespace is for Audio layers and only Audio layers, and a visual effect kind never lands on one. Audio effects (audio.denoise) are offline conform bakes; visual effects are realtime filters. The fix is a different layer or a different kind — project://timeline reports each layer's kind`, data: {
+      error: 'EffectKindNotApplicable', kind: e.kind, layer_kind: e.layer_kind,
+    } }
+  }
+  if (e.error === 'AudioEffectParamStatic') {
+    return { code: 'invalid_params', message: `effect ${e.effect} param '${e.param}' belongs to an audio.* effect, whose params are STATIC ONLY: an audio effect is a whole-clip offline bake, so there is no per-frame value to animate. Send it with update_effect as {"${e.param}": {"mode": "Static", "value": <number>}}; set_keyframe and a Keyframed update_layer_param_track are rejected on it`, data: {
+      error: 'AudioEffectParamStatic', effect: e.effect, param: e.param,
+    } }
+  }
   return { code: 'invalid_params', message: e.error }
 }
 
@@ -1048,7 +1061,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'compositions_delete', args: { composition: parseUuid(a.composition_id, 'composition_id') } }) },
   // ── table-exec: effects ──────────────────────────────────────────────────
   { name: 'add_effect', exec: 'table',
-    description: 'Add an effect to a layer\'s chain (appended to the end of the chain, applied last). `kind` is the catalog key ("blur", "chromakey", "brightness", "contrast", "saturation", "sharpen"). The three colour entries each take one param `amount`, a percentage offset from neutral in [-100, 100] with 0 = no change (so `amount: 20` is "+20 %"); "sharpen" takes `amount` too, but in [0, 100] with 0 = no change — it has no negative side, because that would be a blur. Returns the new effect id. The effect is created with no params set; use update_effect to set a static value first, then set_keyframe to keyframe it.',
+    description: 'Add an effect to a layer\'s chain (appended to the end of the chain, applied last). `kind` is the catalog key. VISUAL kinds ("blur", "chromakey", "brightness", "contrast", "saturation", "sharpen") go on visual layers: the three colour entries each take one param `amount`, a percentage offset from neutral in [-100, 100] with 0 = no change (so `amount: 20` is "+20 %"); "sharpen" takes `amount` too, but in [0, 100] with 0 = no change — it has no negative side, because that would be a blur. AUDIO kinds are the `audio.*` namespace and go on Audio layers ONLY — and a visual kind is refused on an Audio layer (`EffectKindNotApplicable` names both the kind and the layer kind). The one audio kind is "audio.denoise" (ffmpeg afftdn with a sampled noise profile), whose params are `strength` (noise reduction in dB, [1, 40], default 12), `margin` (dB above the measured noise floor, [0, 20], default 8) and the sample region `profile_in_us` / `profile_out_us` — SOURCE-time bounds of a span containing only noise, at least 250000 µs long and inside the media duration. It does nothing until both bounds are set. Audio effect params are STATIC ONLY (a whole-clip offline bake, so nothing to animate): set them with update_effect; set_keyframe on one is rejected (`AudioEffectParamStatic`). Returns the new effect id. The effect is created with no params set; use update_effect to set a static value first, then — for a visual effect — set_keyframe to keyframe it.',
     inputSchema: { type: 'object', properties: { kind: { type: 'string' }, layer_id: { type: 'string' } }, required: ['kind', 'layer_id'] },
     parseArgs: (a) => ({ op: 'add_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), kind: parseStr(a.kind, 'kind') } }),
     shapeResult: (v) => toolText(v as string) },
