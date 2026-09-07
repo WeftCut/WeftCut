@@ -12,6 +12,7 @@ import {
   logEmit,
   markSilences,
   MEDIA_JOB_EVENTS,
+  removeSilences,
   type MediaJobEvent,
   type SilenceRegion,
 } from "../ipc";
@@ -83,7 +84,7 @@ function dbfsOf(amp: number): string {
 }
 
 /// Detect a clip's silent ranges, tune the two parameters against a live
-/// preview, then land each range as a region marker.
+/// preview, then either mark every range or cut them all out.
 ///
 /// The preview is the review surface, and it is deliberately a LIST rather than
 /// a Panel: verifying one silent range means listening to it, which costs more
@@ -95,13 +96,19 @@ function dbfsOf(amp: number): string {
 /// waveform peaks rather than decoding: the read is a cache walk, so a live
 /// control costs what a static one would.
 ///
-/// Nothing is written until *Mark silences*, and nothing at all is written when
-/// the clip has no silence above the threshold — the button greys and the list
-/// says so plainly.
+/// Nothing is written until one of the two actions is pressed, and nothing at
+/// all is written when the clip has no silence above the threshold — both
+/// buttons grey and the list says so plainly. *Mark silences* leaves the film
+/// exactly as long as it was; *Remove* cuts each range out and closes the gap
+/// behind it, as one recorded edit.
 ///
 /// Failures stay INLINE and also land in the status log, on
 /// `AutoCaptionDialog`'s rule: inline wins on proximity and the dialog stays
-/// open, so the parameters the user tuned survive a failure.
+/// open, so the parameters the user tuned survive a failure. A removal's
+/// refusals are the ripple planner's and they NAME the layer that blocked, so
+/// showing the tool's own words is what makes the dialog actionable — a
+/// generic failure would send the user hunting for a clip the message already
+/// identified.
 ///
 /// Rendered by App rather than by a Panel — see `silencePrompt.ts`.
 export function SilenceDialog() {
@@ -112,7 +119,9 @@ export function SilenceDialog() {
   const [regions, setRegions] = useState<readonly SilenceRegion[]>([]);
   const [preview, setPreview] = useState<PreviewState>("detecting");
   const [error, setError] = useState("");
-  const [marking, setMarking] = useState(false);
+  // WHICH write is in flight, not merely whether one is: both actions grey
+  // while either runs, and each button has to know if the spinner is its own.
+  const [busy, setBusy] = useState<null | "mark" | "remove">(null);
   // One coordinator per mounted dialog, not per module: a superseded read must
   // not publish over the newest one even while the newest is still pending
   // (`state/latestRequest.ts` states the rule), and closing the dialog has to
@@ -136,7 +145,7 @@ export function SilenceDialog() {
     setRegions([]);
     setPreview("detecting");
     setError("");
-    setMarking(false);
+    setBusy(null);
   }, [layerId]);
 
   // The live preview. Debounced so a held arrow key does not queue one read per
@@ -210,63 +219,122 @@ export function SilenceDialog() {
     (sum, r) => sum + (r.t_end_us - r.t_start_us),
     0,
   );
-  const canMark = preview === "ready" && regions.length > 0 && !marking;
+  // One gate for both actions: neither may run while a detection is in flight
+  // (the set would not be the one on screen), on a clip with nothing silent, or
+  // while the other one is mid-commit.
+  const canAct = preview === "ready" && regions.length > 0 && busy === null;
 
-  const submit = async () => {
-    if (!canMark) return;
+  /// Run one of the two write verbs and settle the dialog around it: success
+  /// closes, a refusal stays open with the tool's own words in the error slot.
+  ///
+  /// One shared runner because the two differ only in the call and the words:
+  /// the `op_id` pairing, the terminal-row rule and the re-arm on failure are
+  /// the same contract, and a second copy of them is a second place to get the
+  /// status bar stuck on a spinner.
+  const run = async (
+    phase: "mark" | "remove",
+    tool: string,
+    started: { message: string; i18n_key: string; i18n_args: Record<string, unknown> },
+    call: () => Promise<{ message: string; i18n_key: string; i18n_args: Record<string, unknown> }>,
+  ) => {
+    if (!canAct) return;
     setError("");
-    setMarking(true);
+    setBusy(phase);
     // One `op_id` pairs the Started row with its terminal one
     // (docs/status-log.md). Announced even though the commit is local and quick:
-    // the marks land in the ruler's lower half, which the user may not be
-    // looking at, and the log row is the record that they did.
+    // what the run changed is not necessarily where the user is looking — the
+    // ruler's lower half for a mark, the timeline downstream for a removal —
+    // and the log row is the record that it happened.
     const opId = crypto.randomUUID();
     void logEmit({
       level: "info",
       category: { kind: "Project" },
       source: { kind: "User" },
-      message: `Marking silences in ${target.layerName}`,
-      i18n_key: "log.mark_silences_started",
-      i18n_args: { clip: target.layerName },
+      ...started,
       op_id: opId,
       op_state: { state: "Started" },
     });
     try {
-      // Re-detected inside the same call at these very parameters, so the marks
-      // are the set the list showed rather than whatever a second read of a
-      // changed cache would find.
-      const { markers } = await markSilences({
-        layerId: target.layerId,
-        thresholdAmp,
-        minSilenceUs: minSilenceMs * 1_000,
-      });
+      const done = await call();
       void logEmit({
         level: "info",
         category: { kind: "Project" },
         source: { kind: "User" },
-        message: `${markers} silence markers added`,
-        i18n_key: "log.mark_silences_done",
-        i18n_args: { markers, clip: target.layerName },
+        ...done,
         op_id: opId,
         op_state: { state: "Ok" },
       });
       closeSilencePrompt();
     } catch (err) {
       // The tool's own message, verbatim: it names the layer kind it refuses,
-      // the parameter range it rejects, or the waveform it is still waiting on.
-      // A generic "marking failed" would throw away the actionable half.
+      // the parameter range it rejects, the waveform it is still waiting on, or
+      // — for a removal — the layer whose position blocked the ripple. A
+      // generic "it failed" would throw away the actionable half.
       setError(refusalText(err));
       // Under the run's own `op_id`: the Started row above has to close as
-      // `Err`, or the status bar keeps a mark spinning that already failed.
-      logMutationFailure(err, "mark_silences", opId);
-      setMarking(false);
+      // `Err`, or the status bar keeps a run spinning that already failed.
+      logMutationFailure(err, tool, opId);
+      setBusy(null);
     }
   };
+
+  // Both verbs re-detect inside their own call at these very parameters, so
+  // what lands is the set the list showed rather than whatever a second read of
+  // a changed cache would find.
+  const mark = () =>
+    run(
+      "mark",
+      "mark_silences",
+      {
+        message: `Marking silences in ${target.layerName}`,
+        i18n_key: "log.mark_silences_started",
+        i18n_args: { clip: target.layerName },
+      },
+      async () => {
+        const { markers } = await markSilences({
+          layerId: target.layerId,
+          thresholdAmp,
+          minSilenceUs: minSilenceMs * 1_000,
+        });
+        return {
+          message: `${markers} silence markers added`,
+          i18n_key: "log.mark_silences_done",
+          i18n_args: { markers, clip: target.layerName },
+        };
+      },
+    );
+
+  // The count AND the total: a removal shortens the film, so how much it took
+  // out is the fact the record has to carry — the count alone says nothing
+  // about how far downstream moved.
+  const remove = () =>
+    run(
+      "remove",
+      "remove_silences",
+      {
+        message: `Removing silences from ${target.layerName}`,
+        i18n_key: "log.remove_silences_started",
+        i18n_args: { clip: target.layerName },
+      },
+      async () => {
+        const result = await removeSilences({
+          layerId: target.layerId,
+          thresholdAmp,
+          minSilenceUs: minSilenceMs * 1_000,
+        });
+        const total = formatWallClock(result.removed_us);
+        return {
+          message: `${result.removed} silent ranges removed from ${target.layerName}, ${total} in all`,
+          i18n_key: "log.remove_silences_done",
+          i18n_args: { removed: result.removed, total, clip: target.layerName },
+        };
+      },
+    );
 
   return (
     <AppDialog
       title={t("silence.title")}
-      onClose={marking ? undefined : closeSilencePrompt}
+      onClose={busy === null ? closeSilencePrompt : undefined}
       panelClassName="new-project-panel"
     >
       <div className="new-project-row">
@@ -284,7 +352,7 @@ export function SilenceDialog() {
             step={0.005}
             format={{ minimumFractionDigits: 3, maximumFractionDigits: 3 }}
             ariaLabel={t("silence.threshold")}
-            disabled={marking}
+            disabled={busy !== null}
           />
         </div>
         <span className="settings-toggle-hint">
@@ -300,7 +368,7 @@ export function SilenceDialog() {
             min={MIN_SILENCE_FLOOR_MS}
             step={50}
             ariaLabel={t("silence.min_length")}
-            disabled={marking}
+            disabled={busy !== null}
           />
           <span className="settings-toggle-hint">{t("silence.unit_ms")}</span>
         </div>
@@ -341,16 +409,22 @@ export function SilenceDialog() {
       <p className="settings-toggle-hint">{t("silence.note")}</p>
       {error !== "" && <p className="new-project-error">{error}</p>}
       <footer className="new-project-actions">
-        <Button size="lg" disabled={marking} onClick={closeSilencePrompt}>
+        <Button size="lg" disabled={busy !== null} onClick={closeSilencePrompt}>
           {t("silence.cancel")}
+        </Button>
+        {/* Mark stays the default press: it is the reversible one, and the
+            native-NLE habit is that the destructive verb is the deliberate
+            second reach rather than the button Enter lands on. */}
+        <Button size="lg" disabled={!canAct} onClick={() => void remove()}>
+          {busy === "remove" ? t("silence.removing") : t("silence.remove")}
         </Button>
         <Button
           variant="default"
           size="lg"
-          disabled={!canMark}
-          onClick={() => void submit()}
+          disabled={!canAct}
+          onClick={() => void mark()}
         >
-          {marking ? t("silence.running") : t("silence.confirm")}
+          {busy === "mark" ? t("silence.running") : t("silence.confirm")}
         </Button>
       </footer>
     </AppDialog>

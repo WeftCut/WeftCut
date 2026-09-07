@@ -12,6 +12,7 @@ import "../i18n";
 const mocks = vi.hoisted(() => ({
   detectSilences: vi.fn(),
   markSilences: vi.fn(),
+  removeSilences: vi.fn(),
   logEmit: vi.fn(),
   listen: vi.fn(),
   unlisten: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("../ipc", async (importActual) => {
     ...actual,
     detectSilences: mocks.detectSilences,
     markSilences: mocks.markSilences,
+    removeSilences: mocks.removeSilences,
     logEmit: mocks.logEmit,
   };
 });
@@ -55,6 +57,10 @@ function markButton(): HTMLButtonElement {
   return screen.getByRole("button", { name: "Mark silences" }) as HTMLButtonElement;
 }
 
+function removeButton(): HTMLButtonElement {
+  return screen.getByRole("button", { name: "Remove" }) as HTMLButtonElement;
+}
+
 /// The handler the dialog registered for `media:job_complete`, or null when it
 /// registered none.
 function waveformHandler():
@@ -73,6 +79,11 @@ describe("SilenceDialog", () => {
     mocks.markSilences.mockReset().mockResolvedValue({
       markers: 2,
       marker_ids: ["mk-1", "mk-2"],
+    });
+    mocks.removeSilences.mockReset().mockResolvedValue({
+      surviving_layer_ids: ["l-1a", "l-1b", "l-1c"],
+      removed: 2,
+      removed_us: 2_300_000,
     });
     mocks.logEmit.mockReset().mockResolvedValue(undefined);
     mocks.unlisten.mockReset();
@@ -159,8 +170,13 @@ describe("SilenceDialog", () => {
       expect(screen.getByText("No silence above this threshold")).toBeTruthy(),
     );
     expect(markButton().disabled).toBe(true);
+    // Both verbs, not just the default one: there is nothing for either to act
+    // on, and a live Remove would ripple a hole of length zero.
+    expect(removeButton().disabled).toBe(true);
     fireEvent.click(markButton());
+    fireEvent.click(removeButton());
     expect(mocks.markSilences).not.toHaveBeenCalled();
+    expect(mocks.removeSilences).not.toHaveBeenCalled();
   });
 
   // A fresh import's real state. The refusal is a WAIT, not a failure: showing
@@ -283,6 +299,110 @@ describe("SilenceDialog", () => {
         thresholdAmp: 0.02,
         minSilenceUs: 500_000,
       }),
+    );
+  });
+  // The gate the live preview needs: a set is only actionable once the read that
+  // produced it has landed. Until then both buttons are dead, so a press can
+  // never commit a set the list is not showing.
+  it("greys both actions while a detection is still in flight", async () => {
+    mocks.detectSilences.mockReset().mockReturnValue(new Promise(() => {}));
+    open();
+    render(<SilenceDialog />);
+    await waitFor(() => expect(mocks.detectSilences).toHaveBeenCalled());
+    expect(screen.getByText("Reading the waveform\u2026")).toBeTruthy();
+    expect(removeButton().disabled).toBe(true);
+    expect(markButton().disabled).toBe(true);
+  });
+
+  it("removes at the dialog's own parameters, reports the count and the total, and closes", async () => {
+    open();
+    render(<SilenceDialog />);
+    await waitFor(() => expect(mocks.detectSilences).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText("Shortest silence"), {
+      target: { value: "800" },
+    });
+    await waitFor(() =>
+      expect(mocks.detectSilences).toHaveBeenLastCalledWith(
+        expect.objectContaining({ minSilenceUs: 800_000 }),
+      ),
+    );
+    fireEvent.click(removeButton());
+    await waitFor(() =>
+      expect(useSilencePromptStore.getState().target).toBeNull(),
+    );
+    // The very numbers the preview was taken at — a removal at other thresholds
+    // would take out a set the list never showed.
+    expect(mocks.removeSilences).toHaveBeenCalledWith({
+      layerId: "l-1",
+      thresholdAmp: 0.02,
+      minSilenceUs: 800_000,
+    });
+    expect(mocks.markSilences).not.toHaveBeenCalled();
+    const rows = mocks.logEmit.mock.calls.map((c) => c[0]);
+    expect(rows[0]).toMatchObject({
+      i18n_key: "log.remove_silences_started",
+      i18n_args: { clip: "interview.mov" },
+      op_state: { state: "Started" },
+    });
+    // The total beside the count: a removal shortens the film, and how much it
+    // took out is what says how far everything downstream moved.
+    expect(rows[1]).toMatchObject({
+      i18n_key: "log.remove_silences_done",
+      i18n_args: { removed: 2, total: "00:00:02.300", clip: "interview.mov" },
+      op_state: { state: "Ok" },
+    });
+    expect(rows[0].op_id).toBe(rows[1].op_id);
+  });
+
+  // The ripple planner's refusals NAME the layer that blocked, and that name is
+  // the whole value of the message: showing "removal failed" would send the user
+  // hunting for a clip the refusal already identified.
+  it("surfaces a planner refusal inline, naming the blocking layer, and stays open", async () => {
+    mocks.removeSilences.mockRejectedValue(
+      ipcError(
+        'RippleInsideHole: layer "b-roll insert" starts inside the span being closed',
+      ),
+    );
+    open();
+    render(<SilenceDialog />);
+    await waitFor(() => expect(mocks.detectSilences).toHaveBeenCalled());
+    fireEvent.click(removeButton());
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          'Error: RippleInsideHole: layer "b-roll insert" starts inside the span being closed',
+        ),
+      ).toBeTruthy(),
+    );
+    expect(useSilencePromptStore.getState().target).not.toBeNull();
+    // Re-armed, and the ranges are still on screen: the fix is to move that clip
+    // and press again, which a greyed button would make impossible.
+    expect(removeButton().disabled).toBe(false);
+    expect(
+      screen.getByText("2 silent ranges, 00:00:02.300 in total"),
+    ).toBeTruthy();
+  });
+
+  it("greys the other action while one write is in flight", async () => {
+    let settle: (v: unknown) => void = () => {};
+    mocks.removeSilences.mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+    open();
+    render(<SilenceDialog />);
+    await waitFor(() => expect(mocks.detectSilences).toHaveBeenCalled());
+    fireEvent.click(removeButton());
+    // Its own spinner on the pressed button, and the other one dead: two
+    // commits over one clip from one dialog is not a state anything wants.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Removing\u2026" })).toBeTruthy(),
+    );
+    expect(markButton().disabled).toBe(true);
+    settle({ surviving_layer_ids: [], removed: 1, removed_us: 1_000 });
+    await waitFor(() =>
+      expect(useSilencePromptStore.getState().target).toBeNull(),
     );
   });
 });

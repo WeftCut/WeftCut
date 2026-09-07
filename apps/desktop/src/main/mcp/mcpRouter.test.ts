@@ -34,21 +34,23 @@ describe('routeMcpTool', () => {
     for (const t of ['ping', 'detect_silences', 'transcribe_clip'])
       expect(routeMcpTool(t), t).toBe('rust')
   })
-  it('routes auto_split_by_shot to the hybrid orchestrator (TS-owned def, Rust cuts + TS writes)', () => {
+  it('routes the TS-owned hybrid defs to the hybrid orchestrator (Rust compute + TS writes)', () => {
     expect(routeMcpTool('auto_split_by_shot')).toBe('hybrid')
+    expect(routeMcpTool('remove_silences')).toBe('hybrid')
   })
-  it('single-writer invariant: every TS-def tool routes to ts (or hybrid for the TS-owned hybrid), never rust', () => {
+  it('single-writer invariant: every TS-def tool routes to ts (or hybrid for a TS-owned hybrid), never rust', () => {
     // No TS-def tool may reach the Rust project writer. Almost all route 'ts';
-    // auto_split_by_shot routes 'hybrid' (HYBRID_TOOLS is consulted first) — its
-    // splits still write through the TS actor, so the single-writer holds.
+    // the TS-owned hybrids route 'hybrid' (HYBRID_TOOLS is consulted first) —
+    // their edits still write through the TS actor, so single-writer holds.
     for (const t of MCP_TOOLS) expect(routeMcpTool(t), t).toBe(HYBRID_TOOLS.has(t) ? 'hybrid' : 'ts')
   })
-  it('the only hybrid tool with a TS-owned def is auto_split_by_shot (the rest are Rust-catalog-sourced)', () => {
+  it('the hybrid tools with a TS-owned def are auto_split_by_shot and remove_silences (the rest are Rust-catalog-sourced)', () => {
     // import_media / apply_subtitles / synthesize_speech advertise via the Rust
-    // catalog, so they are NOT in MCP_TOOLS; auto_split_by_shot's def is TS-owned
-    // (it must merge into the catalog from the TS side), so it is the lone overlap.
+    // catalog, so they are NOT in MCP_TOOLS. The two whose defs are TS-owned —
+    // they must merge into the catalog from the TS side — are the only overlap.
+    const TS_OWNED = new Set(['auto_split_by_shot', 'remove_silences'])
     for (const t of HYBRID_TOOLS) {
-      expect(MCP_TOOLS.has(t), t).toBe(t === 'auto_split_by_shot')
+      expect(MCP_TOOLS.has(t), t).toBe(TS_OWNED.has(t))
     }
   })
 })

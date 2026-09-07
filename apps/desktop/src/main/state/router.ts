@@ -48,10 +48,16 @@ export type Route =
  *  waveform peaks through `detect_silences`, the TS actor lands one region
  *  marker per silent range in a single commit. Renderer-only for
  *  `apply_shot_cuts`' reason — an agent already has the read tool and
- *  `add_markers`. */
+ *  `add_markers`.
+ *
+ *  `remove_silences` is the first silence arm reachable from BOTH the dialog
+ *  and MCP: cutting the ranges out and closing the gaps is one recorded edit
+ *  no sequence of advertised tools reproduces, so it carries a tool of its own
+ *  (`mcp/mutationTools.ts` `HYBRID_TOOLS`) and this channel serves the very
+ *  same arm. */
 export const HYBRID_CHANNELS: ReadonlySet<string> = new Set([
   'import_media', 'drop_shot_markers', 'apply_shot_cuts', 'mark_silences',
-  'apply_subtitles', 'synthesize_speech',
+  'remove_silences', 'apply_subtitles', 'synthesize_speech',
 ])
 
 /** Read-only channels whose Rust entry point is a direct napi method (or the

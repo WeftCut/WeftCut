@@ -1980,6 +1980,12 @@ const enUS = {
     // The COUNT is the whole point of the row: the marks land in the ruler's
     // lower half, which the user may not have been looking at.
     mark_silences_done: "{{markers}} silence markers added to “{{clip}}”",
+    remove_silences_started: "Removing silences from “{{clip}}”",
+    // The TOTAL beside the count, unlike the marking row's count alone: a
+    // removal shortens the film, and how much it took out is what says how far
+    // everything downstream moved.
+    remove_silences_done:
+      "{{removed}} silent ranges removed from “{{clip}}”, {{total}} in all",
     describe_started: "Describing “{{clip}}”",
     // The engine AND the model, unlike the transcription row's engine alone:
     // one runtime serves several vision models here, so the engine tag on its
@@ -2200,8 +2206,8 @@ const enUS = {
   },
   // The silence dialog. Two live parameters and a preview, straight from the
   // authored `cut-silences` prompt's parameter set — nothing invented beyond it.
-  // The copy here covers the measurement and the marking; what the dialog offers
-  // to DO with the ranges is named by its own action buttons.
+  // The copy here covers the measurement; which of the two verbs follows it is
+  // named by the dialog's own action buttons.
   silence: {
     title: "Detect silences",
     clip: "Clip",
@@ -2220,10 +2226,16 @@ const enUS = {
     summary_one: "1 silent range, {{total}} in total",
     summary_other: "{{count}} silent ranges, {{total}} in total",
     range: "{{start}} – {{end}}",
-    note: "Each range becomes a marker on this clip. Nothing is cut.",
+    // Says what each verb LEAVES, which is the whole difference between them:
+    // one adds a note and changes no timing, the other shortens the film.
+    note:
+      "Mark turns each range into a marker on this clip and changes nothing else. Remove cuts every range out and closes the gap behind it, as one undoable edit.",
     cancel: "Cancel",
     confirm: "Mark silences",
     running: "Marking…",
+    // Not "Cut": the gap closes, which is the part a plain cut would not do.
+    remove: "Remove",
+    removing: "Removing…",
   },
   describe: {
     title: "Describe content",

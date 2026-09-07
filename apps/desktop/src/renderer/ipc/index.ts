@@ -2538,15 +2538,18 @@ export async function synthesizeSpeech(
 }
 
 // ============================================================
-// Silence — detect and mark
+// Silence — detect, mark, remove
 // ============================================================
-// Measuring and marking: find the silent ranges, and put one region marker per
-// range on the waveform the timeline already draws. NOTHING below removes
-// anything — the measurement is the half every silence recipe shares, and what
-// becomes of the ranges is a separate call made by whoever asked for them.
+// One measurement, two verbs over it. `detectSilences` finds the silent ranges
+// and writes nothing; `markSilences` puts one region marker per range on the
+// waveform the timeline already draws; `removeSilences` cuts every range out
+// and closes the gaps behind them. The measurement is the half every silence
+// recipe shares, and which verb follows it is the caller's choice — the two
+// re-detect at the parameters they are given, so neither can act on a set the
+// preview did not show.
 //
-// Both THROW, like every write and every dialog-driven read here: the dialog
-// shows the message inline and logs a row.
+// All three THROW, like every write and every dialog-driven read here: the
+// dialog shows the message inline and logs a row.
 
 /// One silent range in the clip's own composition clock — timeline-absolute and
 /// already clipped to the layer's span, so a caller never maps source time
@@ -2599,6 +2602,48 @@ export async function markSilences(args: {
     ...(args.thresholdAmp === undefined ? {} : { threshold_amp: args.thresholdAmp }),
     ...(args.minSilenceUs === undefined ? {} : { min_silence_us: args.minSilenceUs }),
   });
+}
+
+/// What one removal did: the clip's remaining pieces in timeline order, the
+/// number of silent stretches removed, and the total time that went with them.
+/// Mirrors `RemoveSilencesResult` (`main/state/hybrids.ts`).
+export interface RemoveSilencesResult {
+  surviving_layer_ids: string[];
+  removed: number;
+  removed_us: number;
+}
+
+/// Detect and CUT in ONE commit (one undo entry): every silent range is
+/// removed and the gap it vacated closes behind it, so the clip — and the film
+/// — get shorter (ADR 0062). Detection re-runs inside the same call at the
+/// parameters given, exactly as `markSilences` does, so what leaves is the set
+/// the preview showed.
+///
+/// `removed` is `0` with no commit at all when nothing is silent above the
+/// threshold, and `surviving_layer_ids` is then the untouched clip: re-tuning
+/// and re-running costs no undo steps whichever verb the tuning ends on.
+///
+/// Refuses whole rather than half-cutting. The ripple planner's four refusals
+/// (a layer starting inside a silent stretch, a collision, a link straddling
+/// one, a locked mover) each name the layer that blocked, and a clip that is
+/// silent end to end is an `InvalidArgument` — removing every segment is a
+/// delete. Either way the clip comes back UNSPLIT with nothing recorded, so
+/// the dialog can show the message and let the user fix it and press again.
+///
+/// Unwrapped from the MCP arm's JSON string here, like `synthesizeSpeech`: the
+/// arm is advertised as a tool, where every result becomes one `ToolResult`
+/// text block (`main/state/hybrids.ts` states that contract).
+export async function removeSilences(args: {
+  layerId: string;
+  thresholdAmp?: number;
+  minSilenceUs?: number;
+}): Promise<RemoveSilencesResult> {
+  const json = await invoke<string>("remove_silences", {
+    layer_id: args.layerId,
+    ...(args.thresholdAmp === undefined ? {} : { threshold_amp: args.thresholdAmp }),
+    ...(args.minSilenceUs === undefined ? {} : { min_silence_us: args.minSilenceUs }),
+  });
+  return JSON.parse(json) as RemoveSilencesResult;
 }
 
 /// Export-readiness audio gate (Rust `ensure_export_audio_conform`): media

@@ -38,7 +38,7 @@ const ALL_CHANNELS: readonly string[] = [
   'export_video_sink_cancel', 'import_cancel', 'import_queue_list', 'report_audio_meter',
   'settings_get_api_key_status', 'settings_test_provider',
   // hybrids (native-compute → TS-write)
-  'import_media', 'drop_shot_markers', 'apply_shot_cuts', 'mark_silences',
+  'import_media', 'drop_shot_markers', 'apply_shot_cuts', 'mark_silences', 'remove_silences',
   'apply_subtitles', 'synthesize_speech',
   // clip compute (actor-resolved { layer, media } slice, no actor write)
   'detect_silences', 'transcribe_clip', 'describe_clip',

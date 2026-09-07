@@ -23,8 +23,8 @@ pub(crate) fn catalog() -> Vec<PromptDef> {
     let mut prompts = vec![PromptDef {
         name: NAME_CUT_SILENCES.into(),
         description: Some(
-            "Find the silent regions in a clip and mark them. It stops at marking on purpose: \
-             removing dead air needs a ripple delete this editor does not have."
+            "Cut the silent regions out of a clip and close the gaps, tightening it. Or mark \
+             them first, to review every gap on the ruler before any of it goes."
                 .into(),
         ),
         arguments: vec![
@@ -158,19 +158,23 @@ fn expand_cut_silences(args: Option<&Map<String, Value>>) -> Result<PromptResult
     }
 
     let text = format!(
-"Mark the silent gaps in layer `{layer_id}`.
+"Cut the silent gaps out of layer `{layer_id}` and close them.
 
 Steps:
-1. Call `detect_silences` with `layer_id: \"{layer_id}\"`{extra}. It walks the pre-computed waveform peaks and returns timeline-absolute `[{{ t_start_us, t_end_us }}, ...]` ranges where the audio is below threshold for the requested duration. If the tool errors with a `waveform not generated yet` message, wait for the corresponding `media:job_complete` event (kind=waveform) and retry — imports run in the background.
+1. Call `remove_silences` with `layer_id: \"{layer_id}\"`{extra}. It walks the pre-computed waveform peaks, splits the clip at the edges of every silent stretch, deletes those stretches and closes the gaps behind them, all as ONE recorded edit — a single undo puts the clip back whole. It returns `{{ surviving_layer_ids, removed, removed_us }}`: what is left of the clip in timeline order, how many silent stretches went, and how much time went with them. Linked audio/video partners travel with each removed slice, so no orphaned sliver is left behind. If the tool errors with a `waveform not generated yet` message, wait for the corresponding `media:job_complete` event (kind=waveform) and retry — imports run in the background.
+2. Report how many silent stretches were removed and how much shorter the clip is.
+
+A refusal is whole and lands before any write, so the clip comes back UNSPLIT with nothing recorded — fix what it names and call again. `RippleInsideHole` means a layer on another track STARTS inside one of the silent stretches, so the gap cannot close over it: either ripple that layer away too, or take the review-first route below and let the human decide. `RippleCollision`, `RippleLinkStraddles` and `RippleLockedLayer` / `TrackLocked` each name the layer that blocked. `InvalidArgument` means the clip is silent end to end — removing every part of it is a `delete_layer` (or `ripple_delete_layers`), not an edit to it.
+
+REVIEW FIRST — the alternative when the gaps should be seen before any of them goes:
+1. Call `detect_silences` with `layer_id: \"{layer_id}\"`{extra}. Same walk over the same peaks, but it commits nothing: it returns timeline-absolute `[{{ t_start_us, t_end_us }}, ...]` ranges where the audio is below threshold for the requested duration.
 2. For each region, call `add_marker` with `t_us: <region.t_start_us>` and `end_t_us: <region.t_end_us>` — setting `end_t_us` is what makes it a REGION marker spanning the gap rather than a point at its start. Pass `anchor_layer_id: \"{layer_id}\"` so the mark follows the clip's material instead of standing at a fixed timeline instant: a ripple upstream then moves it with the audio it describes, and trimming the clip past a marked gap hibernates that mark rather than stranding it somewhere it means nothing. One call per region, each its own history entry.
-3. Report how many silent regions were marked and their total duration.
+3. Report how many silent regions were marked and their total duration, and leave what becomes of them to the human.
 
-DO NOT split and delete the marked regions. Removing a silent slice needs a RIPPLE DELETE, and deleting the slice by itself leaves a gap exactly as long as what it removed — audibly identical to doing nothing. This editor has no ripple delete; a vacated span stays a gap here by design (the same rule a transition's overlap follows). Marking is the honest end of this recipe: the gaps become visible on the waveform and against the clip, and the human decides what to do with them.
-
-Defaults if the agent leaves args off: threshold_amp ≈ 0.02 (-34 dBFS), min_silence_us 500ms — tuned for podcast-style speech with quick breath-pause cuts. Loosen for music (lower threshold, longer min) or tighten for talking-head (higher threshold)."
+Defaults if the agent leaves args off: threshold_amp = 0.02 (-34 dBFS), min_silence_us 500ms — tuned for podcast-style speech with quick breath-pause cuts. Loosen for music (lower threshold, longer min) or tighten for talking-head (higher threshold)."
     );
     Ok(PromptResult {
-        description: Some("Mark the silent regions in a clip using waveform analysis.".into()),
+        description: Some("Remove the silent regions from a clip, closing each gap; or mark them to review first.".into()),
         messages: vec![PromptMessage {
             role: PromptRole::User,
             content: ContentBlock::Text { text },
@@ -298,38 +302,51 @@ mod tests {
     }
 
     #[test]
-    fn cut_silences_interpolates_layer_id_and_mentions_detect_silences() {
+    fn cut_silences_interpolates_layer_id_and_names_both_recipes() {
         let a = args(&[("layer_id", json!("xyz-789"))]);
         let result = expand(NAME_CUT_SILENCES, Some(&a)).expect("expand");
         let body = message_text(&result.messages[0]);
         assert!(body.contains("`xyz-789`"));
+        // Two recipes over one detection, and the prompt carries both: the cut
+        // is the answer it leads with, the mark is the review-first fallback.
+        assert!(body.contains("remove_silences"));
         assert!(body.contains("detect_silences"));
-        // The recipe marks; it does not cut. `end_t_us` is what makes each mark
-        // a region spanning the gap rather than a point at its start, and the
-        // anchor is what keeps it tied to the audio it describes. Drop either
-        // and the marks stop meaning what the prompt says they mean.
+        // `end_t_us` is what makes each mark a region spanning the gap rather
+        // than a point at its start, and the anchor is what keeps it tied to the
+        // audio it describes. Drop either and the marks stop meaning what the
+        // prompt says they mean.
         assert!(body.contains("add_marker"));
         assert!(body.contains("end_t_us"));
         assert!(body.contains("anchor_layer_id"));
     }
 
-    /// This prompt used to promise it would "tighten" the clip while its own
-    /// recipe was split → split → `delete_layer`. With no ripple delete that
-    /// removes a slice and leaves a gap exactly as long as what it removed,
-    /// which is audibly identical to doing nothing. Pin the honest contract on
-    /// both halves — the catalog blurb and the expanded recipe — so the promise
-    /// cannot creep back without a ripple primitive behind it.
+    /// This prompt could not keep its own name while the editor had no ripple
+    /// delete: split then split then `delete_layer` left a gap exactly as long
+    /// as what it removed — audibly identical to doing nothing — so the recipe
+    /// marked, the blurb said so, and a "DO NOT split and delete" instruction
+    /// stood in for the missing primitive. `remove_silences` is that primitive
+    /// (ADR 0062), and every pin moves with it: the recipe cuts, the warning is
+    /// gone, and the blurb may promise tightening because it now delivers it.
+    /// The marking recipe stays pinned as the review-first alternative, so
+    /// neither half can quietly drop out of the prompt.
     #[test]
-    fn cut_silences_does_not_promise_tightening_it_cannot_deliver() {
+    fn cut_silences_cuts_the_gaps_and_keeps_marking_as_the_alternative() {
         let a = args(&[("layer_id", json!("xyz"))]);
         let result = expand(NAME_CUT_SILENCES, Some(&a)).expect("expand");
         let body = message_text(&result.messages[0]);
         assert!(
-            !body.contains("delete_layer"),
-            "recipe must not instruct a delete that only leaves a gap"
+            body.contains("remove_silences"),
+            "the recipe must reach the primitive that actually closes the gap"
         );
-        assert!(body.contains("DO NOT split and delete"));
-        assert!(body.contains("RIPPLE DELETE"));
+        assert!(
+            !body.contains("DO NOT split and delete"),
+            "the instruction that stood in for a missing primitive must not outlive it"
+        );
+        // The review-first half, intact.
+        assert!(body.contains("detect_silences"));
+        assert!(body.contains("add_marker"));
+        assert!(body.contains("end_t_us"));
+        assert!(body.contains("anchor_layer_id"));
 
         let listed = catalog();
         let cs = listed
@@ -338,12 +355,16 @@ mod tests {
             .expect("cut-silences in catalog");
         let desc = cs.description.as_deref().unwrap_or_default();
         assert!(
-            !desc.contains("tighten"),
-            "catalog blurb must not promise tightening: {desc}"
+            !desc.contains("does not have"),
+            "catalog blurb must not still claim the editor cannot cut: {desc}"
+        );
+        assert!(
+            desc.contains("tightening"),
+            "catalog blurb should promise what it now delivers: {desc}"
         );
         assert!(
             desc.contains("mark"),
-            "catalog blurb must say what it does: {desc}"
+            "catalog blurb must still offer the review-first half: {desc}"
         );
     }
 

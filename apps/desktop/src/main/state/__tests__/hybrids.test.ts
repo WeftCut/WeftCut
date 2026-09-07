@@ -1223,6 +1223,200 @@ describe('runHybrid: mark_silences', () => {
   })
 })
 
+/** `remove_silences`' answer, parsed out of the JSON string the arm returns. */
+function removedResult(raw: unknown): { surviving_layer_ids: string[]; removed: number; removed_us: number } {
+  return JSON.parse(raw as string) as { surviving_layer_ids: string[]; removed: number; removed_us: number }
+}
+
+describe('runHybrid: remove_silences', () => {
+  it('cuts each silent range out and closes the gaps, in ONE history entry', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
+    const lenBefore = actor.historyStatus().len
+    const result = removedResult(await runHybrid('remove_silences', { layer_id: layerId }, deps))
+    // Four cuts and two discards, and the whole thing is ONE commit — the undo
+    // that follows has to restore the clip, not a split clip missing two takes.
+    expect(actor.historyStatus().len - lenBefore).toBe(1)
+    expect(actor.historyView(1).ops[0].label_key).toBe('history.layer.split_and_ripple')
+    // The surviving segments ABUT: 1s + 2s + 1s of kept material, with the two
+    // silent seconds gone rather than left as gaps. That abutting IS the ripple.
+    expect(spansOfKind(actor, 'VideoClip')).toEqual([
+      [0, 1_000_000], [1_000_000, 3_000_000], [3_000_000, 4_000_000],
+    ])
+    expect(result.surviving_layer_ids).toHaveLength(3)
+    expect(result.removed).toBe(2)
+    expect(result.removed_us).toBe(2_000_000)
+  })
+
+  it('takes each removed slice\u2019s linked audio partner with it', async () => {
+    const { actor, layerId } = withLinkedAudio(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
+    await runHybrid('remove_silences', { layer_id: layerId }, deps)
+    // The audio was split in lockstep and its slivers went with the video's, so
+    // both lanes come out the same length with no orphan at either cut.
+    const expected: Array<[number, number]> = [
+      [0, 1_000_000], [1_000_000, 3_000_000], [3_000_000, 4_000_000],
+    ]
+    expect(spansOfKind(actor, 'VideoClip')).toEqual(expected)
+    expect(spansOfKind(actor, 'Audio')).toEqual(expected)
+  })
+
+  it('cuts nothing at the clip\u2019s own edges: a head range and a tail range each cost one cut, not two', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[0, 1_000_000], [5_000_000, 6_000_000]])
+    const result = removedResult(await runHybrid('remove_silences', { layer_id: layerId }, deps))
+    // A split at the layer's own bound is not a split, so the leading and
+    // trailing stretches are discarded WHOLE — two cuts, three segments, the
+    // middle one the only survivor, landing at the origin the head vacated.
+    expect(result.surviving_layer_ids).toHaveLength(1)
+    expect(spansOfKind(actor, 'VideoClip')).toEqual([[0, 4_000_000]])
+    expect(result.removed_us).toBe(2_000_000)
+  })
+
+  it('writes nothing at all \u2014 no split, no history entry \u2014 when nothing is silent', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [])
+    const lenBefore = actor.historyStatus().len
+    const result = removedResult(await runHybrid('remove_silences', { layer_id: layerId }, deps))
+    // Re-tuning the threshold and re-running must cost no undo steps, whichever
+    // of the dialog's two buttons the tuning ends on.
+    expect(actor.historyStatus().len - lenBefore).toBe(0)
+    // The clip is untouched, so it is the survivor; `removed: 0` is what says
+    // nothing happened.
+    expect(result).toEqual({ surviving_layer_ids: [layerId], removed: 0, removed_us: 0 })
+    expect(spansOfKind(actor, 'VideoClip')).toEqual([[0, 6_000_000]])
+  })
+
+  it('refuses a clip that is silent end to end \u2014 that is a delete, not an edit', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[0, 6_000_000]])
+    const before = JSON.stringify(actor.snapshot())
+    const err = await runHybrid('remove_silences', { layer_id: layerId }, deps)
+      .then(() => null, (e: Error) => JSON.parse(e.message) as { error: string; field: string })
+    // parseDiscardSegments' own refusal, passed straight through: naming every
+    // segment is a delete. Structured, so the dialog shows the detail and an
+    // agent reads the field.
+    expect(err).toMatchObject({ error: 'InvalidArgument', field: 'discard_segments' })
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
+  it('refuses \u2014 whole, with the blocking layer named \u2014 when a clip on another track starts inside a silent stretch', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const other = root(actor.snapshot()).tracks[1].id
+    const add = actor.dispatch('add_layer', { track: other, kind: 'color', t_start_us: 1_500_000, t_end_us: 2_500_000 })
+    expect(add.ok).toBe(true)
+    if (!add.ok) return
+    const deps = makeDeps(actor)
+    withSilences(deps, [[1_000_000, 2_000_000]])
+    const before = JSON.stringify(actor.snapshot())
+    const err = await runHybrid('remove_silences', { layer_id: layerId }, deps)
+      .then(() => null, (e: Error) => JSON.parse(e.message) as { error: string; layer: string })
+    // The planner's refusal, and it names the layer that blocked so the dialog
+    // can say which clip to move. The splits were already applied to the draft
+    // when it landed, so the rollback has to be total: the clip comes back
+    // UNSPLIT and nothing is recorded.
+    expect(err).toMatchObject({ error: 'RippleInsideHole', layer: add.value as string })
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+    expect(actor.historyView(1).ops[0].label_key).not.toBe('history.layer.split_and_ripple')
+  })
+
+  it('passes both parameters through, and invents neither when omitted', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    const { detectSilences } = withSilences(deps, [])
+    await runHybrid('remove_silences', { layer_id: layerId, threshold_amp: 0.05, min_silence_us: 250_000 }, deps)
+    expect(detectSilences).toHaveBeenCalledWith({ layer_id: layerId, threshold_amp: 0.05, min_silence_us: 250_000 })
+    // Omitted means ABSENT on the wire, so Rust's own defaults decide — the
+    // same rule mark_silences follows, and for the same reason.
+    await runHybrid('remove_silences', { layer_id: layerId }, deps)
+    expect(detectSilences).toHaveBeenLastCalledWith({ layer_id: layerId })
+  })
+
+  it('a whole removal is ONE undo, restoring the project exactly', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
+    const before = JSON.stringify(actor.snapshot())
+    await runHybrid('remove_silences', { layer_id: layerId }, deps)
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
+  it('cuts a clip inside a Group on the GROUP\u2019S own timeline', async () => {
+    const { actor, groupId, layerId } = withVideoLayerInGroup(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[1_000_000, 2_000_000]])
+    await runHybrid('remove_silences', { layer_id: layerId }, deps)
+    const inner = actor.snapshot().compositions[groupId]
+    expect(inner.tracks.flatMap((t) => t.layers).map((l) => [l.t_start_us, l.t_end_us]).sort((a, b) => a[0] - b[0]))
+      .toEqual([[0, 1_000_000], [1_000_000, 5_000_000]])
+  })
+
+  it('accepts an Audio layer, which a shot operation refuses', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[2_000_000, 3_000_000]])
+    const result = removedResult(await runHybrid('remove_silences', { layer_id: layerId }, deps))
+    expect(result.removed).toBe(1)
+    expect(spansOfKind(actor, 'Audio')).toEqual([[0, 2_000_000], [2_000_000, 5_000_000]])
+    await expect(runHybrid('drop_shot_markers', { layerId }, deps)).rejects.toThrow(/VideoClip/)
+  })
+
+  it('refuses a kind with no audio stream to be silent in, in its OWN verb', async () => {
+    const actor = freshActor()
+    const track = root(actor.snapshot()).tracks[0].id
+    const add = actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 })
+    expect(add.ok).toBe(true)
+    if (!add.ok) return
+    // The verb rides the message: a removal that reported itself as a mark would
+    // send the reader looking for a marker that was never asked for.
+    await expect(runHybrid('remove_silences', { layer_id: add.value as string }, makeDeps(actor)))
+      .rejects.toThrow(/remove silences: .*VideoClip or Audio/)
+  })
+
+  it('rejects a missing layer_id instead of silently removing nothing', async () => {
+    const { actor } = withVideoLayer(6_000_000)
+    await expect(runHybrid('remove_silences', {}, makeDeps(actor))).rejects.toThrow(/layer_id/)
+  })
+
+  it('throws (not silent no-op) when silence detection is not wired into the build', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    deps.compute.detectSilences = undefined
+    await expect(runHybrid('remove_silences', { layer_id: layerId }, deps)).rejects.toThrow(/not available/)
+  })
+
+  // The state a fresh import is genuinely in. The renderer recognises this
+  // sentence to start WAITING, so neither silence arm may swallow or reword it.
+  it('propagates the waveform-not-ready refusal with its own text', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    deps.compute.detectSilences = vi.fn(async () => {
+      throw new Error('waveform not generated yet for media m-1 \u2014 wait for a media:job_complete event with kind=waveform and retry')
+    })
+    await expect(runHybrid('remove_silences', { layer_id: layerId }, deps))
+      .rejects.toThrow(/waveform not generated yet/)
+    expect(spansOfKind(actor, 'VideoClip')).toEqual([[0, 6_000_000]])
+  })
+
+  // The MCP result contract: this arm is advertised as a tool, and server.ts
+  // stringifies whatever comes back into one text block — an object would reach
+  // the agent as "[object Object]".
+  it('returns a JSON STRING, not the object', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withSilences(deps, [[1_000_000, 2_000_000]])
+    const raw = await runHybrid('remove_silences', { layer_id: layerId }, deps)
+    expect(typeof raw).toBe('string')
+    expect(removedResult(raw).removed).toBe(1)
+  })
+})
+
 describe('cutsToTimeline', () => {
   const layer = { t_start_us: 2_000_000, t_end_us: 8_000_000 }
   const params = { src_in_us: 1_000_000 }

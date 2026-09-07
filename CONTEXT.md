@@ -414,16 +414,17 @@ unlink, unpin, release; link (that is the propagation relationship between
 layers)
 
 **Silence mark**:
-An anchored REGION marker written by *Detect silences…* — one per range the
-waveform peaks stayed under the threshold for, spanning the range, labelled
-"Silence" and amber so it reads apart from the shot-cut blue on the same clip.
-A fact about the material, so it hibernates when a trim passes it and leaves
-with the clip. Marking is where the silence recipe stops here: removing a
-range needs a ripple delete this editor does not have. UI word: Detect
-silences / 检测静默.
-_Avoid_: cut silences (nothing is cut), silence region as a marker kind (it is
-an ordinary marker with `end_t_us`), gap (that is the vacated span a deletion
-leaves on the timeline)
+An anchored REGION marker written by the *Detect silences…* dialog's **Mark**
+— one per range the waveform peaks stayed under the threshold for, spanning the
+range, labelled "Silence" and amber so it reads apart from the shot-cut blue on
+the same clip. A fact about the material, so it hibernates when a trim passes
+it and leaves with the clip. Marking changes no timing; the same dialog's
+**Remove** is the other verb over the same detection (`remove_silences` — cut
+the ranges out and close the gaps). UI word: Detect silences / 检测静默.
+_Avoid_: cut silences (as a name for the MARK — the mark cuts nothing; that is
+what Remove is for), silence region as a marker kind (it is an ordinary marker
+with `end_t_us`), gap (that is the vacated span a deletion leaves on the
+timeline)
 
 ## Shots
 

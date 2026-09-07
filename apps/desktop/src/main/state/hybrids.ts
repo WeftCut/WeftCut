@@ -224,7 +224,9 @@ function resolveShotLayer(
   return { layer, media, params, composition }
 }
 
-/** Resolve the layer a silence operation names. Wider than `resolveShotLayer`
+/** Resolve the layer a silence operation names, refusing in the CALLER'S verb —
+ *  `verb` opens every message here, so a removal never reports itself as a mark.
+ *  Wider than `resolveShotLayer`
  *  by exactly one kind: a silent stretch is a fact about an AUDIO stream, so an
  *  `Audio` layer is as legitimate a subject as a `VideoClip` — which is also
  *  the pair `detect_silences` itself accepts. A `CompositionRef` is not among
@@ -233,11 +235,12 @@ function resolveShotLayer(
 function resolveSilenceLayer(
   layerId: string,
   deps: HybridDeps,
+  verb: string,
 ): { layer: Layer; params: VideoClipParams | AudioParams; composition: Composition } {
   const { layer, composition } = findLayer(layerId, deps)
-  if (!layer) throw new Error(`mark silences: layer ${layerId} not found`)
+  if (!layer) throw new Error(`${verb}: layer ${layerId} not found`)
   if (layer.params.kind !== 'VideoClip' && layer.params.kind !== 'Audio')
-    throw new Error(`mark silences: layer ${layerId} is not a VideoClip or Audio layer — silence is a claim about an audio stream`)
+    throw new Error(`${verb}: layer ${layerId} is not a VideoClip or Audio layer — silence is a claim about an audio stream`)
   return { layer, params: layer.params, composition }
 }
 
@@ -452,8 +455,10 @@ export const SILENCE_MARKER_COLOR: Rgba = { r: 230, g: 160, b: 40, a: 255 }
  *  the detector found survives the follow.
  *
  *  Region rather than point markers, and that is the whole shape of the answer:
- *  a silence has a LENGTH, and this slice stops before removing it (ripple
- *  delete does not exist here), so the length has to be legible on the ruler.
+ *  a silence has a LENGTH, and marking is the verb that leaves the film exactly
+ *  as long as it was — so the length has to be legible on the ruler for a human
+ *  to judge it. `removeSilences` is the other verb over the same detection, for
+ *  when the judging is already done.
  *
  *  No dispatch at all when nothing is silent above the threshold — an empty
  *  answer writes no history entry, so re-tuning and re-running costs no undo
@@ -464,7 +469,7 @@ export async function markSilences(
 ): Promise<string[]> {
   const detect = deps.compute.detectSilences
   if (!detect) throw new Error('mark silences: silence detection is not available in this build')
-  const { layer, params, composition } = resolveSilenceLayer(spec.layer_id, deps)
+  const { layer, params, composition } = resolveSilenceLayer(spec.layer_id, deps, 'mark silences')
   const regions = await detect({
     layer_id: spec.layer_id,
     ...(spec.threshold_amp === undefined ? {} : { threshold_amp: spec.threshold_amp }),
@@ -489,6 +494,113 @@ export async function markSilences(
   return res.value as string[]
 }
 
+/** What one removal did: the clip's remaining pieces in timeline order, how
+ *  many silent stretches went, and how much time went with them. */
+export interface RemoveSilencesResult {
+  surviving_layer_ids: string[]
+  removed: number
+  removed_us: number
+}
+
+/** The answer when nothing is removed. The clip is still there and still whole,
+ *  so it is the SURVIVOR — `[]` would say the opposite. `removed: 0` is what
+ *  says nothing happened. */
+function removedNothing(layerId: string): RemoveSilencesResult {
+  return { surviving_layer_ids: [layerId], removed: 0, removed_us: 0 }
+}
+
+/** Detect one clip's silent ranges and CUT them out, closing each gap behind
+ *  itself, in ONE commit. The other verb over `markSilences`' detection: same
+ *  compute, same `waiting_waveform` contract, and the same "no dispatch when
+ *  nothing is silent" — re-tuning the threshold against a live preview must
+ *  cost no undo steps whichever button the tuning ends on.
+ *
+ *  ONE `split_layer_multi` and not a split followed by deletes, because the
+ *  whole promise here is a single undo that restores the clip whole. The op
+ *  already carries both halves: `at_t_us_list` says where to cut and
+ *  `discard_segments` which of the resulting pieces never existed as far as the
+ *  timeline is concerned. `ripple: true` is what makes the discard a REMOVAL
+ *  rather than a lift — the doomed pieces go to the ripple as one set, so two
+ *  adjacent silences close as the one hole they are and everything downstream
+ *  moves once (ADR 0062).
+ *
+ *  The cut list is every region boundary STRICTLY inside the clip. A region
+ *  that touches the head or the tail contributes no cut on that side, and that
+ *  is not an optimization: there is nothing to cut off at a clip's own edge, and
+ *  a split there is refused rather than ignored. The segment is discarded whole
+ *  instead — dropping the boundary is exactly what makes the leading or trailing
+ *  silence one nominal segment rather than an empty one plus a real one.
+ *
+ *  Which segments to discard is decided by MIDPOINT against the detector's own
+ *  ranges rather than by counting boundaries. The actor re-snaps every cut onto
+ *  the target's grid and SKIPS one that no longer lands strictly inside its
+ *  segment, so a boundary pair less than a frame apart merges two nominal
+ *  segments into one; a midpoint still names the right piece where an index
+ *  arithmetic over "two boundaries per region" would name its neighbour.
+ *
+ *  A clip that is silent end to end names every segment, and `parseDiscardSegments`
+ *  refuses that by design — discarding everything is a delete, not an apply. The
+ *  refusal arrives here as the actor's `InvalidArgument` and is passed straight
+ *  through: the dialog shows it inline and the agent reads the field it names.
+ *
+ *  So do the ripple's own refusals. They are the planner's, raised pre-write:
+ *  a clip on another track that STARTS inside a silent stretch is
+ *  `RippleInsideHole`, a link with members on both sides of one is
+ *  `RippleLinkStraddles`, a locked downstream lane is `RippleLockedLayer` /
+ *  `TrackLocked`, and a mover landing on something that is not moving is
+ *  `RippleCollision`. Each names the layer that blocked. The whole commit rolls
+ *  back — the clip comes out UNSPLIT, with nothing recorded — so a refusal is
+ *  something to fix and re-run, never a half-cut clip to clean up. */
+export async function removeSilences(
+  spec: { layer_id: string; threshold_amp?: number; min_silence_us?: number },
+  deps: HybridDeps,
+): Promise<RemoveSilencesResult> {
+  const detect = deps.compute.detectSilences
+  if (!detect) throw new Error('remove silences: silence detection is not available in this build')
+  const { layer } = resolveSilenceLayer(spec.layer_id, deps, 'remove silences')
+  const detected = await detect({
+    layer_id: spec.layer_id,
+    ...(spec.threshold_amp === undefined ? {} : { threshold_amp: spec.threshold_amp }),
+    ...(spec.min_silence_us === undefined ? {} : { min_silence_us: spec.min_silence_us }),
+  })
+  // Zero-length ranges are filtered rather than trusted: they name no segment to
+  // discard, so a set of nothing but those would dispatch a split that threw
+  // nothing away — an undo entry for an edit the user cannot see.
+  const spans = detected.filter((r) => r.t_end_us > r.t_start_us)
+  if (spans.length === 0) return removedNothing(spec.layer_id)
+
+  const seen = new Set<number>()
+  const cuts: number[] = []
+  for (const span of spans) {
+    for (const t of [span.t_start_us, span.t_end_us]) {
+      if (t <= layer.t_start_us || t >= layer.t_end_us || seen.has(t)) continue
+      seen.add(t)
+      cuts.push(t)
+    }
+  }
+  cuts.sort((a, b) => a - b)
+  // The nominal segments the actor will number, in the same order: `cuts + 1` of
+  // them, spanning the clip end to end.
+  const bounds = [layer.t_start_us, ...cuts, layer.t_end_us]
+  const discard: number[] = []
+  for (let i = 0; i + 1 < bounds.length; i++) {
+    const mid = (bounds[i] + bounds[i + 1]) / 2
+    if (spans.some((r) => mid > r.t_start_us && mid < r.t_end_us)) discard.push(i)
+  }
+  const removedUs = spans.reduce((sum, r) => sum + (r.t_end_us - r.t_start_us), 0)
+  // Layer-addressed like every other split dispatch, so no `composition_id`: the
+  // op derives the scope from the id, and a clip inside a Group ripples the
+  // Group's own timeline.
+  const res = deps.actor.dispatch('split_layer_multi', {
+    layer: spec.layer_id,
+    at_t_us_list: cuts,
+    discard_segments: discard,
+    ripple: true,
+  })
+  if (!res.ok) throw new Error(JSON.stringify(res.error))
+  return { surviving_layer_ids: res.value as string[], removed: spans.length, removed_us: removedUs }
+}
+
 /** Run a hybrid tool: Rust compute then TS-actor write.
  *
  *  Return-shape contract, and it is the MCP half that constrains it: server.ts
@@ -496,12 +608,17 @@ export async function markSilences(
  *  listed in `mcp/mutationTools.ts` `HYBRID_TOOLS` must return a STRING — a
  *  media id (import_media), the bare caption track id (import_media's
  *  `.srt` branch), the id plus a styling note (apply_subtitles), or a JSON
- *  string (synthesize_speech, auto_split_by_shot). `drop_shot_markers`,
- *  `apply_shot_cuts` and `mark_silences` have no MCP tool at all, so they return
- *  the object their IPC caller reads directly — `apply_shot_cuts` a union
- *  discriminated by the `mode` it was asked for, since what the splitting verbs
- *  produce (surviving segments) and what a mark produces (markers) are not the
- *  same kind of thing.
+ *  string (synthesize_speech, auto_split_by_shot, remove_silences).
+ *  `drop_shot_markers`, `apply_shot_cuts` and `mark_silences` have no MCP tool
+ *  at all, so they return the object their IPC caller reads directly —
+ *  `apply_shot_cuts` a union discriminated by the `mode` it was asked for, since
+ *  what the splitting verbs produce (surviving segments) and what a mark
+ *  produces (markers) are not the same kind of thing.
+ *
+ *  The two silence arms sit on opposite sides of that line, and deliberately:
+ *  a mark is composable from `detect_silences` + `add_markers`, so an agent
+ *  needs no tool for it, while the cut is one recorded edit no sequence of
+ *  advertised tools reproduces.
  *
  *  Several of these arms are reachable from BOTH sides (`router.ts`
  *  `HYBRID_CHANNELS`): the renderer's speech dialogs call `apply_subtitles`
@@ -651,6 +768,25 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
         ...(typeof args.min_silence_us === 'number' ? { min_silence_us: args.min_silence_us } : {}),
       }, deps)
       return { markers: ids.length, marker_ids: ids }
+    }
+    case 'remove_silences': {
+      // The silence entry's cutting half, and the only silence arm reachable
+      // from both surfaces: the dialog's *Remove* and the agent's tool of the
+      // same name land the identical single commit.
+      const layerId = args.layer_id
+      if (typeof layerId !== 'string' || layerId.length === 0)
+        throw new Error('remove_silences: layer_id is required')
+      // Left UNDEFINED rather than defaulted, for `mark_silences`' reason: the
+      // defaults are Rust's (`native/src/mcp/tools.rs`), and a number invented
+      // at this hop would be free to disagree with them.
+      const removed = await removeSilences({
+        layer_id: layerId,
+        ...(typeof args.threshold_amp === 'number' ? { threshold_amp: args.threshold_amp } : {}),
+        ...(typeof args.min_silence_us === 'number' ? { min_silence_us: args.min_silence_us } : {}),
+      }, deps)
+      // A JSON STRING, never the object — runHybrid's MCP result contract. The
+      // renderer's typed wrapper parses it back (`renderer/ipc/index.ts`).
+      return JSON.stringify(removed)
     }
     case 'apply_shot_cuts': {
       // The reviewed-list channel: one canonical cut list, three verbs over it.

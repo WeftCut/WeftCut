@@ -231,6 +231,7 @@ to them.
 ### Analysis tools
 
 - `detect_silences { layer_id, threshold_amp?, min_silence_us? }` → `[{ t_start_us, t_end_us }, ...]`. Reads pre-computed peaks; defaults `threshold_amp=0.02` (≈ -34 dBFS) and `min_silence_us=500000`.
+- `remove_silences { layer_id, threshold_amp?, min_silence_us? }` → `{ surviving_layer_ids, removed, removed_us }` — the write beside that read: detect at the same two parameters, then cut every silent stretch out and **close** the gaps, as ONE recorded edit (a single undo restores the whole clip). A stretch touching the clip's head or tail is trimmed off whole rather than split at the clip's own edge; a linked audio/video partner goes with each removed slice; everything downstream shifts left on every track of the composition, so touching stretches close as the one hole they are. Refuses whole, before any write, with `ripple_delete_layers`' refusals by name — `RippleInsideHole`, `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked`, each naming the layer that blocked — plus `InvalidArgument` when the clip is silent end to end, since removing every segment is a delete (`ripple_delete_layers`) rather than an edit. To review the stretches before any of them goes, use `detect_silences` and one region `add_marker` per range instead. A hybrid: Rust reads the peaks, the TS actor commits ([ADR 0062](adr/0062-ripple-is-an-explicit-command-over-placement.md)).
 - `analyze_clip { layer_id, sensitivity?, min_shot_us?, passes? }` → `{ shots: [{ index, t_start_us, t_end_us, keyframe_t_us, brightness, motion, sharpness, flags: [...] }], cut_scores: [{ t_us, score }] }`. Deterministic shot boundaries + per-shot brightness / motion / sharpness (0..1, sharpness = variance-of-Laplacian) and `black` / `freeze` / `fade` flags for a VideoClip layer. Runs over the source (preferring the 720p proxy); source-absolute times clipped to the layer's source window. `cut_scores` is the raw cut signal, `shots` the cleaned segmentation. Defaults `sensitivity=0.4`, `min_shot_us=500000`, `passes=["shots","stats","events"]` (drop `stats`/`events` for timing only). Per-shot stat values are advisory (proxy-decode-derived, not bit-identical across machines); the flags are the deterministic signal.
 - `compare_frames { a: { layer_id, t_us }, b: { layer_id, t_us } }` → `{ phash_hamming, ssim, similar }`. Pairwise perceptual similarity of two video frames — dedup shots, match a cutaway. Each side names a VideoClip layer and a source-absolute `t_us` (same coordinate space as `media://{id}/frame/{t_us}` and `analyze_clip`'s `keyframe_t_us`); the two sides may be the same clip or different clips. `phash_hamming` is the 0..64 Hamming distance between the frames' DCT perceptual hashes (0 = identical, small = same frame re-encoded / rescaled); `ssim` is MSSIM in 0..1; `similar` is `phash_hamming <= 10 && ssim >= 0.5` (both must agree; the pHash is the strong signal and the loose SSIM floor keeps a source frame vs its lossy downscaled proxy similar while rejecting unrelated frames). Cross-aspect-ratio pairs are approximate (the MSSIM path squares both frames, so differing aspect ratios misalign) and lean on the aspect-independent pHash; same-clip dedup (one aspect ratio) is exact. Read-only, no cache; VideoClip layers only.
 - `describe_clip { layer_id, t_start_us?, t_end_us?, fps?, focus?, backend? }` → `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags: [...] }] }` — see "Video understanding" below.
@@ -499,7 +500,7 @@ tools. Agents that need a render either ask the user, or read
 User-invoked workflows discoverable in agent UIs (Claude Desktop slash menu, Cursor command palette):
 
 - `/auto-caption { layer_id, language? }` — walks the agent through `transcribe_clip` → inspect the `srt` field → `apply_subtitles`.
-- `/cut-silences { layer_id, threshold_amp?, min_silence_us? }` — `detect_silences` → one anchored region `add_marker` per gap, marking the dead air. It stops at marking: deleting a silent slice leaves a gap exactly as long as what it removed, and a vacated span stays a gap here by design, so removal waits on a ripple primitive.
+- `/cut-silences { layer_id, threshold_amp?, min_silence_us? }` — one `remove_silences` call at the given thresholds: the silent stretches are cut out and the gaps close, tightening the clip in a single undoable edit. The prompt also carries the review-first alternative — `detect_silences` → one anchored region `add_marker` per gap — for when the gaps should be seen before any of them goes, and it spells out what each ripple refusal means and which layer it names.
 - `/voiceover { script, voice, speed?, target_track_id? }` — `synthesize_speech` for an agent-supplied script. Prompts the agent to split long scripts at paragraph boundaries (tts-1 caps at 4096 chars).
 
 Each prompt closes with the missing-key recovery hint (Settings → API
@@ -610,11 +611,15 @@ channels (`main/state/router.ts` `HYBRID_CHANNELS`) reaching the same
 that the MCP path wraps the string result as a `ToolResult` text block.
 Three hybrids are renderer-only and have no MCP tool at all —
 `drop_shot_markers`, `apply_shot_cuts` (the Shots Panel's reviewed-list
-verbs) and `mark_silences` (the *Detect silences…* dialog's write) — because
+verbs) and `mark_silences` (the *Detect silences…* dialog's Mark) — because
 an agent already composes each from tools it has: `analyze_clip` or the
 `media://{id}/analysis` view plus `split_layer` / `add_markers`, and
 `detect_silences` plus `add_markers`; a second tool over one detection would
-only be a way for the two surfaces to drift. `analyze_clip` stays agent-only —
+only be a way for the two surfaces to drift. `remove_silences` — the same
+dialog's *Remove* — is the hybrid that goes the other way and carries a tool
+of its own, because no sequence of advertised tools reproduces it: the
+splits, the deletes and the closing of the gaps are one recorded edit, and
+composing it would cost an undo step per piece. `analyze_clip` stays agent-only —
 the renderer's shot surfaces read the whole-source report instead, and the
 shot rows read a source's cached description through the same
 `media://{id}/description` handler an agent reads, never computing one

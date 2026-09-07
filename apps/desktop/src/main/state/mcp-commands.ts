@@ -1345,16 +1345,25 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Enter agent mode: flip the human's UI to a simplified preview / scrub / record-only layout while the agent makes changes. `reason` is a short free-text label shown in the record panel header (e.g. 'cutting filler words'). Creates an automatic checkpoint named 'Pre-agent: {reason}' so the human can revert the entire session in one click. Calling this while already in agent mode replaces the session. The human exits via the UI; there is no end_agent_session tool.",
     inputSchema: { type: 'object', properties: { reason: { type: 'string' } }, required: ['reason'] },
     parseDedicated: (a) => ({ reason: parseStr(a.reason, 'reason') }) },
-  // ── hybrid def (TS-owned) — executed by runHybrid (routeMcpTool → 'hybrid'),
-  //    NOT an actor.mcpCall arm. It lives here (not the Rust catalog like the
-  //    other hybrids) because its cuts compute in Rust but its splits write
-  //    through the TS actor, and its def must merge into the advertised catalog
-  //    from the TS side. parseDedicated is the bijection gate's required-scalar
-  //    check only; runHybrid re-validates layer_id itself. ──
+  // ── hybrid defs (TS-owned) — executed by runHybrid (routeMcpTool → 'hybrid'),
+  //    NOT actor.mcpCall arms. They live here (not the Rust catalog like the
+  //    other hybrids) because their input computes in Rust — the shot report,
+  //    the waveform peaks — while the edit writes through the TS actor, so the
+  //    def has to merge into the advertised catalog from the TS side.
+  //    parseDedicated is the bijection gate's required-scalar check only;
+  //    runHybrid re-validates layer_id itself. ──
   { name: 'auto_split_by_shot', exec: 'dedicated',
     description: "Detect shot cuts in a VideoClip layer and split it at every in-window cut, as ONE undoable step. `min_shot_us` (optional) is the minimum shot length for cut detection (closer cuts merge; default 500000 = 0.5s). `drop_short=true` additionally deletes any resulting segment shorter than `min_shot_us`, together with every other member of the layer's link that overlaps the dropped span — the split fans out across a link, so a dropped segment's paired audio goes with it instead of being left as an orphaned sliver (a member wholly inside a surviving segment stays; `delete_layer` itself is still local). Returns `{ layer_ids }` — the new segment layer ids in timeline order (or the single unchanged layer id when no interior cut is found). Pure convenience: reproducible with `analyze_clip` + `split_layer`, and it reads the SAME cached shot report as `analyze_clip`.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, min_shot_us: { type: ['integer', 'null'] }, drop_short: { type: ['boolean', 'null'] } }, required: ['layer_id'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), min_shot_us: parseNumOpt(a.min_shot_us, 'min_shot_us'), drop_short: parseBoolOpt(a.drop_short, 'drop_short', false) }) },
+  { name: 'remove_silences', exec: 'dedicated',
+    description: "Detect the silent stretches in a VideoClip or Audio layer at the given thresholds, cut every one of them out and CLOSE the gaps, as ONE recorded edit — a single undo restores the whole clip. Returns `{ surviving_layer_ids, removed, removed_us }`: the clip's remaining pieces in timeline order, how many silent stretches went, and how much time went with them. A stretch touching the clip's head or tail is trimmed off whole rather than split at the clip's own edge. Link-aware: every other member of the layer's link overlapping a removed slice goes with it in the same commit, so a paired audio track is never left as an orphaned sliver. Everything downstream shifts left across every track of the composition, so the film gets shorter — the removals close as one hole where two silences touch. Refuses whole, before any write, with `ripple_delete_layers`' refusals by name: `RippleInsideHole` (a layer on another track STARTS inside a silent stretch), `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked` — each naming the layer that blocked — plus `InvalidArgument` when the clip is silent end to end, since removing every segment is a delete rather than an edit (`delete_layer` or `ripple_delete_layers` is the tool for that). To review the stretches before removing any, use `detect_silences` and one region `add_marker` per range instead; both recipes are packaged as the `/cut-silences` prompt.",
+    inputSchema: { type: 'object', properties: {
+      layer_id: { type: 'string', description: 'Target VideoClip or Audio layer id.' },
+      threshold_amp: { type: ['number', 'null'], description: "Peak amplitude threshold in [0.0, 1.0], the same parameter `detect_silences` takes. Omit to use that tool's own default." },
+      min_silence_us: { type: ['integer', 'null'], format: 'int64', description: "Shortest silence worth removing, in microseconds — the same parameter `detect_silences` takes. Omit to use that tool's own default." },
+    }, required: ['layer_id'] },
+    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), threshold_amp: parseNumOpt(a.threshold_amp, 'threshold_amp'), min_silence_us: parseNumOpt(a.min_silence_us, 'min_silence_us') }) },
 ]
 
 const DEF_BY_NAME: Map<string, McpToolDef> = new Map(MCP_TOOL_DEFS.map((d) => [d.name, d]))
