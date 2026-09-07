@@ -629,11 +629,20 @@ enum LayerParams {
     CompositionRef(CompositionRefParams),
 }
 
-// A per-layer effect instance. Rust stores the ordered instances + their
-// animatable params; the renderer (effectRegistry.ts) owns the catalog of
-// which filters exist and how to build them. The two join on `kind`, which
-// Rust does not validate (an unknown kind is skipped + warned renderer-side).
+// A per-layer effect instance. The ordered instances + their animatable
+// params are stored here; a catalog outside the model owns which effects
+// exist and how to build them. The two join on `kind`, which the model does
+// not validate (an unknown VISUAL kind is skipped + warned renderer-side).
 // v1 params are scalar `Animated<f64>` only. See render.md, ADR 0027.
+//
+// Two families share this record. A visual `kind` is a realtime Pixi filter
+// from `render/effects/effectRegistry.ts`. A `kind` in the `audio.*`
+// namespace is an offline bake of the clip's audio, catalogued in
+// `shared/audioEffects/` (ADR 0063) — and it is the one kind-ownership rule
+// the command layer enforces: `audio.*` only on an Audio layer, nothing else
+// on one (`EffectKindNotApplicable`). Its params are Static ONLY
+// (`AudioEffectParamStatic`); the artifact a chain bakes to is derived from
+// the effects and never stored on them.
 struct Effect {
     id: EffectId,
     kind: String,                             // catalog key, e.g. "blur"
@@ -923,7 +932,10 @@ There is no migration to this record: v1 is redefined in place under § Versioni
 Animatable params, by kind: the visual kinds carry `x`, `y`, `scale_x`,
 `scale_y`, `rotation_deg`, `anchor_x`, `anchor_y` and `opacity`; Audio carries
 `gain_db` and `pan`; Text adds `color` and Color carries `color` alone. Effect
-params are addressed as `effects[<id>].params[<key>]`. The list has ONE home per
+params are addressed as `effects[<id>].params[<key>]` — except an `audio.*`
+effect's params, which are static only and refuse a `Keyframed` track at both
+write entries, because an audio effect is a whole-clip offline bake with no
+per-frame value to animate (ADR 0063). The list has ONE home per
 side — `animatableParams` in `renderer/keyframe/descriptors.ts` and
 `TRANSFORM_F64_KEYS` + `f64Lens` / `rgbaLens` in
 `main/state/mutations/params.ts`, mirrored by `resolve_animated_f64` in

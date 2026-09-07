@@ -112,6 +112,17 @@ and that cost is deliberate; see the trade-off in ADR 0019.
 
 The waveform job stays independent (22 050 Hz mono peaks); collapsing
 it onto conform output is a possible later simplification, not a goal.
+An effect chain adds a **sibling** pair beside both files —
+`{hash}.fx-{sig16}.conform` and `waveforms/{hash}.fx-{sig16}.v4.peaks`, one
+per distinct chain (see § Clip effects).
+
+Those fx siblings are the one part of `Cache/audio/` the disk-cache LRU sweeps:
+`cache/disk_lru.rs` collects `*.fx-*.conform` as units under the shared budget
+while the canonical `{hash}.conform` beside them stays excluded, because a bake
+is one filter pass over already-decoded PCM (~300× realtime) and a conform is a
+full decode. The `.v4.peaks` siblings were already units. Since mtime is the
+LRU clock, a reader that short-circuits on a cache hit refreshes it — otherwise
+the artifact being played ages out as the oldest unit in the cache.
 
 ## The envelope contract
 
@@ -278,6 +289,178 @@ are **unrecorded** preferences applied to every history snapshot, so
 Ctrl-Z never flips a mixer toggle — the same convention as the track
 eye/lock flags. The Mixer panel is the surface that drives these.
 
+## Clip effects (baked)
+
+An audio effect is an **offline bake**, not a realtime insert: a layer's
+`audio.*` effect chain is rendered once by ffmpeg from the media's conform
+into a **sibling conform file**, and both mixers read that sibling instead of
+the raw conform. Decision record:
+[ADR 0063](adr/0063-audio-effects-are-baked-conform-siblings.md). The v1 kind
+is `audio.denoise` (`afftdn` with a user-sampled noise profile).
+
+The chain is the ordinary `Layer.effects` array; audio kinds live in the
+`audio.*` namespace and the command layer refuses one on a non-Audio layer
+(and a visual kind on an Audio layer). The **effective chain** — what a bake
+actually renders — is the enabled, catalogued, *complete* audio effects in
+stored order; an incomplete one is dropped exactly as a disabled one is, and
+the card says what is missing. A denoise is complete when both sample-region
+bounds are written, the span is at least 250 ms, and it lies inside the media's
+probed duration. Region bounds are **source (media) time**, so move, trim, slip
+and split never invalidate a bake.
+
+### The pipeline
+
+`main/audioFx/baker.ts` is the orchestrator, and the only holder of bake state:
+
+```
+actor change ──► desired = effectiveChain(layer) → chain signature
+   (Layer diff hint ⇒ that layer; anything else ⇒ every composition)
+      │
+      ▼  per layer, 400 ms debounce (a standing timer is re-armed only by a
+      │   CHANGED desire, so a burst of edits collapses into one bake)
+   ready under this signature and the file is still there  ⇒ done (touch mtime)
+   raw conform missing                                     ⇒ ensure_conform, wait
+                                        (its derivatives event re-enters here)
+   the sibling is already on disk and its header parses    ⇒ ready (build peaks)
+   another layer is already baking this signature          ⇒ attach to it
+   otherwise: cancel the bake this layer is leaving (if nobody else wants it),
+              measure_conform_rms → buildFilterComplex → bake_audio_fx
+              → build_peaks_for_vconf → publish ready
+   on failure: publish failed, KEEP the previous ready artifact
+```
+
+Bakes share `ffmpeg_sem` with the import derivatives — no second pool — and
+emit the usual `media:job_started/complete/error` with `kind: "audio_fx"`, so
+the status bar's job counter includes them. A cancel aborts the task, which
+reaps ffmpeg through `kill_on_drop` and discards the temp.
+
+Rust's part is three stateless primitives in `native/src/audio/fx.rs`
+(spawned through `jobs/mod.rs::spawn_audio_fx`): `measure_conform_rms` pools a
+frame range into one dBFS figure, `bake_audio_fx` runs a finished
+`filter_complex` from one conform into another, and `build_peaks_for_vconf`
+draws the waveform sibling. None of them knows what an effect is.
+
+### The signature and the paths
+
+Everything that decides *what* gets rendered is TS. `shared/audioEffects/`
+holds the catalog (`catalog.ts`, `denoise.ts`), the bake contract and the
+graph composer (`graph.ts`), the conform-format twins (`conform.ts`), the
+canonical string (`signature.ts`) and the cross-process state vocabulary
+(`status.ts`). Only main hashes it (`main/audioFx/signature.ts`), because the
+shared tree compiles without Node types — and nothing renderer-side needs a
+signature, it reads the paths the baker publishes.
+
+```
+v1|{media_hash}|{CONFORM_FORMAT_VERSION}|{kind}@{version}{k=v,…};{kind}@{version}{…}
+```
+
+Params sorted by key and printed to six decimals, effect `id` excluded (so two
+layers configured alike share one artifact), chain order preserved (it is the
+render order), only effective entries present. `sig = sha256(canonical)`;
+`sig16` is its first 16 hex chars. An empty effective chain has **no**
+signature — that layer plays the raw conform.
+
+```
+Cache/audio/{media_hash}.fx-{sig16}.conform        (VCONF; same header as the raw one)
+Cache/waveforms/{media_hash}.fx-{sig16}.v4.peaks   (the processed waveform)
+```
+
+The layout is stated twice — `cache/mod.rs`'s `audio_fx_conform` /
+`waveform_fx` and `main/audioFx/fxPaths.ts` — because only the baker holds a
+signature, so only the baker can name the file; the TS side also owns the
+trust predicates (non-empty, magic, format version, plausible channel count),
+since disk existence is what "ready" means.
+
+**The denoise graph** trains the filter with a concat pre-roll: the sample
+region is prepended to the clip, `asendcmd` starts and stops `sample_noise`
+over that copy, and a trailing `atrim` drops it again. `afftdn` is streaming,
+so without the pre-roll everything before the region is processed with an
+untrained profile (measured: 3.7 dB of reduction there, against 9.3 dB with
+it). Both trims count **samples** on the 48 kHz lattice, never seconds: with
+second-valued bounds the pre-roll and the trim that removes it can differ by
+one sample, and `bake_audio_fx` rejects a graph that changes the frame count.
+`nf` is derived at bake time as `clamp(round(region_rms_dbfs + margin), -80,
+-20)` — `sample_noise` sets the profile's spectral shape and never its level,
+so a loud floor left at the filter's default makes the whole filter a no-op.
+
+### The three seams
+
+- **Preview.** `PixiPreview.tsx`'s `audioSourceUrl(layerId, mediaId)` answers
+  the baked path when the layer has one and the raw `conform_path` otherwise;
+  `CompositionNode.ensureAudio` disposes and recreates the `AudioMixer` when
+  the url changes, so the swap lands behind the existing ~5 ms micro-fade. A
+  url that goes null under a live mixer keeps that mixer — the audio it already
+  holds is closer to the truth than silence.
+- **Export.** `render/exportReadiness.ts`'s `runAudioFxGate` runs after the
+  conform gate (the conform is only half the audio wait): listener first, then
+  `ensure_export_audio_fx`, then the wait, with a Cancel-able "preparing"
+  panel. Main injects `layerAudioSources` into the mix channel
+  (`state/export-project-forward.ts`), and `audio/mix.rs`'s `plan_for_project`
+  uses the override as that layer's `conform_path` when the file is there.
+  Only layers whose *desired* signature is the one on disk are named, so an
+  absent entry means "no effects", never "not ready yet". The export window
+  filters **root-composition** layers only: a layer inside a Group keeps times
+  local to that Group and only the mix planner resolves the placement that maps
+  them, so a Group's members are always included — waiting for one bake too
+  many is cheaper than exporting audio the user never heard.
+- **Waveform.** A tile's identity is a `waveformKey` — a media id for the raw
+  conform, or `fx:{media_hash}.fx-{sig16}` for a baked sibling.
+  `LayerBlock.tsx` picks the fx key when one is ready,
+  `tileEngine/WaveformTileProducer.ts` keys tiles and level tables by it, and
+  `state/single-media-forward.ts` resolves an `fx:` key to an explicit
+  `waveformPath` before forwarding to Rust. An fx key is immutable per
+  artifact, so a new bake is simply new tiles and no invalidation event is
+  needed.
+
+### Readiness and status
+
+The baker publishes one `LayerFxState { desired_sig, ready, pending, error }`
+per layer over `audio_fx:status`, answers `audio_fx_snapshot` for boot-time and
+late subscribers, and `state/audioFxStore.ts` mirrors the map in the renderer
+(full state per push, never a delta, so a dropped event cannot half-update it).
+Nothing is persisted: a stored path outlives the file it names.
+
+Status is a four-way derivation of that record, in this order: no desired
+signature ⇒ **none** (the layer plays the raw conform); `ready.sig` equals the
+desired one ⇒ **ready**; an error stands ⇒ **failed**; otherwise **pending**.
+Ready wins over a stale error deliberately, because the last failure stays
+attached until the next bake supersedes it.
+
+- **Preview is stale-while-revalidate.** The last ready artifact keeps playing
+  while a new bake runs and after one fails; only an empty chain returns the
+  layer to the raw conform.
+- `ready.peaks_path` is **null** while the waveform sibling has not landed —
+  correct audio never waits on a picture, so the timeline keeps drawing the raw
+  waveform until it fills in.
+- **A failed signature is not retried** on unrelated project changes; editing
+  the chain (a new signature) or an explicit `audio_fx_reverify { layer_id }`
+  is what asks again. Reverify is also the eviction recovery path: a tile fetch
+  that reads `not_ready` for an `fx:` key drops to the raw waveform and asks the
+  baker to re-probe the disk, cooldown-gated per key.
+- **Export refuses rather than falling back.** A layer that will never bake
+  fails the export with the effect, the layer and the message named; a failure
+  belonging to the chain as a whole (a missing conform, an ffmpeg refusal of the
+  composed graph) says so instead of blaming an arbitrary card.
+
+### The card and the region gesture
+
+An Audio layer's Effects panel renders the audio catalog
+(`panels/EffectPanel.tsx` picks which catalog by layer kind), with no stopwatch
+on any row — `audio.*` params are static only. `properties/AudioRegionRow.tsx`
+shows the two bounds as source seconds, the arm button, and the one status line
+(needs a region / too short / outside the clip's source span / processing /
+failed).
+
+*Select region* arms a one-shot mode scoped to `(layerId, effectId)`
+(`timeline/audioRegionArmStore.ts`); the next drag on that clip paints the
+region and commits both bounds as one `update_layer_param_tracks`, then
+disarms — Escape and a press outside the clip disarm too. The band and its two
+edge handles (`timeline/AudioRegionBand.tsx`, arithmetic in
+`timeline/audioRegionGeometry.ts`, gestures in
+`timeline/hooks/useAudioRegionDrag.ts`) are drawn only while the owning card is
+mounted and expanded, which `state/audioRegionFocusStore.ts` decides. Nothing
+is frame-snapped: audio authors on samples.
+
 ## Export mixer
 
 `lower(project, target, window)` no longer produces an ffmpeg filter
@@ -289,6 +472,14 @@ role mute/solo gates, and `Layer.enabled`/`AudioParams.mute` all take
 effect in export, and each role's gain is folded into its layers'
 envelopes. Layers whose conform is missing fail readiness before any
 work starts.
+
+A layer's conform path is not always its media's: `plan_for_project` takes an
+optional **per-layer override table**, keyed by layer id, which main fills from
+the audio-effect baker (see § Clip effects) — the baked effect-chain sibling
+that layer's audio must come from. An override whose file has been evicted
+falls back to the raw conform rather than failing the plan, because an entry
+that outlives its file must not be able to break an export; keeping the *mix*
+honest is the export gate's job, and it refuses instead of falling back.
 
 The mixer (`export::mix`) is a block-pull loop, deterministic and
 allocation-flat:
@@ -346,10 +537,18 @@ retired by this design; the mixer plan is its replacement.
   identically before and after a re-conform. A conform job that
   *failed* (unreadable audio) fails the export loudly with the media
   named — never a silent layer drop.
+- **Export, effect chains:** the conform gate is followed by the
+  audio-effect gate (`runAudioFxGate` over `ensure_export_audio_fx`),
+  which flushes the bake debounce, waits on `audio_fx:status` for the
+  layers it names, and fails the export with the **effect, the layer and
+  the message** for anything that will never land — never a fall back to
+  the unprocessed audio. See § Clip effects.
 - **Preview:** a layer without conform (job still running, or failed)
   is silent and logs once to the status log. Range-read failures
   retry; a chunk that misses its deadline mutes briefly rather than
-  glitching (underrun behavior).
+  glitching (underrun behavior). A layer whose *bake* is pending or
+  failed is not silent — it keeps playing the last ready artifact, or
+  the raw conform if there has never been one.
 
 ## MCP surface
 
@@ -360,6 +559,16 @@ was a silent-no-op trap for agents, and updating the contract text is
 part of the same change that makes the fields live. The master meter
 is additionally exposed as an MCP resource for agent-side level
 checks.
+
+Clip effects ride the four existing effect tools — `add_effect` /
+`update_effect` / `move_effect` / `remove_effect` — with `audio.denoise` as the
+one audio `kind`; the two rules the audio namespace adds are refusals, not new
+tools (`EffectKindNotApplicable` for a kind on the wrong layer kind,
+`AudioEffectParamStatic` for a keyframe attempt on an `audio.*` param), and
+each message names the rule because the client drops structured error data. See
+[`mcp.md`](mcp.md). Bake status is deliberately not on the MCP surface: an
+agent that needs the processed audio exports, and the export gate does the
+waiting.
 
 ## Testing
 
@@ -376,6 +585,32 @@ checks.
 - **Mixer unit tests:** pure f32-in/f32-out — placement, trim
   clamping, overlap summing, envelope application, block-boundary
   continuity.
+- **Clip effects** are covered in three layers, each answering a different
+  question:
+  - **Rust, real ffmpeg** (`native/src/audio/fx.rs`, skipped where no ffmpeg is
+    installed, in `jobs/conform.rs`'s style) — does the DSP work? Bake output
+    frame count equals input; the RMS primitive against a known-level fixture;
+    peaks over a VCONF input; and a *profile engages* fixture whose noise-only
+    region sits at the END, asserting that the stretch before it improves as
+    much as the stretch after it and that the same graph **without** the concat
+    pre-roll does not — the test that documents why the pre-roll exists.
+  - **Vitest** (`shared/audioEffects/`, `main/audioFx/`,
+    `main/state/mutations/effects`, the renderer stores, rows and geometry) —
+    is the right graph built, named and orchestrated? The canonical string and
+    signature (order, the enabled and completeness filters, id exclusion,
+    quantization, a version bump changing the signature); the baker's state
+    machine (debounce, supersede and cancel, attaching to a shared signature,
+    waiting on a pending conform, a failure keeping the last ready artifact);
+    the namespace and static-only refusals; waveform-key resolution; the arm
+    store's lifecycle and the band's px↔µs mapping including offscreen. The
+    emitted graph is additionally **smoke-run through the bundled ffmpeg** over
+    a fraction-of-a-second fixture (`main/audioFx/graph.ffmpeg.test.ts`), the
+    repo rule for anything that emits an ffmpeg graph.
+  - **End to end** — is it what you hear? Because preview and export read the
+    same baked file, an audio-only export of a noisy fixture with and without
+    the effect, compared by the conformance analyzer's windowed RMS over the
+    noise-only span, is evidence for both paths at once; the Rust fixture above
+    stays the precise DSP gate, so this one proves the plumbing.
 - **Conformance E2E** (extends [`conformance.md`](conformance.md)):
   the deterministic mixer upgrades audio assertions from perceptual
   to analytic. New fixtures: a keyframed gain ramp (per-window RMS
@@ -385,12 +620,18 @@ checks.
 
 ## Out of scope here, designed elsewhere or later
 
-- **Denoise** — offline job producing a processed sibling of the
-  conform artifact (DeepFilterNet-class), never a realtime insert.
 - **Retime / speed** — needs A/V group-coupling semantics first;
   component direction is signalsmith-stretch (same MIT algorithm
   available as Rust crate and AudioWorklet).
 - **Per-role DSP effects** — the `RoleMixSettings.effects` insert that
   would make each role a true processing bus; v1 folds role gain only.
+- **Clip-effect extensions** (§ Clip effects ships the chain and one kind):
+  auto-detecting the sample region by scanning for the quietest span;
+  auditioning the removed noise rather than the result; a speech denoiser on
+  `arnndn`, whose model would arrive through the app-managed content catalog;
+  a conform format carrying a start frame, which is what a span-limited bake
+  would need; dragging the region band's body to relocate it instead of
+  re-arming; keyframed audio params, which `afftdn`'s runtime-commandable
+  `nr` / `nf` would reach through `asendcmd`; and a clip badge for bake state.
 - **True-peak (oversampled) limiting**, loudness-normalize export
   option, >stereo output, scrub audio.

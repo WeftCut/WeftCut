@@ -89,6 +89,15 @@ Supporting decisions:
   coarser switch would buy a comparison the inspector already makes while
   putting a preview-wide "not what you will export" mode one click away.
   Caching the preview is the real answer to effect cost, and it is post-v1.
+- **The `audio.*` namespace is the one kind-ownership rule the command layer
+  enforces.** Audio effects are offline conform bakes rather than filters
+  ([ADR 0063](0063-audio-effects-are-baked-conform-siblings.md)), and the two
+  lifecycles share nothing but this record — so `add_effect` refuses an
+  `audio.*` kind on a non-Audio layer and any other kind on an Audio one
+  (`EffectKindNotApplicable`), and an `audio.*` param may not be keyframed
+  (`AudioEffectParamStatic`). Everything else stays as stated above: an unknown
+  non-audio kind is accepted, stored, and skipped with a warning by the
+  renderer that owns the catalog.
 - **Deferred:** more filters; `ParamValue` / animated color; a full
   filtered-10-bit-export e2e; a linear/HDR working space; a preview cache /
   background render. `Speed` is time remapping, not a filter, and is out of

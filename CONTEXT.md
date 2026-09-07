@@ -692,3 +692,43 @@ deliberately unlocalized, one key committed per gesture. The default path rather
 than a degraded one: an agent draft or a plain Motif stays editable with zero
 author effort, and the form is frozen at the four variants alongside the schema.
 _Avoid_: generated panel, default form, auto form, generic props form
+
+## Audio effects
+
+**Audio effect**:
+An `Effect` on an Audio layer whose `kind` is in the `audio.*` namespace — the
+same record a visual effect uses, with the opposite lifecycle: it is rendered
+once, offline, into a sibling of the media conform, never evaluated per frame.
+The v1 kind is Denoise. UI word: Effects / 效果, Denoise / 降噪.
+_Avoid_: audio filter (that is the ffmpeg graph a bake runs), insert, plugin,
+realtime effect, audio FX
+
+**Effective chain**:
+The part of a layer's effect chain a bake actually renders — the enabled,
+catalogued, *complete* audio effects, in stored order. An incomplete effect (a
+Denoise with no sample region) is out of it exactly as a disabled one is, and an
+empty effective chain means the layer plays the raw conform.
+_Avoid_: active chain, resolved chain, enabled effects (completeness is the
+other half of the filter), effect stack
+
+**Chain signature**:
+The digest that names one baked artifact: a hash over the media hash, the
+conform format version and the effective chain, shortened to its first 16 hex
+characters in a filename. Two layers with the same media and the same effective
+chain have one signature and therefore share one file.
+_Avoid_: effect hash, cache key, chain id, fingerprint, sig (unqualified)
+
+**Bake**:
+The ffmpeg run that turns a media conform into the sibling conform its chain
+signature names, and the artifact that run produces. Both the preview mixer and
+the export mixer read the bake instead of the raw conform. UI word: Processing…
+/ 处理中, while one is in flight.
+_Avoid_: render (that is export), pre-render, freeze, bounce, offline job
+
+**Sample region**:
+The span of SOURCE time a user marks as containing only noise, so Denoise can
+learn its spectrum from it. It says what is *measured*, never what is processed
+— the effect applies to the whole clip — and it is painted by arming Select
+region on the card and dragging on that clip. UI word: Select region / 选区.
+_Avoid_: noise selection, region of effect, in/out marks (those are export
+state), profile range, noise print
