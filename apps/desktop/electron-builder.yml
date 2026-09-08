@@ -1,6 +1,14 @@
 appId: dev.weftcut.desktop
 productName: WeftCut
 executableName: WeftCut
+# OS + arch, no version: GitHub's releases/latest/download/<asset> URL then always
+# resolves to the current build, so a download page never embeds a version. An
+# exact build stays addressable through its tag (releases/download/v<version>/
+# <asset>), and electron-updater derives the previous blockmap URL by swapping the
+# version inside that tag segment, so differential Windows updates still work.
+# Expands to WeftCut-win-x64.exe, WeftCut-linux-x86_64.AppImage,
+# WeftCut-linux-amd64.deb and WeftCut-mac-arm64.dmg; release.mjs pins that set.
+artifactName: ${productName}-${os}-${arch}.${ext}
 publish:
   provider: github
   owner: WeftCut
@@ -81,7 +89,6 @@ extraResources:
 win:
   target: [nsis]
   icon: build/icon.png
-  artifactName: ${productName}-${version}-${arch}.${ext}
   extraResources:
     # LGPL ffmpeg runtime for @weftcut/native-decode (dynamic linking + separate
     # files satisfies LGPL §6; LICENSE + manifest.json carry the notice + exact
@@ -104,7 +111,6 @@ linux:
   target: [AppImage, deb]
   icon: build/icon.png
   category: AudioVideo
-  artifactName: ${productName}-${version}-${arch}.${ext}
   extraResources:
     # LGPL §6 obligations for @weftcut/native-decode's ffmpeg runtime. The .so
     # themselves ride co-located beside the .node (files + asarUnpack above) so
@@ -129,7 +135,6 @@ mac:
   target: [dmg]
   category: public.app-category.video
   icon: build/icon.png
-  artifactName: ${productName}-${version}-${arch}.${ext}
   # Electron 44 dropped macOS 12; the bundled runtime will not start below 13,
   # so the DMG declares the same floor instead of failing at launch.
   minimumSystemVersion: "13.0"

@@ -17,6 +17,16 @@ blockmaps. Release publishing waits for every E2E, unit/typecheck, Rust and
 determinism comparison gate on all three OSes. No additional release build
 bypasses these gates.
 
+Assets are named by OS and architecture with no version: `WeftCut-win-x64.exe`,
+`WeftCut-linux-x86_64.AppImage`, `WeftCut-linux-amd64.deb` and
+`WeftCut-mac-arm64.dmg`. GitHub's
+`https://github.com/WeftCut/WeftCut/releases/latest/download/<asset>` is
+therefore a permanent link to the current build, fit for a download page that
+never needs editing. A specific build stays addressable through its tag,
+`releases/download/v<version>/<asset>`. electron-updater derives the previous
+release's blockmap URL by swapping the version inside that tag segment, so
+differential Windows updates do not depend on a version in the file name.
+
 The macOS build is ad-hoc signed (`identity: "-"` in electron-builder.yml) and
 not notarized: WeftCut has no Apple Developer ID. Ad-hoc rather than no
 signature keeps the bundle's seal consistent after electron-builder rewrites

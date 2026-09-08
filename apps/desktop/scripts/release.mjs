@@ -55,30 +55,28 @@ export async function setVersion(version, root = ROOT) {
   }
 }
 
-// One update manifest per OS, and the installers it must reference.
-// electron-builder expands `${arch}` per target: `x64` on Windows and `arm64` on
-// macOS (the Apple Silicon runner's host arch; there is no Intel build), but the
-// Linux targets keep their packaging conventions — `x86_64` for AppImage and
-// `amd64` for deb — even though both build with arch=x64.
-const MANIFESTS = {
-  'latest.yml': ['x64.exe'],
-  'latest-linux.yml': ['x86_64.AppImage', 'amd64.deb'],
-  'latest-mac.yml': ['arm64.dmg'],
+// One update manifest per OS, and the installers it must reference: the
+// version-less names electron-builder.yml's artifactName produces (the why lives
+// there). electron-builder expands `${arch}` per target: `x64` on Windows and
+// `arm64` on macOS (the Apple Silicon runner's host arch; there is no Intel
+// build), but the Linux targets keep their packaging conventions — `x86_64` for
+// AppImage and `amd64` for deb — even though both build with arch=x64.
+const INSTALLERS = {
+  'latest.yml': ['WeftCut-win-x64.exe'],
+  'latest-linux.yml': ['WeftCut-linux-x86_64.AppImage', 'WeftCut-linux-amd64.deb'],
+  'latest-mac.yml': ['WeftCut-mac-arm64.dmg'],
 }
-const installersOf = version => Object.fromEntries(Object.entries(MANIFESTS)
-  .map(([manifest, suffixes]) => [manifest, suffixes.map(suffix => `WeftCut-${version}-${suffix}`)]))
 
 // Refuse a partial or stale release BEFORE creating/uploading a draft. Stream
 // hashes: an installer can approach 1 GB and must not be buffered into memory.
 export async function validateAssets(directory, version) {
   validateVersion(version)
   const { parse } = await import('yaml')
-  const installers = installersOf(version)
   // The NSIS blockmap drives differential Windows updates, so it is required;
   // electron-builder writes AppImage and DMG blockmaps too, but nothing
   // consumes them (Linux updates download whole, macOS does not self-update).
   const required = [
-    ...Object.values(installers).flat(), `WeftCut-${version}-x64.exe.blockmap`, ...Object.keys(installers),
+    ...Object.values(INSTALLERS).flat(), 'WeftCut-win-x64.exe.blockmap', ...Object.keys(INSTALLERS),
   ]
   const names = await fs.readdir(directory)
   for (const file of required) {
@@ -87,12 +85,12 @@ export async function validateAssets(directory, version) {
     }
   }
   const allowed = new Set([
-    ...required, `WeftCut-${version}-x86_64.AppImage.blockmap`, `WeftCut-${version}-arm64.dmg.blockmap`,
+    ...required, 'WeftCut-linux-x86_64.AppImage.blockmap', 'WeftCut-mac-arm64.dmg.blockmap',
   ])
   for (const name of names) {
     if (!allowed.has(name)) throw new Error(`Unexpected release asset: ${name}`)
   }
-  for (const [manifest, expected] of Object.entries(installers)) {
+  for (const [manifest, expected] of Object.entries(INSTALLERS)) {
     const info = parse(await fs.readFile(path.join(directory, manifest), 'utf8'))
     if (info?.version !== version || !Array.isArray(info.files) || !info.files.length) {
       throw new Error(`Invalid version/files in ${manifest}`)
@@ -118,8 +116,8 @@ export async function validateAssets(directory, version) {
 // the notes it generates). The releases page is the only download page, and the
 // macOS steps are not guessable: the build is ad-hoc signed, not notarized, so
 // Gatekeeper blocks the first launch (electron-builder.yml §mac has the why).
-export function releaseNotes(version) {
-  const { 'latest.yml': [exe], 'latest-linux.yml': [appImage, deb], 'latest-mac.yml': [dmg] } = installersOf(version)
+export function releaseNotes() {
+  const { 'latest.yml': [exe], 'latest-linux.yml': [appImage, deb], 'latest-mac.yml': [dmg] } = INSTALLERS
   const code = text => '`' + text + '`'
   return [
     '## Install',
@@ -175,7 +173,7 @@ async function main() {
     const remote = execFileSync('git', ['ls-remote', '--tags', 'origin', `refs/tags/${tag}`], { encoding: 'utf8' }).trim()
     if (remote) throw new Error(`Tag ${tag} already exists without a matching draft`)
     gh(['release', 'create', tag, '--target', process.env.GITHUB_SHA, '--draft', '--title', `WeftCut ${version}`,
-      '--generate-notes', '--notes', releaseNotes(version)])
+      '--generate-notes', '--notes', releaseNotes()])
   }
   gh(['release', 'upload', tag, ...files, '--clobber'])
   // The update provider sees the release only once every OS is complete.
