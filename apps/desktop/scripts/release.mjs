@@ -72,9 +72,13 @@ const INSTALLERS = {
 export async function validateAssets(directory, version) {
   validateVersion(version)
   const { parse } = await import('yaml')
-  // The NSIS blockmap drives differential Windows updates, so it is required;
-  // electron-builder writes AppImage and DMG blockmaps too, but nothing
-  // consumes them (Linux updates download whole, macOS does not self-update).
+  // The NSIS blockmap drives differential Windows updates, so it is required.
+  // The AppImage has no sidecar blockmap to require: electron-builder appends
+  // its blockmap to the artifact itself, followed by a 4-byte big-endian length
+  // that latest-linux.yml reports as blockMapSize — that embedded map is what
+  // electron-updater ranges over for differential Linux updates, and the
+  // AppImage's own sha512/size check below covers it. Only the DMG gets a
+  // blockmap file nothing consumes (macOS does not self-update).
   const required = [
     ...Object.values(INSTALLERS).flat(), 'WeftCut-win-x64.exe.blockmap', ...Object.keys(INSTALLERS),
   ]
@@ -84,9 +88,7 @@ export async function validateAssets(directory, version) {
       throw new Error(`Missing release asset: ${file}`)
     }
   }
-  const allowed = new Set([
-    ...required, 'WeftCut-linux-x86_64.AppImage.blockmap', 'WeftCut-mac-arm64.dmg.blockmap',
-  ])
+  const allowed = new Set([...required, 'WeftCut-mac-arm64.dmg.blockmap'])
   for (const name of names) {
     if (!allowed.has(name)) throw new Error(`Unexpected release asset: ${name}`)
   }
