@@ -108,7 +108,11 @@ void main() {
     // Clamped before re-premultiplying: an overshoot past 1.0 or an
     // undershoot below 0.0 is not signal worth keeping, and either one would
     // leave RGB outside [0, A] — not a valid premultiplied colour for the
-    // blend that follows.
+    // blend that follows. Consequence worth knowing before reading a "no
+    // change" as a bug: at an edge whose channels are all 0 or 1 on both sides
+    // (pure primaries, black | white) the overshoot IS the whole ring, so the
+    // clamp leaves the kernel an exact identity there. Sharpen shows on
+    // mid-tones; the e2e in effects-smoke.spec.ts scales its chart for that.
     vec3 sharp = clamp(centre + detail * amount, 0.0, 1.0);
     finalColor = vec4(sharp * src.a, src.a);
 }

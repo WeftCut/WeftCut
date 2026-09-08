@@ -14,8 +14,10 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, summary, driveEx
 // carries only what is extra for that test.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-/// Solid colour patches on a 384-px grid — hard RGB edges, which is what a
-/// sharpen kernel has anything to do to. Honours WEFTCUT_TEST_MEDIA like the
+/// Twenty solid colour patches on a 5×4 grid (384×270 px each at 1920×1080) —
+/// hard edges, which is what a sharpen kernel has anything to do to, and grey
+/// mid-tones, which is where it can be seen doing it (see the sharpen test for
+/// why the primaries alone are not enough). Honours WEFTCUT_TEST_MEDIA like the
 /// conformance specs, so a machine that keeps its fixtures elsewhere still runs.
 const CHART = path.join(
   process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media'),
@@ -462,6 +464,36 @@ test('effects: sharpen rings a chart in the live preview, and amount 0 undoes it
   expect(placed.kind).toBe('Image')
   const layerId = placed.layerId
 
+  // Scale the chart to fit the canvas: 1920×1080 / 3, exact, so every patch
+  // border still falls on a whole canvas pixel and the edges stay hard. Placed
+  // at natural size the 640×360 canvas shows only the top-left crop — red |
+  // green over yellow | white — and every channel there is 0 or 255. The kernel
+  // clamps its output to [0, 1], so at such an edge the whole overshoot is
+  // discarded and sharpen at ANY amount is a bit-exact identity: the frame
+  // cannot move, and the `want` below waits its 40 s for nothing (that was this
+  // test's failure mode). Scaled, the grey row is on the canvas with room to
+  // ring. The witness is the canvas itself, not the summary: the scale reaches
+  // the compositor through the project:changed bridge, so a summary that already
+  // says 1/3 does not mean the frame has been re-composited at 1/3 yet.
+  await invokeCmd(page, 'update_layer_params', {
+    layerId,
+    patch: { kind: 'ImageOverlay', scale_x: 1 / 3, scale_y: 1 / 3 },
+  })
+  {
+    const deadline = Date.now() + 20_000
+    // grey_128 | grey_64 sit on row 2 of the scaled chart (y 180..270), meeting
+    // at x = 128. Two pixels well clear of that border, one on each side.
+    let left = await sampleAt(page, 0, 124, 225)
+    let right = await sampleAt(page, 0, 131, 225)
+    while ((left.r !== 128 || right.r !== 64) && Date.now() < deadline) {
+      await page.waitForTimeout(400)
+      left = await sampleAt(page, 0, 124, 225)
+      right = await sampleAt(page, 0, 131, 225)
+    }
+    expect([left.r, left.g, left.b]).toEqual([128, 128, 128])
+    expect([right.r, right.g, right.b]).toEqual([64, 64, 64])
+  }
+
   /// Seek to 0 and encode the composited frame. Polls until two consecutive
   /// captures agree AND `want` accepts — one capture can land mid-reconcile,
   /// and PNG equality is only meaningful once the frame has stopped moving.
@@ -505,6 +537,21 @@ test('effects: sharpen rings a chart in the live preview, and amount 0 undoes it
   await setAmount(100)
   const sharpened = await settled('amount 100', (png) => png !== unfiltered)
   expect(sharpened).not.toBe(unfiltered)
+
+  // The ring itself, at the grey_128 | grey_64 border. The kernel is a sum of
+  // differences, so at amount 1.0 the values are exact: 128 + (128 − 64) = 192
+  // on the bright side, 64 − (128 − 64) = 0 on the dark side. The pixels one
+  // further out stay flat — a tap that reached two texels instead of one would
+  // ring them too, so this also pins the offset `uInputSize.zw` hands the
+  // shader. ±2 is room for a backend's rounding, not for a different kernel.
+  const bright = await sampleAt(page, 0, 127, 225)
+  const dark = await sampleAt(page, 0, 128, 225)
+  const brightFlat = await sampleAt(page, 0, 126, 225)
+  const darkFlat = await sampleAt(page, 0, 129, 225)
+  expect(Math.abs(bright.r - 192)).toBeLessThanOrEqual(2)
+  expect(Math.abs(dark.r - 0)).toBeLessThanOrEqual(2)
+  expect(Math.abs(brightFlat.r - 128)).toBeLessThanOrEqual(2)
+  expect(Math.abs(darkFlat.r - 64)).toBeLessThanOrEqual(2)
 
   // amount 0 undoes it. Not compared against `unfiltered`: that frame skipped
   // the filter pass entirely (no pool intermediate, one resample instead of
