@@ -13,8 +13,27 @@ export interface DecodedAnimation {
   /// Per-frame display time in µs, parallel to `frames`, already clamped.
   durationsUs: number[];
   totalUs: number;
+  /// Decoded frame size: the source downscaled to the composition cap.
   width: number;
   height: number;
+  /// The source's own size. Layer transforms are authored against THIS, so a
+  /// sprite renders a frame at `natural / decoded` times the layer scale
+  /// (`naturalScale`); without it a GIF larger than the composition shrinks by
+  /// exactly the cap ratio.
+  naturalWidth: number;
+  naturalHeight: number;
+}
+
+/// Per-axis factor that maps a decoded frame back to the source's natural size:
+/// the sprite's effective scale is the layer scale times this — anchorPivot's
+/// `effScale`, the same source-vs-proxy correction video sprites apply. 1 when
+/// the frame was not downscaled, and defensively 1 for a degenerate size.
+export function naturalScale(
+  anim: Pick<DecodedAnimation, "width" | "height" | "naturalWidth" | "naturalHeight">,
+): { kx: number; ky: number } {
+  const kx = anim.width > 0 && anim.naturalWidth > 0 ? anim.naturalWidth / anim.width : 1;
+  const ky = anim.height > 0 && anim.naturalHeight > 0 ? anim.naturalHeight / anim.height : 1;
+  return { kx, ky };
 }
 
 export type DecodeFn = (
@@ -121,8 +140,11 @@ export function imageMimeFor(blobType: string, url: string): string {
 /// Real decode via WebCodecs `ImageDecoder`. Works in both the preview main
 /// thread and the export Worker. Each frame is downscaled at decode to
 /// `min(originalDim, maxW/maxH)` so memory stays bounded (the composition never
-/// shows a GIF larger than itself). Throws on a missing/unsupported decoder so
-/// the caller can fall back to the static `createImageBitmap` path (bmp/tiff/svg).
+/// shows a GIF larger than itself); `naturalWidth/Height` let the sprite render
+/// it back at source size. Throws on a missing/unsupported decoder AND on a
+/// single-frame source, so the caller falls back to the static full-resolution
+/// `createImageBitmap` path: a still zoomed past 1:1 must not be served from a
+/// composition-capped frame, and bmp/tiff/svg never decode here at all.
 export const decodeAnimatedImage: DecodeFn = async (assetUrl, maxW, maxH) => {
   const Decoder = (globalThis as { ImageDecoder?: typeof ImageDecoder }).ImageDecoder;
   if (!Decoder) throw new Error("ImageDecoder unavailable");
@@ -139,11 +161,14 @@ export const decodeAnimatedImage: DecodeFn = async (assetUrl, maxW, maxH) => {
   const durationsUs: number[] = [];
   let w = 0;
   let h = 0;
+  let naturalW = 0;
+  let naturalH = 0;
   try {
     await dec.tracks.ready;
     const track = dec.tracks.selectedTrack;
     if (!track) throw new Error("ImageDecoder: no selected track");
     const count = track.frameCount;
+    if (count <= 1) throw new Error("ImageDecoder: single frame, static path");
     for (let i = 0; i < count; i++) {
       // eslint-disable-next-line no-await-in-loop
       const { image } = await dec.decode({ frameIndex: i });
@@ -157,9 +182,9 @@ export const decodeAnimatedImage: DecodeFn = async (assetUrl, maxW, maxH) => {
         resizeQuality: "high",
       });
       durationsUs.push(clampFrameDurationUs(image.duration));
+      if (i === 0) { w = rw; h = rh; naturalW = image.displayWidth; naturalH = image.displayHeight; }
       image.close();
       frames.push(bmp);
-      if (i === 0) { w = rw; h = rh; }
     }
   } catch (err) {
     for (const f of frames) {
@@ -171,7 +196,7 @@ export const decodeAnimatedImage: DecodeFn = async (assetUrl, maxW, maxH) => {
   }
   let total = 0;
   for (const d of durationsUs) total += d;
-  return { frames, durationsUs, totalUs: total, width: w, height: h };
+  return { frames, durationsUs, totalUs: total, width: w, height: h, naturalWidth: naturalW, naturalHeight: naturalH };
 };
 
 /// The singleton every ImageOverlaySprite shares within a JS realm. (Preview and

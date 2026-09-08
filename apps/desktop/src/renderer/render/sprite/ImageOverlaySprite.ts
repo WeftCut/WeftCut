@@ -1,10 +1,12 @@
-// ImageOverlay layer. Supported still-image types (gif/png/jpeg/webp/avif) are
-// decoded via the shared ImageDecoder cache: a multi-frame source becomes an
+// ImageOverlay layer. Raster image types (gif/png/jpeg/webp/avif) are offered to
+// the shared ImageDecoder cache first: a multi-frame source becomes an
 // *animated image* whose frame is chosen per-tick from composition time and
-// LOOPED to fill the (free) layer duration; a single-frame source binds frame 0
-// once. Unsupported types (bmp/tiff/svg) fall back to a one-shot
-// createImageBitmap. The cache owns animated bitmaps; this sprite only wraps
-// them in its own Texture (mirrors MotifSprite ownership). See docs/render.md.
+// LOOPED to fill the (free) layer duration, rendered back at the source's
+// natural size (the cache caps frames at composition size). A single-frame
+// source is declined by the decoder, and unsupported types (bmp/tiff/svg) never
+// decode there, so both take the one-shot full-resolution createImageBitmap
+// path. The cache owns animated bitmaps; this sprite only wraps them in its own
+// Texture (mirrors MotifSprite ownership). See docs/render.md.
 
 import { type Container, ImageSource, Sprite, Texture } from "pixi.js";
 
@@ -13,6 +15,7 @@ import type { ResolvedImageOverlayView } from "../resolveView";
 import { gifFrameIndexAt } from "./gifTiming";
 import type { StageableSprite } from "./StageableSprite";
 import {
+  naturalScale,
   sharedAnimatedImageCache,
   type DecodedAnimation,
 } from "./animatedImageCache";
@@ -109,7 +112,13 @@ export class ImageOverlaySprite implements StageableSprite {
   /// start; `durationUs` is the layer's (free) span.
   update(view: ResolvedImageOverlayView, tInLayerUs: number, durationUs: number): void {
     if (this.disposed) return;
-    this.sprite.scale.set(view.scale_x, view.scale_y);
+    // Animated frames are decoded at most composition-sized, so the rendered
+    // scale carries the frame→source correction: layer transforms are authored
+    // against the source size.
+    const { kx, ky } = this.anim ? naturalScale(this.anim) : { kx: 1, ky: 1 };
+    const effScaleX = view.scale_x * kx;
+    const effScaleY = view.scale_y * ky;
+    this.sprite.scale.set(effScaleX, effScaleY);
     // Anchor is the pivot; `x`/`y` stay the unrotated top-left (anchorPivot.ts).
     const pivot = anchorPivot({
       x: view.x,
@@ -117,8 +126,8 @@ export class ImageOverlaySprite implements StageableSprite {
       anchorX: view.anchor_x,
       anchorY: view.anchor_y,
       ...textureExtent(this.sprite.texture),
-      effScaleX: view.scale_x,
-      effScaleY: view.scale_y,
+      effScaleX,
+      effScaleY,
     });
     this.sprite.pivot.set(pivot.pivotX, pivot.pivotY);
     this.sprite.position.set(pivot.posX, pivot.posY);
