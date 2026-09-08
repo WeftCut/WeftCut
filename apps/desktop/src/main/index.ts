@@ -8,6 +8,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, Notificati
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import electronUpdater from 'electron-updater'
 import { createUpdates } from './updates.js'
+import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
 import { setRuntimeSource, captureMotifFrameB64, setMotifStore, shutdownCaptureHost } from './motif/capture.js'
@@ -181,34 +182,6 @@ function enumerateDrmRenderNodes(): string[] {
       .map((n) => `/dev/dri/${n}`)
   } catch {
     return []
-  }
-}
-
-/// Content-Type for a `weftcut-media://` body, keyed by file extension. The
-/// exact container type is cosmetic — what matters is that it is NOT text, so
-/// Chromium's loader skips the main-thread `TextResourceDecoder` pass over the
-/// body (see the header comment at the `weftcut-media` handler). A container
-/// mediabunny does not recognise still falls back to `application/octet-stream`,
-/// which is equally non-text.
-function mediaMimeForExt(ext: string): string {
-  switch (ext.toLowerCase()) {
-    case '.mp4':
-    case '.m4v':
-      return 'video/mp4'
-    case '.mov':
-      return 'video/quicktime'
-    case '.webm':
-      return 'video/webm'
-    case '.mkv':
-      return 'video/x-matroska'
-    case '.m4a':
-      return 'audio/mp4'
-    case '.mp3':
-      return 'audio/mpeg'
-    case '.wav':
-      return 'audio/wav'
-    default:
-      return 'application/octet-stream'
   }
 }
 
@@ -2152,7 +2125,7 @@ app.whenReady().then(async () => {
       // → TextResourceDecoder::Decode {data_len: 8388608}), which is the periodic
       // ~0.9 s preview stutter on the WebCodecs 4K lane. Tagging the body binary
       // skips that decode entirely. `application/octet-stream` is the safe
-      // default; the container-specific types are cosmetic once it is non-text.
+      // default for containers; images need their real type (mediaMime.ts).
       'Content-Type': mediaMimeForExt(path.extname(abs)),
     }
 

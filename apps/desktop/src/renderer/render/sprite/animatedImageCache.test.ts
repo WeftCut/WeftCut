@@ -1,9 +1,31 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   createAnimatedImageCache,
+  imageMimeFor,
   type DecodedAnimation,
   type DecodeFn,
 } from "./animatedImageCache";
+
+describe("imageMimeFor", () => {
+  const GIF = "weftcut-media://localhost/C%3A%5Cclips%5Cloop.gif";
+
+  it("keeps a definite image type from the response", () => {
+    expect(imageMimeFor("image/webp", GIF)).toBe("image/webp");
+  });
+
+  it("falls back to the extension for an empty, generic or error-page type", () => {
+    // application/octet-stream is what weftcut-media:// sends for an extension
+    // it does not know; ImageDecoder rejects it as firmly as an empty type, and
+    // trusting it froze every animated GIF to its first frame.
+    for (const type of ["", "application/octet-stream", "text/html"]) {
+      expect(imageMimeFor(type, GIF), type || "(empty)").toBe("image/gif");
+    }
+  });
+
+  it("yields empty when neither side knows, so the caller fails loudly", () => {
+    expect(imageMimeFor("application/octet-stream", "weftcut-media://localhost/frame.bin")).toBe("");
+  });
+});
 
 /// A fake decoded animation whose "bitmaps" record close() calls.
 function fakeAnimation(): DecodedAnimation {

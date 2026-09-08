@@ -83,9 +83,9 @@ export function createAnimatedImageCache(decode: DecodeFn): AnimatedImageCache {
   };
 }
 
-/// Map a bare file extension (no dot) to its canonical image MIME type. Used
-/// to recover the type when the weftcut-media:// protocol doesn't set
-/// Content-Type and `blob.type` arrives empty.
+/// Map a bare file extension (no dot) to its canonical image MIME type: the
+/// fallback when the response carries no usable type (`imageMimeFor`). Twin of
+/// the image cases in main/mediaMime.ts.
 const EXT_MIME: Record<string, string> = {
   gif: "image/gif",
   webp: "image/webp",
@@ -106,6 +106,18 @@ function mimeFromUrl(url: string): string {
   }
 }
 
+/// The type to hand `ImageDecoder`: the response's own when it is a definite
+/// image type, else the URL extension's. `ImageDecoder` refuses an empty type
+/// and `application/octet-stream` alike (unlike `createImageBitmap`, it never
+/// sniffs), and a `text/*` body is an error page rather than image bytes — so
+/// all three fall through to the extension. Generic types are a normal input:
+/// weftcut-media:// sends octet-stream for any extension main/mediaMime.ts
+/// does not know, and so does any plain file server.
+export function imageMimeFor(blobType: string, url: string): string {
+  const generic = !blobType || blobType === "application/octet-stream" || blobType.startsWith("text/");
+  return generic ? mimeFromUrl(url) : blobType;
+}
+
 /// Real decode via WebCodecs `ImageDecoder`. Works in both the preview main
 /// thread and the export Worker. Each frame is downscaled at decode to
 /// `min(originalDim, maxW/maxH)` so memory stays bounded (the composition never
@@ -117,12 +129,8 @@ export const decodeAnimatedImage: DecodeFn = async (assetUrl, maxW, maxH) => {
   const res = await fetch(assetUrl);
   if (!res.ok) throw new Error(`fetch ${assetUrl} -> ${res.status}`);
   const blob = await res.blob();
-  // Guard against error-page HTML responses (e.g. Electron serving a
-  // diagnostic page when the protocol handler fails) — they are not image data,
-  // so they fall through to `mimeFromUrl` like an empty `blob.type` does.
-  const rawType = blob.type;
-  const type = (rawType && !rawType.startsWith("text/")) ? rawType : mimeFromUrl(assetUrl);
-  if (!type) throw new Error(`ImageDecoder: cannot determine MIME type (blob.type=${rawType}, url=${assetUrl})`);
+  const type = imageMimeFor(blob.type, assetUrl);
+  if (!type) throw new Error(`ImageDecoder: cannot determine MIME type (blob.type=${blob.type}, url=${assetUrl})`);
   // isTypeSupported may return false in some renderer contexts even for
   // supported types; skip the pre-check and let the decoder fail at open time.
   const buf = await blob.arrayBuffer();
