@@ -44,5 +44,11 @@ export function openDescribeForSelection(): void {
     layerId: layer.id,
     layerName: layerDisplayName(layer, (key, values) => i18n.t(key, values)),
     mediaId: params.media_id,
+    // The clip's whole source window: the dialog sends NO window arguments, so
+    // Rust answers for exactly this span, and this is the span the answer is
+    // merged over. Read off the layer rather than recomputed from a duration —
+    // a trimmed clip's source window is not its length from zero.
+    srcStartUs: params.src_in_us,
+    srcEndUs: params.src_out_us,
   });
 }

@@ -168,9 +168,18 @@
 }
 
 /* Pushed to the far end of the parameters row: it acts on the whole list, where
-   everything to its left shapes one number. */
+   everything to its left shapes one number. `auto` on the FIRST of the two
+   list-wide actions only, so the pair stays together at the end rather than
+   splitting across the row. */
 .shots-measure {
   margin-inline-start: auto;
+}
+
+/* Beside *Measure shots* and skinned identically: both are opt-in passes that
+   change what the rows SAY rather than which rows there are, and a different
+   skin would file this with the apply verbs, which commit. */
+.shots-describe-all {
+  flex: none;
 }
 
 .shots-list {
@@ -399,6 +408,17 @@
   border-radius: var(--radius-control);
   background: var(--muted);
   color: var(--muted-foreground);
+}
+
+/* The per-row press, on its own line UNDER the prose rather than beside it: the
+   prose wraps to whatever width the Panel has, so a button sharing its line
+   would move every time a description landed.
+   The cell stays a BLOCK and the button stays the `inline-flex` the Button
+   primitive gives it, which is what sizes it to its label instead of to the
+   cell — a flex cell would have to re-state the prose's wrapping to get the
+   same result. */
+.shots-describe {
+  margin-top: 4px;
 }
 
 .shots-keep {

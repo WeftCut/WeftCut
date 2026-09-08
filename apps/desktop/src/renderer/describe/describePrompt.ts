@@ -23,10 +23,16 @@ import { create } from "zustand";
 /// under the source, the shot rows read them back by media id, and resolving it
 /// from the layer afterwards would mean re-walking a project this store
 /// deliberately holds no subscription to.
+///
+/// So does the SOURCE span, for the same reason and one more: the run's answer
+/// is merged over exactly that span (`describeRun.ts`), and source time is the
+/// only domain in which the answer, the cache and the shot rows all agree.
 export interface DescribeTarget {
   layerId: string;
   layerName: string;
   mediaId: string;
+  srcStartUs: number;
+  srcEndUs: number;
 }
 
 interface DescribePromptState {

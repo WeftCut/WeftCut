@@ -22,6 +22,19 @@ import { create } from "zustand";
 import { getMediaDescription, type DescSegment } from "../ipc";
 import { LatestRequestCoordinator } from "../state/latestRequest";
 
+/// The window a run is going against: a source id and a source-time span.
+///
+/// A SPAN and not just a media id, because a run is now scoped to one shot as
+/// often as to a whole clip — and a per-shot run that greyed every row of the
+/// column would report work on thirty shots that nobody asked for. The span is
+/// in source time, which is the domain the rows and the cache already share, so
+/// "is this row waiting" is the same intersection the prose itself is found by.
+export interface DescribingSpan {
+  mediaId: string;
+  srcStartUs: number;
+  srcEndUs: number;
+}
+
 interface DescriptionsState {
   /// Segments by media id. A present `null` means the read came back with
   /// nothing — known not described, as opposed to an absent key, which means
@@ -29,14 +42,39 @@ interface DescriptionsState {
   /// what keeps `hydrateDescription` from re-reading a source it has an answer
   /// for.
   segments: ReadonlyMap<string, readonly DescSegment[] | null>;
-  /// The media id a description run is going against, or null. Read by the
-  /// rows: a cell with nothing to show says whether one is on its way.
-  describing: string | null;
+  /// The window a description run is going against, or null. Read by the rows:
+  /// a cell with nothing to show says whether one is on its way.
+  ///
+  /// ONE at a time, and that is a property of the runs rather than of this
+  /// field: every entry point checks it before starting, because the engine is
+  /// a local 2.5 GB model and two concurrent spawns would contend for the same
+  /// VRAM to answer half as fast.
+  describing: DescribingSpan | null;
+  /// The last run's failure, for the Shots Panel's own slot — the engine's
+  /// sentence verbatim, or `""`.
+  ///
+  /// Here rather than on `shotsStore.error`, whose one slot is documented as
+  /// exclusive between the scan, a measurement and an apply. A describe run is
+  /// none of those and greys none of them, so it would be the first thing able
+  /// to overwrite a refusal the reviewer had not read yet.
+  ///
+  /// Not surfaced by the DIALOG, which keeps its own inline copy: it stays open
+  /// on a failure so the parameters survive, and it owns the one remedy button.
+  error: string;
+  /// A shot-by-shot sweep's progress, or null when none is running.
+  ///
+  /// Separate from `describing`, which goes null between the sweep's runs — a
+  /// counter is the only honest progress a sweep of N twenty-second model runs
+  /// has, and without it the button would blink back to its idle label between
+  /// shots. `done` counts FINISHED runs, so it reads 0 while the first is going.
+  batch: { done: number; total: number } | null;
 }
 
 const INITIAL: DescriptionsState = {
   segments: new Map(),
   describing: null,
+  error: "",
+  batch: null,
 };
 
 export const useDescriptionsStore = create<DescriptionsState>(() => ({
@@ -172,20 +210,51 @@ export async function reloadDescription(mediaId: string): Promise<void> {
   }
 }
 
-/// Publish a finished run's segments. Authoritative for a run at a NON-default
-/// sampling or focus, which no read can find — that view is not the one
-/// `media://{id}/description` serves, which is what the dialog says out loud.
-/// At the default view it is the optimistic fill that shows the prose the moment
-/// the model is done, and `reloadDescription` widens it a round trip later.
-export function setDescription(
+/// Publish a finished run's segments OVER the window it answered for, keeping
+/// everything outside that window.
+///
+/// Authoritative for a run at a NON-default sampling, focus or language, which
+/// no read can find — that view is not the one `media://{id}/description`
+/// serves, which is what the dialog says out loud. At the default view it is the
+/// optimistic fill that shows the prose the moment the model is done, and
+/// `reloadDescription` widens it a round trip later.
+///
+/// WINDOWED, and it has to be: a run against one shot answers for that shot's
+/// span alone, so a whole-map replace would delete the prose of every other shot
+/// of the source — and of every other clip cut from it. The replace-intersecting
+/// rule and the half-open predicate are Rust's `DescriptionCache::merge_window`
+/// and `segments_in`, deliberately: this is an OVERLAY on the same cache, and an
+/// overlay that folded segments differently from the file underneath it would
+/// flicker on the reload that follows. Authority stays on disk; `reloadDescription`
+/// is what publishes it.
+export function mergeDescription(
   mediaId: string,
-  segments: readonly DescSegment[],
+  srcStartUs: number,
+  srcEndUs: number,
+  fresh: readonly DescSegment[],
 ): void {
-  put(mediaId, segments);
+  const prior = useDescriptionsStore.getState().segments.get(mediaId) ?? [];
+  const kept = prior.filter(
+    (s) => !(s.t_start_us < srcEndUs && s.t_end_us > srcStartUs),
+  );
+  put(
+    mediaId,
+    [...kept, ...fresh].sort((a, b) => a.t_start_us - b.t_start_us),
+  );
 }
 
-export function setDescribing(mediaId: string | null): void {
-  useDescriptionsStore.setState({ describing: mediaId });
+export function setDescribing(span: DescribingSpan | null): void {
+  useDescriptionsStore.setState({ describing: span });
+}
+
+export function setDescribeError(error: string): void {
+  useDescriptionsStore.setState({ error });
+}
+
+export function setDescribeBatch(
+  batch: { done: number; total: number } | null,
+): void {
+  useDescriptionsStore.setState({ batch });
 }
 
 /// Forget everything — the state every test of this module starts from, and
@@ -221,5 +290,32 @@ export const useDescription = (
     mediaId === null ? null : s.segments.get(mediaId) ?? null,
   );
 
-export const useDescribing = (): string | null =>
+export const useDescribing = (): DescribingSpan | null =>
   useDescriptionsStore((s) => s.describing);
+
+export const useDescribeError = (): string =>
+  useDescriptionsStore((s) => s.error);
+
+export const useDescribeBatch = (): { done: number; total: number } | null =>
+  useDescriptionsStore((s) => s.batch);
+
+/// Whether a run is going against a window that OVERLAPS `[srcStartUs, srcEndUs)`
+/// of `mediaId` — what one row asks to decide whether it is waiting.
+///
+/// The same half-open intersection `segmentsForSpan` finds prose by, so a row
+/// that will receive the run's answer is exactly a row that says it is waiting.
+/// A whole-clip run therefore lights every row of that clip, and a per-shot run
+/// lights the one shot plus any neighbour the span reaches into.
+export function isDescribingSpan(
+  describing: DescribingSpan | null,
+  mediaId: string,
+  srcStartUs: number,
+  srcEndUs: number,
+): boolean {
+  return (
+    describing !== null &&
+    describing.mediaId === mediaId &&
+    describing.srcStartUs < srcEndUs &&
+    describing.srcEndUs > srcStartUs
+  );
+}

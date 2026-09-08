@@ -55,6 +55,19 @@ struct ResourceState {
     #[cfg(feature = "speech")]
     #[serde(default)]
     vlm_config: std::collections::HashMap<String, crate::vlm::BackendConfig>,
+    /// Injected by the TS host for `media://{id}/description`: the app's UI
+    /// language, because language is part of the description cache key. It has to
+    /// ride in the same way the config does — a resource is addressed by URI and
+    /// has no argument to carry it.
+    ///
+    /// Absent → `Language::DEFAULT_TAG`, which is what a host-less read (an agent
+    /// against a bare core) gets. That is also the only shape under which this
+    /// resource and `describe_clip` could disagree about which key to look under,
+    /// and it is why the host injects on BOTH paths from one value
+    /// (`main/index.ts` `uiLanguage`).
+    #[cfg(feature = "speech")]
+    #[serde(default)]
+    language: Option<String>,
 }
 
 fn serialize_err(e: serde_json::Error) -> McpToolError {
@@ -90,8 +103,15 @@ pub(crate) async fn read_resource(
         // `read_description_resource`.
         #[cfg(feature = "speech")]
         if let Some(id_part) = tail.strip_suffix("/description") {
-            return read_description_resource(b, uri, id_part, state.media, &state.vlm_config)
-                .await;
+            return read_description_resource(
+                b,
+                uri,
+                id_part,
+                state.media,
+                &state.vlm_config,
+                state.language.as_deref(),
+            )
+            .await;
         }
         // /analysis — always computable, computes on miss; see
         // `read_analysis_resource`.
@@ -241,12 +261,12 @@ async fn read_media_resource(
 }
 
 /// Serve `media://{id}/description` — the cached scene-description view for the
-/// resolver's DEFAULT params (default backend, fps 1.0, general focus). Resolves
-/// the backend from the injected VLM config, computes the same cache key
-/// `describe_clip` uses, and returns the stored `DescriptionCache`
-/// (`{ covered_ranges, segments }`, source-absolute). Reports a clear not-found
-/// when no backend is configured or nothing has been described yet — unlike the
-/// always-computable analysis resources.
+/// resolver's DEFAULT params (default backend, fps 1.0, general focus, the
+/// injected UI language). Resolves the backend from the injected VLM config,
+/// computes the same cache key `describe_clip` uses, and returns the stored
+/// `DescriptionCache` (`{ covered_ranges, segments }`, source-absolute). Reports
+/// a clear not-found when no backend is configured or nothing has been described
+/// yet — unlike the always-computable analysis resources.
 #[cfg(feature = "speech")]
 async fn read_description_resource(
     b: &Backend,
@@ -254,6 +274,7 @@ async fn read_description_resource(
     id_part: &str,
     media: Option<crate::state::MediaItem>,
     vlm_config: &std::collections::HashMap<String, crate::vlm::BackendConfig>,
+    language: Option<&str>,
 ) -> Result<ResourceResult, McpToolError> {
     use crate::vlm;
 
@@ -274,21 +295,29 @@ async fn read_description_resource(
         )
     })?;
     let model = vlm::resolve::model_label(backend, vlm_config.get(backend.as_str()));
-    // Default view params mirror describe_clip's defaults (fps 1.0, general).
+    // Default view params mirror describe_clip's defaults (fps 1.0, general) —
+    // and its language default, which is what `Language::parse(None)` states.
+    let language = vlm::Language::parse(language);
     let key = vlm::cache_key(
         &media.file_hash_blake3,
         backend,
         &model,
         1000,
         vlm::Focus::General,
+        &language,
     );
     let path = b.cache.description(&key);
     crate::cache::touch_if_stale(&path);
     if !crate::cache::cached_ok(&path) {
+        // The language is named in the refusal: on a language switch every
+        // source reads as undescribed, and a sentence that only said "default
+        // sampling" would make that look like lost data rather than a different
+        // view of the same footage.
         return Err(McpToolError::resource_not_found(
             format!(
-                "no description computed yet for media {media_id} ({}, default sampling) — call describe_clip",
+                "no description computed yet for media {media_id} ({}, default sampling, {}) — call describe_clip",
                 backend.as_str(),
+                language.as_str(),
             ),
             None,
         ));

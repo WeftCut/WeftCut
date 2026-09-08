@@ -27,10 +27,21 @@ import {
   type ShotFlag,
   type TrackSummary,
 } from "../ipc";
+import { useDescribeState, type DescribeState } from "../describe/describeEligibility";
+import {
+  cancelDescribeShots,
+  describeOneShot,
+  describeShotRows,
+} from "../describe/describeShots";
 import {
   hydrateDescription,
+  isDescribingSpan,
+  setDescribeError,
+  useDescribeBatch,
+  useDescribeError,
   useDescribing,
   useDescription,
+  type DescribingSpan,
 } from "../describe/descriptionsStore";
 import { segmentsForSpan } from "../describe/segmentsForSpan";
 import { layerDisplayName } from "../lib/layerName";
@@ -247,17 +258,27 @@ function ShotStatsCells({ row }: { row: ShotRow }) {
 ///
 /// "Not described" and never blank: shots without descriptions are the normal
 /// case, and an empty cell would read as a load that never finished. The one
-/// transient is a run against this very source, which the cell may say it is
-/// waiting on — but only where it has nothing else to show, so a re-describe
+/// transient is a run whose window OVERLAPS this row, which the cell may say it
+/// is waiting on — but only where it has nothing else to show, so a re-describe
 /// never blanks prose that is already on screen.
 ///
-/// Read-only. Editing a model's sentences is not a feature this column claims.
+/// The transient is span-scoped and not source-scoped, because a run is now as
+/// often about one shot as about a whole clip: a per-shot press must not report
+/// work on the twenty-nine rows it is not going to answer for.
+///
+/// Read-only. Editing a model's sentences is not a feature this column claims —
+/// but asking for them IS, which is the button beside it.
 function ShotDescriptionCell({
   row,
   mediaId,
+  describeBlocker,
+  onDescribe,
 }: {
   row: ShotRow;
   mediaId: string;
+  /// Why this row cannot be described, as a `shots_panel.*` key, or null.
+  describeBlocker: string | null;
+  onDescribe: (row: ShotRow) => void;
 }) {
   const { t } = useTranslation();
   const segments = useDescription(mediaId);
@@ -266,30 +287,61 @@ function ShotDescriptionCell({
     () => segmentsForSpan(segments, row.srcStartUs, row.srcEndUs),
     [segments, row.srcStartUs, row.srcEndUs],
   );
-  if (overlapping.length === 0) {
-    return (
-      <p className="shots-description shots-description-empty">
-        {describing === mediaId
-          ? t("shots_panel.describing")
-          : t("shots_panel.not_described")}
-      </p>
-    );
-  }
+  const waiting = isDescribingSpan(
+    describing,
+    mediaId,
+    row.srcStartUs,
+    row.srcEndUs,
+  );
   return (
     <div className="shots-description">
-      {overlapping.map((segment) => (
-        <p
-          className="shots-description-span"
-          key={`${segment.t_start_us}-${segment.t_end_us}`}
-        >
-          <span className="shots-description-text">{segment.text}</span>
-          {segment.tags.map((tag) => (
-            <span className="shots-description-tag" key={tag}>
-              {tag}
-            </span>
-          ))}
+      {overlapping.length === 0 ? (
+        <p className="shots-description-empty">
+          {waiting
+            ? t("shots_panel.describing")
+            : t("shots_panel.not_described")}
         </p>
-      ))}
+      ) : (
+        overlapping.map((segment) => (
+          <p
+            className="shots-description-span"
+            key={`${segment.t_start_us}-${segment.t_end_us}`}
+          >
+            <span className="shots-description-text">{segment.text}</span>
+            {segment.tags.map((tag) => (
+              <span className="shots-description-tag" key={tag}>
+                {tag}
+              </span>
+            ))}
+          </p>
+        ))
+      )}
+      {/* One press, no dialog. The two parameters a dialog would offer are
+          exactly the two that take a result OUT of the view these rows read
+          back (`describeShots.ts`), so offering them on a per-row control would
+          be offering a way to make the press pointless. The label says which
+          gesture it is — a row with prose can still be asked again, because a
+          model's answer is not a fact and re-running one is a normal thing to
+          want. */}
+      <Button
+        className="shots-describe"
+        variant="secondary"
+        size="sm"
+        data-testid={`shots-describe-${row.index}`}
+        disabled={describeBlocker !== null}
+        title={
+          describeBlocker === null
+            ? t("shots_panel.describe_shot_hint")
+            : t(describeBlocker)
+        }
+        onClick={() => onDescribe(row)}
+      >
+        {waiting
+          ? t("shots_panel.describing")
+          : overlapping.length === 0
+            ? t("shots_panel.describe_shot")
+            : t("shots_panel.describe_shot_again")}
+      </Button>
     </div>
   );
 }
@@ -361,12 +413,16 @@ function ShotRowView({
   fpsNum,
   fpsDen,
   onActivate,
+  describeBlocker,
+  onDescribe,
 }: {
   row: ShotRow;
   mediaId: string;
   fpsNum: number;
   fpsDen: number;
   onActivate: (row: ShotRow) => void;
+  describeBlocker: string | null;
+  onDescribe: (row: ShotRow) => void;
 }) {
   const { t } = useTranslation();
   const candidate = row.openingCandidate;
@@ -421,7 +477,12 @@ function ShotRowView({
           </button>
           <ShotStatsCells row={row} />
           <ShotFlags flags={row.flags} />
-          <ShotDescriptionCell row={row} mediaId={mediaId} />
+          <ShotDescriptionCell
+            row={row}
+            mediaId={mediaId}
+            describeBlocker={describeBlocker}
+            onDescribe={onDescribe}
+          />
         </div>
         <AppCheckbox
           className="shots-keep"
@@ -535,6 +596,112 @@ function MeasureShotsButton({
       {measuring !== null
         ? t("shots_panel.measure_running")
         : t("shots_panel.measure")}
+    </Button>
+  );
+}
+
+/// Why a description cannot be run right now, as a `shots_panel.*` key — or null
+/// when it can. ONE rule, read by every row's button AND by the sweep, so a
+/// greyed row and a refused sweep can never disagree about the precondition.
+///
+/// `describeState` is the gate the Edit-menu command is greyed by, reused whole:
+/// the Panel's subject IS the primary selection, so the same three answers apply
+/// — and a re-timed clip is refused by the tool itself, which is exactly the
+/// case a per-row button would otherwise offer and then always fail on.
+///
+/// `needs_selection` and `needs_video_kind` are deliberately not mapped: neither
+/// is reachable here, because a Panel with rows has a selected VideoClip by
+/// construction. They fall through to the same key the tool's own refusal would
+/// name, which is honest and unreachable rather than invented copy.
+export function shotDescribeBlocker(
+  describe: DescribeState,
+  describing: DescribingSpan | null,
+  batch: { done: number; total: number } | null,
+  applying: ShotApplyVerb | null,
+): string | null {
+  if (describe === "speed_not_one") return "shots_panel.describe_speed_not_one";
+  if (describe !== "describe") return "shots_panel.needs_video_clip";
+  // A run in flight, whether a lone press or a sweep. `runDescribe` refuses a
+  // second one anyway; greying says why instead of swallowing the press.
+  if (batch !== null) return "shots_panel.describe_sweep_running";
+  if (describing !== null) return "shots_panel.describe_running";
+  // An apply reshapes the very rows a description is being taken over, so the
+  // window a press would send may not be a span any more by the time the model
+  // answers — `measure_busy`'s rule, and its sentence.
+  if (applying !== null) return "shots_panel.measure_busy";
+  return null;
+}
+
+/// The sweep: describe every shot that has nothing yet, one after another.
+///
+/// Beside *Measure shots* and for its reasons — it writes no project state and
+/// lands no undo entry, it changes what the rows SAY rather than which rows
+/// there are, and its cost is the only reason it is not automatic. The count is
+/// in the label because that cost is linear in it: N runs of about twenty
+/// seconds, and a button that hid the N would be hiding the whole decision.
+///
+/// While it runs it becomes STOP. A ten-minute sweep with no way out is the one
+/// thing *Measure shots* does not have to answer for (three ffmpeg extracts per
+/// span), and the stop is honest about what it can do — `cancelDescribeShots`
+/// states why it takes effect after the shot in flight.
+function DescribeShotsButton({
+  rows,
+  mediaId,
+  describeBlocker,
+  onSweep,
+}: {
+  rows: readonly ShotRow[];
+  mediaId: string;
+  describeBlocker: string | null;
+  onSweep: (rows: readonly ShotRow[]) => void;
+}) {
+  const { t } = useTranslation();
+  const segments = useDescription(mediaId);
+  const batch = useDescribeBatch();
+  // The rows with no prose over their span — the same intersection the cells
+  // render by, so the count names exactly the cells that would fill.
+  const undescribed = useMemo(
+    () =>
+      rows.filter(
+        (row) =>
+          segmentsForSpan(segments, row.srcStartUs, row.srcEndUs).length === 0,
+      ),
+    [rows, segments],
+  );
+  if (batch !== null) {
+    return (
+      <Button
+        className="shots-describe-all"
+        variant="secondary"
+        size="sm"
+        data-testid="shots-describe-all"
+        title={t("shots_panel.describe_all_stop_hint")}
+        onClick={cancelDescribeShots}
+      >
+        {t("shots_panel.describe_all_running", {
+          done: batch.done,
+          total: batch.total,
+        })}
+      </Button>
+    );
+  }
+  // Nothing left to describe gets the `measure_all_measured` treatment: name the
+  // precondition in the tooltip rather than repeat an unusable label.
+  const blocker =
+    undescribed.length === 0
+      ? "shots_panel.describe_all_described"
+      : describeBlocker;
+  return (
+    <Button
+      className="shots-describe-all"
+      variant="secondary"
+      size="sm"
+      data-testid="shots-describe-all"
+      disabled={blocker !== null}
+      title={blocker === null ? t("shots_panel.describe_all_hint") : t(blocker)}
+      onClick={() => onSweep(undescribed)}
+    >
+      {t("shots_panel.describe_all", { count: undescribed.length })}
     </Button>
   );
 }
@@ -696,6 +863,13 @@ export function ShotsPanel() {
   const floor = useShotFloor();
   const minShotUs = useShotMinShotUs();
   const floorReport = useShotFloorReport(mediaId);
+  // The describe gate and its two in-flight flags. The gate is the Edit-menu
+  // command's own (`describeEligibility.ts`), because the Panel's subject IS the
+  // primary selection — one rule for both surfaces.
+  const describeState = useDescribeState();
+  const describing = useDescribing();
+  const describeBatch = useDescribeBatch();
+  const describeError = useDescribeError();
 
   // Mount wiring. The defaults read is what the store reduces at, and the reset
   // on unmount is why a reopened Panel never shows an abandoned review.
@@ -720,6 +894,10 @@ export function ShotsPanel() {
   // selecting a clip costs no model time — `descriptionsStore.ts` is where that
   // rule is enforced.
   useEffect(() => {
+    // A refusal is about the clip it was raised on, so it goes when the subject
+    // does — `shotsStore` clears its own slot on the same event, and a sentence
+    // that outlived its clip would read as a fresh failure on the new one.
+    setDescribeError("");
     if (mediaId === null) return;
     void hydrateDescription(mediaId);
   }, [mediaId]);
@@ -759,6 +937,29 @@ export function ShotsPanel() {
   const compositionId = composition?.id ?? null;
   const onActivate = (row: ShotRow): void => {
     if (compositionId !== null) activateShotRow(compositionId, row.tStartUs);
+  };
+
+  const describeBlocker = shotDescribeBlocker(
+    describeState,
+    describing,
+    describeBatch,
+    applying,
+  );
+  // The subject a run is against, or null. Built from the LAYER rather than
+  // captured, for `setShotSubject`'s reason: `layer` is a fresh object per
+  // summary tick, and a run that outlived a re-selection must still name the
+  // clip it was started on.
+  const describeSubject =
+    layer !== null && clip !== null
+      ? { layerId: layer.id, mediaId: clip.media_id, clipName }
+      : null;
+  const onDescribe = (row: ShotRow): void => {
+    if (describeSubject === null) return;
+    void describeOneShot(row, describeSubject);
+  };
+  const onSweep = (sweep: readonly ShotRow[]): void => {
+    if (describeSubject === null) return;
+    void describeShotRows(sweep, describeSubject);
   };
 
   if (layer === null || clip === null || composition === null) {
@@ -837,7 +1038,22 @@ export function ShotsPanel() {
           clipName={clipName}
           applying={applying}
         />
+        <DescribeShotsButton
+          rows={rows}
+          mediaId={clip.media_id}
+          describeBlocker={describeBlocker}
+          onSweep={onSweep}
+        />
       </div>
+      {/* The describe path's own slot, and not `ShotApplyBar`'s: that one is
+          documented as exclusive between the scan, a measurement and an apply,
+          and a description greys none of them — so it would be the first thing
+          able to overwrite a refusal the reviewer had not read yet. */}
+      {describeError !== "" && (
+        <p className="shots-error" data-testid="shots-describe-error">
+          {describeError}
+        </p>
+      )}
       <ShotApplyBar rows={rows} clipName={clipName} />
       <ul className="shots-list" data-testid="shots-list">
         {rows.map((row) => (
@@ -848,6 +1064,8 @@ export function ShotsPanel() {
             fpsNum={composition.fps_num}
             fpsDen={composition.fps_den}
             onActivate={onActivate}
+            describeBlocker={describeBlocker}
+            onDescribe={onDescribe}
           />
         ))}
       </ul>

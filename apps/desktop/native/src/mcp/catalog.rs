@@ -147,7 +147,11 @@ tool_table! {
                           spawn. Optional `t_start_us`/`t_end_us` narrow the window inside the layer's \
                           time range (both default to the layer endpoints). Optional `fps` sets the \
                           sampling rate; `focus` (`\"general\"` | `\"shot-type\"`) selects the prompt \
-                          template that populates `tags`. Optional `backend` (`\"qwen3_vl\"` | \
+                          template that populates `tags`. Optional `language` is a BCP-47 tag \
+                          (`\"en-US\"`, `\"zh-CN\"`, `\"ja\"`, …) the `text` and `tags` come back in; \
+                          it defaults to the app's UI language, and it is part of the cache key, so \
+                          asking in another language runs the model again rather than translating. \
+                          Optional `backend` (`\"qwen3_vl\"` | \
                           `\"minicpm_v\"` | `\"byo_endpoint\"`) REQUIRES that engine: if it \
                           is not available the call errors naming the missing piece (binary / model / \
                           endpoint) instead of substituting another engine, so an explicit local \

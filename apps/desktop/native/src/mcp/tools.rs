@@ -1052,6 +1052,13 @@ pub(super) struct DescribeClipArgs {
     /// toward shot type / camera).
     #[serde(default)]
     pub focus: Option<String>,
+    /// Language the `text` and `tags` come back in, as a BCP-47 tag
+    /// (`"en-US"`, `"zh-CN"`, `"ja"`, …). Defaults to the app's UI language,
+    /// which the host injects when this is omitted; with no host, `"en-US"`.
+    /// Part of the cache key — a description in another language is a different
+    /// description, not a translation of this one.
+    #[serde(default)]
+    pub language: Option<String>,
     /// Optional STRICT backend override: `"qwen3_vl"` | `"minicpm_v"` |
     /// `"byo_endpoint"`. When set, that engine serves the request or the call
     /// errors naming its exact gap — it never substitutes another engine, so an
@@ -1299,6 +1306,10 @@ pub(super) async fn describe_clip(
         ));
     }
     let focus = vlm::Focus::parse(args.focus.as_deref());
+    // Unknown tags are passed to the model as themselves rather than refused:
+    // the BYO endpoint may serve a model that knows a language this build has
+    // no name for, and a refusal here would be this layer overruling it.
+    let language = vlm::Language::parse(args.language.as_deref());
     let fps_milli = (fps * 1000.0).round() as u32;
 
     let key = vlm::cache_key(
@@ -1307,6 +1318,7 @@ pub(super) async fn describe_clip(
         &model,
         fps_milli,
         focus,
+        &language,
     );
     let dest = b.cache.description(&key);
 
@@ -1335,7 +1347,11 @@ pub(super) async fn describe_clip(
         .map_err(map_vlm_error)?;
 
         let raw = describer
-            .describe(vlm::DescribeRequest { frames, focus })
+            .describe(vlm::DescribeRequest {
+                frames,
+                focus,
+                language: language.clone(),
+            })
             .await
             .map_err(map_vlm_error)?;
         let mut fresh = vlm::parse_raw(raw).map_err(map_vlm_error)?;

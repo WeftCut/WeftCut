@@ -307,7 +307,7 @@
     },
     {
       "name": "describe_clip",
-      "description": "Describe a VideoClip layer's visual content as timestamped, open-vocabulary segments using a video-understanding model (local Qwen3-VL / MiniCPM-V via llama-mtmd-cli, or any OpenAI-compatible endpoint). Samples frames from the layer's source at `fps` (default 1.0), runs the model once over the whole window, and returns `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags: [ ... ] }] }`. All timestamps are SOURCE-ABSOLUTE microseconds; `backend`/`model` name the engine that actually served the request. `text` is a free-text description of the span; `tags` are short visual keywords (subjects, setting, camera motion, shot type) the agent can filter on. Results are cached per source range — a later call over an already-described window returns instantly with no model spawn. Optional `t_start_us`/`t_end_us` narrow the window inside the layer's time range (both default to the layer endpoints). Optional `fps` sets the sampling rate; `focus` (`\"general\"` | `\"shot-type\"`) selects the prompt template that populates `tags`. Optional `backend` (`\"qwen3_vl\"` | `\"minicpm_v\"` | `\"byo_endpoint\"`) REQUIRES that engine: if it is not available the call errors naming the missing piece (binary / model / endpoint) instead of substituting another engine, so an explicit local choice never uploads frames anywhere; an unknown value is rejected. When omitted, selection is the user's preferred engine then availability (local-first). VideoClip layers with speed != 1.0 are rejected — split off a speed-1 segment first. Errors with an actionable message when no video-understanding backend is configured.",
+      "description": "Describe a VideoClip layer's visual content as timestamped, open-vocabulary segments using a video-understanding model (local Qwen3-VL / MiniCPM-V via llama-mtmd-cli, or any OpenAI-compatible endpoint). Samples frames from the layer's source at `fps` (default 1.0), runs the model once over the whole window, and returns `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags: [ ... ] }] }`. All timestamps are SOURCE-ABSOLUTE microseconds; `backend`/`model` name the engine that actually served the request. `text` is a free-text description of the span; `tags` are short visual keywords (subjects, setting, camera motion, shot type) the agent can filter on. Results are cached per source range — a later call over an already-described window returns instantly with no model spawn. Optional `t_start_us`/`t_end_us` narrow the window inside the layer's time range (both default to the layer endpoints). Optional `fps` sets the sampling rate; `focus` (`\"general\"` | `\"shot-type\"`) selects the prompt template that populates `tags`. Optional `language` is a BCP-47 tag (`\"en-US\"`, `\"zh-CN\"`, `\"ja\"`, …) the `text` and `tags` come back in; it defaults to the app's UI language, and it is part of the cache key, so asking in another language runs the model again rather than translating. Optional `backend` (`\"qwen3_vl\"` | `\"minicpm_v\"` | `\"byo_endpoint\"`) REQUIRES that engine: if it is not available the call errors naming the missing piece (binary / model / endpoint) instead of substituting another engine, so an explicit local choice never uploads frames anywhere; an unknown value is rejected. When omitted, selection is the user's preferred engine then availability (local-first). VideoClip layers with speed != 1.0 are rejected — split off a speed-1 segment first. Errors with an actionable message when no video-understanding backend is configured.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
@@ -333,6 +333,14 @@
             "format": "double",
             "type": [
               "number",
+              "null"
+            ]
+          },
+          "language": {
+            "default": null,
+            "description": "Language the `text` and `tags` come back in, as a BCP-47 tag\n(`\"en-US\"`, `\"zh-CN\"`, `\"ja\"`, …). Defaults to the app's UI language,\nwhich the host injects when this is omitted; with no host, `\"en-US\"`.\nPart of the cache key — a description in another language is a different\ndescription, not a translation of this one.",
+            "type": [
+              "string",
               "null"
             ]
           },

@@ -12,12 +12,15 @@
 use serde::{Deserialize, Serialize};
 
 use super::backend::VlmBackend;
-use super::describer::Focus;
+use super::describer::{Focus, Language};
 
 /// Bump when the prompt wording or the sampling contract changes so stale
 /// cached descriptions (computed under an older prompt) are re-derived rather
 /// than reused. Part of the description cache key.
-pub const PROMPT_TEMPLATE_VERSION: u32 = 1;
+///
+/// 2: the prompt gained an output-language rule, so every v1 entry was written
+/// under a prompt that never named a language.
+pub const PROMPT_TEMPLATE_VERSION: u32 = 2;
 
 /// One described span: a timestamped window of the clip plus the model's
 /// free-text description and its extracted `tags`. Transcript-mirror
@@ -120,16 +123,22 @@ fn merge_ranges(mut ranges: Vec<[i64; 2]>) -> Vec<[i64; 2]> {
 }
 
 /// The content-addressed description cache key: `blake3(source_hash | backend |
-/// model | fps_milli | focus | prompt_template_version)`. A change to any input
-/// (different engine, different model file, different sampling rate, different
-/// prompt focus, or a prompt-template bump) yields a fresh key, so stale
-/// descriptions are never reused.
+/// model | fps_milli | focus | language | prompt_template_version)`. A change to
+/// any input (different engine, different model file, different sampling rate,
+/// different prompt focus, a different output language, or a prompt-template
+/// bump) yields a fresh key, so stale descriptions are never reused.
+///
+/// `language` is in here for a sharper reason than the rest: [`Self::covers`]
+/// short-circuits a covered window with no engine spawn, so sharing a key across
+/// languages would hand English prose back to a Chinese request forever — the
+/// one input whose omission is not merely wasteful but uncorrectable.
 pub fn cache_key(
     source_hash: &str,
     backend: VlmBackend,
     model: &str,
     fps_milli: u32,
     focus: Focus,
+    language: &Language,
 ) -> String {
     let mut h = blake3::Hasher::new();
     h.update(source_hash.as_bytes());
@@ -141,6 +150,8 @@ pub fn cache_key(
     h.update(&fps_milli.to_le_bytes());
     h.update(b"\0");
     h.update(focus.as_str().as_bytes());
+    h.update(b"\0");
+    h.update(language.as_str().as_bytes());
     h.update(b"\0");
     h.update(&PROMPT_TEMPLATE_VERSION.to_le_bytes());
     h.finalize().to_hex().to_string()
@@ -221,30 +232,63 @@ mod tests {
 
     #[test]
     fn cache_key_is_sensitive_to_every_input() {
-        let base = cache_key("h", VlmBackend::Qwen3Vl, "m", 1000, Focus::General);
+        let en = Language::default();
+        let key = |hash: &str, be, model: &str, fps, focus, lang: &Language| {
+            cache_key(hash, be, model, fps, focus, lang)
+        };
+        let base = key("h", VlmBackend::Qwen3Vl, "m", 1000, Focus::General, &en);
         assert_eq!(
             base,
-            cache_key("h", VlmBackend::Qwen3Vl, "m", 1000, Focus::General)
+            key("h", VlmBackend::Qwen3Vl, "m", 1000, Focus::General, &en)
         );
         assert_ne!(
             base,
-            cache_key("h2", VlmBackend::Qwen3Vl, "m", 1000, Focus::General)
+            key("h2", VlmBackend::Qwen3Vl, "m", 1000, Focus::General, &en)
         );
         assert_ne!(
             base,
-            cache_key("h", VlmBackend::MiniCpmV, "m", 1000, Focus::General)
+            key("h", VlmBackend::MiniCpmV, "m", 1000, Focus::General, &en)
         );
         assert_ne!(
             base,
-            cache_key("h", VlmBackend::Qwen3Vl, "m2", 1000, Focus::General)
+            key("h", VlmBackend::Qwen3Vl, "m2", 1000, Focus::General, &en)
         );
         assert_ne!(
             base,
-            cache_key("h", VlmBackend::Qwen3Vl, "m", 2000, Focus::General)
+            key("h", VlmBackend::Qwen3Vl, "m", 2000, Focus::General, &en)
         );
         assert_ne!(
             base,
-            cache_key("h", VlmBackend::Qwen3Vl, "m", 1000, Focus::ShotType)
+            key("h", VlmBackend::Qwen3Vl, "m", 1000, Focus::ShotType, &en)
         );
+        let zh = Language::parse(Some("zh-CN"));
+        assert_ne!(
+            base,
+            key("h", VlmBackend::Qwen3Vl, "m", 1000, Focus::General, &zh)
+        );
+    }
+
+    #[test]
+    fn cache_key_follows_the_canonical_language_not_its_spelling() {
+        // `zh` / `zh-CN` / `zh-Hans` produce one prompt, so they must produce
+        // one entry — otherwise switching between two spellings of the same UI
+        // language would re-run a 20-second model over described footage.
+        let a = cache_key(
+            "h",
+            VlmBackend::Qwen3Vl,
+            "m",
+            1000,
+            Focus::General,
+            &Language::parse(Some("zh-CN")),
+        );
+        let b = cache_key(
+            "h",
+            VlmBackend::Qwen3Vl,
+            "m",
+            1000,
+            Focus::General,
+            &Language::parse(Some("zh")),
+        );
+        assert_eq!(a, b);
     }
 }

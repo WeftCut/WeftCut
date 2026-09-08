@@ -151,10 +151,41 @@ describe('handleCallTool flip routing', () => {
     await callClipComputeTool(
       fakeBackend(spy), ts, 'describe_clip', { layer_id: 'gone' },
       () => null,
-      () => ({ config: { qwen3_vl: { binary: 'q' } }, preferred: 'qwen3_vl' }),
+      () => ({ config: { qwen3_vl: { binary: 'q' } }, preferred: 'qwen3_vl', language: 'zh-CN' }),
     )
     const sent = JSON.parse(spy.mock.calls[0][1])
     expect(sent.vlm_config).toEqual({ qwen3_vl: { binary: 'q' } })
     expect(sent.preferred_backend).toBe('qwen3_vl')
+    // The UI language rides in with the config: the description cache is keyed
+    // by it, so the tool that writes an entry and the resource that reads one
+    // have to name the same language.
+    expect(sent.language).toBe('zh-CN')
+  })
+
+  // `language` is ADVERTISED, unlike `preferred_backend`: an agent may want
+  // Japanese prose about a clip whatever the app's chrome is set to, so the
+  // injection fills an unset one and never overrules a stated one.
+  it('leaves an explicitly requested describe language alone', async () => {
+    const ts = tsHostStub()
+    const spy = vi.fn(okEnvelope)
+    await callClipComputeTool(
+      fakeBackend(spy), ts, 'describe_clip', { layer_id: 'gone', language: 'ja' },
+      () => null,
+      () => ({ config: {}, preferred: null, language: 'zh-CN' }),
+    )
+    expect(JSON.parse(spy.mock.calls[0][1]).language).toBe('ja')
+  })
+
+  // No UI to speak for → nothing injected, so Rust's own default decides. The
+  // `detectSilences` rule: one statement of a default, on the side that owns it.
+  it('injects no describe language when the provider has none', async () => {
+    const ts = tsHostStub()
+    const spy = vi.fn(okEnvelope)
+    await callClipComputeTool(
+      fakeBackend(spy), ts, 'describe_clip', { layer_id: 'gone' },
+      () => null,
+      () => ({ config: {}, preferred: null, language: null }),
+    )
+    expect(JSON.parse(spy.mock.calls[0][1]).language).toBeUndefined()
   })
 })

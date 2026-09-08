@@ -43,7 +43,7 @@ pub mod sidecar;
 // reached via their module path at the (few) sites that need them.
 pub use backend::VlmBackend;
 pub use config::BackendConfig;
-pub use describer::{DescribeRequest, Focus};
+pub use describer::{DescribeRequest, Focus, Language};
 pub use description::{cache_key, shift_segments, DescriptionCache, SceneDescription};
 pub use error::VlmError;
 pub use parser::parse_raw;

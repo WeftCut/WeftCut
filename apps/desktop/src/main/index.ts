@@ -843,7 +843,7 @@ app.whenReady().then(async () => {
   // which engine serves a call, so two definitions of it would be two answers
   // to the same question depending on who asked.
   const getPreferredEngine = (): string | null => speechConfig.get().preferred_engine
-  const getVlm = (): { config: Record<string, unknown>; preferred: string | null } => {
+  const getVlm = (): { config: Record<string, unknown>; preferred: string | null; language: string | null } => {
     // Merge non-secret store config + the endpoint's own safeStorage key into
     // the snapshot the stateless describe_clip resolver reads; empty until the
     // user configures an engine → "no backend available".
@@ -851,6 +851,16 @@ app.whenReady().then(async () => {
     return {
       config: toVlmBackendSnapshot(cfg, loadAllKeys()[VLM_ENDPOINT_KEY_TAG] ?? null),
       preferred: cfg.preferred_engine,
+      // The app's UI language, because the model writes its prose in it and the
+      // description cache is keyed by it. Read live off app_settings — the
+      // single source of truth the renderer's `setLocale` writes, and which the
+      // renderer pins on a first launch precisely so this read has an answer
+      // (`renderer/settings/appSettingsStore.ts` `pinDetectedLocale`).
+      //
+      // Still nullable: a build that has never reached that wire-up (or a
+      // hand-edited file) leaves it unset, and Rust's own default is a better
+      // answer than a guess made here.
+      language: appSettings.get().language ?? null,
     }
   }
 

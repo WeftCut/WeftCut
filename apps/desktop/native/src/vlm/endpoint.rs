@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use crate::speech::http::{bearer_auth, shared_client};
 
 use super::backend::VlmBackend;
-use super::describer::{DescribeRequest, Focus, SceneDescriber, TimedFrame};
+use super::describer::{DescribeRequest, Focus, Language, SceneDescriber, TimedFrame};
 use super::error::VlmError;
 use super::parser::RawDescription;
 use super::sidecar::build_prompt;
@@ -60,7 +60,7 @@ impl SceneDescriber for OpenAiCompatDescriber {
                 base64::engine::general_purpose::STANDARD.encode(&bytes),
             ));
         }
-        let body = build_request_body(&self.model, &encoded, req.focus);
+        let body = build_request_body(&self.model, &encoded, req.focus, &req.language);
 
         let mut rb = shared_client().post(&self.url).json(&body);
         if let Some(key) = &self.api_key {
@@ -103,7 +103,12 @@ impl OpenAiCompatDescriber {
 /// parts carry the injected `Frame at <t>s:` markers + the JSON instruction
 /// (reusing [`build_prompt`]'s exact wording so cloud/BYO stay faithful to the
 /// local path). Pure so it is unit-testable without a network.
-pub fn build_request_body(model: &str, frames: &[(i64, String)], focus: Focus) -> Value {
+pub fn build_request_body(
+    model: &str,
+    frames: &[(i64, String)],
+    focus: Focus,
+    language: &Language,
+) -> Value {
     // Reuse the local prompt to derive the leading instruction wording; the
     // per-frame markers are emitted as structured parts instead of `<__media__>`.
     let timed: Vec<TimedFrame> = frames
@@ -113,7 +118,7 @@ pub fn build_request_body(model: &str, frames: &[(i64, String)], focus: Focus) -
             path: Default::default(),
         })
         .collect();
-    let instruction = trailing_instruction(&build_prompt(&timed, focus));
+    let instruction = trailing_instruction(&build_prompt(&timed, focus, language));
 
     let mut content: Vec<Value> = vec![json!({
         "type": "text",
@@ -167,7 +172,7 @@ mod tests {
             (0i64, "AAAA".to_string()),
             (2_500_000i64, "BBBB".to_string()),
         ];
-        let body = build_request_body("gpt-4o", &frames, Focus::General);
+        let body = build_request_body("gpt-4o", &frames, Focus::General, &Language::default());
         let content = body["messages"][0]["content"].as_array().unwrap();
         // lead text + (text + image) * 2 + instruction = 6 parts.
         assert_eq!(content.len(), 6);
@@ -182,6 +187,23 @@ mod tests {
             .unwrap()
             .contains("Return ONLY a JSON array"));
         assert_eq!(body["model"], "gpt-4o");
+    }
+
+    #[test]
+    fn request_body_carries_the_language_rule_to_the_networked_engines() {
+        // The proof that `trailing_instruction`'s reuse actually forwards the
+        // language: the sidecar's own test pins the line's POSITION, this one
+        // pins that the HTTP body ends up with it.
+        let frames = vec![(0i64, "AAAA".to_string())];
+        let body = build_request_body(
+            "gpt-4o",
+            &frames,
+            Focus::General,
+            &Language::parse(Some("zh-CN")),
+        );
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        let instruction = content.last().unwrap()["text"].as_str().unwrap();
+        assert!(instruction.contains("in Simplified Chinese"));
     }
 
     #[test]

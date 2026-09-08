@@ -62,6 +62,11 @@ function open(): void {
     layerId: "l-1",
     layerName: "reel.mp4",
     mediaId: "m-1",
+    // The clip's whole source window — what the run's answer is merged over.
+    // The dialog still sends NO window arguments; this is the span, not a
+    // request for one.
+    srcStartUs: 0,
+    srcEndUs: 4_000_000,
   });
 }
 

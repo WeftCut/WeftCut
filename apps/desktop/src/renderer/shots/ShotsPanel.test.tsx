@@ -72,7 +72,7 @@ import type {
 } from "../ipc";
 import { resetDescriptionsStore } from "../describe/descriptionsStore";
 import { resetShotsStore } from "./shotsStore";
-import { ShotsPanel } from "./ShotsPanel";
+import { ShotsPanel, shotDescribeBlocker } from "./ShotsPanel";
 
 const num = (value: number): AnimTrack<number> => ({ mode: "Static", value });
 
@@ -752,6 +752,232 @@ describe("ShotsPanel — the description column", () => {
       return found;
     });
     expect(rows[1]?.textContent).toContain("Not described");
+  });
+});
+
+// The per-row press and the sweep beside it. `REPORT`'s boundary at 2 s and the
+// clip's 0–6 s source window give two rows: shot 1 over [0, 2 s) and shot 2 over
+// [2 s, 6 s). The clip sits at `t_start_us` 1 s (see `SUMMARY`), so the TIMELINE
+// window a row sends is its source span shifted by one second — which is the
+// projection worth pinning, since `describe_clip` validates against the layer's
+// timeline range and would refuse a source-time window outright.
+describe("ShotsPanel — describing one shot", () => {
+  beforeEach(() => {
+    shots.shotFloorReportCached.mockResolvedValue(true);
+    shots.describeClip.mockResolvedValue({
+      backend: "qwen3_vl",
+      model: "Qwen3VL-4B",
+      segments: [
+        { t_start_us: 2_000_000, t_end_us: 6_000_000, text: "a kitchen", tags: ["interior"] },
+      ],
+    });
+  });
+
+  /// Mount over the reviewed clip and wait for its two rows.
+  async function review(): Promise<HTMLElement[]> {
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    return await waitFor(() => {
+      const found = screen.getAllByRole("listitem");
+      expect(found).toHaveLength(2);
+      return found;
+    });
+  }
+
+  it("sends the row's own window in timeline time", async () => {
+    await review();
+    fireEvent.click(screen.getByTestId("shots-describe-1"));
+    await waitFor(() => expect(shots.describeClip).toHaveBeenCalled());
+    // The window, and NOT `fps` / `focus`: a one-press control must land in the
+    // default view, which is the only one the rows can read back.
+    expect(shots.describeClip).toHaveBeenCalledWith({
+      layerId: "l1",
+      tStartUs: 3_000_000,
+      tEndUs: 7_000_000,
+    });
+  });
+
+  it("shows the run's prose on the row that asked for it", async () => {
+    const rows = await review();
+    fireEvent.click(screen.getByTestId("shots-describe-1"));
+    await waitFor(() => expect(rows[1]?.textContent).toContain("a kitchen"));
+    // …and on no other row: the run answered for one window, and the optimistic
+    // publish is merged over exactly that window.
+    expect(rows[0]?.textContent).toContain("Not described");
+  });
+
+  it("logs the run as a Started/Ok pair naming the shot", async () => {
+    await review();
+    shots.logEmit.mockClear();
+    fireEvent.click(screen.getByTestId("shots-describe-0"));
+    await waitFor(() => expect(shots.logEmit).toHaveBeenCalledTimes(2));
+    const [started, done] = shots.logEmit.mock.calls.map((c) => c[0]);
+    expect(started).toMatchObject({
+      i18n_key: "log.describe_started",
+      op_state: { state: "Started" },
+    });
+    expect(done).toMatchObject({
+      i18n_key: "log.describe_done",
+      op_state: { state: "Ok" },
+    });
+    // One `op_id` across the pair, or the status badge keeps spinning.
+    expect(started?.op_id).toBe(done?.op_id);
+    // The shot's ordinal is in the subject, so a sweep's rows say which run
+    // each one was.
+    expect(started?.i18n_args).toMatchObject({ clip: "shot reel · shot 1" });
+  });
+
+  // The engine's own sentence, in the Panel's describe slot — not the apply
+  // bar's, which is documented as exclusive between the scan, a measurement
+  // and an apply.
+  it("shows a refusal inline without touching the apply slot", async () => {
+    shots.describeClip.mockRejectedValue(
+      new Error("no video-understanding backend available — configure a local engine"),
+    );
+    await review();
+    fireEvent.click(screen.getByTestId("shots-describe-1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("shots-describe-error").textContent).toContain(
+        "no video-understanding backend available",
+      ),
+    );
+  });
+
+  it("greys every describe control on a re-timed clip", async () => {
+    // A speed != 1 clip is refused by the tool itself, so the gate says so
+    // before the press rather than after a twenty-second wait.
+    const retimed = clip({ id: "l1", mediaId: "m1", tStartUs: 1_000_000 });
+    (retimed.params as { speed: number }).speed = 2;
+    act(() => {
+      useProjectStore.getState().apply(
+        summaryFixture({
+          root: { duration_us: 20_000_000, tracks: [track("t1", [retimed])] },
+        }),
+      );
+    });
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    const button = await waitFor(() => screen.getByTestId("shots-describe-0"));
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(button.getAttribute("title")).toContain("speed-1");
+    expect((screen.getByTestId("shots-describe-all") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("sweeps only the rows that have nothing, one run at a time", async () => {
+    shots.getMediaDescription.mockResolvedValue({
+      covered_ranges: [[0, 2_000_000]],
+      segments: [
+        { t_start_us: 0, t_end_us: 2_000_000, text: "a hallway", tags: [] },
+      ],
+    });
+    await review();
+    const sweep = screen.getByTestId("shots-describe-all");
+    // Shot 1 already has prose, so the count names the one that does not.
+    expect(sweep.textContent).toContain("Describe 1 shot");
+    fireEvent.click(sweep);
+    await waitFor(() => expect(shots.describeClip).toHaveBeenCalledTimes(1));
+    expect(shots.describeClip).toHaveBeenCalledWith({
+      layerId: "l1",
+      tStartUs: 3_000_000,
+      tEndUs: 7_000_000,
+    });
+  });
+
+  // A refusal is about the clip it was raised on. `shotsStore` clears its own
+  // slot when the subject changes, and this one has to do the same or the
+  // sentence reads as a fresh failure on the newly selected clip.
+  it("drops the refusal when the subject changes", async () => {
+    shots.describeClip.mockRejectedValue(new Error("no video-understanding backend"));
+    await review();
+    fireEvent.click(screen.getByTestId("shots-describe-1"));
+    await waitFor(() => screen.getByTestId("shots-describe-error"));
+    act(() => {
+      useProjectStore.getState().apply(fixtureAfterSplit());
+    });
+    setLayerSelection("s2", ["s2"]);
+    await waitFor(() =>
+      expect(screen.queryByTestId("shots-describe-error")).toBeNull(),
+    );
+  });
+
+  it("greys the sweep once every shot has a description", async () => {
+    shots.getMediaDescription.mockResolvedValue({
+      covered_ranges: [[0, 6_000_000]],
+      segments: [
+        { t_start_us: 0, t_end_us: 2_000_000, text: "a hallway", tags: [] },
+        { t_start_us: 2_000_000, t_end_us: 6_000_000, text: "a kitchen", tags: [] },
+      ],
+    });
+    await review();
+    const sweep = await waitFor(() => {
+      const found = screen.getByTestId("shots-describe-all") as HTMLButtonElement;
+      expect(found.disabled).toBe(true);
+      return found;
+    });
+    expect(sweep.getAttribute("title")).toContain("already has a description");
+  });
+
+  // The blocker rule direct, for the three in-flight branches a render cannot
+  // reach without a real run in the air. ONE rule for the rows and the sweep, so
+  // a greyed row and a refused sweep cannot disagree about the precondition.
+  describe("shotDescribeBlocker", () => {
+    const span = { mediaId: "m1", srcStartUs: 0, srcEndUs: 1 };
+    const batch = { done: 0, total: 2 };
+    it("is null when the gate is live and nothing is running", () => {
+      expect(shotDescribeBlocker("describe", null, null, null)).toBeNull();
+    });
+    it("names a re-timed clip's remedy before the press", () => {
+      expect(shotDescribeBlocker("speed_not_one", null, null, null)).toBe(
+        "shots_panel.describe_speed_not_one",
+      );
+    });
+    it("falls back to the kind sentence for the unreachable gate states", () => {
+      expect(shotDescribeBlocker("needs_selection", null, null, null)).toBe(
+        "shots_panel.needs_video_clip",
+      );
+      expect(shotDescribeBlocker("needs_video_kind", null, null, null)).toBe(
+        "shots_panel.needs_video_clip",
+      );
+    });
+    // A sweep outranks a lone run in the reason it gives, because a sweep IS a
+    // run: naming the lone one would tell the reviewer to wait twenty seconds
+    // when the real wait is thirty of them.
+    it("reports a sweep ahead of the run it is running", () => {
+      expect(shotDescribeBlocker("describe", span, batch, null)).toBe(
+        "shots_panel.describe_sweep_running",
+      );
+      expect(shotDescribeBlocker("describe", span, null, null)).toBe(
+        "shots_panel.describe_running",
+      );
+    });
+    // An apply reshapes the very rows a description is taken over, so the
+    // window a press would send may not be a span any more by the time the
+    // model answers.
+    it("waits for an apply to finish", () => {
+      expect(shotDescribeBlocker("describe", null, null, "split")).toBe(
+        "shots_panel.measure_busy",
+      );
+    });
+  });
+
+  // A described row keeps its button: a model's answer is not a fact, and
+  // asking again is a normal thing to want.
+  it("offers a second run on a row that already has prose", async () => {
+    shots.getMediaDescription.mockResolvedValue({
+      covered_ranges: [[0, 6_000_000]],
+      segments: [
+        { t_start_us: 0, t_end_us: 2_000_000, text: "a hallway", tags: [] },
+      ],
+    });
+    await review();
+    const button = await waitFor(() => {
+      const found = screen.getByTestId("shots-describe-0");
+      expect(found.textContent).toContain("Describe again");
+      return found;
+    });
+    expect((button as HTMLButtonElement).disabled).toBe(false);
   });
 });
 

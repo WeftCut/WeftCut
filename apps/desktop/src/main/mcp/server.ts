@@ -50,9 +50,20 @@ function unwrap(json: string): unknown { return unwrapEnvelope(JSON.parse(json) 
 /** Per-call VLM config provider (describe_clip + media://{id}/description): the
  *  merged backend-config snapshot the stateless resolver reads (ADR 0024) keyed
  *  by backend tag, plus the user's SOFT preferred engine. VLM config is not held
- *  on the napi `Backend` like speech — it rides in with each call. */
-export type VlmProvider = () => { config: Record<string, unknown>; preferred: string | null }
-const NO_VLM: VlmProvider = () => ({ config: {}, preferred: null })
+ *  on the napi `Backend` like speech — it rides in with each call.
+ *
+ *  `language` rides along because the description cache is keyed by it: the
+ *  model writes its prose in the app's UI language, so the tool that WRITES a
+ *  cache entry and the resource that READS one have to name the same language or
+ *  every source reads as undescribed. One provider, so they cannot disagree.
+ *  `null` = the caller has no UI to speak for (a bare-core read), which Rust
+ *  resolves to `Language::DEFAULT_TAG`. */
+export type VlmProvider = () => {
+  config: Record<string, unknown>
+  preferred: string | null
+  language: string | null
+}
+const NO_VLM: VlmProvider = () => ({ config: {}, preferred: null, language: null })
 
 /** One clip-compute tool call: resolve the `{ layer, media }` slice from the
  *  actor (the sole state owner), inject the engine-selection hints the stateless
@@ -96,6 +107,12 @@ export async function callClipComputeTool(
     if (merged.backend == null && vlm.preferred && vlm.preferred !== 'auto') {
       merged.preferred_backend = vlm.preferred
     }
+    // The UI language as the DEFAULT and not an override: `language` is an
+    // advertised arg, so an agent asking for Japanese prose about a clip must
+    // get it whatever the app's chrome is set to. Only an unset one is filled —
+    // and filling it here rather than leaving it to Rust's own default is what
+    // makes the renderer's runs land in the view the shot rows read back.
+    if (merged.language == null && vlm.language) merged.language = vlm.language
   }
   return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult
 }
@@ -178,7 +195,8 @@ export async function handleReadResource(
     if (served) return served
     // project://compiled / media://* / composition://meter stay Rust compute —
     // inject the project / MediaItem / nothing the stateless reader now needs.
-    const injection = buildResourceInjection(uri, tsHost.actor.snapshot(), getVlm().config)
+    const vlm = getVlm()
+    const injection = buildResourceInjection(uri, tsHost.actor.snapshot(), vlm.config, vlm.language)
     return unwrap(await backend.mcpReadResource(uri, injection)) as ServerResult
   }
   return unwrap(await backend.mcpReadResource(uri)) as ServerResult

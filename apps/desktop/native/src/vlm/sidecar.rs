@@ -28,7 +28,7 @@ use tokio::process::Command;
 
 use crate::process::NoConsoleWindow;
 
-use super::describer::{DescribeRequest, Focus, SceneDescriber, TimedFrame};
+use super::describer::{DescribeRequest, Focus, Language, SceneDescriber, TimedFrame};
 use super::error::VlmError;
 use super::parser::RawDescription;
 
@@ -91,7 +91,7 @@ impl LlamaMtmdSidecar {
 #[async_trait]
 impl SceneDescriber for LlamaMtmdSidecar {
     async fn describe(&self, req: DescribeRequest) -> Result<RawDescription, VlmError> {
-        let prompt = build_prompt(&req.frames, req.focus);
+        let prompt = build_prompt(&req.frames, req.focus, &req.language);
         let args = build_args(&self.model, &self.mmproj, &req.frames, &prompt);
         let timeout = sidecar_timeout(req.frames.len());
         let body = run(&self.binary, &args, timeout).await?;
@@ -106,7 +106,16 @@ impl SceneDescriber for LlamaMtmdSidecar {
 /// text + one `<__media__>` marker per frame (images substitute in order), then
 /// the JSON-array output instruction. `focus` biases what populates `tags`.
 /// Mirrors `spike.mjs:buildPrompt` (validated on Qwen3-VL AND MiniCPM-V).
-pub fn build_prompt(frames: &[TimedFrame], focus: Focus) -> String {
+///
+/// The INSTRUCTIONS stay English whatever `language` is: it names the language of
+/// the answer, not of the asking. Both engines follow an English instruction more
+/// reliably than a translated one, and the JSON keys must not move — so the
+/// language rule is one line at the end, applying to the two free-text fields.
+///
+/// It is emitted unconditionally, English included. A default run's prompt is
+/// then the same shape as every other run's, and a clip full of Chinese signage
+/// cannot talk the model out of the language it was asked for.
+pub fn build_prompt(frames: &[TimedFrame], focus: Focus, language: &Language) -> String {
     let mut lines = vec![
         "You are analyzing frames sampled from a single video clip.".to_string(),
         "Each frame below is labeled with its exact timestamp in seconds.".to_string(),
@@ -138,6 +147,10 @@ pub fn build_prompt(frames: &[TimedFrame], focus: Focus) -> String {
             "- tags: emphasize shot type and camera (e.g. close-up, wide, low-angle, pan, static, handheld)."
         }
     }.to_string());
+    lines.push(format!(
+        "- Write every \"text\" value and every tag in {}. Use no other language for them, whatever language appears in the frames. The JSON keys stay in English.",
+        language.prompt_name(),
+    ));
     lines.join("\n")
 }
 
@@ -292,7 +305,7 @@ mod tests {
     #[test]
     fn prompt_interleaves_one_marker_per_frame_with_timestamps() {
         let frames = vec![frame(0, "a.png"), frame(2_500_000, "b.png")];
-        let p = build_prompt(&frames, Focus::General);
+        let p = build_prompt(&frames, Focus::General, &Language::default());
         assert_eq!(p.matches(MEDIA_MARKER).count(), 2);
         assert!(p.contains("Frame at 0.00s:"));
         assert!(p.contains("Frame at 2.50s:"));
@@ -302,10 +315,39 @@ mod tests {
     #[test]
     fn shot_type_focus_changes_the_tag_instruction() {
         let frames = vec![frame(0, "a.png")];
-        let general = build_prompt(&frames, Focus::General);
-        let shot = build_prompt(&frames, Focus::ShotType);
+        let general = build_prompt(&frames, Focus::General, &Language::default());
+        let shot = build_prompt(&frames, Focus::ShotType, &Language::default());
         assert!(general.contains("subjects, setting"));
         assert!(shot.contains("shot type and camera"));
+    }
+
+    #[test]
+    fn prompt_names_the_output_language_and_keeps_the_instructions_english() {
+        let frames = vec![frame(0, "a.png")];
+        let zh = build_prompt(&frames, Focus::General, &Language::parse(Some("zh-CN")));
+        // The language is named the way a model understands it, not as a tag.
+        assert!(zh.contains("in Simplified Chinese"));
+        assert!(!zh.contains("zh-CN"));
+        // …and the surrounding contract is untouched: same JSON shape, same
+        // timestamp rule, so a translated answer still parses.
+        assert!(zh.contains("Return ONLY a JSON array"));
+        assert!(zh.contains("t_start and t_end MUST be chosen"));
+        // Emitted for English too — one prompt shape for every run.
+        let en = build_prompt(&frames, Focus::General, &Language::default());
+        assert!(en.contains("in English"));
+        assert_ne!(en, zh);
+    }
+
+    #[test]
+    fn language_rule_is_inside_the_shared_trailing_instruction() {
+        // The BYO/cloud path reuses everything from "Return ONLY a JSON array"
+        // onward (`endpoint::trailing_instruction`), so the language line has to
+        // sit after that landmark or the networked engines would silently keep
+        // answering in English.
+        let frames = vec![frame(0, "a.png")];
+        let p = build_prompt(&frames, Focus::General, &Language::parse(Some("ja")));
+        let anchor = p.find("Return ONLY a JSON array").expect("anchor");
+        assert!(p.find("in Japanese").expect("language line") > anchor);
     }
 
     #[test]
@@ -322,7 +364,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "live: needs llama-mtmd-cli + Qwen GGUF + mmproj + a video (WEFTCUT_VLM_* env)"]
     async fn live_qwen_describe() {
-        use super::super::describer::{DescribeRequest, Focus};
+        use super::super::describer::{DescribeRequest, Focus, Language};
         use super::super::frame_extract::{plan_anchors, sample_frames};
         use super::super::parser::parse_raw;
 
@@ -355,6 +397,10 @@ mod tests {
             .describe(DescribeRequest {
                 frames,
                 focus: Focus::General,
+                // Overridable from the env so the live smoke can eyeball a
+                // non-English answer, which is the only way this path's language
+                // rule is ever actually observed.
+                language: Language::parse(std::env::var("WEFTCUT_VLM_LANGUAGE").ok().as_deref()),
             })
             .await
             .expect("describe");

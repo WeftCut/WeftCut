@@ -22,8 +22,9 @@ import {
   hydrateDescription,
   reloadDescription,
   resetDescriptionsStore,
+  isDescribingSpan,
+  mergeDescription,
   setDescribing,
-  setDescription,
   syncDescriptions,
   useDescriptionsStore,
 } from "./descriptionsStore";
@@ -88,30 +89,79 @@ describe("descriptionsStore", () => {
   // A read that cannot see what a run just wrote must not take the prose off
   // the screen — a column one window behind beats a column that emptied.
   it("keeps what it holds when a re-read finds nothing", async () => {
-    setDescription("m-1", CACHE.segments);
+    mergeDescription("m-1", 0, 6_000_000, CACHE.segments);
     mocks.getMediaDescription.mockResolvedValue(null);
     await reloadDescription("m-1");
     expect(held("m-1")).toEqual(CACHE.segments);
   });
 
   it("publishes a finished run's segments directly", () => {
-    setDescription("m-1", CACHE.segments);
+    mergeDescription("m-1", 0, 6_000_000, CACHE.segments);
     expect(held("m-1")).toEqual(CACHE.segments);
   });
 
-  it("carries the in-flight media id for the rows to read", () => {
+  // The rule a per-shot run needs and a whole-clip run never exercised: a run
+  // answers for ONE window, so publishing it must leave every other shot's
+  // prose — and every other clip's, cut from the same source — where it was.
+  it("merges a window's segments and keeps the ones outside it", () => {
+    const early = { t_start_us: 0, t_end_us: 1_000_000, text: "a hallway", tags: [] };
+    const late = { t_start_us: 8_000_000, t_end_us: 9_000_000, text: "a kitchen", tags: [] };
+    mergeDescription("m-1", 0, 10_000_000, [early, late]);
+    const fresh = { t_start_us: 8_000_000, t_end_us: 9_000_000, text: "a galley", tags: [] };
+    mergeDescription("m-1", 8_000_000, 9_000_000, [fresh]);
+    expect(held("m-1")).toEqual([early, fresh]);
+  });
+
+  // Sorted by start, whatever order the windows were described in — the rows
+  // read this list through `segmentsForSpan`, which sorts too, but the search
+  // index reads it raw.
+  it("keeps the merged list in time order", () => {
+    const late = { t_start_us: 8_000_000, t_end_us: 9_000_000, text: "late", tags: [] };
+    const early = { t_start_us: 0, t_end_us: 1_000_000, text: "early", tags: [] };
+    mergeDescription("m-1", 8_000_000, 9_000_000, [late]);
+    mergeDescription("m-1", 0, 1_000_000, [early]);
+    expect(held("m-1")?.map((s) => s.text)).toEqual(["early", "late"]);
+  });
+
+  // A segment that merely TOUCHES the window's edge lies outside it — the same
+  // half-open predicate `segmentsForSpan` and Rust's `segments_in` use, so an
+  // overlay cannot fold a segment differently from the file underneath it.
+  it("leaves a segment that only touches the window's edge", () => {
+    const abutting = { t_start_us: 0, t_end_us: 2_000_000, text: "before", tags: [] };
+    mergeDescription("m-1", 0, 2_000_000, [abutting]);
+    mergeDescription("m-1", 2_000_000, 4_000_000, []);
+    expect(held("m-1")).toEqual([abutting]);
+  });
+
+  it("carries the in-flight window for the rows to read", () => {
     expect(useDescriptionsStore.getState().describing).toBeNull();
-    setDescribing("m-1");
-    expect(useDescriptionsStore.getState().describing).toBe("m-1");
+    const span = { mediaId: "m-1", srcStartUs: 2_000_000, srcEndUs: 4_000_000 };
+    setDescribing(span);
+    expect(useDescriptionsStore.getState().describing).toEqual(span);
     setDescribing(null);
     expect(useDescriptionsStore.getState().describing).toBeNull();
+  });
+
+  // The rows' own question, and the reason `describing` is a span at all: a
+  // per-shot run must not report work on the rows it will not answer for.
+  it("says a row is waiting only when the run's window reaches it", () => {
+    const span = { mediaId: "m-1", srcStartUs: 2_000_000, srcEndUs: 4_000_000 };
+    expect(isDescribingSpan(span, "m-1", 2_000_000, 4_000_000)).toBe(true);
+    // Overlaps by a hair — the run's answer will land on this row too.
+    expect(isDescribingSpan(span, "m-1", 3_999_999, 6_000_000)).toBe(true);
+    // Touches the edge only: half-open, so it is outside.
+    expect(isDescribingSpan(span, "m-1", 4_000_000, 6_000_000)).toBe(false);
+    expect(isDescribingSpan(span, "m-1", 0, 2_000_000)).toBe(false);
+    // Another source entirely.
+    expect(isDescribingSpan(span, "m-2", 2_000_000, 4_000_000)).toBe(false);
+    expect(isDescribingSpan(null, "m-1", 2_000_000, 4_000_000)).toBe(false);
   });
 
   // A project boundary, and the state every test in this file starts from —
   // NOT a Panel close, which the search index goes on reading this map past.
   it("forgets everything on reset", async () => {
     await hydrateDescription("m-1");
-    setDescribing("m-1");
+    setDescribing({ mediaId: "m-1", srcStartUs: 0, srcEndUs: 1 });
     resetDescriptionsStore();
     expect(held("m-1")).toBeUndefined();
     expect(useDescriptionsStore.getState().describing).toBeNull();

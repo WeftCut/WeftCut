@@ -96,6 +96,7 @@ export function buildResourceInjection(
   uri: string,
   snapshot: Project,
   vlmConfig: Record<string, unknown> = {},
+  language: string | null = null,
 ): string {
   if (uri === 'project://compiled') return JSON.stringify({ project: serializeProject(snapshot) })
   if (uri.startsWith(PREFIX_MEDIA)) {
@@ -103,10 +104,17 @@ export function buildResourceInjection(
     const media = snapshot.media_pool[id] ?? null
     // media://{id}/description additionally needs the merged VLM backend config
     // (stateless, ADR 0024) so the cached-view reader can resolve the default
-    // backend + compute the cache key. The always-computable media reads
-    // (/thumbnail, /frame, /waveform, and the shot-layer /analysis view) are
-    // self-contained — they need only the resolved MediaItem, no injected config.
-    if (uri.endsWith('/description')) return JSON.stringify({ media, vlm_config: vlmConfig })
+    // backend + compute the cache key — and the UI language, which is part of
+    // that same key (a URI-addressed resource has no argument to carry it, so it
+    // rides here beside the config, from the one provider `describe_clip`'s
+    // injection also reads). The always-computable media reads (/thumbnail,
+    // /frame, /waveform, and the shot-layer /analysis view) are self-contained —
+    // they need only the resolved MediaItem, no injected config.
+    if (uri.endsWith('/description')) {
+      // Omitted when there is no UI to speak for, so Rust's own default decides
+      // — the `detectSilences` rule, stated once here rather than twice.
+      return JSON.stringify({ media, vlm_config: vlmConfig, ...(language ? { language } : {}) })
+    }
     return JSON.stringify({ media })
   }
   return '{}'

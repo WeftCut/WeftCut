@@ -253,14 +253,19 @@ function applyPersistedLocale(locale: string | undefined): void {
 /// builds cached the choice under `weftcut.locale`. When app_settings has no
 /// language yet, adopt that value (if it's a supported locale) into the store,
 /// then drop the stale key so this never runs again.
-function migrateLegacyLocale(): void {
+///
+/// Answers whether it adopted one, so first-launch detection only persists a
+/// locale the migration did not already decide.
+function migrateLegacyLocale(): boolean {
   let legacy: string | null = null;
   try {
     legacy = localStorage.getItem(LEGACY_LOCALE_STORAGE_KEY);
   } catch {
-    return; // localStorage unavailable (e.g. tests) — nothing to migrate.
+    return false; // localStorage unavailable (e.g. tests) — nothing to migrate.
   }
-  if (legacy && (SUPPORTED_LOCALES as readonly string[]).includes(legacy)) {
+  const adopt =
+    legacy !== null && (SUPPORTED_LOCALES as readonly string[]).includes(legacy);
+  if (adopt) {
     setLocale(legacy as Locale); // persist into app_settings + apply to i18next
   }
   try {
@@ -268,6 +273,39 @@ function migrateLegacyLocale(): void {
   } catch {
     /* ignore */
   }
+  return adopt;
+}
+
+/// The SUPPORTED_LOCALES member i18next's detected language means, matched on the
+/// primary subtag — `zh` and `zh-TW` both resolve through i18next's
+/// `nonExplicitSupportedLngs`, so the value on hand may be a bare code that is
+/// not itself a member. Falls back to `en-US`, which is `fallbackLng`.
+function detectedLocale(): Locale {
+  const detected = (i18n.resolvedLanguage ?? "").toLowerCase();
+  const primary = detected.split("-")[0] ?? "";
+  return (
+    SUPPORTED_LOCALES.find((l) => l.toLowerCase() === detected) ??
+    SUPPORTED_LOCALES.find((l) => l.split("-")[0] === primary) ??
+    "en-US"
+  );
+}
+
+/// Pin the OS-detected locale into app_settings on a genuine first launch.
+///
+/// The field's absence used to mean "follow the OS every launch", and that was
+/// only ever observable ON the first launch: the language control is a TOGGLE
+/// over `SUPPORTED_LOCALES` (`AppMenuBar`, `StartupScreen`) and never offers a
+/// "follow the system" position, so there is no state a user can choose that
+/// this write takes away.
+///
+/// What it buys is that `app_settings.language` becomes what `setLocale` already
+/// calls it — the single source of truth — for MAIN as well as for the renderer.
+/// Electron main reads it to tell the vision model which language to describe
+/// footage in, and it keys the description cache (`native/src/vlm/description.rs`
+/// `cache_key`), so a main that guessed `en-US` while the UI ran in Chinese would
+/// look for descriptions under a key nothing ever writes.
+function pinDetectedLocale(): void {
+  setLocale(detectedLocale());
 }
 
 /// Wire-up: fetch the current settings, subscribe to backend changes.
@@ -292,10 +330,13 @@ export async function wireAppSettingsStream(): Promise<UnlistenFn> {
     const initial = await appSettingsGet();
     if (!eventSeen) {
       useAppSettingsStore.getState().hydrate(initial);
-      // Apply the persisted language choice to i18next, or migrate a legacy
-      // `weftcut.locale` on first upgrade.
+      // Apply the persisted language choice to i18next, or — on a first launch
+      // with nothing persisted — adopt a legacy `weftcut.locale` if there is
+      // one, else pin what the OS detection resolved to. Either way the field
+      // is populated from here on, which is what lets main answer "which
+      // language does this app speak" without a second detector of its own.
       if (initial.language) applyPersistedLocale(initial.language);
-      else migrateLegacyLocale();
+      else if (!migrateLegacyLocale()) pinDetectedLocale();
     }
   } catch (e) {
     // IPC unavailable during early boot or in tests; keep defaults.

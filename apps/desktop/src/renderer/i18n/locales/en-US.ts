@@ -573,8 +573,44 @@ const enUS = {
     // would read as a load that never finished.
     not_described: "Not described",
     // The one legitimate transient, and only where the cell has nothing else to
-    // show: a run against this very source is on its way.
+    // show: a run whose window overlaps this row is on its way.
     describing: "Describing…",
+    // The per-row press. Named for the unit it acts on, because the clip-wide
+    // gesture has the same verb in the Edit menu and the two must not read as
+    // the same button.
+    describe_shot: "Describe shot",
+    // A row that already has prose. "Again" and not "Re-describe": the row is
+    // not being corrected, it is being asked a second time, which is a normal
+    // thing to want from a model.
+    describe_shot_again: "Describe again",
+    describe_shot_hint:
+      "Ask the vision model what is in this shot — one local model run of around twenty seconds, in the app's language.",
+    // What the status-log rows call one shot's run. Interpolated into
+    // `log.describe_started` / `log.describe_done` in place of a clip name, so
+    // a sweep's rows say which shot each one was.
+    describe_shot_subject: "{{clip}} · shot {{index}}",
+    // The sweep. The count is in the label because the cost is linear in it —
+    // hiding the N would hide the whole decision. Pluralized like
+    // `project.tracks`, since it is read at 1 as often as at 30.
+    describe_all_one: "Describe {{count}} shot",
+    describe_all_other: "Describe {{count}} shots",
+    describe_all_hint:
+      "Describe every shot that has nothing yet, one after another — each is a local model run of around twenty seconds, so it is opt-in.",
+    // While it runs the button IS the stop. `done` counts finished runs, so it
+    // reads 0/7 while the first one is going.
+    describe_all_running: "Stop ({{done}}/{{total}})",
+    describe_all_stop_hint:
+      "Stop after the shot being described now — there is no way to cancel a model run already in flight, and its prose is kept.",
+    // Disabled-button reasons, `measure_all_measured`'s rule: name the
+    // precondition rather than repeat a label that cannot be acted on.
+    describe_all_described: "Every shot in this list already has a description",
+    describe_running: "A description is already running",
+    describe_sweep_running: "A shot-by-shot description pass is already running",
+    // The tool's own precondition, said before the press: sampling maps window
+    // time onto source time with no speed factor, so a re-timed clip's segments
+    // would be stamped at source times its frames never show.
+    describe_speed_not_one:
+      "Split off a speed-1 segment first — a re-timed clip cannot be described",
   },
   actions: {
     add_color_layer: "Color layer",
@@ -2280,7 +2316,7 @@ const enUS = {
     // The cost, said before the press rather than discovered after it. No
     // percentage exists to report: the model answers once, at the end.
     note:
-      "This runs a vision model on your machine — around twenty seconds for a clip.",
+      "This runs a vision model on your machine — around twenty seconds for a clip — and writes in the app's language.",
     // Only a run at the default sampling and focus lands in the view that is
     // read back, so the sentence changes with the fields rather than sitting
     // there as a warning nobody re-reads.
