@@ -426,7 +426,7 @@
   "prompts": [
     {
       "name": "cut-silences",
-      "description": "Find the silent regions in a clip and mark them. It stops at marking on purpose: removing dead air needs a ripple delete this editor does not have.",
+      "description": "Cut the silent regions out of a clip and close the gaps, tightening it. Or mark them first, to review every gap on the ruler before any of it goes.",
       "arguments": [
         {
           "name": "layer_id",
