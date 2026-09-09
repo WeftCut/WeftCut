@@ -93,7 +93,10 @@ export function createModelFeature(deps: {
       signal.throwIfAborted();
       signal.addEventListener("abort", cancel, { once: true });
       let result: string;
-      try { result = await deps.backend.invoke("settings_verify_model", JSON.stringify({ requestId, family: p.family, backend: p.backend, local: p.local, endpoint: p.endpoint, apiKey: key })); }
+      // An absent key must stay absent: the endpoint describer sends an
+      // `Authorization` header for any `Some(_)`, so `""` would verify a
+      // self-hosted server with a bare `Bearer ` that the real run never sends.
+      try { result = await deps.backend.invoke("settings_verify_model", JSON.stringify({ requestId, family: p.family, backend: p.backend, local: p.local, endpoint: p.endpoint, ...(key ? { apiKey: key } : {}) })); }
       finally { signal.removeEventListener("abort", cancel); }
       const verified = JSON.parse(result) as { device: "cpu" | "auto" | "fixed" };
       if (bundledSpeech) verified.device = "cpu";

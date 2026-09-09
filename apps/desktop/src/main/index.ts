@@ -455,7 +455,7 @@ app.whenReady().then(async () => {
   // onto the napi Backend), VLM config is injected per-call into describe_clip /
   // media://{id}/description (stateless, ADR 0024) via the provider passed to
   // startMcpHost below.
-  const { createVlmConfigStore, toVlmBackendSnapshot } = await import('./vlm-config.js')
+  const { createVlmConfigStore, toVlmBackendSnapshot, modelProfileToVlmSnapshot } = await import('./vlm-config.js')
   const vlmConfig = createVlmConfigStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'vlm_config.json'), dir: app.getPath('userData') })
 
   // Resolve the user-configurable data root BEFORE the Backend cache dir
@@ -859,11 +859,8 @@ app.whenReady().then(async () => {
     // user configures an engine → "no backend available".
     const cfg = vlmConfig.get()
     const profile = models?.active('vlm')
-    const snapshot: Record<string, unknown> = {}
-    if (profile?.local) snapshot[profile.backend] = { kind: 'local', ...profile.local }
-    if (profile?.endpoint) snapshot[profile.backend] = { kind: 'endpoint', ...profile.endpoint, api_key: loadAllKeys()[profile.keyTag ?? ''] ?? '' }
     return {
-      config: snapshot,
+      config: profile ? modelProfileToVlmSnapshot(profile, loadAllKeys()[profile.keyTag ?? '']) : {},
       preferred: profile?.backend ?? null,
       // The app's UI language, because the model writes its prose in it and the
       // description cache is keyed by it. Read live off app_settings — the

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createModelSettingsStore, freshModelSettings, migrateModelSettings } from "./model-settings";
+import { modelProfileToVlmSnapshot } from "./vlm-config";
 import { VLM_CONFIG_DEFAULTS } from "../shared/vlm-config";
 
 const managed = (id: string) => ({ binary: `C:/managed/${id}/run.exe`, model: `C:/managed/${id}/model` });
@@ -35,6 +36,30 @@ describe("model settings migration", () => {
     expect(next.active.vlm).toBe("custom-legacy-endpoint");
     expect(copies).toEqual([["vlm_endpoint", "model-custom-legacy-endpoint"]]);
     expect(next.profiles.find(p => p.id === next.active.vlm)?.name).toBe("my-model");
+  });
+  // A legacy VLM engine configured one field at a time could be saved with a
+  // blank projector. Migration keeps the explicit selection (files disappearing
+  // must never re-pick a model) and carries the blank through — but the RELOAD
+  // sanitizes a blank path away, so from the second launch on the ACTIVE
+  // profile legitimately has no `mmproj` key at all. `mmproj` is required by the
+  // Rust `BackendConfig::Local`, so the snapshot must still carry it as an
+  // empty path: omit the field and serde rejects the whole map, turning one
+  // under-configured model into an unparseable config for every describe.
+  it("keeps a legacy vision selection whose projector was never configured", () => {
+    const files = new Map<string, string>();
+    const store = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json",
+      migrate: () => migrateModelSettings({ speech: { preferred_engine: "auto", local: {} },
+        vlm: { ...VLM_CONFIG_DEFAULTS, preferred_engine: "qwen3_vl", local: { qwen3_vl: { binary: "C:/my/llama.exe", model: "C:/my/q.gguf", mmproj: "" } } },
+        managedLocal: managed, exists: () => true, hasKey: () => false, copyKey: () => {} }),
+      fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } });
+    expect(store().get().active.vlm).toBe("custom-legacy-qwen3_vl");
+    const reloaded = store().get();
+    expect(reloaded.active.vlm).toBe("custom-legacy-qwen3_vl");
+    const profile = reloaded.profiles.find(p => p.id === reloaded.active.vlm)!;
+    expect(profile.local?.mmproj).toBeUndefined();
+    expect(modelProfileToVlmSnapshot(profile).qwen3_vl).toEqual({
+      kind: "local", binary: "C:/my/llama.exe", model: "C:/my/q.gguf", mmproj: "",
+    });
   });
   it("reloads custom models while refusing forged catalog and credential references", () => {
     const files = new Map<string, string>();

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   createVlmConfigStore,
   toVlmBackendSnapshot,
+  modelProfileToVlmSnapshot,
   type VlmConfigFs,
 } from "./vlm-config";
 import { VLM_CONFIG_DEFAULTS, type VlmConfig } from "../shared/vlm-config";
@@ -257,5 +258,60 @@ describe("describe run params", () => {
     // An unrecognized focus is ignored rather than stored: the field is a wire
     // tag, and there is no meaning to clamp it to.
     expect(s.apply({ describe_focus: "bogus" as never }).describe_focus).toBe("shot-type");
+  });
+});
+
+// The active-model producer. Its two conversions are the ones a hand-rolled
+// object literal got wrong (`{ kind: "local", ...profile.local }`), and neither
+// failure was visible until a describe request or the panel fetch came back.
+describe("modelProfileToVlmSnapshot", () => {
+  // `mmproj` is optional on a ModelLocalConfig (cleanModelLocal drops a blank
+  // one) but REQUIRED by the Rust BackendConfig::Local. Omitting the field
+  // fails the WHOLE map with `missing field 'mmproj'`, so one under-configured
+  // model would make every describe unparseable instead of reporting a gap; an
+  // empty path deserializes and reports `needs_model`.
+  it("always carries mmproj as a path so an unconfigured projector stays a model gap", () => {
+    const snap = modelProfileToVlmSnapshot({
+      backend: "qwen3_vl",
+      local: { binary: "/b/cli", model: "/m/q.gguf" },
+    });
+    expect(snap.qwen3_vl).toEqual({ kind: "local", binary: "/b/cli", model: "/m/q.gguf", mmproj: "" });
+    expect(JSON.stringify(snap)).toContain('"mmproj"');
+  });
+
+  it("keeps the device pin and drops threads, which BackendConfig::Local has no field for", () => {
+    const snap = modelProfileToVlmSnapshot({
+      backend: "qwen3_vl",
+      local: { binary: "/b/cli", model: "/m/q.gguf", mmproj: "/m/mm.gguf", device: "cpu", threads: 8 },
+    });
+    expect(snap.qwen3_vl).toEqual({
+      kind: "local", binary: "/b/cli", model: "/m/q.gguf", mmproj: "/m/mm.gguf", device: "cpu",
+    });
+  });
+
+  // Rust sends an `Authorization` header for any `Some(_)`, so an empty key
+  // would put a bare `Bearer ` on requests to a server that wants no auth.
+  it("omits api_key when there is none, and folds a present one into the entry", () => {
+    const endpoint = { url: "http://h/v1/chat/completions", model: "m" };
+    expect(modelProfileToVlmSnapshot({ backend: "byo_endpoint", endpoint }, "")).toEqual({
+      byo_endpoint: { kind: "endpoint", url: "http://h/v1/chat/completions", model: "m" },
+    });
+    expect(modelProfileToVlmSnapshot({ backend: "byo_endpoint", endpoint }, "  sk-x  ")).toEqual({
+      byo_endpoint: { kind: "endpoint", url: "http://h/v1/chat/completions", api_key: "sk-x", model: "m" },
+    });
+  });
+
+  // A custom profile keeps its own runtime tag, and the map is keyed by that
+  // tag — the Rust resolver looks the selected backend up by name.
+  it("keys the entry by the profile's own backend tag", () => {
+    const snap = modelProfileToVlmSnapshot({
+      backend: "minicpm_v",
+      local: { binary: "/b/cli", model: "/m/mini.gguf", mmproj: "/m/mm.gguf" },
+    });
+    expect(Object.keys(snap)).toEqual(["minicpm_v"]);
+  });
+
+  it("has no entry at all when nothing is configured", () => {
+    expect(modelProfileToVlmSnapshot({ backend: "qwen3_vl" })).toEqual({});
   });
 });

@@ -15,8 +15,11 @@
 // `toVlmBackendSnapshot` is the pure merge that turns this store's config + the
 // safeStorage endpoint key into the tagged `HashMap<String, BackendConfig>` JSON
 // the stateless Rust describe_clip resolver reads (via the injected `vlm_config`
-// arg).
+// arg). `modelProfileToVlmSnapshot` is the same wire shape produced from the
+// ACTIVE MODEL PROFILE, which is what a describe request actually runs against
+// (ADR 0064) — both live here so the one shape has one definition.
 
+import type { ModelProfile } from "../shared/inference-models";
 import {
   VLM_CONFIG_DEFAULTS,
   VLM_DESCRIBE_FOCUSES,
@@ -221,7 +224,7 @@ export function createVlmConfigStore(deps: {
 
 /// The tagged `BackendConfig` JSON shapes the Rust `vlm::config::BackendConfig`
 /// enum deserializes (`#[serde(tag = "kind", rename_all = "snake_case")]`).
-type BackendConfigJson =
+export type BackendConfigJson =
   | { kind: "local"; binary: string; model: string; mmproj: string; device?: string }
   | { kind: "endpoint"; url: string; api_key?: string; model?: string };
 
@@ -257,6 +260,51 @@ export function toVlmBackendSnapshot(
       url: cfg.endpoint.url,
       ...(key !== "" ? { api_key: key } : {}),
       ...(cfg.endpoint.model ? { model: cfg.endpoint.model } : {}),
+    };
+  }
+  return out;
+}
+
+/// The same snapshot, produced from the ACTIVE MODEL PROFILE — the model store
+/// owns the selection (`model-manager.ts`), so this is what a describe request
+/// actually runs against, while `toVlmBackendSnapshot` above still serves the
+/// legacy store's own readers. One producer per wire shape on purpose: the two
+/// disagreed once, and the disagreement was invisible until a request failed.
+///
+/// Two conversions are NOT cosmetic:
+/// - `mmproj` is optional on a `ModelLocalConfig` but REQUIRED by the Rust
+///   `BackendConfig::Local`. Omitting it fails the whole map (`missing field
+///   'mmproj'`), so one under-configured model would turn every describe into a
+///   parse error instead of "this model needs a projector". An empty path
+///   deserializes and reports `needs_model`, which is the truth.
+/// - An empty `api_key` must be ABSENT, not `""`: the Rust endpoint sends an
+///   `Authorization` header for `Some(_)`, so `""` puts a bare `Bearer ` on
+///   requests to a self-hosted server that wants no auth at all.
+///
+/// `threads` is deliberately dropped: `BackendConfig::Local` has no such field
+/// (serde ignores it), so emitting it would advertise a tuning knob that the
+/// sidecar never receives.
+export function modelProfileToVlmSnapshot(
+  profile: Pick<ModelProfile, "backend" | "local" | "endpoint">,
+  apiKey?: string | null,
+): Record<string, BackendConfigJson> {
+  const out: Record<string, BackendConfigJson> = {};
+  if (profile.local) {
+    out[profile.backend] = {
+      kind: "local",
+      binary: profile.local.binary,
+      model: profile.local.model,
+      mmproj: profile.local.mmproj ?? "",
+      ...(profile.local.device ? { device: profile.local.device } : {}),
+    };
+  }
+  if (profile.endpoint) {
+    const key = apiKey?.trim() ?? "";
+    out[profile.backend] = {
+      kind: "endpoint",
+      url: profile.endpoint.url,
+      ...(key !== "" ? { api_key: key } : {}),
+      ...(profile.endpoint.model ? { model: profile.endpoint.model } : {}),
     };
   }
   return out;
