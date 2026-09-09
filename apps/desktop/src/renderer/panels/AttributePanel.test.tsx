@@ -686,8 +686,10 @@ describe("AttributePanel row primitive", () => {
   it("gives an axis pair one captioned row holding both axes", () => {
     renderPanel(videoTrack(), "layer-v1");
     const transform = screen.getByLabelText("Transform");
+    // "Position" captions the mode switcher; the values below it are captioned
+    // by which representation they are.
     for (const [caption, axes] of [
-      ["Position", ["X", "Y"]],
+      ["XY", ["X", "Y"]],
       ["Anchor", ["Anchor X", "Anchor Y"]],
     ] as const) {
       const row = rowsIn(transform).find((r) => r.firstElementChild?.textContent === caption);

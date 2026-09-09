@@ -904,8 +904,11 @@
 /* The empty stopwatch footprint a static row carries so its control starts on
    the same edge as the input boxes of the animatable rows around it, rather
    than on the faint column of clock icons. A pseudo-element, not markup: every
-   `.prop-field` in the panel gets it without 8 call sites having to remember. */
-.prop-field-control::before {
+   `.prop-field` in the panel gets it without 8 call sites having to remember.
+   `.prop-value-slot` is the opt-in for a row that is NOT a `<label>` — a value
+   column holding buttons, which a label would mis-activate (`InspectorRow`). */
+.prop-field-control::before,
+.prop-value-slot::before {
   content: "";
   flex: 0 0 auto;
   width: 18px;
@@ -1007,6 +1010,43 @@
   white-space: nowrap;
 }
 .anim-field-control { display: flex; align-items: center; gap: 6px; min-width: 0; }
+
+/* A nested operation inside a section: the path's node controls, a conversion
+ * in flight. The label column drops by the well's own inset so rows inside it
+ * keep the panel's value edge; change one and change the other. */
+.prop-well {
+  --prop-label-col: 88px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 8px;
+  background: var(--background);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
+}
+.prop-well-head { display: flex; align-items: center; gap: 6px; }
+.prop-well-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The count/selection tail on a well title — same line, quieter. */
+.prop-well-title em { font-style: normal; font-weight: 400; color: var(--color-gray-500); }
+/* Node actions. A toolbar at the well's own edge rather than a row in the
+ * value column: there is no property being labelled here. */
+.prop-well-toolbar { display: flex; gap: 2px; }
+.prop-node-id {
+  font-size: var(--font-size-caption);
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 /* One axis of a merged pair row: `[stopwatch][field]`, two per value column.
  * Each axis keeps its own stopwatch because ADR 0060 has X and Y animate
  * independently — one shared stopwatch would misrepresent the model. */

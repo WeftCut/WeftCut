@@ -16,7 +16,11 @@ const enUS = {
     remove: "Remove custom entry", confirm_remove: "Confirm removal",
   },
   motion_path: {
-    node_mode:'Spatial node', select_node:'Select a point', mode_corner:'Corner', mode_smooth:'Smooth', mode_auto:'Auto smooth', insert:'Insert after point',
+    // `mode_xy` / `mode_path` are the position mode switcher's segments, and
+    // `mode_xy` doubles as the caption on the X|Y value row it governs.
+    mode_xy:'XY', mode_path:'Path',
+    path:'Path', nodes:'{{count}} points', node_of:'Point {{index}} / {{count}}',
+    node_mode:'Spatial node', select_node:'Select a point on the path to edit it', mode_corner:'Corner', mode_smooth:'Smooth', mode_auto:'Auto smooth', insert:'Insert after point',
     insert_hint:'Double-click the path to insert without changing its shape. Adjacent Auto nodes become Smooth to preserve their handles.',
     start_frame:'Start frame (local)', end_frame:'End frame (inclusive)', every_frames:'Maximum frame interval', samples_used:'keys per property', range_error:'The range must stay within this clip.',
     tolerance:'Target error (pixels)', nodes_used:'{{count}} path nodes',

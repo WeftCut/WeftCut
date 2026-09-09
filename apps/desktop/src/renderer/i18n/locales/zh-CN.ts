@@ -18,7 +18,9 @@ const zhCN: Resources = {
     remove: "移除自定义条目", confirm_remove: "确认移除",
   },
   motion_path: {
-    node_mode:'空间节点', select_node:'请选择节点', mode_corner:'角点', mode_smooth:'平滑', mode_auto:'自动平滑', insert:'在节点后保形插点',
+    mode_xy:'XY', mode_path:'路径',
+    path:'路径', nodes:'{{count}} 个节点', node_of:'节点 {{index}} / {{count}}',
+    node_mode:'空间节点', select_node:'选择路径上的节点以编辑', mode_corner:'角点', mode_smooth:'平滑', mode_auto:'自动平滑', insert:'在节点后保形插点',
     insert_hint:'双击路径可保形插点。相邻自动节点会转为平滑模式，以保留原有控制柄。',
     start_frame:'起始帧（片段内）', end_frame:'结束帧（含）', every_frames:'最大采样间隔（帧）', samples_used:'个关键帧／属性', range_error:'转换范围不能超出当前片段。',
     tolerance:'目标误差（像素）', nodes_used:'{{count}} 个路径节点',

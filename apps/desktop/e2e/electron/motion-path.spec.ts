@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { invokeCmd, launchApp, newProject, summary, tmpDir, waitForHook } from './helpers/driver'
 import type { PositionAnimation } from '../../src/shared/position'
 
@@ -7,6 +7,12 @@ async function position(page: Page, id: string): Promise<PositionAnimation> {
   const layer = s.tracks.flatMap(t => t.layers).find(l => l.id === id)!
   return (layer.params as unknown as { position: PositionAnimation }).position
 }
+
+// The position mode switcher's two segments. Exact names: "Path" would also
+// match the "Edit path" button in the node well, and the segments are the only
+// route to a conversion.
+const toPath = (fields: Locator) => fields.getByRole('button', { name: /^(Path|路径)$/ })
+const toXY = (fields: Locator) => fields.getByRole('button', { name: /^XY$/ })
 
 test('motion path creation, point dragging, conversion preview/cancel/apply and undo', async () => {
   const { app, page } = await launchApp()
@@ -18,7 +24,11 @@ test('motion path creation, point dragging, conversion preview/cancel/apply and 
     const fields = page.getByTestId('position-fields')
     await expect(fields).toBeVisible()
     const original = await position(page, id)
-    await fields.getByRole('button', { name: /Create motion path|创建.*路径/ }).click()
+    // The mode switcher is the only entry to changing representation. Static
+    // X/Y carry no timing to preserve, so it takes the instant branch here:
+    // a two-point path in one undo, no conversion to fill in.
+    await toPath(fields).click()
+    await expect(page.getByTestId('position-conversion')).toHaveCount(0)
     await expect.poll(async () => (await position(page, id)).mode).toBe('Path')
     const before = await position(page, id)
     if (before.mode !== 'Path') throw new Error('Path not created')
@@ -54,7 +64,8 @@ test('motion path creation, point dragging, conversion preview/cancel/apply and 
     await page.keyboard.press('Escape')
     await page.mouse.up()
     expect(await position(page, id), 'Escape cancels the uncommitted handle edit').toEqual(curved)
-    await fields.getByRole('combobox', { name: /Spatial node|空间节点/ }).selectOption('Auto')
+    await fields.getByRole('group', { name: /Spatial node|空间节点/ })
+      .getByRole('button', { name: /Auto smooth|自动平滑/ }).click()
     await expect.poll(async () => {
       const p = await position(page, id)
       return p.mode === 'Path' ? p.path.nodes[0]!.tangentMode : ''
@@ -82,13 +93,16 @@ test('motion path creation, point dragging, conversion preview/cancel/apply and 
     await page.screenshot({ path: test.info().outputPath('path-editor.png') })
     await invokeCmd(page, 'project_undo', {})
     await expect.poll(() => position(page, id)).toEqual(moved)
-    await fields.getByRole('button', { name: /Bake to XY|烘焙.*XY/ }).click()
+    // Leaving Path always bakes: the switcher opens the conversion rather than
+    // dropping the geometry.
+    await toXY(fields).click()
+    await expect(page.getByTestId('position-conversion')).toBeVisible()
     await page.getByRole('button', { name: /Preview conversion|预览转换/ }).click()
     await expect(page.getByTestId('conversion-error')).toBeVisible()
     expect(await position(page, id), 'preview never commits').toEqual(moved)
     await page.getByTestId('position-conversion').getByRole('button', { name: /Cancel|取消/ }).click()
     expect(await position(page, id)).toEqual(moved)
-    await fields.getByRole('button', { name: /Bake to XY|烘焙.*XY/ }).click()
+    await toXY(fields).click()
     await page.getByRole('button', { name: /Preview conversion|预览转换/ }).click()
     await page.getByRole('button', { name: /Apply conversion|应用转换/ }).click()
     await expect.poll(async () => (await position(page, id)).mode).toBe('XY')
@@ -98,16 +112,12 @@ test('motion path creation, point dragging, conversion preview/cancel/apply and 
     await expect.poll(() => position(page, id)).toEqual(before)
     await invokeCmd(page, 'project_undo', {})
     await expect.poll(() => position(page, id)).toEqual(original)
+    // An XY position draws no trajectory until asked, so this toggle is the
+    // only way to see the motion on canvas — and asking is not an edit.
+    await expect(page.getByTestId('motion-path-overlay')).toHaveCount(0)
     await fields.getByRole('button', { name: /Show trajectory|显示轨迹/ }).click()
     await expect(page.getByTestId('motion-path-overlay')).toBeVisible()
     expect(await position(page, id), 'trajectory display is not a conversion').toEqual(original)
-    await fields.getByRole('button', { name: /Convert XY to path|XY.*路径/ }).click()
-    await page.getByRole('button', { name: /Preview conversion|预览转换/ }).click()
-    expect(await position(page, id)).toEqual(original)
-    await page.getByRole('button', { name: /Apply conversion|应用转换/ }).click()
-    await expect.poll(async () => (await position(page, id)).mode).toBe('Path')
-    await invokeCmd(page, 'project_undo', {})
-    await expect.poll(() => position(page, id)).toEqual(original)
   } finally { await app.close() }
 })
 
@@ -129,7 +139,11 @@ test('conversion refuses missed quality targets and jumping positions without ch
     await waitForHook(page, 'revealLayer')
     await page.evaluate(id => (window as any).__weftcutTest.revealLayer({ layerId: id }), id)
     const fields = page.getByTestId('position-fields')
-    await fields.getByRole('button', { name: /Convert XY to path|XY.*路径/ }).click()
+    // Keyframed X/Y take the switcher's fitted branch: it opens the conversion
+    // instead of building a path, because there is timing to preserve.
+    await toPath(fields).click()
+    await expect(page.getByTestId('position-conversion')).toBeVisible()
+    expect(await position(page, id), 'opening a conversion commits nothing').toEqual(applied)
     await page.getByLabel(/End frame|结束帧/).fill('1')
     await page.getByLabel(/Target error|目标误差/).fill('0.05')
     await page.getByRole('button', { name: /Preview conversion|预览转换/ }).click()
@@ -141,7 +155,7 @@ test('conversion refuses missed quality targets and jumping positions without ch
     source.x.value[0]!.segment = { kind: 'Hold' }
     await invokeCmd(page, 'set_position', { layerId: id, position: source })
     const jumping = await position(page, id)
-    await fields.getByRole('button', { name: /Convert XY to path|XY.*路径/ }).click()
+    await toPath(fields).click()
     await page.getByRole('button', { name: /Preview conversion|预览转换/ }).click()
     await expect(page.getByTestId('position-conversion').getByRole('alert')).toContainText(/instantaneous position jump|瞬间位置跳变/)
     await expect(page.getByRole('button', { name: /Apply conversion|应用转换/ })).toBeDisabled()
