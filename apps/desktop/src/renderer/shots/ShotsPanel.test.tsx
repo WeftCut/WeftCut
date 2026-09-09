@@ -72,7 +72,7 @@ import type {
 } from "../ipc";
 import { resetDescriptionsStore } from "../describe/descriptionsStore";
 import { resetShotsStore } from "./shotsStore";
-import { ShotsPanel, shotDescribeBlocker } from "./ShotsPanel";
+import { ShotsPanel, cutConfidence, shotDescribeBlocker } from "./ShotsPanel";
 
 const num = (value: number): AnimTrack<number> => ({ mode: "Static", value });
 
@@ -923,6 +923,46 @@ describe("ShotsPanel — describing one shot", () => {
   // The blocker rule direct, for the three in-flight branches a render cannot
   // reach without a real run in the air. ONE rule for the rows and the sweep, so
   // a greyed row and a refused sweep cannot disagree about the precondition.
+  // The margin meter's ramp. These two numbers are the whole design decision,
+  // and they are set from what the detector actually emits rather than from
+  // thirds of its axis — so the reference points are pinned here beside the
+  // boundaries, where a later tidy-up has to read them before moving anything.
+  describe("cutConfidence", () => {
+    it("bands are half-open upward", () => {
+      expect(cutConfidence(0)).toBe("low");
+      expect(cutConfidence(0.249)).toBe("low");
+      expect(cutConfidence(0.25)).toBe("mid");
+      expect(cutConfidence(0.499)).toBe("mid");
+      expect(cutConfidence(0.5)).toBe("high");
+    });
+
+    it("reads the values the detector really emits", () => {
+      // FLOOR_SENSITIVITY: the lowest score that can exist at all, because the
+      // scan runs `select='gt(scene,0.05)'`.
+      expect(cutConfidence(0.05)).toBe("low");
+      // The shipped default line. Amber straddles it on purpose: a boundary
+      // sitting where the line ships is the definition of marginal.
+      expect(cutConfidence(0.4)).toBe("mid");
+      // Measured with the bundled ffmpeg: a hard cut between wholly unrelated
+      // content. Real footage scores lower, so this is near the practical top.
+      expect(cutConfidence(0.688)).toBe("high");
+      expect(cutConfidence(0.709)).toBe("high");
+      // Measured: black to white, the maximal possible frame change.
+      expect(cutConfidence(1)).toBe("high");
+    });
+
+    // The meter clamps the FILL in CSS; the band function is asked about the
+    // raw number, so it must answer for one out of range rather than throw.
+    // `parse_scene_score` validates no range and the `ShotDetector` seam exists
+    // so a learned detector can replace ffmpeg.
+    it("answers for scores outside the axis", () => {
+      expect(cutConfidence(1.6)).toBe("high");
+      expect(cutConfidence(-0.4)).toBe("low");
+      // Unknown is not confident: NaN reads as the low band, never green.
+      expect(cutConfidence(Number.NaN)).toBe("low");
+    });
+  });
+
   describe("shotDescribeBlocker", () => {
     const span = { mediaId: "m1", srcStartUs: 0, srcEndUs: 1 };
     const batch = { done: 0, total: 2 };
@@ -975,7 +1015,9 @@ describe("ShotsPanel — describing one shot", () => {
     await review();
     const button = await waitFor(() => {
       const found = screen.getByTestId("shots-describe-0");
-      expect(found.textContent).toContain("Describe again");
+      // The words are the glyph's accessible name, not its label: the press is
+      // one icon in the card's action gutter (`ShotDescribeAction`).
+      expect(found.getAttribute("aria-label")).toBe("Describe again");
       return found;
     });
     expect((button as HTMLButtonElement).disabled).toBe(false);

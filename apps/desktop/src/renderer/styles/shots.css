@@ -2,15 +2,20 @@
    Shots Panel — one row per detected shot, each row carrying
    its opening candidate above its own body.
 
-   Layout: a single column list. A row is two stacked strips —
-   the candidate header (checkbox, score, before/after frame
-   pair) and the body (cover frame, facts, keep box). Stacked
-   rather than side by side because the Panel must stay legible
-   at TOOL_MINIMUM's 240px, where a five-column row would put
-   two 40px frames next to a truncated timecode.
+   Layout: a single column of CARDS, one per shot, separated by
+   a step of surface plus the list's own gap and nothing else —
+   the Marker Panel's mechanism. Each card stacks three bands:
+   identity plus an action gutter, the cut evidence in a sunken
+   well, then the cover frame beside its measurements and prose.
+   Stacked rather than side by side because the Panel must stay
+   legible at TOOL_MINIMUM's 240px, where a five-column row
+   would put two 40px frames next to a truncated timecode.
 
-   Visual language follows history.css: no drawn row borders,
-   hover as a tint, state carried by text colour and opacity.
+   Weight tracks consequence: exactly ONE filled button is on
+   screen at rest — *Split at cuts*, the plain apply. Everything
+   that only changes what the reviewer sees is a ghost, and the
+   per-card press is one hover-revealed glyph (`.playhead-goto`'s
+   rule), so a forty-shot list does not stand forty buttons.
 
    Every frame slot holds its space with `aspect-ratio`, so the
    list never reflows as the extracts land one at a time.
@@ -182,6 +187,17 @@
   flex: none;
 }
 
+/* Both of these say WHY they are greyed in their `title` — "every shot in this
+   list is already measured", "every shot already has a description" — and the
+   shared button skeleton sets `disabled:pointer-events-none`, which stops the
+   element being hit-tested at all. `.shots-apply-verb`'s rule, which these two
+   needed just as much: the sentence naming the precondition was the one thing
+   nobody could read. */
+.shots-measure:disabled,
+.shots-describe-all:disabled {
+  pointer-events: auto;
+}
+
 .shots-list {
   display: flex;
   flex-direction: column;
@@ -191,23 +207,114 @@
   list-style: none;
 }
 
+/* One card per shot. A step of surface on the Panel's `--card`, plus the
+   list's gap, is the WHOLE separation mechanism — no border, no shadow, no left
+   colour rail. A rail would spend a second channel on what the flags already
+   say, and forty lifted cards read as forty objects competing rather than forty
+   members of one review. `MarkerPanel.tsx`'s card row states the same rule. */
 .shots-row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 4px;
-  border-radius: var(--radius-control);
+  gap: 5px;
+  padding: 6px 8px;
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
 }
 
+/* `--accent` and not `--surface-tint`: the card already sits a step above the
+   Panel, so a 4% white wash on top of it barely registers as "the pointer is
+   here". The Marker Panel's card hover is the same step. */
 .shots-row:hover {
+  background: var(--accent);
+}
+
+/* A card marked for discard. It gives up its SURFACE rather than fading: a shot
+   that will not survive the apply should read as already out of the stack,
+   where a translucent card reads as a card that failed to load. Still present
+   and still re-checkable — the reviewer has to see what an apply would delete,
+   and a row that vanished on being unchecked would leave nothing to re-check.
+   The opacity step is lighter than it was (0.55) because the missing surface is
+   now doing most of the work. */
+.shots-row[data-kept="false"] {
+  background: transparent;
+  opacity: 0.7;
+}
+
+.shots-row[data-kept="false"]:hover {
   background: var(--surface-tint);
 }
 
-/* A row marked for discard. Dimmed and struck rather than hidden: the reviewer
-   has to be able to see what an apply would delete, and a row that vanished on
-   being unchecked would leave nothing to re-check. */
-.shots-row[data-kept="false"] {
-  opacity: 0.55;
+/* The well goes with it. A card that has given up its surface but still holds
+   a near-black inset reads as a hole in the list rather than as a shot on its
+   way out. */
+.shots-row[data-kept="false"] .shots-cuts {
+  background: transparent;
+}
+
+/* ── Band 1: who this shot is, and what can be done to it ───────────────────
+   The keep box leads. Deciding keep-or-discard is the gesture this Panel exists
+   for, and a leading column of boxes is the one that can be run down with the
+   eye — it used to sit at the far right of the body, last on the row rather
+   than first. Nothing on this line has a width that depends on a translated
+   word, which is what lets it hold a fixed action gutter at 240px. */
+.shots-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The card's action gutter. Hidden until the card is hovered or something in it
+   takes focus — `.playhead-goto`'s rule (`playhead.css`), and the one the
+   Marker Panel's delete follows. A column of buttons standing down a forty-shot
+   list reads as the Panel's subject, and the subject is the shots.
+
+   `opacity` and not `display: none`: the button stays in the tab order, so the
+   gutter is reachable by keyboard on a card nobody is pointing at. */
+.shots-card-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.shots-row:hover .shots-card-actions,
+.shots-card-actions:focus-within,
+/* Pinned on the one card a run is against, so the card that is busy does not
+   hide its own state the moment the pointer leaves it. */
+.shots-card-actions[data-running="true"] {
+  opacity: 1;
+}
+
+/* ── Band 2: the cut evidence ───────────────────────────────────────────────
+   The opening boundary and every boundary this shot swallowed, in a sunken well
+   inside the card.
+
+   Sunken, and not a third card band: before this, a candidate strip carried a
+   row's own grammar — a checkbox, a number, two frames — at 60% opacity, so one
+   shot that had merged two boundaries read as three rows. `--surface-sunken` is
+   the token for an inset slot, and an inset inside a raised card cannot be read
+   as its sibling.
+
+   Still the card's top half, because the promise this list makes is the one the
+   Panel's own header comment states: "is this a real cut" is one look, not a
+   second surface. */
+.shots-cuts {
+  display: flex;
+  /* Shrink-wrapped, not full width. A card is a flex column, so a stretched
+     well spent the whole card width on ~200px of evidence and read as an empty
+     container — the inset has to be the size of what it holds. Its width is the
+     widest candidate strip, so a shot with several merged boundaries still
+     lines their checkboxes and scores up in one column. */
+  align-self: flex-start;
+  max-width: 100%;
+  flex-direction: column;
+  gap: 3px;
+  padding: 3px 4px;
+  border-radius: var(--radius-control);
+  background: var(--surface-sunken);
 }
 
 .shots-row[data-kept="false"] .shots-timecode,
@@ -215,25 +322,203 @@
   text-decoration: line-through;
 }
 
-.shots-row-header {
+/* One boundary. The whole strip is the control — `Checkbox.Root` renders a
+   button, so the chrome it arrives with has to come off before the frames can
+   sit in it. */
+.shots-cut {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 0;
   min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  text-align: left;
 }
 
-/* A candidate the reviewer cleared. It stays on the row it merged into so the
-   merge can be undone, and it is dimmed so the accepted boundary above it still
-   reads as the row's own opening. */
-.shots-row-header[data-accepted="false"] {
-  opacity: 0.6;
+.shots-cut:focus-visible {
+  outline: none;
+  border-radius: var(--radius-control);
+  box-shadow: var(--focus-ring);
 }
 
+/* A candidate the reviewer cleared. It stays on the card it merged into so the
+   merge can be undone. The dim is lighter than it was (0.6) because the seam and
+   the meter now say which state this is — the opacity only has to keep the
+   accepted boundary reading as the card's own opening. */
+.shots-cut[data-accepted="false"] {
+  opacity: 0.75;
+}
+
+/* ── The seam ───────────────────────────────────────────────────────────────
+   The state, as geometry. A cut is a vertical rule between two clips — the way
+   every timeline draws one — and a merged boundary is the two frames bridged
+   instead. Vertical against horizontal: two marks on orthogonal axes cannot be
+   misread for each other at a glance down a list, where two 16px squares in the
+   same card could.
+
+   The slot's width never changes with the state. A toggle that reflowed what it
+   sits between would move the next frame out from under the pointer that just
+   clicked it — `.playhead-filter-chip`'s rule. */
+.shots-cut-seam {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-self: stretch;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+}
+
+/* Cut: the edit point. */
+.shots-cut[data-accepted="true"] .shots-cut-seam::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--selection);
+  content: "";
+  transition: opacity var(--transition-fast);
+}
+
+/* Merged: no edit point, and the pair bridged into one span. */
+.shots-cut[data-accepted="false"] .shots-cut-seam::before {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--border-on-dark-strong);
+  content: "";
+  transition: opacity var(--transition-fast);
+}
+
+/* Hover says the ACTION, where the resting rule says the state: scissors on a
+   merged seam, a link on a standing cut. The mark steps aside for it, because
+   an icon shown ON TOP of the state mark would be two claims in one 14px slot. */
+.shots-cut-seam-glyph {
+  display: flex;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.shots-cut:hover .shots-cut-seam-glyph,
+.shots-cut:focus-visible .shots-cut-seam-glyph {
+  opacity: 1;
+  color: var(--foreground);
+}
+
+.shots-cut:hover .shots-cut-seam::before,
+.shots-cut:focus-visible .shots-cut-seam::before {
+  opacity: 0;
+}
+
+/* ── The margin meter ───────────────────────────────────────────────────────
+   How far this boundary's score sat from the line, on the LINE'S OWN axis:
+   the fill and the notch are the two numbers the strip above plots, in the
+   strip's own two colours. That is the whole reason it can carry meaning with
+   no words — it is not a new scale to learn, it is the scale the reviewer just
+   dragged.
+
+   The axis is [0, 1] because that is what the detector emits: the score is
+   ffmpeg's raw `lavfi.scene_score` (`jobs/shot/mod.rs`), and 1.0 is reachable
+   only by a frame pair that changes maximally — measured, black to white.
+
+   Two things the axis is honest about rather than hiding:
+
+   - The left 5% is unreachable. The scan runs `select='gt(scene,0.05)'`
+     (`FLOOR_SENSITIVITY`), so no candidate below the floor is ever emitted.
+     1.7px of 34px; not worth a second scale.
+   - The right third is very nearly unreachable too. A hard cut between wholly
+     unrelated content measures ~0.70, and real footage — shared lighting,
+     palette, grain — scores lower still, which is why the shipped default line
+     is 0.40. So the fill lives in roughly [0.05, 0.7] in practice.
+
+   That second one is a real loss of contrast, and it is deliberately NOT fixed
+   here: the strip above plots on the same [0, 1] (`ScoreStrip`'s `yOf`), so
+   re-ranging the meter alone would buy contrast by breaking the correspondence
+   that is the meter's entire justification. If it is worth fixing it is worth
+   fixing in both, as one shared scale.
+
+   The notch is only drawn once the prefs read has landed (`data-notch`): a
+   notch defaulted to 0 would claim every candidate cleared the line by
+   miles. */
+.shots-cut-meter {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 4px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: var(--surface-raised);
+}
+
+.shots-cut-meter::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: clamp(0%, calc(var(--score, 0) * 100%), 100%);
+  border-radius: 999px;
+  background: currentcolor;
+  content: "";
+}
+
+.shots-cut-meter[data-notch]::after {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: clamp(0%, calc(var(--notch, 0) * 100%), 100%);
+  width: 1px;
+  background: var(--foreground);
+  content: "";
+}
+
+/* The fill's colour is the detector's CONFIDENCE, in the shared status ramp:
+   red below 0.25, amber to 0.5, green above. `cutConfidence` in the Panel keeps
+   the two numbers and states what they were measured from — briefly, the axis
+   is [0, 1] but real cuts live in [0.05, 0.7], so the bands sit inside that.
+
+   Why the fill can afford to carry magnitude at all: accepted-vs-merged used to
+   be here (`--selection` against `--muted-foreground`) and it moved to the seam,
+   where it is drawn as geometry. Nothing was lost and one thing was gained —
+   a HIGH-confidence boundary on a BRIDGED seam is now visible, which is exactly
+   the case worth noticing: a strong cut that `reduce` dropped for sitting inside
+   `min_shot_us` rather than for scoring badly. The old grey hid it.
+
+   Colour is never the only channel: the fill's length and the digits beside it
+   carry the same number, so the ramp is an enhancement and not a requirement.
+
+   `--destructive` is the repo's only red (the token block keeps one greppable
+   ladder and calls it the error role), so the low band shares a hue with this
+   Panel's *Split and discard* verb. Accepted: a 4px bar inside a card and a
+   button in the chrome band are not mistakable for each other, and amber is
+   likewise already the flag colour two lines down. */
+.shots-cut-meter[data-confidence="low"] {
+  color: var(--destructive);
+}
+
+.shots-cut-meter[data-confidence="mid"] {
+  color: var(--warning);
+}
+
+.shots-cut-meter[data-confidence="high"] {
+  color: var(--success);
+}
+
+/* The digits. Demoted to a check on the meter rather than the thing that is
+   read: what the meter cannot say is whether 0.51 or 0.55 sat closer to a line
+   at 0.50, and that is the one question two marginal cuts raise. */
 .shots-score {
   flex: none;
-  min-width: 2.5em;
+  min-width: 2.4em;
+  margin-left: 5px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: var(--font-size-caption);
+  font-size: var(--font-size-micro);
   color: var(--muted-foreground);
 }
 
@@ -292,6 +577,9 @@
    whole row, so the two checkboxes stay independently clickable. */
 .shots-row-goto {
   display: flex;
+  /* Claims what the keep box and the action gutter leave, so the gutter stays
+     at the card's trailing edge instead of floating in beside the timecode. */
+  flex: 1 1 auto;
   align-items: baseline;
   gap: 6px;
   min-width: 0;
@@ -330,6 +618,17 @@
   flex: none;
   color: var(--muted-foreground);
   font-size: var(--font-size-caption);
+}
+
+/* The stats and the flags on one line: both are readings taken over the same
+   span, and pairing them saves a line per card AND keeps anything of variable
+   width off the identity line above. */
+.shots-row-measures {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .shots-stats {
@@ -410,20 +709,31 @@
   color: var(--muted-foreground);
 }
 
-/* The per-row press, on its own line UNDER the prose rather than beside it: the
-   prose wraps to whatever width the Panel has, so a button sharing its line
-   would move every time a description landed.
-   The cell stays a BLOCK and the button stays the `inline-flex` the Button
-   primitive gives it, which is what sizes it to its label instead of to the
-   cell — a flex cell would have to re-state the prose's wrapping to get the
-   same result. */
+/* The per-card press, in the action gutter. It used to be a filled `secondary`
+   button on its own line under the prose — the single loudest thing in a
+   forty-shot list, and parked in the one place whose width the prose decides.
+   As a glyph it costs 24px of a line that was already there, and the words that
+   were its label are its `aria-label` and its tooltip instead. */
 .shots-describe {
-  margin-top: 4px;
+  color: var(--muted-foreground);
+}
+
+.shots-describe[data-running="true"] {
+  color: var(--selection);
+}
+
+/* Why the press is refused lives in its `title`, and the shared button skeleton
+   sets `disabled:pointer-events-none` — which stops the element being
+   hit-tested at all, so the tooltip explaining the greying is the one thing
+   nobody can read. `.shots-apply-verb`'s rule, which this control needed too:
+   as a filled button with a label it at least said "Describe shot" while
+   greyed, and as a glyph it would have said nothing. */
+.shots-describe:disabled {
+  pointer-events: auto;
 }
 
 .shots-keep {
   flex: none;
-  margin-top: 2px;
 }
 
 /* ── The apply bar ──────────────────────────────────────────────────────────
@@ -434,6 +744,13 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* The one seam in the Panel, and it earns its place: it is the line between
+     the controls and the review, which is what lets every control above it
+     give up its border without the band dissolving into the list. Inset by the
+     Panel's own padding rather than bled full-width — `.playhead-toolbar`
+     draws its seam the same way. */
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .shots-apply-verbs {
@@ -449,4 +766,20 @@
    no click either way. */
 .shots-apply-verb:disabled {
   pointer-events: auto;
+}
+
+/* The verb that deletes keeps the destructive HUE and gives up the fill: the
+   warning was never in the filled background. A red block above the list
+   shouted loudest about the verb pressed least, while the colour alone still
+   says which of the three throws footage away — and the `outline` variant's
+   hairline is what keeps that red reading as a button rather than as a loose
+   red sentence. Unlayered, so it beats the variant's own
+   `hover:text-foreground`. */
+.shots-apply-verb[data-verb="discard"] {
+  color: var(--destructive);
+}
+
+.shots-apply-verb[data-verb="discard"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--destructive) 12%, transparent);
+  color: var(--destructive);
 }
