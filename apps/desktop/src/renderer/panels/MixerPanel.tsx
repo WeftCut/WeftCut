@@ -1,7 +1,9 @@
 // The project-wide Role Mixer Panel and the single home for per-Role mute/solo.
 // Boundary: it mixes the four canonical Audio Roles, never Tracks or per-Layer
 // audio, and folds Role gain — no real per-Role buses or meters live here. The
-// only meter is the real master RMS/Peak read off the shared store. The
+// only meter is the real master RMS/Peak read off the shared store. Docked
+// narrow the Panel is a card list, docked wide a console of vertical faders;
+// both are presentations of the one gain gesture `useRoleGain` owns. The
 // recorded-gain / unrecorded-mute-solo model is documented in `docs/audio.md`.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -44,22 +46,37 @@ const GAIN_MAX_DB = 20;
 const GAIN_STEP_DB = 0.5;
 const NEUTRAL_GAIN_DB = 0;
 
-/// Where the 0 dB mark sits along a fader's travel — the same min/max mapping
-/// the slider thumb is positioned from, so tick and thumb coincide at unity.
-const UNITY_TICK_FRACTION =
-  (NEUTRAL_GAIN_DB - GAIN_MIN_DB) / (GAIN_MAX_DB - GAIN_MIN_DB);
+/// Where a dB value sits along a fader's travel — 0 at the low end of the
+/// track, 1 at the high end. This is the mapping the slider positions its thumb
+/// from (a percentage of the track box, with the thumb's own centre translated
+/// onto it), so anything drawn at this fraction against the SAME box coincides
+/// with the thumb at that value. Both the card's unity tick and the console's
+/// shared dB scale read off it.
+function gainFraction(db: number): number {
+  return (db - GAIN_MIN_DB) / (GAIN_MAX_DB - GAIN_MIN_DB);
+}
 
-// At/above this content width the cards get the wide treatment; below it they
-// stay in the narrow flow. The card list works at either width — the switch is
-// here for the console the wide branch grows into, and its threshold belongs to
-// that console's lower bound.
-const CONSOLE_LAYOUT_MIN_WIDTH = 360;
+/// Where the 0 dB mark sits along a fader's travel.
+const UNITY_TICK_FRACTION = gainFraction(NEUTRAL_GAIN_DB);
+
+/// The console's dB legend, drawn once in the shared gutter. 10 dB apart is as
+/// dense as micro type gets over the fader's travel, and unity is one of the
+/// ticks on purpose: it is the line all four faders share.
+const DB_SCALE_TICKS = [20, 10, 0, -10, -20, -30];
+
+// Root width at or above which the Panel is a console. It is the console's own
+// floor, and it is arithmetic rather than an estimate because `editor.css` pins
+// every console column: four 66px Role strips, the 58px master strip, the 26px
+// dB gutter, five 4px gaps and the Panel's own 12px inset on each side. Below
+// it the card list is the only layout that fits, and the card list is legible
+// all the way down to `TOOL_MINIMUM`'s 240px, so there is no third branch.
+const CONSOLE_LAYOUT_MIN_WIDTH = 392;
 
 // Master meter fill scale: -60 dBFS is the visual floor (0% fill), 0 dBFS is
 // full scale. (Silence is the store's `SILENCE_DB` sentinel, rendered "−∞".)
 const METER_FLOOR_DB = -60;
 
-type MixerLayout = "cards" | "cards-wide";
+type MixerLayout = "cards" | "console";
 
 /// Role identity is a glyph, not a colour: four fixed Roles each claiming a hue
 /// would spend the hue channel on identity and leave state without one. The
@@ -174,26 +191,22 @@ function GainReadout({ label, value, onCommit }: {
   );
 }
 
-/// One Role card: identity, readout and flags on line 1, the fader spanning the
-/// card on line 2. The second line is the whole point — a fader that shares a
-/// line with a value widget has no width left. Owns a shared gain draft so the
-/// fader and the readout track each other during an edit (mirrors KeyframeField).
-/// Gain is recorded; mute/solo go through the unrecorded `updateRoleFlags`.
-function RoleChannel({ role, mix, silencedBySolo, onMutated }: {
-  role: AudioRole;
-  mix: RoleMixView;
-  silencedBySolo: boolean;
-  onMutated: () => Promise<void>;
-}) {
-  const { t } = useTranslation();
-  const roleLabel = t(`audio_roles.${role}`);
-  const Glyph = ROLE_GLYPH[role];
+/// The whole Role gain gesture, in one place because the card and the console
+/// strip are two presentations of it and must not become two behaviours. Owns a
+/// shared gain draft so the fader and the readout track each other during an
+/// edit (mirrors KeyframeField), the live audition override, the single
+/// recorded commit, and Escape as abandon. Gain is recorded; mute/solo go
+/// through the unrecorded `updateRoleFlags`.
+function useRoleGain(
+  role: AudioRole,
+  mix: RoleMixView,
+  onMutated: () => Promise<void>,
+) {
   // null = idle (display the committed `mix.gain_db`, which tracks undo/redo); a
   // number while the fader is mid-drag. Both widgets read `value` and write the
   // draft, so a fader drag and the readout stay in sync. A non-null draft is
   // exactly "a fader audition is in flight".
   const [draft, setDraft] = useState<number | null>(null);
-  const value = draft ?? mix.gain_db;
   // Set by Escape so the pointer-release `onValueCommitted` that still fires
   // after a cancel records nothing.
   const cancelledRef = useRef(false);
@@ -224,11 +237,22 @@ function RoleChannel({ role, mix, silencedBySolo, onMutated }: {
       "Set role gain",
     );
   };
+  // The fader's release. Swallows exactly the one release that follows an
+  // Escape, then re-arms.
+  const commitDrag = (gainDb: number) => {
+    if (cancelledRef.current) {
+      cancelledRef.current = false;
+      return;
+    }
+    commitGain(gainDb);
+  };
   // Escape: abandon the gesture. Clear the override (restores the original
   // sound), drop the draft (restores the displayed value), and arm the guard so
-  // the release commits nothing.
-  const cancelGesture = () => {
-    if (draft === null) return;
+  // the release commits nothing. Kept local so a global Escape handler does not
+  // also fire.
+  const cancelOnEscape = (e: React.KeyboardEvent) => {
+    if (e.key !== "Escape" || draft === null) return;
+    e.stopPropagation();
     cancelledRef.current = true;
     clearRoleGainOverride(role);
     setDraft(null);
@@ -240,24 +264,98 @@ function RoleChannel({ role, mix, silencedBySolo, onMutated }: {
     );
   };
 
+  return {
+    value: draft ?? mix.gain_db,
+    audition,
+    commitGain,
+    commitDrag,
+    cancelOnEscape,
+    flip,
+  };
+}
+
+/// Mute and solo for one Role. State rather than actions, so both layouts keep
+/// them at rest — the reset beside them is the action, and it hides.
+function RoleFlags({ mix, roleLabel, flip }: {
+  mix: RoleMixView;
+  roleLabel: string;
+  flip: (patch: { muted?: boolean; solo?: boolean }) => () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <MixerFlagButton
+        active={mix.muted}
+        activeClass="bg-red-500/20 text-red-300"
+        label={t("mixer.mute_hint", { role: roleLabel })}
+        onToggle={flip({ muted: !mix.muted })}
+      >
+        M
+      </MixerFlagButton>
+      <MixerFlagButton
+        active={mix.solo}
+        activeClass="bg-amber-500/25 text-amber-300"
+        label={t("mixer.solo_hint", { role: roleLabel })}
+        onToggle={flip({ solo: !mix.solo })}
+      >
+        S
+      </MixerFlagButton>
+    </>
+  );
+}
+
+/// Return one Role to unity. Lives in the revealed `.mixer-actions` gutter in
+/// both layouts: four reset icons standing at rest read as the Panel's subject,
+/// and the subject is the mix.
+function RoleResetButton({ roleLabel, onReset }: {
+  roleLabel: string;
+  onReset: () => void;
+}) {
+  const { t } = useTranslation();
+  const label = t("mixer.reset_hint", { role: roleLabel });
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={onReset}
+      className="inline-flex size-[18px] items-center justify-center rounded-[4px] text-muted-foreground/60 transition-colors hover:bg-secondary hover:text-foreground"
+    >
+      <RotateCcwIcon size={11} />
+    </button>
+  );
+}
+
+/// What both layouts need to render one Role.
+interface RoleControlProps {
+  role: AudioRole;
+  mix: RoleMixView;
+  silencedBySolo: boolean;
+  onMutated: () => Promise<void>;
+}
+
+/// One Role card: identity, readout and flags on line 1, the fader spanning the
+/// card on line 2. The second line is the whole point — a fader that shares a
+/// line with a value widget has no width left.
+function RoleChannel({ role, mix, silencedBySolo, onMutated }: RoleControlProps) {
+  const { t } = useTranslation();
+  const roleLabel = t(`audio_roles.${role}`);
+  const Glyph = ROLE_GLYPH[role];
+  const gain = useRoleGain(role, mix, onMutated);
+
   return (
     <div
       className="mixer-card"
       data-silenced={silencedBySolo}
-      onKeyDown={(e) => {
-        if (e.key !== "Escape" || draft === null) return;
-        // Keep the cancel local — don't let a global Escape handler also fire.
-        e.stopPropagation();
-        cancelGesture();
-      }}
+      onKeyDown={gain.cancelOnEscape}
     >
       <div className="mixer-card-head">
         <Glyph className="mixer-role-glyph" size={13} aria-hidden />
         <span className="mixer-role-name">{roleLabel}</span>
         <GainReadout
           label={t("mixer.gain_db", { role: roleLabel })}
-          value={value}
-          onCommit={commitGain}
+          value={gain.value}
+          onCommit={gain.commitGain}
         />
         {silencedBySolo ? (
           <span
@@ -268,33 +366,13 @@ function RoleChannel({ role, mix, silencedBySolo, onMutated }: {
           </span>
         ) : null}
         <div className="mixer-card-flags">
-          <MixerFlagButton
-            active={mix.muted}
-            activeClass="bg-red-500/20 text-red-300"
-            label={t("mixer.mute_hint", { role: roleLabel })}
-            onToggle={flip({ muted: !mix.muted })}
-          >
-            M
-          </MixerFlagButton>
-          <MixerFlagButton
-            active={mix.solo}
-            activeClass="bg-amber-500/25 text-amber-300"
-            label={t("mixer.solo_hint", { role: roleLabel })}
-            onToggle={flip({ solo: !mix.solo })}
-          >
-            S
-          </MixerFlagButton>
+          <RoleFlags mix={mix} roleLabel={roleLabel} flip={gain.flip} />
         </div>
-        <div className="mixer-card-actions">
-          <button
-            type="button"
-            title={t("mixer.reset_hint", { role: roleLabel })}
-            aria-label={t("mixer.reset_hint", { role: roleLabel })}
-            onClick={() => commitGain(NEUTRAL_GAIN_DB)}
-            className="inline-flex size-[18px] items-center justify-center rounded-[4px] text-muted-foreground/60 transition-colors hover:bg-secondary hover:text-foreground"
-          >
-            <RotateCcwIcon size={11} />
-          </button>
+        <div className="mixer-actions">
+          <RoleResetButton
+            roleLabel={roleLabel}
+            onReset={() => gain.commitGain(NEUTRAL_GAIN_DB)}
+          />
         </div>
       </div>
       <div className="mixer-card-fader">
@@ -305,20 +383,108 @@ function RoleChannel({ role, mix, silencedBySolo, onMutated }: {
         />
         <AppSlider
           className="mixer-fader"
-          value={value}
+          value={gain.value}
           min={GAIN_MIN_DB}
           max={GAIN_MAX_DB}
           step={GAIN_STEP_DB}
           ariaLabel={t("mixer.gain_fader", { role: roleLabel })}
-          onValueChange={audition}
-          onValueCommitted={(gainDb) => {
-            if (cancelledRef.current) {
-              cancelledRef.current = false;
-              return;
-            }
-            commitGain(gainDb);
-          }}
+          onValueChange={gain.audition}
+          onValueCommitted={gain.commitDrag}
         />
+      </div>
+    </div>
+  );
+}
+
+/// One console strip: the Role's glyph over its name, a vertical fader on the
+/// travel the whole console shares, the readout, then mute/solo/reset. Vertical
+/// is what makes the precision width-independent — a horizontal fader's travel
+/// is a function of the dock width, and at the width this layout takes over it
+/// was under one pixel per legal gain value.
+function RoleStrip({ role, mix, silencedBySolo, onMutated }: RoleControlProps) {
+  const { t } = useTranslation();
+  const roleLabel = t(`audio_roles.${role}`);
+  const Glyph = ROLE_GLYPH[role];
+  const gain = useRoleGain(role, mix, onMutated);
+
+  return (
+    <div
+      className="mixer-console-column mixer-strip"
+      data-silenced={silencedBySolo}
+      onKeyDown={gain.cancelOnEscape}
+    >
+      <div className="mixer-strip-head">
+        <Glyph className="mixer-role-glyph" size={13} aria-hidden />
+        <span className="mixer-role-name">{roleLabel}</span>
+      </div>
+      <div className="mixer-strip-fader">
+        <span
+          className="mixer-strip-unity"
+          aria-hidden
+          style={{ bottom: `${UNITY_TICK_FRACTION * 100}%` }}
+        />
+        <AppSlider
+          orientation="vertical"
+          className="mixer-console-fader"
+          value={gain.value}
+          min={GAIN_MIN_DB}
+          max={GAIN_MAX_DB}
+          step={GAIN_STEP_DB}
+          ariaLabel={t("mixer.gain_fader", { role: roleLabel })}
+          onValueChange={gain.audition}
+          onValueCommitted={gain.commitDrag}
+        />
+      </div>
+      <GainReadout
+        label={t("mixer.gain_db", { role: roleLabel })}
+        value={gain.value}
+        onCommit={gain.commitGain}
+      />
+      <div className="mixer-strip-controls">
+        <RoleFlags mix={mix} roleLabel={roleLabel} flip={gain.flip} />
+        <div className="mixer-actions">
+          <RoleResetButton
+            roleLabel={roleLabel}
+            onReset={() => gain.commitGain(NEUTRAL_GAIN_DB)}
+          />
+        </div>
+      </div>
+      {silencedBySolo ? (
+        <span
+          className="mixer-implied-badge"
+          title={t("mixer.implied_mute_hint", { role: roleLabel })}
+        >
+          {t("mixer.implied_mute_badge")}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/// The console's dB legend: one gutter for all four faders, because four copies
+/// of one legend would be the Panel's loudest element. Ticks are placed by
+/// `gainFraction` against the same box the fader tracks fill, so a tick and a
+/// thumb at one value land on one line. `role="img"` names the whole legend
+/// once instead of leaving a reader six loose numbers.
+function DbScaleGutter() {
+  const { t } = useTranslation();
+  return (
+    <div
+      className="mixer-console-column mixer-db-gutter"
+      role="img"
+      aria-label={t("mixer.db_scale")}
+    >
+      <div className="mixer-db-scale">
+        {DB_SCALE_TICKS.map((db) => (
+          <span
+            key={db}
+            className="mixer-db-tick"
+            data-unity={db === NEUTRAL_GAIN_DB}
+            style={{ bottom: `${gainFraction(db) * 100}%` }}
+          >
+            {db}
+          </span>
+        ))}
       </div>
     </div>
   );
@@ -365,6 +531,58 @@ function MasterMeter() {
   );
 }
 
+/// The same master reading as the console's fifth strip: two columns on the
+/// travel the faders use, so output level and Role gains read on one axis. The
+/// columns are RMS and peak — not left and right; the analyser reads combined
+/// channels. Standing on a sunken surface is what says "not a Role" without
+/// spending a label on it.
+function MasterMeterStrip() {
+  const { t } = useTranslation();
+  const rmsDb = useMasterRmsDb();
+  const peakDb = useMasterPeakDb();
+  const columns = [
+    { key: "rms", label: t("mixer.rms"), db: rmsDb },
+    { key: "peak", label: t("mixer.peak"), db: peakDb },
+  ];
+  return (
+    <div
+      className="mixer-console-column mixer-strip mixer-strip--master"
+      role="group"
+      aria-label={t("mixer.master_meter")}
+    >
+      <span className="mixer-strip-head mixer-master-label">{t("mixer.master")}</span>
+      <div className="mixer-master-row mixer-master-row--meters">
+        {columns.map((column) => (
+          <div key={column.key}>
+            <div className="mixer-meter-column" aria-hidden>
+              {/* The ramp is painted on the track and uncovered from the top,
+                  so a colour means one level. */}
+              <div
+                className="mixer-meter-column-shade"
+                style={{ height: `${(1 - meterFill(column.db)) * 100}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mixer-master-row">
+        {columns.map((column) => (
+          <span key={column.key} className="mixer-master-caption">
+            {column.label}
+          </span>
+        ))}
+      </div>
+      <div className="mixer-master-row">
+        {columns.map((column) => (
+          <span key={column.key} className="mixer-master-reading">
+            {meterText(column.db)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export interface RoleMixerPanelProps {
   onMutated: () => Promise<void>;
   visible?: boolean;
@@ -378,7 +596,7 @@ export function RoleMixerPanel({ onMutated, visible = true }: RoleMixerPanelProp
   // dimmed card and a silent Role cannot disagree.
   const anySolo = anyRoleSolo(roles);
 
-  // Measure our own content width to choose the card list's treatment. No shared
+  // Measure our own content width to choose the layout. No shared
   // ResizeObserver hook exists; inline the timeline's jsdom-guarded pattern (the
   // observer is absent under jsdom, so the synchronous initial measure carries
   // the tests).
@@ -397,7 +615,26 @@ export function RoleMixerPanel({ onMutated, visible = true }: RoleMixerPanelProp
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const layout: MixerLayout = width >= CONSOLE_LAYOUT_MIN_WIDTH ? "cards-wide" : "cards";
+  const layout: MixerLayout = width >= CONSOLE_LAYOUT_MIN_WIDTH ? "console" : "cards";
+
+  // One Role list for both layouts: the four canonical Roles, each with its
+  // committed mix and its gate state, so the two presentations cannot disagree
+  // about what they are showing.
+  const channels = AUDIO_ROLES.map((role: AudioRole) => {
+    const mix: RoleMixView = byRole.get(role) ?? {
+      role,
+      gain_db: 0,
+      muted: false,
+      solo: false,
+    };
+    return {
+      role,
+      mix,
+      // Mute wins over solo, so a Role that muted itself is not "implicitly"
+      // anything — it reads muted, not dimmed.
+      silencedBySolo: !mix.muted && !roleAudible(role, roles, anySolo),
+    };
+  });
 
   return (
     <section
@@ -405,23 +642,24 @@ export function RoleMixerPanel({ onMutated, visible = true }: RoleMixerPanelProp
       className={`mixer-panel mixer-panel--${layout}`}
       aria-label={t("mixer.title")}
     >
-      <div className="mixer-roles">
-        {AUDIO_ROLES.map((role: AudioRole) => {
-          const mix = byRole.get(role) ?? { role, gain_db: 0, muted: false, solo: false };
-          return (
-            <RoleChannel
-              key={role}
-              role={role}
-              mix={mix}
-              // Mute wins over solo, so a Role that muted itself is not
-              // "implicitly" anything — it reads muted, not dimmed.
-              silencedBySolo={!mix.muted && !roleAudible(role, roles, anySolo)}
-              onMutated={onMutated}
-            />
-          );
-        })}
-      </div>
-      {visible ? <MasterMeter /> : null}
+      {layout === "console" ? (
+        <div className="mixer-console">
+          <DbScaleGutter />
+          {channels.map((channel) => (
+            <RoleStrip key={channel.role} {...channel} onMutated={onMutated} />
+          ))}
+          {visible ? <MasterMeterStrip /> : null}
+        </div>
+      ) : (
+        <>
+          <div className="mixer-roles">
+            {channels.map((channel) => (
+              <RoleChannel key={channel.role} {...channel} onMutated={onMutated} />
+            ))}
+          </div>
+          {visible ? <MasterMeter /> : null}
+        </>
+      )}
     </section>
   );
 }

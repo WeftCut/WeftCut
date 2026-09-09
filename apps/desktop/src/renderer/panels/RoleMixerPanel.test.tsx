@@ -33,7 +33,9 @@ vi.mock("../render/audio/roleGainOverrides", () => ({
 // (drag) and onValueCommitted (release) deterministically — Base UI's real
 // slider needs pointer capture jsdom doesn't implement. min/max come through so
 // jsdom's range-value sanitizer keeps negative dB values (mirrors AppSwitch
-// stubbing in EffectsSection.test.tsx).
+// stubbing in EffectsSection.test.tsx). The orientation comes through as the
+// data attribute the real slider stamps: it is what maps up/down to
+// increase/decrease, so a console fader has to be asked for it.
 vi.mock("../components/AppSlider", () => ({
   AppSlider: ({
     value,
@@ -42,6 +44,7 @@ vi.mock("../components/AppSlider", () => ({
     step,
     ariaLabel,
     className,
+    orientation,
     onValueChange,
     onValueCommitted,
   }: {
@@ -51,6 +54,7 @@ vi.mock("../components/AppSlider", () => ({
     step?: number;
     ariaLabel?: string;
     className?: string;
+    orientation?: "horizontal" | "vertical";
     onValueChange: (v: number) => void;
     onValueCommitted?: (v: number) => void;
   }) => (
@@ -59,6 +63,7 @@ vi.mock("../components/AppSlider", () => ({
       role="slider"
       className={className}
       aria-label={ariaLabel}
+      data-orientation={orientation ?? "horizontal"}
       min={min}
       max={max}
       step={step}
@@ -100,6 +105,14 @@ const openReadout = (role: string) => {
   fireEvent.click(readoutFor(role));
   return readoutFor(role) as HTMLInputElement;
 };
+
+/// The console is the same Panel at a content width above the layout threshold.
+function renderConsole(
+  onMutated: () => Promise<void> = vi.fn().mockResolvedValue(undefined),
+) {
+  withWidth(500);
+  render(<RoleMixerPanel onMutated={onMutated} />);
+}
 
 beforeEach(() => {
   rolesRef.current = DEFAULT_ROLES;
@@ -191,10 +204,9 @@ describe("RoleMixerPanel", () => {
     expect(setRoleGain).not.toHaveBeenCalled();
   });
 
-  it("presents the wide card layout when wide", () => {
-    withWidth(500);
-    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
-    expect(screen.getByRole("region", { name: "Mixer" }).className).toContain("mixer-panel--cards-wide");
+  it("presents the console layout when wide", () => {
+    renderConsole();
+    expect(screen.getByRole("region", { name: "Mixer" }).className).toContain("mixer-panel--console");
   });
 
   it("presents the narrow card layout when narrow", () => {
@@ -203,7 +215,7 @@ describe("RoleMixerPanel", () => {
     render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
     expect(root().className).toContain("mixer-panel--cards");
     // Exactly one layout modifier — the narrow one, not both.
-    expect(root().className).not.toContain("mixer-panel--cards-wide");
+    expect(root().className).not.toContain("mixer-panel--console");
   });
 });
 
@@ -382,5 +394,137 @@ describe("RoleMixerPanel — master meter", () => {
 
     const meter = screen.getByRole("group", { name: "Master output meter" });
     expect(within(meter).getByText("RMS −∞ · Peak −∞ dB")).toBeTruthy();
+  });
+});
+
+// jsdom has no layout, so nothing here can see a tick line up with a fader or a
+// track measure 104px — that is the e2e's job. These assert what the console
+// renders and that it behaves as the card list does.
+describe("RoleMixerPanel — the console", () => {
+  it("stands every Role up as a strip whose controls still name their Role", () => {
+    renderConsole();
+
+    for (const role of ["Dialogue", "Music", "SFX", "Voiceover"]) {
+      expect(screen.getByLabelText(`${role} gain fader`)).toBeTruthy();
+      expect(screen.getByLabelText(`${role} gain (dB)`)).toBeTruthy();
+      expect(screen.getByLabelText(`Mute ${role} everywhere`)).toBeTruthy();
+      expect(screen.getByLabelText(`Solo ${role} (mutes the others)`)).toBeTruthy();
+      expect(screen.getByLabelText(`Reset ${role} gain to 0 dB`)).toBeTruthy();
+    }
+    expect(screen.getAllByRole("slider")).toHaveLength(4);
+  });
+
+  it("asks for vertical faders, so up and down are increase and decrease", () => {
+    renderConsole();
+
+    for (const role of ["Dialogue", "Music", "SFX", "Voiceover"]) {
+      expect(faderFor(role).dataset.orientation).toBe("vertical");
+    }
+  });
+
+  it("draws the dB scale once for the whole console, not once per fader", () => {
+    renderConsole();
+
+    expect(screen.getAllByRole("img", { name: "dB scale" })).toHaveLength(1);
+    // Both ends of the gain range and unity are labelled.
+    const scale = screen.getByRole("img", { name: "dB scale" });
+    expect(within(scale).getByText("20")).toBeTruthy();
+    expect(within(scale).getByText("0")).toBeTruthy();
+    expect(within(scale).getByText("-30")).toBeTruthy();
+  });
+
+  it("stands the master meter beside the Roles as a fifth strip", () => {
+    publishMasterMeter({ rmsDb: -18, peakDb: -6 });
+    renderConsole();
+
+    const master = screen.getByRole("group", { name: "Master output meter" });
+    // Two columns, RMS and peak — not left and right.
+    expect(within(master).getByText("RMS")).toBeTruthy();
+    expect(within(master).getByText("Peak")).toBeTruthy();
+    expect(within(master).getByText("-18.0")).toBeTruthy();
+    expect(within(master).getByText("-6.0")).toBeTruthy();
+  });
+
+  it("auditions a fader drag live and records exactly one edit on release", async () => {
+    const onMutated = vi.fn().mockResolvedValue(undefined);
+    renderConsole(onMutated);
+    const fader = faderFor("Dialogue");
+
+    fireEvent.change(fader, { target: { value: "-4" } });
+    expect(setRoleGainOverride).toHaveBeenCalledWith("dialogue", -4);
+    expect(setRoleGain).not.toHaveBeenCalled();
+    // The strip's readout mirrors the drafted value, as the card's does.
+    expect(readoutFor("Dialogue").textContent).toBe("-4 dB");
+
+    fireEvent.change(fader, { target: { value: "-5.5" } });
+    fireEvent.pointerUp(fader);
+
+    await vi.waitFor(() => expect(onMutated).toHaveBeenCalled());
+    expect(setRoleGain).toHaveBeenCalledTimes(1);
+    expect(setRoleGain).toHaveBeenCalledWith("dialogue", -5.5);
+    expect(clearRoleGainOverride).toHaveBeenCalledWith("dialogue");
+  });
+
+  it("Escape abandons a fader gesture without recording a command", () => {
+    renderConsole();
+    const fader = faderFor("Dialogue");
+
+    fireEvent.change(fader, { target: { value: "-6" } });
+    fireEvent.keyDown(fader, { key: "Escape" });
+
+    expect(clearRoleGainOverride).toHaveBeenCalledWith("dialogue");
+    expect(fader.value).toBe("-3");
+
+    // The release that still follows the Escape records nothing.
+    fireEvent.pointerUp(fader);
+    expect(setRoleGain).not.toHaveBeenCalled();
+  });
+
+  it("resets a Role to 0 dB through the recorded gain path", async () => {
+    const onMutated = vi.fn().mockResolvedValue(undefined);
+    renderConsole(onMutated);
+
+    fireEvent.click(screen.getByLabelText("Reset Music gain to 0 dB"));
+
+    await vi.waitFor(() => expect(setRoleGain).toHaveBeenCalledWith("music", 0));
+    expect(updateRoleFlags).not.toHaveBeenCalled();
+  });
+
+  it("opens the readout for typing, and discards what Escape rejects", () => {
+    renderConsole();
+
+    const field = openReadout("Dialogue");
+    expect(document.activeElement).toBe(field);
+    fireEvent.change(field, { target: { value: "12" } });
+    fireEvent.keyDown(field, { key: "Escape" });
+
+    expect(setRoleGain).not.toHaveBeenCalled();
+    expect(readoutFor("Dialogue").textContent).toBe("-3 dB");
+  });
+
+  it("toggles mute through the unrecorded flag path", async () => {
+    renderConsole();
+
+    fireEvent.click(screen.getByLabelText("Mute Dialogue everywhere"));
+
+    await vi.waitFor(() => expect(updateRoleFlags).toHaveBeenCalledWith("dialogue", { muted: true }));
+    expect(setRoleGain).not.toHaveBeenCalled();
+  });
+
+  it("names the reason on every strip a solo silenced, and not on the soloed one", () => {
+    rolesRef.current = [
+      { role: "dialogue", gain_db: 0, muted: false, solo: true },
+      { role: "music", gain_db: 0, muted: false, solo: false },
+    ];
+    renderConsole();
+
+    // Music plus the two absent Roles, exactly as in the card list.
+    expect(screen.getAllByText("Silenced")).toHaveLength(3);
+    expect(
+      screen.getByTitle("Music is silent because another role is soloed").textContent,
+    ).toBe("Silenced");
+    expect(
+      screen.queryByTitle("Dialogue is silent because another role is soloed"),
+    ).toBeNull();
   });
 });
