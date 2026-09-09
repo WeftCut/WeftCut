@@ -6,7 +6,8 @@
 // Node chain per layer:
 //   AudioBufferSourceNode (chunk) → GainNode (envelope automation)
 //     → PanGraph (matrix: ChannelSplitter → 4×GainNode → ChannelMerger)
-//       → GainNode (trim: micro-fades, re-anchor masking) → AudioGraph.input
+//       → GainNode (trim: micro-fades, re-anchor masking)
+//         → AudioGraph.roleBusInput(role)  (the Role's metering fan-in)
 //
 // The gain/pan envelopes are the sampled-envelope contract
 // (`envelope.ts` ↔ Rust `audio::envelope`): identical control points,
@@ -16,7 +17,7 @@
 // Clock: chunks are scheduled against the engine's `ClockAnchor`, and an
 // anchor identity change triggers a micro-faded reschedule (see `lastAnchor`).
 
-import type { AudioView } from "../../ipc";
+import type { AudioRole, AudioView } from "../../ipc";
 import type { AudioGraph } from "./AudioGraph";
 import {
   type Envelope,
@@ -70,15 +71,19 @@ export class AudioMixer {
   private disposed = false;
 
   private view: AudioView;
+  /// The Role bus `trim` is currently wired to. The Role rides on the view, so
+  /// a Role change arrives as a replaced view and `updateView` re-points the
+  /// connection — there is no Role in `AudioMixerInit` to keep in sync.
+  private connectedRole: AudioRole;
   private layerTStartUs: number;
   private layerTEndUs: number;
   private srcInFrame = 0;
   private srcOutFrame = 0;
   private gainEnv: Envelope;
   private panEnv: Envelope;
-  /// Role-bus linear gain folded onto the gain envelope — the preview twin of
-  /// `plan_for_project`'s `role_gain` fold; see roleGate.ts. Unity until the
-  /// Compositor passes one.
+  /// The Role's linear gain, folded onto this layer's own gain envelope — the
+  /// preview twin of `plan_for_project`'s `role_gain` fold; see roleGate.ts.
+  /// Unity until the Compositor passes one.
   private roleGainLinear = 1;
 
   /// The engine's clock anchor as of the last tick — by REFERENCE. The
@@ -101,7 +106,8 @@ export class AudioMixer {
     this.gainNode = ctx.createGain();
     this.trim = ctx.createGain();
     this.gainNode.connect(this.trim);
-    this.trim.connect(graph.input);
+    this.connectedRole = this.view.role;
+    this.trim.connect(graph.roleBusInput(this.connectedRole));
 
     this.gainEnv = { stepUs: 10_000, spanUs: 0, values: [1] };
     this.panEnv = { stepUs: 10_000, spanUs: 0, values: [0] };
@@ -163,7 +169,9 @@ export class AudioMixer {
       spanUs,
     );
     this.panEnv = samplePan(this.view.pan, spanUs);
-    // Fold the role bus gain (preview twin — see roleGate.ts).
+    // Fold the Role gain here (preview twin — see roleGate.ts). This is the
+    // only place it is applied, which is why the Role bus downstream stays at
+    // unity.
     if (this.roleGainLinear !== 1) {
       for (let i = 0; i < this.gainEnv.values.length; i++) {
         this.gainEnv.values[i]! *= this.roleGainLinear;
@@ -190,6 +198,17 @@ export class AudioMixer {
     roleGainLinear: number,
   ): void {
     this.view = view;
+    if (view.role !== this.connectedRole) {
+      // `trim`'s only downstream is its Role bus — `installPanGraph` rewires
+      // into `trim`, never out of it — so a bare disconnect is exact.
+      try {
+        this.trim.disconnect();
+      } catch {
+        // not connected — fine
+      }
+      this.connectedRole = view.role;
+      this.trim.connect(this.graph.roleBusInput(this.connectedRole));
+    }
     this.layerTStartUs = layerTStartUs;
     this.layerTEndUs = layerTEndUs;
     this.roleGainLinear = roleGainLinear;
