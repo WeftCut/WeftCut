@@ -160,7 +160,12 @@ function ModelCard({ model, name: displayName, operation, onUse, onRemoved, onEr
       {operation?.phase === "needs_components" ? <Button size="sm" disabled={submitting} onClick={() => void act(() => modelsInstallComponents(model.id))}>{t("models.install_components")}</Button>
         : !configured ? <Button size="sm" disabled={busy} onClick={() => setAdvanced(true)}>{t("models.configure")}</Button>
         : <Button size="sm" disabled={busy || !canUse || !model.supported && !customIdentity || model.active && !dirty && !operation && !!model.verified && model.installed}
-          onClick={() => void use()}>{operation?.phase === "error" ? t("models.retry") : model.locality === "local" && !model.installed && !customIdentity ? t("models.download_use") : dirty || !model.verified ? t("models.verify_use") : t("models.use")}</Button>}
+          onClick={() => void use()}>{operation?.phase === "error" ? t("models.retry")
+            // Only offer a download when there is one: a custom entry has no
+            // catalog artifacts, so its missing files are a path to repair
+            // (`models.files_missing`), not bytes to fetch.
+            : model.locality === "local" && !model.installed && !customIdentity && model.missingBytes > 0 ? t("models.download_use")
+            : dirty || !model.verified ? t("models.verify_use") : t("models.use")}</Button>}
       {operation && operation.phase !== "error" && <Button size="sm" disabled={submitting || operation.phase === "installing_components"} onClick={() => void act(() => modelsCancel(model.id))}>{t("models.cancel")}</Button>}
       <Button variant="ghost" size="sm" aria-expanded={advanced} onClick={() => setAdvanced(v => !v)}>
         {advanced ? <ChevronDown size={12} /> : <ChevronRight size={12} />}{t("models.advanced")}
