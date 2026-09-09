@@ -440,12 +440,15 @@ const zhCN: Resources = {
     // 跟随片段的标记，区别于自由标记。CONTEXT.md 的定名用词——绝不叫「片段标记」，
     // 那会指向第二种实体。
     anchored: "已锚定",
-    go_to: "跳到 {{timecode}}",
+    go_to: "跳转至 {{timecode}}",
     // 休眠行不跳时间：它所指的那一帧此刻不在任何时间线上，
     // 唯一诚实的去处是它所锚定的片段。
     reveal_clip: "位于素材的 {{timecode}} —— 显示锚定的片段",
     // 退出休眠的唯一出口。CONTEXT.md 的定名用词。
     detach: "解除锚定",
+    // 行内的删除。与轨道右键菜单那一行（`timeline.delete_marker`）用词一致，
+    // 但刻意另立键位：面板为自己的操作命名，上面的 `detach` 已是如此。
+    delete: "删除标记",
   },
   shots_panel: {
     // 状态（a）：没有对象。点名"视频片段"而不是说"未选中"——音频或文字片段也是

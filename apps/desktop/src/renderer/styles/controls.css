@@ -295,6 +295,30 @@
   cursor: not-allowed;
 }
 
+/* Dot modifier — for a dense list row that READS the colour down a column
+ * rather than aiming at it (the Marker Panel). The default 32x22 slab spends a
+ * twelfth of a row at TOOL_MINIMUM's 240px, and its own 1px --border draws a
+ * second box beside the fields' boxes.
+ *
+ * Chromium wraps the fill in ::-webkit-color-swatch-wrapper with its own
+ * padding and puts a border on ::-webkit-color-swatch: left alone, an 11px
+ * control renders a few pixels of colour inside a grey ring. Both pseudos have
+ * to be reset here — no utility class can address them, which is why this is a
+ * modifier and not a className at the call site. */
+.app-color-swatch--dot {
+  width: 11px;
+  height: 11px;
+  border: none;
+  border-radius: 999px;
+}
+.app-color-swatch--dot::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.app-color-swatch--dot::-webkit-color-swatch {
+  border: none;
+  border-radius: 999px;
+}
+
 /* Swatch + eyedropper pairing (AppColorField withEyeDropper). */
 .app-color-field {
   display: inline-flex;

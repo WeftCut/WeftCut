@@ -15,6 +15,7 @@ const marker = vi.hoisted(() => ({
   setMarkerNote: vi.fn().mockResolvedValue(undefined),
   setMarkerColor: vi.fn().mockResolvedValue(undefined),
   detachMarker: vi.fn().mockResolvedValue(undefined),
+  removeMarker: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../ipc", async (importActual) => ({
   ...(await importActual<typeof import("../ipc")>()),
@@ -228,6 +229,25 @@ describe("MarkerPanel", () => {
     // business offering it, because the anchor is still doing its job.
     for (const awake of rowsUnder("Timeline"))
       expect(within(awake).queryByRole("button", { name: "Detach" })).toBeNull();
+  });
+
+  it("deletes a marker from its own row, with no confirm in front of it", () => {
+    render(<MarkerPanel />);
+    fireEvent.click(
+      within(rowsUnder("Timeline")[0]!).getByRole("button", { name: "Delete marker" }),
+    );
+    expect(marker.removeMarker).toHaveBeenCalledExactlyOnceWith("free");
+  });
+
+  // The case the Panel exists for: a hibernating marker is painted on no lane,
+  // so the lane's context menu cannot be opened on it and this row is the ONLY
+  // place it can be deleted from.
+  it("deletes a hibernating marker too — the row is its only delete surface", () => {
+    render(<MarkerPanel />);
+    fireEvent.click(
+      within(rowsUnder("Hibernating")[0]!).getByRole("button", { name: "Delete marker" }),
+    );
+    expect(marker.removeMarker).toHaveBeenCalledExactlyOnceWith("asleep");
   });
 
   it("offers no editable time on any row, hibernating or not", () => {

@@ -18,13 +18,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Anchor, ChevronDown, ChevronRight } from "lucide-react";
+import { Anchor, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { AppColorField, hexToRgba } from "../components/AppColorField";
 import { AppInput } from "../components/AppInput";
 import { tryMutate } from "../errors/tryMutate";
 import { formatTimecode, formatWallClock } from "../frames";
 import {
   detachMarker,
+  removeMarker,
   renameMarker,
   setMarkerColor,
   setMarkerNote,
@@ -182,6 +183,37 @@ function MarkerTextField({
   );
 }
 
+/// The row's delete. No confirm dialog stands in front of it, for the reason
+/// `remove_marker` itself gives: the deletion is RECORDED, so it is one undo
+/// away — and the Panel must not be stricter about an operation than the lane's
+/// own context menu, which deletes on the same terms.
+///
+/// Present on every row, hibernating included: a hibernating marker is painted
+/// on no lane, so the context menu that would otherwise delete it cannot be
+/// opened at all. Without this button the only marker that CANNOT be deleted is
+/// the one whose clip stopped showing it — the exact case a Panel-only surface
+/// exists for.
+///
+/// Hidden until the row is hovered or the button itself takes focus — the house
+/// pattern for a row action (`.playhead-goto`). A column of trash cans standing
+/// down a dense list reads as the Panel's subject, and the subject is the notes.
+function MarkerDeleteButton({ markerId }: { markerId: string }) {
+  const { t } = useTranslation();
+  return (
+    <button
+      type="button"
+      title={t("marker_panel.delete")}
+      aria-label={t("marker_panel.delete")}
+      className="shrink-0 cursor-pointer rounded-[4px] p-[3px] text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+      onClick={() => {
+        void tryMutate(() => removeMarker(markerId), "remove_marker");
+      }}
+    >
+      <Trash2 size={12} aria-hidden />
+    </button>
+  );
+}
+
 /// The colour swatch, drafted locally and committed once the gesture goes quiet
 /// (`COLOR_COMMIT_QUIET_MS`).
 function MarkerColorField({ marker }: { marker: MarkerSummary }) {
@@ -198,6 +230,12 @@ function MarkerColorField({ marker }: { marker: MarkerSummary }) {
     <AppColorField
       value={draft ?? marker.color_hint}
       ariaLabel={t("marker_panel.color_field")}
+      // A dot, not the default 32x22 slab: at `TOOL_MINIMUM`'s 240px the slab
+      // spends a twelfth of the row on a control whose job HERE is to be read
+      // down a column, not aimed at. The modifier lives in `controls.css`
+      // because rounding the native swatch needs `::-webkit-color-swatch`,
+      // which no utility class can reach.
+      className="app-color-swatch--dot"
       withEyeDropper={false}
       onValueChange={(hex) => {
         setDraft(hex);
@@ -216,6 +254,62 @@ function MarkerColorField({ marker }: { marker: MarkerSummary }) {
   );
 }
 
+/// One row, as a flat card. A step of surface (`--surface-raised` on the
+/// Panel's `--card`) plus the list's own gap is the WHOLE separation mechanism —
+/// no border, no left colour rail, no shadow. A rail would spend a second
+/// channel on the colour the dot already carries, and a lifted card in a list
+/// this dense reads as N objects competing rather than N members of a section.
+///
+/// The hover step is `--accent` rather than `--secondary`: the card already sits
+/// one surface above the panel, and `--secondary` is only one step further, so
+/// on a raised ground it barely registers as "the pointer is here".
+const CARD_ROW =
+  "group flex flex-col gap-0.5 rounded-[4px] bg-surface-raised px-2 py-1.5 hover:bg-accent";
+
+/// Line 2 — the note — inset so it lines up with line 1 on both sides.
+///
+/// Left `15px`: the colour dot (11px) plus the row's `gap-1`, so the note hangs
+/// under the TIMECODE. Two lines sharing a left edge read as one block; a note
+/// starting at the card's own padding edge reads as a second row.
+///
+/// Right `22px`: the delete button (a 12px glyph in 3px of padding) plus its
+/// gap. Line 1 gives that width up to the action, so line 2 gives it back
+/// instead of running on underneath a control — the row ends with one action
+/// gutter that both lines respect.
+///
+/// One caveat, stated rather than worked around: on a HIBERNATING row line 1
+/// also carries Detach, so the label ends earlier still and the note lines up
+/// with the delete button rather than with the label. The gutter is a constant,
+/// and a label whose right edge depends on the width of a translated verb is not
+/// something a margin can track.
+const NOTE_INSET = "ml-[15px] mr-[22px]";
+
+/// An empty note costs no height until the row is engaged. `group-focus-within`
+/// is not decoration here: the field is `display: none` at rest, so without it
+/// the note of an unannotated marker could not be reached by keyboard at all —
+/// focusing anything else in the row is what puts it back in the tab order.
+///
+/// The cost is a reflow: hovering a note-less row grows it, and the rows below
+/// step down. Dropping `group-hover` and keeping only `group-focus-within`
+/// removes that entirely, at the price of the note appearing only once a field
+/// in the row is focused.
+const NOTE_COLLAPSED = `${NOTE_INSET} hidden group-hover:block group-focus-within:block`;
+
+function MarkerNoteRow({ marker }: { marker: MarkerSummary }) {
+  const { t } = useTranslation();
+  return (
+    <div className={marker.note === "" ? NOTE_COLLAPSED : NOTE_INSET}>
+      <MarkerTextField
+        className="min-w-0"
+        value={marker.note}
+        ariaLabel={t("marker_panel.note_field")}
+        placeholder={t("marker_panel.note_field")}
+        onCommit={(next) => setMarkerNote(marker.id, next)}
+      />
+    </div>
+  );
+}
+
 /// A marker sitting on a timeline: its own composition's timecode activates it,
 /// and an anchored one is marked as such so "why did this move" has an answer on
 /// the row.
@@ -224,12 +318,12 @@ function TimelineMarkerRow({ row }: { row: PanelMarker }) {
   const { marker } = row;
   const timecode = formatTimecode(marker.t_us, row.fpsNum, row.fpsDen);
   return (
-    <li className="flex flex-col gap-1 rounded-[4px] px-1 py-1 hover:bg-secondary/50">
+    <li className={CARD_ROW}>
       <div className="flex items-center gap-1">
         <MarkerColorField marker={marker} />
         <button
           type="button"
-          className="shrink-0 font-mono text-[11px] text-muted-foreground hover:text-foreground"
+          className="shrink-0 cursor-pointer font-mono text-[11px] text-muted-foreground hover:text-foreground"
           title={t("marker_panel.go_to", { timecode })}
           aria-label={t("marker_panel.go_to", { timecode })}
           onClick={() => activateMarker(row)}
@@ -253,14 +347,9 @@ function TimelineMarkerRow({ row }: { row: PanelMarker }) {
           placeholder={t("kinds.marker")}
           onCommit={(next) => renameMarker(marker.id, next)}
         />
+        <MarkerDeleteButton markerId={marker.id} />
       </div>
-      <MarkerTextField
-        className="min-w-0"
-        value={marker.note}
-        ariaLabel={t("marker_panel.note_field")}
-        placeholder={t("marker_panel.note_field")}
-        onCommit={(next) => setMarkerNote(marker.id, next)}
-      />
+      <MarkerNoteRow marker={marker} />
     </li>
   );
 }
@@ -289,12 +378,12 @@ function HibernatingMarkerRow({ row }: { row: PanelMarker }) {
   // and the commit that rejects it.
   const source = formatWallClock(marker.anchor_src_us ?? marker.t_us);
   return (
-    <li className="flex flex-col gap-1 rounded-[4px] px-1 py-1 hover:bg-secondary/50">
+    <li className={CARD_ROW}>
       <div className="flex items-center gap-1">
         <MarkerColorField marker={marker} />
         <button
           type="button"
-          className="shrink-0 font-mono text-[11px] text-muted-foreground hover:text-foreground"
+          className="shrink-0 cursor-pointer font-mono text-[11px] text-muted-foreground hover:text-foreground"
           title={t("marker_panel.reveal_clip", { timecode: source })}
           aria-label={t("marker_panel.reveal_clip", { timecode: source })}
           onClick={() => {
@@ -317,21 +406,16 @@ function HibernatingMarkerRow({ row }: { row: PanelMarker }) {
         />
         <button
           type="button"
-          className="shrink-0 rounded-[4px] px-1 text-[11px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+          className="shrink-0 cursor-pointer rounded-[4px] px-1 text-[11px] text-muted-foreground hover:text-foreground"
           onClick={() => {
             void tryMutate(() => detachMarker(marker.id), "detach_marker");
           }}
         >
           {t("marker_panel.detach")}
         </button>
+        <MarkerDeleteButton markerId={marker.id} />
       </div>
-      <MarkerTextField
-        className="min-w-0"
-        value={marker.note}
-        ariaLabel={t("marker_panel.note_field")}
-        placeholder={t("marker_panel.note_field")}
-        onCommit={(next) => setMarkerNote(marker.id, next)}
-      />
+      <MarkerNoteRow marker={marker} />
     </li>
   );
 }
@@ -356,7 +440,7 @@ function MarkerSectionView({
   return (
     <section aria-label={section.name} className="flex flex-col">
       {section.markers.length === 0 ? (
-        <h3 className="px-1 py-1 text-xs font-medium text-muted-foreground">
+        <h3 className="px-0.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
           {heading}
         </h3>
       ) : (
@@ -365,7 +449,7 @@ function MarkerSectionView({
             type="button"
             aria-expanded={!collapsed}
             onClick={onToggle}
-            className="flex w-full items-center gap-1 rounded-[4px] px-1 py-1 text-xs font-medium text-muted-foreground hover:bg-secondary hover:text-foreground"
+            className="flex w-full cursor-pointer items-center gap-1 px-0.5 py-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-muted-foreground hover:text-foreground"
           >
             {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
             {heading}
@@ -373,7 +457,7 @@ function MarkerSectionView({
         </h3>
       )}
       {!collapsed && section.markers.length > 0 && (
-        <ul className="flex flex-col">
+        <ul className="flex flex-col gap-1.5">
           {section.markers.map((row) =>
             row.marker.hibernating ? (
               <HibernatingMarkerRow key={row.marker.id} row={row} />
@@ -400,7 +484,10 @@ export function MarkerPanel() {
   );
   return (
     <section
-      className="flex flex-col gap-2 p-1"
+      // Real side padding, replacing `p-1`'s 4px: the cards need a margin to sit
+      // in, or their own surface runs into the panel edge and the step of
+      // surface stops reading as a card at all.
+      className="flex flex-col gap-3.5 px-2 pt-1 pb-2"
       aria-label={t("dock_workspace.panels.marker")}
       data-testid="marker-panel"
     >

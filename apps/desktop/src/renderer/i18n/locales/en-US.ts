@@ -498,6 +498,10 @@ const enUS = {
     reveal_clip: "In the footage at {{timecode}} — reveal the anchoring clip",
     // The one exit from hibernation. CONTEXT.md's pinned word.
     detach: "Detach",
+    // The row's delete. Same words as the lane's context menu row
+    // (`timeline.delete_marker`) and deliberately its own key: the Panel names
+    // its own affordances, as `detach` above already does.
+    delete: "Delete marker",
   },
   shots_panel: {
     // State (a): no subject. It names the kind rather than saying "nothing
