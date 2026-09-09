@@ -75,8 +75,12 @@ const DB_SCALE_TICKS = [20, 10, 0, -10, -20, -30];
 // all the way down to `TOOL_MINIMUM`'s 240px, so there is no third branch.
 const CONSOLE_LAYOUT_MIN_WIDTH = 392;
 
-// Master meter fill scale: -60 dBFS is the visual floor (0% fill), 0 dBFS is
-// full scale. (Silence is the store's `SILENCE_DB` sentinel, rendered "−∞".)
+// The fill scale every meter on the Panel reads: -60 dBFS is the visual floor
+// (0% fill) and 0 dBFS is full scale, for the master output and the per-Role
+// taps alike. One floor on purpose — a Role bar and the master bar at the same
+// level have to fill to the same fraction, or the Panel shows two scales and
+// neither can be read against the other. (Silence is the store's `SILENCE_DB`
+// sentinel, rendered "−∞".)
 const METER_FLOOR_DB = -60;
 
 type MixerLayout = "cards" | "console";
@@ -146,8 +150,9 @@ function GainReadout({ label, value, onCommit }: {
         type="button"
         className="mixer-readout"
         aria-label={label}
-        // Marks a trimmed Role on the readout itself; the badge slot beside it
-        // belongs to implied mute.
+        // A trimmed Role is marked on the readout itself rather than with a
+        // badge of its own: the one badge either layout carries names implied
+        // mute, and a second badge beside it would make two states compete.
         data-neutral={value === NEUTRAL_GAIN_DB}
         onClick={() => {
           discardedRef.current = false;
@@ -329,6 +334,24 @@ function RoleResetButton({ roleLabel, onReset }: {
   );
 }
 
+/// Names why a Role is silent when another Role's solo is what silenced it.
+/// Dimming is the indication and this is the reason, so the state is explained
+/// rather than merely shown; the full sentence is the badge's `title`. Shared by
+/// both layouts because two copies of one explanation are two things to keep
+/// saying the same, and this one is the widest thing either layout adds — the
+/// line it lands on is a layout decision each presentation makes for itself.
+function ImpliedMuteBadge({ roleLabel }: { roleLabel: string }) {
+  const { t } = useTranslation();
+  return (
+    <span
+      className="mixer-implied-badge"
+      title={t("mixer.implied_mute_hint", { role: roleLabel })}
+    >
+      {t("mixer.implied_mute_badge")}
+    </span>
+  );
+}
+
 /// What both layouts need to render one Role.
 interface RoleControlProps {
   role: AudioRole;
@@ -337,10 +360,14 @@ interface RoleControlProps {
   onMutated: () => Promise<void>;
 }
 
-/// One Role card: identity, readout and flags on line 1, the fader spanning the
-/// card on line 2, the Role's level meter on line 3. The second line is the
-/// whole point — a fader that shares a line with a value widget has no width
-/// left.
+/// One Role card: identity and readout on line 1, the fader spanning the card
+/// on line 2, the Role's level meter on line 3, and its state and action on
+/// line 4. Giving the fader a line of its own is the whole point — a fader that
+/// shares a line with a value widget has no width left. The controls have a
+/// line of their own for width rather than for grouping: the Role name is the
+/// one item on the card that grows with a translation, and it only has room to
+/// grow while the boxes sharing its line stay few — `.mixer-card-head` carries
+/// that arithmetic.
 function RoleChannel({ role, mix, silencedBySolo, onMutated }: RoleControlProps) {
   const { t } = useTranslation();
   const roleLabel = t(`audio_roles.${role}`);
@@ -361,23 +388,6 @@ function RoleChannel({ role, mix, silencedBySolo, onMutated }: RoleControlProps)
           value={gain.value}
           onCommit={gain.commitGain}
         />
-        {silencedBySolo ? (
-          <span
-            className="mixer-implied-badge"
-            title={t("mixer.implied_mute_hint", { role: roleLabel })}
-          >
-            {t("mixer.implied_mute_badge")}
-          </span>
-        ) : null}
-        <div className="mixer-card-flags">
-          <RoleFlags mix={mix} roleLabel={roleLabel} flip={gain.flip} />
-        </div>
-        <div className="mixer-actions">
-          <RoleResetButton
-            roleLabel={roleLabel}
-            onReset={() => gain.commitGain(NEUTRAL_GAIN_DB)}
-          />
-        </div>
       </div>
       <div className="mixer-card-fader">
         <span
@@ -392,11 +402,24 @@ function RoleChannel({ role, mix, silencedBySolo, onMutated }: RoleControlProps)
           max={GAIN_MAX_DB}
           step={GAIN_STEP_DB}
           ariaLabel={t("mixer.gain_fader", { role: roleLabel })}
+          getAriaValueText={(db) => t("mixer.gain_value", { value: db })}
           onValueChange={gain.audition}
           onValueCommitted={gain.commitDrag}
         />
       </div>
       <RoleMeter role={role} roleLabel={roleLabel} />
+      <div className="mixer-card-controls">
+        {silencedBySolo ? <ImpliedMuteBadge roleLabel={roleLabel} /> : null}
+        <div className="mixer-card-flags">
+          <RoleFlags mix={mix} roleLabel={roleLabel} flip={gain.flip} />
+        </div>
+        <div className="mixer-actions">
+          <RoleResetButton
+            roleLabel={roleLabel}
+            onReset={() => gain.commitGain(NEUTRAL_GAIN_DB)}
+          />
+        </div>
+      </div>
     </div>
   );
 }
@@ -436,6 +459,7 @@ function RoleStrip({ role, mix, silencedBySolo, onMutated }: RoleControlProps) {
           max={GAIN_MAX_DB}
           step={GAIN_STEP_DB}
           ariaLabel={t("mixer.gain_fader", { role: roleLabel })}
+          getAriaValueText={(db) => t("mixer.gain_value", { value: db })}
           onValueChange={gain.audition}
           onValueCommitted={gain.commitDrag}
         />
@@ -454,14 +478,7 @@ function RoleStrip({ role, mix, silencedBySolo, onMutated }: RoleControlProps) {
           />
         </div>
       </div>
-      {silencedBySolo ? (
-        <span
-          className="mixer-implied-badge"
-          title={t("mixer.implied_mute_hint", { role: roleLabel })}
-        >
-          {t("mixer.implied_mute_badge")}
-        </span>
-      ) : null}
+      {silencedBySolo ? <ImpliedMuteBadge roleLabel={roleLabel} /> : null}
     </div>
   );
 }

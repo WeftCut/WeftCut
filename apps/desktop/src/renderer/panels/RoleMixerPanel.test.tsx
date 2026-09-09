@@ -36,9 +36,11 @@ vi.mock("../render/audio/roleGainOverrides", () => ({
 // (drag) and onValueCommitted (release) deterministically — Base UI's real
 // slider needs pointer capture jsdom doesn't implement. min/max come through so
 // jsdom's range-value sanitizer keeps negative dB values (mirrors AppSwitch
-// stubbing in EffectsSection.test.tsx). The orientation comes through as the
-// data attribute the real slider stamps: it is what maps up/down to
-// increase/decrease, so a console fader has to be asked for it.
+// stubbing in EffectsSection.test.tsx). Two props come through as the attributes
+// the real slider stamps from them, so what is asserted here is what a user of
+// the real control gets: the orientation, which is what maps up/down to
+// increase/decrease, and the announced value text, which the real thumb hands
+// Base UI as `aria-valuetext`.
 vi.mock("../components/AppSlider", () => ({
   AppSlider: ({
     value,
@@ -46,6 +48,7 @@ vi.mock("../components/AppSlider", () => ({
     max,
     step,
     ariaLabel,
+    getAriaValueText,
     className,
     orientation,
     onValueChange,
@@ -56,6 +59,7 @@ vi.mock("../components/AppSlider", () => ({
     max: number;
     step?: number;
     ariaLabel?: string;
+    getAriaValueText?: (value: number) => string;
     className?: string;
     orientation?: "horizontal" | "vertical";
     onValueChange: (v: number) => void;
@@ -66,6 +70,7 @@ vi.mock("../components/AppSlider", () => ({
       role="slider"
       className={className}
       aria-label={ariaLabel}
+      aria-valuetext={getAriaValueText?.(value)}
       data-orientation={orientation ?? "horizontal"}
       min={min}
       max={max}
@@ -176,6 +181,16 @@ describe("RoleMixerPanel", () => {
   it("binds the fader to the Role's committed gain", () => {
     render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
     expect(faderFor("Dialogue").value).toBe("-3");
+  });
+
+  it("announces the fader's value with its unit rather than a bare number", () => {
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+
+    expect(faderFor("Dialogue").getAttribute("aria-valuetext")).toBe("-3 dB");
+    // And it follows the gesture: a listener hears the unit at every value the
+    // drag passes through, not only at the committed one.
+    fireEvent.change(faderFor("Dialogue"), { target: { value: "-6" } });
+    expect(faderFor("Dialogue").getAttribute("aria-valuetext")).toBe("-6 dB");
   });
 
   it("records gain edits through setRoleGain without touching the flag path", async () => {
@@ -389,6 +404,29 @@ describe("RoleMixerPanel — implied mute", () => {
     expect(screen.getAllByText("Silenced")).toHaveLength(3);
   });
 
+  it("names the reason with the same badge on a card and on a strip", () => {
+    rolesRef.current = [
+      { role: "dialogue", gain_db: 0, muted: false, solo: true },
+      { role: "music", gain_db: 0, muted: false, solo: false },
+    ];
+    // The sentence is the title this queries by, so an identical text and skin
+    // is the whole of "one badge, two presentations".
+    const badge = () => {
+      const el = screen.getByTitle("Music is silent because another role is soloed");
+      return { text: el.textContent, className: el.className };
+    };
+
+    withWidth(240);
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+    const onTheCard = badge();
+    cleanup();
+
+    renderConsole();
+
+    expect(onTheCard.text).toBe("Silenced");
+    expect(badge()).toEqual(onTheCard);
+  });
+
   it("names no reason while nothing is soloed", () => {
     render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
     expect(screen.queryAllByText("Silenced")).toHaveLength(0);
@@ -506,6 +544,13 @@ describe("RoleMixerPanel — the console", () => {
     for (const role of ["Dialogue", "Music", "SFX", "Voiceover"]) {
       expect(faderFor(role).dataset.orientation).toBe("vertical");
     }
+  });
+
+  it("announces a vertical fader's value with its unit as the card's does", () => {
+    renderConsole();
+
+    expect(faderFor("Dialogue").getAttribute("aria-valuetext")).toBe("-3 dB");
+    expect(faderFor("Music").getAttribute("aria-valuetext")).toBe("2 dB");
   });
 
   it("draws the dB scale once for the whole console, not once per fader", () => {

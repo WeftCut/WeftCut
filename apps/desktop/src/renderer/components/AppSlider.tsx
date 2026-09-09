@@ -18,6 +18,15 @@ interface AppSliderProps {
   /// nothing when given none.
   orientation?: "horizontal" | "vertical";
   ariaLabel?: string;
+  /// The value as a screen reader should hear it, e.g. `"-3 dB"`. Without one,
+  /// Base UI leaves `aria-valuetext` unset and a reader falls back to
+  /// `aria-valuenow` — a bare number, which on any scale that has a unit is not
+  /// a value the listener can act on. Narrowed from Base UI's
+  /// `(formattedValue, value, index)` to the value alone, because this wrapper
+  /// renders exactly one thumb. It is Base UI's own value, not one the call
+  /// site re-derives, so the announced text and `aria-valuenow` cannot
+  /// disagree.
+  getAriaValueText?: (value: number) => string;
   className?: string;
 }
 
@@ -35,6 +44,7 @@ export function AppSlider({
   disabled,
   orientation,
   ariaLabel,
+  getAriaValueText,
   className,
 }: AppSliderProps) {
   return (
@@ -56,7 +66,15 @@ export function AppSlider({
       <Slider.Control className="app-slider-control">
         <Slider.Track className="app-slider-track">
           <Slider.Indicator className="app-slider-indicator" />
-          <Slider.Thumb className="app-slider-thumb" aria-label={ariaLabel} />
+          <Slider.Thumb
+            className="app-slider-thumb"
+            aria-label={ariaLabel}
+            getAriaValueText={
+              getAriaValueText
+                ? (_formatted, value) => getAriaValueText(value)
+                : undefined
+            }
+          />
         </Slider.Track>
       </Slider.Control>
     </Slider.Root>

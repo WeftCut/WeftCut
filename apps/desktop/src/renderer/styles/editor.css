@@ -212,10 +212,12 @@
   padding: 0;
 }
 
-/* Role Mixer Panel, docked narrow — one flat card per Audio Role, identity plus
-   the dB readout on line 1 and a full-width fader on line 2. The two lines are
-   the whole point: sharing one line with a value widget is what left the fader
-   with no width. Docked wide, the same Panel is the console further down. */
+/* Role Mixer Panel, docked narrow — one flat card per Audio Role: identity plus
+   the dB readout on line 1, a full-width fader on line 2, the Role's own level
+   meter on line 3, and mute/solo/reset on line 4. Identity and value on one
+   line with the fader on its own is the whole point: sharing one line with a
+   value widget is what left the fader with no width. Docked wide, the same
+   Panel is the console further down. */
 .mixer-panel {
   /* Same 12px inset / 8px rhythm as the Captions and Playhead Panels. */
   padding: 12px;
@@ -232,6 +234,16 @@
      over, so the list runs one column at every width it is the layout at. The
      rule is what keeps that a measurement rather than an assumption. */
   --mixer-card-min: 200px;
+
+  /* The one green→amber→red level ramp, declared once for every meter the Panel
+     draws: the per-Role bars, the console's columns and the master's fill. A
+     colour has to mean one level wherever it appears, and a stop list kept in
+     three copies drifts — each site chooses only the gradient's angle. */
+  --mixer-meter-stops:
+    var(--success) 0%,
+    var(--success) 65%,
+    var(--warning) 88%,
+    var(--destructive) 100%;
 }
 
 /* The Role card list. `min()` keeps a card from overflowing a dock narrower than
@@ -258,13 +270,22 @@
   background: var(--surface-raised);
 }
 
-/* Silent because another Role is soloed. Dimming is the indication; the badge
-   beside the readout is what names the reason. An explicitly muted Role is NOT
-   dimmed — its own mute flag reads pressed, and mute wins over solo. */
+/* Silent because another Role is soloed. Dimming is the indication; the badge on
+   the card's controls line is what names the reason. An explicitly muted Role is
+   NOT dimmed — its own mute flag reads pressed, and mute wins over solo. */
 .mixer-card[data-silenced="true"] {
   opacity: 0.6;
 }
 
+/* Line 1 — identity and value, and deliberately nothing else. The glyph and the
+   readout are the only fixed boxes on it (13px, and 59px at the widest gain
+   value), so over the ~186px of card content the narrowest legal dock leaves,
+   the flexible Role name still measures ~102px — near double what the longest
+   translated name needs. That margin is the whole reason the flags and the
+   reset gutter have a line of their own: back here they take 72px with their
+   gaps, the name is down to ~30px and ellipsizes, and the implied-mute badge on
+   top of that overflows the card in exactly the state the badge exists to
+   explain. */
 .mixer-card-head {
   display: flex;
   align-items: center;
@@ -277,8 +298,12 @@
   color: var(--muted-foreground);
 }
 
-/* The only flexible item on the line — everything beside it is `flex: none`, so
-   a long translated Role name ellipsizes instead of starving a short sibling. */
+/* The flexible item wherever it appears — everything beside it is `flex: none`.
+   The ellipsis is the console strip's last resort, not the card's normal state:
+   a strip is a pinned 66px and a long name has nowhere to go there, while a
+   card's head line is kept clear enough that the longest translated name fits
+   whole (`.mixer-card-head` carries that arithmetic). A name that ellipsizes on
+   a card is the symptom of furniture having crept back onto line 1. */
 .mixer-role-name {
   flex: 1 1 auto;
   min-width: 0;
@@ -313,8 +338,9 @@
   box-shadow: var(--focus-ring);
 }
 
-/* A trimmed Role is marked on the readout itself rather than with a second
-   badge — the badge slot beside it belongs to implied mute. */
+/* A trimmed Role is marked on the readout itself rather than with a badge of its
+   own: the one badge a Role carries names implied mute, and a second badge
+   beside it would put two states in one slot. */
 .mixer-readout[data-neutral="false"] {
   color: var(--foreground);
   font-weight: 600;
@@ -327,8 +353,11 @@
   width: 58px;
 }
 
-/* Names why a card is silent, in the slot beside the readout; the full sentence
-   is its `title`. */
+/* Names why a Role is silent; the full sentence is its `title`. It rides the
+   card's controls line and a strip's own last row, never the identity line: it
+   is uppercase micro text, so its width moves with the translation and the UI
+   font, and it appears exactly when a line can least afford an extra fixed
+   box. */
 .mixer-implied-badge {
   flex: none;
   padding: 0 4px;
@@ -343,12 +372,40 @@
   cursor: default;
 }
 
-/* Mute and solo are state, not actions, so they stand at rest. */
+/* Line 4 — the Role's state and its one action. A card has one item that has to
+   grow with a translation, the Role name, and these never do: paying for them
+   in height rather than in the name's width is what this line buys. It does not
+   wrap and the two control groups on it are `flex: none`, so the revealed reset
+   cannot be stranded on a line of its own — which is what wrapping the head
+   line would have risked, since flex fills each line greedily and would happily
+   leave the gutter behind. Only the badge gives way (next rule). */
+.mixer-card-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The badge is the only item on the line whose width a translation moves, so it
+   is the item that gives way: it truncates — with the whole sentence still in
+   its `title` — rather than pushing the reset gutter past the card's edge. */
+.mixer-card-controls .mixer-implied-badge {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Mute and solo are state, not actions, so they stand at rest. Pushed to the
+   card's trailing edge with the reset gutter behind them, so the line reads as
+   the badge's sentence on the left and the Role's controls on the right however
+   wide the card gets. */
 .mixer-card-flags {
   flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
 }
 
 /* The reset gutter, in a card and in a console strip alike. Hidden until its
@@ -426,13 +483,7 @@
   min-width: 0;
   overflow: hidden;
   border-radius: 2px;
-  background: linear-gradient(
-    90deg,
-    var(--success) 0%,
-    var(--success) 65%,
-    var(--warning) 88%,
-    var(--destructive) 100%
-  );
+  background: linear-gradient(90deg, var(--mixer-meter-stops));
 }
 
 /* 90ms against the tap's ~50ms sample: long enough to read as movement, short
@@ -693,13 +744,7 @@
   width: 8px;
   overflow: hidden;
   border-radius: 4px;
-  background: linear-gradient(
-    0deg,
-    var(--success) 0%,
-    var(--success) 65%,
-    var(--warning) 88%,
-    var(--destructive) 100%
-  );
+  background: linear-gradient(0deg, var(--mixer-meter-stops));
 }
 
 .mixer-meter-column-shade {
@@ -722,12 +767,12 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Real master RMS/Peak meter — the only meter the Role Mixer shows. One line:
-   RMS is the track fill, peak is a tick on the same track, and both numbers
-   share one readout. A two-row block spends as much height on one output as the
-   four Roles spend between them, and the tick carries peak positionally so the
-   line loses no information. Reads off the shared store (no per-Role meters, no
-   Compositor polling). */
+/* The real master RMS/Peak meter, on one line: RMS is the track fill, peak is a
+   tick on the same track, and both numbers share one readout. A two-row block
+   spends as much height on one output as the four Roles spend between them, and
+   the tick carries peak positionally so the line loses no information. Reads
+   off the shared meter store rather than polling the Compositor — as every
+   meter on this Panel does, the four per-Role bars included. */
 .mixer-master {
   display: flex;
   align-items: center;
@@ -761,13 +806,7 @@
   left: 0;
   height: 100%;
   border-radius: 3px;
-  background: linear-gradient(
-    90deg,
-    var(--success) 0%,
-    var(--success) 65%,
-    var(--warning) 88%,
-    var(--destructive) 100%
-  );
+  background: linear-gradient(90deg, var(--mixer-meter-stops));
   transition: width 90ms linear;
 }
 
