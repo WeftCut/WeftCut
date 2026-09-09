@@ -1,10 +1,11 @@
 // The project-wide Role Mixer Panel and the single home for per-Role mute/solo.
 // Boundary: it mixes the four canonical Audio Roles, never Tracks or per-Layer
-// audio, and folds Role gain — no real per-Role buses or meters live here. The
-// only meter is the real master RMS/Peak read off the shared store. Docked
-// narrow the Panel is a card list, docked wide a console of vertical faders;
-// both are presentations of the one gain gesture `useRoleGain` owns. The
-// recorded-gain / unrecorded-mute-solo model is documented in `docs/audio.md`.
+// audio, and folds Role gain. Every meter here is a readout off the shared
+// meter store — the master output and the per-Role taps alike — and never a DSP
+// stage: the sampling lives at the audio graph's analysers. Docked narrow the
+// Panel is a card list, docked wide a console of vertical faders; both are
+// presentations of the one gain gesture `useRoleGain` owns. The recorded-gain /
+// unrecorded-mute-solo model is documented in `docs/audio.md`.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -28,9 +29,11 @@ import {
 } from "../ipc";
 import { useAudioRoles } from "../state/projectStore";
 import {
+  acquireRoleMeterDemand,
   SILENCE_DB,
   useMasterPeakDb,
   useMasterRmsDb,
+  useRoleRmsDb,
 } from "../state/masterMeterStore";
 import { anyRoleSolo, roleAudible } from "../render/audio/roleGate";
 import {
@@ -335,8 +338,9 @@ interface RoleControlProps {
 }
 
 /// One Role card: identity, readout and flags on line 1, the fader spanning the
-/// card on line 2. The second line is the whole point — a fader that shares a
-/// line with a value widget has no width left.
+/// card on line 2, the Role's level meter on line 3. The second line is the
+/// whole point — a fader that shares a line with a value widget has no width
+/// left.
 function RoleChannel({ role, mix, silencedBySolo, onMutated }: RoleControlProps) {
   const { t } = useTranslation();
   const roleLabel = t(`audio_roles.${role}`);
@@ -392,6 +396,7 @@ function RoleChannel({ role, mix, silencedBySolo, onMutated }: RoleControlProps)
           onValueCommitted={gain.commitDrag}
         />
       </div>
+      <RoleMeter role={role} roleLabel={roleLabel} />
     </div>
   );
 }
@@ -500,6 +505,39 @@ function meterFill(db: number): number {
 /// sentinel, so true silence is unambiguous rather than a very small number.
 function meterText(db: number): string {
   return db <= SILENCE_DB ? "−∞" : db.toFixed(1);
+}
+
+/// One Role's level, under its fader: which category of sound is loud right
+/// now, per card. RMS on the same floor and silence sentinel as the master, so
+/// the two readings mean one thing. There is no mute/solo branch here on
+/// purpose — a gated Role's bus receives nothing, so it reads silence at the
+/// analyser (`AudioGraph.roleMeterSnapshot`), and a UI-side special case would
+/// only hide a meter that disagreed with what is audible. Peak stays a
+/// master-only reading: this meter answers "how loud", and a second number on
+/// a thin line costs more ink than it repays.
+function RoleMeter({ role, roleLabel }: { role: AudioRole; roleLabel: string }) {
+  const { t } = useTranslation();
+  // Scalar subscription: a selector returning `{ rmsDb, peakDb }` would hand
+  // `useSyncExternalStore` a fresh object every call and re-render this subtree
+  // for as long as it is mounted.
+  const rmsDb = useRoleRmsDb(role);
+  return (
+    <div
+      className="mixer-role-meter"
+      role="group"
+      aria-label={t("mixer.role_meter", { role: roleLabel })}
+    >
+      <div className="mixer-role-meter-track" aria-hidden>
+        {/* The ramp is on the track and the shade retreats from the loud end —
+            the console's meter pattern, so a colour means one level. */}
+        <div
+          className="mixer-role-meter-shade"
+          style={{ width: `${(1 - meterFill(rmsDb)) * 100}%` }}
+        />
+      </div>
+      <span className="mixer-role-meter-value">{meterText(rmsDb)}</span>
+    </div>
+  );
 }
 
 /// The single real Master meter, on one line: RMS as the track fill, peak as a
@@ -616,6 +654,17 @@ export function RoleMixerPanel({ onMutated, visible = true }: RoleMixerPanelProp
     return () => ro.disconnect();
   }, []);
   const layout: MixerLayout = width >= CONSOLE_LAYOUT_MIN_WIDTH ? "console" : "cards";
+
+  // The per-Role tap samples fast enough to read as a meter, so it runs only
+  // while someone is looking at it: a Panel nobody has open spends no frame
+  // budget. The lease is ref-counted and its release idempotent, so a second
+  // holder (or the double mount StrictMode performs) is safe as long as each
+  // acquire is matched by exactly one cleanup — which is what returning the
+  // release straight out of the effect guarantees.
+  useEffect(() => {
+    if (!visible) return;
+    return acquireRoleMeterDemand();
+  }, [visible]);
 
   // One Role list for both layouts: the four canonical Roles, each with its
   // committed mix and its gate state, so the two presentations cannot disagree

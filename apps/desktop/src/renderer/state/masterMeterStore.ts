@@ -114,13 +114,12 @@ export const useMasterPeakDb = (): number =>
 
 // Scalar on purpose: a selector that builds `{ rmsDb, peakDb }` returns a fresh
 // reference on every call, `useSyncExternalStore` compares snapshots with
-// `Object.is`, and the subtree then re-renders forever. Two scalar hooks per
-// Role cost nothing.
+// `Object.is`, and the subtree then re-renders forever. A per-Role peak reading
+// is published and kept, but nothing reads it yet — peak answers headroom and
+// the Role meters answer balance — so it has no selector of its own until a
+// consumer wants one.
 export const useRoleRmsDb = (role: AudioRole): number =>
   useMasterMeterStore((state) => state.roleLevels[role].rmsDb);
-
-export const useRolePeakDb = (role: AudioRole): number =>
-  useMasterMeterStore((state) => state.roleLevels[role].peakDb);
 
 /** Ref-counted demand for the fast per-Role tap: it samples only while
  *  something is looking at it, so a closed Panel spends no frame budget.

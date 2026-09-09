@@ -1716,6 +1716,7 @@ const zhCN: Resources = {
     implied_mute_hint: "{{role}} 因其他角色独奏而静音",
     reset_hint: "将 {{role}} 增益重置为 0 dB",
     db_scale: "dB 刻度",
+    role_meter: "{{role}} 电平表",
     master: "主输出",
     master_meter: "主输出电平表",
     master_levels: "RMS {{rms}} · 峰值 {{peak}} dB",

@@ -404,6 +404,60 @@
   pointer-events: none;
 }
 
+/* Line 3 — the Role's own level, so the card answers "which category is loud
+   right now" and not only "what did I set it to". Thin on purpose: the fader
+   above it is the card's subject, and a meter as tall as the master's would
+   make four Roles read as five meters. */
+.mixer-role-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The green→amber→red ramp is painted on the TRACK and uncovered by a shade
+   retreating from the loud end, so a colour means one level — the console's
+   `.mixer-meter-column` pattern. Anchored to a fill instead, the tip of a
+   −40 dBFS bar paints red and a quiet Role reads as clipping. */
+.mixer-role-meter-track {
+  position: relative;
+  flex: 1 1 0;
+  height: 4px;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--success) 0%,
+    var(--success) 65%,
+    var(--warning) 88%,
+    var(--destructive) 100%
+  );
+}
+
+/* 90ms against the tap's ~50ms sample: long enough to read as movement, short
+   enough that the bar is never a sample behind what is playing. */
+.mixer-role-meter-shade {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--secondary);
+  transition: width 90ms linear;
+}
+
+/* Tabular figures on a reserved width: the track's right edge must not walk
+   left and right as the reading changes. A floor rather than a fixed width so
+   a reading wider than the reserved space is never clipped. */
+.mixer-role-meter-value {
+  flex: none;
+  min-width: 32px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-micro);
+  color: var(--muted-foreground);
+}
+
 /* Role Mixer Panel, docked wide — a console: four Role strips, the master meter
    as a fifth, and the dB scale drawn once in a gutter they share. Vertical
    faders are the reason this layout exists at all: a horizontal fader's

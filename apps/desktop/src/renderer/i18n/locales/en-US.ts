@@ -1950,6 +1950,7 @@ const enUS = {
     implied_mute_hint: "{{role}} is silent because another role is soloed",
     reset_hint: "Reset {{role}} gain to 0 dB",
     db_scale: "dB scale",
+    role_meter: "{{role}} level meter",
     master: "Master",
     master_meter: "Master output meter",
     master_levels: "RMS {{rms}} · Peak {{peak}} dB",

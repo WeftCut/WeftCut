@@ -5,8 +5,11 @@ import "../i18n";
 import {
   clearMasterMeter,
   publishMasterMeter,
+  publishRoleMeters,
+  roleMeterDemandWanted,
+  SILENCE_DB,
 } from "../state/masterMeterStore";
-import type { RoleMixView } from "../ipc";
+import { AUDIO_ROLES, type AudioRole, type RoleMixView } from "../ipc";
 
 const { setRoleGain, updateRoleFlags } = vi.hoisted(() => ({
   setRoleGain: vi.fn().mockResolvedValue(undefined),
@@ -105,6 +108,21 @@ const openReadout = (role: string) => {
   fireEvent.click(readoutFor(role));
   return readoutFor(role) as HTMLInputElement;
 };
+
+const meterFor = (role: string) =>
+  screen.getByRole("group", { name: `${role} level meter` });
+
+/// One per-Role publication shaped like the tap's: all four Roles sampled at
+/// one instant, every Role the test names no level for reading true silence —
+/// which is what a gated Role's bus yields.
+function publishRoleLevels(levels: Partial<Record<AudioRole, number>>) {
+  const samples = {} as Record<AudioRole, { rmsDb: number; peakDb: number }>;
+  for (const role of AUDIO_ROLES) {
+    const rmsDb = levels[role] ?? SILENCE_DB;
+    samples[role] = { rmsDb, peakDb: rmsDb };
+  }
+  publishRoleMeters(samples);
+}
 
 /// The console is the same Panel at a content width above the layout threshold.
 function renderConsole(
@@ -378,14 +396,15 @@ describe("RoleMixerPanel — implied mute", () => {
 });
 
 describe("RoleMixerPanel — master meter", () => {
-  it("shows the real master RMS/Peak from the shared store on one line, and no per-Role meter", () => {
+  it("shows the real master RMS/Peak from the shared store on one line", () => {
     publishMasterMeter({ rmsDb: -18, peakDb: -6 });
     render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
 
     const meter = screen.getByRole("group", { name: "Master output meter" });
     expect(within(meter).getByText("RMS -18.0 · Peak -6.0 dB")).toBeTruthy();
-    // Exactly one meter — the master. No per-Role meters were introduced.
+    // One master reading, standing apart from the four per-Role meters.
     expect(screen.getAllByRole("group", { name: "Master output meter" })).toHaveLength(1);
+    expect(screen.getAllByRole("group", { name: /level meter$/ })).toHaveLength(4);
   });
 
   it("reads silence as −∞ rather than a number", () => {
@@ -394,6 +413,73 @@ describe("RoleMixerPanel — master meter", () => {
 
     const meter = screen.getByRole("group", { name: "Master output meter" });
     expect(within(meter).getByText("RMS −∞ · Peak −∞ dB")).toBeTruthy();
+  });
+});
+
+// Driven by publishing to the shared store rather than by standing up an audio
+// graph: the Panel's job here is to read the store onto the right card, and the
+// graph's own test owns the topology that fills it.
+describe("RoleMixerPanel — per-Role meters", () => {
+  it("shows each Role the level published for that Role", () => {
+    publishRoleLevels({ dialogue: -12, music: -30 });
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+
+    expect(meterFor("Dialogue").textContent).toBe("-12.0");
+    expect(meterFor("Music").textContent).toBe("-30.0");
+  });
+
+  it("reads a Role at the silence floor as silent, not as a very small number", () => {
+    publishRoleLevels({ dialogue: SILENCE_DB, music: -18 });
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+
+    expect(meterFor("Dialogue").textContent).toBe("−∞");
+    expect(meterFor("Music").textContent).toBe("-18.0");
+  });
+
+  it("reads a muted Role as silent while an audible Role still shows level", () => {
+    // Music is muted in the default mix, so the audio pass skips its layers and
+    // its bus receives nothing — the silence is the reading, not a UI override.
+    publishRoleLevels({ dialogue: -9 });
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+
+    expect(screen.getByLabelText("Mute Music everywhere").getAttribute("aria-pressed")).toBe("true");
+    expect(meterFor("Music").textContent).toBe("−∞");
+    expect(meterFor("Dialogue").textContent).toBe("-9.0");
+  });
+
+  it("names its Role in every meter, so four otherwise identical readouts differ", () => {
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+
+    for (const role of ["Dialogue", "Music", "SFX", "Voiceover"]) {
+      expect(meterFor(role)).toBeTruthy();
+    }
+  });
+
+  it("asks the tap for samples while it is open and stops asking once closed", () => {
+    expect(roleMeterDemandWanted()).toBe(false);
+
+    const view = render(
+      <RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />,
+    );
+    expect(roleMeterDemandWanted()).toBe(true);
+
+    view.unmount();
+    expect(roleMeterDemandWanted()).toBe(false);
+  });
+
+  it("asks for nothing until the Panel is visible", () => {
+    const view = render(
+      <RoleMixerPanel
+        onMutated={vi.fn().mockResolvedValue(undefined)}
+        visible={false}
+      />,
+    );
+    expect(roleMeterDemandWanted()).toBe(false);
+
+    view.rerender(
+      <RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} visible />,
+    );
+    expect(roleMeterDemandWanted()).toBe(true);
   });
 });
 
@@ -443,6 +529,9 @@ describe("RoleMixerPanel — the console", () => {
     expect(within(master).getByText("Peak")).toBeTruthy();
     expect(within(master).getByText("-18.0")).toBeTruthy();
     expect(within(master).getByText("-6.0")).toBeTruthy();
+    // The fifth strip IS the console's metering: the Role strips carry faders,
+    // and the per-Role meter is the card's line 3.
+    expect(screen.queryAllByRole("group", { name: /level meter$/ })).toHaveLength(0);
   });
 
   it("auditions a fader drag live and records exactly one edit on release", async () => {
