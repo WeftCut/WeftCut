@@ -58,9 +58,12 @@ what this record is for.
   fan-in, and that is the only place it is applied. Writing it at the bus as
   well would apply it twice — a −6 dB trim would sound at −12 dB and the meter
   would read the squared value. This is the change's one landmine: it is stated
-  in a comment at the node, and a graph test asserts that every role bus reads
-  unity *and stays at unity across a role gain change*, which is the assertion
-  that would catch a double-apply.
+  in a comment at the node, and the assertion that would catch a double-apply
+  is split across two unit tests. `AudioGraph.test.ts` holds every role bus at
+  unity from construction through `setMasterMute`; the role-gain half lives in
+  `AudioMixer.test.ts`, which drives a gain through the fold and asserts it
+  lands on the layer's envelope while the bus stays at unity — `AudioGraph`
+  exposes no role-gain API to exercise, because role gain never reaches it.
 - **Role gating stays skip, not attenuate.** The audio pass skips a gated
   role's layers rather than zeroing them, so nothing reaches that role's bus
   and its analyser reports true silence on its own. The meter therefore carries
@@ -150,12 +153,12 @@ what this record is for.
 - **A future real role bus would have to change five things**, and they are
   worth naming so none of them arrives by drift. The unity invariant goes
   first: role gain would have to leave `AudioMixer.deriveFromView` and be
-  written at the bus in exactly one place, so the graph test asserting unity is
-  the guard that fails first and should be re-decided rather than deleted. The
-  analyser stops being a leaf, so "metering cannot alter output" becomes a
-  claim to test rather than a property of the shape. Gating can no longer be
-  pure skip: an insert whose tail outlives its layers has to be summed even
-  when every member layer is skipped, which is the first place the shared
+  written at the bus in exactly one place, so the unity assertion is the guard
+  that fails first and should be re-decided rather than deleted. The analyser
+  stops being a leaf, so "metering cannot alter output" becomes a claim to test
+  rather than a property of the shape. Gating can no longer be pure skip: an
+  insert whose tail outlives its layers has to be summed even when every member
+  layer is skipped, which is the first place the shared
   `role_audible` predicate would need a preview-side exception. Export gains a
   per-role summing stage, and with it the dual-engine parity obligation this
   change does not carry. And `RoleMixSettings.effects` becomes project state,

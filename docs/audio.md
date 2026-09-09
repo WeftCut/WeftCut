@@ -202,7 +202,9 @@ an output sample. Two invariants make that true and keep it true:
 - **The bus gain is unity, permanently.** The role's gain is folded onto
   each member layer's own envelope in `AudioMixer.deriveFromView`, which
   is the only place it is applied; writing it at the bus as well would
-  apply it twice. A graph test asserts unity survives a role gain change.
+  apply it twice. Unit tests hold both halves of that: `AudioGraph.test.ts`
+  keeps every bus at unity, and `AudioMixer.test.ts` drives a role gain
+  through the fold and asserts the bus stays there.
 - **A gated role's bus reads true silence.** The skip rules below drop a
   gated role's layers entirely rather than zeroing them, so nothing
   reaches the bus and its analyser reports silence without anything
@@ -279,15 +281,18 @@ combined-channel; per-channel (L/R) splitting is future work for master
 and roles alike. `state/masterMeterStore.ts` is the single renderer
 publication seam for all of them and owns the silence floor consumers
 threshold against (`SILENCE_DB`, printed as "−∞"). Two publication rates
-share it because they answer different questions: the master push is
-deliberately slow and feeds the dev PerfHUD and the MCP resource for
-level checks, while the per-role tap (`publishRoleMeters`) samples fast
-enough for a meter to move rather than step, runs only while a reader
-holds a ref-counted lease (`acquireRoleMeterDemand`) and the transport
-plays, and publishes one silent sample when it stops
-(`publishRoleMetersSilent`) — a held last reading would claim level over
-a mix that has gone silent. Selectors are scalar (`useRoleRmsDb`): one
-returning a fresh object per call re-renders its subtree forever.
+share it because they answer different questions: the master push
+(`publishMasterMeter`) is deliberately slow, because that rate is the
+contract of the MCP `composition://meter` resource the same timer
+reports to (`reportAudioMeter`). The dev PerfHUD consumes neither
+rate — it samples `AudioGraph.meterSnapshot` on its own timer. The
+per-role tap (`publishRoleMeters`) samples fast enough for a meter to
+move rather than step, runs only while a reader holds a ref-counted
+lease (`acquireRoleMeterDemand`) and the transport plays, and publishes
+one silent sample when it stops (`publishRoleMetersSilent`) — a held
+last reading would claim level over a mix that has gone silent.
+Selectors are scalar (`useRoleRmsDb`): one returning a fresh object per
+call re-renders its subtree forever.
 Per-role peak is published and kept, but nothing reads it yet.
 
 ## Roles
