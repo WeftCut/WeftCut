@@ -357,9 +357,20 @@
    card's controls line and a strip's own last row, never the identity line: it
    is uppercase micro text, so its width moves with the translation and the UI
    font, and it appears exactly when a line can least afford an extra fixed
-   box. */
+   box.
+
+   Which is why it is the item that gives way, in every layout it appears in:
+   capped to its container and ellipsized rather than allowed to push a sibling
+   out of the card or overrun a strip. `max-width` is what reaches it as a grid
+   item in a console strip, where `flex` does not apply and a max-content badge
+   would otherwise be free to exceed its column — English is the tight case
+   there, within a pixel of the strip's content box before this cap. Truncating
+   costs nothing a reader needs: the sentence is in the `title`, and the card is
+   dimmed either way. */
 .mixer-implied-badge {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
   padding: 0 4px;
   border-radius: var(--radius-control);
   background: color-mix(in srgb, var(--warning) 20%, transparent);
@@ -369,6 +380,8 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: default;
 }
 
@@ -384,16 +397,6 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-}
-
-/* The badge is the only item on the line whose width a translation moves, so it
-   is the item that gives way: it truncates — with the whole sentence still in
-   its `title` — rather than pushing the reset gutter past the card's edge. */
-.mixer-card-controls .mixer-implied-badge {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Mute and solo are state, not actions, so they stand at rest. Pushed to the
