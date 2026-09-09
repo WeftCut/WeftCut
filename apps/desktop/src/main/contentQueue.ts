@@ -54,6 +54,7 @@ export interface ContentQueueDeps {
 const DEFAULT_TICK_MS = 250;
 
 export class ContentQueue {
+  private listeners = new Set<() => void>();
   /** Run order. Terminal `error` entries linger (the row shows why) until the
    *  item is enqueued again or cancelled; `ok`/`cancelled` entries are dropped. */
   private entries: ContentQueueEntry[] = [];
@@ -71,6 +72,38 @@ export class ContentQueue {
 
   entryOf(id: string): ContentQueueEntry | undefined {
     return this.entries.find((e) => e.itemId === id);
+  }
+
+  /** Observe completion of a dependency set without owning or duplicating transfers. */
+  ensure(ids: readonly string[], signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const finish = (error?: Error) => {
+        this.listeners.delete(check);
+        signal.removeEventListener("abort", abort);
+        if (error) reject(error); else resolve();
+      };
+      const abort = () => finish(new Error("Preparation cancelled"));
+      const check = () => {
+        if (signal.aborted) return abort();
+        for (const id of ids) {
+          const item = this.deps.catalog.find(i => i.id === id);
+          if (!item) return finish(new Error(`unknown content id: ${id}`));
+          const entry = this.entryOf(id);
+          if (entry?.state === "error") return finish(new Error(entry.error ?? "Download failed"));
+          if (!this.deps.isInstalled(item)) {
+            if (!entry) return finish(new Error("Download cancelled"));
+            return;
+          }
+        }
+        finish();
+      };
+      if (signal.aborted) return abort();
+      // Enqueue before subscribing: enqueue broadcasts before starting the first transfer.
+      try { this.enqueue([...ids]); } catch (e) { reject(e); return; }
+      this.listeners.add(check);
+      signal.addEventListener("abort", abort, { once: true });
+      check();
+    });
   }
 
   /** Queued or in flight — the states `content:remove` must refuse over. */
@@ -230,6 +263,7 @@ export class ContentQueue {
     if (!force && t - this.lastTickAt < (this.deps.tickMs ?? DEFAULT_TICK_MS)) return;
     this.lastTickAt = t;
     this.deps.onChange(this.snapshot());
+    for (const listener of this.listeners) listener();
   }
 
   private pendingChanged(): void {

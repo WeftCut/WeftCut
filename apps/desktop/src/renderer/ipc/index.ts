@@ -20,6 +20,12 @@ export function updatePathTransform(layerId: string, dx: number, dy: number, ent
 }
 
 import type { ExportSettings } from "../render/exportSettings";
+import type { ModelsView, ModelUseRequest } from "../../shared/inference-models";
+export const modelsList = (): Promise<ModelsView> => invoke("models_list");
+export const modelsUse = (request: ModelUseRequest): Promise<void> => invoke("models_use", { ...request });
+export const modelsCancel = (id: string): Promise<void> => invoke("models_cancel", { id });
+export const modelsInstallComponents = (id: string): Promise<void> => invoke("models_install_components", { id });
+export const modelsRemoveCustom = (id: string): Promise<void> => invoke("models_remove_custom", { id });
 import type { MotifManifest } from "../render/motifs/catalog";
 import type { DecodeRoute } from "../render/decodeRoute";
 import type { RecentEntry } from "../../shared/recents";

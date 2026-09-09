@@ -979,6 +979,19 @@ impl Backend {
                 ser(crate::commands::speech::settings_test_provider(self, a.provider).await)
             }
             #[cfg(feature = "speech")]
+            "settings_verify_model" => {
+                let a = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::model_verify::verify_model_job(a).await)
+            }
+            #[cfg(feature = "speech")]
+            "settings_cancel_model_verification" => {
+                let a: crate::commands::model_verify::CancelVerificationArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::model_verify::cancel_verification(
+                    &a.request_id,
+                ))
+            }
+            #[cfg(feature = "speech")]
             "settings_get_speech_backends" => {
                 let a: crate::commands::speech::SpeechBackendsArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
@@ -1528,8 +1541,8 @@ mod tests {
         assert_eq!(openai["locality"], "cloud");
         assert_eq!(openai["availability"], "available");
         assert_eq!(
-            openai["selected"], true,
-            "auto resolves to the only available backend"
+            openai["selected"], false,
+            "an available key does not activate a model without a selection"
         );
         assert_eq!(openai["capabilities"]["transcription"], true);
         assert_eq!(openai["capabilities"]["tts"], true);

@@ -32,11 +32,7 @@ pub struct WhisperCpp {
     binary: PathBuf,
     model: PathBuf,
     threads: Option<u32>,
-    /// Accepted from config and reserved for a future GPU-selection flag. It is
-    /// intentionally NOT mapped to a CLI arg in v1: whisper.cpp has no portable
-    /// `--device N` (GPU is a build-time/`-ng` concern), and inventing an
-    /// unverified flag here would be a hazard since this path can't run in CI.
-    #[allow(dead_code)]
+    /// CPU disables GPU offload; a numeric ID pins a GPU device.
     device: Option<String>,
 }
 
@@ -77,7 +73,7 @@ impl Transcriber for WhisperCpp {
         // know which file to read.
         let out_file = of_prefix.with_extension(ext);
 
-        let args = build_args(
+        let mut args = build_args(
             &self.model,
             &req.audio_path,
             &of_prefix,
@@ -85,6 +81,19 @@ impl Transcriber for WhisperCpp {
             req.language.as_deref(),
             self.threads,
         );
+        match self.device.as_deref() {
+            Some("cpu") => args.push("--no-gpu".into()),
+            Some(id) => {
+                if id.parse::<u32>().is_err() {
+                    return Err(SpeechError::Provider {
+                        provider: crate::speech::SpeechBackend::WhisperCpp,
+                        message: "Whisper device must be cpu or a numeric GPU device ID".into(),
+                    });
+                }
+                args.extend(["--device".into(), id.into()]);
+            }
+            None => {}
+        }
 
         let timeout = scaled_timeout(&req.audio_path).await;
 

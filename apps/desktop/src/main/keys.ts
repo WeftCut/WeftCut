@@ -25,11 +25,9 @@ function readStored(): Stored {
 }
 
 function writeStored(s: Stored): void {
-  try {
-    fs.writeFileSync(KEYS_FILE(), JSON.stringify(s), 'utf8')
-  } catch {
-    /* best-effort */
-  }
+  const target = KEYS_FILE()
+  fs.writeFileSync(target + '.tmp', JSON.stringify(s), 'utf8')
+  fs.renameSync(target + '.tmp', target)
 }
 
 /// Decrypt every stored key. A blob that fails to decrypt (OS backend rotated,
@@ -46,7 +44,9 @@ export function loadAllKeys(): Record<string, string> {
       mutated = true
     }
   }
-  if (mutated) writeStored(stored)
+  if (mutated) {
+    try { writeStored(stored) } catch { /* Reading usable keys never fails on cleanup. */ }
+  }
   return out
 }
 

@@ -53,6 +53,9 @@ import {
 } from '../shared/content-download.js'
 import { downloadItem, itemStatus, speechAutofillPlan, vlmAutofillPlan, sweepStalePartials, removePartial, type ContentDeps } from './contentDownload.js'
 import { ContentQueue } from './contentQueue.js'
+import { createModelFeature } from './model-feature.js'
+import { ModelManager } from './model-manager.js'
+import { MODEL_EVENTS, type ModelUseRequest } from '../shared/inference-models.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -445,6 +448,7 @@ app.whenReady().then(async () => {
   // IPC intercepts below reuse this instance.
   const { createSpeechConfigStore } = await import('./speech-config.js')
   const speechConfig = createSpeechConfigStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'speech_config.json'), dir: app.getPath('userData') })
+  let models: ModelManager | undefined
 
   // Video-understanding (VLM) backend config store — <userData>/vlm_config.json,
   // the non-secret sibling of the endpoint key. Unlike speech (pushed
@@ -588,7 +592,7 @@ app.whenReady().then(async () => {
   // tag, and pushing one subsystem's secret into the other's config cache is
   // exactly the coupling this key's own tag exists to avoid.
   for (const [provider, key] of Object.entries(loadAllKeys())) {
-    if (provider === VLM_ENDPOINT_KEY_TAG) continue
+    if (provider === VLM_ENDPOINT_KEY_TAG || provider.startsWith('model-')) continue
     backend.setCloudKey(provider, key)
   }
   // …and the TS-owned local-engine config (non-secret binary/model paths) so the
@@ -842,7 +846,7 @@ app.whenReady().then(async () => {
   // `clipCompute` dispatch in `backend:invoke`: the injection is what decides
   // which engine serves a call, so two definitions of it would be two answers
   // to the same question depending on who asked.
-  const getPreferredEngine = (): string | null => speechConfig.get().preferred_engine
+  const getPreferredEngine = (): string | null => models?.active('speech')?.backend ?? null
   const getVlm = (): {
     config: Record<string, unknown>
     preferred: string | null
@@ -854,9 +858,13 @@ app.whenReady().then(async () => {
     // the snapshot the stateless describe_clip resolver reads; empty until the
     // user configures an engine → "no backend available".
     const cfg = vlmConfig.get()
+    const profile = models?.active('vlm')
+    const snapshot: Record<string, unknown> = {}
+    if (profile?.local) snapshot[profile.backend] = { kind: 'local', ...profile.local }
+    if (profile?.endpoint) snapshot[profile.backend] = { kind: 'endpoint', ...profile.endpoint, api_key: loadAllKeys()[profile.keyTag ?? ''] ?? '' }
     return {
-      config: toVlmBackendSnapshot(cfg, loadAllKeys()[VLM_ENDPOINT_KEY_TAG] ?? null),
-      preferred: cfg.preferred_engine,
+      config: snapshot,
+      preferred: profile?.backend ?? null,
       // The app's UI language, because the model writes its prose in it and the
       // description cache is keyed by it. Read live off app_settings — the
       // single source of truth the renderer's `setLocale` writes, and which the
@@ -1016,6 +1024,11 @@ app.whenReady().then(async () => {
       backend!.setCloudKey(provider, (key ?? '').trim())
       return null
     }
+    if (channel === 'models_list') return models!.view()
+    if (channel === 'models_use') { models!.use(args as ModelUseRequest); return null }
+    if (channel === 'models_cancel') { models!.cancel((args as { id: string }).id); return null }
+    if (channel === 'models_install_components') { await models!.installComponents((args as { id: string }).id); return null }
+    if (channel === 'models_remove_custom') { models!.removeCustom((args as { id: string }).id); return null }
     if (channel === 'settings_clear_api_key') {
       const { provider } = (args ?? {}) as { provider: string }
       clearKey(provider)
@@ -1940,10 +1953,9 @@ app.whenReady().then(async () => {
     totalBytesOf: (item) => (contentPlatform ? item.platforms[contentPlatform]?.bytes : undefined) ?? 0,
     download: (item, onProgress, signal) =>
       downloadItem(contentDeps, item, contentPlatform, onProgress, signal),
-    onChange: (snapshot) => emitToRenderer(CONTENT_EVENTS.queue, snapshot),
+    onChange: (snapshot) => { emitToRenderer(CONTENT_EVENTS.queue, snapshot); emitToRenderer(MODEL_EVENTS.changed, {}) },
     onInstalled: () => {
-      autofillSpeechFromContent()
-      autofillVlmFromContent()
+      // Preparation does not mutate execution config. Activation owns that boundary.
     },
     onItemEvent: (item, ev) => {
       const opId = contentOpIds.get(item.id)
@@ -1991,6 +2003,13 @@ app.whenReady().then(async () => {
     now: () => Date.now(),
   })
   contentQueue = queue
+  models = createModelFeature({
+    dir: app.getPath('userData'), cacheDir: dataRoot.cacheDir, atomicFs,
+    content: contentDeps, platform: contentPlatform, queue,
+    speech: speechConfig, vlm: vlmConfig, backend: backend!,
+    changed: () => emitToRenderer(MODEL_EVENTS.changed, {}),
+    activated: () => emitToRenderer(MODEL_EVENTS.activated, {}),
+  })
 
   ipcMain.handle('content:list', (): ContentListRow[] =>
     CONTENT_CATALOG.map((item) => {

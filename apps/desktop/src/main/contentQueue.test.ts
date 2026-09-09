@@ -51,7 +51,7 @@ function harness(opts: { installed?: string[]; tickMs?: number } = {}) {
   let clock = 0;
   const queue = new ContentQueue({
     catalog: CATALOG,
-    isInstalled: (i) => (opts.installed ?? []).includes(i.id),
+    isInstalled: (i) => (opts.installed ?? []).includes(i.id) || installed.includes(i.id),
     totalBytesOf: (i) => i.platforms["win32-x64"]?.bytes ?? 0,
     download: (i, onProgress, signal) =>
       new Promise<ContentDownloadResult>((resolve, reject) => {
@@ -242,5 +242,38 @@ describe("ContentQueue — shutdown", () => {
     expect(h.pending.length).toBe(persistedBefore);
     expect(h.pending.at(-1)).toEqual(["a", "b"]);
     expect(h.runs.has("b")).toBe(false);
+  });
+});
+
+describe("ContentQueue — model dependencies", () => {
+  it("waits for every artifact and shares existing transfers", async () => {
+    const h = harness();
+    const controller = new AbortController();
+    const first = h.queue.ensure(["a", "b"], controller.signal);
+    const second = h.queue.ensure(["a"], controller.signal);
+    let complete = false;
+    void first.then(() => { complete = true; });
+    h.run("a").resolve({ ok: true, entryPath: "/a" });
+    await second;
+    expect(complete).toBe(false);
+    h.run("b").resolve({ ok: true, entryPath: "/b" });
+    await first;
+    expect(complete).toBe(true);
+    expect(h.installed).toEqual(["a", "b"]);
+  });
+  it("aborting an observer leaves a shared transfer running", async () => {
+    const h = harness(); const controller = new AbortController();
+    const pending = h.queue.ensure(["a"], controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toThrow("cancelled");
+    expect(h.run("a").signal.aborted).toBe(false);
+    h.run("a").resolve({ ok: true, entryPath: "/a" }); await h.settle();
+  });
+  it("rejects failed dependencies without activating a partial download", async () => {
+    const h = harness();
+    const pending = h.queue.ensure(["a", "b"], new AbortController().signal);
+    h.run("a").resolve({ ok: false, error: "HTTP 503" });
+    await expect(pending).rejects.toThrow("HTTP 503");
+    h.queue.shutdown(); await h.settle();
   });
 });

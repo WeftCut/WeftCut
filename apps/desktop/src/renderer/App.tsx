@@ -1,4 +1,7 @@
 import { save as saveDialog } from "@/bridge/dialog";
+import { listen } from "@/bridge/events";
+import { MODEL_EVENTS } from "../shared/inference-models";
+import { onDescribeViewChanged } from "./search/searchIndexStore";
 import { getCurrentWindow } from "@/bridge/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -208,6 +211,14 @@ export function App({ onCloseProject }: AppProps) {
   // (transient / throttled / imperative) — see playheadStore.ts.
   const [paused, setPaused] = useState<boolean>(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  useEffect(() => {
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void listen(MODEL_EVENTS.activated, onDescribeViewChanged).then(unlisten => {
+      if (disposed) unlisten(); else stop = unlisten;
+    });
+    return () => { disposed = true; stop?.(); };
+  }, []);
   // The full tab union, not just the system-status subset: the describe
   // dialog's remedy button deep-links to Video understanding, which no
   // capability notice names.

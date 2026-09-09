@@ -844,3 +844,19 @@
   color: var(--foreground);
   font-weight: 500;
 }
+
+.settings-model-section { display: flex; flex-direction: column; gap: 12px; }
+.settings-model-selector { display: flex; align-items: center; gap: 12px; }
+.settings-model-selector .app-select { flex: 1; min-width: 0; }
+.settings-model-card { border: 1px solid var(--border); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.settings-model-card-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.settings-model-card-header strong { font-size: var(--font-size-body); margin-right: auto; }
+.settings-model-state { margin: 0; font-size: var(--font-size-caption); color: var(--muted-foreground); }
+.settings-model-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.settings-model-actions > [aria-expanded] { margin-left: auto; }
+.settings-model-advanced { border-top: 1px solid var(--border); padding-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+.settings-model-advanced[hidden] { display: none; }
+.settings-model-card .settings-slider-label { min-width: 90px; }
+.settings-model-card .settings-key-input-row { min-width: 0; }
+.settings-model-card .settings-key-input-row > input { min-width: 0; flex: 1; }
+.settings-model-card .settings-test-err { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow: auto; }

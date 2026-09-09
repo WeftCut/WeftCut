@@ -151,8 +151,15 @@ pub(crate) async fn read_resource(
                 focus: state.describe_focus.as_deref(),
                 preferred: state.describe_preferred.as_deref(),
             };
-            return read_description_resource(b, uri, id_part, state.media, &state.vlm_config, view)
-                .await;
+            return read_description_resource(
+                b,
+                uri,
+                id_part,
+                state.media,
+                &state.vlm_config,
+                view,
+            )
+            .await;
         }
         // /analysis — always computable, computes on miss; see
         // `read_analysis_resource`.
@@ -354,7 +361,6 @@ async fn read_description_resource(
             None,
         )
     })?;
-    let model = vlm::resolve::model_label(backend, vlm_config.get(backend.as_str()));
     // Every parse/fallback here is describe_clip's own, so an absent injection
     // resolves the way an omitted tool argument does.
     let language = vlm::Language::parse(view.language);
@@ -363,7 +369,7 @@ async fn read_description_resource(
     let key = vlm::cache_key(
         &media.file_hash_blake3,
         backend,
-        &model,
+        &vlm::resolve::cache_model_identity(backend, vlm_config.get(backend.as_str())),
         vlm::fps_milli(fps),
         focus,
         &language,

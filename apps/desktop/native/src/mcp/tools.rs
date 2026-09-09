@@ -974,7 +974,7 @@ pub(super) async fn transcribe_clip(
 
     let (used_backend, transcriber) = {
         let cfg = b.speech_config.lock().expect("speech_config poisoned");
-        match explicit {
+        match explicit.or(preferred) {
             Some(b) => (
                 b,
                 // Strict-resolution failures are the caller's/config's to fix
@@ -1290,7 +1290,7 @@ pub(super) async fn describe_clip(
     });
 
     let cfg = &args.vlm_config;
-    let (used_backend, describer) = match explicit {
+    let (used_backend, describer) = match explicit.or(preferred) {
         Some(be) => (
             be,
             vlm::resolve_scene_describer_exact(be, cfg)
@@ -1318,7 +1318,7 @@ pub(super) async fn describe_clip(
     let key = vlm::cache_key(
         &resolved.source_hash,
         used_backend,
-        &model,
+        &vlm::resolve::cache_model_identity(used_backend, cfg.get(used_backend.as_str())),
         fps_milli,
         focus,
         &language,

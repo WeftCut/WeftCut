@@ -491,6 +491,23 @@ over the candidates, and its meaning is its position.
 _Avoid_: sensitivity in UI copy, detection strength, granularity (that is the
 minimum shot length, a different knob that fixes a different error)
 
+## Inference models
+
+**Model profile**:
+A named speech or video-understanding model, with the configuration needed to
+run it. Built-in profiles own their runtime and auxiliary downloads. Advanced
+settings can adjust the runtime; replacing weights or an endpoint creates an
+independent custom profile. Credentials stay outside the profile.
+_Avoid_: engine as the user's primary selection, automatic model
+
+**Model preparation**:
+Installing a profile's missing files and validating it with a small synthetic
+inference. Only successful preparation makes it the current model. Browsing
+the model list previews a candidate; a failed or cancelled preparation leaves
+the current model intact. Device selection may fall back to CPU with the same
+weights, but a model is never automatically replaced by another model.
+_Avoid_: download as a synonym for activation, silent model fallback
+
 ## Descriptions
 
 **Description**:
@@ -512,13 +529,13 @@ the word this glossary keeps away from shots), transcript
 The five inputs that key a source's cached description — engine, model, sampling
 rate, focus, interface language — taken together. `media://{id}/description`
 serves exactly one of them, and Electron main injects the four axes a user can
-move — the preferred engine (which decides the first two) plus the sampling, the
+move — the current model profile (which decides the first two) plus the sampling, the
 focus and the language — into that read and into `describe_clip` alike, so the
 view a gesture writes is the view the shot rows and the search index read back.
 Change any axis and every source reads as 未描述 under the new view; nothing is
 deleted (`descriptions/` is excluded from the disk-LRU sweep), so switching back
-finds the earlier view intact. Settings → Video understanding owns the engine,
-its model paths, the sampling and the focus; Settings → General owns the
+finds the earlier view intact. Settings → Video understanding owns the model
+selection and, in advanced settings, its paths, sampling and focus; Settings → General owns the
 language.
 _Avoid_: default view (there is no privileged one any more), cached description
 (every run is cached; the view decides which is read), baseline

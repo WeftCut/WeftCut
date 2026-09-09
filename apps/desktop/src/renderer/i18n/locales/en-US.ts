@@ -1,6 +1,20 @@
 // English (US) is the source locale. New keys land here first, then propagate
 // to other locales. Keep keys grouped by feature area, not by component.
 const enUS = {
+  models: {
+    files_missing: "Local files are missing. Check the paths in advanced settings.",
+    model: "Model", local: "Local", online: "Online", online_model: "Online model",
+    current: "In use", current_model: "In use: {{name}}", ready: "Ready", not_verified: "Not verified", not_downloaded: "Not downloaded",
+    downloading: "Preparing downloads…", verifying: "Verifying model…", error: "Preparation failed",
+    needs_components: "A Windows runtime component is required", installing_components: "Installing runtime components…",
+    install_components: "Install runtime components", download_size: "Download: {{size}}", unsupported: "Automatic downloads are not available on this platform. Configure a custom model in advanced settings.",
+    cpu_state: "Verified on CPU · Processing may be slower", online_notice: "Use sends a small test request that may incur a charge. This model sends media to the configured service when processing.",
+    download_use: "Download and use", verify_use: "Verify and use", use: "Use", configure: "Configure model", retry: "Retry", cancel: "Cancel",
+    advanced: "Advanced settings", customized: "Customized", name: "Custom model name", runtime: "Runtime adapter",
+    device_auto: "Automatic (blank); cpu or a device identifier", restore: "Restore automatic configuration", add_custom: "Save as custom model",
+    custom_identity: "These model files or endpoint identify a new model. Give it a name, then verify and use it.",
+    remove: "Remove custom entry", confirm_remove: "Confirm removal",
+  },
   motion_path: {
     node_mode:'Spatial node', select_node:'Select a point', mode_corner:'Corner', mode_smooth:'Smooth', mode_auto:'Auto smooth', insert:'Insert after point',
     insert_hint:'Double-click the path to insert without changing its shape. Adjacent Auto nodes become Smooth to preserve their handles.',

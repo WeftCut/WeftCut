@@ -1,14 +1,12 @@
 //! Backend resolution — the twin of `speech::resolve_transcriber`.
 //!
-//! Owns backend selection (preference + availability) and construction of the
-//! concrete describer; the availability rules themselves live in
-//! [`super::config`]. Privacy-strict by construction — see [`DEFAULT_ORDER`]
-//! for the local-first order and [`resolve_scene_describer_exact`] for the
-//! never-fall-back rule.
+//! Constructs the selected model's describer when available. Availability rules
+//! live in [`super::config`]. Missing files or credentials never select another
+//! model, including a remote endpoint.
 
 use std::collections::HashMap;
 
-use super::backend::{VlmBackend, DEFAULT_ORDER};
+use super::backend::VlmBackend;
 use super::config::{availability, entry, Availability, BackendConfig};
 use super::describer::SceneDescriber;
 use super::endpoint::OpenAiCompatDescriber;
@@ -19,11 +17,9 @@ use super::sidecar::{LlamaMtmdSidecar, OutputStyle};
 /// OpenAI-compatible endpoint). Shared so the tool layer's error and these tests
 /// read the same string.
 pub const NO_DESCRIBER_CONFIGURED: &str =
-    "no video-understanding backend available — configure a local engine (llama-mtmd-cli binary \
-     + Qwen3-VL GGUF model + mmproj) in Settings, or point WeftCut at an OpenAI-compatible \
-     endpoint";
+    "no video-understanding model available — select and prepare a model in Settings → Video understanding";
 
-/// Resolve a describer by **preference then availability**. Returns the chosen
+/// Resolve the selected describer when available. Returns the chosen
 /// backend alongside the describer so the tool layer can report which engine
 /// actually served the request; `None` when nothing is configured.
 pub fn resolve_scene_describer(
@@ -55,29 +51,24 @@ pub fn resolve_scene_describer_exact(
         Availability::NeedsBinary => Err(VlmError::Provider {
             provider: backend,
             message: "requested explicitly but its binary was not found — set its path in \
-                      Settings, or omit `backend` to fall back to another engine"
+                      Settings, or select another model in Settings"
                 .into(),
         }),
         Availability::NeedsModel => Err(VlmError::Provider {
             provider: backend,
             message: "requested explicitly but its model or mmproj GGUF was not found — set its \
-                      path in Settings, or omit `backend` to fall back to another engine"
+                      path in Settings, or select another model in Settings"
                 .into(),
         }),
     }
 }
 
-/// Which backend the resolver would pick right now, WITHOUT constructing it —
-/// same preference-then-availability walk. `[preferred] ++ DEFAULT_ORDER`,
-/// first one that is `Available`.
+/// Check the selected backend's availability without constructing it.
 pub fn select_backend(
     preferred: Option<VlmBackend>,
     cfg: &HashMap<String, BackendConfig>,
 ) -> Option<VlmBackend> {
-    preferred
-        .into_iter()
-        .chain(DEFAULT_ORDER.iter().copied())
-        .find(|b| availability(*b, entry(cfg, *b)) == Availability::Available)
+    preferred.filter(|b| availability(*b, entry(cfg, *b)) == Availability::Available)
 }
 
 /// Build the concrete describer for an already-selected, `Available` backend.
@@ -152,10 +143,51 @@ pub fn model_label(b: VlmBackend, cfg: Option<&BackendConfig>) -> String {
     }
 }
 
+/// Cache identity distinguishes same-named weights and different service URLs.
+/// Secrets and device tuning do not identify a model. Shared by writer and reader.
+pub fn cache_model_identity(b: VlmBackend, cfg: Option<&BackendConfig>) -> String {
+    let identity = match cfg {
+        Some(BackendConfig::Local { model, mmproj, .. }) => [model, mmproj]
+            .iter()
+            .map(|path| {
+                let meta = std::fs::metadata(path).ok();
+                format!(
+                    "{}:{:?}:{:?}",
+                    path.display(),
+                    meta.as_ref().map(|m| m.len()),
+                    meta.and_then(|m| m.modified().ok())
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("|"),
+        Some(BackendConfig::Endpoint { url, model, .. }) => format!("{url}|{model:?}"),
+        None => b.as_str().into(),
+    };
+    format!(
+        "{}-{}",
+        model_label(b, cfg),
+        &blake3::hash(identity.as_bytes()).to_hex()[..16]
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn same_model_name_on_distinct_endpoints_does_not_share_cached_descriptions() {
+        let a = present_endpoint("https://first/v1/chat/completions");
+        let b = present_endpoint("https://second/v1/chat/completions");
+        assert_eq!(
+            model_label(VlmBackend::ByoEndpoint, Some(&a)),
+            model_label(VlmBackend::ByoEndpoint, Some(&b))
+        );
+        assert_ne!(
+            cache_model_identity(VlmBackend::ByoEndpoint, Some(&a)),
+            cache_model_identity(VlmBackend::ByoEndpoint, Some(&b))
+        );
+    }
 
     fn cfg_with(entries: &[(&str, BackendConfig)]) -> HashMap<String, BackendConfig> {
         entries
@@ -189,18 +221,17 @@ mod tests {
     fn present_local_qwen_resolves_and_reports_backend() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = cfg_with(&[("qwen3_vl", present_local(dir.path()))]);
-        let (chosen, _d) = resolve_scene_describer(None, &cfg).expect("resolves");
+        let (chosen, _d) =
+            resolve_scene_describer(Some(VlmBackend::Qwen3Vl), &cfg).expect("resolves");
         assert_eq!(chosen, VlmBackend::Qwen3Vl);
     }
 
     #[test]
-    fn preferred_unavailable_falls_through_default_order() {
-        // MiniCPM soft-preferred but unconfigured; Qwen present → falls through.
+    fn unavailable_selected_model_never_substitutes_another() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = cfg_with(&[("qwen3_vl", present_local(dir.path()))]);
-        let (chosen, _) =
-            resolve_scene_describer(Some(VlmBackend::MiniCpmV), &cfg).expect("falls back");
-        assert_eq!(chosen, VlmBackend::Qwen3Vl);
+        assert!(resolve_scene_describer(Some(VlmBackend::MiniCpmV), &cfg).is_none());
+        assert!(resolve_scene_describer(None, &cfg).is_none());
     }
 
     /// An endpoint config good enough to be `Available`.
@@ -227,7 +258,10 @@ mod tests {
         };
         let msg = format!("{err}");
         assert!(msg.contains("binary was not found"), "names the gap: {msg}");
-        assert!(msg.contains("omit `backend`"), "names the remedy: {msg}");
+        assert!(
+            msg.contains("select another model"),
+            "names the remedy: {msg}"
+        );
     }
 
     #[test]
@@ -251,7 +285,7 @@ mod tests {
         ]);
         assert!(resolve_scene_describer_exact(VlmBackend::ByoEndpoint, &cfg).is_ok());
         // Automatic is local-first…
-        assert_eq!(select_backend(None, &cfg), Some(VlmBackend::Qwen3Vl));
+        assert_eq!(select_backend(None, &cfg), None);
         // …but an available explicit preference wins over DEFAULT_ORDER.
         assert_eq!(
             select_backend(Some(VlmBackend::ByoEndpoint), &cfg),
@@ -284,7 +318,7 @@ mod tests {
 
     #[test]
     fn no_provider_message_names_every_remedy() {
-        assert!(NO_DESCRIBER_CONFIGURED.contains("local engine"));
-        assert!(NO_DESCRIBER_CONFIGURED.contains("endpoint"));
+        assert!(NO_DESCRIBER_CONFIGURED.contains("model"));
+        assert!(NO_DESCRIBER_CONFIGURED.contains("Settings"));
     }
 }

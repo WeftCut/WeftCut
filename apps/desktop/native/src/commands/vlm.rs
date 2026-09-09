@@ -167,7 +167,9 @@ mod tests {
             ),
         ]);
         // Automatic: DEFAULT_ORDER is local-first, so the on-device engine wins.
-        let rows = settings_get_vlm_backends(None, cfg.clone()).await.unwrap();
+        let rows = settings_get_vlm_backends(Some("qwen3_vl".into()), cfg.clone())
+            .await
+            .unwrap();
         assert_eq!(
             rows.iter().find(|r| r.selected).map(|r| r.backend.as_str()),
             Some("qwen3_vl")
@@ -186,12 +188,12 @@ mod tests {
             .unwrap();
         assert_eq!(
             rows.iter().find(|r| r.selected).map(|r| r.backend.as_str()),
-            Some("qwen3_vl")
+            None
         );
     }
 
     #[tokio::test]
-    async fn a_preference_that_is_unavailable_falls_through_to_what_is() {
+    async fn an_unavailable_selection_never_substitutes_an_endpoint() {
         let cfg = cfg_of(vec![(
             "byo_endpoint",
             endpoint("http://h/v1/chat/completions"),
@@ -202,7 +204,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             rows.iter().find(|r| r.selected).map(|r| r.backend.as_str()),
-            Some("byo_endpoint"),
+            None,
         );
     }
 

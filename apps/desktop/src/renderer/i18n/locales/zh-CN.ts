@@ -3,6 +3,20 @@ import type { Resources } from "./en-US";
 // 简体中文 (zh-CN). Mirrors the en-US shape one-to-one — the `Resources` type
 // will fail to type-check if a key is missing or extra.
 const zhCN: Resources = {
+  models: {
+    files_missing: "本地文件缺失，请在高级设置中检查路径",
+    model: "模型", local: "本地", online: "在线", online_model: "在线模型",
+    current: "使用中", current_model: "当前使用：{{name}}", ready: "已就绪", not_verified: "尚未验证", not_downloaded: "尚未下载",
+    downloading: "正在准备下载…", verifying: "正在验证模型…", error: "准备失败",
+    needs_components: "需要安装 Windows 运行组件", installing_components: "正在安装运行组件…",
+    install_components: "安装运行组件", download_size: "需下载：{{size}}", unsupported: "当前平台暂不支持自动下载，可在高级设置中配置自定义模型。",
+    cpu_state: "已通过 CPU 验证 · 处理可能较慢", online_notice: "启用时会发送少量测试请求，可能产生费用。使用此模型处理时，素材会发送至配置的服务。",
+    download_use: "下载并使用", verify_use: "验证并使用", use: "使用", configure: "配置模型", retry: "重试", cancel: "取消",
+    advanced: "高级设置", customized: "已自定义", name: "自定义模型名称", runtime: "运行适配器",
+    device_auto: "留空自动选择；也可填 cpu 或设备标识", restore: "恢复自动配置", add_custom: "另存为自定义模型",
+    custom_identity: "模型文件或服务地址发生变化，需要命名后验证并保存为独立模型。",
+    remove: "移除自定义条目", confirm_remove: "确认移除",
+  },
   motion_path: {
     node_mode:'空间节点', select_node:'请选择节点', mode_corner:'角点', mode_smooth:'平滑', mode_auto:'自动平滑', insert:'在节点后保形插点',
     insert_hint:'双击路径可保形插点。相邻自动节点会转为平滑模式，以保留原有控制柄。',

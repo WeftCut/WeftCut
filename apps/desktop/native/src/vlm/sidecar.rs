@@ -63,9 +63,7 @@ pub struct LlamaMtmdSidecar {
     binary: PathBuf,
     model: PathBuf,
     mmproj: PathBuf,
-    /// Reserved GPU-selection hint; not mapped to a CLI arg in v1 (llama.cpp has
-    /// no portable per-invocation device flag, and this path can't run in CI).
-    #[allow(dead_code)]
+    /// None = automatic, cpu = no offload, otherwise an exact llama device name.
     device: Option<String>,
     style: OutputStyle,
 }
@@ -91,14 +89,73 @@ impl LlamaMtmdSidecar {
 #[async_trait]
 impl SceneDescriber for LlamaMtmdSidecar {
     async fn describe(&self, req: DescribeRequest) -> Result<RawDescription, VlmError> {
+        self.describe_verified(req).await.map(|(raw, _)| raw)
+    }
+}
+
+impl LlamaMtmdSidecar {
+    pub(crate) async fn describe_verified(
+        &self,
+        req: DescribeRequest,
+    ) -> Result<(RawDescription, bool), VlmError> {
         let prompt = build_prompt(&req.frames, req.focus, &req.language);
-        let args = build_args(&self.model, &self.mmproj, &req.frames, &prompt);
+        let mut args = build_args(&self.model, &self.mmproj, &req.frames, &prompt);
+        apply_device(&mut args, self.device.as_deref());
         let timeout = sidecar_timeout(req.frames.len());
-        let body = run(&self.binary, &args, timeout).await?;
-        Ok(match self.style {
-            OutputStyle::Qwen3VlJson => RawDescription::JsonArray(body),
-            OutputStyle::MiniCpmVText => RawDescription::MiniCpmVText(body),
-        })
+        let mut cpu = self.device.as_deref() == Some("cpu");
+        let body = match run(&self.binary, &args, timeout).await {
+            Ok(body) => body,
+            Err(e) if self.device.is_none() && device_failure(&e) => {
+                apply_device(&mut args, Some("cpu"));
+                cpu = true;
+                run(&self.binary, &args, timeout).await?
+            }
+            Err(e) => return Err(e),
+        };
+        Ok((
+            match self.style {
+                OutputStyle::Qwen3VlJson => RawDescription::JsonArray(body),
+                OutputStyle::MiniCpmVText => RawDescription::MiniCpmVText(body),
+            },
+            cpu,
+        ))
+    }
+}
+
+fn device_failure(e: &VlmError) -> bool {
+    match e {
+        VlmError::EngineExit { stderr, .. } => {
+            let s = stderr.to_lowercase();
+            [
+                "out of memory",
+                "failed to allocate",
+                "allocation failed",
+                "vulkan error",
+                "cuda error",
+                "no device",
+            ]
+            .iter()
+            .any(|text| s.contains(text))
+        }
+        _ => false,
+    }
+}
+
+/// Verified against llama.cpp b10103 common/arg.cpp; CPU disables BOTH offloads.
+fn apply_device(args: &mut Vec<OsString>, device: Option<&str>) {
+    match device {
+        Some("cpu") => {
+            if let Some(i) = args.iter().position(|x| x == "-ngl") {
+                args[i + 1] = "0".into();
+            }
+            args.extend([
+                "--device".into(),
+                "none".into(),
+                "--no-mmproj-offload".into(),
+            ]);
+        }
+        Some(name) => args.extend(["--device".into(), name.into()]),
+        None => {}
     }
 }
 
@@ -250,6 +307,36 @@ async fn run(program: &Path, args: &[OsString], timeout: Duration) -> Result<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cpu_disables_model_and_projector_offload_without_changing_weights() {
+        let mut args = build_args(
+            Path::new("model.gguf"),
+            Path::new("vision.gguf"),
+            &[],
+            "test",
+        );
+        apply_device(&mut args, Some("cpu"));
+        let values = as_strings(&args);
+        assert!(values.windows(2).any(|p| p == ["-ngl", "0"]));
+        assert!(values.windows(2).any(|p| p == ["--device", "none"]));
+        assert!(values.contains(&"--no-mmproj-offload".to_string()));
+        assert!(values.windows(2).any(|p| p == ["-m", "model.gguf"]));
+        assert!(values.windows(2).any(|p| p == ["--mmproj", "vision.gguf"]));
+    }
+
+    #[test]
+    fn only_device_resource_failures_are_eligible_for_cpu_retry() {
+        assert!(device_failure(&VlmError::EngineExit {
+            code: Some(1),
+            stderr: "failed to allocate Vulkan buffer".into()
+        }));
+        assert!(!device_failure(&VlmError::EngineExit {
+            code: Some(1),
+            stderr: "invalid model format".into()
+        }));
+        assert!(!device_failure(&VlmError::Timeout { secs: 30 }));
+    }
 
     fn frame(t_us: i64, name: &str) -> TimedFrame {
         TimedFrame {

@@ -40,12 +40,7 @@ pub struct FunAsr {
     model: PathBuf,
     tokens: PathBuf,
     threads: Option<u32>,
-    /// Accepted from config and reserved for a future device-selection flag. It
-    /// is intentionally NOT mapped to a CLI arg in v1: sherpa's provider
-    /// selection is a build/provider concern, not a portable CLI flag, and
-    /// inventing an unverified one here would be a hazard since this path can't
-    /// run in CI (same stance as whisper.cpp).
-    #[allow(dead_code)]
+    /// Explicit sherpa-onnx execution provider (for example cpu or cuda).
     device: Option<String>,
 }
 
@@ -74,7 +69,10 @@ impl Transcriber for FunAsr {
         // Mandarin), so the request's `language` hint has no CLI flag here — the
         // model choice IS the language. `want_word_timing` is likewise implicit:
         // the JSON always carries per-token timestamps (Exact).
-        let args = build_args(&self.model, &self.tokens, &req.audio_path, self.threads);
+        let mut args = build_args(&self.model, &self.tokens, &req.audio_path, self.threads);
+        if let Some(provider) = &self.device {
+            args.insert(0, format!("--provider={provider}").into());
+        }
         let timeout = scaled_timeout(&req.audio_path).await;
 
         SidecarRun {
