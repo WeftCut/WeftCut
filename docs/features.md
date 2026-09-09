@@ -1222,7 +1222,7 @@ the surviving middle of a manual bundle — stays.
 **What is in each shot.** Two gestures over the same tool, at two
 granularities.
 
-*Describe content* — on a `VideoClip`'s context menu beside *Review shots…*,
+*Describe clip content* — on a `VideoClip`'s context menu beside *Review shots…*,
 in the Edit menu and the palette — runs `describe_clip` over the WHOLE clip and
 lands the result as a column on the shot rows. No ellipsis and no dialog: the two
 parameters it used to ask for live in Settings → Video understanding, so the

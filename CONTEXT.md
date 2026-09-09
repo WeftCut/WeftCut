@@ -519,8 +519,8 @@ belongs to the source the way a shot report does, so a shot row and a palette
 entry join it by time intersection alone — a segment that straddles a detected
 boundary belongs to both shots. Prose has no right answer to check it against,
 so it is never reviewed or edited, only read where it is useful and searched.
-UI word: Describe content / 描述内容; a row with none reads Not described /
-未描述.
+UI word: Describe clip content / 描述所选片段内容; a row with none
+reads Not described / 未描述.
 _Avoid_: caption or subtitle (spoken words, a Text layer), summary, scene
 description in UI copy (the Rust struct is `SceneDescription`, but "scene" is
 the word this glossary keeps away from shots), transcript

@@ -124,6 +124,15 @@ const rows = () =>
 const button = (name: RegExp | string) =>
   screen.getByRole("button", { name }) as HTMLButtonElement;
 
+// Scoped to the delete dialog's footer. Its confirm reads "Delete", the same
+// word as the row button that opened it, and its Cancel is the header ✕'s
+// twin — an unscoped query matches two buttons in both cases.
+const footerButton = (name: RegExp | string) =>
+  within(document.querySelector<HTMLElement>(".export-actions")!).getByRole(
+    "button",
+    { name },
+  ) as HTMLButtonElement;
+
 beforeEach(() => {
   mocks.projectHistoryView.mockReset();
   mocks.projectCreateCheckpoint.mockReset().mockResolvedValue("cp-new");
@@ -161,7 +170,7 @@ describe("checkpoint section", () => {
     await mountPanel(stackView([]));
     expect(
       screen.getAllByText(
-        "This session only — checkpoints are not saved with the project.",
+        "This session only — checkpoints are cleared when the project closes.",
       ).length,
     ).toBeGreaterThan(0);
   });
@@ -169,9 +178,7 @@ describe("checkpoint section", () => {
   it("says something useful when there are no checkpoints", async () => {
     await mountPanel(stackView([]));
     expect(
-      screen.getByText(
-        "No checkpoints yet. Create one before a risky edit to keep a named way back.",
-      ),
+      screen.getByText("No checkpoints yet. Use New to save the current state."),
     ).toBeTruthy();
     expect(rows()).toHaveLength(0);
   });
@@ -250,7 +257,7 @@ describe("checkpoint create", () => {
 
     fireEvent.click(button("New"));
     await settle();
-    const input = screen.getByLabelText("Checkpoint name") as HTMLInputElement;
+    const input = screen.getByLabelText("Name") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "  Before the recut  " } });
     fireEvent.click(button("Create"));
     await settle();
@@ -260,7 +267,7 @@ describe("checkpoint create", () => {
     // `create_checkpoint` emits no `project:changed`, so without this explicit
     // refetch the new row would never appear.
     expect(mocks.projectHistoryView).toHaveBeenCalledTimes(2);
-    expect(screen.queryByLabelText("Checkpoint name")).toBeNull();
+    expect(screen.queryByLabelText("Name")).toBeNull();
   });
 
   it("refuses to submit a blank or whitespace-only label", async () => {
@@ -268,7 +275,7 @@ describe("checkpoint create", () => {
     fireEvent.click(button("New"));
     await settle();
     expect(button("Create").disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText("Checkpoint name"), {
+    fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "   " },
     });
     expect(button("Create").disabled).toBe(true);
@@ -278,7 +285,7 @@ describe("checkpoint create", () => {
     await mountPanel(stackView([]));
     fireEvent.click(button("New"));
     await settle();
-    fireEvent.change(screen.getByLabelText("Checkpoint name"), {
+    fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "quick" },
     });
     fireEvent.click(button("Create"));
@@ -298,14 +305,12 @@ describe("checkpoint delete", () => {
 
     // Nothing has been destroyed yet — the dialog is the gate.
     expect(mocks.projectDeleteCheckpoint).not.toHaveBeenCalled();
-    expect(screen.getByText("Delete checkpoint?")).toBeTruthy();
+    expect(screen.getByText("Delete checkpoint")).toBeTruthy();
     expect(
-      screen.getByText(
-        "“Before the recut” will be removed, and the state it holds can no longer be restored.",
-      ),
+      screen.getByText("Checkpoint “Before the recut” will be deleted."),
     ).toBeTruthy();
 
-    fireEvent.click(button("Delete checkpoint"));
+    fireEvent.click(footerButton("Delete"));
     await settle();
     expect(mocks.projectDeleteCheckpoint).toHaveBeenCalledWith("cp-1");
     // Same no-broadcast reason as create.
@@ -328,13 +333,13 @@ describe("checkpoint delete", () => {
 
     fireEvent.click(button("Delete"));
     await settle();
-    fireEvent.click(button("Delete checkpoint"));
+    fireEvent.click(footerButton("Delete"));
     await settle();
 
     expect(mocks.projectDeleteCheckpoint).toHaveBeenCalledWith("cp-1");
     expect(mocks.projectHistoryView).toHaveBeenCalledTimes(2);
     expect(rows()).toHaveLength(0);
-    expect(screen.queryByText("Delete checkpoint?")).toBeNull();
+    expect(screen.queryByText("Delete checkpoint")).toBeNull();
   });
 
   // A user can delete an agent session's `Pre-agent:` checkpoint — that
@@ -355,9 +360,7 @@ describe("checkpoint delete", () => {
     fireEvent.click(button("Delete"));
     await settle();
     expect(
-      screen.getByText(
-        "Agent “claude” created this checkpoint — it may be that session's only way back.",
-      ),
+      screen.getByText("Agent “claude” created this checkpoint."),
     ).toBeTruthy();
   });
 
@@ -373,15 +376,10 @@ describe("checkpoint delete", () => {
     fireEvent.click(button("Delete"));
     await settle();
     // The footer Cancel, not the header ✕ (which carries the same label).
-    fireEvent.click(
-      within(document.querySelector<HTMLElement>(".export-actions")!).getByRole(
-        "button",
-        { name: "Cancel" },
-      ),
-    );
+    fireEvent.click(footerButton("Cancel"));
     await settle();
     expect(mocks.projectDeleteCheckpoint).not.toHaveBeenCalled();
-    expect(screen.queryByText("Delete checkpoint?")).toBeNull();
+    expect(screen.queryByText("Delete checkpoint")).toBeNull();
     expect(rows()).toHaveLength(1);
   });
 });
@@ -406,7 +404,7 @@ describe("checkpoint section under lock_reason", () => {
 
     fireEvent.click(button("Delete"));
     await settle();
-    fireEvent.click(button("Delete checkpoint"));
+    fireEvent.click(footerButton("Delete"));
     await settle();
     expect(mocks.projectDeleteCheckpoint).toHaveBeenCalledWith("cp-1");
   });

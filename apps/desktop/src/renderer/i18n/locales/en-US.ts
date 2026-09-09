@@ -720,13 +720,15 @@ const enUS = {
     // becomes of the ranges is decided inside the dialog
     // (`timeline/LayerContextMenu.tsx` carries the whole reason).
     detect_silences_selected: "Detect silences…",
-    // "Describe content" and not "Describe clip": what the model reads is
-    // what is IN the footage, and the row's answer lands as prose on the shot
-    // rows rather than as anything about the clip as an object.
+    // "Content" and not "clip" as the head noun: what the model reads is what
+    // is IN the footage, and the row's answer lands as prose on the shot rows
+    // rather than as anything about the clip as an object. "Clip" still names
+    // the unit the press acts on — the whole clip, where the per-row
+    // `describe_shot` button acts on one shot.
     //
     // No ellipsis, unlike the two rows above it: sampling and focus live in
     // Settings → Video understanding now, so the press runs rather than asks.
-    describe_selected: "Describe content",
+    describe_selected: "Describe clip content",
     open_voiceover: "Voiceover…",
     // Ellipsis because the row opens a surface rather than committing anything:
     // reviewing is what happens next, and the apply is a press inside the Panel.
@@ -1087,7 +1089,7 @@ const enUS = {
     empty_waiting: "Waiting for agent…",
     restore: "Restore",
     restoring: "Restoring…",
-    restore_hint: "Revert the project to this checkpoint. The restore itself is undoable.",
+    restore_hint: "Revert the project to this checkpoint — the restore is undoable.",
     restore_locked_hint: "Locked by agent: {{reason}}",
     lock_hint: "Agent has locked the revert surface. Click Exit to editor to release the lock.",
     running_pill: "Agent: {{count}} running",
@@ -2177,7 +2179,7 @@ const enUS = {
         "Removed media {{media}} and {{count}} referencing layer(s)",
     },
     audio: { set_role_gain: "Set {{role}} role gain" },
-    checkpoint: { restore: "Restored checkpoint “{{label}}”" },
+    checkpoint: { restore: "Restored to checkpoint “{{label}}”" },
   },
   // The History Panel's own chrome. The ROW text comes from `history.*` above
   // (main records the key at commit time); everything here is panel furniture.
@@ -2213,34 +2215,28 @@ const enUS = {
     // Load-bearing, not chrome: checkpoints are absent from serialize.ts /
     // persistence.ts and `replace_state` clears them, so a user reading them as
     // durable saves loses work.
-    checkpoints_note: "This session only — checkpoints are not saved with the project.",
-    checkpoints_empty:
-      "No checkpoints yet. Create one before a risky edit to keep a named way back.",
+    checkpoints_note: "This session only — checkpoints are cleared when the project closes.",
+    checkpoints_empty: "No checkpoints yet. Use New to save the current state.",
     checkpoint_create: "New",
-    checkpoint_create_hint: "Save the current state as a named checkpoint",
+    checkpoint_create_hint: "Save the current state as a checkpoint",
     checkpoint_create_title: "New Checkpoint",
     checkpoint_create_confirm: "Create",
     checkpoint_cancel: "Cancel",
-    checkpoint_label: "Checkpoint name",
-    checkpoint_label_placeholder: "e.g. Before the recut",
+    checkpoint_label: "Name",
+    checkpoint_label_placeholder: "Rough cut done",
     checkpoint_restore: "Restore",
-    // Says "records a new entry" because that is the surprise: restore does NOT
-    // move the cursor, it appends to the stack below.
-    checkpoint_restore_hint:
-      "Replace the timeline with this checkpoint (records a new history entry)",
+    checkpoint_restore_hint: "Restore the state this checkpoint holds",
     checkpoint_delete: "Delete",
     checkpoint_delete_hint: "Delete this checkpoint",
-    checkpoint_delete_title: "Delete checkpoint?",
-    checkpoint_delete_body:
-      "“{{label}}” will be removed, and the state it holds can no longer be restored.",
+    checkpoint_delete_title: "Delete checkpoint",
+    checkpoint_delete_body: "Checkpoint “{{label}}” will be deleted.",
     // Whose checkpoint this is. The destructive case is cross-actor: an agent
-    // session's `Pre-agent:` checkpoint is that session's only way back, and
+    // session's `Pre-agent:` checkpoint may be that session's only way back, and
     // nothing else in the dialog says the checkpoint isn't yours.
     checkpoint_delete_owner_user: "You created this checkpoint.",
-    checkpoint_delete_owner_agent:
-      "Agent “{{client}}” created this checkpoint — it may be that session's only way back.",
-    checkpoint_delete_note: "Deleting a checkpoint records nothing — Undo will not bring it back.",
-    checkpoint_delete_confirm: "Delete checkpoint",
+    checkpoint_delete_owner_agent: "Agent “{{client}}” created this checkpoint.",
+    checkpoint_delete_note: "Deleting a checkpoint cannot be undone.",
+    checkpoint_delete_confirm: "Delete",
     checkpoint_deleting: "Deleting…",
   },
   // Display labels for Rust-side enum discriminants. Keep keys lowercase so

@@ -109,7 +109,7 @@ export function roleGainSummary(role: string): HistorySummary {
 }
 /** `restore_checkpoint` — the summary quotes the checkpoint's own label. */
 export function restoredCheckpointSummary(label: string): HistorySummary {
-  return { key: 'history.checkpoint.restore', text: `Restored checkpoint '${label}'`, label_args: { label } }
+  return { key: 'history.checkpoint.restore', text: `Restored to checkpoint '${label}'`, label_args: { label } }
 }
 /** `paste_layers` — the summary counts the clones. */
 export function pastedLayersSummary(count: number): HistorySummary {

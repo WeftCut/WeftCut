@@ -192,23 +192,23 @@ describe("LayerContextMenu — kind-gated rows", () => {
 
   // Describe follows Review shots in the same tier, and for the same reason it
   // is in that tier at all: its answer is prose to read ON those rows.
-  it("offers Describe content on a VideoClip, after Review shots", () => {
+  it("offers Describe clip content on a VideoClip, after Review shots", () => {
     renderMenu("VideoClip");
     const labels = screen
       .getAllByRole("menuitem")
       .map((el) => el.textContent ?? "");
     const review = labels.findIndex((l) => /Review shots/.test(l));
-    const describe = labels.findIndex((l) => /Describe content/.test(l));
+    const describe = labels.findIndex((l) => /Describe clip content/.test(l));
     expect(review).toBeGreaterThanOrEqual(0);
     expect(review).toBeLessThan(describe);
   });
 
   it.each(["Audio", "Text", "Color", "Motif", "ImageOverlay", "CompositionRef"])(
-    "%s gets no Describe content row",
+    "%s gets no Describe clip content row",
     (kind) => {
       renderMenu(kind);
       expect(
-        screen.queryByRole("menuitem", { name: /Describe content/ }),
+        screen.queryByRole("menuitem", { name: /Describe clip content/ }),
       ).toBeNull();
     },
   );

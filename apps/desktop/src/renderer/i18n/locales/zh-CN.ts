@@ -529,7 +529,7 @@ const zhCN: Resources = {
     describe_shot: "描述此镜头",
     // 已经有文字的行。说“再描述一次”而不是“重新描述”：这一行不是在被纠正，
     // 而是在被再问一次，对模型来说这是很正常的需求。
-    describe_shot_again: "再描述一次",
+    describe_shot_again: "再次描述",
     describe_shot_hint:
       "问视觉模型这个镜头里有什么——一次本机模型运行，按 app 当前语言输出。",
     // 状态日志里怎么称呼单个镜头的这次运行。它会替代片段名被插进
@@ -632,7 +632,7 @@ const zhCN: Resources = {
     //
     // 上面两条带省略号，这一条不带：采样与侧重现在住在 设置 → 视频理解，按下
     // 就直接跑，没有要先问的东西。
-    describe_selected: "描述内容",
+    describe_selected: "描述所选片段内容",
     open_voiceover: "配音…",
     // 带省略号，因为这一行打开的是一个界面而不是提交任何改动：接下来是审阅，
     // 应用是面板里的另一次按下。
@@ -922,7 +922,7 @@ const zhCN: Resources = {
     empty_waiting: "等待代理…",
     restore: "恢复",
     restoring: "恢复中…",
-    restore_hint: "将项目恢复到此检查点。恢复操作本身可撤销。",
+    restore_hint: "将项目恢复到此检查点，可撤销。",
     restore_locked_hint: "代理已锁定：{{reason}}",
     lock_hint: "代理已锁定撤销功能。点击退出代理模式以解锁。",
     running_pill: "代理：{{count}} 个进行中",
@@ -1924,11 +1924,10 @@ const zhCN: Resources = {
     caption: { restyle: "修改字幕样式" },
     media: { remove_cascade: "删除素材 {{media}} 及其 {{count}} 个引用图层" },
     audio: { set_role_gain: "设置{{role}}角色增益" },
-    checkpoint: { restore: "恢复检查点“{{label}}”" },
+    checkpoint: { restore: "恢复到检查点“{{label}}”" },
   },
   history_panel: {
     loading: "正在载入历史记录…",
-    // Chinese has no plural forms; both _one and _other collapse.
     evicted_one: "更早的 {{count}} 步已超出范围",
     evicted_other: "更早的 {{count}} 步已超出范围",
     jump_hint: "跳转到该状态",
@@ -1946,26 +1945,26 @@ const zhCN: Resources = {
     list_separator: "、",
     aggregate_item: "{{label}} ×{{count}}",
     checkpoints_title: "检查点",
-    checkpoints_note: "仅限本次会话——检查点不会随项目一起保存。",
-    checkpoints_empty: "还没有检查点。在做高风险编辑前先建一个，方便按名字回退。",
+    checkpoints_note: "仅限当前会话，关闭项目后自动清空",
+    checkpoints_empty: "未创建检查点，点击右侧新建保存当前状态",
     checkpoint_create: "新建",
-    checkpoint_create_hint: "把当前状态存为一个命名检查点",
+    checkpoint_create_hint: "保存当前状态为检查点",
     checkpoint_create_title: "新建检查点",
     checkpoint_create_confirm: "创建",
     checkpoint_cancel: "取消",
-    checkpoint_label: "检查点名称",
-    checkpoint_label_placeholder: "例如：重剪之前",
+    checkpoint_label: "名称",
+    checkpoint_label_placeholder: "粗剪完成",
     checkpoint_restore: "恢复",
-    checkpoint_restore_hint: "用该检查点替换时间线（会记录一条新的历史条目）",
+    checkpoint_restore_hint: "恢复到该检查点保存的状态",
     checkpoint_delete: "删除",
     checkpoint_delete_hint: "删除该检查点",
-    checkpoint_delete_title: "删除检查点？",
-    checkpoint_delete_body: "“{{label}}”将被移除，它保存的状态将无法再恢复。",
-    checkpoint_delete_owner_user: "这是你创建的检查点。",
+    checkpoint_delete_title: "删除检查点",
+    checkpoint_delete_body: "将删除检查点“{{label}}”。",
+    checkpoint_delete_owner_user: "这是由你创建的检查点。",
     checkpoint_delete_owner_agent:
-      "这是代理“{{client}}”创建的检查点——它可能是该会话唯一的回退点。",
-    checkpoint_delete_note: "删除检查点不会记录任何历史条目——撤销无法把它找回来。",
-    checkpoint_delete_confirm: "删除检查点",
+      "这是由代理“{{client}}”创建的检查点。",
+    checkpoint_delete_note: "删除检查点将无法恢复，请谨慎操作",
+    checkpoint_delete_confirm: "删除",
     checkpoint_deleting: "正在删除…",
   },
   kinds: {

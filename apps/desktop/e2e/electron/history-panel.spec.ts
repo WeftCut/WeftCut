@@ -133,7 +133,11 @@ test('History Panel navigates the edit stack and runs the checkpoint loop', asyn
     // ── Checkpoint: create ────────────────────────────────────────────────
     await expect(page.locator('.history-checkpoints-empty')).toBeVisible()
     await page.locator('.history-checkpoints button', { hasText: 'New' }).click()
-    await page.getByLabel('Checkpoint name').fill('before the recut')
+    // Scoped to the prompt: the field label is now just 'Name'.
+    await page
+      .locator('.new-project-panel')
+      .getByLabel('Name', { exact: true })
+      .fill('before the recut')
     await page.getByRole('button', { name: 'Create' }).click()
 
     // `create_checkpoint` emits NO `project:changed` — this row only appears
@@ -159,10 +163,13 @@ test('History Panel navigates the edit stack and runs the checkpoint loop', asyn
 
     // ── Checkpoint: delete, behind a confirmation ─────────────────────────
     await checkpointRows(page).locator('button', { hasText: 'Delete' }).click()
-    await expect(page.getByText('Delete checkpoint?')).toBeVisible()
+    await expect(page.getByText('Delete checkpoint')).toBeVisible()
     // Still there: the dialog is the gate, not a formality.
     await expect(checkpointRows(page)).toHaveCount(1)
-    await page.getByRole('button', { name: 'Delete checkpoint' }).click()
+    await page
+      .locator('.checkpoint-delete-dialog .export-actions')
+      .getByRole('button', { name: 'Delete', exact: true })
+      .click()
 
     // Same no-broadcast story as create: only the Panel's own refetch clears it.
     await expect(checkpointRows(page)).toHaveCount(0)

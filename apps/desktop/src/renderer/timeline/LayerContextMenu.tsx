@@ -151,7 +151,7 @@ export const ANALYSIS_MENU_COMMAND_IDS = [
 /// drive-by that writes without looking, and the eye should reach the one that
 /// shows you the cuts first.
 /// *Review shots* first: it is the surface this menu made authoritative, and it
-/// costs nothing to open. *Describe content* follows because its answer is
+/// costs nothing to open. *Describe clip content* follows because its answer is
 /// something to READ on those rows — the correlation between where a clip cuts
 /// and what is in it is the whole reason the two sit together.
 export const VIDEO_MENU_COMMAND_IDS = ["reviewShots", "describeSelected"] as const;
@@ -206,7 +206,7 @@ const DETECT_SILENCES_REASON: Record<Exclude<AudioClipState, "ok">, string> = {
   speed_not_one: "quick_actions.detect_silences_speed_not_one",
 };
 
-/// Why a greyed *Describe content* row is greyed. Same block and same
+/// Why a greyed *Describe clip content* row is greyed. Same block and same
 /// `Record`-over-the-remaining-states rule as the two tables above.
 ///
 /// `needs_video_kind` survives even though the row renders only over a
@@ -397,7 +397,7 @@ export function LayerContextMenu({
   const audioClip = useAudioClipState();
   const detectSilencesHint =
     audioClip === "ok" ? undefined : t(DETECT_SILENCES_REASON[audioClip]);
-  // The *Describe content* row's tooltip. Subscribed like the two above it, on
+  // The *Describe clip content* row's tooltip. Subscribed like the two above it, on
   // its own picture-clip gate.
   const describe = useDescribeState();
   const describeHint =
