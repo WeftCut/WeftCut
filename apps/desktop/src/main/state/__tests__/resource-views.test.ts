@@ -111,6 +111,7 @@ describe('buildResourceInjection', () => {
         language: 'zh-CN',
         fps: 2.5,
         focus: 'shot-type',
+        preferred: 'byo_endpoint',
       }),
     )
     expect(injected.media.id).toBe('m1')
@@ -118,6 +119,24 @@ describe('buildResourceInjection', () => {
     expect(injected.language).toBe('zh-CN')
     expect(injected.describe_fps).toBe(2.5)
     expect(injected.describe_focus).toBe('shot-type')
+    // The FOURTH axis, and the one whose absence is hardest to see: the backend
+    // the preference resolves and that backend's model label are both hashed
+    // into the key, so a read that omitted it would walk the plain availability
+    // order and answer out of an entry `describe_clip` never writes.
+    expect(injected.describe_preferred).toBe('byo_endpoint')
+  })
+
+  // "auto" is the setting's way of saying "no preference" — the same value the
+  // tool path declines to send as `preferred_backend`. Sending it would be a tag
+  // no backend answers to, which is harmless, but the two sides must state the
+  // rule identically or one day only one of them will.
+  it('treats an auto preference as no preference', () => {
+    const actor = mkActor()
+    const snap = { ...actor.snapshot(), media_pool: { m1: mediaItemTemplate('m1', 'Video', 1_000_000) } } as never
+    const injected = JSON.parse(
+      buildResourceInjection('media://m1/description', snap, {}, { preferred: 'auto' }),
+    )
+    expect('describe_preferred' in injected).toBe(false)
   })
 
   // No UI to speak for → nothing injected, so Rust's own defaults decide. The
@@ -129,6 +148,7 @@ describe('buildResourceInjection', () => {
     expect('language' in injected).toBe(false)
     expect('describe_fps' in injected).toBe(false)
     expect('describe_focus' in injected).toBe(false)
+    expect('describe_preferred' in injected).toBe(false)
   })
 
   it('injects nothing for composition://meter', () => {

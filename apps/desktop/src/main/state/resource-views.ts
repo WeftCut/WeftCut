@@ -98,6 +98,12 @@ export interface DescribeView {
   language?: string | null
   fps?: number | null
   focus?: string | null
+  /** The SOFT preferred engine, `'auto'` or null for none. A cache-key axis like
+   *  the other three — the resolved backend and its model label are both hashed
+   *  into the key — so a read that omitted it would answer out of whatever the
+   *  plain availability order picks while `describe_clip` writes under the
+   *  preferred engine, and the rows would report every source as undescribed. */
+  preferred?: string | null
 }
 
 /** Build the injected-state JSON the backend's `mcpReadResource` needs for the
@@ -115,22 +121,27 @@ export function buildResourceInjection(
     const id = uri.slice(PREFIX_MEDIA.length).split('/')[0] ?? ''
     const media = snapshot.media_pool[id] ?? null
     // media://{id}/description additionally needs the merged VLM backend config
-    // (stateless, ADR 0024) so the cached-view reader can resolve the default
-    // backend + compute the cache key — and the three view axes that are part of
-    // that same key, from the one provider `describe_clip`'s injection also
-    // reads. The always-computable media reads (/thumbnail, /frame, /waveform,
-    // and the shot-layer /analysis view) are self-contained — they need only the
+    // (stateless, ADR 0024) so the cached-view reader can resolve the backend +
+    // compute the cache key — and the four view axes that are part of that same
+    // key, from the one provider `describe_clip`'s injection also reads. The
+    // always-computable media reads (/thumbnail, /frame, /waveform, and the
+    // shot-layer /analysis view) are self-contained — they need only the
     // resolved MediaItem, no injected config.
     if (uri.endsWith('/description')) {
       // Each axis omitted when there is no UI to speak for, so Rust's own
       // default decides — the `detectSilences` rule, stated once here rather
-      // than once per axis.
+      // than once per axis. `'auto'` is such an absence: it is the setting's way
+      // of saying "no preference", and the same value the tool path declines to
+      // send as `preferred_backend` (`mcp/server.ts`).
       return JSON.stringify({
         media,
         vlm_config: vlmConfig,
         ...(view.language ? { language: view.language } : {}),
         ...(view.fps == null ? {} : { describe_fps: view.fps }),
         ...(view.focus ? { describe_focus: view.focus } : {}),
+        ...(view.preferred && view.preferred !== 'auto'
+          ? { describe_preferred: view.preferred }
+          : {}),
       })
     }
     return JSON.stringify({ media })

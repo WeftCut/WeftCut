@@ -71,6 +71,23 @@ export function VlmSection({ onError }: { onError: (msg: string) => void }) {
     if (view !== null) setFpsDraft(view.describe_fps);
   }, [view]);
 
+  /// Re-fetch, then drop every description the renderer is holding and read them
+  /// again — what EVERY mutation in this section owes, because every one of them
+  /// moves the description cache key. The engine and its model label are hashed
+  /// into that key exactly as the sampling and the focus are (`vlm::cache_key`),
+  /// so picking another engine, or pointing one at a different GGUF, switches
+  /// which cached view a read resolves just as surely as changing the sampling
+  /// does. Without this the rows go on showing the previous view's prose — the
+  /// same failure `resyncDescriptionsForView` was added for, on the axes it was
+  /// not yet wired to.
+  ///
+  /// AFTER the persist, never before: the re-read resolves whatever main has
+  /// stored, so a resync racing the write would re-read the view being left.
+  const refreshAfterMutation = async () => {
+    await refresh();
+    onDescribeViewChanged();
+  };
+
   /// Persist one or both run params, then re-fetch — the mutate-then-refresh
   /// cycle every other control in this section uses, so what renders is always
   /// the store's value and never a draft that could disagree with the clamp.
@@ -81,11 +98,7 @@ export function VlmSection({ onError }: { onError: (msg: string) => void }) {
     onError("");
     try {
       await settingsSetVlmDescribe(patch);
-      await refresh();
-      // Either field keys the description cache, so every description already
-      // held in the renderer now belongs to a view nobody is asking for. AFTER
-      // the persist, not before: the re-read resolves whatever main has stored.
-      onDescribeViewChanged();
+      await refreshAfterMutation();
     } catch (e) {
       onError(String(e));
     }
@@ -113,7 +126,7 @@ export function VlmSection({ onError }: { onError: (msg: string) => void }) {
               onError("");
               try {
                 await settingsSetVlmPreferred(next as VlmPreferredEngine);
-                await refresh();
+                await refreshAfterMutation();
               } catch (e) {
                 onError(String(e));
               }
@@ -198,14 +211,14 @@ export function VlmSection({ onError }: { onError: (msg: string) => void }) {
             <VlmLocalRow
               key={b.backend}
               info={b}
-              onChanged={refresh}
+              onChanged={refreshAfterMutation}
               onError={onError}
             />
           ) : (
             <VlmEndpointRow
               key={b.backend}
               info={b}
-              onChanged={refresh}
+              onChanged={refreshAfterMutation}
               onError={onError}
             />
           ),

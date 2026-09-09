@@ -86,18 +86,30 @@ struct ResourceState {
     #[cfg(feature = "speech")]
     #[serde(default)]
     describe_focus: Option<String>,
+    /// Injected by the TS host for `media://{id}/description`: the user's SOFT
+    /// preferred engine, the fourth cache-key axis. The chosen backend and its
+    /// model label are both hashed into the key, so a read that walked the plain
+    /// availability order while `describe_clip` honored a preference would look
+    /// under a different entry entirely and report every source as undescribed.
+    ///
+    /// Absent (and `"auto"`, which no backend answers to) → no preference, which
+    /// is what a host-less read gets.
+    #[cfg(feature = "speech")]
+    #[serde(default)]
+    describe_preferred: Option<String>,
 }
 
-/// The three cache-key inputs the app's UI owns, as one argument.
+/// The four cache-key inputs the app's UI owns, as one argument.
 ///
-/// Grouped rather than passed as three: they are one thing — the VIEW a read
-/// resolves — and three positional `Option`s at a call site are one
+/// Grouped rather than passed as four: they are one thing — the VIEW a read
+/// resolves — and four positional `Option`s at a call site are one
 /// transposition away from a silently wrong key.
 #[cfg(feature = "speech")]
 struct InjectedView<'a> {
     language: Option<&'a str>,
     fps: Option<f64>,
     focus: Option<&'a str>,
+    preferred: Option<&'a str>,
 }
 
 fn serialize_err(e: serde_json::Error) -> McpToolError {
@@ -137,6 +149,7 @@ pub(crate) async fn read_resource(
                 language: state.language.as_deref(),
                 fps: state.describe_fps,
                 focus: state.describe_focus.as_deref(),
+                preferred: state.describe_preferred.as_deref(),
             };
             return read_description_resource(b, uri, id_part, state.media, &state.vlm_config, view)
                 .await;
@@ -289,19 +302,19 @@ async fn read_media_resource(
 }
 
 /// Serve `media://{id}/description` — the cached scene-description view the
-/// app's own settings name (resolver's default backend + the injected sampling,
-/// focus and language). Resolves the backend from the injected VLM config,
-/// computes the same cache key `describe_clip` uses, and returns the stored
-/// `DescriptionCache` (`{ covered_ranges, segments }`, source-absolute). Reports
-/// a clear not-found when no backend is configured or nothing has been described
-/// yet — unlike the always-computable analysis resources.
+/// app's own settings name (the preferred engine's backend + the injected
+/// sampling, focus and language). Resolves the backend from the injected VLM
+/// config, computes the same cache key `describe_clip` uses, and returns the
+/// stored `DescriptionCache` (`{ covered_ranges, segments }`, source-absolute).
+/// Reports a clear not-found when no backend is configured or nothing has been
+/// described yet — unlike the always-computable analysis resources.
 ///
 /// The view is INJECTED and not defaulted here, and that is the whole contract
-/// this resource keeps: the host fills the tool's omitted `fps` / `focus` /
-/// `language` from one provider and injects the same three values here, so the
-/// view a gesture writes is the view the shot rows read back. Hardcoding any of
-/// them would strand every run at a non-default setting in a view no read can
-/// find.
+/// this resource keeps: the host fills the tool's omitted `preferred_backend` /
+/// `fps` / `focus` / `language` from one provider and injects the same four
+/// values here, so the view a gesture writes is the view the shot rows read
+/// back. Hardcoding any of them would strand every run at a non-default setting
+/// in a view no read can find.
 #[cfg(feature = "speech")]
 async fn read_description_resource(
     b: &Backend,
@@ -320,8 +333,20 @@ async fn read_description_resource(
         McpToolError::resource_not_found(format!("media {media_id} not found"), None)
     })?;
 
-    // Same preference-then-availability walk as describe_clip, no preference.
-    let backend = vlm::resolve::select_backend(None, vlm_config).ok_or_else(|| {
+    // The SAME preference-then-availability walk as describe_clip, preference
+    // included: the resolved backend and its model label are two of the six
+    // cache-key inputs, so a read that dropped the preference would look under
+    // the entry a different engine wrote — the failure the other three axes are
+    // injected to prevent, one field further along. An unknown tag (`"auto"`,
+    // or a config from a build with another engine catalog) finds no backend
+    // here and simply means "no preference", the way an omitted one does.
+    let preferred = view.preferred.and_then(|tag| {
+        vlm::VlmBackend::all()
+            .iter()
+            .copied()
+            .find(|b| b.as_str() == tag)
+    });
+    let backend = vlm::resolve::select_backend(preferred, vlm_config).ok_or_else(|| {
         McpToolError::resource_not_found(
             format!(
                 "no video-understanding backend configured — configure one, then call describe_clip for media {media_id}",

@@ -47,6 +47,27 @@ describe('handleReadResource', () => {
     expect('media' in injected).toBe(true)
     expect(injected.media).toBeNull()
   })
+  // media://{id}/description is the READ half of the description cache key, and
+  // the tool is the write half (`server.flip.test.ts`). One provider fills both,
+  // so the whole view has to reach both — a missing axis here does not fail, it
+  // reports every source as undescribed, which reads as lost prose.
+  it('forwards media://{id}/description with the WHOLE describe view, preference included', async () => {
+    const ts = tsHostStub()
+    const spy = vi.fn(async (_u: string, _s?: string) => '{"ok":true,"result":{"contents":[]}}')
+    await handleReadResource(fakeBackend(spy), () => ts, 'media://m1/description', () => ({
+      config: { qwen3_vl: { kind: 'local' } },
+      preferred: 'byo_endpoint',
+      language: 'zh-CN',
+      fps: 2.5,
+      focus: 'shot-type',
+    }))
+    const injected = JSON.parse(spy.mock.calls[0][1] as string)
+    expect(injected.vlm_config).toEqual({ qwen3_vl: { kind: 'local' } })
+    expect(injected.language).toBe('zh-CN')
+    expect(injected.describe_fps).toBe(2.5)
+    expect(injected.describe_focus).toBe('shot-type')
+    expect(injected.describe_preferred).toBe('byo_endpoint')
+  })
   it('forwards composition://meter with no state injection', async () => {
     const ts = tsHostStub()
     const spy = vi.fn(async (_u: string, _s?: string) => '{"ok":true,"result":{"contents":[]}}')

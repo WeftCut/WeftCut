@@ -294,4 +294,50 @@ describe("resyncDescriptionsForView", () => {
     expect(useDescriptionsStore.getState().describing).toEqual(span);
     expect(isDescribingSpan(useDescriptionsStore.getState().describing, "m-1", 0, 1_000)).toBe(true);
   });
+
+  // …but what that run PRODUCES is about the view it started under. Merging it
+  // would put back exactly the prose the resync dropped — the stale-view failure
+  // again, one model run late. The optimistic fill is only ever a head start on
+  // the disk copy, so skipping it costs nothing: `reloadDescription` behind it
+  // reads the view the rows are actually asking about.
+  it("drops a run's optimistic fill when the view moved while it was in flight", async () => {
+    const stale = [
+      { t_start_us: 0, t_end_us: 2_000_000, text: "from the view just left", tags: [] },
+    ];
+    setDescribing({ mediaId: "m-1", srcStartUs: 0, srcEndUs: 2_000_000 });
+    mocks.getMediaDescription.mockResolvedValue(null);
+    await resyncDescriptionsForView(new Map([["m-1", "/a/reel.mp4"]]));
+    expect(held("m-1")).toBeNull();
+
+    setDescribing(null);
+    mergeDescription("m-1", 0, 2_000_000, stale);
+    expect(held("m-1")).toBeNull();
+  });
+
+  // A read already in the air answers about the view being left too, and it
+  // lands AFTER the resync has finished — the one ordering the segment clear
+  // cannot cover on its own.
+  it("drops a read issued before the view changed", async () => {
+    const stale: DescriptionCache = {
+      covered_ranges: [[0, 6_000_000]],
+      segments: [{ t_start_us: 0, t_end_us: 2_000_000, text: "old view", tags: [] }],
+    };
+    let settle: (c: DescriptionCache) => void = () => {};
+    mocks.getMediaDescription.mockReturnValueOnce(
+      new Promise<DescriptionCache>((res) => { settle = res; }),
+    );
+    const pending = hydrateDescription("m-1");
+
+    mocks.getMediaDescription.mockResolvedValue(null);
+    await resyncDescriptionsForView(new Map([["m-1", "/a/reel.mp4"]]));
+    // The resync issued its OWN read for the source, rather than seeing an entry
+    // in flight and skipping it — the guard must not outlive the view it belongs
+    // to, or the source would never be re-read at all.
+    expect(mocks.getMediaDescription).toHaveBeenCalledTimes(2);
+    expect(held("m-1")).toBeNull();
+
+    settle(stale);
+    await pending;
+    expect(held("m-1")).toBeNull();
+  });
 });

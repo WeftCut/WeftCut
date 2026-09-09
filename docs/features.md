@@ -1266,14 +1266,18 @@ make, and so does a run already in flight — the model is serial, so a second
 press would be refused silently otherwise.
 
 Selecting a clip never describes it: the rows read the cached view through
-`media://{id}/description`, which serves the sampling, focus and LANGUAGE the
-app's settings name — so what a gesture writes is what the rows read back, at any
-setting. **Sampling and focus live in Settings → Video understanding**, one value
-across every project: how densely to sample frames, and whether `tags` lean
+`media://{id}/description`, which serves the ENGINE, sampling, focus and LANGUAGE
+the app's settings name — so what a gesture writes is what the rows read back, at
+any setting. **Sampling and focus live in Settings → Video understanding**, one
+value across every project: how densely to sample frames, and whether `tags` lean
 toward the general scene or toward shot type and camera work (the prose describes
 the scene either way). Changing either switches to another cached view and keeps
 the one already there — `descriptions/` is excluded from the disk-LRU sweep, so
-switching back finds it intact and needs no model run. **The prose is written in
+switching back finds it intact and needs no model run. The engine selector and the
+per-backend rows above them do the same thing for the same reason: the resolved
+backend and its model file are cache-key inputs too, so pointing the section at
+another engine — or at another GGUF — switches views exactly as the sampling does,
+and every control in the section re-reads the rows after it persists. **The prose is written in
 the app's UI language.** That language is part of the same cache key — the range-lazy cache short-circuits a described window with no
 model spawn, so sharing a key across languages would hand English prose back to a
 Chinese request with no way to correct it. The consequence is worth stating: after

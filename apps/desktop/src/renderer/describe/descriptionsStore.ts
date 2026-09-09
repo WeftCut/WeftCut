@@ -86,11 +86,41 @@ export const useDescriptionsStore = create<DescriptionsState>(() => ({
 /// user has navigated away from cannot publish over the newest one.
 const reads = new LatestRequestCoordinator();
 
-/// Sources with a read in the air. The idempotence guard the rest of this
-/// module states over `segments` only closes once an answer has landed, so
-/// without this a Panel selecting a clip while the index is sweeping the pool
-/// would probe the same source twice.
-const inFlight = new Set<string>();
+/// Which VIEW the map currently holds, as a counter. Bumped by
+/// `resyncDescriptionsForView`; captured by every read before it is issued and
+/// compared before it publishes.
+///
+/// A read already in the air when the view changes answers about the view being
+/// LEFT, and publishing that answer would put back exactly the prose the resync
+/// just dropped — the stale-view failure again, one round trip late. Comparing
+/// generations is how an answer says which question it was to.
+let viewGeneration = 0;
+
+/// The generation the run in flight started under. Read by `mergeDescription`,
+/// which runs just AFTER `setDescribing(null)` — so this deliberately survives
+/// that call rather than being cleared by it.
+let runGeneration = 0;
+
+/// Sources with a read in the air, and the generation that issued it. The
+/// idempotence guard the rest of this module states over `segments` only closes
+/// once an answer has landed, so without this a Panel selecting a clip while the
+/// index is sweeping the pool would probe the same source twice.
+///
+/// The generation is what keeps it from becoming a BLOCK: after a view change
+/// the read it names can no longer publish, so its entry must not stop the
+/// resync from issuing the read that can.
+const inFlight = new Map<string, number>();
+
+/// Publish an answer only if the view it was asked under is still the one the
+/// map holds.
+function putIfCurrent(
+  generation: number,
+  mediaId: string,
+  value: readonly DescSegment[] | null,
+): void {
+  if (generation !== viewGeneration) return;
+  put(mediaId, value);
+}
 
 /// The file each answered source pointed at when it was last looked at.
 /// `segments` is keyed by media id, and a relink keeps the id while changing
@@ -114,12 +144,14 @@ function put(
 /// cost a cache probe and not a model run.
 export async function hydrateDescription(mediaId: string): Promise<void> {
   if (useDescriptionsStore.getState().segments.has(mediaId)) return;
-  if (inFlight.has(mediaId)) return;
-  inFlight.add(mediaId);
+  const generation = viewGeneration;
+  if (inFlight.get(mediaId) === generation) return;
+  inFlight.set(mediaId, generation);
   try {
     await reads.run(
       () => getMediaDescription(mediaId),
-      (cache) => put(mediaId, cache === null ? null : cache.segments),
+      (cache) =>
+        putIfCurrent(generation, mediaId, cache === null ? null : cache.segments),
     );
   } catch (err) {
     // A read that cannot even be asked leaves the column saying "not
@@ -127,9 +159,9 @@ export async function hydrateDescription(mediaId: string): Promise<void> {
     // Recorded and not surfaced: a description is an extra on a row that is
     // legible without it, and the status log is where a describe failure belongs.
     console.warn("[descriptionsStore] description read failed", err);
-    put(mediaId, null);
+    putIfCurrent(generation, mediaId, null);
   } finally {
-    inFlight.delete(mediaId);
+    if (inFlight.get(mediaId) === generation) inFlight.delete(mediaId);
   }
 }
 
@@ -166,22 +198,23 @@ export async function syncDescriptions(
     useDescriptionsStore.setState({ segments: next });
   }
   for (const [id, path] of sources) readAtPath.set(id, path);
+  const generation = viewGeneration;
   await Promise.all(
     [...sources.keys()].map(async (mediaId) => {
       if (useDescriptionsStore.getState().segments.has(mediaId)) return;
-      if (inFlight.has(mediaId)) return;
-      inFlight.add(mediaId);
+      if (inFlight.get(mediaId) === generation) return;
+      inFlight.set(mediaId, generation);
       try {
         const cache = await getMediaDescription(mediaId);
-        put(mediaId, cache === null ? null : cache.segments);
+        putIfCurrent(generation, mediaId, cache === null ? null : cache.segments);
       } catch (err) {
         // Same answer a failed subject read gives — nothing is known to be on
         // disk, so nothing is indexed. Recorded and not surfaced: a palette
         // missing a row it could not have known about is not a refusal.
         console.warn("[descriptionsStore] description sweep read failed", err);
-        put(mediaId, null);
+        putIfCurrent(generation, mediaId, null);
       } finally {
-        inFlight.delete(mediaId);
+        if (inFlight.get(mediaId) === generation) inFlight.delete(mediaId);
       }
     }),
   );
@@ -199,7 +232,9 @@ export async function syncDescriptions(
 /// Clears the SEGMENTS only. Run state (`describing`, `batch`) is deliberately
 /// untouched: with no dialog holding the window, a setting can be changed while
 /// a run is in flight, and dropping the in-flight flag would let the gate go
-/// live and a second model spawn start beside the first.
+/// live and a second model spawn start beside the first. What that run PRODUCES
+/// is a different matter — the generation bump below is what keeps its answer,
+/// which is about the view being left, from landing on the rows.
 ///
 /// Takes its sources the way `syncDescriptions` does, so this module still knows
 /// nothing about the project store — `search/searchIndexStore.ts` owns that
@@ -207,6 +242,7 @@ export async function syncDescriptions(
 export async function resyncDescriptionsForView(
   sources: ReadonlyMap<string, string>,
 ): Promise<void> {
+  viewGeneration += 1;
   readAtPath.clear();
   useDescriptionsStore.setState({ segments: new Map() });
   await syncDescriptions(sources);
@@ -223,11 +259,12 @@ export async function resyncDescriptionsForView(
 /// not see what the run just wrote, and dropping prose already on screen for
 /// that is strictly worse than a column that is one window behind.
 export async function reloadDescription(mediaId: string): Promise<void> {
+  const generation = viewGeneration;
   try {
     await reads.run(
       () => getMediaDescription(mediaId),
       (cache) => {
-        if (cache !== null) put(mediaId, cache.segments);
+        if (cache !== null) putIfCurrent(generation, mediaId, cache.segments);
       },
     );
   } catch (err) {
@@ -258,6 +295,12 @@ export function mergeDescription(
   srcEndUs: number,
   fresh: readonly DescSegment[],
 ): void {
+  // Dropped outright when the view moved while the run was in flight. A setting
+  // can be changed mid-run — nothing holds the window any more — and these
+  // segments answer the question that was asked at the press, not the one the
+  // rows are asking now. `reloadDescription` behind it reads the new view, so
+  // the row lands on the right answer rather than on a merge of two.
+  if (runGeneration !== viewGeneration) return;
   const prior = useDescriptionsStore.getState().segments.get(mediaId) ?? [];
   const kept = prior.filter(
     (s) => !(s.t_start_us < srcEndUs && s.t_end_us > srcStartUs),
@@ -269,6 +312,11 @@ export function mergeDescription(
 }
 
 export function setDescribing(span: DescribingSpan | null): void {
+  // A run is pinned to the view it STARTED under, which is the view its answer
+  // will be about — see `mergeDescription`. Recorded on the start alone: the
+  // clear runs first on the way out, and zeroing it there would unpin the very
+  // answer that is about to be merged.
+  if (span !== null) runGeneration = viewGeneration;
   useDescriptionsStore.setState({ describing: span });
 }
 
@@ -294,6 +342,10 @@ export function resetDescriptionsStore(): void {
   reads.invalidate();
   inFlight.clear();
   readAtPath.clear();
+  // Bumped rather than zeroed: a read issued before the reset is still in the
+  // air, and restarting the count would let its answer look current again.
+  viewGeneration += 1;
+  runGeneration = viewGeneration;
   // `INITIAL.segments` is never mutated — every write above builds a new map —
   // so restoring it by reference keeps the selectors from re-rendering on a
   // reset that changed nothing.

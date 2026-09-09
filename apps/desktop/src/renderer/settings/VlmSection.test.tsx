@@ -32,6 +32,14 @@ vi.mock("@/bridge/dialog", () => ({ open: dialog.open }));
 // Managed downloads have their own tests; here they would only add noise.
 vi.mock("./ManagedContent", () => ({ ManagedContent: () => null }));
 
+// The description resync every mutation here owes. Stubbed rather than let run:
+// the real one fans a read out over the project's sources, and what this file
+// has to hold is only that the section ASKS for it.
+const search = vi.hoisted(() => ({ onDescribeViewChanged: vi.fn() }));
+vi.mock("../search/searchIndexStore", () => ({
+  onDescribeViewChanged: search.onDescribeViewChanged,
+}));
+
 import i18n from "../i18n";
 import { VlmSection } from "./VlmSection";
 
@@ -79,6 +87,7 @@ beforeEach(async () => {
   ipc.settingsClearVlmLocal.mockReset().mockResolvedValue(undefined);
   ipc.settingsSetVlmEndpoint.mockReset().mockResolvedValue(undefined);
   ipc.settingsSetVlmDescribe.mockReset().mockResolvedValue(undefined);
+  search.onDescribeViewChanged.mockReset();
 });
 
 describe("VlmSection", () => {
@@ -230,7 +239,7 @@ describe("VlmSection", () => {
     expect(screen.queryByText(/Cloud VLM/)).toBeNull();
   });
 
-  it("changing the preferred engine persists it and re-fetches", async () => {
+  it("changing the preferred engine persists it, re-fetches, and resyncs the descriptions", async () => {
     const user = userEvent.setup();
     render(<VlmSection onError={onError} />);
     await screen.findByText("Qwen3-VL (local)");
@@ -240,6 +249,39 @@ describe("VlmSection", () => {
       expect(ipc.settingsSetVlmPreferred).toHaveBeenCalledWith("byo_endpoint"),
     );
     expect(ipc.settingsGetVlmBackends.mock.calls.length).toBeGreaterThan(1);
+    // The engine is a cache-key axis, exactly as the sampling and the focus are
+    // — `vlm::cache_key` hashes the resolved backend and its model label. Held
+    // here because the panel's own copy PROMISES it ("switch back and the
+    // previous descriptions are there"), and without the resync the rows would
+    // go on showing the engine-just-left's prose.
+    await waitFor(() =>
+      expect(search.onDescribeViewChanged).toHaveBeenCalledTimes(1),
+    );
+  });
+
+  // Same axis, reached the other way: the model label is part of the key too, so
+  // pointing an engine at a different GGUF — or clearing it — is as much a view
+  // change as picking another engine.
+  it("saving or clearing a backend's config resyncs the descriptions too", async () => {
+    const user = userEvent.setup();
+    ipc.settingsGetVlmBackends.mockResolvedValue(
+      view([
+        { backend: "qwen3_vl", availability: "available", selected: true,
+          local: { binary: "b", model: "m", mmproj: "p" } },
+      ]),
+    );
+    render(<VlmSection onError={onError} />);
+    await screen.findByText("Qwen3-VL (local)");
+    await user.click(nth(screen.getAllByRole("button", { name: "Save" }), 0));
+    await waitFor(() => expect(ipc.settingsSetVlmLocal).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(search.onDescribeViewChanged).toHaveBeenCalledTimes(1),
+    );
+    await user.click(nth(screen.getAllByRole("button", { name: "Clear" }), 0));
+    await waitFor(() => expect(ipc.settingsClearVlmLocal).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(search.onDescribeViewChanged).toHaveBeenCalledTimes(2),
+    );
   });
 
   // The two run params are this section's now: what used to be asked on every

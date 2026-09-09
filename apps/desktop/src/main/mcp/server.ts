@@ -52,13 +52,15 @@ function unwrap(json: string): unknown { return unwrapEnvelope(JSON.parse(json) 
  *  by backend tag, plus the user's SOFT preferred engine. VLM config is not held
  *  on the napi `Backend` like speech — it rides in with each call.
  *
- *  `language`, `fps` and `focus` ride along because the description cache is
- *  keyed by all three: the tool that WRITES a cache entry and the resource that
- *  READS one have to name the same view or every source reads as undescribed.
- *  One provider, so they cannot disagree — and it is the app's
+ *  `preferred`, `language`, `fps` and `focus` ride along because the description
+ *  cache is keyed by all four — `preferred` through the backend it resolves and
+ *  that backend's model label: the tool that WRITES a cache entry and the
+ *  resource that READS one have to name the same view or every source reads as
+ *  undescribed. One provider, so they cannot disagree — and it is the app's
  *  Video-understanding settings, not this layer's guess.
  *  `null` = the caller has no UI to speak for (a bare-core read), which Rust
- *  resolves to `Language::DEFAULT_TAG` / `DEFAULT_FPS` / `Focus::General`. */
+ *  resolves to no preference / `Language::DEFAULT_TAG` / `DEFAULT_FPS` /
+ *  `Focus::General`. */
 export type VlmProvider = () => {
   config: Record<string, unknown>
   preferred: string | null
@@ -215,6 +217,11 @@ export async function handleReadResource(
       language: vlm.language,
       fps: vlm.fps,
       focus: vlm.focus,
+      // The preference too, and for the same reason the other three ride along:
+      // the backend it resolves and that backend's model label are hashed into
+      // the description cache key, so a read that walked the plain availability
+      // order would answer out of a view no gesture ever writes.
+      preferred: vlm.preferred,
     })
     return unwrap(await backend.mcpReadResource(uri, injection)) as ServerResult
   }

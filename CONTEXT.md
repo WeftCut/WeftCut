@@ -496,7 +496,8 @@ minimum shot length, a different knob that fixes a different error)
 **Description**:
 What a video-understanding model said about a stretch of one SOURCE: a list of
 described segments, each a source-absolute span with prose and short tags,
-cached per source and (sampling, focus, engine) and read back by media id. It
+cached per source and [Description view](#descriptions) and read back by media
+id. It
 belongs to the source the way a shot report does, so a shot row and a palette
 entry join it by time intersection alone — a segment that straddles a detected
 boundary belongs to both shots. Prose has no right answer to check it against,
@@ -510,13 +511,15 @@ the word this glossary keeps away from shots), transcript
 **Description view**:
 The five inputs that key a source's cached description — engine, model, sampling
 rate, focus, interface language — taken together. `media://{id}/description`
-serves exactly one of them, and Electron main injects the same three
-user-settable axes into that read and into `describe_clip`, so the view a
-gesture writes is the view the shot rows and the search index read back. Change
-any axis and every source reads as 未描述 under the new view; nothing is deleted
-(`descriptions/` is excluded from the disk-LRU sweep), so switching back finds
-the earlier view intact. Settings → Video understanding owns the sampling and
-the focus; Settings → General owns the language.
+serves exactly one of them, and Electron main injects the four axes a user can
+move — the preferred engine (which decides the first two) plus the sampling, the
+focus and the language — into that read and into `describe_clip` alike, so the
+view a gesture writes is the view the shot rows and the search index read back.
+Change any axis and every source reads as 未描述 under the new view; nothing is
+deleted (`descriptions/` is excluded from the disk-LRU sweep), so switching back
+finds the earlier view intact. Settings → Video understanding owns the engine,
+its model paths, the sampling and the focus; Settings → General owns the
+language.
 _Avoid_: default view (there is no privileged one any more), cached description
 (every run is cached; the view decides which is read), baseline
 
