@@ -25,10 +25,18 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
-use crate::speech::backends::sidecar::{scaled_timeout, OutputSink, SidecarRun};
+use crate::speech::backends::sidecar::{scaled_timeout, DevicePin, OutputSink, SidecarRun};
 use crate::speech::error::SpeechError;
 use crate::speech::parse::{RawTranscript, TranscriptFormat};
 use crate::speech::transcriber::{TranscribeRequest, Transcriber};
+
+/// sherpa-onnx's own report that the `--provider` pin could not be honored. It
+/// prints this for an unsupported provider string (`provider.cc`) AND for a
+/// valid one the build lacks (`session.cc`: "Please compile with
+/// -DSHERPA_ONNX_ENABLE_GPU=ON. Available providers: CPUExecutionProvider"),
+/// both at exit 0. The bundled 1.13.4 win-x64 build is CPU-only, so every
+/// non-cpu provider lands here.
+const FUNASR_DEVICE_ABANDONED: &[&str] = &["fallback to cpu"];
 
 /// sherpa-onnx-offline (FunASR Paraformer) transcription client. All fields come
 /// from the backend's
@@ -70,8 +78,30 @@ impl Transcriber for FunAsr {
         // model choice IS the language. `want_word_timing` is likewise implicit:
         // the JSON always carries per-token timestamps (Exact).
         let mut args = build_args(&self.model, &self.tokens, &req.audio_path, self.threads);
+        let mut device_pin = None;
         if let Some(provider) = &self.device {
+            // sherpa names an execution PROVIDER, not a device index. A numeric
+            // value is the mistake one shared device field invites, and sherpa
+            // answers it with `Unsupported string: 0. Fallback to cpu` at exit
+            // 0 — so reject it here where the remedy can be named. Any other
+            // spelling is left to sherpa (its provider set is build-specific);
+            // `device_pin` catches the fallback it reports.
+            if provider.parse::<u32>().is_ok() {
+                return Err(SpeechError::Provider {
+                    provider: crate::speech::SpeechBackend::FunAsr,
+                    message: "FunASR device must be an execution provider name \
+                              (cpu, cuda, coreml), not a device number"
+                        .into(),
+                });
+            }
             args.insert(0, format!("--provider={provider}").into());
+            if provider != "cpu" {
+                device_pin = Some(DevicePin {
+                    backend: crate::speech::SpeechBackend::FunAsr,
+                    device: provider.clone(),
+                    markers: FUNASR_DEVICE_ABANDONED,
+                });
+            }
         }
         let timeout = scaled_timeout(&req.audio_path).await;
 
@@ -81,6 +111,7 @@ impl Transcriber for FunAsr {
             timeout,
             output: OutputSink::Stdout, // sherpa prints the result JSON to stdout
             format: TranscriptFormat::FunAsrJson,
+            device_pin,
         }
         .run()
         .await
@@ -121,6 +152,36 @@ mod tests {
         args.iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect()
+    }
+
+    /// A device NUMBER is rejected before anything spawns — sherpa would take
+    /// `--provider=0`, warn `Unsupported string: 0. Fallback to cpu`, and exit
+    /// 0, which reads as a verified GPU run. The bogus binary path proves the
+    /// refusal happens before the child (a spawn failure would say `Spawn`).
+    #[tokio::test]
+    async fn a_device_number_is_refused_with_the_provider_remedy() {
+        let engine = FunAsr::new(
+            PathBuf::from("/nonexistent/sherpa-onnx-offline"),
+            PathBuf::from("/m/paraformer.onnx"),
+            PathBuf::from("/m/tokens.txt"),
+            None,
+            Some("0".into()),
+        );
+        let err = engine
+            .transcribe(TranscribeRequest {
+                audio_path: PathBuf::from("/a/clip.wav"),
+                language: None,
+                want_word_timing: true,
+            })
+            .await
+            .expect_err("a device number is not a provider");
+        match err {
+            SpeechError::Provider { message, .. } => {
+                assert!(message.contains("provider name"), "names it: {message}");
+                assert!(message.contains("cuda"), "names the shape: {message}");
+            }
+            other => panic!("expected Provider, got {other:?}"),
+        }
     }
 
     #[test]

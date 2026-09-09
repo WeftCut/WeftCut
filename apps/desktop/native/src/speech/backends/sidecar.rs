@@ -30,6 +30,28 @@ use tokio::process::Command;
 use crate::process::NoConsoleWindow;
 use crate::speech::error::SpeechError;
 use crate::speech::parse::{RawTranscript, TranscriptFormat};
+use crate::speech::SpeechBackend;
+
+/// An explicitly pinned NON-CPU device, plus the engine's own stderr markers
+/// for "I could not use it and ran on the CPU instead".
+///
+/// Both bundled runtimes report that fallback and still **exit 0**:
+/// `whisper-cli` prints `whisper_backend_init_gpu: no GPU found` for a
+/// `--device N` it has no GPU for, and `sherpa-onnx-offline` prints
+/// `... Fallback to cpu!` both for an unsupported `--provider` string and for a
+/// valid one its build lacks (`Available providers: CPUExecutionProvider`).
+/// Trusting the exit code alone therefore reports a pinned device that never
+/// ran — and model verification would persist that claim. An explicit device is
+/// strict (ADR 0064), so the fallback must surface as a failure the user can act
+/// on, while `None` (automatic) keeps whatever the engine chose.
+pub struct DevicePin {
+    /// Attribution for the resulting [`SpeechError::Provider`].
+    pub backend: SpeechBackend,
+    /// The device string as the user wrote it, echoed back in the error.
+    pub device: String,
+    /// Case-insensitive substrings; the engine's wording, not ours.
+    pub markers: &'static [&'static str],
+}
 
 /// Where a sidecar deposits its transcript body.
 pub enum OutputSink {
@@ -55,6 +77,8 @@ pub struct SidecarRun {
     /// Which [`RawTranscript`] variant to tag the body as — must match what the
     /// engine's flags produce (whisper `-ojf` → [`TranscriptFormat::WhisperJson`]).
     pub format: TranscriptFormat,
+    /// Set when the caller pinned an explicit non-CPU device; see [`DevicePin`].
+    pub device_pin: Option<DevicePin>,
 }
 
 impl SidecarRun {
@@ -98,6 +122,21 @@ impl SidecarRun {
             output.status.code(),
             &output.stderr,
         )?;
+        // A zero exit is not proof the pinned device ran — check before the
+        // transcript is accepted, so a fallback cannot pass as a device success.
+        if let Some(pin) = &self.device_pin {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if let Some(report) = abandoned_device(&stderr, pin.markers) {
+                return Err(SpeechError::Provider {
+                    provider: pin.backend,
+                    message: format!(
+                        "device \"{}\" was not used — the runtime reported: {report}. \
+                         Use a runtime built for this device, or select cpu/automatic.",
+                        pin.device
+                    ),
+                });
+            }
+        }
         let body = read_body(&self.output, &output.stdout).await?;
         Ok(wrap(self.format, body))
     }
@@ -146,6 +185,25 @@ fn exit_result(success: bool, code: Option<i32>, stderr: &[u8]) -> Result<(), Sp
             stderr: String::from_utf8_lossy(stderr).trim().to_string(),
         })
     }
+}
+
+/// The engine's own fallback line, if any marker appears in `stderr` — returned
+/// verbatim (trimmed) so the error quotes the runtime rather than paraphrasing
+/// it. Case-insensitive: the two runtimes differ in punctuation and casing, and
+/// a build could change either. Pure, so the contract is testable without a GPU
+/// (this box has none, which is exactly why the bug shipped).
+fn abandoned_device(stderr: &str, markers: &[&str]) -> Option<String> {
+    let haystack = stderr.to_lowercase();
+    let hit = markers
+        .iter()
+        .find(|m| haystack.contains(&m.to_lowercase()))?;
+    let needle = hit.to_lowercase();
+    // Quote the whole reporting line: the marker alone omits the engine's reason
+    // ("Available providers: …"), which is the actionable half.
+    stderr
+        .lines()
+        .find(|line| line.to_lowercase().contains(&needle))
+        .map(|line| line.trim().to_owned())
 }
 
 /// Read the transcript body from wherever the engine put it. For
@@ -227,6 +285,48 @@ mod tests {
             SpeechError::EngineExit { code: None, .. } => {}
             other => panic!("expected EngineExit{{code:None}}, got {other:?}"),
         }
+    }
+
+    /// The two runtimes report an abandoned device pin at exit 0, so the stderr
+    /// scan is the only thing standing between "ran on the CPU" and a persisted
+    /// claim that a GPU was verified. Real captured lines from the pinned
+    /// builds: whisper-cli 1.9.1 `--device 7` and sherpa-onnx 1.13.4
+    /// `--provider=cuda` / `--provider=0`.
+    #[test]
+    fn engine_reported_cpu_fallback_is_detected_and_quoted_whole() {
+        let whisper = "whisper_init_with_params_no_state: gpu_device = 7\n\
+                       whisper_backend_init_gpu: no GPU found\n";
+        assert_eq!(
+            abandoned_device(whisper, &["no GPU found"]).as_deref(),
+            Some("whisper_backend_init_gpu: no GPU found"),
+        );
+        // Case-insensitive, and the quoted line carries sherpa's reason.
+        let sherpa = "session.cc:GetSessionOptionsImpl:324 Please compile with \
+                      -DSHERPA_ONNX_ENABLE_GPU=ON. Available providers: \
+                      CPUExecutionProvider, . Fallback to cpu!\n";
+        let hit = abandoned_device(sherpa, &["fallback to cpu"]).expect("detected");
+        assert!(
+            hit.contains("Available providers"),
+            "keeps the reason: {hit}"
+        );
+        assert!(abandoned_device(
+            "Unsupported string: 0. Fallback to cpu",
+            &["fallback to cpu"]
+        )
+        .is_some());
+    }
+
+    /// An automatic run prints its own device chatter; nothing here may trip on
+    /// it, and a CPU pin legitimately reports "no GPU found" too — which is why
+    /// only an explicit NON-cpu pin supplies markers at all.
+    #[test]
+    fn ordinary_engine_logs_are_not_a_fallback_report() {
+        let ok = "whisper_backend_init_gpu: using CUDA backend\n\
+                  ggml_cuda_init: found 1 CUDA devices\n";
+        assert!(abandoned_device(ok, &["no GPU found"]).is_none());
+        assert!(abandoned_device(ok, &["fallback to cpu"]).is_none());
+        assert!(abandoned_device("", &["no GPU found"]).is_none());
+        assert!(abandoned_device("no GPU found", &[]).is_none());
     }
 
     #[test]

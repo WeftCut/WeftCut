@@ -20,10 +20,15 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
-use crate::speech::backends::sidecar::{scaled_timeout, OutputSink, SidecarRun};
+use crate::speech::backends::sidecar::{scaled_timeout, DevicePin, OutputSink, SidecarRun};
 use crate::speech::error::SpeechError;
 use crate::speech::parse::{RawTranscript, TranscriptFormat};
 use crate::speech::transcriber::{TranscribeRequest, Transcriber};
+
+/// `whisper-cli`'s own report that the `--device N` pin could not be honored:
+/// `whisper_backend_init_gpu: no GPU found`. Printed only when no GPU backend
+/// was found at all (a successful init names the backend instead).
+const WHISPER_DEVICE_ABANDONED: &[&str] = &["no GPU found"];
 
 /// whisper.cpp transcription client. All fields come from the backend's
 /// [`BackendConfig::Local`](crate::speech::config::BackendConfig::Local) entry
@@ -81,6 +86,7 @@ impl Transcriber for WhisperCpp {
             req.language.as_deref(),
             self.threads,
         );
+        let mut device_pin = None;
         match self.device.as_deref() {
             Some("cpu") => args.push("--no-gpu".into()),
             Some(id) => {
@@ -91,6 +97,13 @@ impl Transcriber for WhisperCpp {
                     });
                 }
                 args.extend(["--device".into(), id.into()]);
+                // `--device N` is accepted by a CPU-only build, which then
+                // prints `no GPU found` and transcribes on the CPU at exit 0.
+                device_pin = Some(DevicePin {
+                    backend: crate::speech::SpeechBackend::WhisperCpp,
+                    device: id.to_owned(),
+                    markers: WHISPER_DEVICE_ABANDONED,
+                });
             }
             None => {}
         }
@@ -103,6 +116,7 @@ impl Transcriber for WhisperCpp {
             timeout,
             output: OutputSink::File(out_file),
             format,
+            device_pin,
         }
         .run()
         .await
