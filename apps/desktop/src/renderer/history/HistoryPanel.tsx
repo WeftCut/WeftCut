@@ -275,7 +275,17 @@ export function HistoryPanel() {
           <span className="history-row-label">
             {t(entry.label_key, entry.label_args ?? {})}
           </span>
-          {names && <span className="history-row-entities">{names}</span>}
+          {/* `title` on the SPAN, not the row: the names are the one part of
+              the row that ellipsizes by design (history.css gives them the
+              whole shrink burden), and nothing else says how much was cut —
+              the collapsed form carries no count. It shadows the button's own
+              `jump_hint` while the pointer is over the names; the hint stays
+              reachable from the time, the actor icon and the label. */}
+          {names && (
+            <span className="history-row-entities" title={names}>
+              {names}
+            </span>
+          )}
         </span>
       </button>
     );
@@ -349,7 +359,11 @@ export function HistoryPanel() {
               <span className="history-group-steps">
                 {t("history_panel.group_steps", { count: item.entries.length })}
               </span>
-              <span className="history-group-aggregate">{aggregate}</span>
+              {/* Same reason as `.history-row-entities` above: the aggregate is
+                  what the group header sacrifices for width. */}
+              <span className="history-group-aggregate" title={aggregate}>
+                {aggregate}
+              </span>
             </span>
           </button>
         </div>

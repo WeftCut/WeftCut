@@ -251,6 +251,14 @@ describe("HistoryPanel rendering", () => {
     // `kinds.color` → "Color"; main holds no locale bundle, so a derived name
     // travels as a key.
     expect(screen.getByText("beach.mp4, Color")).toBeTruthy();
+    // The span carries its own text as `title`, because history.css hands it the
+    // whole shrink burden — it is the part of the row that ellipsizes, and the
+    // collapsed form states no count, so hover is the ONLY way back to the full
+    // list. Asserted here rather than e2e: jsdom has no layout, so the markup
+    // contract is all this suite can hold.
+    expect(
+      screen.getByText("beach.mp4, Color").getAttribute("title"),
+    ).toBe("beach.mp4, Color");
   });
 
   // A derived TRACK name is the one entity label carrying interpolation values;
@@ -394,9 +402,11 @@ describe("HistoryPanel agent folding", () => {
     expect(headers).toHaveLength(1);
     expect(headers[0]!.textContent).toContain("claude");
     expect(headers[0]!.textContent).toContain("3 steps");
-    expect(
-      document.querySelector(".history-group-aggregate")?.textContent,
-    ).toBe("Split layer ×2, Added marker");
+    const agg = document.querySelector(".history-group-aggregate");
+    expect(agg?.textContent).toBe("Split layer ×2, Added marker");
+    // Same hover contract as `.history-row-entities`: the aggregate is what the
+    // group header gives up for width.
+    expect(agg?.getAttribute("title")).toBe("Split layer ×2, Added marker");
     // Collapsed: only the two human rows are rendered as entries.
     expect(rows().map((r) => r.dataset.historyIndex)).toEqual(["0", "4"]);
   });

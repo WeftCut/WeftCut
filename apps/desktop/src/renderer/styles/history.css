@@ -217,7 +217,31 @@ button.history-row:disabled {
   white-space: nowrap;
 }
 
+/* SHRINK ORDER inside `.history-row-body`, and the reason it is stated rather
+   than left to default: flexbox distributes shrinkage in proportion to each
+   item's BASE size, so a long `.history-row-entities` string outbids the
+   operation label for width. Measured in Chromium: `Added shot markers` needs
+   136 px, and beside a 47-cut name list it was handed 13 px in a 250 px body
+   and still only 33 px in a 600 px one — the operation, the row's whole point,
+   reduced to `A…` by its own decoration, at EVERY width. Widening the panel is
+   no escape, because the names' base size grows with the cut count.
+   The label therefore absorbs ZERO shrink while the entities span carries a
+   large `flex-shrink` (below): the names give up every pixel and collapse to
+   nothing before the label loses anything.
+   `flex-shrink: 0` and not merely a small share of the shrink, because a share
+   is never zero — at `999` against the names the label still gave up ~0.18 px,
+   and `text-overflow` fires on ANY overflow. In zh-CN that rounded
+   `添加镜头标记` down to `添加镜头标…`: one 12 px glyph gone and an ellipsis
+   drawn, from a deficit too small to see in a measurement.
+   `max-width: 100%` and not `flex: none`, because an item sized to its own
+   content never overflows itself — `text-overflow` would never fire and the
+   parent's `overflow: hidden` would hard-clip with no `…` at all
+   (`Split layer and closed the g`, which reads as a finished phrase). Capped
+   at the row instead, the label re-arms its own ellipsis for the one case that
+   deserves it: a panel too narrow for the operation name itself. */
 .history-row-label {
+  flex-shrink: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -225,6 +249,12 @@ button.history-row:disabled {
 /* Entity names resolved in main against the snapshot that still holds the
    ref — the whole reason a delete row can say more than a raw uuid. */
 .history-row-entities {
+  /* Yields all of it before the label loses a character — see the shrink-order
+     note above. Kept explicit rather than left to default so that a third span
+     added to this row later still ranks below the names. The full list is on
+     the span's `title`, since the ellipsis is the only thing in the row that
+     says more exists. */
+  flex-shrink: 999;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -278,6 +308,11 @@ button.history-row:disabled {
    agent's self-reported reason, which is intent — and which the Agent panel
    and status bar already show (spec decision 11). */
 .history-group-aggregate {
+  /* Same yield rule as `.history-row-entities`: this is the group header's
+     decoration and the client name is its subject. `.history-group-steps` is
+     already `flex: none`, so the order here is aggregate, then steps and
+     client together. */
+  flex-shrink: 999;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
