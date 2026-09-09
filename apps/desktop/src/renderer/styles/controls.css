@@ -73,7 +73,10 @@
   outline: none;
 }
 
-.app-slider-thumb:focus-visible {
+/* The thumb is a plain div — what takes focus is the visually-hidden range
+ * input Base UI nests inside it, in either orientation — so the ring has to be
+ * drawn through :has(). A bare :focus-visible here never matches. */
+.app-slider-thumb:has(:focus-visible) {
   box-shadow: var(--focus-ring);
 }
 
@@ -83,6 +86,38 @@
 
 .app-slider[data-disabled] .app-slider-control {
   cursor: not-allowed;
+}
+
+/* Vertical variant, off the orientation Base UI stamps on every slider part.
+ * The rules above stay the horizontal geometry every other call site reads;
+ * these swap the axes for it — a 4 px column of track centred in a 16 px-wide
+ * control. Thumb and indicator need nothing here: Base UI writes both their
+ * long-axis position and their cross-axis centring inline, per orientation.
+ *
+ * Every size below is a cross-axis one on purpose. The fader's LENGTH is the
+ * height the call site gives the slider, stretched down through the control to
+ * the track, so a console picks its own fader height and no height constant
+ * lives in this skin. Give the slider element itself a height: `flex: 0 0 auto`
+ * is what lets that height win in a flex column, where the horizontal
+ * `flex: 1 1 0` would size the fader from the container instead — and a fader
+ * whose travel changes when the Panel resizes has no stable feel. A vertical
+ * slider no ancestor gives a height to is a fader of zero length. */
+.app-slider[data-orientation="vertical"] {
+  align-items: stretch;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.app-slider[data-orientation="vertical"] .app-slider-control {
+  align-items: stretch;
+  justify-content: center;
+  width: 16px;
+  height: auto;
+}
+
+.app-slider[data-orientation="vertical"] .app-slider-track {
+  width: 4px;
+  height: auto;
 }
 
 /* AppSwitch — the on/off pill replacing bare checkboxes. */
