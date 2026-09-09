@@ -106,6 +106,11 @@ const NARROW_WINDOW_PX = 960
 const CARDS_WINDOW_PX = 1280
 const CONSOLE_WINDOW_PX = 1700
 const WIDEST_WINDOW_PX = 1900
+// The console at its own floor, where a Role strip is the pinned 66px that
+// `editor.css` calls the layout threshold's arithmetic. The few px each strip
+// has over its content is deliberate slack for text whose width a translation
+// moves, and this is the width at which that slack is all there is.
+const CONSOLE_FLOOR_WINDOW_PX = 1636
 
 // Mirrors `CONSOLE_LAYOUT_MIN_WIDTH` in `MixerPanel.tsx`. There it is
 // arithmetic over the console's pinned column widths; here it meets a layout
@@ -122,6 +127,13 @@ const GAIN_STEP_COUNT = 100
 // this guards was 0px wide at every width the Panel is normally docked at, and
 // the thumb's own fixed 12px box is what hid it.
 const CARD_TRACK_FLOOR_PX = 150
+// A floor on the Role name's own box on a card, for the same reason and against
+// the same trap: a layout assertion protects exactly the box it measures, and a
+// fader with a width says nothing about what is left on the line above it. The
+// name measures ~102px at the narrowest legal dock, near double the longest
+// translated Role name; furniture creeping back onto the identity line takes it
+// to ~30px, where the name ellipsizes.
+const ROLE_NAME_FLOOR_PX = 95
 
 test.describe('Role Mixer panel flow (Electron UI)', () => {
   let app: ElectronApplication | undefined
@@ -221,6 +233,160 @@ test.describe('Role Mixer panel flow (Electron UI)', () => {
       if (!(track instanceof HTMLElement)) throw new Error('the card fader has no track')
       return track.getBoundingClientRect().width
     }, MIXER_ROOT)
+
+  // Every Role card's name box, in list order, with the two numbers that say
+  // whether its text fits: an ellipsized name reports a scroll width past its
+  // client width. Read for all four cards because only the longest translated
+  // name runs out of room, and which one that is moves with the locale.
+  const roleNameFit = (): Promise<
+    Array<{ role: string; clientWidth: number; scrollWidth: number }>
+  > =>
+    page.evaluate(
+      (selector) =>
+        Array.from(document.querySelectorAll(`${selector} .mixer-card`)).map((card) => {
+          const name = card.querySelector('.mixer-role-name')
+          if (!(name instanceof HTMLElement)) throw new Error('a Role card carries no name')
+          return {
+            role: name.textContent ?? '',
+            clientWidth: name.clientWidth,
+            scrollWidth: name.scrollWidth,
+          }
+        }),
+      MIXER_ROOT,
+    )
+
+  // Every card silenced by another Role's solo, with what it takes to say the
+  // badge stayed inside it: the scroll/client pair on the card and on its
+  // controls line, and the reset gutter's own right edge against the card's —
+  // an overflowing badge pushes the gutter out, which is a rect relation and
+  // not a scroll width.
+  const silencedCardFit = (): Promise<
+    Array<{
+      role: string
+      badge: string
+      badgeWidth: number
+      cardClient: number
+      cardScroll: number
+      controlsClient: number
+      controlsScroll: number
+      cardRight: number
+      resetRight: number
+    }>
+  > =>
+    page.evaluate(
+      (selector) =>
+        Array.from(
+          document.querySelectorAll(`${selector} .mixer-card[data-silenced="true"]`),
+        ).map((card) => {
+          const find = (suffix: string): HTMLElement => {
+            const el = card.querySelector(suffix)
+            if (!(el instanceof HTMLElement)) throw new Error(`a silenced card has no ${suffix}`)
+            return el
+          }
+          const controls = find('.mixer-card-controls')
+          const badge = find('.mixer-implied-badge')
+          return {
+            role: find('.mixer-role-name').textContent ?? '',
+            badge: badge.textContent ?? '',
+            badgeWidth: badge.getBoundingClientRect().width,
+            cardClient: (card as HTMLElement).clientWidth,
+            cardScroll: (card as HTMLElement).scrollWidth,
+            controlsClient: controls.clientWidth,
+            controlsScroll: controls.scrollWidth,
+            cardRight: card.getBoundingClientRect().right,
+            resetRight: find('.mixer-actions').getBoundingClientRect().right,
+          }
+        }),
+      MIXER_ROOT,
+    )
+
+  // The same question on a console strip, where the badge has no truncation
+  // rule of its own and the strip is a pinned width: does uppercase micro text
+  // whose width moves with the translation still fit the slack?
+  const silencedStripFit = (): Promise<
+    Array<{
+      role: string
+      badge: string
+      badgeWidth: number
+      stripWidth: number
+      stripClient: number
+      stripScroll: number
+      contentSlack: number
+      overhangLeft: number
+      overhangRight: number
+    }>
+  > =>
+    page.evaluate(
+      (selector) =>
+        Array.from(
+          document.querySelectorAll(`${selector} .mixer-strip[data-silenced="true"]`),
+        ).map((strip) => {
+          const find = (suffix: string): HTMLElement => {
+            const el = strip.querySelector(suffix)
+            if (!(el instanceof HTMLElement)) throw new Error(`a silenced strip has no ${suffix}`)
+            return el
+          }
+          const badge = find('.mixer-implied-badge').getBoundingClientRect()
+          const box = strip.getBoundingClientRect()
+          const style = getComputedStyle(strip)
+          const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
+          return {
+            role: find('.mixer-role-name').textContent ?? '',
+            badge: find('.mixer-implied-badge').textContent ?? '',
+            badgeWidth: badge.width,
+            stripWidth: box.width,
+            stripClient: (strip as HTMLElement).clientWidth,
+            stripScroll: (strip as HTMLElement).scrollWidth,
+            // What the slack `editor.css` leaves for this string is actually
+            // worth, in fractional pixels. `scrollWidth` is integer-snapped, so
+            // a sub-pixel overrun does not show up there at all.
+            contentSlack: box.width - padding - badge.width,
+            overhangLeft: box.left - badge.left,
+            overhangRight: badge.right - box.right,
+          }
+        }),
+      MIXER_ROOT,
+    )
+
+  // Computed opacity once its transition has run out. Read straight after a
+  // hover, this returns the animation's start value.
+  const settledOpacity = async (suffix: string): Promise<string> => {
+    const read = (): Promise<string> =>
+      page.evaluate((target) => {
+        const el = document.querySelector(`${target.root} ${target.suffix}`)
+        if (!(el instanceof HTMLElement)) throw new Error(`no ${target.suffix} to read`)
+        return getComputedStyle(el).opacity
+      }, { root: MIXER_ROOT, suffix })
+    let previous = ''
+    let stable = 0
+    await expect
+      .poll(
+        async () => {
+          const opacity = await read()
+          stable = opacity === previous ? stable + 1 : 0
+          previous = opacity
+          return stable
+        },
+        { intervals: new Array(40).fill(60) },
+      )
+      .toBeGreaterThanOrEqual(2)
+    return read()
+  }
+
+  // Solo Dialogue for the duration of `body`, so the other three Roles render
+  // the implied-mute badge, then put the flag back. Solo is unrecorded, so no
+  // undo would clear it for whatever runs next.
+  const withDialogueSoloed = async (body: () => Promise<void>): Promise<void> => {
+    const solo = () => panel().getByLabel('Solo Dialogue (mutes the others)')
+    await solo().click()
+    try {
+      await expect(panel().locator('.mixer-implied-badge')).toHaveCount(3)
+      await body()
+    } finally {
+      await solo().click()
+      await expect(panel().locator('.mixer-implied-badge')).toHaveCount(0)
+    }
+  }
 
   // The console's shared geometry, read off the first Role strip: its fader
   // travel, and the two boxes the dB scale's truthfulness rests on — the 0 dB
@@ -465,5 +631,94 @@ test.describe('Role Mixer panel flow (Electron UI)', () => {
 
     await dragDialogueFader(0, 32)
     await expect.poll(dialogueGain).toBeLessThan(raised)
+  })
+
+  test('no Role name is truncated on a card at the narrowest legal dock', async () => {
+    const geometry = await useLayout('cards', NARROW_WINDOW_PX)
+    const trackWidth = await cardFaderTrackWidth()
+    const names = await roleNameFit()
+    console.log(
+      '[e2e] mixer card name fit',
+      JSON.stringify({ rootWidth: geometry.rootWidth, trackWidth, names }),
+    )
+    expect(names).toHaveLength(4)
+    for (const name of names) {
+      // The fader having a width says nothing about the line above it: a
+      // layout assertion protects exactly the box it measures, and the
+      // identity line's fixed boxes are what the name is left over from.
+      expect(name.scrollWidth, `${name.role} is ellipsized`).toBe(name.clientWidth)
+      expect(name.clientWidth, `${name.role} has no room`).toBeGreaterThanOrEqual(
+        ROLE_NAME_FLOOR_PX,
+      )
+    }
+  })
+
+  test('a card silenced by another Role solo keeps its badge and controls inside the card', async () => {
+    await useLayout('cards', NARROW_WINDOW_PX)
+    await withDialogueSoloed(async () => {
+      const silenced = await silencedCardFit()
+      console.log('[e2e] mixer silenced card fit', JSON.stringify(silenced))
+      expect(silenced).toHaveLength(3)
+      for (const card of silenced) {
+        expect(card.cardScroll, `${card.role} card overflows`).toBe(card.cardClient)
+        expect(card.controlsScroll, `${card.role} controls line overflows`).toBe(
+          card.controlsClient,
+        )
+        // The badge appears exactly in the state it exists to explain, so a
+        // badge that pushes the reset gutter past the card's edge breaks the
+        // card only when a user is reading it.
+        expect(
+          card.resetRight,
+          `${card.role} reset gutter sits outside the card`,
+        ).toBeLessThanOrEqual(card.cardRight + 0.5)
+      }
+    })
+  })
+
+  test('a console strip holds the implied-mute badge at the console floor', async () => {
+    // Coming UP to this width the Panel is still a card list — the two layouts
+    // measure about a scrollbar apart at one dock column, because the card list
+    // scrolls and the console does not — so the narrowest console anyone can be
+    // looking at is reached by narrowing a wider one.
+    await useLayout('console')
+    const floor = await resizeAndSettle(CONSOLE_FLOOR_WINDOW_PX)
+    expect(floor.layout).toBe('console')
+    expect(floor.rootWidth).toBeLessThan(CONSOLE_LAYOUT_MIN_WIDTH + 8)
+    await withDialogueSoloed(async () => {
+      const strips = await silencedStripFit()
+      console.log(
+        '[e2e] mixer console strip fit',
+        JSON.stringify({ rootWidth: floor.rootWidth, strips }),
+      )
+      expect(strips).toHaveLength(3)
+      for (const strip of strips) {
+        // The badge is the one thing either layout adds whose width a
+        // translation moves, and a strip is a pinned width — so this is the
+        // column arithmetic's only genuinely marginal claim.
+        expect(strip.stripScroll, `${strip.role} strip overflows`).toBe(strip.stripClient)
+        expect(strip.overhangRight, `${strip.role} badge runs past the strip`).toBeLessThanOrEqual(
+          0.5,
+        )
+        expect(strip.overhangLeft, `${strip.role} badge runs past the strip`).toBeLessThanOrEqual(
+          0.5,
+        )
+      }
+    })
+  })
+
+  test('mute and solo stand at rest while the reset gutter waits for a pointer', async () => {
+    await useLayout('cards')
+    // At rest means no pointer on the card and nothing in it focused — the
+    // gutter answers to both.
+    await page.mouse.move(0, 0)
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    expect(await settledOpacity('.mixer-actions')).toBe('0')
+    // State, not actions: these never hide, so the column of Roles reads as
+    // four mixes rather than four rows of buttons.
+    await expect(panel().getByLabel('Mute Dialogue everywhere')).toBeVisible()
+    await expect(panel().getByLabel('Solo Dialogue (mutes the others)')).toBeVisible()
+
+    await panel().locator('.mixer-card').first().hover()
+    expect(await settledOpacity('.mixer-actions')).toBe('1')
   })
 })
