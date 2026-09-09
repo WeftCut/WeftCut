@@ -3,12 +3,12 @@ import type { ReactNode } from "react";
 /// A property row the caller fills itself: caption in the panel's label
 /// column, whatever it passes in the value column.
 ///
-/// This is what a MERGED pair row is built from — `X | Y`, `Anchor X | Y` and
+/// This is what a merged pair row is built from — `X | Y`, `Anchor X | Y` and
 /// unlinked `Scale` are one row each, captioned once, holding two
 /// `InspectorAnimField layout="cell"` axes (and, for scale, the chain toggle
-/// after them). Two separate half-width rows is what they used to be, and that
-/// put the section's value edge in two places and stacked the axes vertically
-/// below a ~290 px panel.
+/// after them). Keep them merged: two half-width rows per pair cost the panel
+/// its single value edge and stack below a ~290 px panel (`.prop-field-pair`
+/// in `editor.css`).
 ///
 /// Not a `<label>` (unlike `Field`): the value column holds several controls,
 /// and a label wrapping them would activate only the first — clicking the

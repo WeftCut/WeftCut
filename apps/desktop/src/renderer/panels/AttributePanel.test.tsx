@@ -656,9 +656,9 @@ describe("AttributePanel Audio fade guards", () => {
 
 // The panel has ONE row primitive: `.prop-field` (static) and `.anim-field`
 // (animatable) are the same grid, and what leads the value column is a
-// stopwatch or the CSS-reserved empty slot. These pin the structure that grid
-// depends on — jsdom can't measure the edges, but every way the alignment has
-// broken before was a row shaped differently, not a layout engine bug.
+// stopwatch or the CSS-reserved empty slot. jsdom cannot measure the resulting
+// edges, so these pin the row SHAPE the grid needs instead — which is where
+// the alignment is actually won or lost.
 describe("AttributePanel row primitive", () => {
   const rowsIn = (section: HTMLElement) =>
     [...section.querySelectorAll<HTMLElement>(".anim-field, .prop-field")];
@@ -669,9 +669,9 @@ describe("AttributePanel row primitive", () => {
     const rows = rowsIn(transform);
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
-      // A stopwatch as a direct child of the row is the old shape: it made the
-      // label a second column and the value a third, which is what put the
-      // value edge in four places at once.
+      // A stopwatch as a direct child of the row makes the caption a second
+      // grid column and the value a third, which breaks the panel's one
+      // value edge for every animatable row.
       expect(row.querySelector(":scope > .anim-stopwatch")).toBeNull();
       const caption = row.firstElementChild;
       expect(caption?.className).toMatch(/anim-field-label|prop-field-label/);
@@ -701,8 +701,8 @@ describe("AttributePanel row primitive", () => {
     }
   });
 
-  // Unlinking used to add a SECOND row (Scale X with the chain, then a bare
-  // Scale Y) — one property that changed how many rows the panel had.
+  // The chain must not change the panel's row count: it swaps one axis cell
+  // for two inside the same row.
   it("keeps scale on one row whether it is linked or not", () => {
     const scaleRow = () =>
       rowsIn(screen.getByLabelText("Transform")).find(

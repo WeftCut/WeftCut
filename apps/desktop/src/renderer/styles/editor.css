@@ -527,10 +527,11 @@
 }
 
 /* Two equal controls side by side on one full-width line — the Group section's
-   Open/Ungroup buttons. Axis pairs no longer live here: X|Y and Anchor X|Y are
-   ONE row whose value column holds both fields (`.anim-axis`), which is what
-   keeps them on the panel's single value edge and stops them stacking below a
-   ~290 px panel. */
+   Open/Ungroup buttons. NOT for axis pairs: X|Y and Anchor X|Y are one row
+   whose value column holds both fields (`.anim-axis`). Splitting an axis pair
+   into two half-width rows costs the panel its single value edge and, below a
+   ~290 px panel — a 1280 window puts it at 271 — wraps the two axes into a
+   stack of full-width rows. */
 .prop-field-pair {
   display: flex;
   flex-wrap: wrap;
@@ -874,10 +875,11 @@
    reserves its footprint. So the panel has exactly one label edge and one
    value edge, across sections and across nesting.
 
-   Before this, the two coexisted with different label-column algorithms —
-   `.prop-field` at a fixed 96 px, `.anim-field` content-driven off a 56 px
-   floor — which put the value edge in four places at once (measured at a
-   412 px panel: 100.9 / 104.8 / 118.9 / 137.4). */
+   Both label columns must stay FIXED-width. Sizing either to its content
+   (`flex: 0 0 auto`, `width: max-content`, `min-width` as a floor) rags the
+   panel: the longest caption pushes its own input right and no two rows line
+   up. `Path progress (%)` at 92 px against `Opacity`'s 56 is the pair that
+   makes it obvious. */
 .prop-field {
   display: grid;
   /* `minmax(0, 1fr)` (NOT plain `1fr`) so the control column can shrink
@@ -893,11 +895,11 @@
   color: var(--color-slate-300);
 }
 
-/* The 96 px label column (the `--prop-label-col` fallback above) is wide
-   enough for the longest label either row kind carries — `Path progress (%)`
-   at 92 px, `Sample region start` at 95 px — so unifying the grid needed no
-   shortened copy. Override the variable on a nested container to keep the
-   value edge continuous through an inset (see `.prop-well`). */
+/* 96 px (the `--prop-label-col` fallback above) is the longest caption either
+   row kind carries — `Path progress (%)` at 92 px, `Sample region start` at
+   95 px. Shortening it ellipsizes those; a nested container that insets its
+   rows should instead override the variable by its own inset, which keeps the
+   value edge continuous through the nesting. */
 
 /* The empty stopwatch footprint a static row carries so its control starts on
    the same edge as the input boxes of the animatable rows around it, rather
@@ -986,11 +988,10 @@
   font-family: inherit;
 }
 
-/* An animatable row: the SAME grid as `.prop-field` (see there for why the
- * whole panel shares one), with the stopwatch leading the value column rather
- * than sitting outside the label. A content-driven label column is what used
- * to rag this section's value edge — `Path progress (%)` is 92 px against
- * `Opacity`'s 56, so every long label pushed its own input right. */
+/* An animatable row: the SAME grid as `.prop-field` (see there for the shared
+ * rules), with the stopwatch leading the value column rather than sitting
+ * outside the label — that is what keeps a static row's control and an
+ * animatable row's control on one edge. */
 .anim-field {
   display: grid;
   grid-template-columns: var(--prop-label-col, 96px) minmax(0, 1fr);
