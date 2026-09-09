@@ -68,6 +68,36 @@ struct ResourceState {
     #[cfg(feature = "speech")]
     #[serde(default)]
     language: Option<String>,
+    /// Injected by the TS host for `media://{id}/description` for `language`'s
+    /// reason, and from the same provider: the app's Video-understanding
+    /// sampling rate and prompt focus are cache-key inputs too, and a resource
+    /// addressed by URI has no argument to carry them.
+    ///
+    /// Spelled `describe_*` rather than bare `fps` / `focus` because this state
+    /// slice serves EVERY resource, and a bare `fps` beside `project` would read
+    /// as the composition's frame rate.
+    ///
+    /// Absent → [`vlm::DEFAULT_FPS`] / [`vlm::Focus::General`], which is what a
+    /// host-less read gets, exactly as an absent `language` yields
+    /// `Language::DEFAULT_TAG`.
+    #[cfg(feature = "speech")]
+    #[serde(default)]
+    describe_fps: Option<f64>,
+    #[cfg(feature = "speech")]
+    #[serde(default)]
+    describe_focus: Option<String>,
+}
+
+/// The three cache-key inputs the app's UI owns, as one argument.
+///
+/// Grouped rather than passed as three: they are one thing — the VIEW a read
+/// resolves — and three positional `Option`s at a call site are one
+/// transposition away from a silently wrong key.
+#[cfg(feature = "speech")]
+struct InjectedView<'a> {
+    language: Option<&'a str>,
+    fps: Option<f64>,
+    focus: Option<&'a str>,
 }
 
 fn serialize_err(e: serde_json::Error) -> McpToolError {
@@ -103,15 +133,13 @@ pub(crate) async fn read_resource(
         // `read_description_resource`.
         #[cfg(feature = "speech")]
         if let Some(id_part) = tail.strip_suffix("/description") {
-            return read_description_resource(
-                b,
-                uri,
-                id_part,
-                state.media,
-                &state.vlm_config,
-                state.language.as_deref(),
-            )
-            .await;
+            let view = InjectedView {
+                language: state.language.as_deref(),
+                fps: state.describe_fps,
+                focus: state.describe_focus.as_deref(),
+            };
+            return read_description_resource(b, uri, id_part, state.media, &state.vlm_config, view)
+                .await;
         }
         // /analysis — always computable, computes on miss; see
         // `read_analysis_resource`.
@@ -260,13 +288,20 @@ async fn read_media_resource(
     ))
 }
 
-/// Serve `media://{id}/description` — the cached scene-description view for the
-/// resolver's DEFAULT params (default backend, fps 1.0, general focus, the
-/// injected UI language). Resolves the backend from the injected VLM config,
+/// Serve `media://{id}/description` — the cached scene-description view the
+/// app's own settings name (resolver's default backend + the injected sampling,
+/// focus and language). Resolves the backend from the injected VLM config,
 /// computes the same cache key `describe_clip` uses, and returns the stored
 /// `DescriptionCache` (`{ covered_ranges, segments }`, source-absolute). Reports
 /// a clear not-found when no backend is configured or nothing has been described
 /// yet — unlike the always-computable analysis resources.
+///
+/// The view is INJECTED and not defaulted here, and that is the whole contract
+/// this resource keeps: the host fills the tool's omitted `fps` / `focus` /
+/// `language` from one provider and injects the same three values here, so the
+/// view a gesture writes is the view the shot rows read back. Hardcoding any of
+/// them would strand every run at a non-default setting in a view no read can
+/// find.
 #[cfg(feature = "speech")]
 async fn read_description_resource(
     b: &Backend,
@@ -274,7 +309,7 @@ async fn read_description_resource(
     id_part: &str,
     media: Option<crate::state::MediaItem>,
     vlm_config: &std::collections::HashMap<String, crate::vlm::BackendConfig>,
-    language: Option<&str>,
+    view: InjectedView<'_>,
 ) -> Result<ResourceResult, McpToolError> {
     use crate::vlm;
 
@@ -295,28 +330,34 @@ async fn read_description_resource(
         )
     })?;
     let model = vlm::resolve::model_label(backend, vlm_config.get(backend.as_str()));
-    // Default view params mirror describe_clip's defaults (fps 1.0, general) —
-    // and its language default, which is what `Language::parse(None)` states.
-    let language = vlm::Language::parse(language);
+    // Every parse/fallback here is describe_clip's own, so an absent injection
+    // resolves the way an omitted tool argument does.
+    let language = vlm::Language::parse(view.language);
+    let focus = vlm::Focus::parse(view.focus);
+    let fps = view.fps.unwrap_or(vlm::DEFAULT_FPS);
     let key = vlm::cache_key(
         &media.file_hash_blake3,
         backend,
         &model,
-        1000,
-        vlm::Focus::General,
+        vlm::fps_milli(fps),
+        focus,
         &language,
     );
     let path = b.cache.description(&key);
     crate::cache::touch_if_stale(&path);
     if !crate::cache::cached_ok(&path) {
-        // The language is named in the refusal: on a language switch every
-        // source reads as undescribed, and a sentence that only said "default
-        // sampling" would make that look like lost data rather than a different
-        // view of the same footage.
+        // The whole VIEW is named in the refusal: change any of these and every
+        // source reads as undescribed, and a sentence that named none of them
+        // would make that look like lost data rather than a different view of the
+        // same footage. Nothing is deleted on a switch — `descriptions/` is
+        // excluded from the disk-LRU sweep — so the prior view is still there to
+        // switch back to.
         return Err(McpToolError::resource_not_found(
             format!(
-                "no description computed yet for media {media_id} ({}, default sampling, {}) — call describe_clip",
+                "no description computed yet for media {media_id} ({}, {} fps, {} focus, {}) — call describe_clip",
                 backend.as_str(),
+                fps,
+                focus.as_str(),
                 language.as_str(),
             ),
             None,
@@ -529,6 +570,30 @@ pub(super) fn static_resources() -> Vec<ResourceDef> {
 mod stateless_tests {
     use super::*;
     use crate::napi_backend::Backend;
+
+    /// The injected field NAMES are the contract with
+    /// `main/state/resource-views.ts`. A rename on either side degrades in
+    /// silence — the reader falls back to the bare-core view, finds no entry
+    /// under that key, and reports every source as undescribed with nothing to
+    /// diagnose. The reader itself needs a `Backend` and a cache on disk, so
+    /// what is pinned here is the shape it reads from.
+    #[cfg(feature = "speech")]
+    #[test]
+    fn resource_state_reads_the_injected_describe_view() {
+        let state: ResourceState = serde_json::from_str(
+            r#"{"media":null,"vlm_config":{},"language":"zh-CN","describe_fps":2.5,"describe_focus":"shot-type"}"#,
+        )
+        .unwrap();
+        assert_eq!(state.language.as_deref(), Some("zh-CN"));
+        assert_eq!(state.describe_fps, Some(2.5));
+        assert_eq!(state.describe_focus.as_deref(), Some("shot-type"));
+        // A stateless read parses clean and injects nothing, so every axis falls
+        // back the way an omitted tool argument does.
+        let bare: ResourceState = serde_json::from_str("{}").unwrap();
+        assert!(bare.language.is_none());
+        assert!(bare.describe_fps.is_none());
+        assert!(bare.describe_focus.is_none());
+    }
 
     /// The advertised `project://history` description must teach the window
     /// semantics (`window_start`, `evicted`, absolute `jump_to` indices):

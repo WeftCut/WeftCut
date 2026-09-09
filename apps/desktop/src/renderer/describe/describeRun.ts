@@ -1,12 +1,16 @@
 // One description run, from the press to the prose on the rows — the whole of
-// it, so the dialog and the Shots Panel's buttons are literally the same run.
+// it, so the describe command and the Shots Panel's buttons are literally the
+// same run.
 //
-// Extracted the day the Panel grew a per-shot button. Duplicating this in the
-// Panel would have meant two statements of the log pair, two of the in-flight
-// flag, two of the optimistic-fill rule and two of what a default view is; the
-// last one matters most, because a run at a NON-default view lands somewhere
-// `media://{id}/description` cannot read it back from, and a second copy of that
-// rule would be free to drift into producing prose nobody can find again.
+// Duplicating this in the Panel would have meant two statements of the log pair,
+// two of the in-flight flag and two of the optimistic-fill rule.
+//
+// It states NO run parameters. Sampling, focus and language are the user's
+// Settings → Video understanding, and Electron main injects all three into
+// `describe_clip` and into the `media://{id}/description` read from one provider
+// (`main/index.ts` `getVlm`) — the only arrangement under which the view a run
+// writes and the view the rows read cannot disagree. A default restated here
+// would be a second opinion about a setting this surface does not own.
 //
 // Deliberately NOT in `descriptionsStore.ts`: that module's stated rule is that
 // reading a description never computes one, and a `describeClip` call inside it
@@ -14,7 +18,7 @@
 // this is the one thing allowed to spend a model to get one.
 
 import { logMutationFailure, refusalText } from "../errors/tryMutate";
-import { describeClip, logEmit, type DescribeFocus } from "../ipc";
+import { describeClip, logEmit } from "../ipc";
 import {
   mergeDescription,
   reloadDescription,
@@ -22,31 +26,6 @@ import {
   setDescribing,
   useDescriptionsStore,
 } from "./descriptionsStore";
-
-/// The parameter values `describe_clip` resolves an omitted argument to.
-///
-/// TWIN of `DescribeClipArgs`' `unwrap_or(1.0)`, `Focus::parse(None)` and
-/// `Language::parse(None)` (`native/src/mcp/tools.rs`,
-/// `native/src/vlm/describer.rs`), and knowingly so — the addon exposes no
-/// getter for them the way it does for the shot detector's (`shot_default_opts`).
-/// Change one side and change this one: these values are also the key of the
-/// DEFAULT view, the only one `media://{id}/description` serves, so a mismatch
-/// here would produce descriptions the shot rows can never read back.
-export const DEFAULT_FPS = 1.0;
-export const DEFAULT_FOCUS: DescribeFocus = "general";
-
-/// `language` is absent from that pair on purpose. The default is the app's UI
-/// language, and the renderer never states it: Electron main injects it into
-/// `describe_clip` AND into the resource read from ONE value
-/// (`main/index.ts` `getVlm`), which is the only arrangement under which the
-/// view a run writes and the view the rows read cannot disagree. A renderer that
-/// sent a language of its own would be a second opinion about the same question.
-///
-/// Which is also why a run is at the default VIEW whenever its two parameters
-/// are default: language is not a parameter this surface offers.
-export function isDefaultView(fps: number, focus: DescribeFocus): boolean {
-  return fps === DEFAULT_FPS && focus === DEFAULT_FOCUS;
-}
 
 /// What to describe, and what to call it in the log.
 export interface DescribeRunTarget {
@@ -63,25 +42,20 @@ export interface DescribeRunTarget {
   /// whole-clip run must send no window at all — sending the layer's own
   /// endpoints would be a second statement of a default that already has one.
   window: { tStartUs: number; tEndUs: number } | null;
-  /// What the log rows and the dialog call this run's subject: the clip's name,
-  /// or the clip's name and the shot's ordinal.
+  /// What the log rows call this run's subject: the clip's name, or the clip's
+  /// name and the shot's ordinal.
   label: string;
 }
 
 /// Run one description and land it. Answers the failure's own sentence, or `""`
-/// on success — the dialog needs it for its inline slot, and the Panel's buttons
-/// let it go to the store's slot instead.
+/// on success — the command needs it to decide whether the failure has a remedy
+/// to open, and the Panel's buttons let it go to the store's slot instead.
 ///
 /// Refuses to start while another run is going. The engine is a local model:
 /// two spawns would halve each other's speed, and the batch arm below is exactly
 /// the surface that would otherwise fire thirty at once.
-export async function runDescribe(
-  target: DescribeRunTarget,
-  opts: { fps?: number; focus?: DescribeFocus } = {},
-): Promise<string> {
+export async function runDescribe(target: DescribeRunTarget): Promise<string> {
   if (useDescriptionsStore.getState().describing !== null) return "";
-  const fps = opts.fps ?? DEFAULT_FPS;
-  const focus = opts.focus ?? DEFAULT_FOCUS;
   const { mediaId, srcStartUs, srcEndUs } = target;
 
   setDescribeError("");
@@ -102,27 +76,27 @@ export async function runDescribe(
     op_state: { state: "Started" },
   });
   try {
-    // Omitted at the defaults so Rust's own decide (`ipc/index.ts` states the
-    // rule) — which is also what keeps a default run landing in the view the
-    // shot rows read back.
+    // The window is the only argument this layer states. The three view axes are
+    // main's to fill (`ipc/index.ts` `describeClip` states the rule).
     const result = await describeClip({
       layerId: target.layerId,
       ...(target.window === null
         ? {}
         : { tStartUs: target.window.tStartUs, tEndUs: target.window.tEndUs }),
-      ...(fps === DEFAULT_FPS ? {} : { fps }),
-      ...(focus === DEFAULT_FOCUS ? {} : { focus }),
     });
     setDescribing(null);
     // The run's own segments first, over its own window and nothing wider, so
-    // the cells it answered for fill the moment the model is done. Then, at the
-    // default view only, the cache behind them: it holds every window of this
-    // source ever described, so the re-read is how a row picks up prose an
-    // earlier run on a neighbouring shot produced. A finer or re-focused run has
-    // no such view to re-read, and asking for one would answer with the default
-    // view's segments — over the top of the ones just computed.
+    // the cells it answered for fill the moment the model is done. Then the cache
+    // behind them: it holds every window of this source described under the
+    // current view, so the re-read is how a row picks up prose an earlier run on
+    // a neighbouring shot produced.
+    //
+    // UNCONDITIONAL, and that is the whole point of injecting the view: the read
+    // resolves the same key the run just wrote, so there is no longer a setting
+    // at which the re-read would answer with some other view's segments over the
+    // top of the ones just computed.
     mergeDescription(mediaId, srcStartUs, srcEndUs, result.segments);
-    if (isDefaultView(fps, focus)) void reloadDescription(mediaId);
+    void reloadDescription(mediaId);
     void logEmit({
       level: "info",
       category: { kind: "Project" },

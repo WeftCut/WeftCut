@@ -217,6 +217,7 @@ const DESCRIBE_REASON: Record<Exclude<DescribeState, "describe">, string> = {
   needs_selection: "quick_actions.describe_needs_selection",
   needs_video_kind: "quick_actions.describe_needs_video_kind",
   speed_not_one: "quick_actions.describe_speed_not_one",
+  already_running: "quick_actions.describe_already_running",
 };
 
 /// Why a greyed *Move to… ›* trigger is greyed. Same block and same

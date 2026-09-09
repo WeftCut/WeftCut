@@ -95,23 +95,37 @@ const TRACKS = [
 
 describe("describeState", () => {
   it("admits a normal-speed VideoClip", () => {
-    expect(describeState("l-video", TRACKS)).toBe("describe");
+    expect(describeState("l-video", TRACKS, false)).toBe("describe");
   });
 
   it("asks for a selection when nothing is selected, or when the summary has no such layer", () => {
-    expect(describeState(null, TRACKS)).toBe("needs_selection");
-    expect(describeState("l-gone", TRACKS)).toBe("needs_selection");
+    expect(describeState(null, TRACKS, false)).toBe("needs_selection");
+    expect(describeState("l-gone", TRACKS, false)).toBe("needs_selection");
   });
 
   // The one state that genuinely differs from the audio gate's: sound is not
   // what makes a clip describable, so an Audio layer auto-caption accepts is
   // the wrong kind here.
   it("names the wrong kind for an Audio layer rather than admitting it", () => {
-    expect(describeState("l-audio", TRACKS)).toBe("needs_video_kind");
+    expect(describeState("l-audio", TRACKS, false)).toBe("needs_video_kind");
   });
 
   it("refuses a re-timed clip at the gesture, not at the tool", () => {
-    expect(describeState("l-fast", TRACKS)).toBe("speed_not_one");
+    expect(describeState("l-fast", TRACKS, false)).toBe("speed_not_one");
+  });
+
+  // The state the command surface lives or dies by: `runDescribe` refuses a
+  // second run and returns nothing, so a gesture that stayed live during one
+  // would be a press with no effect and no explanation.
+  it("names a run already in flight", () => {
+    expect(describeState("l-video", TRACKS, true)).toBe("already_running");
+  });
+
+  // LAST of the checks, so the harder instruction wins: told to pick a video
+  // clip, waiting for a run to finish is not the thing to go and do.
+  it("prefers a material refusal over the in-flight one", () => {
+    expect(describeState("l-audio", TRACKS, true)).toBe("needs_video_kind");
+    expect(describeState(null, TRACKS, true)).toBe("needs_selection");
   });
 });
 

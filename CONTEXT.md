@@ -507,15 +507,18 @@ _Avoid_: caption or subtitle (spoken words, a Text layer), summary, scene
 description in UI copy (the Rust struct is `SceneDescription`, but "scene" is
 the word this glossary keeps away from shots), transcript
 
-**Default view**:
-The one description of a source that `media://{id}/description` serves and
-therefore the only one the shot rows and the search index can read back across
-sessions: the resolver's default engine at the default sampling (1.0 frames per
-second) and focus (general). A run at other settings is cached under its own
-key and readable for the session it was made in; the describe dialog says which
-of the two a run will be.
-_Avoid_: cached description (every run is cached; only this one is read back),
-baseline
+**Description view**:
+The five inputs that key a source's cached description — engine, model, sampling
+rate, focus, interface language — taken together. `media://{id}/description`
+serves exactly one of them, and Electron main injects the same three
+user-settable axes into that read and into `describe_clip`, so the view a
+gesture writes is the view the shot rows and the search index read back. Change
+any axis and every source reads as 未描述 under the new view; nothing is deleted
+(`descriptions/` is excluded from the disk-LRU sweep), so switching back finds
+the earlier view intact. Settings → Video understanding owns the sampling and
+the focus; Settings → General owns the language.
+_Avoid_: default view (there is no privileged one any more), cached description
+(every run is cached; the view decides which is read), baseline
 
 ## Links and Groups
 

@@ -52,18 +52,27 @@ function unwrap(json: string): unknown { return unwrapEnvelope(JSON.parse(json) 
  *  by backend tag, plus the user's SOFT preferred engine. VLM config is not held
  *  on the napi `Backend` like speech — it rides in with each call.
  *
- *  `language` rides along because the description cache is keyed by it: the
- *  model writes its prose in the app's UI language, so the tool that WRITES a
- *  cache entry and the resource that READS one have to name the same language or
- *  every source reads as undescribed. One provider, so they cannot disagree.
+ *  `language`, `fps` and `focus` ride along because the description cache is
+ *  keyed by all three: the tool that WRITES a cache entry and the resource that
+ *  READS one have to name the same view or every source reads as undescribed.
+ *  One provider, so they cannot disagree — and it is the app's
+ *  Video-understanding settings, not this layer's guess.
  *  `null` = the caller has no UI to speak for (a bare-core read), which Rust
- *  resolves to `Language::DEFAULT_TAG`. */
+ *  resolves to `Language::DEFAULT_TAG` / `DEFAULT_FPS` / `Focus::General`. */
 export type VlmProvider = () => {
   config: Record<string, unknown>
   preferred: string | null
   language: string | null
+  fps: number | null
+  focus: string | null
 }
-const NO_VLM: VlmProvider = () => ({ config: {}, preferred: null, language: null })
+const NO_VLM: VlmProvider = () => ({
+  config: {},
+  preferred: null,
+  language: null,
+  fps: null,
+  focus: null,
+})
 
 /** One clip-compute tool call: resolve the `{ layer, media }` slice from the
  *  actor (the sole state owner), inject the engine-selection hints the stateless
@@ -113,6 +122,12 @@ export async function callClipComputeTool(
     // and filling it here rather than leaving it to Rust's own default is what
     // makes the renderer's runs land in the view the shot rows read back.
     if (merged.language == null && vlm.language) merged.language = vlm.language
+    // The other two view axes take the same default-not-override rule, for the
+    // same reason: an agent that asked for a specific sampling or focus keeps
+    // it, and an omitted one is filled from the app's setting — which is what
+    // makes a renderer run land in the view the shot rows read back.
+    if (merged.fps == null && vlm.fps != null) merged.fps = vlm.fps
+    if (merged.focus == null && vlm.focus) merged.focus = vlm.focus
   }
   return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult
 }
@@ -196,7 +211,11 @@ export async function handleReadResource(
     // project://compiled / media://* / composition://meter stay Rust compute —
     // inject the project / MediaItem / nothing the stateless reader now needs.
     const vlm = getVlm()
-    const injection = buildResourceInjection(uri, tsHost.actor.snapshot(), vlm.config, vlm.language)
+    const injection = buildResourceInjection(uri, tsHost.actor.snapshot(), vlm.config, {
+      language: vlm.language,
+      fps: vlm.fps,
+      focus: vlm.focus,
+    })
     return unwrap(await backend.mcpReadResource(uri, injection)) as ServerResult
   }
   return unwrap(await backend.mcpReadResource(uri)) as ServerResult
@@ -273,16 +292,16 @@ export async function readMediaFrameDataUrl(
  *  an unreadable cache file — still throws, because those are real. */
 const NOT_DESCRIBED = /no description computed yet for media|no video-understanding backend/
 
-/** The cached description for one source's DEFAULT view — the resolver's default
- *  backend at fps 1.0 and focus `general` — or `null` when nothing is cached
- *  there, read through the SAME `media://{id}/description` resource an agent
- *  reads.
+/** The cached description for one source under the view the app's settings name
+ *  — the resolver's backend at the configured sampling, focus and UI language —
+ *  or `null` when nothing is cached there, read through the SAME
+ *  `media://{id}/description` resource an agent reads.
  *
  *  Exported for the renderer's description channel (`index.ts`), the way
- *  `readMediaFrameDataUrl` is. The default view is the only view this resource
- *  serves and deliberately so: it is what a description made at the dialog's
- *  default sampling lands in, and therefore the only one a Panel reopened in a
- *  later session can still find.
+ *  `readMediaFrameDataUrl` is. This resource serves ONE view, and the injection
+ *  is what makes it the right one: the same provider fills the tool's omitted
+ *  view arguments, so what a gesture writes is what a Panel reopened in a later
+ *  session finds.
  *
  *  `getVlm` is not optional here as it is on the frame read: the resource needs
  *  the merged backend config to resolve which backend's cache key to look

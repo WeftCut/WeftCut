@@ -55,7 +55,7 @@ describe("descriptionsStore", () => {
     expect(held("m-1")).toEqual(CACHE.segments);
   });
 
-  // `null` is an ANSWER — this source has nothing at the default view — and it
+  // `null` is an ANSWER — this source has nothing under the current view — and it
   // has to be held, or the Panel would re-read on every render.
   it("records a source with nothing described, and does not ask twice", async () => {
     mocks.getMediaDescription.mockResolvedValue(null);

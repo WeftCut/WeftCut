@@ -1974,15 +1974,19 @@ export async function settingsClearLocalBackend(backend: string): Promise<void> 
 //     covers both, so there is no cloud-provider backend here,
 //   * a third required local path, `mmproj` (the vision projector),
 //   * no Rust-side push on write — the store IS the state.
-// All five channels are intercepted in Electron main. VlmPreferredEngine /
-// VlmLocalEngineConfig are single-sourced in src/shared/vlm-config.ts.
+// Every channel here is intercepted in Electron main. VlmPreferredEngine /
+// VlmLocalEngineConfig / VlmDescribeFocus are single-sourced in
+// src/shared/vlm-config.ts — the focus union in particular, because it is both a
+// persisted setting and a `describe_clip` wire tag and two spellings of it would
+// drift.
 // ============================================================
 
 import type {
   VlmPreferredEngine,
   VlmLocalEngineConfig,
+  VlmDescribeFocus,
 } from "../../shared/vlm-config";
-export type { VlmPreferredEngine, VlmLocalEngineConfig };
+export type { VlmPreferredEngine, VlmLocalEngineConfig, VlmDescribeFocus };
 
 /// Availability verdict tags mirroring Rust `vlm::config::Availability`. No
 /// `needs_key` twin: nothing here is key-gated — the endpoint's key is optional,
@@ -2019,12 +2023,28 @@ export interface VlmBackendInfo {
 
 export interface VlmBackendsView {
   preferred_engine: VlmPreferredEngine;
+  /// The two describe run params, alongside the backends because Settings →
+  /// Video understanding owns all three and reads them in one fetch.
+  describe_fps: number;
+  describe_focus: VlmDescribeFocus;
   backends: VlmBackendInfo[];
 }
 
 /// Full backend listing + the user's preferred engine, for the Settings panel.
 export async function settingsGetVlmBackends(): Promise<VlmBackendsView> {
   return invoke<VlmBackendsView>("settings_get_vlm_backends");
+}
+
+/// Persist the sampling rate and/or the prompt focus every describe gesture
+/// uses. Either may be omitted; main clamps the rate to the legal range.
+export async function settingsSetVlmDescribe(args: {
+  fps?: number;
+  focus?: VlmDescribeFocus;
+}): Promise<void> {
+  return invoke<void>("settings_set_vlm_describe", {
+    ...(args.fps === undefined ? {} : { fps: args.fps }),
+    ...(args.focus === undefined ? {} : { focus: args.focus }),
+  });
 }
 
 /// Persist the user's preferred description engine ("auto" | a backend tag).
@@ -2787,10 +2807,6 @@ export interface DescriptionCache {
   segments: DescSegment[];
 }
 
-/// What the model is asked to attend to: the general scene, or the shot type and
-/// camera work. Mirrors Rust `Focus` (the wire tags, hyphen included).
-export type DescribeFocus = "general" | "shot-type";
-
 /// Describe one VideoClip layer's window with a video-understanding model. The
 /// engine is chosen by the user's Settings → Video understanding preference then
 /// availability; when nothing is configured the call rejects with the message
@@ -2798,38 +2814,36 @@ export type DescribeFocus = "general" | "shot-type";
 ///
 /// A read: it commits nothing, so it neither enters undo nor dirties the
 /// project. What it writes is its own content-addressed cache, keyed by
-/// `(source, backend, model, fps, focus)` — so a second call over a window the
-/// same key already covers returns from disk with no model spawn.
+/// `(source, backend, model, fps, focus, language)` — so a second call over a
+/// window the same key already covers returns from disk with no model spawn.
 ///
-/// `t_start_us` / `t_end_us` default to the layer's own endpoints in Rust, and
-/// `fps` / `focus` are omitted rather than defaulted here so Rust's defaults
-/// decide — `detectSilences`' rule. Sending an explicit value equal to the
-/// default would key the same cache entry, but it would also put a second
-/// statement of that default in TypeScript.
+/// `t_start_us` / `t_end_us` default to the layer's own endpoints in Rust. The
+/// THREE view arguments — sampling, focus, language — are not on this signature
+/// at all: main fills them from the user's Settings → Video understanding
+/// (`main/mcp/server.ts`), which is what makes a run land in the view
+/// `media://{id}/description` serves. A renderer that sent its own would be a
+/// second statement of a setting it does not own.
 export async function describeClip(args: {
   layerId: string;
   tStartUs?: number;
   tEndUs?: number;
-  fps?: number;
-  focus?: DescribeFocus;
 }): Promise<SceneDescription> {
   return invoke<SceneDescription>("describe_clip", {
     layer_id: args.layerId,
     ...(args.tStartUs === undefined ? {} : { t_start_us: args.tStartUs }),
     ...(args.tEndUs === undefined ? {} : { t_end_us: args.tEndUs }),
-    ...(args.fps === undefined ? {} : { fps: args.fps }),
-    ...(args.focus === undefined ? {} : { focus: args.focus }),
   });
 }
 
-/// The description cached for one source's DEFAULT view — the resolver's default
-/// engine at the default sampling and focus — or `null` when there is nothing
-/// there to read.
+/// The description cached for one source under the view the app's settings name
+/// — the resolver's engine at the configured sampling, focus and language — or
+/// `null` when there is nothing there to read.
 ///
 /// `null` covers both nothing-described-yet and no-engine-configured, because a
 /// row that has no description has one empty state either way. Which of the two
 /// it is matters only where something can be done about it, and that is the
-/// describe dialog, which gets the engine's own sentence.
+/// describe command, which acts on the engine's own sentence by opening
+/// Settings → Video understanding.
 ///
 /// Never computes: this is the read path a Panel may issue on every selection
 /// change. `describeClip` is the only call that spends a model.

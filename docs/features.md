@@ -1222,21 +1222,22 @@ the surviving middle of a manual bundle — stays.
 **What is in each shot.** Two gestures over the same tool, at two
 granularities.
 
-*Describe content…* — on a `VideoClip`'s context menu beside *Review shots…*,
-in the Edit menu and the palette — runs `describe_clip` over the WHOLE clip
-with the tool's own two parameters (frames sampled per second, default 1.0;
-focus, *general* or *shot type and camera*) and lands the result as a column on
-the shot rows: each row shows the model's prose for the stretch of source it
+*Describe content* — on a `VideoClip`'s context menu beside *Review shots…*,
+in the Edit menu and the palette — runs `describe_clip` over the WHOLE clip and
+lands the result as a column on the shot rows. No ellipsis and no dialog: the two
+parameters it used to ask for live in Settings → Video understanding, so the
+press starts the run. It reveals the Shots Panel FIRST, because a whole-clip run
+lights every row of that clip and that is what makes a run with no cancel on the
+wire distinguishable from a dead app. The rows: each row shows the model's prose for the stretch of source it
 covers, tags after it, and a segment that straddles a detected boundary appears
 on both rows — the model and the detector disagreeing about where the content
 changes is exactly the correlation the column is for.
 
 **Per shot**, each row carries its own *Describe shot* press, and the
 parameters row carries *Describe N shots* over every row that has nothing yet.
-Both are one press with no dialog, at the default sampling and focus: those two
-are exactly the parameters that take a result OUT of the view the rows read
-back, so a per-row control that offered them would be offering a way to make
-the press pointless. A shot-sized window is also the better question — handed
+All three gestures run at the same view, because none of them states one: the
+window is the only argument any of them sends. A shot-sized window is the better
+question — handed
 one shot, the model has nowhere else to put a segment boundary, so the prose is
 about that shot and lands on that row, where a whole-clip run at 1 fps chooses
 its own spans. This needs no new tool: `describe_clip` already takes
@@ -1251,22 +1252,29 @@ run's window actually reaches say *Describing…*, so a per-shot press never
 reports work on the twenty-nine rows it will not answer for.
 
 Shots with no description read *Not described* at the same row height; that is
-the ordinary state, not a failure. The dialog says up front that this is a local
-model run of around twenty seconds and that it writes in the app's language, and
-every run is Started → Ok/Err under one `op_id`, the Ok row naming the engine and
-model that answered and — for a per-shot run — which shot. The one failure with a
-remedy inside the app — no video-understanding engine configured — grows a button
-to Settings → Video understanding; every other refusal is the tool's own sentence,
-inline in the dialog or in the Panel's own describe slot (never the apply bar's,
-which is exclusive between the scan, a measurement and an apply). A re-timed clip
-greys every describe control with the split to make, which is the tool's own
-precondition said before the press rather than after a twenty-second wait.
+the ordinary state, not a failure. Every run is Started → Ok/Err under one
+`op_id`, the Ok row naming the engine and model that answered and — for a
+per-shot run — which shot. The one failure with a remedy inside the app — no
+video-understanding engine configured — OPENS Settings → Video understanding
+rather than offering a button to it: the command has no dialog to host one, a
+status-log row cannot carry an action, and the panel it opens is where the
+missing engine is configured. Every other refusal is the tool's own sentence in
+the status log, and in the Panel's own describe slot when the press came from
+there (never the apply bar's, which is exclusive between the scan, a measurement
+and an apply). A re-timed clip greys every describe control with the split to
+make, and so does a run already in flight — the model is serial, so a second
+press would be refused silently otherwise.
 
 Selecting a clip never describes it: the rows read the cached view through
-`media://{id}/description`, which serves the default sampling, focus and
-LANGUAGE, so a run at other settings is readable for the session and the dialog
-says so. **The prose is written in the app's UI language.** That language is part
-of the cache key — the range-lazy cache short-circuits a described window with no
+`media://{id}/description`, which serves the sampling, focus and LANGUAGE the
+app's settings name — so what a gesture writes is what the rows read back, at any
+setting. **Sampling and focus live in Settings → Video understanding**, one value
+across every project: how densely to sample frames, and whether `tags` lean
+toward the general scene or toward shot type and camera work (the prose describes
+the scene either way). Changing either switches to another cached view and keeps
+the one already there — `descriptions/` is excluded from the disk-LRU sweep, so
+switching back finds it intact and needs no model run. **The prose is written in
+the app's UI language.** That language is part of the same cache key — the range-lazy cache short-circuits a described window with no
 model spawn, so sharing a key across languages would hand English prose back to a
 Chinese request with no way to correct it. The consequence is worth stating: after
 a language switch every shot reads *Not described* until it is described again,
@@ -1283,10 +1291,11 @@ review decisions and the verbs; `shotRows.ts` projects spans into rows;
 floor scan are `native/src/jobs/shot/`, read through `analyzeShotsFloor` /
 `reduceShotReport`; the verbs are the `apply_shot_cuts` hybrid in
 `main/state/hybrids.ts` over `split_layer_multi` (with `discard_segments`) and
-`add_markers`. Descriptions: `renderer/describe/` (dialog, eligibility, the
+`add_markers`. Descriptions: `renderer/describe/` (eligibility, the
 per-source store, the one shared run in `describeRun.ts`, the shot-scoped arm in
 `describeShots.ts` and the time-intersection join),
-`commands/describeCommands.ts`, and `readMediaDescription` in
+`commands/describeCommands.ts`, the two run params in `settings/VlmSection.tsx`
+over `shared/vlm-config.ts`, and `readMediaDescription` in
 `main/mcp/server.ts` behind the `get_media_description` channel; the output
 language is the prompt's trailing rule in `native/src/vlm/sidecar.rs` and a
 cache-key input in `native/src/vlm/description.rs`.

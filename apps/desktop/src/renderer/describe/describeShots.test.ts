@@ -167,10 +167,11 @@ describe("describeOneShot", () => {
   });
   afterEach(resetDescriptionsStore);
 
-  // The rule the one-press control lives or dies by: `fps` and `focus` are the
-  // two parameters that take a result OUT of the view `media://{id}/description`
-  // serves, so a per-row run must send neither.
-  it("sends the window and neither parameter", async () => {
+  // The window is the ONLY thing a run states. Sampling, focus and language are
+  // main's to inject from Settings → Video understanding, so a renderer that
+  // sent any of them would be a second statement of a setting it does not own —
+  // and the two surfaces could then disagree about which view was written.
+  it("sends the window and no view parameters", async () => {
     await describeOneShot(shot(2), SUBJECT);
     expect(mocks.describeClip).toHaveBeenCalledWith({
       layerId: "l-1",

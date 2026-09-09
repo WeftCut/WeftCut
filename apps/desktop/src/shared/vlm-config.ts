@@ -29,6 +29,30 @@ export const VLM_PREFERRED_ENGINES: readonly VlmPreferredEngine[] = [
   "byo_endpoint",
 ];
 
+/// What the model is asked to attend to, and therefore what populates a
+/// segment's `tags`. Mirrors the Rust `Focus` wire tags, hyphen included.
+export type VlmDescribeFocus = "general" | "shot-type";
+
+export const VLM_DESCRIBE_FOCUSES: readonly VlmDescribeFocus[] = [
+  "general",
+  "shot-type",
+];
+
+/// Sampling bounds for [`VlmConfig.describe_fps`], in frames per second.
+///
+/// `MAX` is Rust's own: `describe_clip` refuses anything outside `(0.0, 30.0]`,
+/// so a stored value above it would travel to a refusal instead of a run. `MIN`
+/// is this layer's: below a tenth of a frame per second a minute of footage
+/// yields fewer than six frames, and the model would be describing stills rather
+/// than a clip. `STEP` keeps the useful range (roughly 0.5-3) reachable by a
+/// stepper — a whole-number step would put its lower half out of reach.
+///
+/// ONE definition, read by the store's coercion and by the Settings field alike:
+/// two clamps would be two answers to what a legal sampling rate is.
+export const VLM_DESCRIBE_FPS_MIN = 0.1;
+export const VLM_DESCRIBE_FPS_MAX = 30;
+export const VLM_DESCRIBE_FPS_STEP = 0.5;
+
 /// The `cloud_keys.json` provider tag the endpoint's optional API key is stored
 /// under. Its own tag, not the speech section's `"openai"` entry: one secret,
 /// one editor — a key the user typed under Video understanding must not change
@@ -65,6 +89,19 @@ export interface VlmConfig {
   local: Record<string, VlmLocalEngineConfig>;
   /// The single endpoint config, when configured.
   endpoint?: VlmEndpointConfig;
+  /// How densely to sample frames, and what to bias `tags` toward. NOT backend
+  /// config — they are the run parameters every describe gesture uses, and they
+  /// live here beside `preferred_engine` because this file is what the Video
+  /// understanding panel owns. `toVlmBackendSnapshot` projects only the backend
+  /// half of this store, so neither reaches the Rust resolver's config map.
+  ///
+  /// Both are part of the description cache key, so changing either switches
+  /// which cached view every read resolves to (`native/src/vlm/description.rs`
+  /// `cache_key`). Main injects them on BOTH sides of that key — the
+  /// `describe_clip` argument fill and the `media://{id}/description` read — so
+  /// the view that gets written is the view that gets read back.
+  describe_fps: number;
+  describe_focus: VlmDescribeFocus;
 }
 
 /// Patch shape — every field optional; the store merges, persists atomically,
@@ -74,6 +111,8 @@ export interface VlmConfigPatch {
   preferred_engine?: VlmPreferredEngine;
   local?: { backend: string; config: VlmLocalEngineConfig | null };
   endpoint?: VlmEndpointConfig | null;
+  describe_fps?: number;
+  describe_focus?: VlmDescribeFocus;
 }
 
 export const VLM_CONFIG_DEFAULTS: VlmConfig = {
@@ -82,4 +121,10 @@ export const VLM_CONFIG_DEFAULTS: VlmConfig = {
   // would blank a Settings selector. The store's read() backfills this default.
   preferred_engine: "auto",
   local: {},
+  // ADDITIVE-FIELD SAFETY, and the whole of this feature's migration: these are
+  // the values the tool's own defaults used to state, so every description ever
+  // cached was written under this view and a first launch after these fields
+  // appear resolves to the key it already resolved to.
+  describe_fps: 1.0,
+  describe_focus: "general",
 };

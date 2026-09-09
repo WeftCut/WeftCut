@@ -4,6 +4,7 @@ import {
   toVlmBackendSnapshot,
   type VlmConfigFs,
 } from "./vlm-config";
+import { VLM_CONFIG_DEFAULTS, type VlmConfig } from "../shared/vlm-config";
 
 const PATH = "/cfg/vlm_config.json";
 const DIR = "/cfg";
@@ -33,9 +34,18 @@ function memFs(seed: Record<string, string> = {}) {
 const store = (seed?: Record<string, string>) =>
   createVlmConfigStore({ ...memFs(seed), path: PATH, dir: DIR });
 
+/// A whole `VlmConfig` from the parts a test cares about, so an additive field
+/// does not have to be typed into every fixture. `local` is re-made rather than
+/// spread from the defaults: the store mutates what `get()` returned.
+const cfg = (over: Partial<VlmConfig> = {}): VlmConfig => ({
+  ...VLM_CONFIG_DEFAULTS,
+  local: {},
+  ...over,
+});
+
 describe("vlm-config store", () => {
   it("defaults to auto with no local engines when no file", () => {
-    expect(store().get()).toEqual({ preferred_engine: "auto", local: {} });
+    expect(store().get()).toEqual(cfg());
   });
 
   // ADDITIVE-FIELD SAFETY: an OLD config lacking preferred_engine must load as
@@ -51,7 +61,7 @@ describe("vlm-config store", () => {
   });
 
   it("corrupt JSON degrades to defaults", () => {
-    expect(store({ [PATH]: "{not json" }).get()).toEqual({ preferred_engine: "auto", local: {} });
+    expect(store({ [PATH]: "{not json" }).get()).toEqual(cfg());
   });
 
   it("preferred_engine round-trips through an independent reader", () => {
@@ -149,11 +159,10 @@ describe("takeLegacyEndpointKey", () => {
 describe("toVlmBackendSnapshot", () => {
   it("maps local + endpoint into the Rust-tagged BackendConfig shapes, key folded into the endpoint entry", () => {
     const snap = toVlmBackendSnapshot(
-      {
-        preferred_engine: "auto",
+      cfg({
         local: { qwen3_vl: { binary: "/b/cli", model: "/m/q.gguf", mmproj: "/m/mm.gguf" } },
         endpoint: { url: "http://h/v1/chat/completions", model: "m" },
-      },
+      }),
       "  sk-endpoint  ",
     );
     expect(snap.qwen3_vl).toEqual({ kind: "local", binary: "/b/cli", model: "/m/q.gguf", mmproj: "/m/mm.gguf" });
@@ -168,7 +177,7 @@ describe("toVlmBackendSnapshot", () => {
 
   it("omits the endpoint entry when the URL is blank, key or no key", () => {
     const snap = toVlmBackendSnapshot(
-      { preferred_engine: "auto", local: {}, endpoint: { url: "   " } },
+      cfg({ endpoint: { url: "   " } }),
       "sk-endpoint",
     );
     expect(snap.byo_endpoint).toBeUndefined();
@@ -178,15 +187,75 @@ describe("toVlmBackendSnapshot", () => {
   // A key alone configures nothing — availability is URL-gated, so a stored key
   // with no endpoint must not put an entry in the snapshot at all.
   it("a key with no endpoint configured yields no entry", () => {
-    const snap = toVlmBackendSnapshot({ preferred_engine: "auto", local: {} }, "sk-endpoint");
+    const snap = toVlmBackendSnapshot(cfg(), "sk-endpoint");
     expect(Object.keys(snap)).toHaveLength(0);
   });
 
   it("omits api_key when the endpoint has none, so a self-hosted server sends no header", () => {
     const snap = toVlmBackendSnapshot(
-      { preferred_engine: "auto", local: {}, endpoint: { url: "http://h/v1" } },
+      cfg({ endpoint: { url: "http://h/v1" } }),
       null,
     );
     expect(snap.byo_endpoint).toEqual({ kind: "endpoint", url: "http://h/v1" });
+  });
+
+  // The two describe run params live in this store but are NOT backend config:
+  // the snapshot IS the Rust resolver's `HashMap<String, BackendConfig>`, and a
+  // stray field in it would be a config entry for a backend that does not exist.
+  it("projects the backend half only — the describe params never reach the snapshot", () => {
+    const snap = toVlmBackendSnapshot(
+      cfg({
+        describe_fps: 2.5,
+        describe_focus: "shot-type",
+        endpoint: { url: "http://h/v1" },
+      }),
+      null,
+    );
+    expect(Object.keys(snap)).toEqual(["byo_endpoint"]);
+    expect(JSON.stringify(snap)).not.toContain("describe_");
+  });
+});
+
+// The run params are cache-key inputs, so a value the store lets through is a
+// view every later read has to resolve. Coercion is the only guard.
+describe("describe run params", () => {
+  it("backfills both when the file predates them", () => {
+    const s = store({ [PATH]: '{ "local": {} }' });
+    expect(s.get().describe_fps).toBe(1);
+    expect(s.get().describe_focus).toBe("general");
+  });
+
+  // CLAMPED rather than rejected: a hand-edited 60 is a legible intent to sample
+  // as densely as the engine allows, and the run it would otherwise reach
+  // refuses outright.
+  it("clamps a stored sampling rate into the legal range", () => {
+    expect(store({ [PATH]: '{ "describe_fps": 60 }' }).get().describe_fps).toBe(30);
+    expect(store({ [PATH]: '{ "describe_fps": 0 }' }).get().describe_fps).toBe(0.1);
+    expect(store({ [PATH]: '{ "describe_fps": 2.5 }' }).get().describe_fps).toBe(2.5);
+  });
+
+  it("defaults a wrong-typed rate and an unrecognized focus", () => {
+    expect(store({ [PATH]: '{ "describe_fps": "fast" }' }).get().describe_fps).toBe(1);
+    expect(store({ [PATH]: '{ "describe_fps": null }' }).get().describe_fps).toBe(1);
+    expect(store({ [PATH]: '{ "describe_focus": "bogus" }' }).get().describe_focus).toBe("general");
+    expect(store({ [PATH]: '{ "describe_focus": 7 }' }).get().describe_focus).toBe("general");
+  });
+
+  it("a patch round-trips through an independent reader, clamped", () => {
+    const { fs } = memFs();
+    const s = createVlmConfigStore({ fs, path: PATH, dir: DIR });
+    expect(s.apply({ describe_fps: 3, describe_focus: "shot-type" })).toMatchObject({
+      describe_fps: 3,
+      describe_focus: "shot-type",
+    });
+    const reader = createVlmConfigStore({ fs, path: PATH, dir: DIR });
+    expect(reader.get().describe_fps).toBe(3);
+    expect(reader.get().describe_focus).toBe("shot-type");
+    // Out of range on the way IN, too — the setter and the reader share one
+    // coercion, so the panel cannot store what a run would refuse.
+    expect(s.apply({ describe_fps: 99 }).describe_fps).toBe(30);
+    // An unrecognized focus is ignored rather than stored: the field is a wire
+    // tag, and there is no meaning to clamp it to.
+    expect(s.apply({ describe_focus: "bogus" as never }).describe_focus).toBe("shot-type");
   });
 });

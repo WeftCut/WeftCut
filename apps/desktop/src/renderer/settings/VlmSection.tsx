@@ -2,20 +2,36 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   settingsGetVlmBackends,
+  settingsSetVlmDescribe,
   settingsSetVlmPreferred,
   settingsSetVlmLocal,
   settingsClearVlmLocal,
   settingsSetVlmEndpoint,
   type VlmBackendInfo,
   type VlmBackendsView,
+  type VlmDescribeFocus,
   type VlmPreferredEngine,
 } from "../ipc";
+import {
+  VLM_DESCRIBE_FOCUSES,
+  VLM_DESCRIBE_FPS_MAX,
+  VLM_DESCRIBE_FPS_MIN,
+  VLM_DESCRIBE_FPS_STEP,
+} from "../../shared/vlm-config";
 import { open as openFileDialog } from "@/bridge/dialog";
 import { AppInput } from "../components/AppInput";
+import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { Button } from "@/components/ui/button";
 import { ManagedContent } from "./ManagedContent";
 import { vlmEngineOptions } from "./vlmEngineOptions";
+
+/// Each focus value with its label key. A `Record` over the union so a third
+/// focus cannot be added without writing the copy that names it.
+const FOCUS_LABELS: Record<VlmDescribeFocus, string> = {
+  general: "settings.vlm_focus_general",
+  "shot-type": "settings.vlm_focus_shot_type",
+};
 
 /// Settings → Video understanding. The structural twin of `SpeechSection`:
 /// fetch the full backend listing (preference + live availability, merged with
@@ -44,6 +60,31 @@ export function VlmSection({ onError }: { onError: (msg: string) => void }) {
   useEffect(() => {
     void refresh();
   }, []);
+
+  // Local draft for the sampling field, so a persist costs one IPC per EDIT
+  // rather than one per keystroke (`AppNumberField` commits on blur / Enter /
+  // step-end). Re-mirrored from the store after every commit, which is how the
+  // clamp becomes visible: type 60 and the field comes back 30.
+  const [fpsDraft, setFpsDraft] = useState<number | null>(null);
+  useEffect(() => {
+    if (view !== null) setFpsDraft(view.describe_fps);
+  }, [view]);
+
+  /// Persist one or both run params, then re-fetch — the mutate-then-refresh
+  /// cycle every other control in this section uses, so what renders is always
+  /// the store's value and never a draft that could disagree with the clamp.
+  const saveDescribe = async (patch: {
+    fps?: number;
+    focus?: VlmDescribeFocus;
+  }) => {
+    onError("");
+    try {
+      await settingsSetVlmDescribe(patch);
+      await refresh();
+    } catch (e) {
+      onError(String(e));
+    }
+  };
 
   if (view === null) {
     return (
@@ -90,6 +131,61 @@ export function VlmSection({ onError }: { onError: (msg: string) => void }) {
             but it is the one thing a user picking an engine needs to know
             before they pick — so it is stated where the choice is made. */}
         <p className="settings-toggle-hint">{t("settings.vlm_privacy_note")}</p>
+      </section>
+      {/* The two run parameters, in their own group between the engine choice
+          and the per-backend rows: the selector above decides WHICH engine, and
+          these decide what it is asked to do. Not per-backend rows, because they
+          apply to whichever engine resolves. */}
+      <section className="settings-section">
+        <label className="settings-toggle-row">
+          <AppNumberField
+            value={fpsDraft ?? view.describe_fps}
+            onValueChange={setFpsDraft}
+            onCommit={(v) => void saveDescribe({ fps: v })}
+            min={VLM_DESCRIBE_FPS_MIN}
+            max={VLM_DESCRIBE_FPS_MAX}
+            step={VLM_DESCRIBE_FPS_STEP}
+            format={{ minimumFractionDigits: 1, maximumFractionDigits: 1 }}
+            align="center"
+            className="settings-input-narrow"
+            ariaLabel={t("settings.vlm_sampling")}
+          />
+          <span>
+            <span className="settings-toggle-label">
+              {t("settings.vlm_sampling")}
+            </span>
+            <span className="settings-toggle-hint">
+              {t("settings.vlm_sampling_hint")}
+            </span>
+          </span>
+        </label>
+        <label className="settings-toggle-row">
+          <AppSelect
+            value={view.describe_focus}
+            onValueChange={(next) =>
+              void saveDescribe({ focus: next as VlmDescribeFocus })
+            }
+            options={VLM_DESCRIBE_FOCUSES.map((value) => ({
+              value,
+              label: t(FOCUS_LABELS[value]),
+            }))}
+            ariaLabel={t("settings.vlm_focus")}
+          />
+          <span>
+            <span className="settings-toggle-label">
+              {t("settings.vlm_focus")}
+            </span>
+            <span className="settings-toggle-hint">
+              {t("settings.vlm_focus_hint")}
+            </span>
+          </span>
+        </label>
+        {/* What changing either of these actually does. Said here because this
+            is where it is done, and said by VIEW rather than by these two
+            fields: the engine, the model and the interface language key the same
+            cache, and a sentence naming only the two controls beside it would
+            leave a language switch looking like lost data. */}
+        <p className="settings-toggle-hint">{t("settings.vlm_view_note")}</p>
       </section>
       <section className="settings-section">
         {view.backends.map((b) =>

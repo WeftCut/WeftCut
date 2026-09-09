@@ -378,6 +378,8 @@ const enUS = {
       "A description reads frames — select a video clip",
     describe_speed_not_one:
       "This clip is re-timed — split a normal-speed segment off it first, or the descriptions land in the wrong place",
+    describe_already_running:
+      "A description is already running — wait for it to finish",
   },
   dock_workspace: {
     editing_label: "Editing workspace",
@@ -584,7 +586,7 @@ const enUS = {
     // thing to want from a model.
     describe_shot_again: "Describe again",
     describe_shot_hint:
-      "Ask the vision model what is in this shot — one local model run of around twenty seconds, in the app's language.",
+      "Ask the vision model what is in this shot — one local model run, in the app's language.",
     // What the status-log rows call one shot's run. Interpolated into
     // `log.describe_started` / `log.describe_done` in place of a clip name, so
     // a sweep's rows say which shot each one was.
@@ -595,7 +597,7 @@ const enUS = {
     describe_all_one: "Describe {{count}} shot",
     describe_all_other: "Describe {{count}} shots",
     describe_all_hint:
-      "Describe every shot that has nothing yet, one after another — each is a local model run of around twenty seconds, so it is opt-in.",
+      "Describe every shot that has nothing yet, one after another — each is its own local model run, so it is opt-in.",
     // While it runs the button IS the stop. `done` counts finished runs, so it
     // reads 0/7 while the first one is going.
     describe_all_running: "Stop ({{done}}/{{total}})",
@@ -707,7 +709,10 @@ const enUS = {
     // "Describe content" and not "Describe clip": what the model reads is
     // what is IN the footage, and the row's answer lands as prose on the shot
     // rows rather than as anything about the clip as an object.
-    describe_selected: "Describe content…",
+    //
+    // No ellipsis, unlike the two rows above it: sampling and focus live in
+    // Settings → Video understanding now, so the press runs rather than asks.
+    describe_selected: "Describe content",
     open_voiceover: "Voiceover…",
     // Ellipsis because the row opens a surface rather than committing anything:
     // reviewing is what happens next, and the apply is a press inside the Panel.
@@ -1534,6 +1539,22 @@ const enUS = {
     vlm_engine_active: "Active engine: {{engine}}",
     vlm_engine_none:
       "No engine configured — download or point to a local engine below, or add an OpenAI-compatible endpoint.",
+    // Named for what it controls rather than for the wire field (`fps`): what a
+    // user is choosing is how closely the model looks. The unit is in the hint
+    // below — a settings row has no unit slot.
+    vlm_sampling: "Sample",
+    vlm_sampling_hint:
+      "Frames per second sampled across the clip — more is finer and slower.",
+    vlm_focus: "Focus",
+    vlm_focus_general: "General scene",
+    vlm_focus_shot_type: "Shot type and camera",
+    vlm_focus_hint:
+      "What the tags lean toward. The prose describes the scene either way.",
+    // Worded by VIEW rather than by the two controls beside it: the engine, the
+    // model and the interface language key the same cache, and naming only these
+    // two would leave a language switch looking like lost data.
+    vlm_view_note:
+      "Descriptions are cached per engine, model, sampling, focus and interface language. Changing any of them switches to another description view and keeps the existing one — switch back and it is there.",
     vlm_privacy_note:
       "Frames are only ever sent to an engine you configure. Automatic prefers on-device engines and reaches an endpoint last; asking for a specific engine never falls back to a different one.",
     vlm_available: "Available",
@@ -2298,36 +2319,6 @@ const enUS = {
     // Not "Cut": the gap closes, which is the part a plain cut would not do.
     remove: "Remove",
     removing: "Removing…",
-  },
-  describe: {
-    title: "Describe content",
-    clip: "Clip",
-    // Named for what it controls rather than for the wire field (`fps`): what a
-    // user is choosing is how closely the model looks, and the unit is beside
-    // the field.
-    sampling: "Sample",
-    unit_fps: "frames / second",
-    sampling_hint:
-      "Frames per second sampled across the clip — more is finer and slower.",
-    focus: "Focus",
-    focus_general: "General scene",
-    focus_shot_type: "Shot type and camera",
-    focus_hint: "What the tags lean toward. The prose describes the scene either way.",
-    // The cost, said before the press rather than discovered after it. No
-    // percentage exists to report: the model answers once, at the end.
-    note:
-      "This runs a vision model on your machine — around twenty seconds for a clip — and writes in the app's language.",
-    // Only a run at the default sampling and focus lands in the view that is
-    // read back, so the sentence changes with the fields rather than sitting
-    // there as a warning nobody re-reads.
-    remembered_default:
-      "Remembered for later sessions, and searchable, at these settings.",
-    remembered_custom:
-      "Readable now, but only descriptions made at {{fps}} frames / second with {{focus}} are remembered for later sessions.",
-    open_settings: "Open Settings → Video understanding",
-    cancel: "Cancel",
-    confirm: "Describe",
-    running: "Describing…",
   },
   search: {
     placeholder: "Search commands, media, clips, captions, descriptions…",

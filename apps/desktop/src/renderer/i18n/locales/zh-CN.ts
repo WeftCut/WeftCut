@@ -341,6 +341,7 @@ const zhCN: Resources = {
     describe_needs_video_kind: "描述读的是画面——请选一个视频片段",
     describe_speed_not_one:
       "这个片段变过速——先从中切出一段常速，否则描述会落错位置",
+    describe_already_running: "已经有一次描述在执行——等它结束再来",
   },
   dock_workspace: {
     editing_label: "编辑工作区",
@@ -516,7 +517,7 @@ const zhCN: Resources = {
     // 而是在被再问一次，对模型来说这是很正常的需求。
     describe_shot_again: "再描述一次",
     describe_shot_hint:
-      "问视觉模型这个镜头里有什么——一次本机模型运行，约二十秒，按 app 当前语言输出。",
+      "问视觉模型这个镜头里有什么——一次本机模型运行，按 app 当前语言输出。",
     // 状态日志里怎么称呼单个镜头的这次运行。它会替代片段名被插进
     // log.describe_started / log.describe_done，这样批量跑出来的每一行都说清是哪个镜头。
     describe_shot_subject: "{{clip}} · 镜头 {{index}}",
@@ -526,7 +527,7 @@ const zhCN: Resources = {
     describe_all_one: "描述 {{count}} 个镜头",
     describe_all_other: "描述 {{count}} 个镜头",
     describe_all_hint:
-      "把还没有描述的镜头逐个描述——每个都是一次约二十秒的本机模型运行，所以需要主动触发。",
+      "把还没有描述的镜头逐个描述——每个都是各自一次本机模型运行，所以需要主动触发。",
     // 运行期间这个按钮就是停止键。done 数的是已完成的运行，所以第一个还在跑
     // 的时候显示 0/7。
     describe_all_running: "停止（{{done}}/{{total}}）",
@@ -614,7 +615,10 @@ const zhCN: Resources = {
     detect_silences_selected: "检测静默…",
     // 用"描述内容"而不是"描述片段"：模型读的是画面里有什么，这一行的产物是
     // 落在镜头行上的文字，而不是关于片段这个对象的任何说明。
-    describe_selected: "描述内容…",
+    //
+    // 上面两条带省略号，这一条不带：采样与侧重现在住在 设置 → 视频理解，按下
+    // 就直接跑，没有要先问的东西。
+    describe_selected: "描述内容",
     open_voiceover: "配音…",
     // 带省略号，因为这一行打开的是一个界面而不是提交任何改动：接下来是审阅，
     // 应用是面板里的另一次按下。
@@ -1329,6 +1333,18 @@ const zhCN: Resources = {
       "尚未配置引擎——请在下方下载或指定本地引擎，或填写 OpenAI 兼容服务地址。",
     vlm_privacy_note:
       "画面帧只会发送到你自己配置的引擎。「自动」优先选择本地引擎，服务地址排在最后；显式指定某个引擎时绝不会退回到另一个。",
+    // 按它控制什么来命名，而不是按线上的字段名（fps）：用户在选的是模型看得
+    // 多细。单位放在下面那句提示里——设置行没有单位槽。
+    vlm_sampling: "采样",
+    vlm_sampling_hint: "在整个片段上每秒采样的帧数——越多越细，也越慢。",
+    vlm_focus: "侧重",
+    vlm_focus_general: "画面内容",
+    vlm_focus_shot_type: "镜别与运镜",
+    vlm_focus_hint: "决定标签偏向哪一边。无论选哪个，正文都会描述画面。",
+    // 按「视图」措辞，而不是按旁边那两个控件：引擎、模型、界面语言键的是同一
+    // 份缓存，只提采样和侧重，会让改一次界面语言看起来像数据丢了。
+    vlm_view_note:
+      "描述按引擎、模型、采样、侧重、界面语言分别缓存。改动其中任何一项都会切换到另一份描述视图，原有的一份保留——改回去即刻可见。",
     vlm_available: "可用",
     vlm_needs_binary: "缺少可执行文件",
     vlm_needs_model: "缺少模型",
@@ -2018,31 +2034,6 @@ const zhCN: Resources = {
     // 不叫“剪掉”：空缺会合上，而这恰是单纯剪一刀做不到的那一半。
     remove: "移除",
     removing: "正在移除…",
-  },
-  describe: {
-    title: "描述内容",
-    clip: "片段",
-    // 按它控制什么来命名，而不是按线上的字段名（fps）：用户在选的是模型看得
-    // 多细，单位就写在输入框旁边。
-    sampling: "采样",
-    unit_fps: "帧 / 秒",
-    sampling_hint: "在整个片段上每秒采样的帧数——越多越细，也越慢。",
-    focus: "侧重",
-    focus_general: "画面内容",
-    focus_shot_type: "镜别与运镜",
-    focus_hint: "决定标签偏向哪一边。无论选哪个，正文都会描述画面。",
-    // 代价在按下之前就说清楚，而不是按下之后才发现。没有百分比可报：模型只在
-    // 最后一次性给出答案。
-    note: "这会在本机运行一个视觉模型——一个片段大约二十秒，输出用 app 当前的语言。",
-    // 只有按默认采样和默认侧重跑出来的结果才会落进被读回的那个视图，所以这句
-    // 随输入框变化，而不是当一句没人再读的警告摆在那里。
-    remembered_default: "按当前设置跑出的描述会留到下次会话，并且可被搜索。",
-    remembered_custom:
-      "现在可以读，但只有按 {{fps}} 帧 / 秒、侧重{{focus}}跑出的描述才会留到下次会话。",
-    open_settings: "打开设置 → 视频理解",
-    cancel: "取消",
-    confirm: "描述",
-    running: "正在描述…",
   },
   search: {
     placeholder: "搜索命令、素材、片段、字幕、画面描述…",

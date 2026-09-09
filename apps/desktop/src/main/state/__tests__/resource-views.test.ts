@@ -100,6 +100,37 @@ describe('buildResourceInjection', () => {
     expect(injected.media.id).toBe('m1')
     expect('vlm_config' in injected).toBe(false)
   })
+  // The field names here are the contract with Rust's `ResourceState`. A rename
+  // on either side degrades in silence: the reader keys the bare-core view, finds
+  // nothing, and every source reports as undescribed.
+  it('injects the config AND the whole describe view for media://{id}/description', () => {
+    const actor = mkActor()
+    const snap = { ...actor.snapshot(), media_pool: { m1: mediaItemTemplate('m1', 'Video', 1_000_000) } } as never
+    const injected = JSON.parse(
+      buildResourceInjection('media://m1/description', snap, { qwen3_vl: {} }, {
+        language: 'zh-CN',
+        fps: 2.5,
+        focus: 'shot-type',
+      }),
+    )
+    expect(injected.media.id).toBe('m1')
+    expect(injected.vlm_config).toEqual({ qwen3_vl: {} })
+    expect(injected.language).toBe('zh-CN')
+    expect(injected.describe_fps).toBe(2.5)
+    expect(injected.describe_focus).toBe('shot-type')
+  })
+
+  // No UI to speak for → nothing injected, so Rust's own defaults decide. The
+  // `detectSilences` rule: one statement of a default, on the side that owns it.
+  it('injects no view axis the provider has none for', () => {
+    const actor = mkActor()
+    const snap = { ...actor.snapshot(), media_pool: { m1: mediaItemTemplate('m1', 'Video', 1_000_000) } } as never
+    const injected = JSON.parse(buildResourceInjection('media://m1/description', snap, {}))
+    expect('language' in injected).toBe(false)
+    expect('describe_fps' in injected).toBe(false)
+    expect('describe_focus' in injected).toBe(false)
+  })
+
   it('injects nothing for composition://meter', () => {
     const actor = mkActor()
     expect(buildResourceInjection('composition://meter', actor.snapshot())).toBe('{}')

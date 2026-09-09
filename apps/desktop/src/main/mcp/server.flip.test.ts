@@ -151,15 +151,23 @@ describe('handleCallTool flip routing', () => {
     await callClipComputeTool(
       fakeBackend(spy), ts, 'describe_clip', { layer_id: 'gone' },
       () => null,
-      () => ({ config: { qwen3_vl: { binary: 'q' } }, preferred: 'qwen3_vl', language: 'zh-CN' }),
+      () => ({
+        config: { qwen3_vl: { binary: 'q' } },
+        preferred: 'qwen3_vl',
+        language: 'zh-CN',
+        fps: 2.5,
+        focus: 'shot-type',
+      }),
     )
     const sent = JSON.parse(spy.mock.calls[0][1])
     expect(sent.vlm_config).toEqual({ qwen3_vl: { binary: 'q' } })
     expect(sent.preferred_backend).toBe('qwen3_vl')
-    // The UI language rides in with the config: the description cache is keyed
-    // by it, so the tool that writes an entry and the resource that reads one
-    // have to name the same language.
+    // The whole VIEW rides in with the config: the description cache is keyed by
+    // all three, so the tool that writes an entry and the resource that reads
+    // one have to name the same one.
     expect(sent.language).toBe('zh-CN')
+    expect(sent.fps).toBe(2.5)
+    expect(sent.focus).toBe('shot-type')
   })
 
   // `language` is ADVERTISED, unlike `preferred_backend`: an agent may want
@@ -171,9 +179,25 @@ describe('handleCallTool flip routing', () => {
     await callClipComputeTool(
       fakeBackend(spy), ts, 'describe_clip', { layer_id: 'gone', language: 'ja' },
       () => null,
-      () => ({ config: {}, preferred: null, language: 'zh-CN' }),
+      () => ({ config: {}, preferred: null, language: 'zh-CN', fps: 1, focus: 'general' }),
     )
     expect(JSON.parse(spy.mock.calls[0][1]).language).toBe('ja')
+  })
+
+  // Same rule for the other two axes, and it has to hold for the same reason:
+  // an agent that asked to sample densely, or for camera-focused tags, keeps
+  // what it asked for whatever the app's panel is set to.
+  it('leaves an explicitly requested sampling and focus alone', async () => {
+    const ts = tsHostStub()
+    const spy = vi.fn(okEnvelope)
+    await callClipComputeTool(
+      fakeBackend(spy), ts, 'describe_clip', { layer_id: 'gone', fps: 4, focus: 'general' },
+      () => null,
+      () => ({ config: {}, preferred: null, language: null, fps: 1, focus: 'shot-type' }),
+    )
+    const sent = JSON.parse(spy.mock.calls[0][1])
+    expect(sent.fps).toBe(4)
+    expect(sent.focus).toBe('general')
   })
 
   // No UI to speak for → nothing injected, so Rust's own default decides. The
@@ -184,8 +208,11 @@ describe('handleCallTool flip routing', () => {
     await callClipComputeTool(
       fakeBackend(spy), ts, 'describe_clip', { layer_id: 'gone' },
       () => null,
-      () => ({ config: {}, preferred: null, language: null }),
+      () => ({ config: {}, preferred: null, language: null, fps: null, focus: null }),
     )
-    expect(JSON.parse(spy.mock.calls[0][1]).language).toBeUndefined()
+    const sent = JSON.parse(spy.mock.calls[0][1])
+    expect(sent.language).toBeUndefined()
+    expect(sent.fps).toBeUndefined()
+    expect(sent.focus).toBeUndefined()
   })
 })

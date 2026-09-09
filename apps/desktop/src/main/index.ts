@@ -843,7 +843,13 @@ app.whenReady().then(async () => {
   // which engine serves a call, so two definitions of it would be two answers
   // to the same question depending on who asked.
   const getPreferredEngine = (): string | null => speechConfig.get().preferred_engine
-  const getVlm = (): { config: Record<string, unknown>; preferred: string | null; language: string | null } => {
+  const getVlm = (): {
+    config: Record<string, unknown>
+    preferred: string | null
+    language: string | null
+    fps: number | null
+    focus: string | null
+  } => {
     // Merge non-secret store config + the endpoint's own safeStorage key into
     // the snapshot the stateless describe_clip resolver reads; empty until the
     // user configures an engine → "no backend available".
@@ -861,6 +867,12 @@ app.whenReady().then(async () => {
       // hand-edited file) leaves it unset, and Rust's own default is a better
       // answer than a guess made here.
       language: appSettings.get().language ?? null,
+      // The other two cache-key axes, from the same store as `preferred` — the
+      // Video-understanding panel owns all three of the run's parameters. Never
+      // null in practice: the store backfills its own defaults, so there is
+      // always a view to name.
+      fps: cfg.describe_fps,
+      focus: cfg.describe_focus,
     }
   }
 
@@ -1085,6 +1097,10 @@ app.whenReady().then(async () => {
       // fields: local engines get their paths, the endpoint row its URL/model.
       return {
         preferred_engine: vc.preferred_engine,
+        // The two run params ride back with the backends so the panel stays ONE
+        // fetch: same store, same section, same refresh-after-mutation cycle.
+        describe_fps: vc.describe_fps,
+        describe_focus: vc.describe_focus,
         backends: rows.map((r) => {
           if (r.locality === 'local' && vc.local[r.backend]) return { ...r, local: vc.local[r.backend] }
           if (r.locality === 'endpoint' && vc.endpoint) {
@@ -1099,6 +1115,20 @@ app.whenReady().then(async () => {
     if (channel === 'settings_set_vlm_preferred') {
       const { engine } = (args ?? {}) as { engine: import('../shared/vlm-config.js').VlmPreferredEngine }
       vlmConfig.apply({ preferred_engine: engine })
+      return null
+    }
+    // The two describe run params. One channel for both because they are one
+    // panel row group and the store applies a patch atomically; either field may
+    // be omitted, and the store's own coercion clamps the sampling rate.
+    if (channel === 'settings_set_vlm_describe') {
+      const a = (args ?? {}) as {
+        fps?: number
+        focus?: import('../shared/vlm-config.js').VlmDescribeFocus
+      }
+      vlmConfig.apply({
+        ...(a.fps === undefined ? {} : { describe_fps: a.fps }),
+        ...(a.focus === undefined ? {} : { describe_focus: a.focus }),
+      })
       return null
     }
     if (channel === 'settings_set_vlm_local') {

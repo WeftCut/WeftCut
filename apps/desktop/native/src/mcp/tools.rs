@@ -1043,13 +1043,16 @@ pub(super) struct DescribeClipArgs {
     /// `t_end_us`. Must lie within the layer.
     #[serde(default)]
     pub t_end_us: Option<i64>,
-    /// Frames sampled per second across the window (default 1.0). Higher = finer
-    /// temporal detail at more cost; capped so the frame set fits the model's
-    /// context.
+    /// Frames sampled per second across the window. Higher = finer temporal
+    /// detail at more cost; capped so the frame set fits the model's context.
+    /// Defaults to the app's Video-understanding setting, which the host injects
+    /// when this is omitted; with no host, 1.0. Part of the cache key.
     #[serde(default)]
     pub fps: Option<f64>,
-    /// Prompt focus: `"general"` (default) or `"shot-type"` (biases `tags`
-    /// toward shot type / camera).
+    /// Prompt focus: `"general"` or `"shot-type"` (biases `tags` toward shot
+    /// type / camera). Defaults to the app's Video-understanding setting, which
+    /// the host injects when this is omitted; with no host, `"general"`. Part of
+    /// the cache key.
     #[serde(default)]
     pub focus: Option<String>,
     /// Language the `text` and `tags` come back in, as a BCP-47 tag
@@ -1298,7 +1301,7 @@ pub(super) async fn describe_clip(
     };
     let model = vlm::model_label(used_backend, cfg.get(used_backend.as_str()));
 
-    let fps = args.fps.unwrap_or(1.0);
+    let fps = args.fps.unwrap_or(vlm::DEFAULT_FPS);
     if !(fps.is_finite() && fps > 0.0 && fps <= 30.0) {
         return Err(McpToolError::invalid_params(
             format!("fps {fps} must be in (0.0, 30.0]"),
@@ -1310,7 +1313,7 @@ pub(super) async fn describe_clip(
     // the BYO endpoint may serve a model that knows a language this build has
     // no name for, and a refusal here would be this layer overruling it.
     let language = vlm::Language::parse(args.language.as_deref());
-    let fps_milli = (fps * 1000.0).round() as u32;
+    let fps_milli = vlm::fps_milli(fps);
 
     let key = vlm::cache_key(
         &resolved.source_hash,

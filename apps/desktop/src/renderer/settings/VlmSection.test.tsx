@@ -17,6 +17,7 @@ const ipc = vi.hoisted(() => ({
   settingsSetVlmLocal: vi.fn(),
   settingsClearVlmLocal: vi.fn(),
   settingsSetVlmEndpoint: vi.fn(),
+  settingsSetVlmDescribe: vi.fn(),
 }));
 
 vi.mock("../ipc", async (importActual) => {
@@ -55,6 +56,8 @@ function view(over: Partial<VlmBackendInfo>[] = []): VlmBackendsView {
   ];
   return {
     preferred_engine: "auto",
+    describe_fps: 1,
+    describe_focus: "general",
     backends: base.map((b) => {
       const patch = over.find((o) => o.backend === b.backend);
       return patch ? { ...b, ...patch } : b;
@@ -62,7 +65,10 @@ function view(over: Partial<VlmBackendInfo>[] = []): VlmBackendsView {
   };
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  document.body.innerHTML = "";
+});
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
   onError.mockReset();
@@ -72,6 +78,7 @@ beforeEach(async () => {
   ipc.settingsSetVlmLocal.mockReset().mockResolvedValue(undefined);
   ipc.settingsClearVlmLocal.mockReset().mockResolvedValue(undefined);
   ipc.settingsSetVlmEndpoint.mockReset().mockResolvedValue(undefined);
+  ipc.settingsSetVlmDescribe.mockReset().mockResolvedValue(undefined);
 });
 
 describe("VlmSection", () => {
@@ -233,6 +240,71 @@ describe("VlmSection", () => {
       expect(ipc.settingsSetVlmPreferred).toHaveBeenCalledWith("byo_endpoint"),
     );
     expect(ipc.settingsGetVlmBackends.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  // The two run params are this section's now: what used to be asked on every
+  // press is a setting, so the panel has to SHOW the current one.
+  it("renders the stored sampling and focus, and says what changing them does", async () => {
+    ipc.settingsGetVlmBackends.mockResolvedValue({
+      ...view(),
+      describe_fps: 2.5,
+      describe_focus: "shot-type",
+    });
+    render(<VlmSection onError={onError} />);
+    const sampling = (await screen.findByLabelText("Sample")) as HTMLInputElement;
+    expect(sampling.value).toBe("2.5");
+    expect(
+      screen.getByRole("combobox", { name: "Focus" }).textContent,
+    ).toContain("Shot type and camera");
+    // Worded by VIEW and not by the two controls beside it: the engine, the
+    // model and the interface language key the same cache, and a sentence
+    // naming only these two would leave a language switch looking like data
+    // loss rather than a different view of the same footage.
+    expect(screen.getByText(/interface language/)).toBeTruthy();
+    expect(screen.getByText(/keeps the existing one/)).toBeTruthy();
+  });
+
+  it("changing the focus persists it and re-fetches", async () => {
+    const user = userEvent.setup();
+    render(<VlmSection onError={onError} />);
+    await screen.findByText("Qwen3-VL (local)");
+    // Keyboard activation, NOT user.click: a click opens the popup only for the
+    // FIRST Select touched in a file, and the engine selector above already
+    // spends that (`CanvasSection.test.tsx` documents the landmine).
+    const trigger = screen.getByRole("combobox", { name: "Focus" });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(trigger.getAttribute("aria-expanded")).toBe("true"),
+    );
+    await user.pointer({
+      target: screen.getByRole("option", { name: "Shot type and camera" }),
+      keys: "[MouseLeft]",
+    });
+    await waitFor(() =>
+      expect(ipc.settingsSetVlmDescribe).toHaveBeenCalledWith({
+        focus: "shot-type",
+      }),
+    );
+    // Mutate-then-refresh, like every other control here: the panel never keeps
+    // an optimistic value that could disagree with what main stored.
+    expect(ipc.settingsGetVlmBackends.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  // The clamp lives in main, so the field re-mirrors the store after a commit
+  // rather than keeping its own draft — otherwise a typed 60 would sit there
+  // looking accepted.
+  it("commits the sampling once per edit and shows main's clamp", async () => {
+    const user = userEvent.setup();
+    render(<VlmSection onError={onError} />);
+    const sampling = (await screen.findByLabelText("Sample")) as HTMLInputElement;
+    ipc.settingsGetVlmBackends.mockResolvedValue({ ...view(), describe_fps: 30 });
+    await user.clear(sampling);
+    await user.type(sampling, "60");
+    await user.tab();
+    await waitFor(() => expect(ipc.settingsSetVlmDescribe).toHaveBeenCalled());
+    expect(ipc.settingsSetVlmDescribe.mock.calls).toHaveLength(1);
+    await waitFor(() => expect(sampling.value).toBe("30.0"));
   });
 
   it("a failing fetch reports through onError instead of blanking the pane", async () => {

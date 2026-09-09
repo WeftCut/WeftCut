@@ -122,6 +122,17 @@ fn merge_ranges(mut ranges: Vec<[i64; 2]>) -> Vec<[i64; 2]> {
     out
 }
 
+/// The sampling rate in the unit [`cache_key`] wants: milli-fps, rounded.
+///
+/// ONE conversion, called by the `describe_clip` tool and by the
+/// `media://{id}/description` reader alike. Two spellings of `fps * 1000.0`
+/// would be two keys for one view, and the divergence is SILENT: the tool writes
+/// under one key, the resource reads under the other, and every source reports
+/// as undescribed with nothing to diagnose.
+pub fn fps_milli(fps: f64) -> u32 {
+    (fps * 1000.0).round() as u32
+}
+
 /// The content-addressed description cache key: `blake3(source_hash | backend |
 /// model | fps_milli | focus | language | prompt_template_version)`. A change to
 /// any input (different engine, different model file, different sampling rate,
@@ -228,6 +239,20 @@ mod tests {
         let both = c.segments_in(0, 10_000_000);
         assert_eq!(both.len(), 2);
         assert_eq!(both[0].text, "early"); // sorted by start
+    }
+
+    /// The `describe_clip` tool and the `media://{id}/description` reader both
+    /// key on this, so a rounding change silently re-keys every description ever
+    /// cached. Pinned here rather than at either caller — one home for the fact.
+    #[test]
+    fn fps_milli_rounds_to_the_key_unit() {
+        assert_eq!(fps_milli(1.0), 1000);
+        assert_eq!(fps_milli(2.5), 2500);
+        assert_eq!(fps_milli(0.1), 100);
+        // Rounds rather than truncates: 0.3 is not representable in binary, so
+        // `as u32` alone would key 0.3 fps as 299.
+        assert_eq!(fps_milli(0.3), 300);
+        assert_eq!(fps_milli(30.0), 30_000);
     }
 
     #[test]

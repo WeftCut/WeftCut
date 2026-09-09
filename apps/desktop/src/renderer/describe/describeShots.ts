@@ -57,7 +57,7 @@ let cancelRequested = false;
 /// and there is no cancel on the wire — abandoning the promise would leave the
 /// engine running and the row it answers for blank. So the sweep finishes the
 /// shot it started, keeps that prose, and stops. That is also the honest reading
-/// of the button: a sweep of twenty-second runs needs a way out, and the way out
+/// of the button: a sweep of local model runs needs a way out, and the way out
 /// costs at most one more run.
 export function cancelDescribeShots(): void {
   if (useDescriptionsStore.getState().batch !== null) cancelRequested = true;
@@ -116,11 +116,11 @@ export async function describeShotRows(
 /// One shot, one run — what a row's own button presses and what the sweep loops
 /// over. Answers the failure's sentence, or `""`.
 ///
-/// At the DEFAULT view always: no `fps`, no `focus`. Those two are what the
-/// dialog exists to offer, and a value other than the default here would write
-/// prose into a view `media://{id}/description` does not serve — so the row
-/// would show it for this session and read *Not described* in the next one. A
-/// one-press control must not be able to do that.
+/// States no view parameters, and needs none: sampling, focus and language come
+/// from the user's Settings → Video understanding through main's injection, so
+/// this one-press control and the describe command run at one view — and it is
+/// the view `media://{id}/description` serves, so the prose a row shows now is
+/// the prose it shows next session.
 export async function describeOneShot(
   shot: DescribableShot,
   subject: DescribeShotsSubject,

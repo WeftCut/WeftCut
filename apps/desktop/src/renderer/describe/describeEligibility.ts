@@ -24,6 +24,11 @@ import {
   usePrimaryLayerId,
 } from "../state/selectionStore";
 import { primarySelectedLayer } from "../speech/autoCaptionEligibility";
+import {
+  useDescribeBatch,
+  useDescribing,
+  useDescriptionsStore,
+} from "./descriptionsStore";
 
 /// Stable empty reference — a fresh `[]` per selector call would defeat the
 /// reference-equality bail-out the hooks below rely on.
@@ -32,23 +37,28 @@ const NO_TRACKS: readonly TrackSummary[] = [];
 /// `describe` is the live direction; the rest are the disabled reasons, one per
 /// tooltip string.
 ///
-/// No in-flight state, unlike auto-caption's: a description is a local model run
-/// that starts nowhere but its own dialog, and the dialog disables its own
-/// button while one is going. Greying the command for it would refuse the
-/// gesture with no instruction behind the refusal.
+/// `already_running` is the feature's own condition on top of the material ones,
+/// the way `AutoCaptionState` carries `transcribing`. It has to be in here: a
+/// description starts from a menu item and from the Shots Panel's buttons alike,
+/// `runDescribe` refuses a second one, and a refusal that is not rendered is a
+/// press that silently does nothing.
 export type DescribeState =
   | "describe"
   | "needs_selection"
   | "needs_video_kind"
-  | "speed_not_one";
+  | "speed_not_one"
+  | "already_running";
 
 /// The order of the checks is the order the instructions get harder: select
 /// something, select a picture clip, then go and split a speed-1 segment off it.
+/// `inFlight` is checked LAST — "a run is already going" is only worth saying
+/// about a selection that could otherwise be described.
 ///
 /// Pure, so the store reads belong to the forms below it.
 export function describeState(
   primaryId: string | null,
   tracks: readonly TrackSummary[],
+  inFlight: boolean,
 ): DescribeState {
   const layer = primarySelectedLayer(primaryId, tracks);
   if (!layer) return "needs_selection";
@@ -60,15 +70,18 @@ export function describeState(
   // onto source time by one addition with no speed factor, so a re-timed clip's
   // segments would be timestamped at source times its frames never show.
   if (params.speed !== 1) return "speed_not_one";
+  if (inFlight) return "already_running";
   return "describe";
 }
 
 /// Imperative form, for `CommandDef.enabled` and the command handler — both run
 /// where there is no React.
 export function describeForSelection(): DescribeState {
+  const runs = useDescriptionsStore.getState();
   return describeState(
     primaryLayerIdOf(currentSelection()),
     currentOpenComposition()?.tracks ?? NO_TRACKS,
+    runs.describing !== null || runs.batch !== null,
   );
 }
 
@@ -86,17 +99,22 @@ export function describeTarget(): LayerSummary | null {
   );
 }
 
-/// Subscription form — two stores, two subscriptions, neither a composite
-/// selector (`feedback_zustand_composite_selector`). The project subscription
-/// closes over the other and yields a STRING, so an unrelated project mutation
-/// re-runs the predicate and then bails out instead of re-rendering.
+/// Subscription form — three stores, four subscriptions, every one of them
+/// ATOMIC (`feedback_zustand_composite_selector`): the two run-state hooks each
+/// pick a single field, so neither builds a fresh object per call. The project
+/// subscription closes over the others and yields a STRING, so an unrelated
+/// project mutation re-runs the predicate and then bails out instead of
+/// re-rendering.
 export const useDescribeState = (): DescribeState => {
   const primaryId = usePrimaryLayerId();
   const focusedId = useCompositionAnchorStore((s) => s.focusedId);
+  const describing = useDescribing();
+  const batch = useDescribeBatch();
   return useProjectStore((s) =>
     describeState(
       primaryId,
       compositionOrRoot(s.summary, focusedId)?.tracks ?? NO_TRACKS,
+      describing !== null || batch !== null,
     ),
   );
 };

@@ -2,7 +2,7 @@
 // owned by the Electron main process. Twin of src/main/speech-config.ts.
 //
 // NON-secret ONLY: the preferred engine + each local engine's binary/model/mmproj
-// paths (+ device) + the endpoint URL/model. The endpoint's optional API key is a
+// paths (+ device) + the endpoint URL/model + the two describe run params. The endpoint's optional API key is a
 // credential and lives in safeStorage (keys.ts / cloud_keys.json under
 // VLM_ENDPOINT_KEY_TAG) — NEVER here. Earlier builds did persist it here in
 // plaintext; `takeLegacyEndpointKey` below is the one-shot move.
@@ -19,9 +19,13 @@
 
 import {
   VLM_CONFIG_DEFAULTS,
+  VLM_DESCRIBE_FOCUSES,
+  VLM_DESCRIBE_FPS_MAX,
+  VLM_DESCRIBE_FPS_MIN,
   VLM_PREFERRED_ENGINES,
   type VlmConfig,
   type VlmConfigPatch,
+  type VlmDescribeFocus,
   type VlmPreferredEngine,
   type VlmLocalEngineConfig,
   type VlmEndpointConfig,
@@ -50,6 +54,29 @@ export interface VlmConfigStore {
 
 function isPreferred(v: unknown): v is VlmPreferredEngine {
   return typeof v === "string" && (VLM_PREFERRED_ENGINES as readonly string[]).includes(v);
+}
+
+function isFocus(v: unknown): v is VlmDescribeFocus {
+  return typeof v === "string" && (VLM_DESCRIBE_FOCUSES as readonly string[]).includes(v);
+}
+
+/// Coerce a stored sampling rate into the legal range, or the default when it is
+/// absent or not a finite number. CLAMPED rather than rejected: a hand-edited 60
+/// is a legible intent to sample as densely as the engine allows, and the run it
+/// would otherwise reach refuses outright.
+function readFps(raw: unknown): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    return VLM_CONFIG_DEFAULTS.describe_fps;
+  }
+  return Math.min(VLM_DESCRIBE_FPS_MAX, Math.max(VLM_DESCRIBE_FPS_MIN, raw));
+}
+
+/// A fresh defaults snapshot for every bail-out below. FRESH and not the shared
+/// constant: `apply` mutates what `read` returned, so handing back
+/// `VLM_CONFIG_DEFAULTS.local` itself would let one patch write into the module
+/// constant every later read starts from.
+function defaults(): VlmConfig {
+  return { ...VLM_CONFIG_DEFAULTS, local: {} };
 }
 
 /// Coerce one on-disk local-engine entry into a valid `VlmLocalEngineConfig`, or
@@ -87,21 +114,21 @@ export function createVlmConfigStore(deps: {
   dir: string;
 }): VlmConfigStore {
   function read(): VlmConfig {
-    if (!deps.fs.exists(deps.path)) return { preferred_engine: "auto", local: {} };
+    if (!deps.fs.exists(deps.path)) return defaults();
     let body: string;
     try {
       body = deps.fs.readFile(deps.path);
     } catch (e) {
       console.warn(`[vlm-config] read ${deps.path}:`, e);
-      return { preferred_engine: "auto", local: {} };
+      return defaults();
     }
-    if (body.trim() === "") return { preferred_engine: "auto", local: {} };
+    if (body.trim() === "") return defaults();
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(body) as Record<string, unknown>;
     } catch (e) {
       console.warn(`[vlm-config] parse ${deps.path}:`, e);
-      return { preferred_engine: "auto", local: {} };
+      return defaults();
     }
     // Per-field defaulting (the ONE backfill point): a missing / wrong-typed
     // preferred_engine falls back to "auto" so the selector is never undefined.
@@ -115,7 +142,14 @@ export function createVlmConfigStore(deps: {
         if (entry) local[tag] = entry;
       }
     }
-    const out: VlmConfig = { preferred_engine, local };
+    const out: VlmConfig = {
+      preferred_engine,
+      local,
+      describe_fps: readFps(parsed.describe_fps),
+      describe_focus: isFocus(parsed.describe_focus)
+        ? parsed.describe_focus
+        : VLM_CONFIG_DEFAULTS.describe_focus,
+    };
     const endpoint = readEndpoint(parsed.endpoint);
     if (endpoint) out.endpoint = endpoint;
     return out;
@@ -151,6 +185,12 @@ export function createVlmConfigStore(deps: {
           if (ep) current.endpoint = ep;
           else delete current.endpoint;
         }
+      }
+      if (patch.describe_fps !== undefined) {
+        current.describe_fps = readFps(patch.describe_fps);
+      }
+      if (patch.describe_focus !== undefined && isFocus(patch.describe_focus)) {
+        current.describe_focus = patch.describe_focus;
       }
       write(current);
       return current;

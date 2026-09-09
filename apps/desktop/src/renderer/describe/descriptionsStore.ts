@@ -14,8 +14,9 @@
 //
 // THE RULE THIS MODULE EXISTS TO ENFORCE: reading a description never computes
 // one. `hydrateDescription` goes through `getMediaDescription`, which reports a
-// cache miss; `describeClip` spends ~20 s against a local 2.5 GB model and is
-// reachable only from the describe dialog, which one deliberate press opens.
+// cache miss; `describeClip` spends a run against a local 2.5 GB model and is
+// reachable only from a deliberate press — the describe command, or one of the
+// Shots Panel's buttons — never from a read on this module's path.
 
 import { create } from "zustand";
 
@@ -64,7 +65,7 @@ interface DescriptionsState {
   /// A shot-by-shot sweep's progress, or null when none is running.
   ///
   /// Separate from `describing`, which goes null between the sweep's runs — a
-  /// counter is the only honest progress a sweep of N twenty-second model runs
+  /// counter is the only honest progress a sweep of N local model runs
   /// has, and without it the button would blink back to its idle label between
   /// shots. `done` counts FINISHED runs, so it reads 0 while the first is going.
   batch: { done: number; total: number } | null;
@@ -105,9 +106,9 @@ function put(
   useDescriptionsStore.setState({ segments: next });
 }
 
-/// Read one source's cached description — the default view, which is the only
-/// one that survives a session. Idempotent on a source already answered for, so
-/// the Panel may call it from an effect.
+/// Read one source's cached description, under the view the app's settings name.
+/// Idempotent on a source already answered for, so the Panel may call it from an
+/// effect.
 ///
 /// NEVER calls `describeClip`: opening the Panel on an undescribed clip must
 /// cost a cache probe and not a model run.
@@ -124,7 +125,7 @@ export async function hydrateDescription(mediaId: string): Promise<void> {
     // A read that cannot even be asked leaves the column saying "not
     // described" — the honest answer, since nothing is known to be on disk.
     // Recorded and not surfaced: a description is an extra on a row that is
-    // legible without it, and the dialog is where a describe failure belongs.
+    // legible without it, and the status log is where a describe failure belongs.
     console.warn("[descriptionsStore] description read failed", err);
     put(mediaId, null);
   } finally {
@@ -213,11 +214,11 @@ export async function reloadDescription(mediaId: string): Promise<void> {
 /// Publish a finished run's segments OVER the window it answered for, keeping
 /// everything outside that window.
 ///
-/// Authoritative for a run at a NON-default sampling, focus or language, which
-/// no read can find — that view is not the one `media://{id}/description`
-/// serves, which is what the dialog says out loud. At the default view it is the
-/// optimistic fill that shows the prose the moment the model is done, and
-/// `reloadDescription` widens it a round trip later.
+/// The optimistic fill, and only that: it shows the prose the moment the model
+/// is done, and `reloadDescription` widens it a round trip later. There is no
+/// longer a setting at which a run lands in a view no read can find — main
+/// injects the view into both sides of the cache key — so this is a head start
+/// on the disk copy, never the only one.
 ///
 /// WINDOWED, and it has to be: a run against one shot answers for that shot's
 /// span alone, so a whole-map replace would delete the prose of every other shot

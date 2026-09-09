@@ -116,13 +116,12 @@ import {
   openSelectedGroup,
   ungroupSelected,
 } from "./commands/groupCommands";
-import { openDescribeForSelection } from "./commands/describeCommands";
+import { describeSelected } from "./commands/describeCommands";
 import { openSilenceForSelection } from "./commands/silenceCommands";
 import {
   openAutoCaptionForSelection,
   openVoiceoverPrompt,
 } from "./commands/speechCommands";
-import { DescribeDialog } from "./describe/DescribeDialog";
 import { SilenceDialog } from "./silence/SilenceDialog";
 import { AutoCaptionDialog } from "./speech/AutoCaptionDialog";
 import { VoiceoverDialog } from "./speech/VoiceoverDialog";
@@ -772,8 +771,15 @@ export function App({ onCloseProject }: AppProps) {
     autoCaptionSelected: openAutoCaptionForSelection,
     // Same split, same slot-and-nothing-else (`commands/silenceCommands.ts`).
     detectSilencesSelected: openSilenceForSelection,
-    // And again (`commands/describeCommands.ts`).
-    describeSelected: openDescribeForSelection,
+    // Describe RUNS rather than raising a dialog — its parameters are Settings
+    // now (`commands/describeCommands.ts`). So this is not a bare slot: App
+    // lends the two things only it can do, revealing the Panel the run becomes
+    // visible in and opening the tab a missing engine is configured on.
+    describeSelected: () =>
+      void describeSelected({
+        revealShots: () => workspaceController?.openPanel("shots"),
+        openSettings: () => openSettings("vlm"),
+      }),
     // Opening the Panel is the whole command: it resolves its own subject from
     // the primary selection, and the right-click that raised the row has
     // already made the clicked clip that selection. `openPanel` is idempotent,
@@ -1149,25 +1155,21 @@ export function App({ onCloseProject }: AppProps) {
       {/* The four clip-analysis dialogs, owned here for the same reason: every
           one of their commands reaches the Edit menu and the palette, which must
           work with every Panel closed. Each renders nothing until its prompt is
-          opened. The two reveals are App's — the Caption Panel is where a landed
-          transcript becomes visible and the Shots Panel is where described
-          segments do, and only the workspace controller can open either.
+          opened. The reveal is App's — the Caption Panel is where a landed
+          transcript becomes visible, and only the workspace controller can open
+          it.
 
           The silence dialog needs no such reveal: its result lands in the
           timeline ruler, which is already the surface the user is looking at.
 
-          Describe also gets `onOpenSettings`: its one recoverable failure is
-          "no engine configured", and the category that configures one is
-          App's modal to open. */}
+          Describe has no dialog at all — its parameters are Settings and its
+          command runs on the press; App lends it the same reveal and the
+          settings deep-link through the handler map above. */}
       <AutoCaptionDialog
         onRevealCaptions={() => workspaceController?.openPanel("caption")}
       />
       <VoiceoverDialog />
       <SilenceDialog />
-      <DescribeDialog
-        onRevealShots={() => workspaceController?.openPanel("shots")}
-        onOpenSettings={() => openSettings("vlm")}
-      />
 
       {/* Save Workspace As / Rename Workspace name prompt. */}
       {workspaceNameDialog && workspaceProfiles && (

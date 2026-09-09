@@ -620,6 +620,14 @@ export function shotDescribeBlocker(
   applying: ShotApplyVerb | null,
 ): string | null {
   if (describe === "speed_not_one") return "shots_panel.describe_speed_not_one";
+  // The shared gate's own in-flight verdict, mapped before the generic refusal
+  // below — which would otherwise call a running description "not a video clip".
+  // WHICH run it is comes from this panel's own two params; the gate cannot know.
+  if (describe === "already_running") {
+    return batch !== null
+      ? "shots_panel.describe_sweep_running"
+      : "shots_panel.describe_running";
+  }
   if (describe !== "describe") return "shots_panel.needs_video_clip";
   // A run in flight, whether a lone press or a sweep. `runDescribe` refuses a
   // second one anyway; greying says why instead of swallowing the press.
@@ -637,8 +645,8 @@ export function shotDescribeBlocker(
 /// Beside *Measure shots* and for its reasons — it writes no project state and
 /// lands no undo entry, it changes what the rows SAY rather than which rows
 /// there are, and its cost is the only reason it is not automatic. The count is
-/// in the label because that cost is linear in it: N runs of about twenty
-/// seconds, and a button that hid the N would be hiding the whole decision.
+/// in the label because that cost is linear in it: N local model runs, and a
+/// button that hid the N would be hiding the whole decision.
 ///
 /// While it runs it becomes STOP. A ten-minute sweep with no way out is the one
 /// thing *Measure shots* does not have to answer for (three ffmpeg extracts per

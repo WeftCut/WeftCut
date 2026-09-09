@@ -38,7 +38,12 @@ pub struct TimedFrame {
 
 /// Which prompt template to use — selects what the model is asked to emphasize
 /// and, therefore, what populates `tags`. Part of the cache key (a different
-/// focus is a different description). `General` is the default.
+/// focus is a different description).
+///
+/// The app's Video-understanding setting decides which one a gesture uses: the
+/// host fills the tool's `focus` arg from it when the caller omits one, the way
+/// it fills `language`. `General` is only what a caller with no app settings to
+/// speak for resolves to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     /// General timeline description (subjects, setting, action, shot type).
@@ -47,6 +52,13 @@ pub enum Focus {
     /// motion, framing.
     ShotType,
 }
+
+/// What an omitted `fps` resolves to, for a caller with no app settings to
+/// speak for. The sampling analogue of [`Focus::General`] and
+/// [`Language::DEFAULT_TAG`], and here for their reason: the `describe_clip`
+/// tool and the `media://{id}/description` reader both take it from this one
+/// place, so a bare-core write and a bare-core read land on one key.
+pub const DEFAULT_FPS: f64 = 1.0;
 
 impl Focus {
     /// Stable key fragment (part of the description cache key).
@@ -114,8 +126,9 @@ impl Language {
     /// the prompt every run sends, and the model cannot be talked into the
     /// footage's own language by on-screen text.
     ///
-    /// TWIN of `DEFAULT_LANGUAGE` in `renderer/describe/describeRun.ts` — see
-    /// `Focus::parse`'s twin note in `DescribeDialog.tsx`.
+    /// No TS twin: the renderer sends none of the three view arguments, and the
+    /// host fills them from `vlm_config.json` (`main/mcp/server.ts`). This is the
+    /// floor under that fill, not a value any UI restates.
     pub const DEFAULT_TAG: &'static str = "en-US";
 
     /// Parse a BCP-47-ish tag; absent → [`Self::DEFAULT_TAG`]. Case- and

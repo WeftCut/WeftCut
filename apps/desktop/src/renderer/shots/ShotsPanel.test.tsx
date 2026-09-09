@@ -789,8 +789,9 @@ describe("ShotsPanel — describing one shot", () => {
     await review();
     fireEvent.click(screen.getByTestId("shots-describe-1"));
     await waitFor(() => expect(shots.describeClip).toHaveBeenCalled());
-    // The window, and NOT `fps` / `focus`: a one-press control must land in the
-    // default view, which is the only one the rows can read back.
+    // The window, and NO view arguments: sampling, focus and language are
+    // Settings, injected by main, so every describe gesture lands in the one
+    // view these rows read back.
     expect(shots.describeClip).toHaveBeenCalledWith({
       layerId: "l1",
       tStartUs: 3_000_000,
@@ -846,7 +847,7 @@ describe("ShotsPanel — describing one shot", () => {
 
   it("greys every describe control on a re-timed clip", async () => {
     // A speed != 1 clip is refused by the tool itself, so the gate says so
-    // before the press rather than after a twenty-second wait.
+    // before the press rather than after the run.
     const retimed = clip({ id: "l1", mediaId: "m1", tStartUs: 1_000_000 });
     (retimed.params as { speed: number }).speed = 2;
     act(() => {
@@ -942,7 +943,7 @@ describe("ShotsPanel — describing one shot", () => {
       );
     });
     // A sweep outranks a lone run in the reason it gives, because a sweep IS a
-    // run: naming the lone one would tell the reviewer to wait twenty seconds
+    // run: naming the lone one would tell the reviewer to wait for a model run
     // when the real wait is thirty of them.
     it("reports a sweep ahead of the run it is running", () => {
       expect(shotDescribeBlocker("describe", span, batch, null)).toBe(
