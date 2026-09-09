@@ -15,6 +15,7 @@ import { listen, type UnlistenFn } from "@/bridge/events";
 import { create } from "zustand";
 
 import i18n, { SUPPORTED_LOCALES, type Locale } from "../i18n";
+import { onDescribeViewChanged } from "../search/searchIndexStore";
 
 import {
   APP_SETTINGS_EVENTS,
@@ -234,7 +235,12 @@ export function displayMode(): DisplayMode {
 /// syncs the change to OTHER windows).
 export function setLocale(next: Locale): void {
   void i18n.changeLanguage(next);
-  void setAppSettings({ language: next });
+  // The language keys the description cache alongside the sampling and the
+  // focus, so a switch puts every held description in a view nobody is asking
+  // for. Chained AFTER the persist rather than fired beside it: main injects
+  // this field into the read, so a resync racing the write would re-read under
+  // the language being left behind.
+  void setAppSettings({ language: next }).then(onDescribeViewChanged);
 }
 
 /// The old (pre-app_settings) localStorage cache key written by i18next's

@@ -321,7 +321,7 @@
           },
           "focus": {
             "default": null,
-            "description": "Prompt focus: `\"general\"` (default) or `\"shot-type\"` (biases `tags`\ntoward shot type / camera).",
+            "description": "Prompt focus: `\"general\"` or `\"shot-type\"` (biases `tags` toward shot\ntype / camera). Defaults to the app's Video-understanding setting, which\nthe host injects when this is omitted; with no host, `\"general\"`. Part of\nthe cache key.",
             "type": [
               "string",
               "null"
@@ -329,7 +329,7 @@
           },
           "fps": {
             "default": null,
-            "description": "Frames sampled per second across the window (default 1.0). Higher = finer\ntemporal detail at more cost; capped so the frame set fits the model's\ncontext.",
+            "description": "Frames sampled per second across the window. Higher = finer temporal\ndetail at more cost; capped so the frame set fits the model's context.\nDefaults to the app's Video-understanding setting, which the host injects\nwhen this is omitted; with no host, 1.0. Part of the cache key.",
             "format": "double",
             "type": [
               "number",

@@ -18,6 +18,7 @@ import {
   VLM_DESCRIBE_FPS_MIN,
   VLM_DESCRIBE_FPS_STEP,
 } from "../../shared/vlm-config";
+import { onDescribeViewChanged } from "../search/searchIndexStore";
 import { open as openFileDialog } from "@/bridge/dialog";
 import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
@@ -81,6 +82,10 @@ export function VlmSection({ onError }: { onError: (msg: string) => void }) {
     try {
       await settingsSetVlmDescribe(patch);
       await refresh();
+      // Either field keys the description cache, so every description already
+      // held in the renderer now belongs to a view nobody is asking for. AFTER
+      // the persist, not before: the re-read resolves whatever main has stored.
+      onDescribeViewChanged();
     } catch (e) {
       onError(String(e));
     }

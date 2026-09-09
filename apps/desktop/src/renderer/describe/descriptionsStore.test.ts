@@ -1,8 +1,8 @@
 // The store's one load-bearing rule: reading a description never computes one.
 //
-// A Panel asks for this on every subject change, and `describe_clip` spends
-// ~20 s against a local 2.5 GB model — so the assertion that the compute path
-// is never touched is the point of this file, not a detail of it.
+// A Panel asks for this on every subject change, and `describe_clip` spends a
+// run against a local 2.5 GB model — so the assertion that the compute path is
+// never touched is the point of this file, not a detail of it.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -24,6 +24,7 @@ import {
   resetDescriptionsStore,
   isDescribingSpan,
   mergeDescription,
+  resyncDescriptionsForView,
   setDescribing,
   syncDescriptions,
   useDescriptionsStore,
@@ -247,5 +248,50 @@ describe("syncDescriptions", () => {
       syncDescriptions(new Map([["m-1", "a.mp4"]])),
     ).resolves.toBeUndefined();
     expect(held("m-1")).toBeNull();
+  });
+});
+
+// A change to the sampling, the focus or the interface language re-keys the
+// cache this store mirrors, so everything held becomes an answer to a question
+// nobody is asking. Caught in the real app: with the Shots Panel open, changing
+// the focus left the rows showing the previous view's prose.
+describe("resyncDescriptionsForView", () => {
+  beforeEach(() => {
+    mocks.getMediaDescription.mockReset().mockResolvedValue(CACHE);
+    mocks.describeClip.mockReset();
+    resetDescriptionsStore();
+  });
+  afterEach(resetDescriptionsStore);
+
+  it("drops what is held and reads every source again", async () => {
+    await hydrateDescription("m-1");
+    expect(held("m-1")).toEqual(CACHE.segments);
+    expect(mocks.getMediaDescription).toHaveBeenCalledTimes(1);
+
+    // The other view's answer, so a stale hold is visible as a wrong value
+    // rather than as an absent one.
+    const other = [
+      { t_start_us: 0, t_end_us: 2_000_000, text: "wide, static", tags: ["wide"] },
+    ];
+    mocks.getMediaDescription.mockResolvedValue({ covered_ranges: [[0, 6_000_000]], segments: other });
+    await resyncDescriptionsForView(new Map([["m-1", "/a/reel.mp4"]]));
+
+    expect(held("m-1")).toEqual(other);
+    // Past the idempotence guard: `syncDescriptions` alone would have seen the
+    // id already held and read nothing.
+    expect(mocks.getMediaDescription).toHaveBeenCalledTimes(2);
+    // Never the compute path, this module's one rule.
+    expect(mocks.describeClip).not.toHaveBeenCalled();
+  });
+
+  // With no dialog holding the window, a setting can be changed WHILE a run is
+  // in flight. Dropping the flag would let the gate go live and a second local
+  // model spawn start beside the first.
+  it("leaves run state alone", async () => {
+    const span = { mediaId: "m-1", srcStartUs: 0, srcEndUs: 2_000_000 };
+    setDescribing(span);
+    await resyncDescriptionsForView(new Map([["m-1", "/a/reel.mp4"]]));
+    expect(useDescriptionsStore.getState().describing).toEqual(span);
+    expect(isDescribingSpan(useDescriptionsStore.getState().describing, "m-1", 0, 1_000)).toBe(true);
   });
 });

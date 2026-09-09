@@ -187,8 +187,32 @@ export async function syncDescriptions(
   );
 }
 
-/// Re-read one source past the idempotence guard — what a finished DEFAULT-view
-/// run calls.
+/// Forget every held description because the VIEW changed, then read them all
+/// again under the new one.
+///
+/// This store mirrors `media://{id}/description`, which serves ONE view. Change
+/// the sampling, the focus or the interface language and every segment held here
+/// belongs to a view nobody is asking for any more — so without this the rows go
+/// on showing the previous view's prose, which is the exact failure
+/// `vlm::cache_key` puts all three in the key to prevent, one layer up.
+///
+/// Clears the SEGMENTS only. Run state (`describing`, `batch`) is deliberately
+/// untouched: with no dialog holding the window, a setting can be changed while
+/// a run is in flight, and dropping the in-flight flag would let the gate go
+/// live and a second model spawn start beside the first.
+///
+/// Takes its sources the way `syncDescriptions` does, so this module still knows
+/// nothing about the project store — `search/searchIndexStore.ts` owns that
+/// projection and the one-line caller that uses it.
+export async function resyncDescriptionsForView(
+  sources: ReadonlyMap<string, string>,
+): Promise<void> {
+  readAtPath.clear();
+  useDescriptionsStore.setState({ segments: new Map() });
+  await syncDescriptions(sources);
+}
+
+/// Re-read one source past the idempotence guard — what a finished run calls.
 ///
 /// A run answers for the window it was asked about, and the cache on disk holds
 /// every window ever described of that source; re-reading is how a clip's rows

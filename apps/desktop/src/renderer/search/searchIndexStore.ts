@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { listCommands, subscribeCommandRegistry } from "../commands/registry";
 import {
+  resyncDescriptionsForView,
   syncDescriptions,
   useDescriptionsStore,
 } from "../describe/descriptionsStore";
@@ -9,6 +10,21 @@ import type { ProjectSummary } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
 import { buildEntries, type CommandInput, type LocaleInput } from "./buildEntries";
 import type { SearchEntry } from "./types";
+
+/// The describe VIEW changed — drop every held description and read them again.
+///
+/// Here rather than in `descriptionsStore` because this module already owns the
+/// project → `{mediaId: path}` projection the fan-out read needs, and rather than
+/// in either caller because there are two of them: the sampling and focus
+/// controls in Settings → Video understanding, and the interface language, which
+/// keys the same cache.
+///
+/// Fire-and-forget: the rows show `Not described` for the round trip, which is
+/// the honest state — under the new view nothing IS described until the read
+/// lands.
+export function onDescribeViewChanged(): void {
+  void resyncDescriptionsForView(videoSources(useProjectStore.getState().summary));
+}
 
 /// IDE-style background index (spec §Index): dirty signals (summary
 /// change via projectStore, locale change, command-registry change, a
