@@ -57,6 +57,9 @@ const enUS = {
     stopwatch_enable: "Animate this property (add a keyframe at the playhead)",
     stopwatch_disable: "Stop animating — removes all keyframes (keeps the value at the playhead; undoable)",
     stopwatch_offscreen: "Move the playhead over the clip to keyframe",
+    // The stopwatch's accessible name. A merged axis row puts two of them
+    // side by side with no caption, so the name has to carry the param.
+    stopwatch_param: "{{param}} — {{action}}",
     nav_prev: "Previous keyframe",
     nav_set: "Add or remove a keyframe at the playhead",
     nav_next: "Next keyframe",
@@ -1870,6 +1873,9 @@ const enUS = {
     line_height_hint: "0 = automatic — the font's own line metrics.",
     letter_spacing: "Letter spacing (px)",
     color: "Color",
+    // `position` / `anchor` caption a MERGED axis row; `x` / `y` / `anchor_x`
+    // / `anchor_y` stay as the per-axis accessible names inside it.
+    position: "Position",
     x: "X",
     y: "Y",
     opacity: "Opacity",
@@ -1881,6 +1887,7 @@ const enUS = {
     scale_link: "Link X/Y scale (uniform) — Scale Y becomes a copy of Scale X",
     scale_unlink: "Unlink X/Y scale",
     rotation: "Rotation (°)",
+    anchor: "Anchor",
     anchor_x: "Anchor X",
     anchor_y: "Anchor Y",
     speed: "Speed",

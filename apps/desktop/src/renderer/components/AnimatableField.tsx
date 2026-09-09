@@ -41,6 +41,7 @@ export function AnimatableField<T extends TrackValue>({
   onMutated,
   commitTrack,
   children,
+  layout = "row",
 }: {
   layerId: string;
   paramKey: string;
@@ -64,6 +65,16 @@ export function AnimatableField<T extends TrackValue>({
   /// The existing control (slider / number field), already bound to the
   /// parent's display value + commit. Rendered to the right of the stopwatch.
   children: ReactNode;
+  /// `"row"` (default) is a full property row: caption in the panel's label
+  /// column, stopwatch + control in the value column.
+  ///
+  /// `"cell"` is one axis of a merged pair row (X|Y, Anchor X|Y, unlinked
+  /// Scale) — stopwatch + control only, no caption, because the row that
+  /// composes two of these owns the caption. Each axis still carries its OWN
+  /// stopwatch: ADR 0060 animates X and Y independently, so one shared toggle
+  /// would misstate the model. The caption being absent is why the toggle's
+  /// accessible name names its param.
+  layout?: "row" | "cell";
 }) {
   const { t } = useTranslation();
   const lit = track.mode === "Keyframed";
@@ -90,21 +101,39 @@ export function AnimatableField<T extends TrackValue>({
     }
   };
 
+  const stopwatch = (
+    <button
+      type="button"
+      className={`anim-stopwatch ${lit ? "is-lit" : ""}`}
+      aria-pressed={lit}
+      // Names the param, not just the action: in a merged pair row two of
+      // these sit side by side with no caption between them, and "Animate
+      // this property" twice over says nothing about which axis.
+      aria-label={t("keyframe.stopwatch_param", { param: label, action: toggleLabel })}
+      disabled={disabled}
+      title={toggleLabel}
+      onClick={toggle}
+    >
+      <Clock size={12} aria-hidden />
+    </button>
+  );
+
+  if (layout === "cell") {
+    return (
+      <div className="anim-axis" onFocusCapture={() => setKeyframeFocus(layerId, paramKey)}>
+        {stopwatch}
+        {children}
+      </div>
+    );
+  }
+
   return (
     <div className="anim-field" onFocusCapture={() => setKeyframeFocus(layerId, paramKey)}>
-      <button
-        type="button"
-        className={`anim-stopwatch ${lit ? "is-lit" : ""}`}
-        aria-pressed={lit}
-        aria-label={toggleLabel}
-        disabled={disabled}
-        title={toggleLabel}
-        onClick={toggle}
-      >
-        <Clock size={12} aria-hidden />
-      </button>
       <span className="anim-field-label">{label}</span>
-      <div className="anim-field-control">{children}</div>
+      <div className="anim-field-control">
+        {stopwatch}
+        {children}
+      </div>
     </div>
   );
 }

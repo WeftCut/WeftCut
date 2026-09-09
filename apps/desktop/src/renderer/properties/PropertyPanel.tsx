@@ -87,6 +87,7 @@ import { Field } from "./Field";
 import { MotifParamsFrame } from "./MotifParamsFrame";
 import { MotifPropField } from "./MotifPropFields";
 import { PropSection } from "./PropSection";
+import { InspectorRow } from "./InspectorRow";
 import { useLayerBakeStatus } from "../timeline/motifBakeStatusStore";
 import { findPanelLayer } from "../panels/panelLayer";
 
@@ -758,8 +759,10 @@ function InspectorColorField({
 
 /// Unified transform Section for the visual kinds (Text, VideoClip,
 /// ImageOverlay, Motif): opacity, position, scale, rotation, anchor. Position,
-/// scale and anchor pair their two axes into one row each (`.prop-field-pair`);
-/// opacity and rotation stay full-width.
+/// scale and anchor put their two axes in ONE row's value column
+/// (`InspectorRow` + two `layout="cell"` fields); opacity and rotation hold a
+/// single control. Every row is the same grid, so the section has one label
+/// edge and one value edge.
 ///
 /// Anchor sits AFTER rotation because it is read as "what that rotation turns
 /// around" — and it stays in the core section rather than the advanced bucket
@@ -782,19 +785,14 @@ function TransformSection({
     <PropSection layerKind={layer.kind} sectionId="transform" title={t("property_panel.transform")}>
       <InspectorAnimField layer={layer} desc={OPACITY} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <PositionFields layer={layer} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated}/>
-      {/* Scale keeps the axis-pair row, but `ScaleFields` owns what fills it:
-          one collapsed "Scale" + closed chain while linked, Scale X / Scale Y
-          + open chain while not. `.prop-field-pair > .scale-link-row` gives the
-          chain-bearing row the same flex basis as a bare `.anim-field`, so the
-          linked form spans the row and the unlinked form pairs off. */}
-      <div className="prop-field-pair">
-        <ScaleFields layer={layer} scaleLinked={scaleLinked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      </div>
+      {/* `ScaleFields` owns its own row: one field + closed chain while
+          linked, both axes + open chain while not. */}
+      <ScaleFields layer={layer} scaleLinked={scaleLinked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <InspectorAnimField layer={layer} desc={ROTATION} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      <div className="prop-field-pair">
-        <InspectorAnimField layer={layer} desc={ANCHOR_X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-        <InspectorAnimField layer={layer} desc={ANCHOR_Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      </div>
+      <InspectorRow label={t("property_panel.anchor")}>
+        <InspectorAnimField layer={layer} desc={ANCHOR_X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} layout="cell" />
+        <InspectorAnimField layer={layer} desc={ANCHOR_Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} layout="cell" />
+      </InspectorRow>
     </PropSection>
   );
 }

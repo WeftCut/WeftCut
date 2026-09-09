@@ -19,12 +19,16 @@ export function InspectorAnimField({
   tInLayerUs,
   playheadInSpan,
   onMutated,
+  layout,
 }: {
   layer: LayerSummary;
   desc: NumberParamDescriptor;
   tInLayerUs: number;
   playheadInSpan: boolean;
   onMutated: () => Promise<void>;
+  /// `"cell"` for one axis of a merged pair row (see `InspectorRow`), which
+  /// drops the caption and keeps only stopwatch + control.
+  layout?: "row" | "cell";
 }) {
   const { t } = useTranslation();
   const track = readNumberTrack(layer.params, desc) ?? { mode: "Static" as const, value: desc.fallback };
@@ -49,6 +53,7 @@ export function InspectorAnimField({
         );
       }}
       onMutated={onMutated}
+      {...(layout ? { layout } : {})}
       widgets={desc.widgets ?? ["number"]}
       {...(desc.step !== undefined ? { step: desc.step } : {})}
       {...(desc.min !== undefined ? { min: desc.min } : {})}

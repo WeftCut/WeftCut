@@ -33,6 +33,9 @@ export interface KeyframeFieldProps {
   max?: number;
   /// Inspector: true (wraps in AnimatableField's stopwatch). Timeline: false.
   showStopwatch?: boolean;
+  /// Forwarded to AnimatableField: `"cell"` renders one axis of a merged pair
+  /// row (no caption) instead of a full property row.
+  layout?: "row" | "cell";
   /// Timeline density.
   compact?: boolean;
   /// Required when showStopwatch — AnimatableField's toggle refreshes through it.
@@ -55,6 +58,7 @@ export function KeyframeField({
   showStopwatch = true,
   compact = false,
   onMutated,
+  layout = "row",
 }: KeyframeFieldProps) {
   const shown = displayValue(track, tInLayerUs, fallback, resolveAnimated);
   // Shared draft: null = idle (display `shown`, which tracks playhead/undo);
@@ -151,6 +155,7 @@ export function KeyframeField({
         tInLayerUs={tInLayerUs}
         playheadInSpan={playheadInSpan}
         onMutated={onMutated ?? (async () => {})}
+        layout={layout}
         // The stopwatch's lift/collapse writes flow through the SAME sink as
         // the value widgets, so a composite (fan-out) field keeps its twin
         // invariant on every write path, stopwatch included.

@@ -4,12 +4,17 @@ import { tryMutate } from "../errors/tryMutate";
 import { setScaleLinked, type LayerSummary } from "../ipc";
 import { SCALE, SCALE_X, SCALE_Y } from "../keyframe/descriptors";
 import { InspectorAnimField } from "./InspectorAnimField";
+import { InspectorRow } from "./InspectorRow";
 
-/// The scale block every transform-bearing section renders: a single
-/// collapsed "Scale" row + closed chain while linked, separate Scale X /
-/// Scale Y rows + open chain while not. Closing the chain is silent and
+/// The scale block every transform-bearing section renders: ONE "Scale" row
+/// either way — a single field + closed chain while linked, the X and Y axes
+/// side by side + open chain while not. Closing the chain is silent and
 /// destructive by design (the actor snaps scale_y := scale_x, keyframes
 /// included — one commit, so one undo restores both track and flag).
+///
+/// The chain is the last child of the value column, after the field(s) it
+/// governs, so a chain-bearing row is still one grid row on the panel's
+/// single label edge.
 export function ScaleFields({
   layer,
   scaleLinked,
@@ -42,21 +47,23 @@ export function ScaleFields({
       {scaleLinked ? <Link2 size={12} aria-hidden /> : <Link2Off size={12} aria-hidden />}
     </button>
   );
-  if (scaleLinked) {
-    return (
-      <div className="scale-link-row">
-        <InspectorAnimField layer={layer} desc={SCALE} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-        {chain}
-      </div>
-    );
-  }
+  const axes = scaleLinked
+    ? [SCALE]
+    : [SCALE_X, SCALE_Y];
   return (
-    <>
-      <div className="scale-link-row">
-        <InspectorAnimField layer={layer} desc={SCALE_X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-        {chain}
-      </div>
-      <InspectorAnimField layer={layer} desc={SCALE_Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-    </>
+    <InspectorRow label={t("property_panel.scale")}>
+      {axes.map((desc) => (
+        <InspectorAnimField
+          key={desc.labelKey}
+          layer={layer}
+          desc={desc}
+          tInLayerUs={tInLayerUs}
+          playheadInSpan={playheadInSpan}
+          onMutated={onMutated}
+          layout="cell"
+        />
+      ))}
+      {chain}
+    </InspectorRow>
   );
 }

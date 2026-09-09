@@ -526,26 +526,15 @@
   color: var(--foreground);
 }
 
-/* Two half-width anim rows side by side (position X|Y, scale X|Y); wraps to
-   a single column when the panel can't fit two ~120 px fields. */
+/* Two equal controls side by side on one full-width line — the Group section's
+   Open/Ungroup buttons. Axis pairs no longer live here: X|Y and Anchor X|Y are
+   ONE row whose value column holds both fields (`.anim-axis`), which is what
+   keeps them on the panel's single value edge and stops them stacking below a
+   ~290 px panel. */
 .prop-field-pair {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 8px;
-}
-
-.prop-field-pair > .anim-field {
-  flex: 1 1 120px;
-  min-width: 120px;
-}
-
-/* ScaleFields puts its chain toggle in a `.scale-link-row` wrapper, so inside
-   an axis pair that row — not the `.anim-field` it wraps — is the flex item.
-   Give it the same basis: linked scale is a lone child and spans the row,
-   unlinked scale pairs Scale X (with chain) against Scale Y. */
-.prop-field-pair > .scale-link-row {
-  flex: 1 1 120px;
-  min-width: 120px;
 }
 
 /* Where a media item is used. Every row is a button because navigating to the
@@ -879,6 +868,16 @@
   color: var(--muted-foreground);
 }
 
+/* ONE row primitive for the property panel. `.prop-field` (a static property)
+   and `.anim-field` (an animatable one) are the same grid and differ only in
+   what leads the value column: a stopwatch, or the empty slot below that
+   reserves its footprint. So the panel has exactly one label edge and one
+   value edge, across sections and across nesting.
+
+   Before this, the two coexisted with different label-column algorithms —
+   `.prop-field` at a fixed 96 px, `.anim-field` content-driven off a 56 px
+   floor — which put the value edge in four places at once (measured at a
+   412 px panel: 100.9 / 104.8 / 118.9 / 137.4). */
 .prop-field {
   display: grid;
   /* `minmax(0, 1fr)` (NOT plain `1fr`) so the control column can shrink
@@ -887,11 +886,27 @@
      width — would push the column past the inspector's right padding
      and overflow into the panel's edge. With `0` as the lower bound,
      flex children inside `.prop-field-control` shrink to fit instead. */
-  grid-template-columns: 96px minmax(0, 1fr);
+  grid-template-columns: var(--prop-label-col, 96px) minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   font-size: var(--font-size-body);
   color: var(--color-slate-300);
+}
+
+/* The 96 px label column (the `--prop-label-col` fallback above) is wide
+   enough for the longest label either row kind carries — `Path progress (%)`
+   at 92 px, `Sample region start` at 95 px — so unifying the grid needed no
+   shortened copy. Override the variable on a nested container to keep the
+   value edge continuous through an inset (see `.prop-well`). */
+
+/* The empty stopwatch footprint a static row carries so its control starts on
+   the same edge as the input boxes of the animatable rows around it, rather
+   than on the faint column of clock icons. A pseudo-element, not markup: every
+   `.prop-field` in the panel gets it without 8 call sites having to remember. */
+.prop-field-control::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 18px;
 }
 
 .prop-field-label {
@@ -971,18 +986,39 @@
   font-family: inherit;
 }
 
-.anim-field { display: flex; align-items: center; gap: 6px; }
-.anim-field-label { flex: 0 0 auto; font-size: var(--font-size-caption); color: var(--muted-foreground); min-width: 56px; }
-.anim-field-control { flex: 1 1 auto; display: flex; align-items: center; gap: 6px; }
-.anim-stopwatch { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: var(--radius-control); color: var(--color-gray-500); background: transparent; border: none; cursor: pointer; }
+/* An animatable row: the SAME grid as `.prop-field` (see there for why the
+ * whole panel shares one), with the stopwatch leading the value column rather
+ * than sitting outside the label. A content-driven label column is what used
+ * to rag this section's value edge — `Path progress (%)` is 92 px against
+ * `Opacity`'s 56, so every long label pushed its own input right. */
+.anim-field {
+  display: grid;
+  grid-template-columns: var(--prop-label-col, 96px) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+.anim-field-label {
+  font-size: var(--font-size-caption);
+  color: var(--muted-foreground);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.anim-field-control { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* One axis of a merged pair row: `[stopwatch][field]`, two per value column.
+ * Each axis keeps its own stopwatch because ADR 0060 has X and Y animate
+ * independently — one shared stopwatch would misrepresent the model. */
+.anim-axis { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 0; }
+.anim-stopwatch { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex: 0 0 auto; border-radius: var(--radius-control); color: var(--color-gray-500); background: transparent; border: none; cursor: pointer; }
 .anim-stopwatch:hover:not(:disabled) { color: var(--muted-foreground); background: var(--secondary); }
 .anim-stopwatch.is-lit { color: var(--keyframe); }
 .anim-stopwatch:disabled { opacity: 0.35; cursor: default; }
 
-/* Uniform-scale chain: sits at the end of the (collapsed Scale | Scale X) row.
- * Same footprint family as .anim-stopwatch; lit = linked. */
-.scale-link-row { display: flex; align-items: center; gap: 6px; }
-.scale-link-row > .anim-field { flex: 1 1 auto; min-width: 0; }
+/* Uniform-scale chain: sits at the END of the scale row's value column, after
+ * the field(s) it governs. Same footprint family as .anim-stopwatch; lit =
+ * linked. (No wrapper class: the chain is just the last child of the value
+ * column, so the row stays one grid row like every other.) */
 .scale-link-toggle { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 18px; height: 18px; border-radius: var(--radius-control); color: var(--color-gray-500); background: transparent; border: none; cursor: pointer; }
 .scale-link-toggle:hover { color: var(--muted-foreground); background: var(--secondary); }
 .scale-link-toggle.is-linked { color: var(--accent-foreground); }

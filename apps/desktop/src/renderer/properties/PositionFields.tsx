@@ -8,6 +8,7 @@ import { IN_IDENTITY, OUT_IDENTITY, HOLD_EXTRAPOLATION } from '../../shared/keyf
 import { type PathPosition, type PathNode } from '../../shared/position';
 import { evaluatePosition } from '../render/position';
 import { PositionConversionFields } from './PositionConversionFields';
+import { InspectorRow } from './InspectorRow';
 import { Button } from '@/components/ui/button';
 import { insertPathNode, setPathNodeMode } from '../../shared/pathGeometry';
 export function PositionFields(props: {
@@ -63,7 +64,7 @@ export function PositionFields(props: {
         if (await change({ ...path, path: insertPathNode(path.path, selected, 0.5, id) }, true)) edit.setNode(id);
     };
     return <div data-testid="position-fields">
-    {path ? <InspectorAnimField {...props} desc={PATH_PROGRESS}/> : <div className="prop-field-pair"><InspectorAnimField {...props} desc={X}/><InspectorAnimField {...props} desc={Y}/></div>}
+    {path ? <InspectorAnimField {...props} desc={PATH_PROGRESS}/> : <InspectorRow label={t('property_panel.position')}><InspectorAnimField {...props} desc={X} layout="cell"/><InspectorAnimField {...props} desc={Y} layout="cell"/></InspectorRow>}
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
       {!path && <Button size="sm" variant="outline" disabled={busy || position.mode !== 'XY' || position.x.mode !== 'Static' || position.y.mode !== 'Static'} onClick={() => void create()}>{t('motion_path.create')}</Button>}
       <Button size="sm" variant="outline" disabled={busy} onClick={() => edit.setLayer(edit.layerId === layer.id ? null : layer.id)}>{edit.layerId === layer.id ? t('motion_path.done') : path ? t('motion_path.edit') : t('motion_path.show')}</Button>

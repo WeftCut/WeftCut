@@ -653,3 +653,74 @@ describe("AttributePanel Audio fade guards", () => {
     expect(updateLayerParams).not.toHaveBeenCalled();
   });
 });
+
+// The panel has ONE row primitive: `.prop-field` (static) and `.anim-field`
+// (animatable) are the same grid, and what leads the value column is a
+// stopwatch or the CSS-reserved empty slot. These pin the structure that grid
+// depends on — jsdom can't measure the edges, but every way the alignment has
+// broken before was a row shaped differently, not a layout engine bug.
+describe("AttributePanel row primitive", () => {
+  const rowsIn = (section: HTMLElement) =>
+    [...section.querySelectorAll<HTMLElement>(".anim-field, .prop-field")];
+
+  it("puts the caption first and the stopwatch inside the value column", () => {
+    renderPanel(videoTrack(), "layer-v1");
+    const transform = screen.getByLabelText("Transform");
+    const rows = rowsIn(transform);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      // A stopwatch as a direct child of the row is the old shape: it made the
+      // label a second column and the value a third, which is what put the
+      // value edge in four places at once.
+      expect(row.querySelector(":scope > .anim-stopwatch")).toBeNull();
+      const caption = row.firstElementChild;
+      expect(caption?.className).toMatch(/anim-field-label|prop-field-label/);
+      for (const watch of row.querySelectorAll(".anim-stopwatch")) {
+        expect(watch.closest(".anim-field-control")).toBe(
+          row.querySelector(".anim-field-control"),
+        );
+      }
+    }
+  });
+
+  it("gives an axis pair one captioned row holding both axes", () => {
+    renderPanel(videoTrack(), "layer-v1");
+    const transform = screen.getByLabelText("Transform");
+    for (const [caption, axes] of [
+      ["Position", ["X", "Y"]],
+      ["Anchor", ["Anchor X", "Anchor Y"]],
+    ] as const) {
+      const row = rowsIn(transform).find((r) => r.firstElementChild?.textContent === caption);
+      expect(row, `${caption} row`).toBeTruthy();
+      expect(row!.querySelectorAll(".anim-axis")).toHaveLength(2);
+      // Each axis keeps its own stopwatch — X and Y animate independently —
+      // and names its param, since the row's caption covers both.
+      for (const axis of axes) {
+        expect(within(row!).getByRole("button", { name: new RegExp(`^${axis} —`) })).toBeTruthy();
+      }
+    }
+  });
+
+  // Unlinking used to add a SECOND row (Scale X with the chain, then a bare
+  // Scale Y) — one property that changed how many rows the panel had.
+  it("keeps scale on one row whether it is linked or not", () => {
+    const scaleRow = () =>
+      rowsIn(screen.getByLabelText("Transform")).find(
+        (r) => r.firstElementChild?.textContent === "Scale",
+      )!;
+
+    renderPanel(videoTrack(), "layer-v1");
+    expect(scaleRow()).toBeTruthy();
+    expect(scaleRow().querySelectorAll(".anim-axis")).toHaveLength(1);
+    expect(within(scaleRow()).getByRole("button", { name: "Unlink X/Y scale" })).toBeTruthy();
+
+    cleanup();
+    const unlinked = videoTrack();
+    (unlinked.layers[0]!.params as { scale_linked: boolean }).scale_linked = false;
+    renderPanel(unlinked, "layer-v1");
+    expect(scaleRow().querySelectorAll(".anim-axis")).toHaveLength(2);
+    expect(within(scaleRow()).getByRole("button", { name: /^Scale X —/ })).toBeTruthy();
+    expect(within(scaleRow()).getByRole("button", { name: /^Scale Y —/ })).toBeTruthy();
+    expect(within(scaleRow()).getByRole("button", { name: "Link X/Y scale (uniform) — Scale Y becomes a copy of Scale X" })).toBeTruthy();
+  });
+});
