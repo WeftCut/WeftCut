@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import "../i18n";
 import {
   clearMasterMeter,
   publishMasterMeter,
 } from "../state/masterMeterStore";
+import type { RoleMixView } from "../ipc";
 
 const { setRoleGain, updateRoleFlags } = vi.hoisted(() => ({
   setRoleGain: vi.fn().mockResolvedValue(undefined),
@@ -68,22 +69,41 @@ vi.mock("../components/AppSlider", () => ({
   ),
 }));
 
+// The project's Role mix, swappable per test: solo/mute combinations are what
+// the implied-mute rendering is derived from, and SFX/Voiceover are deliberately
+// absent so the absent-Role default stays covered.
+const DEFAULT_ROLES: RoleMixView[] = [
+  { role: "dialogue", gain_db: -3, muted: false, solo: false },
+  { role: "music", gain_db: 2, muted: true, solo: false },
+];
+const rolesRef = vi.hoisted(() => ({ current: [] as RoleMixView[] }));
+
 vi.mock("../state/projectStore", () => ({
-  useAudioRoles: () => [
-    { role: "dialogue", gain_db: -3, muted: false, solo: false },
-    { role: "music", gain_db: 2, muted: true, solo: false },
-  ],
+  useAudioRoles: () => rolesRef.current,
 }));
 
 import { RoleMixerPanel } from "./RoleMixerPanel";
 
-// Force a deterministic content width so the responsive strips/rows choice is
+// Force a deterministic content width so the responsive layout choice is
 // testable (jsdom reports 0 for every rect and has no ResizeObserver).
 function withWidth(px: number) {
   return vi
     .spyOn(HTMLElement.prototype, "getBoundingClientRect")
     .mockReturnValue({ width: px, height: 0, top: 0, left: 0, right: px, bottom: 0, x: 0, y: 0, toJSON: () => ({}) });
 }
+
+const faderFor = (role: string) =>
+  screen.getByLabelText(`${role} gain fader`) as HTMLInputElement;
+/// The dB readout: a button at rest, the number field once opened.
+const readoutFor = (role: string) => screen.getByLabelText(`${role} gain (dB)`);
+const openReadout = (role: string) => {
+  fireEvent.click(readoutFor(role));
+  return readoutFor(role) as HTMLInputElement;
+};
+
+beforeEach(() => {
+  rolesRef.current = DEFAULT_ROLES;
+});
 
 afterEach(() => {
   cleanup();
@@ -102,25 +122,36 @@ describe("RoleMixerPanel", () => {
     for (const name of ["Dialogue", "Music", "SFX", "Voiceover"]) {
       expect(screen.getByText(name)).toBeTruthy();
     }
-    // Each Role exposes a fader, a numeric dB entry, mute, solo, and reset.
+    // Each Role exposes a fader, a dB readout, mute, solo, and reset.
     expect(screen.getAllByRole("slider")).toHaveLength(4);
     expect(screen.getAllByLabelText(/gain \(dB\)$/)).toHaveLength(4);
-    expect(screen.getAllByLabelText("Mute this role everywhere")).toHaveLength(4);
-    expect(screen.getAllByLabelText("Solo this role (mutes the others)")).toHaveLength(4);
+    expect(screen.getAllByLabelText(/^Mute .+ everywhere$/)).toHaveLength(4);
+    expect(screen.getAllByLabelText(/^Solo .+ \(mutes the others\)$/)).toHaveLength(4);
     expect(screen.getAllByLabelText(/^Reset .+ gain to 0 dB$/)).toHaveLength(4);
+  });
+
+  it("names its Role in the accessible name of every control on a card", () => {
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+
+    for (const role of ["Dialogue", "Music", "SFX", "Voiceover"]) {
+      expect(screen.getByLabelText(`${role} gain fader`)).toBeTruthy();
+      expect(screen.getByLabelText(`${role} gain (dB)`)).toBeTruthy();
+      expect(screen.getByLabelText(`Mute ${role} everywhere`)).toBeTruthy();
+      expect(screen.getByLabelText(`Solo ${role} (mutes the others)`)).toBeTruthy();
+      expect(screen.getByLabelText(`Reset ${role} gain to 0 dB`)).toBeTruthy();
+    }
   });
 
   it("binds the fader to the Role's committed gain", () => {
     render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
-    const fader = screen.getByLabelText("Dialogue gain fader") as HTMLInputElement;
-    expect(fader.value).toBe("-3");
+    expect(faderFor("Dialogue").value).toBe("-3");
   });
 
   it("records gain edits through setRoleGain without touching the flag path", async () => {
     const onMutated = vi.fn().mockResolvedValue(undefined);
     render(<RoleMixerPanel onMutated={onMutated} />);
 
-    const gain = screen.getByLabelText("Dialogue gain (dB)");
+    const gain = openReadout("Dialogue");
     fireEvent.change(gain, { target: { value: "-6" } });
     fireEvent.blur(gain);
 
@@ -144,7 +175,7 @@ describe("RoleMixerPanel", () => {
     const onMutated = vi.fn().mockResolvedValue(undefined);
     render(<RoleMixerPanel onMutated={onMutated} />);
 
-    fireEvent.click(screen.getAllByLabelText("Mute this role everywhere")[0]!);
+    fireEvent.click(screen.getByLabelText("Mute Dialogue everywhere"));
 
     await vi.waitFor(() => expect(updateRoleFlags).toHaveBeenCalledWith("dialogue", { muted: true }));
     expect(setRoleGain).not.toHaveBeenCalled();
@@ -154,29 +185,82 @@ describe("RoleMixerPanel", () => {
   it("toggles solo through the unrecorded flag path", async () => {
     render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
 
-    fireEvent.click(screen.getAllByLabelText("Solo this role (mutes the others)")[0]!);
+    fireEvent.click(screen.getByLabelText("Solo Dialogue (mutes the others)"));
 
     await vi.waitFor(() => expect(updateRoleFlags).toHaveBeenCalledWith("dialogue", { solo: true }));
     expect(setRoleGain).not.toHaveBeenCalled();
   });
 
-  it("presents channel strips when wide", () => {
+  it("presents the wide card layout when wide", () => {
     withWidth(500);
     render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
-    expect(screen.getByRole("region", { name: "Mixer" }).className).toContain("mixer-panel--strips");
+    expect(screen.getByRole("region", { name: "Mixer" }).className).toContain("mixer-panel--cards-wide");
   });
 
-  it("presents rows when narrow", () => {
+  it("presents the narrow card layout when narrow", () => {
     withWidth(240);
+    const root = () => screen.getByRole("region", { name: "Mixer" });
     render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
-    expect(screen.getByRole("region", { name: "Mixer" }).className).toContain("mixer-panel--rows");
+    expect(root().className).toContain("mixer-panel--cards");
+    // Exactly one layout modifier — the narrow one, not both.
+    expect(root().className).not.toContain("mixer-panel--cards-wide");
+  });
+});
+
+describe("RoleMixerPanel — the dB readout", () => {
+  it("shows the gain with its unit at rest", () => {
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+
+    expect(screen.getByRole("button", { name: "Dialogue gain (dB)" }).textContent).toBe("-3 dB");
+    expect(screen.getByRole("button", { name: "Music gain (dB)" }).textContent).toBe("2 dB");
+  });
+
+  it("becomes a focused input when opened", () => {
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+
+    const field = openReadout("Dialogue");
+    expect(field).toBeInstanceOf(HTMLInputElement);
+    expect(document.activeElement).toBe(field);
+  });
+
+  it("Escape in the readout discards the typed value without recording it", () => {
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+
+    const field = openReadout("Dialogue");
+    fireEvent.change(field, { target: { value: "12" } });
+    fireEvent.keyDown(field, { key: "Escape" });
+
+    expect(setRoleGain).not.toHaveBeenCalled();
+    // Closed again, still showing the committed gain.
+    expect(screen.getByRole("button", { name: "Dialogue gain (dB)" }).textContent).toBe("-3 dB");
+  });
+
+  it("Escape in the readout leaves a live fader audition running", () => {
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+
+    fireEvent.change(faderFor("Dialogue"), { target: { value: "-6" } });
+    const field = openReadout("Dialogue");
+    clearRoleGainOverride.mockClear();
+    fireEvent.keyDown(field, { key: "Escape" });
+
+    // Closing the readout is not abandoning the drag.
+    expect(clearRoleGainOverride).not.toHaveBeenCalled();
+    expect(setRoleGain).not.toHaveBeenCalled();
+  });
+
+  it("marks a trimmed Role and leaves a Role at 0 dB unmarked", () => {
+    rolesRef.current = [
+      { role: "dialogue", gain_db: -3, muted: false, solo: false },
+      { role: "music", gain_db: 0, muted: false, solo: false },
+    ];
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+
+    expect(screen.getByRole("button", { name: "Dialogue gain (dB)" }).dataset.neutral).toBe("false");
+    expect(screen.getByRole("button", { name: "Music gain (dB)" }).dataset.neutral).toBe("true");
   });
 });
 
 describe("RoleMixerPanel — Role Gain audition", () => {
-  const faderFor = (role: string) =>
-    screen.getByLabelText(`${role} gain fader`) as HTMLInputElement;
-
   it("auditions a fader drag live through the renderer-local override, recording nothing yet", () => {
     render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
 
@@ -185,8 +269,8 @@ describe("RoleMixerPanel — Role Gain audition", () => {
     // Live preview only: the override is set, no recorded command fires.
     expect(setRoleGainOverride).toHaveBeenCalledWith("dialogue", -6);
     expect(setRoleGain).not.toHaveBeenCalled();
-    // The number field mirrors the drafted value so both widgets agree.
-    expect((screen.getByLabelText("Dialogue gain (dB)") as HTMLInputElement).value).toBe("-6");
+    // The readout mirrors the drafted value so both widgets agree.
+    expect(readoutFor("Dialogue").textContent).toBe("-6 dB");
   });
 
   it("records exactly one setRoleGain on release and clears the override", async () => {
@@ -243,14 +327,51 @@ describe("RoleMixerPanel — Role Gain audition", () => {
   });
 });
 
+describe("RoleMixerPanel — implied mute", () => {
+  it("names the reason on every Role a solo silenced, and not on the soloed one", () => {
+    rolesRef.current = [
+      { role: "dialogue", gain_db: 0, muted: false, solo: true },
+      { role: "music", gain_db: 0, muted: false, solo: false },
+    ];
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+
+    // Music plus the two absent Roles — an absent Role defaults to audible only
+    // when no solo set exists.
+    expect(screen.getAllByText("Silenced")).toHaveLength(3);
+    expect(
+      screen.getByTitle("Music is silent because another role is soloed").textContent,
+    ).toBe("Silenced");
+    expect(
+      screen.queryByTitle("Dialogue is silent because another role is soloed"),
+    ).toBeNull();
+  });
+
+  it("reads a Role that is both muted and soloed as muted, not implicitly silenced", () => {
+    rolesRef.current = [{ role: "dialogue", gain_db: 0, muted: true, solo: true }];
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+
+    // Mute wins over solo: Dialogue is silent because IT is muted, so it is not
+    // the implied-mute case, and the other three carry the badge.
+    expect(screen.getByLabelText("Mute Dialogue everywhere").getAttribute("aria-pressed")).toBe("true");
+    expect(
+      screen.queryByTitle("Dialogue is silent because another role is soloed"),
+    ).toBeNull();
+    expect(screen.getAllByText("Silenced")).toHaveLength(3);
+  });
+
+  it("names no reason while nothing is soloed", () => {
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+    expect(screen.queryAllByText("Silenced")).toHaveLength(0);
+  });
+});
+
 describe("RoleMixerPanel — master meter", () => {
-  it("shows the real master RMS/Peak from the shared store, and no per-Role meter", () => {
+  it("shows the real master RMS/Peak from the shared store on one line, and no per-Role meter", () => {
     publishMasterMeter({ rmsDb: -18, peakDb: -6 });
     render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
 
     const meter = screen.getByRole("group", { name: "Master output meter" });
-    expect(within(meter).getByText("-18.0")).toBeTruthy();
-    expect(within(meter).getByText("-6.0")).toBeTruthy();
+    expect(within(meter).getByText("RMS -18.0 · Peak -6.0 dB")).toBeTruthy();
     // Exactly one meter — the master. No per-Role meters were introduced.
     expect(screen.getAllByRole("group", { name: "Master output meter" })).toHaveLength(1);
   });
@@ -260,6 +381,6 @@ describe("RoleMixerPanel — master meter", () => {
     render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
 
     const meter = screen.getByRole("group", { name: "Master output meter" });
-    expect(within(meter).getAllByText("−∞")).toHaveLength(2);
+    expect(within(meter).getByText("RMS −∞ · Peak −∞ dB")).toBeTruthy();
   });
 });
