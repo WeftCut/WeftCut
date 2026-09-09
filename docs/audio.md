@@ -341,10 +341,15 @@ content width and renders one of two layouts, carrying exactly one
 
 - **Card list** (`RoleChannel`), below the console's floor. One flat card
   per role: glyph, name and dB readout on line 1, a fader spanning the
-  card with a unity tick on line 2, the role's level meter on line 3.
-  The second line is the point — a fader sharing a line with a value
-  widget has no width left. Role identity is a glyph, not a hue, so the
-  colour channel stays free for state. The list is always one column: a
+  card with a unity tick on line 2, the role's level meter on line 3,
+  and the implied-mute badge with mute/solo/reset on line 4. Giving each
+  of those a line of its own is the point — everything but the name is
+  fixed-width, so a line that holds the name and the controls together
+  has no room left for either the name or the fader. Role identity is a
+  glyph, not a hue, so the colour channel stays free for state. The
+  badge is the only item a translation can widen, so it is the one that
+  truncates; its sentence is in its `title` regardless. The list is
+  always one column: a
   second column needs more root width than the console's floor leaves,
   so the auto-fill grid rule earns its place as the correct way to write
   a card grid and as the fallback if that floor ever moves, not as a
