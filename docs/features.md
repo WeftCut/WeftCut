@@ -860,7 +860,7 @@ bar through the usual refusal funnel. No toast, no dialog.
 **For agents** the same edit is `ripple_delete_layers { layer_ids }`
 ([mcp.md](mcp.md)); `split_layer_multi` carries a `ripple` flag so a split and
 the closing of what it discarded are one undo, which is what
-[Detect silences](#detect-silences)' *Remove* and the `/cut-silences` prompt
+[Pauses](#pauses)' *Remove pauses* and the `/cut-pauses` prompt
 stand on.
 
 Code: `renderer/ripple/plan.ts` (the planner), `main/state/mutations/ripple.ts`
@@ -1117,9 +1117,10 @@ marks reachable inside it, nesting included.
 marker's time is a cache the next commit rewrites, so a typed value would revert
 under the cursor. Position is the lane's drag, and that is the one rule. A
 region marker drags whole — its ends are not resizable by a gesture yet; the
-only hand-reachable producer of one is *Detect silences in selected clip…* (§ below), which
-writes a region per silent range. Child markers are never projected onto a parent's
-lane; the badge asserts a count and no position, because drawing a child
+only hand-reachable producer of one is *Mark pauses*, in the Attribute panel's
+[Pauses](#pauses) section (§ below), which writes a region per pause. Child
+markers are never projected onto a parent's lane; the badge asserts a count and
+no position, because drawing a child
 composition's contents on the parent would erase, visually, the boundary
 ADR 0052 and ADR 0053 pay for.
 
@@ -1359,71 +1360,152 @@ arithmetic, the voiceover dialog), `renderer/commands/speechCommands.ts`; the ma
 `callClipComputeTool` in `main/mcp/server.ts` and the `clipCompute` route in
 `main/state/router.ts`.
 
-## Detect silences
+## Pauses
 
-The third authored prompt, `/cut-silences`, reaches a person as **Detect
-silences in selected clip…** — on the same audio-bearing clips as
-transcription (context menu, Edit menu, palette; an `ACTION_DEFS` entry
-scoped to the timeline selection with no default key), and it offers exactly
-what the prompt offers: measure, then either mark the gaps or cut them out.
-The row keeps the verb *detect* because the measurement is the half both
-verbs share, and the dialog is where both of them live.
+**Pauses** is a section of the Attribute panel, on any clip whose sound the
+composition actually plays. It measures the quiet stretches of that audio and
+carries the two verbs over the one measurement — mark them, or cut them out —
+with the timeline still visible and playable underneath, which is the whole
+reason it is a panel section and not the modal dialog it replaces
+([ADR 0068](adr/0068-a-pause-is-a-fact-about-the-audio-that-plays.md)).
 
-The dialog carries the recipe's two parameters — the peak amplitude a sample
-must stay under (shown with its dBFS equivalent, since that is the unit an
-audio person reasons in) and the shortest gap worth acting on, in
-milliseconds. Every change re-detects, live: `detect_silences` walks the
-pre-computed waveform peaks and decodes nothing, so a control that re-runs
-per keystroke costs a cache read. The preview is a list, not a review Panel,
-on purpose — verifying a silent range means listening to it, which costs more
-than marking the set and deleting the marks you disagree with; what the list
-answers is how much of the clip is silence and where (a count, a total, the
-ranges as wall-clock times). A clip with nothing under the threshold says so
-and both buttons grey; nothing is written.
+**The subject is the layer that plays.** An `Audio` layer measures itself. A
+`VideoClip` delegates to the linked Audio member that shares its media, else to
+its link's only Audio member, and the section says which on a first line —
+*Measured on the linked audio "…"* — because the partner is what a person
+hears, an embedded track reaches no mixer, and a partner that has been muted,
+slipped or deleted is exactly what a detection over the source file would miss.
+A `VideoClip` with no such member shows no Pauses section at all, and *Detect
+pauses in selected clip…* greys with its own reason, *This clip plays no
+sound*.
 
-**Mark silences** lands one region marker per range, in the clip's own
-composition (a clip inside a Group marks the Group's timeline), anchored to
-the clip at the source instant its range begins ([ADR 0056](adr/0056-following-a-clip-is-a-marker-field.md)):
+**Collapsed by default, and expanding it is what detects.** The body unmounts
+when the section collapses, so a clip selected and left alone runs no
+detection, holds no subscription and draws nothing. *Detect pauses in selected
+clip…* — the clip context menu, the Edit menu and the palette, an `ACTION_DEFS`
+entry scoped to the timeline selection with no default key — reveals the
+Attribute panel and expands the section, the same gesture *Review shots…* makes
+on the Shots Panel. A command that only opened the panel would leave the user
+hunting for a collapsed header.
+
+**The parameters are in the units an audio person reasons in.** A preset row
+sets the two that matter — *Speech / podcast*, *Noisy room*, *Music /
+ambience* — with *Custom* lighting when the numbers match none of them.
+**Threshold** is a slider in dB (−60 … −20, a dB per step, read out as
+`−34 dB`) whose ends are labelled *true silence only* and *allow room noise*;
+amplitude is what the detector takes, and amplitude 0..1 is linear on a
+logarithmic quantity, so one step of it is 6 dB at the bottom of the range and
+a fifth of a dB at the top — a control that cannot be aimed. **Auto** sets the
+threshold 6 dB above the clip's own noise floor, which every detection returns
+and the section prints (*Noise floor ≈ −48 dB*), so the number has a referent
+instead of being a number. **Shortest pause** is a millisecond field, and
+**Keep each side** is the pad *Remove* leaves behind. *Reset to defaults*
+restores the detector's own values.
+
+**Every change re-detects, live**, on a short debounce with the latest run
+winning: a detection walks pre-computed waveform peaks and decodes nothing, so
+a control that re-runs per keystroke costs a cache read. It also re-runs when
+the selection names a new subject, when the subject is trimmed, slipped or
+moved — bands measured over a window the clip no longer has are worse than no
+bands — and when an effect bake or its waveform lands. A fresh import's
+waveform may still be generating. That is a state, not a failure: the section
+shows *Waiting for the waveform…* and retries when the job reports, the same
+instruction the authored recipe gives an agent.
+
+**Which peaks it reads** is the question the timeline waveform already answers:
+the baked effect sibling's when the subject has effects and their peaks are
+ready, the raw media's otherwise ([audio.md](audio.md)). Denoise moves a clip's
+floor, and a pause is a fact about the audio after it — so the bands and the
+waveform drawn under them cannot disagree, and a subject whose bake is still
+running falls back rather than refusing.
+
+**One summary line and the bands, not a list.** The section says *{{count}}
+pauses · removes {{removed}} · result {{result}}* and puts the rest on the
+timeline: one band per pause on the subject's own audio block, the whole range
+in faint amber and the core *Remove* would actually cut in a stronger one.
+Nothing is drawn on the linked picture or on the ruler — a filmstrip under a
+band verifies nothing, and the link's accent already says the picture follows.
+Nobody confirms forty rows one by one; *where* is answered by the bands and
+*how it sounds* by the audition. A clip with nothing under the threshold reads
+*No pauses at this threshold* and both verbs grey; nothing is written.
+
+**Audition result** answers the question a list cannot. It stitches the audio
+that would survive around the first three joins from the playhead (the clip's
+start, when the playhead is outside the clip) out of the same conform PCM the
+mixer itself would play, with at least a second of context on each side, a
+ten-second cap and a five-millisecond crossfade at every join, and plays the
+one buffer. It never moves the playhead and never touches the transport:
+auditioning by seek-and-skip depends on decode keeping up, so the join heard
+would not reliably be the join exported, while the stitched excerpt *is* the
+samples. Pressing again stops it, and so does changing a parameter, changing
+the subject, or collapsing the section.
+
+**Mark pauses** lands one region marker per pause, in the clip's own
+composition (a clip inside a Group marks the Group's timeline), anchored to the
+subject at the source instant its range begins ([ADR 0056](adr/0056-following-a-clip-is-a-marker-field.md)):
 a trim past a range hibernates its mark and re-extending revives it, and
-deleting the clip takes them all. One commit, one undo for the whole set.
-Silence marks are amber, a class apart from the shot-cut blue, because the two
-producers routinely sit on the same clip and hue is the only channel left to
-tell "the picture changes here" from "nobody is speaking through here". The
-detection re-runs inside the same call at the dialog's parameters, so what
-lands is the set the preview showed.
+deleting the clip takes them all. One commit, one undo for the whole set. A
+mark spans the whole pause, pad included — marking is for reading, not for
+cutting. Pause marks are amber, a class apart from the shot-cut blue, because
+the two producers routinely sit on the same clip and hue is the only channel
+left to tell "the picture changes here" from "nobody is speaking through here".
 
-**Remove** is the other verb over the same detection: every silent stretch is
-cut out of the clip and the gap it vacated closes behind it, so the clip — and
-the film — get shorter ([ADR 0062](adr/0062-ripple-is-an-explicit-command-over-placement.md)).
-One commit, one undo: the undo restores the whole clip, not a split clip
-missing its quiet parts. A stretch touching the clip's head or tail is trimmed
-off whole rather than split at the clip's own edge, a linked audio partner goes
-with each removed slice, and two touching stretches close as the one hole they
-are. Refusals arrive before any write and the clip comes back unsplit, so a
-rejected press leaves nothing to clean up: the ripple planner's four — a layer
-on another track starting inside a silent stretch, a collision, a link
-straddling one, a locked mover — each name the layer that blocked, and a clip
-that is silent end to end is refused as the delete it would be. All of them
-land in the dialog's own error slot, beside the ranges and the parameters that
-produced them, so the fix is to move that clip and press again. Both verbs
-reach the same tools an agent has: Mark is the renderer-only `mark_silences`
-hybrid, Remove is `remove_silences`, which is advertised
+**Remove pauses** is the other verb over the same detection: each pause is cut
+out of the clip and the gap it vacated closes behind it, so the clip — and the
+film — get shorter ([ADR 0062](adr/0062-ripple-is-an-explicit-command-over-placement.md)).
+What goes is the pause's core, not the pause: *Keep each side* stays at both
+ends, because erasing a pause outright makes speech breathless and clips the
+soft onset of a word that a ten-millisecond peak window read as quiet. A pause
+touching the clip's head or tail keeps its pad on the inner side only and is
+trimmed to the clip's edge on the outer one. The pad can never eat a whole
+pause: the field's maximum is half the shortest-pause value less a 50 ms
+margin, and the tools refuse a pair that breaks the rule rather than cutting on
+it. One commit, one undo: the undo restores the whole clip, not a split clip
+missing its quiet parts. A linked audio partner goes with each removed slice,
+and two touching cuts close as the one hole they are. Refusals arrive before
+any write and the clip comes back unsplit, so a rejected press leaves nothing
+to clean up: the ripple planner's four — a layer on another track starting
+inside a removed stretch, a collision, a link straddling one, a locked mover —
+each name the layer that blocked, and a clip that is one pause end to end is
+refused as the delete it would be. All of them land in the section's own error
+slot, beside the parameters that produced them, so the fix is to move that clip
+and press again.
+
+Both verbs re-detect inside their own call at the section's current parameters,
+so what lands is the set the bands showed, and both grey while a detection is
+in flight and while the other is committing. Every run is two status-log rows
+under one `op_id`; a failure closes the op and stays inline, so the parameters
+tuned survive a fix.
+
+**The parameters are a project preference** (`settings.pause_review`, `null` =
+the detector's defaults, so no threshold literal lives outside Rust), written
+through the unrecorded settings patch whenever one commits — a slider release,
+a field, a preset, Auto — and hydrated when a project opens, so tuning never
+enters the undo stack. One recording session is one project: tune once, use on
+every clip in it. Different projects have different noise floors, which is why
+none of it is global.
+
+**Bridge is a fixed detector constant, not a control.** A loud run shorter than
+80 ms inside a quiet one does not end it. A click, a cough or a lip noise runs
+30–100 ms and would otherwise split one pause into two halves that both fall
+under the minimum and vanish, while the shortest syllable is 150 ms, so nothing
+80 ms long is a word. A fourth field in a narrow panel, for a knob nobody
+turns, is worth less than the default being right.
+
+Both verbs reach the same tools an agent has: Mark is the renderer-only
+`mark_pauses` hybrid, Remove is `remove_pauses`, which is advertised
 ([mcp.md](mcp.md)).
 
-A fresh import's waveform may still be generating. That is a state, not a
-failure: the dialog shows *Waiting for the waveform…*, listens for the
-`media:job_complete` event with kind `waveform` for its own source, and
-retries when it fires — the same instruction the authored recipe gives an
-agent. Every run is two status-log rows under one `op_id`; a failure closes
-the op and stays inline, so the parameters tuned survive a fix.
-
-Code: `renderer/silence/` (the dialog and its prompt store),
-`renderer/commands/silenceCommands.ts`; the shared audio-clip gate lives in
-`renderer/speech/autoCaptionEligibility.ts`; the two writes are the
-`mark_silences` and `remove_silences` hybrids in `main/state/hybrids.ts`. Only
-the first is renderer-only — an agent already composes a mark from
-`detect_silences` and `add_markers`, while the cut is one recorded edit no
-sequence of tools reproduces.
+Code: `renderer/properties/PausesSection.tsx` (the section and its controls),
+`renderer/audition/` (the stitched result audition), `renderer/state/pausePreviewStore.ts`
+(what the timeline reads) and `renderer/timeline/PauseBands.tsx` (the bands);
+the command, its gate and the renderer's subject rule live in
+`renderer/commands/pauseCommands.ts`, the main process's twin in
+`main/state/pauseSubject.ts`; the two writes are the
+`mark_pauses` and `remove_pauses` hybrids in `main/state/hybrids.ts`. Only the
+first is renderer-only — an agent already composes a mark from `detect_pauses`
+and `add_markers`, while the cut is one recorded edit no sequence of tools
+reproduces.
 
 ## Global search palette
 

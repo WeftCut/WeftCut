@@ -19,7 +19,7 @@ should go.
    restore point.
 3. A small change (a handful of tool calls) needs no more ceremony than that:
    edit, verify, report.
-4. A batch job (rough-cutting a video, a silence pass, building a caption
+4. A batch job (rough-cutting a video, a pause pass, building a caption
    track) uses a work session: ASK whether to begin the batch and enter the
    lightweight agent view unless already authorized, then call
    `begin_agent_session`. It creates a checkpoint once per session. Wrap the
@@ -46,10 +46,11 @@ intended before reporting it done.
 Common flows, one line each — parameters and caveats live in the tool
 descriptions:
 
-- Cut silences: `remove_silences` cuts every silent stretch out of a clip and
-  closes the gaps, as one undoable edit (or mark them to review first:
-  `detect_silences` → an anchored region `add_marker` per gap; both packaged as
-  the `/cut-silences` prompt).
+- Cut pauses: `remove_pauses` cuts every pause out of a clip and closes the
+  gaps, as one undoable edit — `pad_us` of each pause stays at both ends, so
+  the speech either side keeps its breath (or mark them to review first:
+  `detect_pauses` → an anchored region `add_marker` per pause; both packaged
+  as the `/cut-pauses` prompt).
 - Captions: `transcribe_clip` → inspect the returned SRT → `apply_subtitles`
   (also `/auto-caption`).
 - Voiceover: `synthesize_speech` appends a spoken script to the timeline

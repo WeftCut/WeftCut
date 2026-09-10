@@ -422,16 +422,29 @@ _Avoid_: orphan (a detached marker is an ordinary free marker, not a casualty);
 unlink, unpin, release; link (that is the propagation relationship between
 layers)
 
-**Silence mark**:
-An anchored REGION marker written by the *Detect silences…* dialog's **Mark**
-— one per range the waveform peaks stayed under the threshold for, spanning the
-range, labelled "Silence" and amber so it reads apart from the shot-cut blue on
-the same clip. A fact about the material, so it hibernates when a trim passes
-it and leaves with the clip. Marking changes no timing; the same dialog's
-**Remove** is the other verb over the same detection (`remove_silences` — cut
-the ranges out and close the gaps). UI word: Detect silences / 检测静默.
-_Avoid_: cut silences (as a name for the MARK — the mark cuts nothing; that is
-what Remove is for), silence region as a marker kind (it is an ordinary marker
+**Pause**:
+A stretch of an Audio layer's PLAYED audio whose peak stays under the threshold
+for at least the minimum length. The subject is always the layer that reaches
+the mixer: an `Audio` layer is its own subject, and a `VideoClip` delegates to
+the Audio member of its link that shares its media, else to the link's sole
+Audio member, else it has no subject at all and offers no pause surface. Read
+off the peaks of what plays — the baked effect sibling's when they are ready,
+the media's otherwise — so a pause never disagrees with the waveform drawn
+under it. UI word: Pauses / 停顿.
+_Avoid_: silence / 静默 (the retired name for this), 静音 (that is mute), gap
+(that is the vacated span a deletion leaves on the timeline), 空白 / 间隙 (they
+collide with gap), dead air
+
+**Pause mark**:
+An anchored REGION marker written by the Pauses section's **Mark pauses** — one
+per pause, spanning its whole range, labelled "Pause" and amber so it reads
+apart from the shot-cut blue on the same clip. A fact about the material, so it
+hibernates when a trim passes it and leaves with the clip. Marking changes no
+timing; the section's **Remove pauses** is the other verb over the same
+detection (`remove_pauses` — cut the pauses out, keeping a pad on each side,
+and close the gaps). UI word: Mark pauses / 标记停顿.
+_Avoid_: cut pauses (as a name for the MARK — the mark cuts nothing; that is
+what Remove is for), pause region as a marker kind (it is an ordinary marker
 with `end_t_us`), gap (that is the vacated span a deletion leaves on the
 timeline)
 

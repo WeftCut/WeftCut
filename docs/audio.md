@@ -532,6 +532,18 @@ so a loud floor left at the filter's default makes the whole filter a no-op.
   artifact, so a new bake is simply new tiles and no invalidation event is
   needed.
 
+A **pause detection reads the same peaks the waveform draws**: the fx sibling's
+`.peaks` when the layer's bake is ready and its peaks file has landed, the raw
+media's otherwise. `detect_pauses` takes the resolved path the way it takes
+`layer` and `media` — main injects it out of the baker's state — so the choice
+is made in one place for the tile producer and the detector alike, and the
+bands the Pauses section draws cannot disagree with the waveform under them.
+That the processed audio is what a pause is measured on is the point rather
+than a convenience: denoise moves a clip's floor, and what a person hears is
+the baked sibling. A subject whose bake is still running falls back to the raw
+peaks rather than refusing — the same tolerance the tile fetch has, and unlike
+export, which keeps its strict gate.
+
 ### Readiness and status
 
 The baker publishes one `LayerFxState { desired_sig, ready, pending, error }`

@@ -24,7 +24,7 @@ Premiere, FCP and Resolve is an explicit one, and moving layers the user did
 not touch is its purpose: it is how a cut keeps the rest of the film in sync.
 Without it, removing dead air is impossible — split → split → delete leaves a
 hole exactly as long as the slice, audibly identical to doing nothing — and
-the `/cut-silences` recipe could only mark.
+the `/cut-pauses` recipe could only mark.
 
 ## Decision
 
@@ -79,8 +79,8 @@ the `/cut-silences` recipe could only mark.
   Edit menu, the palette and the Quick Actions strip; with a keyframe or
   transition-chip selection the key degrades to the plain delete. For agents
   `ripple_delete_layers { layer_ids }`, a `ripple` flag on the internal
-  multi-split, and `remove_silences`, which the `/cut-silences` prompt and
-  the Detect silences dialog's *Remove* both call.
+  multi-split, and `remove_pauses`, which the `/cut-pauses` prompt and
+  the Pauses section's *Remove pauses* both call.
 
 ## Considered options
 
@@ -121,7 +121,7 @@ the `/cut-silences` recipe could only mark.
   overlap-placement rule and Policy B reconcile stand.
 - Composition duration follows ADR 0005 unchanged: unpinned shrinks, pinned
   keeps its length.
-- The `/cut-silences` prompt may promise to tighten a clip again, and does
+- The `/cut-pauses` prompt may promise to tighten a clip again, and does
   it in one recorded edit.
 - The refusal vocabulary grows by four variants, each carrying the entity
   it names; the status bar is the only after-the-fact surface.
