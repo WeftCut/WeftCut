@@ -982,8 +982,9 @@ export function LayerBlock({
         if (layer.locked || trackLocked) return;
         onContextMenu(e, layer.id, layer.kind, layer.enabled);
       }}
+      // The kind by its UI name (`kinds.*`: Video, Image, Group), never the discriminant.
       title={[
-        `${layer.kind}: ${formatTimecode(liveStart, fpsNum, fpsDen)} → ${formatTimecode(liveEnd, fpsNum, fpsDen)}`,
+        `${t(`kinds.${layer.kind.toLowerCase()}`, { defaultValue: layer.kind })}: ${formatTimecode(liveStart, fpsNum, fpsDen)} → ${formatTimecode(liveEnd, fpsNum, fpsDen)}`,
         // The chip is where a Text layer's words live now, and the chip
         // truncates: to 12 characters on a narrow block, to 240px of ellipsis on
         // a wide one, and to nothing at all once the layer has been renamed. The

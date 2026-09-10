@@ -230,9 +230,9 @@ test.describe('ripple delete', () => {
       expect(videoBefore.map((l) => l.t_start_us)).toEqual([0, 2_000_000, 4_000_000])
       expect(audioBefore.map((l) => l.t_start_us)).toEqual([0, 2_000_000, 4_000_000])
       // The two title prefixes the block locators would read: `LayerBlock`'s
-      // tooltip opens with the layer's KIND, which is how a spec tells the
+      // tooltip opens with the kind's UI label (Video / Audio), which is how a spec tells the
       // picture slice of a combined row from its audio slice.
-      await expect(block(page, videoBefore[1]!.id)).toHaveAttribute('title', /^VideoClip: /)
+      await expect(block(page, videoBefore[1]!.id)).toHaveAttribute('title', /^Video: /)
       await expect(block(page, audioBefore[1]!.id)).toHaveAttribute('title', /^Audio: /)
       const shapeBefore = shapeOf(before)
 
