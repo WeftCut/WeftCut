@@ -22,7 +22,7 @@ import { resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
  *  the rendered result (ADR 0049). `box_w`/`box_h` are the one pair where
  *  `null` is a value distinct from absent — see the `case 'Text'` merge. */
 export type LayerParamsPatch =
-  | { kind: 'Text'; content?: string; font_family?: string; font_size_px?: number; color?: Rgba; x?: number; y?: number; opacity?: number; align?: TextAlign; valign?: VAlign; box_w?: number | null; box_h?: number | null; line_height?: number; letter_spacing?: number }
+  | { kind: 'Text'; content?: string; font_family?: string; font_size_px?: number; color?: Rgba; x?: number; y?: number; opacity?: number; align?: TextAlign; valign?: VAlign; box_w?: number | null; box_h?: number | null; line_height?: number; letter_spacing?: number; outline_width?: number; outline_color?: Rgba }
   | { kind: 'VideoClip'; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; speed?: number; flip_h?: boolean; flip_v?: boolean; fade_in_us?: number; fade_out_us?: number }
   | { kind: 'ImageOverlay'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; fade_in_us?: number; fade_out_us?: number }
   | { kind: 'Motif'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; src_in_us?: number; motif_id?: string; motif_version?: number; props?: Record<string, unknown> }
@@ -152,6 +152,24 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
           throw new CommandFailure({ error: 'InvalidArgument', field, detail: `${field} must be a finite number` })
         }
       }
+      // Zero is a value here — "no outline" — so the predicate admits it where
+      // font_size_px's does not; negative is not a thinner stroke, it is nothing.
+      if (patch.outline_width !== undefined && !(Number.isFinite(patch.outline_width) && patch.outline_width >= 0)) {
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'outline_width',
+          detail: `outline_width must be zero or a positive number of composition pixels — got ${patch.outline_width}` })
+      }
+      // A colour needs a stroke to colour. Refused rather than inventing a width:
+      // this surface has no default stroke of its own (a Text layer is born with
+      // none), and a guessed width would be the silent default ADR 0048 rules out.
+      // The width may arrive in the same patch, which is how an agent adds a
+      // coloured outline in one commit.
+      if (patch.outline_color !== undefined) {
+        const widthAfter = patch.outline_width !== undefined ? patch.outline_width : (t.outline?.width ?? 0)
+        if (!(widthAfter > 0)) {
+          throw new CommandFailure({ error: 'InvalidArgument', field: 'outline_color',
+            detail: 'outline_color needs an outline to colour: send outline_width > 0 in the same patch, or set one first' })
+        }
+      }
       // A shape predicate, not a range: there is no sensible upper bound on type
       // size, but zero and negative are not small type, they are no glyphs at all.
       // Hand-written rather than table-driven for the reason every refusal here is
@@ -194,6 +212,16 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (patch.box_h !== undefined) t.box_h = boxHPatch as number | null
       if (patch.line_height !== undefined) t.line_height = patch.line_height
       if (patch.letter_spacing !== undefined) t.letter_spacing = patch.letter_spacing
+      // Width before colour, so a patch carrying both creates the stroke and then
+      // colours it. Zero stores `null` — the same absent style the Text tool
+      // writes and a caption restyle produces — never a zero-width stroke object.
+      // A new stroke is black, the default caption outline colour, until coloured.
+      if (patch.outline_width !== undefined) {
+        t.outline = patch.outline_width <= 0
+          ? null
+          : { color: t.outline?.color ?? { r: 0, g: 0, b: 0, a: 255 }, width: patch.outline_width }
+      }
+      if (patch.outline_color !== undefined && t.outline) t.outline = { color: patch.outline_color, width: t.outline.width }
       return
     }
     case 'VideoClip': {

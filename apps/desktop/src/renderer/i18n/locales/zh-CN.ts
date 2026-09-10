@@ -1752,6 +1752,10 @@ const zhCN: Resources = {
     line_height: "行高（像素）",
     line_height_hint: "0 = 自动，使用字体自带的行度量。",
     letter_spacing: "字距（像素）",
+    // 宽度填 0 即去掉描边；颜色那一行随之消失。
+    outline_width: "描边（像素）",
+    outline_width_hint: "0 = 无描边。",
+    outline_color: "描边颜色",
     color: "颜色",
     position: "位置",
     x: "X",

@@ -10,7 +10,7 @@
 // convention in this folder, and the real `../i18n` — so a missing translation
 // surfaces as a raw `property_panel.*` key in a query instead of passing.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../i18n";
 import type { LayerSummary, TrackSummary } from "../ipc";
@@ -396,6 +396,64 @@ describe("Text block placement, leading and tracking", () => {
         letter_spacing: 0.5,
       }),
     );
+  });
+});
+
+describe("Outline", () => {
+  const BLACK = { r: 0, g: 0, b: 0, a: 255 };
+
+  // Zero and "none" are one value on this row, so a layer with no outline reads
+  // 0 and shows nothing to colour; the colour row appears with the stroke.
+  it("reads an absent outline as width 0 and shows the colour row only with a stroke", () => {
+    installProbe({ natural: { w: 600, h: 200 } });
+    const { section, rerenderWith } = renderTextPanel({ outline: null });
+    expect((within(section).getByLabelText("Outline (px)") as HTMLInputElement).value).toBe("0");
+    expect(within(section).queryByLabelText("Outline color")).toBeNull();
+
+    rerenderWith({ outline: { color: BLACK, width: 3 } });
+    expect((within(section).getByLabelText("Outline (px)") as HTMLInputElement).value).toBe("3");
+    expect(within(section).getByLabelText("Outline color")).toBeTruthy();
+  });
+
+  it("commits the width as a scalar, and 0 goes on the wire as 0", async () => {
+    const user = userEvent.setup();
+    installProbe({ natural: { w: 600, h: 200 } });
+    const { section } = renderTextPanel({ outline: { color: BLACK, width: 0.5 } });
+
+    const width = within(section).getByLabelText("Outline (px)") as HTMLInputElement;
+    await user.click(width);
+    await user.keyboard("{ArrowUp}");
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(updateLayerParams).toHaveBeenCalledWith("layer-t1", { kind: "Text", outline_width: 1 }),
+    );
+    await user.keyboard("{ArrowDown}{ArrowDown}");
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(updateLayerParams).toHaveBeenCalledWith("layer-t1", { kind: "Text", outline_width: 0 }),
+    );
+  });
+
+  // The picker fires per drag step; one gesture must be one history entry, and
+  // the stored alpha survives a picker that only edits the RGB triplet.
+  it("commits the colour once per gesture, after the debounce, keeping the stored alpha", async () => {
+    vi.useFakeTimers();
+    try {
+      installProbe({ natural: { w: 600, h: 200 } });
+      const { section } = renderTextPanel({ outline: { color: { r: 0, g: 0, b: 0, a: 200 }, width: 3 } });
+      const swatch = within(section).getByLabelText("Outline color");
+      fireEvent.change(swatch, { target: { value: "#ff0000" } });
+      fireEvent.change(swatch, { target: { value: "#00ff00" } });
+      expect(updateLayerParams).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(250);
+      expect(updateLayerParams).toHaveBeenCalledTimes(1);
+      expect(updateLayerParams).toHaveBeenCalledWith("layer-t1", {
+        kind: "Text",
+        outline_color: { r: 0, g: 255, b: 0, a: 200 },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

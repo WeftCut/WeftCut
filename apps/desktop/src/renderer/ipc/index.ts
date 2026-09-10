@@ -633,6 +633,11 @@ export interface TextPatch {
   box_h?: number | null;
   line_height?: number;
   letter_spacing?: number;
+  /// Width 0 removes the outline (the mutation stores `null`). A colour needs
+  /// an outline to land on: with none stored, send `outline_width > 0` in the
+  /// same patch or the mutation refuses.
+  outline_width?: number;
+  outline_color?: Rgba;
 }
 
 export interface VideoClipPatch {

@@ -1989,6 +1989,10 @@ const enUS = {
     line_height: "Line height (px)",
     line_height_hint: "0 = automatic — the font's own line metrics.",
     letter_spacing: "Letter spacing (px)",
+    // Width 0 is how the outline is removed; the colour row leaves with it.
+    outline_width: "Outline (px)",
+    outline_width_hint: "0 = no outline.",
+    outline_color: "Outline color",
     color: "Color",
     // `position` / `anchor` caption a MERGED axis row; `x` / `y` / `anchor_x`
     // / `anchor_y` stay as the per-axis accessible names inside it.

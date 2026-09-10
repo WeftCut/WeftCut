@@ -911,6 +911,10 @@ function TextBoxFields({
   );
 }
 
+/// What a fresh outline is coloured until the user says otherwise — the default
+/// caption outline colour, so a stroke added here matches an imported cue's.
+const OUTLINE_BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
+
 /// The block-placement pair, each listed in the direction it reads: `align`
 /// left to right, `valign` top to bottom.
 const ALIGNS = ["Left", "Center", "Right"] as const;
@@ -941,6 +945,15 @@ function TextFields({
   const [boxH, setBoxH] = useState<number | null>(v.box_h);
   const [leading, setLeading] = useState(v.line_height);
   const [tracking, setTracking] = useState(v.letter_spacing);
+  // An absent outline reads as width 0, which is also what commits one away —
+  // the field and the store share one representation of "none".
+  const [outlineW, setOutlineW] = useState(v.outline?.width ?? 0);
+  const [outlineColor, setOutlineColor] = useState<Rgba>(v.outline?.color ?? OUTLINE_BLACK);
+  // The native colour picker fires per drag step; each commit is a history
+  // entry, so bursts coalesce into one commit per gesture (`CaptionsPanel`'s
+  // rule for its colour swatch).
+  const outlineColorDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (outlineColorDebounce.current) clearTimeout(outlineColorDebounce.current); }, []);
   // While a number in this section is being edited, suppress the prop→local
   // resync so a mid-typing debounced commit's round-trip can't clobber the
   // in-progress edit.
@@ -962,6 +975,8 @@ function TextFields({
     setBoxH(v.box_h);
     setLeading(v.line_height);
     setTracking(v.letter_spacing);
+    setOutlineW(v.outline?.width ?? 0);
+    setOutlineColor(v.outline?.color ?? OUTLINE_BLACK);
   }, [layer.id, v]);
 
   // Fixed is the only mode that can shrink, so it is the only one worth
@@ -1023,6 +1038,40 @@ function TextFields({
         commitStatic={(color) => commit({ kind: "Text", color })}
         onMutated={onMutated}
       />
+      {/* The outline: the one style a caption import adds beyond the file's own,
+          and until this row the one nothing in the inspector could change. Width
+          0 is "none" — the mutation stores `null` — so the colour row has nothing
+          to colour and leaves rather than sitting disabled. */}
+      <Field label={t("property_panel.outline_width")} hint={t("property_panel.outline_width_hint")}>
+        <AppNumberField
+          value={outlineW}
+          step={0.5}
+          min={0}
+          max={64}
+          ariaLabel={t("property_panel.outline_width")}
+          onValueChange={setOutlineW}
+          onCommit={(px) => commit({ kind: "Text", outline_width: px })}
+          onFocus={() => { editingNumber.current = true; }}
+          onBlur={() => { editingNumber.current = false; }}
+        />
+      </Field>
+      {v.outline !== null && (
+        <Field label={t("property_panel.outline_color")}>
+          <AppColorField
+            value={rgbaToHex(outlineColor)}
+            ariaLabel={t("property_panel.outline_color")}
+            onValueChange={(hex) => {
+              // The picker edits the RGB triplet; the stored alpha rides along.
+              const next = hexToRgba(hex, outlineColor.a);
+              setOutlineColor(next);
+              if (outlineColorDebounce.current) clearTimeout(outlineColorDebounce.current);
+              outlineColorDebounce.current = setTimeout(() => {
+                void commit({ kind: "Text", outline_color: next });
+              }, 250);
+            }}
+          />
+        </Field>
+      )}
       <TextBoxFields
         layerId={layer.id}
         boxW={v.box_w}

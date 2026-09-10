@@ -150,6 +150,32 @@ describe('Text box patch', () => {
     expect([t.align, t.valign, t.line_height, t.letter_spacing]).toEqual(['Left', 'Top', 1.4, 2])
   })
 
+  // The outline is the one style a caption import adds beyond the file's own,
+  // and this is the only route that changes it on a single layer. Zero stores
+  // null — the absent style a Text layer is born with — never a zero-width
+  // stroke; a new stroke is black until coloured, and a colour keeps the width.
+  it('outline_width adds, resizes and (at 0) removes the outline; outline_color keeps the width', () => {
+    const { p, id } = textLayer()
+    const t = () => layerOf(p, id).params as TextParams
+    expect(t().outline).toBeNull()
+    applyUpdateLayerParams(p, id, { kind: 'Text', outline_width: 3 }, new MotifCatalog())
+    expect(t().outline).toEqual({ color: { r: 0, g: 0, b: 0, a: 255 }, width: 3 })
+    applyUpdateLayerParams(p, id, { kind: 'Text', outline_color: { r: 255, g: 0, b: 0, a: 255 } }, new MotifCatalog())
+    expect(t().outline).toEqual({ color: { r: 255, g: 0, b: 0, a: 255 }, width: 3 })
+    applyUpdateLayerParams(p, id, { kind: 'Text', outline_width: 5 }, new MotifCatalog())
+    expect(t().outline).toEqual({ color: { r: 255, g: 0, b: 0, a: 255 }, width: 5 })
+    applyUpdateLayerParams(p, id, { kind: 'Text', outline_width: 0 }, new MotifCatalog())
+    expect(t().outline).toBeNull()
+  })
+
+  // Width and colour in one patch is how an agent adds a coloured outline in
+  // one commit — the width lands first, then the colour lands on it.
+  it('outline_width and outline_color in one patch create a coloured stroke', () => {
+    const { p, id } = textLayer()
+    applyUpdateLayerParams(p, id, { kind: 'Text', outline_width: 2, outline_color: { r: 0, g: 0, b: 255, a: 255 } }, new MotifCatalog())
+    expect((layerOf(p, id).params as TextParams).outline).toEqual({ color: { r: 0, g: 0, b: 255, a: 255 }, width: 2 })
+  })
+
   // MCP hands the patch over as untyped JSON, so these are the values the TYPES
   // reject and the wire does not. Each would survive into state and reach the
   // sprite: an unknown valign indexes its fraction table to `undefined` and lands
@@ -163,6 +189,11 @@ describe('Text box patch', () => {
     ['box_h', { box_w: 800, box_h: 0 }],
     ['line_height', { line_height: Number.NaN }],
     ['letter_spacing', { letter_spacing: Number.POSITIVE_INFINITY }],
+    ['outline_width', { outline_width: -1 }],
+    ['outline_width', { outline_width: Number.NaN }],
+    // A colour with no stroke to land on, and none arriving in the same patch:
+    // refused rather than answered with a guessed width.
+    ['outline_color', { outline_color: { r: 1, g: 2, b: 3, a: 255 } }],
   ] as Array<[string, Record<string, unknown>]>)('refuses a bogus %s from the wire', (field, bad) => {
     const { p, id } = textLayer()
     const before = JSON.stringify(p)
