@@ -667,7 +667,7 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
     }
     case 'apply_subtitles': {
       // Body + optional format tag; label is always "Captions". Reached by the
-      // agent's `apply_subtitles` tool and by the renderer's auto-caption entry,
+      // agent's `apply_subtitles` tool and by the renderer's transcribe command,
       // which hands over the `srt` its `transcribe_clip` call returned.
       // ToolResult text contract: the bare track id, or the id + a
       // simplified-styling annotation. server.ts wraps this string into

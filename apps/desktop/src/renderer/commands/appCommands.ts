@@ -121,7 +121,7 @@ export const MENU_ONLY_COMMAND_IDS = [
   // strip button, the palette, and the Transitions panel instead.
   "applyDefaultTransition",
   // Voiceover. Menu-only and NOT an `ACTION_DEFS` entry, unlike its
-  // auto-caption sibling: this operation has no scope at all — it needs a
+  // transcribe sibling: this operation has no scope at all — it needs a
   // script, not a selection, and must be reachable with nothing selected — so
   // an `ActionDef` would carry a `scope` field with nothing to say and a
   // rebindable row for a key that acts on no object (`shortcuts/defs.ts` states
@@ -417,7 +417,7 @@ export function buildAppCommands(
     // one of its own: the gate also stands the command down while a run is in
     // flight, and nothing rebuilds the catalogue when a transcription starts.
     autoCaptionSelected: canAutoCaptionSelection,
-    // The same shared audio-clip gate, minus auto-caption's in-flight
+    // The same shared audio-clip gate, minus transcription's in-flight
     // condition (`commands/silenceCommands.ts` says why it is not folded in).
     detectSilencesSelected: canDetectSilencesSelection,
     // The picture-clip gate, one notch narrower than the audio one above: a

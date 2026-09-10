@@ -1,10 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { autoCaptionState, autoCaptionForSelection } from "./autoCaptionEligibility";
-import {
-  closeAutoCaptionPrompt,
-  setAutoCaptionTranscribing,
-} from "./autoCaptionPrompt";
+import { setTranscribing } from "./transcribeRun";
 import type { LayerSummary, TrackSummary } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
 import {
@@ -151,7 +148,7 @@ describe("autoCaptionState", () => {
 
 describe("autoCaptionForSelection", () => {
   beforeEach(() => {
-    closeAutoCaptionPrompt();
+    setTranscribing(false);
     clearLayerSelection();
     useProjectStore.getState().apply(summaryFixture({ root: { tracks: TRACKS } }));
   });
@@ -160,9 +157,9 @@ describe("autoCaptionForSelection", () => {
     expect(autoCaptionForSelection()).toBe("needs_selection");
     setLayerSelection("l-video", ["l-video"]);
     expect(autoCaptionForSelection()).toBe("auto_caption");
-    setAutoCaptionTranscribing(true);
+    setTranscribing(true);
     expect(autoCaptionForSelection()).toBe("transcribing");
-    setAutoCaptionTranscribing(false);
+    setTranscribing(false);
     expect(autoCaptionForSelection()).toBe("auto_caption");
   });
 

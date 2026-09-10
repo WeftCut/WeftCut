@@ -153,17 +153,17 @@ describe("LayerContextMenu — kind-gated rows", () => {
 
   // The analysis tier follows the MATERIAL, not the visual kind: both kinds that
   // reference media with an audio stream get it, and nothing else does.
-  it.each(["VideoClip", "Audio"])("%s gets the auto-caption row", (kind) => {
+  it.each(["VideoClip", "Audio"])("%s gets the transcribe row", (kind) => {
     renderMenu(kind);
-    expect(screen.getByRole("menuitem", { name: /Auto-caption clip/ })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: /Transcribe selected clip/ })).toBeTruthy();
   });
 
   it.each(["Text", "Color", "Motif", "ImageOverlay", "CompositionRef"])(
-    "%s gets no auto-caption row — a row that can only refuse is worse than none",
+    "%s gets no transcribe row — a row that can only refuse is worse than none",
     (kind) => {
       renderMenu(kind);
       expect(
-        screen.queryByRole("menuitem", { name: /Auto-caption clip/ }),
+        screen.queryByRole("menuitem", { name: /Transcribe selected clip/ }),
       ).toBeNull();
     },
   );
@@ -192,23 +192,23 @@ describe("LayerContextMenu — kind-gated rows", () => {
 
   // Describe follows Review shots in the same tier, and for the same reason it
   // is in that tier at all: its answer is prose to read ON those rows.
-  it("offers Describe clip content on a VideoClip, after Review shots", () => {
+  it("offers Describe selected clip content on a VideoClip, after Review shots", () => {
     renderMenu("VideoClip");
     const labels = screen
       .getAllByRole("menuitem")
       .map((el) => el.textContent ?? "");
     const review = labels.findIndex((l) => /Review shots/.test(l));
-    const describe = labels.findIndex((l) => /Describe clip content/.test(l));
+    const describe = labels.findIndex((l) => /Describe selected clip content/.test(l));
     expect(review).toBeGreaterThanOrEqual(0);
     expect(review).toBeLessThan(describe);
   });
 
   it.each(["Audio", "Text", "Color", "Motif", "ImageOverlay", "CompositionRef"])(
-    "%s gets no Describe clip content row",
+    "%s gets no Describe selected clip content row",
     (kind) => {
       renderMenu(kind);
       expect(
-        screen.queryByRole("menuitem", { name: /Describe clip content/ }),
+        screen.queryByRole("menuitem", { name: /Describe selected clip content/ }),
       ).toBeNull();
     },
   );

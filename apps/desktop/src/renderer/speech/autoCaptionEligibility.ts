@@ -29,7 +29,7 @@ import {
   primaryLayerIdOf,
   usePrimaryLayerId,
 } from "../state/selectionStore";
-import { useAutoCaptionPromptStore } from "./autoCaptionPrompt";
+import { useTranscribeRunStore } from "./transcribeRun";
 
 /// Stable empty reference — a fresh `[]` per selector call would defeat the
 /// reference-equality bail-out the hooks below rely on.
@@ -129,7 +129,7 @@ export function audioClipTarget(): LayerSummary | null {
   );
 }
 
-/// Auto-caption's verdict: the shared audio-clip gate plus the one condition
+/// Transcription's verdict: the shared audio-clip gate plus the one condition
 /// that belongs to transcription alone.
 ///
 /// `transcribing` comes in rather than being read here so the whole verdict
@@ -150,7 +150,7 @@ export function autoCaptionForSelection(): AutoCaptionState {
   return autoCaptionState(
     primaryLayerIdOf(currentSelection()),
     currentOpenComposition()?.tracks ?? NO_TRACKS,
-    useAutoCaptionPromptStore.getState().transcribing,
+    useTranscribeRunStore.getState().transcribing,
   );
 }
 
@@ -174,12 +174,12 @@ export const useAudioClipState = (): AudioClipState => {
   );
 };
 
-/// Subscription form of auto-caption's verdict — the shared gate's two stores
+/// Subscription form of transcription's verdict — the shared gate's two stores
 /// plus the in-flight flag, on the same rules.
 export const useAutoCaptionState = (): AutoCaptionState => {
   const primaryId = usePrimaryLayerId();
   const focusedId = useCompositionAnchorStore((s) => s.focusedId);
-  const transcribing = useAutoCaptionPromptStore((s) => s.transcribing);
+  const transcribing = useTranscribeRunStore((s) => s.transcribing);
   return useProjectStore((s) =>
     autoCaptionState(
       primaryId,

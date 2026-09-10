@@ -208,7 +208,7 @@ describe('routeChannel', () => {
     }
   })
   // The write halves of the two speech recipes, reached by the renderer's
-  // auto-caption and voiceover dialogs under the same names the agent uses —
+  // transcribe command and voiceover dialog under the same names the agent uses —
   // one arm and one commit shape, whoever asks.
   it('routes the two speech write channels to hybrid', () => {
     expect(routeChannel('apply_subtitles').kind).toBe('hybrid')

@@ -6,14 +6,14 @@ import { create } from "zustand";
 /// and the search palette, both of which must work with every timeline closed,
 /// and a dialog owned by an unmounted Panel would simply never render. So App
 /// renders the dialog and every entry point only flips this. Same shape as
-/// `speech/autoCaptionPrompt.ts`.
+/// `history/checkpointPrompt.ts`.
 ///
-/// Unlike that one this store carries no in-flight flag, and the difference is
-/// real rather than an omission: a transcription is a paid network request whose
-/// second concurrent run would bill twice and race two tracks onto the timeline,
-/// so its COMMAND has to grey out. Marking silences is a local commit that
-/// cannot be started from anywhere but this dialog, and the dialog disables its
-/// own button while the commit is in flight.
+/// It carries no in-flight flag, unlike `speech/transcribeRun.ts`'s store, and
+/// the difference is real rather than an omission: a transcription is a paid
+/// network request whose second concurrent run would bill twice and race two
+/// tracks onto the timeline, so its COMMAND has to grey out. Marking silences
+/// is a local commit that cannot be started from anywhere but this dialog, and
+/// the dialog disables its own button while the commit is in flight.
 
 /// The clip a silence run is about, captured at open.
 ///

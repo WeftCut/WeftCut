@@ -122,11 +122,10 @@ import {
 import { describeSelected } from "./commands/describeCommands";
 import { openSilenceForSelection } from "./commands/silenceCommands";
 import {
-  openAutoCaptionForSelection,
   openVoiceoverPrompt,
+  transcribeSelected,
 } from "./commands/speechCommands";
 import { SilenceDialog } from "./silence/SilenceDialog";
-import { AutoCaptionDialog } from "./speech/AutoCaptionDialog";
 import { VoiceoverDialog } from "./speech/VoiceoverDialog";
 import { setTool } from "./state/toolStore";
 import { logEmit } from "./ipc";
@@ -778,11 +777,19 @@ export function App({ onCloseProject }: AppProps) {
     openGroup: openSelectedGroup,
     addToGroup: () => void addToGroupSelected(),
     moveToComposition: () => void moveSelectionToRoot(),
+    // Transcribe RUNS rather than raising a dialog — the clip is the selection
+    // and the language is the engine's to detect (`commands/speechCommands.ts`).
+    // So, like Describe below, this is not a bare slot: App lends the two things
+    // only it can do, revealing the Panel the cues become visible in and opening
+    // the tab a missing engine or key is configured on.
+    autoCaptionSelected: () =>
+      void transcribeSelected({
+        revealCaptions: () => workspaceController?.openPanel("caption"),
+        openSettings: () => openSettings("speech"),
+      }),
     // Self-contained like the Group commands: it reads the selection store and
     // raises its own dialog, so App lends a slot and nothing else
-    // (`commands/speechCommands.ts`).
-    autoCaptionSelected: openAutoCaptionForSelection,
-    // Same split, same slot-and-nothing-else (`commands/silenceCommands.ts`).
+    // (`commands/silenceCommands.ts`).
     detectSilencesSelected: openSilenceForSelection,
     // Describe RUNS rather than raising a dialog — its parameters are Settings
     // now (`commands/describeCommands.ts`). So this is not a bare slot: App
@@ -1162,22 +1169,18 @@ export function App({ onCloseProject }: AppProps) {
       <CheckpointPromptDialog />
       <MarkerRenameDialog />
 
-      {/* The four clip-analysis dialogs, owned here for the same reason: every
-          one of their commands reaches the Edit menu and the palette, which must
+      {/* The clip-analysis dialogs, owned here for the same reason: every one
+          of their commands reaches the Edit menu and the palette, which must
           work with every Panel closed. Each renders nothing until its prompt is
-          opened. The reveal is App's — the Caption Panel is where a landed
-          transcript becomes visible, and only the workspace controller can open
-          it.
+          opened.
 
-          The silence dialog needs no such reveal: its result lands in the
-          timeline ruler, which is already the surface the user is looking at.
+          The silence dialog needs no reveal: its result lands in the timeline
+          ruler, which is already the surface the user is looking at.
 
-          Describe has no dialog at all — its parameters are Settings and its
-          command runs on the press; App lends it the same reveal and the
-          settings deep-link through the handler map above. */}
-      <AutoCaptionDialog
-        onRevealCaptions={() => workspaceController?.openPanel("caption")}
-      />
+          Transcribe and Describe have no dialog at all — nothing is left to ask
+          before either runs — so App lends each the reveal of the Panel its
+          result becomes visible in and the settings deep-link, through the
+          handler map above. */}
       <VoiceoverDialog />
       <SilenceDialog />
 

@@ -403,7 +403,7 @@ const enUS = {
       "A selected group already contains it — the group cannot also sit inside it",
     move_to_composition_offscreen:
       "Not on screen at the playhead — the clips land at its start",
-    // Auto-caption. The clip menu is the only surface that shows these, but
+    // Transcribe. The clip menu is the only surface that shows these, but
     // they are the same kind of sentence as the ones above and drift if kept
     // apart. Each names one thing to go and do — which is why the wrong-kind
     // and speed cases stay separate: "pick a clip with sound" and "split a
@@ -414,7 +414,7 @@ const enUS = {
     auto_caption_speed_not_one:
       "This clip is re-timed — split a normal-speed segment off it first, or the words land in the wrong place",
     auto_caption_transcribing: "A transcription is already running",
-    // Detect silences. The same gate as auto-caption, said in the verb the row
+    // Detect silences. The same gate as transcribe, said in the verb the row
     // uses: the place to go is the same, but "to transcribe" and "to measure"
     // are not the same errand.
     detect_silences_needs_selection: "Select a video or audio clip to measure",
@@ -758,24 +758,34 @@ const enUS = {
     // (`shortcuts/defs.ts` says what those forms do).
     move_to_composition: "Move to timeline",
     move_to_composition_submenu: "Move to…",
-    // "Auto-caption" and not "Transcribe": the row's result is a caption track,
-    // and what a user is reaching for is the captions, not the transcript.
-    // Ellipsis on both because both raise a dialog first.
-    auto_caption_selected: "Auto-caption clip…",
+    // The three analysis rows name their subject — "selected clip" — because
+    // they sit in the Edit menu and the palette as well as on the clip itself,
+    // and there a row has to say what it will act on. The context menu keeps
+    // the same label: the right-click has just made the clicked clip that
+    // selection, so the sentence stays true.
+    //
+    // "Transcribe" and not "Auto-caption": the row asks the speech engine a
+    // question about the clip, and the name says which one. What lands is
+    // still a caption track — the Caption panel opens on success to show it.
+    // No ellipsis: nothing is asked before it runs. The language is the
+    // engine's to detect, so the one field the old dialog carried was a click
+    // that asked nothing (`speech/transcribeRun.ts`).
+    auto_caption_selected: "Transcribe selected clip",
     // "Detect silences" and not "Cut silences": nothing is removed by the row
     // itself. Measuring is the half every silence recipe shares, and what
     // becomes of the ranges is decided inside the dialog
-    // (`timeline/LayerContextMenu.tsx` carries the whole reason).
-    detect_silences_selected: "Detect silences…",
-    // "Content" and not "clip" as the head noun: what the model reads is what
-    // is IN the footage, and the row's answer lands as prose on the shot rows
-    // rather than as anything about the clip as an object. "Clip" still names
-    // the unit the press acts on — the whole clip, where the per-row
-    // `describe_shot` button acts on one shot.
+    // (`timeline/LayerContextMenu.tsx` carries the whole reason). Ellipsis
+    // because that dialog comes first.
+    detect_silences_selected: "Detect silences in selected clip…",
+    // "Content" as the head noun: what the model reads is what is IN the
+    // footage, and the row's answer lands as prose on the shot rows rather than
+    // as anything about the clip as an object. "Clip" still names the unit the
+    // press acts on — the whole clip, where the per-row `describe_shot` button
+    // acts on one shot.
     //
-    // No ellipsis, unlike the two rows above it: sampling and focus live in
+    // No ellipsis, like the transcribe row: sampling and focus live in
     // Settings → Video understanding now, so the press runs rather than asks.
-    describe_selected: "Describe clip content",
+    describe_selected: "Describe selected clip content",
     open_voiceover: "Voiceover…",
     // Ellipsis because the row opens a surface rather than committing anything:
     // reviewing is what happens next, and the apply is a press inside the Panel.
@@ -2037,7 +2047,7 @@ const enUS = {
   },
   captions: {
     title: "Captions",
-    empty: "Import a subtitle file or auto-caption to create captions.",
+    empty: "Import a subtitle file or transcribe a clip to create captions.",
     style_heading: "Caption style",
     seek_to: "Go to caption at {{timecode}}",
   },
@@ -2382,19 +2392,6 @@ const enUS = {
     // uses this as their last rung so a blank-labelled marker never renders as a
     // raw uuid (main/state/history-labels.ts).
     marker: "Marker",
-  },
-  // The auto-caption dialog. One field, because the authored recipe declares one
-  // optional parameter and nothing here is invented beyond it.
-  auto_caption: {
-    title: "Auto-caption",
-    clip: "Clip",
-    language: "Language",
-    language_placeholder: "Leave empty to detect automatically",
-    language_hint: "A two-letter code ({{examples}}), or leave it empty.",
-    note: "The words land on a new caption track. Open the Caption panel to read and fix them.",
-    cancel: "Cancel",
-    confirm: "Transcribe",
-    running: "Transcribing…",
   },
   // The voiceover dialog.
   voiceover: {

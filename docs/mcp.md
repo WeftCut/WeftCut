@@ -622,8 +622,8 @@ that reports `Available` or the exact missing piece. Engines that report
 engine-exact per-word timestamps (whisper.cpp, FunASR) carry an
 "exact word timing" badge on their row.
 
-**Human entries ride the same tools.** The renderer's *Auto-caption clip…*
-and *Voiceover…* dialogs do not have a second implementation: the main
+**Human entries ride the same tools.** The renderer's *Transcribe selected
+clip* command and *Voiceover…* dialog do not have a second implementation: the main
 process serves `transcribe_clip`, `detect_silences` and `describe_clip` to
 the renderer through `callClipComputeTool` (`main/mcp/server.ts`) — the very
 function `handleCallTool` uses for the MCP call of the same name, slice
@@ -635,7 +635,7 @@ channels (`main/state/router.ts` `HYBRID_CHANNELS`) reaching the same
 that the MCP path wraps the string result as a `ToolResult` text block.
 Three hybrids are renderer-only and have no MCP tool at all —
 `drop_shot_markers`, `apply_shot_cuts` (the Shots Panel's reviewed-list
-verbs) and `mark_silences` (the *Detect silences…* dialog's Mark) — because
+verbs) and `mark_silences` (the *Detect silences in selected clip…* dialog's Mark) — because
 an agent already composes each from tools it has: `analyze_clip` or the
 `media://{id}/analysis` view plus `split_layer` / `add_markers`, and
 `detect_silences` plus `add_markers`; a second tool over one detection would

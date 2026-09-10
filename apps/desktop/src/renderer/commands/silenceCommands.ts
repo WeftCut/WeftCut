@@ -23,7 +23,7 @@ import { openSilencePrompt } from "../silence/silencePrompt";
 /// audio has no silence to find, and a re-timed one would have its ranges
 /// marked at times its audio never reaches (`audioClipState` states both).
 ///
-/// Auto-caption's extra "a transcription is already running" condition is NOT
+/// Transcription's extra "a transcription is already running" condition is NOT
 /// folded in, and deliberately: marking silences is a local commit that starts
 /// nowhere but its own dialog, so greying this row for a network call it shares
 /// nothing with would be a refusal with no instruction behind it.

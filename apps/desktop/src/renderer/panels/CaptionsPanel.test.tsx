@@ -112,7 +112,7 @@ describe("CaptionsPanel", () => {
     useProjectStore.getState().apply(null);
     render(<CaptionPanel onMutated={async () => {}} onActivateCue={ignoreCueActivation} />);
     expect(
-      screen.getByText("Import a subtitle file or auto-caption to create captions."),
+      screen.getByText("Import a subtitle file or transcribe a clip to create captions."),
     ).toBeTruthy();
   });
 

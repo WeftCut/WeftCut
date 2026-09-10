@@ -120,13 +120,14 @@ export const GROUP_MENU_COMMAND_IDS = [
 /// Registry-driven like the two tiers above and swept by the same test.
 ///
 /// Kind-gated rather than always-present because the row is about the clip's
-/// material: offering "Auto-caption" over a Color layer would be a row that can
+/// material: offering "Transcribe" over a Color layer would be a row that can
 /// only ever refuse. The gate is the two kinds that carry a media reference with
 /// an audio stream, which is exactly what `resolve_clip_audio_source` accepts.
 ///
-/// Two rows, in the order they are reached: caption a clip, then measure its
-/// silence. Both take arguments, so both open a dialog rather than acting on the
-/// click.
+/// Two rows, in the order they are reached: transcribe a clip, then measure its
+/// silence. The first runs on the click — the clip is the selection and the
+/// language is the engine's to detect — and the second opens a dialog, because
+/// a threshold is a parameter someone has to choose.
 ///
 /// The silence row joins as *detect and mark*, not as *cut silences*, and the
 /// distinction is the reason the tier still holds two entries rather than three:
@@ -179,7 +180,7 @@ const ADD_TO_GROUP_REASON: Record<Exclude<AddToGroupState, "add_to_group">, stri
     starts_before_group: "quick_actions.add_to_group_starts_before_group",
   };
 
-/// Why a greyed *Auto-caption* row is greyed. Same block and same
+/// Why a greyed *Transcribe* row is greyed. Same block and same
 /// `Record`-over-the-remaining-states rule as `ADD_TO_GROUP_REASON` above.
 ///
 /// `needs_selection` survives even though the row only renders over a clip a
@@ -196,7 +197,7 @@ const AUTO_CAPTION_REASON: Record<
 };
 
 /// Why a greyed *Detect silences* row is greyed. Its own table even though the
-/// gate is shared with *Auto-caption*: the verdict is one thing, but the
+/// gate is shared with *Transcribe*: the verdict is one thing, but the
 /// instruction reads differently per verb — "a clip to transcribe" and "a clip
 /// to measure" send the user to the same place for different reasons, and a
 /// tooltip that names the wrong operation is worse than none.
@@ -385,7 +386,7 @@ export function LayerContextMenu({
   // refuses for real (`timeline/rippleEligibility.ts`).
   const rippleDelete = useRippleDeleteState();
   const rippleDeleteHint = rippleDeleteReason(rippleDelete, t);
-  // The *Auto-caption* row's tooltip. Subscribed so a greyed row re-labels
+  // The *Transcribe* row's tooltip. Subscribed so a greyed row re-labels
   // under an open popup — a transcription started elsewhere flips the state.
   const autoCaption = useAutoCaptionState();
   const autoCaptionHint =

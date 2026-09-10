@@ -367,7 +367,7 @@ const zhCN: Resources = {
     move_to_composition_already_there: "这些片段已经在这里了",
     move_to_composition_cycle: "所选的组里已经包含它——不能再把组放进它里面",
     move_to_composition_offscreen: "播放头处看不到它——片段会落在它的开头",
-    // 自动字幕。只有片段右键菜单会显示这几句，但它们和上面是同一类句子，分开放
+    // 语音转文字。只有片段右键菜单会显示这几句，但它们和上面是同一类句子，分开放
     // 就会走样。每句都指向一件具体要做的事——所以"选错种类"和"变速了"分成两句：
     // "选一个有声音的片段"和"先切出一段常速"要做的事并不相同。
     auto_caption_needs_selection: "选中一个视频或音频片段来转写",
@@ -375,7 +375,7 @@ const zhCN: Resources = {
     auto_caption_speed_not_one:
       "这个片段变过速——先从中切出一段常速，否则字会落错位置",
     auto_caption_transcribing: "已经有一次转写在进行中",
-    // 检测静默。门禁与自动字幕完全一样，只是换成这一行自己的动词：要去的地方
+    // 检测静默。门禁与语音转文字完全一样，只是换成这一行自己的动词：要去的地方
     // 相同，但"去转写"和"去测量"并不是同一件事。
     detect_silences_needs_selection: "选中一个视频或音频片段来测量",
     detect_silences_needs_audio_kind: "这个片段没有声音——请选视频或音频片段",
@@ -663,16 +663,23 @@ const zhCN: Resources = {
     // 于是直接点名时间线（两种形态各做什么，见 shortcuts/defs.ts）。
     move_to_composition: "移动到时间线",
     move_to_composition_submenu: "移动到…",
-    // 用"自动字幕"而不是"转写"：这一行的产物是一条字幕轨，用户要的是字幕本身，
-    // 不是转写文本。两条都带省略号，因为都会先弹对话框。
-    auto_caption_selected: "自动字幕…",
-    detect_silences_selected: "检测静默…",
+    // 三条分析行都点明对象"所选片段"：它们不只在片段右键菜单里，也在编辑菜单和
+    // 搜索面板里，那里的一行必须说清自己会对什么下手。右键菜单沿用同一标签——
+    // 右键已经把点中的片段变成了所选，这句话仍然成立。
+    //
+    // 用"语音转文字"而不是"自动字幕"：这一行是在向语音引擎问一个关于片段的
+    // 问题，名字就该说出问的是什么；产物仍是一条字幕轨，成功后字幕面板会打开。
+    // 不带省略号：按下就跑，没有要先问的东西——语言由引擎自己识别，旧对话框里
+    // 唯一那个字段的正确答案总是"留空"（speech/transcribeRun.ts）。
+    auto_caption_selected: "为所选片段语音转文字",
+    // 带省略号：阈值是参数，要先弹对话框。
+    detect_silences_selected: "为所选片段检测静默…",
     // 用"描述内容"而不是"描述片段"：模型读的是画面里有什么，这一行的产物是
     // 落在镜头行上的文字，而不是关于片段这个对象的任何说明。
     //
-    // 上面两条带省略号，这一条不带：采样与侧重现在住在 设置 → 视频理解，按下
-    // 就直接跑，没有要先问的东西。
-    describe_selected: "描述所选片段内容",
+    // 和语音转文字那条一样不带省略号：采样与侧重现在住在 设置 → 视频理解，
+    // 按下就直接跑，没有要先问的东西。
+    describe_selected: "为所选片段描述内容",
     open_voiceover: "配音…",
     // 带省略号，因为这一行打开的是一个界面而不是提交任何改动：接下来是审阅，
     // 应用是面板里的另一次按下。
@@ -1801,7 +1808,7 @@ const zhCN: Resources = {
   },
   captions: {
     title: "字幕",
-    empty: "导入字幕文件或自动字幕以创建字幕。",
+    empty: "导入字幕文件，或为片段做语音转文字，即可创建字幕。",
     style_heading: "字幕样式",
     seek_to: "跳到 {{timecode}} 的字幕",
   },
@@ -2094,19 +2101,6 @@ const zhCN: Resources = {
     color: "颜色",
     compositionref: "组",
     marker: "标记",
-  },
-  // 自动字幕对话框。只有一个字段，因为编排好的配方只声明了一个可选参数，这里
-  // 不额外发明任何东西。
-  auto_caption: {
-    title: "自动字幕",
-    clip: "片段",
-    language: "语言",
-    language_placeholder: "留空则自动识别",
-    language_hint: "两位字母代码（{{examples}}），或者留空。",
-    note: "文字会落在一条新的字幕轨上。打开字幕面板即可阅读和修改。",
-    cancel: "取消",
-    confirm: "开始转写",
-    running: "正在转写…",
   },
   // 配音对话框。
   voiceover: {

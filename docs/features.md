@@ -1117,7 +1117,7 @@ marks reachable inside it, nesting included.
 marker's time is a cache the next commit rewrites, so a typed value would revert
 under the cursor. Position is the lane's drag, and that is the one rule. A
 region marker drags whole — its ends are not resizable by a gesture yet; the
-only hand-reachable producer of one is *Detect silences…* (§ below), which
+only hand-reachable producer of one is *Detect silences in selected clip…* (§ below), which
 writes a region per silent range. Child markers are never projected onto a parent's
 lane; the badge asserts a count and no position, because drawing a child
 composition's contents on the parent would erase, visually, the boundary
@@ -1222,7 +1222,7 @@ the surviving middle of a manual bundle — stays.
 **What is in each shot.** Two gestures over the same tool, at two
 granularities.
 
-*Describe clip content* — on a `VideoClip`'s context menu beside *Review shots…*,
+*Describe selected clip content* — on a `VideoClip`'s context menu beside *Review shots…*,
 in the Edit menu and the palette — runs `describe_clip` over the WHOLE clip and
 lands the result as a column on the shot rows. No ellipsis and no dialog: the two
 parameters it used to ask for live in Settings → Video understanding, so the
@@ -1304,7 +1304,7 @@ over `shared/vlm-config.ts`, and `readMediaDescription` in
 language is the prompt's trailing rule in `native/src/vlm/sidecar.rs` and a
 cache-key input in `native/src/vlm/description.rs`.
 
-## Auto-caption and voiceover
+## Transcribe and voiceover
 
 Two speech operations the MCP prompts `/auto-caption` and `/voiceover`
 already script for an agent are reachable by hand, through the same tools
@@ -1312,21 +1312,25 @@ already script for an agent are reachable by hand, through the same tools
 aggregate "AI" menu: each capability hangs off the object it acts on, which
 is how every comparable NLE places them.
 
-**Auto-caption clip…** sits on a `VideoClip` or `Audio` layer's context menu
-(the two kinds whose media carries an audio stream — offering it over a
+**Transcribe selected clip** sits on a `VideoClip` or `Audio` layer's context
+menu (the two kinds whose media carries an audio stream — offering it over a
 Color layer would be a row that can only refuse), in the Edit menu, and in
 the palette. It is an `ACTION_DEFS` entry scoped to the timeline selection
-with no default key, so a user who captions every clip can bind one in
-Settings → Keyboard. The dialog has one optional field, the language hint
-(blank = detect). Confirming runs `transcribe_clip` on the primary selected
-layer's whole span, applies the returned `srt` as one caption-role track
-(`add_caption_track`, so one undo removes every cue), and reveals the Caption
-panel — a landed transcript is invisible until its editor is open. A greyed
-row says why: nothing selected, wrong kind, a re-timed clip (`speed != 1`,
-refused at the gesture before any audio is extracted), or a transcription
-already running (a second concurrent run would bill a second request). The
-transcript is edited in `CaptionsPanel`, per cue, which is strictly more than
-a review list could offer ([captions.md](captions.md)).
+with no default key, so a user who transcribes every clip can bind one in
+Settings → Keyboard. There is no dialog: the clip is the selection, and the
+language is the engine's to detect (whisper.cpp runs `-l auto`, OpenAI omits
+the field, FunASR's model *is* the language), so the press runs
+`transcribe_clip` on the primary selected layer's whole span, applies the
+returned `srt` as one caption-role track (`add_caption_track`, so one undo
+removes every cue), and reveals the Caption panel — a landed transcript is
+invisible until its editor is open. A greyed row says why: nothing selected,
+wrong kind, a re-timed clip (`speed != 1`, refused at the gesture before any
+audio is extracted), or a transcription already running (a second concurrent
+run would bill a second request). A refusal lands as a status-bar line, and
+when it names Settings → Transcription — no model prepared, no API key — the
+command opens that pane, since the remedy is the one thing a log row cannot
+carry. The transcript is edited in `CaptionsPanel`, per cue, which is
+strictly more than a review list could offer ([captions.md](captions.md)).
 
 **Voiceover…** is menu-only (Edit menu + palette): it acts on no clip, it
 needs a script, so it must be reachable with nothing selected and a
@@ -1344,27 +1348,26 @@ call already produced. A cost sentence sits above the button — this is the
 one per-use paid action in the editor, and the content-addressed cache is
 what makes a re-run of the same script free.
 
-Both dialogs keep the tool's own refusal inline ("no transcription backend
-available; configure one in Settings → Transcription", the payload cap, the
-missing key) and stay open, so what was typed survives a fix in Settings;
-each run is also two status-log rows under one `op_id`
-([status-log.md](status-log.md)). Log rows carry the script's length, never
-the script.
+The voiceover dialog keeps the tool's own refusal inline (the payload cap,
+the missing key) and stays open, so what was typed survives a fix in
+Settings; each run of either operation is two status-log rows under one
+`op_id` ([status-log.md](status-log.md)). Log rows carry the script's
+length, never the script.
 
-Code: `renderer/speech/` (eligibility, placement arithmetic, the two
-dialogs), `renderer/commands/speechCommands.ts`; the main-process bridge is
+Code: `renderer/speech/` (eligibility, the transcription run, placement
+arithmetic, the voiceover dialog), `renderer/commands/speechCommands.ts`; the main-process bridge is
 `callClipComputeTool` in `main/mcp/server.ts` and the `clipCompute` route in
 `main/state/router.ts`.
 
 ## Detect silences
 
 The third authored prompt, `/cut-silences`, reaches a person as **Detect
-silences…** — on the same audio-bearing clips as auto-caption (context menu,
-Edit menu, palette; an `ACTION_DEFS` entry scoped to the timeline selection
-with no default key), and it offers exactly what the prompt offers: measure,
-then either mark the gaps or cut them out. The row keeps the name *Detect
-silences…* because the measurement is the half both verbs share, and the
-dialog is where both of them live.
+silences in selected clip…** — on the same audio-bearing clips as
+transcription (context menu, Edit menu, palette; an `ACTION_DEFS` entry
+scoped to the timeline selection with no default key), and it offers exactly
+what the prompt offers: measure, then either mark the gaps or cut them out.
+The row keeps the verb *detect* because the measurement is the half both
+verbs share, and the dialog is where both of them live.
 
 The dialog carries the recipe's two parameters — the peak amplitude a sample
 must stay under (shown with its dBFS equivalent, since that is the unit an

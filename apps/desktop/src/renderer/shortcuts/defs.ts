@@ -295,13 +295,15 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // — and greys where the selection is already there
   // (`timeline/moveToCompositionEligibility.ts`).
   moveToComposition:      { defaultKeys: [],               labelKey: "actions.move_to_composition", scope: TIMELINE_SELECTION },
-  // Transcribe the selected clip and apply the cues. Catalogued here rather
-  // than as a menu-only command, for `openGroup`'s reason and `addToGroup`'s
-  // shape: it acts on the timeline SELECTION, so `scope` is the gate that keeps
-  // it from firing with the media pool focused, and a user who captions every
-  // clip has somewhere to bind it (Settings → Keyboard) — which a menu-only
-  // command has not. Unbound by default because its home is the pointer: you
-  // right-click the clip you mean.
+  // Transcribe the selected clip and apply the cues. Runs on the press — the
+  // clip is the selection and the language is the engine's to detect, so there
+  // is nothing to ask first and the label carries no ellipsis. Catalogued here
+  // rather than as a menu-only command, for `openGroup`'s reason and
+  // `addToGroup`'s shape: it acts on the timeline SELECTION, so `scope` is the
+  // gate that keeps it from firing with the media pool focused, and a user who
+  // transcribes every clip has somewhere to bind it (Settings → Keyboard) —
+  // which a menu-only command has not. Unbound by default because its home is
+  // the pointer: you right-click the clip you mean.
   //
   autoCaptionSelected:    { defaultKeys: [],               labelKey: "actions.auto_caption_selected", scope: TIMELINE_SELECTION },
   // The label says *detect* because MEASURING is the half every silence recipe
