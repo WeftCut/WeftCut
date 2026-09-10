@@ -932,9 +932,6 @@ const enUS = {
   },
   preview: {
     edit_text: "Edit text",
-    edit_text_hint: "Double-click the text box to edit in the preview",
-    edit_text_keys: "Enter: new line · Ctrl/⌘+Enter or click outside: save · Esc: cancel",
-    edit_text_failed: "Could not save. Your text is still here; press Ctrl/⌘+Enter to retry.",
     empty_hint: "Add a layer to start the preview",
     preparing: "Preparing preview…",
     // What the preview renders. The list names the timeline and every Group;

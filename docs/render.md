@@ -543,6 +543,8 @@ bit-for-bit what it did before the box existed.
 
 `Compositor.naturalSizeOf` asks the sprite for that same rectangle, so the
 on-canvas gizmo draws the box being dragged rather than the glyphs inside it.
+A glyphless layer reports one em by one line rather than nothing, so an emptied
+title still has a box to double-click and a footprint for the Text tool to hit.
 
 **CJK breaking is realm-global, and that decides where it is installed.** Pixi's
 wrap unit is a space-delimited token and `CanvasTextMetrics.canBreakWords`

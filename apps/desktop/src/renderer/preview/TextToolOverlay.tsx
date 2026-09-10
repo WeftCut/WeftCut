@@ -60,7 +60,7 @@ export function TextToolOverlayHost() {
   const renderTargetId = usePreviewRenderTargetId();
 
   // Escape returns to Selection, as it does for the Blade in Timeline. An open
-  // editor owns its own Escape (cancel the draft) and stops the key before it
+  // editor owns its own Escape (finish the edit) and stops the key before it
   // reaches the window; this is the Escape AFTER that one.
   useEffect(() => {
     if (tool !== "text") return;

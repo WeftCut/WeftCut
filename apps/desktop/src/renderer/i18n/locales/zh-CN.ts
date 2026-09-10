@@ -795,9 +795,6 @@ const zhCN: Resources = {
   },
   preview: {
     edit_text: "编辑文字",
-    edit_text_hint: "双击文字框，在预览中直接编辑",
-    edit_text_keys: "Enter 换行 · Ctrl/⌘+Enter 或点击外部保存 · Esc 取消",
-    edit_text_failed: "保存失败，输入内容已保留；按 Ctrl/⌘+Enter 重试。",
     empty_hint: "添加图层后预览将自动启动",
     preparing: "正在准备预览…",
     target_label: "预览内容",

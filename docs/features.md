@@ -1516,17 +1516,22 @@ changes mid-session are not reflected.
 
 ## On-canvas transform (gizmo)
 
-Selected Text layers support in-preview entry: double-click the box or click
-**Edit text** (also available for an empty Text layer). Entry pauses playback
-and opens a native textarea at the transformed box, with the rendered font
-size. Enter inserts a line break; Ctrl/⌘+Enter, blur or an outside click saves;
-Escape cancels. IME composition owns Enter/Escape until it ends. The draft stays
-local and saves only `content` in one history entry; text undo stays in the
-input while editing. Locked or disabled layers/tracks cannot enter this mode.
-The input is editor chrome: it uses theme colours, grows along auto box axes,
-and scrolls overflowing text in fixed boxes;
-the compositor applies the authored colour, effects and shrink-to-fit on save.
-Changing project or removing the editing surface discards an unsubmitted draft.
+Selected Text layers support in-preview entry: double-click the box, or click
+the text with the Text tool. An empty Text layer keeps a one-em, one-line
+footprint, so its box still draws and both entries still reach it. Entry pauses
+playback and opens a native textarea at the transformed box, with the rendered
+font size. Enter inserts a line break; Ctrl/⌘+Enter, Escape, blur or an outside
+click all finish the edit and save it — there is no cancel key, and reverting a
+finished edit is undo's job. IME composition owns Enter/Escape until it ends.
+The draft stays local and saves only `content` in one history entry; text undo
+stays in the input while editing. A save the project refuses is reported in the
+status bar, as every direct commit is, and keeps the draft in the field: any
+finishing action retries, and Escape then leaves without saving. Locked or
+disabled layers/tracks cannot enter this mode. The input is
+editor chrome: it uses theme colours, grows along auto box axes, and scrolls
+overflowing text in fixed boxes; the compositor applies the authored colour,
+effects and shrink-to-fit on save. Changing project or removing the editing
+surface discards an unsubmitted draft.
 
 ### Text tool
 
@@ -1548,7 +1553,7 @@ takes no pointer input while the tool is armed (switch to Selection to move or
 resize).
 
 The tool stays armed after a creation, so successive clicks make successive
-titles. Escape inside the editor cancels the draft; Escape outside it returns
+titles. Escape inside the editor finishes the edit; Escape outside it returns
 to the Selection tool. The click that closes an open editor only closes it —
 it never creates a layer under itself. A drag (pointer travel past a few
 pixels) does nothing in this version. The tool is unavailable on a project

@@ -72,20 +72,35 @@ test("inline text entry saves multiline content as one undo step and can reopen 
     await invokeCmd(page, "project_redo", {});
     await expect.poll(content).toBe("你好，预览\n第二行文字");
 
-    await page.locator(".preview-edit-text").click();
-    await input.fill("discard me");
+    // Escape finishes the edit and keeps what was typed; undo is the way back.
+    await box.dblclick({ position: { x: 15, y: 15 } });
+    await input.fill("kept by escape");
     await input.press("Escape");
     await expect(input).toBeHidden();
+    await expect.poll(content).toBe("kept by escape");
+    await invokeCmd(page, "project_undo", {});
     await expect.poll(content).toBe("你好，预览\n第二行文字");
 
-    await page.locator(".preview-edit-text").click();
+    await box.dblclick({ position: { x: 15, y: 15 } });
     await input.fill("");
     await input.press("ControlOrMeta+Enter");
     await expect.poll(content).toBe("");
-    await page.locator(".preview-edit-text").click();
+    // Emptied, the layer keeps a one-em footprint: the gizmo still boxes it and
+    // the Text tool still finds it, so an empty title is no dead end in the
+    // preview. The gizmo is inert under the tool, so a press at its box's
+    // centre reaches the tool's hit test.
+    await expect
+      .poll(async () => (await textBoxProbe(page, layerId)).natural?.w ?? 0)
+      .toBeGreaterThan(0);
+    await page.locator('[data-quick-action="selectTextTool"]').click();
+    const surface = page.getByTestId("preview-text-tool");
+    await expect(surface).toBeVisible();
+    const caret = await box.boundingBox();
+    if (!caret) throw new Error("the emptied layer has no gizmo box");
+    await page.mouse.click(caret.x + caret.width / 2, caret.y + caret.height / 2);
     await expect(input).toBeFocused();
     await input.fill("restored");
-    await page.locator(".pixi-preview-canvas").click({ position: { x: 5, y: 5 } });
+    await surface.click({ position: { x: 5, y: 5 } });
     await expect.poll(content).toBe("restored");
   } finally {
     await app.close();

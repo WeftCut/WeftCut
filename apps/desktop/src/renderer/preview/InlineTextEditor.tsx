@@ -19,15 +19,13 @@ type TextLayer = LayerSummary & { params: Extract<LayerSummary["params"], { kind
 // Whether this layer's editor is open is read off `textEditingStore`, not held
 // here: the Text tool opens an editor from outside this component, and may do
 // so for a layer whose gizmo is still mounting (`TextToolOverlay.tsx`). The
-// double-click and the Edit text button write the same store, so every entry
-// path is one path.
+// gizmo's double-click writes the same store, so every entry path is one path.
 export function EditableTextGizmo({ layer, composition, locked, children }: {
   layer: LayerSummary;
   composition: CompositionSummary;
   locked: boolean;
   children: (onEdit: () => void) => ReactNode;
 }) {
-  const { t } = useTranslation();
   const editing = useTextEditingLayerId() === layer.id;
   const timeUs = useFocusedPlayheadUsThrottled();
   const inSpan = timeUs >= layer.t_start_us && timeUs < layer.t_end_us;
@@ -41,17 +39,9 @@ export function EditableTextGizmo({ layer, composition, locked, children }: {
     transportPause();
     beginTextEdit(layer.id);
   };
-  return <>
-    {editing && !locked && inSpan
-      ? <InlineTextEditor layer={layer as TextLayer} composition={composition} onDone={() => endTextEdit(layer.id)} />
-      : children(start)}
-    {!editing && !locked && inSpan && <button
-      type="button"
-      className="preview-edit-text"
-      onClick={start}
-      title={t("preview.edit_text_hint")}
-    >{t("preview.edit_text")}</button>}
-  </>;
+  return editing && !locked && inSpan
+    ? <InlineTextEditor layer={layer as TextLayer} composition={composition} onDone={() => endTextEdit(layer.id)} />
+    : children(start);
 }
 
 // A DOM textarea gives the OS a real caret for IME candidates and preserves
@@ -73,6 +63,9 @@ export function InlineTextEditor({ layer, composition, onDone }: {
   const finished = useRef(false);
   const saving = useRef(false);
   const [pending, setPending] = useState(false);
+  // A refused save leaves no mark in the editor itself: the status-bar line
+  // `tryMutate` logs is the one surface, as for every other direct commit.
+  // This flag only changes what Escape does next.
   const [failed, setFailed] = useState(false);
   const finishRef = useRef<(save: boolean) => void>(() => {});
   const finish = async (save: boolean) => {
@@ -190,7 +183,6 @@ export function InlineTextEditor({ layer, composition, onDone }: {
     <textarea
       ref={textarea}
       aria-label={t("preview.edit_text")}
-      aria-describedby="preview-text-edit-hint"
       defaultValue={params.content}
       readOnly={pending}
       spellCheck={false}
@@ -210,17 +202,20 @@ export function InlineTextEditor({ layer, composition, onDone }: {
       onKeyDown={event => {
         event.stopPropagation();
         if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
+        // Escape FINISHES the edit, it does not cancel it: what is in the field
+        // is the user's text, and a key that threw it away would sit one keycap
+        // from the ones that keep it. Reverting a finished edit is undo's job —
+        // the save is one history entry. The exception is a save the project
+        // refused: the status bar has said so, and Escape is then the way out
+        // that writes nothing.
         if (event.key === "Escape") {
           event.preventDefault();
-          finishRef.current(false);
+          finishRef.current(!failed);
         } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
           event.preventDefault();
           finishRef.current(true);
         }
       }}
     />
-    <div className="preview-text-edit-hint" id="preview-text-edit-hint">
-      {failed ? <span role="alert">{t("preview.edit_text_failed")}</span> : t("preview.edit_text_keys")}
-    </div>
   </div>;
 }

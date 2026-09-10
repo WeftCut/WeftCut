@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "../i18n";
 import { EditableTextGizmo, InlineTextEditor } from "./InlineTextEditor";
-import { updateLayerParams, type CompositionSummary, type LayerSummary } from "../ipc";
+import { logEmit, updateLayerParams, type CompositionSummary, type LayerSummary } from "../ipc";
 import { registerGizmoProbe, clearGizmoProbe, type GizmoProbe } from "./gizmoProbeRegistry";
 import { appActionsSuspended } from "../shortcuts/useShortcuts";
 import {
@@ -51,6 +51,14 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+// A refused save leaves no trace in the editor itself — the status-bar line
+// `tryMutate` logs is the one surface — so the tests wait on that log, then on
+// the field being writable again (the same commit that arms Escape's exit).
+async function refused(input: HTMLTextAreaElement) {
+  await waitFor(() => expect(logEmit).toHaveBeenCalledOnce());
+  await waitFor(() => expect(input.readOnly).toBe(false));
+}
+
 function setup() {
   const onDone = vi.fn();
   const view = render(<InlineTextEditor layer={layer} composition={composition} onDone={onDone} />);
@@ -93,13 +101,15 @@ describe("in-preview text editing", () => {
     await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
   });
 
-  it("cancels with Escape without committing on the subsequent blur", () => {
+  // Escape is a way OUT, not a way back: the typed text is kept and saved
+  // once, and reverting it is undo's job.
+  it("finishes with Escape, saving the draft once even when blur follows", async () => {
     const { input, onDone } = setup();
-    fireEvent.change(input, { target: { value: "Discard" } });
+    fireEvent.change(input, { target: { value: "Keep this" } });
     fireEvent.keyDown(input, { key: "Escape" });
     fireEvent.blur(input);
-    expect(onDone).toHaveBeenCalledOnce();
-    expect(updateLayerParams).not.toHaveBeenCalled();
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    expect(updateLayerParams).toHaveBeenCalledExactlyOnceWith("title", { kind: "Text", content: "Keep this" });
   });
 
   it("waits for the final IME text when an outside click finishes composition", async () => {
@@ -195,15 +205,32 @@ describe("in-preview text editing", () => {
     expect(updateLayerParams).toHaveBeenCalledExactlyOnceWith("title", { kind: "Text", content: "Tabbed away" });
   });
 
-  it("retains the draft for retry when saving fails", async () => {
+  it("retains the draft for retry when saving fails, reporting only to the log", async () => {
     vi.mocked(updateLayerParams).mockRejectedValueOnce(new Error("save failed"));
     const { input, onDone } = setup();
     fireEvent.change(input, { target: { value: "Keep this" } });
     fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
-    await screen.findByRole("alert");
+    await refused(input);
     expect(input.value).toBe("Keep this");
+    expect(document.activeElement).toBe(input);
+    expect(screen.queryByRole("alert")).toBeNull();
     expect(onDone).not.toHaveBeenCalled();
     fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
     await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  });
+
+  // With every key and click saving, a save the project keeps refusing would
+  // otherwise hold the user in the editor. Escape is the exit that writes
+  // nothing — only once the log has said the text could not be saved.
+  it("leaves without saving on Escape after a refused save", async () => {
+    vi.mocked(updateLayerParams).mockRejectedValueOnce(new Error("save failed"));
+    const { input, onDone } = setup();
+    fireEvent.change(input, { target: { value: "Refused" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    await refused(input);
+    expect(onDone).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(onDone).toHaveBeenCalledOnce();
+    expect(updateLayerParams).toHaveBeenCalledOnce();
   });
 });

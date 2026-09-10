@@ -73,11 +73,11 @@ Three shapes were on the table.
 - **The editor's open state is a store.** `textEditingStore` names the layer
   being edited, in `pathEditingStore`'s shape, because the request now comes
   from outside the gizmo and may name a layer whose gizmo has not mounted. The
-  double-click and the Edit text button write the same store. The store also
+  gizmo's double-click writes the same store. The store also
   stamps the pointerdown that closes an editor from outside, so the tool —
   which sees the same event afterwards — can decline to create under it.
 - **Exit follows the Blade.** The tool stays armed after a creation. Escape in
-  the editor cancels the draft; Escape outside it returns to Selection, with
+  the editor finishes the edit; Escape outside it returns to Selection, with
   the listener mounted by the preview overlay while the tool is armed, not by
   the timeline. `T` arms the tool (Premiere's Type key); the display-mode
   toggle that held `T` moves to `Shift+T`, because a tool switch is a reflex

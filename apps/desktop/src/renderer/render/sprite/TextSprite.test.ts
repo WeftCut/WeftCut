@@ -191,6 +191,27 @@ describe("TextSprite", () => {
     expect(s.naturalSize()).toEqual({ w: 200, h: 300 });
   });
 
+  // The gizmo boxes what this reports and the Text tool hit-tests it, so an
+  // emptied layer with no footprint would be unreachable from the preview.
+  it("gives a glyphless layer a one-em caret footprint instead of none", () => {
+    const s = new TextSprite({ layerId: "L" });
+    s.update({ ...plain, content: "" });
+    expect(s.naturalSize()).toEqual({ w: BASE_PX, h: LINE_H });
+    // Newlines alone are still no glyphs; the height is still the line count.
+    s.update({ ...plain, content: "\n" });
+    expect(s.naturalSize()).toEqual({ w: BASE_PX, h: 2 * LINE_H });
+    // A stroke inflates an empty block to a sliver, which is not a footprint
+    // either.
+    s.update({ ...base, content: "" });
+    expect(s.naturalSize()?.w).toBe(BASE_PX);
+    // A glyph keeps its own width, however narrow: the floor is for no glyph.
+    s.update({ ...plain, content: "a" });
+    expect(s.naturalSize()).toEqual({ w: ADVANCE_PX, h: LINE_H });
+    // A box axis is still the box.
+    s.update({ ...plain, content: "", box_w: 200 });
+    expect(s.naturalSize()).toEqual({ w: 200, h: LINE_H });
+  });
+
   it("renders a garbage align/valign at the default instead of vanishing", () => {
     const s = new TextSprite({ layerId: "L" });
     const bogus = {

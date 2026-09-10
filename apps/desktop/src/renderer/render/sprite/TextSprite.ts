@@ -206,13 +206,26 @@ export class TextSprite implements StageableSprite {
   /// The rectangle `x`/`y` anchors and the on-canvas gizmo draws: the box when
   /// one is set, the measured glyph bounds otherwise (Text is the one visual
   /// kind with no intrinsic size). LOCAL composition px, pre-`scale`, like
-  /// every other kind's natural size. Null while the layer measures empty.
+  /// every other kind's natural size.
+  ///
+  /// A GLYPHLESS layer measures 0 wide (a stroke inflates that to a sliver), and
+  /// neither is a footprint: the gizmo hides a layer without one and the Text
+  /// tool's hit test skips it, which would leave an emptied title unreachable
+  /// from the preview — nothing to double-click, and a click on its spot making
+  /// a second layer over it. So with no glyph the auto width is floored to one
+  /// em of the size that RENDERS, which against Pixi's one-line height for empty
+  /// text is a caret's box — where Figma and Premiere leave an empty text node.
+  /// A glyph, however narrow, keeps its measured width, so the box still hugs
+  /// real text. Null only when nothing measurable exists at all.
   naturalSize(): { w: number; h: number } | null {
     // Fixed needs no measurement, which also keeps the gizmo's box off the
     // glyph atlas while a drag is resizing it.
     if (this.boxW !== null && this.boxH !== null) return { w: this.boxW, h: this.boxH };
     const b = this.text.getLocalBounds();
-    const w = this.boxW ?? b.width, h = this.boxH ?? b.height;
+    const glyphless = !/[^\r\n]/.test(this.text.text);
+    const em = this.fitState?.effectivePx ?? this.text.style.fontSize;
+    const w = this.boxW ?? (glyphless ? Math.max(b.width, em) : b.width);
+    const h = this.boxH ?? (b.height > 0 ? b.height : em);
     return w > 0 && h > 0 ? { w, h } : null;
   }
 

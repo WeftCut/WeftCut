@@ -2,19 +2,6 @@
 
 .preview { grid-area: preview; }
 
-.preview-edit-text,
-.preview-text-edit-hint {
-  position: absolute;
-  left: 8px;
-  bottom: 8px;
-  padding: 4px 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: 4px;
-  background: var(--background);
-  color: var(--foreground);
-  font-size: var(--font-size-caption);
-}
-
 .preview-inline-text-editor {
   position: absolute;
   inset: 0;

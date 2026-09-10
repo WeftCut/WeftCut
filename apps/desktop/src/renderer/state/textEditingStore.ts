@@ -1,8 +1,7 @@
 // Which Text layer the preview's inline editor is open on — `pathEditingStore`'s
 // shape, for the same reason it has one: the request to edit comes from more
-// than one place. The gizmo's double-click and its Edit text button are the
-// two that live beside the editor; the Text tool's click
-// (`preview/TextToolOverlay.tsx`) is the one that does not, and it may name a
+// than one place. The gizmo's double-click lives beside the editor; the Text
+// tool's click (`preview/TextToolOverlay.tsx`) does not, and it may name a
 // layer whose gizmo has not mounted yet. A store the gizmo READS lets that
 // request be made before there is a component to receive it.
 //

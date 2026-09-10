@@ -173,7 +173,8 @@ test("a click on existing text edits it, and the click that closes the editor cr
     expect(Math.abs(made.params.x!.value - CANVAS.width * 0.1)).toBeLessThan(2 * scale);
     expect(Math.abs(made.params.y!.value - CANVAS.height * 0.1)).toBeLessThan(2 * scale);
 
-    // Escape in the editor cancels the draft; a second Escape leaves the tool.
+    // Escape in the editor finishes the edit (the placeholder is untouched, so
+    // nothing is written); a second Escape leaves the tool.
     await input.press("Escape");
     await expect(input).toBeHidden();
     await page.keyboard.press("Escape");
