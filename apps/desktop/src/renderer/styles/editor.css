@@ -236,9 +236,12 @@
   --mixer-card-min: 200px;
 
   /* The one green→amber→red level ramp, declared once for every meter the Panel
-     draws: the per-Role bars, the console's columns and the master's fill. A
+     draws: the per-Role bars, the console's columns and the master's line. A
      colour has to mean one level wherever it appears, and a stop list kept in
-     three copies drifts — each site chooses only the gradient's angle. */
+     three copies drifts — each site chooses only the gradient's angle. Every
+     site paints the ramp on the TRACK and uncovers it with a shade retreating
+     from the loud end; anchored to a fill instead, the tip of a −40 dBFS bar
+     paints red and a quiet signal reads as clipping. */
   --mixer-meter-stops:
     var(--success) 0%,
     var(--success) 65%,
@@ -475,10 +478,9 @@
   min-width: 0;
 }
 
-/* The green→amber→red ramp is painted on the TRACK and uncovered by a shade
-   retreating from the loud end, so a colour means one level — the console's
-   `.mixer-meter-column` pattern. Anchored to a fill instead, the tip of a
-   −40 dBFS bar paints red and a quiet Role reads as clipping. */
+/* The ramp on the track, uncovered by a shade retreating from the loud end (the
+   rule `--mixer-meter-stops` states). Clipping here is what keeps the shade's
+   square end inside the rounded track. */
 .mixer-role-meter-track {
   position: relative;
   flex: 1 1 0;
@@ -738,10 +740,9 @@
   justify-content: center;
 }
 
-/* One vertical meter column, filling from the bottom. The green→amber→red ramp
-   is painted on the TRACK and uncovered by a shade retreating from the top, so
-   a colour means one level: anchored to the fill instead, the tip of a −40 dBFS
-   bar paints red and a quiet signal reads as clipping. */
+/* One vertical meter column, filling from the bottom: the ramp on the track,
+   uncovered by a shade retreating from the top (the rule `--mixer-meter-stops`
+   states). */
 .mixer-meter-column {
   position: relative;
   width: 8px;
@@ -770,12 +771,13 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* The real master RMS/Peak meter, on one line: RMS is the track fill, peak is a
-   tick on the same track, and both numbers share one readout. A two-row block
-   spends as much height on one output as the four Roles spend between them, and
-   the tick carries peak positionally so the line loses no information. Reads
-   off the shared meter store rather than polling the Compositor — as every
-   meter on this Panel does, the four per-Role bars included. */
+/* The real master RMS/Peak meter, on one line: RMS is the track's uncovered
+   ramp, peak is a tick on the same track, and both numbers share one readout. A
+   two-row block spends as much height on one output as the four Roles spend
+   between them, and the tick carries peak positionally so the line loses no
+   information. Reads off the shared meter store rather than polling the
+   Compositor — as every meter on this Panel does, the four per-Role bars
+   included. */
 .mixer-master {
   display: flex;
   align-items: center;
@@ -793,23 +795,35 @@
   color: var(--muted-foreground);
 }
 
-/* Not clipped: the peak tick deliberately stands taller than the track. */
+/* Not clipped: the peak tick deliberately stands taller than the track, which
+   is why the ramp below is a box of its own rather than this one's background. */
 .mixer-meter-track {
   position: relative;
   flex: 1 1 0;
   height: 6px;
   min-width: 0;
-  border-radius: 3px;
-  background: var(--secondary);
 }
 
-.mixer-meter-fill {
+/* The ramp on the track, uncovered by a shade retreating from the loud end (the
+   rule `--mixer-meter-stops` states). Clipped so the shade's square end stays
+   inside the rounded track — the clipping the track itself cannot do while the
+   peak tick overhangs it. */
+.mixer-meter-ramp {
   position: absolute;
-  top: 0;
-  left: 0;
-  height: 100%;
+  inset: 0;
+  overflow: hidden;
   border-radius: 3px;
   background: linear-gradient(90deg, var(--mixer-meter-stops));
+}
+
+/* 90ms against the push's 500ms sample, the same easing the Role bars use, so
+   the master's line and the four Role lines move as one family. */
+.mixer-meter-shade {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--secondary);
   transition: width 90ms linear;
 }
 

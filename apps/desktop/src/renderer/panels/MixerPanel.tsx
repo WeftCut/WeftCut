@@ -557,10 +557,10 @@ function RoleMeter({ role, roleLabel }: { role: AudioRole; roleLabel: string }) 
   );
 }
 
-/// The single real Master meter, on one line: RMS as the track fill, peak as a
-/// tick on the same track, both numbers in one readout. Subscribes to the shared
-/// master RMS/Peak store the preview audio graph publishes to, rather than
-/// polling the Compositor.
+/// The single real Master meter, on one line: RMS as the track's uncovered
+/// ramp, peak as a tick on the same track, both numbers in one readout.
+/// Subscribes to the shared master RMS/Peak store the preview audio graph
+/// publishes to, rather than polling the Compositor.
 function MasterMeter() {
   const { t } = useTranslation();
   const rmsDb = useMasterRmsDb();
@@ -569,10 +569,16 @@ function MasterMeter() {
     <div className="mixer-master" role="group" aria-label={t("mixer.master_meter")}>
       <span className="mixer-master-label">{t("mixer.master")}</span>
       <div className="mixer-meter-track">
-        <div
-          className="mixer-meter-fill"
-          style={{ width: `${meterFill(rmsDb) * 100}%` }}
-        />
+        {/* The ramp is on the track and the shade retreats from the loud end
+            — the same pattern as the Role meters and the console's columns, so
+            a colour means one level. The ramp is its own clipped box because
+            the peak tick beside it deliberately stands taller than the track. */}
+        <div className="mixer-meter-ramp" aria-hidden>
+          <div
+            className="mixer-meter-shade"
+            style={{ width: `${(1 - meterFill(rmsDb)) * 100}%` }}
+          />
+        </div>
         <div
           className="mixer-meter-peak"
           aria-hidden

@@ -5,6 +5,7 @@ import {
   acquireRoleMeterDemand,
   clearMasterMeter,
   publishMasterMeter,
+  publishMasterMeterSilent,
   publishRoleMeters,
   publishRoleMetersSilent,
   roleMeterDemandWanted,
@@ -57,6 +58,21 @@ describe("masterMeterStore", () => {
       peakDb: -120,
       sampledAtMs: null,
     });
+  });
+
+  it("reads silence again once the transport stops, leaving the Role slice alone", () => {
+    publishMasterMeter({ rmsDb: -18, peakDb: -6 }, 11);
+    publishRoleMeters(everyRoleAt(-9, -3), 12);
+
+    publishMasterMeterSilent();
+
+    const state = useMasterMeterStore.getState();
+    expect(state).toMatchObject({ rmsDb: -120, peakDb: -120 });
+    // A sample, not a clear: the reading is fresh silence, so it carries a time.
+    expect(state.sampledAtMs).not.toBeNull();
+    // The two publications stay independent in this direction too.
+    expect(state.roleLevels.music).toEqual({ rmsDb: -9, peakDb: -3 });
+    expect(state.roleSampledAtMs).toBe(12);
   });
 });
 

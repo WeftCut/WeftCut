@@ -85,9 +85,20 @@ export function publishRoleMeters(
   useMasterMeterStore.setState({ roleLevels, roleSampledAtMs: sampledAtMs });
 }
 
+/** Publish one all-silent master reading. The push calls this when the
+ *  transport stops: its timer samples only while playing, so without this the
+ *  master would hold its last playing reading beside four Role meters that have
+ *  fallen to the floor — level claimed over a mix that has gone silent. */
+export function publishMasterMeterSilent(): void {
+  useMasterMeterStore.setState({
+    rmsDb: SILENCE_DB,
+    peakDb: SILENCE_DB,
+    sampledAtMs: performance.now(),
+  });
+}
+
 /** Publish one all-silent per-Role reading. The tap calls this when it stops
- *  (no demand, or a paused transport): holding the last reading would claim
- *  level over a mix that has gone silent. */
+ *  (no demand, or a paused transport), for the same reason as the master's. */
 export function publishRoleMetersSilent(): void {
   useMasterMeterStore.setState({
     roleLevels: silentRoleLevels(),

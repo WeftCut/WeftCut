@@ -287,10 +287,13 @@ contract of the MCP `composition://meter` resource the same timer
 reports to (`reportAudioMeter`). The dev PerfHUD consumes neither
 rate — it samples `AudioGraph.meterSnapshot` on its own timer. The
 per-role tap (`publishRoleMeters`) samples fast enough for a meter to
-move rather than step, runs only while a reader holds a ref-counted
-lease (`acquireRoleMeterDemand`) and the transport plays, and publishes
-one silent sample when it stops (`publishRoleMetersSilent`) — a held
-last reading would claim level over a mix that has gone silent.
+move rather than step, and runs only while a reader holds a ref-counted
+lease (`acquireRoleMeterDemand`) and the transport plays. Both sample
+only while playing, and both publish one silent sample when the
+transport stops (`publishMasterMeterSilent`, `publishRoleMetersSilent`)
+— a held last reading would claim level over a mix that has gone
+silent. That silent sample goes to the store only; the MCP resource
+keeps the reading it was last handed while playing.
 Selectors are scalar (`useRoleRmsDb`): one returning a fresh object per
 call re-renders its subtree forever.
 Per-role peak is published and kept, but nothing reads it yet.

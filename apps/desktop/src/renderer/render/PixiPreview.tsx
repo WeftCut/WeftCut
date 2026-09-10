@@ -88,6 +88,7 @@ import { webgpuDeviceOf } from "./webgpuDevice";
 import {
   clearMasterMeter,
   publishMasterMeter,
+  publishMasterMeterSilent,
   publishRoleMeters,
   publishRoleMetersSilent,
   roleMeterDemandWanted,
@@ -555,6 +556,14 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
           peakDb: Number.isFinite(snap.peakDb) ? snap.peakDb : -120,
         }).catch(() => {});
       }, 500);
+      // The push samples only while playing, so a pause would leave the store
+      // holding the last playing reading — beside Role meters that fall to the
+      // floor the moment their tap stops. One silent sample on the transition
+      // keeps the master's reading truthful. The store only: the MCP resource's
+      // contract is a reading sampled while playing, and it is not touched here.
+      engine.onPlayStateChange((playing) => {
+        if (!playing) publishMasterMeterSilent();
+      });
 
       // Per-Role meter tap for the Role Mixer's card meters, independent of the
       // push above. It samples only while a consumer holds a demand lease AND
