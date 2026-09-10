@@ -39,6 +39,7 @@ import { resolveAnimated } from "../render/animated";
 import { evaluatePosition } from '../render/position';
 import { usePathEditingStore } from '../state/pathEditingStore';
 import { MotionPathOverlay } from './MotionPathOverlay';
+import { EditableTextGizmo } from './InlineTextEditor';
 import { translatePath, type PathPosition } from '../../shared/position';
 import { updatePathTransform } from '../ipc';
 import { DEFAULT_ANCHOR } from "../render/anchorPivot";
@@ -304,7 +305,17 @@ export function TransformGizmoHost() {
   // Keyed on the layer id so switching selection remounts with fresh drag
   // state instead of carrying a half-finished gesture across layers.
   const path='position' in found.params&&found.params.position?.mode==='Path';
-  return <><MotionPathOverlay key={`path-${found.id}`} layer={found} composition={composition}/>{!(path&&editingLayerId===found.id)&&<TransformGizmo key={found.id} layer={found} composition={composition}/>}</>;
+  const selected = found;
+  const locked = selected.locked || !selected.enabled || composition.tracks.some(track =>
+    (track.locked || !track.enabled) && track.layers.some(layer => layer.id === selected.id));
+  return <>
+    <MotionPathOverlay key={`path-${selected.id}`} layer={selected} composition={composition} />
+    {!(path && editingLayerId === selected.id) && (selected.params.kind === "Text"
+      ? <EditableTextGizmo key={selected.id} layer={selected} composition={composition} locked={locked}>
+          {onEdit => <TransformGizmo layer={selected} composition={composition} onEditText={onEdit} />}
+        </EditableTextGizmo>
+      : <TransformGizmo key={selected.id} layer={selected} composition={composition} />)}
+  </>;
 }
 
 interface DragBase {
@@ -653,9 +664,11 @@ function thresholdFor(
 function TransformGizmo({
   layer,
   composition,
+  onEditText,
 }: {
   layer: LayerSummary;
   composition: CompositionSummary;
+  onEditText?: () => void;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const boxRef = useRef<SVGPolygonElement | null>(null);
@@ -1666,6 +1679,7 @@ function TransformGizmo({
         onPointerMove={moveDrag}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
+        onDoubleClick={onEditText}
         style={{
           // A transparent fill still hit-tests under `pointerEvents: all`, so
           // the whole footprint is the drag handle.

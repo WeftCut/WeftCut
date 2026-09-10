@@ -42,6 +42,56 @@ const BASELINE_LINES = 2;
 const FONT_PX = 64;
 const DURATION_US = 4_000_000;
 
+test("inline text entry saves multiline content as one undo step and can reopen empty text", async ({}, testInfo) => {
+  const { app, page } = await launchApp();
+  try {
+    await newProject(page, {
+      parentFolder: tmpDir("weftcut-e2e-inline-text-"),
+      name: `inline-text-${Date.now()}`,
+      canvas: CANVAS,
+    });
+    const layerId = await textLayerUnderGizmo(page);
+    const content = async () => {
+      const s = await summary(page);
+      const layer = s.tracks.flatMap(track => track.layers).find(layer => layer.id === layerId);
+      return layer?.params.kind === "Text" ? layer.params.content : null;
+    };
+    // Avoid the anchor reticle, which owns the exact centre of the box.
+    const box = page.getByTestId("transform-gizmo-box");
+    await box.dblclick({ position: { x: 15, y: 15 } });
+    const input = page.getByTestId("preview-inline-text-editor").locator("textarea");
+    await expect(input).toBeFocused();
+    await input.fill("你好，预览\n第二行文字");
+    await page.screenshot({ path: testInfo.outputPath("inline-text-editing.png") });
+    await expect.poll(content).toBe(CONTENT);
+    await input.press("ControlOrMeta+Enter");
+    await expect(input).toBeHidden();
+    await expect.poll(content).toBe("你好，预览\n第二行文字");
+    await invokeCmd(page, "project_undo", {});
+    await expect.poll(content).toBe(CONTENT);
+    await invokeCmd(page, "project_redo", {});
+    await expect.poll(content).toBe("你好，预览\n第二行文字");
+
+    await page.locator(".preview-edit-text").click();
+    await input.fill("discard me");
+    await input.press("Escape");
+    await expect(input).toBeHidden();
+    await expect.poll(content).toBe("你好，预览\n第二行文字");
+
+    await page.locator(".preview-edit-text").click();
+    await input.fill("");
+    await input.press("ControlOrMeta+Enter");
+    await expect.poll(content).toBe("");
+    await page.locator(".preview-edit-text").click();
+    await expect(input).toBeFocused();
+    await input.fill("restored");
+    await page.locator(".pixi-preview-canvas").click({ position: { x: 5, y: 5 } });
+    await expect.poll(content).toBe("restored");
+  } finally {
+    await app.close();
+  }
+});
+
 interface StoredText {
   font_size_px: number;
   box_w: number | null;

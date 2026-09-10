@@ -84,7 +84,9 @@ const EMPTY_OVERRIDES: OverrideMap = {};
 /// suspending the dispatcher would hand the action to the menu instead of
 /// dropping it.
 export function appActionsSuspended(): boolean {
-  return usePickSessionStore.getState().session !== null;
+  return usePickSessionStore.getState().session !== null ||
+    (typeof document !== "undefined" &&
+      document.activeElement?.closest("[data-inline-text-editor]") != null);
 }
 
 /// Mounts a `window` keydown listener that dispatches to the handlers

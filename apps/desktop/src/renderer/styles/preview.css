@@ -2,6 +2,42 @@
 
 .preview { grid-area: preview; }
 
+.preview-edit-text,
+.preview-text-edit-hint {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: var(--font-size-caption);
+}
+
+.preview-inline-text-editor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.preview-inline-text-editor textarea {
+  position: absolute;
+  visibility: hidden;
+  transform-origin: top left;
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  outline: 2px solid var(--ring);
+  background: var(--background);
+  color: var(--foreground);
+  caret-color: var(--foreground);
+  resize: none;
+  pointer-events: auto;
+}
+
 .preview {
   display: flex;
   flex-direction: column;

@@ -1516,6 +1516,18 @@ changes mid-session are not reflected.
 
 ## On-canvas transform (gizmo)
 
+Selected Text layers support in-preview entry: double-click the box or click
+**Edit text** (also available for an empty Text layer). Entry pauses playback
+and opens a native textarea at the transformed box, with the rendered font
+size. Enter inserts a line break; Ctrl/⌘+Enter, blur or an outside click saves;
+Escape cancels. IME composition owns Enter/Escape until it ends. The draft stays
+local and saves only `content` in one history entry; text undo stays in the
+input while editing. Locked or disabled layers/tracks cannot enter this mode.
+The input is editor chrome: it uses theme colours, grows along auto box axes,
+and scrolls overflowing text in fixed boxes;
+the compositor applies the authored colour, effects and shrink-to-fit on save.
+Changing project or removing the editing surface discards an unsubmitted draft.
+
 The primary selected layer shows its footprint as a box over the preview:
 dragging inside the box moves it, handles on its corners and edges resize it, a
 knob on a stalk above its top edge rotates it, and a target reticle at the pivot
