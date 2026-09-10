@@ -24,7 +24,7 @@ function entry(
     op_id: `op-${seq}`,
     actor,
     timestamp: "2026-08-11T10:00:00.000Z",
-    summary: "Added layer",
+    summary: "Added clip",
     label_key: labelKey,
     affected: [],
     entity_labels: [],

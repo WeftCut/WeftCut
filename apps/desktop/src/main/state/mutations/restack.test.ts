@@ -234,7 +234,7 @@ describe('restack_layer through the actor', () => {
     expect(actor.historyStatus().len).toBe(lenBefore + 1) // exactly one commit
     const last = actor.historyView(10).ops.at(-1)!
     expect(last.label_key).toBe('history.layer.restack')
-    expect(last.summary).toBe('Restacked layer')
+    expect(last.summary).toBe('Restacked clip')
     // the split landed: a fresh track above the anchor's holds x
     expect(root(actor.snapshot()).tracks.length).toBe(root(before).tracks.length + 1)
     expect(root(actor.snapshot()).tracks.at(-1)!.layers.map((l) => l.id)).toEqual([x])

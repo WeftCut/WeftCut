@@ -372,7 +372,7 @@ describe('dispatch: split + links', () => {
     // Split, two deletes, two fan-out deletes and the sweep are ONE entry, and
     // the row says the gaps were closed rather than merely that shots were cut.
     expect(actor.historyStatus().len - lenBefore).toBe(1)
-    expect(actor.historyView(1).ops[0]).toMatchObject({ summary: 'Split layer and closed the gaps', label_key: 'history.layer.split_and_ripple' })
+    expect(actor.historyView(1).ops[0]).toMatchObject({ summary: 'Split clip and closed the gaps', label_key: 'history.layer.split_and_ripple' })
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     expect(JSON.stringify(actor.snapshot())).toBe(before)
   })
@@ -2069,7 +2069,7 @@ describe('dispatch: paste_layers', () => {
     expect([...root(actor.snapshot()).links[0].members].sort()).toEqual([...clones].sort())
     expect(actor.historyStatus().len - lenBefore).toBe(1)
     const head = actor.historyView(1).ops.at(-1)!
-    expect(head.summary).toBe('Duplicated 2 layers')
+    expect(head.summary).toBe('Duplicated 2 clips')
     expect(head.label_key).toBe('history.layer.paste_multi')
     expect(head.label_args).toEqual({ count: 2 })
     expect(head.affected.map((x) => x.id).sort()).toEqual([...clones].sort())
@@ -2140,7 +2140,7 @@ describe('dispatch: set_layers_enabled', () => {
     expect(enabledOf(actor)).toEqual([false, false])
     expect(actor.historyStatus().len - lenBefore).toBe(1)
     const head = actor.historyView(1).ops.at(-1)!
-    expect(head.summary).toBe('Disabled 2 layers')
+    expect(head.summary).toBe('Disabled 2 clips')
     expect(head.label_key).toBe('history.layer.disabled_multi')
     expect(head.label_args).toEqual({ count: 2 })
     expect(actor.dispatch('undo', {}).ok).toBe(true)
@@ -2250,7 +2250,7 @@ describe('dispatch: add_group_layer', () => {
     if (!r.ok) return
     expect(actor.historyStatus().len).toBe(len + 1)
     expect(actor.historyView(1).ops[0]).toMatchObject({
-      summary: 'Added layer', label_key: 'history.layer.add', affected: [{ kind: 'Layer', id: r.value as string }],
+      summary: 'Added clip', label_key: 'history.layer.add', affected: [{ kind: 'Layer', id: r.value as string }],
     })
     expect(placedIn(actor, rootTrackId).map((l) => l.id)).toEqual([r.value])
 

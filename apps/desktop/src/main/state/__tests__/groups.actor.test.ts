@@ -37,7 +37,7 @@ describe('groups — actor dispatch', () => {
     expect(Object.keys(value).sort()).toEqual(['composition_id', 'layer_id'])
     expect(actor.historyStatus().len).toBe(len + 1)
     const row = actor.historyView(1).ops[0]
-    expect(row).toMatchObject({ summary: 'Grouped 2 layers', label_key: 'history.group.create', label_args: { count: 2 }, affected: [{ kind: 'Layer', id: value.layer_id }] })
+    expect(row).toMatchObject({ summary: 'Grouped 2 clips', label_key: 'history.group.create', label_args: { count: 2 }, affected: [{ kind: 'Layer', id: value.layer_id }] })
     expect(groupsIn(actor)).toEqual([value.composition_id])
     expect(actor.snapshot().compositions[value.composition_id].label).toBe('Intro')
 
@@ -68,7 +68,7 @@ describe('groups — actor dispatch', () => {
     expect(actor.dispatch('groups_add_members', { layers: [z1.value, z2.value], group_layer: layer_id })).toEqual({ ok: true, value: null })
     expect(actor.historyStatus().len).toBe(len + 1)
     expect(actor.historyView(1).ops[0]).toMatchObject({
-      summary: 'Added 2 layers to Group', label_key: 'history.group.add_members', label_args: { count: 2 },
+      summary: 'Added 2 clips to Group', label_key: 'history.group.add_members', label_args: { count: 2 },
       affected: [{ kind: 'Layer', id: z1.value }, { kind: 'Layer', id: z2.value }, { kind: 'Layer', id: layer_id }],
     })
     // The Group clip starts at 2 s over `src_in_us` 0, so both land 2 s earlier.

@@ -219,7 +219,7 @@ describe("HistoryPanel rendering", () => {
       stackView([entry(USER, "history.initial"), entry(USER, "history.layer.add")]),
     );
     expect(screen.getByText("Initial")).toBeTruthy();
-    expect(screen.getByText("Added layer")).toBeTruthy();
+    expect(screen.getByText("Added clip")).toBeTruthy();
     expect(screen.queryByText("UNTRANSLATED WIRE TEXT")).toBeNull();
   });
 
@@ -232,7 +232,7 @@ describe("HistoryPanel rendering", () => {
       ]),
     );
     expect(
-      screen.getByText("Removed media beach.mp4 and 2 referencing layer(s)"),
+      screen.getByText("Removed media beach.mp4 and 2 referencing clip(s)"),
     ).toBeTruthy();
   });
 
@@ -403,10 +403,10 @@ describe("HistoryPanel agent folding", () => {
     expect(headers[0]!.textContent).toContain("claude");
     expect(headers[0]!.textContent).toContain("3 steps");
     const agg = document.querySelector(".history-group-aggregate");
-    expect(agg?.textContent).toBe("Split layer ×2, Added marker");
+    expect(agg?.textContent).toBe("Split clip ×2, Added marker");
     // Same hover contract as `.history-row-entities`: the aggregate is what the
     // group header gives up for width.
-    expect(agg?.getAttribute("title")).toBe("Split layer ×2, Added marker");
+    expect(agg?.getAttribute("title")).toBe("Split clip ×2, Added marker");
     // Collapsed: only the two human rows are rendered as entries.
     expect(rows().map((r) => r.dataset.historyIndex)).toEqual(["0", "4"]);
   });

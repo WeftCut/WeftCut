@@ -344,15 +344,15 @@ export function LayerContextMenu({
       ? layerEnabled
         ? t("timeline.disable_linked_layers", {
             count: enabledTargets.length,
-            defaultValue: "Disable {{count}} linked layers",
+            defaultValue: "Disable {{count}} linked clips",
           })
         : t("timeline.enable_linked_layers", {
             count: enabledTargets.length,
-            defaultValue: "Enable {{count}} linked layers",
+            defaultValue: "Enable {{count}} linked clips",
           })
       : layerEnabled
-        ? t("timeline.disable_layer", { defaultValue: "Disable layer" })
-        : t("timeline.enable_layer", { defaultValue: "Enable layer" });
+        ? t("timeline.disable_layer", { defaultValue: "Disable clip" })
+        : t("timeline.enable_layer", { defaultValue: "Enable clip" });
   // The *Add to Group* row's label and tooltip. `useAddToGroupState` is the
   // subscription that keeps both live under an open popup; `addToGroupTarget`
   // reads the same two stores imperatively and is therefore re-read by the very

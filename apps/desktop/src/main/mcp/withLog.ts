@@ -189,7 +189,7 @@ type RequestLike = { params?: unknown }
  *  until `initialize` completes; the key is omitted rather than written as
  *  `undefined`.
  *
- *  `deps.observe` is what turns `MCP: add_motif` into `Added layer` — see the
+ *  `deps.observe` is what turns `MCP: add_motif` into `Added clip` — see the
  *  window below for the timing that makes it safe. */
 export function withLog<Req extends RequestLike, Res>(
   method: McpLoggedMethod,

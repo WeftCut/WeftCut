@@ -279,7 +279,7 @@ function refuseUnstaged(layerId: string, axis: "x" | "y"): void {
     level: "warn",
     category: { kind: "Project" },
     source: { kind: "User" },
-    message: "Cannot center a layer the preview has not staged yet",
+    message: "Cannot center a clip the preview has not staged yet",
     i18n_key: "log.center_layer_unstaged",
     details: { context: axis === "x" ? "center_horizontally" : "center_vertically", layerId },
   });

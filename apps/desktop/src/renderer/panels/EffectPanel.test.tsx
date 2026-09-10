@@ -105,7 +105,7 @@ describe("EffectPanel boundary", () => {
     );
 
     expect(screen.getByRole("complementary", { name: "Effects" })).toBeTruthy();
-    expect(screen.getByText("Select a layer to edit its effects.")).toBeTruthy();
+    expect(screen.getByText("Select a clip to edit its effects.")).toBeTruthy();
     expect(screen.queryByTestId("effect-chain")).toBeNull();
   });
 

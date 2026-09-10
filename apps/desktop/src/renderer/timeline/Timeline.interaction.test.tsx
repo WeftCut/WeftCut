@@ -977,7 +977,7 @@ describe("Timeline seek/selection coupling", () => {
         ).toBe("Ctrl+B");
         // A row whose provider never mounted is omitted, never rendered dead:
         // `pasteAtPlayhead` and `moveToNewTrack` are absent here on purpose.
-        expect(screen.queryByText("Paste layer at playhead")).toBeNull();
+        expect(screen.queryByText("Paste clip at playhead")).toBeNull();
       } finally {
         unregister();
       }

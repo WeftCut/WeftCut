@@ -40,7 +40,7 @@ describe("LinkLabelField", () => {
 
   it("renders the identity line as one text run: member count unlabelled, the label otherwise, or not linked", () => {
     const { rerender } = renderLine(link);
-    expect(screen.getByText("Color · Visual · Link of 2 layers")).toBeTruthy();
+    expect(screen.getByText("Color · Visual · Link of 2 clips")).toBeTruthy();
     rerender(<LinkLabelField kindLabel="Color" trackLabel="Visual" link={{ ...link, label: "Pair" }} onMutated={onMutated} />);
     expect(screen.getByText("Color · Visual · Pair")).toBeTruthy();
     rerender(<LinkLabelField kindLabel="Color" trackLabel="Visual" link={null} onMutated={onMutated} />);
@@ -89,6 +89,6 @@ describe("LinkLabelField", () => {
     fireEvent.blur(input);
     await flush();
     expect(ipcMocks.linksRename).not.toHaveBeenCalled();
-    expect(screen.getByText("Color · Visual · Link of 2 layers")).toBeTruthy();
+    expect(screen.getByText("Color · Visual · Link of 2 clips")).toBeTruthy();
   });
 });

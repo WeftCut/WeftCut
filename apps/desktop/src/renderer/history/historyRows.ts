@@ -22,7 +22,7 @@ export function formatClock(ts: string): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-/// One line of a group header's aggregate: `Split layer ×2`.
+/// One line of a group header's aggregate: `Split clip ×2`.
 export interface HistoryAggregateItem {
   labelKey: string;
   /// Interpolation values for `labelKey`, taken from the run's FIRST entry

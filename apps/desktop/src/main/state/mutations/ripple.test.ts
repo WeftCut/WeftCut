@@ -521,7 +521,7 @@ describe('dispatch: ripple_delete_layers records one entry that one undo unwinds
     const len = actor.historyStatus().len
     expect(ripple(actor, [head]).ok).toBe(true)
     expect(actor.historyStatus().len - len).toBe(1)
-    expect(actor.historyView(1).ops[0]).toMatchObject({ summary: 'Ripple deleted layers', label_key: 'history.layer.ripple_delete' })
+    expect(actor.historyView(1).ops[0]).toMatchObject({ summary: 'Ripple deleted clips', label_key: 'history.layer.ripple_delete' })
     expect(JSON.stringify(actor.snapshot())).not.toBe(before)
 
     expect(actor.dispatch('undo', {}).ok).toBe(true)

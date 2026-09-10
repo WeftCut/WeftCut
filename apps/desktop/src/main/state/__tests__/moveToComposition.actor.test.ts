@@ -61,7 +61,7 @@ describe('move_layers_to_composition — actor dispatch', () => {
 
     expect(actor.historyStatus().len).toBe(len + 1)
     expect(actor.historyView(1).ops[0]).toMatchObject({
-      summary: 'Moved 2 layers to Intro', label_key: 'history.layer.move_to_composition',
+      summary: 'Moved 2 clips to Intro', label_key: 'history.layer.move_to_composition',
       label_args: { count: 2, composition: 'Intro' },
       // The members alone: a composition has no EntityRef of its own.
       affected: [{ kind: 'Layer', id: p }, { kind: 'Layer', id: q }],
@@ -120,7 +120,7 @@ describe('move_layers_to_composition — actor dispatch', () => {
     // The root has no name of its own — it IS the timeline — so the row takes
     // the phrase key rather than printing a uuid.
     expect(actor.historyView(1).ops[0]).toMatchObject({
-      summary: 'Moved 1 layers elsewhere',
+      summary: 'Moved 1 clips elsewhere',
       label_key: 'history.layer.move_to_composition_unnamed', label_args: { count: 1 },
       affected: [{ kind: 'Layer', id: w }],
     })

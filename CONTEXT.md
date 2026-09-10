@@ -222,6 +222,15 @@ number, not the behavior)
 
 ## Track placement
 
+**Layer**:
+One placed item in a track — the data object (`Track.layers`, sorted by start)
+that occupies a span of composition time and carries a kind: video, audio,
+image, text, motif, group. The model word — code, commands, ADRs and this file say
+layer. UI word: clip / 片段 on every surface — never *layer* in en-US copy, never 图层
+in zh-CN: 图层 names a compositing stack in an NLE and reads as a synonym for track.
+_Avoid_: layer / 图层 in any UI string (menus, history labels, hints, inspector
+headings); item, element, object
+
 **Track**:
 The kind-agnostic container a layer sits in — the data object (`Project.tracks`,
 ordered bottom-of-z-stack first). Not something the user provisions: tracks
@@ -519,7 +528,7 @@ belongs to the source the way a shot report does, so a shot row and a palette
 entry join it by time intersection alone — a segment that straddles a detected
 boundary belongs to both shots. Prose has no right answer to check it against,
 so it is never reviewed or edited, only read where it is useful and searched.
-UI word: Describe clip content / 描述所选片段内容; a row with none
+UI word: Describe clip content / 描述片段内容; a row with none
 reads Not described / 未描述.
 _Avoid_: caption or subtitle (spoken words, a Text layer), summary, scene
 description in UI copy (the Rust struct is `SceneDescription`, but "scene" is

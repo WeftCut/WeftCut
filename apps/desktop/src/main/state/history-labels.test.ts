@@ -208,7 +208,7 @@ describe('resolveEntityLabels', () => {
 
   // ── the `before` snapshot: a HistoryEntry stores the state AFTER its own op,
   //    so a delete is nameable ONLY from its predecessor. Without this the
-  //    `Deleted layer` row — the one a user most wants to identify — shows a uuid,
+  //    `Deleted clip` row — the one a user most wants to identify — shows a uuid,
   //    which is the whole thing main-side resolution exists to avoid.
   it('names a ref the AFTER snapshot dropped from the BEFORE snapshot', () => {
     const before = layer(fresh(), mkLayer('L1', 'Clip 01', colorParams({ r: 0, g: 0, b: 0, a: 255 }, 16, 9)))

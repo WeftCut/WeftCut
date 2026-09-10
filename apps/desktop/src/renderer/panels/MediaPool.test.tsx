@@ -389,7 +389,7 @@ describe("MediaPool removal", () => {
     expect(screen.getByText("Dialogue · 00:00:02:00")).toBeTruthy();
 
     await user.click(
-      screen.getByRole("button", { name: "Remove media + 1 layer" }),
+      screen.getByRole("button", { name: "Remove media + 1 clip" }),
     );
 
     await waitFor(() => {
@@ -424,9 +424,9 @@ describe("MediaPool removal", () => {
     await user.click(screen.getByRole("button", { name: "Remove" }));
 
     const forceButton = await screen.findByRole("button", {
-      name: "Remove media + 1 layer",
+      name: "Remove media + 1 clip",
     });
-    expect(screen.getByText("Layer late-lay")).toBeTruthy();
+    expect(screen.getByText("Clip late-lay")).toBeTruthy();
     expect(removeMedia).toHaveBeenNthCalledWith(1, "raced-media", false);
 
     await user.click(forceButton);

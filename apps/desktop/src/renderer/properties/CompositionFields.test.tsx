@@ -130,6 +130,6 @@ describe("the composition branch of the Attribute panel", () => {
   it("falls back to the empty placeholder when nothing is selected", () => {
     seed();
     renderPanel();
-    expect(screen.getByText("Select a layer to edit its properties.")).toBeTruthy();
+    expect(screen.getByText("Select a clip to edit its properties.")).toBeTruthy();
   });
 });

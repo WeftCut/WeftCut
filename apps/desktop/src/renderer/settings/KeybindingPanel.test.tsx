@@ -31,7 +31,7 @@ describe("KeybindingPanel", () => {
   it("prints the dispatch rule under an action whose key does two things", () => {
     renderPanel();
 
-    expect(hintIn(rowOf("Delete selected layer"))).toBe(i18n.t("hints.delete_selected"));
+    expect(hintIn(rowOf("Delete selected clip"))).toBe(i18n.t("hints.delete_selected"));
     expect(hintIn(rowOf("Nudge earlier"))).toBe(i18n.t("hints.nudge_back"));
   });
 

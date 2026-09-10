@@ -236,7 +236,7 @@ button.history-row:disabled {
    `max-width: 100%` and not `flex: none`, because an item sized to its own
    content never overflows itself — `text-overflow` would never fire and the
    parent's `overflow: hidden` would hard-clip with no `…` at all
-   (`Split layer and closed the g`, which reads as a finished phrase). Capped
+   (`Split clip and closed the g`, which reads as a finished phrase). Capped
    at the row instead, the label re-arms its own ellipsis for the one case that
    deserves it: a panel too narrow for the operation name itself. */
 .history-row-label {

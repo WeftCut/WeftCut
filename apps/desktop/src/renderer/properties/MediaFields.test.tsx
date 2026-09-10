@@ -205,6 +205,6 @@ describe("the media branch of the Attribute panel", () => {
     act(() => useProjectStore.getState().apply(summaryFixture()));
 
     expect(currentSelection()).toEqual({ kind: "none" });
-    expect(screen.getByText("Select a layer to edit its properties.")).toBeTruthy();
+    expect(screen.getByText("Select a clip to edit its properties.")).toBeTruthy();
   });
 });

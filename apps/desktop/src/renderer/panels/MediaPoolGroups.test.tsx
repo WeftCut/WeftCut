@@ -363,7 +363,7 @@ describe("a Group card", () => {
     expect(card("comp-empty").classList.contains("is-not-placeable")).toBe(true);
     // One treatment, its own reason.
     expect(card("comp-empty").getAttribute("title")).toBe(
-      "This Group is empty. Open it and add a layer first.",
+      "This Group is empty. Open it and add a clip first.",
     );
   });
 

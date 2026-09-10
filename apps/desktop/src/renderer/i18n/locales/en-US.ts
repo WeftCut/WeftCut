@@ -1,5 +1,7 @@
 // English (US) is the source locale. New keys land here first, then propagate
 // to other locales. Keep keys grouped by feature area, not by component.
+// UI word for a placed item is `clip` — never `layer`, which stays the model word in
+// code, commands and ADRs (CONTEXT.md **Layer**). zh-CN mirrors this as 片段.
 const enUS = {
   models: {
     current_label: "Current model", none_selected: "None", none_active: "No model selected",
@@ -329,7 +331,7 @@ const enUS = {
     // gesture the icon alone cannot; disabled (an empty project has no canvas
     // to click), it names the remedy — `clear_range_empty`'s rule.
     text_tool_hint: "Text tool: click the preview to add text, click text to edit it",
-    text_tool_needs_layer: "Add a layer first, or insert text from the Insert menu",
+    text_tool_needs_layer: "Add a clip first, or insert text from the Insert menu",
     // The marker toggle's two-state hint: current state, then what a click does.
     // Both halves matter — the pressed border says WHICH state, not what
     // pressing again would get you.
@@ -343,29 +345,29 @@ const enUS = {
     follow_off_hint: "Timeline auto-scroll off. Click to enable.",
     safe_area_on_hint: "Showing safe-area guides. Click to hide.",
     safe_area_off_hint: "Safe-area guides hidden. Click to show.",
-    link_override_on_hint: "Links off — edits act on single layers. Click to restore links.",
-    link_override_off_hint: "Links on. Click to edit single layers without holding Alt.",
+    link_override_on_hint: "Links off — edits act on single clips. Click to restore links.",
+    link_override_off_hint: "Links on. Click to edit single clips without holding Alt.",
     // Disabled-button reasons, the `clear_range_empty` rule: name the
     // precondition rather than restate a label that can't be acted on.
-    link_selected: "Link selected layers",
-    unlink_selected: "Unlink selected layers",
+    link_selected: "Link selected clips",
+    unlink_selected: "Unlink selected clips",
     link_needs_two: "Select two or more unlinked clips to link them",
     link_mixed_selection: "Select clips that are all unlinked, or all in one link",
     // Group / Ungroup, same rule: a greyed button names the precondition. The
     // three not-plain reasons are separate strings because each names a
     // different field to reset (`timeline/groupEligibility.ts`).
-    group_selected: "Group selected layers",
+    group_selected: "Group selected clips",
     group_needs_selection: "Select one or more clips to group them",
     group_locked: "Unlock the selected clips to group them",
-    ungroup_selected: "Ungroup — put the group's layers back",
+    ungroup_selected: "Ungroup — put the group's clips back",
     ungroup_needs_one_group: "Select exactly one group clip to ungroup it",
     ungroup_locked: "Unlock the group clip to ungroup it",
     ungroup_not_plain_transform:
-      "Reset the group's transform first — ungrouping cannot carry it onto the layers inside",
+      "Reset the group's transform first — ungrouping cannot carry it onto the clips inside",
     ungroup_not_plain_opacity:
-      "Reset the group's opacity to 1 first — ungrouping cannot carry it onto the layers inside",
+      "Reset the group's opacity to 1 first — ungrouping cannot carry it onto the clips inside",
     ungroup_not_plain_effects:
-      "Remove the group's effects first — ungrouping cannot carry them onto the layers inside",
+      "Remove the group's effects first — ungrouping cannot carry them onto the clips inside",
     // Ripple delete. Only TWO reasons live here: the rest of them are refusals
     // the planner returns, and their sentences are the curated refusal copy
     // under `errors.ripple_*` — the same line the status bar shows when the
@@ -675,7 +677,7 @@ const enUS = {
       "Split off a speed-1 segment first — a re-timed clip cannot be described",
   },
   actions: {
-    add_color_layer: "Color layer",
+    add_color_layer: "Color clip",
     add_text_layer: "Text",
     select_tool: "Selection tool",
     toggle_blade_mode: "Blade tool",
@@ -708,13 +710,13 @@ const enUS = {
     // where what the user sees selected is clips on tracks.
     select_all: "Select all clips",
     deselect_all: "Deselect all",
-    delete_selected: "Delete selected layer",
+    delete_selected: "Delete selected clip",
     // Premiere's own English term. Kept short because it also sits on a 16 px
     // strip button's tooltip and on a context-menu row beside plain Delete,
     // where the contrast between the two labels is the whole explanation.
     ripple_delete_selected: "Ripple delete",
-    copy_selected: "Copy selected layer",
-    paste_at_playhead: "Paste layer at playhead",
+    copy_selected: "Copy selected clip",
+    paste_at_playhead: "Paste clip at playhead",
     split_at_playhead: "Split at playhead",
     toggle_log: "Toggle activity log",
     focus_log_search: "Focus activity-log search",
@@ -743,7 +745,7 @@ const enUS = {
     focus_previous_panel: "Focus previous Panel",
     toggle_maximize_panel: "Maximize / restore Panel",
     restore_maximized_panel: "Restore maximized Panel",
-    group_selected: "Group selected layers",
+    group_selected: "Group selected clips",
     ungroup_selected: "Ungroup",
     open_group: "Open group",
     add_to_group: "Add to Group",
@@ -790,7 +792,7 @@ const enUS = {
     // Ellipsis because the row opens a surface rather than committing anything:
     // reviewing is what happens next, and the apply is a press inside the Panel.
     review_shots: "Review shots…",
-    toggle_link_selected: "Link / Unlink selected layers",
+    toggle_link_selected: "Link / Unlink selected clips",
     toggle_link_override: "Toggle link override",
     // One key, two subjects — the label names the gesture and the hint below it
     // names what each selection makes it do.
@@ -904,25 +906,25 @@ const enUS = {
       "The source file will stay on disk. Removing unused media cannot be undone.",
     remove_in_use_title: "Media is in use",
     remove_in_use_body_one:
-      "“{{label}}” is used by {{count}} timeline layer. Removing it will also remove:",
+      "“{{label}}” is used by {{count}} timeline clip. Removing it will also remove:",
     remove_in_use_body_other:
-      "“{{label}}” is used by {{count}} timeline layers. Removing it will also remove:",
+      "“{{label}}” is used by {{count}} timeline clips. Removing it will also remove:",
     remove_in_use_note:
       "This timeline change can be undone. The source file will stay on disk.",
     // Last rungs of a reference row's naming chain, for a layer the renderer's
     // snapshot cannot place (`panels/mediaReferences.ts`).
-    reference_unknown_layer: "Layer {{id}}",
+    reference_unknown_layer: "Clip {{id}}",
     reference_unknown_track: "Unknown track",
     remove_cancel: "Cancel",
     remove_confirm: "Remove",
-    remove_force_confirm_one: "Remove media + {{count}} layer",
-    remove_force_confirm_other: "Remove media + {{count}} layers",
+    remove_force_confirm_one: "Remove media + {{count}} clip",
+    remove_force_confirm_other: "Remove media + {{count}} clips",
     removing: "Removing…",
     remove_failed: "Could not remove media: {{detail}}",
     // Group cards, in the same pool list as the media ones.
     // A composition whose last inner layer was deleted. It has no window to
     // place, so the card is not draggable — the hint is what says why.
-    groups_empty_hint: "This Group is empty. Open it and add a layer first.",
+    groups_empty_hint: "This Group is empty. Open it and add a clip first.",
     groups_card_hint:
       "Drag onto a track to place another instance · double-click to open · right-click for Group actions",
     // A composition no Group clip references. Not "unused": everything in the
@@ -942,7 +944,7 @@ const enUS = {
   },
   preview: {
     edit_text: "Edit text",
-    empty_hint: "Add a layer to start the preview",
+    empty_hint: "Add a clip to start the preview",
     preparing: "Preparing preview…",
     // What the preview renders. The list names the timeline and every Group;
     // the default follows whichever timeline holds the keyboard.
@@ -1010,15 +1012,15 @@ const enUS = {
     // Accessible name for the lane header's inline rename field — the visible
     // label it replaces is the lane's own name.
     rename_track_label: "Rename {{label}}",
-    enable_layer: "Enable layer",
-    disable_layer: "Disable layer",
+    enable_layer: "Enable clip",
+    disable_layer: "Disable clip",
     // The row's label when the toggle fans out across the link: the count says
     // what one click will touch. `_one` never renders (a fan-out is ≥ 2) but
     // completes the plural pair.
-    enable_linked_layers_one: "Enable {{count}} linked layer",
-    enable_linked_layers_other: "Enable {{count}} linked layers",
-    disable_linked_layers_one: "Disable {{count}} linked layer",
-    disable_linked_layers_other: "Disable {{count}} linked layers",
+    enable_linked_layers_one: "Enable {{count}} linked clip",
+    enable_linked_layers_other: "Enable {{count}} linked clips",
+    disable_linked_layers_one: "Disable {{count}} linked clip",
+    disable_linked_layers_other: "Disable {{count}} linked clips",
     bake_dot_warming: "Warming…",
     bake_dot_baking: "Pre-baking…",
     bake_dot_ready: "Pre-baked",
@@ -1082,7 +1084,7 @@ const enUS = {
     // Failure copy moved to `errors.*` (errors/formatCommandError.ts).
   },
   playhead_panel: {
-    section_label: "Hidden-track layers near playhead",
+    section_label: "Hidden-track clips near playhead",
     // A row's leading time value: unit letters, not a timecode (see
     // `formatPlayheadDelta`). The phrase around the value is what saves every row a
     // printed field name, so a translation has to keep the relation it states —
@@ -1126,9 +1128,9 @@ const enUS = {
     restack_back: "Send to back",
     // Folded link rows. `link_count_aria` names the `×N` glyph; N is the link's
     // full member count, so it is never 1.
-    link_count_aria: "Link of {{count}} layers",
-    expand_link: "Show the layers linked with {{label}}",
-    collapse_link: "Hide the layers linked with {{label}}",
+    link_count_aria: "Link of {{count}} clips",
+    expand_link: "Show the clips linked with {{label}}",
+    collapse_link: "Hide the clips linked with {{label}}",
     link_menu: "Link {{label}}",
     rename_link: "Rename link…",
     unlink: "Unlink",
@@ -1138,7 +1140,7 @@ const enUS = {
     all_tracks_hint: "Press <key>{{key}}</key> to switch back to A/B Roll.",
     empty_title: "Nothing near the playhead",
     empty_msg:
-      "No hidden-track layers fall within ±{{window}} of the playhead. Move the playhead, or widen the window above.",
+      "No hidden-track clips fall within ±{{window}} of the playhead. Move the playhead, or widen the window above.",
   },
   agent_panel: {
   "service_unknown": "MCP status unavailable",
@@ -1233,7 +1235,7 @@ const enUS = {
     track_not_empty: "{{track}} still has clips on it.",
     track_not_removable: "{{track}} is reserved and can't be removed.",
     link_locked_member:
-      "“{{layer}}” is linked with the locked layer “{{locked}}”.",
+      "“{{layer}}” is linked with the locked clip “{{locked}}”.",
     trim_edge_out_of_range:
       "Can't trim “{{layer}}” to {{time}} — outside the clip's range.",
     split_outside_layer:
@@ -1307,7 +1309,7 @@ const enUS = {
       'audio effect "{{effect}}" on "{{layer}}": {{message}}',
     failed_audio_fx_chain: 'audio effects on "{{layer}}": {{message}}',
     no_video_material:
-      "No video to export: the selected range has no visible layers.",
+      "No video to export: the selected range has no visible clips.",
     no_audio_material:
       "No audio to export: the selected range has no audio.",
     progress_label:
@@ -1471,8 +1473,8 @@ const enUS = {
   },
   motif_stale: {
     title: "Motifs changed since you placed them",
-    entry: "v{{from}} → v{{to}} ({{n}} layers)",
-    note: "These layers already render with the current version — this is just a heads-up.",
+    entry: "v{{from}} → v{{to}} ({{n}} clips)",
+    note: "These clips already render with the current version — this is just a heads-up.",
     dismiss: "Got it",
   },
   connect: {
@@ -1747,7 +1749,7 @@ const enUS = {
     preview_heading: "Preview",
     preview_snap_enabled: "Preview snapping",
     preview_snap_enabled_hint:
-      "Align layers to the frame's edges and centre lines, and to other layers, while moving or resizing them on the preview. Hold Ctrl to override.",
+      "Align clips to the frame's edges and centre lines, and to other clips, while moving or resizing them on the preview. Hold Ctrl to override.",
     preview_snap_strength: "Snap strength",
     preview_snap_strength_hint:
       "Measured in screen pixels.",
@@ -1825,9 +1827,9 @@ const enUS = {
   },
   effects: {
     heading: "Effects",
-    empty: "Select a layer to edit its effects.",
+    empty: "Select a clip to edit its effects.",
     add: "Add effect",
-    empty_chain: "No effects on this layer yet.",
+    empty_chain: "No effects on this clip yet.",
     order_hint: "Applied top to bottom.",
     drag_hint: "Drag to reorder",
     collapse: "Collapse {{name}}",
@@ -1918,19 +1920,19 @@ const enUS = {
     // Spatial progress is a scalar track, displayed as a percentage.
     path_progress: 'Path progress (%)',
     heading: "Properties",
-    empty: "Select a layer to edit its properties.",
-    envelope: "Layer",
+    empty: "Select a clip to edit its properties.",
+    envelope: "Clip",
     advanced: "Advanced",
     label: "Label",
     enabled: "Enabled",
     audio_units_hint:
       "Audio edits land on exact 48 kHz samples, so these fields read and accept sub-frame times. Dragging still snaps to frames — samples are 0.042 px wide at maximum zoom. Use Alt+←/→ to nudge one sample, Alt+Shift+←/→ for 1 ms.",
     t_start: "Start",
-    t_start_hint: "Inclusive — frame at this timecode is the layer's first.",
+    t_start_hint: "Inclusive — frame at this timecode is the clip's first.",
     kind: "Kind",
     link_none: "Not linked",
-    link_of_one: "Link of {{count}} layer",
-    link_of_other: "Link of {{count}} layers",
+    link_of_one: "Link of {{count}} clip",
+    link_of_other: "Link of {{count}} clips",
     link_rename: "Rename link",
     // The Group section: the composition's own name, its frame size and length
     // (both read-only here — a Group's size is copied at pre-compose), and the
@@ -1961,7 +1963,7 @@ const enUS = {
     media_usage_go: "Go to this clip",
     locked: "Locked",
     duration: "Duration",
-    multi_primary: "Editing primary layer “{{label}}” — {{count}} layers selected; changes apply only to this layer.",
+    multi_primary: "Editing primary clip “{{label}}” — {{count}} clips selected; changes apply only to this clip.",
     text: "Text",
     content: "Content",
     font_family: "Font family",
@@ -1973,7 +1975,7 @@ const enUS = {
     text_box_mode_auto_height: "Auto height",
     text_box_mode_fixed: "Fixed",
     text_box_unmeasured:
-      "Needs the layer's rendered size. Move the playhead over this layer, or drag a box handle in the preview.",
+      "Needs the clip's rendered size. Move the playhead over this clip, or drag a box handle in the preview.",
     text_box_w: "Box width",
     text_box_h: "Box height",
     text_box_h_hint:
@@ -2030,7 +2032,7 @@ const enUS = {
     bake_error: "Pre-bake failed",
     motif_install: "Install",
     motif_delete: "Delete",
-    motif_delete_confirm: 'Delete Motif "{{id}}"? Placed layers will lose their content.',
+    motif_delete_confirm: 'Delete Motif "{{id}}"? Placed clips will lose their content.',
     motif_status: { builtin: "Builtin", draft: "Draft", installed: "Installed" },
     motif_edit: "Edit",
     motif_edit_fork: "Duplicate & edit",
@@ -2039,8 +2041,8 @@ const enUS = {
     motif_discard: "Discard",
     motif_confirm: "Confirm",
     motif_cancel: "Cancel",
-    motif_update_confirm_one: "Used by 1 layer in this project. Updating changes it (and other projects update on next open).",
-    motif_update_confirm_many: "Used by {{count}} layers in this project. Updating changes all of them (and other projects update on next open).",
+    motif_update_confirm_one: "Used by 1 clip in this project. Updating changes it (and other projects update on next open).",
+    motif_update_confirm_many: "Used by {{count}} clips in this project. Updating changes all of them (and other projects update on next open).",
     motif_source: "Source",
     motif_source_apply: "Apply",
     motif_source_applying: "Applying…",
@@ -2093,7 +2095,7 @@ const enUS = {
     track_label: "Track",
     track_overlay_auto: "New track (auto-create)",
     duration_hint:
-      "Layer length defaults to {{value}} (the motif's default duration). Trim later in the timeline if you need a different length.",
+      "Clip length defaults to {{value}} (the motif's default duration). Trim later in the timeline if you need a different length.",
     add: "Add to timeline",
     adding: "Adding…",
     new_button: "New Motif",
@@ -2120,7 +2122,7 @@ const enUS = {
     running_badge_hint: "{{count}} running operation(s) — click to view",
     announce_error_prefix: "Error",
     links_off: "Links off",
-    links_off_hint: "Link override is on (Alt+Shift+G): edits act on single layers",
+    links_off_hint: "Link override is on (Alt+Shift+G): edits act on single clips",
   },
   system_status: {
     trigger: "System {{count}}",
@@ -2170,7 +2172,7 @@ const enUS = {
     export_cancelled: "Export cancelled",
     cleared: "Log cleared",
     center_layer_unstaged:
-      "Cannot center a layer the preview has not staged yet — its size is unknown",
+      "Cannot center a clip the preview has not staged yet — its size is unknown",
     cross_composition_copy:
       "A clip cannot be copied across timelines — release without Alt to move it there",
     paste_keyframes_no_target: "Select a clip to paste keyframes onto",
@@ -2244,37 +2246,37 @@ const enUS = {
   history: {
     initial: "Initial",
     layer: {
-      add: "Added layer",
-      paste: "Pasted layer",
-      duplicate: "Duplicated layer",
-      paste_multi: "Duplicated {{count}} layers",
-      enabled_multi: "Enabled {{count}} layers",
-      disabled_multi: "Disabled {{count}} layers",
-      move: "Moved layer",
+      add: "Added clip",
+      paste: "Pasted clip",
+      duplicate: "Duplicated clip",
+      paste_multi: "Duplicated {{count}} clips",
+      enabled_multi: "Enabled {{count}} clips",
+      disabled_multi: "Disabled {{count}} clips",
+      move: "Moved clip",
       move_to_new_track: "Moved to a new track",
       // The named form wins whenever the destination carries a stored label;
       // the unnamed one covers a derived `Group N` and the root, neither of
       // which main can name.
-      move_to_composition: "Moved {{count}} layers to {{composition}}",
-      move_to_composition_unnamed: "Moved {{count}} layers elsewhere",
-      restack: "Restacked layer",
-      trim: "Trimmed layer",
-      split: "Split layer",
-      split_by_shots: "Split layer by shots",
-      delete: "Deleted layer",
-      delete_multi: "Deleted layers",
-      ripple_delete: "Ripple deleted layers",
-      split_and_ripple: "Split layer and closed the gaps",
-      update: "Updated layer",
-      update_params: "Updated layer params",
-      keyframe_param: "Keyframed layer param",
-      keyframe_params: "Keyframed layer params",
-      keyframe_params_multi: "Keyframed params across layers",
+      move_to_composition: "Moved {{count}} clips to {{composition}}",
+      move_to_composition_unnamed: "Moved {{count}} clips elsewhere",
+      restack: "Restacked clip",
+      trim: "Trimmed clip",
+      split: "Split clip",
+      split_by_shots: "Split clip by shots",
+      delete: "Deleted clip",
+      delete_multi: "Deleted clips",
+      ripple_delete: "Ripple deleted clips",
+      split_and_ripple: "Split clip and closed the gaps",
+      update: "Updated clip",
+      update_params: "Updated clip params",
+      keyframe_param: "Keyframed clip param",
+      keyframe_params: "Keyframed clip params",
+      keyframe_params_multi: "Keyframed params across clips",
       scale_link: "Linked scale",
       scale_unlink: "Unlinked scale",
       separate_audio: "Separated audio",
       add_av_pair: "Added A/V pair",
-      rebind_motif: "Rebound motif layers",
+      rebind_motif: "Rebound motif clips",
     },
     track: {
       add: "Added track",
@@ -2310,8 +2312,8 @@ const enUS = {
       rename: "Renamed link",
     },
     group: {
-      create: "Grouped {{count}} layers",
-      add_members: "Added {{count}} layers to Group",
+      create: "Grouped {{count}} clips",
+      add_members: "Added {{count}} clips to Group",
       ungroup: "Ungrouped",
       rename: "Renamed Group",
     },
@@ -2319,7 +2321,7 @@ const enUS = {
     caption: { restyle: "Restyled captions" },
     media: {
       remove_cascade:
-        "Removed media {{media}} and {{count}} referencing layer(s)",
+        "Removed media {{media}} and {{count}} referencing clip(s)",
     },
     audio: { set_role_gain: "Set {{role}} role gain" },
     checkpoint: { restore: "Restored to checkpoint “{{label}}”" },

@@ -43,7 +43,7 @@ describe('rebind_motif dispatch', () => {
 
     // one history entry was recorded for rebind_motif
     const hist = actor.historyView(10)
-    const rebindEntry = hist.ops.find((e) => e.summary === 'Rebound motif layers')
+    const rebindEntry = hist.ops.find((e) => e.summary === 'Rebound motif clips')
     expect(rebindEntry).toBeDefined()
   })
 
@@ -101,7 +101,7 @@ describe('rebind_motif dispatch', () => {
 
     // only ONE history entry for the whole batch
     const hist = actor.historyView(10)
-    const rebindEntries = hist.ops.filter((e) => e.summary === 'Rebound motif layers')
+    const rebindEntries = hist.ops.filter((e) => e.summary === 'Rebound motif clips')
     expect(rebindEntries.length).toBe(1)
   })
 })

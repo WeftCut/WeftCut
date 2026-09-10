@@ -142,7 +142,7 @@ describe("AttributePanel boundary", () => {
       />,
     );
 
-    expect(screen.getByText("Select a layer to edit its properties.")).toBeTruthy();
+    expect(screen.getByText("Select a clip to edit its properties.")).toBeTruthy();
     expect(screen.queryByText("Effects")).toBeNull();
   });
 });
@@ -185,7 +185,7 @@ function summaryWithLinks(links: CompositionSummary["links"]): void {
 }
 
 function envelope(): HTMLElement {
-  return screen.getByRole("region", { name: "Layer" });
+  return screen.getByRole("region", { name: "Clip" });
 }
 
 function advanced(): HTMLElement {
@@ -247,7 +247,7 @@ describe("AttributePanel Layer envelope", () => {
     ]);
     renderPanel(colorTrack());
 
-    expect(screen.getByText("Color · Visual · Link of 2 layers")).toBeTruthy();
+    expect(screen.getByText("Color · Visual · Link of 2 clips")).toBeTruthy();
     expect(screen.queryByText(/019fcc4d/)).toBeNull();
   });
 
@@ -258,7 +258,7 @@ describe("AttributePanel Layer envelope", () => {
     setLayerSelection("layer-a1", ["layer-a1", "layer-x"]);
     renderPanel(track, "layer-a1");
 
-    expect(screen.getByText(/“voice\.wav” — 2 layers selected/)).toBeTruthy();
+    expect(screen.getByText(/“voice\.wav” — 2 clips selected/)).toBeTruthy();
     expect(screen.queryByText(/layer-a1/)).toBeNull();
   });
 });
@@ -600,15 +600,15 @@ describe("AttributePanel multi-selection", () => {
   it("identifies which primary layer is edited when several layers are selected", () => {
     setLayerSelection("layer-1", ["layer-1", "layer-2"]);
     renderPanel(colorTrack());
-    const note = screen.getByText(/changes apply only to this layer/);
+    const note = screen.getByText(/changes apply only to this clip/);
     expect(note.textContent).toContain("“Card”");
-    expect(note.textContent).toContain("2 layers selected");
+    expect(note.textContent).toContain("2 clips selected");
   });
 
   it("omits the primary-layer note for a single selection", () => {
     setLayerSelection("layer-1", ["layer-1"]);
     renderPanel(colorTrack());
-    expect(screen.queryByText(/changes apply only to this layer/)).toBeNull();
+    expect(screen.queryByText(/changes apply only to this clip/)).toBeNull();
   });
 });
 

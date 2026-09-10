@@ -29,32 +29,32 @@ export const HISTORY_SUMMARY = {
    *  not by a commit site. */
   initial: { key: 'history.initial', text: 'Initial' },
 
-  layerAdd: { key: 'history.layer.add', text: 'Added layer' },
-  layerPaste: { key: 'history.layer.paste', text: 'Pasted layer' },
-  layerDuplicate: { key: 'history.layer.duplicate', text: 'Duplicated layer' },
-  layerMove: { key: 'history.layer.move', text: 'Moved layer' },
+  layerAdd: { key: 'history.layer.add', text: 'Added clip' },
+  layerPaste: { key: 'history.layer.paste', text: 'Pasted clip' },
+  layerDuplicate: { key: 'history.layer.duplicate', text: 'Duplicated clip' },
+  layerMove: { key: 'history.layer.move', text: 'Moved clip' },
   layerMoveToNewTrack: { key: 'history.layer.move_to_new_track', text: 'Moved to a new track' },
-  layerRestack: { key: 'history.layer.restack', text: 'Restacked layer' },
-  layerTrim: { key: 'history.layer.trim', text: 'Trimmed layer' },
-  layerSplit: { key: 'history.layer.split', text: 'Split layer' },
-  layerSplitByShots: { key: 'history.layer.split_by_shots', text: 'Split layer by shots' },
-  layerDelete: { key: 'history.layer.delete', text: 'Deleted layer' },
-  layerDeleteMulti: { key: 'history.layer.delete_multi', text: 'Deleted layers' },
-  layerRippleDelete: { key: 'history.layer.ripple_delete', text: 'Ripple deleted layers' },
+  layerRestack: { key: 'history.layer.restack', text: 'Restacked clip' },
+  layerTrim: { key: 'history.layer.trim', text: 'Trimmed clip' },
+  layerSplit: { key: 'history.layer.split', text: 'Split clip' },
+  layerSplitByShots: { key: 'history.layer.split_by_shots', text: 'Split clip by shots' },
+  layerDelete: { key: 'history.layer.delete', text: 'Deleted clip' },
+  layerDeleteMulti: { key: 'history.layer.delete_multi', text: 'Deleted clips' },
+  layerRippleDelete: { key: 'history.layer.ripple_delete', text: 'Ripple deleted clips' },
   // A multi-split whose discarded segments also closed their holes — the
   // silence cut's entry. Its own label because "split by shots" would name a
   // detector the edit never ran.
-  layerSplitAndRipple: { key: 'history.layer.split_and_ripple', text: 'Split layer and closed the gaps' },
-  layerUpdate: { key: 'history.layer.update', text: 'Updated layer' },
-  layerUpdateParams: { key: 'history.layer.update_params', text: 'Updated layer params' },
-  layerKeyframeParam: { key: 'history.layer.keyframe_param', text: 'Keyframed layer param' },
-  layerKeyframeParams: { key: 'history.layer.keyframe_params', text: 'Keyframed layer params' },
-  layerKeyframeParamsMulti: { key: 'history.layer.keyframe_params_multi', text: 'Keyframed params across layers' },
+  layerSplitAndRipple: { key: 'history.layer.split_and_ripple', text: 'Split clip and closed the gaps' },
+  layerUpdate: { key: 'history.layer.update', text: 'Updated clip' },
+  layerUpdateParams: { key: 'history.layer.update_params', text: 'Updated clip params' },
+  layerKeyframeParam: { key: 'history.layer.keyframe_param', text: 'Keyframed clip param' },
+  layerKeyframeParams: { key: 'history.layer.keyframe_params', text: 'Keyframed clip params' },
+  layerKeyframeParamsMulti: { key: 'history.layer.keyframe_params_multi', text: 'Keyframed params across clips' },
   layerScaleLink: { key: 'history.layer.scale_link', text: 'Linked scale' },
   layerScaleUnlink: { key: 'history.layer.scale_unlink', text: 'Unlinked scale' },
   layerSeparateAudio: { key: 'history.layer.separate_audio', text: 'Separated audio' },
   layerAddAvPair: { key: 'history.layer.add_av_pair', text: 'Added A/V pair' },
-  layerRebindMotif: { key: 'history.layer.rebind_motif', text: 'Rebound motif layers' },
+  layerRebindMotif: { key: 'history.layer.rebind_motif', text: 'Rebound motif clips' },
 
   trackAdd: { key: 'history.track.add', text: 'Added track' },
   trackDelete: { key: 'history.track.delete', text: 'Deleted track' },
@@ -99,7 +99,7 @@ export const HISTORY_SUMMARY = {
  *  the layers that went with it. */
 export function removedMediaSummary(media: Uuid, referencingCount: number): HistorySummary {
   return {
-    key: 'history.media.remove_cascade', text: `Removed media ${media} and ${referencingCount} referencing layer(s)`,
+    key: 'history.media.remove_cascade', text: `Removed media ${media} and ${referencingCount} referencing clip(s)`,
     label_args: { media, count: referencingCount },
   }
 }
@@ -113,15 +113,15 @@ export function restoredCheckpointSummary(label: string): HistorySummary {
 }
 /** `paste_layers` — the summary counts the clones. */
 export function pastedLayersSummary(count: number): HistorySummary {
-  return { key: 'history.layer.paste_multi', text: `Duplicated ${count} layers`, label_args: { count } }
+  return { key: 'history.layer.paste_multi', text: `Duplicated ${count} clips`, label_args: { count } }
 }
 /** `groups_create` — the summary counts the members that went into the Group. */
 export function groupCreateSummary(count: number): HistorySummary {
-  return { key: 'history.group.create', text: `Grouped ${count} layers`, label_args: { count } }
+  return { key: 'history.group.create', text: `Grouped ${count} clips`, label_args: { count } }
 }
 /** `groups_add_members` — the summary counts the members that joined it. */
 export function groupAddMembersSummary(count: number): HistorySummary {
-  return { key: 'history.group.add_members', text: `Added ${count} layers to Group`, label_args: { count } }
+  return { key: 'history.group.add_members', text: `Added ${count} clips to Group`, label_args: { count } }
 }
 /** `move_layers_to_composition` — the summary names the DESTINATION, which is
  *  the only thing that tells this row from an ordinary move.
@@ -134,15 +134,15 @@ export function groupAddMembersSummary(count: number): HistorySummary {
 export function moveToCompositionSummary(count: number, compositionName: string | null): HistorySummary {
   const name = compositionName?.trim()
   return name
-    ? { key: 'history.layer.move_to_composition', text: `Moved ${count} layers to ${name}`, label_args: { count, composition: name } }
-    : { key: 'history.layer.move_to_composition_unnamed', text: `Moved ${count} layers elsewhere`, label_args: { count } }
+    ? { key: 'history.layer.move_to_composition', text: `Moved ${count} clips to ${name}`, label_args: { count, composition: name } }
+    : { key: 'history.layer.move_to_composition_unnamed', text: `Moved ${count} clips elsewhere`, label_args: { count } }
 }
 /** `set_layers_enabled` — one key per direction rather than a `{{state}}`
  *  placeholder, so each locale conjugates the verb natively. */
 export function layersEnabledSummary(enabled: boolean, count: number): HistorySummary {
   return enabled
-    ? { key: 'history.layer.enabled_multi', text: `Enabled ${count} layers`, label_args: { count } }
-    : { key: 'history.layer.disabled_multi', text: `Disabled ${count} layers`, label_args: { count } }
+    ? { key: 'history.layer.enabled_multi', text: `Enabled ${count} clips`, label_args: { count } }
+    : { key: 'history.layer.disabled_multi', text: `Disabled ${count} clips`, label_args: { count } }
 }
 
 /** Every key this module can emit — the table's plus the templated ones,

@@ -385,7 +385,7 @@ unlinked — because `Alt` on the body already means duplicate. A collision on
 any member's destination shows the drag invalid and creates nothing.
 **Enable / Disable** in a clip's context menu and the inspector's Enabled
 switch send the link's members in one `set_layers_enabled` (the menu row
-reads `Disable 2 linked layers`); `Alt`+right-click narrows the row to the
+reads `Disable 2 linked clips`); `Alt`+right-click narrows the row to the
 clicked layer. Linked layers show a 2 px left accent in a hue derived
 deterministically from `link_id`. `Ctrl+L` **toggles** link ↔ unlink, as in
 Premiere: a selection inside one link unlinks it, two or more unlinked layers

@@ -160,11 +160,11 @@ test('the timeline, the ruler and the Insert menu follow the open composition', 
     await page.keyboard.press('End')
     await expect.poll(() => playheadUs(page)).toBe(4_966_667)
 
-    // ── Insert → Color layer lands INSIDE the Group ───────────────────────
+    // ── Insert → Color clip lands INSIDE the Group ───────────────────────
     const rootLayersBefore = layerIdsOf(root)
     const groupLayersBefore = layerIdsOf(group)
     await page.locator('.menu-trigger').filter({ hasText: /^Insert$/ }).click()
-    await page.locator('.app-menu-item').filter({ hasText: /^Color layer$/ }).click()
+    await page.locator('.app-menu-item').filter({ hasText: /^Color clip$/ }).click()
 
     await expect
       .poll(async () => layerIdsOf((await wire(page)).compositions[groupId]!).length)

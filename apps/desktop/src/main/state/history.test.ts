@@ -244,7 +244,7 @@ describe('History', () => {
   /// could print nothing but a uuid.
   ///
   /// An entry stores the state AFTER its own op, so a DELETE is nameable only
-  /// from its predecessor — the case that decides whether `Deleted layer` shows
+  /// from its predecessor — the case that decides whether `Deleted clip` shows
   /// a name or a uuid, which is the row a user most wants to identify.
   it('view names each ref from whichever stored snapshot holds it', () => {
     const gen = seededGen()
@@ -258,8 +258,8 @@ describe('History', () => {
     const h = new History(withLayer, U, gen())
     // The delete entry's own snapshot no longer holds L1 — the PREVIOUS one does,
     // so the name has to come from there.
-    h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted layer', label_key: 'history.layer.delete', affected: [{ kind: 'Layer', id: 'L1' }], snapshot: p0 })
-    h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Updated layer', label_key: 'history.layer.update', affected: [{ kind: 'Layer', id: 'L1' }], snapshot: withLayer })
+    h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted clip', label_key: 'history.layer.delete', affected: [{ kind: 'Layer', id: 'L1' }], snapshot: p0 })
+    h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Updated clip', label_key: 'history.layer.update', affected: [{ kind: 'Layer', id: 'L1' }], snapshot: withLayer })
     const ops = h.view(10).ops
     expect(ops[1].entity_labels).toEqual([{ text: 'Clip 01' }])  // deleted here → named from the predecessor
     expect(ops[2].entity_labels).toEqual([{ text: 'Clip 01' }])  // present here → named from its own snapshot
@@ -289,7 +289,7 @@ describe('History', () => {
     // predecessor's — the double-flatten the memo removes.
     const ghost = [{ kind: 'Layer' as const, id: 'ghost' }]
     for (let i = 0; i < 3; i++) {
-      h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted layer',
+      h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted clip',
         label_key: HISTORY_SUMMARY.layerDelete.key, affected: ghost, snapshot: counted(base) })
     }
 
@@ -309,7 +309,7 @@ describe('History', () => {
     const gen = seededGen()
     const p0 = blankProject(gen, 'labels')
     const h = new History(p0, U, gen())
-    h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted layer', label_key: 'history.layer.delete', affected: [{ kind: 'Layer', id: 'ghost' }], snapshot: p0 })
+    h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted clip', label_key: 'history.layer.delete', affected: [{ kind: 'Layer', id: 'ghost' }], snapshot: p0 })
     expect(h.view(10).ops[1].entity_labels).toEqual([{ text: 'ghost' }])
   })
 
@@ -375,7 +375,7 @@ describe('History', () => {
     }
     const withLayer = withRoot(p0, { tracks: root(p0).tracks.map((t, i) => (i === 0 ? { ...t, layers: [held] } : t)) })
     const h = new History(withLayer, U, gen())
-    h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted layer', label_key: 'history.layer.delete', affected: [{ kind: 'Layer', id: 'L1' }], snapshot: p0 })
+    h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted clip', label_key: 'history.layer.delete', affected: [{ kind: 'Layer', id: 'L1' }], snapshot: p0 })
     const ops = h.view(1).ops // window holds ONLY the delete; its predecessor is the seed
     expect(ops).toHaveLength(1)
     expect(ops[0].entity_labels).toEqual([{ text: 'Clip 01' }])

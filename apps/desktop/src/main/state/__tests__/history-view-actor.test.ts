@@ -30,7 +30,7 @@ const head = (actor: ReturnType<typeof createActor>) => actor.historyView(50).op
 describe('HistoryView rows carry label_key + entity_labels', () => {
   it('records the summary key next to the unchanged English summary', () => {
     const { actor } = twoLayers()
-    expect(head(actor)).toMatchObject({ summary: 'Updated layer', label_key: 'history.layer.update' })
+    expect(head(actor)).toMatchObject({ summary: 'Updated clip', label_key: 'history.layer.update' })
     expect(actor.historyView(50).ops[0]).toMatchObject({ summary: 'Initial', label_key: 'history.initial' })
   })
   it('names the affected layer with the label the timeline shows', () => {
@@ -59,7 +59,7 @@ describe('derived affected', () => {
     const trackId = val(actor.dispatch('add_track', { label: 'B-Roll' }))
     expect(head(actor)).toMatchObject({ summary: 'Added track', affected: [{ kind: 'Track', id: trackId }], entity_labels: [{ text: 'B-Roll' }] })
     const layerId = val(actor.dispatch('add_layer', { track: trackId, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }))
-    expect(head(actor)).toMatchObject({ summary: 'Added layer', affected: [{ kind: 'Layer', id: layerId }] })
+    expect(head(actor)).toMatchObject({ summary: 'Added clip', affected: [{ kind: 'Layer', id: layerId }] })
     expect(head(actor).entity_labels).toEqual([{ label_key: 'kinds.color' }]) // no label, no media → kind key
     const markerId = val(actor.dispatch('add_marker', { t_us: 0, label: 'Intro' }))
     expect(head(actor)).toMatchObject({ summary: 'Added marker', affected: [{ kind: 'Marker', id: markerId }], entity_labels: [{ text: 'Intro' }] })
@@ -68,7 +68,7 @@ describe('derived affected', () => {
     const { actor, l1 } = twoLayers()
     const r = actor.dispatch('split_layer', { layer: l1, at_t_us: 1_000_000 }) as { ok: true; value: { left: string; right: string } }
     expect(head(actor)).toMatchObject({
-      summary: 'Split layer',
+      summary: 'Split clip',
       affected: [{ kind: 'Layer', id: r.value.left }, { kind: 'Layer', id: r.value.right }],
     })
   })
