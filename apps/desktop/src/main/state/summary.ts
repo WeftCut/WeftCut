@@ -156,7 +156,7 @@ function anchorLayer(c: Composition, anchor: MarkerAnchor): Layer | undefined {
 /** The end a region marker SHOWS, or `null` for a point.
  *
  *  An anchored region's stored `end_t_us` is the span it was given — by hand,
- *  or by a producer such as *Detect silences* — and `reconcileMarkers` carries
+ *  or by a producer such as *Mark pauses* — and `reconcileMarkers` carries
  *  it at the same frame delta as the start. The model never clips it: a trim
  *  that shortens the clip into the region and is then undone or re-extended has
  *  to give the whole span back, exactly as hibernation gives a whole marker

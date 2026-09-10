@@ -17,7 +17,7 @@ import { captureMotifFrameB64 } from '../motif/capture.js'
 import { routeMcpTool } from './mutationTools.js'
 import { shapeMotifMcpResult } from './motifResult.js'
 import { runHybrid } from '../state/hybrids.js'
-import { CLIP_SLICE_TOOLS, resolveClipSliceArgs, TWO_SLICE_TOOLS, resolveTwoSliceArgs } from '../state/clip-slice-forward.js'
+import { CLIP_SLICE_TOOLS, resolveClipSliceArgs, resolvePauseComputeArgs, TWO_SLICE_TOOLS, resolveTwoSliceArgs } from '../state/clip-slice-forward.js'
 import { serveProjectResource, buildResourceInjection } from '../state/resource-views.js'
 import type { TsActorHost } from '../state/ts-actor-host.js'
 import type { ActorHandle, ChangeEvent } from '../state/actor.js'
@@ -78,6 +78,17 @@ const NO_VLM: VlmProvider = () => ({
   focus: null,
 })
 
+/** The baked peaks file `detect_pauses` must read for one SUBJECT Audio layer,
+ *  or `null` for "the media's own" (spec Decision 11). Supplied by the host,
+ *  because the bake state lives in main's audio-fx baker and nowhere else — it
+ *  is a derivation, never project state (ADR 0063).
+ *
+ *  A build with no baker (every test harness, a bare-core call) answers `null`
+ *  and reads the raw peaks, which is the same fallback a not-yet-baked layer
+ *  takes. */
+export type PeaksPathProvider = (subjectLayerId: string) => string | null
+const NO_PEAKS_PATH: PeaksPathProvider = () => null
+
 /** One clip-compute tool call: resolve the `{ layer, media }` slice from the
  *  actor (the sole state owner), inject the engine-selection hints the stateless
  *  Rust resolvers read, dispatch, and unwrap the envelope.
@@ -97,8 +108,14 @@ export async function callClipComputeTool(
   args: Record<string, unknown>,
   getPreferredEngine: () => string | null = () => null,
   getVlm: VlmProvider = NO_VLM,
+  peaksPathFor: PeaksPathProvider = NO_PEAKS_PATH,
 ): Promise<ServerResult> {
-  const merged = resolveClipSliceArgs(args, tsHost.actor.snapshot())
+  // `detect_pauses` takes its own resolver: the slice is the SUBJECT Audio
+  // layer, not the layer the caller named, and the peaks file rides with it
+  // (spec Decisions 1 and 11).
+  const merged = name === 'detect_pauses'
+    ? resolvePauseComputeArgs(args, tsHost.actor.snapshot(), peaksPathFor)
+    : resolveClipSliceArgs(args, tsHost.actor.snapshot())
   // ADR 0064: inject the explicitly selected model backend. None stays unset;
   // native resolution does not choose another configured model implicitly.
   // An agent's explicit backend override remains authoritative.
@@ -140,6 +157,7 @@ export async function handleCallTool(
   args: Record<string, unknown>,
   getPreferredEngine: () => string | null = () => null,
   getVlm: VlmProvider = NO_VLM,
+  peaksPathFor: PeaksPathProvider = NO_PEAKS_PATH,
 ): Promise<ServerResult> {
   const tsHost = getTsHost()
   if (tsHost?.agent && ['begin_agent_session', 'end_agent_session', 'lock_history', 'unlock_history'].includes(name)) {
@@ -187,7 +205,7 @@ export async function handleCallTool(
       return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult
     }
     if (CLIP_SLICE_TOOLS.has(name)) {
-      return callClipComputeTool(backend, tsHost, name, args, getPreferredEngine, getVlm)
+      return callClipComputeTool(backend, tsHost, name, args, getPreferredEngine, getVlm, peaksPathFor)
     }
     // route === 'rust' → fall through (other reads are served by the backend).
   }
@@ -371,6 +389,9 @@ export interface McpServerOptions {
   getTsHost?: () => TsActorHost | null
   getPreferredEngine?: () => string | null
   getVlm?: VlmProvider
+  /** Resolves a subject Audio layer to the baked peaks file `detect_pauses`
+   *  must read. Omitted → the raw media peaks, the pre-bake behaviour. */
+  peaksPathFor?: PeaksPathProvider
   /** LogBus emit + workspace identity for the six request handlers. Omitted →
    *  no rows at all, which is what a `buildMcpServer` without a bus wants.
    *
@@ -384,6 +405,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   const getTsHost = opts.getTsHost ?? (() => null)
   const getPreferredEngine = opts.getPreferredEngine ?? (() => null)
   const getVlm = opts.getVlm ?? NO_VLM
+  const peaksPathFor = opts.peaksPathFor ?? NO_PEAKS_PATH
   // `observe` is the session's to supply, not the caller's: it is the one log
   // seam that needs the routing table and the actor. An un-instrumented build
   // gets no window at all — nothing would read it, and the subscribe/unsubscribe
@@ -415,7 +437,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
     return { tools: mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS]) } as unknown as ServerResult
   }, log, clientInfo))
   server.setRequestHandler(CallToolRequestSchema, track('tools/call', async (req: CallToolRequest) =>
-    handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm),
+    handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm, peaksPathFor),
   log, clientInfo))
   server.setRequestHandler(ListResourcesRequestSchema, track('resources/list', async () => {
     const cat = JSON.parse(await backend.mcpCatalog()) as { resources: Array<{ uri: string }> }

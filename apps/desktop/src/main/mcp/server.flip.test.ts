@@ -90,7 +90,7 @@ describe('handleCallTool flip routing', () => {
     const spy = vi.fn((_name: string, _args: string) =>
       Promise.resolve('{"ok":true,"result":{"content":[{"type":"text","text":"[]"}]}}'),
     )
-    await handleCallTool(fakeBackend(spy), () => ts, 'detect_silences', { layer_id: 'gone' })
+    await handleCallTool(fakeBackend(spy), () => ts, 'detect_pauses', { layer_id: 'gone' })
     expect(spy).toHaveBeenCalledTimes(1)
     const merged = JSON.parse(spy.mock.calls[0][1])
     // The slice was resolved + merged (the intercept ran); 'gone' is not in the
@@ -100,6 +100,29 @@ describe('handleCallTool flip routing', () => {
     expect(merged.layer).toBeNull()
     expect(merged.media).toBeNull()
     expect(merged.layer_id).toBe('gone')
+  })
+  // Decision 11: the detection reads whatever the mixer plays, so the host
+  // resolves the fx sibling's peaks file and injects it beside the slice. A
+  // build with no baker injects null and Rust reads the media's own peaks —
+  // the same fallback a not-yet-baked layer takes.
+  it('injects the resolved fx peaks path for detect_pauses, and null without a baker', async () => {
+    const ts = tsHostStub()
+    const track = root(ts.actor.snapshot()).tracks[1].id
+    const AID = '00000000-0000-0000-0000-0000000000dd'
+    ts.actor.dispatch('add_media', { id: AID, kind: 'Audio', duration_us: 4_000_000 })
+    const add = ts.actor.dispatch('add_layer', { track, kind: 'audio', media: AID,
+      src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 })
+    expect(add.ok).toBe(true)
+    if (!add.ok) return
+    const layerId = add.value as string
+    const spy = vi.fn(okEnvelope)
+    const peaksPathFor = vi.fn(() => 'C:/cache/fx/abc.peaks')
+    await handleCallTool(fakeBackend(spy), () => ts, 'detect_pauses', { layer_id: layerId },
+      () => null, undefined, peaksPathFor)
+    expect(peaksPathFor).toHaveBeenCalledWith(layerId)
+    expect(JSON.parse(spy.mock.calls[0][1]).peaks_path).toBe('C:/cache/fx/abc.peaks')
+    await handleCallTool(fakeBackend(spy), () => ts, 'detect_pauses', { layer_id: layerId })
+    expect(JSON.parse(spy.mock.calls[1][1]).peaks_path).toBeNull()
   })
   it('begins work through the session service when the host provides it', async () => {
     const ts = tsHostStub()
@@ -210,7 +233,7 @@ describe('handleCallTool flip routing', () => {
   })
 
   // No UI to speak for → nothing injected, so Rust's own default decides. The
-  // `detectSilences` rule: one statement of a default, on the side that owns it.
+  // `detectPauses` rule: one statement of a default, on the side that owns it.
   it('injects no describe language when the provider has none', async () => {
     const ts = tsHostStub()
     const spy = vi.fn(okEnvelope)

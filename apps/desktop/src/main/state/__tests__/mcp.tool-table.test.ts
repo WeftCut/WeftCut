@@ -19,7 +19,7 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   'update_marker', 'remove_marker', 'attach_marker', 'detach_marker',
   'remove_media', 'undo', 'redo',
   'set_role_gain', 'set_role_flags',
-  // dedicated-exec tools — auto_split_by_shot and remove_silences are TS-owned
+  // dedicated-exec tools — auto_split_by_shot and remove_pauses are TS-owned
   // HYBRID defs (they route 'hybrid', not to an actor arm) that carry a
   // parseDedicated for the bijection required-scalar gate.
   'add_color_layer', 'add_video_layer', 'split_layer', 'add_marker',
@@ -29,7 +29,7 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   'set_keyframe_easing', 'smooth_keyframes', 'clear_keyframes', 'set_param_track',
   'set_keyframe_tangents', 'set_extrapolation',
   'dry_run', 'checkpoint', 'list_checkpoints', 'restore_checkpoint', 'begin_agent_session', 'end_agent_session',
-  'auto_split_by_shot', 'remove_silences',
+  'auto_split_by_shot', 'remove_pauses',
 ])
 
 describe('MCP tool table projections', () => {

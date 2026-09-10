@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   resolveClipSliceArgs,
+  resolvePauseComputeArgs,
   resolveTwoSliceArgs,
   CLIP_SLICE_TOOLS,
   TWO_SLICE_TOOLS,
@@ -29,7 +30,7 @@ describe('resolveClipSliceArgs', () => {
     expect(out.media).toBeNull()
   })
   it('lists exactly the clip-slice compute tools', () => {
-    expect([...CLIP_SLICE_TOOLS].sort()).toEqual(['analyze_clip', 'describe_clip', 'detect_silences', 'transcribe_clip'])
+    expect([...CLIP_SLICE_TOOLS].sort()).toEqual(['analyze_clip', 'describe_clip', 'detect_pauses', 'transcribe_clip'])
   })
 })
 
@@ -65,5 +66,65 @@ describe('resolveTwoSliceArgs', () => {
     const out = resolveTwoSliceArgs({ a: { layer_id: 'L1', t_us: 0 } }, snap)
     expect(out.a).toMatchObject({ layer: vclip, media })
     expect(out.b).toMatchObject({ layer: null, media: null })
+  })
+})
+
+// `detect_pauses` is the one clip-compute tool whose slice is not the layer the
+// caller named: it resolves the SUBJECT that plays, and carries the peaks file
+// that subject's effect chain baked (spec Decisions 1 and 11).
+const audio = { id: 'A1', params: { kind: 'Audio', media: 'm2' } } as never
+const pauseSnap = {
+  compositions: { r: { tracks: [{ layers: [vclip, audio, text] }], links: [{ id: 'k1', members: ['A1', 'L1'] }] } },
+  root_id: 'r',
+  media_pool: { m1: media, m2: media2 },
+} as never
+
+describe('resolvePauseComputeArgs', () => {
+  it('injects the subject Audio layer, its media and the fx peaks path', () => {
+    const peaksPathFor = vi.fn(() => 'C:/cache/fx/abc.peaks')
+    const out = resolvePauseComputeArgs({ layer_id: 'A1', threshold_amp: 0.02 }, pauseSnap, peaksPathFor)
+    expect(out.layer).toBe(audio)
+    expect(out.media).toBe(media2)
+    expect(out.peaks_path).toBe('C:/cache/fx/abc.peaks')
+    expect(out.threshold_amp).toBe(0.02)
+    // Keyed by the SUBJECT, never by the layer the caller named — the bake state
+    // hangs off the layer that plays.
+    expect(peaksPathFor).toHaveBeenCalledWith('A1')
+  })
+
+  it('resolves a VideoClip to its linked Audio partner, peaks and all', () => {
+    const peaksPathFor = vi.fn(() => 'C:/cache/fx/abc.peaks')
+    const out = resolvePauseComputeArgs({ layer_id: 'L1' }, pauseSnap, peaksPathFor)
+    expect(out.layer).toBe(audio)
+    expect(out.media).toBe(media2)
+    expect(peaksPathFor).toHaveBeenCalledWith('A1')
+  })
+
+  it('falls back to the raw peaks when no bake is ready, rather than refusing', () => {
+    // The same fallback the waveform tile fetch takes; export keeps its own
+    // strict gate.
+    const out = resolvePauseComputeArgs({ layer_id: 'A1' }, pauseSnap, () => null)
+    expect(out.peaks_path).toBeNull()
+    expect(out.layer).toBe(audio)
+  })
+
+  it('injects a null layer for a missing id and lets Rust own the not-found refusal', () => {
+    expect(resolvePauseComputeArgs({ layer_id: 'gone' }, pauseSnap, () => null))
+      .toMatchObject({ layer: null, media: null, peaks_path: null })
+  })
+
+  it('throws the plays-no-sound refusal for a layer with no subject', () => {
+    // Rust accepts `Audio` only, so an unresolved delegation must be named here
+    // in the vocabulary of the timeline rather than surfacing as a wire-shape
+    // complaint about a layer kind the agent was invited to pass.
+    const unlinked = {
+      compositions: { r: { tracks: [{ layers: [vclip, text] }], links: [] } },
+      root_id: 'r',
+      media_pool: { m1: media },
+    } as never
+    expect(() => resolvePauseComputeArgs({ layer_id: 'L1' }, unlinked, () => null))
+      .toThrow('detect_pauses: layer L1 plays no sound — it is a VideoClip with no linked Audio layer; select the audio clip')
+    expect(() => resolvePauseComputeArgs({ layer_id: 'L2' }, unlinked, () => null))
+      .toThrow(/plays no sound — it is a Text/)
   })
 })

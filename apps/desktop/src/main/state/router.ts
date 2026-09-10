@@ -45,20 +45,20 @@ export type Route =
  *  Either caller lands the same single commit; the MCP path differs only in
  *  wrapping the string result as a `ToolResult` text block (server.ts).
  *
- *  `mark_silences` is the same split one capability over: Rust reads the
- *  waveform peaks through `detect_silences`, the TS actor lands one region
- *  marker per silent range in a single commit. Renderer-only for
+ *  `mark_pauses` is the same split one capability over: Rust reads the
+ *  waveform peaks through `detect_pauses`, the TS actor lands one region
+ *  marker per pause in a single commit. Renderer-only for
  *  `apply_shot_cuts`' reason — an agent already has the read tool and
  *  `add_markers`.
  *
- *  `remove_silences` is the first silence arm reachable from BOTH the dialog
- *  and MCP: cutting the ranges out and closing the gaps is one recorded edit
- *  no sequence of advertised tools reproduces, so it carries a tool of its own
- *  (`mcp/mutationTools.ts` `HYBRID_TOOLS`) and this channel serves the very
- *  same arm. */
+ *  `remove_pauses` is the one pause arm reachable from BOTH the Attribute
+ *  Panel's Pauses section and MCP: cutting the cores out and closing the gaps
+ *  is one recorded edit no sequence of advertised tools reproduces, so it
+ *  carries a tool of its own (`mcp/mutationTools.ts` `HYBRID_TOOLS`) and this
+ *  channel serves the very same arm. */
 export const HYBRID_CHANNELS: ReadonlySet<string> = new Set([
-  'import_media', 'drop_shot_markers', 'apply_shot_cuts', 'mark_silences',
-  'remove_silences', 'apply_subtitles', 'synthesize_speech',
+  'import_media', 'drop_shot_markers', 'apply_shot_cuts', 'mark_pauses',
+  'remove_pauses', 'apply_subtitles', 'synthesize_speech',
 ])
 
 /** Read-only channels whose Rust entry point is a direct napi method (or the
@@ -101,7 +101,7 @@ export const DIRECT_NAPI_READS: ReadonlySet<string> = new Set([
  *  stays agent-only, because the renderer's shot surfaces read the whole-source
  *  report through `analyze_shots` instead. */
 export const CLIP_COMPUTE_CHANNELS: ReadonlySet<string> = new Set([
-  'detect_silences', 'transcribe_clip', 'describe_clip',
+  'detect_pauses', 'transcribe_clip', 'describe_clip',
 ])
 
 /** The audio-fx baker's own channels, served in `index.ts` by the baker — the

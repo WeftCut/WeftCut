@@ -129,7 +129,7 @@ export function buildResourceInjection(
     // resolved MediaItem, no injected config.
     if (uri.endsWith('/description')) {
       // Each axis omitted when there is no UI to speak for, so Rust's own
-      // default decides — the `detectSilences` rule, stated once here rather
+      // default decides — the `detectPauses` rule, stated once here rather
       // than once per axis. `'auto'` is such an absence: it is the setting's way
       // of saying "no preference", and the same value the tool path declines to
       // send as `preferred_backend` (`mcp/server.ts`).

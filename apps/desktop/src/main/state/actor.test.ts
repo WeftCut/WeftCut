@@ -433,7 +433,7 @@ describe('dispatch: split + links', () => {
     // of the clip has link members before it and after it. That is not a link
     // torn apart — the pieces before the cut end exactly at it — and the
     // planner lets the pieces after it close up, each V/A pair in lockstep.
-    // This is the silence cut's shape: a middle slice out, the rest tightens.
+    // This is the pause cut's shape: a middle slice out, the rest tightens.
     const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [1_000_000, 2_000_000, 4_000_000], discard_segments: [1, 3], ripple: true })
     expect(r.ok).toBe(true)
     if (!r.ok) return
@@ -1408,6 +1408,54 @@ describe('dispatch: role gain + flags + project settings', () => {
     actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
     actor.dispatch('undo', {})
     expect(actor.snapshot().settings.shot_review).toEqual(good)
+  })
+  it('update_project_settings stores pause_review, clears it with null, and records nothing', () => {
+    const { actor } = setup()
+    const before = actor.historyStatus().len
+    const tuned = { threshold_amp: 0.02, min_pause_us: 500_000, pad_us: 100_000 }
+    // One recording session is one project, so tuning a threshold is a
+    // preference — it must not put an entry between the edit before it and the
+    // edit after.
+    expect(actor.dispatch('update_project_settings', { patch: { pause_review: tuned } }).ok).toBe(true)
+    expect(actor.snapshot().settings.pause_review).toEqual(tuned)
+    expect(actor.historyStatus().len).toBe(before)
+    // Untouched by a patch that does not mention it, and untouched by the other
+    // review preference either.
+    actor.dispatch('update_project_settings', { patch: { shot_review: { sensitivity: 0.5, min_shot_us: 500_000 } } })
+    expect(actor.snapshot().settings.pause_review).toEqual(tuned)
+    // null = back to the detector's own defaults and the pad default.
+    expect(actor.dispatch('update_project_settings', { patch: { pause_review: null } }).ok).toBe(true)
+    expect(actor.snapshot().settings.pause_review).toBeNull()
+  })
+  it('update_project_settings refuses a pause_review the pipeline could not honour, whole', () => {
+    const { actor, a } = setup()
+    const good = { threshold_amp: 0.02, min_pause_us: 500_000, pad_us: 100_000 }
+    actor.dispatch('update_project_settings', { patch: { pause_review: good } })
+    for (const [bad, field] of [
+      [{ ...good, threshold_amp: 1.5 }, 'pause_review.threshold_amp'],
+      [{ ...good, threshold_amp: -0.1 }, 'pause_review.threshold_amp'],
+      [{ ...good, threshold_amp: Number.NaN }, 'pause_review.threshold_amp'],
+      [{ ...good, min_pause_us: 0 }, 'pause_review.min_pause_us'],
+      [{ ...good, min_pause_us: 1.5 }, 'pause_review.min_pause_us'],
+      [{ ...good, pad_us: -1 }, 'pause_review.pad_us'],
+      [{ ...good, pad_us: 1.5 }, 'pause_review.pad_us'],
+      // The pair constraint: 2 × 250 ms is not less than a 500 ms minimum, so
+      // every pause would come out with no core left to cut.
+      [{ ...good, pad_us: 250_000 }, 'pause_review.pad_us'],
+    ] as const) {
+      const r = actor.dispatch('update_project_settings', { patch: { pause_review: bad } })
+      expect(r.ok, field).toBe(false)
+      if (!r.ok) {
+        expect(r.error.error).toBe('InvalidArgument')
+        expect((r.error as { field?: string }).field).toBe(field)
+      }
+      // Refused BEFORE the replace, so the last good triple still stands.
+      expect(actor.snapshot().settings.pause_review).toEqual(good)
+    }
+    // And the preference survives undo like every other unrecorded setting.
+    actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    actor.dispatch('undo', {})
+    expect(actor.snapshot().settings.pause_review).toEqual(good)
   })
 })
 

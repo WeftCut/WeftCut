@@ -7,7 +7,7 @@
 // bucket that actually serves it, and every required scalar is enforced by its parser.
 //
 // The Rust snapshot is the LIVE rust-native surface ONLY: ping, the clip compute
-// tools (detect_silences, transcribe_clip, analyze_clip, compare_frames,
+// tools (detect_pauses, transcribe_clip, analyze_clip, compare_frames,
 // describe_clip), and the hybrid-import tools (import_media, apply_subtitles,
 // synthesize_speech). The mutation defs (MCP_TOOL_DEFS) and the motif defs are
 // TS-owned — TS is their source of truth, so there is nothing for them to "be
@@ -82,7 +82,7 @@ describe('MCP catalog↔handler bijection (permanent gate)', () => {
 
   it('4. every TS def routes ts (hybrid for TS-owned hybrid defs); every motif def routes motif except preview_motif_draft (rust capture)', () => {
     // A TS def normally routes 'ts'; a TS-owned HYBRID def (auto_split_by_shot,
-    // remove_silences) routes 'hybrid' — HYBRID_TOOLS is consulted before
+    // remove_pauses) routes 'hybrid' — HYBRID_TOOLS is consulted before
     // MCP_TOOLS, because their input computes in Rust while the edit writes
     // through the TS actor.
     for (const d of MCP_TOOL_DEFS) expect(routeMcpTool(d.name), d.name).toBe(HYBRID_TOOLS.has(d.name) ? 'hybrid' : 'ts')

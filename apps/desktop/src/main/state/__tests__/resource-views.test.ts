@@ -140,7 +140,7 @@ describe('buildResourceInjection', () => {
   })
 
   // No UI to speak for → nothing injected, so Rust's own defaults decide. The
-  // `detectSilences` rule: one statement of a default, on the side that owns it.
+  // `detectPauses` rule: one statement of a default, on the side that owns it.
   it('injects no view axis the provider has none for', () => {
     const actor = mkActor()
     const snap = { ...actor.snapshot(), media_pool: { m1: mediaItemTemplate('m1', 'Video', 1_000_000) } } as never

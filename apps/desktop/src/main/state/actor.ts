@@ -676,6 +676,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     prefer_proxies?: boolean | null
     proxy_override?: { media_id: string; value: boolean | null } | null
     shot_review?: { sensitivity: number; min_shot_us: number } | null
+    pause_review?: { threshold_amp: number; min_pause_us: number; pad_us: number } | null
   }): void {
     // Validated whole or refused whole, against the SAME bounds
     // `reduce_shot_report` enforces at the napi boundary — so a pair that
@@ -690,6 +691,25 @@ export function createActor(opts: ActorOptions): ActorHandle {
         throw new CommandFailure({ error: 'InvalidArgument', field: 'shot_review.min_shot_us', detail: `min_shot_us ${String(o.min_shot_us)} must be a positive whole number of microseconds` })
       return { sensitivity: o.sensitivity, min_shot_us: o.min_shot_us }
     }
+    // Same whole-or-refused discipline, against the bounds the pause pipeline
+    // itself enforces: `threshold_amp` is the wire unit `detect_pauses` takes,
+    // and `2 · pad_us < min_pause_us` is what leaves every detected pause a
+    // core to cut (`hybrids.ts` `pauseCores`). Refusing a triple here rather
+    // than at the cut is what keeps a stored preference one a later removal
+    // will accept.
+    function reviewedPauseParams(v: unknown): { threshold_amp: number; min_pause_us: number; pad_us: number } | null {
+      if (v === null) return null
+      const o = v as { threshold_amp?: unknown; min_pause_us?: unknown; pad_us?: unknown }
+      if (typeof o !== 'object' || typeof o.threshold_amp !== 'number' || !Number.isFinite(o.threshold_amp) || o.threshold_amp < 0 || o.threshold_amp > 1)
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'pause_review.threshold_amp', detail: `threshold_amp ${String(o?.threshold_amp)} must be a finite number in [0, 1]` })
+      if (typeof o.min_pause_us !== 'number' || !Number.isSafeInteger(o.min_pause_us) || o.min_pause_us <= 0)
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'pause_review.min_pause_us', detail: `min_pause_us ${String(o.min_pause_us)} must be a positive whole number of microseconds` })
+      if (typeof o.pad_us !== 'number' || !Number.isSafeInteger(o.pad_us) || o.pad_us < 0)
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'pause_review.pad_us', detail: `pad_us ${String(o.pad_us)} must be a whole number of microseconds >= 0` })
+      if (2 * o.pad_us >= o.min_pause_us)
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'pause_review.pad_us', detail: `pad_us ${o.pad_us} keeps ${2 * o.pad_us}us of every pause, which is not less than min_pause_us ${o.min_pause_us} — nothing would be cut` })
+      return { threshold_amp: o.threshold_amp, min_pause_us: o.min_pause_us, pad_us: o.pad_us }
+    }
     const next = { ...current().settings, proxy_overrides: { ...current().settings.proxy_overrides } }
     if (typeof patch.prefer_proxies === 'boolean') next.prefer_proxies = patch.prefer_proxies
     if (patch.proxy_override) {
@@ -701,6 +721,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     // the detector's defaults. The refusal above happens BEFORE the replace,
     // so a rejected patch leaves every snapshot untouched.
     if (patch.shot_review !== undefined) next.shot_review = reviewedShotParams(patch.shot_review)
+    if (patch.pause_review !== undefined) next.pause_review = reviewedPauseParams(patch.pause_review)
     history.replaceSettingsEverywhere(next)
     broadcastUnrecorded('Updated project settings', current())
   }
@@ -1243,7 +1264,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'remove_media': removeMedia(a.media as Uuid, (a.force as boolean) ?? false); return { ok: true, value: null }
         case 'set_role_gain': setRoleGain(a.role as string, parseNum(a.gain_db, 'gain_db')); return { ok: true, value: null }
         case 'update_role_flags': updateRoleFlags(a.role as string, a.patch as RoleFlagsPatch); return { ok: true, value: null }
-        case 'update_project_settings': updateProjectSettings(a.patch as { prefer_proxies?: boolean | null; proxy_override?: { media_id: string; value: boolean | null } | null; shot_review?: { sensitivity: number; min_shot_us: number } | null }); return { ok: true, value: null }
+        case 'update_project_settings': updateProjectSettings(a.patch as { prefer_proxies?: boolean | null; proxy_override?: { media_id: string; value: boolean | null } | null; shot_review?: { sensitivity: number; min_shot_us: number } | null; pause_review?: { threshold_amp: number; min_pause_us: number; pad_us: number } | null }); return { ok: true, value: null }
         case 'add_caption_track': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.trackAddCaption, trackRef, { kind: 'Coarse' }, (d) => applyAddCaptionTrack(d, idGen, a.cues as Cue[], a.comp_w as number, a.comp_h as number, (a.label as string) ?? null, comp)) } }
         case 'restyle_captions': {
           // Project-wide: one commit over EVERY caption-role track in every

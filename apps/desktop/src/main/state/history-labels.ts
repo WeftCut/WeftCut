@@ -42,7 +42,7 @@ export const HISTORY_SUMMARY = {
   layerDeleteMulti: { key: 'history.layer.delete_multi', text: 'Deleted clips' },
   layerRippleDelete: { key: 'history.layer.ripple_delete', text: 'Ripple deleted clips' },
   // A multi-split whose discarded segments also closed their holes — the
-  // silence cut's entry. Its own label because "split by shots" would name a
+  // pause cut's entry. Its own label because "split by shots" would name a
   // detector the edit never ran.
   layerSplitAndRipple: { key: 'history.layer.split_and_ripple', text: 'Split clip and closed the gaps' },
   layerUpdate: { key: 'history.layer.update', text: 'Updated clip' },

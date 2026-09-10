@@ -1,13 +1,18 @@
 import type { Layer, MediaItem, Project } from './model'
 import { eachLayer } from './model'
+import { playsNoSoundError, resolvePauseSubject } from './pauseSubject'
 
 /** MCP clip compute tools whose Rust handler takes one layer + its MediaItem
  *  (the `resolve_clip_audio_source` / `resolve_clip_video_source` inputs) as an
  *  injected slice; the TS actor (the sole state owner) resolves and forwards it.
- *  `detect_silences` / `transcribe_clip` read the layer's audio; `describe_clip`
- *  and `analyze_clip` read its video frames. */
+ *  `detect_pauses` / `transcribe_clip` read the layer's audio; `describe_clip`
+ *  and `analyze_clip` read its video frames.
+ *
+ *  `detect_pauses` takes its slice from `resolvePauseComputeArgs` below rather
+ *  than from `resolveClipSliceArgs`: it is the one tool whose slice is not the
+ *  named layer (spec Decision 1). */
 export const CLIP_SLICE_TOOLS: ReadonlySet<string> = new Set([
-  'detect_silences', 'transcribe_clip', 'describe_clip', 'analyze_clip',
+  'detect_pauses', 'transcribe_clip', 'describe_clip', 'analyze_clip',
 ])
 
 /** MCP clip compute tools shaped `{ a:{layer_id,t_us}, b:{layer_id,t_us} }` —
@@ -41,6 +46,45 @@ export function resolveClipSliceArgs(
 ): Record<string, unknown> {
   const { layer, media } = resolveLayerSlice((args as { layer_id?: string }).layer_id ?? '', snapshot)
   return { ...args, layer, media }
+}
+
+/** Resolve `detect_pauses`' slice: the SUBJECT Audio layer, its media, and the
+ *  peaks file the detection must read.
+ *
+ *  Not `resolveClipSliceArgs`, because the named layer is not necessarily the
+ *  one that plays — a VideoClip delegates to its linked audio (spec Decision 1)
+ *  — and the detector's answer has to describe the samples the mixer will send.
+ *  `peaks_path` follows the same principle one level down (Decision 11): when
+ *  the subject's effect chain has a baked peaks sibling on disk, the bands the
+ *  detection produces are read off the very file the timeline waveform draws,
+ *  so the two can never disagree. `null` falls back to the media's own peaks
+ *  rather than refusing, mirroring the tile fetch; export keeps its own strict
+ *  gate.
+ *
+ *  A missing layer injects `layer: null` and lets Rust own the not-found
+ *  refusal, exactly as the general resolver does. A layer with no subject is
+ *  refused HERE instead: Rust accepts `Audio` only, so passing the VideoClip
+ *  through would surface the host's own unresolved delegation as a wire-shape
+ *  complaint about a layer kind the agent was invited to pass. */
+export function resolvePauseComputeArgs(
+  args: Record<string, unknown>,
+  snapshot: Pick<Project, 'compositions' | 'media_pool'>,
+  peaksPathFor: (subjectLayerId: string) => string | null,
+): Record<string, unknown> {
+  const layerId = (args as { layer_id?: string }).layer_id ?? ''
+  const resolved = resolvePauseSubject(layerId, snapshot)
+  if (!resolved.ok) {
+    if (resolved.reason === 'plays_no_sound') throw playsNoSoundError('detect_pauses', layerId, snapshot)
+    return { ...args, layer: null, media: null, peaks_path: null }
+  }
+  const { subject } = resolved
+  const mediaId = subject.params.kind === 'Audio' ? subject.params.media : null
+  return {
+    ...args,
+    layer: subject,
+    media: mediaId ? snapshot.media_pool[mediaId] ?? null : null,
+    peaks_path: peaksPathFor(subject.id),
+  }
 }
 
 /** Resolve BOTH nested clip slices for a two-slice tool: each of `a` / `b` gets

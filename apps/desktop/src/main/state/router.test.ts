@@ -41,10 +41,10 @@ const ALL_CHANNELS: readonly string[] = [
   // audio-fx baker route (main-served: the baker holds the derived bake state)
   'audio_fx_snapshot', 'ensure_export_audio_fx', 'audio_fx_reverify',
   // hybrids (native-compute → TS-write)
-  'import_media', 'drop_shot_markers', 'apply_shot_cuts', 'mark_silences', 'remove_silences',
+  'import_media', 'drop_shot_markers', 'apply_shot_cuts', 'mark_pauses', 'remove_pauses',
   'apply_subtitles', 'synthesize_speech',
   // clip compute (actor-resolved { layer, media } slice, no actor write)
-  'detect_silences', 'transcribe_clip', 'describe_clip',
+  'detect_pauses', 'transcribe_clip', 'describe_clip',
   // direct-napi reads (served by an index.ts intercept, never by the router)
   'analyze_shots', 'analyze_shots_floor', 'shot_floor_report_cached',
   'shot_floor_sensitivity', 'shot_default_opts', 'reduce_shot_report',
@@ -218,9 +218,9 @@ describe('routeChannel', () => {
   // undo entry, no dirty flag) and must not reach bare rust either — the
   // stateless handler needs the actor-resolved slice index.ts injects.
   it('routes the three clip-compute channels to their own read kind', () => {
-    for (const ch of ['detect_silences', 'transcribe_clip', 'describe_clip'])
+    for (const ch of ['detect_pauses', 'transcribe_clip', 'describe_clip'])
       expect(routeChannel(ch), ch).toEqual({ kind: 'clipCompute' })
-    for (const ch of ['detect_silences', 'transcribe_clip', 'describe_clip'])
+    for (const ch of ['detect_pauses', 'transcribe_clip', 'describe_clip'])
       expect(PRODUCTION_OPS.has(ch), ch).toBe(false)
   })
   // `analyze_clip` shares the MCP slice-injection path but has no renderer

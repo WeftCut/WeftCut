@@ -31,12 +31,12 @@ describe('routeMcpTool', () => {
   it('routes the live rust-native tools to rust', () => {
     // Link reads come from the project://current summary resource (it includes
     // `links`), not an MCP tool.
-    for (const t of ['ping', 'detect_silences', 'transcribe_clip'])
+    for (const t of ['ping', 'detect_pauses', 'transcribe_clip'])
       expect(routeMcpTool(t), t).toBe('rust')
   })
   it('routes the TS-owned hybrid defs to the hybrid orchestrator (Rust compute + TS writes)', () => {
     expect(routeMcpTool('auto_split_by_shot')).toBe('hybrid')
-    expect(routeMcpTool('remove_silences')).toBe('hybrid')
+    expect(routeMcpTool('remove_pauses')).toBe('hybrid')
   })
   it('single-writer invariant: every TS-def tool routes to ts (or hybrid for a TS-owned hybrid), never rust', () => {
     // No TS-def tool may reach the Rust project writer. Almost all route 'ts';
@@ -44,11 +44,11 @@ describe('routeMcpTool', () => {
     // their edits still write through the TS actor, so single-writer holds.
     for (const t of MCP_TOOLS) expect(routeMcpTool(t), t).toBe(HYBRID_TOOLS.has(t) ? 'hybrid' : 'ts')
   })
-  it('the hybrid tools with a TS-owned def are auto_split_by_shot and remove_silences (the rest are Rust-catalog-sourced)', () => {
+  it('the hybrid tools with a TS-owned def are auto_split_by_shot and remove_pauses (the rest are Rust-catalog-sourced)', () => {
     // import_media / apply_subtitles / synthesize_speech advertise via the Rust
     // catalog, so they are NOT in MCP_TOOLS. The two whose defs are TS-owned —
     // they must merge into the catalog from the TS side — are the only overlap.
-    const TS_OWNED = new Set(['auto_split_by_shot', 'remove_silences'])
+    const TS_OWNED = new Set(['auto_split_by_shot', 'remove_pauses'])
     for (const t of HYBRID_TOOLS) {
       expect(MCP_TOOLS.has(t), t).toBe(TS_OWNED.has(t))
     }
@@ -60,7 +60,7 @@ describe('merged ListTools is a clean catalog↔handler bijection', () => {
   // must stay a duplicate-free union where every name routes to exactly one engine.
   const rust4a = [...MCP_TOOLS].map((n) => ({ name: n })).concat(
     [{ name: 'ping' }, { name: 'list_motifs' }, { name: 'get_motif_source' }, { name: 'preview_motif_draft' },
-     { name: 'detect_silences' }, { name: 'transcribe_clip' }, { name: 'import_media' }, { name: 'apply_subtitles' },
+     { name: 'detect_pauses' }, { name: 'transcribe_clip' }, { name: 'import_media' }, { name: 'apply_subtitles' },
      { name: 'install_motif' }, { name: 'motif_staleness_report' }, { name: 'acknowledge_motif_staleness' }, { name: 'synthesize_speech' }],
   )
   const tsDefs = MCP_TOOL_DEFS.map((d) => ({ name: d.name, description: d.description, inputSchema: d.inputSchema }))

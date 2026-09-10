@@ -238,6 +238,13 @@ export interface ProjectMetadata { name: string; created_at: string; modified_at
  *  the way in. `sensitivity` reads backwards — a higher value yields FEWER
  *  cuts — which is why it never reaches a label; see ADR 0057. */
 export interface ShotReviewSettings { sensitivity: number; min_shot_us: number }
+/** The Pauses section's three tuned parameters: the peak amplitude a stretch
+ *  must stay under to count as quiet, the shortest pause surfaced, and how much
+ *  of each pause a removal keeps on EACH side. `2 · pad_us < min_pause_us`
+ *  holds by validation (`actor.ts`), so every detected pause has a core left to
+ *  cut. Stored as amplitude, not dB: it is the wire unit `detect_pauses` takes,
+ *  and the section's slider is the only surface that thinks in decibels. */
+export interface PauseReviewSettings { threshold_amp: number; min_pause_us: number; pad_us: number }
 export interface ProjectSettings {
   preview_width: number; preview_height: number; autosave_interval_secs: number | null
   history_capacity: number; auto_pair_audio_on_import: boolean
@@ -249,6 +256,11 @@ export interface ProjectSettings {
    *  (`Backend::shot_default_opts`), and a copy here would be free to drift
    *  from the value a zero-argument apply and `analyze_clip` both use. */
   shot_review: ShotReviewSettings | null
+  /** The tuned pause parameters, or `null` for "whatever the detector and the
+   *  pad default resolve to". Per project rather than global because one
+   *  recording session is one project, and two projects rarely share a noise
+   *  floor. */
+  pause_review: PauseReviewSettings | null
 }
 export interface Project {
   schema_version: number; project_id: Uuid; metadata: ProjectMetadata
@@ -309,7 +321,7 @@ export function* eachLayer(p: Pick<Project, 'compositions'>): Iterable<{ composi
 export function defaultSettings(): ProjectSettings {
   return { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
     history_capacity: 200, auto_pair_audio_on_import: true,
-    prefer_proxies: false, proxy_overrides: {}, shot_review: null }
+    prefer_proxies: false, proxy_overrides: {}, shot_review: null, pause_review: null }
 }
 
 /** Mirror of Rust `Project::new_blank`. Id order: A-roll, B-roll, project_id,

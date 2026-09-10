@@ -2,13 +2,15 @@ import { describe, it, expect, vi } from 'vitest'
 import { createActor, type ActorHandle } from '../actor'
 import { seededGen } from '../ids'
 import { blankProject, type MediaItem } from '../model'
-import { mediaItemTemplate, videoClipParams } from '../mutations/media'
+import { audioParams, mediaItemTemplate, videoClipParams } from '../mutations/media'
 import { applyAddLayer } from '../mutations/add'
 import { markerHibernating } from '../summary'
 import {
-  runHybrid, markShotCuts, cutsToTimeline, SILENCE_MARKER_COLOR,
-  type HybridDeps, type SilenceRegion,
+  runHybrid, markShotCuts, cutsToTimeline, pauseCores,
+  DEFAULT_PAUSE_PAD_US, PAUSE_MARKER_COLOR,
+  type HybridDeps,
 } from '../hybrids'
+import { resolvePauseSubject } from '../pauseSubject'
 import { applyWorkspacePathsEvent } from '../jobs-writeback'
 import { root, withGroup } from './fixtures/project'
 
@@ -63,7 +65,7 @@ function makeDeps(actor: ActorHandle, opts: { workspaceDir?: string | null; file
       analyzeShotsFloor: vi.fn(async () => JSON.stringify({ shots: [], cut_scores: [] })),
       reduceShotReport: vi.fn((reportJson: string) => reportJson),
       shotDefaultOpts: vi.fn(() => ({ ...RUST_SHOT_DEFAULTS })),
-      detectSilences: vi.fn(async () => [] as SilenceRegion[]),
+      detectPauses: vi.fn(async () => ({ pauses: [], noise_floor_amp: 0, peaks_source: 'raw' as const })),
     },
     enqueueDerivatives,
     enqueueWorkspaceCopy,
@@ -1019,27 +1021,44 @@ describe('runHybrid: apply_shot_cuts', () => {
   })
 })
 
-/** Point the silence compute at one fixed region list and hand back the spy.
+/** Point the pause compute at one fixed range list and hand back the spy.
  *
  *  The detector itself is Rust's and unit-tested there, so what these tests own
- *  is the TS half: which parameters reach it, and what its answer becomes on the
- *  timeline. The list arrives TIMELINE-absolute and pre-clipped, which is the
- *  contract `detect_silences` states. */
-function withSilences(deps: HybridDeps, regions: Array<[number, number]>) {
-  const detectSilences = vi.fn(async () =>
-    regions.map(([t_start_us, t_end_us]) => ({ t_start_us, t_end_us })))
-  deps.compute.detectSilences = detectSilences
-  return { detectSilences }
+ *  is the TS half: which subject and which parameters reach it, and what its
+ *  answer becomes on the timeline. The list arrives TIMELINE-absolute and
+ *  pre-clipped, which is the contract `detect_pauses` states. */
+function withPauses(deps: HybridDeps, ranges: Array<[number, number]>) {
+  const detectPauses = vi.fn(async () => ({
+    pauses: ranges.map(([t_start_us, t_end_us]) => ({ t_start_us, t_end_us })),
+    noise_floor_amp: 0.004,
+    peaks_source: 'raw' as const,
+  }))
+  deps.compute.detectPauses = detectPauses
+  return { detectPauses }
 }
 
-/** Fresh project with an Audio layer on the B-roll track — the second kind
- *  `mark_silences` admits, and the one a shot operation refuses. */
+/** Fresh project with an Audio layer on the B-roll track — the only kind that
+ *  is its OWN pause subject, and the one a shot operation refuses. */
 function withAudioLayer(durationUs = 6_000_000) {
   const actor = freshActor()
   const track = root(actor.snapshot()).tracks[1].id
   const AID = '00000000-0000-0000-0000-0000000000dd'
   actor.dispatch('add_media', { id: AID, kind: 'Audio', duration_us: durationUs })
   const add = actor.dispatch('add_layer', { track, kind: 'audio', media: AID, src_in_us: 0, src_out_us: durationUs, t_start_us: 0, t_end_us: durationUs })
+  if (!add.ok) throw new Error(JSON.stringify(add.error))
+  return { actor, track, layerId: add.value as string }
+}
+
+/** An Audio layer with a source window offset from its timeline placement —
+ *  the only shape in which a source time and a timeline time can be told apart. */
+function withOffsetAudioLayer(opts: { srcInUs: number; srcOutUs: number; tStartUs: number }) {
+  const actor = freshActor()
+  const track = root(actor.snapshot()).tracks[1].id
+  const AID = '00000000-0000-0000-0000-0000000000dd'
+  actor.dispatch('add_media', { id: AID, kind: 'Audio', duration_us: 10_000_000 })
+  const add = actor.dispatch('add_layer', { track, kind: 'audio', media: AID,
+    src_in_us: opts.srcInUs, src_out_us: opts.srcOutUs,
+    t_start_us: opts.tStartUs, t_end_us: opts.tStartUs + (opts.srcOutUs - opts.srcInUs) })
   if (!add.ok) throw new Error(JSON.stringify(add.error))
   return { actor, layerId: add.value as string }
 }
@@ -1049,64 +1068,202 @@ function markerSpans(actor: ActorHandle): Array<[number, number | null]> {
   return root(actor.snapshot()).markers.map((m) => [m.t_us, m.end_t_us ?? null])
 }
 
-describe('runHybrid: mark_silences', () => {
-  it('lands one REGION marker per detected range, in ONE history entry', async () => {
+/** An Audio layer one composition deeper: the smallest project in which "the
+ *  subject's composition" and "the root" differ. */
+function withAudioLayerInGroup(durationUs = 6_000_000) {
+  const idGen = seededGen()
+  const p = blankProject(idGen, 'hg')
+  const AID = '00000000-0000-0000-0000-0000000000dd'
+  p.media_pool[AID] = mediaItemTemplate(AID, 'Audio', durationUs)
+  let layerId = ''
+  const { p: withComp, groupId } = withGroup(p, idGen, (g, view) => {
+    layerId = applyAddLayer(view, idGen, g.tracks[1].id, audioParams(AID, 0, durationUs), 0, durationUs)
+  })
+  const actor = createActor({ initial: withComp, idGen, clock: () => '<TS>' })
+  return { actor, groupId, layerId }
+}
+
+describe('resolvePauseSubject', () => {
+  it('an Audio layer is its own subject, delegating from nothing', () => {
+    const { actor, layerId } = withAudioLayer()
+    const r = resolvePauseSubject(layerId, actor.snapshot())
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.subject.id).toBe(layerId)
+    expect(r.delegatedFrom).toBeNull()
+  })
+
+  it('a VideoClip delegates to the sole Audio member of its link', () => {
+    const { actor, layerId, audioId } = withLinkedAudio()
+    const r = resolvePauseSubject(layerId, actor.snapshot())
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.subject.id).toBe(audioId)
+    expect(r.delegatedFrom?.id).toBe(layerId)
+  })
+
+  it('the member sharing the clip’s media wins over a second Audio member', () => {
+    // A paired A/V import puts picture and sound in ONE file, and the link may
+    // also hold a music bed. Same-media is what tells the clip's own track from
+    // everything else that happens to be tied to it.
+    const { actor, track, mediaId, layerId } = withVideoLayer(6_000_000)
+    const sameMedia = actor.dispatch('add_layer', { track, kind: 'audio', media: mediaId,
+      src_in_us: 0, src_out_us: 6_000_000, t_start_us: 0, t_end_us: 6_000_000 })
+    expect(sameMedia.ok).toBe(true)
+    if (!sameMedia.ok) return
+    const MUSIC = '00000000-0000-0000-0000-0000000000ee'
+    actor.dispatch('add_media', { id: MUSIC, kind: 'Audio', duration_us: 6_000_000 })
+    const other = actor.dispatch('add_layer', { track: root(actor.snapshot()).tracks[1].id, kind: 'audio',
+      media: MUSIC, src_in_us: 0, src_out_us: 6_000_000, t_start_us: 0, t_end_us: 6_000_000 })
+    expect(other.ok).toBe(true)
+    if (!other.ok) return
+    const linked = actor.dispatch('links_create', { layers: [layerId, sameMedia.value as string, other.value as string], reassign: false })
+    expect(linked.ok).toBe(true)
+    const r = resolvePauseSubject(layerId, actor.snapshot())
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.subject.id).toBe(sameMedia.value as string)
+  })
+
+  it('two Audio members and neither shares the media — ambiguous, so no subject', () => {
+    const { actor, track, layerId } = withVideoLayer(6_000_000)
+    const ids: string[] = []
+    for (const [i, id] of ['00000000-0000-0000-0000-0000000000e1', '00000000-0000-0000-0000-0000000000e2'].entries()) {
+      actor.dispatch('add_media', { id, kind: 'Audio', duration_us: 6_000_000 })
+      const add = actor.dispatch('add_layer', { track: i === 0 ? track : root(actor.snapshot()).tracks[1].id,
+        kind: 'audio', media: id, src_in_us: 0, src_out_us: 6_000_000, t_start_us: 0, t_end_us: 6_000_000 })
+      expect(add.ok).toBe(true)
+      if (add.ok) ids.push(add.value as string)
+    }
+    expect(actor.dispatch('links_create', { layers: [layerId, ...ids], reassign: false }).ok).toBe(true)
+    expect(resolvePauseSubject(layerId, actor.snapshot())).toEqual({ ok: false, reason: 'plays_no_sound' })
+  })
+
+  it('an unlinked VideoClip has no subject — its embedded track is not what plays', () => {
     const { actor, layerId } = withVideoLayer(6_000_000)
+    expect(resolvePauseSubject(layerId, actor.snapshot())).toEqual({ ok: false, reason: 'plays_no_sound' })
+  })
+
+  it('any other kind has no subject, and a missing layer is not_found', () => {
+    const actor = freshActor()
+    const track = root(actor.snapshot()).tracks[0].id
+    const add = actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 })
+    expect(add.ok).toBe(true)
+    if (!add.ok) return
+    expect(resolvePauseSubject(add.value as string, actor.snapshot())).toEqual({ ok: false, reason: 'plays_no_sound' })
+    expect(resolvePauseSubject('nope', actor.snapshot())).toEqual({ ok: false, reason: 'not_found' })
+  })
+})
+
+describe('pauseCores', () => {
+  const layer = { t_start_us: 0, t_end_us: 6_000_000 }
+
+  it('shrinks an interior pause by the pad on BOTH sides', () => {
+    expect(pauseCores([{ t_start_us: 1_000_000, t_end_us: 2_000_000 }], 100_000, layer))
+      .toEqual([{ t_start_us: 1_100_000, t_end_us: 1_900_000 }])
+  })
+
+  it('a pause touching the head keeps no pad on the head side', () => {
+    // There is no material outside the clip to breathe into, so the pad would
+    // have nothing to protect — and the whole-trim rule already discards the
+    // stretch to the clip's own edge.
+    expect(pauseCores([{ t_start_us: 0, t_end_us: 1_000_000 }], 100_000, layer))
+      .toEqual([{ t_start_us: 0, t_end_us: 900_000 }])
+  })
+
+  it('a pause touching the tail keeps no pad on the tail side', () => {
+    expect(pauseCores([{ t_start_us: 5_000_000, t_end_us: 6_000_000 }], 100_000, layer))
+      .toEqual([{ t_start_us: 5_100_000, t_end_us: 6_000_000 }])
+  })
+
+  it('drops a core the pad collapses instead of cutting a zero-length hole', () => {
+    // Unreachable under the validated `2 · pad < min_pause_us`; reachable when a
+    // caller omitted `min_pause_us` so the pair could not be checked.
+    expect(pauseCores([{ t_start_us: 1_000_000, t_end_us: 1_300_000 }], 200_000, layer)).toEqual([])
+  })
+
+  it('keeps two cores separate rather than merging what the pad left between them', () => {
+    expect(pauseCores(
+      [{ t_start_us: 1_000_000, t_end_us: 2_000_000 }, { t_start_us: 2_100_000, t_end_us: 3_100_000 }],
+      100_000, layer,
+    )).toEqual([
+      { t_start_us: 1_100_000, t_end_us: 1_900_000 },
+      { t_start_us: 2_200_000, t_end_us: 3_000_000 },
+    ])
+  })
+
+  it('a zero pad is the erase-whole case', () => {
+    expect(pauseCores([{ t_start_us: 1_000_000, t_end_us: 2_000_000 }], 0, layer))
+      .toEqual([{ t_start_us: 1_000_000, t_end_us: 2_000_000 }])
+  })
+})
+
+describe('runHybrid: mark_pauses', () => {
+  it('lands one REGION marker per detected range, in ONE history entry', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
+    withPauses(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
     const lenBefore = actor.historyStatus().len
-    expect(await runHybrid('mark_silences', { layer_id: layerId }, deps))
+    expect(await runHybrid('mark_pauses', { layer_id: layerId }, deps))
       .toEqual({ markers: 2, marker_ids: expect.arrayContaining([expect.any(String)]) })
     // Single-undo acceptance: a whole detected set is one commit.
     expect(actor.historyStatus().len - lenBefore).toBe(1)
-    // A region, not a point: `end_t_us` is what makes the silence's LENGTH
+    // A region, not a point: `end_t_us` is what makes the pause's LENGTH
     // legible on the ruler, which is the whole review surface this slice ships.
     expect(markerSpans(actor)).toEqual([[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
   })
 
-  it('labels and colours the marks as a class of their own, not as shot marks', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+  it('marks the WHOLE pause — the pad is the removal’s business, not the mark’s', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[1_000_000, 2_000_000]])
-    await runHybrid('mark_silences', { layer_id: layerId }, deps)
+    withPauses(deps, [[1_000_000, 2_000_000]])
+    await runHybrid('mark_pauses', { layer_id: layerId, pad_us: 250_000 }, deps)
+    expect(markerSpans(actor)).toEqual([[1_000_000, 2_000_000]])
+  })
+
+  it('labels and colours the marks as a class of their own, not as shot marks', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withPauses(deps, [[1_000_000, 2_000_000]])
+    await runHybrid('mark_pauses', { layer_id: layerId }, deps)
     const [m] = root(actor.snapshot()).markers
-    expect(m.label).toBe('Silence')
+    expect(m.label).toBe('Pause')
     // Explicitly NOT the `add_markers` shot-blue default: the two machine
     // producers sit on the same clip and have to be separable at a glance.
-    expect(m.color).toEqual(SILENCE_MARKER_COLOR)
+    expect(m.color).toEqual(PAUSE_MARKER_COLOR)
     expect(m.color).not.toEqual({ r: 0, g: 128, b: 255, a: 255 })
   })
 
-  it("anchors every mark to the clip at its range's SOURCE time", async () => {
+  it("anchors every mark to the subject at its range's SOURCE time", async () => {
     // Source window [1s, 7s) placed at 2s, so timeline = source + 1s: an anchor
     // that merely copied t_us would be off by exactly that offset.
-    const { actor, layerId } = withVideoLayer(10_000_000, { srcInUs: 1_000_000, srcOutUs: 7_000_000, tStartUs: 2_000_000 })
+    const { actor, layerId } = withOffsetAudioLayer({ srcInUs: 1_000_000, srcOutUs: 7_000_000, tStartUs: 2_000_000 })
     const deps = makeDeps(actor)
-    withSilences(deps, [[3_000_000, 4_000_000]])
-    await runHybrid('mark_silences', { layer_id: layerId }, deps)
+    withPauses(deps, [[3_000_000, 4_000_000]])
+    await runHybrid('mark_pauses', { layer_id: layerId }, deps)
     expect(root(actor.snapshot()).markers.map((m) => [m.t_us, m.end_t_us, m.anchor])).toEqual([
       [3_000_000, 4_000_000, { layer: layerId, src_us: 2_000_000 }],
     ])
   })
 
-  it('passes both parameters through, and invents neither when omitted', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+  it('passes both detection parameters through, and invents neither when omitted', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    const { detectSilences } = withSilences(deps, [])
-    await runHybrid('mark_silences', { layer_id: layerId, threshold_amp: 0.05, min_silence_us: 250_000 }, deps)
-    expect(detectSilences).toHaveBeenCalledWith({ layer_id: layerId, threshold_amp: 0.05, min_silence_us: 250_000 })
+    const { detectPauses } = withPauses(deps, [])
+    await runHybrid('mark_pauses', { layer_id: layerId, threshold_amp: 0.05, min_pause_us: 250_000 }, deps)
+    expect(detectPauses).toHaveBeenCalledWith({ layer_id: layerId, threshold_amp: 0.05, min_pause_us: 250_000 })
     // Omitted means ABSENT on the wire, so Rust's own defaults decide — a
     // number invented at this hop would be free to drift from them.
-    await runHybrid('mark_silences', { layer_id: layerId }, deps)
-    expect(detectSilences).toHaveBeenLastCalledWith({ layer_id: layerId })
+    await runHybrid('mark_pauses', { layer_id: layerId }, deps)
+    expect(detectPauses).toHaveBeenLastCalledWith({ layer_id: layerId })
   })
 
-  it('writes nothing at all — no marker, no history entry — when nothing is silent', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+  it('writes nothing at all — no marker, no history entry — when nothing was found', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [])
+    withPauses(deps, [])
     const lenBefore = actor.historyStatus().len
-    expect(await runHybrid('mark_silences', { layer_id: layerId }, deps))
+    expect(await runHybrid('mark_pauses', { layer_id: layerId }, deps))
       .toEqual({ markers: 0, marker_ids: [] })
     // Re-tuning the threshold and re-running has to cost no undo steps, or the
     // live control would bury the edit that preceded it.
@@ -1115,56 +1272,66 @@ describe('runHybrid: mark_silences', () => {
   })
 
   it('a whole set is ONE undo, restoring the project exactly', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
+    withPauses(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
     const before = JSON.stringify(actor.snapshot())
-    await runHybrid('mark_silences', { layer_id: layerId }, deps)
+    await runHybrid('mark_pauses', { layer_id: layerId }, deps)
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     expect(JSON.stringify(actor.snapshot())).toBe(before)
   })
 
-  it("marks the CLIP'S composition: a clip inside a Group marks the Group, and the root gains nothing", async () => {
-    const { actor, groupId, layerId } = withVideoLayerInGroup(6_000_000)
+  it("marks the SUBJECT'S composition: a clip inside a Group marks the Group, and the root gains nothing", async () => {
+    const { actor, groupId, layerId } = withAudioLayerInGroup(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[1_000_000, 2_000_000]])
-    await runHybrid('mark_silences', { layer_id: layerId }, deps)
+    withPauses(deps, [[1_000_000, 2_000_000]])
+    await runHybrid('mark_pauses', { layer_id: layerId }, deps)
     const inner = actor.snapshot().compositions[groupId]
     expect(inner.markers.map((m) => [m.t_us, m.end_t_us, m.label])).toEqual([
-      [1_000_000, 2_000_000, 'Silence'],
+      [1_000_000, 2_000_000, 'Pause'],
     ])
     expect(root(actor.snapshot()).markers).toEqual([])
   })
 
-  it('accepts an Audio layer, which a shot operation refuses', async () => {
-    const { actor, layerId } = withAudioLayer(6_000_000)
+  it('a VideoClip delegates: the detection, the anchor and the mark all name the linked audio', async () => {
+    const { actor, layerId, audioId } = withLinkedAudio(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[2_000_000, 3_000_000]])
-    expect(await runHybrid('mark_silences', { layer_id: layerId }, deps))
+    const { detectPauses } = withPauses(deps, [[2_000_000, 3_000_000]])
+    expect(await runHybrid('mark_pauses', { layer_id: layerId }, deps))
       .toEqual({ markers: 1, marker_ids: [expect.any(String)] })
-    await expect(runHybrid('drop_shot_markers', { layerId }, deps)).rejects.toThrow(/VideoClip/)
+    // The subject is what plays, so the read and the anchor are both the audio's
+    // — a mark tied to the picture would survive unlinking the very sound it
+    // describes.
+    expect(detectPauses).toHaveBeenCalledWith({ layer_id: audioId })
+    expect(root(actor.snapshot()).markers[0].anchor).toEqual({ layer: audioId, src_us: 2_000_000 })
   })
 
-  it('refuses a kind with no audio stream to be silent in', async () => {
+  it('refuses a clip that plays no sound, naming its kind and the remedy', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
+    await expect(runHybrid('mark_pauses', { layer_id: layerId }, makeDeps(actor)))
+      .rejects.toThrow(/mark pauses: layer .* plays no sound — it is a VideoClip with no linked Audio layer; select the audio clip/)
+  })
+
+  it('refuses a kind that can hold no audio at all', async () => {
     const actor = freshActor()
     const track = root(actor.snapshot()).tracks[0].id
     const add = actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 })
     expect(add.ok).toBe(true)
     if (!add.ok) return
-    await expect(runHybrid('mark_silences', { layer_id: add.value as string }, makeDeps(actor)))
-      .rejects.toThrow(/VideoClip or Audio/)
+    await expect(runHybrid('mark_pauses', { layer_id: add.value as string }, makeDeps(actor)))
+      .rejects.toThrow(/plays no sound — it is a Color/)
   })
 
   it('rejects a missing layer_id instead of silently marking nothing', async () => {
-    const { actor } = withVideoLayer(6_000_000)
-    await expect(runHybrid('mark_silences', {}, makeDeps(actor))).rejects.toThrow(/layer_id/)
+    const { actor } = withAudioLayer(6_000_000)
+    await expect(runHybrid('mark_pauses', {}, makeDeps(actor))).rejects.toThrow(/layer_id/)
   })
 
-  it('throws (not silent no-op) when silence detection is not wired into the build', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+  it('throws (not a quiet no-op) when pause detection is not wired into the build', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    deps.compute.detectSilences = undefined
-    await expect(runHybrid('mark_silences', { layer_id: layerId }, deps)).rejects.toThrow(/not available/)
+    deps.compute.detectPauses = undefined
+    await expect(runHybrid('mark_pauses', { layer_id: layerId }, deps)).rejects.toThrow(/not available/)
   })
 
   // The state a fresh import is genuinely in: the waveform job is still running,
@@ -1172,21 +1339,21 @@ describe('runHybrid: mark_silences', () => {
   // neither swallow it (nothing would be marked, with no reason given) nor
   // reword it — the renderer recognises that sentence to start waiting.
   it('propagates the waveform-not-ready refusal with its own text', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    deps.compute.detectSilences = vi.fn(async () => {
+    deps.compute.detectPauses = vi.fn(async () => {
       throw new Error('waveform not generated yet for media m-1 — wait for a media:job_complete event with kind=waveform and retry')
     })
-    await expect(runHybrid('mark_silences', { layer_id: layerId }, deps))
+    await expect(runHybrid('mark_pauses', { layer_id: layerId }, deps))
       .rejects.toThrow(/waveform not generated yet/)
     expect(root(actor.snapshot()).markers).toEqual([])
   })
 
-  it('silence regions travel with the clip, span intact', async () => {
-    const { actor, track, layerId } = withVideoLayer(6_000_000)
+  it('pause marks travel with the clip, span intact', async () => {
+    const { actor, track, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[1_000_000, 2_000_000]])
-    await runHybrid('mark_silences', { layer_id: layerId }, deps)
+    withPauses(deps, [[1_000_000, 2_000_000]])
+    await runHybrid('mark_pauses', { layer_id: layerId }, deps)
     expect(actor.dispatch('move_layer', { layer: layerId, to_track: track, t_start_us: 3_000_000 }).ok).toBe(true)
     // `reconcileMarkers` re-derives `t_us` from the anchor and carries `end_t_us`
     // by the SAME frame delta — so the region keeps its length rather than
@@ -1194,11 +1361,11 @@ describe('runHybrid: mark_silences', () => {
     expect(markerSpans(actor)).toEqual([[4_000_000, 5_000_000]])
   })
 
-  it('trimming past a silence region hibernates it; re-extending revives it with its span', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+  it('trimming past a pause mark hibernates it; re-extending revives it with its span', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
-    await runHybrid('mark_silences', { layer_id: layerId }, deps)
+    withPauses(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
+    await runHybrid('mark_pauses', { layer_id: layerId }, deps)
     expect(actor.dispatch('trim_layer', { layer: layerId, edge: 'out', new_t_us: 3_000_000 }).ok).toBe(true)
     const trimmed = root(actor.snapshot())
     // Hibernation is a KEPT marker the clip no longer shows: its times freeze
@@ -1213,35 +1380,35 @@ describe('runHybrid: mark_silences', () => {
     ])
   })
 
-  it('deleting the clip takes its silence regions with it', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+  it('deleting the clip takes its pause marks with it', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[1_000_000, 2_000_000]])
-    await runHybrid('mark_silences', { layer_id: layerId }, deps)
+    withPauses(deps, [[1_000_000, 2_000_000]])
+    await runHybrid('mark_pauses', { layer_id: layerId }, deps)
     expect(actor.dispatch('delete_layer', { layer: layerId }).ok).toBe(true)
     expect(root(actor.snapshot()).markers).toEqual([])
   })
 })
 
-/** `remove_silences`' answer, parsed out of the JSON string the arm returns. */
+/** `remove_pauses`' answer, parsed out of the JSON string the arm returns. */
 function removedResult(raw: unknown): { surviving_layer_ids: string[]; removed: number; removed_us: number } {
   return JSON.parse(raw as string) as { surviving_layer_ids: string[]; removed: number; removed_us: number }
 }
 
-describe('runHybrid: remove_silences', () => {
-  it('cuts each silent range out and closes the gaps, in ONE history entry', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+describe('runHybrid: remove_pauses', () => {
+  it('cuts each core out and closes the gaps, in ONE history entry', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
+    withPauses(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
     const lenBefore = actor.historyStatus().len
-    const result = removedResult(await runHybrid('remove_silences', { layer_id: layerId }, deps))
+    const result = removedResult(await runHybrid('remove_pauses', { layer_id: layerId, pad_us: 0 }, deps))
     // Four cuts and two discards, and the whole thing is ONE commit — the undo
     // that follows has to restore the clip, not a split clip missing two takes.
     expect(actor.historyStatus().len - lenBefore).toBe(1)
     expect(actor.historyView(1).ops[0].label_key).toBe('history.layer.split_and_ripple')
     // The surviving segments ABUT: 1s + 2s + 1s of kept material, with the two
-    // silent seconds gone rather than left as gaps. That abutting IS the ripple.
-    expect(spansOfKind(actor, 'VideoClip')).toEqual([
+    // quiet seconds gone rather than left as gaps. That abutting IS the ripple.
+    expect(spansOfKind(actor, 'Audio')).toEqual([
       [0, 1_000_000], [1_000_000, 3_000_000], [3_000_000, 4_000_000],
     ])
     expect(result.surviving_layer_ids).toHaveLength(3)
@@ -1249,74 +1416,109 @@ describe('runHybrid: remove_silences', () => {
     expect(result.removed_us).toBe(2_000_000)
   })
 
-  it('takes each removed slice\u2019s linked audio partner with it', async () => {
-    const { actor, layerId } = withLinkedAudio(6_000_000)
+  it('keeps pad_us on each side of an interior pause, and counts only what it cut', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
-    await runHybrid('remove_silences', { layer_id: layerId }, deps)
-    // The audio was split in lockstep and its slivers went with the video's, so
-    // both lanes come out the same length with no orphan at either cut.
-    const expected: Array<[number, number]> = [
-      [0, 1_000_000], [1_000_000, 3_000_000], [3_000_000, 4_000_000],
-    ]
-    expect(spansOfKind(actor, 'VideoClip')).toEqual(expected)
-    expect(spansOfKind(actor, 'Audio')).toEqual(expected)
+    withPauses(deps, [[1_000_000, 2_000_000]])
+    const result = removedResult(await runHybrid('remove_pauses', { layer_id: layerId, pad_us: 100_000 }, deps))
+    // 1.1s..1.9s went; the two 100 ms pads stayed, so the clip is 800 ms shorter
+    // and the number reported is the length of the CORE, not of the pause.
+    expect(spansOfKind(actor, 'Audio')).toEqual([[0, 1_100_000], [1_100_000, 5_200_000]])
+    expect(result.removed_us).toBe(800_000)
   })
 
-  it('cuts nothing at the clip\u2019s own edges: a head range and a tail range each cost one cut, not two', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+  it('defaults the pad rather than erasing, and the default is the one constant', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[0, 1_000_000], [5_000_000, 6_000_000]])
-    const result = removedResult(await runHybrid('remove_silences', { layer_id: layerId }, deps))
+    withPauses(deps, [[1_000_000, 2_000_000]])
+    const result = removedResult(await runHybrid('remove_pauses', { layer_id: layerId }, deps))
+    expect(result.removed_us).toBe(1_000_000 - 2 * DEFAULT_PAUSE_PAD_US)
+  })
+
+  it("cuts nothing at the clip's own edges: a head range and a tail range each cost one cut, not two", async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withPauses(deps, [[0, 1_000_000], [5_000_000, 6_000_000]])
+    const result = removedResult(await runHybrid('remove_pauses', { layer_id: layerId, pad_us: 0 }, deps))
     // A split at the layer's own bound is not a split, so the leading and
     // trailing stretches are discarded WHOLE — two cuts, three segments, the
     // middle one the only survivor, landing at the origin the head vacated.
     expect(result.surviving_layer_ids).toHaveLength(1)
-    expect(spansOfKind(actor, 'VideoClip')).toEqual([[0, 4_000_000]])
+    expect(spansOfKind(actor, 'Audio')).toEqual([[0, 4_000_000]])
     expect(result.removed_us).toBe(2_000_000)
   })
 
-  it('writes nothing at all \u2014 no split, no history entry \u2014 when nothing is silent', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+  it('an edge pause keeps its pad on the INNER side only', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [])
+    withPauses(deps, [[0, 1_000_000], [5_000_000, 6_000_000]])
+    const result = removedResult(await runHybrid('remove_pauses', { layer_id: layerId, pad_us: 100_000 }, deps))
+    // 0..0.9 and 5.1..6.0 go: 1.8s in total, and what is left is the 4.2s
+    // between them, pulled to the origin.
+    expect(spansOfKind(actor, 'Audio')).toEqual([[0, 4_200_000]])
+    expect(result.removed_us).toBe(1_800_000)
+  })
+
+  it('writes nothing at all — no split, no history entry — when nothing was found', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withPauses(deps, [])
     const lenBefore = actor.historyStatus().len
-    const result = removedResult(await runHybrid('remove_silences', { layer_id: layerId }, deps))
+    const result = removedResult(await runHybrid('remove_pauses', { layer_id: layerId }, deps))
     // Re-tuning the threshold and re-running must cost no undo steps, whichever
-    // of the dialog's two buttons the tuning ends on.
+    // of the section's two buttons the tuning ends on.
     expect(actor.historyStatus().len - lenBefore).toBe(0)
     // The clip is untouched, so it is the survivor; `removed: 0` is what says
     // nothing happened.
     expect(result).toEqual({ surviving_layer_ids: [layerId], removed: 0, removed_us: 0 })
-    expect(spansOfKind(actor, 'VideoClip')).toEqual([[0, 6_000_000]])
+    expect(spansOfKind(actor, 'Audio')).toEqual([[0, 6_000_000]])
   })
 
-  it('refuses a clip that is silent end to end \u2014 that is a delete, not an edit', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+  it('refuses a negative pad, and a pad that would leave no core, BEFORE detecting', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[0, 6_000_000]])
+    const { detectPauses } = withPauses(deps, [[1_000_000, 2_000_000]])
+    for (const args of [
+      { layer_id: layerId, pad_us: -1 },
+      // 2 × 250 ms is not less than a 500 ms minimum, so every core collapses.
+      { layer_id: layerId, pad_us: 250_000, min_pause_us: 500_000 },
+    ]) {
+      const err = await runHybrid('remove_pauses', args, deps)
+        .then(() => null, (e: Error) => JSON.parse(e.message) as { error: string; field: string })
+      expect(err).toMatchObject({ error: 'InvalidArgument', field: 'pad_us' })
+    }
+    // A refusal that arrived after a cache walk would read as a failure of the
+    // detector rather than of the argument.
+    expect(detectPauses).not.toHaveBeenCalled()
+    expect(spansOfKind(actor, 'Audio')).toEqual([[0, 6_000_000]])
+  })
+
+  it('refuses a clip whose cores cover it end to end — that is a delete, not an edit', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withPauses(deps, [[0, 6_000_000]])
     const before = JSON.stringify(actor.snapshot())
-    const err = await runHybrid('remove_silences', { layer_id: layerId }, deps)
+    const err = await runHybrid('remove_pauses', { layer_id: layerId, pad_us: 0 }, deps)
       .then(() => null, (e: Error) => JSON.parse(e.message) as { error: string; field: string })
     // parseDiscardSegments' own refusal, passed straight through: naming every
-    // segment is a delete. Structured, so the dialog shows the detail and an
+    // segment is a delete. Structured, so the section shows the detail and an
     // agent reads the field.
     expect(err).toMatchObject({ error: 'InvalidArgument', field: 'discard_segments' })
     expect(JSON.stringify(actor.snapshot())).toBe(before)
   })
 
-  it('refuses \u2014 whole, with the blocking layer named \u2014 when a clip on another track starts inside a silent stretch', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
-    const other = root(actor.snapshot()).tracks[1].id
+  it('refuses — whole, with the blocking layer named — when a clip on another track starts inside a removed core', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
+    const other = root(actor.snapshot()).tracks[0].id
     const add = actor.dispatch('add_layer', { track: other, kind: 'color', t_start_us: 1_500_000, t_end_us: 2_500_000 })
     expect(add.ok).toBe(true)
     if (!add.ok) return
     const deps = makeDeps(actor)
-    withSilences(deps, [[1_000_000, 2_000_000]])
+    withPauses(deps, [[1_000_000, 2_000_000]])
     const before = JSON.stringify(actor.snapshot())
-    const err = await runHybrid('remove_silences', { layer_id: layerId }, deps)
+    const err = await runHybrid('remove_pauses', { layer_id: layerId, pad_us: 0 }, deps)
       .then(() => null, (e: Error) => JSON.parse(e.message) as { error: string; layer: string })
-    // The planner's refusal, and it names the layer that blocked so the dialog
+    // The planner's refusal, and it names the layer that blocked so the section
     // can say which clip to move. The splits were already applied to the draft
     // when it landed, so the rollback has to be total: the clip comes back
     // UNSPLIT and nothing is recorded.
@@ -1325,93 +1527,97 @@ describe('runHybrid: remove_silences', () => {
     expect(actor.historyView(1).ops[0].label_key).not.toBe('history.layer.split_and_ripple')
   })
 
-  it('passes both parameters through, and invents neither when omitted', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+  it('passes both detection parameters through, and invents neither when omitted', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    const { detectSilences } = withSilences(deps, [])
-    await runHybrid('remove_silences', { layer_id: layerId, threshold_amp: 0.05, min_silence_us: 250_000 }, deps)
-    expect(detectSilences).toHaveBeenCalledWith({ layer_id: layerId, threshold_amp: 0.05, min_silence_us: 250_000 })
+    const { detectPauses } = withPauses(deps, [])
+    await runHybrid('remove_pauses', { layer_id: layerId, threshold_amp: 0.05, min_pause_us: 250_000, pad_us: 0 }, deps)
+    // `pad_us` never reaches Rust: the cut list is built here, so the detector
+    // is asked for whole pauses whatever the pad is.
+    expect(detectPauses).toHaveBeenCalledWith({ layer_id: layerId, threshold_amp: 0.05, min_pause_us: 250_000 })
     // Omitted means ABSENT on the wire, so Rust's own defaults decide — the
-    // same rule mark_silences follows, and for the same reason.
-    await runHybrid('remove_silences', { layer_id: layerId }, deps)
-    expect(detectSilences).toHaveBeenLastCalledWith({ layer_id: layerId })
+    // same rule mark_pauses follows, and for the same reason.
+    await runHybrid('remove_pauses', { layer_id: layerId }, deps)
+    expect(detectPauses).toHaveBeenLastCalledWith({ layer_id: layerId })
   })
 
   it('a whole removal is ONE undo, restoring the project exactly', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
+    withPauses(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
     const before = JSON.stringify(actor.snapshot())
-    await runHybrid('remove_silences', { layer_id: layerId }, deps)
+    await runHybrid('remove_pauses', { layer_id: layerId }, deps)
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     expect(JSON.stringify(actor.snapshot())).toBe(before)
   })
 
-  it('cuts a clip inside a Group on the GROUP\u2019S own timeline', async () => {
-    const { actor, groupId, layerId } = withVideoLayerInGroup(6_000_000)
+  it("cuts a clip inside a Group on the GROUP'S own timeline", async () => {
+    const { actor, groupId, layerId } = withAudioLayerInGroup(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[1_000_000, 2_000_000]])
-    await runHybrid('remove_silences', { layer_id: layerId }, deps)
+    withPauses(deps, [[1_000_000, 2_000_000]])
+    await runHybrid('remove_pauses', { layer_id: layerId, pad_us: 0 }, deps)
     const inner = actor.snapshot().compositions[groupId]
     expect(inner.tracks.flatMap((t) => t.layers).map((l) => [l.t_start_us, l.t_end_us]).sort((a, b) => a[0] - b[0]))
       .toEqual([[0, 1_000_000], [1_000_000, 5_000_000]])
   })
 
-  it('accepts an Audio layer, which a shot operation refuses', async () => {
-    const { actor, layerId } = withAudioLayer(6_000_000)
+  it('cuts the SUBJECT audio and takes the linked picture with it, in lockstep', async () => {
+    const { actor, layerId, audioId } = withLinkedAudio(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[2_000_000, 3_000_000]])
-    const result = removedResult(await runHybrid('remove_silences', { layer_id: layerId }, deps))
-    expect(result.removed).toBe(1)
-    expect(spansOfKind(actor, 'Audio')).toEqual([[0, 2_000_000], [2_000_000, 5_000_000]])
-    await expect(runHybrid('drop_shot_markers', { layerId }, deps)).rejects.toThrow(/VideoClip/)
+    const { detectPauses } = withPauses(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
+    // Addressed by the VIDEO id: the delegation is what turns the read and the
+    // split onto the audio, and the picture then follows the split's own link
+    // fan-out rather than being cut by a second dispatch.
+    await runHybrid('remove_pauses', { layer_id: layerId, pad_us: 0 }, deps)
+    expect(detectPauses).toHaveBeenCalledWith({ layer_id: audioId })
+    const expected: Array<[number, number]> = [
+      [0, 1_000_000], [1_000_000, 3_000_000], [3_000_000, 4_000_000],
+    ]
+    expect(spansOfKind(actor, 'Audio')).toEqual(expected)
+    expect(spansOfKind(actor, 'VideoClip')).toEqual(expected)
   })
 
-  it('refuses a kind with no audio stream to be silent in, in its OWN verb', async () => {
-    const actor = freshActor()
-    const track = root(actor.snapshot()).tracks[0].id
-    const add = actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 })
-    expect(add.ok).toBe(true)
-    if (!add.ok) return
+  it('refuses a clip that plays no sound, in its OWN verb', async () => {
+    const { actor, layerId } = withVideoLayer(6_000_000)
     // The verb rides the message: a removal that reported itself as a mark would
     // send the reader looking for a marker that was never asked for.
-    await expect(runHybrid('remove_silences', { layer_id: add.value as string }, makeDeps(actor)))
-      .rejects.toThrow(/remove silences: .*VideoClip or Audio/)
+    await expect(runHybrid('remove_pauses', { layer_id: layerId }, makeDeps(actor)))
+      .rejects.toThrow(/remove pauses: layer .* plays no sound — it is a VideoClip with no linked Audio layer; select the audio clip/)
   })
 
   it('rejects a missing layer_id instead of silently removing nothing', async () => {
-    const { actor } = withVideoLayer(6_000_000)
-    await expect(runHybrid('remove_silences', {}, makeDeps(actor))).rejects.toThrow(/layer_id/)
+    const { actor } = withAudioLayer(6_000_000)
+    await expect(runHybrid('remove_pauses', {}, makeDeps(actor))).rejects.toThrow(/layer_id/)
   })
 
-  it('throws (not silent no-op) when silence detection is not wired into the build', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+  it('throws (not a quiet no-op) when pause detection is not wired into the build', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    deps.compute.detectSilences = undefined
-    await expect(runHybrid('remove_silences', { layer_id: layerId }, deps)).rejects.toThrow(/not available/)
+    deps.compute.detectPauses = undefined
+    await expect(runHybrid('remove_pauses', { layer_id: layerId }, deps)).rejects.toThrow(/not available/)
   })
 
   // The state a fresh import is genuinely in. The renderer recognises this
-  // sentence to start WAITING, so neither silence arm may swallow or reword it.
+  // sentence to start WAITING, so neither pause arm may swallow or reword it.
   it('propagates the waveform-not-ready refusal with its own text', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    deps.compute.detectSilences = vi.fn(async () => {
-      throw new Error('waveform not generated yet for media m-1 \u2014 wait for a media:job_complete event with kind=waveform and retry')
+    deps.compute.detectPauses = vi.fn(async () => {
+      throw new Error('waveform not generated yet for media m-1 — wait for a media:job_complete event with kind=waveform and retry')
     })
-    await expect(runHybrid('remove_silences', { layer_id: layerId }, deps))
+    await expect(runHybrid('remove_pauses', { layer_id: layerId }, deps))
       .rejects.toThrow(/waveform not generated yet/)
-    expect(spansOfKind(actor, 'VideoClip')).toEqual([[0, 6_000_000]])
+    expect(spansOfKind(actor, 'Audio')).toEqual([[0, 6_000_000]])
   })
 
   // The MCP result contract: this arm is advertised as a tool, and server.ts
   // stringifies whatever comes back into one text block — an object would reach
   // the agent as "[object Object]".
   it('returns a JSON STRING, not the object', async () => {
-    const { actor, layerId } = withVideoLayer(6_000_000)
+    const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
-    withSilences(deps, [[1_000_000, 2_000_000]])
-    const raw = await runHybrid('remove_silences', { layer_id: layerId }, deps)
+    withPauses(deps, [[1_000_000, 2_000_000]])
+    const raw = await runHybrid('remove_pauses', { layer_id: layerId }, deps)
     expect(typeof raw).toBe('string')
     expect(removedResult(raw).removed).toBe(1)
   })

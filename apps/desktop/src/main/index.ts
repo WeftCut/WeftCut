@@ -32,6 +32,7 @@ import { SINGLE_MEDIA_CHANNELS, WAVEFORM_KEY_CHANNELS, resolveSingleMediaArgs, r
 import { EXPORT_PROJECT_CHANNELS, injectProjectArgs } from './state/export-project-forward.js'
 import { createAudioFxBaker, exportWindowFromArgs, type AudioFxBaker } from './audioFx/baker.js'
 import { createFxCacheLayout, createNodeAudioFxFs, fxCacheRoot } from './audioFx/fxPaths.js'
+import { fxWaveformKey } from '../shared/audioEffects/status.js'
 import { openPreviewGpu, requestFrameAtPreviewGpu, consumeAckPreviewGpu, closePreviewGpu, takeTimingsPreviewGpu, hwBudget } from './previewGpu.js'
 import { recordFrameReadySent, recordConsumeAck, takeMainTimings } from './previewGpuTiming.js'
 import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw } from './previewSw.js'
@@ -694,6 +695,24 @@ app.whenReady().then(async () => {
     },
   }
 
+  /** The peaks file `detect_pauses` reads for one subject Audio layer: the
+   *  effect chain's baked sibling when that bake is the one the mixer is
+   *  playing and its waveform has landed on disk, else `null` for the media's
+   *  own (spec Decision 11) — the same rule the timeline waveform follows, so
+   *  the bands can never disagree with the picture under them.
+   *
+   *  `resolveWaveformKey` rather than `ready.peaks_path` straight: it is the
+   *  baker's own answer to "is this artifact still on disk", so an evicted
+   *  sibling falls back here exactly as it does for a tile fetch. The
+   *  `ready.sig === desired_sig` gate is what keeps a stale bake out — its
+   *  peaks describe audio the user is no longer hearing. */
+  const peaksPathFor = (subjectLayerId: string): string | null => {
+    const state = audioFxBaker?.snapshot()[subjectLayerId]
+    const ready = state?.ready
+    if (!ready || ready.sig !== state.desired_sig || ready.peaks_path === null) return null
+    return audioFxBaker?.resolveWaveformKey(fxWaveformKey(ready.media_hash, ready.sig.slice(0, 16))) ?? null
+  }
+
   // Rust compute facade for the native-compute → TS-write hybrids:
   // Rust probes/hashes/parses (no actor write); the TS host applies the write.
   const computeFacade = {
@@ -708,22 +727,26 @@ app.whenReady().then(async () => {
     shotFloorSensitivity: () => backend!.shotFloorSensitivity(),
     shotDefaultOpts: () =>
       JSON.parse(backend!.shotDefaultOpts()) as import('./state/hybrids.js').ShotDefaultOpts,
-    // Not a bare napi method like the shot entries above: `detect_silences` is
-    // a clip-compute TOOL, and its `{ layer, media }` slice is resolved by
+    // Not a bare napi method like the shot entries above: `detect_pauses` is
+    // a clip-compute TOOL, and its subject + media + peaks slice is resolved by
     // `callClipComputeTool` — the very function the agent's call and the
     // renderer's read channel go through. One call site is the point: a second
-    // resolution here would be a second answer to "which clip is this", and the
-    // waveform-not-ready refusal has to read identically on every path.
+    // resolution here would be a second answer to "which clip plays this", and
+    // the waveform-not-ready refusal has to read identically on every path.
     //
     // `tsHost` is resolved LAZILY because this facade is built before the host
     // exists; by the time a hybrid can run, it does. The import is local for
     // the same chunking reason the renderer's dispatch states below — a
     // top-level one would pull the MCP SDK into the entry chunk.
-    detectSilences: async (args: { layer_id: string; threshold_amp?: number; min_silence_us?: number }) => {
-      if (!tsHost) throw new Error('detect_silences: the project actor is not started yet')
+    detectPauses: async (args: { layer_id: string; threshold_amp?: number; min_pause_us?: number }) => {
+      if (!tsHost) throw new Error('detect_pauses: the project actor is not started yet')
       const { callClipComputeTool } = await import('./mcp/server.js')
-      const result = await callClipComputeTool(backend!, tsHost, 'detect_silences', { ...args })
-      return toolResultPayload(result) as import('./state/hybrids.js').SilenceRegion[]
+      // The two engine seams belong to transcribe/describe; a peaks read picks
+      // no model, so they take their defaults and only the peaks one is passed.
+      const result = await callClipComputeTool(
+        backend!, tsHost, 'detect_pauses', { ...args }, undefined, undefined, peaksPathFor,
+      )
+      return toolResultPayload(result) as import('./state/hybrids.js').DetectPausesResult
     },
   }
 
@@ -887,6 +910,9 @@ app.whenReady().then(async () => {
     getTsHost: () => tsHost,
     getPreferredEngine,
     getVlm,
+    // `detect_pauses` reads the same peaks file the timeline draws, so the
+    // agent's bands and the person's are the same bands.
+    peaksPathFor,
     // Every MCP request and transport lifecycle event → a LogBus row
     // (docs/status-log.md § Producers).
     log: {
@@ -1282,7 +1308,7 @@ app.whenReady().then(async () => {
         a.out_us,
       ))
     }
-    // Clip compute (transcribe_clip / detect_silences / describe_clip): the
+    // Clip compute (transcribe_clip / detect_pauses / describe_clip): the
     // renderer's half of the human entries, and it goes through the MCP host's
     // OWN function so the slice resolution and the engine injection are literally
     // the same code the agent's call takes. Intercepted here rather than folded
@@ -1294,7 +1320,7 @@ app.whenReady().then(async () => {
     // caller learning MCP's carrier shape.
     if (tsHost && CLIP_COMPUTE_CHANNELS.has(channel)) {
       const result = await callClipComputeTool(
-        backend!, tsHost, channel, (args ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm,
+        backend!, tsHost, channel, (args ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm, peaksPathFor,
       )
       return toolResultPayload(result)
     }
