@@ -4,12 +4,23 @@ import { updateLayerParams, type CompositionSummary, type LayerSummary } from ".
 import { tryMutate } from "../errors/tryMutate";
 import { transportPause } from "../state/playbackStore";
 import { focusedPlayheadUs, useFocusedPlayheadUsThrottled } from "../state/playheadProjection";
+import {
+  beginTextEdit,
+  endTextEdit,
+  markEditorClosedByPointer,
+  useTextEditingLayerId,
+} from "../state/textEditingStore";
 import { layerFrameAt } from "./centerInFrame";
 import { containFit, compToClient, layerQuad } from "./gizmoGeometry";
 import { getGizmoProbe } from "./gizmoProbeRegistry";
 
 type TextLayer = LayerSummary & { params: Extract<LayerSummary["params"], { kind: "Text" }> };
 
+// Whether this layer's editor is open is read off `textEditingStore`, not held
+// here: the Text tool opens an editor from outside this component, and may do
+// so for a layer whose gizmo is still mounting (`TextToolOverlay.tsx`). The
+// double-click and the Edit text button write the same store, so every entry
+// path is one path.
 export function EditableTextGizmo({ layer, composition, locked, children }: {
   layer: LayerSummary;
   composition: CompositionSummary;
@@ -17,22 +28,22 @@ export function EditableTextGizmo({ layer, composition, locked, children }: {
   children: (onEdit: () => void) => ReactNode;
 }) {
   const { t } = useTranslation();
-  const [editing, setEditing] = useState(false);
+  const editing = useTextEditingLayerId() === layer.id;
   const timeUs = useFocusedPlayheadUsThrottled();
   const inSpan = timeUs >= layer.t_start_us && timeUs < layer.t_end_us;
   useEffect(() => {
-    if (!inSpan || locked) setEditing(false);
-  }, [inSpan, locked]);
+    if (editing && (!inSpan || locked)) endTextEdit(layer.id);
+  }, [editing, inSpan, locked, layer.id]);
   if (layer.params.kind !== "Text") return null;
   const start = () => {
     const now = focusedPlayheadUs();
     if (locked || now < layer.t_start_us || now >= layer.t_end_us) return;
     transportPause();
-    setEditing(true);
+    beginTextEdit(layer.id);
   };
   return <>
     {editing && !locked && inSpan
-      ? <InlineTextEditor layer={layer as TextLayer} composition={composition} onDone={() => setEditing(false)} />
+      ? <InlineTextEditor layer={layer as TextLayer} composition={composition} onDone={() => endTextEdit(layer.id)} />
       : children(start)}
     {!editing && !locked && inSpan && <button
       type="button"
@@ -93,11 +104,38 @@ export function InlineTextEditor({ layer, composition, onDone }: {
 
   useEffect(() => {
     const outside = (event: PointerEvent) => {
-      if (!wrapper.current?.contains(event.target as Node)) finishRef.current(true);
+      if (wrapper.current?.contains(event.target as Node)) return;
+      // Stamped BEFORE the save, so the Text tool — whose own handler for this
+      // same event runs after this capture listener — can tell a closing click
+      // from a click on empty frame and not create a layer under it.
+      markEditorClosedByPointer(event);
+      finishRef.current(true);
     };
     document.addEventListener("pointerdown", outside, true);
     return () => document.removeEventListener("pointerdown", outside, true);
   }, []);
+
+  // A blur closes the editor one task LATER, not inside the blur event. The
+  // focus-region listener (`focus/useFocusRegions.ts`) runs at window capture
+  // on every pointerdown and focuses the panel, which blurs this field before
+  // the same pointerdown reaches `outside` above. Closing synchronously there
+  // would unmount this component — and its listener — in the microtask
+  // checkpoint between the two, so the closing press would never be stamped
+  // and the Text tool would create a layer under it. Deferred, the press
+  // still finds the listener, stamps itself and finishes the session; the
+  // timer then finds it finished and does nothing. A blur with no press
+  // behind it (Tab away, focus taken by code) saves on the next task instead.
+  const blurClose = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (blurClose.current !== null) window.clearTimeout(blurClose.current);
+  }, []);
+  const onBlur = () => {
+    if (blurClose.current !== null) return;
+    blurClose.current = window.setTimeout(() => {
+      blurClose.current = null;
+      finishRef.current(true);
+    }, 0);
+  };
 
   useLayoutEffect(() => {
     const el = textarea.current;
@@ -168,7 +206,7 @@ export function InlineTextEditor({ layer, composition, onDone }: {
           queueMicrotask(() => finishRef.current(true));
         }
       }}
-      onBlur={() => finishRef.current(true)}
+      onBlur={onBlur}
       onKeyDown={event => {
         event.stopPropagation();
         if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return;

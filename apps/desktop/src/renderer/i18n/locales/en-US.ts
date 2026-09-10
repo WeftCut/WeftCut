@@ -325,6 +325,11 @@ const enUS = {
     // Shown on the disabled Clear button — says why it's disabled rather than
     // repeating the label the user can't act on.
     clear_range_empty: "No in/out points marked",
+    // The Text tool's two tooltips. Armed or armable, the hint teaches the
+    // gesture the icon alone cannot; disabled (an empty project has no canvas
+    // to click), it names the remedy — `clear_range_empty`'s rule.
+    text_tool_hint: "Text tool: click the preview to add text, click text to edit it",
+    text_tool_needs_layer: "Add a layer first, or insert text from the Insert menu",
     // The marker toggle's two-state hint: current state, then what a click does.
     // Both halves matter — the pressed border says WHICH state, not what
     // pressing again would get you.
@@ -674,6 +679,7 @@ const enUS = {
     add_text_layer: "Text",
     select_tool: "Selection tool",
     toggle_blade_mode: "Blade tool",
+    select_text_tool: "Text tool",
     move_to_new_track: "Move to a new track",
     import_media: "Import media…",
     export: "Export…",

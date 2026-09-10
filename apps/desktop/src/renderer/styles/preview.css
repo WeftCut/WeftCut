@@ -21,6 +21,23 @@
   pointer-events: none;
 }
 
+/* The Text tool's click surface. Sized to the CANVAS box by TextToolOverlay.tsx
+   rather than inset:0, so the I-beam and the surface stop at the letterbox. */
+.preview-text-tool {
+  position: absolute;
+  cursor: text;
+  touch-action: none;
+}
+
+/* While the Text tool is armed the gizmo is display-only: every press on the
+   frame belongs to the tool's hit test, not to a drag handle
+   (TransformGizmo.tsx sets `data-inert`). `!important` because the targets set
+   `pointer-events: all` inline, and an ancestor's `none` does not reach a
+   descendant that names its own value. */
+.transform-gizmo[data-inert="true"] * {
+  pointer-events: none !important;
+}
+
 .preview-inline-text-editor textarea {
   position: absolute;
   visibility: hidden;

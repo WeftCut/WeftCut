@@ -54,6 +54,8 @@ import { usePreviewRenderTargetId } from "../state/compositionAnchorStore";
 import { useOpenComposition } from "../state/projectStore";
 import { focusedPlayheadUs, useFocusedPlayheadReader } from "../state/playheadProjection";
 import { usePrimaryLayerId } from "../state/selectionStore";
+import { endTextEdit, textEditingLayerId } from "../state/textEditingStore";
+import { useActiveTool } from "../state/toolStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { layerFrameAt, TRANSFORMABLE_KINDS } from "./centerInFrame";
 import {
@@ -293,6 +295,19 @@ export function TransformGizmoHost() {
   // would lie about where the layer is, exactly as a clamped playhead would lie
   // about where the film is, so nothing is drawn until the two agree again.
   const renderTargetId = usePreviewRenderTargetId();
+  // Display-only while the Text tool is armed: the frame's presses belong to
+  // that tool's hit test (`TextToolOverlay.tsx`), and a box that still took
+  // drags would make "click text to edit it" false for the selected layer.
+  const inert = useActiveTool() === "text";
+  // An editor open on a layer that is no longer the primary selection has lost
+  // its gizmo, and with it the only component that could close it. The Text
+  // tool selects BEFORE it opens, so during its own flow the two agree here;
+  // this catches the selection moving away by any other route — a timeline
+  // click, a delete, a project switch — and closes the orphan.
+  useEffect(() => {
+    const editing = textEditingLayerId();
+    if (editing !== null && editing !== primaryLayerId) endTextEdit(editing);
+  }, [primaryLayerId]);
   if (!primaryLayerId || !composition) return null;
   if (renderTargetId !== composition.id) return null;
   let found: LayerSummary | null = null;
@@ -312,9 +327,9 @@ export function TransformGizmoHost() {
     <MotionPathOverlay key={`path-${selected.id}`} layer={selected} composition={composition} />
     {!(path && editingLayerId === selected.id) && (selected.params.kind === "Text"
       ? <EditableTextGizmo key={selected.id} layer={selected} composition={composition} locked={locked}>
-          {onEdit => <TransformGizmo layer={selected} composition={composition} onEditText={onEdit} />}
+          {onEdit => <TransformGizmo layer={selected} composition={composition} onEditText={onEdit} inert={inert} />}
         </EditableTextGizmo>
-      : <TransformGizmo key={selected.id} layer={selected} composition={composition} />)}
+      : <TransformGizmo key={selected.id} layer={selected} composition={composition} inert={inert} />)}
   </>;
 }
 
@@ -665,10 +680,14 @@ function TransformGizmo({
   layer,
   composition,
   onEditText,
+  inert = false,
 }: {
   layer: LayerSummary;
   composition: CompositionSummary;
   onEditText?: () => void;
+  /// Draw the box and handles but take no pointer input — the Text tool's
+  /// state (`preview.css` strips the targets' `pointer-events` off this flag).
+  inert?: boolean;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const boxRef = useRef<SVGPolygonElement | null>(null);
@@ -1638,7 +1657,9 @@ function TransformGizmo({
   return (
     <svg
       ref={svgRef}
+      className="transform-gizmo"
       data-testid="transform-gizmo"
+      data-inert={inert ? "true" : "false"}
       style={{
         position: "absolute",
         inset: 0,

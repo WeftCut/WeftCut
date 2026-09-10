@@ -8,7 +8,8 @@
 import type { LayerParams, Project, Rgba } from './model'
 import { textParamsDefault } from './mutations/add'
 import { videoClipParams, audioParams, imageOverlayParams } from './mutations/media'
-import { parseRgba, parseNumOpt, parseStr, parseStrOpt } from './mcp-commands'
+import { McpArgError, parseRgba, parseNumOpt, parseStr, parseStrOpt } from './mcp-commands'
+import { staticPosition } from '../../shared/position'
 
 /** 6-color palette cycled by layer index. */
 const DEMO_PALETTE: Rgba[] = [
@@ -36,9 +37,23 @@ export function prodColorParams(a: Record<string, unknown>, comp: { width: numbe
 
 /** Default text layer: `textParamsDefault`'s params, with "Text" as the body
  *  when the caller names none. No local defaults — this arm exists only to read
- *  the wire arg. */
+ *  the wire args.
+ *
+ *  `x`/`y` place the layer: they are the ANCHOR point (ADR 0049 — a Text
+ *  layer's position names its anchor), so with the factory's centred anchor
+ *  the text is centred on the point. Both or neither: half a point is refused
+ *  at the boundary rather than paired with a guessed axis, the way ADR 0049
+ *  refuses a `(null, set)` box. Unclamped on purpose — a title that starts
+ *  partly out of frame is a legitimate thing to author. */
 export function prodTextParams(a: Record<string, unknown>, comp: { width: number; height: number }): LayerParams {
-  return textParamsDefault(parseStrOpt(a.content, 'content') ?? 'Text', comp)
+  const params = textParamsDefault(parseStrOpt(a.content, 'content') ?? 'Text', comp)
+  const x = parseNumOpt(a.x, 'x')
+  const y = parseNumOpt(a.y, 'y')
+  if ((x === undefined) !== (y === undefined)) {
+    throw new McpArgError('x and y must be given together', x === undefined ? 'x' : 'y')
+  }
+  if (x !== undefined && y !== undefined) params.transform.position = staticPosition(x, y)
+  return params
 }
 
 /** Image layer span: still→3s, animated→duration_us. */

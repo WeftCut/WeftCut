@@ -83,12 +83,17 @@ export async function addTextLayerIn(opts: {
   durationUs?: number;
   trackId?: string;
   content?: string;
+  /// Anchor point in composition pixels, both or neither — see `addTextLayer`.
+  x?: number;
+  y?: number;
 }): Promise<string> {
   return invoke<string>("add_text_layer", {
     trackId: opts.trackId,
     content: opts.content,
     tStartUs: opts.tStartUs,
     durationUs: opts.durationUs,
+    x: opts.x,
+    y: opts.y,
     compositionId: opts.compositionId,
   });
 }

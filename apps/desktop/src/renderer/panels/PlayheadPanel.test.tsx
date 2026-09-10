@@ -218,8 +218,8 @@ describe("PlayheadPanel", () => {
     expect(screen.getByText("All Tracks")).toBeTruthy();
     // The explainer hands back the way out, and names the key from the
     // effective bindings rather than a literal — no provider here, so this is
-    // the default chord.
-    expect(container.querySelector(".playhead-empty-kbd")?.textContent).toBe("T");
+    // the default chord (`Shift+T`; the bare `T` arms the Text tool).
+    expect(container.querySelector(".playhead-empty-kbd")?.textContent).toBe("Shift+T");
   });
 
   // The other idle state has no single key that fixes it, so it offers none.

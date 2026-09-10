@@ -42,7 +42,7 @@ import { canDescribeSelection } from "./describeCommands";
 import { canOpenSelectedGroup } from "./groupCommands";
 import { canDetectSilencesSelection } from "./silenceCommands";
 import { canAutoCaptionSelection } from "./speechCommands";
-import { currentOpenComposition } from "../state/projectStore";
+import { currentOpenComposition, useProjectStore } from "../state/projectStore";
 import {
   currentSelection,
   layerIdsOf,
@@ -66,8 +66,22 @@ export interface AppCommandFlags {
   busy: boolean;
   canUndo: boolean;
   canRedo: boolean;
-  canBlade: boolean;
   exportLocked: boolean;
+}
+
+/// Whether the project has any layer at all — the gate both pointer tools
+/// share: the Blade needs a layer to cut, and the Text tool needs the preview
+/// to have a canvas, which it only mounts once something is staged.
+///
+/// A live read of the mirror, not an `AppCommandFlags` field, for `clearRange`'s
+/// reason with a sharper edge: the Quick Actions strip subscribes to exactly
+/// this boolean, so when the first layer lands the strip re-renders in the SAME
+/// commit as App — before App's layout effect has swapped in the provider
+/// getter that carries the new flags. A flag would answer that render with the
+/// old value and nothing would re-render the strip afterwards, leaving both
+/// tool buttons greyed on a project that has a layer.
+export function projectHasLayers(): boolean {
+  return (useProjectStore.getState().summary?.layer_count ?? 0) > 0;
 }
 
 /// Command ids with no catalogue action of their own. An action that HAS a
@@ -367,7 +381,10 @@ export function buildAppCommands(
     redo: () => !flags.busy && flags.canRedo,
     importMedia: () => !flags.busy,
     export: () => !flags.exportLocked,
-    toggleBladeMode: () => !flags.busy && flags.canBlade,
+    toggleBladeMode: () => !flags.busy && projectHasLayers(),
+    // The Text tool's gate is the Blade's (`projectHasLayers`). The strip
+    // button's hint names the remedy; this predicate only greys it.
+    selectTextTool: () => !flags.busy && projectHasLayers(),
     // Read from the store rather than routed through `flags`, unlike every
     // entry above. A flag is a snapshot taken at App render time, and App
     // deliberately does NOT subscribe to `rangeStore` (marking in/out would
@@ -415,6 +432,7 @@ export function buildAppCommands(
   const checkedFor: Partial<Record<ActionId, () => boolean>> = {
     selectTool: () => activeTool() === "select",
     toggleBladeMode: () => activeTool() === "blade",
+    selectTextTool: () => activeTool() === "text",
     // Same live-read reason as `clearRange` below the flags: App does not
     // re-render on an app-settings flip, so a captured flag would freeze.
     toggleFollowPlayhead: () => followPlayheadEnabled(),

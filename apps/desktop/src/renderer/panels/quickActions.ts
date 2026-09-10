@@ -26,6 +26,7 @@ import {
   Scissors,
   SquareDashed,
   SquareSplitHorizontal,
+  Type,
   UnfoldVertical,
   Ungroup,
   Unlink,
@@ -66,6 +67,11 @@ export interface QuickActionHintText {
 /// functions — hooks can't be called per row.
 export interface QuickActionState {
   tool: Tool;
+  /// Whether the project has any layer (`AppCommandFlags.hasLayers`, read here
+  /// off the project store as one boolean). The Text tool's hint reads it to
+  /// name the remedy on the greyed button; the greying itself comes from the
+  /// command's `enabled`, so the two cannot disagree about the gate.
+  hasLayers: boolean;
   displayMode: DisplayMode;
   /// Whether any in/out point is marked (`rangeStore.ts`). Not a position —
   /// the strip can't render one, and subscribing to the positions would
@@ -192,6 +198,22 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
         id: "toggleBladeMode",
         icon: Scissors,
         active: (s) => s.tool === "blade",
+      },
+      {
+        // The Text tool (`preview/TextToolOverlay.tsx`): a preview click edits
+        // the Text layer under the pointer or creates one at the click point.
+        // Greyed on an empty project for the Blade's reason — no canvas to
+        // click — and, unlike the Blade, it says so: a `Type` glyph cannot
+        // teach a click gesture, so the hint carries it while the tool is
+        // usable, and names the remedy while it is not (`clear_range_empty`'s
+        // rule).
+        id: "selectTextTool",
+        icon: Type,
+        active: (s) => s.tool === "text",
+        hint: (s) =>
+          s.hasLayers
+            ? "quick_actions.text_tool_hint"
+            : "quick_actions.text_tool_needs_layer",
       },
     ],
   },

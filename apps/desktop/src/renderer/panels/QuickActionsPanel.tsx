@@ -25,6 +25,7 @@ import {
   useTailSnapEnabled,
 } from "../settings/appSettingsStore";
 import { useActiveTool } from "../state/toolStore";
+import { useProjectStore } from "../state/projectStore";
 import { useLinkOverride } from "../state/linkOverrideStore";
 import { useHasMarkedRange } from "../state/rangeStore";
 import { useLinkToggleState } from "../timeline/linkEligibility";
@@ -266,6 +267,10 @@ export function QuickActionsPanel({
   // keep their last state until something unrelated re-rendered the strip.
   useSyncExternalStore(subscribeCommandRegistry, commandRegistryVersion);
   const tool = useActiveTool();
+  // One boolean off the project mirror, so the strip re-renders when the
+  // project gains its first layer or loses its last — the Text tool's hint
+  // flips there — and on nothing else the mirror does.
+  const hasLayers = useProjectStore((s) => (s.summary?.layer_count ?? 0) > 0);
   const displayMode = useDisplayMode();
   // Subscribed, not read imperatively: `clearRange`'s `enabled` predicate is
   // evaluated during THIS render, so without a subscription the button would
@@ -321,6 +326,7 @@ export function QuickActionsPanel({
 
   const state: QuickActionState = {
     tool,
+    hasLayers,
     displayMode,
     hasRange,
     markersVisible,

@@ -1,11 +1,18 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "../i18n";
-import { InlineTextEditor } from "./InlineTextEditor";
+import { EditableTextGizmo, InlineTextEditor } from "./InlineTextEditor";
 import { updateLayerParams, type CompositionSummary, type LayerSummary } from "../ipc";
 import { registerGizmoProbe, clearGizmoProbe, type GizmoProbe } from "./gizmoProbeRegistry";
 import { appActionsSuspended } from "../shortcuts/useShortcuts";
+import {
+  beginTextEdit,
+  consumesPointerDown,
+  endTextEdit,
+  textEditingLayerId,
+  useTextEditingStore,
+} from "../state/textEditingStore";
 
 vi.mock("../ipc", async importActual => ({
   ...await importActual<typeof import("../ipc")>(),
@@ -40,6 +47,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   clearGizmoProbe(probe);
+  useTextEditingStore.setState({ layerId: null, closingPointerStamp: null });
   vi.clearAllMocks();
 });
 
@@ -124,6 +132,67 @@ describe("in-preview text editing", () => {
     next.unmount();
     expect(updateLayerParams).not.toHaveBeenCalled();
     expect(appActionsSuspended()).toBe(false);
+  });
+
+  // The gizmo reads WHICH layer is being edited off the store, so the Text tool
+  // can open an editor from outside it — and a request naming another layer
+  // opens nothing here.
+  it("opens and closes with the editing store, for its own layer only", () => {
+    render(
+      <EditableTextGizmo layer={layer} composition={composition} locked={false}>
+        {(onEdit) => <button type="button" onClick={onEdit}>box</button>}
+      </EditableTextGizmo>,
+    );
+    expect(screen.queryByRole("textbox")).toBeNull();
+    act(() => beginTextEdit("someone-else"));
+    expect(screen.queryByRole("textbox")).toBeNull();
+    act(() => beginTextEdit("title"));
+    expect(screen.getByRole("textbox")).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(textEditingLayerId()).toBeNull();
+    // The gizmo's own entry points write the same store.
+    fireEvent.click(screen.getByRole("button", { name: "box" }));
+    expect(textEditingLayerId()).toBe("title");
+    act(() => endTextEdit("title"));
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  // The press that closes the editor from outside is marked before the save,
+  // so the Text tool, which sees the same event afterwards, can decline to
+  // create a layer under it.
+  it("marks the outside press that closes it as consumed", () => {
+    setup();
+    const press = new PointerEvent("pointerdown", { bubbles: true });
+    document.body.dispatchEvent(press);
+    expect(consumesPointerDown(press)).toBe(true);
+    expect(consumesPointerDown(press)).toBe(false);
+  });
+
+  // The focus-region listener blurs the field at window capture, BEFORE the
+  // same pointerdown reaches the editor's own listener. A blur that closed the
+  // editor synchronously would take that listener with it and the press would
+  // go unstamped — so the blur's close is deferred past the press.
+  it("lets the press that blurred it stamp itself before the blur closes it", async () => {
+    const { input, onDone } = setup();
+    fireEvent.blur(input);
+    expect(onDone).not.toHaveBeenCalled();
+    const press = new PointerEvent("pointerdown", { bubbles: true });
+    document.body.dispatchEvent(press);
+    expect(onDone).toHaveBeenCalledOnce();
+    expect(consumesPointerDown(press)).toBe(true);
+    // The deferred blur finds the session finished and closes nothing twice.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(onDone).toHaveBeenCalledOnce();
+  });
+
+  it("saves on a blur with no press behind it, one task later", async () => {
+    const { input, onDone } = setup();
+    fireEvent.change(input, { target: { value: "Tabbed away" } });
+    fireEvent.blur(input);
+    expect(updateLayerParams).not.toHaveBeenCalled();
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    expect(updateLayerParams).toHaveBeenCalledExactlyOnceWith("title", { kind: "Text", content: "Tabbed away" });
   });
 
   it("retains the draft for retry when saving fails", async () => {

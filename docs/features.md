@@ -1528,6 +1528,37 @@ and scrolls overflowing text in fixed boxes;
 the compositor applies the authored colour, effects and shrink-to-fit on save.
 Changing project or removing the editing surface discards an unsubmitted draft.
 
+### Text tool
+
+The third modal tool, beside Selection and Blade in the Quick Actions strip's
+tool row, the Edit menu and the search palette; `T` arms it (the display-mode
+toggle that held `T` is on `Shift+T`). While it is armed the preview canvas
+shows an I-beam and a click there is a text edit: on a Text layer it selects
+that layer and opens the inline editor on it; on empty frame it creates a Text
+layer at the click point and opens the editor with the placeholder selected,
+so typing replaces it. The click point is the new layer's anchor, so the text
+is centred on it; every other parameter is the same default the Insert menu's
+**Text** command uses, and the layer lands on the same automatically chosen
+overlay track at the playhead. Creation and the first edit are two history
+entries, as they are from the menu. Locked and disabled layers, and layers on
+locked or disabled tracks, are transparent to the click — as in Premiere, a
+click over a locked title creates a new one. Only Text is hit-tested: the
+preview is not a selection surface for any other kind, and the transform gizmo
+takes no pointer input while the tool is armed (switch to Selection to move or
+resize).
+
+The tool stays armed after a creation, so successive clicks make successive
+titles. Escape inside the editor cancels the draft; Escape outside it returns
+to the Selection tool. The click that closes an open editor only closes it —
+it never creates a layer under itself. A drag (pointer travel past a few
+pixels) does nothing in this version. The tool is unavailable on a project
+with no layers, because the preview mounts no canvas until something is
+staged; the strip button's tooltip says so and points at the Insert menu,
+which works on an empty project. The tool is also inert while the preview is
+pointed at a composition other than the focused one, for the gizmo's reason:
+the click's frame coordinate only means something when the canvas is that
+composition's frame.
+
 The primary selected layer shows its footprint as a box over the preview:
 dragging inside the box moves it, handles on its corners and edges resize it, a
 knob on a stalk above its top edge rotates it, and a target reticle at the pivot

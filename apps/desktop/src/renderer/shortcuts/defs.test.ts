@@ -29,6 +29,17 @@ describe("ACTION_DEFS", () => {
     ]);
   });
 
+  // The other named pair: the Text tool took the bare `T` Premiere gives its
+  // Type tool, and the display-mode toggle that held it moved to the chord.
+  // Pinned because the swap is the kind of change a merge could half-revert,
+  // leaving `T` on the toggle and the tool with no key.
+  it("keeps the tool keys bare and the display toggle on the Shift chord", () => {
+    expect(ACTION_DEFS.selectTool.defaultKeys).toEqual(["V"]);
+    expect(ACTION_DEFS.toggleBladeMode.defaultKeys).toEqual(["C"]);
+    expect(ACTION_DEFS.selectTextTool.defaultKeys).toEqual(["T"]);
+    expect(ACTION_DEFS.toggleDisplayMode.defaultKeys).toEqual(["Shift+T"]);
+  });
+
   it("gives no default chord to two actions at once", () => {
     const bound = ACTION_IDS.flatMap((id) =>
       ACTION_DEFS[id].defaultKeys.map((spec) => ({ id, spec })),

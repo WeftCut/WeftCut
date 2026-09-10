@@ -47,7 +47,6 @@ const flags = {
   busy: false,
   canUndo: false,
   canRedo: false,
-  canBlade: false,
   exportLocked: false,
 };
 

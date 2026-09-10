@@ -750,10 +750,12 @@ export function App({ onCloseProject }: AppProps) {
     splitAtPlayhead,
     importMedia: importMediaFiles,
     export: () => setExportDialogOpen(true),
-    // One key per tool, both idempotent (`toolStore.ts`). `Esc` → Selection
-    // is bound inside Timeline, where blade-mode's preview state lives.
+    // One key per tool, all idempotent (`toolStore.ts`). `Esc` → Selection is
+    // bound where each pointer tool's state lives: inside Timeline for the
+    // Blade, inside the preview's `TextToolOverlay` for the Text tool.
     selectTool: () => setTool("select"),
     toggleBladeMode: () => setTool("blade"),
+    selectTextTool: () => setTool("text"),
     toggleLog: toggleLogConsole,
     focusLogSearch,
     // R.8: T flips the A/B Roll / All Tracks display_mode at the app level.
@@ -1051,7 +1053,6 @@ export function App({ onCloseProject }: AppProps) {
         busy,
         canUndo: !!summary?.history.can_undo,
         canRedo: !!summary?.history.can_redo,
-        canBlade: !!summary && summary.layer_count > 0,
         // Locked for every non-terminal phase, stated as the TERMINAL set
         // rather than by listing the running ones. Listing them had already
         // gone stale: `preparing` was missing, so the export command stayed

@@ -312,6 +312,9 @@ const zhCN: Resources = {
     resolution_quarter_hint: "播放分辨率：1/4。点击切回完整。",
     // 显示在禁用的"清除"按钮上——说明为什么点不了，而不是重复一个用不了的标签。
     clear_range_empty: "未设置入出点",
+    // 文字工具的两条提示：可用时教手势，禁用时（空工程没有画布可点）说补救办法。
+    text_tool_hint: "文字工具：点击预览添加文字，点击文字进行编辑",
+    text_tool_needs_layer: "请先添加一个图层，或从“插入”菜单插入文本",
     // 标记开关的两态提示：先说当前状态，再说点击后会发生什么。
     markers_shown_hint: "当前显示时间线标记。点击隐藏。",
     markers_hidden_hint: "已隐藏时间线标记。点击显示。",
@@ -597,6 +600,7 @@ const zhCN: Resources = {
     add_text_layer: "文本",
     select_tool: "选择工具",
     toggle_blade_mode: "剪刀工具",
+    select_text_tool: "文字工具",
     move_to_new_track: "移动到新轨道",
     import_media: "导入素材…",
     export: "导出…",

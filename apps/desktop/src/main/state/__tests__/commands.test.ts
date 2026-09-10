@@ -8,6 +8,7 @@ import { blankProject, SCHEMA_VERSION } from '../model'
 import { seededGen } from '../ids'
 import { textParamsDefault } from '../mutations/add'
 import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
+import { staticPosition } from '../../../shared/position'
 import { root } from './fixtures/project'
 
 // ── PRODUCTION_OPS coverage assertion ────────────────────────────────────────
@@ -210,6 +211,41 @@ describe('prodTextParams', () => {
   it('is textParamsDefault with the content arg read off the wire', () => {
     expect(prodTextParams({ content: 'x' }, COMP)).toEqual(textParamsDefault('x', COMP))
     expect(prodTextParams({}, COMP)).toEqual(textParamsDefault('Text', COMP))
+  })
+
+  // The Text tool's one divergence from the factory: where the layer lands.
+  // `x`/`y` are the anchor point (ADR 0049), so the factory's centred anchor
+  // puts the text centred ON the point — and nothing else about the params may
+  // move, or a tool-made layer and a menu-made one would be two kinds of text.
+  it('places the layer at x/y and changes nothing else', () => {
+    const placed = prodTextParams({ x: 100, y: 200 }, COMP) as Extract<LayerParams, { kind: 'Text' }>
+    const base = textParamsDefault('Text', COMP)
+    expect(placed.transform.position).toEqual(staticPosition(100, 200))
+    expect({ ...placed, transform: { ...placed.transform, position: base.transform.position } }).toEqual(base)
+  })
+
+  // Half a point is refused at the boundary, not paired with a guessed axis —
+  // ADR 0049's `(null, set)` rule for the box, applied to the position. The
+  // named field is the MISSING one, which is what the caller has to supply.
+  it('refuses x without y and y without x, naming the missing axis', () => {
+    expect(() => prodTextParams({ x: 100 }, COMP)).toThrow(/x and y must be given together/)
+    expect(() => prodTextParams({ y: 100 }, COMP)).toThrow(/x and y must be given together/)
+    const gen = seededGen()
+    const a = createActor({ initial: blankProject(gen, 'half'), idGen: gen, clock: () => '<TS>' })
+    const r = a.command('add_text_layer', { tStartUs: 0, x: 100 })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatchObject({ error: 'InvalidArgument', field: 'y' })
+    const s = a.command('add_text_layer', { tStartUs: 0, y: 100 })
+    expect(s.ok).toBe(false)
+    if (!s.ok) expect(s.error).toMatchObject({ error: 'InvalidArgument', field: 'x' })
+    expect(root(a.snapshot()).tracks.flatMap((t) => t.layers)).toEqual([])
+  })
+
+  // Unclamped: a title that starts partly out of frame is a legitimate thing
+  // to author, and the boundary is not where composition policy lives.
+  it('does not clamp the point to the frame', () => {
+    const p = prodTextParams({ x: -50, y: 5000 }, COMP) as Extract<LayerParams, { kind: 'Text' }>
+    expect(p.transform.position).toEqual(staticPosition(-50, 5000))
   })
 
   // Size is the demo op's only legitimate divergence from the factory — a family

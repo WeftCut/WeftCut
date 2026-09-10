@@ -61,9 +61,11 @@ export const EDIT_MENU: MenuSection = {
     "---",
     // Modal tools: checkmarks make the armed tool visible here too, so blade
     // mode isn't discoverable only by the timeline cursor. Selection is always
-    // available; the Blade needs a layer to cut.
+    // available; the Blade needs a layer to cut, and the Text tool needs one
+    // for the preview to have a canvas to click.
     "selectTool",
     "toggleBladeMode",
+    "selectTextTool",
     // The Blade without the pointer: same cut, resolved from the playhead. It
     // sits with the tools rather than in a section of its own because that is
     // the relationship a user needs to see — reach for the tool to cut where

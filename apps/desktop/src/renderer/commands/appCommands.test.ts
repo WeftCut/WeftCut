@@ -32,7 +32,7 @@ const handlers: HandlerMap = {
   copySelected: noop, pasteAtPlayhead: noop,
   splitAtPlayhead: noop,
   importMedia: noop, export: noop,
-  selectTool: noop, toggleBladeMode: noop, toggleLog: noop, focusLogSearch: noop,
+  selectTool: noop, toggleBladeMode: noop, selectTextTool: noop, toggleLog: noop, focusLogSearch: noop,
   toggleDisplayMode: noop,
   seekFrameBack: noop, seekFrameForward: noop, seekSecondBack: noop,
   seekSecondForward: noop, seekPrevEdit: noop, seekNextEdit: noop,
@@ -51,7 +51,7 @@ const menu = {
   openVoiceoverDialog: noop,
 };
 
-const flags = { busy: false, canUndo: true, canRedo: false, canBlade: true, exportLocked: true };
+const flags = { busy: false, canUndo: true, canRedo: false, exportLocked: true };
 
 function resolveKey(obj: unknown, dotted: string): unknown {
   return dotted.split(".").reduce<any>((acc, k) => acc?.[k], obj);
@@ -228,8 +228,33 @@ describe("buildAppCommands", () => {
       setTool("blade");
       expect(by("selectTool").checked!()).toBe(false);
       expect(by("toggleBladeMode").checked!()).toBe(true);
+      setTool("text");
+      expect(by("toggleBladeMode").checked!()).toBe(false);
+      expect(by("selectTextTool").checked!()).toBe(true);
       // Non-modal commands are not checkable at all.
       expect(by("save").checked).toBeUndefined();
+    });
+
+    // Both pointer tools share one gate: a project with no layer has nothing
+    // to cut and no canvas to click. Read LIVE off the project mirror, and
+    // built BEFORE the first layer lands, for the reason `projectHasLayers`
+    // gives: the strip re-renders on that flip in the same commit as App, ahead
+    // of any flag App could hand the provider.
+    it("greys the Blade and the Text tool together until the project has a layer", () => {
+      const defs = buildAppCommands(handlers, menu, flags);
+      const by = (id: string) => defs.find((d) => d.id === id)!;
+      try {
+        useProjectStore.getState().apply({ ...summaryFixture(), layer_count: 0 });
+        expect(by("toggleBladeMode").enabled!()).toBe(false);
+        expect(by("selectTextTool").enabled!()).toBe(false);
+        useProjectStore.getState().apply({ ...summaryFixture(), layer_count: 1 });
+        expect(by("toggleBladeMode").enabled!()).toBe(true);
+        expect(by("selectTextTool").enabled!()).toBe(true);
+      } finally {
+        useProjectStore.getState().apply(null);
+      }
+      // Selection is always available — there is no state it cannot be armed in.
+      expect(by("selectTool").enabled).toBeUndefined();
     });
   });
 

@@ -15,6 +15,7 @@ import type {
 } from "../render/pixiPreviewFlag";
 import { PixiErrorBoundary } from "../render/PixiErrorBoundary";
 import { SafeAreaGuidesHost } from "./SafeAreaGuides";
+import { TextToolOverlayHost } from "./TextToolOverlay";
 import { TransformGizmoHost } from "./TransformGizmo";
 
 interface Props {
@@ -144,8 +145,11 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
         {/* After the canvas so they stack above it; screen-space by design —
             see TransformGizmo.tsx. Skipped while the dock tab is hidden — an
             overlay would otherwise track a canvas nobody can see.
-            Safe areas first: they are chrome about the frame, so they paint
-            UNDER the selection's box and handles. */}
+            The Text tool's click surface first: it must sit UNDER the gizmo
+            host so an open inline editor stays clickable (TextToolOverlay.tsx).
+            Then safe areas: chrome about the frame, so they paint under the
+            selection's box and handles. */}
+        {visible && <TextToolOverlayHost />}
         {visible && <SafeAreaGuidesHost />}
         {visible && <TransformGizmoHost />}
       </div>

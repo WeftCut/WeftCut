@@ -26,6 +26,7 @@ export type ActionId =
   | "export"
   | "selectTool"
   | "toggleBladeMode"
+  | "selectTextTool"
   | "toggleLog"
   | "focusLogSearch"
   | "toggleDisplayMode"
@@ -188,14 +189,23 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   //
   // `toggleBladeMode` keeps its historical id so users' persisted keybinding
   // overrides survive; it no longer toggles — it selects the Blade.
+  //
+  // `T` arms the Text tool, Premiere's Type-tool key: a preview click edits
+  // the Text layer under the pointer or creates one at the click point
+  // (`preview/TextToolOverlay.tsx`). Every tool key is a bare letter because a
+  // tool switch is a reflex; the display-mode toggle that used to hold `T` is
+  // not one, so it moved to the chord below.
   selectTool:      { defaultKeys: ["V"],                   labelKey: "actions.select_tool" },
   toggleBladeMode: { defaultKeys: ["C"],                   labelKey: "actions.toggle_blade_mode" },
+  selectTextTool:  { defaultKeys: ["T"],                   labelKey: "actions.select_text_tool" },
   toggleLog:       { defaultKeys: ["Mod+`"],               labelKey: "actions.toggle_log" },
   focusLogSearch:  { defaultKeys: ["Mod+Shift+`"],         labelKey: "actions.focus_log_search" },
-  // Bare-letter `T` flips the app-level `display_mode` (A/B Roll ↔ All Tracks, see
-  // `shared/app-settings.ts`). Rebindable through Settings → Keyboard.
-  // Bare-letter chords don't fire in text inputs by default.
-  toggleDisplayMode: { defaultKeys: ["T"],                 labelKey: "actions.toggle_display_mode" },
+  // `Shift+T` flips the app-level `display_mode` (A/B Roll ↔ All Tracks, see
+  // `shared/app-settings.ts`). A chord and not a bare letter for the reason
+  // `toggleFollowPlayhead` gives: a view toggle is not a reflex, and the bare
+  // `T` went to the Text tool. Rebindable through Settings → Keyboard; a user's
+  // persisted override is keyed by this id and survives the move.
+  toggleDisplayMode: { defaultKeys: ["Shift+T"],           labelKey: "actions.toggle_display_mode" },
   // Whether the timeline pages its view to keep the playhead on screen
   // (`timeline/followPlayhead.ts`). Shift+F rather than a bare letter: the
   // single-key space is reserved for the tools and mark points a user hits

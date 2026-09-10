@@ -763,12 +763,20 @@ export async function addTextLayer(opts: {
   durationUs?: number;
   trackId?: string;
   content?: string;
+  /// Where the layer lands, composition pixels — the ANCHOR point, since that
+  /// is what a Text layer's position names (ADR 0049). Both or neither: the
+  /// actor refuses one without the other, and with neither the layer is
+  /// centred in the frame.
+  x?: number;
+  y?: number;
 }): Promise<string> {
   return invoke<string>("add_text_layer", {
     trackId: opts.trackId,
     content: opts.content,
     tStartUs: opts.tStartUs,
     durationUs: opts.durationUs,
+    x: opts.x,
+    y: opts.y,
   });
 }
 

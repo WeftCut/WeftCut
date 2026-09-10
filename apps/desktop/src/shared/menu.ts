@@ -18,7 +18,7 @@
 /// see src/renderer/menu/nativeMenu.ts).
 ///
 /// Deliberately small. In-app menu items derive `disabled` from live state
-/// (`busy`, `canUndo`, `canBlade`, `exportLocked`); a native MenuItem is a
+/// (`busy`, `canUndo`, the live layer-count read, `exportLocked`); a native MenuItem is a
 /// main-process object, so every one of those transitions would have to be
 /// pushed over IPC and re-applied. That sync cost — not the labels — is what
 /// full parity would buy.

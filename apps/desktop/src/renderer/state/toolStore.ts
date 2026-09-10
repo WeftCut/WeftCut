@@ -1,6 +1,12 @@
-// Timeline tool selection — which modal tool arms the timeline's layer
-// clicks. Session state, deliberately NOT persisted: a project always reopens
+// Editing tool selection — which modal tool arms clicks on the editing
+// surfaces. Session state, deliberately NOT persisted: a project always reopens
 // on the Selection tool, matching every NLE.
+//
+// Each tool names the surface it changes. `blade` changes what a TIMELINE
+// layer click does; `text` changes what a PREVIEW click does and leaves the
+// timeline behaving as under `select` (the preview click has a frame
+// coordinate to place text at, a timeline click does not). The store is one
+// radio group regardless, because a user holds one tool at a time.
 //
 // A module-level store rather than App state because the Quick Actions Panel
 // is a Dock Panel: it must read the active tool without sitting on App's
@@ -13,11 +19,13 @@
 import { create } from "zustand";
 
 /// The modal tools. `select` is the default: layer clicks select and drag.
-/// `blade` arms the razor — clicks split the layer at the click point.
+/// `blade` arms the razor — timeline clicks split the layer at the click point.
+/// `text` arms the Text tool — a preview click edits the Text layer under the
+/// pointer, or creates one at the click point (`preview/TextToolOverlay.tsx`).
 ///
 /// Adding a tool is additive: extend this union, give it an `ActionId` + key
 /// in `ACTION_DEFS`, and add a row to the Quick Actions tool section.
-export type Tool = "select" | "blade";
+export type Tool = "select" | "blade" | "text";
 
 interface State {
   tool: Tool;

@@ -41,7 +41,7 @@ function commandIds(): Set<string> {
       applyDefaultTransition: () => {},
       openVoiceoverDialog: () => {},
     },
-    { busy: false, canUndo: false, canRedo: false, canBlade: false, exportLocked: false },
+    { busy: false, canUndo: false, canRedo: false, exportLocked: false },
   );
   return new Set(defs.map((d) => d.id));
 }
@@ -51,6 +51,7 @@ function commandIds(): Set<string> {
 function state(over: Partial<QuickActionState> = {}): QuickActionState {
   return {
     tool: "select",
+    hasLayers: true,
     displayMode: "AbRoll",
     hasRange: false,
     markersVisible: true,
@@ -119,6 +120,8 @@ describe("quickActions catalogue", () => {
       state({ tool: "select", displayMode: "AllTracks" }),
       state({ tool: "blade", displayMode: "AbRoll" }),
       state({ tool: "blade", displayMode: "AllTracks" }),
+      state({ tool: "text", displayMode: "AbRoll" }),
+      state({ tool: "text", displayMode: "AllTracks" }),
     ];
     for (const section of QUICK_ACTION_SECTIONS) {
       if (section.mode !== "radio") continue;
@@ -174,6 +177,44 @@ describe("quickActions catalogue", () => {
     );
     expect(item?.active?.(state({ displayMode: "AbRoll" }))).toBe(true);
     expect(item?.active?.(state({ displayMode: "AllTracks" }))).toBe(false);
+  });
+
+  // The third tool. In the radio section with the other two, so the strip
+  // shows one armed tool; its hint is the one place the click gesture is
+  // taught, and the one place a greyed button names its remedy.
+  describe("text tool", () => {
+    const item = (): QuickActionItem => {
+      const found = QUICK_ACTION_SECTIONS.flatMap((s) => s.items).find(
+        (i) => i.id === "selectTextTool",
+      );
+      if (!found) throw new Error("no strip item for selectTextTool");
+      return found;
+    };
+
+    it("sits in the tools radio section, after the Blade", () => {
+      const tools = QUICK_ACTION_SECTIONS.find((s) => s.id === "tools");
+      expect(tools?.mode).toBe("radio");
+      expect(tools?.items.map((i) => i.id)).toEqual([
+        "selectTool",
+        "toggleBladeMode",
+        "selectTextTool",
+      ]);
+    });
+
+    it("reads as armed only while the text tool is the active tool", () => {
+      expect(item().active?.(state({ tool: "text" }))).toBe(true);
+      expect(item().active?.(state({ tool: "select" }))).toBe(false);
+      expect(item().active?.(state({ tool: "blade" }))).toBe(false);
+    });
+
+    it("teaches the gesture while usable, and names the remedy while not", () => {
+      expect(item().hint?.(state({ hasLayers: true }))).toBe(
+        "quick_actions.text_tool_hint",
+      );
+      expect(item().hint?.(state({ hasLayers: false }))).toBe(
+        "quick_actions.text_tool_needs_layer",
+      );
+    });
   });
 
   // An independent toggle whose state is carried by the pressed attributes and
