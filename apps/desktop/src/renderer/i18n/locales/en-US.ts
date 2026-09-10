@@ -2023,9 +2023,9 @@ const enUS = {
     role_meter: "{{role}} level meter",
     master: "Master",
     master_meter: "Master output meter",
-    master_levels: "RMS {{rms}} · Peak {{peak}} dB",
-    rms: "RMS",
-    peak: "Peak",
+    master_rms: "RMS {{value}}",
+    master_peak: "Peak {{value}} dB",
+    peak_hold: "Peak hold {{value}} dB, click to reset",
   },
   motif_picker: {
     heading: "Motifs",

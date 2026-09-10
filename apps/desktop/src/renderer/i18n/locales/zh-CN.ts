@@ -1789,9 +1789,9 @@ const zhCN: Resources = {
     role_meter: "{{role}} 电平表",
     master: "主输出",
     master_meter: "主输出电平表",
-    master_levels: "RMS {{rms}} · 峰值 {{peak}} dB",
-    rms: "RMS",
-    peak: "峰值",
+    master_rms: "RMS {{value}}",
+    master_peak: "峰值 {{value}} dB",
+    peak_hold: "峰值保持 {{value}} dB，点击重置",
   },
   motif_picker: {
     heading: "Motifs",

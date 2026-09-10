@@ -30,6 +30,17 @@ export interface RoleMeterSnapshot {
  *  The agent-facing master REPORT (`reportAudioMeter`, the MCP resource) is a
  *  separate ~2 Hz push and does not pass through this store. */
 interface MeterState extends MasterMeterSnapshot {
+  /** The loudest master peak since the hold was last reset, in dBFS on the same
+   *  floor. A meter's NUMBER is a hold, not a sample: the bar and the tick move
+   *  with the signal, and the number stands at the pass's maximum until someone
+   *  resets it, so an editor can play through and then read what the mix
+   *  reached. It is held across a stopped transport on purpose (the silent
+   *  sample leaves it alone), because "the loudest moment of the pass" is
+   *  exactly what a reader looks at once the pass is over; only a reset or a
+   *  disposed preview (`clearMasterMeter`) lets it go. Infinite hold rather
+   *  than a timed decay, as a console's peak display does — a decay needs a
+   *  clock that keeps ticking after the last sample, and the store has none. */
+  peakHoldDb: number;
   roleLevels: Record<AudioRole, RoleMeterSnapshot>;
   roleSampledAtMs: number | null;
 }
@@ -50,6 +61,7 @@ function silentRoleLevels(): Record<AudioRole, RoleMeterSnapshot> {
 export const useMasterMeterStore = create<MeterState>(() => ({
   rmsDb: SILENCE_DB,
   peakDb: SILENCE_DB,
+  peakHoldDb: SILENCE_DB,
   sampledAtMs: null,
   roleLevels: silentRoleLevels(),
   roleSampledAtMs: null,
@@ -59,16 +71,26 @@ function jsonSafeDb(value: number): number {
   return Number.isFinite(value) ? value : SILENCE_DB;
 }
 
-/** Publish one master analyser reading. */
+/** Publish one master analyser reading. The peak hold ratchets up here and
+ *  nowhere else: a sample can raise it, never lower it. */
 export function publishMasterMeter(
   sample: Pick<MasterMeterSnapshot, "rmsDb" | "peakDb">,
   sampledAtMs = performance.now(),
 ): void {
-  useMasterMeterStore.setState({
+  const peakDb = jsonSafeDb(sample.peakDb);
+  useMasterMeterStore.setState((prev) => ({
     rmsDb: jsonSafeDb(sample.rmsDb),
-    peakDb: jsonSafeDb(sample.peakDb),
+    peakDb,
+    peakHoldDb: Math.max(prev.peakHoldDb, peakDb),
     sampledAtMs,
-  });
+  }));
+}
+
+/** Let the master peak hold go. The next published sample becomes the new
+ *  hold, so a reset mid-play reads the current peak rather than silence for
+ *  longer than one sample. */
+export function resetMasterPeakHold(): void {
+  useMasterMeterStore.setState({ peakHoldDb: SILENCE_DB });
 }
 
 /** Publish one per-Role reading. The slice is replaced wholesale so every Role
@@ -91,7 +113,9 @@ export function publishRoleMeters(
 /** Publish one all-silent master reading. The push calls this when the
  *  transport stops: its timer samples only while playing, so without this the
  *  master would hold its last playing reading beside four Role meters that have
- *  fallen to the floor — level claimed over a mix that has gone silent. */
+ *  fallen to the floor — level claimed over a mix that has gone silent. The
+ *  peak HOLD is not a reading of the mix now and is deliberately left standing
+ *  (see `peakHoldDb`). */
 export function publishMasterMeterSilent(): void {
   useMasterMeterStore.setState({
     rmsDb: SILENCE_DB,
@@ -114,6 +138,7 @@ export function clearMasterMeter(): void {
   useMasterMeterStore.setState({
     rmsDb: SILENCE_DB,
     peakDb: SILENCE_DB,
+    peakHoldDb: SILENCE_DB,
     sampledAtMs: null,
     roleLevels: silentRoleLevels(),
     roleSampledAtMs: null,
@@ -125,6 +150,9 @@ export const useMasterRmsDb = (): number =>
 
 export const useMasterPeakDb = (): number =>
   useMasterMeterStore((state) => state.peakDb);
+
+export const useMasterPeakHoldDb = (): number =>
+  useMasterMeterStore((state) => state.peakHoldDb);
 
 // Scalar on purpose: a selector that builds `{ rmsDb, peakDb }` returns a fresh
 // reference on every call, `useSyncExternalStore` compares snapshots with

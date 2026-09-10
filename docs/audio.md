@@ -300,6 +300,18 @@ Selectors are scalar (`useRoleRmsDb`): one returning a fresh object per
 call re-renders its subtree forever.
 Per-role peak is published and kept, but nothing reads it yet.
 
+The store's one derived value is the master **peak hold** (`peakHoldDb`):
+the loudest master peak since it was last let go, raised by every
+published sample and lowered only by `resetMasterPeakHold` or a cleared
+preview. The silent sample leaves it standing on purpose — a meter's
+NUMBER is a hold, not a sample: the bar and the tick move with the
+signal, and the number stands at the pass's maximum so an editor can play
+through and then read what the mix reached. It is an infinite hold, as a
+console's peak display is, rather than a timed decay: a decay needs a
+clock that keeps ticking after the last sample, and the store has none.
+In the Panel the number is also the reset (click it), and at 0 dBFS and
+above it reads as a clip until reset.
+
 ## Roles
 
 Audio mixing groups by **role**, not by track. A role is a per-layer
@@ -361,13 +373,19 @@ content width and renders one of two layouts, carrying exactly one
   second column anyone can reach.
 - **Console** (`RoleStrip`), at 392 px of root width and above. Four
   vertical-fader strips, each fader a channel-strip cap with its own
-  level meter beside it (`RoleStripMeter`, the master column drawn once
-  per role, so a role's level and gain read on one axis), the dB legend
-  drawn once in a shared gutter (`DbScaleGutter`), and the master meter
-  as a fifth strip on a sunken surface. The per-role meter sits in the
-  fader row itself, so the row keeps its one fixed height and the dB
-  scale stays true; it is bar-only, because the numeric reading lives on
-  the card. Vertical
+  level meter beside it (`RoleStripMeter`, the one `MeterColumn` every
+  strip draws, so a role's level and gain read on one axis), the dB
+  legend drawn once in a shared gutter (`DbScaleGutter`), and the master
+  as a fifth strip on a sunken surface, shaped like the four: one RMS
+  column on the fader travel with the live peak as a tick across it, the
+  peak hold as the number under its name (where a console prints a
+  channel's peak; it is also the reset), and the RMS reading on the
+  readout row in line with the four gain readouts. One column, never two
+  — a second column on a mixer reads as the right channel whatever its
+  caption says, and the analyser is combined-channel. The per-role meter
+  sits in the fader row itself, so the row keeps its one fixed height and
+  the dB scale stays true; it is bar-only, because the numeric reading
+  lives on the card. Vertical
   travel is what makes the precision width-independent: a horizontal
   fader's travel is a function of the dock width. The threshold is
   arithmetic over the column widths `editor.css` pins — four role

@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import "../i18n";
 import {
   clearMasterMeter,
   publishMasterMeter,
+  publishMasterMeterSilent,
   publishRoleMeters,
   roleMeterDemandWanted,
   SILENCE_DB,
@@ -116,6 +117,9 @@ const openReadout = (role: string) => {
 
 const meterFor = (role: string) =>
   screen.getByRole("group", { name: `${role} level meter` });
+
+/// The master's peak hold: the number, and the button that resets it.
+const peakHold = () => screen.getByRole("button", { name: /^Peak hold / });
 
 /// One per-Role publication shaped like the tap's: all four Roles sampled at
 /// one instant, every Role the test names no level for reading true silence —
@@ -434,12 +438,15 @@ describe("RoleMixerPanel — implied mute", () => {
 });
 
 describe("RoleMixerPanel — master meter", () => {
-  it("shows the real master RMS/Peak from the shared store on one line", () => {
+  it("shows the real master RMS and the peak hold from the shared store on one line", () => {
     publishMasterMeter({ rmsDb: -18, peakDb: -6 });
     render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
 
     const meter = screen.getByRole("group", { name: "Master output meter" });
-    expect(within(meter).getByText("RMS -18.0 · Peak -6.0 dB")).toBeTruthy();
+    expect(within(meter).getByText("RMS -18.0")).toBeTruthy();
+    expect(
+      within(meter).getByRole("button", { name: "Peak hold -6.0 dB, click to reset" }).textContent,
+    ).toBe("Peak -6.0 dB");
     // One master reading, standing apart from the four per-Role meters.
     expect(screen.getAllByRole("group", { name: "Master output meter" })).toHaveLength(1);
     expect(screen.getAllByRole("group", { name: /level meter$/ })).toHaveLength(4);
@@ -450,7 +457,43 @@ describe("RoleMixerPanel — master meter", () => {
     render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
 
     const meter = screen.getByRole("group", { name: "Master output meter" });
-    expect(within(meter).getByText("RMS −∞ · Peak −∞ dB")).toBeTruthy();
+    expect(within(meter).getByText("RMS −∞")).toBeTruthy();
+    expect(peakHold().textContent).toBe("Peak −∞ dB");
+  });
+
+  it("holds the loudest peak of the pass until the number is clicked", () => {
+    publishMasterMeter({ rmsDb: -18, peakDb: -6 });
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+    const meter = screen.getByRole("group", { name: "Master output meter" });
+
+    // The signal falls; the hold does not.
+    act(() => publishMasterMeter({ rmsDb: -30, peakDb: -12 }));
+    expect(peakHold().textContent).toBe("Peak -6.0 dB");
+    // Nor does the transport stopping let it go — the RMS beside it reads
+    // silence, the hold still reads the pass.
+    act(() => publishMasterMeterSilent());
+    expect(within(meter).getByText("RMS −∞")).toBeTruthy();
+    expect(peakHold().textContent).toBe("Peak -6.0 dB");
+    // A louder moment raises it.
+    act(() => publishMasterMeter({ rmsDb: -12, peakDb: -3 }));
+    expect(peakHold().textContent).toBe("Peak -3.0 dB");
+
+    // The number is the reset.
+    fireEvent.click(peakHold());
+    expect(peakHold().textContent).toBe("Peak −∞ dB");
+  });
+
+  it("marks a hold at or over full scale as a clip until it is reset", () => {
+    publishMasterMeter({ rmsDb: -6, peakDb: 0.4 });
+    render(<RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />);
+
+    expect(peakHold().dataset.clip).toBe("true");
+    // The bar has long fallen back; the record stands.
+    act(() => publishMasterMeter({ rmsDb: -30, peakDb: -20 }));
+    expect(peakHold().dataset.clip).toBe("true");
+
+    fireEvent.click(peakHold());
+    expect(peakHold().dataset.clip).toBe("false");
   });
 });
 
@@ -564,19 +607,42 @@ describe("RoleMixerPanel — the console", () => {
     expect(within(scale).getByText("-30")).toBeTruthy();
   });
 
-  it("stands the master meter beside the Roles as a fifth strip", () => {
+  it("stands the master meter beside the Roles as a fifth strip shaped like them", () => {
     publishMasterMeter({ rmsDb: -18, peakDb: -6 });
     renderConsole();
 
     const master = screen.getByRole("group", { name: "Master output meter" });
-    // Two columns, RMS and peak — not left and right.
-    expect(within(master).getByText("RMS")).toBeTruthy();
-    expect(within(master).getByText("Peak")).toBeTruthy();
-    expect(within(master).getByText("-18.0")).toBeTruthy();
-    expect(within(master).getByText("-6.0")).toBeTruthy();
-    // The master strip reads the whole mix; each Role strip now stands its own
+    // ONE column, the Role strips' own, and so no captions to tell two apart: a
+    // second column on a mixer reads as the right channel whatever it is called.
+    expect(master.querySelectorAll(".mixer-meter-column")).toHaveLength(1);
+    expect(within(master).queryByText("RMS")).toBeNull();
+    expect(within(master).queryByText("Peak")).toBeNull();
+    // The peak hold at the head, as a bare number; the RMS on the readout row,
+    // named by its title where the strip has no room for a caption.
+    expect(
+      within(master).getByRole("button", { name: "Peak hold -6.0 dB, click to reset" }).textContent,
+    ).toBe("-6.0");
+    expect(within(master).getByTitle("RMS -18.0").textContent).toBe("-18.0");
+    // The master strip reads the whole mix; each Role strip stands its own
     // level meter beside its fader, so level and gain read on one axis per Role.
     expect(screen.queryAllByRole("group", { name: /level meter$/ })).toHaveLength(4);
+  });
+
+  it("moves the master's peak tick with the live peak while the number holds", () => {
+    publishMasterMeter({ rmsDb: -18, peakDb: -30 });
+    renderConsole();
+    const master = screen.getByRole("group", { name: "Master output meter" });
+    const tickTop = () =>
+      (master.querySelector(".mixer-meter-column-peak") as HTMLElement).style.top;
+
+    // -30 dBFS on the -60 floor is halfway up the column.
+    expect(tickTop()).toBe("50%");
+    act(() => publishMasterMeter({ rmsDb: -30, peakDb: -45 }));
+    // The tick fell with the signal; the hold in the head kept the pass's peak.
+    expect(tickTop()).toBe("75%");
+    expect(peakHold().textContent).toBe("-30.0");
+    // Role columns carry no tick: peak is the master's reading.
+    expect(meterFor("Dialogue").querySelector(".mixer-meter-column-peak")).toBeNull();
   });
 
   it("moves each Role strip's meter with the level published for that Role", () => {

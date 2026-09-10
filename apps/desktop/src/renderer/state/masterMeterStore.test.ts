@@ -8,6 +8,7 @@ import {
   publishMasterMeterSilent,
   publishRoleMeters,
   publishRoleMetersSilent,
+  resetMasterPeakHold,
   roleMeterDemandWanted,
   subscribeRoleMeterDemand,
   useMasterMeterStore,
@@ -73,6 +74,43 @@ describe("masterMeterStore", () => {
     // The two publications stay independent in this direction too.
     expect(state.roleLevels.music).toEqual({ rmsDb: -9, peakDb: -3 });
     expect(state.roleSampledAtMs).toBe(12);
+  });
+});
+
+describe("masterMeterStore peak hold", () => {
+  beforeEach(() => clearMasterMeter());
+
+  it("ratchets up with the samples and never down", () => {
+    publishMasterMeter({ rmsDb: -18, peakDb: -6 }, 1);
+    publishMasterMeter({ rmsDb: -30, peakDb: -12 }, 2);
+    // The live peak fell; the hold did not.
+    expect(useMasterMeterStore.getState()).toMatchObject({ peakDb: -12, peakHoldDb: -6 });
+
+    publishMasterMeter({ rmsDb: -12, peakDb: -3 }, 3);
+    expect(useMasterMeterStore.getState().peakHoldDb).toBe(-3);
+  });
+
+  it("stands through the transport's silent sample, and lets go on reset or a cleared preview", () => {
+    publishMasterMeter({ rmsDb: -18, peakDb: -6 }, 1);
+
+    publishMasterMeterSilent();
+    // The reading is silence; the loudest moment of the pass is still on record.
+    expect(useMasterMeterStore.getState()).toMatchObject({ peakDb: -120, peakHoldDb: -6 });
+
+    resetMasterPeakHold();
+    expect(useMasterMeterStore.getState().peakHoldDb).toBe(-120);
+    // The next sample is the new hold, not the floor.
+    publishMasterMeter({ rmsDb: -20, peakDb: -9 }, 2);
+    expect(useMasterMeterStore.getState().peakHoldDb).toBe(-9);
+
+    clearMasterMeter();
+    expect(useMasterMeterStore.getState().peakHoldDb).toBe(-120);
+  });
+
+  it("reads analyser silence as the floor, so it cannot raise the hold", () => {
+    publishMasterMeter({ rmsDb: -18, peakDb: -6 }, 1);
+    publishMasterMeter({ rmsDb: -Infinity, peakDb: Number.NaN }, 2);
+    expect(useMasterMeterStore.getState().peakHoldDb).toBe(-6);
   });
 });
 

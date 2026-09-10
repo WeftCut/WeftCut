@@ -532,11 +532,11 @@
      translation or a font — CONSOLE_LAYOUT_MIN_WIDTH in `MixerPanel.tsx` is
      these summed with the Panel's inset, and that comment carries the sum.
      Each floor is what the column has to hold: a Role strip's readout and its
-     mute/solo/reset row are 58px apiece, the master strip's two 23px readings
-     with their gap are 52px, and the gutter's widest tick is "-30" plus its
-     mark. The few px over each is deliberate slack — the uppercase
-     implied-mute badge and the meter captions are text, so their width moves
-     with the UI font. */
+     mute/solo/reset row are 58px apiece, the master strip's is its uppercase
+     "MASTER" head (its one reading is narrower), and the gutter's widest tick
+     is "-30" plus its mark. The few px over each is deliberate slack — the
+     uppercase implied-mute badge and the master's head are text, so their
+     width moves with the UI font and the translation. */
   --mixer-console-gap: 4px;
   --mixer-strip-min-width: 66px;
   --mixer-master-min-width: 58px;
@@ -560,9 +560,9 @@
    the same box, and a tick and a thumb at one value land on one line. Which
    makes the head row's fixed length and the top inset load-bearing: an `auto`
    head row is sized by its own column's content, and the master's micro-type
-   caption is not as tall as a Role's glyph over its name, so the fader rows
-   would drift apart by a few pixels and the scale would read a systematic
-   offset. Rows BELOW the fader are free to differ, and do. */
+   name over its peak hold is not as tall as a Role's glyph over its name, so
+   the fader rows would drift apart by a few pixels and the scale would read a
+   systematic offset. Rows BELOW the fader are free to differ, and do. */
 .mixer-console-column {
   display: grid;
   grid-template-rows: var(--mixer-strip-head-height) var(--mixer-console-fader-height);
@@ -761,54 +761,76 @@
 .mixer-strip--master {
   flex: none;
   /* A FIXED width, not a floor. Left as `min-width` the strip is content-sized,
-     and its two readings change width as the levels move ("−∞" → "-18.0" → …),
-     so every changed digit re-sized the strip and reflowed the whole console.
-     Pinned, the strip never moves; the readings sit in fixed cells and only
-     re-center. This also caps the strip at the width the 392px threshold's
-     arithmetic assumes — content could push it a few px past 58 before — so the
-     console floor is now exact rather than approximate. The strip's own side
-     padding is dropped so the two readings get the full budgeted width to sit
-     in; `box-sizing: border-box` keeps the EXTERNAL width (the number the
-     arithmetic pins) at `--mixer-master-min-width` regardless of padding. */
+     and its readings change width as the levels move ("−∞" → "-18.0" → …), so
+     every changed digit re-sized the strip and reflowed the whole console.
+     Pinned, the strip never moves; a reading only re-centers in its cell. This
+     also caps the strip at the width the 392px threshold's arithmetic assumes,
+     so the console floor is exact rather than approximate. The strip's own side
+     padding is dropped so the head's "MASTER" — the widest thing on it — gets
+     the full budgeted width; `box-sizing: border-box` keeps the EXTERNAL width
+     (the number the arithmetic pins) at `--mixer-master-min-width` regardless
+     of padding. The `min-width` is restated because `.mixer-strip` sets the
+     Role strips' 66px floor on this element too, and a min-width beats a
+     width — without the override the strip measured 66px, 8px over what the
+     threshold's sum budgets for it. */
   width: var(--mixer-master-min-width);
+  min-width: var(--mixer-master-min-width);
   padding-left: 0;
   padding-right: 0;
   background: var(--surface-sunken);
 }
 
-/* Meters, captions and readings in three rows of two, so each number stands
-   under the column it belongs to. */
-.mixer-master-row {
-  justify-self: stretch;
-  display: flex;
-  gap: 6px;
-  min-width: 0;
+/* The peak hold: the number a meter is read by once the pass is over, standing
+   where a console prints a channel's peak — over the meter, under the strip's
+   name (and after the RMS on the compact line). It is the reset control too, so
+   it is a button, but one that looks like a reading at rest: the hover wash is
+   the whole affordance, as it is for the gain readout. Foreground rather than
+   the label's muted colour, because it is the strip's one number worth reading
+   first. Micro type in both homes — the head's, and the compact line's. */
+.mixer-master-hold {
+  flex: none;
+  padding: 0 3px;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--foreground);
+  font-size: var(--font-size-micro);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+  transition: background var(--transition-fast);
 }
 
-.mixer-master-row > * {
-  flex: 1 1 0;
-  min-width: 0;
-  text-align: center;
+.mixer-master-hold:hover {
+  background: var(--hover-neutral);
 }
 
-/* The meter row is the fader row — the master's levels and the Roles' gains
-   read on one axis because they are the same box. */
-.mixer-master-row--meters {
-  align-self: stretch;
-  align-items: stretch;
+.mixer-master-hold:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
-.mixer-master-row--meters > * {
-  display: flex;
-  justify-content: center;
+/* At or over full scale the hold takes the ramp's own clip colour and keeps it
+   until reset: a clip that lasted one sample is still on record when the pass
+   ends, which a bar that has already fallen back cannot say. */
+.mixer-master-hold[data-clip="true"] {
+  color: var(--destructive);
+  font-weight: 600;
 }
 
 /* One vertical meter column, filling from the bottom: the ramp on the track,
    uncovered by a shade retreating from the top (the rule `--mixer-meter-stops`
-   states). */
+   states). The column itself is NOT clipped — the master's peak tick
+   deliberately stands wider than it, as the compact meter's tick stands taller
+   than its track — so the ramp is a clipped box of its own inside it, which is
+   what keeps the shade's square end inside the rounded column. */
 .mixer-meter-column {
   position: relative;
   width: 8px;
+}
+
+.mixer-meter-column-ramp {
+  position: absolute;
+  inset: 0;
   overflow: hidden;
   border-radius: 4px;
   background: linear-gradient(0deg, var(--mixer-meter-stops));
@@ -823,19 +845,41 @@
   transition: height 90ms linear;
 }
 
-/* Which column, and what it currently reads. */
-.mixer-master-caption,
+/* The live peak, as a line across the column at the level it reads — the
+   compact meter's tick turned upright. Placed from `top` and centred on that
+   position by half its own height, exactly as the unity hairline and a vertical
+   thumb are. It moves with the signal; the HOLD is the number in the head. */
+.mixer-meter-column-peak {
+  position: absolute;
+  left: 50%;
+  width: 12px;
+  height: 2px;
+  translate: -50% -50%;
+  border-radius: 1px;
+  background: var(--foreground);
+  transition: top 90ms linear;
+}
+
+/* The master's RMS, on the console's readout row: the same line box as a Role's
+   gain readout (`.mixer-readout`'s padding at the Panel's body size), so the
+   five numbers under the faders sit on one line — four gains and one level.
+   Not a button and no hover wash, because it is not editable; its `title`
+   names what it is, since the strip has no room for a caption row and the
+   column above it is the same RMS column every Role strip carries. */
 .mixer-master-reading {
-  font-size: var(--font-size-micro);
+  /* Pinned to the top of its row. The console stretches every column to the
+     tallest (a Role strip, with its controls row under the readout), and a grid
+     spreads that extra height over its implicit rows — so the master's one
+     implicit row is taller than a Role's readout row, and a reading centred in
+     it sat 11px below the four gain readouts it is meant to line up with. */
+  align-self: start;
+  padding: 1px 4px;
   color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
   /* Never wrap a reading onto a second line inside its fixed cell: a wrap would
      add height the strip's grid does not budget, and the whole point of the
      pinned strip is a footprint that does not move with the reading. */
   white-space: nowrap;
-}
-
-.mixer-master-reading {
-  font-variant-numeric: tabular-nums;
 }
 
 /* The real master RMS/Peak meter, on one line: RMS is the track's uncovered
