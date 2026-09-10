@@ -34,7 +34,7 @@ const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 }
 const SAFE_AREA_MARGIN = 0.08
 
 /** subtitles/layout.rs:21 cue_to_text_params — lay out one cue as a Text layer.
- *  Styleless cues get white fill, black outline + soft shadow, size 5% of comp
+ *  Styleless cues get white fill + black outline and no shadow, size 5% of comp
  *  height, bottom-centre inside `SAFE_AREA_MARGIN`. The ASS 9-grid align (or
  *  \pos) becomes an absolute anchor + position. NOTE the f32 keystone: size_px /
  *  outline width / shadow offsets / box_w are f32 in Rust — the differential
@@ -46,7 +46,15 @@ export function cueToTextParams(cue: Cue, compW: number, compH: number): TextPar
   const size = s.size_px ?? Math.round(compH * 0.05)
   const primary = s.primary ?? WHITE
   const outlineW = Math.max(s.outline_px ?? size * 0.06, 1.0)
-  const shadowOff = Math.max(s.shadow_px ?? 2.0, 1.0)
+  // No default shadow. A styleless cue (SRT/VTT) is white text with a black
+  // outline and nothing else — the outline alone is what keeps it legible over
+  // any picture, and a shadow on top of it read as a black smear no inspector
+  // field could switch off. An ASS style says what it wants: a positive `Shadow`
+  // depth becomes the offset, and an explicit 0 is honoured as "none" rather
+  // than lifted to 1 px. Positive depths keep the 1 px floor a sub-pixel shadow
+  // has always had. TWIN: `subtitles/layout.rs`, same predicate, same floor.
+  const shadowPx = s.shadow_px ?? null
+  const shadowOff = shadowPx !== null && shadowPx > 0 ? Math.max(shadowPx, 1.0) : null
   const an = s.align ?? 2
   const [[anchorX, anchorY], baseX, baseY] = anchorFor(an, compW, compH)
   // Quantized to the same authored precision an inspector edit would get. This is
@@ -73,7 +81,7 @@ export function cueToTextParams(cue: Cue, compW: number, compH: number): TextPar
     align: alignFor(an),
     transform: { ...defaultTransform(), position: { mode: 'XY', x: { mode: 'Static', value: x }, y: { mode: 'Static', value: y } }, anchor_x: { mode: 'Static', value: anchorX }, anchor_y: { mode: 'Static', value: anchorY } },
     opacity: { mode: 'Static', value: 1 },
-    shadow: { color: BLACK, offset_x: shadowOff, offset_y: shadowOff, blur: shadowOff },
+    shadow: shadowOff === null ? null : { color: BLACK, offset_x: shadowOff, offset_y: shadowOff, blur: shadowOff },
     outline: { color: s.outline_color ?? BLACK, width: outlineW },
     intro: null, outro: null,
     // Auto height, never Fixed: it wraps a transcript's unbroken line without

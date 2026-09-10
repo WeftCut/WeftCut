@@ -23,7 +23,9 @@ describe('cueToTextParams (mirror subtitles/layout.rs)', () => {
     expect(p.font.family).toBe('Liberation Sans, Noto Sans SC')
     expect(p.font.size_px).toBe(54) // round(1080 * 0.05)
     expect(p.outline).not.toBeNull()
-    expect(p.shadow).not.toBeNull()
+    // No shadow on a styleless cue: the outline is the legibility device, and a
+    // shadow nobody asked for was a black smear no inspector field could remove.
+    expect(p.shadow).toBeNull()
     expect(staticAnchor(p)).toEqual([0.5, 1.0]) // an2 bottom-center
     expect(p.transform.position.x).toEqual({ mode: 'Static', value: 960 }) // w/2
     expect((p.transform.position.y as { value: number }).value).toBeCloseTo(1080 - 1080 * 0.08, 5) // h - 8%
@@ -89,6 +91,14 @@ describe('cueToTextParams (mirror subtitles/layout.rs)', () => {
     expect([p.font.size_px, p.font.weight, p.font.italic]).toEqual([54, 700, true])
     expect((p.outline as { width: number }).width).toBe(3)
     expect((p.shadow as { blur: number }).blur).toBe(2)
+  })
+  // The ASS `Shadow` field is honoured both ways: a depth becomes the offset, and
+  // an explicit 0 stays none instead of being lifted to the 1 px floor — an author
+  // who turned the shadow off must not get one anyway. Twin of
+  // `ass_shadow_zero_is_none_and_a_depth_keeps_its_floor` in subtitles/layout.rs.
+  it('ASS Shadow: 0 means no shadow; a positive depth keeps its 1 px floor', () => {
+    expect(cueToTextParams(cue({ shadow_px: 0 }), 1920, 1080).shadow).toBeNull()
+    expect(cueToTextParams(cue({ shadow_px: 0.5 }), 1920, 1080).shadow).toEqual({ color: { r: 0, g: 0, b: 0, a: 255 }, offset_x: 1, offset_y: 1, blur: 1 })
   })
 })
 

@@ -15,7 +15,7 @@ pub const DEFAULT_CAPTION_FONT: &str = "Liberation Sans, Noto Sans SC";
 const SAFE_AREA_MARGIN: f64 = 0.08;
 
 /// Lay out one cue as a Text layer. Styleless cues (SRT/VTT) get the default
-/// caption look: white fill, black outline + soft shadow, size 5% of comp
+/// caption look: white fill + black outline and no shadow, size 5% of comp
 /// height, bottom-centre inside `SAFE_AREA_MARGIN`. The ASS 9-grid `align`
 /// (or `\pos`) is converted here to an absolute anchor + position — the render
 /// model stays plain x/y/anchor (no caption-specific render code).
@@ -24,7 +24,23 @@ pub fn cue_to_text_params(cue: &Cue, comp_w: u32, comp_h: u32) -> TextParams {
     let size = s.size_px.unwrap_or((comp_h as f32 * 0.05).round());
     let primary = s.primary.unwrap_or(Rgba::WHITE);
     let outline_w = s.outline_px.unwrap_or(size * 0.06).max(1.0);
-    let shadow_off = s.shadow_px.unwrap_or(2.0).max(1.0);
+    // No default shadow. A styleless cue (SRT/VTT) is white text with a black
+    // outline and nothing else — the outline alone is what keeps it legible over
+    // any picture, and a shadow on top of it read as a black smear no inspector
+    // field could switch off. An ASS style says what it wants: a positive
+    // `Shadow` depth becomes the offset, and an explicit 0 is honoured as "none"
+    // rather than lifted to 1 px. Positive depths keep the 1 px floor a
+    // sub-pixel shadow has always had. TWIN: `state/mutations/captions.ts`, same
+    // predicate, same floor.
+    let shadow = s.shadow_px.filter(|&px| px > 0.0).map(|px| {
+        let off = px.max(1.0);
+        Shadow {
+            color: Rgba::BLACK,
+            offset_x: off,
+            offset_y: off,
+            blur: off,
+        }
+    });
 
     let an = s.align.unwrap_or(2);
     let ((anchor_x, anchor_y), base_x, base_y) = anchor_for(an, comp_w as f64, comp_h as f64);
@@ -74,12 +90,7 @@ pub fn cue_to_text_params(cue: &Cue, comp_w: u32, comp_h: u32) -> TextParams {
             ..Default::default()
         },
         opacity: Animated::Static(1.0),
-        shadow: Some(Shadow {
-            color: Rgba::BLACK,
-            offset_x: shadow_off,
-            offset_y: shadow_off,
-            blur: shadow_off,
-        }),
+        shadow,
         outline: Some(Outline {
             color: s.outline_color.unwrap_or(Rgba::BLACK),
             width: outline_w,
@@ -151,7 +162,10 @@ mod tests {
         assert_eq!(p.font.family, "Liberation Sans, Noto Sans SC");
         assert_eq!(p.font.size_px, 54.0); // round(1080 * 0.05)
         assert!(p.outline.is_some());
-        assert!(p.shadow.is_some());
+        // No shadow on a styleless cue: the outline is the legibility device, and
+        // a shadow nobody asked for was a black smear no inspector field could
+        // remove.
+        assert!(p.shadow.is_none());
         // an2: bottom-center → anchor (0.5, 1.0), x = w/2, y = h - 8%
         assert_eq!(static_anchor(&p.transform), (0.5, 1.0));
         match (
@@ -243,6 +257,31 @@ mod tests {
         assert_eq!(p.align, TextAlign::Left);
         assert_eq!(p.box_w.expect("wrap width"), 1613.0);
         assert!(p.box_h.is_none());
+    }
+
+    /// The ASS `Shadow` field is honoured both ways: a depth becomes the offset,
+    /// and an explicit 0 stays none instead of being lifted to the 1 px floor —
+    /// an author who turned the shadow off must not get one anyway. Twin of
+    /// `ASS Shadow: 0 means no shadow` in state/mutations/captions.test.ts.
+    #[test]
+    fn ass_shadow_zero_is_none_and_a_depth_keeps_its_floor() {
+        let with = |px: f32| {
+            cue_to_text_params(
+                &cue(CueStyle {
+                    shadow_px: Some(px),
+                    ..CueStyle::default()
+                }),
+                1920,
+                1080,
+            )
+        };
+        assert!(with(0.0).shadow.is_none());
+        let floor = with(0.5).shadow.expect("a positive depth is a shadow");
+        assert_eq!(
+            (floor.offset_x, floor.offset_y, floor.blur),
+            (1.0, 1.0, 1.0)
+        );
+        assert_eq!(with(2.0).shadow.expect("depth 2").offset_x, 2.0);
     }
 
     /// The wrap width tracks the composition, not a hardcoded 1920.

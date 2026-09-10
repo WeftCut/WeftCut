@@ -57,9 +57,13 @@ cues never overlap, produces a single track.
 ## Cue layout and ASS support
 
 `cue_to_text_params` turns a cue into a `Text` layer's parameters. A styleless
-cue (plain SRT/VTT) gets the default caption look: white fill, a thin outline and
-soft shadow, font size proportional to composition height, bottom-centre anchored
-with a safe-area margin.
+cue (plain SRT/VTT) gets the default caption look: white fill and a thin black
+outline — no shadow — font size proportional to composition height,
+bottom-centre anchored with a safe-area margin. The outline alone is the
+legibility device; a shadow is only ever what an ASS style asked for, and a style
+whose `Shadow` is 0 gets none rather than a 1 px one. Neither field has an
+inspector control, which is why the default carries nothing a user could not
+take off again.
 
 Every cue — styled or not, imported or transcribed — is also born with a **wrap
 width**: `box_w` is the composition width less the safe-area margin on each side,
