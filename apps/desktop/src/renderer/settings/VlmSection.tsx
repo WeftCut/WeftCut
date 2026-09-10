@@ -8,7 +8,7 @@ import { AppSelect } from "../components/AppSelect";
 import { onDescribeViewChanged } from "../search/searchIndexStore";
 
 export function VlmSection({ onError }: { onError: (msg: string) => void }) {
-  return <ModelSection family="vlm" onError={onError} advancedContent={<DescribeSettings onError={onError} />} />;
+  return <><ModelSection family="vlm" onError={onError} /><DescribeSettings onError={onError} /></>;
 }
 
 function DescribeSettings({ onError }: { onError(msg: string): void }) {
@@ -27,7 +27,8 @@ function DescribeSettings({ onError }: { onError(msg: string): void }) {
     catch (e) { onError(String(e)); }
     finally { setBusy(false); }
   };
-  return <>
+  return <section className="settings-section settings-model-fields settings-analysis-options">
+    <strong>{t("models.analysis_options")}</strong>
     <div className="settings-key-input-row"><span className="settings-slider-label">{t("settings.vlm_sampling")}</span>
       <AppNumberField value={fps} min={VLM_DESCRIBE_FPS_MIN} max={VLM_DESCRIBE_FPS_MAX} step={VLM_DESCRIBE_FPS_STEP}
         disabled={busy} ariaLabel={t("settings.vlm_sampling")} onValueChange={setFps} onCommit={value => { void save({ fps: value }); }} />
@@ -37,5 +38,5 @@ function DescribeSettings({ onError }: { onError(msg: string): void }) {
         options={[{ value: "general", label: t("settings.vlm_focus_general") }, { value: "shot-type", label: t("settings.vlm_focus_shot_type") }]}
         onValueChange={value => void save({ focus: value as VlmDescribeFocus })} />
     </div>
-  </>;
+  </section>;
 }

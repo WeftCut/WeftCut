@@ -12,6 +12,7 @@ function setup(over: Partial<ModelManagerDeps> = {}) {
   const deps: ModelManagerDeps = {
     store: { get: () => structuredClone(state), set: next => { state = structuredClone(next); } },
     managedLocal: local, content: () => ({ installed: true, supported: true, bytes: 100, receivedBytes: 0 }),
+    downloadedBytes: () => 200, referencesContent: () => false, assertContentIdle: vi.fn(), removeContent: vi.fn(),
     ensureContent: vi.fn(async () => {}), cancelContent: vi.fn(), exists: () => true,
     getKey: tag => keys.get(tag) ?? "", setKey: (tag, key) => { keys.set(tag, key); },
     needsComponents: () => false, installComponents: vi.fn(async () => {}),
@@ -136,5 +137,77 @@ describe("model preparation and activation", () => {
     expect(manager.active("speech")?.id).toBe("whisper-base");
     expect(keys.get("openai")).toBe("previous");
     expect(manager.view().operations[0]?.error).toBe("Disk full");
+  });
+});
+
+describe("model library lifecycle", () => {
+  it("saves a verified inactive profile without switching the active profile", async () => {
+    const { manager, state } = setup();
+    manager.use({ id: "whisper-base" }); await settle();
+    manager.use({ id: "paraformer-zh", saveOnly: true }); await settle();
+    expect(state().active.speech).toBe("whisper-base");
+    expect(state().profiles.find(p => p.id === "paraformer-zh")?.verified).toBe(true);
+  });
+  it("saves a new custom profile independently and edits its endpoint in place", async () => {
+    const { manager, state } = setup();
+    manager.use({ id: "vlm-online", name: "Local", endpoint: { url: "http://localhost/v1/chat/completions", model: "first" }, saveOnly: true }); await settle();
+    expect(state().active.vlm).toBeNull();
+    manager.use({ id: "custom-test", name: "Renamed", endpoint: { url: "http://localhost/v1/chat/completions", model: "second" }, saveOnly: true }); await settle();
+    expect(state().profiles.filter(p => p.custom)).toHaveLength(1);
+    expect(state().profiles.find(p => p.id === "custom-test")?.endpoint?.model).toBe("second");
+    expect(state().active.vlm).toBeNull();
+  });
+  it("None cancels pending activation while preserving credentials and files", async () => {
+    const late = deferred<{ device: "cpu" }>(); const { manager, deps, keys, state } = setup();
+    manager.use({ id: "openai-whisper", apiKey: "saved" }); await settle();
+    deps.verify = () => late.promise;
+    manager.use({ id: "whisper-base" }); await settle();
+    manager.unselect("speech"); late.resolve({ device: "cpu" }); await settle();
+    expect(state().active.speech).toBeNull(); expect(keys.get("openai")).toBe("saved");
+    expect(state().profiles).toHaveLength(5); expect(deps.removeContent).not.toHaveBeenCalled();
+  });
+  it("removes the active custom profile and its key without deleting files", async () => {
+    const { manager, deps, state, keys } = setup();
+    manager.use({ id: "openai-whisper", createCustom: true, name: "My service", apiKey: "secret" }); await settle();
+    manager.removeCustom("custom-test");
+    expect(state().active.speech).toBeNull();
+    expect(state().profiles.some(p => p.id === "custom-test")).toBe(false);
+    expect(keys.get("model-custom-test")).toBe("");
+    expect(deps.removeContent).not.toHaveBeenCalled();
+    expect(() => manager.removeCustom("whisper-base")).toThrow("Only custom");
+  });
+  it("rolls back active custom removal if credential persistence fails", async () => {
+    const { manager, deps, state } = setup();
+    manager.use({ id: "openai-whisper", createCustom: true, name: "My service", apiKey: "secret" }); await settle();
+    const setKey = deps.setKey; deps.setKey = (tag, value) => { if (!value) throw new Error("Key store unavailable"); setKey(tag, value); };
+    expect(() => manager.removeCustom("custom-test")).toThrow("Key store unavailable");
+    expect(state().active.speech).toBe("custom-test");
+    expect(state().profiles.some(p => p.id === "custom-test")).toBe(true);
+  });
+  it("clears only unshared artifacts and unselects the target without removing its configuration", async () => {
+    const { manager, deps, state } = setup({ referencesContent: (p, id) => p.custom === true && id === "whisper-cpp-runtime" });
+    manager.use({ id: "whisper-base", createCustom: true, name: "Shared runtime", local: { binary: local("whisper-base").binary, model: "/own/weights" }, saveOnly: true }); await settle();
+    manager.use({ id: "whisper-base" }); await settle();
+    manager.clearDownloads("whisper-base");
+    expect(state().active.speech).toBeNull();
+    expect(state().profiles.some(p => p.id === "whisper-base")).toBe(true);
+    expect(deps.removeContent).toHaveBeenCalledExactlyOnceWith("whisper-model-base");
+  });
+  it("refuses deletion during file use and preserves the current selection", async () => {
+    const { manager, deps, state } = setup({ assertContentIdle: () => { throw new Error("in use"); } });
+    manager.use({ id: "whisper-base" }); await settle();
+    expect(() => manager.clearDownloads("whisper-base")).toThrow("in use");
+    expect(state().active.speech).toBe("whisper-base"); expect(deps.removeContent).not.toHaveBeenCalled();
+  });
+  it("a failed deletion leaves None and never restarts a download", async () => {
+    const { manager, deps, state } = setup({ removeContent: () => { throw new Error("locked file"); } });
+    manager.use({ id: "whisper-base" }); await settle(); vi.mocked(deps.ensureContent).mockClear();
+    expect(() => manager.clearDownloads("whisper-base")).toThrow("locked file");
+    expect(state().active.speech).toBeNull(); expect(deps.ensureContent).not.toHaveBeenCalled();
+  });
+  it("legacy content removal cannot bypass model references", () => {
+    const { manager, deps } = setup();
+    expect(() => manager.removeUnusedContent("whisper-model-base")).toThrow("model library");
+    expect(deps.removeContent).not.toHaveBeenCalled();
   });
 });

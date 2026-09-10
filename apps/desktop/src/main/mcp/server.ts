@@ -1,3 +1,4 @@
+import { beginModelUse } from "../model-usage";
 import { randomUUID } from 'node:crypto'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import {
@@ -98,21 +99,14 @@ export async function callClipComputeTool(
   getVlm: VlmProvider = NO_VLM,
 ): Promise<ServerResult> {
   const merged = resolveClipSliceArgs(args, tsHost.actor.snapshot())
-  // Inject the user's preferred engine as the SOFT `preferred_backend`
-  // hint (ADR 0036: select by user preference THEN availability). The
-  // agent-visible `backend` arg is deliberately NOT touched — it is a
-  // STRICT override in Rust (that engine or an error, never a substitute),
-  // so conflating the two would turn a mere preference into a hard
-  // requirement (or worse, a hard requirement into a silent fallback).
-  // "auto"/unset injects nothing; the Rust resolver's DEFAULT_ORDER decides.
+  // ADR 0064: inject the explicitly selected model backend. None stays unset;
+  // native resolution does not choose another configured model implicitly.
+  // An agent's explicit backend override remains authoritative.
   if (name === 'transcribe_clip' && merged.backend == null) {
     const pref = getPreferredEngine()
     if (pref && pref !== 'auto') merged.preferred_backend = pref
   }
-  // describe_clip: inject the stateless VLM backend-config snapshot (ADR
-  // 0024) it resolves against, plus the SOFT preferred-engine hint — same
-  // soft/strict split as transcribe_clip (the agent-visible `backend` stays
-  // a STRICT override, so only fill preferred_backend when it is unset).
+  // Vision resolves against the selected profile's per-call configuration.
   if (name === 'describe_clip') {
     const vlm = getVlm()
     merged.vlm_config = vlm.config
@@ -132,7 +126,9 @@ export async function callClipComputeTool(
     if (merged.fps == null && vlm.fps != null) merged.fps = vlm.fps
     if (merged.focus == null && vlm.focus) merged.focus = vlm.focus
   }
-  return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult
+  const release = name === 'transcribe_clip' || name === 'describe_clip' ? beginModelUse() : () => {}
+  try { return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult }
+  finally { release() }
 }
 
 /** CallTool routing (tsHost present): mutations → TS actor.mcpCall, hybrid →

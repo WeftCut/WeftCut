@@ -7,6 +7,10 @@ export interface ModelManagerDeps {
   content(id: string): { installed: boolean; supported: boolean; bytes: number; receivedBytes: number };
   ensureContent(ids: readonly string[], signal: AbortSignal): Promise<void>;
   cancelContent(id: string): void;
+  downloadedBytes(id: string): number;
+  referencesContent(profile: ModelProfile, id: string): boolean;
+  assertContentIdle(ids: readonly string[]): void;
+  removeContent(id: string): void;
   exists(path: string): boolean;
   getKey(tag: string): string;
   setKey(tag: string, value: string): void;
@@ -49,6 +53,7 @@ export class ModelManager {
           missingBytes: content.filter(c => !c.installed).reduce((s, c) => s + c.bytes, 0),
           hasKey: !!p.keyTag && !!this.deps.getKey(p.keyTag),
           customized: !!stored.custom || !!stored.local,
+          downloadedBytes: p.artifacts.reduce((sum, id) => sum + this.deps.downloadedBytes(id), 0),
         };
       }),
       operations: [...this.pending.values()].map(p => {
@@ -80,7 +85,7 @@ export class ModelManager {
     }
     const filesChanged = !!candidate.local && !!this.resolved(original).local && !sameModelFiles(candidate.local, this.resolved(original).local!);
     const endpointChanged = !!candidate.endpoint && (candidate.endpoint.model !== original.endpoint?.model || candidate.endpoint.url !== original.endpoint?.url);
-    if (request.createCustom || filesChanged || endpointChanged) {
+    if (request.createCustom || !original.custom && (filesChanged || endpointChanged)) {
       if (!request.name?.trim()) throw new Error("Name the custom model");
       const id = `custom-${this.deps.uuid()}`;
       candidate = { ...candidate, id, custom: true, artifacts: [], name: request.name.trim().slice(0, 120), keyTag: `model-${id}` };
@@ -128,11 +133,66 @@ export class ModelManager {
     const cfg = this.deps.store.get();
     const p = cfg.profiles.find(p => p.id === id);
     if (!p?.custom) throw new Error("Only custom entries can be removed");
-    if (cfg.active[p.family] === id) throw new Error("Select another model before removing the current model");
     this.cancel(id);
+    if (cfg.active[p.family] === id) {
+      const pending = this.pending.get(p.family);
+      if (pending) this.cancel(pending.operation.id);
+    }
+    const previous = structuredClone(cfg);
     cfg.profiles = cfg.profiles.filter(p => p.id !== id);
-    this.deps.store.set(cfg);
-    if (p.keyTag) this.deps.setKey(p.keyTag, "");
+    if (cfg.active[p.family] === id) cfg.active[p.family] = null;
+    const key = p.keyTag ? this.deps.getKey(p.keyTag) : "";
+    try {
+      this.deps.store.set(cfg);
+      this.deps.applyActive();
+      if (p.keyTag && !cfg.profiles.some(other => other.keyTag === p.keyTag)) this.deps.setKey(p.keyTag, "");
+    } catch (e) {
+      this.deps.store.set(previous);
+      if (p.keyTag) this.deps.setKey(p.keyTag, key);
+      this.deps.applyActive();
+      throw e;
+    }
+    this.deps.changed();
+  }
+
+  unselect(family: ModelFamily): void {
+    if (family !== "speech" && family !== "vlm") throw new Error("Unknown model family");
+    const pending = this.pending.get(family);
+    if (pending) this.cancel(pending.operation.id);
+    const previous = this.deps.store.get();
+    const next = structuredClone(previous);
+    next.active[family] = null;
+    try { this.deps.store.set(next); this.deps.applyActive(); }
+    catch (e) { this.deps.store.set(previous); this.deps.applyActive(); throw e; }
+    this.deps.changed();
+  }
+
+  clearDownloads(id: string): void {
+    const cfg = this.deps.store.get();
+    const target = cfg.profiles.find(p => p.id === id);
+    if (!target) throw new Error("Unknown model");
+    this.cancel(id);
+    const retained = [...cfg.profiles.filter(p => p.id !== id).map(p => this.resolved(p)),
+      ...[...this.pending.values()].map(p => p.profile)];
+    const removable = target.artifacts.filter(artifact => !retained.some(p =>
+      p.artifacts.includes(artifact) || this.deps.referencesContent(p, artifact)));
+    this.deps.assertContentIdle(removable);
+    if (cfg.active[target.family] === id) this.unselect(target.family);
+    // Commit None before touching files; a failed deletion must never leave an
+    // active profile pointing at partially removed downloads.
+    try { for (const artifact of removable) this.deps.removeContent(artifact); }
+    finally { this.deps.changed(); }
+  }
+
+  /** Legacy content removal must obey the same references and in-use guard. */
+  removeUnusedContent(id: string): void {
+    const profiles = [...this.deps.store.get().profiles.map(p => this.resolved(p)),
+      ...[...this.pending.values()].map(p => p.profile)];
+    if (profiles.some(p => p.artifacts.includes(id) || this.deps.referencesContent(p, id))) {
+      throw new Error("Remove model downloads from the model library");
+    }
+    this.deps.assertContentIdle([id]);
+    this.deps.removeContent(id);
     this.deps.changed();
   }
 
@@ -172,7 +232,7 @@ export class ModelManager {
       if (!candidate.custom && candidate.local && JSON.stringify(candidate.local) === JSON.stringify(this.deps.managedLocal(candidate.id))) delete candidate.local;
       const i = cfg.profiles.findIndex(x => x.id === candidate.id);
       if (i < 0) cfg.profiles.push(candidate); else cfg.profiles[i] = candidate;
-      cfg.active[candidate.family] = candidate.id;
+      if (!p.request.saveOnly) cfg.active[candidate.family] = candidate.id;
       // Synchronous commit after verification: no request can observe a half-prepared candidate.
       const oldKey = candidate.keyTag ? this.deps.getKey(candidate.keyTag) : "";
       if (candidate.keyTag) this.deps.setKey(candidate.keyTag, p.key);

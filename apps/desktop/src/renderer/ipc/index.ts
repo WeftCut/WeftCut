@@ -20,7 +20,9 @@ export function updatePathTransform(layerId: string, dx: number, dy: number, ent
 }
 
 import type { ExportSettings } from "../render/exportSettings";
-import type { ModelsView, ModelUseRequest } from "../../shared/inference-models";
+import type { ModelsView, ModelUseRequest, ModelFamily } from "../../shared/inference-models";
+export const modelsUnselect = (family: ModelFamily): Promise<void> => invoke("models_unselect", { family });
+export const modelsClearDownloads = (id: string): Promise<void> => invoke("models_clear_downloads", { id });
 export const modelsList = (): Promise<ModelsView> => invoke("models_list");
 export const modelsUse = (request: ModelUseRequest): Promise<void> => invoke("models_use", { ...request });
 export const modelsCancel = (id: string): Promise<void> => invoke("models_cancel", { id });

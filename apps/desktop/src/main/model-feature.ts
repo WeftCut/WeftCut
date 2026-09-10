@@ -13,6 +13,8 @@ import type { SpeechConfigStore, SpeechConfigFs } from "./speech-config";
 import type { VlmConfigStore } from "./vlm-config";
 import { loadAllKeys, setKey } from "./keys";
 import { installModelComponents, missingModelComponents } from "./model-components";
+import { createModelDownloads } from "./model-downloads";
+import { assertModelsIdle, beginModelUse } from "./model-usage";
 
 export function createModelFeature(deps: {
   dir: string; cacheDir: string; atomicFs: SpeechConfigFs;
@@ -65,6 +67,12 @@ export function createModelFeature(deps: {
   };
   const manager = new ModelManager({
     store, managedLocal,
+    ...createModelDownloads(deps.content),
+    assertContentIdle: ids => {
+      if (!ids.length) return;
+      assertModelsIdle();
+      if (ids.some(id => deps.queue.isPending(id))) throw new Error("Download is stopping or still in progress. Retry after it finishes.");
+    },
     content: id => {
       const item = CONTENT_CATALOG.find(c => c.id === id)!;
       const status = itemStatus(deps.content, item, deps.platform);
@@ -96,8 +104,9 @@ export function createModelFeature(deps: {
       // An absent key must stay absent: the endpoint describer sends an
       // `Authorization` header for any `Some(_)`, so `""` would verify a
       // self-hosted server with a bare `Bearer ` that the real run never sends.
+      const release = beginModelUse();
       try { result = await deps.backend.invoke("settings_verify_model", JSON.stringify({ requestId, family: p.family, backend: p.backend, local: p.local, endpoint: p.endpoint, ...(key ? { apiKey: key } : {}) })); }
-      finally { signal.removeEventListener("abort", cancel); }
+      finally { release(); signal.removeEventListener("abort", cancel); }
       const verified = JSON.parse(result) as { device: "cpu" | "auto" | "fixed" };
       if (bundledSpeech) verified.device = "cpu";
       return verified;

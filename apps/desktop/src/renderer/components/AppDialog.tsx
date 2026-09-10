@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { Dialog, DialogOverlay, DialogPortal } from "@/components/ui/dialog";
@@ -14,6 +14,7 @@ interface AppDialogProps {
   /// dialog undismissable (export-in-progress): every close request is
   /// ignored until the caller re-renders with `onClose` set or unmounts.
   onClose?: (() => void) | undefined;
+  dismissOnPointerOutside?: boolean;
   /// Set false to draw no ✕ at all — for a dialog that stays dismissable by
   /// Escape and backdrop while an in-flight operation must not be abandoned
   /// mid-click, and for the new-project dialog, which closes via its footer
@@ -29,6 +30,7 @@ interface AppDialogProps {
   headerExtra?: ReactNode;
   children: ReactNode;
 }
+const DialogDepth = createContext(0);
 
 /// The one modal wrapper for every WeftCut dialog. Base UI supplies the
 /// portal, focus trap, Escape close, backdrop dismiss, and aria wiring.
@@ -37,16 +39,21 @@ interface AppDialogProps {
 export function AppDialog({
   title,
   onClose,
+  dismissOnPointerOutside = true,
   showClose = true,
   panelClassName,
   headerExtra,
   children,
 }: AppDialogProps) {
   const { t } = useTranslation();
+  const depth = useContext(DialogDepth);
+  const overlayLayer = 50 + depth * 2;
   return (
+    <DialogDepth.Provider value={depth + 1}>
     <Dialog
       open
-      disablePointerDismissal={onClose === undefined}
+      modal
+      disablePointerDismissal={onClose === undefined || !dismissOnPointerOutside}
       onOpenChange={(open) => {
         // Undismissable dialogs (no onClose) ignore every close request —
         // Escape included — so `open` stays true until the caller unmounts.
@@ -55,8 +62,11 @@ export function AppDialog({
     >
       <DialogPortal>
         {/* Match the legacy flat rgba(0,0,0,0.5) backdrop (no blur). */}
-        <DialogOverlay className="bg-black/50 supports-backdrop-filter:backdrop-blur-none" />
+        {/* Base UI omits nested backdrops by default. Each stacked app dialog
+            needs its own blocker above its parent's popup. */}
+        <DialogOverlay forceRender style={{ zIndex: overlayLayer }} className="bg-black/50 supports-backdrop-filter:backdrop-blur-none" />
         <DialogPrimitive.Popup
+          style={{ zIndex: overlayLayer + 1 }}
           className={cn(
             "fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 outline-none",
             panelClassName,
@@ -83,5 +93,6 @@ export function AppDialog({
         </DialogPrimitive.Popup>
       </DialogPortal>
     </Dialog>
+    </DialogDepth.Provider>
   );
 }

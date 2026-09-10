@@ -1,24 +1,41 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight } from "lucide-react";
-import { INITIAL_MODEL, MODEL_EVENTS, type ModelBackend, type ModelFamily, type ModelLocalConfig, type ModelOperation, type ModelsView, type ModelUseRequest, type ModelView } from "../../shared/inference-models";
-import { modelsList, modelsUse, modelsCancel, modelsInstallComponents, modelsRemoveCustom } from "../ipc";
+import { MODEL_EVENTS, type ModelBackend, type ModelFamily, type ModelOperation, type ModelsView, type ModelUseRequest, type ModelView } from "../../shared/inference-models";
+import { modelsList, modelsUse, modelsCancel, modelsUnselect, modelsClearDownloads, modelsRemoveCustom } from "../ipc";
 import { listen, type UnlistenFn } from "@/bridge/events";
-import { open as openFileDialog } from "@/bridge/dialog";
 import { Button } from "@/components/ui/button";
-import { AppInput } from "../components/AppInput";
-import { AppNumberField } from "../components/AppNumberField";
-import { AppSelect } from "../components/AppSelect";
+import { DialogDescription } from "@/components/ui/dialog";
+import { AppDialog } from "../components/AppDialog";
+import { canSwitchModel, ModelPicker } from "./ModelPicker";
+import { ModelEditor } from "./ModelEditor";
 
-export function ModelSection({ family, onError, advancedContent }: { family: ModelFamily; onError(msg: string): void; advancedContent?: ReactNode }) {
+type Panel = { kind: "add" } | { kind: "editor"; id: string; mode: "prepare" | "edit" | "new"; backend?: ModelBackend };
+export function modelSize(bytes: number): string {
+  return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(2)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+}
+const adapters: Record<ModelFamily, { id: string; backend: ModelBackend; label: string }[]> = {
+  speech: [
+    { id: "whisper-base", backend: "whisper_cpp", label: "Whisper · whisper.cpp" },
+    { id: "paraformer-zh", backend: "funasr", label: "FunASR · sherpa-onnx" },
+    { id: "openai-whisper", backend: "openai", label: "OpenAI Whisper · whisper-1" },
+  ],
+  vlm: [
+    { id: "qwen3-vl-4b", backend: "qwen3_vl", label: "Qwen3-VL · llama-mtmd" },
+    { id: "qwen3-vl-4b", backend: "minicpm_v", label: "MiniCPM-V · llama-mtmd" },
+    { id: "vlm-online", backend: "byo_endpoint", label: "OpenAI-compatible" },
+  ],
+};
+export function ModelSection({ family, onError }: { family: ModelFamily; onError(msg: string): void }) {
   const { t } = useTranslation();
   const [view, setView] = useState<ModelsView | null>(null);
-  const [selected, setSelected] = useState(INITIAL_MODEL[family]);
-  const initialized = useRef(false);
-  const wanted = useRef<string | null>(null);
-  const lastActive = useRef<string | null>(null);
-  const selectedRef = useRef(selected);
-  selectedRef.current = selected;
+  const [panel, setPanel] = useState<Panel | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [failure, setFailure] = useState<ModelOperation | null>(null);
+  const [confirmation, setConfirmation] = useState<{ id: string; action: "remove" | "clear" } | null>(null);
+  const [dialogError, setDialogError] = useState("");
+  const wanted = useRef<ModelUseRequest | null>(null);
+  const acknowledged = useRef(false);
+  const refreshRef = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
     let disposed = false;
     let unlisten: UnlistenFn | undefined;
@@ -28,186 +45,121 @@ export function ModelSection({ family, onError, advancedContent }: { family: Mod
       try {
         const next = await modelsList();
         if (disposed || version !== generation) return;
-        const active = next.active[family];
-        if (!initialized.current) {
-          setSelected(active ?? INITIAL_MODEL[family]);
-          initialized.current = true;
-        } else if (active && active !== lastActive.current && wanted.current === selectedRef.current) {
-          setSelected(active);
+        if (wanted.current && acknowledged.current && !next.operations.some(o => o.family === family)) {
           wanted.current = null;
+          acknowledged.current = false;
+          setPanel(null);
         }
-        lastActive.current = active;
         setView(next);
       } catch (e) { if (!disposed) onError(String(e)); }
     };
+    refreshRef.current = refresh;
     void (async () => {
-      // Subscribe first, then read: preparation completion cannot be lost between them.
       unlisten = await listen(MODEL_EVENTS.changed, () => { void refresh(); });
       if (disposed) { unlisten(); return; }
       await refresh();
     })().catch(e => { if (!disposed) onError(String(e)); });
-    return () => { disposed = true; unlisten?.(); };
+    return () => { disposed = true; unlisten?.(); refreshRef.current = async () => {}; };
   }, [family]);
   if (!view) return <section className="settings-section"><p className="settings-status">…</p></section>;
   const models = view.models.filter(m => m.family === family);
-  const model = models.find(m => m.id === selected) ?? models[0];
-  if (!model) return null;
-  const displayName = (m: ModelView) => m.id === "vlm-online" ? t("models.online_model") : m.name;
-  const active = models.find(m => m.active);
-  return <section className="settings-section settings-model-section">
-    <div className="settings-model-selector">
-      <label className="settings-slider-label" id={`model-label-${family}`}>{t("models.model")}</label>
-      <AppSelect value={model.id} ariaLabel={t("models.model")} onValueChange={id => { wanted.current = null; setSelected(id); }}
-        options={models.map(m => ({ value: m.id, label: `${displayName(m)} · ${t(m.locality === "local" ? "models.local" : "models.online")}${m.active ? ` · ${t("models.current")}` : ""}` }))} />
-    </div>
-    {active && !model.active && <p className="settings-toggle-hint">{t("models.current_model", { name: displayName(active) })}</p>}
-    <ModelCard key={model.id} model={model} name={displayName(model)}
-      operation={view.operations.find(o => o.id === model.id)}
-      advancedContent={advancedContent}
-      onUse={() => { wanted.current = model.id; }}
-      onRemoved={() => setSelected(INITIAL_MODEL[family])} onError={onError} />
-  </section>;
-}
-
-function ModelCard({ model, name: displayName, operation, onUse, onRemoved, onError, advancedContent }: {
-  model: ModelView; name: string; operation: ModelOperation | undefined;
-  advancedContent?: ReactNode;
-  onUse(): void; onRemoved(): void; onError(msg: string): void;
-}) {
-  const { t } = useTranslation();
-  const [advanced, setAdvanced] = useState(false);
-  const [local, setLocal] = useState<ModelLocalConfig>(model.local ?? { binary: "", model: "" });
-  const [endpoint, setEndpoint] = useState(model.endpoint ?? { url: "", model: "" });
-  const [apiKey, setApiKey] = useState("");
-  const [name, setName] = useState(model.custom ? model.name : "");
-  const [createCustom, setCreateCustom] = useState(false);
-  const [backend, setBackend] = useState<ModelBackend>(model.backend);
-  const [submitting, setSubmitting] = useState(false);
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const wasPreparing = useRef(false);
-  useEffect(() => {
-    if (wasPreparing.current && !operation && model.active && model.verified) {
-      setApiKey(""); setCreateCustom(false);
-    }
-    wasPreparing.current = !!operation;
-  }, [operation, model.active, model.verified]);
-  // Background progress must not overwrite drafts. Only committed config changes resync.
-  const savedLocal = JSON.stringify(model.local ?? { binary: "", model: "" });
-  const savedEndpoint = JSON.stringify(model.endpoint ?? { url: "", model: "" });
-  useEffect(() => { setLocal(JSON.parse(savedLocal)); }, [savedLocal]);
-  useEffect(() => { setEndpoint(JSON.parse(savedEndpoint)); }, [savedEndpoint]);
-  const busy = submitting || !!operation && operation.phase !== "error" && operation.phase !== "needs_components";
-  const filesChanged = ["model", "tokens", "mmproj"].some(k => (local[k as keyof ModelLocalConfig] ?? "") !== (model.local?.[k as keyof ModelLocalConfig] ?? ""));
-  const endpointChanged = endpoint.url !== (model.endpoint?.url ?? "") || endpoint.model !== (model.endpoint?.model ?? "");
-  const customIdentity = createCustom || filesChanged || endpointChanged;
-  const dirty = JSON.stringify(local) !== savedLocal || JSON.stringify(endpoint) !== savedEndpoint || !!apiKey || customIdentity || model.custom && name !== model.name;
-  const requiresName = customIdentity || model.custom;
-  const configured = model.locality === "local" || model.backend === "openai" ? true : !!endpoint.url.trim() && !!endpoint.model.trim();
-  const canUse = configured && (!requiresName || !!name.trim()) && (model.backend !== "openai" || !!apiKey.trim() || model.hasKey);
+  const active = models.find(m => m.id === view.active[family]);
+  const operation = failure ?? view.operations.find(o => o.family === family);
+  const preparing = submitting || !!operation && operation.phase !== "error";
+  const name = (m: ModelView) => m.id === "vlm-online" ? t("models.online_model") : m.name;
+  const state = (m: ModelView) => t(m.locality === "local" && !m.installed ? m.custom ? "models.files_missing" : "models.not_downloaded" : m.active ? "models.current" : canSwitchModel(m) ? "models.ready" : "models.not_verified");
   const act = async (fn: () => Promise<void>) => {
-    setSubmitting(true); onError("");
-    try { await fn(); } catch (e) { onError(String(e)); }
+    setSubmitting(true); setDialogError("");
+    try { await fn(); await refreshRef.current(); }
+    catch (e) { setDialogError(String(e)); }
     finally { setSubmitting(false); }
   };
-  const use = (restore = false) => act(async () => {
-    onUse();
-    const req: ModelUseRequest = { id: model.id, ...(restore ? { restore: true } : {
-      ...(model.locality === "local" ? { local } : {}),
-      ...(model.backend === "byo_endpoint" ? { endpoint } : {}),
-      ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-      ...(requiresName ? { name: name.trim() } : {}),
-      ...(createCustom ? { createCustom: true, backend } : {}),
-    }) };
-    await modelsUse(req);
+  const useModel = async (request: ModelUseRequest) => {
+    wanted.current = request;
+    acknowledged.current = false;
+    setSubmitting(true); setFailure(null); setDialogError("");
+    try { await modelsUse(request); acknowledged.current = true; await refreshRef.current(); }
+    catch (e) { setFailure({ id: request.id, family, phase: "error", error: String(e) }); }
+    finally { setSubmitting(false); }
+  };
+  const cancel = async () => {
+    wanted.current = null;
+    acknowledged.current = false;
+    if (operation) await modelsCancel(operation.id);
+    setFailure(null);
+  };
+  const choose = (id: string) => void act(async () => {
+    setPanel(null); setConfirmation(null);
+    if (!id) { await cancel(); await modelsUnselect(family); return; }
+    if (id === active?.id) { await cancel(); return; }
+    const candidate = models.find(m => m.id === id);
+    if (!candidate) return;
+    await cancel();
+    if (canSwitchModel(candidate)) await useModel({ id });
+    else setPanel({ kind: "editor", id, mode: "prepare" });
   });
-  const pathField = (key: "binary" | "model" | "tokens" | "mmproj", label: string) => <div className="settings-key-input-row" key={key}>
-    <span className="settings-slider-label">{label}</span>
-    <AppInput value={local[key] ?? ""} ariaLabel={label} mono spellCheck={false} disabled={busy}
-      onValueChange={value => setLocal(prev => ({ ...prev, [key]: value }))} />
-    <Button size="sm" disabled={busy} onClick={() => void act(async () => {
-      const picked = await openFileDialog({ title: label });
-      if (typeof picked === "string") setLocal(prev => ({ ...prev, [key]: picked }));
-    })}>{t("settings.speech_browse")}</Button>
+  const editor = panel?.kind === "editor" ? models.find(m => m.id === panel.id) : undefined;
+  const confirmModel = models.find(m => m.id === confirmation?.id);
+  const adding = panel?.kind === "add" || panel?.kind === "editor" && panel.mode === "new";
+  const inlineEditor = editor && panel?.kind === "editor" && panel.mode !== "new";
+  const renderEditor = () => editor && panel?.kind === "editor" && <ModelEditor key={[editor.id, panel.mode, panel.backend ?? editor.backend].join("-")} model={editor} name={name(editor)}
+    operation={operation?.id === editor.id ? operation : undefined} submittingRequest={submitting}
+    mode={panel.mode} backendOverride={panel.backend} onUse={useModel} onError={setDialogError}
+    draft={operation?.id === editor.id ? wanted.current ?? undefined : undefined} onCancel={() => void act(cancel)} />;
+  const actions = (m: ModelView) => <div className="settings-model-actions">
+    <Button size="sm" variant="outline" aria-expanded={!!inlineEditor && editor.id === m.id} disabled={preparing}
+      onClick={() => { setConfirmation(null); setPanel(inlineEditor && editor.id === m.id ? null : { kind: "editor", id: m.id, mode: m.active ? "edit" : "prepare" }); }}>{t("models.edit")}</Button>
+    {(m.downloadedBytes ?? 0) > 0 && <Button size="sm" variant="ghost" disabled={submitting} onClick={() => setConfirmation({ id: m.id, action: "clear" })}>{t("models.clear_downloads")}</Button>}
+    {m.custom && <Button size="sm" variant="ghost" disabled={submitting} onClick={() => setConfirmation({ id: m.id, action: "remove" })}>{t("models.remove")}</Button>}
   </div>;
-  const state = operation ? t(`models.${operation.phase}`)
-    : model.locality === "local" && !model.installed ? t(model.custom ? "models.files_missing" : "models.not_downloaded")
-    : model.verified && (model.backend !== "openai" || model.hasKey) ? t(model.active ? "models.current" : "models.ready")
-    : t("models.not_verified");
-  const size = model.missingBytes >= 1024 ** 3 ? `${(model.missingBytes / 1024 ** 3).toFixed(2)} GB` : `${(model.missingBytes / 1024 ** 2).toFixed(1)} MB`;
-  return <div className="settings-model-card">
-    <div className="settings-model-card-header">
-      <strong>{displayName}</strong>
-      <span className={`settings-badge ${model.active ? "settings-badge-on" : "settings-badge-off"}`}>{t(model.locality === "local" ? "models.local" : "models.online")}</span>
-      {model.customized && <span className="settings-badge settings-badge-off">{t("models.customized")}</span>}
+  const confirm = (id: string) => confirmation?.id === id && confirmModel && <div className="settings-model-confirm" role="alert">
+    <strong>{name(confirmModel)} · {t(confirmation.action === "clear" ? "models.clear_downloads" : "models.remove")}</strong>
+    <p>{t(confirmation.action === "clear" ? "models.clear_hint" : "models.remove_hint")}</p>
+    {confirmModel.active && <p>{t("models.active_remove_hint")}</p>}
+    <div className="settings-model-actions"><Button size="sm" disabled={submitting} onClick={() => void act(async () => {
+      await cancel();
+      if (confirmation.action === "clear") await modelsClearDownloads(id); else await modelsRemoveCustom(id);
+      setPanel(null); setConfirmation(null);
+    })}>{t("models.confirm_remove")}</Button><Button size="sm" variant="ghost" onClick={() => setConfirmation(null)}>{t("models.cancel")}</Button></div>
+  </div>;
+  return <section className="settings-section settings-model-section">
+    <p className="settings-blurb">{t(family === "speech" ? "settings.speech_blurb" : "settings.vlm_blurb")}</p>
+    <div className="settings-model-selector">
+      <span className="settings-slider-label">{t("models.current_label")}</span>
+      <ModelPicker models={models} activeId={view.active[family]} disabled={submitting} preparing={preparing} onChoose={choose}
+        onAdd={() => { setDialogError(""); setConfirmation(null); setPanel({ kind: "add" }); }} />
     </div>
-    <p className="settings-model-state" role="status">{state}</p>
-    {model.locality === "local" && !model.installed && model.supported && !model.custom && <p className="settings-toggle-hint">{t("models.download_size", { size })}</p>}
-    {!model.supported && <p className="settings-toggle-hint">{t("models.unsupported")}</p>}
-    {model.executionDevice === "cpu" && <p className="settings-toggle-hint">{t("models.cpu_state")}</p>}
-    {model.locality === "online" && <>
-      <div className="settings-key-input-row">
-        <span className="settings-slider-label">API Key</span>
-        <AppInput type="password" value={apiKey} autoComplete="off" spellCheck={false} ariaLabel="API Key" disabled={busy}
-          placeholder={t(model.hasKey ? "settings.placeholder_set" : "settings.placeholder_unset")} onValueChange={setApiKey} />
-      </div>
-      <p className="settings-toggle-hint">{t("models.online_notice")}</p>
-    </>}
-    {operation?.progress !== undefined && <div className="progress-track" role="progressbar" aria-label={t("models.downloading")} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(operation.progress * 100)}>
-      <div className="progress-fill" style={{ width: `${operation.progress * 100}%` }} />
+    <p className="settings-toggle-hint">{t("models.switch_hint")}</p>
+    <div className="settings-model-card settings-model-summary" data-testid="current-model-summary">
+      {active ? <>
+        <div className="settings-model-card-header"><strong>{name(active)}</strong><span className="settings-badge settings-badge-on">{t(active.locality === "local" ? "models.local" : "models.online")}</span></div>
+        <p className="settings-model-state">{state(active)}{active.executionDevice === "cpu" ? ` · ${t("models.cpu_state")}` : ""}</p>
+        {active.endpoint && <p className="settings-model-address">{active.endpoint.model} · {active.endpoint.url}</p>}
+        {(active.downloadedBytes ?? 0) > 0 && <p className="settings-model-state">{modelSize(active.downloadedBytes!)}</p>}
+        {actions(active)}
+        {inlineEditor && editor.id === active.id && <div className="settings-model-inline-editor">{renderEditor()}</div>}
+        {confirm(active.id)}
+      </> : <><strong>{t("models.none_active")}</strong><p className="settings-toggle-hint">{t("models.empty_hint")}</p></>}
+    </div>
+    {inlineEditor && editor.id !== active?.id && <div className="settings-model-card settings-model-candidate">
+      <strong>{t("models.setup_model", { name: name(editor) })}</strong>
+      {actions(editor)}
+      {renderEditor()}
+      {confirm(editor.id)}
     </div>}
-    {operation?.error && <p className="settings-test-err" role="alert">{operation.error}</p>}
-    <div className="settings-model-actions">
-      {operation?.phase === "needs_components" ? <Button size="sm" disabled={submitting} onClick={() => void act(() => modelsInstallComponents(model.id))}>{t("models.install_components")}</Button>
-        : !configured ? <Button size="sm" disabled={busy} onClick={() => setAdvanced(true)}>{t("models.configure")}</Button>
-        : <Button size="sm" disabled={busy || !canUse || !model.supported && !customIdentity || model.active && !dirty && !operation && !!model.verified && model.installed}
-          onClick={() => void use()}>{operation?.phase === "error" ? t("models.retry")
-            // Only offer a download when there is one: a custom entry has no
-            // catalog artifacts, so its missing files are a path to repair
-            // (`models.files_missing`), not bytes to fetch.
-            : model.locality === "local" && !model.installed && !customIdentity && model.missingBytes > 0 ? t("models.download_use")
-            : dirty || !model.verified ? t("models.verify_use") : t("models.use")}</Button>}
-      {operation && operation.phase !== "error" && <Button size="sm" disabled={submitting || operation.phase === "installing_components"} onClick={() => void act(() => modelsCancel(model.id))}>{t("models.cancel")}</Button>}
-      <Button variant="ghost" size="sm" aria-expanded={advanced} onClick={() => setAdvanced(v => !v)}>
-        {advanced ? <ChevronDown size={12} /> : <ChevronRight size={12} />}{t("models.advanced")}
-      </Button>
-    </div>
-    <div hidden={!advanced} className="settings-model-advanced">
-      {(requiresName || model.backend === "byo_endpoint") && <div className="settings-key-input-row">
-        <span className="settings-slider-label">{t("models.name")}</span>
-        <AppInput value={name} ariaLabel={t("models.name")} disabled={busy} onValueChange={setName} />
-      </div>}
-      {model.locality === "local" ? <>
-        {createCustom && <div className="settings-key-input-row"><span className="settings-slider-label">{t("models.runtime")}</span>
-          <AppSelect value={backend} ariaLabel={t("models.runtime")} disabled={busy} onValueChange={v => setBackend(v as ModelBackend)}
-            options={(model.family === "speech" ? ["whisper_cpp", "funasr"] : ["qwen3_vl", "minicpm_v"]).map(value => ({ value, label: value }))} /></div>}
-        {pathField("binary", t("settings.speech_binary"))}
-        {pathField("model", t("settings.speech_model"))}
-        {(backend === "funasr") && pathField("tokens", t("settings.speech_tokens"))}
-        {model.family === "vlm" && pathField("mmproj", t("settings.vlm_mmproj"))}
-        <div className="settings-key-input-row"><span className="settings-slider-label">{t("settings.speech_device")}</span>
-          <AppInput value={local.device ?? ""} ariaLabel={t("settings.speech_device")} placeholder={t("models.device_auto")} disabled={busy}
-            onValueChange={device => setLocal(prev => { const next = { ...prev }; if (device.trim()) next.device = device; else delete next.device; return next; })} />
-        </div>
-        {model.family === "speech" && <div className="settings-key-input-row"><span className="settings-slider-label">{t("settings.speech_threads")}</span>
-          <AppNumberField value={local.threads ?? null} min={1} max={256} ariaLabel={t("settings.speech_threads")} disabled={busy}
-            onValueChange={threads => setLocal(prev => { const next = { ...prev }; if (threads != null) next.threads = threads; else delete next.threads; return next; })}
-            onClear={() => setLocal(prev => { const next = { ...prev }; delete next.threads; return next; })} /></div>}
-      </> : model.backend === "byo_endpoint" ? <>
-        <div className="settings-key-input-row"><span className="settings-slider-label">{t("settings.vlm_endpoint_url")}</span>
-          <AppInput value={endpoint.url} ariaLabel={t("settings.vlm_endpoint_url")} disabled={busy} placeholder="https://…/v1/chat/completions" onValueChange={url => setEndpoint(prev => ({ ...prev, url }))} /></div>
-        <div className="settings-key-input-row"><span className="settings-slider-label">{t("settings.vlm_endpoint_model")}</span>
-          <AppInput value={endpoint.model} ariaLabel={t("settings.vlm_endpoint_model")} disabled={busy} onValueChange={model => setEndpoint(prev => ({ ...prev, model }))} /></div>
-      </> : null}
-      {customIdentity && <p className="settings-toggle-hint">{t("models.custom_identity")}</p>}
-      {advanced && advancedContent}
-      <div className="settings-model-actions">
-        {!model.custom && model.locality === "local" && <Button size="sm" disabled={busy || !model.customized && !dirty} onClick={() => void use(true)}>{t("models.restore")}</Button>}
-        <Button size="sm" disabled={busy} onClick={() => { setCreateCustom(true); setName(model.custom ? `${model.name} (copy)` : ""); }}>{t("models.add_custom")}</Button>
-        {model.custom && <Button size="sm" disabled={busy || model.active} onClick={() => {
-          if (!confirmRemove) setConfirmRemove(true);
-          else void act(async () => { await modelsRemoveCustom(model.id); onRemoved(); });
-        }}>{t(confirmRemove ? "models.confirm_remove" : "models.remove")}</Button>}
+    {operation && !panel && <div className="settings-model-card" role="status">
+      <p className="settings-model-state">{models.find(m => m.id === operation.id)?.name} · {t(`models.${operation.phase}`)}</p>
+      {operation.error && <p className="settings-test-err" role="alert">{operation.error}</p>}
+      <div className="settings-model-actions"><Button size="sm" onClick={() => setPanel({ kind: "editor", id: operation.id, mode: wanted.current?.createCustom ? "new" : wanted.current?.saveOnly ? "edit" : "prepare", ...(wanted.current?.backend ? { backend: wanted.current.backend } : {}) })}>{t("models.details")}</Button><Button size="sm" variant="ghost" onClick={() => void act(cancel)}>{t("models.cancel")}</Button></div>
+    </div>}
+    {!adding && dialogError && <p role="alert" className="settings-test-err">{dialogError}</p>}
+    {adding && <AppDialog title={t("models.add_model")} panelClassName="settings-panel settings-model-dialog" dismissOnPointerOutside={false} onClose={() => { setPanel(null); setDialogError(""); }}>
+      <div className="settings-model-dialog-body">
+        <DialogDescription className="settings-toggle-hint">{t(panel?.kind === "add" ? "models.custom_type_hint" : "models.editor_hint")}</DialogDescription>
+        {panel?.kind === "add" && <div className="settings-model-adapters">{adapters[family].map(a => <Button key={a.backend} variant="outline" onClick={() => setPanel({ kind: "editor", id: a.id, backend: a.backend, mode: "new" })}>{a.label}<span>{t(a.backend === "openai" || a.backend === "byo_endpoint" ? "models.online" : "models.local")}</span></Button>)}</div>}
+        {renderEditor()}
+        {dialogError && <p role="alert" className="settings-test-err">{dialogError}</p>}
       </div>
-    </div>
-  </div>;
+    </AppDialog>}
+  </section>;
 }

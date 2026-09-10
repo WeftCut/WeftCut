@@ -26,7 +26,6 @@ export const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   // An entry point for the existing compatible-endpoint adapter, not a new provider preset.
   { id: "vlm-online", name: "Online model", family: "vlm", backend: "byo_endpoint", locality: "online", artifacts: [] },
 ];
-export const INITIAL_MODEL: Record<ModelFamily, string> = { speech: "whisper-base", vlm: "qwen3-vl-4b" };
 export interface ModelProfile extends ModelDefinition {
   custom?: boolean;
   local?: ModelLocalConfig;
@@ -57,6 +56,8 @@ export interface ModelView extends ModelProfile {
   missingBytes: number;
   hasKey: boolean;
   customized: boolean;
+  /** Bytes actually present in app-owned downloads, including paused partials. */
+  downloadedBytes?: number;
 }
 export interface ModelsView {
   models: ModelView[];
@@ -65,6 +66,8 @@ export interface ModelsView {
 }
 export interface ModelUseRequest {
   id: string;
+  /** Verify and save without changing the current selection. */
+  saveOnly?: boolean;
   name?: string;
   local?: ModelLocalConfig;
   endpoint?: ModelEndpoint;

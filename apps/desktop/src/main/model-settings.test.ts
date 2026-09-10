@@ -5,6 +5,18 @@ import { VLM_CONFIG_DEFAULTS } from "../shared/vlm-config";
 
 const managed = (id: string) => ({ binary: `C:/managed/${id}/run.exe`, model: `C:/managed/${id}/model` });
 describe("model settings migration", () => {
+  it("persists an explicit None across restart even when verified profiles remain", () => {
+    const files = new Map<string, string>();
+    const factory = () => createModelSettingsStore({ dir: "/config", path: "/config/models.json", migrate: freshModelSettings,
+      fs: { exists: p => files.has(p), readFile: p => files.get(p)!, writeFile: (p, s) => { files.set(p, s); }, rename: (a, b) => { files.set(b, files.get(a)!); files.delete(a); }, mkdirp: () => {} } });
+    const store = factory(), state = store.get();
+    state.profiles[0]!.verified = true;
+    state.active.speech = "whisper-base"; store.set(state);
+    state.active.speech = null; store.set(state);
+    const restored = factory().get();
+    expect(restored.active).toEqual({ speech: null, vlm: null });
+    expect(restored.profiles[0]?.verified).toBe(true);
+  });
   it("keeps a fresh installation inactive", () => {
     const next = migrateModelSettings({ speech: { preferred_engine: "auto", local: {} }, vlm: VLM_CONFIG_DEFAULTS,
       managedLocal: managed, exists: () => true, hasKey: () => false, copyKey: () => {} });

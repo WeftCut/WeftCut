@@ -51,11 +51,11 @@ import {
   CONTENT_EVENTS, contentPlatformKey,
   type ContentListRow, type ContentQueueSnapshot,
 } from '../shared/content-download.js'
-import { downloadItem, itemStatus, speechAutofillPlan, vlmAutofillPlan, sweepStalePartials, removePartial, type ContentDeps } from './contentDownload.js'
+import { downloadItem, itemStatus, speechAutofillPlan, vlmAutofillPlan, sweepStalePartials, type ContentDeps } from './contentDownload.js'
 import { ContentQueue } from './contentQueue.js'
 import { createModelFeature } from './model-feature.js'
 import { ModelManager } from './model-manager.js'
-import { MODEL_EVENTS, type ModelUseRequest } from '../shared/inference-models.js'
+import { MODEL_EVENTS, type ModelUseRequest, type ModelFamily } from '../shared/inference-models.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -1023,6 +1023,8 @@ app.whenReady().then(async () => {
       backend!.setCloudKey(provider, (key ?? '').trim())
       return null
     }
+    if (channel === 'models_unselect') { models!.unselect((args as { family: ModelFamily }).family); return null }
+    if (channel === 'models_clear_downloads') { models!.clearDownloads((args as { id: string }).id); return null }
     if (channel === 'models_list') return models!.view()
     if (channel === 'models_use') { models!.use(args as ModelUseRequest); return null }
     if (channel === 'models_cancel') { models!.cancel((args as { id: string }).id); return null }
@@ -2038,17 +2040,8 @@ app.whenReady().then(async () => {
     queue.cancel(id)
   })
 
-  // Remove every installed version of an item. Files only — speech config is
-  // deliberately untouched: availability is file-existence-based, so the
-  // Settings row degrades to NeedsBinary/NeedsModel truthfully on its own.
   ipcMain.handle('content:remove', (_e, { id }: { id: string }) => {
-    const item = CONTENT_CATALOG.find((i) => i.id === id)
-    if (!item) throw new Error(`unknown content id: ${id}`)
-    if (queue.isPending(id)) throw new Error('download in progress')
-    contentDeps.fs.rm(path.join(dataRoot.downloadsDir, item.id))
-    // "Remove" means the user is done with this content: a paused partial has
-    // no business surviving it.
-    removePartial(contentDeps, item.id)
+    models!.removeUnusedContent(id)
   })
 
   // Resume what the previous run left pending. Installed entries are skipped by

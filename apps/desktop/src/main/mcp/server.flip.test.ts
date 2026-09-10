@@ -5,6 +5,7 @@ import { uuidV7Gen } from '../state/ids'
 import { blankProject } from '../state/model'
 import { mediaItemTemplate } from '../state/mutations/media'
 import { root } from '../state/__tests__/fixtures/project'
+import { assertModelsIdle } from '../model-usage'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
 
@@ -32,6 +33,15 @@ function fakeBackend(mcpCallTool: (n: string, a: string) => Promise<string>) {
 }
 
 describe('handleCallTool flip routing', () => {
+  it('holds model files until native inference ends, including a rejected run', async () => {
+    let reject!: (reason: Error) => void;
+    const native = new Promise<string>((_resolve, fail) => { reject = fail });
+    const run = callClipComputeTool(fakeBackend(() => native), tsHostStub(), 'transcribe_clip', { layer_id: 'gone' });
+    expect(() => assertModelsIdle()).toThrow('in use');
+    reject(new Error('cancelled'));
+    await expect(run).rejects.toThrow('cancelled');
+    expect(() => assertModelsIdle()).not.toThrow();
+  });
   it('routes a mutation tool to the TS actor (state changes)', async () => {
     const ts = tsHostStub()
     const track = root(ts.actor.snapshot()).tracks[0].id

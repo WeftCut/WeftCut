@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../i18n";
 import { MODEL_DEFINITIONS, type ModelsView } from "../../shared/inference-models";
-const ipc = vi.hoisted(() => ({ modelsList: vi.fn(), modelsUse: vi.fn(), modelsCancel: vi.fn(), modelsInstallComponents: vi.fn(), modelsRemoveCustom: vi.fn(), settingsGetVlmBackends: vi.fn(), settingsSetVlmDescribe: vi.fn() }));
+const ipc = vi.hoisted(() => ({ modelsUnselect: vi.fn(), modelsClearDownloads: vi.fn(), modelsList: vi.fn(), modelsUse: vi.fn(), modelsCancel: vi.fn(), modelsInstallComponents: vi.fn(), modelsRemoveCustom: vi.fn(), settingsGetVlmBackends: vi.fn(), settingsSetVlmDescribe: vi.fn() }));
 const events = vi.hoisted(() => ({ refresh: (() => {}) as () => void }));
 vi.mock("../ipc", () => ipc);
 vi.mock("@/bridge/events", () => ({ listen: vi.fn(async (_event: string, callback: () => void) => { events.refresh = callback; return () => {}; }) }));
@@ -17,7 +17,7 @@ import { onDescribeViewChanged } from "../search/searchIndexStore";
 function initial(): ModelsView {
   return { active: { speech: null, vlm: null }, operations: [], models: MODEL_DEFINITIONS.map(p => ({
     ...p, active: false, installed: false, supported: true, missingBytes: 123000000, hasKey: false, customized: false,
-    ...(p.locality === "local" ? { local: { binary: `/managed/${p.id}/run.exe`, model: `/managed/${p.id}/weights`, ...(p.family === "vlm" ? { mmproj: "/managed/projector" } : {}) } } : {}),
+    ...(p.locality === "local" ? { local: { binary: `/managed/${p.id}/run.exe`, model: `/managed/${p.id}/weights`, ...(p.backend === "funasr" ? { tokens: "/managed/tokens.txt" } : {}), ...(p.family === "vlm" ? { mmproj: "/managed/projector" } : {}) } } : {}),
   })) };
 }
 beforeEach(() => {
@@ -25,85 +25,153 @@ beforeEach(() => {
   ipc.modelsList.mockResolvedValue(initial());
   ipc.modelsUse.mockResolvedValue(undefined); ipc.modelsCancel.mockResolvedValue(undefined);
 });
+// Base UI's pointer-open path is timing-sensitive in jsdom (see CanvasSection
+// tests). Exercise keyboard opening here and real pointer input in Electron.
+async function openPicker(user: ReturnType<typeof userEvent.setup>) {
+  const trigger = await screen.findByRole("button", { name: "Current model" });
+  await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(trigger.getAttribute("aria-expanded")).toBe("true"));
+}
 async function choose(user: ReturnType<typeof userEvent.setup>, name: RegExp) {
-  await user.click(screen.getByRole("combobox", { name: "Model" }));
-  await user.click(await screen.findByRole("option", { name }));
+  await openPicker(user);
+  await user.click(await screen.findByRole("menuitemradio", { name }));
 }
 describe("model settings", () => {
-  it("keeps video sampling and focus in advanced settings and refreshes descriptions after a change", async () => {
-    ipc.settingsGetVlmBackends.mockResolvedValue({ describe_fps: 1, describe_focus: "general" });
-    ipc.settingsSetVlmDescribe.mockResolvedValue(undefined);
-    const user = userEvent.setup(); render(<VlmSection onError={vi.fn()} />);
-    const advanced = await screen.findByRole("button", { name: "Advanced settings" });
-    expect(screen.queryByRole("combobox", { name: "Focus" })).toBeNull();
-    await user.click(advanced);
-    await user.click(await screen.findByRole("combobox", { name: "Focus" }));
-    await user.click(await screen.findByRole("option", { name: "Shot type and camera" }));
-    await waitFor(() => expect(ipc.settingsSetVlmDescribe).toHaveBeenCalledWith({ focus: "shot-type" }));
-    expect(onDescribeViewChanged).toHaveBeenCalled();
-    expect(ipc.modelsUse).not.toHaveBeenCalled();
-  });
-  it("previews Whisper without downloading and exposes only one compact card", async () => {
-    render(<ModelSection family="speech" onError={vi.fn()} />);
-    await screen.findByRole("button", { name: "Download and use" });
-    expect(document.querySelectorAll(".settings-model-card")).toHaveLength(1);
-    expect(screen.queryByRole("textbox", { name: "Binary" })).toBeNull();
-    expect(ipc.modelsUse).not.toHaveBeenCalled();
-    expect(screen.queryByText(/recommend/i)).toBeNull();
-  });
-  it("previews Qwen for vision and keeps online models in the selector", async () => {
-    const user = userEvent.setup();
-    render(<ModelSection family="vlm" onError={vi.fn()} />);
-    await screen.findByRole("button", { name: "Download and use" });
-    expect(screen.getByRole("combobox").textContent).toContain("Qwen3-VL-4B");
-    await choose(user, /Online model/);
-    expect(screen.getByLabelText("API Key")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Configure model" })).toBeTruthy();
-    expect(ipc.modelsUse).not.toHaveBeenCalled();
-  });
-  it("browsing another model does not change the active model", async () => {
-    const v = initial(); v.active.speech = "whisper-base"; v.models[0]!.active = true;
-    ipc.modelsList.mockResolvedValue(v);
+  function readySpeech() {
+    const v = initial();
+    v.active.speech = "whisper-base";
+    Object.assign(v.models[0]!, { active: true, installed: true, verified: true, downloadedBytes: 100 });
+    Object.assign(v.models[1]!, { installed: true, verified: false, missingBytes: 0 });
+    ipc.modelsList.mockImplementation(async () => structuredClone(v));
+    return v;
+  }
+  it("starts with a genuine empty state and performs no model preparation", async () => {
     const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
-    await screen.findByRole("combobox"); await choose(user, /Paraformer/);
-    expect(screen.getByText("In use: Whisper Base")).toBeTruthy();
+    expect((await screen.findByTestId("current-model-summary")).textContent).toContain("No model selected");
+    expect(screen.queryByText("Whisper Base")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Download/ })).toBeNull();
+    await openPicker(user);
+    expect(screen.getByRole("menuitemradio", { name: "None" }).getAttribute("aria-checked")).toBe("true");
+    expect(ipc.modelsUse).not.toHaveBeenCalled();
+  });
+  it("switches installed models directly and retains the summary until verification succeeds", async () => {
+    const v = readySpeech();
+    ipc.modelsUse.mockImplementation(async () => { v.operations = [{ id: "paraformer-zh", family: "speech", phase: "verifying" }]; });
+    const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
+    await choose(user, /Paraformer/);
+    expect(ipc.modelsUse).toHaveBeenCalledExactlyOnceWith({ id: "paraformer-zh" });
+    expect(screen.getByTestId("current-model-summary").textContent).toContain("Whisper Base");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    v.operations = []; v.active.speech = "paraformer-zh";
+    v.models[0]!.active = false; Object.assign(v.models[1]!, { active: true, verified: true });
+    await act(async () => events.refresh());
+    await waitFor(() => expect(screen.getByTestId("current-model-summary").textContent).toContain("Paraformer"));
+  });
+  it("opens explicit download setup without replacing the selected summary", async () => {
+    const v = readySpeech(); v.models[1]!.installed = false; v.models[1]!.missingBytes = 123000000;
+    const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
+    await choose(user, /Paraformer/);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "Download and use" })).toBeTruthy();
+    expect(screen.getByTestId("current-model-summary").textContent).toContain("Whisper Base");
     expect(ipc.modelsUse).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Download and use" }));
     expect(ipc.modelsUse).toHaveBeenCalledWith(expect.objectContaining({ id: "paraformer-zh" }));
   });
-  it("collapsing advanced settings preserves the draft without applying it", async () => {
+  it("choosing None cancels preparation and persists unselection", async () => {
+    const v = readySpeech(); v.operations = [{ id: "paraformer-zh", family: "speech", phase: "verifying" }];
     const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Advanced settings" }));
-    const binary = screen.getByRole("textbox", { name: "Binary" });
-    await user.clear(binary); await user.type(binary, "C:/own/runtime.exe");
-    await user.click(screen.getByRole("button", { name: "Advanced settings" }));
-    expect(screen.queryByRole("textbox", { name: "Binary" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Advanced settings" }));
-    expect((screen.getByRole("textbox", { name: "Binary" }) as HTMLInputElement).value).toBe("C:/own/runtime.exe");
+    await choose(user, /^None$/);
+    expect(ipc.modelsCancel).toHaveBeenCalledWith("paraformer-zh");
+    expect(ipc.modelsUnselect).toHaveBeenCalledWith("speech");
     expect(ipc.modelsUse).not.toHaveBeenCalled();
   });
-  it("requires a name for replacement model files and sends a single candidate", async () => {
-    const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Advanced settings" }));
-    const model = screen.getByRole("textbox", { name: "Model" });
-    await user.clear(model); await user.type(model, "D:/own/large.bin");
-    const button = screen.getByRole("button", { name: "Verify and use" }) as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    await user.type(screen.getByRole("textbox", { name: "Custom model name" }), "My large model");
-    await user.click(button);
-    expect(ipc.modelsUse).toHaveBeenCalledWith(expect.objectContaining({ id: "whisper-base", name: "My large model", local: expect.objectContaining({ model: "D:/own/large.bin" }) }));
+  it("edits the current model inside its card without a separate page or dialog", async () => {
+    readySpeech(); const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
+    const summary = await screen.findByTestId("current-model-summary");
+    await user.click(within(summary).getByRole("button", { name: "Edit" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(within(summary).getByRole("textbox", { name: "Device" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(ipc.modelsUse).toHaveBeenCalledWith(expect.objectContaining({ id: "whisper-base", saveOnly: true }));
+    await openPicker(user);
+    expect(screen.queryByRole("menuitem", { name: "Model library…" })).toBeNull();
   });
-  it("reflects background preparation without replacing edited fields", async () => {
+  it("offers actual speech adapters and describes the fixed OpenAI service", async () => {
+    readySpeech(); const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
+    await openPicker(user); await user.click(screen.getByRole("menuitem", { name: "Add custom model…" }));
+    expect(screen.getByTestId("current-model-summary").textContent).toContain("Whisper Base");
+    expect(screen.getByRole("button", { name: /sherpa-onnx/ })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /OpenAI Whisper/ }));
+    expect(screen.getByText(/fixed whisper-1/)).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "URL" })).toBeNull();
+    await user.type(screen.getByRole("textbox", { name: "Custom model name" }), "My OpenAI");
+    await user.type(screen.getByLabelText("API Key"), "test-key");
+    await user.click(screen.getByRole("button", { name: "Add without selecting" }));
+    expect(ipc.modelsUse).toHaveBeenCalledWith(expect.objectContaining({ id: "openai-whisper", backend: "openai", createCustom: true, saveOnly: true, apiKey: "test-key" }));
+  });
+  it("shows projector fields for the MiniCPM adapter and requires all local files", async () => {
+    const user = userEvent.setup(); render(<ModelSection family="vlm" onError={vi.fn()} />);
+    await openPicker(user); await user.click(screen.getByRole("menuitem", { name: "Add custom model…" }));
+    await user.click(screen.getByRole("button", { name: /MiniCPM-V/ }));
+    expect(screen.getByText(/matching mmproj/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Add and use" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("textbox", { name: "URL" })).toBeNull();
+  });
+  it("retries a failed Add without selecting with the same save-only intent", async () => {
+    const v = readySpeech();
+    ipc.modelsUse.mockImplementation(async () => { v.operations = [{ id: "openai-whisper", family: "speech", phase: "error", error: "Rejected" }]; });
     const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Advanced settings" }));
+    await openPicker(user); await user.click(screen.getByRole("menuitem", { name: "Add custom model…" }));
+    await user.click(screen.getByRole("button", { name: /OpenAI Whisper/ }));
+    await user.type(screen.getByRole("textbox", { name: "Custom model name" }), "My OpenAI");
+    await user.type(screen.getByLabelText("API Key"), "test-key");
+    await user.click(screen.getByRole("button", { name: "Add without selecting" }));
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
+    expect(ipc.modelsUse).toHaveBeenLastCalledWith(expect.objectContaining({ saveOnly: true, createCustom: true, name: "My OpenAI" }));
+    expect(screen.getByTestId("current-model-summary").textContent).toContain("Whisper Base");
+  });
+  it("confirms removal of an active custom entry with a None fallback", async () => {
+    const v = readySpeech(); Object.assign(v.models[0]!, { custom: true, name: "My Whisper" });
+    const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Remove custom entry" }));
+    expect(screen.getByText(/selection will be None/)).toBeTruthy();
+    expect(ipc.modelsRemoveCustom).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Confirm removal" }));
+    expect(ipc.modelsRemoveCustom).toHaveBeenCalledWith("whisper-base");
+  });
+  it("clears downloads from the current card with a separate explicit confirmation", async () => {
+    readySpeech(); const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Clear downloads" }));
+    expect(screen.getByText(/Shared files needed/)).toBeTruthy();
+    expect(ipc.modelsClearDownloads).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Confirm removal" }));
+    expect(ipc.modelsClearDownloads).toHaveBeenCalledWith("whisper-base");
+  });
+  it("keeps video analysis options outside model editors, including when None is selected", async () => {
+    ipc.settingsGetVlmBackends.mockResolvedValue({ describe_fps: 1, describe_focus: "general" });
+    ipc.settingsSetVlmDescribe.mockResolvedValue(undefined);
+    const user = userEvent.setup(); render(<VlmSection onError={vi.fn()} />);
+    expect(await screen.findByText("Video analysis options")).toBeTruthy();
+    const input = await screen.findByLabelText("Sample", { exact: true });
+    await user.clear(input); await user.type(input, "2"); await user.tab();
+    await waitFor(() => expect(ipc.settingsSetVlmDescribe).toHaveBeenCalledWith({ fps: 2 }));
+    expect(onDescribeViewChanged).toHaveBeenCalled();
+    await choose(user, /Online model/);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.querySelector(".settings-model-editor")?.textContent).not.toContain("Video analysis options");
+  });
+  it("does not overwrite an editor draft when background status changes", async () => {
+    const v = readySpeech(); const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
     const input = screen.getByRole("textbox", { name: "Device" });
     await user.type(input, "cpu");
-    const v = initial(); v.operations = [{ id: "whisper-base", family: "speech", phase: "downloading", progress: 0.42 }];
-    ipc.modelsList.mockResolvedValue(v);
-    await act(async () => { events.refresh(); });
-    await waitFor(() => expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("42"));
+    v.models[0]!.downloadedBytes = 300;
+    await act(async () => events.refresh());
     expect((input as HTMLInputElement).value).toBe("cpu");
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(ipc.modelsCancel).toHaveBeenCalledWith("whisper-base");
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(ipc.modelsUse).toHaveBeenCalledWith(expect.objectContaining({ saveOnly: true, local: expect.objectContaining({ device: "cpu" }) }));
   });
 });
