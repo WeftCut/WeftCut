@@ -91,14 +91,13 @@ describe('handleCallTool flip routing', () => {
     expect(merged.media).toBeNull()
     expect(merged.layer_id).toBe('gone')
   })
-  it('flips the agent-session slot after a successful begin_agent_session', async () => {
+  it('begins work through the session service when the host provides it', async () => {
     const ts = tsHostStub()
-    const spy = vi.fn()
-    ts.beginAgentSessionSlot = spy
+    const begin = vi.fn(() => ({ id: 'session' }))
+    ;(ts as any).agent = { begin }
     await handleCallTool(fakeBackend(async () => { throw new Error('rust must not be called') }), () => ts, 'begin_agent_session', { reason: 'cleanup' })
-    expect(spy).toHaveBeenCalledWith('cleanup', 'mcp')
+    expect(begin).toHaveBeenCalledWith('cleanup')
   })
-
   // ADR 0036: transcribe_clip selects by user preference THEN availability.
   // The host injects the stored preferred engine as the SOFT `preferred_backend`
   // hint when the agent omits `backend`; the agent's explicit `backend` is a

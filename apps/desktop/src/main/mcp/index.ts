@@ -9,6 +9,7 @@ import { buildMcpServer, type McpServerOptions } from './server.js'
 import { loadOrInitAuth, saveAuth, rotateToken, type McpAuth } from './auth.js'
 import { listenLoopback } from './bind.js'
 import { NO_MCP_LOG, type McpLogEntryInput } from './withLog.js'
+import type { AgentConnection, AgentConnectionSnapshot } from '../../shared/agent-activity.js'
 
 type Backend = import('@weftcut/core').Backend
 
@@ -20,6 +21,7 @@ export interface McpInfoView {
 
 export interface McpHost {
   getInfo(): McpInfoView
+  connectionSnapshot(): AgentConnectionSnapshot
   resetToken(): string
   notifyChange(summary: unknown): void
   close(): Promise<void>
@@ -32,6 +34,8 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
   let auth: McpAuth = loadOrInitAuth()
   const transports = new Map<string, StreamableHTTPServerTransport>()
   const servers = new Set<Server>()
+  const connections = new Map<string, AgentConnection>()
+  let available = true
   const log = opts.log ?? NO_MCP_LOG
 
   /** One transport-lifecycle row. Every row this producer writes is `Mcp`, so
@@ -84,15 +88,18 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
     const sid = req.headers['mcp-session-id'] as string | undefined
     let transport = sid ? transports.get(sid) : undefined
     if (transport) {
+      const client = connections.get(sid!)
+      if (client) client.last_activity_at = new Date().toISOString()
       // Existing session — route straight through.
       await transport.handleRequest(req, res, req.body)
       return
     }
     // No usable existing transport: only allow a fresh initialize request.
     if (!sid && isInitializeRequest(req.body)) {
+      const connectionId = randomUUID()
       let newServer: Server | undefined
       transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
+        sessionIdGenerator: () => connectionId,
         onsessioninitialized: (id) => {
           transports.set(id, transport!)
         },
@@ -107,6 +114,8 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
         const sessionId = transport!.sessionId
         if (sessionId) transports.delete(sessionId)
         if (newServer) servers.delete(newServer)
+        connections.delete(connectionId)
+        opts.getTsHost?.()?.agent?.end('disconnected', connectionId)
         // `Debug`, not `Info`: a client reconnecting is routine, and at `Info` it
         // would flood the console's default filter.
         emitLifecycle('debug', { kind: 'System' }, 'MCP client disconnected',
@@ -137,13 +146,15 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
         // of those. `Warn`, not `Error`: the request failed, the app did not.
         emitLifecycle('warn', { kind: 'System' }, 'MCP transport error', { error: detail })
       }
-      newServer = buildMcpServer(backend, opts)
+      newServer = buildMcpServer(backend, { ...opts, connectionId })
       servers.add(newServer)
       // `getClientVersion()` is populated while the `initialize` REQUEST is
       // handled, which precedes the `notifications/initialized` that fires this
       // — so the row carries the real agent name, not `undefined`.
       newServer.oninitialized = () => {
         const client = newServer!.getClientVersion()
+        const now = new Date().toISOString()
+        connections.set(connectionId, { id: connectionId, client: client?.name ?? 'MCP', version: client?.version ?? '', connected_at: now, last_activity_at: now })
         const who = client ? `${client.name}/${client.version ?? '?'}` : 'unknown'
         emitLifecycle('info', { kind: 'System' }, `MCP client connected: ${who}`, {
           ...(client ? { client_info: client } : {}),
@@ -189,6 +200,9 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
   }
 
   return {
+    connectionSnapshot(): AgentConnectionSnapshot {
+      return { available, url, connections: [...connections.values()] }
+    },
     getInfo(): McpInfoView {
       return { bind: `127.0.0.1:${port}`, url, bearer_token: auth.token }
     },
@@ -212,6 +226,7 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
       }
     },
     async close(): Promise<void> {
+      available = false
       for (const t of transports.values()) await t.close().catch(() => {})
       http.close()
     },

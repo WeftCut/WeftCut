@@ -488,8 +488,29 @@ Motif authoring (see [motifs.md](motifs.md) "Agent surface"):
 - `list_checkpoints()` / `restore_checkpoint { checkpoint_id }` — restore clears redo and replaces the current snapshot.
 - `undo()` / `redo()`
 - `lock_history { reason }` / `unlock_history()` — freeze undo while a tool batch runs; the UI shows the reason.
-- `begin_agent_session { reason }` — flips the human's UI into a simplified preview / scrub / record-only layout. Auto-checkpoints. The human can also enter agent mode locally (View menu / command palette, client `local`); the human ends the session via the UI; the agent has no symmetric tool.
+- `begin_agent_session { reason }` → work session with stable `id`, `connection_id` and `checkpoint_id`. Creates one Pre-agent checkpoint and enters the lightweight agent view. One active work session per project: repeating on the same connection returns it without another checkpoint or view switch; another connection receives `AgentSessionBusy`.
+- `end_agent_session()` — ends the calling connection’s work session and releases its owned undo lock. Another connection cannot end it (`AgentSessionOwnerMismatch`). Repeating after end is safe. The user can also end work or unlock locally in the agent panel. Ending work keeps the current view and activity; it does not cancel running operations, disconnect MCP or prohibit later calls.
 - `dry_run { operations }` — applies the batch against a clone, validates after each op (matching `commit()`), halts at the first error. Does not commit. Op variants: `add_color_layer`, `add_video_layer`, `update_layer`, `update_layer_params`, `move_layer`, `split_layer`, `delete_layer`. Returns `{ results: [{ index, status, output? | error? }, ...], halted_at: number | null }`. Other tools (motifs, caption import, media import, undo/redo) are not dry-runnable.
+
+### Agent panel and lifecycle
+
+Manual entry and exit (View menu / command palette / Exit to editor) only switch
+layout. They create no work session, checkpoint or start message, and do not
+release undo locks. A definite close of the owning MCP transport ends its work
+session and releases that session’s lock; idle time is never treated as a close.
+Already-running operations retain their attribution and actual outcome.
+
+Both layouts show the same current-project activity: running tasks, readable
+operations and objects, errors, folded quick reads, work-session groups and
+checkpoint recovery. Only the editor offers object navigation. Restore remains
+undoable and retains reads and errors; reverted markers use actual history
+provenance, never a timestamp range. The panel retains 1000 completed activities
+and all running calls, independently of diagnostic log clearing. Reopening a
+project starts a fresh activity stream.
+
+The connection header distinguishes a listening MCP service, registered clients
+(name/version and last request), and running calls. Registration is not a live
+process heartbeat. Connection settings reuse Settings → Agent.
 
 ### Render
 

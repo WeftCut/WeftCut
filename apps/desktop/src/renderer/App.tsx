@@ -468,7 +468,7 @@ export function App({ onCloseProject }: AppProps) {
     pong,
     keybindings,
     setKeybindings,
-    agentSession,
+    agentMode,
     exitAgentMode,
     enterAgentMode,
     staleMotifs,
@@ -946,8 +946,8 @@ export function App({ onCloseProject }: AppProps) {
     clearRange: () => clearMarkedRange(),
     openSearchPalette: () => {
       // Agent mode doesn't mount the palette — setting the flag would sit
-      // latent and pop the palette open when the session ends.
-      if (!agentSession) setPaletteOpen(true);
+      // latent and pop the palette open when the user returns to the editor.
+      if (!agentMode) setPaletteOpen(true);
     },
     openSettings: () => openSettings("general"),
   };
@@ -1016,7 +1016,7 @@ export function App({ onCloseProject }: AppProps) {
   // Local agent-mode entry (View menu + palette). The reason labels the
   // record-panel header and the "Pre-agent: …" auto-checkpoint.
   const handleEnterAgentMode = useCallback(
-    () => enterAgentMode(t("agent_mode.manual_reason")),
+    () => enterAgentMode(),
     [enterAgentMode, t],
   );
 
@@ -1114,10 +1114,9 @@ export function App({ onCloseProject }: AppProps) {
     ],
   );
 
-  if (agentSession) {
-    // Agent mode swap: backend's `agent_session:changed` event flipped
-    // the slot to Some(...). Render the simplified shell instead of the
-    // editor body. ShortcutBindingsProvider stays so the agent-mode
+  if (agentMode) {
+    // View selection is independent of the work session. Render the
+    // lightweight shell while agent view is selected. ShortcutBindingsProvider stays so the agent-mode
     // panel can still consume bound actions if it grows any (it has none
     // today). Floating editor panels (export, settings, motif-picker) are
     // deliberately suppressed — the user is
@@ -1126,7 +1125,6 @@ export function App({ onCloseProject }: AppProps) {
       <ShortcutBindingsProvider overrides={shortcutOverrides}>
         <AgentMode
           ref={previewRef}
-          session={agentSession}
           summary={summary}
           onPausedChange={setPaused}
           onSeek={seekTo}

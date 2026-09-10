@@ -91,6 +91,15 @@ export class History {
   private lockReasonStr: string | null = null
   /** Front-evicted entry count — see HistoryView.evicted. */
   private evictedCount = 0
+  // Runtime provenance, independent of serialized project data. Bounded IDs
+  // make old, untraceable effects explicitly unknown rather than falsely undone.
+  private effectLineage = new WeakMap<object, ReadonlySet<Uuid>>()
+  private knownEffects = new Set<Uuid>()
+
+  effectStates(ids: readonly Uuid[]): Array<'applied' | 'reverted' | 'unknown'> {
+    const active = this.effectLineage.get(this.snapshots[this.cursor])
+    return ids.map(id => !this.knownEffects.has(id) ? 'unknown' : active?.has(id) ? 'applied' : 'reverted')
+  }
 
   constructor(initial: Project, actor: Actor, opId: Uuid, timestamp = '<TS>') {
     this.snapshots.push({ op_id: opId, actor, timestamp, ...seed(initial) })
@@ -107,11 +116,18 @@ export class History {
     this.checkpoints.clear()
     this.lockReasonStr = null
     this.evictedCount = 0 // a fresh stack has discarded nothing
+    this.effectLineage = new WeakMap()
+    this.knownEffects.clear()
   }
 
   current(): Project { return this.snapshots[this.cursor].snapshot }
 
-  record(entry: HistoryEntry): void {
+  record(entry: HistoryEntry, baseEffects = this.effectLineage.get(this.snapshots[this.cursor])): void {
+    this.knownEffects.add(entry.op_id)
+    if (this.knownEffects.size > 4000) this.knownEffects.delete(this.knownEffects.values().next().value!)
+    const effects = new Set([...baseEffects ?? []].filter(id => this.knownEffects.has(id)))
+    effects.add(entry.op_id)
+    this.effectLineage.set(entry, effects)
     this.snapshots = this.snapshots.slice(0, this.cursor + 1) // truncate redo tail
     this.snapshots.push(entry)
     while (this.snapshots.length > this.cap) { this.snapshots.shift(); this.evictedCount += 1 } // evict front
@@ -157,13 +173,14 @@ export class History {
 
   checkpoint(label: string, actor: Actor, id: Uuid, createdAt = '<TS>'): Uuid {
     this.checkpoints.set(id, { id, label, actor, created_at: createdAt, snapshot: this.current() })
+    this.effectLineage.set(this.checkpoints.get(id)!, this.effectLineage.get(this.snapshots[this.cursor]) ?? new Set())
     return id
   }
   restoreCheckpoint(id: Uuid, opId: Uuid, timestamp: string, actor: Actor): Project | null {
     const cp = this.checkpoints.get(id)
     if (!cp) return null
     const s = restoredCheckpointSummary(cp.label)
-    this.record({ op_id: opId, actor, timestamp, summary: s.text, label_key: s.key, label_args: s.label_args, affected: [], snapshot: cp.snapshot })
+    this.record({ op_id: opId, actor, timestamp, summary: s.text, label_key: s.key, label_args: s.label_args, affected: [], snapshot: cp.snapshot }, this.effectLineage.get(cp) ?? new Set())
     return cp.snapshot
   }
   listCheckpoints(): NamedCheckpoint[] {

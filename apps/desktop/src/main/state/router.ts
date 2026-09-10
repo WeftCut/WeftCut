@@ -13,8 +13,8 @@ export type Route =
   | { kind: 'historyView' }   // actor.historyView(cap) — the whole edit stack, READ-only
   | { kind: 'projectSettings' } // actor.snapshot().settings
   | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' }
-  | { kind: 'agentSessionEnd' } // agentSessionEnd seam: endSlot + unlockHistory
-  | { kind: 'agentSessionBegin' } // UI-initiated session: checkpoint + beginSlot (mirrors the MCP tool path)
+  | { kind: 'agentSessionEnd' } // end work locally; release only its owned lock
+  | { kind: 'agentSessionBegin' } // legacy local channel: request agent view only
   | { kind: 'appSettings' }   // app-level prefs store, owned in TS main (config-dir)
   | { kind: 'workspace' }     // app-level Dock arrangement document, owned in TS main (config-dir)
   | { kind: 'viewState' }     // per-workspace view.json store, owned in TS main

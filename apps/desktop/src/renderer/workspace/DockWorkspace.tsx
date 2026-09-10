@@ -482,23 +482,8 @@ function PlayheadDockPanel() {
   );
 }
 
-/// The agent panel outside agent mode: the dock workspace only mounts in
-/// editor mode (App swaps the whole body for AgentMode while a session is
-/// active), so there is no live session to headline — the shared AgentPanel
-/// omits its header here, and the epoch window start shows every
-/// agent-attributed entry in the log stream.
-const AGENT_PANEL_WINDOW_START = new Date(0).toISOString();
-
-function AgentDockPanel() {
-  const contracts = useContracts();
-  return (
-    <AgentPanel
-      session={null}
-      sessionStartedAt={AGENT_PANEL_WINDOW_START}
-      lockReason={contracts.summary?.history.lock_reason ?? null}
-    />
-  );
-}
+/// Same activity surface; only editor mode offers object navigation.
+function AgentDockPanel() { return <AgentPanel editor />; }
 
 /// No `weft-dock-panel-scroll` wrapper and no contracts: the History Panel owns
 /// its own scroller (sticky cursor follow) and pulls the edit stack over its own

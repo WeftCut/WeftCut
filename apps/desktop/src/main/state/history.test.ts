@@ -18,6 +18,35 @@ function entry(p: Project, op: string): HistoryEntry {
 function freshProject(name: string): Project { return blankProject(seededGen(), name) }
 
 describe('History', () => {
+  it('tracks restore ancestry through preferences, undo/redo and abandoned branches', () => {
+    const project = freshProject('Provenance')
+    const h = new History(project, U, 'seed')
+    h.record(entry(project, 'a'))
+    h.checkpoint('After A', U, 'cp')
+    h.record(entry(project, 'b'))
+    h.replaceSettingsEverywhere({ ...project.settings, preview_width: 320 })
+    h.replaceMediaPoolEverywhere({})
+    h.restoreCheckpoint('cp', 'restore', 'now', U)
+    expect(h.effectStates(['a', 'b', 'restore'])).toEqual(['applied', 'reverted', 'applied'])
+    h.undo()
+    expect(h.effectStates(['a', 'b', 'restore'])).toEqual(['applied', 'applied', 'reverted'])
+    h.redo()
+    h.record(entry(h.current(), 'c'))
+    expect(h.effectStates(['a', 'b', 'c'])).toEqual(['applied', 'reverted', 'applied'])
+    h.undo()
+    h.record(entry(h.current(), 'd'))
+    expect(h.effectStates(['c', 'd'])).toEqual(['reverted', 'applied'])
+  })
+
+  it('reports effects outside the bounded provenance horizon as unknown', () => {
+    const project = freshProject('Bounded provenance')
+    const h = new History(project, U, 'seed')
+    for (let i = 0; i < 4001; i++) h.record(entry(project, `op${i}`))
+    expect(h.effectStates(['op0', 'op1', 'op4000'])).toEqual(['unknown', 'applied', 'applied'])
+    h.reset(project, U, 'new-seed')
+    expect(h.effectStates(['op4000'])).toEqual(['unknown'])
+  })
+
   it('records, undoes, and redoes', () => {
     const h = new History(freshProject('0'), U, 'op0')
     expect(h.canUndo()).toBe(false)

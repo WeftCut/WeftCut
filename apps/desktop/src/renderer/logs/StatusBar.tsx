@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { AlertTriangleIcon, InfoIcon, OctagonAlertIcon } from "lucide-react";
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { renderLogMessage } from "./renderMessage";
+import { useAgentActivity } from "../agent/activityStore";
 import { useLogStore } from "./store";
 import { useLinkOverride } from "../state/linkOverrideStore";
 import { MEDIA_JOB_EVENTS, type LogEntry, type LogLevel } from "../ipc";
@@ -37,24 +38,10 @@ export function StatusBar({
   const runningCount = useLogStore((s) =>
     Object.keys(s.runningOps).length,
   );
-  // Agent-attributed running ops: a subset of runningOps where the
-  // associated entry's source kind is "Agent". Surfaced as its own
-  // pill so the user has a signal that an MCP client is still working
-  // after exiting agent mode — those ops finish in the background.
-  const agentRunningCount = useLogStore((s) => {
-    const entryByOp = new Map<string, LogEntry>();
-    for (const entry of s.entries) {
-      if (entry.op_id && !entryByOp.has(entry.op_id)) {
-        entryByOp.set(entry.op_id, entry);
-      }
-    }
-    let n = 0;
-    for (const opId of Object.keys(s.runningOps)) {
-      const e = entryByOp.get(opId);
-      if (e?.source.kind === "Agent") n += 1;
-    }
-    return n;
-  });
+  // Activity liveness survives diagnostic log clearing and eviction.
+  const agentRunningCount = useAgentActivity(s =>
+    s.snapshot?.activities.filter(a => a.state === "running").length ?? 0,
+  );
   // Derivative-job tracker. Increments on `media:job_started`,
   // decrements on `media:job_complete` / `media:job_error`. The total
   // renders a "Generating derivatives (N)…" pill so the user sees that

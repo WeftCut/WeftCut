@@ -133,11 +133,8 @@ describe('restore_checkpoint LogBus parity — renderer command path', () => {
     }))
   })
 
-  // The MCP path emits `Checkpoint:` rows for every creation; the renderer path
-  // did not. RecordPanel builds a `checkpoint_id → ts` map from exactly those
-  // rows and pairs each later Restore against it, so a user-created checkpoint
-  // produced a Restore divider whose creation event never existed — and the
-  // rolled-back range it should have hidden stayed on screen.
+  // Both caller surfaces retain diagnostic create/restore records, independently
+  // of the structured activity stream used by the agent panel.
   it('emits a Checkpoint log entry with User source on renderer command create', async () => {
     const emitLog = vi.fn()
     const host = createTsActorHost({ ...makeInMemoryDeps(), emitLog })
@@ -164,8 +161,7 @@ describe('restore_checkpoint LogBus parity — renderer command path', () => {
     const cpId = await host.handleInvoke('project_create_checkpoint', { label: 'cp' })
     await host.handleInvoke('project_restore_checkpoint', { checkpointId: cpId })
 
-    // The pairing RecordPanel performs: both halves present, keyed on the SAME
-    // id, so the rolled-back range between them is computable.
+    // Both diagnostic records refer to the same recovery point.
     const details = emitLog.mock.calls.map((c) => (c[0] as { details: { kind: string; id?: string; checkpoint_id?: string } }).details)
     expect(details.find((d) => d.kind === 'Checkpoint')?.id).toBe(cpId)
     expect(details.find((d) => d.kind === 'Restore')?.checkpoint_id).toBe(cpId)
@@ -191,9 +187,7 @@ describe('restore_checkpoint LogBus parity — renderer command path', () => {
       message: 'Checkpoint deleted: doomed',
       details: expect.objectContaining({ kind: 'CheckpointDeleted', id: cpId, label: 'doomed' }),
     }))
-    // NOT `kind: 'Checkpoint'`: RecordPanel keys its checkpoint→restore map on
-    // that, and reusing it here would overwrite the creation timestamp with the
-    // deletion's, corrupting every rolled-back range computed from it.
+    // Deletion remains distinguishable from creation in diagnostics.
     const kinds = emitLog.mock.calls.map((c) => (c[0] as { details: { kind: string } }).details.kind)
     expect(kinds).not.toContain('Checkpoint')
   })

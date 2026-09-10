@@ -51,7 +51,7 @@ const MCP_ACTOR: Actor = { kind: 'Agent', client: 'mcp' }
 
 export type Clock = () => string
 export type DiffHint = { kind: 'Coarse' } | { kind: 'Layer'; id: Uuid } | { kind: 'Composition' }
-export interface ChangeEvent { op_id: Uuid; actor: Actor; timestamp: string; summary: string; affected: EntityRef[]; new_snapshot: Project; diff_hint: DiffHint }
+export interface ChangeEvent { op_id: Uuid; history_op_id?: Uuid; actor: Actor; timestamp: string; summary: string; affected: EntityRef[]; new_snapshot: Project; diff_hint: DiffHint }
 
 export type DryRunOp =
   | { kind: 'AddLayer'; track_id: Uuid; params: LayerParams; t_start_us: number; t_end_us: number }
@@ -100,6 +100,7 @@ export interface ActorHandle {
   subscribe(cb: (e: ChangeEvent) => void): () => void
   historyView(limit: number): ReturnType<History['view']>
   historyStatus(): ReturnType<History['status']>
+  historyEffects(ids: readonly string[]): ReturnType<History['effectStates']>
   /** The stack cap — the `limit` a "give me the WHOLE stack" read should pass to
    *  `historyView` (the history panel's read; MCP's `view(100)` is a different
    *  consumer with a different need). Delegates to History so the number is never
@@ -270,11 +271,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
     }
   }
 
-  /** NON-recorded events only — these never reach history, so they carry no
-   *  label key and no affected refs. */
-  function broadcastUnrecorded(summary: string, snapshot: Project, diff: DiffHint = { kind: 'Coarse' }): void {
+  /** Snapshot notification with its own event ID. Restore additionally carries
+   *  the recorded history ID; undo/redo and preference changes have none. */
+  function broadcastUnrecorded(summary: string, snapshot: Project, diff: DiffHint = { kind: 'Coarse' }, historyOpId?: Uuid): void {
     const opId = idGen() // the unrecorded broadcast's own deterministic id
-    emit({ op_id: opId, actor, timestamp: clock(), summary, affected: [], new_snapshot: snapshot, diff_hint: diff })
+    emit({ op_id: opId, ...(historyOpId ? { history_op_id: historyOpId } : {}), actor, timestamp: clock(), summary, affected: [], new_snapshot: snapshot, diff_hint: diff })
   }
 
   // ── affected-ref helpers. Every recorded commit names the entities it touched,
@@ -547,7 +548,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     if (!history.hasCheckpoint(id)) throw new CommandFailure({ error: 'CheckpointNotFound', checkpoint: id }) // 0 ids — peek BEFORE mint
     const opId = idGen() // entry op_id — minted FIRST
     const snap = history.restoreCheckpoint(id, opId, clock(), actor)!
-    broadcastUnrecorded(`Restored checkpoint ${id}`, snap) // +1 broadcast id (the SECOND id)
+    broadcastUnrecorded(`Restored checkpoint ${id}`, snap, { kind: 'Coarse' }, opId) // +1 broadcast id (the SECOND id)
   }
   /** Drop a checkpoint. Absent id → CheckpointNotFound, burning ZERO ids (same
    *  peek-before-mint convention restoreCheckpoint follows) — and here nothing is
@@ -1660,6 +1661,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           restoreCheckpoint(id) // throws CommandFailure(HistoryLocked|CheckpointNotFound) → outer catch → mapCommandError → invalid_params (no data)
           return { ok: true, result: toolEmpty() }
         }
+        // Work-session lifecycle is owned by the host; a bare actor has no session.
+        case 'end_agent_session': return { ok: true, result: toolEmpty() }
         case 'begin_agent_session': {
           const p = mcpDef('begin_agent_session').parseDedicated!(a)
           const reason = p.reason as string
@@ -1865,6 +1868,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     subscribe(cb) { subs.add(cb); return () => subs.delete(cb) },
     historyView: (n) => history.view(n),
     historyStatus: () => history.status(),
+    historyEffects: (ids) => history.effectStates(ids),
     historyCapacity: () => history.capacity(),
     lockHistory: (r) => history.lock(r),
     unlockHistory: () => history.unlock(),

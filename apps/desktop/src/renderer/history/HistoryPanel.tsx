@@ -150,9 +150,8 @@ export function HistoryPanel() {
   );
 
   // Sticky cursor follow, yielding the moment the user scrolls the cursor row
-  // out of view and re-arming when they bring it back — the convention
-  // RecordPanel.tsx:22-24 establishes for this panel family, restated for a
-  // cursor that can sit ANYWHERE in the stack rather than only at the end.
+  // out of view and re-arming when they bring it back. The cursor can sit
+  // anywhere in the stack, unlike the agent panel's latest-activity follow.
   //
   // Sticky therefore means "the cursor row is currently visible", NOT "we are
   // near the bottom". That distinction is load-bearing: this panel scrolls to a

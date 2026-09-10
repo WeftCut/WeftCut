@@ -9,7 +9,8 @@ import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type 
 import type { RelinkFs, RelinkReport } from './relink'
 import { serializeProjectToJson } from './persistence'
 import { describeGridRepairs, type GridRepair } from './serialize'
-import { agentSessionEnd } from './agent-session-seam'
+import { AgentActivityService } from '../agent/activity'
+import { AGENT_VIEW_EVENT } from '../../shared/agent-activity'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
 import type { UserMotifStore } from '../motif/store'
@@ -49,11 +50,7 @@ export interface TsActorHostDeps {
   readFile: (p: string) => string
   /** Current workspace directory (cached from backend). Null before first open/newWorkspace. */
   workspaceDir: () => string | null
-  /** Flip the Rust agent-session slot ON/OFF (backend.beginAgentSessionSlot / endAgentSessionSlot).
-   *  `client` attributes the session: 'mcp' for tool-initiated, 'local' for UI-initiated. */
-  beginAgentSessionSlot?: (reason: string, client: string) => void
-  endAgentSessionSlot?: () => void
-  /** Emit a record-panel LogBus pin-row via the Rust log surface.
+  /** Emit a diagnostic LogBus pin-row via the Rust log surface.
    *  Optional → no-op when omitted (tests that do not care about logging).
    *  Must never throw — wrap call sites in try/catch; a failing emit must not abort the mutation. */
   emitLog?: (entry: {
@@ -105,6 +102,7 @@ interface PersistenceHandlers {
 
 export interface TsActorHost {
   actor: ActorHandle
+  agent: AgentActivityService
   handleInvoke: (channel: string, args: Record<string, unknown>) => Promise<unknown>
   /** Host-level MCP call: delegates to actor.mcpCall, then emits the appropriate
    *  LogBus pin-row for restore_checkpoint / checkpoint / begin_agent_session on success.
@@ -121,7 +119,6 @@ export interface TsActorHost {
    *  watcher can refresh the actor catalog when a Motif appears on disk with no
    *  store-mutating tool call (otherwise add_motif rejects it). */
   refreshMotifCatalog: () => void
-  beginAgentSessionSlot: (reason: string, client: string) => void
   start: () => void
   stop: () => void
 }
@@ -166,6 +163,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (actor)', err) } },
   })
   let unsub: (() => void) | null = null
+  const agent = new AgentActivityService(actor, deps.send)
 
   const autosave: AutosaveController = createAutosave({
     actor,
@@ -307,6 +305,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   // All pin-rows: level 'info', category {kind:'Project'}.
 
   function emitRestoreLog(id: string, label: string | null, source: { kind: 'User' } | { kind: 'Agent'; client: string }): void {
+    agent.checkpoint('restore', id, label ?? id)
     try {
       deps.emitLog?.({
         level: 'info',
@@ -318,14 +317,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     } catch (err) { console.warn('[ts-actor-host] emitLog failed (restore)', err) }
   }
 
-  /** The `Checkpoint:` pin-row. Emitted for EVERY checkpoint creation, agent or
-   *  user: RecordPanel builds a `checkpoint_id → ts` map from these rows and
-   *  pairs each later Restore against it, so a creation that never logged leaves
-   *  a Restore divider pointing at nothing. */
+  /** Checkpoint activity and diagnostic pin-row, for either caller surface. */
   function emitCheckpointLog(
     id: string, label: string,
     source: { kind: 'User' } | { kind: 'Agent'; client: string },
   ): void {
+    agent.checkpoint('checkpoint', id, label)
     try {
       deps.emitLog?.({
         level: 'info',
@@ -337,17 +334,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     } catch (err) { console.warn('[ts-actor-host] emitLog failed (checkpoint)', err) }
   }
 
-  /** Deleting a checkpoint destroys a named recovery point and records NOTHING
-   *  on the edit stack, so the log ring is the only place it can leave a trace.
-   *
-   *  A DISTINCT `details.kind` on purpose: RecordPanel keys its checkpoint→restore
-   *  map on `kind: 'Checkpoint'`, and reusing that here would overwrite the
-   *  creation timestamp with the deletion's and corrupt every rolled-back range
-   *  computed from it. */
+  /** Refresh recovery availability and retain a diagnostic deletion record. */
   function emitCheckpointDeletedLog(
     id: string, label: string | null,
     source: { kind: 'User' } | { kind: 'Agent'; client: string },
   ): void {
+    agent.refresh()
     try {
       deps.emitLog?.({
         level: 'info',
@@ -385,6 +377,9 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   async function handleInvoke(channel: string, args: Record<string, unknown>): Promise<unknown> {
+    if (channel === 'agent_activity_snapshot') return agent.snapshot()
+    if (channel === 'agent_session_get') return agent.snapshot().session
+    if (channel === 'agent_unlock_history') { agent.unlock(); return null }
     const route = routeChannel(channel)
     switch (route.kind) {
       case 'command': {
@@ -397,11 +392,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         // The renderer surfaces an IPC rejection as `Error.message` (bridge/ipc.ts),
         // so serialize the CommandError as JSON to keep it structured.
         if (!r.ok) throw new Error(JSON.stringify(r.error))
-        // The user-side half of the checkpoint pin-rows the MCP path emits from
-        // mcpCall. All three matter: without CREATE, RecordPanel pairs a later
-        // Restore against a checkpoint it never saw; without DELETE, destroying a
-        // named recovery point leaves no trace anywhere (it records no history
-        // entry either).
+        // Keep local checkpoint actions visible in activity and diagnostics.
         if (channel === 'project_restore_checkpoint') {
           // Emit the Restore pin-row (User source). The checkpoint is kept on restore,
           // so listCheckpoints() still resolves the id → label after the call.
@@ -432,44 +423,9 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       case 'saveAs': return persistence.saveAs((args as { path: string }).path)
       case 'newWorkspace': return persistence.newWorkspace(args as never)
       case 'save': return persistence.save()
-      case 'agentSessionEnd':
-        agentSessionEnd({
-          endSlot: () => deps.endAgentSessionSlot?.(),
-          unlockHistory: () => actor.unlockHistory(),
-        })
-        // The exit bookend to the `Pre-agent:` pin-row — without it the record
-        // panel's transcript has no right bracket. This channel is the only
-        // end path (there is no end_agent_session MCP tool; the human exits
-        // via the UI), so `User` is exact.
-        try {
-          deps.emitLog?.({
-            level: 'info',
-            category: { kind: 'Project' },
-            source: { kind: 'User' },
-            message: 'Agent session ended',
-            details: { kind: 'AgentSessionEnd' },
-          })
-        } catch (err) { console.warn('[ts-actor-host] emitLog failed (agent_session_end)', err) }
-        return null
-      case 'agentSessionBegin': {
-        // UI-initiated session — mirrors the MCP path in server.ts: mint the
-        // auto-checkpoint through the same actor arm, then flip the Rust slot.
-        // `client` attributes the session ('local' from the UI; 'mcp' on the
-        // tool path). The checkpoint pin-row is emitted here (not via the host
-        // mcpCall wrapper) so the log attributes the real client, not 'mcp'.
-        const reason = typeof args.reason === 'string' ? args.reason.trim() : ''
-        if (reason === '') return reject('agent_session_begin: reason must be non-empty')
-        const client =
-          typeof args.client === 'string' && args.client.trim() !== '' ? args.client : 'local'
-        const r = actor.mcpCall('begin_agent_session', JSON.stringify({ reason }))
-        if (!r.ok) return reject(`agent_session_begin failed: ${JSON.stringify(r.error)}`)
-        try {
-          const payload = JSON.parse(r.result.content[0]?.text ?? '{}') as { checkpoint_id?: string }
-          emitCheckpointLog(payload.checkpoint_id ?? '', `Pre-agent: ${reason}`, { kind: 'Agent', client })
-        } catch (err) { console.warn('[ts-actor-host] emitLog failed (agent_session_begin)', err) }
-        deps.beginAgentSessionSlot?.(reason, client)
-        return null
-      }
+      case 'agentSessionEnd': agent.end('user'); return null
+      // Compatibility for the old local channel: it now requests a view only.
+      case 'agentSessionBegin': deps.send(AGENT_VIEW_EVENT, { workspace_id: agent.snapshot().workspace_id }); return null
       case 'hybrid': {
         const hybridResult = await runHybrid(route.tool, args, hybridDeps)
         return hybridResult
@@ -574,18 +530,20 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
 
   return {
     actor,
+    agent,
     handleInvoke,
     mcpCall,
     hybridDeps,
     motifTool: runMotif,
     refreshMotifCatalog,
-    beginAgentSessionSlot(reason: string, client: string) { deps.beginAgentSessionSlot?.(reason, client) },
     start() {
+      agent.start()
       if (!unsub) unsub = actor.subscribe(emitChange)
       autosave.start()
       refreshMotifCatalog()
     },
     stop() {
+      agent.stop()
       autosave.stop()
       if (unsub) { unsub(); unsub = null }
     },

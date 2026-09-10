@@ -20,10 +20,16 @@ should go.
 3. A small change (a handful of tool calls) needs no more ceremony than that:
    edit, verify, report.
 4. A batch job (rough-cutting a video, a silence pass, building a caption
-   track) is different: ASK the user whether to switch the app into agent mode,
-   and call `begin_agent_session` only after they agree. Wrap the batch in
-   `lock_history` … `unlock_history`, and rehearse it with `dry_run` first
-   where its op set allows.
+   track) uses a work session: ASK whether to begin the batch and enter the
+   lightweight agent view unless already authorized, then call
+   `begin_agent_session`. It creates a checkpoint once per session. Wrap the
+   batch in `lock_history` … `unlock_history`, rehearse with `dry_run` where
+   supported, and call `end_agent_session` when finished (also on failure).
+   Use a finally-style cleanup so a failed tool does not leave undo locked.
+   Manual view switching neither starts nor ends work. The user can end work
+   or unlock locally; explicit transport close also ends its owned session.
+   None of these cancels running calls or prohibits later tools. Do not infer
+   that a session ended because the user returned to the editor.
 5. Errors are instructions: WeftCut errors name the cause and list concrete
    options. Pick one; never retry a rejected call verbatim.
 6. A commit can also fail because the user (or another agent) edited

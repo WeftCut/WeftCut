@@ -755,3 +755,33 @@ learn its spectrum from it. It says what is *measured*, never what is processed
 region on the card and dragging on that clip. UI word: Select region / 选区.
 _Avoid_: noise selection, region of effect, in/out marks (those are export
 state), profile range, noise print
+
+## Agent activity
+
+**Agent view**:
+The lightweight preview, mini timeline and agent panel layout. A user can enter
+or leave it independently of work. A new MCP work session enters it once;
+switching views creates no checkpoint and releases no undo lock (ADR 0065).
+UI word: Agent Mode / 代理模式.
+_Avoid_: session (when referring to layout), private agent panel
+
+**Work session**:
+One explicitly begun batch of agent work in the current project opening, with a
+stable ID, owning MCP connection, reason and start/end timestamps. Ending it
+releases its owned undo lock, preserves activity and keeps the current view.
+It does not cancel tools or prohibit subsequent operations.
+_Avoid_: view mode, transport session, agent permission, execution lock
+
+**MCP connection**:
+A registered protocol connection identified independently of client name and
+version. Definite transport close ends its owned work session. Registration and
+last-request time are facts; neither is a heartbeat proving process liveness.
+_Avoid_: online agent (inferred from registration), work session
+
+**Agent activity**:
+A structured record of an MCP call or checkpoint action in this project opening:
+who called, optional work session, operation and objects, execution state,
+duration, error and actual history IDs. Reverted describes an edit's current
+effect, independently of whether its call completed or failed. The bounded
+activity stream retains running calls and does not restore from disk.
+_Avoid_: diagnostic log entry, history entry, permanent transcript

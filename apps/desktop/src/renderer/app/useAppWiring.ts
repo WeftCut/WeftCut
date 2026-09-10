@@ -3,20 +3,15 @@ import { getCurrentWindow } from "@/bridge/window";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  AGENT_SESSION_EVENTS,
-  agentSessionBegin,
-  agentSessionEnd,
-  agentSessionGet,
   audioFxSnapshot,
   keybindingsGet,
-  type AgentSession,
   type AudioFxStatusEvent,
   type KeybindingsMap,
   motifStalenessReport,
   type MotifStaleEntry,
   ping,
 } from "../ipc";
-import { tryMutate } from "../errors/tryMutate";
+import { useAgentActivity, wireAgentActivity } from "../agent/activityStore";
 import { wireLogStream } from "../logs/store";
 import { wireSearchIndex } from "../search/searchIndexStore";
 import { bootAudioFxStore } from "../state/audioFxStore";
@@ -26,8 +21,7 @@ import { wireAppSettingsStream } from "../settings/appSettingsStore";
 import { wireDecodeComponent } from "../settings/decodeComponentStore";
 
 /// Owns the App-root backend wiring: the pong healthcheck, keybindings +
-/// agent-session state (seeded on mount, kept live via
-/// `agent_session:changed`), the on-open stale-motifs pull, and the
+/// agent activity snapshots and independent view selection, the on-open stale-motifs pull, and the
 /// stream-wiring effects (status log, project-state mirror, app-settings,
 /// and the `project:changed` → refresh subscription). `refresh` arrives from
 /// App via `deps` — App still owns the callback itself since the R.7
@@ -36,9 +30,9 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
   pong: string;
   keybindings: KeybindingsMap;
   setKeybindings: React.Dispatch<React.SetStateAction<KeybindingsMap>>;
-  agentSession: AgentSession | null;
+  agentMode: boolean;
   exitAgentMode: () => Promise<void>;
-  enterAgentMode: (reason: string) => Promise<void>;
+  enterAgentMode: () => Promise<void>;
   staleMotifs: MotifStaleEntry[];
   setStaleMotifs: React.Dispatch<React.SetStateAction<MotifStaleEntry[]>>;
 } {
@@ -51,13 +45,7 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
   // catalogue (`ACTION_DEFS`) is the validator. Unknown action ids in
   // the file are silently ignored at dispatch time.
   const [keybindings, setKeybindings] = useState<KeybindingsMap>({});
-  // Active agent session (null = editor mode). Set by the
-  // `agent_session:changed` event the backend emits whenever an MCP
-  // client calls `begin_agent_session` or any path clears the slot
-  // (workspace change, user-side exit). Always seeded by an explicit
-  // get on mount so the UI never blinks through the wrong mode on
-  // app start.
-  const [agentSession, setAgentSession] = useState<AgentSession | null>(null);
+  const agentMode = useAgentActivity(s => s.mode === "agent");
 
   // §7-B on-open staleness: App mounts exactly once per successful project
   // open (every open path remounts it), so a mount-time pull IS the
@@ -79,44 +67,19 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
     ping().then(setPong).catch((e) => setPong(`error: ${String(e)}`));
     refresh();
     keybindingsGet().then(setKeybindings).catch(() => {});
-    // Seed agent-session mode explicitly so the UI never flashes through
-    // editor mode on a fresh app start when an MCP client has already
-    // begun a session (e.g., on app re-launch via deeplink in the
-    // future). Subsequent flips arrive via the agent_session:changed
-    // event below.
-    agentSessionGet().then(setAgentSession).catch(() => {});
   }, [refresh]);
 
-  // Subscribe to agent_session:changed — payload is `AgentSession | null`.
-  // Begin / replace / end all flow through here so the conditional render
-  // below stays in sync with the backend slot.
   useEffect(() => {
-    let unlisten: (() => void) | null = null;
     let cancelled = false;
-    (async () => {
-      const u = await listen<AgentSession | null>(
-        AGENT_SESSION_EVENTS.changed,
-        (e) => setAgentSession(e.payload),
-      );
-      if (cancelled) {
-        u();
-        return;
-      }
-      unlisten = u;
-    })();
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
-    };
+    let stop: (() => void) | undefined;
+    void wireAgentActivity().then(unlisten => {
+      if (cancelled) unlisten(); else stop = unlisten;
+    });
+    return () => { cancelled = true; stop?.(); };
   }, []);
 
-  const exitAgentMode = useCallback(async () => {
-    await tryMutate(() => agentSessionEnd(), "agent_session_end");
-  }, []);
-
-  const enterAgentMode = useCallback(async (reason: string) => {
-    await tryMutate(() => agentSessionBegin(reason), "agent_session_begin");
-  }, []);
+  const exitAgentMode = useCallback(async () => { useAgentActivity.setState({ mode: "editor" }); }, []);
+  const enterAgentMode = useCallback(async () => { useAgentActivity.setState({ mode: "agent" }); }, []);
 
   // Wire the status-log stream: seed from `log_list`, then subscribe to
   // `log:entry` events. Pre-workspace this is a no-op (backend bus is
@@ -262,7 +225,7 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
     pong,
     keybindings,
     setKeybindings,
-    agentSession,
+    agentMode,
     exitAgentMode,
     enterAgentMode,
     staleMotifs,

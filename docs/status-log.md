@@ -3,8 +3,8 @@
 A persistent status bar + expandable inline console that records shortcut
 results, wait operations, MCP agent activity, and system errors. Lives at
 the bottom of the editor view. It replaced `ActivityPanel` and the
-menu-bar error span, and is designed to scale forward into a future
-"full agent mode".
+menu-bar error span, and remains the diagnostic surface. The agent panel has a separate structured
+activity stream (ADR 0065).
 
 ---
 
@@ -238,20 +238,20 @@ NLE-convention answer).
   visible bar but do not announce.
 - Expanded console has `role="log"`.
 
-## Forward-compat for full agent mode
+## Agent activity is a separate stream
 
-Bets baked into v1:
-- `source.Agent { client }` and `op_id` grouping in the schema.
-- Backend-owned `LogBus` with broadcast — a future agent-mode UI
-  subscribes to the same stream without re-plumbing.
-- `details` carries MCP tool args, with large values elided; this is
-  the transcript. Return values are omitted — a mutation's is an id or
-  an ack, and a read's is the project view, replayable at `Debug`.
+The MCP handler funnel feeds both the diagnostic decorator and the main-owned
+`AgentActivityService`. Diagnostic rows retain their severity, bounded details
+and JSONL output. Agent activity has its own stable IDs, connection and work
+session ownership, actual history IDs, execution state and completion budget.
+The two kinds of IDs are not interchangeable.
 
-Deferred until agent-mode lands:
-- Chat-bubble transcript view, suggestion accept/reject UI, per-agent
-  session grouping, an `agent.message` MCP endpoint for free-form
-  narration.
+Clearing or evicting diagnostic logs does not remove panel activities or running
+task state. Both editor and agent layouts consume the same activity snapshot and
+versioned updates. The editor’s agent-running pill also reads activity state.
+Restoring checkpoints preserves activities and marks only proven reverted
+effects; it no longer prunes a time interval from the diagnostic stream.
+See [ADR 0065](adr/0065-agent-view-work-session-and-activity-are-independent.md).
 
 ## Deferred
 

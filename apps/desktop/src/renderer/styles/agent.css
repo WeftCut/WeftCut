@@ -4,8 +4,8 @@
    Agent mode shell — 3-pane layout:
      preview top-left (expanding), mini timeline bottom-left
      (~80 px tall), record panel right (~360 px wide).
-   Replaces the entire editor body while an MCP-initiated agent
-   session is active.
+   Replaces the editor body when agent view is selected. Work
+   sessions have an independent lifecycle.
 
    Visual language mirrors the editor's dock workspace
    (styles/workspace.css): a recessed pure-black well, one
@@ -120,7 +120,7 @@
   min-height: 0;
 }
 
-/* The shared AgentPanel (header + record stream) fills its host: this
+/* The shared AgentPanel (connection status + activity stream) fills its host: this
    grid cell in agent mode (flex column), the dock Panel's content region
    in the editor (sized by .weft-dock-panel > .agent-panel). */
 .agent-panel {
@@ -128,19 +128,6 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-}
-
-.agent-record-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px;
-  /* In-pane separator only (like .preview-transport's border-top in the
-     editor); the header shares the pane's --card so the record island
-     reads as one uniform surface. */
-  border-bottom: 1px solid var(--border-soft);
-  background: var(--card);
 }
 
 /* Record-panel width sash: overlays the 6px inter-column gap with a few px
@@ -166,92 +153,6 @@
 
 .agent-width-sash:focus-visible {
   outline: none;
-}
-
-.agent-record-title {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
-}
-
-.agent-record-client {
-  font-size: var(--font-size-micro);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-gray-500);
-}
-
-.agent-record-reason {
-  font-size: var(--font-size-label);
-  font-weight: 600;
-  color: #fafafa;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-
-
-.agent-record-body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.agent-lock-badge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: #2a1a0a;
-  border-bottom: 1px solid #4a2c10;
-  font-size: var(--font-size-caption);
-  color: var(--color-amber-400);
-}
-
-.agent-lock-icon {
-  font-size: var(--font-size-body);
-}
-
-.agent-lock-reason {
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-record-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 4px 0;
-  font-size: var(--font-size-body);
-}
-
-.agent-record-empty {
-  padding: 16px 12px;
-  color: var(--color-gray-500);
-  font-style: italic;
-}
-
-.agent-record-row {
-  display: grid;
-  grid-template-columns: auto auto 1fr auto;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 12px;
-  border-left: 2px solid transparent;
-}
-
-.agent-record-row:hover {
-  background: var(--surface-tint);
-}
-
-@keyframes agent-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 
 /* Project-bar pill surfaced while the user is back in editor mode

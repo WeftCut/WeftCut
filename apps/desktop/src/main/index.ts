@@ -790,8 +790,6 @@ app.whenReady().then(async () => {
     enqueueWorkspaceCopy: (id, p) => backend!.enqueueWorkspaceCopy(id, p),
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     workspaceDir: () => wsCache,
-    beginAgentSessionSlot: (reason, client) => backend!.beginAgentSessionSlot(reason, client),
-    endAgentSessionSlot: () => backend!.endAgentSessionSlot(),
     emitLog: (entry) => { void backend!.invoke('log_emit', JSON.stringify({ input: entry })) },
     listMotifs: () => backend!.invoke('list_motifs', '{}'),
     motifStore,
@@ -999,6 +997,10 @@ app.whenReady().then(async () => {
   const { AUDIO_FX_CHANNELS, CLIP_COMPUTE_CHANNELS } = await import('./state/router.js')
 
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
+    if (channel === 'agent_connections') return mcpHost.connectionSnapshot()
+    if (channel === 'agent_activity_snapshot' || channel === 'agent_session_get' || channel === 'agent_unlock_history') {
+      return tsHost!.handleInvoke(channel, args ?? {})
+    }
     // Motif runtime registration: renderer sends its clock-takeover source once
     // at boot; main injects it into the offscreen capture host via CDP.
     if (channel === 'motif_register_runtime') {

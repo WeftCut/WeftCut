@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import {
   CallToolRequestSchema,
@@ -145,11 +146,26 @@ export async function handleCallTool(
   getVlm: VlmProvider = NO_VLM,
 ): Promise<ServerResult> {
   const tsHost = getTsHost()
+  if (tsHost?.agent && ['begin_agent_session', 'end_agent_session', 'lock_history', 'unlock_history'].includes(name)) {
+    try {
+      let result: unknown = {}
+      if (name === 'begin_agent_session') {
+        if (typeof args.reason !== 'string') throw new Error('reason must be a string')
+        result = tsHost.agent.begin(args.reason)
+      } else if (name === 'end_agent_session') tsHost.agent.end('agent')
+      else if (name === 'lock_history') {
+        if (typeof args.reason !== 'string') throw new Error('reason must be a string')
+        tsHost.agent.lock(args.reason)
+      } else tsHost.agent.unlock()
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] } as ServerResult
+    } catch (e) {
+      return { isError: true, content: [{ type: 'text', text: e instanceof Error ? e.message : String(e) }] } as ServerResult
+    }
+  }
   if (tsHost) {
     const route = routeMcpTool(name)
     if (route === 'ts') {
       const out = unwrapEnvelope(tsHost.mcpCall(name, JSON.stringify(args)))
-      if (name === 'begin_agent_session') tsHost.beginAgentSessionSlot(((args.reason as string | undefined) ?? '').trim(), 'mcp')
       return out as ServerResult
     }
     if (route === 'hybrid') {
@@ -355,6 +371,7 @@ export function mcpCommitObserver(getTsHost: () => TsActorHost | null): (tool: s
  *  positionals: `log` is the fourth and every one of them is optional, and each
  *  omitted seam must keep the behaviour it had before it existed. */
 export interface McpServerOptions {
+  connectionId?: string
   getTsHost?: () => TsActorHost | null
   getPreferredEngine?: () => string | null
   getVlm?: VlmProvider
@@ -384,26 +401,37 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   // client that opened *this* session — `undefined` until it has initialized.
   const clientInfo = (): { name: string; version?: string } | undefined => server.getClientVersion()
 
+  const connectionId = opts.connectionId ?? randomUUID()
+  const track: typeof withLog = (method, handler, deps, client) => withLog(method, (req, extra) => {
+    const service = getTsHost()?.agent
+    if (!service) return handler(req, extra)
+    const params = (req.params ?? {}) as Record<string, unknown>
+    const tool = method === 'tools/call' ? String(params.name ?? '') : method
+    const read = method !== 'tools/call' || /^(get_|list_|read_|ping$|view_|analyze_|describe_|transcribe_|compare_|detect_)/.test(tool)
+    return service.run(connectionId, clientInfo()?.name ?? 'MCP', tool,
+      method === 'tools/call' ? params.arguments ?? {} : params, read, () => handler(req, extra))
+  }, deps, client)
+
   // Every handler goes through withLog: the funnel is what keeps a newly added
   // tool logged with nothing to remember. See `docs/status-log.md`.
-  server.setRequestHandler(ListToolsRequestSchema, withLog('tools/list', async () => {
+  server.setRequestHandler(ListToolsRequestSchema, track('tools/list', async () => {
     const rust = (JSON.parse(await backend.mcpCatalog()) as { tools: Array<{ name: string }> }).tools
     return { tools: mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS]) } as unknown as ServerResult
   }, log, clientInfo))
-  server.setRequestHandler(CallToolRequestSchema, withLog('tools/call', async (req: CallToolRequest) =>
+  server.setRequestHandler(CallToolRequestSchema, track('tools/call', async (req: CallToolRequest) =>
     handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm),
   log, clientInfo))
-  server.setRequestHandler(ListResourcesRequestSchema, withLog('resources/list', async () => {
+  server.setRequestHandler(ListResourcesRequestSchema, track('resources/list', async () => {
     const cat = JSON.parse(await backend.mcpCatalog()) as { resources: Array<{ uri: string }> }
     return { resources: mergeMcpResources(cat.resources, MOTIF_RESOURCE_DEFS) } as unknown as ServerResult
   }, log, clientInfo))
-  server.setRequestHandler(ReadResourceRequestSchema, withLog('resources/read', async (req: ReadResourceRequest) =>
+  server.setRequestHandler(ReadResourceRequestSchema, track('resources/read', async (req: ReadResourceRequest) =>
     handleReadResource(backend, getTsHost, req.params.uri, getVlm),
   log, clientInfo))
-  server.setRequestHandler(ListPromptsRequestSchema, withLog('prompts/list', async () => {
+  server.setRequestHandler(ListPromptsRequestSchema, track('prompts/list', async () => {
     return { prompts: JSON.parse(await backend.mcpListPrompts()) } as unknown as ServerResult
   }, log, clientInfo))
-  server.setRequestHandler(GetPromptRequestSchema, withLog('prompts/get', async (req: GetPromptRequest) => {
+  server.setRequestHandler(GetPromptRequestSchema, track('prompts/get', async (req: GetPromptRequest) => {
     return unwrap(
       await backend.mcpGetPrompt(req.params.name, JSON.stringify(req.params.arguments ?? {})),
     ) as ServerResult

@@ -143,9 +143,7 @@ export function CheckpointSection({
                 {/* ONLY Restore disables under the lock. The lock rejects
                     REVERT paths (docs/features.md#undo-stack-scope) and restore
                     is one; create and delete are not, and the backend serves
-                    both while locked. Disabling a button the backend would
-                    happily serve is a lie in the opposite direction from the
-                    one RecordPanel avoids. */}
+                    both while locked. */}
                 <Button
                   variant="secondary"
                   size="xs"

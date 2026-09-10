@@ -9,7 +9,6 @@ import {
 } from "react";
 
 import {
-  type AgentSession,
   type ProjectSummary,
 } from "../ipc";
 import { useOpenComposition } from "../state/projectStore";
@@ -23,11 +22,8 @@ import { setPlayheadFromPreview } from "../state/playheadProjection";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
 
-/// Agent mode — the simplified preview / mini-timeline / record-panel
-/// layout the human sees while an agent session is active. Entered via
-/// the `begin_agent_session` MCP tool or locally via the View menu /
-/// command palette (`agent_session_begin` channel); exited via the
-/// persistent "Exit to editor" button in the titlebar's top-right.
+/// Lightweight viewing layout, selected locally or on a new MCP work session.
+/// Switching back to the editor does not end work or release the undo lock.
 ///
 /// Layout: preview top-left, mini timeline bottom-left, agent panel right
 /// (resizable via the sash in the column gap) — grid metrics live in
@@ -36,12 +32,10 @@ import { WindowControls } from "../components/WindowControls";
 /// Both the menu bar and editor-mode status bar are hidden — in
 /// agent mode the record panel IS the surface for activity.
 interface AgentModeProps {
-  session: AgentSession;
   summary: ProjectSummary | null;
   onPausedChange: (paused: boolean) => void;
   onSeek: (tUs: number) => void;
-  /// User-side exit handler. Wired by the parent to call
-  /// `agentSessionEnd` then refresh state.
+  /// Switch the renderer layout back to the editor.
   onExit: () => void;
 }
 
@@ -62,7 +56,6 @@ function clampRecordWidth(width: number, viewportWidth: number): number {
 
 export const AgentMode = forwardRef(function AgentMode(
   {
-    session,
     summary,
     onPausedChange,
     onSeek,
@@ -157,11 +150,7 @@ export const AgentMode = forwardRef(function AgentMode(
       </section>
 
       <section className="agent-record">
-        <AgentPanel
-          session={session}
-          sessionStartedAt={session.started_at}
-          lockReason={summary?.history.lock_reason ?? null}
-        />
+        <AgentPanel editor={false} />
       </section>
 
       {/* The single resizable seam: record-panel width only. */}
