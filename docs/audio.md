@@ -280,20 +280,22 @@ loop around it (track + window gating) stays parallel on the two sides.
 combined-channel; per-channel (L/R) splitting is future work for master
 and roles alike. `state/masterMeterStore.ts` is the single renderer
 publication seam for all of them and owns the silence floor consumers
-threshold against (`SILENCE_DB`, printed as "−∞"). Two publication rates
-share it because they answer different questions: the master push
-(`publishMasterMeter`) is deliberately slow, because that rate is the
-contract of the MCP `composition://meter` resource the same timer
-reports to (`reportAudioMeter`). The dev PerfHUD consumes neither
-rate — it samples `AudioGraph.meterSnapshot` on its own timer. The
-per-role tap (`publishRoleMeters`) samples fast enough for a meter to
-move rather than step, and runs only while a reader holds a ref-counted
-lease (`acquireRoleMeterDemand`) and the transport plays. Both sample
-only while playing, and both publish one silent sample when the
-transport stops (`publishMasterMeterSilent`, `publishRoleMetersSilent`)
-— a held last reading would claim level over a mix that has gone
-silent. That silent sample goes to the store only; the MCP resource
-keeps the reading it was last handed while playing.
+threshold against (`SILENCE_DB`, printed as "−∞"). The master UI reading
+(`publishMasterMeter`) and the per-role slice (`publishRoleMeters`) are
+published TOGETHER by one fast tap, from one instant at one rate quick
+enough for a meter to move rather than step, so the master's line and the
+role columns beside it read as one clock; the tap runs only while a reader
+holds a ref-counted lease (`acquireRoleMeterDemand`) and the transport
+plays. Deliberately slow and SEPARATE is the agent-facing master report
+(`reportAudioMeter`), whose ~2 Hz cadence is the contract of the MCP
+`composition://meter` resource; it samples `AudioGraph.meterSnapshot` on
+its own 500 ms timer and does not pass through the store. The dev PerfHUD
+consumes neither — it samples `AudioGraph.meterSnapshot` on its own timer
+too. Both readings publish one silent sample when the transport stops
+(`publishMasterMeterSilent`, `publishRoleMetersSilent`) — a held last
+reading would claim level over a mix that has gone silent. That silent
+sample goes to the store only; the MCP resource keeps the reading it was
+last handed while playing.
 Selectors are scalar (`useRoleRmsDb`): one returning a fresh object per
 call re-renders its subtree forever.
 Per-role peak is published and kept, but nothing reads it yet.
@@ -358,9 +360,14 @@ content width and renders one of two layouts, carrying exactly one
   a card grid and as the fallback if that floor ever moves, not as a
   second column anyone can reach.
 - **Console** (`RoleStrip`), at 392 px of root width and above. Four
-  vertical-fader strips, the dB legend drawn once in a shared gutter
-  (`DbScaleGutter`), and the master meter as a fifth strip on a sunken
-  surface, so output level and role gains read on one axis. Vertical
+  vertical-fader strips, each fader a channel-strip cap with its own
+  level meter beside it (`RoleStripMeter`, the master column drawn once
+  per role, so a role's level and gain read on one axis), the dB legend
+  drawn once in a shared gutter (`DbScaleGutter`), and the master meter
+  as a fifth strip on a sunken surface. The per-role meter sits in the
+  fader row itself, so the row keeps its one fixed height and the dB
+  scale stays true; it is bar-only, because the numeric reading lives on
+  the card. Vertical
   travel is what makes the precision width-independent: a horizontal
   fader's travel is a function of the dock width. The threshold is
   arithmetic over the column widths `editor.css` pins — four role

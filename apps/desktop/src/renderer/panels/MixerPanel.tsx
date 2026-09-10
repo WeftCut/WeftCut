@@ -463,6 +463,10 @@ function RoleStrip({ role, mix, silencedBySolo, onMutated }: RoleControlProps) {
           onValueChange={gain.audition}
           onValueCommitted={gain.commitDrag}
         />
+        {/* Beside the fader, in the SAME cell, so the fader row keeps its one
+            fixed height and the dB scale stays true. The column is opaque, so
+            the unity hairline behind it simply stops at the meter. */}
+        <RoleStripMeter role={role} roleLabel={roleLabel} />
       </div>
       <GainReadout
         label={t("mixer.gain_db", { role: roleLabel })}
@@ -553,6 +557,34 @@ function RoleMeter({ role, roleLabel }: { role: AudioRole; roleLabel: string }) 
         />
       </div>
       <span className="mixer-role-meter-value">{meterText(rmsDb)}</span>
+    </div>
+  );
+}
+
+/// One Role's level BESIDE its console fader, on the fader's own travel, so a
+/// Role's level and its gain read on one axis — the master strip's column, one
+/// per Role. Drawn the way the master columns are (ramp on the track, a shade
+/// retreating from the top), and reading the same store the card's line-3 meter
+/// does, so the two presentations of one Role cannot disagree. Bar only: the
+/// number lives on the card, and a strip this narrow has room for a fader and a
+/// column but not a readout under both. Scalar subscription for the reason the
+/// card `RoleMeter` states; the column is `aria-hidden` and the Role's name is
+/// on the group, exactly as the card meter is shaped.
+function RoleStripMeter({ role, roleLabel }: { role: AudioRole; roleLabel: string }) {
+  const { t } = useTranslation();
+  const rmsDb = useRoleRmsDb(role);
+  return (
+    <div
+      className="mixer-strip-meter"
+      role="group"
+      aria-label={t("mixer.role_meter", { role: roleLabel })}
+    >
+      <div className="mixer-meter-column" aria-hidden>
+        <div
+          className="mixer-meter-column-shade"
+          style={{ height: `${(1 - meterFill(rmsDb)) * 100}%` }}
+        />
+      </div>
     </div>
   );
 }

@@ -574,9 +574,24 @@ describe("RoleMixerPanel — the console", () => {
     expect(within(master).getByText("Peak")).toBeTruthy();
     expect(within(master).getByText("-18.0")).toBeTruthy();
     expect(within(master).getByText("-6.0")).toBeTruthy();
-    // The fifth strip IS the console's metering: the Role strips carry faders,
-    // and the per-Role meter is the card's line 3.
-    expect(screen.queryAllByRole("group", { name: /level meter$/ })).toHaveLength(0);
+    // The master strip reads the whole mix; each Role strip now stands its own
+    // level meter beside its fader, so level and gain read on one axis per Role.
+    expect(screen.queryAllByRole("group", { name: /level meter$/ })).toHaveLength(4);
+  });
+
+  it("moves each Role strip's meter with the level published for that Role", () => {
+    // Bar only in the console — the reading has no number there (the card owns
+    // that), so assert the shade that uncovers the ramp: a louder Role uncovers
+    // more of it. Dialogue at 0 dBFS fills the track; Music at the silence floor
+    // is fully covered. This is the "responsive level beside the fader" the
+    // console layout was missing.
+    publishRoleLevels({ dialogue: 0, music: SILENCE_DB });
+    renderConsole();
+
+    const shadeHeight = (role: string) =>
+      (meterFor(role).querySelector(".mixer-meter-column-shade") as HTMLElement).style.height;
+    expect(shadeHeight("Dialogue")).toBe("0%");
+    expect(shadeHeight("Music")).toBe("100%");
   });
 
   it("auditions a fader drag live and records exactly one edit on release", async () => {

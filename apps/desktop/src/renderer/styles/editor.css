@@ -612,9 +612,11 @@
 
 /* The fader's cell IS the shared fader row: stretching it is what makes the
    cell, the slider inside it and the gutter's scale one box, which is what the
-   scale is read against. No `overflow` here on purpose — the 12px thumb rides
-   6px past each end of the 4px track, so clipping the cell would clip both
-   extremes of travel. */
+   scale is read against. It also carries the Role's level meter beside the
+   fader (`gap` sets the space between them; the absolute unity line does not
+   take part in it), so level and gain share one column and one axis. No
+   `overflow` here on purpose — the fader cap rides past each end of the track,
+   so clipping the cell would clip both extremes of travel. */
 .mixer-strip-fader {
   position: relative;
   align-self: stretch;
@@ -622,7 +624,20 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 4px;
   min-width: 0;
+}
+
+/* One Role's level, the height of the fader beside it and on the same travel,
+   so a loud Role and a high gain reach the same line. It is the master strip's
+   column drawn once per Role; the column is opaque, so it hides the stretch of
+   the unity hairline that would otherwise cross it. */
+.mixer-strip-meter {
+  flex: none;
+  align-self: center;
+  height: var(--mixer-console-fader-height);
+  display: flex;
+  align-items: stretch;
 }
 
 /* The fader's length. `.app-slider`'s vertical rules deliberately keep no
@@ -632,6 +647,42 @@
    ordering `playhead.css` documents). */
 .mixer-console-fader {
   height: var(--mixer-console-fader-height);
+}
+
+/* The console fader wears a cap, not a dot. A channel fader reads as a grip you
+   pull along a track, and the wide flat cap with a centre index is the shape
+   that says so, where a 12px round dot reads as a generic slider. Scoped to the
+   console fader by the `.mixer-console-fader` ancestor, so every OTHER slider in
+   the app keeps its round thumb — and the two-class selector outranks
+   `.app-slider-thumb` whatever the import order. Base UI still writes the
+   thumb's travel position and cross-axis centring inline; only its shape is set
+   here. No `box-shadow`, so the `:focus-visible` ring (which is a box-shadow at
+   equal specificity) is never clobbered. */
+.mixer-console-fader .app-slider-thumb {
+  width: 16px;
+  height: 11px;
+  border-radius: 3px;
+  background: linear-gradient(
+    180deg,
+    var(--foreground),
+    color-mix(in srgb, var(--foreground) 80%, black)
+  );
+}
+
+/* The cap's centre index: the exact line the value reads at, the groove a real
+   fader cap carries across its middle. Decorative and non-interactive, so it
+   never sits between a pointer and the thumb's own input. */
+.mixer-console-fader .app-slider-thumb::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: 50%;
+  height: 1px;
+  translate: 0 -50%;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--surface-sunken) 70%, black);
+  pointer-events: none;
 }
 
 /* The 0 dB level, drawn across each fader cell at the gutter's own 0 dB tick.
@@ -709,7 +760,19 @@
    the Role strips says "not a Role" without spending a label on it. */
 .mixer-strip--master {
   flex: none;
-  min-width: var(--mixer-master-min-width);
+  /* A FIXED width, not a floor. Left as `min-width` the strip is content-sized,
+     and its two readings change width as the levels move ("−∞" → "-18.0" → …),
+     so every changed digit re-sized the strip and reflowed the whole console.
+     Pinned, the strip never moves; the readings sit in fixed cells and only
+     re-center. This also caps the strip at the width the 392px threshold's
+     arithmetic assumes — content could push it a few px past 58 before — so the
+     console floor is now exact rather than approximate. The strip's own side
+     padding is dropped so the two readings get the full budgeted width to sit
+     in; `box-sizing: border-box` keeps the EXTERNAL width (the number the
+     arithmetic pins) at `--mixer-master-min-width` regardless of padding. */
+  width: var(--mixer-master-min-width);
+  padding-left: 0;
+  padding-right: 0;
   background: var(--surface-sunken);
 }
 
@@ -765,6 +828,10 @@
 .mixer-master-reading {
   font-size: var(--font-size-micro);
   color: var(--muted-foreground);
+  /* Never wrap a reading onto a second line inside its fixed cell: a wrap would
+     add height the strip's grid does not budget, and the whole point of the
+     pinned strip is a footprint that does not move with the reading. */
+  white-space: nowrap;
 }
 
 .mixer-master-reading {
@@ -816,8 +883,9 @@
   background: linear-gradient(90deg, var(--mixer-meter-stops));
 }
 
-/* 90ms against the push's 500ms sample, the same easing the Role bars use, so
-   the master's line and the four Role lines move as one family. */
+/* 90ms against the tap's ~50ms sample, the same easing the Role bars use, so
+   the master's line and the four Role lines move as one family — the master UI
+   now rides the same fast preview tap the Roles do. */
 .mixer-meter-shade {
   position: absolute;
   top: 0;

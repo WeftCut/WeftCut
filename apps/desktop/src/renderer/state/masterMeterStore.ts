@@ -23,9 +23,12 @@ export interface RoleMeterSnapshot {
   peakDb: number;
 }
 
-/** The master reading and the per-Role slice. Published independently: the
- *  master runs at the agent resource's slow rate, the Roles at the UI tap's
- *  fast one, so each carries its own sample time. */
+/** The master reading and the per-Role slice. The preview UI tap publishes both
+ *  together at one fast rate and one sample time, so the master's line and the
+ *  Role columns shown beside it move as one clock. Each keeps its own
+ *  `*SampledAtMs` so a consumer can still tell a stale slice from a fresh one.
+ *  The agent-facing master REPORT (`reportAudioMeter`, the MCP resource) is a
+ *  separate ~2 Hz push and does not pass through this store. */
 interface MeterState extends MasterMeterSnapshot {
   roleLevels: Record<AudioRole, RoleMeterSnapshot>;
   roleSampledAtMs: number | null;

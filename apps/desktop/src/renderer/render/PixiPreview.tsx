@@ -114,10 +114,14 @@ interface Props {
 const LOG = "[weftcut/pixi]";
 let previewResourceSequence = 0;
 
-/// Period of the per-Role UI meter tap. Fast enough that a level meter moves
-/// rather than steps — which is why it is a second timer and not a faster
-/// version of the agent-facing meter push, whose slow rate is deliberate.
-const ROLE_METER_SAMPLE_MS = 50;
+/// Period of the preview mixer's UI meter tap — master output AND per-Role,
+/// sampled together at this one rate. Fast enough that a level meter moves
+/// rather than steps, which is why it is a second timer and not a faster
+/// version of the agent-facing meter push (the ~2 Hz Rust report), whose slow
+/// rate is deliberate. The master's UI reading rides this tap so it moves at the
+/// same rate as the Role meters shown beside it; only its agent-facing report
+/// stays at the slow cadence.
+const PREVIEW_METER_SAMPLE_MS = 50;
 
 /// The render-target half of Playback Resolution: rasterize at
 /// `composition × fraction`. Pixi shrinks only the canvas backing store
@@ -539,10 +543,12 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         compositor.compositeFrame(engine.positionUs());
       });
 
-      // Master-bus meter push (~2 Hz while playing) for the MCP
-      // `composition://meter` resource. dB values clamp at -120 — JSON
-      // can't carry the analyser's -Infinity silence reading. Clear any
-      // prior timer first (StrictMode re-mount).
+      // Master-bus meter REPORT (~2 Hz while playing) for the MCP
+      // `composition://meter` resource. This is the agent-facing push only — the
+      // master's UI reading is published by the fast preview tap below, at the
+      // Role meters' rate, so the two do not read as two clocks. dB values clamp
+      // at -120 — JSON can't carry the analyser's -Infinity silence reading.
+      // Clear any prior timer first (StrictMode re-mount).
       if (meterTimerRef.current !== null) {
         window.clearInterval(meterTimerRef.current);
       }
@@ -550,7 +556,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         const g = compositor.getAudioGraph();
         if (!g || !engine.isPlaying()) return;
         const snap = g.meterSnapshot();
-        publishMasterMeter(snap);
         void reportAudioMeter({
           rmsDb: Number.isFinite(snap.rmsDb) ? snap.rmsDb : -120,
           peakDb: Number.isFinite(snap.peakDb) ? snap.peakDb : -120,
@@ -565,10 +570,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         if (!playing) publishMasterMeterSilent();
       });
 
-      // Per-Role meter tap for the Role Mixer's card meters, independent of the
-      // push above. It samples only while a consumer holds a demand lease AND
-      // the transport plays, and publishes one silent sample whenever it stops
-      // — a held last reading would show level over a silent mix.
+      // The preview mixer's UI meter tap: master output AND the four Roles, from
+      // one instant at one rate, for the Role Mixer Panel. Independent of the
+      // agent report above. It samples only while a consumer holds a demand
+      // lease AND the transport plays, and publishes one silent sample whenever
+      // it stops — a held last reading would show level over a silent mix.
       const stopRoleMeterTap = (): void => {
         if (roleMeterTimerRef.current === null) return;
         window.clearInterval(roleMeterTimerRef.current);
@@ -584,8 +590,13 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         }
         roleMeterTimerRef.current = window.setInterval(() => {
           const g = compositor.getAudioGraph();
-          if (g) publishRoleMeters(g.roleMeterSnapshots());
-        }, ROLE_METER_SAMPLE_MS);
+          if (!g) return;
+          // Master and Roles carry the SAME sample time, so the master's line
+          // and the four Role columns move as one clock rather than two.
+          const sampledAtMs = performance.now();
+          publishMasterMeter(g.meterSnapshot(), sampledAtMs);
+          publishRoleMeters(g.roleMeterSnapshots(), sampledAtMs);
+        }, PREVIEW_METER_SAMPLE_MS);
       };
       // Drop a prior mount's timer and subscription (StrictMode re-mount).
       if (roleMeterTimerRef.current !== null) {
