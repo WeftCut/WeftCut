@@ -484,8 +484,42 @@ describe("ShotsPanel — rows", () => {
     const restore = screen.getByRole("checkbox", {
       name: "Restore the cut at 00:00:02:00",
     });
+    // Hover text says the action, in both states.
+    expect(restore.getAttribute("title")).toBe("Split here");
     fireEvent.click(restore);
     await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(2));
+  });
+
+  it("leaves the cut alone when the meter or the score is clicked", async () => {
+    openComposition(ROOT_ID, null);
+    setLayerSelection("l1", ["l1"]);
+    render(<ShotsPanel />);
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(2));
+
+    const toggle = screen.getByRole("checkbox", {
+      name: "Cut at the start of shot 2",
+    });
+    expect(toggle.getAttribute("title")).toBe(
+      "Clear the cut and merge into the previous shot",
+    );
+    const row = toggle.closest(".shots-cut");
+    expect(row).not.toBeNull();
+    const meter = row!.querySelector(".shots-cut-meter");
+    const score = row!.querySelector(".shots-score");
+    expect(meter).not.toBeNull();
+    expect(score).not.toBeNull();
+    // The reading sits BESIDE the control, not inside it — a click there can
+    // never bubble into the checkbox, which is what makes the rest of this
+    // test hold rather than merely pass.
+    expect(toggle.contains(meter)).toBe(false);
+    expect(toggle.contains(score)).toBe(false);
+
+    await act(async () => {
+      fireEvent.click(meter!);
+      fireEvent.click(score!);
+    });
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
   });
 
   it("marks a row for discard without removing it", async () => {

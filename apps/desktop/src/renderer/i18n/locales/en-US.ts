@@ -554,6 +554,10 @@ const enUS = {
     // before it; the cleared boundary stays on that row so it can be restored.
     accept_candidate: "Cut at the start of shot {{index}}",
     restore_candidate: "Restore the cut at {{timecode}}",
+    // The toggle's hover text says the ACTION, as the seam glyph does — the
+    // label above names the option, which is not the same thing.
+    merge_candidate_hint: "Clear the cut and merge into the previous shot",
+    restore_candidate_hint: "Split here",
     // Checked = keep. Every row starts kept, so a plain apply is "split here"
     // and discarding is opted into row by row.
     keep_shot: "Keep shot {{index}}",

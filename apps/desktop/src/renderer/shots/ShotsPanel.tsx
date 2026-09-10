@@ -470,9 +470,16 @@ export function cutConfidence(score: number): "low" | "mid" | "high" {
 /// can never be misread for each other at a glance down a list.
 ///
 /// Resting geometry says the STATE; hover says the ACTION — scissors on a merged
-/// seam, a link on a standing cut. That is why the glyph is hover-only and the
-/// rule is not: an icon that showed the action at rest would contradict the
-/// geometry beside it.
+/// seam, a link on a standing cut, and a `title` that spells the same action
+/// out in words. That is why the glyph is hover-only and the rule is not: an
+/// icon that showed the action at rest would contradict the geometry beside it.
+///
+/// The control is the PAIR AND ITS SEAM, and stops there. The meter and the
+/// digits to its right are the evidence the decision is weighed on, not the
+/// decision — and a reading that toggles what it reports is a misclick waiting
+/// to happen, because the eye goes to the number to check a marginal cut and
+/// the hand follows it. So they sit beside the button, not inside it: the
+/// pointer turns to an arrow over them, and hovering them raises no glyph.
 ///
 /// Still `role="checkbox"` underneath (Base UI's `Checkbox.Root`), because that
 /// is what it is to a screen reader and to the keyboard: a two-state option with
@@ -495,33 +502,39 @@ function ShotCandidateRow({
 }) {
   const { t } = useTranslation();
   return (
-    <Checkbox.Root
-      className="shots-cut"
-      data-accepted={accepted}
-      checked={accepted}
-      aria-label={label}
-      onCheckedChange={(next) =>
-        setCandidateAccepted(mediaId, candidate.srcUs, next)
-      }
-      onClick={blurAfterMouseActivation}
-    >
-      <ShotFrame
-        className="shots-pair-frame"
-        mediaId={mediaId}
-        tUs={candidate.beforeSrcUs}
-        alt={t("shots_panel.frame_before")}
-      />
-      <span className="shots-cut-seam" aria-hidden>
-        <span className="shots-cut-seam-glyph">
-          {accepted ? <Link2 size={10} /> : <Scissors size={10} />}
+    <div className="shots-cut" data-accepted={accepted}>
+      <Checkbox.Root
+        className="shots-cut-toggle"
+        checked={accepted}
+        aria-label={label}
+        title={
+          accepted
+            ? t("shots_panel.merge_candidate_hint")
+            : t("shots_panel.restore_candidate_hint")
+        }
+        onCheckedChange={(next) =>
+          setCandidateAccepted(mediaId, candidate.srcUs, next)
+        }
+        onClick={blurAfterMouseActivation}
+      >
+        <ShotFrame
+          className="shots-pair-frame"
+          mediaId={mediaId}
+          tUs={candidate.beforeSrcUs}
+          alt={t("shots_panel.frame_before")}
+        />
+        <span className="shots-cut-seam" aria-hidden>
+          <span className="shots-cut-seam-glyph">
+            {accepted ? <Link2 size={10} /> : <Scissors size={10} />}
+          </span>
         </span>
-      </span>
-      <ShotFrame
-        className="shots-pair-frame"
-        mediaId={mediaId}
-        tUs={candidate.srcUs}
-        alt={t("shots_panel.frame_after")}
-      />
+        <ShotFrame
+          className="shots-pair-frame"
+          mediaId={mediaId}
+          tUs={candidate.srcUs}
+          alt={t("shots_panel.frame_after")}
+        />
+      </Checkbox.Root>
       {/* How far this boundary sat from the line, on the line's OWN axis: both
           are [0, 1] (`ScoreStrip`'s `aria-valuemax` is 1), so the fill and the
           notch are the same two numbers the strip above plots — and the colours
@@ -543,7 +556,7 @@ function ShotCandidateRow({
         }
       />
       <span className="shots-score">{candidate.score.toFixed(2)}</span>
-    </Checkbox.Root>
+    </div>
   );
 }
 

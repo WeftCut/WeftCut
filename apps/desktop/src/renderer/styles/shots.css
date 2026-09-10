@@ -322,10 +322,20 @@
   text-decoration: line-through;
 }
 
-/* One boundary. The whole strip is the control — `Checkbox.Root` renders a
-   button, so the chrome it arrives with has to come off before the frames can
-   sit in it. */
+/* One boundary: the toggle, then the meter and the digits beside it. */
 .shots-cut {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--muted-foreground);
+}
+
+/* The control is the frame pair and the seam between them, and nothing to
+   their right — the meter and the score are what the decision is weighed on,
+   and a reading that flipped what it reports would be the misclick this split
+   exists to rule out. `Checkbox.Root` renders a button, so the chrome it
+   arrives with has to come off before the frames can sit in it. */
+.shots-cut-toggle {
   display: flex;
   align-items: center;
   gap: 0;
@@ -333,12 +343,12 @@
   padding: 0;
   border: 0;
   background: none;
-  color: var(--muted-foreground);
+  color: inherit;
   cursor: pointer;
   text-align: left;
 }
 
-.shots-cut:focus-visible {
+.shots-cut-toggle:focus-visible {
   outline: none;
   border-radius: var(--radius-control);
   box-shadow: var(--focus-ring);
@@ -399,21 +409,23 @@
 
 /* Hover says the ACTION, where the resting rule says the state: scissors on a
    merged seam, a link on a standing cut. The mark steps aside for it, because
-   an icon shown ON TOP of the state mark would be two claims in one 14px slot. */
+   an icon shown ON TOP of the state mark would be two claims in one 14px slot.
+   Keyed on the toggle, not the row: a glyph raised by hovering the meter would
+   promise an action the meter does not have. */
 .shots-cut-seam-glyph {
   display: flex;
   opacity: 0;
   transition: opacity var(--transition-fast);
 }
 
-.shots-cut:hover .shots-cut-seam-glyph,
-.shots-cut:focus-visible .shots-cut-seam-glyph {
+.shots-cut-toggle:hover .shots-cut-seam-glyph,
+.shots-cut-toggle:focus-visible .shots-cut-seam-glyph {
   opacity: 1;
   color: var(--foreground);
 }
 
-.shots-cut:hover .shots-cut-seam::before,
-.shots-cut:focus-visible .shots-cut-seam::before {
+.shots-cut-toggle:hover .shots-cut-seam::before,
+.shots-cut-toggle:focus-visible .shots-cut-seam::before {
   opacity: 0;
 }
 

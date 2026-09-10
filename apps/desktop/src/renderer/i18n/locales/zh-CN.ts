@@ -489,6 +489,10 @@ const zhCN: Resources = {
     // 合并后的行上，随时可以恢复。
     accept_candidate: "在第 {{index}} 个镜头开头切一刀",
     restore_candidate: "恢复 {{timecode}} 处的切点",
+    // 悬停文字说的是动作，和分割线上的图标一致——上面的 label 说的是选项本身，
+    // 两者不是一回事。
+    merge_candidate_hint: "取消切点，并入前一个镜头",
+    restore_candidate_hint: "在此处切开",
     // 勾选＝保留。每行默认保留，所以直接应用就是"在此切开"，
     // 丢弃要逐行主动勾掉。
     keep_shot: "保留第 {{index}} 个镜头",
