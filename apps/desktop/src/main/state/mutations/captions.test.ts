@@ -164,6 +164,21 @@ describe('applyRestyleCaptions (project-wide)', () => {
     }
   })
 
+  // Zero is "no outline", stored as null — the same absent style the Text tool
+  // writes — and not a zero-width stroke object the renderer would still gate on.
+  // Turning it back on with no colour to keep falls back to black, the default
+  // caption outline colour.
+  it('outline_width 0 removes the outline on every cue; a later width brings it back in black', () => {
+    const p = twoLaneProject()
+    const layers = () => root(p).tracks.filter((t) => t.role === 'Caption').flatMap((t) => t.layers)
+    applyRestyleCaptions(p, { outline_width: 0 })
+    for (const layer of layers()) expect((layer.params as TextParams).outline).toBeNull()
+    applyRestyleCaptions(p, { outline_width: 2 })
+    for (const layer of layers()) {
+      expect((layer.params as TextParams).outline).toEqual({ color: { r: 0, g: 0, b: 0, a: 255 }, width: 2 })
+    }
+  })
+
   it('leaves non-caption tracks untouched', () => {
     const p = twoLaneProject()
     // A-roll is a non-caption track from blankProject; give it a Text layer.

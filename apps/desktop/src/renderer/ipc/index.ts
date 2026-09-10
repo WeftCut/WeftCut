@@ -3138,7 +3138,8 @@ export function exportVideoSinkWrite(bytes: Uint8Array): Promise<void> {
 }
 
 /// Caption restyle patch. Fields are snake_case to match the actor
-/// `CaptionStylePatch`.
+/// `CaptionStylePatch`. `outline_width` 0 removes the outline (the actor stores
+/// `null`, the same absent style the Text tool writes).
 export interface CaptionStylePatch {
   font_family?: string;
   font_size_px?: number;

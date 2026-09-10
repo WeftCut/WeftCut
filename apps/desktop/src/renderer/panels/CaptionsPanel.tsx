@@ -3,8 +3,11 @@
 // including overlapping lanes, and exposes them as one editable cue list.
 // Activating a cue selects its Text Layer, seeks the playhead to its start, and
 // reveals it in Timeline (composed by the host via `onActivateCue`). Inline text
-// editing still updates a single ordinary Text Layer. The style controls restyle
-// the WHOLE corpus — every caption-role Track — in one atomic undo entry.
+// editing still updates a single ordinary Text Layer. The style controls — size,
+// outline width, colour — restyle the WHOLE corpus, every caption-role Track, in
+// one atomic undo entry. Outline width 0 means no outline: it is the one style
+// the default caption look adds beyond the file's own, so the row that sets its
+// weight is also the row that takes it off.
 // Each caption cue is a first-class Text Layer built by `apply_subtitles` /
 // transcribe / subtitle import.
 
@@ -105,9 +108,14 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
     firstTextParams?.kind === "Text"
       ? trackStatic(firstTextParams.color, WHITE)
       : WHITE;
+  // An absent outline reads as 0, which is also what commits one away — the
+  // field and the store agree on one representation of "none".
+  const seedOutline =
+    firstTextParams?.kind === "Text" ? (firstTextParams.outline?.width ?? 0) : 0;
 
   const [fontSize, setFontSize] = useState(seedSize);
   const [color, setColor] = useState(seedColor);
+  const [outlineWidth, setOutlineWidth] = useState(seedOutline);
   // Debounce slot for caption color commits — the native color picker fires
   // onChange continuously; each IPC call creates a history entry, so we must
   // coalesce bursts into one commit per gesture.
@@ -118,7 +126,8 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
   useEffect(() => {
     setFontSize(seedSize);
     setColor(seedColor);
-  }, [seedSize, seedColor.r, seedColor.g, seedColor.b, seedColor.a]);
+    setOutlineWidth(seedOutline);
+  }, [seedSize, seedOutline, seedColor.r, seedColor.g, seedColor.b, seedColor.a]);
 
   // Clear any pending debounced color commit on unmount so a late call can't
   // fire after the component is gone.
@@ -162,6 +171,10 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
           </ul>
           <section className="captions-style-section" aria-label={t("captions.style_heading")}>
             <h4>{t("captions.style_heading")}</h4>
+            {/* Two number fields share the row, so each carries a visible word:
+                a bare pair of numbers would leave the user guessing which one is
+                the size. The colour swatch explains itself. */}
+            <span className="captions-style-label">{t("captions.size_label")}</span>
             <AppNumberField
               value={fontSize}
               step={1}
@@ -172,6 +185,21 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
               onCommit={(v) =>
                 void tryMutate(
                   () => restyleCaptions({ font_size_px: v }).then(onMutated),
+                  "Restyle captions",
+                )
+              }
+            />
+            <span className="captions-style-label">{t("captions.outline_label")}</span>
+            <AppNumberField
+              value={outlineWidth}
+              step={1}
+              min={0}
+              max={64}
+              ariaLabel={t("captions.outline_width")}
+              onValueChange={setOutlineWidth}
+              onCommit={(v) =>
+                void tryMutate(
+                  () => restyleCaptions({ outline_width: v }).then(onMutated),
                   "Restyle captions",
                 )
               }

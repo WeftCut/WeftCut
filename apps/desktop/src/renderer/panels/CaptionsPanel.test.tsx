@@ -24,8 +24,9 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-/// A Text caption layer at `startUs` with `content` and font size `size`.
-function textLayer(id: string, startUs: number, content: string, size = 54) {
+/// A Text caption layer at `startUs` with `content`, font size `size` and,
+/// when `outlineWidth` is given, a black outline of that width.
+function textLayer(id: string, startUs: number, content: string, size = 54, outlineWidth: number | null = null) {
   return {
     id,
     label: null,
@@ -53,7 +54,7 @@ function textLayer(id: string, startUs: number, content: string, size = 54) {
       scale_linked: true,
       rotation_deg: { mode: "Static" as const, value: 0 },
       opacity: { mode: "Static" as const, value: 1 },
-      outline: null,
+      outline: outlineWidth === null ? null : { color: { r: 0, g: 0, b: 0, a: 255 }, width: outlineWidth },
       shadow: null,
       box_w: null,
       box_h: null,
@@ -172,11 +173,32 @@ describe("CaptionsPanel", () => {
     expect(updateLayerParams).toHaveBeenCalledWith("L1", { kind: "Text", content: "World" });
   });
 
-  it("renders a style section with font-size and color controls", () => {
+  it("renders a style section with size, outline and color controls", () => {
     seed();
     render(<CaptionPanel onMutated={async () => {}} onActivateCue={ignoreCueActivation} />);
     // Style heading visible
     expect(screen.getByText("Caption style")).toBeTruthy();
+    expect(screen.getByLabelText("Font size (px)")).toBeTruthy();
+    expect(screen.getByLabelText("Outline width (px), 0 for none")).toBeTruthy();
+    expect(screen.getByLabelText("Color")).toBeTruthy();
+  });
+
+  // The outline is the one style the default caption look adds beyond the
+  // file's own, so the row that sets its weight must also be able to take it
+  // off — and 0 is how, on the wire as in the field.
+  it("commits an outline width to the whole corpus, and 0 goes on the wire as 0", async () => {
+    seed();
+    const onMutated = vi.fn().mockResolvedValue(undefined);
+    render(<CaptionPanel onMutated={onMutated} onActivateCue={ignoreCueActivation} />);
+    const outlineInput = screen.getByLabelText("Outline width (px), 0 for none");
+    fireEvent.change(outlineInput, { target: { value: "3" } });
+    fireEvent.blur(outlineInput);
+    await Promise.resolve();
+    expect(restyleCaptions).toHaveBeenCalledWith({ outline_width: 3 });
+    fireEvent.change(outlineInput, { target: { value: "0" } });
+    fireEvent.blur(outlineInput);
+    await Promise.resolve();
+    expect(restyleCaptions).toHaveBeenLastCalledWith({ outline_width: 0 });
   });
 
   it("restyles the whole corpus (restyleCaptions, no track id) on font-size commit", async () => {
@@ -220,11 +242,15 @@ describe("CaptionsPanel", () => {
       <CaptionPanel onMutated={async () => {}} onActivateCue={ignoreCueActivation} />,
     );
 
+    // No outline on the seed, so the field reads 0 — "none" and "0" are one value.
+    expect((screen.getByLabelText("Outline width (px), 0 for none") as HTMLInputElement).value).toBe("0");
+
     act(() => {
-      apply([captionTrack("t1", [textLayer("L1", 1_000_000, "Restored", 72)])]);
+      apply([captionTrack("t1", [textLayer("L1", 1_000_000, "Restored", 72, 5)])]);
     });
 
     expect(screen.getByDisplayValue("Restored")).toBeTruthy();
     expect((screen.getByLabelText("Font size (px)") as HTMLInputElement).value).toBe("72");
+    expect((screen.getByLabelText("Outline width (px), 0 for none") as HTMLInputElement).value).toBe("5");
   });
 });

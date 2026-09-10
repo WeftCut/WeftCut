@@ -122,11 +122,14 @@ caption-role track and lists their cues flattened in time order, including
 overlapping lanes. Activating a cue (its timecode) selects that `Text` layer,
 seeks the playhead to its start, and reveals it in the Timeline — keeping caption
 navigation and timeline context in sync. Each row also offers inline text editing
-of the single cue, committed on blur through `update_layer_params`. A corpus-level
-restyle control batch-applies font family, size, colour, and outline across every
-`Text` layer on **all** caption-role tracks in a single undo step
-(`restyle_captions`); the colour commit is debounced because it fans out to every
-caption layer in the project. A selected caption cue remains editable as an
+of the single cue, committed on blur through `update_layer_params`. The style
+row batch-applies size, outline width and colour across every `Text` layer on
+**all** caption-role tracks in a single undo step (`restyle_captions`, whose
+patch also carries a font family the panel does not yet expose). Outline width
+0 removes the outline — stored as `null`, the same absent style the Text tool
+writes — which is how the one style the default look adds beyond the file's own
+can be taken off again. The colour commit is debounced because it fans out to
+every caption layer in the project. A selected caption cue remains editable as an
 ordinary `Text` layer in the Attribute panel.
 
 Because cues are plain `Text` layers, they are also editable directly on the

@@ -116,7 +116,10 @@ function alignFor(an: number): TextAlign {
 }
 
 /** Batch style applied to a caption track's Text layers. null/absent =
- *  "don't touch". */
+ *  "don't touch". `outline_width` 0 (or below) REMOVES the outline: a zero-width
+ *  stroke is not a stroke, and storing it as `null` is the same absent style the
+ *  Text tool writes and a shadowless cue carries — one representation of "none",
+ *  so the renderer's `o ? stroke : nothing` gate and the Panel's seed read agree. */
 export interface CaptionStylePatch {
   font_family?: string | null
   font_size_px?: number | null
@@ -164,8 +167,8 @@ function newCaptionTrack(c: Composition, idGen: IdGen, label: string | null): Uu
 }
 
 /** Patch every Text layer of ONE track with a caption style patch; non-Text
- *  layers skipped. outline_width keeps the existing outline color (or BLACK if
- *  none). */
+ *  layers skipped. A positive outline_width keeps the existing outline color (or
+ *  BLACK if none); zero removes the outline (see `CaptionStylePatch`). */
 function restyleTrackTextLayers(track: Track, patch: CaptionStylePatch): void {
   for (const layer of track.layers) {
     if (layer.params.kind !== 'Text') continue
@@ -174,8 +177,12 @@ function restyleTrackTextLayers(track: Track, patch: CaptionStylePatch): void {
     if (patch.font_size_px !== undefined && patch.font_size_px !== null) tp.font.size_px = patch.font_size_px
     if (patch.color !== undefined && patch.color !== null) tp.color = { mode: 'Static', value: patch.color }
     if (patch.outline_width !== undefined && patch.outline_width !== null) {
-      const existingColor = tp.outline ? tp.outline.color : BLACK
-      tp.outline = { color: existingColor, width: patch.outline_width }
+      if (patch.outline_width <= 0) {
+        tp.outline = null
+      } else {
+        const existingColor = tp.outline ? tp.outline.color : BLACK
+        tp.outline = { color: existingColor, width: patch.outline_width }
+      }
     }
   }
 }

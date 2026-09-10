@@ -1011,10 +1011,22 @@
 
 .captions-style-section {
   display: flex;
+  /* Three fields and two words share the row with the heading; on a narrow
+     Panel they wrap under it rather than overflow. */
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--border-soft);
+}
+
+/* The word beside each number field. `flex: none` so the growing heading can
+   never crush it into an ellipsis (a short label loses to a long sibling at
+   every width otherwise). */
+.captions-style-label {
+  flex: none;
+  font-size: var(--font-size-caption);
+  color: var(--muted-foreground);
 }
 
 .captions-style-section h4 {

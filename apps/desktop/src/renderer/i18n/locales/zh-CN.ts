@@ -1810,6 +1810,10 @@ const zhCN: Resources = {
     title: "字幕",
     empty: "导入字幕文件，或为片段做语音转文字，即可创建字幕。",
     style_heading: "字幕样式",
+    // 数字框旁边的两个词；下面的无障碍标签要说明 0 的含义，因为字段本身没地方说。
+    size_label: "字号",
+    outline_label: "描边",
+    outline_width: "描边宽度（px），0 为无描边",
     seek_to: "跳到 {{timecode}} 的字幕",
   },
   audio_roles: { dialogue: "对白", music: "音乐", sfx: "音效", voiceover: "旁白" },

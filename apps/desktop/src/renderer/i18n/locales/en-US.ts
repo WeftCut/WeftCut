@@ -2049,6 +2049,11 @@ const enUS = {
     title: "Captions",
     empty: "Import a subtitle file or transcribe a clip to create captions.",
     style_heading: "Caption style",
+    // The two words beside the number fields; the aria-label below says what 0
+    // does, because the field has no visible way to.
+    size_label: "Size",
+    outline_label: "Outline",
+    outline_width: "Outline width (px), 0 for none",
     seek_to: "Go to caption at {{timecode}}",
   },
   audio_roles: { dialogue: "Dialogue", music: "Music", sfx: "SFX", voiceover: "Voiceover" },
