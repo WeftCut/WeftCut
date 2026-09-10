@@ -120,12 +120,11 @@ import {
   ungroupSelected,
 } from "./commands/groupCommands";
 import { describeSelected } from "./commands/describeCommands";
-import { openSilenceForSelection } from "./commands/silenceCommands";
+import { openPausesForSelection } from "./commands/pauseCommands";
 import {
   openVoiceoverPrompt,
   transcribeSelected,
 } from "./commands/speechCommands";
-import { SilenceDialog } from "./silence/SilenceDialog";
 import { VoiceoverDialog } from "./speech/VoiceoverDialog";
 import { setTool } from "./state/toolStore";
 import { logEmit } from "./ipc";
@@ -787,10 +786,14 @@ export function App({ onCloseProject }: AppProps) {
         revealCaptions: () => workspaceController?.openPanel("caption"),
         openSettings: () => openSettings("speech"),
       }),
-    // Self-contained like the Group commands: it reads the selection store and
-    // raises its own dialog, so App lends a slot and nothing else
-    // (`commands/silenceCommands.ts`).
-    detectSilencesSelected: openSilenceForSelection,
+    // Not a bare slot: the section lives in the Attribute Panel, and only App
+    // can reveal a Panel. Revealing then expanding, in that order — a command
+    // that only opened the Panel would leave the user hunting for a collapsed
+    // header (`commands/pauseCommands.ts`).
+    detectPausesSelected: () => {
+      workspaceController?.openPanel("attribute");
+      openPausesForSelection();
+    },
     // Describe RUNS rather than raising a dialog — its parameters are Settings
     // now (`commands/describeCommands.ts`). So this is not a bare slot: App
     // lends the two things only it can do, revealing the Panel the run becomes
@@ -1174,15 +1177,12 @@ export function App({ onCloseProject }: AppProps) {
           work with every Panel closed. Each renders nothing until its prompt is
           opened.
 
-          The silence dialog needs no reveal: its result lands in the timeline
-          ruler, which is already the surface the user is looking at.
-
-          Transcribe and Describe have no dialog at all — nothing is left to ask
-          before either runs — so App lends each the reveal of the Panel its
-          result becomes visible in and the settings deep-link, through the
-          handler map above. */}
+          Transcribe, Describe and Pauses have no dialog at all — nothing is
+          left to ask before the first two run, and the third lives in the
+          Attribute Panel — so App lends each the reveal of the Panel its result
+          becomes visible in and the settings deep-link, through the handler map
+          above. */}
       <VoiceoverDialog />
-      <SilenceDialog />
 
       {/* Save Workspace As / Rename Workspace name prompt. */}
       {workspaceNameDialog && workspaceProfiles && (

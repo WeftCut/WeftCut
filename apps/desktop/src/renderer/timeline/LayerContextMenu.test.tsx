@@ -59,7 +59,9 @@ vi.mock("../state/projectStore", async (importActual) => ({
 }));
 vi.mock("../speech/autoCaptionEligibility", () => ({
   useAutoCaptionState: () => "auto_caption",
-  useAudioClipState: () => "ok",
+}));
+vi.mock("../commands/pauseCommands", () => ({
+  usePauseSubjectState: () => "ok",
 }));
 vi.mock("../describe/describeEligibility", () => ({
   useDescribeState: () => "describe",

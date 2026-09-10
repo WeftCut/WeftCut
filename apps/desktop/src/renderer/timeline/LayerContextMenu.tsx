@@ -22,9 +22,11 @@ import {
   SubMenu,
 } from "../menu/Menu";
 import {
-  useAudioClipState,
+  usePauseSubjectState,
+  type PauseSubjectState,
+} from "../commands/pauseCommands";
+import {
   useAutoCaptionState,
-  type AudioClipState,
   type AutoCaptionState,
 } from "../speech/autoCaptionEligibility";
 import { useLinkOverride } from "../state/linkOverrideStore";
@@ -125,19 +127,20 @@ export const GROUP_MENU_COMMAND_IDS = [
 /// an audio stream, which is exactly what `resolve_clip_audio_source` accepts.
 ///
 /// Two rows, in the order they are reached: transcribe a clip, then measure its
-/// silence. The first runs on the click — the clip is the selection and the
-/// language is the engine's to detect — and the second opens a dialog, because
-/// a threshold is a parameter someone has to choose.
+/// pauses. The first runs on the click — the clip is the selection and the
+/// language is the engine's to detect — and the second opens the Attribute
+/// Panel's Pauses section, because a threshold is a parameter someone has to
+/// choose against a waveform they can see.
 ///
-/// The silence row joins as *detect and mark*, not as *cut silences*, and the
-/// distinction is the reason the tier still holds two entries rather than three:
-/// MEASURING is the half every silence recipe shares — mark the ranges, tighten
-/// them, remove them — so the row that opens the surface is the measurement, and
-/// what becomes of the ranges is a decision made inside it rather than by which
-/// row was clicked.
+/// The pause row joins as *detect*, not as *cut pauses*, and the distinction is
+/// the reason the tier still holds two entries rather than three: MEASURING is
+/// the half every pause recipe shares — mark them, tighten them, remove them —
+/// so the row that opens the surface is the measurement, and what becomes of
+/// the pauses is a decision made inside it rather than by which row was
+/// clicked.
 export const ANALYSIS_MENU_COMMAND_IDS = [
   "autoCaptionSelected",
-  "detectSilencesSelected",
+  "detectPausesSelected",
 ] as const;
 
 /// The rows only a `VideoClip` gets. Registry-driven like the tiers above and
@@ -196,15 +199,21 @@ const AUTO_CAPTION_REASON: Record<
   transcribing: "quick_actions.auto_caption_transcribing",
 };
 
-/// Why a greyed *Detect silences* row is greyed. Its own table even though the
-/// gate is shared with *Transcribe*: the verdict is one thing, but the
-/// instruction reads differently per verb — "a clip to transcribe" and "a clip
-/// to measure" send the user to the same place for different reasons, and a
-/// tooltip that names the wrong operation is worse than none.
-const DETECT_SILENCES_REASON: Record<Exclude<AudioClipState, "ok">, string> = {
-  needs_selection: "quick_actions.detect_silences_needs_selection",
-  needs_audio_kind: "quick_actions.detect_silences_needs_audio_kind",
-  speed_not_one: "quick_actions.detect_silences_speed_not_one",
+/// Why a greyed *Detect pauses* row is greyed. Its own table even though the
+/// first three states are shared with *Transcribe*: the verdict is one thing,
+/// but the instruction reads differently per verb — "a clip to transcribe" and
+/// "a clip to measure" send the user to the same place for different reasons,
+/// and a tooltip that names the wrong operation is worse than none.
+///
+/// `plays_no_sound` is the one state transcription does not have: a pause is a
+/// fact about the audio that PLAYS, so a picture clip with no linked Audio
+/// partner has nothing to measure even though its own file carries a track
+/// (spec Decision 1).
+const DETECT_PAUSES_REASON: Record<Exclude<PauseSubjectState, "ok">, string> = {
+  needs_selection: "quick_actions.detect_pauses_needs_selection",
+  needs_audio_kind: "quick_actions.detect_pauses_needs_audio_kind",
+  speed_not_one: "quick_actions.detect_pauses_speed_not_one",
+  plays_no_sound: "quick_actions.detect_pauses_plays_no_sound",
 };
 
 /// Why a greyed *Describe clip content* row is greyed. Same block and same
@@ -391,13 +400,13 @@ export function LayerContextMenu({
   const autoCaption = useAutoCaptionState();
   const autoCaptionHint =
     autoCaption === "auto_caption" ? undefined : t(AUTO_CAPTION_REASON[autoCaption]);
-  // The *Detect silences* row's tooltip. Subscribed like the row above it, on
-  // the shared half of the same gate — a selection change under an open popup
-  // has to re-label both rows or one of them would be explaining a clip the
-  // other has moved on from.
-  const audioClip = useAudioClipState();
-  const detectSilencesHint =
-    audioClip === "ok" ? undefined : t(DETECT_SILENCES_REASON[audioClip]);
+  // The *Detect pauses* row's tooltip. Subscribed like the row above it, on
+  // the shared half of the same gate plus its own subject rule — a selection
+  // change under an open popup has to re-label both rows or one of them would
+  // be explaining a clip the other has moved on from.
+  const pauseSubject = usePauseSubjectState();
+  const detectPausesHint =
+    pauseSubject === "ok" ? undefined : t(DETECT_PAUSES_REASON[pauseSubject]);
   // The *Describe clip content* row's tooltip. Subscribed like the two above it, on
   // its own picture-clip gate.
   const describe = useDescribeState();
@@ -588,8 +597,8 @@ export function LayerContextMenu({
                     {...(id === "autoCaptionSelected" && autoCaptionHint
                       ? { hint: autoCaptionHint }
                       : {})}
-                    {...(id === "detectSilencesSelected" && detectSilencesHint
-                      ? { hint: detectSilencesHint }
+                    {...(id === "detectPausesSelected" && detectPausesHint
+                      ? { hint: detectPausesHint }
                       : {})}
                   />
                 ))}

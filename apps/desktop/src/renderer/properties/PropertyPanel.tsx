@@ -86,6 +86,7 @@ import { TransitionFields } from "./TransitionFields";
 import { Field } from "./Field";
 import { MotifParamsFrame } from "./MotifParamsFrame";
 import { MotifPropField } from "./MotifPropFields";
+import { PausesSection } from "./PausesSection";
 import { PropSection } from "./PropSection";
 import { InspectorRow } from "./InspectorRow";
 import { useLayerBakeStatus } from "../timeline/motifBakeStatusStore";
@@ -389,6 +390,11 @@ function LayerPanel({
         </Field>
       </PropSection>
       <KindFields layer={layer} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} />
+      {/* After the kind's own sections and before the Advanced bucket: pauses
+          are a question about the material, not a property of the clip, so
+          they belong under what the clip IS and above the rows nobody opens.
+          Renders nothing for a layer with no audio subject. */}
+      <PausesSection layer={layer} />
       <PropSection layerKind={layer.kind} sectionId="advanced" title={t("property_panel.advanced")} defaultCollapsed>
         <Field label={t("property_panel.locked")}>
           <AppSwitch

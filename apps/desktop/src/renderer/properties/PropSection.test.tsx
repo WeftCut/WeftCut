@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { PropSection, clearPropSectionMemory } from "./PropSection";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  PropSection,
+  clearPropSectionMemory,
+  requestPropSectionExpand,
+} from "./PropSection";
 
 afterEach(() => {
   cleanup();
@@ -89,5 +93,54 @@ describe("PropSection session memory", () => {
       </PropSection>,
     );
     expect(screen.getByText("section body")).toBeTruthy();
+  });
+});
+
+// The command's half of the contract: revealing the Attribute Panel is not
+// enough on its own, because a section that stays collapsed leaves the user
+// hunting for a header. Both orders are real — the Panel may be closed when the
+// command runs, or already showing the very layer it is about.
+describe("PropSection expand requests", () => {
+  it("expands a section that is already mounted", () => {
+    renderSection({ sectionId: "pauses", title: "Pauses", defaultCollapsed: true });
+    expect(screen.queryByText("section body")).toBeNull();
+
+    act(() => requestPropSectionExpand("VideoClip", "pauses"));
+    expect(screen.getByText("section body")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Pauses" }).getAttribute("aria-expanded"),
+    ).toBe("true");
+  });
+
+  it("expands a section that mounts after the request", () => {
+    act(() => requestPropSectionExpand("VideoClip", "pauses"));
+    renderSection({ sectionId: "pauses", title: "Pauses", defaultCollapsed: true });
+    expect(screen.getByText("section body")).toBeTruthy();
+  });
+
+  // Keyed, or one command would open every collapsed section on screen.
+  it("leaves other sections and other kinds alone", () => {
+    render(
+      <>
+        <PropSection layerKind="VideoClip" sectionId="advanced" title="Advanced" defaultCollapsed>
+          <p>advanced body</p>
+        </PropSection>
+        <PropSection layerKind="Text" sectionId="pauses" title="Text pauses" defaultCollapsed>
+          <p>text body</p>
+        </PropSection>
+      </>,
+    );
+    act(() => requestPropSectionExpand("VideoClip", "pauses"));
+    expect(screen.queryByText("advanced body")).toBeNull();
+    expect(screen.queryByText("text body")).toBeNull();
+  });
+
+  // The request is an EVENT, not a latch: re-collapsing after acting on one has
+  // to stick, or the header's own toggle would fight a stale flag.
+  it("does not re-open a section the user collapsed after the request", () => {
+    renderSection({ sectionId: "pauses", title: "Pauses", defaultCollapsed: true });
+    act(() => requestPropSectionExpand("VideoClip", "pauses"));
+    fireEvent.click(screen.getByRole("button", { name: "Pauses" }));
+    expect(screen.queryByText("section body")).toBeNull();
   });
 });

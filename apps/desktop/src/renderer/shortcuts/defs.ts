@@ -43,7 +43,7 @@ export type ActionId =
   | "addToGroup"
   | "moveToComposition"
   | "autoCaptionSelected"
-  | "detectSilencesSelected"
+  | "detectPausesSelected"
   | "describeSelected"
   | "reviewShots"
   | "toggleLinkSelected"
@@ -306,16 +306,15 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // the pointer: you right-click the clip you mean.
   //
   autoCaptionSelected:    { defaultKeys: [],               labelKey: "actions.auto_caption_selected", scope: TIMELINE_SELECTION },
-  // The label says *detect* because MEASURING is the half every silence recipe
-  // shares — mark the ranges, tighten them, cut them out — and what to do with
-  // the ranges is the dialog's decision, not this row's. What this one lands is
-  // a region marker per silent range, on the waveform the timeline already
-  // draws.
+  // The label says *detect* because MEASURING is the half every pause recipe
+  // shares — mark the pauses, tighten them, cut them out — and what to do with
+  // them is decided in the section this opens, not by this row. The ellipsis is
+  // that section: the press reveals a surface rather than committing anything.
   //
   // Catalogued, scoped and unbound for `autoCaptionSelected`'s three reasons:
   // it acts on the timeline selection, a user who does this to every clip has
   // somewhere to bind it, and its home is the pointer.
-  detectSilencesSelected: { defaultKeys: [],               labelKey: "actions.detect_silences_selected", scope: TIMELINE_SELECTION },
+  detectPausesSelected:   { defaultKeys: [],               labelKey: "actions.detect_pauses_selected", scope: TIMELINE_SELECTION },
   // Ask a vision model what is in the selected clip. Catalogued, scoped and
   // unbound for `autoCaptionSelected`'s three reasons, with one that belongs to
   // this row alone: it is the most expensive gesture in the app — ~20 s against

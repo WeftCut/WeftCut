@@ -1,9 +1,9 @@
 import { create } from "zustand";
 
 /// The voiceover dialog's open state, as module-level state — `checkpointPrompt`'s
-/// shape and `silencePrompt`'s reasons, minus the target: this operation has
-/// no scope. It needs a script, not a selection, so there is nothing to capture
-/// at open.
+/// shape, minus the target: this operation has
+/// no scope. It needs a script, not a selection, so there is nothing to
+/// capture at open.
 
 interface VoiceoverPromptState {
   open: boolean;

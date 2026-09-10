@@ -29,6 +29,7 @@ import {
   type LinkTab as LinkTabInfo,
 } from "./geometry";
 import { AudioRegionBand } from "./AudioRegionBand";
+import { PauseBands } from "./PauseBands";
 import { compUsFromSourceUs } from "./audioRegionGeometry";
 import { useArmedRegionSelect } from "./audioRegionArmStore";
 import { useAudioRegionDrag } from "./hooks/useAudioRegionDrag";
@@ -1003,6 +1004,20 @@ export function LayerBlock({
         layerHeightPx={sliceHeight}
         pxPerSec={pxPerSec}
       />
+      {/* Candidate pauses, on the subject Audio clip only: the component asks
+          the store by id and draws nothing on any other block. A duplicate
+          ghost carries the source layer's id, so it is kept out the same way
+          the sample region is — one clip, one set of bands. */}
+      {!previewOnly && (
+        <PauseBands
+          layerId={layer.id}
+          pxPerSec={pxPerSec}
+          blockLeftPx={((layer.t_start_us - liveStart) / 1_000_000) * pxPerSec}
+          tStartUs={layer.t_start_us}
+          blockLoUs={liveStart}
+          blockHiUs={liveEnd}
+        />
+      )}
       {regionBandCard && (
         <AudioRegionBand
           layer={layer}

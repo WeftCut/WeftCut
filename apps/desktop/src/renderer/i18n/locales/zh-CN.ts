@@ -377,12 +377,18 @@ const zhCN: Resources = {
     auto_caption_speed_not_one:
       "这个片段变过速——先从中切出一段常速，否则字会落错位置",
     auto_caption_transcribing: "已经有一次转写在进行中",
-    // 检测静默。门禁与语音转文字完全一样，只是换成这一行自己的动词：要去的地方
+    // 检测停顿。门禁大体与语音转文字相同，只是换成这一行自己的动词：要去的地方
     // 相同，但"去转写"和"去测量"并不是同一件事。
-    detect_silences_needs_selection: "选中一个视频或音频片段来测量",
-    detect_silences_needs_audio_kind: "这个片段没有声音——请选视频或音频片段",
-    detect_silences_speed_not_one:
-      "这个片段变过速——先从中切出一段常速，否则区间会落错位置",
+    //
+    // 第一句要的是"音频片段"，而转写那句两种都收，这不是笔误：画面片段只能通过
+    // 与它相连的音频来测量，直接说音频是最短的一条路。
+    detect_pauses_needs_selection: "选中一个音频片段来测量",
+    detect_pauses_needs_audio_kind: "这个片段没有声音——请选视频或音频片段",
+    detect_pauses_speed_not_one:
+      "这个片段变过速——先从中切出一段常速，否则停顿会落错位置",
+    // 只属于停顿的一句：这个片段的文件里也许有声音轨，但真正播放的是与它相连的
+    // 音频片段，而它没有（规格 Decision 1）。
+    detect_pauses_plays_no_sound: "这个片段不播放声音",
     // 描述内容。同样是自己的三句，其中"选错种类"这一句和上面两块真的不一样：
     // 描述读的是画面，有没有声音在这里不构成条件。
     describe_needs_selection: "选中一个视频片段来描述",
@@ -677,8 +683,8 @@ const zhCN: Resources = {
     // 不带省略号：按下就跑，没有要先问的东西——语言由引擎自己识别，旧对话框里
     // 唯一那个字段的正确答案总是"留空"（speech/transcribeRun.ts）。
     auto_caption_selected: "转写片段语音",
-    // 带省略号：阈值是参数，要先弹对话框。
-    detect_silences_selected: "检测片段静默…",
+    // 带省略号：阈值是参数，要先打开属性面板里的"停顿"一节去挑。
+    detect_pauses_selected: "检测停顿…",
     // 用"描述…内容"而不是"描述片段"：模型读的是画面里有什么，这一行的产物是
     // 落在镜头行上的文字，而不是关于片段这个对象的任何说明。
     //
@@ -1020,12 +1026,12 @@ const zhCN: Resources = {
     "transcribe_clip": "转写片段",
     "analyze_shots_floor": "检测镜头",
     "compare_frames": "比较画面",
-    "detect_silences": "检测静音",
+    "detect_pauses": "检测停顿",
     "import_media": "导入素材",
     "synthesize_speech": "合成语音",
     "apply_subtitles": "应用字幕",
     "auto_split_by_shot": "按镜头分割",
-    "remove_silences": "移除静音",
+    "remove_pauses": "移除停顿",
     "ping": "检查连接",
     "resources/read": "读取资源",
     "resources/list": "列出资源",
@@ -1864,6 +1870,8 @@ const zhCN: Resources = {
     role: "角色",
     mute: "静音",
     transform: "变换",
+    // 属性面板里的“停顿”一节，排在片段自己的分节之后、“高级”之前。
+    pauses: "停顿",
     props: "参数",
     unknown_motif: "未知 Motif——无法在此编辑其参数。",
     bake_warming: "预热预览… {{done}}/{{total}}",
@@ -2046,14 +2054,15 @@ const zhCN: Resources = {
     voiceover_started: "正在生成配音——{{chars}} 个字符，{{voice}}",
     voiceover_done: "已添加配音——{{chars}} 个字符，{{voice}}",
     voiceover_done_cached: "已添加配音——复用了缓存音频，未产生费用",
-    mark_silences_started: "正在标记“{{clip}}”的静默区间",
+    mark_pauses_started: "正在标记“{{clip}}”的停顿",
     // 数量是这行的全部意义：标记落在标尺下半部分，用户当时未必在看那里。
-    mark_silences_done: "已为“{{clip}}”添加 {{markers}} 个静默标记",
-    remove_silences_started: "正在移除“{{clip}}”的静默区间",
+    mark_pauses_done: "已为“{{clip}}”添加 {{markers}} 个停顿标记",
+    remove_pauses_started: "正在移除“{{clip}}”的停顿",
     // 和标记那行只写数量不同，这里连总时长一起写：移除会让片子变短，取走了多少
-    // 才说明下游整体挪了多远。
-    remove_silences_done:
-      "已从“{{clip}}”移除 {{removed}} 段静默，共 {{total}}",
+    // 才说明下游整体挪了多远。这里的总时长是真正剪掉的那部分，而不是找到的停顿
+    // 全长——每段两侧都留了一点。
+    remove_pauses_done:
+      "已从“{{clip}}”移除 {{removed}} 处停顿，共 {{total}}",
     describe_started: "正在描述“{{clip}}”",
     // 引擎和模型都写上，和转写那行只写引擎不同：这里一个运行时服务多个视觉
     // 模型，只写引擎标签说不清是哪套权重回答的。
@@ -2213,37 +2222,54 @@ const zhCN: Resources = {
     confirm: "生成",
     running: "正在生成…",
   },
-  // 静默对话框。两个实时参数加一份预览，参数集直接来自已写好的 `cut-silences`
-  // 提示词，没有额外发明。这里的文案覆盖测量；测完之后走哪个动作，由对话框
-  // 自己的动作按钮命名。
-  silence: {
-    title: "检测静默",
-    clip: "片段",
-    threshold: "静默阈值",
-    // 输入的是幅度，因为工具收的就是幅度；分贝才是做声音的人在想的单位，
-    // 所以两者都显示。
-    threshold_hint: "峰值幅度，约为 {{dbfs}} dBFS。",
-    min_length: "最短静默",
-    min_length_hint: "短于此长度的空白不会被标记。",
+  // 属性面板里的“停顿”一节。它住在面板而不是对话框里，是因为调阈值这件事要一边看着
+  // 波形、一边能放来听（规格 Decision 3），所以这里的文案要能在时间线旁边一列窄栏里
+  // 站得住，而不是写在一张有地方放提示的表单里。
+  //
+  // 通篇用“停顿”：说的是说话之间那段安静，旧名字与“静音”相撞。
+  pauses: {
+    // 写在委托过来的画面片段上，好让用户知道这些数字说的不是他选中的画面。
+    delegated: "按链接的音频“{{clip}}”计算",
+    // 是起点而不是模式：各自把阈值和最短长度设好就退开。用录音的样子来命名，因为
+    // 用户知道的是自己录的是什么，而不是某个分贝数。
+    preset_speech: "对话 / 播客",
+    preset_noisy: "有底噪的录音",
+    preset_music: "音乐 / 环境声",
+    // 是一个读数而不是第四个选项：它亮起来，就是在说下面两个数字是用户自己调的。
+    preset_custom: "自定义",
+    threshold: "阈值",
+    // 用分贝而不是工具本身收的幅度：0..1 在一个对数量上是线性的，同样一格在低端是
+    // 6 dB，在高端只有 0.4 dB。换算由这一节自己做。
+    db: "{{db}} dB",
+    // 两端说明两个方向各是什么意思。分贝数只对已经熟悉这个房间的人才是参照。
+    threshold_low: "只算真正无声",
+    threshold_high: "允许环境噪音",
+    // 从这个片段自己的峰值算出来的，这也是“自动”值得有个按钮的原因：它知道一件
+    // 用户不知道的、关于这段录音的事。
+    noise_floor: "底噪约 {{db}} dB",
+    auto: "自动",
+    min_length: "最短停顿",
+    // 写“保留”而不是“补偿”：这个数字是每段停顿两侧活下来的部分，整段抹掉会让
+    // 说话听着喘不过气。
+    pad: "两侧各保留",
     unit_ms: "毫秒",
+    // 三个数字，不列清单：没有人会一条一条去确认四十行。停顿在哪由片段上的色带
+    // 回答，听起来怎么样由试听回答，代价多大由这一行回答。
+    summary_one: "1 处停顿，移除 {{removed}}，结果 {{result}}",
+    summary_other: "{{count}} 处停顿，移除 {{removed}}，结果 {{result}}",
+    none: "这个阈值下没有停顿",
     detecting: "正在读取波形…",
-    // 这是一种状态，不是失败：刚导入的素材峰值还在生成，完成后对话框
-    // 会自己重试。
+    // 这是一种状态，不是失败：刚导入的素材峰值还在生成，完成后这一节会自己重试。
     waiting_waveform: "正在等待波形…",
-    none: "在这个阈值下没有静默",
-    summary_one: "1 段静默，共 {{total}}",
-    summary_other: "{{count}} 段静默，共 {{total}}",
-    range: "{{start}} – {{end}}",
-    // 说清两个动作各自留下什么，这正是它们的全部区别：一个只加注记、不动时间，
-    // 另一个会让片子变短。
-    note:
-      "“标记静默”把每段静默变成这个片段上的一个标记，别的都不动。“移除”会把每段静默剪掉并合上留下的空缺，算一次可撤销的编辑。",
-    cancel: "取消",
-    confirm: "标记静默",
-    running: "正在标记…",
-    // 不叫“剪掉”：空缺会合上，而这恰是单纯剪一刀做不到的那一半。
-    remove: "移除",
+    // 写“效果”：放出来的是把移除的结果拼起来的样子，而不是片段现在的样子。
+    audition: "试听效果",
+    audition_stop: "停止",
+    mark: "标记停顿",
+    marking: "正在标记…",
+    remove: "移除停顿",
     removing: "正在移除…",
+    // 参数是按项目记住的，所以要留一条回去的路。
+    reset: "恢复默认",
   },
   search: {
     placeholder: "搜索命令、素材、片段、字幕、画面描述…",

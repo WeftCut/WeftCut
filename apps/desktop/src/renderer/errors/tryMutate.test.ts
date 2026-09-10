@@ -118,8 +118,8 @@ describe("logMutationFailure / refusalText", () => {
   // hand that id here — on BOTH branches, refusal and prose alike.
   it("logMutationFailure closes the op it is handed, refusal or prose", () => {
     logEmitMock.mockClear();
-    logMutationFailure(wireError({ error: "TrackLocked", track: "t-9" }), "mark_silences", "op-1");
-    logMutationFailure(new Error("plain boom"), "mark_silences", "op-2");
+    logMutationFailure(wireError({ error: "TrackLocked", track: "t-9" }), "mark_pauses", "op-1");
+    logMutationFailure(new Error("plain boom"), "mark_pauses", "op-2");
     expect(logEmitMock.mock.calls[0]![0]).toMatchObject({
       op_id: "op-1",
       op_state: { state: "Err" },

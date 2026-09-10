@@ -1773,6 +1773,20 @@ export interface ShotReviewSettings {
   min_shot_us: number;
 }
 
+/// The Pauses section's per-project detection parameters — the threshold a peak
+/// must stay under, the shortest pause surfaced, and what each side of one
+/// keeps when it is removed. Mirrors Rust `PauseReviewSettings`.
+///
+/// Per PROJECT and not global (spec Decision 14): one recording session is one
+/// project, and two sessions do not share a noise floor. `threshold_amp` is an
+/// amplitude in [0, 1] because that is what the detector takes; the section's
+/// slider is in dB and converts.
+export interface PauseReviewSettings {
+  threshold_amp: number;
+  min_pause_us: number;
+  pad_us: number;
+}
+
 /// Per-project behavior settings (`Project.settings`). Only the fields
 /// the UI consumes are typed; the Rust struct carries more.
 export interface ProjectSettingsView {
@@ -1781,6 +1795,8 @@ export interface ProjectSettingsView {
   /// `null` on a project nobody has tuned — read as "whatever the detector
   /// defaults to", which is what keeps every threshold literal in Rust.
   shot_review: ShotReviewSettings | null;
+  /// `null` on a project nobody has tuned, on `shot_review`'s rule.
+  pause_review: PauseReviewSettings | null;
 }
 
 export interface ProjectSettingsPatch {
@@ -1790,6 +1806,11 @@ export interface ProjectSettingsPatch {
   /// whole if `sensitivity` is outside [0, 1] or `min_shot_us` is not a
   /// positive whole number — the bounds `reduceShotReport` itself enforces.
   shot_review?: ShotReviewSettings | null;
+  /// `null` clears the tuning and restores the detection defaults — what the
+  /// section's *Reset to defaults* sends. Refused whole if `threshold_amp` is
+  /// outside [0, 1], `min_pause_us` is not positive, `pad_us` is negative, or
+  /// `2 × pad_us ≥ min_pause_us` — the constraint that makes a core exist.
+  pause_review?: PauseReviewSettings | null;
 }
 
 export async function getProjectSettings(): Promise<ProjectSettingsView> {
@@ -2589,112 +2610,147 @@ export async function synthesizeSpeech(
 }
 
 // ============================================================
-// Silence — detect, mark, remove
+// Pauses — detect, mark, remove
 // ============================================================
-// One measurement, two verbs over it. `detectSilences` finds the silent ranges
-// and writes nothing; `markSilences` puts one region marker per range on the
-// waveform the timeline already draws; `removeSilences` cuts every range out
-// and closes the gaps behind them. The measurement is the half every silence
-// recipe shares, and which verb follows it is the caller's choice — the two
-// re-detect at the parameters they are given, so neither can act on a set the
-// preview did not show.
+// One measurement, two verbs over it. `detectPauses` finds the pauses and
+// writes nothing; `markPauses` puts one region marker per pause on the
+// waveform the timeline already draws; `removePauses` cuts the core of every
+// pause out and closes the gaps behind them. The measurement is the half every
+// pause recipe shares, and which verb follows it is the caller's choice — the
+// two re-detect at the parameters they are given, so neither can act on a set
+// the section did not show.
 //
-// All three THROW, like every write and every dialog-driven read here: the
-// dialog shows the message inline and logs a row.
+// The SUBJECT of all three is the Audio layer that plays (spec Decision 1): a
+// VideoClip id is accepted and resolved to its linked Audio partner by main,
+// and refused when it has none.
+//
+// All three THROW, like every write and every panel-driven read here: the
+// section shows the message inline and logs a row.
 
-/// One silent range in the clip's own composition clock — timeline-absolute and
+/// One pause in the subject's own composition clock — timeline-absolute and
 /// already clipped to the layer's span, so a caller never maps source time
-/// itself. Mirrors Rust `SilenceRegion` (`native/src/mcp/tools.rs`).
-export interface SilenceRegion {
+/// itself. Mirrors Rust `PauseRegion` (`native/src/mcp/tools.rs`).
+export interface PauseRegion {
   t_start_us: number;
   t_end_us: number;
 }
 
-/// Detect one VideoClip or Audio layer's silent ranges. Reads the PRE-COMPUTED
-/// waveform peaks — no decode — which is what makes re-running it on every
-/// parameter change affordable, and why the silence dialog's controls are live
-/// where the shot Panel's threshold needed a Rust split to become so.
+/// Which peaks file a detection actually read: the media's own, or the baked
+/// effect sibling's. What plays is what is measured (spec Decision 11), so the
+/// bands can never disagree with the waveform under them.
+export type PeaksSource = "raw" | "fx";
+
+/// A detection, whole: the pauses, the noise floor the section's *Auto* button
+/// sets a threshold from, and which peaks were read. Mirrors Rust
+/// `DetectPausesResult`.
+///
+/// `noise_floor_amp` is the 10th percentile of the peaks inside the subject's
+/// source window, as a peak amplitude in [0, 1]; `0` when the window holds no
+/// peak at all.
+export interface DetectPausesResult {
+  pauses: PauseRegion[];
+  noise_floor_amp: number;
+  peaks_source: PeaksSource;
+}
+
+/// Detect one clip's pauses. Reads the PRE-COMPUTED waveform peaks — no decode
+/// — which is what makes re-running it on every parameter change affordable,
+/// and why the Pauses section's controls are live where the shot Panel's
+/// threshold needed a Rust split to become so.
 ///
 /// A read: it commits nothing, so it neither enters undo nor dirties the
-/// project. Marking the result is `markSilences`.
+/// project. Marking the result is `markPauses`.
 ///
 /// Rejects while the source's waveform job is still running, with a message
 /// naming the `media:job_complete` event to wait for — a real state on a fresh
 /// import, and one the caller is expected to WAIT on rather than report
-/// (`silence/SilenceDialog.tsx`). `threshold_amp` and `min_silence_us` are
-/// omitted rather than defaulted here so Rust's own defaults decide.
-export async function detectSilences(args: {
+/// (`properties/PausesSection.tsx`).
+export async function detectPauses(args: {
   layerId: string;
   thresholdAmp?: number;
-  minSilenceUs?: number;
-}): Promise<SilenceRegion[]> {
-  return invoke<SilenceRegion[]>("detect_silences", {
+  minPauseUs?: number;
+}): Promise<DetectPausesResult> {
+  return invoke<DetectPausesResult>("detect_pauses", {
     layer_id: args.layerId,
     ...(args.thresholdAmp === undefined ? {} : { threshold_amp: args.thresholdAmp }),
-    ...(args.minSilenceUs === undefined ? {} : { min_silence_us: args.minSilenceUs }),
+    ...(args.minPauseUs === undefined ? {} : { min_pause_us: args.minPauseUs }),
   });
 }
 
-/// Detect and mark in ONE commit (one undo entry): a region marker per silent
-/// range, in the clip's own composition, anchored to the clip so trimming past
-/// one hibernates its mark and deleting the clip takes them all (ADR 0056).
+/// Detect and mark in ONE commit (one undo entry): a region marker per pause,
+/// in the subject's own composition, anchored to the clip so trimming past one
+/// hibernates its mark and deleting the clip takes them all (ADR 0056).
 /// Detection re-runs inside the same call at the parameters given, so the marks
-/// can never be a set the preview did not show.
+/// can never be a set the section did not show.
 ///
-/// `markers` is `0` with no commit at all when nothing is silent above the
+/// The FULL range is marked, pad and all — the pad is what a removal keeps, and
+/// a mark changes no timing (spec Decision 8), so it has nothing to shrink for.
+///
+/// `markers` is `0` with no commit at all when nothing is quiet above the
 /// threshold — re-tuning and re-running costs no undo steps.
-export async function markSilences(args: {
+export async function markPauses(args: {
   layerId: string;
   thresholdAmp?: number;
-  minSilenceUs?: number;
+  minPauseUs?: number;
 }): Promise<{ markers: number; marker_ids: string[] }> {
-  return invoke<{ markers: number; marker_ids: string[] }>("mark_silences", {
+  return invoke<{ markers: number; marker_ids: string[] }>("mark_pauses", {
     layer_id: args.layerId,
     ...(args.thresholdAmp === undefined ? {} : { threshold_amp: args.thresholdAmp }),
-    ...(args.minSilenceUs === undefined ? {} : { min_silence_us: args.minSilenceUs }),
+    ...(args.minPauseUs === undefined ? {} : { min_pause_us: args.minPauseUs }),
   });
 }
 
 /// What one removal did: the clip's remaining pieces in timeline order, the
-/// number of silent stretches removed, and the total time that went with them.
-/// Mirrors `RemoveSilencesResult` (`main/state/hybrids.ts`).
-export interface RemoveSilencesResult {
+/// number of pauses cut, and the total time that went with them — the sum of
+/// the CORES, not of the pauses, since each keeps its pad.
+/// Mirrors `RemovePausesResult` (`main/state/hybrids.ts`).
+export interface RemovePausesResult {
   surviving_layer_ids: string[];
   removed: number;
   removed_us: number;
 }
 
-/// Detect and CUT in ONE commit (one undo entry): every silent range is
-/// removed and the gap it vacated closes behind it, so the clip — and the film
-/// — get shorter (ADR 0062). Detection re-runs inside the same call at the
-/// parameters given, exactly as `markSilences` does, so what leaves is the set
-/// the preview showed.
+/// Detect and CUT in ONE commit (one undo entry): each pause's core is removed
+/// and the gap it vacated closes behind it, so the clip — and the film — get
+/// shorter (ADR 0062). Detection re-runs inside the same call at the parameters
+/// given, exactly as `markPauses` does, so what leaves is the set the section
+/// showed.
 ///
-/// `removed` is `0` with no commit at all when nothing is silent above the
+/// `padUs` is what each side of a pause KEEPS: the core cut is
+/// `[start + pad, end − pad)`, and a pause touching the clip's head or tail
+/// keeps its pad on the inner side only. Erasing a pause outright makes speech
+/// breathless, so the default is 100 ms per side rather than zero (spec
+/// Decision 8); `0` restores the whole-erase behaviour. Refused when
+/// `2 × padUs ≥ minPauseUs` — a core that cannot exist is a parameter mistake,
+/// not an empty result.
+///
+/// `removed` is `0` with no commit at all when nothing is quiet above the
 /// threshold, and `surviving_layer_ids` is then the untouched clip: re-tuning
 /// and re-running costs no undo steps whichever verb the tuning ends on.
 ///
 /// Refuses whole rather than half-cutting. The ripple planner's four refusals
-/// (a layer starting inside a silent stretch, a collision, a link straddling
-/// one, a locked mover) each name the layer that blocked, and a clip that is
-/// silent end to end is an `InvalidArgument` — removing every segment is a
-/// delete. Either way the clip comes back UNSPLIT with nothing recorded, so
-/// the dialog can show the message and let the user fix it and press again.
+/// (a layer starting inside a pause, a collision, a link straddling one, a
+/// locked mover) each name the layer that blocked, and a clip that is quiet end
+/// to end is an `InvalidArgument` — removing every segment is a delete. Either
+/// way the clip comes back UNSPLIT with nothing recorded, so the section can
+/// show the message and let the user fix it and press again.
 ///
 /// Unwrapped from the MCP arm's JSON string here, like `synthesizeSpeech`: the
 /// arm is advertised as a tool, where every result becomes one `ToolResult`
 /// text block (`main/state/hybrids.ts` states that contract).
-export async function removeSilences(args: {
+export async function removePauses(args: {
   layerId: string;
   thresholdAmp?: number;
-  minSilenceUs?: number;
-}): Promise<RemoveSilencesResult> {
-  const json = await invoke<string>("remove_silences", {
+  minPauseUs?: number;
+  padUs?: number;
+}): Promise<RemovePausesResult> {
+  const json = await invoke<string>("remove_pauses", {
     layer_id: args.layerId,
     ...(args.thresholdAmp === undefined ? {} : { threshold_amp: args.thresholdAmp }),
-    ...(args.minSilenceUs === undefined ? {} : { min_silence_us: args.minSilenceUs }),
+    ...(args.minPauseUs === undefined ? {} : { min_pause_us: args.minPauseUs }),
+    ...(args.padUs === undefined ? {} : { pad_us: args.padUs }),
   });
-  return JSON.parse(json) as RemoveSilencesResult;
+  return JSON.parse(json) as RemovePausesResult;
 }
 
 /// Export-readiness audio gate (Rust `ensure_export_audio_conform`): media

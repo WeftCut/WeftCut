@@ -10,7 +10,7 @@
 // `describe/`'s.
 //
 // Self-contained, so App lends `describeSelected` a `HandlerMap` slot and
-// nothing else — the same split `commands/silenceCommands.ts` documents, and
+// nothing else — the same split `commands/pauseCommands.ts` documents, and
 // for the same reason: a command registered by Timeline vanishes with the
 // Timeline Panel, and the clip context menu must not lose rows when a Panel is
 // closed (`menu/contextMenuCommands.test.ts` states the rule).

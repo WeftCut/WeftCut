@@ -1136,6 +1136,141 @@
   gap: 4px 8px;
 }
 
+/* The Pauses section. A stack, not a grid: the two `.prop-field` rows inside
+   keep the panel's value edge, and everything else here is a full-width line
+   whose own content decides its layout. */
+.pauses-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The three starting points, wrapping rather than scrolling — the panel is
+   narrow enough at a 1280 window that one row of four chips does not fit, and
+   a horizontal scroller hides the chip nobody knows is there. */
+.pauses-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pauses-preset {
+  padding: 2px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
+  background: var(--surface-sunken);
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.pauses-preset:hover {
+  border-color: var(--selection-border);
+  color: var(--foreground);
+}
+
+/* Lit = "these are the numbers below". Both the pressed chips and the Custom
+   readout take it, because the row reads as one set of four states. */
+.pauses-preset[aria-pressed="true"],
+.pauses-preset[data-active="true"] {
+  border-color: var(--selection-border);
+  background: var(--surface-raised);
+  color: var(--foreground);
+}
+
+/* Custom is a readout, so it takes no pointer and no hover. */
+.pauses-preset--custom {
+  cursor: default;
+}
+
+.pauses-preset--custom:hover {
+  border-color: var(--border-soft);
+  color: var(--muted-foreground);
+}
+
+.pauses-preset--custom[data-active="true"]:hover {
+  border-color: var(--selection-border);
+  color: var(--foreground);
+}
+
+/* The threshold's number, beside its slider. Tabular so the readout does not
+   shift under a drag. */
+.pauses-readout {
+  flex: none;
+  min-width: 52px;
+  color: var(--foreground);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* The slider's two end labels, pinned to the ends they describe. `flex: none`
+   on neither: both are short, and the pair is what says which direction is
+   which — an ellipsized end label says nothing. */
+.pauses-ends {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+}
+
+.pauses-floor {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.pauses-summary {
+  margin: 0;
+  color: var(--foreground);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Three buttons that must all stay legible: they wrap instead of shrinking,
+   because a crushed verb is worse than a second row
+   (`reference_flex_shrink_crushes_short_sibling`). */
+.pauses-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pauses-actions > button {
+  flex: none;
+}
+
+/* The default press of the three (ADR: the reversible verb is the primary
+   one). */
+.pauses-primary {
+  border-color: var(--selection-border);
+  color: var(--foreground);
+}
+
+/* A link, not a button: restoring the defaults is an escape hatch, and giving
+   it a fourth button's weight would put it in the same row as the verbs. */
+.pauses-reset {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.pauses-reset:hover {
+  color: var(--foreground);
+}
+
 /* Where a media item is used. Every row is a button because navigating to the
    clip is the point — the same list read-only inside the removal confirmation
    (`.media-remove-reference-list`) is what the inspector's version replaces. */

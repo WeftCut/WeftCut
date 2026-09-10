@@ -416,14 +416,23 @@ const enUS = {
     auto_caption_speed_not_one:
       "This clip is re-timed — split a normal-speed segment off it first, or the words land in the wrong place",
     auto_caption_transcribing: "A transcription is already running",
-    // Detect silences. The same gate as transcribe, said in the verb the row
+    // Detect pauses. Mostly the transcribe gate, said in the verb the row
     // uses: the place to go is the same, but "to transcribe" and "to measure"
     // are not the same errand.
-    detect_silences_needs_selection: "Select a video or audio clip to measure",
-    detect_silences_needs_audio_kind:
+    //
+    // `needs_selection` asks for an AUDIO clip where transcription asks for
+    // either kind, and that is not a slip: a picture clip is measurable only
+    // through the audio it is linked to, so naming the audio is the shortest
+    // route to a selection that works.
+    detect_pauses_needs_selection: "Select an audio clip to measure",
+    detect_pauses_needs_audio_kind:
       "This clip carries no sound — select a video or audio clip",
-    detect_silences_speed_not_one:
-      "This clip is re-timed — split a normal-speed segment off it first, or the ranges land in the wrong place",
+    detect_pauses_speed_not_one:
+      "This clip is re-timed — split a normal-speed segment off it first, or the pauses land in the wrong place",
+    // The one reason that belongs to pauses alone: the clip's own file may
+    // carry a track, but what plays is the linked Audio layer, and this clip
+    // has none (spec Decision 1).
+    detect_pauses_plays_no_sound: "This clip plays no sound",
     // Describe content. Its own three sentences again, and the kind case is the
     // one that genuinely differs from the two blocks above: a description reads
     // frames, so sound is not what makes a clip eligible here.
@@ -773,12 +782,12 @@ const enUS = {
     // engine's to detect, so the one field the old dialog carried was a click
     // that asked nothing (`speech/transcribeRun.ts`).
     auto_caption_selected: "Transcribe selected clip",
-    // "Detect silences" and not "Cut silences": nothing is removed by the row
-    // itself. Measuring is the half every silence recipe shares, and what
-    // becomes of the ranges is decided inside the dialog
+    // "Detect pauses" and not "Cut pauses": nothing is removed by the row
+    // itself. Measuring is the half every pause recipe shares, and what becomes
+    // of the pauses is decided inside the section it opens
     // (`timeline/LayerContextMenu.tsx` carries the whole reason). Ellipsis
-    // because that dialog comes first.
-    detect_silences_selected: "Detect silences in selected clip…",
+    // because that section comes first.
+    detect_pauses_selected: "Detect pauses in selected clip…",
     // "Content" as the head noun: what the model reads is what is IN the
     // footage, and the row's answer lands as prose on the shot rows rather than
     // as anything about the clip as an object. "Clip" still names the unit the
@@ -1194,12 +1203,12 @@ const enUS = {
     "transcribe_clip": "Transcribe clip",
     "analyze_shots_floor": "Detect shots",
     "compare_frames": "Compare frames",
-    "detect_silences": "Detect silences",
+    "detect_pauses": "Detect pauses",
     "import_media": "Import media",
     "synthesize_speech": "Synthesize speech",
     "apply_subtitles": "Apply subtitles",
     "auto_split_by_shot": "Split into shots",
-    "remove_silences": "Remove silences",
+    "remove_pauses": "Remove pauses",
     "ping": "Check connection",
     "resources/read": "Read resource",
     "resources/list": "List resources",
@@ -2101,6 +2110,8 @@ const enUS = {
     role: "Role",
     mute: "Mute",
     transform: "Transform",
+    // The Pauses section, between the kind's own sections and Advanced.
+    pauses: "Pauses",
     props: "Props",
     unknown_motif: "Unknown motif — its props can't be edited here.",
     bake_warming: "Warming preview… {{done}}/{{total}}",
@@ -2296,16 +2307,17 @@ const enUS = {
     voiceover_done: "Voiceover added — {{chars}} characters, {{voice}}",
     voiceover_done_cached:
       "Voiceover added — reused cached audio, nothing billed",
-    mark_silences_started: "Marking silences in “{{clip}}”",
+    mark_pauses_started: "Marking pauses in “{{clip}}”",
     // The COUNT is the whole point of the row: the marks land in the ruler's
     // lower half, which the user may not have been looking at.
-    mark_silences_done: "{{markers}} silence markers added to “{{clip}}”",
-    remove_silences_started: "Removing silences from “{{clip}}”",
+    mark_pauses_done: "{{markers}} pause markers added to “{{clip}}”",
+    remove_pauses_started: "Removing pauses from “{{clip}}”",
     // The TOTAL beside the count, unlike the marking row's count alone: a
     // removal shortens the film, and how much it took out is what says how far
-    // everything downstream moved.
-    remove_silences_done:
-      "{{removed}} silent ranges removed from “{{clip}}”, {{total}} in all",
+    // everything downstream moved. It is the sum of the CORES cut, not of the
+    // pauses found — each one keeps its pad.
+    remove_pauses_done:
+      "{{removed}} pauses removed from “{{clip}}”, {{total}} in all",
     describe_started: "Describing “{{clip}}”",
     // The engine AND the model, unlike the transcription row's engine alone:
     // one runtime serves several vision models here, so the engine tag on its
@@ -2505,38 +2517,66 @@ const enUS = {
     confirm: "Generate",
     running: "Generating…",
   },
-  // The silence dialog. Two live parameters and a preview, straight from the
-  // authored `cut-silences` prompt's parameter set — nothing invented beyond it.
-  // The copy here covers the measurement; which of the two verbs follows it is
-  // named by the dialog's own action buttons.
-  silence: {
-    title: "Detect silences",
-    clip: "Clip",
-    threshold: "Silence below",
-    // The number is amplitude because that is what the tool takes; the decibels
-    // are what an audio person reasons in, so both are shown.
-    threshold_hint: "Peak amplitude, roughly {{dbfs}} dBFS.",
-    min_length: "Shortest silence",
-    min_length_hint: "Gaps shorter than this are not marked.",
+  // The Pauses section of the Attribute Panel. Its home is a panel section and
+  // not a dialog because tuning a threshold is something a person does WHILE
+  // looking at the waveform and playing the clip (spec Decision 3), so the copy
+  // here has to work in a narrow column beside the timeline rather than in a
+  // form with room for hints.
+  //
+  // The UI word is PAUSE on every line here: a stretch of quiet inside speech
+  // is what the feature is about, and the old noun collided with mute. The one
+  // exception is the slider end below, where the phrase names the sound itself.
+  pauses: {
+    // Named on the delegating clip, so the user knows the numbers are not about
+    // the picture they selected.
+    delegated: "Measured on the linked audio “{{clip}}”",
+    // Starting points, not modes: each sets the threshold and the minimum and
+    // then gets out of the way. Named for the RECORDING, because that is what
+    // the user knows about their own material — a dB figure is not.
+    preset_speech: "Speech / podcast",
+    preset_noisy: "Noisy room",
+    preset_music: "Music / ambience",
+    // A readout rather than a fourth choice: it lights to say the two numbers
+    // below are the user's own.
+    preset_custom: "Custom",
+    threshold: "Threshold",
+    // Decibels and not amplitude, unlike the tool's own parameter: 0..1 is
+    // linear on a logarithmic quantity, so one step of it is 6 dB at the bottom
+    // of the range and 0.4 dB at the top. The section converts.
+    db: "{{db}} dB",
+    // The two ends say what the directions MEAN. A dB number is a referent only
+    // to someone who already knows the room.
+    threshold_low: "true silence only",
+    threshold_high: "allow room noise",
+    // Measured from the clip's own peaks, which is what makes Auto worth a
+    // button: it knows something about this recording that the user does not.
+    noise_floor: "Noise floor ≈ {{db}} dB",
+    auto: "Auto",
+    min_length: "Shortest pause",
+    // “Keep”, not “pad” or “trim”: the number is what SURVIVES on each side of a
+    // pause, and a removal that erased them outright makes speech breathless.
+    pad: "Keep each side",
     unit_ms: "ms",
+    // Three numbers and no list: nobody confirms forty rows one by one. WHERE
+    // the pauses are is answered by the bands on the clip, how it sounds by the
+    // audition, and what it costs by this line.
+    summary_one: "1 pause · removes {{removed}} · result {{result}}",
+    summary_other: "{{count}} pauses · removes {{removed}} · result {{result}}",
+    none: "No pauses at this threshold",
     detecting: "Reading the waveform…",
     // A state, not a failure: on a fresh import the peaks are still being
-    // generated, and the dialog retries by itself once they are.
+    // generated, and the section retries by itself once they are.
     waiting_waveform: "Waiting for the waveform…",
-    none: "No silence above this threshold",
-    summary_one: "1 silent range, {{total}} in total",
-    summary_other: "{{count}} silent ranges, {{total}} in total",
-    range: "{{start}} – {{end}}",
-    // Says what each verb LEAVES, which is the whole difference between them:
-    // one adds a note and changes no timing, the other shortens the film.
-    note:
-      "Mark turns each range into a marker on this clip and changes nothing else. Remove cuts every range out and closes the gap behind it, as one undoable edit.",
-    cancel: "Cancel",
-    confirm: "Mark silences",
-    running: "Marking…",
-    // Not "Cut": the gap closes, which is the part a plain cut would not do.
-    remove: "Remove",
+    // “Result”, because what plays is the stitched OUTCOME of a removal and not
+    // the clip as it stands.
+    audition: "Audition result",
+    audition_stop: "Stop",
+    mark: "Mark pauses",
+    marking: "Marking…",
+    remove: "Remove pauses",
     removing: "Removing…",
+    // The parameters are remembered per project, so there has to be a way back.
+    reset: "Reset to defaults",
   },
   search: {
     placeholder: "Search commands, media, clips, captions, descriptions…",

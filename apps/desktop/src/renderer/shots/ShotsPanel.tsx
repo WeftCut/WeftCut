@@ -6,8 +6,9 @@
 // Why shots get a Panel and the other analysis capabilities do not: what earns
 // a review surface is whether checking one result costs less than undoing all
 // of them. A shot cut is verified by looking at one frame pair, and the detector
-// really does misfire — so review pays. Silence has to be listened to and a
-// transcript has to be read (and then edited), which is why neither gets one.
+// really does misfire — so review pays. A pause has to be listened to and a
+// transcript has to be read (and then edited), which is why neither gets one —
+// pauses are reviewed in place, on the clip's own waveform.
 //
 // The Panel follows the primary selected VideoClip and NEVER scans on selection:
 // clicking clips is the highest-frequency gesture in the app, and the floor scan

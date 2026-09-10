@@ -2,10 +2,10 @@
 // not — plus transcription's own extra condition on top of that.
 //
 // Two layers, because two features ask the same first question: the
-// `AudioClipState` half is the material's own gate (the silence entry reads it
-// too), and `AutoCaptionState` is that verdict plus "a transcription is already
-// running". The generic half stays here rather than moving to a module of its
-// own so there is one place to look for it.
+// `AudioClipState` half is the material's own gate (the pause entry builds on
+// it too), and `AutoCaptionState` is that verdict plus "a transcription is
+// already running". The generic half stays here rather than moving to a module
+// of its own so there is one place to look for it.
 //
 // The sibling of `timeline/groupEligibility.ts`, and the same three shapes for
 // the same two reasons: a Dock Panel cannot read Timeline's locals and has to
@@ -37,9 +37,10 @@ const NO_TRACKS: readonly TrackSummary[] = [];
 
 /// Whether the selection is a clip whose AUDIO can be analyzed — the half of
 /// the verdict that is not about transcription at all, and the reason it is
-/// named for the material rather than for one of its readers: silence detection
-/// asks the identical question (`commands/silenceCommands.ts`), and two copies
-/// of it would be two answers to "does this clip have usable audio".
+/// named for the material rather than for one of its readers: pause detection
+/// asks the identical first question (`commands/pauseCommands.ts`, which adds
+/// one condition of its own on top), and two copies of it would be two answers
+/// to "does this clip have usable audio".
 ///
 /// `ok` is the live direction; the rest are the disabled reasons, and each
 /// reader owns its own wording for them because the instruction differs by verb.
@@ -98,8 +99,8 @@ export function audioClipState(
   // and an Audio layer has no speed field at all, so this is the whole check
   // rather than a partial one that leaves Rust to catch the rest.
   //
-  // It is the SAME wall for silence: `detect_silences` maps source time onto the
-  // timeline by one addition, with no speed factor, so a re-timed clip's ranges
+  // It is the SAME wall for pauses: `detect_pauses` maps source time onto the
+  // timeline by one addition, with no speed factor, so a re-timed clip's pauses
   // would be marked at times its audio never reaches.
   if (params.kind === "VideoClip" && params.speed !== 1) return "speed_not_one";
   return "ok";

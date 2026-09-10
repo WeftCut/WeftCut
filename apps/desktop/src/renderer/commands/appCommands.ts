@@ -40,7 +40,7 @@ import { canMoveSelectionToRoot } from "../timeline/moveToCompositionEligibility
 import { canRippleDeleteSelection } from "../timeline/rippleEligibility";
 import { canDescribeSelection } from "./describeCommands";
 import { canOpenSelectedGroup } from "./groupCommands";
-import { canDetectSilencesSelection } from "./silenceCommands";
+import { canDetectPausesSelection } from "./pauseCommands";
 import { canAutoCaptionSelection } from "./speechCommands";
 import { currentOpenComposition, useProjectStore } from "../state/projectStore";
 import {
@@ -417,9 +417,10 @@ export function buildAppCommands(
     // one of its own: the gate also stands the command down while a run is in
     // flight, and nothing rebuilds the catalogue when a transcription starts.
     autoCaptionSelected: canAutoCaptionSelection,
-    // The same shared audio-clip gate, minus transcription's in-flight
-    // condition (`commands/silenceCommands.ts` says why it is not folded in).
-    detectSilencesSelected: canDetectSilencesSelection,
+    // The shared audio-clip gate plus the one condition that belongs to
+    // pauses alone: a clip whose sound nothing plays has no subject to measure
+    // (`commands/pauseCommands.ts`).
+    detectPausesSelected: canDetectPausesSelection,
     // The picture-clip gate, one notch narrower than the audio one above: a
     // description reads FRAMES, so an Audio layer the two rows above accept is
     // the wrong kind here (`describe/describeEligibility.ts`).

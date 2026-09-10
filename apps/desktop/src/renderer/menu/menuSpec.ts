@@ -109,7 +109,7 @@ export const EDIT_MENU: MenuSection = {
     "---",
     // Clip analysis and speech. Last in Edit and in their own group because
     // these are the rows that ask a question ABOUT the material rather than
-    // editing it — listen to a clip, measure its silence, look at its content,
+    // editing it — listen to a clip, measure its pauses, look at its content,
     // speak a script — and none of them belongs beside the structural edits
     // above. The first three are also on the clip's context menu, which is
     // their pointer home; voiceover is only here and in the palette, because it
@@ -120,7 +120,7 @@ export const EDIT_MENU: MenuSection = {
     // answer is prose rather than a timeline edit, and the one that costs ~20 s
     // of local model time.
     "autoCaptionSelected",
-    "detectSilencesSelected",
+    "detectPausesSelected",
     "describeSelected",
     "openVoiceoverDialog",
   ],
