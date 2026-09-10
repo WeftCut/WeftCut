@@ -9,7 +9,7 @@
 //! - `tools`    — native/compute/hybrid-compute tools only; mutations are
 //!   served by the TS actor's `MCP_TOOLS` table, never here.
 //! - `resources`— the read-only `project://*` / `media://*` resource readers.
-//! - `prompts`  — user-invokable prompt templates (`cut-silences`).
+//! - `prompts`  — user-invokable prompt templates (`cut-pauses`).
 //! - `catalog`  — the `tool_table!` macro feeding BOTH the advertised schemas
 //!   and the name→handler dispatch (native/compute/hybrid only).
 //!

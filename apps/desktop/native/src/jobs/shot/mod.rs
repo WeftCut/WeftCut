@@ -444,7 +444,7 @@ pub fn is_report_cached(cache: &CacheLayout, media: &MediaItem, opts: &ShotOpts)
 }
 
 /// Clip a WHOLE-source report to the layer window `[in_us, out_us]` (mirrors how
-/// `detect_silences` clips its regions to the same window). Each whole-source
+/// `detect_pauses` clips its regions to the same window). Each whole-source
 /// shot is intersected with the window: shots with no overlap are dropped,
 /// straddling shots are truncated to the window edge, and the survivors are
 /// re-indexed from 0. Per-shot stats/flags carry over UNCHANGED — they describe

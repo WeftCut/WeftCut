@@ -592,15 +592,22 @@ fn build_pyramid(finest: LevelData) -> Vec<(u32, LevelData)> {
 }
 
 /// Max-abs peaks plus their exact PCM timebase for compatibility consumers
-/// such as silence detection and the legacy whole-waveform command.
+/// such as pause detection and the legacy whole-waveform command.
 pub struct PeaksFile {
     pub peaks: Vec<f32>,
     pub sample_rate: u32,
     pub frames_per_peak: u32,
 }
 
+/// One max-abs track folded across EVERY channel of the level nearest
+/// 100 peaks/sec. The fold is load-bearing: a dual-mono take with the voice on
+/// one channel only reads as end-to-end quiet when a consumer looks at channel
+/// 0 alone, so pause detection would swallow the whole clip.
 pub fn read_peaks_file(path: &std::path::Path) -> Result<PeaksFile> {
     let header = read_header(path)?;
+    if header.channels == 0 {
+        anyhow::bail!("peaks file has no channels");
+    }
     // Pick the level nearest 100 peaks/sec while remaining at or above it.
     // Crucially, return that level's exact rational timebase rather than
     // resampling it to a nominal integer rate.
@@ -613,13 +620,13 @@ pub fn read_peaks_file(path: &std::path::Path) -> Result<PeaksFile> {
         .map(|(i, l)| (i, *l))
         .unwrap_or((0, header.levels[0]));
 
-    let range = read_range(path, level_idx, 0, 0, level.peak_count)?;
-    let peaks = range
-        .min
-        .iter()
-        .zip(&range.max)
-        .map(|(&min, &max)| dequantize(min).abs().max(dequantize(max).abs()))
-        .collect();
+    let mut peaks = vec![0.0f32; level.peak_count as usize];
+    for ch in 0..header.channels as usize {
+        let range = read_range(path, level_idx, ch, 0, level.peak_count)?;
+        for (slot, (&min, &max)) in peaks.iter_mut().zip(range.min.iter().zip(&range.max)) {
+            *slot = slot.max(dequantize(min).abs().max(dequantize(max).abs()));
+        }
+    }
     Ok(PeaksFile {
         peaks,
         sample_rate: header.sample_rate,
@@ -859,6 +866,43 @@ mod tests {
 
         // Out-of-range channel is an error, not a silent clamp.
         assert!(read_range(&path, 0, 5, 0, 2).is_err());
+    }
+
+    /// A dual-mono take with the voice on the right channel only: reading
+    /// channel 0 alone reports digital quiet end to end, which pause detection
+    /// would then swallow whole. The fold across channels is what keeps the
+    /// speech visible.
+    #[test]
+    fn read_peaks_file_folds_every_channel() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("right-only.v4.peaks");
+
+        let silent_left = vec![0i16; 4];
+        let loud_right = vec![i16::MAX / 2; 4];
+        let level = LevelData {
+            channels: 2,
+            peak_count: 4,
+            mins: vec![silent_left.clone(), loud_right.iter().map(|v| -v).collect()],
+            maxs: vec![silent_left, loud_right],
+            rmss: vec![vec![0; 4], vec![u16::MAX / 2; 4]],
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async { write_peaks(&path, 2, &[(BASE_FRAMES_PER_PEAK, level)]).await })
+            .unwrap();
+
+        let file = read_peaks_file(&path).expect("read folded peaks");
+        assert_eq!(file.peaks.len(), 4);
+        assert_eq!(file.sample_rate, SAMPLE_RATE);
+        assert_eq!(file.frames_per_peak, BASE_FRAMES_PER_PEAK);
+        for p in &file.peaks {
+            assert!(
+                (*p - 0.5).abs() < 0.01,
+                "right-channel speech must survive the fold, got {p}"
+            );
+        }
     }
 
     #[test]

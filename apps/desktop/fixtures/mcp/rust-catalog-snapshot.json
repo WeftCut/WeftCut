@@ -57,17 +57,25 @@
       }
     },
     {
-      "name": "detect_silences",
-      "description": "Find silent regions in a VideoClip or Audio layer using the pre-computed waveform. Walks the layer's VPEAKS file using its exact PCM timebase and returns timeline-absolute ranges where every peak stays below `threshold_amp` for at least `min_silence_us` microseconds. Defaults: `threshold_amp=0.02` (-34 dBFS), `min_silence_us=500000` (0.5s). Use the returned ranges to feed `split_layer` + `delete_layer` and produce a tighter cut. Returns `[{ t_start_us, t_end_us }, ...]` sorted by t_start_us. Errors with `NotReady` if the waveform job hasn't finished yet — wait for a `media:job_complete` event with `kind=waveform` and retry.",
+      "name": "detect_pauses",
+      "description": "Find the pauses in a clip's audio — the stretches nobody is speaking — using the pre-computed waveform. Commits nothing: it measures and reports, and the write is yours to make with `remove_pauses` or `add_marker`. Walks the layer's VPEAKS file on its exact PCM timebase, folding EVERY channel (a dual-mono take with the voice on one side only would otherwise read as quiet end to end), and returns the timeline-absolute ranges where every peak stays below `threshold_amp` for at least `min_pause_us` microseconds. `bridge_us` keeps one pause whole across a short interruption: a loud run shorter than it does not end the pause, so a click, a cough or lip noise no longer splits one pause into two halves that are each under the minimum and both disappear. Defaults: `threshold_amp=0.02` (-34 dBFS), `min_pause_us=500000` (0.5s), `bridge_us=80000` (80ms — no syllable is that short). `bridge_us` must be below `min_pause_us`. Returns `{ pauses: [{ t_start_us, t_end_us }, ...], noise_floor_amp, peaks_source }`: `pauses` sorted by `t_start_us`; `noise_floor_amp` is the 10th percentile of the peaks inside the clip's source window (0.0 when it holds none) — the referent for a threshold, which reads well at roughly the floor plus 6 dB; `peaks_source` is `\"raw\"` or `\"fx\"`, naming whether the numbers came from the media's own waveform or from its baked effect chain, which is what the mixer plays once a chain is baked. Pass either an Audio layer or the VideoClip that plays it — a VideoClip is resolved to the Audio layer of its link, because only an Audio layer reaches the mixer, and a clip that plays no sound is refused saying so. Errors if the waveform job hasn't finished yet — wait for a `media:job_complete` event with `kind=waveform` and retry.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "bridge_us": {
+            "description": "A loud run shorter than this INSIDE a quiet run does not end the pause,\nin microseconds. Default 80000 (80ms) — long enough to swallow a click,\na cough or lip noise, short enough that no syllable fits. Must be ≥ 0\nand strictly below `min_pause_us`.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "layer_id": {
-            "description": "Target VideoClip or Audio layer id.",
+            "description": "Target Audio layer id. A VideoClip id is accepted by the host, which\nresolves it to the Audio layer of its link before the call.",
             "type": "string"
           },
-          "min_silence_us": {
-            "description": "Minimum contiguous silence duration (microseconds) to surface.\nDefault 500000 (0.5 seconds).",
+          "min_pause_us": {
+            "description": "Shortest pause to surface, in microseconds. Default 500000 (0.5s).",
             "format": "int64",
             "type": [
               "integer",
@@ -75,7 +83,7 @@
             ]
           },
           "threshold_amp": {
-            "description": "Peak amplitude threshold in [0.0, 1.0]. Anything strictly below this\ncounts as silence. Default 0.02 (≈ -34 dBFS).",
+            "description": "Peak amplitude threshold in [0.0, 1.0]. Anything strictly below this\ncounts as quiet. Default 0.02 (≈ -34 dBFS).",
             "format": "float",
             "type": [
               "number",
@@ -86,7 +94,7 @@
         "required": [
           "layer_id"
         ],
-        "title": "DetectSilencesArgs",
+        "title": "DetectPausesArgs",
         "type": "object"
       }
     },
@@ -433,12 +441,12 @@
   ],
   "prompts": [
     {
-      "name": "cut-silences",
-      "description": "Cut the silent regions out of a clip and close the gaps, tightening it. Or mark them first, to review every gap on the ruler before any of it goes.",
+      "name": "cut-pauses",
+      "description": "Cut the pauses out of a clip and close the gaps, tightening it. Or mark them first, to review every pause on the ruler before any of it goes.",
       "arguments": [
         {
           "name": "layer_id",
-          "description": "Target VideoClip or Audio layer id.",
+          "description": "Target Audio layer id, or the VideoClip that plays it — a VideoClip is resolved to the Audio layer of its link.",
           "required": true
         },
         {
@@ -447,8 +455,13 @@
           "required": false
         },
         {
-          "name": "min_silence_us",
-          "description": "Minimum silence duration to cut, in microseconds. Default 500000 (0.5s).",
+          "name": "min_pause_us",
+          "description": "Shortest pause to cut, in microseconds. Default 500000 (0.5s).",
+          "required": false
+        },
+        {
+          "name": "pad_us",
+          "description": "Microseconds of each pause kept on EACH side when removing. Default 100000 (100ms); 0 erases each pause whole.",
           "required": false
         }
       ]

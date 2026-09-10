@@ -144,6 +144,12 @@ pub struct ProjectSettings {
     /// would vanish silently on the way through.
     #[serde(default)]
     pub shot_review: Option<ShotReviewSettings>,
+    /// The Pauses section's detection parameters, or `None` for the detector's
+    /// own defaults. **TS owns and reads it** (`state/model.ts`
+    /// `PauseReviewSettings`); Rust only round-trips it, for the same reason
+    /// `shot_review` is declared here.
+    #[serde(default)]
+    pub pause_review: Option<PauseReviewSettings>,
 }
 
 /// Twin of TS `ShotReviewSettings`: the threshold and minimum shot length a
@@ -153,6 +159,19 @@ pub struct ProjectSettings {
 pub struct ShotReviewSettings {
     pub sensitivity: f32,
     pub min_shot_us: i64,
+}
+
+/// Twin of TS `PauseReviewSettings`: the three knobs the Pauses section tunes.
+/// One recording session is one project, so the parameters belong to the
+/// project rather than to the app. `threshold_amp` is an `f32` like
+/// `DetectPausesArgs::threshold_amp` — amplitude, not the dB the UI shows — so
+/// the value a project stores is the value the detector would be handed.
+/// `pad_us` is per side, and the actor holds `2 × pad_us < min_pause_us`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PauseReviewSettings {
+    pub threshold_amp: f32,
+    pub min_pause_us: i64,
+    pub pad_us: i64,
 }
 
 fn default_auto_pair_audio_on_import() -> bool {
@@ -199,6 +218,7 @@ impl Default for ProjectSettings {
             prefer_proxies: false,
             proxy_overrides: Default::default(),
             shot_review: None,
+            pause_review: None,
         }
     }
 }
@@ -229,6 +249,39 @@ mod shot_review_tests {
         let json = serde_json::to_string(&p).unwrap();
         let back: Project = serde_json::from_str(&json).unwrap();
         assert_eq!(back.settings.shot_review, Some(reviewed));
+    }
+}
+
+#[cfg(test)]
+mod pause_review_tests {
+    use super::*;
+
+    /// A project written before the field existed carries no `pause_review`; it
+    /// reads as the detector's defaults, the same `null` TS backfills.
+    #[test]
+    fn missing_pause_review_reads_as_none() {
+        let p = Project::new_blank("t");
+        let mut v = serde_json::to_value(&p).unwrap();
+        v["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("pause_review");
+        let back: Project = serde_json::from_value(v).unwrap();
+        assert_eq!(back.settings.pause_review, None);
+    }
+
+    #[test]
+    fn pause_review_round_trips_the_triple_ts_writes() {
+        let mut p = Project::new_blank("t");
+        let reviewed = PauseReviewSettings {
+            threshold_amp: 0.02,
+            min_pause_us: 500_000,
+            pad_us: 100_000,
+        };
+        p.settings.pause_review = Some(reviewed.clone());
+        let json = serde_json::to_string(&p).unwrap();
+        let back: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.settings.pause_review, Some(reviewed));
     }
 }
 

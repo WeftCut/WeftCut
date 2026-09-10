@@ -1,4 +1,4 @@
-//! MCP prompts surface — `cut-silences`, `auto-caption`, `voiceover`. Owns the
+//! MCP prompts surface — `cut-pauses`, `auto-caption`, `voiceover`. Owns the
 //! advertised prompt catalog (`catalog`) and the per-call expansion (`expand`);
 //! the cloud-backed `auto-caption` / `voiceover` exist only under
 //! `#[cfg(feature = "speech")]`.
@@ -12,7 +12,7 @@ use super::wire::{
     ContentBlock, McpToolError, PromptArgDef, PromptDef, PromptMessage, PromptResult, PromptRole,
 };
 
-pub const NAME_CUT_SILENCES: &str = "cut-silences";
+pub const NAME_CUT_PAUSES: &str = "cut-pauses";
 #[cfg(feature = "speech")]
 pub const NAME_AUTO_CAPTION: &str = "auto-caption";
 #[cfg(feature = "speech")]
@@ -21,16 +21,20 @@ pub const NAME_VOICEOVER: &str = "voiceover";
 /// Static prompt catalog; re-exported as `list_prompts`.
 pub(crate) fn catalog() -> Vec<PromptDef> {
     let mut prompts = vec![PromptDef {
-        name: NAME_CUT_SILENCES.into(),
+        name: NAME_CUT_PAUSES.into(),
         description: Some(
-            "Cut the silent regions out of a clip and close the gaps, tightening it. Or mark \
-             them first, to review every gap on the ruler before any of it goes."
+            "Cut the pauses out of a clip and close the gaps, tightening it. Or mark \
+             them first, to review every pause on the ruler before any of it goes."
                 .into(),
         ),
         arguments: vec![
             PromptArgDef {
                 name: "layer_id".into(),
-                description: Some("Target VideoClip or Audio layer id.".into()),
+                description: Some(
+                    "Target Audio layer id, or the VideoClip that plays it — a VideoClip is \
+                     resolved to the Audio layer of its link."
+                        .into(),
+                ),
                 required: true,
             },
             PromptArgDef {
@@ -41,9 +45,17 @@ pub(crate) fn catalog() -> Vec<PromptDef> {
                 required: false,
             },
             PromptArgDef {
-                name: "min_silence_us".into(),
+                name: "min_pause_us".into(),
                 description: Some(
-                    "Minimum silence duration to cut, in microseconds. Default 500000 (0.5s)."
+                    "Shortest pause to cut, in microseconds. Default 500000 (0.5s).".into(),
+                ),
+                required: false,
+            },
+            PromptArgDef {
+                name: "pad_us".into(),
+                description: Some(
+                    "Microseconds of each pause kept on EACH side when removing. Default 100000 \
+                     (100ms); 0 erases each pause whole."
                         .into(),
                 ),
                 required: false,
@@ -125,14 +137,14 @@ pub(crate) fn expand(
     args: Option<&Map<String, Value>>,
 ) -> Result<PromptResult, McpToolError> {
     match name {
-        NAME_CUT_SILENCES => expand_cut_silences(args),
+        NAME_CUT_PAUSES => expand_cut_pauses(args),
         #[cfg(feature = "speech")]
         NAME_AUTO_CAPTION => expand_auto_caption(args),
         #[cfg(feature = "speech")]
         NAME_VOICEOVER => expand_voiceover(args),
         other => Err(McpToolError::invalid_params(
             format!(
-                "unknown prompt '{other}'; available: cut-silences{}",
+                "unknown prompt '{other}'; available: cut-pauses{}",
                 if cfg!(feature = "speech") {
                     ", auto-caption, voiceover"
                 } else {
@@ -144,37 +156,46 @@ pub(crate) fn expand(
     }
 }
 
-fn expand_cut_silences(args: Option<&Map<String, Value>>) -> Result<PromptResult, McpToolError> {
+fn expand_cut_pauses(args: Option<&Map<String, Value>>) -> Result<PromptResult, McpToolError> {
     let layer_id = require_str(args, "layer_id")?;
     let threshold = optional_str(args, "threshold_amp");
-    let min_silence = optional_str(args, "min_silence_us");
+    let min_pause = optional_str(args, "min_pause_us");
+    let pad = optional_str(args, "pad_us");
 
+    // The detection args both routes share; `pad_us` shapes the cut only, so it
+    // rides along with `remove_pauses` and never with `detect_pauses`.
     let mut extra = String::new();
     if let Some(t) = &threshold {
         extra.push_str(&format!(", `threshold_amp: {t}`"));
     }
-    if let Some(m) = &min_silence {
-        extra.push_str(&format!(", `min_silence_us: {m}`"));
+    if let Some(m) = &min_pause {
+        extra.push_str(&format!(", `min_pause_us: {m}`"));
+    }
+    let mut remove_extra = extra.clone();
+    if let Some(p) = &pad {
+        remove_extra.push_str(&format!(", `pad_us: {p}`"));
     }
 
     let text = format!(
-"Cut the silent gaps out of layer `{layer_id}` and close them.
+"Cut the pauses out of layer `{layer_id}` and close them.
 
 Steps:
-1. Call `remove_silences` with `layer_id: \"{layer_id}\"`{extra}. It walks the pre-computed waveform peaks, splits the clip at the edges of every silent stretch, deletes those stretches and closes the gaps behind them, all as ONE recorded edit — a single undo puts the clip back whole. It returns `{{ surviving_layer_ids, removed, removed_us }}`: what is left of the clip in timeline order, how many silent stretches went, and how much time went with them. Linked audio/video partners travel with each removed slice, so no orphaned sliver is left behind. If the tool errors with a `waveform not generated yet` message, wait for the corresponding `media:job_complete` event (kind=waveform) and retry — imports run in the background.
-2. Report how many silent stretches were removed and how much shorter the clip is.
+1. Call `remove_pauses` with `layer_id: \"{layer_id}\"`{remove_extra}. It walks the pre-computed waveform peaks, splits the clip at the edges of every pause, deletes them and closes the gaps behind them, all as ONE recorded edit — a single undo puts the clip back whole. Each pause keeps `pad_us` on EACH side (default 100000 — 100 ms; pass 0 to erase pauses whole), so speech keeps its breath and a soft word onset is not clipped off. It returns `{{ surviving_layer_ids, removed, removed_us }}`: what is left of the clip in timeline order, how many pauses went, and how much time went with them. Linked audio/video partners travel with each removed slice, so no orphaned sliver is left behind. If the tool errors with a `waveform not generated yet` message, wait for the corresponding `media:job_complete` event (kind=waveform) and retry — imports run in the background.
+2. Report how many pauses were removed and how much shorter the clip is.
 
-A refusal is whole and lands before any write, so the clip comes back UNSPLIT with nothing recorded — fix what it names and call again. `RippleInsideHole` means a layer on another track STARTS inside one of the silent stretches, so the gap cannot close over it: either ripple that layer away too, or take the review-first route below and let the human decide. `RippleCollision`, `RippleLinkStraddles` and `RippleLockedLayer` / `TrackLocked` each name the layer that blocked. `InvalidArgument` means the clip is silent end to end — removing every part of it is a `delete_layer` (or `ripple_delete_layers`), not an edit to it.
+A refusal is whole and lands before any write, so the clip comes back UNSPLIT with nothing recorded — fix what it names and call again. `RippleInsideHole` means a layer on another track STARTS inside one of the pauses, so the gap cannot close over it: either ripple that layer away too, or take the review-first route below and let the human decide. `RippleCollision`, `RippleLinkStraddles` and `RippleLockedLayer` / `TrackLocked` each name the layer that blocked. `InvalidArgument` means the clip is one pause end to end — removing every part of it is a `delete_layer` (or `ripple_delete_layers`), not an edit to it — or that `pad_us` is too large for `min_pause_us`, which needs `2 × pad_us` to stay below it.
 
-REVIEW FIRST — the alternative when the gaps should be seen before any of them goes:
-1. Call `detect_silences` with `layer_id: \"{layer_id}\"`{extra}. Same walk over the same peaks, but it commits nothing: it returns timeline-absolute `[{{ t_start_us, t_end_us }}, ...]` ranges where the audio is below threshold for the requested duration.
-2. For each region, call `add_marker` with `t_us: <region.t_start_us>` and `end_t_us: <region.t_end_us>` — setting `end_t_us` is what makes it a REGION marker spanning the gap rather than a point at its start. Pass `anchor_layer_id: \"{layer_id}\"` so the mark follows the clip's material instead of standing at a fixed timeline instant: a ripple upstream then moves it with the audio it describes, and trimming the clip past a marked gap hibernates that mark rather than stranding it somewhere it means nothing. One call per region, each its own history entry.
-3. Report how many silent regions were marked and their total duration, and leave what becomes of them to the human.
+REVIEW FIRST — the alternative when the pauses should be seen before any of them goes:
+1. Call `detect_pauses` with `layer_id: \"{layer_id}\"`{extra}. Same walk over the same peaks, but it commits nothing: it returns `{{ pauses: [{{ t_start_us, t_end_us }}, ...], noise_floor_amp, peaks_source }}` — timeline-absolute ranges where the audio stays below threshold for the requested duration, the measured noise floor, and which peaks file the numbers came from. If it finds nothing, `noise_floor_amp` says why: a threshold near the floor plus 6 dB is the one that reads pauses as a listener would.
+2. For each pause, call `add_marker` with `t_us: <pause.t_start_us>` and `end_t_us: <pause.t_end_us>` — setting `end_t_us` is what makes it a REGION marker spanning the pause rather than a point at its start. Pass `anchor_layer_id: \"{layer_id}\"` so the mark follows the clip's material instead of standing at a fixed timeline instant: a ripple upstream then moves it with the audio it describes, and trimming the clip past a marked pause hibernates that mark rather than stranding it somewhere it means nothing. One call per pause, each its own history entry.
+3. Report how many pauses were marked and their total duration, and leave what becomes of them to the human.
 
-Defaults if the agent leaves args off: threshold_amp = 0.02 (-34 dBFS), min_silence_us 500ms — tuned for podcast-style speech with quick breath-pause cuts. Loosen for music (lower threshold, longer min) or tighten for talking-head (higher threshold)."
+Defaults if the agent leaves args off: threshold_amp = 0.02 (-34 dBFS), min_pause_us 500 ms, pad_us 100 ms per side, bridge_us 80 ms — tuned for podcast-style speech with quick breath-pause cuts. Loosen for music (lower threshold, longer min) or tighten for talking-head (higher threshold)."
     );
     Ok(PromptResult {
-        description: Some("Remove the silent regions from a clip, closing each gap; or mark them to review first.".into()),
+        description: Some(
+            "Remove the pauses from a clip, closing each gap; or mark them to review first.".into(),
+        ),
         messages: vec![PromptMessage {
             role: PromptRole::User,
             content: ContentBlock::Text { text },
@@ -283,35 +304,37 @@ mod tests {
     }
 
     #[test]
-    fn catalog_lists_cut_silences_with_required_args_marked() {
+    fn catalog_lists_cut_pauses_with_required_args_marked() {
         let cat = catalog();
         #[cfg(not(feature = "speech"))]
         assert_eq!(cat.len(), 1);
         #[cfg(feature = "speech")]
         assert_eq!(cat.len(), 3);
 
-        let cs = cat.iter().find(|p| p.name == NAME_CUT_SILENCES).unwrap();
+        let cs = cat.iter().find(|p| p.name == NAME_CUT_PAUSES).unwrap();
         let layer = cs.arguments.iter().find(|a| a.name == "layer_id").unwrap();
         assert!(layer.required);
-        let threshold = cs
-            .arguments
-            .iter()
-            .find(|a| a.name == "threshold_amp")
-            .unwrap();
-        assert!(!threshold.required);
+        for optional in ["threshold_amp", "min_pause_us", "pad_us"] {
+            let arg = cs
+                .arguments
+                .iter()
+                .find(|a| a.name == optional)
+                .unwrap_or_else(|| panic!("{optional} must be advertised"));
+            assert!(!arg.required);
+        }
     }
 
     #[test]
-    fn cut_silences_interpolates_layer_id_and_names_both_recipes() {
+    fn cut_pauses_interpolates_layer_id_and_names_both_recipes() {
         let a = args(&[("layer_id", json!("xyz-789"))]);
-        let result = expand(NAME_CUT_SILENCES, Some(&a)).expect("expand");
+        let result = expand(NAME_CUT_PAUSES, Some(&a)).expect("expand");
         let body = message_text(&result.messages[0]);
         assert!(body.contains("`xyz-789`"));
         // Two recipes over one detection, and the prompt carries both: the cut
         // is the answer it leads with, the mark is the review-first fallback.
-        assert!(body.contains("remove_silences"));
-        assert!(body.contains("detect_silences"));
-        // `end_t_us` is what makes each mark a region spanning the gap rather
+        assert!(body.contains("remove_pauses"));
+        assert!(body.contains("detect_pauses"));
+        // `end_t_us` is what makes each mark a region spanning the pause rather
         // than a point at its start, and the anchor is what keeps it tied to the
         // audio it describes. Drop either and the marks stop meaning what the
         // prompt says they mean.
@@ -320,22 +343,37 @@ mod tests {
         assert!(body.contains("anchor_layer_id"));
     }
 
+    /// Pad is what makes *Remove* keep part of each pause instead of erasing
+    /// it, so the defaults paragraph has to name it — and the bridge — or an
+    /// agent tunes only the two knobs the old prompt knew about.
+    #[test]
+    fn cut_pauses_names_the_pad_and_bridge_defaults() {
+        let a = args(&[("layer_id", json!("xyz"))]);
+        let result = expand(NAME_CUT_PAUSES, Some(&a)).expect("expand");
+        let body = message_text(&result.messages[0]);
+        assert!(body.contains("pad_us"));
+        assert!(body.contains("100000"), "the pad default, in µs");
+        assert!(body.contains("pass 0 to erase pauses whole"));
+        assert!(body.contains("bridge_us 80 ms"));
+        assert!(body.contains("min_pause_us 500 ms"));
+    }
+
     /// This prompt could not keep its own name while the editor had no ripple
     /// delete: split then split then `delete_layer` left a gap exactly as long
     /// as what it removed — audibly identical to doing nothing — so the recipe
     /// marked, the blurb said so, and a "DO NOT split and delete" instruction
-    /// stood in for the missing primitive. `remove_silences` is that primitive
+    /// stood in for the missing primitive. `remove_pauses` is that primitive
     /// (ADR 0062), and every pin moves with it: the recipe cuts, the warning is
     /// gone, and the blurb may promise tightening because it now delivers it.
     /// The marking recipe stays pinned as the review-first alternative, so
     /// neither half can quietly drop out of the prompt.
     #[test]
-    fn cut_silences_cuts_the_gaps_and_keeps_marking_as_the_alternative() {
+    fn cut_pauses_cuts_the_gaps_and_keeps_marking_as_the_alternative() {
         let a = args(&[("layer_id", json!("xyz"))]);
-        let result = expand(NAME_CUT_SILENCES, Some(&a)).expect("expand");
+        let result = expand(NAME_CUT_PAUSES, Some(&a)).expect("expand");
         let body = message_text(&result.messages[0]);
         assert!(
-            body.contains("remove_silences"),
+            body.contains("remove_pauses"),
             "the recipe must reach the primitive that actually closes the gap"
         );
         assert!(
@@ -343,7 +381,7 @@ mod tests {
             "the instruction that stood in for a missing primitive must not outlive it"
         );
         // The review-first half, intact.
-        assert!(body.contains("detect_silences"));
+        assert!(body.contains("detect_pauses"));
         assert!(body.contains("add_marker"));
         assert!(body.contains("end_t_us"));
         assert!(body.contains("anchor_layer_id"));
@@ -351,8 +389,8 @@ mod tests {
         let listed = catalog();
         let cs = listed
             .iter()
-            .find(|p| p.name == NAME_CUT_SILENCES)
-            .expect("cut-silences in catalog");
+            .find(|p| p.name == NAME_CUT_PAUSES)
+            .expect("cut-pauses in catalog");
         let desc = cs.description.as_deref().unwrap_or_default();
         assert!(
             !desc.contains("does not have"),
@@ -368,17 +406,29 @@ mod tests {
         );
     }
 
+    /// `pad_us` shapes the cut, not the detection, so it must reach
+    /// `remove_pauses` and stay off the `detect_pauses` call the review-first
+    /// route makes — an argument that tool does not take.
     #[test]
-    fn cut_silences_passes_through_optional_thresholds() {
+    fn cut_pauses_passes_through_optional_args_to_the_tool_that_takes_them() {
         let a = args(&[
             ("layer_id", json!("xyz")),
             ("threshold_amp", json!("0.05")),
-            ("min_silence_us", json!("1000000")),
+            ("min_pause_us", json!("1000000")),
+            ("pad_us", json!("200000")),
         ]);
-        let result = expand(NAME_CUT_SILENCES, Some(&a)).expect("expand");
+        let result = expand(NAME_CUT_PAUSES, Some(&a)).expect("expand");
         let body = message_text(&result.messages[0]);
         assert!(body.contains("`threshold_amp: 0.05`"));
-        assert!(body.contains("`min_silence_us: 1000000`"));
+        assert!(body.contains("`min_pause_us: 1000000`"));
+        assert_eq!(
+            body.matches("`pad_us: 200000`").count(),
+            1,
+            "pad_us belongs to the remove call only"
+        );
+        let (remove_half, review_half) = body.split_once("REVIEW FIRST").expect("both halves");
+        assert!(remove_half.contains("`pad_us: 200000`"));
+        assert!(!review_half.contains("`pad_us: 200000`"));
     }
 
     #[test]
@@ -388,8 +438,8 @@ mod tests {
     }
 
     #[test]
-    fn cut_silences_requires_layer_id() {
-        let err = expand(NAME_CUT_SILENCES, None).expect_err("missing layer_id");
+    fn cut_pauses_requires_layer_id() {
+        let err = expand(NAME_CUT_PAUSES, None).expect_err("missing layer_id");
         assert!(format!("{err}").contains("layer_id"));
     }
 

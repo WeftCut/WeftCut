@@ -1616,18 +1616,18 @@ mod tests {
         );
     }
 
-    /// `detect_silences` resolves from the injected `layer` arg, NOT a mirror.
+    /// `detect_pauses` resolves from the injected `layer` arg, NOT a mirror.
     /// With no injected layer it reports "layer not found" (`args.layer ==
     /// None`); a mirror-backed regression would report "read-mirror not set"
     /// instead — the negative assert below discriminates exactly that.
     #[cfg(all(feature = "jobs", feature = "mcp"))]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn detect_silences_resolves_injected_layer_not_mirror() {
+    async fn detect_pauses_resolves_injected_layer_not_mirror() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
         let reply: serde_json::Value = serde_json::from_str(
             &b.mcp_call_tool(
-                "detect_silences".into(),
+                "detect_pauses".into(),
                 r#"{"layer_id":"00000000-0000-0000-0000-000000000000"}"#.into(),
             )
             .await
@@ -1638,7 +1638,7 @@ mod tests {
         let msg = reply["error"]["message"].as_str().unwrap_or("");
         assert!(
             msg.contains("not found") && !msg.contains("read-mirror"),
-            "detect_silences must resolve from the injected layer, not the mirror; got: {msg}"
+            "detect_pauses must resolve from the injected layer, not the mirror; got: {msg}"
         );
     }
 
@@ -1758,7 +1758,7 @@ mod tests {
             );
         }
 
-        // detect_silences / transcribe_clip never read a mirror — the TS MCP
+        // detect_pauses / transcribe_clip never read a mirror — the TS MCP
         // host passes the { layer, media } slice resolve_clip_audio_source
         // needs.
         assert!(

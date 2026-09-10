@@ -50,15 +50,31 @@ tool_table! {
                           Advanced ASS styling (karaoke, drawings) is simplified. \
                           Returns the new caption track id.", tools::ApplySubtitlesArgs, tools::apply_subtitles),
     #[cfg(feature = "jobs")]
-    "detect_silences" => ("Find silent regions in a VideoClip or Audio layer using the pre-computed \
-                          waveform. Walks the layer's VPEAKS file using its exact PCM timebase and \
-                          returns timeline-absolute ranges where every peak stays below `threshold_amp` \
-                          for at least `min_silence_us` microseconds. Defaults: `threshold_amp=0.02` \
-                          (-34 dBFS), `min_silence_us=500000` (0.5s). Use the returned ranges to feed \
-                          `split_layer` + `delete_layer` and produce a tighter cut. \
-                          Returns `[{ t_start_us, t_end_us }, ...]` sorted by t_start_us. Errors with \
-                          `NotReady` if the waveform job hasn't finished yet — wait for a \
-                          `media:job_complete` event with `kind=waveform` and retry.", tools::DetectSilencesArgs, tools::detect_silences),
+    "detect_pauses" => ("Find the pauses in a clip's audio — the stretches nobody is speaking — using \
+                          the pre-computed waveform. Commits nothing: it measures and reports, and the \
+                          write is yours to make with `remove_pauses` or `add_marker`. Walks the \
+                          layer's VPEAKS file on its exact PCM timebase, folding EVERY channel (a \
+                          dual-mono take with the voice on one side only would otherwise read as quiet \
+                          end to end), and returns the timeline-absolute ranges where every peak stays \
+                          below `threshold_amp` for at least `min_pause_us` microseconds. \
+                          `bridge_us` keeps one pause whole across a short interruption: a loud run \
+                          shorter than it does not end the pause, so a click, a cough or lip noise no \
+                          longer splits one pause into two halves that are each under the minimum and \
+                          both disappear. Defaults: `threshold_amp=0.02` (-34 dBFS), \
+                          `min_pause_us=500000` (0.5s), `bridge_us=80000` (80ms — no syllable is that \
+                          short). `bridge_us` must be below `min_pause_us`. \
+                          Returns `{ pauses: [{ t_start_us, t_end_us }, ...], noise_floor_amp, \
+                          peaks_source }`: `pauses` sorted by `t_start_us`; `noise_floor_amp` is the \
+                          10th percentile of the peaks inside the clip's source window (0.0 when it \
+                          holds none) — the referent for a threshold, which reads well at roughly the \
+                          floor plus 6 dB; `peaks_source` is `\"raw\"` or `\"fx\"`, naming whether the \
+                          numbers came from the media's own waveform or from its baked effect chain, \
+                          which is what the mixer plays once a chain is baked. \
+                          Pass either an Audio layer or the VideoClip that plays it — a VideoClip is \
+                          resolved to the Audio layer of its link, because only an Audio layer reaches \
+                          the mixer, and a clip that plays no sound is refused saying so. \
+                          Errors if the waveform job hasn't finished yet — wait for a \
+                          `media:job_complete` event with `kind=waveform` and retry.", tools::DetectPausesArgs, tools::detect_pauses),
     #[cfg(feature = "jobs")]
     "analyze_clip" => ("Detect shot boundaries in a VideoClip layer and return the shot list plus per-shot \
                           pixel stats. Runs a deterministic detector over the layer's source (preferring the \
@@ -207,10 +223,10 @@ mod tests {
         assert!(cat.tools.iter().any(|t| t.name == "ping"));
         assert!(cat.tools.iter().any(|t| t.name == "apply_subtitles"));
         assert!(cat.resources.iter().any(|r| r.uri == "project://current"));
-        assert!(cat.prompts.iter().any(|p| p.name == "cut-silences"));
+        assert!(cat.prompts.iter().any(|p| p.name == "cut-pauses"));
     }
 
-    /// detect_silences / transcribe_clip carry
+    /// detect_pauses / transcribe_clip carry
     /// serde-deserialized `layer` / `media` slice fields the TS host injects.
     /// `#[schemars(skip)]` MUST keep them out of the advertised tool schema so
     /// agents never see (or try to fill) them.
@@ -218,7 +234,7 @@ mod tests {
     #[test]
     fn injected_slice_fields_are_not_advertised() {
         let cat = catalog();
-        for name in ["detect_silences", "transcribe_clip", "describe_clip"] {
+        for name in ["detect_pauses", "transcribe_clip", "describe_clip"] {
             let tool = cat
                 .tools
                 .iter()
