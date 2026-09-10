@@ -179,16 +179,40 @@ buffer-scheduled graph on one shared `AudioContext`:
 
 ```
 per layer:  AudioBufferSourceNode (chunk)
-              → GainNode        (gain envelope via setValueCurveAtTime)
+              → GainNode        (gain envelope via setValueCurveAtTime;
+                                 the role's gain is folded into it here)
               → ChannelSplitter → 4×GainNode → ChannelMerger
                                 (pan matrix; coefficient curves from the
                                  weftcut-eval pan law — mono uses 2 gains)
               → trim GainNode   (micro-fades, re-anchor masking)
-              → master.input
+              → roleBus(role).gain
+role bus:   gain (UNITY, permanently) → master.input
+              ↘ analyser        (LEAF — the role's meter tap)
 master:     input → analyser (meter) → DynamicsCompressor
               (−1 dB, 20:1, 1 ms attack — soft overload protection)
               → destination
 ```
+
+**Role buses are metering taps.** Each of the four roles owns one
+`GainNode` (`AudioGraph.roleBusInput`) — the single point every member
+layer's chain fans into — with an analyser hanging off it as a **leaf**
+that feeds nothing onward, so a bus adds no processing and cannot alter
+an output sample. Two invariants make that true and keep it true:
+
+- **The bus gain is unity, permanently.** The role's gain is folded onto
+  each member layer's own envelope in `AudioMixer.deriveFromView`, which
+  is the only place it is applied; writing it at the bus as well would
+  apply it twice. Unit tests hold both halves of that: `AudioGraph.test.ts`
+  keeps every bus at unity, and `AudioMixer.test.ts` drives a role gain
+  through the fold and asserts the bus stays there.
+- **A gated role's bus reads true silence.** The skip rules below drop a
+  gated role's layers entirely rather than zeroing them, so nothing
+  reaches the bus and its analyser reports silence without anything
+  asking whether the role is gated.
+
+`roleMeterSnapshot` / `roleMeterSnapshots` read the taps. This is
+deliberately *not* the per-role processing bus the Roles section defers:
+[ADR 0066](adr/0066-a-role-meter-is-a-tap-not-a-bus.md).
 
 **Feeding:** chunks are read straight from the conform file over
 `weftcut-media://` HTTP Range requests (loop-read until the exact byte
@@ -252,8 +276,27 @@ in the export planner `audible_audio_layers`, wasm in the preview gate
 by the `roleGateGolden.fixture.json` cross-language golden. The layer-selection
 loop around it (track + window gating) stays parallel on the two sides.
 
-The master meter (RMS + peak per channel) is surfaced to the dev
-PerfHUD and over MCP for level checks.
+**Meter readings** — master RMS + peak, and per-role RMS + peak — are
+combined-channel; per-channel (L/R) splitting is future work for master
+and roles alike. `state/masterMeterStore.ts` is the single renderer
+publication seam for all of them and owns the silence floor consumers
+threshold against (`SILENCE_DB`, printed as "−∞"). Two publication rates
+share it because they answer different questions: the master push
+(`publishMasterMeter`) is deliberately slow, because that rate is the
+contract of the MCP `composition://meter` resource the same timer
+reports to (`reportAudioMeter`). The dev PerfHUD consumes neither
+rate — it samples `AudioGraph.meterSnapshot` on its own timer. The
+per-role tap (`publishRoleMeters`) samples fast enough for a meter to
+move rather than step, and runs only while a reader holds a ref-counted
+lease (`acquireRoleMeterDemand`) and the transport plays. Both sample
+only while playing, and both publish one silent sample when the
+transport stops (`publishMasterMeterSilent`, `publishRoleMetersSilent`)
+— a held last reading would claim level over a mix that has gone
+silent. That silent sample goes to the store only; the MCP resource
+keeps the reading it was last handed while playing.
+Selectors are scalar (`useRoleRmsDb`): one returning a fresh object per
+call re-renders its subtree forever.
+Per-role peak is published and kept, but nothing reads it yet.
 
 ## Roles
 
@@ -269,10 +312,12 @@ v1 realizes the bus by **folding**: the role's `gain_db` is converted
 to linear and multiplied into every member layer's gain envelope before
 the block loop, and role mute/solo simply filter which layers enter the
 plan. There is no separate summing stage per role — the per-block
-accumulator loop is unchanged from a track-less mix. A future per-role
-effect insert — the `RoleMixSettings.effects` this design does not have —
-is the deferred extension point that would turn the fold into a real bus
-with its own DSP.
+accumulator loop is unchanged from a track-less mix, and the preview's
+per-role metering taps are unity leaves rather than a stage
+([ADR 0066](adr/0066-a-role-meter-is-a-tap-not-a-bus.md)). A future
+per-role effect insert — the `RoleMixSettings.effects` this design does
+not have — is the deferred extension point that would turn the fold into
+a real bus with its own DSP.
 
 Three control levels stack, each owning a different scope:
 
@@ -287,7 +332,56 @@ Role gain is a **recorded** edit — `set_role_gain` lands on the undo
 stack like any parameter change. Role mute and solo (`update_role_flags`)
 are **unrecorded** preferences applied to every history snapshot, so
 Ctrl-Z never flips a mixer toggle — the same convention as the track
-eye/lock flags. The Mixer panel is the surface that drives these.
+eye/lock flags. The Role Mixer Panel is the surface that drives these.
+
+### The Role Mixer Panel
+
+`RoleMixerPanel` is project-wide and the single home for per-role
+mute/solo: it mixes the four roles, never tracks or per-layer audio —
+layer gain, pan and fades stay in the inspector. It measures its own
+content width and renders one of two layouts, carrying exactly one
+`mixer-panel--<layout>` class on the measured root.
+
+- **Card list** (`RoleChannel`), below the console's floor. One flat card
+  per role: glyph, name and dB readout on line 1, a fader spanning the
+  card with a unity tick on line 2, the role's level meter on line 3,
+  and the implied-mute badge with mute/solo/reset on line 4. Giving each
+  of those a line of its own is the point — everything but the name is
+  fixed-width, so a line that holds the name and the controls together
+  has no room left for either the name or the fader. Role identity is a
+  glyph, not a hue, so the colour channel stays free for state. The
+  badge is the only item a translation can widen, so it is the one that
+  truncates; its sentence is in its `title` regardless. The list is
+  always one column: a
+  second column needs more root width than the console's floor leaves,
+  so the auto-fill grid rule earns its place as the correct way to write
+  a card grid and as the fallback if that floor ever moves, not as a
+  second column anyone can reach.
+- **Console** (`RoleStrip`), at 392 px of root width and above. Four
+  vertical-fader strips, the dB legend drawn once in a shared gutter
+  (`DbScaleGutter`), and the master meter as a fifth strip on a sunken
+  surface, so output level and role gains read on one axis. Vertical
+  travel is what makes the precision width-independent: a horizontal
+  fader's travel is a function of the dock width. The threshold is
+  arithmetic over the column widths `editor.css` pins — four role
+  strips, the master strip, the gutter, the gaps, the Panel's inset —
+  rather than a measurement, so it cannot drift with a font or a
+  translation; a strip has to hold both the readout and the
+  mute/solo/reset row, which is what puts the floor where it is.
+
+Both layouts are presentations of **one** gain gesture, `useRoleGain`: the
+fader auditions live through a renderer-local role override
+(`auditionedRoleGainLinear` folds it in place of the committed gain),
+release records exactly one `set_role_gain`, and Escape mid-drag restores
+both the sound and the displayed value. `GainReadout` shows the value with
+its unit at rest, marks a non-neutral one, and becomes an input only when
+clicked. Reset to unity is revealed on hover or focus; mute and solo are
+state, so they stand at rest. A role silenced by another role's solo dims
+and names the reason, off the same `roleAudible` predicate the audio pass
+gates with, so a dimmed card and a silent role cannot disagree. Every
+meter on the Panel is a readout off the shared meter store (§ Preview
+mixer) rather than a DSP stage, and the Panel holds the per-role tap's
+lease only while it is visible.
 
 ## Clip effects (baked)
 

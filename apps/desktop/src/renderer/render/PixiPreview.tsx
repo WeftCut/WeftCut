@@ -88,6 +88,11 @@ import { webgpuDeviceOf } from "./webgpuDevice";
 import {
   clearMasterMeter,
   publishMasterMeter,
+  publishMasterMeterSilent,
+  publishRoleMeters,
+  publishRoleMetersSilent,
+  roleMeterDemandWanted,
+  subscribeRoleMeterDemand,
 } from "../state/masterMeterStore";
 import {
   installTimedPresent,
@@ -108,6 +113,11 @@ interface Props {
 
 const LOG = "[weftcut/pixi]";
 let previewResourceSequence = 0;
+
+/// Period of the per-Role UI meter tap. Fast enough that a level meter moves
+/// rather than steps — which is why it is a second timer and not a faster
+/// version of the agent-facing meter push, whose slow rate is deliberate.
+const ROLE_METER_SAMPLE_MS = 50;
 
 /// The render-target half of Playback Resolution: rasterize at
 /// `composition × fraction`. Pixi shrinks only the canvas backing store
@@ -143,6 +153,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   /// MCP meter push timer; set in `onInit`, cleared on unmount (the mount
   /// effect is async and can't return a cleanup itself).
   const meterTimerRef = useRef<number | null>(null);
+  /// Per-Role UI meter tap; runs only while a consumer holds a demand lease and
+  /// the transport plays. Same teardown path as `meterTimerRef`.
+  const roleMeterTimerRef = useRef<number | null>(null);
+  const unsubRoleMeterDemandRef = useRef<(() => void) | null>(null);
   const samplerRef = useRef<PreviewSampler | null>(null);
   const gizmoProbeRef = useRef<GizmoProbe | null>(null);
   /// The canvas box the gizmo probe hands out, cached because its readers are
@@ -542,6 +556,47 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
           peakDb: Number.isFinite(snap.peakDb) ? snap.peakDb : -120,
         }).catch(() => {});
       }, 500);
+      // The push samples only while playing, so a pause would leave the store
+      // holding the last playing reading — beside Role meters that fall to the
+      // floor the moment their tap stops. One silent sample on the transition
+      // keeps the master's reading truthful. The store only: the MCP resource's
+      // contract is a reading sampled while playing, and it is not touched here.
+      engine.onPlayStateChange((playing) => {
+        if (!playing) publishMasterMeterSilent();
+      });
+
+      // Per-Role meter tap for the Role Mixer's card meters, independent of the
+      // push above. It samples only while a consumer holds a demand lease AND
+      // the transport plays, and publishes one silent sample whenever it stops
+      // — a held last reading would show level over a silent mix.
+      const stopRoleMeterTap = (): void => {
+        if (roleMeterTimerRef.current === null) return;
+        window.clearInterval(roleMeterTimerRef.current);
+        roleMeterTimerRef.current = null;
+        publishRoleMetersSilent();
+      };
+      const syncRoleMeterTap = (): void => {
+        const wanted = roleMeterDemandWanted() && engine.isPlaying();
+        if (wanted === (roleMeterTimerRef.current !== null)) return;
+        if (!wanted) {
+          stopRoleMeterTap();
+          return;
+        }
+        roleMeterTimerRef.current = window.setInterval(() => {
+          const g = compositor.getAudioGraph();
+          if (g) publishRoleMeters(g.roleMeterSnapshots());
+        }, ROLE_METER_SAMPLE_MS);
+      };
+      // Drop a prior mount's timer and subscription (StrictMode re-mount).
+      if (roleMeterTimerRef.current !== null) {
+        window.clearInterval(roleMeterTimerRef.current);
+        roleMeterTimerRef.current = null;
+      }
+      unsubRoleMeterDemandRef.current?.();
+      unsubRoleMeterDemandRef.current =
+        subscribeRoleMeterDemand(syncRoleMeterTap);
+      engine.onPlayStateChange(syncRoleMeterTap);
+      syncRoleMeterTap();
 
       // E2E-only: register a live bridge so the WebDriver hooks
       // (window.__weftcutTest.weftcutSeekUs / weftcutSampleComposite) can drive
@@ -867,6 +922,12 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       if (meterTimerRef.current !== null) {
         window.clearInterval(meterTimerRef.current);
         meterTimerRef.current = null;
+      }
+      unsubRoleMeterDemandRef.current?.();
+      unsubRoleMeterDemandRef.current = null;
+      if (roleMeterTimerRef.current !== null) {
+        window.clearInterval(roleMeterTimerRef.current);
+        roleMeterTimerRef.current = null;
       }
       // E2E-only: clear the preview bridge so seek/readback hooks don't
       // hold a stale closure over the disposed engine + compositor.

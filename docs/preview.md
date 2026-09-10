@@ -387,11 +387,13 @@ sees a frame within ~1 frame-time of each drag step.
 
 ## Audio
 
-`AudioGraph` is a Web Audio mixer keyed by layer id. Each `AudioLayer`
-gets a `BufferSource` chained through a per-clip `GainNode` (for
-animated gain) and merged into a master bus. `seekTo` re-schedules every
-source against the new clock origin; pause stops scheduling but holds
-state for the next play.
+`AudioGraph` owns the preview's master bus and one metering tap per audio
+role. Each audio layer gets an `AudioMixer` that schedules its chunks
+through a gain envelope and a pan matrix and fans into its role's bus,
+which sums into the master input. A seek re-anchors and reschedules every
+source; pause stops scheduling but holds state for the next play. The
+topology, the envelope contract and the meter seam live in
+[`docs/audio.md`](audio.md) § Preview mixer.
 
 The audio compositor that produces the final m4a at export time still
 runs in Rust ffmpeg — see [`docs/export.md`](export.md). The

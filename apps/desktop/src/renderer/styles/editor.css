@@ -212,6 +212,12 @@
   padding: 0;
 }
 
+/* Role Mixer Panel, docked narrow — one flat card per Audio Role: identity plus
+   the dB readout on line 1, a full-width fader on line 2, the Role's own level
+   meter on line 3, and mute/solo/reset on line 4. Identity and value on one
+   line with the fader on its own is the whole point: sharing one line with a
+   value widget is what left the fader with no width. Docked wide, the same
+   Panel is the console further down. */
 .mixer-panel {
   /* Same 12px inset / 8px rhythm as the Captions and Playhead Panels. */
   padding: 12px;
@@ -221,94 +227,561 @@
   /* Everything in the mixer speaks --font-size-body; without this the Role
      names inherit the 16px UA default. */
   font-size: var(--font-size-body);
+  /* Card floor width, and therefore the column count — a length and not a JS
+     branch, so the column count stays a property of the list rather than a
+     second layout state to keep in sync with the layout modifier. Two columns
+     need 408px of card list, which is past the width where the console takes
+     over, so the list runs one column at every width it is the layout at. The
+     rule is what keeps that a measurement rather than an assumption. */
+  --mixer-card-min: 200px;
+
+  /* The one green→amber→red level ramp, declared once for every meter the Panel
+     draws: the per-Role bars, the console's columns and the master's line. A
+     colour has to mean one level wherever it appears, and a stop list kept in
+     three copies drifts — each site chooses only the gradient's angle. Every
+     site paints the ramp on the TRACK and uncovers it with a shade retreating
+     from the loud end; anchored to a fill instead, the tip of a −40 dBFS bar
+     paints red and a quiet signal reads as clipping. */
+  --mixer-meter-stops:
+    var(--success) 0%,
+    var(--success) 65%,
+    var(--warning) 88%,
+    var(--destructive) 100%;
 }
 
-/* The responsive Role strip/row area. The strips/rows modifier lives on the
-   panel (so width measurement and tests read one element) but drives this inner
-   flow. */
+/* The Role card list. `min()` keeps a card from overflowing a dock narrower than
+   the floor instead of forcing a horizontal scroll. */
 .mixer-roles {
-  display: flex;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--mixer-card-min), 100%), 1fr));
+  gap: 8px;
   min-width: 0;
 }
 
-/* Narrow: one horizontal row per Role, controls stacked top-to-bottom. */
-.mixer-panel--rows .mixer-roles {
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* Wide: side-by-side channel strips, each control stacked within its column. */
-.mixer-panel--strips .mixer-roles {
-  flex-direction: row;
-  align-items: flex-start;
-}
-
-.mixer-channel {
+/* One flat card per Role. A step of surface on the Panel's `--card` plus the
+   list's own gap is the WHOLE separation mechanism — no border, no shadow, no
+   colour rail. A rail would spend a second channel on what the flags already
+   say, and four lifted cards read as four objects competing rather than four
+   members of one mix. `MarkerPanel.tsx` and the Shots list state the same rule. */
+.mixer-card {
   display: flex;
-  min-width: 0;
-}
-
-.mixer-panel--rows .mixer-channel {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-}
-
-.mixer-panel--strips .mixer-channel {
-  flex: 1 1 0;
   flex-direction: column;
-  align-items: stretch;
   gap: 6px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
 }
 
+/* Silent because another Role is soloed. Dimming is the indication; the badge on
+   the card's controls line is what names the reason. An explicitly muted Role is
+   NOT dimmed — its own mute flag reads pressed, and mute wins over solo. */
+.mixer-card[data-silenced="true"] {
+  opacity: 0.6;
+}
+
+/* Line 1 — identity and value, and deliberately nothing else. The glyph and the
+   readout are the only fixed boxes on it (13px, and 59px at the widest gain
+   value), so over the ~186px of card content the narrowest legal dock leaves,
+   the flexible Role name still measures ~102px — near double what the longest
+   translated name needs. That margin is the whole reason the flags and the
+   reset gutter have a line of their own: back here they take 72px with their
+   gaps, the name is down to ~30px and ellipsizes, and the implied-mute badge on
+   top of that overflows the card in exactly the state the badge exists to
+   explain. */
+.mixer-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mixer-role-glyph {
+  flex: none;
+  color: var(--muted-foreground);
+}
+
+/* The flexible item wherever it appears — everything beside it is `flex: none`.
+   The ellipsis is the console strip's last resort, not the card's normal state:
+   a strip is a pinned 66px and a long name has nowhere to go there, while a
+   card's head line is kept clear enough that the longest translated name fits
+   whole (`.mixer-card-head` carries that arithmetic). A name that ellipsizes on
+   a card is the symptom of furniture having crept back onto line 1. */
 .mixer-role-name {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.mixer-panel--rows .mixer-role-name {
-  flex: 0 0 72px;
-}
-
-.mixer-panel--strips .mixer-role-name {
+/* The dB value at rest: a button that swaps itself for a number field when
+   pressed. `cursor: text` plus the hover wash is the only affordance saying so —
+   a permanently-open field is exactly what this replaces. */
+.mixer-readout {
+  flex: none;
+  min-width: 58px;
+  padding: 1px 4px;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
   text-align: center;
+  cursor: text;
+  transition: color var(--transition-fast), background var(--transition-fast);
 }
 
-/* The fader fills the row's free space; in a strip it spans the column width
-   without stretching vertically (AppSlider defaults to flex: 1 1 0). */
-.mixer-panel--rows .mixer-fader {
-  flex: 1 1 0;
+.mixer-readout:hover {
+  background: var(--hover-neutral);
+  color: var(--foreground);
 }
 
-.mixer-panel--strips .mixer-fader {
-  flex: 0 0 auto;
-  align-self: stretch;
+.mixer-readout:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
-.mixer-panel--strips .mixer-gain-field {
-  align-self: center;
+/* A trimmed Role is marked on the readout itself rather than with a badge of its
+   own: the one badge a Role carries names implied mute, and a second badge
+   beside it would put two states in one slot. */
+.mixer-readout[data-neutral="false"] {
+  color: var(--foreground);
+  font-weight: 600;
 }
 
-.mixer-channel-flags {
+/* The open editor. Fixed width so opening and closing it does not reflow the
+   rest of the line (`.app-number-field` is `width: 100%`). */
+.mixer-readout-field {
+  flex: none;
+  width: 58px;
+}
+
+/* Names why a Role is silent; the full sentence is its `title`. It rides the
+   card's controls line and a strip's own last row, never the identity line: it
+   is uppercase micro text, so its width moves with the translation and the UI
+   font, and it appears exactly when a line can least afford an extra fixed
+   box.
+
+   Which is why it is the item that gives way, in every layout it appears in:
+   capped to its container and ellipsized rather than allowed to push a sibling
+   out of the card or overrun a strip. `max-width` is what reaches it as a grid
+   item in a console strip, where `flex` does not apply and a max-content badge
+   would otherwise be free to exceed its column — English is the tight case
+   there, within a pixel of the strip's content box before this cap. Truncating
+   costs nothing a reader needs: the sentence is in the `title`, and the card is
+   dimmed either way. */
+.mixer-implied-badge {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 4px;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--warning) 20%, transparent);
+  color: var(--warning);
+  font-size: var(--font-size-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+/* Line 4 — the Role's state and its one action. A card has one item that has to
+   grow with a translation, the Role name, and these never do: paying for them
+   in height rather than in the name's width is what this line buys. It does not
+   wrap and the two control groups on it are `flex: none`, so the revealed reset
+   cannot be stranded on a line of its own — which is what wrapping the head
+   line would have risked, since flex fills each line greedily and would happily
+   leave the gutter behind. Only the badge gives way (next rule). */
+.mixer-card-controls {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
-.mixer-panel--strips .mixer-channel-flags {
+/* Mute and solo are state, not actions, so they stand at rest. Pushed to the
+   card's trailing edge with the reset gutter behind them, so the line reads as
+   the badge's sentence on the left and the Role's controls on the right however
+   wide the card gets. */
+.mixer-card-flags {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* The reset gutter, in a card and in a console strip alike. Hidden until its
+   Role is hovered or something in it takes focus — `.shots-card-actions`' rule,
+   and the one the Marker Panel's delete follows. Four reset icons standing at
+   rest read as the Panel's subject, and the subject is the mix.
+
+   `opacity` and not `display: none`: the button stays in the tab order, so the
+   gutter is reachable by keyboard on a Role nobody is pointing at. */
+.mixer-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.mixer-card:hover .mixer-actions,
+.mixer-card:focus-within .mixer-actions,
+.mixer-strip:hover .mixer-actions,
+.mixer-strip:focus-within .mixer-actions {
+  opacity: 1;
+}
+
+/* Line 2 — the fader, spanning the card. The wrapper exists to give the unity
+   tick a box that matches the slider's own track width. */
+.mixer-card-fader {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* Pinned here rather than left to `.app-slider`'s own flex default: this
+   control's width IS the two-line card's reason to exist, and `flex-shrink: 0`
+   is what stops anything that later joins the line from crushing it — a fader
+   sharing a line with a `width: 100%` value widget shrank to 0px. */
+.mixer-fader {
+  flex: none;
+  width: 100%;
+}
+
+/* The 0 dB mark. Positioned from the same min/max mapping the slider thumb uses
+   (`translate: -50%` on both), so tick and thumb coincide at unity. Decorative:
+   the value it marks is already in the fader's announced value. */
+.mixer-unity-tick {
+  position: absolute;
+  top: 50%;
+  width: 1px;
+  height: 10px;
+  translate: -50% -50%;
+  background: var(--border-on-dark-strong);
+  pointer-events: none;
+}
+
+/* Line 3 — the Role's own level, so the card answers "which category is loud
+   right now" and not only "what did I set it to". Thin on purpose: the fader
+   above it is the card's subject, and a meter as tall as the master's would
+   make four Roles read as five meters. */
+.mixer-role-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The ramp on the track, uncovered by a shade retreating from the loud end (the
+   rule `--mixer-meter-stops` states). Clipping here is what keeps the shade's
+   square end inside the rounded track. */
+.mixer-role-meter-track {
+  position: relative;
+  flex: 1 1 0;
+  height: 4px;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--mixer-meter-stops));
+}
+
+/* 90ms against the tap's ~50ms sample: long enough to read as movement, short
+   enough that the bar is never a sample behind what is playing. */
+.mixer-role-meter-shade {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--secondary);
+  transition: width 90ms linear;
+}
+
+/* Tabular figures on a reserved width: the track's right edge must not walk
+   left and right as the reading changes. A floor rather than a fixed width so
+   a reading wider than the reserved space is never clipped. */
+.mixer-role-meter-value {
+  flex: none;
+  min-width: 32px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-micro);
+  color: var(--muted-foreground);
+}
+
+/* Role Mixer Panel, docked wide — a console: four Role strips, the master meter
+   as a fifth, and the dB scale drawn once in a gutter they share. Vertical
+   faders are the reason this layout exists at all: a horizontal fader's
+   precision is a function of the Panel's width, and at the width the console
+   takes over that was under one pixel per legal gain value. Vertical travel is
+   a fixed length, so the feel of the control does not change when the dock
+   resizes. */
+.mixer-console {
+  display: flex;
+  align-items: stretch;
+  gap: var(--mixer-console-gap);
+  min-width: 0;
+
+  /* The console's own widths. Pinned lengths rather than content-sized columns,
+     so the Panel's layout threshold is arithmetic and cannot drift with a
+     translation or a font — CONSOLE_LAYOUT_MIN_WIDTH in `MixerPanel.tsx` is
+     these summed with the Panel's inset, and that comment carries the sum.
+     Each floor is what the column has to hold: a Role strip's readout and its
+     mute/solo/reset row are 58px apiece, the master strip's two 23px readings
+     with their gap are 52px, and the gutter's widest tick is "-30" plus its
+     mark. The few px over each is deliberate slack — the uppercase
+     implied-mute badge and the meter captions are text, so their width moves
+     with the UI font. */
+  --mixer-console-gap: 4px;
+  --mixer-strip-min-width: 66px;
+  --mixer-master-min-width: 58px;
+  --mixer-db-gutter-width: 26px;
+
+  /* The fader's travel. 50 dB at a 0.5 dB step is 100 legal values, so 104px of
+     track is 1.04px per step — at EVERY dock width. A fixed length and never a
+     percentage of the Panel's height: precision that changes when the Panel
+     resizes has no stable feel, which is the whole reason this layout is
+     vertical. */
+  --mixer-console-fader-height: 104px;
+
+  /* Fixed for the reason `.mixer-console-column` states. */
+  --mixer-strip-head-height: 32px;
+}
+
+/* Every console column is the SAME grid — the four Role strips, the master
+   strip and the dB gutter alike. That shared row template is the contract the
+   scale's truthfulness rests on: the fader row is one fixed length at one fixed
+   offset in every column, so the gutter's ticks and the four fader tracks are
+   the same box, and a tick and a thumb at one value land on one line. Which
+   makes the head row's fixed length and the top inset load-bearing: an `auto`
+   head row is sized by its own column's content, and the master's micro-type
+   caption is not as tall as a Role's glyph over its name, so the fader rows
+   would drift apart by a few pixels and the scale would read a systematic
+   offset. Rows BELOW the fader are free to differ, and do. */
+.mixer-console-column {
+  display: grid;
+  grid-template-rows: var(--mixer-strip-head-height) var(--mixer-console-fader-height);
+  align-items: center;
+  justify-items: center;
+  gap: 4px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  min-width: 0;
+}
+
+/* One Role's channel strip. Same surface step as a card, so the console reads
+   as four members of one mix; the master strip's sunken surface below is the
+   whole mechanism marking it as not a Role. */
+.mixer-strip {
+  flex: 1 1 0;
+  min-width: var(--mixer-strip-min-width);
+  padding-left: 3px;
+  padding-right: 3px;
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+}
+
+/* The card's rule, on a strip: dimming indicates, the badge names the reason,
+   and an explicitly muted Role is NOT dimmed because mute wins over solo. */
+.mixer-strip[data-silenced="true"] {
+  opacity: 0.6;
+}
+
+/* Glyph over name, not beside it: alongside a 13px glyph in a strip this narrow
+   the name has nothing left to ellipsize. */
+.mixer-strip-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+}
+
+/* The head is a column, so `align-self` is the name's width: it takes the
+   strip's and ellipsizes there instead of widening the strip. */
+.mixer-strip-head .mixer-role-name {
+  align-self: stretch;
+  text-align: center;
+}
+
+/* The fader's cell IS the shared fader row: stretching it is what makes the
+   cell, the slider inside it and the gutter's scale one box, which is what the
+   scale is read against. No `overflow` here on purpose — the 12px thumb rides
+   6px past each end of the 4px track, so clipping the cell would clip both
+   extremes of travel. */
+.mixer-strip-fader {
+  position: relative;
+  align-self: stretch;
+  justify-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+/* The fader's length. `.app-slider`'s vertical rules deliberately keep no
+   height of their own — a vertical slider is as long as its call site says —
+   so the console declares its travel here. `editor.css` imports after
+   `controls.css`, so equal specificity resolves in this file's favour (the
+   ordering `playhead.css` documents). */
+.mixer-console-fader {
+  height: var(--mixer-console-fader-height);
+}
+
+/* The 0 dB level, drawn across each fader cell at the gutter's own 0 dB tick.
+   The cells share one extent, so the four hairlines read as one line at unity
+   rather than as four repetitions of the legend. Positioned from `bottom` and
+   centred on that position by half its own height, exactly the way a vertical
+   thumb is positioned. */
+.mixer-strip-unity {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  translate: 0 50%;
+  background: var(--border-on-dark-strong);
+  pointer-events: none;
+}
+
+/* Mute, solo and the revealed reset on one line — the strip's floor width. */
+.mixer-strip-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+/* The dB scale, drawn ONCE for the whole console: four copies of one legend
+   would be the loudest thing on the Panel. */
+.mixer-db-gutter {
+  flex: none;
+  width: var(--mixer-db-gutter-width);
+}
+
+/* Explicitly the fader row: the gutter carries no head, and a lone child would
+   otherwise land in the head row and the whole scale would be read against the
+   wrong box. */
+.mixer-db-scale {
+  position: relative;
+  grid-row: 2;
+  align-self: stretch;
+  justify-self: stretch;
+}
+
+/* One tick: the value, then a mark pointing at the faders. Placed from the same
+   fraction the slider positions its thumb from and centred on it the same way,
+   so tick and thumb coincide at every value — a scale that reads a systematic
+   offset is worse than no scale at all. */
+.mixer-db-tick {
+  position: absolute;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  translate: 0 50%;
+  font-size: var(--font-size-micro);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.mixer-db-tick::after {
+  content: "";
+  width: 4px;
+  height: 1px;
+  background: var(--border-on-dark-strong);
+}
+
+/* Unity is the one value all four faders share a line at, so it is the one tick
+   that is not quiet. */
+.mixer-db-tick[data-unity="true"] {
+  color: var(--foreground);
+}
+
+/* The master meter as the fifth strip, on a SUNKEN surface: one step down from
+   the Role strips says "not a Role" without spending a label on it. */
+.mixer-strip--master {
+  flex: none;
+  min-width: var(--mixer-master-min-width);
+  background: var(--surface-sunken);
+}
+
+/* Meters, captions and readings in three rows of two, so each number stands
+   under the column it belongs to. */
+.mixer-master-row {
+  justify-self: stretch;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mixer-master-row > * {
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+}
+
+/* The meter row is the fader row — the master's levels and the Roles' gains
+   read on one axis because they are the same box. */
+.mixer-master-row--meters {
+  align-self: stretch;
+  align-items: stretch;
+}
+
+.mixer-master-row--meters > * {
+  display: flex;
   justify-content: center;
 }
 
-/* Real master RMS/Peak meter — the only meter the Role Mixer shows. Sits below
-   the Role strips/rows, separated by a hairline, and reads off the shared store
-   (no per-Role meters, no Compositor polling). */
+/* One vertical meter column, filling from the bottom: the ramp on the track,
+   uncovered by a shade retreating from the top (the rule `--mixer-meter-stops`
+   states). */
+.mixer-meter-column {
+  position: relative;
+  width: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: linear-gradient(0deg, var(--mixer-meter-stops));
+}
+
+.mixer-meter-column-shade {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: var(--secondary);
+  transition: height 90ms linear;
+}
+
+/* Which column, and what it currently reads. */
+.mixer-master-caption,
+.mixer-master-reading {
+  font-size: var(--font-size-micro);
+  color: var(--muted-foreground);
+}
+
+.mixer-master-reading {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The real master RMS/Peak meter, on one line: RMS is the track's uncovered
+   ramp, peak is a tick on the same track, and both numbers share one readout. A
+   two-row block spends as much height on one output as the four Roles spend
+   between them, and the tick carries peak positionally so the line loses no
+   information. Reads off the shared meter store rather than polling the
+   Compositor — as every meter on this Panel does, the four per-Role bars
+   included. */
 .mixer-master {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--border);
 }
@@ -322,50 +795,51 @@
   color: var(--muted-foreground);
 }
 
-.mixer-master-bars {
-  flex: 1 1 0;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.mixer-meter {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.mixer-meter-label {
-  flex: 0 0 30px;
-  font-size: 9px;
-  color: var(--muted-foreground);
-}
-
+/* Not clipped: the peak tick deliberately stands taller than the track, which
+   is why the ramp below is a box of its own rather than this one's background. */
 .mixer-meter-track {
+  position: relative;
   flex: 1 1 0;
   height: 6px;
   min-width: 0;
-  border-radius: 3px;
-  background: var(--secondary);
-  overflow: hidden;
 }
 
-.mixer-meter-fill {
-  height: 100%;
+/* The ramp on the track, uncovered by a shade retreating from the loud end (the
+   rule `--mixer-meter-stops` states). Clipped so the shade's square end stays
+   inside the rounded track — the clipping the track itself cannot do while the
+   peak tick overhangs it. */
+.mixer-meter-ramp {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
   border-radius: 3px;
-  background: linear-gradient(
-    90deg,
-    var(--success) 0%,
-    var(--success) 65%,
-    var(--warning) 88%,
-    var(--destructive) 100%
-  );
+  background: linear-gradient(90deg, var(--mixer-meter-stops));
+}
+
+/* 90ms against the push's 500ms sample, the same easing the Role bars use, so
+   the master's line and the four Role lines move as one family. */
+.mixer-meter-shade {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--secondary);
   transition: width 90ms linear;
 }
 
-.mixer-meter-value {
-  flex: 0 0 44px;
+.mixer-meter-peak {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: 11px;
+  translate: -50% -50%;
+  border-radius: 1px;
+  background: var(--foreground);
+  transition: left 90ms linear;
+}
+
+.mixer-master-value {
+  flex: 0 0 auto;
   text-align: right;
   font-variant-numeric: tabular-nums;
   font-size: var(--font-size-micro);
