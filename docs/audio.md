@@ -212,7 +212,7 @@ an output sample. Two invariants make that true and keep it true:
 
 `roleMeterSnapshot` / `roleMeterSnapshots` read the taps. This is
 deliberately *not* the per-role processing bus the Roles section defers:
-[ADR 0065](adr/0065-a-role-meter-is-a-tap-not-a-bus.md).
+[ADR 0066](adr/0066-a-role-meter-is-a-tap-not-a-bus.md).
 
 **Feeding:** chunks are read straight from the conform file over
 `weftcut-media://` HTTP Range requests (loop-read until the exact byte
@@ -314,7 +314,7 @@ the block loop, and role mute/solo simply filter which layers enter the
 plan. There is no separate summing stage per role — the per-block
 accumulator loop is unchanged from a track-less mix, and the preview's
 per-role metering taps are unity leaves rather than a stage
-([ADR 0065](adr/0065-a-role-meter-is-a-tap-not-a-bus.md)). A future
+([ADR 0066](adr/0066-a-role-meter-is-a-tap-not-a-bus.md)). A future
 per-role effect insert — the `RoleMixSettings.effects` this design does
 not have — is the deferred extension point that would turn the fold into
 a real bus with its own DSP.
