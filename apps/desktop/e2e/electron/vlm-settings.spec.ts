@@ -112,7 +112,10 @@ test('the endpoint key round-trips through safeStorage and never lands in vlm_co
     expect(endpointRow.endpoint).toEqual({ url: URL_A, model: 'qwen2-vl', has_api_key: true })
     // URL-gated, never key-gated: the row is available on the URL alone.
     expect(endpointRow.availability).toBe('available')
-    expect(endpointRow.selected).toBe(true)
+    // Configuring the endpoint adds it without selecting it: a model is chosen
+    // only by an explicit selection, never by being the one thing configured
+    // (ADR 0064), so with no preference on disk nothing is selected.
+    expect(endpointRow.selected).toBe(false)
 
     // An untouched key field omits `apiKey`; the stored key must survive that.
     await invoke('settings_set_vlm_endpoint', { url: URL_A, model: 'other-vlm' })
@@ -248,9 +251,10 @@ test('a retired preferred_engine tag on disk degrades to automatic', async () =>
     const row = view.backends.find((b) => b.backend === 'byo_endpoint')!
     expect(row.endpoint?.url).toBe(URL_A) // the seeded file really was loaded
     expect(view.preferred_engine).toBe('auto')
-    // Degrading to automatic is not the same as picking nothing: the walk then
-    // resolves by availability, and the endpoint is the one thing configured.
-    expect(row.selected).toBe(true)
+    // Automatic IS picking nothing: a retired tag is never substituted with
+    // another model (ADR 0064), so the endpoint stays configured but unselected
+    // until the user chooses it.
+    expect(row.selected).toBe(false)
   } finally {
     await second.app.close()
   }

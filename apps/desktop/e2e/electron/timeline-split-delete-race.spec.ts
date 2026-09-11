@@ -53,7 +53,9 @@ test('an older summary cannot restore a VideoClip after split-right-delete', asy
       imported.layerId,
     )
 
-    const blocks = page.locator('.timeline-layer[title^="VideoClip:"]')
+    // The block's tooltip leads with the kind's UI name (`kinds.videoclip` →
+    // "Video"), not the LayerParams discriminant.
+    const blocks = page.locator('.timeline-layer[title^="Video:"]')
     await expect(blocks).toHaveCount(1)
     const originalBox = await blocks.first().boundingBox()
     expect(originalBox).not.toBeNull()

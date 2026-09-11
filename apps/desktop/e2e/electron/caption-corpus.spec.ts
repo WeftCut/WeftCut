@@ -275,8 +275,10 @@ test("Caption Panel manages the whole corpus: aggregate, seek, restyle-all, one 
     const newSize = baseSize + 22;
     // Base UI's NumberField tracks its value through real keystrokes (a raw
     // .fill() is ignored), and a Dockview sash overlaps the click point — so
-    // focus without hit-testing, then type + Enter to commit.
-    const sizeInput = captionPanel.locator('.captions-style-section input[type="number"]');
+    // focus without hit-testing, then type + Enter to commit. The style row
+    // holds two number fields (size and outline width), so the size field's
+    // input is the one named by its label.
+    const sizeInput = captionPanel.getByLabel("Font size (px)", { exact: true });
     await sizeInput.focus();
     await sizeInput.press(`${MOD}+a`);
     await sizeInput.pressSequentially(String(newSize));
