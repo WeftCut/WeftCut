@@ -574,6 +574,51 @@ export function pauseCores(
   return cores
 }
 
+/** The cores as the split can actually take them when the subject travels with a
+ *  picture.
+ *
+ *  `split_layer_multi` re-snaps every spanning link member on ITS OWN grid: the
+ *  Audio subject on the 48 kHz lattice, a linked VideoClip on the frame grid. A
+ *  boundary that lands between frames is therefore cut in two places up to half a
+ *  frame apart, and the picture piece of a KEPT segment then overlaps the next
+ *  hole by that half frame — enough for the fan-out to doom it and for the
+ *  ripple planner to refuse the whole edit (`RippleInsideHole` over a hole that
+ *  has swallowed the clip). Snapping the interior boundaries onto the
+ *  composition's frame grid FIRST puts both members' cuts on one instant: a frame
+ *  boundary is a sample boundary at every integer rate, and at 29.97 / 59.94 the
+ *  residue is ~10 µs, which the fan-out's half-frame slack absorbs. The head and
+ *  tail boundaries are the subject's own edges and are left alone.
+ *
+ *  Only when a frame-grid member shares the link: an unlinked Audio clip keeps
+ *  its sample precision, because nothing else has to be cut where it is cut.
+ *  A core the snap collapses is dropped, like one the pad collapsed. */
+function cutGridCores(
+  cores: readonly PauseRegion[],
+  subject: Pick<Layer, 'id' | 't_start_us' | 't_end_us'>,
+  composition: Composition,
+): PauseRegion[] {
+  const link = composition.links.find((g) => g.members.includes(subject.id))
+  if (!link) return [...cores]
+  const kindOf = (id: string): string | undefined => {
+    for (const track of composition.tracks) {
+      const hit = track.layers.find((l) => l.id === id)
+      if (hit) return hit.params.kind
+    }
+    return undefined
+  }
+  const sharesFrameGrid = link.members.some((m) => m !== subject.id && kindOf(m) !== 'Audio')
+  if (!sharesFrameGrid) return [...cores]
+  const { num, den } = composition.fps
+  const onFrame = (t: number): number => snapFrameRound(t, num, den)
+  const out: PauseRegion[] = []
+  for (const c of cores) {
+    const start = c.t_start_us <= subject.t_start_us ? c.t_start_us : onFrame(c.t_start_us)
+    const end = c.t_end_us >= subject.t_end_us ? c.t_end_us : onFrame(c.t_end_us)
+    if (end > start) out.push({ t_start_us: start, t_end_us: end })
+  }
+  return out
+}
+
 /** Refuse a pad that cannot mean what it says, BEFORE any detection runs — a
  *  refusal that arrives after a cache walk reads as a failure of the detector.
  *
@@ -646,7 +691,7 @@ export async function removePauses(
   if (!detect) throw new Error('remove pauses: pause detection is not available in this build')
   const padUs = spec.pad_us ?? DEFAULT_PAUSE_PAD_US
   refusePadArgs(padUs, spec.min_pause_us)
-  const { subject } = resolvePauseTarget(spec.layer_id, deps, 'remove pauses')
+  const { subject, composition } = resolvePauseTarget(spec.layer_id, deps, 'remove pauses')
   const { pauses } = await detect({
     layer_id: subject.id,
     ...(spec.threshold_amp === undefined ? {} : { threshold_amp: spec.threshold_amp }),
@@ -657,7 +702,7 @@ export async function removePauses(
   // nothing away — an undo entry for an edit the user cannot see. The pad shrink
   // then drops anything else that leaves nothing to cut.
   const spans = pauses.filter((r) => r.t_end_us > r.t_start_us)
-  const cores = pauseCores(spans, padUs, subject)
+  const cores = cutGridCores(pauseCores(spans, padUs, subject), subject, composition)
   if (cores.length === 0) return removedNothing(subject.id)
 
   const seen = new Set<number>()

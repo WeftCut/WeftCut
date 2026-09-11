@@ -1461,8 +1461,11 @@ trimmed to the clip's edge on the outer one. The pad can never eat a whole
 pause: the field's maximum is half the shortest-pause value less a 50 ms
 margin, and the tools refuse a pair that breaks the rule rather than cutting on
 it. One commit, one undo: the undo restores the whole clip, not a split clip
-missing its quiet parts. A linked audio partner goes with each removed slice,
-and two touching cuts close as the one hole they are. Refusals arrive before
+missing its quiet parts. A linked picture goes with each removed slice: the
+cuts are decided on the sound but, when a frame-grid member shares the link,
+landed on the composition's frame grid first, so both members are cut at one
+instant rather than half a frame apart (an unlinked audio clip keeps its
+sample precision). Two touching cuts close as the one hole they are. Refusals arrive before
 any write and the clip comes back unsplit, so a rejected press leaves nothing
 to clean up: the ripple planner's four — a layer on another track starting
 inside a removed stretch, a collision, a link straddling one, a locked mover —

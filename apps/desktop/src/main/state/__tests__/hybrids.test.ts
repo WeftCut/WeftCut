@@ -1577,6 +1577,41 @@ describe('runHybrid: remove_pauses', () => {
     expect(spansOfKind(actor, 'VideoClip')).toEqual(expected)
   })
 
+  // The detector's boundaries sit between frames (its peaks window is ~8 ms).
+  // Cut there, the audio lands on the sample lattice and the picture is
+  // re-snapped onto the frame grid up to half a frame away, and the picture
+  // piece of a KEPT segment then laps into the next hole — which the fan-out
+  // read as membership and the planner refused as a hole that ate the clip.
+  // Snapping the cores onto the frame grid first puts both cuts on one instant.
+  it('lands a picture-linked cut on the frame grid, so grid drift cannot doom a kept piece', async () => {
+    const { actor, layerId } = withLinkedAudio(6_000_000)
+    const deps = makeDeps(actor)
+    withPauses(deps, [[1_253_151, 2_993_197], [3_256_598, 4_996_643]])
+    const raw = await runHybrid('remove_pauses', { layer_id: layerId, pad_us: 100_000 }, deps)
+    // Cores [1 353 151, 2 893 197) and [3 356 598, 4 896 643) → 30 fps frames
+    // 41 / 87 and 101 / 147: [1 366 667, 2 900 000) and [3 366 667, 4 900 000),
+    // 1 533 333 µs each; the kept pieces close up by one hole, then two, and the
+    // ripple lands each moved edge back on a frame (55 and 88).
+    const expected: Array<[number, number]> = [
+      [0, 1_366_667], [1_366_667, 1_833_333], [1_833_333, 2_933_333],
+    ]
+    expect(spansOfKind(actor, 'Audio')).toEqual(expected)
+    expect(spansOfKind(actor, 'VideoClip')).toEqual(expected)
+    expect(removedResult(raw).removed_us).toBe(3_066_666)
+  })
+
+  it('keeps sample precision on an UNLINKED audio clip — nothing else has to be cut where it is cut', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withPauses(deps, [[1_253_151, 2_993_197]])
+    await runHybrid('remove_pauses', { layer_id: layerId, pad_us: 100_000 }, deps)
+    const spans = spansOfKind(actor, 'Audio')
+    expect(spans).toHaveLength(2)
+    // The actor re-snaps onto the 48 kHz lattice (≤ 21 µs), not onto a frame.
+    expect(Math.abs(spans[0][1] - 1_353_151)).toBeLessThanOrEqual(21)
+    expect(Math.abs(spans[0][1] - 1_366_667)).toBeGreaterThan(1_000)
+  })
+
   it('refuses a clip that plays no sound, in its OWN verb', async () => {
     const { actor, layerId } = withVideoLayer(6_000_000)
     // The verb rides the message: a removal that reported itself as a mark would

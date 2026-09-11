@@ -267,6 +267,23 @@ describe('dispatch: split + links', () => {
     expect(spansOfKind(actor, track, 'Audio')).toEqual([[0, 2_000_000], [4_000_000, 6_000_000]])
   })
 
+  it('split_layer_multi fan-out ignores a kept neighbour that laps into the hole by grid drift alone', () => {
+    const { actor, track, audio } = linkedPair()
+    // The AUDIO is the target, cut between frames on the 48 kHz lattice; the
+    // picture is re-snapped onto the 30 fps grid (frames 38 and 90), so its kept
+    // first piece ends 13.5 ms INSIDE the discarded span. That is drift between
+    // two grids, not membership of the hole: the piece stays, and only the
+    // picture under the discarded segment goes.
+    const r = actor.dispatch('split_layer_multi', { layer: audio, at_t_us_list: [1_253_151, 2_993_197], discard_segments: [1] })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(spansOfKind(actor, track, 'VideoClip')).toEqual([[0, 1_266_667], [3_000_000, 6_000_000]])
+    const audioSpans = spansOfKind(actor, track, 'Audio')
+    expect(audioSpans).toHaveLength(2)
+    expect(Math.abs(audioSpans[0][1] - 1_253_151)).toBeLessThanOrEqual(21) // its own lattice
+    expect(Math.abs(audioSpans[1][0] - 2_993_197)).toBeLessThanOrEqual(21)
+  })
+
   it('split_layer_multi fan-out rides the split commit: one undo restores the audio too', () => {
     const { actor, layer } = linkedPair()
     const before = JSON.stringify(actor.snapshot())

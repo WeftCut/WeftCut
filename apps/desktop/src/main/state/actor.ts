@@ -980,7 +980,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // the audio a rejected take cut off is a half-result nobody asked for.
         // Overlap and not exact co-span, so a slipped-sync partner still
         // travels; overlap and not "every member", so a manual bundle member
-        // sitting wholly inside a KEPT segment stays. `delete_layer` itself is
+        // sitting wholly inside a KEPT segment stays. Overlap by MORE than half
+        // a frame (or by most of the piece), not any overlap at all: members on
+        // different grids are cut up to half a frame apart, and a kept
+        // neighbour's piece lapping into a hole by that drift is not part of it
+        // (`remove_pauses` cuts an Audio target whose picture rides the frame
+        // grid). `delete_layer` itself is
         // still local — this is the shot-apply's own reach, not a link rule
         // (docs/features.md § Links). A partner on a locked track fails the
         // whole op through applyDeleteLayer's own checkTrackLock and the commit
@@ -1059,10 +1064,21 @@ export function createActor(opts: ActorOptions): ActorHandle {
               // Read the link BEFORE this segment's own delete: a link
               // auto-dissolves below two members, so a two-member pair would
               // have no siblings left to read afterwards.
+              // Half a frame of slack on the overlap: members on different
+              // grids are cut up to half a frame apart (a sample-lattice cut
+              // rounds onto the frame grid), so the piece of a KEPT neighbour
+              // can lap into this segment by that much without belonging to
+              // it. A piece that is mostly inside still travels however short
+              // it is, and a piece longer than the slack overlap is a partner
+              // that genuinely shares the span (a slipped or longer partner).
+              const halfFrameUs = (500_000 * loc!.comp.fps.den) / loc!.comp.fps.num
               const partners = linkSiblingsExcluding(loc!.comp, id).filter((sid) => {
                 if (targets.has(sid)) return false // never another segment of the target
                 const s = locateLayer(d, sid)?.layer
-                return s !== undefined && s.t_start_us < seg.t_end_us && s.t_end_us > seg.t_start_us
+                if (s === undefined) return false
+                const overlapUs = Math.min(s.t_end_us, seg.t_end_us) - Math.max(s.t_start_us, seg.t_start_us)
+                if (overlapUs <= 0) return false
+                return overlapUs * 2 > s.t_end_us - s.t_start_us || overlapUs > halfFrameUs
               })
               if (ripple) { doomed.add(id); for (const sid of partners) doomed.add(sid); continue }
               applyDeleteLayer(d, id)
