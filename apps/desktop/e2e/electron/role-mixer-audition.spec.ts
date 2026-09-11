@@ -109,6 +109,18 @@ const WIDEST_WINDOW_PX = 1900
 // There is deliberately NO console-floor window width here. See
 // `narrowestConsole()`: the floor is hysteretic, the hysteresis is a
 // scrollbar's, and a scrollbar's width belongs to the platform.
+//
+// How far INSIDE that measured floor to stand. The dock column is a fraction of
+// the window, so the narrowest console window is within about a quarter of a
+// column pixel of the cliff, and anything that re-measures the Panel mid-test
+// can tip it back into a card list — soloing a Role adds a badge to every
+// strip, and that is exactly how `silencedStripFit()` came back empty on
+// macos-latest. Sixteen window pixels is roughly four column pixels, which is
+// squarely inside the floor test's own definition of the floor — it asserts
+// `rootWidth < CONSOLE_LAYOUT_MIN_WIDTH + 8`, so eight is the tolerance this
+// spec already declares. Two column pixels was measured as too few: it puts the
+// root one pixel off the threshold, and one pixel is what the badge moves.
+const FLOOR_MARGIN_WINDOW_PX = 16
 
 // Mirrors `CONSOLE_LAYOUT_MIN_WIDTH` in `MixerPanel.tsx`. There it is
 // arithmetic over the console's pinned column widths; here it meets a layout
@@ -483,8 +495,10 @@ test.describe('Role Mixer panel flow (Electron UI)', () => {
       if ((await probe(middle)).layout === 'console') wide = middle
       else narrow = middle
     }
-    // Left AT the floor, because the caller measures the strips standing there.
-    return probe(wide)
+    // Left just INSIDE the floor, because the caller measures the strips while
+    // standing there and a measurement balanced on the cliff does not survive
+    // the re-render its own assertions cause (`FLOOR_MARGIN_WINDOW_PX`).
+    return probe(wide + FLOOR_MARGIN_WINDOW_PX)
   }
 
   test('the master output meter stands once beside one level meter per Role', async () => {
@@ -721,6 +735,13 @@ test.describe('Role Mixer panel flow (Electron UI)', () => {
     expect(floor.layout).toBe('console')
     expect(floor.rootWidth).toBeLessThan(CONSOLE_LAYOUT_MIN_WIDTH + 8)
     await withDialogueSoloed(async () => {
+      // Re-read the layout with the badges up. Soloing re-renders every strip,
+      // and a Panel that fell back to cards under that re-render answers
+      // `silencedStripFit()` with an empty list — a count nobody can read as
+      // "the console is gone".
+      expect((await mixerGeometry()).layout, 'the badges pushed the Panel out of the console').toBe(
+        'console',
+      )
       const strips = await silencedStripFit()
       console.log(
         '[e2e] mixer console strip fit',
