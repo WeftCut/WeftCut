@@ -230,22 +230,34 @@ async function settledRemoval(page: Page): Promise<string> {
   return outcome
 }
 
-/// Right-click a clip block through its LOCATOR, never through `page.mouse` at
-/// a box read a moment earlier.
+/// Right-click a clip block and hold on until its menu is actually up.
 ///
-/// `locator.click()` scrolls the block into view, waits for its box to hold
-/// still across two frames, and re-reads the point it presses. A
-/// `page.mouse.click(box.x + box.width / 2, …)` does none of those three:
-/// `toBeVisible()` does not mean in-viewport, an absolute coordinate never
-/// scrolls, and a box read before the waveform lands is a box the Audio block
-/// has already moved out of. On the first CI run of this spec that cost the
-/// three tests below on windows-latest and macos-latest — ubuntu-latest and the
-/// picture-lane call in this same file stayed green, which is the shape of a
-/// stale or off-screen POINT and not of a menu that fails to open.
-const rightClickBlock = async (page: Page, layerId: string): Promise<void> => {
+/// Two things, and the second is the one that was missing. Through the LOCATOR,
+/// so the press scrolls the block into view, waits for its box to hold still
+/// across two frames, and re-reads the point — none of which
+/// `page.mouse.click(box.x + box.width / 2, …)` does, and `toBeVisible()` does
+/// not mean in-viewport. And RETRIED, because a press that lands is not yet a
+/// menu.
+///
+/// The retry is what the CI runs actually asked for. Three runs of this spec
+/// put the same `0 elements` on windows-latest and macos-latest, green in
+/// between on the very same code, and the press itself never once reported a
+/// problem — so the point was never the fault. A Base UI menu closes on window
+/// blur and `--project=parallel` has other workers' Electron windows opening
+/// throughout the run; the timeline is also still re-rendering behind the
+/// import's conform and waveform jobs. Both end the same way: press again, and
+/// let the menu being up be the thing that ends the wait.
+const openBlockMenu = async (page: Page, layerId: string): Promise<void> => {
   const target = block(page, layerId)
   await expect(target).toBeVisible()
-  await target.click({ button: 'right' })
+  const menu = page.locator('.app-menu-list')
+  // A menu still up from an earlier gesture would satisfy the wait below
+  // without this press ever landing — a precondition, not a state to clean up.
+  await expect(menu).toHaveCount(0)
+  await expect(async () => {
+    if ((await menu.count()) === 0) await target.click({ button: 'right' })
+    await expect(menu).toHaveCount(1, { timeout: 2_000 })
+  }).toPass({ timeout: 60_000, intervals: [250, 500, 1_000, 2_000] })
 }
 
 /// Right-click the clip and run *Detect pauses…* from its context menu.
@@ -255,7 +267,7 @@ const rightClickBlock = async (page: Page, layerId: string): Promise<void> => {
 /// making the clicked layer the PRIMARY — which is the layer the Attribute
 /// Panel renders and the layer the subject rule resolves from.
 async function detectFromContextMenu(page: Page, layerId: string, rowLabel: string): Promise<void> {
-  await rightClickBlock(page, layerId)
+  await openBlockMenu(page, layerId)
   // By accessible name: the row renders its accelerator in an `aria-hidden`
   // span, so a `hasText` anchor would have to know the keystroke (there is no
   // default one, but the row must not depend on that staying true).
@@ -448,7 +460,7 @@ test.describe('pauses', () => {
       await expect(pausesSection(page, 'Pauses')).toHaveCount(0)
 
       // ── …and the row says why ────────────────────────────────────────────
-      await rightClickBlock(page, videoLayerId)
+      await openBlockMenu(page, videoLayerId)
       const row = page.getByRole('menuitem', { name: 'Detect pauses in selected clip…', exact: true })
       await expect(row).toHaveCount(1)
       await expect(row).toHaveAttribute('aria-disabled', 'true')
@@ -494,7 +506,7 @@ test.describe('pauses', () => {
 
       // Same sweep over the row that opens it, which is the other surface the
       // rename had to reach.
-      await rightClickBlock(page, audioLayerId)
+      await openBlockMenu(page, audioLayerId)
       const menuText = await page.locator('.app-menu-list').first().innerText()
       expect(menuText).toContain('检测停顿')
       for (const retired of ['静默', '静音']) {

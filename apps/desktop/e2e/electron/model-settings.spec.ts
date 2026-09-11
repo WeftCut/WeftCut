@@ -82,9 +82,21 @@ test("model setup stays inline and the add dialog blocks the settings behind it"
     await page.mouse.click(point.x, point.y);
     await expect(modal).toBeVisible();
     await expect(page.locator('#settings-tab-vlm')).toHaveAttribute('aria-selected', 'true');
+    // Polled, not read once. Base UI keeps focus in a modal by catching the
+    // `focusin` that escapes and sending it back, so the redirect lands a task
+    // AFTER the key — a synchronous read right behind `press('Tab')` is racing
+    // the trap rather than testing it. That race failed on windows-latest and
+    // reproduces on a developer box, intermittently in both places, while the
+    // claim it is making (focus never leaves the dialog) is never in doubt once
+    // the trap has had its turn.
     for (let i = 0; i < 8; i++) {
       await page.keyboard.press('Tab');
-      expect(await modal.evaluate(el => el.contains(document.activeElement))).toBe(true);
+      await expect
+        .poll(() => modal.evaluate(el => el.contains(document.activeElement)), {
+          message: `Tab ${i + 1} of 8 left focus outside the add dialog`,
+          timeout: 5_000,
+        })
+        .toBe(true);
     }
     await page.getByRole("button", { name: /OpenAI-compatible/ }).click();
     await page.screenshot({ animations: "disabled", path: "../../.scratch/model-settings/qa/video-add-overlay.png" });
