@@ -413,6 +413,12 @@ test.describe('ripple delete', () => {
       const aRoll = trackWithRole(before, 'a-roll')
       const middle = block(page, videoBefore[1]!.id)
       await expect(middle).toBeVisible()
+      // Scrolled into view BEFORE the box is read, because this is the one
+      // press in the file a locator cannot make: the piece is deleted below and
+      // the point is pressed against the empty lane it leaves behind. A box read
+      // off screen would be remembered as a coordinate no pointer can reach —
+      // `toBeVisible()` does not mean in-viewport.
+      await middle.scrollIntoViewIfNeeded()
       const middleBox = await middle.boundingBox()
       if (!middleBox) throw new Error('the middle picture piece has no layout box')
 
@@ -521,10 +527,12 @@ test.describe('ripple delete', () => {
       // A right-click INSIDE the selection keeps it (`Timeline.tsx`'s
       // `onContextMenu` only re-selects a clip that was outside), so the row
       // below is greyed against the same two ids the key will send.
-      const middle = block(page, videoBefore[1]!.id)
-      const box = await middle.boundingBox()
-      if (!box) throw new Error('the middle picture piece has no layout box')
-      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: 'right' })
+      // Through the LOCATOR, not `page.mouse` at a box read a moment earlier:
+      // `locator.click()` scrolls the block into view, waits for its box to hold
+      // still across two frames, and re-reads the point it presses. The same
+      // absolute-coordinate press cost `pauses.spec.ts` three tests on
+      // windows-latest and macos-latest while linux stayed green.
+      await block(page, videoBefore[1]!.id).click({ button: 'right' })
       expect(await selectedLayerIds(page)).toEqual(
         [videoBefore[1]!.id, audioBefore[1]!.id].sort(),
       )
