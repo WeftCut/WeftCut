@@ -110,8 +110,9 @@ selected. A layer selection and a selected transition chip are mutually
 exclusive: choosing either drops the other, which is what lets Delete and the
 Attribute panel always have exactly one kind of target.
 
-**Click semantics.** Plain click replaces the selection; a click on blank lane
-space clears it, per *Background clicks* below. `Shift+click` **toggles** — the
+**Click semantics.** Plain click replaces the selection; a click on the blank
+lane space *between two clips* selects that **gap**, and a click on any other
+blank space clears, per *Background clicks* below. `Shift+click` **toggles** — the
 clicked clip (and its link) goes in if it was out and out if it was in. Toggle
 rather than union because that is the additive modifier in Resolve, FCP and
 Premiere alike, and a union-only gesture leaves no way back from an over-wide
@@ -181,13 +182,29 @@ out, and accumulating across boxes is the only thing a Shift-marquee is for. Unt
 one exists, "sweep a block, then `Shift+click` to trim it" is the accumulation
 path.
 
-**Background clicks clear per kind.** A press that never travels far enough to
-become a box *is* the background click, and what it drops depends on the same
-surface the box's kind comes from: blank lane space drops the clips and the
-transition chip, blank sub-lane space drops only the keyframes — so clicking
-beside a diamond leaves the Attribute panel on the clip being keyframed. The band
-below the last track is part of the timeline's clip surface: clicking it clears,
-and a box can start there and drag up over the tracks.
+**Background clicks clear per kind — except on a gap.** A press that never
+travels far enough to become a box *is* the background click, and what it does
+depends on the same surface the box's kind comes from: blank lane space drops
+the clips and the transition chip, blank sub-lane space drops only the keyframes
+— so clicking beside a diamond leaves the Attribute panel on the clip being
+keyframed. The band below the last track is part of the timeline's clip surface:
+clicking it clears, and a box can start there and drag up over the tracks.
+
+The one blank space that *selects* is a **gap**: the empty span on a lane between
+two clip boundaries ([ADR 0069](adr/0069-a-gap-is-a-selectable-span-whose-delete-closes-it.md)).
+Clicking it highlights the span with the selected-clip outline, and `Delete`
+then **closes** it rather than lifting anything — see [Ripple delete](#ripple-delete)
+— which is the gesture Premiere and Resolve give the bare key over a gap. A gap
+is read class-agnostically off every clip on the lane, so on a combined A/V row
+the space under a picture whose audio half is empty is not a gap. The space
+before the first clip counts as a gap from the head of the composition; the space
+after the last clip does not — it has no right edge to close up to — and neither
+does blank space on a locked lane, whose gap could never close (its own
+downstream clip would have to move). A gap selection has no id: it is re-derived
+against every project summary and dropped the moment the span stops being
+exactly that gap, so a stale highlight never arms a Delete the actor would
+refuse. Right-clicking a gap selects it and offers the one row that means
+anything over empty space, *Ripple delete*.
 
 **Keyframe selection is a set**, spanning layers and properties, because one
 sub-lane row draws the curves of every layer on its track. A box tests each
@@ -857,16 +874,38 @@ are one curated wording. The mirror can lag the actor by a round trip, so the
 actor stays the authority: a refusal it did not predict lands on the status
 bar through the usual refusal funnel. No toast, no dialog.
 
+**A selected gap closes under the same closing.** Clicking the blank lane space
+between two clips selects the gap ([Timeline selection](#timeline-selection)),
+and `Delete`, `Backspace`, `Shift+Delete` and the gap's context-menu row all do
+one thing: the gap is the hole, nothing is deleted, and every layer of the
+composition starting at or after its end moves left by its length, on every
+track ([ADR 0069](adr/0069-a-gap-is-a-selectable-span-whose-delete-closes-it.md)).
+Bare `Delete` closes here because a gap is already empty — there is nothing to
+lift — and because that is what Premiere and Resolve make the key mean over a
+gap. From the merge on the planner is the deletion's, so the refusals are the
+same four with the same predicted greying: a clip starting inside the gap on
+another lane (`RippleInsideHole`; the remedy is to remove that clip, since a gap
+has no set to add it to), a landing that collides, a link reaching across, a
+lock that would have to move — and the gap's own lane always holds a mover, so a
+gap on a locked lane always refuses. The span travels to the actor as **both
+edges**, never as a time inside it: the actor closes exactly what the timeline
+highlighted, and a span that is no longer a gap when it arrives — a clip moved
+into it under a lagging mirror — is refused (`GapNotFound`) rather than
+re-measured. The history row reads *Closed gap*.
+
 **For agents** the same edit is `ripple_delete_layers { layer_ids }`
-([mcp.md](mcp.md)); `split_layer_multi` carries a `ripple` flag so a split and
+([mcp.md](mcp.md)) and, for a gap, `ripple_delete_gap { track_id, start_us,
+end_us }`; `split_layer_multi` carries a `ripple` flag so a split and
 the closing of what it discarded are one undo, which is what
 [Pauses](#pauses)' *Remove pauses* and the `/cut-pauses` prompt
 stand on.
 
-Code: `renderer/ripple/plan.ts` (the planner), `main/state/mutations/ripple.ts`
-(the sweep and the transition re-derivation), `renderer/timeline/rippleEligibility.ts`
-(the one predicate behind every surface), `renderer/errors/formatCommandError.ts`
-(the four curated refusals).
+Code: `renderer/ripple/plan.ts` (the planner, with its gap entry),
+`renderer/ripple/gap.ts` (what a gap is — one rule for the click, the selection
+store and the planner), `main/state/mutations/ripple.ts` (the sweep and the
+transition re-derivation), `renderer/timeline/rippleEligibility.ts` (the one
+predicate behind every surface), `renderer/errors/formatCommandError.ts` (the
+curated refusals).
 
 ## Track placement
 

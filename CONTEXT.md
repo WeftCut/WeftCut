@@ -373,9 +373,24 @@ clip is not closed. Every layer on every track of the composition that starts at
 or after the hole moves left by the total length of the holes ahead of it; a
 layer that would start *inside* a hole refuses instead of sliding, as does a
 collision, a link with members on both sides, and a locked layer or lane that
-would have to move (ADR 0062).
-_Avoid_: close gap (a gesture on a selected gap, not built), ripple trim,
-implicit ripple
+would have to move (ADR 0062). A selected **Gap** closes under the same closing.
+_Avoid_: ripple trim, implicit ripple
+
+**Gap**:
+The empty span on ONE track between two layer boundaries — its right edge where
+a layer starts, its left where one ends or at composition time 0 — read off
+every layer on the lane whatever its class, so a half-empty combined A/V row is
+not one. The space after a track's last layer is not a gap: it has no right
+edge to close up to. Selectable by a plain click on it (the highlight is the
+selected-clip outline over the span), and the one selection whose `Delete`
+CLOSES rather than lifts: everything after it, on every track, moves left by its
+length through the ripple's own planner, with the ripple's refusals. Named by
+lane plus `[s, e)`, never by an id, and re-derived against every summary — a
+span that stops being exactly that gap drops out of the selection. UI word: Gap
+/ 间隙; the history row is *Closed gap* / *闭合间隙* (ADR 0069).
+_Avoid_: hole (that is the ripple's per-layer measure, clipped to same-class
+neighbours), blank space / 空白 (trailing space is blank and is not a gap), close
+gap as a UI verb (the row is *Ripple delete*; the key is *Delete*)
 
 ## Markers
 

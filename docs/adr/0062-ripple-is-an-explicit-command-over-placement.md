@@ -125,5 +125,7 @@ the `/cut-pauses` recipe could only mark.
   it in one recorded edit.
 - The refusal vocabulary grows by four variants, each carrying the entity
   it names; the status bar is the only after-the-fact surface.
-- Gap selection, ripple trim, insert edits and Sync Lock remain unbuilt and
-  are named as such, so none arrives by drift.
+- Ripple trim, insert edits and Sync Lock remain unbuilt and are named as
+  such, so none arrives by drift. Gap selection has since arrived as its own
+  decision, [ADR 0069](0069-a-gap-is-a-selectable-span-whose-delete-closes-it.md),
+  built on this planner's closing.
