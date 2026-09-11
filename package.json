@@ -1,6 +1,6 @@
 {
   "name": "weftcut",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "license": "MIT",
   "description": "Electron desktop video editor with an MCP tool surface for external AI agents",
