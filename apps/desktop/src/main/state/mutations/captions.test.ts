@@ -129,6 +129,57 @@ describe('applyAddCaptionTrack', () => {
     expect(caps[0].layers.map((l) => (l.params as { content: string }).content)).toEqual(['a', 'c'])
     expect(caps[1].layers.map((l) => (l.params as { content: string }).content)).toEqual(['b'])
   })
+  // ADR 0070. The candidates are the composition's caption tracks, not only the
+  // lanes this call opens: a second transcription of the same timeline lands on
+  // the caption track already there wherever that track has room.
+  it('packs into an existing caption track with room instead of opening a new one, and returns it', () => {
+    const { p, gen } = blank()
+    const existing = applyAddCaptionTrack(p, gen, [{ start_us: 0, end_us: 2_000_000, text: 'a', style: CLEAN }], 1920, 1080, 'Captions')
+    const tid = applyAddCaptionTrack(p, gen, [
+      { start_us: 2_000_000, end_us: 3_000_000, text: 'b', style: CLEAN }, // touches a's end: free
+      { start_us: 5_000_000, end_us: 6_000_000, text: 'c', style: CLEAN },
+    ], 1920, 1080, 'Captions')
+    expect(tid).toBe(existing)
+    const caps = root(p).tracks.filter((t) => t.role === 'Caption')
+    expect(caps).toHaveLength(1)
+    expect(caps[0].layers.map((l) => (l.params as { content: string }).content)).toEqual(['a', 'b', 'c'])
+  })
+  it('a cue that collides with the existing track opens a new lane; the next one that fits goes back', () => {
+    const { p, gen } = blank()
+    const existing = applyAddCaptionTrack(p, gen, [{ start_us: 0, end_us: 2_000_000, text: 'a', style: CLEAN }], 1920, 1080, null)
+    const tid = applyAddCaptionTrack(p, gen, [
+      { start_us: 1_000_000, end_us: 3_000_000, text: 'b', style: CLEAN }, // overlaps a → new lane
+      { start_us: 3_000_000, end_us: 4_000_000, text: 'c', style: CLEAN }, // existing track free again
+    ], 1920, 1080, null)
+    const caps = root(p).tracks.filter((t) => t.role === 'Caption')
+    expect(caps).toHaveLength(2)
+    expect(caps[0].id).toBe(existing)
+    expect(caps[0].layers.map((l) => (l.params as { content: string }).content)).toEqual(['a', 'c'])
+    expect(caps[1].layers.map((l) => (l.params as { content: string }).content)).toEqual(['b'])
+    // The first cue landed on the new lane, so that is the track reported.
+    expect(tid).toBe(caps[1].id)
+  })
+  // The `pickFreeOverlayTrack` rule: a locked lane must not receive content any
+  // more than it may lose it.
+  it('never packs into a locked caption track', () => {
+    const { p, gen } = blank()
+    const existing = applyAddCaptionTrack(p, gen, [{ start_us: 0, end_us: 1_000_000, text: 'a', style: CLEAN }], 1920, 1080, null)
+    root(p).tracks.find((t) => t.id === existing)!.locked = true
+    const tid = applyAddCaptionTrack(p, gen, [{ start_us: 5_000_000, end_us: 6_000_000, text: 'b', style: CLEAN }], 1920, 1080, null)
+    expect(tid).not.toBe(existing)
+    expect(root(p).tracks.filter((t) => t.role === 'Caption')).toHaveLength(2)
+    expect(root(p).tracks.find((t) => t.id === existing)!.layers).toHaveLength(1)
+  })
+  // Scope: only the target composition's caption tracks are candidates. A Group's
+  // captions never spill into the root's caption track, however much room it has.
+  it('considers only the target composition`s caption tracks', () => {
+    const { p, idGen, groupId } = groupedProject()
+    const rootCaptions = applyAddCaptionTrack(p, idGen, [{ start_us: 0, end_us: 1_000_000, text: 'root', style: CLEAN }], 1920, 1080, null)
+    const inGroup = applyAddCaptionTrack(p, idGen, [{ start_us: 5_000_000, end_us: 6_000_000, text: 'group', style: CLEAN }], 1920, 1080, null, groupId)
+    expect(inGroup).not.toBe(rootCaptions)
+    expect(group(p, groupId).tracks.some((t) => t.id === inGroup && t.role === 'Caption')).toBe(true)
+    expect(root(p).tracks.find((t) => t.id === rootCaptions)!.layers).toHaveLength(1)
+  })
   it('empty cues → one empty Caption track (raw-contract safety net)', () => {
     const { p, gen } = blank()
     const tid = applyAddCaptionTrack(p, gen, [], 1920, 1080, 'X')

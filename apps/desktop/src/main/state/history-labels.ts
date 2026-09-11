@@ -63,7 +63,10 @@ export const HISTORY_SUMMARY = {
   trackDelete: { key: 'history.track.delete', text: 'Deleted track' },
   trackMove: { key: 'history.track.move', text: 'Moved track' },
   trackRename: { key: 'history.track.rename', text: 'Renamed track' },
-  trackAddCaption: { key: 'history.track.add_caption', text: 'Added caption track' },
+  /** Not `Added caption track`: the cues pack into a caption track already there
+   *  when it has room (ADR 0070), so a track is opened only sometimes and the row
+   *  names what always happened. */
+  trackAddCaption: { key: 'history.track.add_caption', text: 'Added captions' },
 
   markerAdd: { key: 'history.marker.add', text: 'Added marker' },
   markerAddShots: { key: 'history.marker.add_shots', text: 'Added shot markers' },

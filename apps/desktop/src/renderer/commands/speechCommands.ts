@@ -20,8 +20,8 @@
 import i18n from "../i18n";
 import { layerDisplayName } from "../lib/layerName";
 import {
-  audioClipTarget,
   canAutoCaptionSelection,
+  transcribeTargets,
 } from "../speech/autoCaptionEligibility";
 import { runTranscribe } from "../speech/transcribeRun";
 import { openVoiceoverPrompt } from "../speech/voiceoverPrompt";
@@ -43,28 +43,30 @@ function namesTranscriptionSettings(message: string): boolean {
   return /Settings → Transcription/.test(message);
 }
 
-/// Transcribe the primary selected clip, start to finish.
+/// Transcribe the selected clips, start to finish — every clip with sound in
+/// the selection, reduced to one subject per source (`transcribeSubjects`
+/// states the rule), read in timeline order and landed as ONE commit.
 ///
 /// The selection is read from the store, not from a captured value: the gate is
 /// evaluated live for the same reason, and App does not re-render on a
 /// multi-select change.
 ///
-/// The name is resolved HERE and carried into the run, off `i18n.t` rather than
-/// a component's `useTranslation` — the command runs where there is no React.
-/// No group ordinals are passed because a Group layer never reaches this point:
-/// the gate admits VideoClip and Audio only.
+/// The names are resolved HERE and carried into the run, off `i18n.t` rather
+/// than a component's `useTranslation` — the command runs where there is no
+/// React. No group ordinals are passed because a Group layer never reaches this
+/// point: the subjects are VideoClip and Audio layers only.
 export async function transcribeSelected(deps: {
   revealCaptions: () => void;
   openSettings: () => void;
 }): Promise<void> {
-  const layer = audioClipTarget();
+  const clips = transcribeTargets();
   // Prevented by the command's `enabled`; a palette entry built before the
   // selection changed can still reach here, and doing nothing is the honest
   // answer to "no target".
-  if (!layer) return;
+  if (clips.length === 0) return;
+  const t = (key: string, values: Record<string, unknown>) => i18n.t(key, values);
   const message = await runTranscribe({
-    layerId: layer.id,
-    label: layerDisplayName(layer, (key, values) => i18n.t(key, values)),
+    clips: clips.map((layer) => ({ layerId: layer.id, label: layerDisplayName(layer, t) })),
     revealCaptions: deps.revealCaptions,
   });
   // The failure's own sentence is already in the status log (`runTranscribe`

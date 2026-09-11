@@ -188,6 +188,24 @@ describe('runHybrid: apply_subtitles (MCP hybrid)', () => {
     expect(track!.layers).toHaveLength(2)
   })
 
+  // ADR 0070: the write packs into the caption track already there, so two
+  // transcriptions of two clips on one timeline share one caption track and the
+  // arm answers the SAME id twice.
+  it('a second body whose cues fit lands on the first caption track and returns its id', async () => {
+    const actor = freshActor()
+    const deps = makeDeps(actor)
+    const first = await runHybrid('apply_subtitles', { body: TWO_CUE_SRT, format: 'srt' }, deps)
+    deps.compute.parseSubtitles = vi.fn(async () => JSON.stringify({
+      cues: [{ start_us: 6_000_000, end_us: 7_000_000, text: 'Later', style: { bold: false, italic: false } }],
+      simplified: false,
+    }))
+    const second = await runHybrid('apply_subtitles', { body: 'ignored by the fake parser', format: 'srt' }, deps)
+    expect(second).toBe(first)
+    const caps = root(actor.snapshot()).tracks.filter((t) => t.role === 'Caption')
+    expect(caps).toHaveLength(1)
+    expect(caps[0].layers).toHaveLength(3)
+  })
+
   it('appends the simplified-styling annotation when ASS styling was lossy', async () => {
     const actor = freshActor()
     const deps = makeDeps(actor)

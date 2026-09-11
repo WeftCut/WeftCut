@@ -57,8 +57,9 @@ pub(super) struct ApplySubtitlesArgs {
     pub body: String,
     /// 'srt', 'ass', or 'vtt'. Sniffed from body when omitted.
     pub format: Option<String>,
-    /// IGNORED — a caption import always creates its own Caption-role track.
-    /// Kept for wire-schema stability; do not remove.
+    /// IGNORED — the lane is the packing's to pick: cues land on the caption
+    /// tracks already there where they have room (ADR 0070). Kept for
+    /// wire-schema stability; do not remove.
     pub track_id: Option<String>,
     /// IGNORED — cue timings come from the body, not the timeline envelope.
     /// Kept for wire-schema stability; do not remove.

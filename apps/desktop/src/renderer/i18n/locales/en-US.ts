@@ -2277,7 +2277,12 @@ const enUS = {
     paste_keyframes_skipped:
       "Skipped {{params}} — the selected clips do not carry it",
     auto_caption_started: "Transcribing “{{clip}}”",
+    // Several clips are counted, not listed: their names are in the Caption
+    // Panel the moment the cues land, and a row that named six clips would be a
+    // paragraph. The failure row names the ONE clip that matters.
+    auto_caption_started_many: "Transcribing {{count}} clips",
     auto_caption_done: "{{cues}} caption cues added ({{engine}})",
+    auto_caption_failed: "Transcribing “{{clip}}” failed: {{reason}}",
     shots_analyze_started: "Analyzing shots in “{{clip}}”",
     // The CANDIDATE count, not a shot count: the scan's product is the
     // candidate list, and how many shots come out of it is whatever threshold
@@ -2386,7 +2391,7 @@ const enUS = {
       delete: "Deleted track",
       move: "Moved track",
       rename: "Renamed track",
-      add_caption: "Added caption track",
+      add_caption: "Added captions",
     },
     marker: {
       add: "Added marker",

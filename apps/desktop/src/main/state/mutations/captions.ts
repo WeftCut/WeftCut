@@ -1,7 +1,7 @@
 import type { Composition, Project, Rgba, TextAlign, TextParams, Track, Uuid } from '../model'
 import { scopeComposition } from './helpers'
 import type { IdGen } from '../ids'
-import { snapFrameRound } from '../snap'
+import { gridForLayerKind, snapOnGrid } from '../snap'
 import { quantizeExtentPx, quantizeParam } from '../quantize'
 import { applyAddLayer, defaultTransform } from './add'
 import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
@@ -127,43 +127,63 @@ export interface CaptionStylePatch {
   outline_width?: number | null
 }
 
-/** add_caption_track — greedy lane-pack the cues into Caption
- *  tracks (one Text layer per cue). Cues stable-sorted by start_us; each cue goes
- *  to the FIRST lane whose last layer's snapped end <= this cue's snapped start,
- *  else a new Caption track is opened (appended after the existing tracks).
- *  Returns the primary (first-opened) track id. Empty cues still create one empty
- *  Caption track. ★ ID ORDER: opening a lane mints the track id (newCaptionTrack
- *  → idGen) BEFORE the layer id (applyAddLayer → idGen) — mirror Track::new()
- *  then apply_add_layer exactly. No explicit autofit (applyAddLayer autofits per
- *  layer). The lanes open in `compositionId`, the root by default. */
+/** add_caption_track — lay the cues onto Caption tracks (one Text layer per
+ *  cue), packing into the caption tracks the composition ALREADY HAS before
+ *  opening a new one (ADR 0070). Cues stable-sorted by start_us; each cue goes to
+ *  the FIRST unlocked Caption-role track, in track order, whose layers leave the
+ *  cue's snapped span free, else a new Caption track is appended after the
+ *  existing tracks and joins the candidates. Existing tracks come first because
+ *  they precede anything appended, so a second transcription of the same
+ *  timeline lands beside the first instead of above it — a new lane opens only
+ *  where a cue truly collides with one already there.
+ *
+ *  The free test is the same-track overlap rule `pickFreeOverlayTrack` applies to
+ *  every other placement, on the snapped bounds `applyAddLayer` will store: two
+ *  cues that touch (end == start) share a lane, two that overlap by a frame do
+ *  not. Locked tracks are never candidates, for that helper's reason — a locked
+ *  lane must not receive content any more than it may lose it.
+ *
+ *  Returns the track the FIRST cue landed on — an existing one when it had room.
+ *  Empty cues still open one empty Caption track. ★ ID ORDER: opening a lane
+ *  mints the track id (newCaptionTrack → idGen) BEFORE the layer id (applyAddLayer
+ *  → idGen) — the seeded-id tests pin that order. No explicit autofit
+ *  (applyAddLayer autofits per layer). Scoped to `compositionId`, the root by
+ *  default: only THAT composition's caption tracks are candidates, and a new lane
+ *  opens there. */
 export function applyAddCaptionTrack(p: Project, idGen: IdGen, cues: Cue[], compW: number, compH: number, label: string | null, compositionId?: Uuid | null): Uuid {
   const c = scopeComposition(p, compositionId)
-  const fps = c.fps
+  const grid = gridForLayerKind('Text', c.fps)
   const sorted = cues.slice().sort((a, b) => (a.start_us < b.start_us ? -1 : a.start_us > b.start_us ? 1 : 0)) // stable by start_us
-  const trackIds: Uuid[] = []
-  const trackEnds: number[] = []
+  // Candidates in the order they are tried: the composition's own unlocked
+  // caption tracks first, then every lane this call opens, appended as it opens.
+  const lanes: Track[] = c.tracks.filter((t) => t.role === 'Caption' && !t.locked)
+  let first: Uuid | null = null
   for (const cue of sorted) {
-    const snappedStart = snapFrameRound(cue.start_us, fps.num, fps.den)
-    const slot = trackEnds.findIndex((end) => end <= snappedStart)
-    let trackId: Uuid
-    if (slot >= 0) { trackId = trackIds[slot] }
-    else { trackId = newCaptionTrack(c, idGen, label); trackIds.push(trackId); trackEnds.push(0) }
-    applyAddLayer(p, idGen, trackId, cueToTextParams(cue, compW, compH), cue.start_us, cue.end_us)
-    trackEnds[trackIds.indexOf(trackId)] = snapFrameRound(cue.end_us, fps.num, fps.den)
+    const s = snapOnGrid(cue.start_us, grid)
+    const e = snapOnGrid(cue.end_us, grid)
+    let lane = lanes.find((t) => spanFree(t, s, e))
+    if (!lane) { lane = newCaptionTrack(c, idGen, label); lanes.push(lane) }
+    applyAddLayer(p, idGen, lane.id, cueToTextParams(cue, compW, compH), cue.start_us, cue.end_us)
+    first ??= lane.id
   }
-  if (trackIds.length > 0) return trackIds[0]
-  return newCaptionTrack(c, idGen, label) // empty-cues safety net (Track::new after the loop)
+  return first ?? newCaptionTrack(c, idGen, label).id // empty-cues safety net (Track::new after the loop)
+}
+
+/** Whether no layer of `t` overlaps the half-open span `[s, e)` — the
+ *  `pickFreeOverlayTrack` predicate, on one track. */
+function spanFree(t: Track, s: number, e: number): boolean {
+  return t.layers.every((l) => !(s < l.t_end_us && l.t_start_us < e))
 }
 
 /** Track::new() defaults + role=Caption, appended to the END of the track list
  *  (push_back). A role stamp makes it part of the reserved skeleton, so
  *  `transient` is false and emptying it never removes it — unlike every track
  *  `applyAddTrack` mints. */
-function newCaptionTrack(c: Composition, idGen: IdGen, label: string | null): Uuid {
-  const id = idGen()
-  c.tracks.push({ id, label, enabled: true, locked: false, muted: false, solo: false,
-    removable: true, role: 'Caption', transient: false, height_px: 64, layers: [] })
-  return id
+function newCaptionTrack(c: Composition, idGen: IdGen, label: string | null): Track {
+  const track: Track = { id: idGen(), label, enabled: true, locked: false, muted: false, solo: false,
+    removable: true, role: 'Caption', transient: false, height_px: 64, layers: [] }
+  c.tracks.push(track)
+  return track
 }
 
 /** Patch every Text layer of ONE track with a caption style patch; non-Text

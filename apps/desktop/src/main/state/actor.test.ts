@@ -1498,6 +1498,20 @@ describe('dispatch: caption tracks', () => {
     actor.dispatch('undo', {})
     expect(root(actor.snapshot()).tracks.some((t) => t.role === 'Caption')).toBe(false)
   })
+  // ADR 0070: a second import whose cues fit lands on the caption track already
+  // there — one track, two commits — and undoing the second leaves the first.
+  it('a second add_caption_track packs into the existing caption track; undo peels only its cues', () => {
+    const { actor } = setup()
+    const first = actor.dispatch('add_caption_track', { cues: [{ start_us: 0, end_us: 1_000_000, text: 'a', style: CLEAN }], comp_w: 1920, comp_h: 1080, label: null })
+    const second = actor.dispatch('add_caption_track', { cues: [{ start_us: 2_000_000, end_us: 3_000_000, text: 'b', style: CLEAN }], comp_w: 1920, comp_h: 1080, label: null })
+    expect(second).toEqual(first)
+    const caps = () => root(actor.snapshot()).tracks.filter((t) => t.role === 'Caption')
+    expect(caps()).toHaveLength(1)
+    expect(caps()[0].layers).toHaveLength(2)
+    actor.dispatch('undo', {})
+    expect(caps()).toHaveLength(1)
+    expect(caps()[0].layers.map((l) => (l.params as { content: string }).content)).toEqual(['a'])
+  })
   // Project-wide restyle over overlapping caption lanes: two cues that overlap
   // lane-pack into TWO caption tracks, so this exercises the cross-track corpus.
   function setupTwoCaptionLanes() {

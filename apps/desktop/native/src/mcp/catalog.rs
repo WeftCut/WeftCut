@@ -45,10 +45,12 @@ tool_table! {
     "ping" => ("Liveness check. Returns 'pong' to confirm the WeftCut MCP server is reachable.", super::EmptyArgs, tools::ping),
     // begin_agent_session routes to the TS actor ('ts' MCP tool) and is supplied
     // by the TS def; mergeMcpCatalog filters it out of the Rust side.
-    "apply_subtitles" => ("Import a subtitle document (SRT/VTT/ASS) as a caption track of editable Text layers. \
-                          Cue timings come from the body. `format` is sniffed when omitted. \
+    "apply_subtitles" => ("Import a subtitle document (SRT/VTT/ASS) as editable Text layers on the caption tracks. \
+                          Cue timings come from the body; each cue lands on the first unlocked caption track \
+                          with room for its span, and a new caption track opens only for a cue that collides \
+                          with all of them. `format` is sniffed when omitted. \
                           Advanced ASS styling (karaoke, drawings) is simplified. \
-                          Returns the new caption track id.", tools::ApplySubtitlesArgs, tools::apply_subtitles),
+                          Returns the id of the caption track the first cue landed on.", tools::ApplySubtitlesArgs, tools::apply_subtitles),
     #[cfg(feature = "jobs")]
     "detect_pauses" => ("Find the pauses in a clip's audio — the stretches nobody is speaking — using \
                           the pre-computed waveform. Commits nothing: it measures and reports, and the \
@@ -122,7 +124,7 @@ tool_table! {
                           `word_timing` is the provenance of the per-word times: `exact` (from an engine's \
                           token offsets) or `interpolated_from_cue` (approximated by splitting an SRT cue span \
                           across its words). Pipe the `srt` field straight into `apply_subtitles` (the cues \
-                          self-position into a new caption track via their internal timestamps — `apply_subtitles` \
+                          self-position onto a caption track via their internal timestamps — `apply_subtitles` \
                           takes no start/end); use `segments`/`words` for word-level editing. Optional \
                           `t_start_us`/`t_end_us` narrow the transcription window inside the layer's time range; \
                           both default to the layer endpoints. Optional `backend` (`\"openai\"` | `\"whisper_cpp\"` | \

@@ -2030,7 +2030,10 @@ const zhCN: Resources = {
     paste_keyframes_no_target: "请先选中一个片段，再粘贴关键帧",
     paste_keyframes_skipped: "已跳过 {{params}}——选中的片段没有这些属性",
     auto_caption_started: "正在转写“{{clip}}”",
+    // 多个片段只报数量、不列名字：字幕一落地，名字就在字幕面板里；失败那一行才点名。
+    auto_caption_started_many: "正在转写 {{count}} 个片段",
     auto_caption_done: "已添加 {{cues}} 条字幕（{{engine}}）",
+    auto_caption_failed: "转写“{{clip}}”失败：{{reason}}",
     shots_analyze_started: "正在分析“{{clip}}”的镜头",
     // 报的是候选数而不是镜头数：扫描的产物是候选列表，
     // 从中得出多少个镜头取决于随后读的阈值。
@@ -2117,7 +2120,7 @@ const zhCN: Resources = {
       delete: "删除轨道",
       move: "移动轨道",
       rename: "重命名轨道",
-      add_caption: "添加字幕轨道",
+      add_caption: "添加字幕",
     },
     marker: {
       add: "添加标记",
