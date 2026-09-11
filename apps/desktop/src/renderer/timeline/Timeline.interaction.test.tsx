@@ -360,6 +360,87 @@ describe("Timeline seek/selection coupling", () => {
     expect(layerIdsOf(currentSelection()).size).toBe(0);
   });
 
+  // The gap gesture (ADR 0069). jsdom's canvas rect is all zeros, so a press's
+  // clientX IS its canvas x, and at the default 80 px/s a press at 240 px is
+  // t = 3 s — inside the [2 s, 4 s) gap the two-clip lane below leaves.
+  describe("clicking a gap", () => {
+    const second: LayerSummary = {
+      ...layer,
+      id: "layer-2",
+      label: "Clip B",
+      t_start_us: 4_000_000,
+      t_end_us: 6_000_000,
+    };
+    const gapped: TrackSummary = { ...track, layers: [layer, second] };
+
+    it("selects the gap between two clips and draws its highlight on that lane", () => {
+      const onSeek = vi.fn();
+      const { container } = renderTimeline({ tracks: [gapped], onSeek });
+      const lane = container.querySelector('[data-testid="track-lane"]')!;
+      fireEvent.pointerDown(lane, { button: 0, clientX: 240 });
+      fireEvent.pointerUp(window, { clientX: 240 });
+
+      expect(onSeek).not.toHaveBeenCalled();
+      expect(currentSelection()).toEqual({
+        kind: "gap",
+        trackId: "track-1",
+        s: 2_000_000,
+        e: 4_000_000,
+      });
+      const highlight = container.querySelector(
+        '[data-testid="timeline-gap-selection"]',
+      ) as HTMLElement | null;
+      expect(highlight).not.toBeNull();
+      expect(highlight!.getAttribute("data-track-id")).toBe("track-1");
+      expect(highlight!.getAttribute("data-start-us")).toBe("2000000");
+      expect(highlight!.getAttribute("data-end-us")).toBe("4000000");
+      // 2 s × 80 px/s from the canvas's left edge, 2 s wide.
+      expect(highlight!.style.left).toBe("160px");
+      expect(highlight!.style.width).toBe("160px");
+    });
+
+    it("clears on trailing space, which is not a gap", () => {
+      const { container } = renderTimeline({ tracks: [gapped], selectedLayerId: layer.id });
+      const lane = container.querySelector('[data-testid="track-lane"]')!;
+      fireEvent.pointerDown(lane, { button: 0, clientX: 560 });
+      fireEvent.pointerUp(window, { clientX: 560 });
+
+      expect(currentSelection().kind).toBe("none");
+      expect(
+        container.querySelector('[data-testid="timeline-gap-selection"]'),
+      ).toBeNull();
+    });
+
+    it("clears rather than selecting a gap on a locked lane — its closing can never be offered", () => {
+      const { container } = renderTimeline({
+        tracks: [{ ...gapped, locked: true }],
+        selectedLayerId: layer.id,
+      });
+      const lane = container.querySelector('[data-testid="track-lane"]')!;
+      fireEvent.pointerDown(lane, { button: 0, clientX: 240 });
+      fireEvent.pointerUp(window, { clientX: 240 });
+
+      expect(currentSelection().kind).toBe("none");
+    });
+
+    it("is replaced by a clip click, and its highlight goes with it", () => {
+      const { container } = renderTimeline({ tracks: [gapped] });
+      const lane = container.querySelector('[data-testid="track-lane"]')!;
+      fireEvent.pointerDown(lane, { button: 0, clientX: 240 });
+      fireEvent.pointerUp(window, { clientX: 240 });
+      expect(currentSelection().kind).toBe("gap");
+
+      const block = container.querySelector(".timeline-layer")!;
+      fireEvent.pointerDown(block, { button: 0, clientX: 50 });
+      fireEvent.pointerUp(window, { clientX: 50 });
+      fireEvent.click(block);
+      expect(primaryLayerIdOf(currentSelection())).toBe(layer.id);
+      expect(
+        container.querySelector('[data-testid="timeline-gap-selection"]'),
+      ).toBeNull();
+    });
+  });
+
   it("clicking a clip selects it without seeking", () => {
     const onSeek = vi.fn();
     const { container } = renderTimeline({ selectedLayerId: null, onSeek });

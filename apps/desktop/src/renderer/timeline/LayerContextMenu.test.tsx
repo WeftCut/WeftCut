@@ -333,7 +333,7 @@ describe("LayerContextMenu — the Ripple delete row", () => {
     renderMenu("VideoClip");
     expect(row().getAttribute("aria-disabled")).toBe("true");
     expect(row().getAttribute("title")).toBe(
-      "Select the clips to remove and close the gap after",
+      "Select the clips to remove and close the gap after, or click a gap to close it",
     );
   });
 });

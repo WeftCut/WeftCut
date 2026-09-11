@@ -17,9 +17,17 @@
 /// structural so the actor's `Composition` and the mirror's `CompositionSummary`
 /// each adapt through a one-screen mapper instead of this file learning either.
 ///
+/// Two entry points, one closing. `planRipple` derives its holes from the layers
+/// a deletion vacates; `planRippleGap` takes a gap the user selected AS the hole
+/// (ADR 0069). From the merge on the two are the same function, which is what
+/// makes a selected gap inherit every refusal a ripple has — a layer starting
+/// inside the span on another track, a landing that collides, a link reaching
+/// across, a lock that would have to move — with no second vocabulary.
+///
 /// ADR 0062.
 import { layerOverlapClass, shiftOnGrids, type OverlapClass } from '../grid'
 import type { CommandError, Rational, TimeUs, Uuid } from '../../shared/commandErrors'
+import { isGapOn } from './gap'
 
 export interface RippleLayerView {
   id: Uuid
@@ -53,6 +61,12 @@ export interface RippleMove { layer: Uuid; track: Uuid; t_start_us: TimeUs; t_en
 export type RipplePlan =
   | { ok: true; holes: RippleHole[]; moves: RippleMove[] }
   | { ok: false; refusal: CommandError }
+
+/** A selected gap: the track it sits on and its span, half-open. Both edges are
+ *  sent, never a time inside the gap: what the user saw highlighted is what
+ *  closes, and a gap that moved under a lagging mirror is refused
+ *  (`GapNotFound`) rather than re-measured. */
+export interface RippleGap { track: Uuid; s: TimeUs; e: TimeUs }
 
 /** A layer with the two things every step below asks of it: which lane it is on
  *  and which class it competes in. */
@@ -88,10 +102,7 @@ function pairKey(a: Uuid, b: Uuid): string {
  * on arithmetic that a refusal would have invalidated.
  */
 export function planRipple(view: RippleView, deleted: readonly Uuid[]): RipplePlan {
-  const index = new Map<Uuid, Placed>()
-  for (const track of view.tracks)
-    for (const layer of track.layers)
-      index.set(layer.id, { layer, track, cls: layerOverlapClass(layer) })
+  const index = indexOf(view)
 
   // 1 — dedupe, and refuse an id that names nothing before measuring anything.
   const doomed = new Set<Uuid>()
@@ -106,10 +117,7 @@ export function planRipple(view: RippleView, deleted: readonly Uuid[]): RipplePl
 
   // 2 — everything that survives, in track then timeline order. Every later step
   // walks this list, so its order is what makes each refusal deterministic.
-  const remaining: Placed[] = []
-  for (const track of view.tracks)
-    for (const layer of track.layers)
-      if (!doomed.has(layer.id)) remaining.push({ layer, track, cls: layerOverlapClass(layer) })
+  const remaining = remainingOf(view, doomed)
 
   // 3 — the hole a deleted layer actually vacated: its own footprint, clipped to
   // the same-class neighbours that REMAIN on its own lane. Not `[t_start, t_end)`:
@@ -134,6 +142,57 @@ export function planRipple(view: RippleView, deleted: readonly Uuid[]): RipplePl
     // was vacated, so nothing moves.
     if (e > s) raw.push({ s, e })
   }
+
+  return planClosing(view, index, doomed, raw)
+}
+
+/**
+ * The plan for closing a selected gap, or the refusal that says why not
+ * (ADR 0069). The gap is the hole — no layer is deleted — so the closing is
+ * `planRipple`'s from the merge on: a layer starting inside the span on another
+ * track, a landing that collides, a link reaching across the cut and a lock that
+ * would have to move all refuse exactly as they do for a deletion.
+ *
+ * Refused before the closing is planned when `[s, e)` is not a gap on `track`
+ * as this view sees it (`GapNotFound`): a layer reaches into it, or an edge is
+ * not a layer boundary. That is the mirror-lag case — the renderer selected a
+ * gap the actor no longer has — and refusing beats closing whatever is free
+ * there now. A track that is not in the view is `TrackNotFound`.
+ */
+export function planRippleGap(view: RippleView, gap: RippleGap): RipplePlan {
+  const track = view.tracks.find((t) => t.id === gap.track)
+  if (track === undefined) return { ok: false, refusal: { error: 'TrackNotFound', track: gap.track } }
+  if (!isGapOn(track.layers, gap.s, gap.e))
+    return { ok: false, refusal: { error: 'GapNotFound', track: gap.track, s: gap.s, e: gap.e } }
+  return planClosing(view, indexOf(view), new Set(), [{ s: gap.s, e: gap.e }])
+}
+
+/** Every layer in the view by id, with its lane and class. */
+function indexOf(view: RippleView): Map<Uuid, Placed> {
+  const index = new Map<Uuid, Placed>()
+  for (const track of view.tracks)
+    for (const layer of track.layers)
+      index.set(layer.id, { layer, track, cls: layerOverlapClass(layer) })
+  return index
+}
+
+/** Every layer NOT in `doomed`, in track then timeline order. */
+function remainingOf(view: RippleView, doomed: ReadonlySet<Uuid>): Placed[] {
+  const remaining: Placed[] = []
+  for (const track of view.tracks)
+    for (const layer of track.layers)
+      if (!doomed.has(layer.id)) remaining.push({ layer, track, cls: layerOverlapClass(layer) })
+  return remaining
+}
+
+/**
+ * Steps 4–10: merge the raw spans, refuse what makes them unclosable, land every
+ * downstream layer. Shared by the deletion and the gap; `doomed` is empty for
+ * the gap, and every read of it below then degrades to "consider every layer".
+ * The step numbers continue `planRipple`'s, because the order is one order.
+ */
+function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: ReadonlySet<Uuid>, raw: readonly RippleHole[]): RipplePlan {
+  const remaining = remainingOf(view, doomed)
 
   // 4 — merge across ALL tracks into disjoint ascending spans. Touching counts as
   // overlapping (`h.s <= last.e`), which is what makes a linked V+A pair one hole

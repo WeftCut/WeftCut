@@ -10,6 +10,7 @@ import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 import {
   planRipple,
+  planRippleGap,
   type RippleLayerView,
   type RippleMove,
   type RipplePlan,
@@ -405,5 +406,113 @@ describe("property: applying an accepted plan keeps the layout legal", () => {
     // satisfy the property above without the landing arithmetic ever running.
     expect(acceptedRuns).toBeGreaterThan(RUNS / 10);
     expect(movedRuns).toBeGreaterThan(RUNS / 20);
+  });
+});
+
+// ── a selected gap as the hole (ADR 0069) ────────────────────────────────────
+
+describe("planRippleGap closes a selected gap with the ripple's own closing", () => {
+  it("shifts every layer at or after the gap's end left by its length, on every track", () => {
+    const view = viewOf([
+      track("TV", [vis("A", 0, 2), vis("B", 4, 6)]),
+      track("TB", [vis("P", 0, 1), vis("Q", 5, 7)]),
+      track("TA", [aud("R", 4, 6)]),
+    ]);
+    const plan = accepted(planRippleGap(view, { track: "TV", s: sec(2), e: sec(4) }));
+    expect(plan.holes).toEqual([{ s: sec(2), e: sec(4) }]);
+    expect(plan.moves.map(shape)).toEqual([
+      ["B", "TV", sec(2), sec(4)],
+      ["Q", "TB", sec(3), sec(5)],
+      ["R", "TA", sec(2), sec(4)],
+    ]);
+  });
+
+  it("closes the space before the first clip from composition time 0", () => {
+    const view = viewOf([track("TV", [vis("A", 1, 3), vis("B", 3, 5)])]);
+    const plan = accepted(planRippleGap(view, { track: "TV", s: 0, e: sec(1) }));
+    expect(plan.moves.map(shape)).toEqual([
+      ["A", "TV", sec(0), sec(2)],
+      ["B", "TV", sec(2), sec(4)],
+    ]);
+  });
+
+  it("refuses a span that is not a gap — a piece of one, one a clip reaches into, trailing space — naming the span", () => {
+    const view = viewOf([track("TV", [vis("A", 0, 2), vis("B", 4, 6)])]);
+    const spans: ReadonlyArray<readonly [number, number]> = [
+      [sec(2), sec(3)],
+      [sec(1), sec(4)],
+      [sec(6), sec(8)],
+    ];
+    for (const [s, e] of spans) {
+      expect(refused(planRippleGap(view, { track: "TV", s, e }))).toEqual({
+        error: "GapNotFound",
+        track: "TV",
+        s,
+        e,
+      });
+    }
+    expect(refused(planRippleGap(view, { track: "nope", s: sec(2), e: sec(4) }))).toEqual({
+      error: "TrackNotFound",
+      track: "nope",
+    });
+  });
+
+  it("inherits the ripple's refusals: a clip starting inside the gap on another lane, and a locked lane that must move", () => {
+    const inside = viewOf([
+      track("TV", [vis("A", 0, 2), vis("B", 4, 6)]),
+      track("TB", [vis("Title", 3, 5)]),
+    ]);
+    expect(refused(planRippleGap(inside, { track: "TV", s: sec(2), e: sec(4) }))).toEqual({
+      error: "RippleInsideHole",
+      layer: "Title",
+      hole: { s: sec(2), e: sec(4) },
+    });
+    // The gap's own lane always holds a mover (the clip at its right edge), so
+    // a gap on a locked lane can never close.
+    const locked = viewOf([track("TV", [vis("A", 0, 2), vis("B", 4, 6)], true)]);
+    expect(refused(planRippleGap(locked, { track: "TV", s: sec(2), e: sec(4) }))).toEqual({
+      error: "TrackLocked",
+      track: "TV",
+    });
+  });
+
+  it("leaves a layer that starts before the gap where it is, and refuses when a mover would land on it", () => {
+    // A spanning title on TB starts before the gap and stays; the mover on TV
+    // lands next to A with nothing in the way.
+    const spanning = viewOf([
+      track("TV", [vis("A", 0, 2), vis("B", 4, 6)]),
+      track("TB", [vis("Title", 1, 5)]),
+    ]);
+    const plan = accepted(planRippleGap(spanning, { track: "TV", s: sec(2), e: sec(4) }));
+    expect(plan.moves.map(shape)).toEqual([["B", "TV", sec(2), sec(4)]]);
+    // The same shape with a clip downstream of the title on ITS lane: that
+    // clip moves 2 s left, into the title.
+    const collides = viewOf([
+      track("TV", [vis("A", 0, 2), vis("B", 4, 6)]),
+      track("TB", [vis("Long", 1, 5), vis("Next", 5, 6)]),
+    ]);
+    expect(refused(planRippleGap(collides, { track: "TV", s: sec(2), e: sec(4) }))).toEqual({
+      error: "RippleCollision",
+      moving: "Next",
+      blocking: "Long",
+      track: "TB",
+    });
+  });
+
+  it("agrees with planRipple: deleting a clip and closing the gap it leaves land everything identically", () => {
+    const view = viewOf([
+      track("TV", [vis("A", 0, 2), vis("B", 2, 4), vis("C", 4, 6)]),
+      track("TB", [vis("Q", 5, 7)]),
+      track("TA", [aud("R", 4, 6)]),
+    ]);
+    const viaDelete = accepted(planRipple(view, ["B"]));
+    const withoutB = viewOf([
+      track("TV", [vis("A", 0, 2), vis("C", 4, 6)]),
+      track("TB", [vis("Q", 5, 7)]),
+      track("TA", [aud("R", 4, 6)]),
+    ]);
+    const viaGap = accepted(planRippleGap(withoutB, { track: "TV", s: sec(2), e: sec(4) }));
+    expect(viaGap.holes).toEqual(viaDelete.holes);
+    expect(viaGap.moves).toEqual(viaDelete.moves);
   });
 });

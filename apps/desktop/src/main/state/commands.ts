@@ -138,6 +138,9 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // The same selection, closing the span it vacated (ADR 0062). Same rename,
   // and one entry: the deletes and the sweep are one undo.
   ripple_delete_layers: (a) => ({ op: 'ripple_delete_layers', args: { layers: a.layerIds } }),
+  // A selected gap closing (ADR 0069): the lane and BOTH edges of the span the
+  // renderer highlighted, so the actor closes that and refuses anything else.
+  ripple_delete_gap: (a) => ({ op: 'ripple_delete_gap', args: { track: a.trackId, s: a.startUs, e: a.endUs } }),
   remove_media: (a) => ({ op: 'remove_media', args: { media: a.mediaId, force: a.force ?? false } }),
   duplicate_layer: (a) => ({ op: 'duplicate_layer', args: { layer: a.layerId, t_offset_us: a.tOffsetUs } }),
   // The whole-link duplicate: a set in (the first id is the seed the drop
@@ -237,7 +240,7 @@ export const PRODUCTION_OPS = new Set<string>([
   'add_color_layer', 'add_text_layer', 'add_media_layer', 'paste_layer',
   'add_demo_color_layer', 'add_demo_text_layer',
   // Remaining mechanical + meta channels
-  'move_layer', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layer', 'delete_layers', 'ripple_delete_layers', 'remove_media', 'duplicate_layer', 'paste_layers', 'set_layers_enabled', 'split_layer_linked',
+  'move_layer', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layer', 'delete_layers', 'ripple_delete_layers', 'ripple_delete_gap', 'remove_media', 'duplicate_layer', 'paste_layers', 'set_layers_enabled', 'split_layer_linked',
   'links_create', 'links_dissolve', 'links_rename',
   'groups_create', 'groups_add_members', 'move_layers_to_composition', 'groups_ungroup', 'groups_rename', 'compositions_delete', 'add_group_layer',
   'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks', 'update_param_tracks_multi', 'set_scale_linked',

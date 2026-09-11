@@ -1675,6 +1675,21 @@ export async function rippleDeleteLayers(layerIds: string[]): Promise<void> {
   return invoke<void>("ripple_delete_layers", { layerIds });
 }
 
+/// Close a selected gap (ADR 0069): the empty span `[startUs, endUs)` on
+/// `trackId` goes, and every layer of the composition starting at or after it
+/// moves left by its length — `rippleDeleteLayers`' closing with nothing
+/// deleted, as ONE undo step. Both edges travel so the actor closes exactly the
+/// span the timeline highlighted; a span that is no longer a gap when the actor
+/// reads it is refused (`GapNotFound`) rather than re-measured, and the
+/// ripple's own refusals apply as they do to a deletion.
+export async function rippleDeleteGap(args: {
+  trackId: string;
+  startUs: number;
+  endUs: number;
+}): Promise<void> {
+  return invoke<void>("ripple_delete_gap", args);
+}
+
 // ============================================================
 // Transitions (spec § Command surface — three recorded, undoable ops)
 // ============================================================

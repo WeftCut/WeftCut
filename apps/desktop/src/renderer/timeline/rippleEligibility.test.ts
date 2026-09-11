@@ -12,7 +12,12 @@ import i18n from "../i18n";
 import type { CompositionSummary, LayerSummary, ProjectSummary } from "../ipc";
 import { clearKeyframeSelection, selectKeyframe } from "../keyframe/selectionStore";
 import { useProjectStore } from "../state/projectStore";
-import { clearLayerSelection, setLayerSelection } from "../state/selectionStore";
+import {
+  clearLayerSelection,
+  setGapSelection,
+  setLayerSelection,
+  type Selection,
+} from "../state/selectionStore";
 import { ROOT_ID, summaryFixture } from "../testing/summaryFixture";
 import {
   canRippleDeleteSelection,
@@ -79,6 +84,21 @@ function rootOf(summary: ProjectSummary): CompositionSummary {
   return summary.compositions[ROOT_ID]!;
 }
 
+/// The `Selection` shapes the predicate takes, built the way the store builds
+/// them: a Layer set carries its first id as primary.
+const NONE: Selection = { kind: "none" };
+const layers = (ids: string[]): Selection => ({
+  kind: "layers",
+  primary: ids[0]!,
+  ids: new Set(ids),
+});
+const gap = (trackId: string, s: number, e: number): Selection => ({
+  kind: "gap",
+  trackId,
+  s,
+  e,
+});
+
 afterEach(() => {
   useProjectStore.getState().apply(null);
   clearLayerSelection();
@@ -88,14 +108,14 @@ afterEach(() => {
 describe("rippleDeleteStateOf", () => {
   it("offers the ripple for a plain selection whose span closes cleanly", () => {
     const root = rootOf(seed(baseTracks()));
-    expect(rippleDeleteStateOf(new Set(["l-a"]), root, false)).toEqual({
+    expect(rippleDeleteStateOf(layers(["l-a"]), root, false)).toEqual({
       kind: "ripple",
     });
   });
 
   it("asks for a selection when there is none", () => {
     const root = rootOf(seed(baseTracks()));
-    expect(rippleDeleteStateOf(new Set(), root, false)).toEqual({
+    expect(rippleDeleteStateOf(NONE, root, false)).toEqual({
       kind: "needs_selection",
     });
   });
@@ -104,7 +124,7 @@ describe("rippleDeleteStateOf", () => {
   // a selection left over from another one is simply not found.
   it("asks for a selection when the selected ids live in another composition", () => {
     const root = rootOf(seed(baseTracks()));
-    expect(rippleDeleteStateOf(new Set(["elsewhere"]), root, false)).toEqual({
+    expect(rippleDeleteStateOf(layers(["elsewhere"]), root, false)).toEqual({
       kind: "needs_selection",
     });
   });
@@ -112,7 +132,7 @@ describe("rippleDeleteStateOf", () => {
   // The precedence rule, not a refusal: the key is about to delete keys.
   it("reports the keyframe precedence ahead of everything else", () => {
     const root = rootOf(seed(baseTracks()));
-    expect(rippleDeleteStateOf(new Set(["l-a"]), root, true)).toEqual({
+    expect(rippleDeleteStateOf(layers(["l-a"]), root, true)).toEqual({
       kind: "keyframes",
     });
   });
@@ -131,7 +151,7 @@ describe("rippleDeleteStateOf", () => {
         }),
       ]),
     );
-    const state = rippleDeleteStateOf(new Set(["l-a"]), rootOf(seed(tracks)), false);
+    const state = rippleDeleteStateOf(layers(["l-a"]), rootOf(seed(tracks)), false);
     expect(state).toEqual({
       kind: "refused",
       refusal: {
@@ -149,17 +169,54 @@ describe("rippleDeleteStateOf", () => {
     tracks.push(
       track("t-locked", [layer({ id: "l-music", t_start_us: 2_000_000, t_end_us: 3_000_000 })], true),
     );
-    const state = rippleDeleteStateOf(new Set(["l-a"]), rootOf(seed(tracks)), false);
+    const state = rippleDeleteStateOf(layers(["l-a"]), rootOf(seed(tracks)), false);
     expect(state).toEqual({
       kind: "refused",
       refusal: { error: "TrackLocked", track: "t-locked" },
     });
   });
 
+  // The gap kind (ADR 0069): the same planner through its gap entry, so the
+  // verdict is the closing's and the refusals are the ripple's own.
+  it("offers the ripple for a selected gap that closes cleanly", () => {
+    const tracks = baseTracks();
+    tracks[0]!.layers[1]!.t_start_us = 3_000_000;
+    const root = rootOf(seed(tracks));
+    expect(rippleDeleteStateOf(gap("t-video", 2_000_000, 3_000_000), root, false)).toEqual({
+      kind: "ripple",
+    });
+  });
+
+  it("refuses a gap with the planner's own error when a clip on another lane starts inside it", () => {
+    const tracks = baseTracks();
+    tracks[0]!.layers[1]!.t_start_us = 3_000_000;
+    tracks.push(
+      track("t-text", [
+        layer({ id: "l-title", label: "Lower third", t_start_us: 2_500_000, t_end_us: 4_000_000 }),
+      ]),
+    );
+    expect(rippleDeleteStateOf(gap("t-video", 2_000_000, 3_000_000), rootOf(seed(tracks)), false)).toEqual({
+      kind: "refused",
+      refusal: { error: "RippleInsideHole", layer: "l-title", hole: { s: 2_000_000, e: 3_000_000 } },
+    });
+  });
+
+  it("refuses a gap the mirror no longer holds, and asks for a selection for a gap on a lane elsewhere", () => {
+    const root = rootOf(seed(baseTracks()));
+    // Two abutting clips: the span between them is not a gap.
+    expect(rippleDeleteStateOf(gap("t-video", 2_000_000, 3_000_000), root, false)).toEqual({
+      kind: "refused",
+      refusal: { error: "GapNotFound", track: "t-video", s: 2_000_000, e: 3_000_000 },
+    });
+    expect(rippleDeleteStateOf(gap("elsewhere", 2_000_000, 3_000_000), root, false)).toEqual({
+      kind: "needs_selection",
+    });
+  });
+
   it("lets a locked lane with nothing downstream through", () => {
     const tracks = baseTracks();
     tracks.push(track("t-locked", [], true));
-    expect(rippleDeleteStateOf(new Set(["l-a"]), rootOf(seed(tracks)), false)).toEqual({
+    expect(rippleDeleteStateOf(layers(["l-a"]), rootOf(seed(tracks)), false)).toEqual({
       kind: "ripple",
     });
   });
@@ -172,7 +229,7 @@ describe("rippleDeleteReason", () => {
 
   it("names the precondition for the two states that have one", () => {
     expect(rippleDeleteReason({ kind: "needs_selection" }, t)).toBe(
-      "Select the clips to remove and close the gap after",
+      "Select the clips to remove and close the gap after, or click a gap to close it",
     );
     expect(rippleDeleteReason({ kind: "keyframes" }, t)).toContain("Keyframes");
   });
@@ -193,7 +250,7 @@ describe("rippleDeleteReason", () => {
         }),
       ]),
     );
-    const state = rippleDeleteStateOf(new Set(["l-a"]), rootOf(seed(tracks)), false);
+    const state = rippleDeleteStateOf(layers(["l-a"]), rootOf(seed(tracks)), false);
     expect(rippleDeleteReason(state, t)).toBe(
       "Ripple delete blocked: Lower third starts inside the span being closed — add it to the selection, or delete without ripple.",
     );
@@ -204,7 +261,7 @@ describe("rippleDeleteReason", () => {
     tracks.push(
       track("t-locked", [layer({ id: "l-music", t_start_us: 2_000_000, t_end_us: 3_000_000 })], true),
     );
-    const state = rippleDeleteStateOf(new Set(["l-a"]), rootOf(seed(tracks)), false);
+    const state = rippleDeleteStateOf(layers(["l-a"]), rootOf(seed(tracks)), false);
     // `TrackLocked`'s own curated line, reused rather than restated — the lane
     // is locked, whichever op ran into it.
     expect(rippleDeleteReason(state, t)).toBe("Track 2 is locked.");
@@ -243,6 +300,15 @@ describe("rippleDeleteState — the live read", () => {
     expect(rippleDeleteState()).toEqual({ kind: "needs_selection" });
     expect(canRippleDeleteSelection()).toBe(false);
     setLayerSelection("l-a", ["l-a"]);
+    expect(rippleDeleteState()).toEqual({ kind: "ripple" });
+    expect(canRippleDeleteSelection()).toBe(true);
+  });
+
+  it("follows a gap selection through the same read", () => {
+    const tracks = baseTracks();
+    tracks[0]!.layers[1]!.t_start_us = 3_000_000;
+    seed(tracks);
+    setGapSelection("t-video", 2_000_000, 3_000_000);
     expect(rippleDeleteState()).toEqual({ kind: "ripple" });
     expect(canRippleDeleteSelection()).toBe(true);
   });

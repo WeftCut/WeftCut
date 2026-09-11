@@ -26,6 +26,7 @@ import type {
   TrackSummary,
   TransitionSummary,
 } from "../ipc";
+import type { GapSelection } from "../state/selectionStore";
 import { playheadClockUs } from "../state/playheadProjection";
 import { useMarqueeAnchor } from "./hooks/useMarqueeAnchor";
 import {
@@ -49,6 +50,7 @@ export function TrackLane({
   isExpanded,
   selectedLayerId,
   selectedLayerIds,
+  selectedGap,
   transitions,
   selectedTransitionId,
   linkByLayerId,
@@ -64,6 +66,7 @@ export function TrackLane({
   onMediaDrop,
   onContextMenu,
   onChipContextMenu,
+  onGapContextMenu,
   onChipResize,
   onCommitLabel,
   onCommitLinkLabel,
@@ -88,6 +91,10 @@ export function TrackLane({
   isExpanded: boolean;
   selectedLayerId: string | null;
   selectedLayerIds: ReadonlySet<string>;
+  /// The selected gap when it sits on THIS lane, else null (ADR 0069). Timeline
+  /// narrows it per lane so a gap selection re-renders the lane it is on and
+  /// leaves the others' props untouched.
+  selectedGap: GapSelection | null;
   /// Full project transition list; the lane filters to chips whose both
   /// participants live on this track.
   transitions: TransitionSummary[];
@@ -127,6 +134,10 @@ export function TrackLane({
   /// Transition-chip counterpart of `onContextMenu` — the Timeline anchors
   /// the chip menu at the cursor for this chip's transition.
   onChipContextMenu: (e: React.MouseEvent, chip: TrackTransitionChip) => void;
+  /// Lane-background counterpart: a right-click on blank lane space. The
+  /// Timeline resolves it to the gap under the pointer (or to nothing) — the
+  /// lane hands over only where the press was and which lane it is.
+  onGapContextMenu: (e: React.MouseEvent, trackId: string) => void;
   /// Chip edge-drag commit — the Timeline lowers the assembled patch through
   /// `updateTransition` (one commit per gesture, spec D6).
   onChipResize: (args: TransitionResizeArgs) => void;
@@ -442,8 +453,29 @@ export function TrackLane({
   // A box started on lane background sweeps CLIPS. Chips and the height
   // splitter stop their own pointerdown, so only the background reaches here —
   // and a locked chip, which does not stop it and is background as far as
-  // selection is concerned.
-  const { onPointerDown: onMarqueeDown } = useMarqueeAnchor({ kind: "clip" });
+  // selection is concerned. The lane's id rides along so a press that never
+  // becomes a box can select the gap under it (ADR 0069).
+  const { onPointerDown: onMarqueeDown } = useMarqueeAnchor({
+    kind: "clip",
+    trackId: track.id,
+  });
+
+  // Right-click on blank lane space. Chips and blocks stop their own
+  // contextmenu, so only background reaches here; the `closest` guard is belt
+  // and braces for a child that forgets to.
+  const onLaneContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      const target = e.target as Element | null;
+      if (target?.closest?.("[data-layer-id], [data-transition-id]")) return;
+      onGapContextMenu(e, track.id);
+    },
+    [onGapContextMenu, track.id],
+  );
+
+  // The selected gap's band: the lane's full-height slice, as a clip on a
+  // single-class lane would fill it, so the highlight reads as "this span is
+  // selected" in the same vocabulary as a selected clip's outline.
+  const gapBand = layerSliceRect(height, "full");
 
   return (
     <div
@@ -468,10 +500,36 @@ export function TrackLane({
       ].join(" ")}
       style={{ height }}
       onPointerDown={onMarqueeDown}
+      onContextMenu={onLaneContextMenu}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
+      {/* The selected gap (ADR 0069). It takes pointer events only to carry
+          its tooltip; every press on it bubbles to the lane's own pointerdown
+          and contextmenu, which resolve it as lane background: clicking a
+          selected gap re-selects it (a no-op commit), dragging from it starts a
+          box, right-clicking it opens its menu. Below the blocks in z, since it
+          can never overlap one. */}
+      {selectedGap !== null && (
+        <div
+          data-testid="timeline-gap-selection"
+          data-track-id={track.id}
+          data-start-us={selectedGap.s}
+          data-end-us={selectedGap.e}
+          className="absolute z-[1] rounded bg-ring/15 outline outline-2 -outline-offset-2 outline-ring"
+          style={{
+            left: (selectedGap.s / 1_000_000) * pxPerSec,
+            top: gapBand.top,
+            width: Math.max(2, ((selectedGap.e - selectedGap.s) / 1_000_000) * pxPerSec),
+            height: gapBand.height,
+          }}
+          title={t("timeline.gap_title", {
+            start: formatTimecode(selectedGap.s, fpsNum, fpsDen),
+            end: formatTimecode(selectedGap.e, fpsNum, fpsDen),
+          })}
+        />
+      )}
       {visibleDropPreview !== null && (
         <div
           data-testid="media-drop-ghost"

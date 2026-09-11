@@ -231,6 +231,15 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
     key: "errors.ripple_locked_layer",
     args: (e, ctx) => ({ layer: ctx.layer(e.layer) }),
   },
+  // The gap closing's own refusal (ADR 0069), curated for the ripple four's
+  // reason: reachable from the Delete key when the mirror lags the actor. The
+  // span is not interpolated — the user's highlight already showed it, and
+  // "no longer there" is the whole message.
+  GapNotFound: {
+    tier: "curated",
+    key: "errors.gap_not_found",
+    args: (e, ctx) => ({ track: ctx.track(e.track) }),
+  },
   SplitOutsideLayer: {
     tier: "curated",
     key: "errors.split_outside_layer",

@@ -21,10 +21,12 @@ import {
 import { restorePrecomposeSelection } from "./precomposeSelection";
 import {
   retainCompositionSelection,
+  retainGapSelection,
   retainLayerSelection,
   retainMediaSelection,
   retainTransitionSelection,
 } from "./selectionStore";
+import { isGapOn } from "../ripple/gap";
 import { LatestRequestCoordinator } from "./latestRequest";
 import { retainTrackViewState } from "./viewState";
 
@@ -164,6 +166,16 @@ export const useProjectStore = create<
     );
     retainCompositionSelection(summary ? Object.keys(summary.compositions) : []);
     retainMediaSelection(indices.mediaById.keys());
+    // The gap is re-derived, not looked up: it has no id, so "still there" means
+    // the same span is still exactly a gap on the same lane.
+    retainGapSelection((trackId) => {
+      if (!summary) return null;
+      for (const c of Object.values(summary.compositions)) {
+        const track = c.tracks.find((t) => t.id === trackId);
+        if (track !== undefined) return track.layers;
+      }
+      return null;
+    }, isGapOn);
     // After the indices and the retained selections: the fallback switch this
     // may run clears the selection, and reads the summary just published.
     reconcileCompositionAnchors(summary);

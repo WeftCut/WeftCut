@@ -32,6 +32,8 @@ describe('PRODUCTION_OPS', () => {
       'delete_layer', 'delete_layers',
       // The selection's delete that also closes the span it vacated (ADR 0062).
       'ripple_delete_layers',
+      // A selected gap closing: the same sweep with nothing deleted (ADR 0069).
+      'ripple_delete_gap',
       'duplicate_layer',
       'fit_composition_to_layers', 'groups_add_members', 'groups_create', 'groups_rename', 'groups_ungroup',
       'links_create', 'links_dissolve', 'links_rename', 'move_effect',

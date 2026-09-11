@@ -485,6 +485,7 @@ export function dryRunErrorString(e: CommandError): string {
   if (e.error === 'RippleCollision') return `layer ${e.moving} would ripple left onto layer ${e.blocking} on track ${e.track}`
   if (e.error === 'RippleLinkStraddles') return `link ${e.link} has members on both sides of the span [${e.hole.s}, ${e.hole.e}) µs the ripple would close`
   if (e.error === 'RippleLockedLayer') return `layer ${e.layer} is locked and would have to move`
+  if (e.error === 'GapNotFound') return `[${e.s}, ${e.e}) µs is not a gap on track ${e.track}`
   return e.error
 }
 
@@ -655,6 +656,15 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
   if (e.error === 'RippleLockedLayer') {
     return { code: 'invalid_params', message: `layer ${e.layer} is locked and would have to move: ripple delete shifts everything that starts at or after the span it closes. Unlock it (update_layer { patch: { locked: false } }) and retry, or narrow layer_ids so nothing downstream of ${e.layer} is removed. Only a layer that actually shifts blocks — a locked layer upstream of the cut is fine.`, data: {
       error: 'RippleLockedLayer', layer: e.layer,
+    } }
+  }
+  // ── Gap closing (ADR 0069). The span is echoed because the fix is to re-read
+  // the track and send the gap as it is NOW: either a layer has reached into
+  // the span since it was measured, or an edge is not a layer boundary. ──
+  if (e.error === 'GapNotFound') {
+    return { code: 'invalid_params', message: `[${e.s}, ${e.e}) µs is not a gap on track ${e.track}: a gap is the WHOLE empty span between two layer boundaries on one track — end_us exactly where a layer starts, start_us exactly where one ends (or 0) — with no layer reaching into it. Re-read the track (project://compositions) and send the gap as it is now; the space after the last layer on a track is not a gap.`, data: {
+      error: 'GapNotFound', track: e.track, span_us: [e.s, e.e],
+      options: [{ action: 'reread_then_retry', resource: 'project://compositions' }],
     } }
   }
   // ── Groups (ADR 0052). Each message says what was refused AND why, because the
@@ -980,6 +990,10 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Delete a SET of layers AND close the span each one vacated, so the film gets shorter (ADR 0062). The span closed for a layer is its own footprint CLIPPED to its remaining same-class neighbours on its own track — a transition participant's authorized overlap is therefore never part of the hole — and touching or overlapping holes merge into one. Every remaining layer that starts at or after a hole then shifts LEFT by that hole's length, on EVERY track of the composition and each on its own lattice, so a linked A/V pair stays in sync; pass both members of a pair and their two holes merge into one shift. What stays: a gap that already sat beside the deleted layer (it just travels left with everything else), a layer that STARTS before the hole (reaching into it is fine — it is anchored ahead of the cut), free markers, and the playhead. Markers anchored to a mover follow it; markers anchored to a deleted layer go with it. Refuses whole, before any write, always naming the entity: `RippleInsideHole` — a remaining layer starts inside the span, so add it to `layer_ids` (its own hole merges in) or use `delete_layer` to leave the span open; `RippleCollision` — a mover would land on a layer that is not moving, so move or delete the blocking layer (the system never makes room); `RippleLinkStraddles` — a link has members on both sides of the span and a link means they move together, so unlink them or add the straddling members to `layer_ids`; `RippleLockedLayer` / `TrackLocked` — a layer or track that would have to move is locked, so unlock it. Locks read leniently: only a layer that actually shifts blocks, so a locked logo at the head does not disable ripple for the rest of the film. The set is ONE composition's (`CrossCompositionSet` otherwise) and must hold at least one id. Recorded — one undo restores every moved layer too.",
     inputSchema: { type: 'object', properties: { layer_ids: { type: 'array', items: { type: 'string' } } }, required: ['layer_ids'] },
     parseArgs: (a) => ({ op: 'ripple_delete_layers', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) } }) },
+  { name: 'ripple_delete_gap', exec: 'table',
+    description: "Close a GAP — the empty span on one track between two layer boundaries — so everything after it moves left and the film gets shorter (ADR 0069). Nothing is deleted. `track_id` names the lane and `start_us` / `end_us` the gap's half-open span `[start_us, end_us)`, read off `project://compositions`: `end_us` must be exactly where a layer on that track STARTS and `start_us` exactly where one ENDS (or 0 — the space before the first clip is a gap too); the space after the last clip is not a gap and cannot be closed. Send the whole gap, not a piece of it, or the call is refused with `GapNotFound` carrying the span you sent — the same refusal you get when a layer reaches into the span, so re-read the composition and retry with the gap as it is now. The closing is `ripple_delete_layers`' closing: every remaining layer that starts at or after `end_us`, on EVERY track of the composition, shifts LEFT by the gap's length, each on its own lattice; a layer that starts before the gap stays, free markers and the playhead stay, anchored markers follow their layers. Refuses whole, before any write, with the same names: `RippleInsideHole` — a layer on another track starts inside the gap, so delete it or `ripple_delete_layers` it first (a gap has no set to add it to); `RippleCollision` — a mover would land on a layer that is not moving; `RippleLinkStraddles` — a link has a member reaching across the gap and another downstream; `RippleLockedLayer` / `TrackLocked` — a layer or lane that would have to move is locked (the gap's own lane always has a mover, so a gap on a locked lane always refuses). Recorded — one undo puts every moved layer back.",
+    inputSchema: { type: 'object', properties: { track_id: { type: 'string' }, start_us: { type: 'integer' }, end_us: { type: 'integer' } }, required: ['track_id', 'start_us', 'end_us'] },
+    parseArgs: (a) => ({ op: 'ripple_delete_gap', args: { track: parseUuid(a.track_id, 'track_id'), s: parseNum(a.start_us, 'start_us'), e: parseNum(a.end_us, 'end_us') } }) },
   // ── table-exec: links ───────────────────────────────────────────────────
   { name: 'links_create', exec: 'table',
     description: 'Create a new link from >=2 distinct layer ids. Optional `label`. If any layer is already in another link, the op fails unless `reassign=true`, which removes them from their prior link(s) first (auto-dissolving any link that falls below 2 members). Returns the new link id.',

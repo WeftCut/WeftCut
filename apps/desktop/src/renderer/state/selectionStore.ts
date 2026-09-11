@@ -18,12 +18,24 @@ import { create } from "zustand";
 /// `media` and `group` are siblings rather than one `pool` branch: the inspector
 /// dispatches to a different component for each, so a shared tag would only be
 /// unwrapped again at every read.
+///
+/// `gap` is the one selectable thing with no id: the empty span on one track
+/// between two layer boundaries (ADR 0069), named by its lane and its half-open
+/// `[s, e)`. It is what Delete CLOSES rather than lifts — everything after it
+/// moves left — which is why it is a selection kind and not a hover state: the
+/// key has to know what it is aimed at. Kept valid by `retainGapSelection`,
+/// which re-derives the span against every summary the way the id kinds are
+/// retained against their id lists.
 export type Selection =
   | { kind: "none" }
   | { kind: "layers"; primary: string; ids: ReadonlySet<string> }
   | { kind: "transition"; id: string }
+  | { kind: "gap"; trackId: string; s: number; e: number }
   | { kind: "media"; id: string }
   | { kind: "group"; id: string };
+
+/// A selected gap, as the surfaces read it.
+export interface GapSelection { trackId: string; s: number; e: number }
 
 export interface SelectionState {
   selection: Selection;
@@ -63,6 +75,13 @@ export function transitionIdOf(selection: Selection): string | null {
   return selection.kind === "transition" ? selection.id : null;
 }
 
+/// The gap a selection holds — null for every other kind. The `Selection`
+/// object itself is returned (it IS the gap plus a tag), so the reference is
+/// stable between selection changes and safe to hand a zustand selector.
+export function gapOf(selection: Selection): GapSelection | null {
+  return selection.kind === "gap" ? selection : null;
+}
+
 function equalIds(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   if (a.size !== b.size) return false;
   for (const id of a) {
@@ -81,6 +100,15 @@ function sameSelection(a: Selection, b: Selection): boolean {
     );
   }
   if (a.kind === "none" || b.kind === "none") return a.kind === b.kind;
+  if (a.kind === "gap" || b.kind === "gap") {
+    return (
+      a.kind === "gap" &&
+      b.kind === "gap" &&
+      a.trackId === b.trackId &&
+      a.s === b.s &&
+      a.e === b.e
+    );
+  }
   return a.kind === b.kind && a.id === b.id;
 }
 
@@ -194,6 +222,41 @@ export function clearTransitionSelection(): void {
   if (currentSelection().kind === "transition") commit(NONE);
 }
 
+/// Select a gap: the empty span `[s, e)` on `trackId` (ADR 0069). The caller
+/// has already resolved the press to a gap through `ripple/gap.ts`'s rule; this
+/// records what it found and replaces whatever else was selected, as a clip
+/// click does.
+export function setGapSelection(trackId: string, s: number, e: number): void {
+  commit({ kind: "gap", trackId, s, e });
+}
+
+/// Drop a gap selection that the snapshot no longer holds as a gap — a clip
+/// moved into it, an edge moved, the lane went, or the gap itself just closed.
+/// `layersOfTrack` answers a lane's layers, or null for a lane the project no
+/// longer has; `isGap` is the one definition of a gap (`ripple/gap.ts`'s
+/// `isGapOn`), injected so this store learns no timeline geometry.
+///
+/// Re-derived on EVERY summary rather than only on edits that touch the lane,
+/// for the reason the id kinds are: the summary is the only signal the renderer
+/// has, and a gap whose highlight outlived the gap would arm Delete for a
+/// closing the actor refuses.
+export function retainGapSelection(
+  layersOfTrack: (
+    trackId: string,
+  ) => readonly { t_start_us: number; t_end_us: number }[] | null,
+  isGap: (
+    layers: readonly { t_start_us: number; t_end_us: number }[],
+    s: number,
+    e: number,
+  ) => boolean,
+): void {
+  const current = currentSelection();
+  if (current.kind !== "gap") return;
+  const layers = layersOfTrack(current.trackId);
+  if (layers !== null && isGap(layers, current.s, current.e)) return;
+  commit(NONE);
+}
+
 /// Drop selected Layers that no longer resolve in the current Project snapshot.
 /// If the former primary disappeared while another selected Layer remains, the
 /// first survivor becomes primary. Other kinds are left to their own `retain*`
@@ -261,6 +324,11 @@ export const useSelectedLayerIds = (): ReadonlySet<string> =>
 
 export const useSelectedTransitionId = (): string | null =>
   useSelectionStore((state) => transitionIdOf(state.selection));
+
+/// The selected gap, or null. Reference-stable: `gapOf` returns the selection
+/// object itself.
+export const useSelectedGap = (): GapSelection | null =>
+  useSelectionStore((state) => gapOf(state.selection));
 
 /// The Group picked in the media pool. "Composition" is the project's word for
 /// the entity the pool calls a Group; they are the same thing.

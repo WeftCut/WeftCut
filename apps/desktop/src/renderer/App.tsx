@@ -14,6 +14,7 @@ import {
   projectSaveAs,
   projectSummary,
   projectUndo,
+  rippleDeleteGap,
   rippleDeleteLayers,
   type ProjectSummary,
 } from "./ipc";
@@ -48,10 +49,12 @@ import { LatestRequestCoordinator } from "./state/latestRequest";
 import {
   clearLayerSelection,
   currentSelection,
+  gapOf,
   layerIdsOf,
   primaryLayerIdOf,
   setLayerSelection,
   usePrimaryLayerId,
+  type GapSelection,
 } from "./state/selectionStore";
 import {
   clampSeekUs,
@@ -627,12 +630,36 @@ export function App({ onCloseProject }: AppProps) {
   // link (docs/features.md § Links), and it does not need to: selection is what
   // carries the link, so a swept or clicked member already brought its
   // siblings along.
+  //
+  // A SELECTED GAP CLOSES under this key (ADR 0069). There is nothing to lift —
+  // a gap is already empty — so "delete the gap" can only mean "close it", and
+  // Premiere and Resolve both give the bare key that meaning. It is the one
+  // selection kind for which Delete and Ripple delete are the same edit.
+  const closeSelectedGap = useCallback(
+    async (gap: GapSelection) => {
+      try {
+        await rippleDeleteGap({ trackId: gap.trackId, startUs: gap.s, endUs: gap.e });
+        clearLayerSelection();
+        await refresh();
+      } catch (err) {
+        logMutationFailure(err, "Close gap");
+      }
+    },
+    [refresh],
+  );
+
   const deleteSelected = useCallback(async () => {
     if (hasKeyframeSelection()) {
       if (await deleteSelectedKeyframes()) await refresh();
       return;
     }
-    const layerIds = [...layerIdsOf(currentSelection())];
+    const selection = currentSelection();
+    const gap = gapOf(selection);
+    if (gap !== null) {
+      await closeSelectedGap(gap);
+      return;
+    }
+    const layerIds = [...layerIdsOf(selection)];
     if (layerIds.length === 0) return;
     try {
       await deleteLayers(layerIds);
@@ -641,7 +668,7 @@ export function App({ onCloseProject }: AppProps) {
     } catch (err) {
       logMutationFailure(err, "Delete layers");
     }
-  }, [refresh]);
+  }, [closeSelectedGap, refresh]);
 
   // The same delete, plus the closing of what it vacated: everything after the
   // freed span, on every track of that composition, moves left (ADR 0062).
@@ -662,7 +689,13 @@ export function App({ onCloseProject }: AppProps) {
       if (await deleteSelectedKeyframes()) await refresh();
       return;
     }
-    const layerIds = [...layerIdsOf(currentSelection())];
+    const selection = currentSelection();
+    const gap = gapOf(selection);
+    if (gap !== null) {
+      await closeSelectedGap(gap);
+      return;
+    }
+    const layerIds = [...layerIdsOf(selection)];
     if (layerIds.length === 0) return;
     try {
       await rippleDeleteLayers(layerIds);
@@ -671,7 +704,7 @@ export function App({ onCloseProject }: AppProps) {
     } catch (err) {
       logMutationFailure(err, "Ripple delete");
     }
-  }, [refresh]);
+  }, [closeSelectedGap, refresh]);
 
   // Copy and paste share ONE slot, and it holds whichever kind was copied last
   // (`keyframe/clipboard.ts`) — so the same pair of keys never needs the user to

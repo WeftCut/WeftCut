@@ -173,6 +173,20 @@ describe("formatCommandError — curated tier", () => {
       );
     });
 
+    // The gap closing's refusal (ADR 0069) opens with the ripple's four words —
+    // it greys the same row — and names the lane, since the gap has no name of
+    // its own and its span was already on screen as the highlight.
+    it("GapNotFound names the lane the gap was on", () => {
+      seedStore();
+      const out = formatCommandError({
+        error: "GapNotFound", track: "t-1", s: 2_000_000, e: 4_000_000,
+      });
+      expect(out.message).toBe(
+        "Ripple delete blocked: the selected gap on B-Roll is no longer there.",
+      );
+      expect(out.i18n_key).toBe("errors.gap_not_found");
+    });
+
     // A link has no derived name to fall back on — the timeline draws an
     // unlabelled one as a tint across the clips it holds — so the clips are
     // what the sentence can point at.

@@ -13,14 +13,18 @@
 // ADR 0062.
 import type { Composition, Project, Uuid } from '../model'
 import { CommandFailure } from '../errors'
-import { planRipple, type RippleView } from '../../../renderer/ripple/plan'
+import { planRipple, planRippleGap, type RippleMove, type RippleView } from '../../../renderer/ripple/plan'
 import { applyDeleteLayer } from './delete'
-import { applyDurationAutofit, insertSorted, locateLayerIn, requireSameComposition } from './helpers'
+import { applyDurationAutofit, insertSorted, locateLayerIn, requireSameComposition, requireTrack } from './helpers'
 import { frameGrid, gridIndex, timeUsAtGridIndex } from '../snap'
 
 /** What the ripple touched: the layers it removed, the ones it re-timed, and the
  *  lanes emptying left behind. The actor names all three in its history refs. */
 export interface RippleDeleteResult { deleted: Uuid[]; moved: Uuid[]; prunedTracks: Uuid[] }
+
+/** What closing a gap touched: the lane it sat on and the layers the closing
+ *  re-timed. Nothing is deleted and no lane can empty. */
+export interface RippleGapResult { track: Uuid; moved: Uuid[] }
 
 /** The actor's `Composition` as the planner's structural view. The planner
  *  learns neither side's layer model (the renderer mirror adapts through the
@@ -64,6 +68,31 @@ export function applyRippleDeleteLayers(p: Project, ids: readonly Uuid[]): Rippl
     if (pruned !== null) prunedTracks.push(pruned)
   }
 
+  const moved = applySweep(c, plan.moves)
+  return { deleted, moved, prunedTracks }
+}
+
+/**
+ * Close the gap `[s, e)` on `trackId`: every layer of its composition that starts
+ * at or after `e` moves left by `e - s`, on every track, and nothing is deleted
+ * (ADR 0069). The plan is computed FIRST, off untouched state, and a refusal is
+ * thrown before a single layer is re-timed — `GapNotFound` when the span is not
+ * a gap as the actor sees it (the renderer's mirror can lag), and the ripple's
+ * own four when the closing would not be clean.
+ */
+export function applyRippleDeleteGap(p: Project, trackId: Uuid, s: number, e: number): RippleGapResult {
+  const { comp: c } = requireTrack(p, trackId) // TrackNotFound
+  const plan = planRippleGap(rippleViewOfComposition(c), { track: trackId, s, e })
+  if (!plan.ok) throw new CommandFailure(plan.refusal)
+  return { track: trackId, moved: applySweep(c, plan.moves) }
+}
+
+/**
+ * The sweep: write every landing, keep a travelling transition's frame count,
+ * and autofit once. Shared by the deletion and the gap closing — what differs
+ * between them is how the holes were found, and that is the planner's business.
+ */
+function applySweep(c: Composition, plannedMoves: readonly RippleMove[]): Uuid[] {
   // Moves are keyed by LAYER id and re-located one at a time, never by the track
   // index the plan carries: a delete above may have pruned a whole lane out of
   // the vector. Both endpoints come from the plan — a landing plus the old
@@ -86,7 +115,7 @@ export function applyRippleDeleteLayers(p: Project, ids: readonly Uuid[]): Rippl
   // No delta check: the planner refuses a pair whose participants moved by
   // different amounts, so both-moved already means uniformly moved. Both
   // participants are visual (validate's rule), hence the composition frame grid.
-  const movedSet = new Set(plan.moves.map((m) => m.layer))
+  const movedSet = new Set(plannedMoves.map((m) => m.layer))
   const grid = frameGrid(c.fps)
   const borrowedFrames = new Map<Uuid, number>()
   for (const tr of c.transitions) {
@@ -96,7 +125,7 @@ export function applyRippleDeleteLayers(p: Project, ids: readonly Uuid[]): Rippl
   }
 
   const moved: Uuid[] = []
-  for (const move of plan.moves) {
+  for (const move of plannedMoves) {
     const loc = locateLayerIn(c, move.layer)! // a mover is a REMAINING layer, and only `deleted` was removed
     const layer = loc.track.layers.splice(loc.layerIndex, 1)[0]
     layer.t_start_us = move.t_start_us
@@ -117,5 +146,5 @@ export function applyRippleDeleteLayers(p: Project, ids: readonly Uuid[]): Rippl
   // The sweep lowered the high-water mark; each delete's own autofit ran before
   // it (ADR 0005 — a pinned composition keeps its length either way).
   applyDurationAutofit(c)
-  return { deleted, moved, prunedTracks }
+  return moved
 }

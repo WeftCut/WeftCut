@@ -3,13 +3,16 @@ import {
   clearLayerSelection,
   clearTransitionSelection,
   currentSelection,
+  gapOf,
   layerIdsOf,
   primaryLayerIdOf,
   retainCompositionSelection,
+  retainGapSelection,
   retainLayerSelection,
   retainMediaSelection,
   retainTransitionSelection,
   setCompositionSelection,
+  setGapSelection,
   setLayerSelection,
   setMediaSelection,
   setTransitionSelection,
@@ -307,5 +310,73 @@ describe("media selection", () => {
 
     expect(spy).not.toHaveBeenCalled();
     unsub();
+  });
+});
+
+// ── the gap kind (ADR 0069) ──────────────────────────────────────────────────
+
+describe("gap selection", () => {
+  const lane = [
+    { t_start_us: 0, t_end_us: 2_000_000 },
+    { t_start_us: 4_000_000, t_end_us: 6_000_000 },
+  ];
+  const isGap = (
+    layers: readonly { t_start_us: number; t_end_us: number }[],
+    s: number,
+    e: number,
+  ) => layers.some((l) => l.t_end_us === s) && layers.some((l) => l.t_start_us === e);
+
+  it("replaces whatever was selected, and is read back as the gap and as no Layers", () => {
+    setLayerSelection("layer-1", ["layer-1"]);
+    setGapSelection("track-1", 2_000_000, 4_000_000);
+
+    expect(currentSelection()).toEqual({ kind: "gap", trackId: "track-1", s: 2_000_000, e: 4_000_000 });
+    expect(gapOf(currentSelection())).toEqual({ kind: "gap", trackId: "track-1", s: 2_000_000, e: 4_000_000 });
+    expect(layerIdsOf(currentSelection()).size).toBe(0);
+    expect(primaryLayerIdOf(currentSelection())).toBeNull();
+    expect(transitionIdOf(currentSelection())).toBeNull();
+  });
+
+  it("is displaced by a Layer selection and cleared by the background clear", () => {
+    setGapSelection("track-1", 2_000_000, 4_000_000);
+    setLayerSelection("layer-1", ["layer-1"]);
+    expect(gapOf(currentSelection())).toBeNull();
+
+    setGapSelection("track-1", 2_000_000, 4_000_000);
+    clearLayerSelection();
+    expect(currentSelection().kind).toBe("none");
+  });
+
+  it("does not notify subscribers when the same gap is selected again", () => {
+    setGapSelection("track-1", 2_000_000, 4_000_000);
+    const spy = vi.fn();
+    const unsub = useSelectionStore.subscribe(spy);
+
+    setGapSelection("track-1", 2_000_000, 4_000_000);
+    expect(spy).not.toHaveBeenCalled();
+
+    setGapSelection("track-1", 2_000_000, 5_000_000);
+    expect(spy).toHaveBeenCalledTimes(1);
+    unsub();
+  });
+
+  it("retains a gap the snapshot still holds and drops one it does not", () => {
+    setGapSelection("track-1", 2_000_000, 4_000_000);
+    retainGapSelection(() => lane, isGap);
+    expect(gapOf(currentSelection())).not.toBeNull();
+
+    // The right clip moved: the span is no longer bounded where it was.
+    retainGapSelection(() => [lane[0]!, { t_start_us: 3_000_000, t_end_us: 6_000_000 }], isGap);
+    expect(currentSelection().kind).toBe("none");
+  });
+
+  it("drops a gap whose lane left the project, and leaves the other kinds alone", () => {
+    setGapSelection("track-1", 2_000_000, 4_000_000);
+    retainGapSelection(() => null, isGap);
+    expect(currentSelection().kind).toBe("none");
+
+    setTransitionSelection("tr-1");
+    retainGapSelection(() => null, isGap);
+    expect(currentSelection()).toEqual({ kind: "transition", id: "tr-1" });
   });
 });

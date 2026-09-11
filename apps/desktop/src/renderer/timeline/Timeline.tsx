@@ -119,6 +119,7 @@ import { beginGroupRename, beginLayerRename, beginLinkRename } from "./renameSto
 import {
   MarqueeAnchorContext,
   beginMarquee,
+  type BackgroundPress,
   type MarqueeAnchor,
 } from "./hooks/useMarqueeAnchor";
 import { useTimelineView } from "./hooks/useTimelineView";
@@ -157,13 +158,17 @@ import {
   currentSelection,
   layerIdsOf,
   primaryLayerIdOf,
+  setGapSelection,
   setLayerSelection,
   setTransitionSelection,
   toggleLayerSelection,
   usePrimaryLayerId,
+  useSelectedGap,
   useSelectedLayerIds,
   useSelectedTransitionId,
 } from "../state/selectionStore";
+import { gapAt } from "../ripple/gap";
+import { GapContextMenu } from "./GapContextMenu";
 import {
   clearKeyframeSelection,
   getSelectedKeyframes,
@@ -308,8 +313,13 @@ export function Timeline({
     y: number;
     transition: TransitionSummary;
   } | null>(null);
+  // The gap's context menu — the third right-click surface. It carries no
+  // target of its own: the right-click selected the gap first, and the menu's
+  // one row acts on the selection (ADR 0069).
+  const [gapMenu, setGapMenu] = useState<{ x: number; y: number } | null>(null);
   const primaryLayerId = usePrimaryLayerId();
   const selectedLayerIds = useSelectedLayerIds();
+  const selectedGap = useSelectedGap();
   const selectedTransitionId = useSelectedTransitionId();
   const [bladePreview, setBladePreview] = useState<{
     layerId: string;
@@ -1324,14 +1334,38 @@ export function Timeline({
   // detached over moving content. Outside-click and Escape closing belong
   // to Base UI.
   useEffect(() => {
-    if (!contextMenu && !chipMenu) return;
+    if (!contextMenu && !chipMenu && !gapMenu) return;
     const onScroll = () => {
       setContextMenu(null);
       setChipMenu(null);
+      setGapMenu(null);
     };
     window.addEventListener("scroll", onScroll, true);
     return () => window.removeEventListener("scroll", onScroll, true);
-  }, [contextMenu, chipMenu]);
+  }, [contextMenu, chipMenu, gapMenu]);
+
+  /// Right-click on lane background (ADR 0069). Resolves the press to the gap
+  /// under it through the one gap rule; over trailing space, an empty lane or a
+  /// locked lane there is no gap and no menu — nothing else lives on lane
+  /// background to offer. Selects first, as the clip and chip menus do, so the
+  /// one row acts on the gap it visibly targets.
+  const onGapContextMenu = useCallback(
+    (e: React.MouseEvent, trackId: string) => {
+      const canvas = canvasRef.current;
+      const track = tracks.find((candidate) => candidate.id === trackId);
+      if (canvas === null || track === undefined || track.locked || pxPerSec <= 0) {
+        return;
+      }
+      const rect = canvas.getBoundingClientRect();
+      const gap = gapAt(track.layers, ((e.clientX - rect.left) / pxPerSec) * 1_000_000);
+      if (gap === null) return;
+      e.preventDefault();
+      setGapSelection(track.id, gap.s, gap.e);
+      clearKeyframeSelection();
+      setGapMenu({ x: e.clientX, y: e.clientY });
+    },
+    [pxPerSec, tracks],
+  );
 
   const onSeparateAudio = useCallback(
     async (layerId: string) => {
@@ -1541,6 +1575,8 @@ export function Timeline({
       // not put back — the marquee never reached into the pool to begin with.
       if (snapshot.kind === "transition") {
         setTransitionSelection(snapshot.id);
+      } else if (snapshot.kind === "gap") {
+        setGapSelection(snapshot.trackId, snapshot.s, snapshot.e);
       } else {
         setLayerSelection(primary, layerIdsOf(snapshot));
       }
@@ -1659,13 +1695,37 @@ export function Timeline({
   /// Attribute panel stays on the clip being inspected. That is a strict
   /// narrowing — the state it leaves was already reachable by selecting a
   /// keyframe and then clicking a lane.
-  const onMarqueeBackgroundClick = useCallback((kind: MarqueeKind) => {
-    if (kind === "keyframe") {
-      clearKeyframeSelection();
-      return;
-    }
-    clearLayerSelection();
-  }, []);
+  ///
+  /// On a LANE, blank space between two clips is a gap, and the click selects it
+  /// (ADR 0069) — Premiere's and Resolve's gesture, with no modifier. Only a
+  /// press that resolves to a gap through the one gap rule selects: trailing
+  /// space, an empty lane, the drop strip and the scroll body all still clear.
+  /// A locked lane's blank space clears too, for `marqueeHitClips`'s reason —
+  /// its gap can never close (its own downstream clip would have to move), so
+  /// selecting it would arm a Delete the actor always refuses. The keyframe
+  /// selection is dropped with the gap for the sweep's reason: Delete takes the
+  /// keys first, and a stale key selection would eat the closing.
+  const onMarqueeBackgroundClick = useCallback(
+    (kind: MarqueeKind, press: BackgroundPress) => {
+      if (kind === "keyframe") {
+        clearKeyframeSelection();
+        return;
+      }
+      if (press.trackId !== null && pxPerSec > 0) {
+        const track = tracks.find((candidate) => candidate.id === press.trackId);
+        if (track !== undefined && !track.locked) {
+          const gap = gapAt(track.layers, (press.canvasX / pxPerSec) * 1_000_000);
+          if (gap !== null) {
+            setGapSelection(track.id, gap.s, gap.e);
+            clearKeyframeSelection();
+            return;
+          }
+        }
+      }
+      clearLayerSelection();
+    },
+    [pxPerSec, tracks],
+  );
 
   // How deep THIS Panel's composition sits, and the background that says so.
   // Read here rather than in a child because the tint belongs to the timeline's
@@ -1860,6 +1920,11 @@ export function Timeline({
                 isExpanded={expandedTracks.has(track.id)}
                 selectedLayerId={primaryLayerId}
                 selectedLayerIds={selectedLayerIds}
+                selectedGap={
+                  selectedGap !== null && selectedGap.trackId === track.id
+                    ? selectedGap
+                    : null
+                }
                 transitions={transitions}
                 selectedTransitionId={selectedTransitionId}
                 linkByLayerId={linkByLayerId}
@@ -1874,6 +1939,7 @@ export function Timeline({
                 onDragStart={(state) => setDrag(state)}
                 onContextMenu={onContextMenu}
                 onChipContextMenu={onChipContextMenu}
+                onGapContextMenu={onGapContextMenu}
                 onChipResize={(args) => void onChipResize(args)}
                 onCommitLabel={onCommitLabel}
                 onCommitLinkLabel={onCommitLinkLabel}
@@ -1973,6 +2039,13 @@ export function Timeline({
         onClose={() => setChipMenu(null)}
         onUpdate={(args) => void onChipMenuUpdate(args)}
         onDelete={(id) => void onChipMenuDelete(id)}
+      />
+    )}
+    {gapMenu && (
+      <GapContextMenu
+        x={gapMenu.x}
+        y={gapMenu.y}
+        onClose={() => setGapMenu(null)}
       />
     )}
     </KeyframeBatchContext.Provider>

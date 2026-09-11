@@ -349,7 +349,7 @@ const zhCN: Resources = {
     // 波纹删除。这里只有两条：其余的理由都是规划器返回的拒绝，句子来自
     // errors.ripple_* 那份策展文案——和通道真的拒绝时状态栏显示的是同一句，
     // 不留第二份措辞（见 timeline/rippleEligibility.ts）。
-    ripple_needs_selection: "选中要删除并闭合其后间隙的片段",
+    ripple_needs_selection: "选中要删除并闭合其后间隙的片段，或点选一段间隙将它闭合",
     // 这一条不是拒绝，而是优先级规则露了出来：这个键此刻会去删关键帧，
     // 所以直说，而不是假装波纹删除只是暂时不可用。
     ripple_keyframes: "当前选中的是关键帧——这个键会删除它们。取消选择后才会对片段做波纹删除",
@@ -729,9 +729,9 @@ const zhCN: Resources = {
     nudge_forward: "把选中的关键帧后移一帧；没有选中关键帧时，把选中的音频后移一个采样。",
     nudge_large_back: "把选中的关键帧前移十帧；没有选中关键帧时，把选中的音频前移一毫秒。",
     nudge_large_forward: "把选中的关键帧后移十帧；没有选中关键帧时，把选中的音频后移一毫秒。",
-    delete_selected: "有选中的关键帧时删除关键帧，否则删除选中的片段。",
+    delete_selected: "有选中的关键帧时删除关键帧，否则删除选中的片段。选中的是间隙时则闭合它——其后的一切左移。",
     ripple_delete_selected:
-      "和删除键一样，选中的关键帧和选中的转场先拿到这个键；否则删除选中的片段，并把其后的一切左移。",
+      "和删除键一样，选中的关键帧和选中的转场先拿到这个键；否则删除选中的片段，并把其后的一切左移。选中的是间隙时则闭合它。",
     copy_selected: "有选中的关键帧时复制关键帧，否则复制选中的片段。",
     paste_at_playhead: "把复制的关键帧粘贴到选中片段的播放头处，否则粘贴复制的片段。",
   },
@@ -830,6 +830,9 @@ const zhCN: Resources = {
     track_lock_hint: "锁定此轨道禁止编辑",
     drop_collision: "与现有素材重叠",
     drop_locked: "轨道已锁定",
+    // 选中间隙的悬停提示——沿用片段自己标题的形状（“视频：起 → 止”），
+    // 种类的位置换成“间隙”。
+    gap_title: "间隙：{{start}} → {{end}}",
     drop_cycle: "组不能包含自身",
     drop_spawn_hint: "松开即新建轨道",
     toggle_keyframe_lanes: "展开关键帧轨",
@@ -1057,6 +1060,7 @@ const zhCN: Resources = {
     "split_layer": "分割片段",
     "delete_layer": "删除片段",
     "ripple_delete_layers": "波纹删除片段",
+    "ripple_delete_gap": "闭合间隙",
     "restack_layer": "重排片段叠放顺序",
     "set_layers_enabled": "启用或禁用片段",
     "set_scale_linked": "锁定或解除等比缩放",
@@ -1156,6 +1160,10 @@ const zhCN: Resources = {
     ripple_collision: "波纹删除受阻：“{{moving}}”会落到“{{blocking}}”上。",
     ripple_link_straddles: "波纹删除受阻：链接 {{link}} 在切口两侧都有成员。",
     ripple_locked_layer: "波纹删除受阻：“{{layer}}”已锁定，但它必须移动。",
+    // 间隙自己的拒绝（ADR 0069）：渲染端选中的区间，到达通道时已经不是间隙——
+    // 有片段移进来了，或边界变了。开头和波纹删除的四条一样，因为它变灰的是同一行、
+    // 落到的是同一个状态栏。
+    gap_not_found: "波纹删除受阻：{{track}} 上选中的间隙已不存在。",
     fps_locked_by_content:
       "帧率保持 {{current}} fps——时间线上仍有 {{layers}} 个片段。",
     fps_locked_by_content_history:
@@ -2099,6 +2107,10 @@ const zhCN: Resources = {
       separate_audio: "分离音频",
       add_av_pair: "添加音视频对",
       rebind_motif: "重绑定 Motif 片段",
+    },
+    // 闭合选中的间隙（ADR 0069）：动作的对象是间隙，没有片段被删。
+    gap: {
+      close: "闭合间隙",
     },
     track: {
       add: "添加轨道",

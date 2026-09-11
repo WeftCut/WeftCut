@@ -17,7 +17,7 @@ import { applyDurationAutofit } from './helpers'
 import { applyLinksCreate } from './links'
 import { audioParams, mediaItemTemplate, videoClipParams } from './media'
 import { applyAddTransition } from './transitions'
-import { applyRippleDeleteLayers } from './ripple'
+import { applyRippleDeleteGap, applyRippleDeleteLayers } from './ripple'
 import { AUDIO_GRID, frameGrid, timeUsAtGridIndex } from '../snap'
 import { isCommandFailure, type CommandError } from '../errors'
 import { groupedProject, root, withGroup } from '../__tests__/fixtures/project'
@@ -541,5 +541,107 @@ describe('dispatch: ripple_delete_layers records one entry that one undo unwinds
     const rc = root(actor.snapshot())
     expect(rc.tracks.flatMap((t) => t.layers).map((l) => l.id)).toEqual([survivor])
     expect(spanOf(rc, survivor)).toEqual([sec(0), sec(2)])
+  })
+})
+
+// ── a selected gap (ADR 0069) ────────────────────────────────────────────────
+
+const closeGap = (actor: ActorHandle, track: Uuid, s: number, e: number): DispatchResult =>
+  actor.dispatch('ripple_delete_gap', { track, s, e })
+
+describe('applyRippleDeleteGap closes the span the user selected', () => {
+  it('re-times every layer at or after the gap on every lane, deletes nothing, and lets the composition shrink', () => {
+    const x = fx()
+    const a = color(x, x.aRoll, sec(0), sec(2))
+    const b = color(x, x.aRoll, sec(4), sec(6))
+    const q = color(x, x.bRoll, sec(5), sec(7))
+    const p1 = color(x, x.bRoll, sec(0), sec(1))
+    expect(root(x.p).duration_us).toBe(sec(7))
+
+    expect(applyRippleDeleteGap(x.p, x.aRoll, sec(2), sec(4))).toEqual({ track: x.aRoll, moved: [b, q] })
+    const rc = root(x.p)
+    expect(spanOf(rc, a)).toEqual([sec(0), sec(2)])
+    expect(spanOf(rc, p1)).toEqual([sec(0), sec(1)])
+    expect(spanOf(rc, b)).toEqual([sec(2), sec(4)])
+    expect(spanOf(rc, q)).toEqual([sec(3), sec(5)])
+    expect(idsOn(rc, x.aRoll)).toEqual([a, b])
+    expect(rc.duration_us).toBe(sec(5))
+  })
+
+  it('closes the space before the first clip', () => {
+    const x = fx()
+    const a = color(x, x.aRoll, sec(1), sec(3))
+    expect(applyRippleDeleteGap(x.p, x.aRoll, 0, sec(1))).toEqual({ track: x.aRoll, moved: [a] })
+    expect(spanOf(root(x.p), a)).toEqual([sec(0), sec(2)])
+  })
+
+  it('refuses a span that is not the gap as the actor sees it, and an unknown lane, writing nothing', () => {
+    const x = fx()
+    color(x, x.aRoll, sec(0), sec(2))
+    color(x, x.aRoll, sec(4), sec(6))
+    const before = JSON.stringify(x.p)
+    expect(refusalOf(() => applyRippleDeleteGap(x.p, x.aRoll, sec(2), sec(3)))).toEqual({ error: 'GapNotFound', track: x.aRoll, s: sec(2), e: sec(3) })
+    expect(refusalOf(() => applyRippleDeleteGap(x.p, x.aRoll, sec(6), sec(8)))).toEqual({ error: 'GapNotFound', track: x.aRoll, s: sec(6), e: sec(8) })
+    expect(refusalOf(() => applyRippleDeleteGap(x.p, 'no-such-track', sec(2), sec(4)))).toEqual({ error: 'TrackNotFound', track: 'no-such-track' })
+    expect(JSON.stringify(x.p)).toBe(before)
+  })
+})
+
+describe('dispatch: ripple_delete_gap', () => {
+  it('records ONE entry under its own label that one undo unwinds, transitions and markers included', () => {
+    const x = fx()
+    color(x, x.aRoll, sec(0), sec(2))
+    const b1 = color(x, x.aRoll, sec(4), sec(6))
+    const b2 = color(x, x.aRoll, sec(6), sec(8))
+    applyAddTransition(x.p, x.gen, b1, b2, sec(1), CROSSFADE)
+    const anchored = clip(x, x.bRoll, sec(4), sec(6))
+    applyAddMarker(x.p, x.gen, sec(5), null, 'on the B roll', BLUE, null, '', { layer: anchored, src_us: sec(1) })
+    const actor = x.open()
+
+    const before = JSON.stringify(actor.snapshot())
+    const len = actor.historyStatus().len
+    expect(closeGap(actor, x.aRoll, sec(2), sec(4)).ok).toBe(true)
+    expect(actor.historyStatus().len - len).toBe(1)
+    expect(actor.historyView(1).ops[0]).toMatchObject({ summary: 'Closed gap', label_key: 'history.gap.close' })
+    const rc = root(actor.snapshot())
+    expect(spanOf(rc, b1)).toEqual([sec(2), sec(4)])
+    expect(spanOf(rc, anchored)).toEqual([sec(2), sec(4)])
+    // The anchored marker rode with its clip; the transition kept its frame count.
+    expect(rc.markers.find((m) => m.anchor?.layer === anchored)?.t_us).toBe(sec(3))
+    expect(rc.transitions).toHaveLength(1)
+    expect(rc.transitions[0].duration_us).toBe(sec(1))
+
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+
+  it('refuses pre-write with the ripple\'s own names, burning no id and no entry', () => {
+    const x = fx()
+    color(x, x.aRoll, sec(0), sec(2))
+    color(x, x.aRoll, sec(4), sec(6))
+    const blocker = color(x, x.bRoll, sec(3), sec(5))
+    const actor = x.open()
+    const before = actor.snapshot()
+    const len = actor.historyStatus().len
+    const ids = x.burned()
+    expect(closeGap(actor, x.aRoll, sec(2), sec(4))).toEqual({
+      ok: false,
+      error: { error: 'RippleInsideHole', layer: blocker, hole: { s: sec(2), e: sec(4) } },
+    })
+    expect(closeGap(actor, x.aRoll, sec(2), sec(2))).toMatchObject({ ok: false, error: { error: 'InvalidArgument' } })
+    expect(actor.snapshot()).toBe(before)
+    expect(actor.historyStatus().len).toBe(len)
+    expect(x.burned()).toBe(ids)
+  })
+
+  it('reaches the actor through the MCP surface with the span echoed on a refusal', () => {
+    const x = fx()
+    color(x, x.aRoll, sec(0), sec(2))
+    const b = color(x, x.aRoll, sec(4), sec(6))
+    const actor = x.open()
+    const refused = actor.mcpCall('ripple_delete_gap', JSON.stringify({ track_id: x.aRoll, start_us: sec(2), end_us: sec(3) }))
+    expect(refused.ok).toBe(false)
+    expect(actor.mcpCall('ripple_delete_gap', JSON.stringify({ track_id: x.aRoll, start_us: sec(2), end_us: sec(4) })).ok).toBe(true)
+    expect(spanOf(root(actor.snapshot()), b)).toEqual([sec(2), sec(4)])
   })
 })

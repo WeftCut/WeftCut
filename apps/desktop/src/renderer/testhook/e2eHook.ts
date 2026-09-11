@@ -40,6 +40,7 @@ import {
 } from "../state/compositionAnchorStore";
 import {
   currentSelection,
+  gapOf,
   layerIdsOf,
   primaryLayerIdOf,
 } from "../state/selectionStore";
@@ -456,6 +457,11 @@ export interface E2EHook {
   /// The whole selection set, for a spec proving a gesture LEFT it alone —
   /// the hidden-member badge's reveal must not select.
   getSelectedLayerIds(): string[];
+  /// The selected gap — its lane and half-open span — or null when the
+  /// selection is of any other kind (ADR 0069). The highlight carries the same
+  /// three values as `data-*`, but a spec proving a click SELECTED the gap
+  /// wants the store's answer, not the DOM's.
+  getSelectedGap(): { trackId: string; s: number; e: number } | null;
   /// Open a composition by id — the anchor store's `openComposition` with no
   /// entry layer, for a spec that needs to stand INSIDE a composition without
   /// walking the pointer gestures that get there. False when the summary does
@@ -653,6 +659,10 @@ export function installBootstrapHook(
   hookSlot().getSelectedLayerId = () => primaryLayerIdOf(currentSelection());
   hookSlot().getSelectedLayerIds = () =>
     Array.from(layerIdsOf(currentSelection()));
+  hookSlot().getSelectedGap = () => {
+    const gap = gapOf(currentSelection());
+    return gap === null ? null : { trackId: gap.trackId, s: gap.s, e: gap.e };
+  };
   hookSlot().setOpenComposition = (compositionId) => openComposition(compositionId, null);
   hookSlot().getOpenComposition = () => {
     const { focusedId, anchors } = useCompositionAnchorStore.getState();

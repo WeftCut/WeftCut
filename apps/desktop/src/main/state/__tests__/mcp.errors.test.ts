@@ -114,6 +114,21 @@ describe('mapCommandError — ripple delete names the span and the way out', () 
     expect(out.message).toMatch(/upstream of the cut is fine/)
     expect(out.data).toEqual({ error: 'RippleLockedLayer', layer: 'L9' })
   })
+
+  // The gap closing (ADR 0069): the fix is always "re-read the lane and send
+  // the gap as it is now", so the message says what a gap IS and the data
+  // echoes the span that was sent.
+  it('echoes the span that was not a gap and points at the composition resource', () => {
+    const out = mapCommandError({ error: 'GapNotFound', track: 'T1', s: 2_000_000, e: 3_000_000 })
+    expect(out.code).toBe('invalid_params')
+    expect(out.message).toContain('[2000000, 3000000) µs')
+    expect(out.message).toContain('T1')
+    expect(out.message).toMatch(/after the last layer .* is not a gap/)
+    expect(out.data).toEqual({
+      error: 'GapNotFound', track: 'T1', span_us: [2_000_000, 3_000_000],
+      options: [{ action: 'reread_then_retry', resource: 'project://compositions' }],
+    })
+  })
 })
 
 describe('dryRunErrorString', () => {
@@ -142,5 +157,7 @@ describe('dryRunErrorString', () => {
       .toBe('link K1 has members on both sides of the span [0, 1000000) µs the ripple would close')
     expect(dryRunErrorString({ error: 'RippleLockedLayer', layer: 'L9' }))
       .toBe('layer L9 is locked and would have to move')
+    expect(dryRunErrorString({ error: 'GapNotFound', track: 'T1', s: 2_000_000, e: 3_000_000 }))
+      .toBe('[2000000, 3000000) µs is not a gap on track T1')
   })
 })

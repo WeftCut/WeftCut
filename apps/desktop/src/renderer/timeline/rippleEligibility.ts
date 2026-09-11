@@ -31,7 +31,7 @@ import {
   hasKeyframeSelection,
   useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
-import { planRipple } from "../ripple/plan";
+import { planRipple, planRippleGap } from "../ripple/plan";
 import { rippleViewOfSummary } from "../ripple/summaryView";
 import { useCompositionAnchorStore } from "../state/compositionAnchorStore";
 import {
@@ -42,7 +42,8 @@ import {
 import {
   currentSelection,
   layerIdsOf,
-  useSelectedLayerIds,
+  useSelectionStore,
+  type Selection,
 } from "../state/selectionStore";
 
 /// `ripple` is the live direction; the rest are the disabled reasons.
@@ -88,10 +89,14 @@ const RIPPLE_DELETE_REASON: Record<"needs_selection" | "keyframes", string> = {
  * composition's tracks, so a selected layer that lives elsewhere is simply not
  * found and the answer is `needs_selection` rather than the planner's
  * `LayerNotFound` — a refusal whose sentence would name a uuid the user cannot
- * see.
+ * see. A selected gap is scoped the same way, by its lane.
+ *
+ * Takes the whole `Selection` rather than the layer set because a gap is a
+ * selection kind of its own (ADR 0069): the same four surfaces grey and label
+ * for it, and the verdict comes from the same planner through its gap entry.
  */
 export function rippleDeleteStateOf(
-  selected: ReadonlySet<string>,
+  selection: Selection,
   composition: CompositionSummary | null,
   keyframes: boolean,
 ): RippleDeleteState {
@@ -99,6 +104,18 @@ export function rippleDeleteStateOf(
   // key does the keyframe delete whatever the clips look like.
   if (keyframes) return KEYFRAMES;
   if (composition === null) return NEEDS_SELECTION;
+  if (selection.kind === "gap") {
+    if (!composition.tracks.some((track) => track.id === selection.trackId)) {
+      return NEEDS_SELECTION;
+    }
+    const plan = planRippleGap(rippleViewOfSummary(composition), {
+      track: selection.trackId,
+      s: selection.s,
+      e: selection.e,
+    });
+    return plan.ok ? RIPPLE : { kind: "refused", refusal: plan.refusal };
+  }
+  const selected = layerIdsOf(selection);
   const ids: string[] = [];
   for (const track of composition.tracks) {
     for (const layer of track.layers) {
@@ -114,32 +131,33 @@ export function rippleDeleteStateOf(
 /// than a speed one: the hook below returns this value straight out of a zustand
 /// selector, and a selector that builds a fresh object every tick loops
 /// `useSyncExternalStore` forever (`feedback_zustand_composite_selector`). Every
-/// input is reference-stable between the changes that matter — the selection Set
-/// between selection changes, and the composition between summaries, since
-/// `compositionOrRoot` hands back a sub-object of the summary — so one entry is
-/// enough for every subscriber, which all read the same three stores.
+/// input is reference-stable between the changes that matter — the `Selection`
+/// object between selection changes (`selectionStore.ts`'s `commit` publishes
+/// nothing for an equal selection), and the composition between summaries,
+/// since `compositionOrRoot` hands back a sub-object of the summary — so one
+/// entry is enough for every subscriber, which all read the same three stores.
 let memo: {
-  selected: ReadonlySet<string>;
+  selection: Selection;
   composition: CompositionSummary | null;
   keyframes: boolean;
   state: RippleDeleteState;
 } | null = null;
 
 function rippleDeleteStateMemo(
-  selected: ReadonlySet<string>,
+  selection: Selection,
   composition: CompositionSummary | null,
   keyframes: boolean,
 ): RippleDeleteState {
   if (
     memo !== null &&
-    memo.selected === selected &&
+    memo.selection === selection &&
     memo.composition === composition &&
     memo.keyframes === keyframes
   ) {
     return memo.state;
   }
-  const state = rippleDeleteStateOf(selected, composition, keyframes);
-  memo = { selected, composition, keyframes, state };
+  const state = rippleDeleteStateOf(selection, composition, keyframes);
+  memo = { selection, composition, keyframes, state };
   return state;
 }
 
@@ -147,7 +165,7 @@ function rippleDeleteStateMemo(
 /// where there is no React.
 export function rippleDeleteState(): RippleDeleteState {
   return rippleDeleteStateMemo(
-    layerIdsOf(currentSelection()),
+    currentSelection(),
     currentOpenComposition(),
     hasKeyframeSelection(),
   );
@@ -168,12 +186,12 @@ export function canRippleDeleteSelection(): boolean {
  * re-rendering.
  */
 export const useRippleDeleteState = (): RippleDeleteState => {
-  const selected = useSelectedLayerIds();
+  const selection = useSelectionStore((s) => s.selection);
   const focusedId = useCompositionAnchorStore((s) => s.focusedId);
   const keyframes = useKeyframeSelectionStore((s) => s.selected.size > 0);
   return useProjectStore((s) =>
     rippleDeleteStateMemo(
-      selected,
+      selection,
       compositionOrRoot(s.summary, focusedId),
       keyframes,
     ),

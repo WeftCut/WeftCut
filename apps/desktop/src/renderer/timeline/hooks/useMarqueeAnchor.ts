@@ -37,6 +37,17 @@ const ARM_TRAVEL_PX = 3;
 const EDGE_BAND_PX = 28;
 const EDGE_SPEED_PX = 12;
 
+/// Where a background click landed, for the surface that decides what it means.
+/// `trackId` is the lane the press started on — null from the drop strip, the
+/// scroll body and a sub-lane, which sit on no lane — and `canvasX` is the
+/// press's x in the `timeline-canvas` space, which is the ruler's own axis
+/// (x = 0 is t = 0). Together they are what a lane click needs to resolve to the
+/// gap under it (ADR 0069); the gesture itself still knows nothing of gaps.
+export interface BackgroundPress {
+  trackId: string | null;
+  canvasX: number;
+}
+
 /// What the gesture needs and no anchor surface has.
 export interface MarqueeAnchor {
   /// `timeline-canvas` — the element the box's coordinates are relative to.
@@ -52,10 +63,11 @@ export interface MarqueeAnchor {
   takeSnapshot: () => () => void;
   /// A press released below `ARM_TRAVEL_PX`: the timeline's background click,
   /// which means whatever the anchored surface's population says it means —
-  /// hence `kind`. Deliberately not a degenerate `onBox`: a zero-area box
-  /// already means "took nothing", and what clearing means must not ride on
-  /// that coincidence.
-  onBackgroundClick: (kind: MarqueeKind) => void;
+  /// hence `kind`, and hence `press`, since on a lane it can mean "select the
+  /// gap here". Deliberately not a degenerate `onBox`: a zero-area box already
+  /// means "took nothing", and what clearing means must not ride on that
+  /// coincidence.
+  onBackgroundClick: (kind: MarqueeKind, press: BackgroundPress) => void;
 }
 
 /// A context rather than props: the anchor surfaces are up to three components
@@ -67,11 +79,13 @@ export const MarqueeAnchorContext = createContext<MarqueeAnchor | null>(null);
 
 /// Start a marquee from `e`. Exported for the Timeline, which provides the
 /// context and so cannot consume it; every other surface goes through
-/// `useMarqueeAnchor`.
+/// `useMarqueeAnchor`. `trackId` is the lane the press is on, for the
+/// background click; a surface on no lane passes none.
 export function beginMarquee(
   anchor: MarqueeAnchor,
   kind: MarqueeKind,
   e: ReactPointerEvent,
+  trackId: string | null = null,
 ): void {
   if (e.button !== 0) return;
   // Event-time read, deliberately not a subscription: blade mode hijacks the
@@ -181,7 +195,9 @@ export function beginMarquee(
   /// commit step. One that never armed is the background click.
   const release = () => {
     teardown();
-    if (!armed) anchor.onBackgroundClick(kind);
+    // `x0` and not the release point: the press decided where the click is,
+    // and a release a pixel or two away is still that click.
+    if (!armed) anchor.onBackgroundClick(kind, { trackId, canvasX: x0 });
   };
 
   window.addEventListener("pointermove", onMove);
@@ -194,16 +210,24 @@ export function beginMarquee(
 
 /// Arms one anchor surface. `kind` is the surface's own answer to "which
 /// population does a box started here take" — never re-derived from geometry.
-export function useMarqueeAnchor({ kind }: { kind: MarqueeKind }): {
+/// `trackId` is the lane the surface IS, when it is one; it rides along to the
+/// background click and nowhere else.
+export function useMarqueeAnchor({
+  kind,
+  trackId = null,
+}: {
+  kind: MarqueeKind;
+  trackId?: string | null;
+}): {
   onPointerDown: (e: ReactPointerEvent) => void;
 } {
   const anchor = useContext(MarqueeAnchorContext);
   const onPointerDown = useCallback(
     (e: ReactPointerEvent) => {
       if (anchor === null) return;
-      beginMarquee(anchor, kind, e);
+      beginMarquee(anchor, kind, e, trackId);
     },
-    [anchor, kind],
+    [anchor, kind, trackId],
   );
   return { onPointerDown };
 }

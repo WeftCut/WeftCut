@@ -166,6 +166,13 @@ export type CommandError =
   // is the plain `TrackLocked`, and a locked track with nothing downstream does
   // not block at all.
   | { error: 'RippleLockedLayer'; layer: Uuid }
+  // `[s, e)` is not a gap on `track` (ADR 0069): a layer reaches into it, or an
+  // edge is not a layer boundary — the right edge must be where a layer starts,
+  // the left where one ends or composition time 0. The span the renderer
+  // selected is what closes, never "whatever is free there now": the mirror can
+  // lag the actor, and a gap that moved under the click is refused rather than
+  // silently re-measured.
+  | { error: 'GapNotFound'; track: Uuid; s: TimeUs; e: TimeUs }
   | { error: 'SplitOutsideLayer'; layer: Uuid; at_t: TimeUs }
   | { error: 'LinkLockedMember'; link: Uuid; locked_layer: Uuid; touched: Uuid }
   | { error: 'TrimEdgeOutOfRange'; layer: Uuid; new_t: TimeUs; cur_start: TimeUs; cur_end: TimeUs }

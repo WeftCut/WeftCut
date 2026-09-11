@@ -13,7 +13,7 @@ import { applyMoveLayer, applyMoveLayersToNewTrack } from './mutations/move'
 import { applyRestackLayer, type RestackPosition } from './mutations/restack'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
-import { applyRippleDeleteLayers, type RippleDeleteResult } from './mutations/ripple'
+import { applyRippleDeleteGap, applyRippleDeleteLayers, type RippleDeleteResult, type RippleGapResult } from './mutations/ripple'
 import { applyDuplicateLayer, applyPasteLayer, applyPasteLayers, pasteLayerInterval } from './mutations/duplicate'
 import { applySplitLayer, parseDiscardSegments } from './mutations/split'
 import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, applyLinksRename, linkSiblingsExcluding } from './mutations/links'
@@ -912,6 +912,22 @@ export function createActor(opts: ActorOptions): ActorHandle {
           if (layers.length === 0) return { ok: false, error: { error: 'InvalidArgument', field: 'layers', detail: 'at least one layer is required' } }
           commit(HISTORY_SUMMARY.layerRippleDelete, (r: RippleDeleteResult) => layerRefs([...r.deleted, ...r.moved]), { kind: 'Coarse' },
             (d) => applyRippleDeleteLayers(d, layers))
+          return { ok: true, value: null }
+        }
+        // ripple_delete_gap — a selected gap closes: nothing is deleted, and every
+        // layer of the composition starting at or after the gap's end moves left
+        // by its length (ADR 0069). The span travels as BOTH edges so the actor
+        // closes exactly what the renderer highlighted; the planner refuses a
+        // span that is no longer a gap (`GapNotFound`) instead of re-measuring.
+        // Refusals are pre-write for `ripple_delete_layers`' reason; the
+        // degenerate span is refused here, above the commit, as the empty set is.
+        case 'ripple_delete_gap': {
+          const track = a.track as Uuid
+          const s = parseNum(a.s, 's')
+          const e = parseNum(a.e, 'e')
+          if (!(s >= 0 && e > s)) return { ok: false, error: { error: 'InvalidArgument', field: 'e', detail: 'the gap must be a non-empty span [s, e) with s >= 0' } }
+          commit(HISTORY_SUMMARY.gapClose, (r: RippleGapResult) => [...trackRef(r.track), ...layerRefs(r.moved)], { kind: 'Coarse' },
+            (d) => applyRippleDeleteGap(d, track, s, e))
           return { ok: true, value: null }
         }
         case 'duplicate_layer': return { ok: true, value: commit(HISTORY_SUMMARY.layerDuplicate, layerRef, { kind: 'Coarse' }, (d) => applyDuplicateLayer(d, idGen, a.layer as Uuid, parseNum(a.t_offset_us, 't_offset_us'))) }

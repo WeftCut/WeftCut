@@ -373,7 +373,8 @@ const enUS = {
     // under `errors.ripple_*` — the same line the status bar shows when the
     // actor refuses for real, so there is no second wording to keep in step
     // (`timeline/rippleEligibility.ts`).
-    ripple_needs_selection: "Select the clips to remove and close the gap after",
+    ripple_needs_selection:
+      "Select the clips to remove and close the gap after, or click a gap to close it",
     // Not a refusal but the precedence rule showing through: the key is about to
     // do the keyframe delete, so the row says so rather than pretending the
     // ripple is merely unavailable.
@@ -844,9 +845,9 @@ const enUS = {
     nudge_large_forward:
       "Moves the selected keyframes ten frames later; with no keyframes selected, slips the selected audio one millisecond.",
     delete_selected:
-      "Deletes the selected keyframes when any are selected, else the selected clips.",
+      "Deletes the selected keyframes when any are selected, else the selected clips. A selected gap closes instead — everything after it moves left.",
     ripple_delete_selected:
-      "Selected keyframes and a selected transition take this key first, as they do for Delete; otherwise the selected clips go and everything after them moves left.",
+      "Selected keyframes and a selected transition take this key first, as they do for Delete; otherwise the selected clips go and everything after them moves left. A selected gap closes.",
     copy_selected:
       "Copies the selected keyframes when any are selected, else the selected clip.",
     paste_at_playhead:
@@ -969,6 +970,9 @@ const enUS = {
     track_lock_hint: "Lock this track against edits",
     drop_collision: "Overlaps existing media",
     drop_locked: "Track is locked",
+    // The selected gap's tooltip — the shape a clip's own title has (`Video:
+    // start → end`), with the gap named where the kind would be.
+    gap_title: "Gap: {{start}} → {{end}}",
     // A Group released inside itself, or inside a Group it already contains.
     drop_cycle: "A Group cannot contain itself",
     drop_spawn_hint: "Release to create a track",
@@ -1235,6 +1239,7 @@ const enUS = {
     "split_layer": "Split clip",
     "delete_layer": "Delete clip",
     "ripple_delete_layers": "Ripple delete clips",
+    "ripple_delete_gap": "Close gap",
     "restack_layer": "Restack clip",
     "set_layers_enabled": "Enable or disable clips",
     "set_scale_linked": "Link or unlink X/Y scale",
@@ -1346,6 +1351,12 @@ const enUS = {
       "Ripple delete blocked: link {{link}} has members on both sides of the cut.",
     ripple_locked_layer:
       "Ripple delete blocked: {{layer}} is locked and would have to move.",
+    // The gap's own refusal (ADR 0069): the span the renderer selected is no
+    // longer a gap by the time the actor reads it — a clip moved into it, or
+    // an edge moved. Same four-word opening as the ripple's, since it greys the
+    // same row and lands on the same status bar.
+    gap_not_found:
+      "Ripple delete blocked: the selected gap on {{track}} is no longer there.",
     fps_locked_by_content:
       "Frame rate stays {{current}} fps — the timeline still holds {{layers}} clip(s).",
     fps_locked_by_content_history:
@@ -2365,6 +2376,10 @@ const enUS = {
       separate_audio: "Separated audio",
       add_av_pair: "Added A/V pair",
       rebind_motif: "Rebound motif clips",
+    },
+    // A selected gap closed (ADR 0069): the subject is the gap, no clip went.
+    gap: {
+      close: "Closed gap",
     },
     track: {
       add: "Added track",
