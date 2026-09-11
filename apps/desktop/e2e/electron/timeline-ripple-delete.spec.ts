@@ -393,6 +393,103 @@ test.describe('ripple delete', () => {
     }
   })
 
+  // The gap gesture (ADR 0069). What only a real window can answer: that a
+  // press on lane background resolves through the lane's measured x to the gap
+  // the store then holds, that the highlight the lane draws is that gap, and
+  // that bare `Delete` over it reaches `App`'s handler and closes it on BOTH
+  // lanes of the combined A/V row. The gap is made with a PLAIN delete of the
+  // middle pair, so the span [2 s, 4 s) is left standing where the middle piece
+  // was — which is also where the click goes, measured off the piece's block
+  // before it is lifted.
+  test('clicking the gap a plain Delete left selects it, and Delete closes it on both lanes', async () => {
+    test.setTimeout(150_000)
+    const { app, page } = await launchApp()
+    try {
+      await seedSplitPair(page, [2_000_000, 4_000_000])
+
+      const before = await wire(page)
+      const videoBefore = clipsOfKind(before, 'VideoClip')
+      const audioBefore = clipsOfKind(before, 'Audio')
+      const aRoll = trackWithRole(before, 'a-roll')
+      const middle = block(page, videoBefore[1]!.id)
+      await expect(middle).toBeVisible()
+      const middleBox = await middle.boundingBox()
+      if (!middleBox) throw new Error('the middle picture piece has no layout box')
+
+      // The lift: the pair goes and its span stays empty (`delete_layers`, the
+      // key's own op). Nothing downstream moves — that is what the gap IS.
+      await invokeCmd(page, 'delete_layers', { layerIds: [videoBefore[1]!.id, audioBefore[1]!.id] })
+      await expect
+        .poll(async () => clipsOfKind(await wire(page), 'VideoClip').length, {
+          timeout: 20_000,
+          intervals: [250, 500, 1000],
+        })
+        .toBe(2)
+      const gapped = await wire(page)
+      expect(clipsOfKind(gapped, 'VideoClip').map((l) => l.t_start_us)).toEqual([0, 4_000_000])
+      expect(clipsOfKind(gapped, 'Audio').map((l) => l.t_start_us)).toEqual([0, 4_000_000])
+      const shapeGapped = shapeOf(gapped)
+
+      // A plain click where the middle piece was: lane background now, and a
+      // gap by the one gap rule — its left edge the head's end, its right the
+      // tail's start.
+      await page.mouse.click(middleBox.x + middleBox.width / 2, middleBox.y + middleBox.height / 2)
+      await waitForHook(page, 'getSelectedGap')
+      const selectedGap = () =>
+        page.evaluate(() =>
+          (window as unknown as {
+            __weftcutTest: { getSelectedGap(): { trackId: string; s: number; e: number } | null }
+          }).__weftcutTest.getSelectedGap(),
+        )
+      await expect.poll(selectedGap).toEqual({ trackId: aRoll, s: 2_000_000, e: 4_000_000 })
+      // The highlight is the store's gap, drawn on the lane it names.
+      const highlight = page.locator('[data-testid="timeline-gap-selection"]')
+      await expect(highlight).toHaveCount(1)
+      await expect(highlight).toHaveAttribute('data-track-id', aRoll)
+      await expect(highlight).toHaveAttribute('data-start-us', '2000000')
+      await expect(highlight).toHaveAttribute('data-end-us', '4000000')
+      // Nothing else is selected: a gap and a clip set are branches of one union.
+      expect(await selectedLayerIds(page)).toEqual([])
+
+      // BARE Delete, not Shift+Delete: over a gap the key closes.
+      await page.keyboard.press('Delete')
+      await expect
+        .poll(async () => clipsOfKind(await wire(page), 'VideoClip')[1]!.t_start_us, {
+          timeout: 20_000,
+          intervals: [250, 500, 1000],
+        })
+        .toBe(2_000_000)
+
+      const after = await wire(page)
+      const videoAfter = clipsOfKind(after, 'VideoClip')
+      const audioAfter = clipsOfKind(after, 'Audio')
+      // Closed on the picture AND the sound: the closing sweeps every lane.
+      expect(videoAfter.map((l) => l.id)).toEqual([videoBefore[0]!.id, videoBefore[2]!.id])
+      expect(audioAfter.map((l) => l.id)).toEqual([audioBefore[0]!.id, audioBefore[2]!.id])
+      expect(videoAfter[1]!.t_start_us).toBe(videoAfter[0]!.t_end_us)
+      expect(audioAfter[1]!.t_start_us).toBe(audioAfter[0]!.t_end_us)
+      expect(after.duration_us).toBe(gapped.duration_us - 2_000_000)
+      // One entry for the closing, and nothing deleted by it.
+      expect(after.history.len).toBe(gapped.history.len + 1)
+      // The gap is gone, so the selection that named it is gone with it — the
+      // store re-derives the gap against every summary rather than keeping a
+      // highlight over a span that no longer exists.
+      expect(await selectedGap()).toBeNull()
+      await expect(highlight).toHaveCount(0)
+
+      await invokeCmd(page, 'project_undo', {})
+      await expect
+        .poll(async () => clipsOfKind(await wire(page), 'VideoClip')[1]!.t_start_us, {
+          timeout: 20_000,
+          intervals: [250, 500, 1000],
+        })
+        .toBe(4_000_000)
+      expect(shapeOf(await wire(page))).toEqual(shapeGapped)
+    } finally {
+      await app.close()
+    }
+  })
+
   test('a clip starting inside the span greys the Ripple delete row with the reason, and the key writes nothing', async () => {
     test.setTimeout(150_000)
     const { app, page } = await launchApp()
