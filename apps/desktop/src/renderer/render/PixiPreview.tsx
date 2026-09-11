@@ -127,9 +127,9 @@ let previewResourceSequence = 0;
 const PREVIEW_METER_SAMPLE_MS = 50;
 
 /// The render-target half of Playback Resolution, with the display fit folded
-/// in: rasterize at `composition × fraction`, the fraction being how much of
-/// the composition the panel can show (never above 1) times the knob, and put
-/// the canvas where that buffer blits 1:1. Pixi shrinks only the canvas
+/// in: rasterize at `composition × fraction`, the fraction being the smaller of
+/// how much of the composition the panel can show (never above 1) and the
+/// knob, and put the canvas where the fit's buffer blits 1:1. Pixi shrinks only the canvas
 /// backing store (`texture.source.pixelWidth`) — every sprite transform,
 /// `containMap` and render texture keep composition coordinates and nothing
 /// has to move. Below a fit of 1 the canvas box is the buffer's own size,

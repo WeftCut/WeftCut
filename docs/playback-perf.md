@@ -914,10 +914,10 @@ even once".
 `<PixiApplication width={composition.width} height={composition.height}>` fixes
 the LOGICAL size to the composition; `renderer.resize(…, resolution)` sizes the
 drawing buffer to the device pixels the panel gives the canvas, capped at the
-composition, times the `playback_resolution` fraction (1 / 0.5 / 0.25). A 4K
-composition in a 960×540 panel therefore rasterizes 960×540 at Full — the
-pixels the panel cannot show are not drawn — and the browser blits the buffer
-1:1 instead of downscaling it ([`render.md`](render.md) §Preview canvas,
+composition and at the `playback_resolution` fraction (1 / 0.5 / 0.25),
+whichever is smaller. A 4K composition in a 960×540 panel therefore
+rasterizes 960×540 at Full — the pixels the panel cannot show are not drawn —
+and the browser blits the buffer 1:1 instead of downscaling it ([`render.md`](render.md) §Preview canvas,
 [ADR 0071](adr/0071-the-preview-backing-store-fits-the-display-box.md)).
 
 The matrix cells in this document were measured with the buffer at

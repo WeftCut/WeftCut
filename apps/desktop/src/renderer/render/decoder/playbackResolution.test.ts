@@ -137,11 +137,23 @@ describe("displayFit", () => {
 describe("previewRenderResolution", () => {
   const room = { width: 693, height: 389 };
 
-  it("is the fit at Full and the fit's fraction at 1/2 and 1/4", () => {
+  it("is the smaller of the fit and the knob", () => {
+    // A 1080p composition in a 693 px panel fits at 0.36: 1/2 would only trim
+    // pixels the panel never shows, so it stays at the fit; 1/4 goes below it.
     const fit = displayFit(hd, room);
+    expect(fit).toBeLessThan(0.5);
+    expect(fit).toBeGreaterThan(0.25);
     expect(previewRenderResolution("full", hd, room)).toBe(fit);
-    expect(previewRenderResolution("half", hd, room)).toBe(fit * 0.5);
-    expect(previewRenderResolution("quarter", hd, room)).toBe(fit * 0.25);
+    expect(previewRenderResolution("half", hd, room)).toBe(fit);
+    expect(previewRenderResolution("quarter", hd, room)).toBe(0.25);
+  });
+
+  it("is the knob alone when the panel has room for the whole composition", () => {
+    // The pre-fit numbers: a large panel at 1/2 renders 960×540 as it always did.
+    const wide = { width: 2560, height: 1440 };
+    expect(previewRenderResolution("full", hd, wide)).toBe(1);
+    expect(previewRenderResolution("half", hd, wide)).toBe(0.5);
+    expect(previewRenderResolution("quarter", hd, wide)).toBe(0.25);
   });
 
   it("is the knob alone without a box", () => {

@@ -4,9 +4,9 @@
 // `quarter`); the two halves of the setting each want a different shape of the
 // same number — the native ship stage takes a divisor
 // (`FfmpegSourceInit.playbackScaleDiv` → `SwTransport` → `preview_sw_open`'s
-// `scale_div` → Rust `OutScale`), Pixi's renderer takes its reciprocal times
-// how much of the composition the preview panel can show at all
-// (`displayFit`). See docs/render.md §Preview canvas, ADR 0071.
+// `scale_div` → Rust `OutScale`), Pixi's renderer takes the smaller of its
+// reciprocal and how much of the composition the preview panel can show at
+// all (`displayFit`). See docs/render.md §Preview canvas, ADR 0071.
 import type { PlaybackResolution } from "../../../shared/app-settings";
 
 /// Divisor applied to BOTH axes of the shipped frame. Native owns the rest of
@@ -112,16 +112,22 @@ export function displayFit(
   return Math.min(1, aw / cw, ah / ch);
 }
 
-/// What the preview hands `renderer.resize` as its resolution: the fit, then
-/// the knob. Half and Quarter are fractions of what the panel can show, not of
-/// the composition — a throttle relative to a buffer the panel could not
-/// display anyway would throttle nothing.
+/// What the preview hands `renderer.resize` as its resolution: the smaller of
+/// the fit and the knob. Pixels above the fit are never displayed (the box is
+/// the fit's size), so a knob that only trimmed those would trim nothing
+/// visible and save next to nothing — the buffer is already the panel's size,
+/// and the knob's real saving, the decode divisor, applies regardless. Below
+/// the fit the knob shrinks what IS displayed, which is where cutting raster
+/// work costs sharpness and is worth the trade: a large panel at 1/2 renders
+/// 960×540 instead of 1920×1080, as it always did. Premiere's program monitor
+/// behaves the same way — 1/2 looks like Full until the monitor is big enough
+/// to show the difference.
 export function previewRenderResolution(
   setting: PlaybackResolution | undefined,
   composition: { width: number; height: number },
   available: DeviceBox | null,
 ): number {
-  return displayFit(composition, available) * playbackRenderResolution(setting);
+  return Math.min(displayFit(composition, available), playbackRenderResolution(setting));
 }
 
 /// The buffer Pixi allocates for a resolution: `round(composition × r)` per
@@ -138,8 +144,8 @@ export function bufferFor(
 }
 
 /// The canvas element's box for a fit below 1, in CSS pixels relative to the
-/// host: the buffer's own size, centred in the host and snapped to whole device
-/// pixels.
+/// host: the size of the buffer the fit allocates (the Full buffer), centred in
+/// the host and snapped to whole device pixels.
 ///
 /// Two conditions make the compositor's blit a copy rather than a resample —
 /// the box must cover exactly as many device pixels as the buffer has, and its
@@ -147,8 +153,10 @@ export function bufferFor(
 /// contain-fit box lands on a fractional device size, and flex centring lands
 /// on a fractional origin. Either one resamples every glyph by up to half a
 /// pixel, which on text is the difference between a stem and a smear. So below
-/// 1 the box is written from the buffer, not the other way round; the fit is
+/// 1 the box is written from the fit, not the other way round; the fit is
 /// therefore computed from the HOST's space, never from the canvas's own box.
+/// A knob below the fit draws a smaller buffer into this same box and the
+/// browser upscales it — the pre-fit look of 1/4 on a small panel.
 ///
 /// Null at a fit of 1: the buffer is then the composition, CSS's contain-fit
 /// owns the box, and the browser upscales as it always did.

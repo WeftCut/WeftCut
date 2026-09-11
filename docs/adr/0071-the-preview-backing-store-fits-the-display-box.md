@@ -63,10 +63,15 @@ share from 36 % to 56 %.
   contain-fit owns the canvas as before. The cap also makes a panel larger than
   its composition the exact pre-fit path, byte-identical, which is what keeps
   the E2E pixel gates — whose compositions are small — out of the blast radius.
-- **Half and Quarter are fractions of the fit**, not of the composition. A
-  throttle relative to a buffer the panel could not display anyway would
-  throttle nothing. The box stays the fit's size; the browser upscales the
-  smaller buffer into it. The decode divisor keeps the knob's meaning alone
+- **The knob caps the fit: `min(fit, knob)`.** Pixels above the fit are never
+  displayed, so a knob that only trimmed those would trim nothing visible and
+  save next to nothing — the buffer is already the panel's size, and the knob's
+  real saving, the decode divisor, applies regardless. A knob below the fit
+  shrinks what is displayed; the box stays the fit's size and the browser
+  upscales the smaller buffer into it — the pre-fit look of 1/4 on a small
+  panel and of every setting on a large one. Premiere's program monitor
+  behaves the same way: 1/2 looks like Full until the monitor is big enough to
+  show the difference. The decode divisor keeps the knob's meaning alone
   (Full 1, 1/2 2, 1/4 4); the fit does not thread into `OutScale`.
 - **A still text layer snaps to the buffer grid, in preview.** A glyph texture
   drawn at a fractional buffer position is resampled by up to half a pixel, so
@@ -136,3 +141,7 @@ share from 36 % to 56 %.
   origin halved the text's fully-lit pixels.
 - **`roundPixels` unconditionally** — a title sliding slowly across the frame
   would step by whole buffer pixels; NLE monitors keep sub-pixel motion.
+- **Half and Quarter as fractions of the fit (`fit × knob`)** — on a 693 px
+  panel 1/2 became a 2× upscale where it had been a 1.4× downscale, a visible
+  loss bought with a raster saving of a few hundred thousand pixels, while the
+  decode saving was identical either way.

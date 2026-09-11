@@ -934,14 +934,18 @@ host (`.pixi-preview-host`) reports the room the panel offers, floored to whole
 device pixels, and the resolution is
 
 ```
-min(1, room / composition) × knob        knob = Full 1 · 1/2 0.5 · 1/4 0.25
+min(1, room / composition, knob)         knob = Full 1 · 1/2 0.5 · 1/4 0.25
 ```
 
-(`render/decoder/playbackResolution.ts`). Below a fit of 1 the canvas
-element's box is then WRITTEN from the buffer — its own size in device pixels,
-centred in the host and snapped to whole device pixels
-(`fittedCanvasBox`) — so the compositor's blit is a copy and the downscale is
-Pixi's. That is what makes text sharp: `Text` follows `renderer.resolution`
+(`render/decoder/playbackResolution.ts`). The knob caps the fit rather than
+multiplying it: pixels above the fit are never displayed, so trimming them
+would cost nothing and save nothing, while the knob's real saving — the
+decode divisor — applies regardless; only a knob below the fit shrinks what is
+shown. Below a fit of 1 the canvas element's box is WRITTEN from the fit — the
+Full buffer's size in device pixels, centred in the host and snapped to whole
+device pixels (`fittedCanvasBox`) — so at Full the compositor's blit is a copy
+and the downscale is Pixi's; a knob below the fit draws a smaller buffer into
+that same box and the browser upscales it. That is what makes text sharp: `Text` follows `renderer.resolution`
 (auto-resolution, the `resolutionChange` runner), so glyphs are rasterized at
 the density they are shown at rather than drawn at composition size and shrunk
 by the compositor's bilinear tap, and a text layer that stands still snaps its
