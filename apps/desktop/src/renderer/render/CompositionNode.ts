@@ -1710,7 +1710,10 @@ export class CompositionNode {
     if (layer.params.kind !== "Text") return null;
     const existing = this.texts.get(layer.id);
     if (existing) return existing;
-    const sprite = new TextSprite({ layerId: layer.id });
+    const sprite = new TextSprite({
+      layerId: layer.id,
+      snapToPixels: this.host.mode === "preview",
+    });
     const text: ActiveText = { layerId: layer.id, sprite, effects: new EffectChain() };
     this.texts.set(layer.id, text);
     // eslint-disable-next-line no-console

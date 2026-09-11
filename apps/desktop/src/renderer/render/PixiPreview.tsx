@@ -57,8 +57,11 @@ import { proxyIntent } from "../state/proxyPreferenceStore";
 import { layerFxState, readyAudioPath } from "../state/audioFxStore";
 import { resolveDecodeEngine } from "./decoder/decodeEngine";
 import {
-  playbackRenderResolution,
+  fittedCanvasBox,
   playbackScaleDiv,
+  previewRenderResolution,
+  roomFrom,
+  type HostBox,
 } from "./decoder/playbackResolution";
 import { isFfmpegUnusable } from "./decoder/ffmpegCapability";
 import { isWebcodecsUnusable } from "./decoder/webcodecsCapability";
@@ -123,23 +126,76 @@ let previewResourceSequence = 0;
 /// stays at the slow cadence.
 const PREVIEW_METER_SAMPLE_MS = 50;
 
-/// The render-target half of Playback Resolution: rasterize at
-/// `composition × fraction`. Pixi shrinks only the canvas backing store
-/// (`texture.source.pixelWidth`) — the logical size stays `width`/`height`, so
-/// `app.screen`, `renderer.width/height`, `containMap` and every render
-/// texture keep composition coordinates and nothing has to move. The canvas
-/// scales the smaller buffer back up into the CSS-owned display box.
+/// The render-target half of Playback Resolution, with the display fit folded
+/// in: rasterize at `composition × fraction`, the fraction being how much of
+/// the composition the panel can show (never above 1) times the knob, and put
+/// the canvas where that buffer blits 1:1. Pixi shrinks only the canvas
+/// backing store (`texture.source.pixelWidth`) — every sprite transform,
+/// `containMap` and render texture keep composition coordinates and nothing
+/// has to move. Below a fit of 1 the canvas box is the buffer's own size,
+/// snapped to the device grid (`fittedCanvasBox`); at 1 the box is CSS's
+/// contain-fit and the browser upscales the composition-sized buffer as it
+/// always did. The downscale is then Pixi's own, which is the point: `Text`
+/// follows `renderer.resolution` (the `resolutionChange` runner re-rasterizes
+/// every glyph at the new density), where glyphs drawn at composition size and
+/// shrunk by the compositor's 2×2 bilinear tap read as blurred. ADR 0071.
 ///
 /// Size and fraction are applied together on purpose: a composition-size
 /// change must carry the current fraction forward rather than reset it.
-function applyPlaybackRenderResolution(
+function applyPreviewFit(
   app: Application,
   size: { width: number; height: number },
-  resolution: PlaybackResolution | undefined,
+  setting: PlaybackResolution | undefined,
+  host: HostBox | null,
 ): void {
-  // Read out first: callers pass `app.screen`, which `resize` then mutates.
   const { width, height } = size;
-  app.renderer.resize(width, height, playbackRenderResolution(resolution));
+  app.renderer.resize(
+    width,
+    height,
+    previewRenderResolution(setting, { width, height }, host?.available ?? null),
+  );
+  const box = host
+    ? fittedCanvasBox({
+        composition: { width, height },
+        available: host.available,
+        hostOrigin: host.origin,
+        devicePixelRatio: window.devicePixelRatio || 1,
+      })
+    : null;
+  const style = (app.canvas as HTMLCanvasElement).style;
+  if (box) {
+    style.position = "absolute";
+    style.left = `${box.css.left}px`;
+    style.top = `${box.css.top}px`;
+    style.width = `${box.css.width}px`;
+    style.height = `${box.css.height}px`;
+  } else {
+    for (const p of ["position", "left", "top", "width", "height"]) style.removeProperty(p);
+  }
+}
+
+/// The host's device-pixel box and origin read synchronously, for the first
+/// application at init: the observer's first reading arrives after this
+/// frame's rAF, and a first frame drawn at composition size only to be redrawn
+/// at the fit is the double render the init sequence is ordered to avoid. Null
+/// before layout.
+function measureHostBox(host: HTMLElement): HostBox | null {
+  const r = host.getBoundingClientRect();
+  if (!(r.width > 0 && r.height > 0)) return null;
+  const dpr = window.devicePixelRatio || 1;
+  return {
+    available: roomFrom(r.width, r.height, dpr),
+    origin: { x: r.left * dpr, y: r.top * dpr },
+  };
+}
+
+function sameHostBox(a: HostBox, b: HostBox): boolean {
+  return (
+    a.available.width === b.available.width &&
+    a.available.height === b.available.height &&
+    a.origin.x === b.origin.x &&
+    a.origin.y === b.origin.y
+  );
 }
 
 export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPreview(
@@ -167,6 +223,19 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   /// per-frame rAF loops (`preview/layoutRectCache.ts`). Lives beside the probe
   /// and retires with it.
   const canvasRectRef = useRef<ClientRectCache | null>(null);
+  /// The composition's size as the renderer draws it, held HERE rather than
+  /// read back off `app.screen`: below a fit of 1 Pixi's logical size drifts
+  /// off the composition by a fraction of a pixel (`displayFit`), and every
+  /// extract frame, `containMap` and render-texture allocation wants the
+  /// integer the composition actually is. Seeded at init, followed by the
+  /// composition-size effect.
+  const logicalSizeRef = useRef<{ width: number; height: number } | null>(null);
+  /// The device pixels the host offers and where it sits on the device grid,
+  /// as last observed — the fit half of `applyPreviewFit`. Null until the host
+  /// has a layout box.
+  const hostBoxRef = useRef<HostBox | null>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const unsubOverridesRef = useRef<(() => void) | null>(null);
   const unsubRoleOverridesRef = useRef<(() => void) | null>(null);
   const unsubTransformOverridesRef = useRef<(() => void) | null>(null);
@@ -253,17 +322,61 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // ADR 0059.
       const device = webgpuDeviceOf(app.renderer);
       app.stage.once("destroyed", () => queueMicrotask(() => device?.destroy()));
+      // `app.screen` is exact only here, before the first `resize` — Pixi
+      // initialized it from the composition-sized props at resolution 1.
+      const logical = { width: app.screen.width, height: app.screen.height };
+      logicalSizeRef.current = logical;
+      /// The composition size for every closure below — never
+      /// `renderer.width/height` (see `logicalSizeRef`).
+      const logicalSize = (): { width: number; height: number } =>
+        logicalSizeRef.current ?? logical;
+      // The buffer follows the room the host offers (ADR 0071), taken as the
+      // host's CSS box in whole device pixels (`roomFrom`). The HOST is
+      // observed rather than the canvas because below a fit of 1 the canvas
+      // box is WRITTEN from the fit (`applyPreviewFit`) and could not report
+      // the room it has. Observed in `device-pixel-content-box` terms so a DPR
+      // change fires it as a panel resize does. A hidden dock tab reads 0×0 and
+      // is skipped, so the last good fit outlives the hide; an unchanged
+      // reading is skipped so a layout pass that moved nothing costs no
+      // `resize`. LANDMINE: a host that moves without resizing is not observed
+      // — its origin is re-read only when its size changes.
+      resizeObserverRef.current?.disconnect();
+      const hostEl = hostRef.current ?? (app.canvas as HTMLCanvasElement).parentElement;
+      hostBoxRef.current = hostEl ? measureHostBox(hostEl) : null;
+      if (hostEl) {
+        const observer = new ResizeObserver((entries) => {
+          const entry = entries[entries.length - 1];
+          if (!entry || applicationRef.current !== app) return;
+          const dpr = window.devicePixelRatio || 1;
+          const available = roomFrom(entry.contentRect.width, entry.contentRect.height, dpr);
+          if (!(available.width > 0 && available.height > 0)) return;
+          const r = hostEl.getBoundingClientRect();
+          const next: HostBox = { available, origin: { x: r.left * dpr, y: r.top * dpr } };
+          const prev = hostBoxRef.current;
+          if (prev && sameHostBox(prev, next)) return;
+          hostBoxRef.current = next;
+          applyPreviewFit(
+            app,
+            logicalSize(),
+            useAppSettingsStore.getState().settings.playback_resolution,
+            next,
+          );
+        });
+        observer.observe(hostEl, { box: "device-pixel-content-box" });
+        resizeObserverRef.current = observer;
+      }
       // Before the log so it reports the buffer we actually got, and before
-      // the first composite so the very first frame rasterizes at the user's
-      // setting instead of full res and then re-rendering.
-      applyPlaybackRenderResolution(
+      // the first composite so the very first frame rasterizes at the fit and
+      // the user's setting instead of full res and then re-rendering.
+      applyPreviewFit(
         app,
-        app.screen,
+        logical,
         useAppSettingsStore.getState().settings.playback_resolution,
+        hostBoxRef.current,
       );
       console.log(
         `${LOG} application init: canvas=${app.canvas.width}×${app.canvas.height} ` +
-          `renderer=${app.renderer.type}`,
+          `resolution=${app.renderer.resolution.toFixed(4)} renderer=${app.renderer.type}`,
       );
       // Hardware-lane slot acks: the read-completion signal is taken on THIS
       // device, because it is presented every frame and therefore serviced every
@@ -272,10 +385,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // reached for by the transport: the device belongs to the Application's
       // lifecycle, not to any one decode session.
       setSlotFenceBackend(slotFenceBackendForRenderer(app.renderer));
-      // Display geometry belongs to `.pixi-preview-canvas`: its DOM box is
-      // contain-sized and centered independently of this physical backing
-      // store. Do not write inline width/height here — playback resolution
-      // changes the backing pixels and must never change the on-panel size.
+      // Display geometry: at a fit of 1 the canvas box is CSS's contain-fit
+      // (`.pixi-preview-canvas`); below it `applyPreviewFit` writes the box as
+      // the buffer's own device pixels, centered on the device grid. Either way
+      // the Playback Resolution knob changes the backing pixels alone and never
+      // the on-panel size.
 
       // Dispose any prior Compositor (StrictMode re-mount). Release its
       // transport registration first so the store never holds a disposed
@@ -354,14 +468,16 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
       const compositor = new Compositor({
         app,
-        // LANDMINE: the LOGICAL size, not `app.canvas.width/height`. The
-        // canvas is the physical backing store, which the playback-resolution
-        // fraction shrinks; these two become `compositionWidth`/`Height` and
-        // size the effect + transition render textures, so reading the
-        // physical buffer would silently render effects at the preview
-        // throttle and diverge from export.
-        width: app.screen.width,
-        height: app.screen.height,
+        // LANDMINE: the composition's size, not `app.canvas.width/height` and
+        // not `app.screen` either. The canvas is the physical backing store,
+        // which the fit and the playback-resolution fraction shrink, and below
+        // a fit of 1 the logical size drifts off the composition by a fraction
+        // of a pixel (`displayFit`); these two become `compositionWidth`/
+        // `Height` and size the effect + transition render textures, so either
+        // would silently render effects at the wrong size and diverge from
+        // export.
+        width: logical.width,
+        height: logical.height,
         mode: "preview",
         resolveSource,
         // Membership-change snapshot only (see `compositeFrame`'s reset/
@@ -480,11 +596,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
             app.renderer.render(app.stage);
             const out = app.renderer.extract.pixels({
               target: app.stage,
-              frame: new Rectangle(0, 0, app.renderer.width, app.renderer.height),
+              frame: new Rectangle(0, 0, logicalSize().width, logicalSize().height),
               // Pinned, because `extract` otherwise inherits
               // `renderer.resolution` while `mapClientToComposition` below maps
-              // through the LOGICAL size — a throttled preview would hand the
-              // eyedropper a buffer the coordinates don't index.
+              // through the composition size — a fitted or throttled preview
+              // would hand the eyedropper a buffer the coordinates don't index.
               resolution: 1,
             });
             return { pixels: out.pixels, width: out.width, height: out.height };
@@ -497,7 +613,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         },
         mapClientToComposition: (clientX, clientY) => {
           const rect = (app.canvas as HTMLCanvasElement).getBoundingClientRect();
-          return containMap(clientX, clientY, rect, app.renderer.width, app.renderer.height);
+          const { width, height } = logicalSize();
+          return containMap(clientX, clientY, rect, width, height);
         },
         canvasRect: () => (app.canvas as HTMLCanvasElement).getBoundingClientRect(),
       };
@@ -624,12 +741,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
               // (reliable on WebGPU/WebGL regardless of preserveDrawingBuffer,
               // and avoids the OffscreenCanvas 2D-context quirks of the
               // canvas()+drawImage route). Frame is pinned to the WHOLE
-              // composition (renderer size) AND `resolution: 1`, so (x,y) are
+              // composition AND `resolution: 1`, so (x,y) are
               // ABSOLUTE composition pixels no matter what the playback-
               // resolution knob does to the canvas — the countdown sits at
               // (0,0) scale 1, so its center is (W/2, H/2).
-              const W = app.renderer.width;
-              const H = app.renderer.height;
+              const { width: W, height: H } = logicalSize();
               // Force a render of the live tree before extracting so the
               // freshly-bound motif texture is on the framebuffer (the
               // always-on ticker also renders, but extracting right after an
@@ -708,8 +824,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
             // return the exact clip-frame identity bound during that same
             // capture. Ring bounds alone cannot establish what was painted.
             captureFrame: async (layerId?: string): Promise<PreviewFrameCapture> => {
-              const W = app.renderer.width;
-              const H = app.renderer.height;
+              const { width: W, height: H } = logicalSize();
               // Re-composite + render so the freshly-decoded frame is on the
               // framebuffer before the read (mirrors sampleComposite).
               const positionUs = engine.positionUs();
@@ -804,30 +919,28 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         playbackScaleDiv(s.settings.playback_resolution),
       );
       const app = applicationRef.current;
-      // `app.screen` IS the composition size — the renderer's logical size is
-      // never the throttled one, which is what makes re-applying safe here.
-      if (app) {
-        applyPlaybackRenderResolution(
-          app,
-          app.screen,
-          s.settings.playback_resolution,
-        );
+      const logical = logicalSizeRef.current;
+      if (app && logical) {
+        applyPreviewFit(app, logical, s.settings.playback_resolution, hostBoxRef.current);
       }
     });
   }, []);
 
-  // Re-applies size + fraction together (why: `applyPlaybackRenderResolution`).
-  // No-ops while the pixel dimensions are unchanged — Pixi compares them.
+  // Re-applies size + fraction together (why: `applyPreviewFit`). No-ops while
+  // the pixel dimensions are unchanged — Pixi compares them.
   const compositionWidth = composition?.width;
   const compositionHeight = composition?.height;
   useEffect(() => {
     const app = applicationRef.current;
     if (!app || compositionWidth === undefined || compositionHeight === undefined)
       return;
-    applyPlaybackRenderResolution(
+    const logical = { width: compositionWidth, height: compositionHeight };
+    logicalSizeRef.current = logical;
+    applyPreviewFit(
       app,
-      { width: compositionWidth, height: compositionHeight },
+      logical,
       useAppSettingsStore.getState().settings.playback_resolution,
+      hostBoxRef.current,
     );
     // The renderer alone is not enough: the Compositor sizes the transition RT
     // pool and each ImageOverlaySprite's decode cap off its own copy.
@@ -915,6 +1028,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       gizmoProbeRef.current = null;
       canvasRectRef.current?.dispose();
       canvasRectRef.current = null;
+      resizeObserverRef.current?.disconnect();
+      resizeObserverRef.current = null;
+      hostBoxRef.current = null;
+      logicalSizeRef.current = null;
       unsubOverridesRef.current?.();
       unsubOverridesRef.current = null;
       unsubRoleOverridesRef.current?.();
@@ -965,6 +1082,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
   return (
     <div
+      ref={hostRef}
       className="pixi-preview-host"
       style={
         {

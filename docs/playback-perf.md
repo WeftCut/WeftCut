@@ -909,18 +909,23 @@ from HEVC**: both fixtures are `keyint=240 min-keyint=240 scenecut=0`, so the
 remaining question is the narrower "what makes a clip fall a full second behind
 even once".
 
-### Preview rasterizes at composition resolution, not panel resolution
+### Preview rasterizes at panel density, never above composition resolution
 
-`<PixiApplication width={composition.width} height={composition.height}>` and
-`renderer.resize(app.screen…)` size the drawing buffer from the **composition**;
-`playback_resolution` only multiplies it by 1 / 0.5 / 0.25, and the canvas is
-scaled to the panel purely in CSS (`objectFit: contain`). A 4K composition in a
-960×540 panel therefore rasterizes ~16× the pixels the panel can show, at Full.
+`<PixiApplication width={composition.width} height={composition.height}>` fixes
+the LOGICAL size to the composition; `renderer.resize(…, resolution)` sizes the
+drawing buffer to the device pixels the panel gives the canvas, capped at the
+composition, times the `playback_resolution` fraction (1 / 0.5 / 0.25). A 4K
+composition in a 960×540 panel therefore rasterizes 960×540 at Full — the
+pixels the panel cannot show are not drawn — and the browser blits the buffer
+1:1 instead of downscaling it ([`render.md`](render.md) §Preview canvas,
+[ADR 0071](adr/0071-the-preview-backing-store-fits-the-display-box.md)).
 
-Recorded as a latent inefficiency, **not** as the current bottleneck: the ¼
-control above shows reclaiming those pixels does not move the 4K tail on this
-box. It would matter on a GPU where fill rate, rather than this one, is the
-constraint.
+The matrix cells in this document were measured with the buffer at
+composition size on every leg, so a cell's raster cost is an upper bound for a
+panel smaller than its composition. The ¼ control above shows that reclaiming
+those pixels does not move the 4K tail on this box: the fit is a text-sharpness
+change first and a fill-rate saving second, one that matters on a GPU where
+fill rate, rather than the read barrier, is the constraint.
 
 ### Material types beyond H.264
 

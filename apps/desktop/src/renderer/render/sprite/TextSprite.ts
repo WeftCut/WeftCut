@@ -13,6 +13,11 @@ import type { StageableSprite } from "./StageableSprite";
 
 export interface TextSpriteInit {
   layerId: string;
+  /// Preview only: land the glyph texture on the buffer's pixel grid while the
+  /// layer stands still (see `update`). Export draws at composition resolution,
+  /// where nothing is resampled and rounding would only move a title by up to
+  /// half a pixel from where it was authored.
+  snapToPixels?: boolean;
 }
 
 /// Where the block sits along one axis of the box, as a fraction of the slack.
@@ -181,9 +186,15 @@ export class TextSprite implements StageableSprite {
   /// to the shrink search is in that signature, so an unchanged signature means
   /// this is still the answer.
   private fitState: TextFit | null = null;
+  private readonly snapToPixels: boolean;
+  /// Position of the previous `update`, NaN before the first — what decides
+  /// whether the layer is standing still this frame.
+  private lastX = NaN;
+  private lastY = NaN;
 
   constructor(init: TextSpriteInit) {
     this.layerId = init.layerId;
+    this.snapToPixels = init.snapToPixels === true;
     this.text = new Text({
       text: "",
       style: new TextStyle({
@@ -329,6 +340,21 @@ export class TextSprite implements StageableSprite {
     this.text.position.set(view.x, view.y);
     this.text.scale.set(view.scale_x, view.scale_y);
     this.text.angle = view.rotation_deg;
+    // A glyph texture drawn at a fractional buffer position is resampled by up
+    // to half a pixel, which on a stem is the difference between crisp and
+    // smeared. So in preview the block lands on the pixel grid while the layer
+    // stands still, and moves freely — sub-pixel, as an NLE's monitor does —
+    // from the frame its position changes, so a slow slide never steps. The
+    // first frame counts as still: a paused frame is composited once and must
+    // not wait for a second pass to sharpen. Rotation opts out: `roundPixels`
+    // rounds the quad's corners one by one and would shear a turned block.
+    if (this.snapToPixels) {
+      const still =
+        Number.isNaN(this.lastX) || (this.lastX === view.x && this.lastY === view.y);
+      this.text.roundPixels = still && view.rotation_deg % 360 === 0;
+      this.lastX = view.x;
+      this.lastY = view.y;
+    }
     // Color alpha (Rgba.a) multiplies the layer's `opacity` field.
     this.text.alpha = view.opacity * (view.color.a / 255);
   }

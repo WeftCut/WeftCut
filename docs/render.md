@@ -924,6 +924,49 @@ The encoder configures with `hardwareAcceleration: 'prefer-hardware'`
 first. On configure error or a sustained zero-output condition the
 Worker re-configures with `'prefer-software'` and logs a warning.
 
+## Preview canvas
+
+The preview draws the composition into one Pixi canvas whose LOGICAL size is
+the composition — every sprite transform, render texture, filter frame and
+`containMap` speak composition pixels — and whose backing store is sized by
+`renderer.resize(width, height, resolution)` alone. A `ResizeObserver` on the
+host (`.pixi-preview-host`) reports the room the panel offers, floored to whole
+device pixels, and the resolution is
+
+```
+min(1, room / composition) × knob        knob = Full 1 · 1/2 0.5 · 1/4 0.25
+```
+
+(`render/decoder/playbackResolution.ts`). Below a fit of 1 the canvas
+element's box is then WRITTEN from the buffer — its own size in device pixels,
+centred in the host and snapped to whole device pixels
+(`fittedCanvasBox`) — so the compositor's blit is a copy and the downscale is
+Pixi's. That is what makes text sharp: `Text` follows `renderer.resolution`
+(auto-resolution, the `resolutionChange` runner), so glyphs are rasterized at
+the density they are shown at rather than drawn at composition size and shrunk
+by the compositor's bilinear tap, and a text layer that stands still snaps its
+block to the buffer grid (`TextSprite`, preview only; it moves sub-pixel from
+the frame its position changes). At a fit of 1 the inline box is removed and
+CSS's contain-fit owns the canvas (`.pixi-preview-canvas`, container-query
+units); the cap keeps the preview from showing detail the export cannot have
+and makes a panel larger than its composition the exact pre-fit path — the E2E
+gates' case. The decode divisor stays the knob's alone (Full 1, 1/2 2, 1/4 4);
+the fit does not thread into `OutScale`.
+[ADR 0071](adr/0071-the-preview-backing-store-fits-the-display-box.md).
+
+Two numbers to keep apart:
+
+- **The composition size is the composition's.** Below a fit of 1 Pixi
+  redefines its logical size as `pixels / resolution`, a fraction of a pixel
+  off the composition; `PixiPreview` holds the composition's integers itself
+  and never reads `app.screen` or `renderer.width/height` for them.
+- **Readbacks are pinned to `resolution: 1` at the composition frame** —
+  the colour picker's `captureFrame`, the E2E `sampleComposite`, conformance
+  PNGs — so they are composition-sized whatever the fit or the knob. Text
+  glyphs in such a read are the preview-density textures, upsampled. Filter
+  intermediates are `Filter.defaultOptions.resolution = 1` as well, so a
+  texel-addressed kernel (sharpen) is identical in preview and export.
+
 ## Render & Play
 
 A user-triggered affordance ("Render & Play") runs the export

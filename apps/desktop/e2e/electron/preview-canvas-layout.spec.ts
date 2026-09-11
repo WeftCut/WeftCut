@@ -76,29 +76,25 @@ test('preview panel owns both letterbox axes while the Pixi canvas stays centere
     await expect(page.locator('.pixi-preview-canvas')).toBeVisible()
     await expect(page.getByTestId('pixi-preview-initializing')).toBeHidden()
 
+    // Below a fit of 1 the canvas box is the buffer's own size in whole device
+    // pixels, centred on the device grid (ADR 0071), so it may sit up to one
+    // pixel off the ideal contain box on either axis and up to half a pixel
+    // off centre.
+    const withinOnePx = (actual: number, expected: number): void => {
+      expect(Math.abs(actual - expected)).toBeLessThanOrEqual(1)
+    }
+
     const wide = await layoutAt(page, { width: 600, height: 240 })
-    expect(wide.canvas.width).toBeCloseTo(wide.surface.height * (16 / 9), 0)
-    expect(wide.canvas.height).toBeCloseTo(wide.surface.height, 0)
-    expect(wide.canvas.x + wide.canvas.width / 2).toBeCloseTo(
-      wide.surface.x + wide.surface.width / 2,
-      0,
-    )
-    expect(wide.canvas.y + wide.canvas.height / 2).toBeCloseTo(
-      wide.surface.y + wide.surface.height / 2,
-      0,
-    )
+    withinOnePx(wide.canvas.width, wide.surface.height * (16 / 9))
+    withinOnePx(wide.canvas.height, wide.surface.height)
+    withinOnePx(wide.canvas.x + wide.canvas.width / 2, wide.surface.x + wide.surface.width / 2)
+    withinOnePx(wide.canvas.y + wide.canvas.height / 2, wide.surface.y + wide.surface.height / 2)
 
     const tall = await layoutAt(page, { width: 240, height: 500 })
-    expect(tall.canvas.width).toBeCloseTo(tall.surface.width, 0)
-    expect(tall.canvas.height).toBeCloseTo(tall.surface.width / (16 / 9), 0)
-    expect(tall.canvas.x + tall.canvas.width / 2).toBeCloseTo(
-      tall.surface.x + tall.surface.width / 2,
-      0,
-    )
-    expect(tall.canvas.y + tall.canvas.height / 2).toBeCloseTo(
-      tall.surface.y + tall.surface.height / 2,
-      0,
-    )
+    withinOnePx(tall.canvas.width, tall.surface.width)
+    withinOnePx(tall.canvas.height, tall.surface.width / (16 / 9))
+    withinOnePx(tall.canvas.x + tall.canvas.width / 2, tall.surface.x + tall.surface.width / 2)
+    withinOnePx(tall.canvas.y + tall.canvas.height / 2, tall.surface.y + tall.surface.height / 2)
 
     expect(wide.panelBackground).not.toBe('rgba(0, 0, 0, 0)')
     expect(wide.previewBackground).toBe('rgba(0, 0, 0, 0)')
