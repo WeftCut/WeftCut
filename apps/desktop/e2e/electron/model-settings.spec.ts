@@ -35,13 +35,13 @@ test("model setup stays inline and the add dialog blocks the settings behind it"
     const behind = page.locator('#settings-tab-speech');
     await expect(behind).toBeVisible();
     // The probe point has to be over the tab AND inside the viewport, so it is
-    // the centre of the two boxes' INTERSECTION rather than of the tab alone.
-    // `document.elementFromPoint` answers null for a coordinate outside the
-    // viewport, and a tab whose centre sits there is the whole of how this
-    // read `Expected "dialog-overlay" / Received null` on macos-latest while
-    // passing on the other two runners. The visible extent comes back with the
-    // point so a tab that is genuinely off-screen reports as that, in numbers,
-    // instead of as a null nobody can place.
+    // the centre of the two boxes' INTERSECTION rather than of the tab alone:
+    // a hit test answers nothing at all for a coordinate outside the viewport,
+    // and `toBeVisible()` does not mean in-viewport. The visible extent comes
+    // back with the point and both rects go into the failure message, so a tab
+    // that is genuinely off-screen reports as that, in numbers. (It was not
+    // off-screen on macos-latest — these two assertions passed there while the
+    // hit test below still failed, which is what ruled the viewport out.)
     const probe = await behind.evaluate((el) => {
       const r = el.getBoundingClientRect();
       const left = Math.max(r.left, 0);
@@ -61,7 +61,24 @@ test("model setup stays inline and the add dialog blocks the settings behind it"
     expect(probe.visibleWidth, `the speech tab is off-screen horizontally: ${where}`).toBeGreaterThan(0);
     expect(probe.visibleHeight, `the speech tab is off-screen vertically: ${where}`).toBeGreaterThan(0);
     const point = { x: probe.x, y: probe.y };
-    expect(await page.evaluate(p => document.elementFromPoint(p.x, p.y)?.getAttribute('data-slot'), point)).toBe('dialog-overlay');
+    // The whole hit-test STACK, not just its top. The claim is that the add
+    // dialog's overlay lies ABOVE the settings tab at the point about to be
+    // pressed; which node wins the very top is not part of it, and Base UI
+    // hangs focus guards and scroll-lock furniture over a modal that differ by
+    // platform. `elementFromPoint(...)?.getAttribute('data-slot')` cannot tell
+    // those apart: it answers null both when nothing hit-tests AND when
+    // something does but carries no `data-slot`, which is how this read a bare
+    // `Received: null` on macos-latest while passing on the other two runners.
+    const stack = await page.evaluate(p => document.elementsFromPoint(p.x, p.y).map(el => ({
+      slot: el.getAttribute('data-slot'),
+      id: el.id || null,
+      tag: el.tagName.toLowerCase(),
+    })), point);
+    const overlayAt = stack.findIndex(e => e.slot === 'dialog-overlay');
+    const tabAt = stack.findIndex(e => e.id === 'settings-tab-speech');
+    const seen = `point ${JSON.stringify(point)} hit-tests as ${JSON.stringify(stack)}`;
+    expect(overlayAt, `no dialog overlay stands over the speech tab: ${seen}`).toBeGreaterThanOrEqual(0);
+    expect(tabAt === -1 || overlayAt < tabAt, `the speech tab is above the overlay: ${seen}`).toBe(true);
     await page.mouse.click(point.x, point.y);
     await expect(modal).toBeVisible();
     await expect(page.locator('#settings-tab-vlm')).toHaveAttribute('aria-selected', 'true');
