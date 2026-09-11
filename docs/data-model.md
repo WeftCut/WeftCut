@@ -478,7 +478,8 @@ extension fallback recognizes them plus `tif`/`tiff`:
 
 **Subtitle files (srt, ass, vtt)** are consumed at import: `import_media` on a
 subtitle extension reads the body, parses it through `subtitles::parse`, and
-calls `add_caption_track` to build a caption-role track of `Text` layers. The
+calls `add_caption_track` to land the cues as `Text` layers on a caption-role
+track, packing into one already there where it has room (ADR 0070). The
 file is never copied to `Media/`, never added to the media pool, and no
 `MediaItem` is created. The `MediaKind::Subtitle` enum variant exists in the
 Rust codebase but is unreachable through normal import; subtitle files are routed
@@ -1237,7 +1238,7 @@ the UI uses the same actor via backend commands.
 | `add_color_layer(track_id, t_start_us, t_end_us, color, width?, height?, composition_id?)` → `LayerId` | rejects on overlap; the track fixes the composition, `composition_id` is a cross-check |
 | `add_video_layer(track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us, composition_id?)` → `LayerId` | rejects on overlap; same cross-check |
 | `add_motif(motif_id, t_start_us, t_end_us?, track_id?, props?, composition_id?)` → `LayerId` | `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates a fresh track when absent, in `composition_id` (root by default) |
-| `apply_subtitles(body, format?, track_id?, t_start_us?, t_end_us?)` | Parses `body` (SRT/VTT/ASS) and builds a new caption-role track of editable `Text` layers. `format` is sniffed when omitted. `track_id`, `t_start_us`, and `t_end_us` are accepted on the wire for backward compatibility but are ignored — cue timings come from the body and each import always creates its own caption track. Advanced ASS tags (karaoke, drawings) are stripped; the tool notes when `simplified=true`. Returns the new caption track id. |
+| `apply_subtitles(body, format?, track_id?, t_start_us?, t_end_us?)` | Parses `body` (SRT/VTT/ASS) and lands the cues as editable `Text` layers on the composition's caption-role tracks — packing into the unlocked caption tracks already there where they have room, opening a new caption track only for a cue that collides with all of them (ADR 0070). `format` is sniffed when omitted. `track_id`, `t_start_us`, and `t_end_us` are accepted on the wire for backward compatibility but are ignored — cue timings come from the body, and the lane is the packing's to pick. Advanced ASS tags (karaoke, drawings) are stripped; the tool notes when `simplified=true`. Returns the id of the caption track the first cue landed on. |
 | `duplicate_layer(layer_id, t_offset_us)` → `LayerId` | |
 | `paste_layers(layer_ids, t_start_us, target_track_id?)` → `{ clones: [{ source, clone }] }` | the whole-link duplicate: every clone shifts by the delta the seed (`layer_ids[0]`) travels to `t_start_us`, then snaps on its own lattice; only the seed changes track; any lock or overlap refuses the whole set; two or more clones are linked to each other |
 | `set_layers_enabled(layer_ids, enabled)` | sets `enabled` on exactly the layers named — the UI hands it a link's members when the toggle fans out; a locked track refuses the whole set, a layer's own lock does not |

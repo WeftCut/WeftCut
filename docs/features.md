@@ -1357,20 +1357,32 @@ menu (the two kinds whose media carries an audio stream — offering it over a
 Color layer would be a row that can only refuse), in the Edit menu, and in
 the palette. It is an `ACTION_DEFS` entry scoped to the timeline selection
 with no default key, so a user who transcribes every clip can bind one in
-Settings → Keyboard. There is no dialog: the clip is the selection, and the
+Settings → Keyboard. There is no dialog: the clips are the selection, and the
 language is the engine's to detect (whisper.cpp runs `-l auto`, OpenAI omits
-the field, FunASR's model *is* the language), so the press runs
-`transcribe_clip` on the primary selected layer's whole span, applies the
-returned `srt` as one caption-role track (`add_caption_track`, so one undo
-removes every cue), and reveals the Caption panel — a landed transcript is
-invisible until its editor is open. A greyed row says why: nothing selected,
-wrong kind, a re-timed clip (`speed != 1`, refused at the gesture before any
-audio is extracted), or a transcription already running (a second concurrent
-run would bill a second request). A refusal lands as a status-bar line, and
-when it names Settings → Transcription — no model prepared, no API key — the
-command opens that pane, since the remedy is the one thing a log row cannot
-carry. The transcript is edited in `CaptionsPanel`, per cue, which is
-strictly more than a review list could offer ([captions.md](captions.md)).
+the field, FunASR's model *is* the language). The press acts on the WHOLE
+selection ([ADR 0070](adr/0070-captions-land-where-there-is-room-and-a-transcription-reads-each-selected-source-once.md)):
+every selected clip with sound, in timeline order, reduced to one subject per
+source — a linked picture clip yields to its selected same-media audio (the
+layer that plays, so a plain click on a linked clip is still one
+transcription, and the words follow an A/V slip), and the same source span
+selected twice is read once; titles and captions caught in a marquee are
+ignored. It runs `transcribe_clip` on each subject's whole span, one at a
+time, then applies every returned `srt` in one `apply_subtitles` call
+(`add_caption_track`, so a six-clip transcription is one history row and one
+undo, and the cues pack into the caption track already there wherever it has
+room), and reveals the Caption panel — a landed transcript is invisible until
+its editor is open. A greyed row says why: nothing selected, nothing with
+sound in the selection, a re-timed clip among the subjects (`speed != 1`,
+refused at the gesture before any audio is extracted, for the whole press
+rather than by skipping that clip), or a transcription already running (a
+second concurrent run would bill a second request). The run stops at the
+first clip that fails and still lands the transcripts before it: the status
+log then carries the cues that landed and, as the row that closes the run,
+the clip that failed by name with the tool's own sentence. When that sentence
+names Settings → Transcription — no model prepared, no API key — the command
+opens that pane, since the remedy is the one thing a log row cannot carry.
+The transcript is edited in `CaptionsPanel`, per cue, which is strictly more
+than a review list could offer ([captions.md](captions.md)).
 
 **Voiceover…** is menu-only (Edit menu + palette): it acts on no clip, it
 needs a script, so it must be reachable with nothing selected and a

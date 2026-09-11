@@ -3,6 +3,12 @@ status: accepted
 ---
 # 0026 — Captions as first-class Text layers
 
+> **Amended by [ADR 0070](0070-captions-land-where-there-is-room-and-a-transcription-reads-each-selected-source-once.md).**
+> Pillar 1 below says every import builds a caption track of its own and
+> overlapping cues fan onto additional tracks. The overlap rule stands, but the
+> candidates now include the caption tracks the composition already has: a new
+> track opens only for a cue that collides with all of them.
+
 ## Context
 
 The original subtitle implementation used libass-wasm (JASSUB) to render

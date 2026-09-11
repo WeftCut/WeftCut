@@ -30,29 +30,42 @@ chokepoint so there is exactly one parsing path and one mutation:
   import** — parsed straight into a caption track. They are never added to the
   media pool and produce no proxy or derivative jobs.
 - **MCP `apply_subtitles`.** An agent passes a subtitle body inline. Cue timings
-  come from the body; the tool builds its own caption track and returns the new
-  track id.
+  come from the body; the cues land on the composition's caption tracks (see
+  *Cues pack into the caption tracks already there*, below) and the tool
+  returns the id of the track the first cue landed on.
 - **Transcription.** `transcribe_clip` returns a normalized transcript
   envelope; its rendered `srt` field (timestamps already timeline-absolute)
   pipes into `apply_subtitles` to land the cues on a caption track at the
   right offset. A person reaches the same pair as **Transcribe selected clip**
   on a `VideoClip` / `Audio` layer's context menu, in the Edit menu and in the
   search palette: no dialog — the language is the engine's to detect — so the
-  press runs the pair, then the returned `srt` is applied and the Caption panel
-  is revealed so the new track is visible. There is no review step between the
-  two — the result is a track of editable `Text` layers, and `CaptionsPanel`
-  already edits them per cue, which is strictly more than a review list offers
-  ([features.md](features.md) § Transcribe and voiceover).
+  press reads every selected clip with sound, one at a time in timeline order,
+  applies all the returned `srt` bodies in ONE `apply_subtitles` call, and
+  reveals the Caption panel so the cues are visible. One subject per source: a
+  linked picture clip yields to its selected same-media audio, and the same
+  source span selected twice is read once ([ADR 0070](adr/0070-captions-land-where-there-is-room-and-a-transcription-reads-each-selected-source-once.md)).
+  There is no review step between the two — the result is editable `Text`
+  layers on a caption track, and `CaptionsPanel` already edits them per cue,
+  which is strictly more than a review list offers ([features.md](features.md)
+  § Transcribe and voiceover).
 
 All three call `subtitles::parse(body, format)` → `Cue { start_us, end_us, text,
 style }`, then the atomic `add_caption_track` mutation. Format is sniffed
 (`subtitles::sniff`) when the caller does not supply one. The whole import is a
-single history entry (one undo removes the whole import, however many cues).
+single history entry, *Added captions* (one undo removes the whole import,
+however many cues).
 
-**Overlapping cues auto-stack.** When cues overlap in time, they fan greedily
-onto additional caption tracks so each track stays non-overlapping — the same
-linear-timeline invariant every other layer class obeys. A transcription, whose
-cues never overlap, produces a single track.
+**Cues pack into the caption tracks already there.** `add_caption_track` tries
+the composition's own unlocked caption tracks first, in track order, and lands
+each cue on the first whose layers leave the cue's span free; a new caption
+track opens only for a cue that collides with every one of them, and then joins
+the candidates ([ADR 0070](adr/0070-captions-land-where-there-is-room-and-a-transcription-reads-each-selected-source-once.md)). So a second
+transcription — another clip on the same timeline, transcribed later — lands
+beside the first on the same caption track, and only cues that genuinely
+overlap in time fan onto additional tracks, keeping each track non-overlapping
+— the same linear-timeline invariant every other layer class obeys. Locked
+caption tracks are never candidates. A transcription, whose cues never overlap,
+adds to a single track.
 
 ## Cue layout and ASS support
 
