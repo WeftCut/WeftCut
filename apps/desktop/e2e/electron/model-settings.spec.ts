@@ -33,9 +33,34 @@ test("model setup stays inline and the add dialog blocks the settings behind it"
     await expect(modal).toBeVisible();
     await expect(page.locator('[data-slot="dialog-overlay"]:visible')).toHaveCount(2);
     const behind = page.locator('#settings-tab-speech');
-    const box = await behind.boundingBox();
-    expect(box).not.toBeNull();
-    const point = { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
+    await expect(behind).toBeVisible();
+    // The probe point has to be over the tab AND inside the viewport, so it is
+    // the centre of the two boxes' INTERSECTION rather than of the tab alone.
+    // `document.elementFromPoint` answers null for a coordinate outside the
+    // viewport, and a tab whose centre sits there is the whole of how this
+    // read `Expected "dialog-overlay" / Received null` on macos-latest while
+    // passing on the other two runners. The visible extent comes back with the
+    // point so a tab that is genuinely off-screen reports as that, in numbers,
+    // instead of as a null nobody can place.
+    const probe = await behind.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const left = Math.max(r.left, 0);
+      const top = Math.max(r.top, 0);
+      const right = Math.min(r.right, window.innerWidth);
+      const bottom = Math.min(r.bottom, window.innerHeight);
+      return {
+        x: (left + right) / 2,
+        y: (top + bottom) / 2,
+        visibleWidth: right - left,
+        visibleHeight: bottom - top,
+        tab: { left: r.left, top: r.top, right: r.right, bottom: r.bottom },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      };
+    });
+    const where = JSON.stringify({ tab: probe.tab, viewport: probe.viewport });
+    expect(probe.visibleWidth, `the speech tab is off-screen horizontally: ${where}`).toBeGreaterThan(0);
+    expect(probe.visibleHeight, `the speech tab is off-screen vertically: ${where}`).toBeGreaterThan(0);
+    const point = { x: probe.x, y: probe.y };
     expect(await page.evaluate(p => document.elementFromPoint(p.x, p.y)?.getAttribute('data-slot'), point)).toBe('dialog-overlay');
     await page.mouse.click(point.x, point.y);
     await expect(modal).toBeVisible();

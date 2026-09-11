@@ -106,11 +106,9 @@ const NARROW_WINDOW_PX = 960
 const CARDS_WINDOW_PX = 1280
 const CONSOLE_WINDOW_PX = 1700
 const WIDEST_WINDOW_PX = 1900
-// The console at its own floor, where a Role strip is the pinned 66px that
-// `editor.css` calls the layout threshold's arithmetic. The few px each strip
-// has over its content is deliberate slack for text whose width a translation
-// moves, and this is the width at which that slack is all there is.
-const CONSOLE_FLOOR_WINDOW_PX = 1636
+// There is deliberately NO console-floor window width here. See
+// `narrowestConsole()`: the floor is hysteretic, the hysteresis is a
+// scrollbar's, and a scrollbar's width belongs to the platform.
 
 // Mirrors `CONSOLE_LAYOUT_MIN_WIDTH` in `MixerPanel.tsx`. There it is
 // arithmetic over the console's pinned column widths; here it meets a layout
@@ -455,6 +453,40 @@ test.describe('Role Mixer panel flow (Electron UI)', () => {
     return geometry
   }
 
+  // The narrowest window at which the Panel is STILL a console, measured by
+  // narrowing rather than assumed. A fixed window width cannot do this job on
+  // every box: the crossover is hysteretic, and the hysteresis is the
+  // SCROLLBAR's. The card list scrolls and the console does not, so where the
+  // scrollbar takes width from the content box (Windows, most Linux) the card
+  // list measures ~10px under its dock column and the console holds ~10px below
+  // the width that first produced it; with macOS overlay scrollbars that gap is
+  // zero and both directions cross at the same width. Measured on one CI run of
+  // the same commit: Windows crossed at a 1666px window (root 391 -> 402),
+  // macOS at 1672px (root 391 -> 392). A window width tuned on the first lands
+  // the second in a card list, which is how this arrived as a macOS-only
+  // failure rather than as the platform fact it is.
+  const narrowestConsole = async (): Promise<MixerGeometry> => {
+    let current = await useLayout('console', CONSOLE_WINDOW_PX)
+    // Every probe is REACHED BY NARROWING: one that follows a card list has to
+    // climb back into the console first, or it reports the rising crossover —
+    // the one width the caller's claim is explicitly not about.
+    const probe = async (windowWidth: number): Promise<MixerGeometry> => {
+      if (current.layout !== 'console') current = await useLayout('console', CONSOLE_WINDOW_PX)
+      current = await resizeAndSettle(windowWidth)
+      return current
+    }
+    let narrow = NARROW_WINDOW_PX
+    let wide = CONSOLE_WINDOW_PX
+    expect((await probe(narrow)).layout).toBe('cards')
+    while (wide - narrow > 1) {
+      const middle = Math.floor((narrow + wide) / 2)
+      if ((await probe(middle)).layout === 'console') wide = middle
+      else narrow = middle
+    }
+    // Left AT the floor, because the caller measures the strips standing there.
+    return probe(wide)
+  }
+
   test('the master output meter stands once beside one level meter per Role', async () => {
     await useLayout('cards')
     await expect(panel().getByRole('group', { name: 'Master output meter' })).toHaveCount(1)
@@ -680,8 +712,12 @@ test.describe('Role Mixer panel flow (Electron UI)', () => {
     // measure about a scrollbar apart at one dock column, because the card list
     // scrolls and the console does not — so the narrowest console anyone can be
     // looking at is reached by narrowing a wider one.
-    await useLayout('console')
-    const floor = await resizeAndSettle(CONSOLE_FLOOR_WINDOW_PX)
+    //
+    // A bisection over window widths, not one width: how far the console holds
+    // past its own threshold is the scrollbar's width, so the window that puts
+    // a strip at the floor differs per platform (`narrowestConsole()`).
+    test.setTimeout(120_000)
+    const floor = await narrowestConsole()
     expect(floor.layout).toBe('console')
     expect(floor.rootWidth).toBeLessThan(CONSOLE_LAYOUT_MIN_WIDTH + 8)
     await withDialogueSoloed(async () => {

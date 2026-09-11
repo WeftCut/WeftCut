@@ -230,6 +230,24 @@ async function settledRemoval(page: Page): Promise<string> {
   return outcome
 }
 
+/// Right-click a clip block through its LOCATOR, never through `page.mouse` at
+/// a box read a moment earlier.
+///
+/// `locator.click()` scrolls the block into view, waits for its box to hold
+/// still across two frames, and re-reads the point it presses. A
+/// `page.mouse.click(box.x + box.width / 2, …)` does none of those three:
+/// `toBeVisible()` does not mean in-viewport, an absolute coordinate never
+/// scrolls, and a box read before the waveform lands is a box the Audio block
+/// has already moved out of. On the first CI run of this spec that cost the
+/// three tests below on windows-latest and macos-latest — ubuntu-latest and the
+/// picture-lane call in this same file stayed green, which is the shape of a
+/// stale or off-screen POINT and not of a menu that fails to open.
+const rightClickBlock = async (page: Page, layerId: string): Promise<void> => {
+  const target = block(page, layerId)
+  await expect(target).toBeVisible()
+  await target.click({ button: 'right' })
+}
+
 /// Right-click the clip and run *Detect pauses…* from its context menu.
 ///
 /// The right-click is also the SELECTION: `Timeline.tsx`'s `onContextMenu`
@@ -237,11 +255,7 @@ async function settledRemoval(page: Page): Promise<string> {
 /// making the clicked layer the PRIMARY — which is the layer the Attribute
 /// Panel renders and the layer the subject rule resolves from.
 async function detectFromContextMenu(page: Page, layerId: string, rowLabel: string): Promise<void> {
-  const target = block(page, layerId)
-  await expect(target).toBeVisible()
-  const box = await target.boundingBox()
-  if (!box) throw new Error(`the clip block for ${layerId} has no layout box`)
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: 'right' })
+  await rightClickBlock(page, layerId)
   // By accessible name: the row renders its accelerator in an `aria-hidden`
   // span, so a `hasText` anchor would have to know the keystroke (there is no
   // default one, but the row must not depend on that staying true).
@@ -434,10 +448,7 @@ test.describe('pauses', () => {
       await expect(pausesSection(page, 'Pauses')).toHaveCount(0)
 
       // ── …and the row says why ────────────────────────────────────────────
-      const target = block(page, videoLayerId)
-      const box = await target.boundingBox()
-      if (!box) throw new Error('the picture block has no layout box')
-      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: 'right' })
+      await rightClickBlock(page, videoLayerId)
       const row = page.getByRole('menuitem', { name: 'Detect pauses in selected clip…', exact: true })
       await expect(row).toHaveCount(1)
       await expect(row).toHaveAttribute('aria-disabled', 'true')
@@ -483,10 +494,7 @@ test.describe('pauses', () => {
 
       // Same sweep over the row that opens it, which is the other surface the
       // rename had to reach.
-      const target = block(page, audioLayerId)
-      const box = await target.boundingBox()
-      if (!box) throw new Error('the sound block has no layout box')
-      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: 'right' })
+      await rightClickBlock(page, audioLayerId)
       const menuText = await page.locator('.app-menu-list').first().innerText()
       expect(menuText).toContain('检测停顿')
       for (const retired of ['静默', '静音']) {
