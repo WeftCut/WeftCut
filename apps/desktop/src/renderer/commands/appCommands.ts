@@ -49,6 +49,7 @@ import {
   primaryLayerIdOf,
 } from "../state/selectionStore";
 import { activeTool } from "../state/toolStore";
+import { canStepPreviewZoom, resetPreviewView, stepPreviewZoom } from "../state/previewViewStore";
 import { layerOverlapClass } from "../timeline/geometry";
 import {
   evaluateTimelinePlacements,
@@ -187,6 +188,9 @@ const SELF_CONTAINED_COMMAND_IDS = [
   "setPlaybackResolutionHalf",
   "setPlaybackResolutionQuarter",
   "cyclePlaybackResolution",
+  "previewZoomIn",
+  "previewZoomOut",
+  "previewZoomFit",
 ] as const;
 
 type SelfContainedCommandId = (typeof SELF_CONTAINED_COMMAND_IDS)[number];
@@ -200,6 +204,9 @@ const SELF_CONTAINED_LABEL_KEYS: Record<SelfContainedCommandId, string> = {
   setPlaybackResolutionHalf: "actions.playback_resolution_half",
   setPlaybackResolutionQuarter: "actions.playback_resolution_quarter",
   cyclePlaybackResolution: "actions.playback_resolution_cycle",
+  previewZoomIn: "actions.preview_zoom_in",
+  previewZoomOut: "actions.preview_zoom_out",
+  previewZoomFit: "actions.preview_zoom_fit",
 };
 
 /// The rungs `cyclePlaybackResolution` walks, in order, wrapping at the end.
@@ -385,6 +392,7 @@ export function buildAppCommands(
     // The Text tool's gate is the Blade's (`projectHasLayers`). The strip
     // button's hint names the remedy; this predicate only greys it.
     selectTextTool: () => !flags.busy && projectHasLayers(),
+    selectHandTool: () => projectHasLayers(),
     // Read from the store rather than routed through `flags`, unlike every
     // entry above. A flag is a snapshot taken at App render time, and App
     // deliberately does NOT subscribe to `rangeStore` (marking in/out would
@@ -434,6 +442,7 @@ export function buildAppCommands(
     selectTool: () => activeTool() === "select",
     toggleBladeMode: () => activeTool() === "blade",
     selectTextTool: () => activeTool() === "text",
+    selectHandTool: () => activeTool() === "hand",
     // Same live-read reason as `clearRange` below the flags: App does not
     // re-render on an app-settings flip, so a captured flag would freeze.
     toggleFollowPlayhead: () => followPlayheadEnabled(),
@@ -498,6 +507,15 @@ export function buildAppCommands(
     SelfContainedCommandId,
     { run: () => void | Promise<void>; enabled?: () => boolean; checked?: () => boolean }
   > = {
+    previewZoomIn: {
+      run: () => stepPreviewZoom(1),
+      enabled: () => projectHasLayers() && canStepPreviewZoom(1),
+    },
+    previewZoomOut: {
+      run: () => stepPreviewZoom(-1),
+      enabled: () => projectHasLayers() && canStepPreviewZoom(-1),
+    },
+    previewZoomFit: { run: resetPreviewView, enabled: projectHasLayers },
     toggleSafeAreaGuides: {
       run: () => void toggleSafeAreaGuides(),
       checked: () => safeAreaGuidesVisible(),

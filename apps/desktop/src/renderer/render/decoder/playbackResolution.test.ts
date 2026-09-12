@@ -11,6 +11,38 @@ import {
   roomFrom,
 } from "./playbackResolution";
 
+describe("zoomed preview", () => {
+  const composition = { width: 1920, height: 1080 };
+  const available = { width: 960, height: 540 };
+
+  it("raises raster density with zoom, bounded by source size and the quality knob", () => {
+    expect(previewRenderResolution("full", composition, available, 0.5)).toBe(0.25);
+    expect(previewRenderResolution("full", composition, available, 1.5)).toBe(0.75);
+    expect(previewRenderResolution("full", composition, available, 4)).toBe(1);
+    expect(previewRenderResolution("half", composition, available, 4)).toBe(0.5);
+    expect(previewRenderResolution("quarter", composition, available, 4)).toBe(0.25);
+    // Multiply the uncapped display scale: a large panel zoomed out can still
+    // be above source resolution. Capping Fit before multiplying loses detail.
+    expect(previewRenderResolution("full", { width: 480, height: 270 }, available, 0.75)).toBe(1);
+  });
+
+  it("zooms beyond the host and clamps pan so the picture cannot get lost", () => {
+    const box = fittedCanvasBox({ composition, available, hostOrigin: { x: 0, y: 0 },
+      devicePixelRatio: 1, view: { zoom: 2, pan: { x: 9999, y: -9999 } } })!;
+    expect(box.css).toEqual({ left: 0, top: -540, width: 1920, height: 1080 });
+  });
+
+  it("centres each axis that fits and preserves device-grid alignment at fractional DPR", () => {
+    const box = fittedCanvasBox({ composition, available: { width: 1000, height: 1000 },
+      hostOrigin: { x: 0.3, y: 0.7 }, devicePixelRatio: 1.25,
+      view: { zoom: 1.5, pan: { x: 9999, y: 9999 } } })!;
+    expect(box.css.width * 1.25).toBe(1500);
+    expect(box.css.height * 1.25).toBe(844);
+    expect(box.css.top * 1.25).toBeCloseTo(78.3);
+    expect(box.css.left * 1.25 + 0.3).toBeCloseTo(0);
+  });
+});
+
 describe("playbackScaleDiv", () => {
   it("maps each fraction to the native ship-stage divisor", () => {
     expect(playbackScaleDiv("full")).toBe(1);

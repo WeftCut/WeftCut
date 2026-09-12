@@ -19,6 +19,10 @@ import {
   FoldHorizontal,
   FoldVertical,
   Group,
+  Hand,
+  Scan,
+  ZoomIn,
+  ZoomOut,
   Link,
   Link2Off,
   Magnet,
@@ -192,6 +196,12 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
         id: "selectTool",
         icon: MousePointer2,
         active: (s) => s.tool === "select",
+      },
+      {
+        id: "selectHandTool",
+        icon: Hand,
+        active: (s) => s.tool === "hand",
+        hint: () => "quick_actions.hand_tool_hint",
       },
       {
         // Historical id — it selects the Blade, it no longer toggles.
@@ -412,6 +422,15 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
     id: "markers",
     mode: "command",
     items: [{ id: "addMarkerAtPlayhead", icon: BookmarkPlus }],
+  },
+  {
+    id: "preview_zoom",
+    mode: "command",
+    items: [
+      { id: "previewZoomOut", icon: ZoomOut },
+      { id: "previewZoomFit", icon: Scan },
+      { id: "previewZoomIn", icon: ZoomIn },
+    ],
   },
   {
     // Preview decode resolution — ONE button walking three rungs, where the

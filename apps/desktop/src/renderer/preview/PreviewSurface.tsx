@@ -17,6 +17,7 @@ import { PixiErrorBoundary } from "../render/PixiErrorBoundary";
 import { SafeAreaGuidesHost } from "./SafeAreaGuides";
 import { TextToolOverlayHost } from "./TextToolOverlay";
 import { TransformGizmoHost } from "./TransformGizmo";
+import { PreviewHandTool } from "./PreviewHandTool";
 
 interface Props {
   /// True when the project has at least one layer. When false we
@@ -152,6 +153,7 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
         {visible && <TextToolOverlayHost />}
         {visible && <SafeAreaGuidesHost />}
         {visible && <TransformGizmoHost />}
+        {visible && <PreviewHandTool />}
       </div>
     );
   },

@@ -196,6 +196,7 @@ describe("quickActions catalogue", () => {
       expect(tools?.mode).toBe("radio");
       expect(tools?.items.map((i) => i.id)).toEqual([
         "selectTool",
+        "selectHandTool",
         "toggleBladeMode",
         "selectTextTool",
       ]);

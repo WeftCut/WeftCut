@@ -66,6 +66,7 @@ export const EDIT_MENU: MenuSection = {
     "selectTool",
     "toggleBladeMode",
     "selectTextTool",
+    "selectHandTool",
     // The Blade without the pointer: same cut, resolved from the playhead. It
     // sits with the tools rather than in a section of its own because that is
     // the relationship a user needs to see — reach for the tool to cut where

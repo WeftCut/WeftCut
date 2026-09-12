@@ -103,3 +103,75 @@ test('preview panel owns both letterbox axes while the Pixi canvas stays centere
     await app.close()
   }
 })
+
+test('preview zoom controls resize the buffer, and the hand pans only the view', async () => {
+  const { app, page } = await launchApp()
+  try {
+    await newProject(page, {
+      parentFolder: tmpDir('weftcut-e2e-preview-zoom-'),
+      name: `preview-zoom-${Date.now()}`,
+      canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+    })
+    await invokeCmd(page, 'add_color_layer', { tStartUs: 0, durationUs: 1_000_000 })
+    const canvas = page.locator('.pixi-preview-canvas')
+    await expect(canvas).toBeVisible()
+    await expect(page.getByTestId('pixi-preview-initializing')).toBeHidden()
+    const beforeProject = await invokeCmd(page, 'project_summary', {})
+    const action = (id: string) => page.locator(`[data-quick-action="${id}"]`)
+    // Exercise the actual toolbar in its ordinary dock layout first.
+    await action('previewZoomIn').click()
+    await expect(page.locator('.preview-zoom-label')).toHaveText('1.5×')
+    await action('selectHandTool').click()
+    await expect(action('selectHandTool')).toHaveAttribute('aria-checked', 'true')
+    await page.screenshot({ path: test.info().outputPath('preview-zoom-toolbar.png') })
+
+    const { surface } = await layoutAt(page, { width: 480, height: 270 })
+    const cx = surface.x + surface.width / 2
+    const cy = surface.y + surface.height / 2
+    // The fixed test surface can overlap the dock strip. The remainder tests
+    // its real command buttons without making their location part of geometry.
+    const run = (id: string) => action(id).evaluate((button: HTMLButtonElement) => button.click())
+    await run('previewZoomFit')
+    await run('previewZoomIn')
+    await run('previewZoomIn')
+    await expect.poll(() => canvas.evaluate(el => el.getBoundingClientRect().width)).toBeCloseTo(960, 0)
+    const bufferWidth = await canvas.evaluate(el => el.width)
+    const original = (await canvas.boundingBox())!
+    await page.mouse.move(cx, cy)
+    await page.mouse.down()
+    await page.mouse.move(cx + 60, cy + 40, { steps: 8 })
+    await page.mouse.up()
+    await expect.poll(async () => (await canvas.boundingBox())!.x).toBeCloseTo(original.x + 60, 0)
+    expect((await canvas.boundingBox())!.y).toBeCloseTo(original.y + 40, 0)
+    expect(await canvas.evaluate(el => el.width)).toBe(bufferWidth)
+    expect(await invokeCmd(page, 'project_summary', {})).toEqual(beforeProject)
+
+    // Capture continues outside the preview and clamps at its frame edges.
+    await page.mouse.move(cx, cy)
+    await page.mouse.down()
+    await page.mouse.move(1000, 750, { steps: 8 })
+    await page.mouse.up()
+    const edge = (await canvas.boundingBox())!
+    expect(edge.x).toBeCloseTo(surface.x, 0)
+    expect(edge.y).toBeCloseTo(surface.y, 0)
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('preview-hand-tool')).toHaveCount(0)
+    await run('previewZoomFit')
+    await expect.poll(() => canvas.evaluate(el => el.getBoundingClientRect().width)).toBeCloseTo(480, 0)
+    expect((await canvas.boundingBox())!.x).toBeCloseTo(surface.x, 0)
+    expect((await canvas.boundingBox())!.y).toBeCloseTo(surface.y, 0)
+    await run('previewZoomOut')
+    await expect.poll(() => canvas.evaluate(el => el.getBoundingClientRect().width)).toBeCloseTo(360, 0)
+    expect(await canvas.evaluate(el => el.width)).toBeLessThan(bufferWidth)
+    await run('previewZoomOut')
+    await run('previewZoomOut')
+    await expect(action('previewZoomOut')).toBeDisabled()
+    for (let step = 0; step < 7; step++) await run('previewZoomIn')
+    await expect(action('previewZoomIn')).toBeDisabled()
+    await expect.poll(() => canvas.evaluate(el => el.width)).toBe(1920)
+    await run('cyclePlaybackResolution')
+    await expect.poll(() => canvas.evaluate(el => el.width)).toBe(960)
+  } finally {
+    await app.close()
+  }
+})

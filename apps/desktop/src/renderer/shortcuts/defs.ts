@@ -27,6 +27,7 @@ export type ActionId =
   | "selectTool"
   | "toggleBladeMode"
   | "selectTextTool"
+  | "selectHandTool"
   | "toggleLog"
   | "focusLogSearch"
   | "toggleDisplayMode"
@@ -198,6 +199,7 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   selectTool:      { defaultKeys: ["V"],                   labelKey: "actions.select_tool" },
   toggleBladeMode: { defaultKeys: ["C"],                   labelKey: "actions.toggle_blade_mode" },
   selectTextTool:  { defaultKeys: ["T"],                   labelKey: "actions.select_text_tool" },
+  selectHandTool:  { defaultKeys: ["H"],                   labelKey: "actions.select_hand_tool" },
   toggleLog:       { defaultKeys: ["Mod+`"],               labelKey: "actions.toggle_log" },
   focusLogSearch:  { defaultKeys: ["Mod+Shift+`"],         labelKey: "actions.focus_log_search" },
   // `Shift+T` flips the app-level `display_mode` (A/B Roll ↔ All Tracks, see

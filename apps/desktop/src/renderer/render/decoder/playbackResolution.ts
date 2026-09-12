@@ -8,6 +8,7 @@
 // reciprocal and how much of the composition the preview panel can show at
 // all (`displayFit`). See docs/render.md §Preview canvas, ADR 0071.
 import type { PlaybackResolution } from "../../../shared/app-settings";
+import { clampPreviewPan, type PreviewView } from "../../state/previewViewStore";
 
 /// Divisor applied to BOTH axes of the shipped frame. Native owns the rest of
 /// the dimension math (even rounding, the 320 px long-edge floor); 1 is
@@ -126,8 +127,13 @@ export function previewRenderResolution(
   setting: PlaybackResolution | undefined,
   composition: { width: number; height: number },
   available: DeviceBox | null,
+  zoom = 1,
 ): number {
-  return Math.min(displayFit(composition, available), playbackRenderResolution(setting));
+  const z = available && composition.width > 0 && composition.height > 0 &&
+    available.width > 0 && available.height > 0
+    ? Math.min(available.width / composition.width, available.height / composition.height) * zoom
+    : 1;
+  return Math.min(1, z, playbackRenderResolution(setting));
 }
 
 /// The buffer Pixi allocates for a resolution: `round(composition × r)` per
@@ -158,26 +164,35 @@ export function bufferFor(
 /// A knob below the fit draws a smaller buffer into this same box and the
 /// browser upscales it — the pre-fit look of 1/4 on a small panel.
 ///
-/// Null at a fit of 1: the buffer is then the composition, CSS's contain-fit
-/// owns the box, and the browser upscales as it always did.
+/// At the default Fit view, null above source density lets CSS contain-fit
+/// own the box. An explicit zoom always writes its box, including above source
+/// density; `buffer` then describes the display's pixel extent, while the
+/// actual raster buffer remains capped by `previewRenderResolution`.
 export function fittedCanvasBox(input: {
   composition: { width: number; height: number };
   available: DeviceBox;
   hostOrigin: { x: number; y: number };
   devicePixelRatio: number;
+  view?: PreviewView;
 }): {
   buffer: DeviceBox;
   css: { left: number; top: number; width: number; height: number };
 } | null {
-  const fit = displayFit(input.composition, input.available);
-  if (fit >= 1) return null;
+  const zoom = input.view?.zoom ?? 1;
+  const pan = input.view?.pan ?? { x: 0, y: 0 };
+  const fit = Math.min(input.available.width / input.composition.width,
+    input.available.height / input.composition.height) * zoom;
+  // Preserve CSS's existing Fit path for a panel larger than the composition.
+  if (fit >= 1 && zoom === 1 && pan.x === 0 && pan.y === 0) return null;
   const buffer = bufferFor(input.composition, fit);
   const dpr = input.devicePixelRatio;
   const { x: ox, y: oy } = input.hostOrigin;
   // Centre in device pixels, round to the grid in ABSOLUTE device coordinates
   // (the host's own origin is fractional), then express relative to the host.
-  const left = Math.round(ox + (input.available.width - buffer.width) / 2) - ox;
-  const top = Math.round(oy + (input.available.height - buffer.height) / 2) - oy;
+  const dx = clampPreviewPan(pan.x * dpr, buffer.width, input.available.width);
+  const dy = clampPreviewPan(pan.y * dpr, buffer.height, input.available.height);
+  const left = Math.round(ox + (input.available.width - buffer.width) / 2 + dx) - ox;
+  const top = Math.round(oy + (input.available.height - buffer.height) / 2 + dy) - oy;
   return {
     buffer,
     css: {

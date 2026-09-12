@@ -47,7 +47,8 @@ import {
   registerGizmoProbe,
   type GizmoProbe,
 } from "../preview/gizmoProbeRegistry";
-import { observeClientRect, type ClientRectCache } from "../preview/layoutRectCache";
+import { bumpPreviewLayoutEpoch, observeClientRect, type ClientRectCache } from "../preview/layoutRectCache";
+import { resetPreviewView, usePreviewViewStore } from "../state/previewViewStore";
 import { quickProxyPath } from "./decodeRoute";
 import {
   setSlotFenceBackend,
@@ -147,19 +148,22 @@ function applyPreviewFit(
   size: { width: number; height: number },
   setting: PlaybackResolution | undefined,
   host: HostBox | null,
+  resize = true,
 ): void {
   const { width, height } = size;
-  app.renderer.resize(
-    width,
-    height,
-    previewRenderResolution(setting, { width, height }, host?.available ?? null),
-  );
+  const view = usePreviewViewStore.getState();
+  const resolution = previewRenderResolution(setting, size, host?.available ?? null, view.zoom);
+  // Panning only moves the DOM canvas. It must not re-rasterize glyphs.
+  if (resize) {
+    app.renderer.resize(width, height, resolution);
+  }
   const box = host
     ? fittedCanvasBox({
         composition: { width, height },
         available: host.available,
         hostOrigin: host.origin,
         devicePixelRatio: window.devicePixelRatio || 1,
+        view,
       })
     : null;
   const style = (app.canvas as HTMLCanvasElement).style;
@@ -172,6 +176,7 @@ function applyPreviewFit(
   } else {
     for (const p of ["position", "left", "top", "width", "height"]) style.removeProperty(p);
   }
+  bumpPreviewLayoutEpoch();
 }
 
 /// The host's device-pixel box and origin read synchronously, for the first
@@ -299,6 +304,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   // edited is a change of argument. Export is unaffected: it renders the root.
   const targetId = usePreviewRenderTargetId();
   const composition = compositionOrRoot(summary, targetId) ?? undefined;
+  useEffect(() => resetPreviewView(), [targetId]);
   /// The composition the engine's clock is currently running on. Seeded on the
   /// first pass so the re-base below fires only on a real change of target.
   const previewTargetRef = useRef<string | null | undefined>(undefined);
@@ -925,6 +931,15 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       }
     });
   }, []);
+
+  useEffect(() => usePreviewViewStore.subscribe((view, previous) => {
+    const app = applicationRef.current;
+    const logical = logicalSizeRef.current;
+    if (app && logical) {
+      applyPreviewFit(app, logical, useAppSettingsStore.getState().settings.playback_resolution,
+        hostBoxRef.current, view.zoom !== previous.zoom);
+    }
+  }), []);
 
   // Re-applies size + fraction together (why: `applyPreviewFit`). No-ops while
   // the pixel dimensions are unchanged — Pixi compares them.

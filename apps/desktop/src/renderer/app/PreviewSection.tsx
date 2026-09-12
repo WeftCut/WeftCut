@@ -38,6 +38,7 @@ import {
 } from "../preview/previewTargetOptions";
 import { PlayheadTimecode } from "../preview/PlayheadTimecode";
 import { DroppedFramesIndicator } from "../preview/DroppedFramesIndicator";
+import { usePreviewViewStore } from "../state/previewViewStore";
 
 interface PreviewSectionProps {
   previewRef: React.RefObject<PreviewSurfaceHandle | null>;
@@ -88,6 +89,7 @@ export function PreviewSection({
       {/* A toolbar row, not a header bar — the Panel's title is its dock tab. */}
       <div className="preview-target-bar">
         <RenderTargetControl />
+        <PreviewZoomLabel />
       </div>
       <div id="video-surface" className="video-surface">
         <PreviewSurface
@@ -183,6 +185,14 @@ export function PreviewSection({
 ///
 /// Shows the raw CHOICE rather than the resolved target, so following reads as
 /// following rather than as whichever composition happens to have focus.
+function PreviewZoomLabel() {
+  const { t } = useTranslation();
+  const zoom = usePreviewViewStore((s) => s.zoom);
+  return <span className="preview-zoom-label" title={t("quick_actions.zoom_level", { zoom })}>
+    {zoom}×
+  </span>;
+}
+
 function RenderTargetControl() {
   const { t } = useTranslation();
   const summary = useProjectSummary();

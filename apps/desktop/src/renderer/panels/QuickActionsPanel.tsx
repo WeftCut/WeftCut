@@ -25,6 +25,7 @@ import {
   useTailSnapEnabled,
 } from "../settings/appSettingsStore";
 import { useActiveTool } from "../state/toolStore";
+import { usePreviewViewStore } from "../state/previewViewStore";
 import { useProjectStore } from "../state/projectStore";
 import { useLinkOverride } from "../state/linkOverrideStore";
 import { useHasMarkedRange } from "../state/rangeStore";
@@ -267,6 +268,8 @@ export function QuickActionsPanel({
   // keep their last state until something unrelated re-rendered the strip.
   useSyncExternalStore(subscribeCommandRegistry, commandRegistryVersion);
   const tool = useActiveTool();
+  // Re-evaluate command bounds when a zoom step changes, never on pan frames.
+  usePreviewViewStore((s) => s.zoom);
   // One boolean off the project mirror, so the strip re-renders when the
   // project gains its first layer or loses its last — the Text tool's hint
   // flips there — and on nothing else the mirror does.

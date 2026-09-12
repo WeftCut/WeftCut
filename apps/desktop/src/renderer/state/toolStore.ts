@@ -22,10 +22,11 @@ import { create } from "zustand";
 /// `blade` arms the razor — timeline clicks split the layer at the click point.
 /// `text` arms the Text tool — a preview click edits the Text layer under the
 /// pointer, or creates one at the click point (`preview/TextToolOverlay.tsx`).
+/// `hand` pans the preview viewport; timeline clicks still select normally.
 ///
 /// Adding a tool is additive: extend this union, give it an `ActionId` + key
 /// in `ACTION_DEFS`, and add a row to the Quick Actions tool section.
-export type Tool = "select" | "blade" | "text";
+export type Tool = "select" | "blade" | "text" | "hand";
 
 interface State {
   tool: Tool;

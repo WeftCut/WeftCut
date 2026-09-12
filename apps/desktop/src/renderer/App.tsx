@@ -787,6 +787,7 @@ export function App({ onCloseProject }: AppProps) {
     selectTool: () => setTool("select"),
     toggleBladeMode: () => setTool("blade"),
     selectTextTool: () => setTool("text"),
+    selectHandTool: () => setTool("hand"),
     toggleLog: toggleLogConsole,
     focusLogSearch,
     // R.8: T flips the A/B Roll / All Tracks display_mode at the app level.

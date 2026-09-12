@@ -1041,8 +1041,23 @@ keys also stay dead inside text fields, so a minus still types into a numeric
 inspector field.
 
 Both are real commands (search palette, Settings → Keyboard, agent-callable) and
-are **unscoped** — the timeline is the only zoomable surface in the app, so `=`
-means the same thing whichever panel holds focus.
+are **unscoped** — `=` and `-` always zoom the timeline, whichever panel holds
+focus. Preview zoom has its own commands in Quick Actions.
+
+## Preview zoom and pan
+
+Quick Actions offers Zoom out, Fit to window and Zoom in, in fixed steps of
+0.25×, 0.5×, 0.75×, 1× (Fit), 1.5×, 2×, 3× and 4×. The preview toolbar shows
+the multiplier relative to Fit; no numeric input is needed. Fit recentres the
+picture, and changing the preview's composition resets the view.
+
+The Hand tool (`H`) sits beside Selection in the same tool group. Dragging the
+preview pans its enlarged picture, with a grabbing cursor during the gesture;
+each axis is bounded by the frame edges and centred when it fits. Pointer
+capture keeps a drag working outside the panel. `Esc` or `V` returns to
+Selection. Zoom and pan are session view state: they change no clips, history
+entries or export geometry. The canvas and its editing overlays share the
+resulting screen coordinates.
 
 ## Follow playhead
 

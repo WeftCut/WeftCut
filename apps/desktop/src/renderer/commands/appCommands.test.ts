@@ -32,7 +32,7 @@ const handlers: HandlerMap = {
   copySelected: noop, pasteAtPlayhead: noop,
   splitAtPlayhead: noop,
   importMedia: noop, export: noop,
-  selectTool: noop, toggleBladeMode: noop, selectTextTool: noop, toggleLog: noop, focusLogSearch: noop,
+  selectTool: noop, toggleBladeMode: noop, selectTextTool: noop, selectHandTool: noop, toggleLog: noop, focusLogSearch: noop,
   toggleDisplayMode: noop,
   seekFrameBack: noop, seekFrameForward: noop, seekSecondBack: noop,
   seekSecondForward: noop, seekPrevEdit: noop, seekNextEdit: noop,
