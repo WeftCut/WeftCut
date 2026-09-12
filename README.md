@@ -5,75 +5,185 @@
 <h1 align="center">WeftCut</h1>
 
 <p align="center">
-  A cross-platform desktop video editor where <strong>AI agents are first-class citizens</strong>.<br/>
-  Connect Claude, Cursor, or any MCP client — and audit its edits to your timeline live.
+  <strong>The video editor your AI agent can actually drive.</strong><br/>
+  Point Claude, Cursor, or any MCP client at a real desktop NLE — and watch
+  every edit land on your timeline while it plays.
 </p>
 
-
-![WeftCut editor](docs/assets/editor.png)
-
-Most editors bolt AI on as features. WeftCut exposes the editor *as* a tool
-surface: a localhost MCP server with a full catalog of editing tools, driven by
-whatever agent you connect. The intelligence lives outside; the app stays
-small, fast, and free of bundled models. Everything an agent can do, you can
-do — it is also a complete editor for humans.
+<p align="center">
+  <a href="https://github.com/WeftCut/WeftCut/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/WeftCut/WeftCut?label=download&color=2563eb" /></a>
+  <img alt="Platforms" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-555" />
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/WeftCut/WeftCut?color=555" /></a>
+  <a href="https://weftcut.com">weftcut.com</a>
+</p>
 
 ![An agent editing the timeline live over MCP](docs/assets/agent-edit.gif)
 
 <p align="center"><em>An agent at work over MCP while playback runs: restyling the
-lower third live, trimming the B-roll, then undoing — every edit lands in the UI
-in real time.</em></p>
+lower third, trimming the B-roll, then undoing both — every edit lands in the UI
+in real time, and the Agent panel records what it did.</em></p>
 
-For a longer run, an agent can put the editor into **agent mode**: the UI folds
-down to preview, scrub and a record of what the agent is doing, and every batch
-boundary it checkpoints is one click away from being restored.
+Most editors bolt AI on as a feature: a button that generates something, a
+sidebar that suggests a cut. WeftCut exposes the editor *itself* as a tool
+surface. A localhost MCP server publishes **88 editing tools** — place, trim,
+split, restyle, keyframe, group, caption, mix, checkpoint — and whatever agent
+you already have open drives them. The intelligence lives outside the app: the
+installer bundles no model weights, and the local engines for speech and vision
+are an opt-in download when you want them.
 
-![Agent mode — the record panel while an agent works](docs/assets/agent-mode.png)
+None of that rides on a stripped-down editor. Everything an agent can reach, you
+can do by hand, in a full NLE: A/B-roll timeline, keyframes with a curve editor,
+effects, captions, a role-based audio mixer, and hardware-accelerated export.
 
-## Features
+## Install
 
-- **Agent-native editing** — a built-in MCP server (streamable HTTP) exposes
-  the whole editor: place and trim clips, restyle titles, set keyframes,
-  manage groups and markers, checkpoint and undo. Changes land in the UI in
-  real time while you keep editing alongside.
-- **A real NLE timeline** — A/B-roll rows with filmstrips and waveforms,
-  frame-aligned editing (SMPTE timecode), keyframes with bézier easing and a
-  curve editor, cross-track groups with auto-paired audio/video.
-- **Fast, accurate preview** — PixiJS v8 + WebCodecs compositing with a native
-  Rust decode engine underneath; optional proxies for heavy codecs; a
-  transport indicator that tells you when playback drops frames.
-- **Titles, captions & Motifs** — styled text layers; SRT/VTT/ASS import as
-  editable caption layers; "Motifs": animated, parameterized web overlays
-  (lower thirds, countdowns, karaoke text) rendered pixel-identically in
-  preview and export.
-- **Effects** — per-layer effect chains including chroma key, with an
-  eyedropper that picks from the live frame.
-- **Audio** — role-based mixing (dialogue / music / effects), gain, pan,
-  fades, and sample-accurate export through a Rust mixer.
-- **Export** — H.264 / HEVC / AV1 up to 10-bit, hardware or software
-  encoders, resolution/fps/quality controls, streamed muxing that doesn't
-  buffer the whole render in memory.
-- **Find anything** — a `Ctrl+K` palette that searches commands, media,
-  clips, captions, and markers (with pinyin support).
+| Platform | Download |
+|---|---|
+| **Windows** | [WeftCut-win-x64.exe](https://github.com/WeftCut/WeftCut/releases/latest/download/WeftCut-win-x64.exe) |
+| **macOS** (Apple Silicon) | [WeftCut-mac-arm64.dmg](https://github.com/WeftCut/WeftCut/releases/latest/download/WeftCut-mac-arm64.dmg) |
+| **Linux** | [AppImage](https://github.com/WeftCut/WeftCut/releases/latest/download/WeftCut-linux-x86_64.AppImage) · [.deb](https://github.com/WeftCut/WeftCut/releases/latest/download/WeftCut-linux-amd64.deb) |
+
+Windows updates itself in the background. The macOS build is ad-hoc signed and
+not notarized, so it neither self-updates nor opens on the first try — allow it
+under **System Settings → Privacy & Security → Open Anyway**. All releases:
+[github.com/WeftCut/WeftCut/releases](https://github.com/WeftCut/WeftCut/releases).
+
+## Hand your timeline to an agent
+
+Copy the MCP URL and token the app prints on startup (also available in-app)
+into your client's config, and your agent is holding the editor.
+
+- **It edits the project you are watching.** No import/export round trip, no
+  separate headless copy. The agent calls `trim_layer`, the block shortens
+  under the playhead while audio keeps playing, and your next click continues
+  from there.
+- **You can always see what it did.** Every tool call becomes a row in the
+  Agent panel — *Trimmed clip · Ember.mp4*, *Added marker · Needs a look* — and
+  the status bar echoes it. Nothing happens off the record.
+- **Every batch is reversible.** Agents checkpoint at logical boundaries
+  (`checkpoint`), and each checkpoint is one click from being restored. The
+  agent can also rehearse a whole multi-step edit against a throwaway clone
+  first (`dry_run`) and find the collision before it touches your project.
+- **Multi-agent, with rules.** Sessions are per-connection. An agent that is
+  mid-batch can `lock_history` so a stray Ctrl-Z doesn't land in the middle of
+  its work — and the lock, plus the reason it gave, is shown to you.
+
+For a longer run, an agent can call `begin_agent_session` and fold the UI down
+to preview, scrub, and a record of what it is doing:
+
+![Agent mode — the activity panel while an agent works](docs/assets/agent-mode.png)
+
+## Code as video: Motifs
+
+A **Motif** is an on-screen element written as code — a real web page (HTML,
+CSS, SVG, canvas, WebGL, whatever you reach for) dropped on the timeline as a
+layer. It isn't a fixed preset: the author declares the knobs, and the inspector
+builds the form from that declaration, so `seconds`, `label` and `accent` below
+are editable in the app because the Countdown's manifest says they are.
+
+The one rule that makes it an editor feature instead of a screen recording:
+**a Motif renders as a pure function of time.** It never advances itself. The
+harness owns the clock and drives the page to each composition frame, so the
+same `t` always yields the same pixels — when you scrub, when you re-export,
+and in preview and export alike.
+
+```js
+// The built-in Countdown's whole script, near enough verbatim — the rest of the
+// file is the SVG ring it animates. `props` is whatever the manifest declares;
+// `frame` runs once per composition frame and keeps no state of its own.
+motif.define({
+  setup: async function (props, ctx) {
+    _label = props.label != null ? String(props.label) : "GO";
+    num.style.color = props.accent;
+    ring.style.stroke = props.accent;
+    ring.setAttribute("stroke-dasharray", C);
+    ring.animate([{ strokeDashoffset: 0 }, { strokeDashoffset: C }],
+      { duration: ctx.duration * 1000, easing: "linear", fill: "both" });
+  },
+  frame: function (t, ctx) {
+    var n = Math.max(0, Math.ceil(ctx.duration - t));
+    num.textContent = n > 0 ? String(n) : _label;
+  },
+});
+```
+
+![A Motif on the timeline, with its props in the inspector](docs/assets/motif.png)
+
+Which is where agents and video stop being two separate ideas. Writing a web
+page is the thing coding agents are already best at — so an agent can author a
+brand-new overlay for your edit instead of picking one from a catalog:
+
+`write_motif_draft` writes it · `preview_motif_draft` **renders a frame back as
+a PNG so the agent can look at its own output and fix it** · `add_motif` puts
+the draft on the timeline · `install_motif` publishes it to your catalog for
+good. The authoring spec ships inside the app as an agent skill, so the model
+gets the contract without you pasting documentation.
+
+Lower thirds, countdowns, karaoke text and animated title cards are the obvious
+uses. Anything you can build on a page is the actual limit.
+
+## A complete editor underneath
+
+![WeftCut editor](docs/assets/editor.png)
+
+**Timeline** — A/B-roll rows with filmstrips and waveforms, frame-accurate
+SMPTE editing, ripple delete that closes the gap behind it, linked A/V that
+trims as one clip, cross-track groups, and nested compositions.
+<br/><sub>Agent: `move_layer` · `trim_layer` · `split_layer` · `ripple_delete_gap` · `links_create` · `groups_create` · `move_layers_to_composition`</sub>
+
+**Keyframes** — animate any parameter, with bézier easing, a curve editor,
+tangent control, motion paths and extrapolation.
+<br/><sub>Agent: `set_keyframe` · `set_keyframe_easing` · `set_keyframe_tangents` · `smooth_keyframes` · `set_extrapolation`</sub>
+
+**Speech and captions** — transcribe a clip and get editable caption layers
+packed onto your caption tracks; import SRT/VTT/ASS the same way. Transcription
+runs against a cloud provider, or entirely on your machine once you let the app
+fetch a local engine (whisper.cpp, FunASR). Text-to-speech for scratch voiceover.
+<br/><sub>Agent: `transcribe_clip` · `apply_subtitles` · `synthesize_speech`</sub>
+
+**Audio** — role-based mixing (dialogue / music / SFX / voiceover) with live
+per-role metering, gain, pan, fades and denoise. **Pauses** finds the dead air
+in a take and cuts it as one undoable edit, keeping a pad so speech still
+breathes.
+<br/><sub>Agent: `detect_pauses` · `remove_pauses` · `set_role_gain` · `set_role_flags`</sub>
+
+![The Role Mixer console, metering during playback](docs/assets/mixer.png)
+
+**Understanding the footage** — shot-boundary detection with per-shot
+brightness, motion and sharpness, frame comparison, and vision-model
+descriptions of what a clip actually contains. An agent can cut on content, not
+just on timecode.
+<br/><sub>Agent: `analyze_clip` · `auto_split_by_shot` · `describe_clip` · `compare_frames`</sub>
+
+**Titles, effects and transitions** — styled text layers with outlines, per-layer
+effect chains including chroma key with an eyedropper that picks from the live
+frame, and transitions between clips.
+<br/><sub>Agent: `add_effect` · `update_effect` · `add_transition` · `update_transition`</sub>
+
+**Export** — H.264 / HEVC / AV1 up to 10-bit, hardware or software encoders,
+resolution / fps / quality controls, and streamed muxing that never buffers the
+whole render in memory.
+
+**Find anything** — one `Ctrl+K` palette over commands, media, clips, captions
+and markers, with pinyin support.
 
 ![Search palette](docs/assets/search-palette.png)
 
-## How it's built
+## Under the hood
 
-| Layer | Choice |
-|---|---|
-| Shell | Electron; UI in React 19 |
-| Renderer | PixiJS v8 + WebCodecs — preview on `<canvas>`, export in a Worker on `OffscreenCanvas` |
-| Native core | Rust via napi-rs — decode engine, audio mixer, jobs, media analysis |
-| Encode / conform | ffmpeg (LGPL libraries in-process for decode; GPL CLI as a separate process for encode) |
-| Containers | `mediabunny` (MP4/MOV + Matroska/WebM demux/mux) |
-| Agent protocol | MCP over streamable HTTP (`@modelcontextprotocol/sdk`) |
+Electron shell with a React 19 UI; the preview composites through **PixiJS v8 +
+WebCodecs** on a `<canvas>`, and export runs the same compositor in a Worker on
+an `OffscreenCanvas`. A **Rust** core (napi-rs) does decoding, audio mixing,
+media analysis and background jobs; **ffmpeg** handles the codecs it doesn't;
+`mediabunny` demuxes and muxes. The agent surface is MCP over streamable HTTP.
 
-## Getting started
+The design choices behind that, and why several of them were reversed, are
+written down as [ADRs](docs/adr/).
 
-Prerequisites: **Node 24+**, **Rust** (stable via `rustup`), and your
-platform's C++ build tools — per-OS install commands in
-[docs/setup.md](docs/setup.md).
+## Build from source
+
+Prerequisites: **Node 24+**, **Rust** (stable via `rustup`), and your platform's
+C++ build tools — per-OS commands in [docs/setup.md](docs/setup.md).
 
 ```sh
 npm install       # JS dependencies
@@ -81,30 +191,33 @@ npm run bootstrap # one-time: fetch ffmpeg + build the Rust addons
 npm run dev       # start the editor
 ```
 
-Common scripts: `npm run typecheck`, `npm test`, `npm run e2e`,
-`npm run build`, `npm run package` (installers). See
-[docs/setup.md](docs/setup.md) for packaging notes and troubleshooting.
-
-To connect an agent, grab the MCP URL + token the app prints on startup (also
-available in-app) and drop it into your client's MCP config — the full tool
-surface and multi-agent behavior are documented in [docs/mcp.md](docs/mcp.md).
+Also useful: `npm run typecheck`, `npm test`, `npm run e2e`, `npm run build`,
+`npm run package` (installers).
 
 ## Documentation
 
-- **[Architecture](docs/architecture.md)** — system overview, components, data flow, repo layout.
+Start with **[architecture](docs/architecture.md)** for the system map, or
+**[MCP server & agent UX](docs/mcp.md)** for the tool surface, resources and
+multi-agent behavior. **[Motifs](docs/motifs.md)** and
+**[motif authoring](docs/motif-authoring.md)** cover the overlay engine and its
+contract.
+
+<details>
+<summary>Everything else</summary>
+
 - **[Data model](docs/data-model.md)** — project state schema, history, persistence, validation.
 - **[Render](docs/render.md)** — PixiJS + WebCodecs renderer architecture.
-- **[Motifs](docs/motifs.md)** — parameterized web overlays (CDP capture, raster cache, user-authored catalog).
 - **[Preview](docs/preview.md)** — interactive preview surface and transport.
-- **[Export](docs/export.md)** — export settings + range, audio export, final mux, proxies and background jobs.
-- **[Conformance](docs/conformance.md)** — media fixtures and E2E gates for frame alignment, audio sync, and color.
-- **[MCP server & agent UX](docs/mcp.md)** — protocol, tool surface, resources, multi-agent.
-- **[Features](docs/features.md)** — small-feature contracts: undo-stack scope, groups, the search palette, the color picker.
-- **[Status / Log system](docs/status-log.md)** — bottom-of-editor log bus.
+- **[Export](docs/export.md)** — export settings and range, audio export, final mux, proxies, background jobs.
+- **[Captions](docs/captions.md)** · **[Audio](docs/audio.md)** — caption ingestion and the audio engine.
+- **[Conformance](docs/conformance.md)** — media fixtures and E2E gates for frame alignment, audio sync, colour.
+- **[Features](docs/features.md)** — small-feature contracts: undo-stack scope, groups, search palette, colour picker.
+- **[Status / log system](docs/status-log.md)** — the bottom-of-editor log bus.
 - **[Setup](docs/setup.md)** — per-OS toolchain prerequisites and first-run flow.
-- **[Licensing](docs/licensing.md)** — MIT app + the two FFmpeg lanes (LGPL in-process decode, GPL sidecar) and their build-time compliance gates.
-- **[v1 target](https://github.com/WeftCut/WeftCut/issues/11)** — release scope and open work. Tracked as a GitHub issue, not a doc: `docs/` describes what exists today.
-- **ADRs** — [`docs/adr/`](docs/adr/): architecture decision records with a `status` frontmatter field (`accepted`, `proposed`, or `superseded`). Prefer the top-level docs above for current behavior; older ADRs may be historical.
+- **[Licensing](docs/licensing.md)** — MIT app plus the two FFmpeg lanes and their build-time compliance gates.
+- **[v1 target](https://github.com/WeftCut/WeftCut/issues/11)** — release scope and open work, tracked as an issue: `docs/` describes what exists today.
+
+</details>
 
 ## Maintainer
 
@@ -112,15 +225,14 @@ WeftCut is built and maintained by [UncleChair](https://github.com/UncleChair).
 
 It exists to speed up my own video work. I wanted an editor an agent could
 actually drive, and a timeline I could keep watching while it did — so the MCP
-surface is the part I use daily, not a demo bolted onto the side. That is also
-why the app ships no models of its own: the intelligence is whichever agent I
-already have open.
+surface is the part I use daily, not a demo bolted onto the side. Motifs came
+from the other half of that: the overlays I wanted were easier to *write* than
+to find, and an agent that can write a web page can write one for the shot in
+front of it.
 
 The project sits under the [WeftCut](https://github.com/WeftCut) organization so
 the name, domain and releases have a stable home, but it is a one-person
-project — issues and pull requests all reach me. Design decisions are written
-down as [ADRs](docs/adr/) instead of being settled in private, so the reasoning
-behind the codebase stays legible to anyone reading it.
+project — issues and pull requests all reach me.
 
 ## License
 
