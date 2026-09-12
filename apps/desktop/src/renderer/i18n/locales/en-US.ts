@@ -310,9 +310,8 @@ const enUS = {
     enter_agent_mode: "Enter Agent Mode",
   },
   quick_actions: {
-    preview_zoom: "Preview zoom",
-    hand_tool_hint: "Hand tool: drag to pan the enlarged preview. Escape returns to Selection.",
-    zoom_level: "Preview zoom: {{zoom}}× Fit",
+    hand_tool_hint:
+      "Hand tool: drag to pan the enlarged preview. The middle mouse button pans under any tool, and the wheel or a trackpad pinch zooms. Escape returns to Selection.",
     tools: "Tools",
     toggles: "Toggles",
     edit: "Edit",
@@ -967,6 +966,12 @@ const enUS = {
     // the default follows whichever timeline holds the keyboard.
     target_label: "What the preview shows",
     target_follow_focus: "Follow focus",
+    // Percentages are composition pixels per device pixel, so 100 % is the
+    // "actual detail" reading. Fit is a mode, not a percentage: it re-fits
+    // when the panel is resized.
+    zoom_label: "Preview zoom",
+    zoom_fit: "Fit",
+    zoom_percent: "{{percent}}%",
   },
   timeline: {
     empty_placeholder: "timeline (import a clip or pick a motif to populate)",

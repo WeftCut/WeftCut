@@ -301,9 +301,8 @@ const zhCN: Resources = {
     enter_agent_mode: "进入代理模式",
   },
   quick_actions: {
-    preview_zoom: "预览缩放",
-    hand_tool_hint: "手型工具：拖动放大的预览画面，按 Esc 返回选择工具",
-    zoom_level: "预览缩放：适应窗口的 {{zoom}} 倍",
+    hand_tool_hint:
+      "手型工具：拖动放大的预览画面。任何工具下按住鼠标中键均可平移，滚轮或触控板双指捏合缩放，按 Esc 返回选择工具",
     tools: "工具",
     toggles: "开关",
     edit: "编辑",
@@ -824,6 +823,9 @@ const zhCN: Resources = {
     preparing: "正在准备预览…",
     target_label: "预览内容",
     target_follow_focus: "跟随焦点",
+    zoom_label: "预览缩放",
+    zoom_fit: "适应窗口",
+    zoom_percent: "{{percent}}%",
   },
   timeline: {
     empty_placeholder: "时间线（导入片段或选择 Motif 开始）",

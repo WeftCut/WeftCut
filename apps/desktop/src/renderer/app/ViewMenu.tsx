@@ -200,6 +200,15 @@ export function ViewMenu({
         checked={safeAreaGuides}
         onSelect={() => void getCommand("toggleSafeAreaGuides")?.run()}
       />
+      {/* The preview's view, with its own chrome. Fit only: the two stepping
+          commands read as an errand from a menu, and the toolbar's zoom
+          readout is a menu of the scales already. Labelled from the command so
+          the row, the palette and Settings → Keyboard cannot drift. */}
+      <MenuItem
+        actionId="previewZoomFit"
+        label={t("actions.preview_zoom_fit")}
+        onSelect={() => void getCommand("previewZoomFit")?.run()}
+      />
       <MenuSeparator />
       {/* Enter path only: while a session is active the whole menu bar is
           swapped out for AgentMode, so exit stays on AgentMode's "Exit to

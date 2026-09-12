@@ -6,9 +6,14 @@
 // (`FfmpegSourceInit.playbackScaleDiv` → `SwTransport` → `preview_sw_open`'s
 // `scale_div` → Rust `OutScale`), Pixi's renderer takes the smaller of its
 // reciprocal and how much of the composition the preview panel can show at
-// all (`displayFit`). See docs/render.md §Preview canvas, ADR 0071.
+// all (`fitScale`). See docs/render.md §Preview canvas, ADR 0071.
 import type { PlaybackResolution } from "../../../shared/app-settings";
-import { clampPreviewPan, type PreviewView } from "../../state/previewViewStore";
+import {
+  clampPreviewPan,
+  resolvePreviewZoom,
+  type Pan,
+  type PreviewZoom,
+} from "../../state/previewViewStore";
 
 /// Divisor applied to BOTH axes of the shipped frame. Native owns the rest of
 /// the dimension math (even rounding, the 320 px long-edge floor); 1 is
@@ -87,22 +92,27 @@ export function roomFrom(
 }
 
 /// The fraction of the composition's pixels the panel can show: the limiting
-/// axis of the space the host offers, so the buffer exceeds that space on
-/// neither axis.
+/// axis of the space the host offers, so a buffer drawn at this scale exceeds
+/// that space on neither axis.
 ///
-/// Capped at 1: the preview must not show detail the export cannot have, so a
-/// 720p composition in a wide panel is drawn at 720p and upscaled, as every NLE
-/// program monitor is above 100 %. An unknown or empty space — the host before
-/// its first layout, a hidden dock tab — is 1 as well: exactly the pre-fit
-/// path, byte-identical, which together with the cap keeps every gate whose
-/// panel outgrows its composition out of the blast radius.
+/// UNCAPPED — above 1 it says how far Fit magnifies, which CSS's contain-fit
+/// performs rather than the buffer. The readout and the wheel need that
+/// number: capped, Fit would read as 100 % on any panel larger than the
+/// composition and the first wheel notch would jump. The cap belongs to the
+/// raster instead (`previewRenderResolution`), where it stops the preview
+/// showing detail the export cannot have.
+///
+/// An unknown or empty space — the host before its first layout, a hidden dock
+/// tab — is 1: exactly the pre-fit path, byte-identical, which together with
+/// the cap keeps every gate whose panel outgrows its composition out of the
+/// blast radius.
 ///
 /// LANDMINE: below 1 the renderer's LOGICAL size drifts off the composition by
 /// up to half a backing pixel per axis (`TextureSource.resize` redefines it as
 /// `pixels / resolution`), invisibly on screen but not in a number. Nothing may
 /// read `app.screen` or `renderer.width/height` as the composition size; the
 /// composition is the composition.
-export function displayFit(
+export function fitScale(
   composition: { width: number; height: number },
   available: DeviceBox | null,
 ): number {
@@ -110,7 +120,7 @@ export function displayFit(
   const cw = composition.width, ch = composition.height;
   const aw = available.width, ah = available.height;
   if (!(cw > 0 && ch > 0 && aw > 0 && ah > 0)) return 1;
-  return Math.min(1, aw / cw, ah / ch);
+  return Math.min(aw / cw, ah / ch);
 }
 
 /// What the preview hands `renderer.resize` as its resolution: the smaller of
@@ -127,13 +137,13 @@ export function previewRenderResolution(
   setting: PlaybackResolution | undefined,
   composition: { width: number; height: number },
   available: DeviceBox | null,
-  zoom = 1,
+  zoom: PreviewZoom = "fit",
 ): number {
-  const z = available && composition.width > 0 && composition.height > 0 &&
-    available.width > 0 && available.height > 0
-    ? Math.min(available.width / composition.width, available.height / composition.height) * zoom
-    : 1;
-  return Math.min(1, z, playbackRenderResolution(setting));
+  return Math.min(
+    1,
+    resolvePreviewZoom(zoom, fitScale(composition, available)),
+    playbackRenderResolution(setting),
+  );
 }
 
 /// The buffer Pixi allocates for a resolution: `round(composition × r)` per
@@ -165,26 +175,25 @@ export function bufferFor(
 /// browser upscales it — the pre-fit look of 1/4 on a small panel.
 ///
 /// At the default Fit view, null above source density lets CSS contain-fit
-/// own the box. An explicit zoom always writes its box, including above source
-/// density; `buffer` then describes the display's pixel extent, while the
-/// actual raster buffer remains capped by `previewRenderResolution`.
+/// own the box. Any explicit zoom writes its box, including above source
+/// density; `buffer` then describes the picture's pixel extent on screen,
+/// while the raster behind it stays capped by `previewRenderResolution`.
 export function fittedCanvasBox(input: {
   composition: { width: number; height: number };
   available: DeviceBox;
   hostOrigin: { x: number; y: number };
   devicePixelRatio: number;
-  view?: PreviewView;
+  view?: { zoom: PreviewZoom; pan: Pan };
 }): {
   buffer: DeviceBox;
   css: { left: number; top: number; width: number; height: number };
 } | null {
-  const zoom = input.view?.zoom ?? 1;
+  const zoom = input.view?.zoom ?? "fit";
   const pan = input.view?.pan ?? { x: 0, y: 0 };
-  const fit = Math.min(input.available.width / input.composition.width,
-    input.available.height / input.composition.height) * zoom;
+  const scale = resolvePreviewZoom(zoom, fitScale(input.composition, input.available));
   // Preserve CSS's existing Fit path for a panel larger than the composition.
-  if (fit >= 1 && zoom === 1 && pan.x === 0 && pan.y === 0) return null;
-  const buffer = bufferFor(input.composition, fit);
+  if (zoom === "fit" && scale >= 1 && pan.x === 0 && pan.y === 0) return null;
+  const buffer = bufferFor(input.composition, scale);
   const dpr = input.devicePixelRatio;
   const { x: ox, y: oy } = input.hostOrigin;
   // Centre in device pixels, round to the grid in ABSOLUTE device coordinates

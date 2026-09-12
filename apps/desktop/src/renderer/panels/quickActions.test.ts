@@ -122,6 +122,8 @@ describe("quickActions catalogue", () => {
       state({ tool: "blade", displayMode: "AllTracks" }),
       state({ tool: "text", displayMode: "AbRoll" }),
       state({ tool: "text", displayMode: "AllTracks" }),
+      state({ tool: "hand", displayMode: "AbRoll" }),
+      state({ tool: "hand", displayMode: "AllTracks" }),
     ];
     for (const section of QUICK_ACTION_SECTIONS) {
       if (section.mode !== "radio") continue;

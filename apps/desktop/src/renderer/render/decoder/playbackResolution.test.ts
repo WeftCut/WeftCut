@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   bufferFor,
-  displayFit,
+  fitScale,
   fittedCanvasBox,
   playbackRenderResolution,
   playbackScaleDiv,
@@ -13,33 +13,55 @@ import {
 
 describe("zoomed preview", () => {
   const composition = { width: 1920, height: 1080 };
+  // A panel showing the 1080p composition at half size: Fit is 0.5, so every
+  // case below is also a case about what Fit is worth versus what the zoom asks
+  // for.
   const available = { width: 960, height: 540 };
 
-  it("raises raster density with zoom, bounded by source size and the quality knob", () => {
-    expect(previewRenderResolution("full", composition, available, 0.5)).toBe(0.25);
-    expect(previewRenderResolution("full", composition, available, 1.5)).toBe(0.75);
+  it("rasterizes at the zoom, capped by the source and by the quality knob", () => {
+    expect(previewRenderResolution("full", composition, available)).toBe(0.5);
+    // 100 % is one composition pixel per device pixel — full raster, even
+    // though the picture no longer fits the panel. That is the reading a user
+    // switches to 100 % FOR.
+    expect(previewRenderResolution("full", composition, available, 1)).toBe(1);
+    expect(previewRenderResolution("full", composition, available, 0.25)).toBe(0.25);
+    // Above source density there is no more detail to draw: the buffer stops
+    // at the composition and the browser upscales, as every NLE monitor does.
     expect(previewRenderResolution("full", composition, available, 4)).toBe(1);
     expect(previewRenderResolution("half", composition, available, 4)).toBe(0.5);
     expect(previewRenderResolution("quarter", composition, available, 4)).toBe(0.25);
-    // Multiply the uncapped display scale: a large panel zoomed out can still
-    // be above source resolution. Capping Fit before multiplying loses detail.
-    expect(previewRenderResolution("full", { width: 480, height: 270 }, available, 0.75)).toBe(1);
+    // Fit on a panel larger than the composition is a magnification, and the
+    // same cap applies to it.
+    expect(previewRenderResolution("full", { width: 480, height: 270 }, available)).toBe(1);
+  });
+
+  it("leaves the Fit view's box to CSS only when Fit is a magnification", () => {
+    const fits = { composition: { width: 480, height: 270 }, available,
+      hostOrigin: { x: 0, y: 0 }, devicePixelRatio: 1 };
+    expect(fittedCanvasBox(fits)).toBeNull();
+    const shrunk = fittedCanvasBox({ composition, available, hostOrigin: { x: 0, y: 0 },
+      devicePixelRatio: 1 })!;
+    expect(shrunk.css).toEqual({ left: 0, top: 0, width: 960, height: 540 });
   });
 
   it("zooms beyond the host and clamps pan so the picture cannot get lost", () => {
     const box = fittedCanvasBox({ composition, available, hostOrigin: { x: 0, y: 0 },
       devicePixelRatio: 1, view: { zoom: 2, pan: { x: 9999, y: -9999 } } })!;
-    expect(box.css).toEqual({ left: 0, top: -540, width: 1920, height: 1080 });
+    // Dragged past its own edges on both axes: the picture stops with its left
+    // edge on the host's left and its bottom edge on the host's bottom.
+    expect(box.css).toEqual({ left: 0, top: -1620, width: 3840, height: 2160 });
   });
 
   it("centres each axis that fits and preserves device-grid alignment at fractional DPR", () => {
     const box = fittedCanvasBox({ composition, available: { width: 1000, height: 1000 },
       hostOrigin: { x: 0.3, y: 0.7 }, devicePixelRatio: 1.25,
       view: { zoom: 1.5, pan: { x: 9999, y: 9999 } } })!;
-    expect(box.css.width * 1.25).toBe(1500);
-    expect(box.css.height * 1.25).toBe(844);
-    expect(box.css.top * 1.25).toBeCloseTo(78.3);
+    expect(box.css.width * 1.25).toBe(2880);
+    expect(box.css.height * 1.25).toBe(1620);
+    // Both edges land on whole device pixels in ABSOLUTE coordinates, which is
+    // what keeps the blit a copy: origin + offset is an integer.
     expect(box.css.left * 1.25 + 0.3).toBeCloseTo(0);
+    expect(box.css.top * 1.25 + 0.7).toBeCloseTo(1);
   });
 });
 
@@ -125,44 +147,52 @@ describe("roomFrom", () => {
 const hd = { width: 1920, height: 1080 };
 const uhd = { width: 3840, height: 2160 };
 
-describe("displayFit", () => {
+/// The fit as the RASTER sees it: `fitScale` under the cap that
+/// `previewRenderResolution` applies. Spelled out here because the cap is a
+/// contract of its own — every gate whose panel outgrows its composition
+/// relies on it — and it no longer has a function of its own to name.
+const cappedFit = (composition: { width: number; height: number },
+  available: { width: number; height: number } | null): number =>
+  Math.min(1, fitScale(composition, available));
+
+describe("the display fit", () => {
   it("is exactly 1 without a box, or with room for the whole composition", () => {
     // Both are the pre-fit path — the contract every gate whose panel outgrows
     // its composition relies on for byte-identical pixels.
-    expect(displayFit(hd, null)).toBe(1);
-    expect(displayFit(hd, { width: 1920, height: 1080 })).toBe(1);
-    expect(displayFit(hd, { width: 2560, height: 1440 })).toBe(1);
-    expect(displayFit({ width: 640, height: 360 }, { width: 900, height: 506 })).toBe(1);
+    expect(cappedFit(hd, null)).toBe(1);
+    expect(cappedFit(hd, { width: 1920, height: 1080 })).toBe(1);
+    expect(cappedFit(hd, { width: 2560, height: 1440 })).toBe(1);
+    expect(cappedFit({ width: 640, height: 360 }, { width: 900, height: 506 })).toBe(1);
   });
 
   it("treats an empty or degenerate box as unknown", () => {
     // A hidden dock tab lays the host out at 0×0; the last good fit must
     // survive that, so this reads as "no box" rather than as a zero buffer.
-    expect(displayFit(hd, { width: 0, height: 0 })).toBe(1);
-    expect(displayFit(hd, { width: 675, height: 0 })).toBe(1);
-    expect(displayFit({ width: 0, height: 0 }, { width: 675, height: 380 })).toBe(1);
+    expect(cappedFit(hd, { width: 0, height: 0 })).toBe(1);
+    expect(cappedFit(hd, { width: 675, height: 0 })).toBe(1);
+    expect(cappedFit({ width: 0, height: 0 }, { width: 675, height: 380 })).toBe(1);
   });
 
   it("is the limiting axis, so the buffer never exceeds the room on either", () => {
     // A 16:9 composition in a wider-than-16:9 host is height-limited, in a
     // taller one width-limited.
-    expect(displayFit(hd, { width: 1000, height: 390 })).toBe(390 / 1080);
-    expect(displayFit(hd, { width: 693, height: 1000 })).toBe(693 / 1920);
+    expect(cappedFit(hd, { width: 1000, height: 390 })).toBe(390 / 1080);
+    expect(cappedFit(hd, { width: 693, height: 1000 })).toBe(693 / 1920);
     for (const room of [
       { width: 693, height: 389 },
       { width: 613, height: 345 },
       { width: 100, height: 1000 },
       { width: 1000, height: 100 },
     ]) {
-      const b = bufferFor(hd, displayFit(hd, room));
+      const b = bufferFor(hd, cappedFit(hd, room));
       expect(b.width).toBeLessThanOrEqual(room.width);
       expect(b.height).toBeLessThanOrEqual(room.height);
     }
   });
 
   it("never exceeds 1, whichever side of the composition the room lands", () => {
-    expect(displayFit(hd, { width: 1920, height: 1079 })).toBeLessThan(1);
-    expect(displayFit(hd, { width: 1921, height: 1081 })).toBe(1);
+    expect(cappedFit(hd, { width: 1920, height: 1079 })).toBeLessThan(1);
+    expect(cappedFit(hd, { width: 1921, height: 1081 })).toBe(1);
   });
 });
 
@@ -172,7 +202,7 @@ describe("previewRenderResolution", () => {
   it("is the smaller of the fit and the knob", () => {
     // A 1080p composition in a 693 px panel fits at 0.36: 1/2 would only trim
     // pixels the panel never shows, so it stays at the fit; 1/4 goes below it.
-    const fit = displayFit(hd, room);
+    const fit = cappedFit(hd, room);
     expect(fit).toBeLessThan(0.5);
     expect(fit).toBeGreaterThan(0.25);
     expect(previewRenderResolution("full", hd, room)).toBe(fit);
@@ -227,7 +257,7 @@ describe("fittedCanvasBox", () => {
       const box = fittedCanvasBox({ composition, available, hostOrigin, devicePixelRatio: dpr });
       expect(box).not.toBeNull();
       const { buffer, css } = box!;
-      expect(buffer).toEqual(bufferFor(composition, displayFit(composition, available)));
+      expect(buffer).toEqual(bufferFor(composition, cappedFit(composition, available)));
       expect(css.width * dpr).toBeCloseTo(buffer.width, 9);
       expect(css.height * dpr).toBeCloseTo(buffer.height, 9);
       const absX = hostOrigin.x + css.left * dpr;

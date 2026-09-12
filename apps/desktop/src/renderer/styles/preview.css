@@ -71,12 +71,14 @@
   font-size: var(--font-size-caption);
 }
 
-.preview-zoom-label {
+/* The zoom readout doubles as its menu, so it sits at the far end of the
+   toolbar row where every monitor's zoom control sits. */
+.preview-target-bar .preview-zoom-select {
   margin-left: auto;
-  color: var(--muted-foreground);
-  font-size: var(--font-size-caption);
+  /* A fixed floor so the toolbar does not jiggle as the percentage changes
+     width under the wheel. Outranks .app-select's own min-width. */
+  min-width: 5.5rem;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
 .video-surface {
@@ -132,6 +134,10 @@
 }
 
 .preview-hand-overlay[data-dragging="true"] { cursor: grabbing; }
+
+/* A middle-button pan is available under every tool, so the grabbing cursor
+   has to come from the surface rather than from the Hand tool's overlay. */
+.preview-video[data-panning="true"] { cursor: grabbing; }
 
 .preview-rebuilding {
   position: absolute;

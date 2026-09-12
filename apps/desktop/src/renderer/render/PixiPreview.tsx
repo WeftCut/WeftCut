@@ -48,7 +48,11 @@ import {
   type GizmoProbe,
 } from "../preview/gizmoProbeRegistry";
 import { bumpPreviewLayoutEpoch, observeClientRect, type ClientRectCache } from "../preview/layoutRectCache";
-import { resetPreviewView, usePreviewViewStore } from "../state/previewViewStore";
+import {
+  resetPreviewView,
+  setPreviewFit,
+  usePreviewViewStore,
+} from "../state/previewViewStore";
 import { quickProxyPath } from "./decodeRoute";
 import {
   setSlotFenceBackend,
@@ -58,6 +62,7 @@ import { proxyIntent } from "../state/proxyPreferenceStore";
 import { layerFxState, readyAudioPath } from "../state/audioFxStore";
 import { resolveDecodeEngine } from "./decoder/decodeEngine";
 import {
+  fitScale,
   fittedCanvasBox,
   playbackScaleDiv,
   previewRenderResolution,
@@ -151,6 +156,12 @@ function applyPreviewFit(
   resize = true,
 ): void {
   const { width, height } = size;
+  // Publish what Fit is worth before reading the view: this is the only place
+  // that knows the host's device-pixel box, and the readout, the wheel and the
+  // stepping commands all resolve `"fit"` through the number written here.
+  // Guarded inside the store, so re-applying an unchanged fit — every pan
+  // frame — notifies nobody.
+  setPreviewFit(fitScale(size, host?.available ?? null));
   const view = usePreviewViewStore.getState();
   const resolution = previewRenderResolution(setting, size, host?.available ?? null, view.zoom);
   // Panning only moves the DOM canvas. It must not re-rasterize glyphs.
@@ -230,7 +241,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const canvasRectRef = useRef<ClientRectCache | null>(null);
   /// The composition's size as the renderer draws it, held HERE rather than
   /// read back off `app.screen`: below a fit of 1 Pixi's logical size drifts
-  /// off the composition by a fraction of a pixel (`displayFit`), and every
+  /// off the composition by a fraction of a pixel (`fitScale`), and every
   /// extract frame, `containMap` and render-texture allocation wants the
   /// integer the composition actually is. Seeded at init, followed by the
   /// composition-size effect.
@@ -478,7 +489,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         // not `app.screen` either. The canvas is the physical backing store,
         // which the fit and the playback-resolution fraction shrink, and below
         // a fit of 1 the logical size drifts off the composition by a fraction
-        // of a pixel (`displayFit`); these two become `compositionWidth`/
+        // of a pixel (`fitScale`); these two become `compositionWidth`/
         // `Height` and size the effect + transition render textures, so either
         // would silently render effects at the wrong size and diverge from
         // export.
@@ -932,7 +943,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     });
   }, []);
 
+  // The view's own changes. `fit` is NOT one of them: it is written from
+  // inside `applyPreviewFit` by whatever geometry change is already applying,
+  // so re-entering here would re-apply the same box a second time.
   useEffect(() => usePreviewViewStore.subscribe((view, previous) => {
+    if (view.zoom === previous.zoom && view.pan === previous.pan) return;
     const app = applicationRef.current;
     const logical = logicalSizeRef.current;
     if (app && logical) {

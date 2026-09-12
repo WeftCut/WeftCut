@@ -104,7 +104,7 @@ test('preview panel owns both letterbox axes while the Pixi canvas stays centere
   }
 })
 
-test('preview zoom controls resize the buffer, and the hand pans only the view', async () => {
+test('the preview zooms about the pointer and pans with no tool armed', async () => {
   const { app, page } = await launchApp()
   try {
     await newProject(page, {
@@ -117,57 +117,125 @@ test('preview zoom controls resize the buffer, and the hand pans only the view',
     await expect(canvas).toBeVisible()
     await expect(page.getByTestId('pixi-preview-initializing')).toBeHidden()
     const beforeProject = await invokeCmd(page, 'project_summary', {})
-    const action = (id: string) => page.locator(`[data-quick-action="${id}"]`)
-    // Exercise the actual toolbar in its ordinary dock layout first.
-    await action('previewZoomIn').click()
-    await expect(page.locator('.preview-zoom-label')).toHaveText('1.5×')
-    await action('selectHandTool').click()
-    await expect(action('selectHandTool')).toHaveAttribute('aria-checked', 'true')
-    await page.screenshot({ path: test.info().outputPath('preview-zoom-toolbar.png') })
+    const box = async () => (await canvas.boundingBox())!
+    const dpr = await page.evaluate(() => window.devicePixelRatio)
+    const zoom = page.locator('.preview-zoom-select')
 
+    // ── The readout is the control, exercised in the ordinary dock layout ──
+    const pick = async (stop: RegExp) => {
+      await zoom.click()
+      await page.locator('.app-menu-item').filter({ hasText: stop }).click()
+    }
+    // Over the preview wherever the dock put it, so the wheel below lands on
+    // the picture and not on a neighbouring panel.
+    const overPreview = async () => {
+      const s = (await page.locator('#video-surface').boundingBox())!
+      await page.mouse.move(s.x + s.width / 2, s.y + s.height / 2)
+    }
+    await expect(zoom).toContainText('Fit')
+    await pick(/^75%$/)
+    await expect(zoom).toContainText('75%')
+    // A notch off that stop: the readout now names a value its own menu does
+    // not list.
+    await overPreview()
+    await page.mouse.wheel(0, -40)
+    await expect(zoom).not.toContainText('75%')
+    await expect(zoom).not.toContainText('Fit')
+    // ...and back onto a listed one. The value the trigger was rendering from
+    // leaves the list here — where a value-controlled Select fell back to its
+    // first entry and threw the whole view back to Fit.
+    await pick(/^100%$/)
+    await expect(zoom).toContainText('100%')
+    // 100 % is one composition pixel per DEVICE pixel. The panel's size has
+    // nothing to do with it — the picture simply overflows the panel.
+    await expect.poll(async () => (await box()).width).toBeCloseTo(1920 / dpr, 0)
+    await page.screenshot({ path: test.info().outputPath('preview-zoom-toolbar.png') })
+    await page.keyboard.press('Z')
+    await expect(zoom).toContainText('Fit')
+
+    // ── A fixed surface, so every number below is the composition's own ────
     const { surface } = await layoutAt(page, { width: 480, height: 270 })
     const cx = surface.x + surface.width / 2
     const cy = surface.y + surface.height / 2
-    // The fixed test surface can overlap the dock strip. The remainder tests
-    // its real command buttons without making their location part of geometry.
-    const run = (id: string) => action(id).evaluate((button: HTMLButtonElement) => button.click())
-    await run('previewZoomFit')
-    await run('previewZoomIn')
-    await run('previewZoomIn')
-    await expect.poll(() => canvas.evaluate(el => el.getBoundingClientRect().width)).toBeCloseTo(960, 0)
-    const bufferWidth = await canvas.evaluate(el => el.width)
-    const original = (await canvas.boundingBox())!
+    await expect.poll(async () => (await box()).width).toBeCloseTo(480, 0)
+
+    // The wheel zooms with nothing armed and no mode to enter, and holds the
+    // point under the pointer still: the same fraction of the picture stays
+    // beneath it afterwards.
+    const probeX = surface.x + 120
+    const under = async () => {
+      const frame = await box()
+      return (probeX - frame.x) / frame.width
+    }
+    const beforeWheel = await under()
+    await page.mouse.move(probeX, cy)
+    await page.mouse.wheel(0, -240)
+    await expect.poll(async () => (await box()).width).toBeGreaterThan(480)
+    expect(await under()).toBeCloseTo(beforeWheel, 2)
+    await expect(zoom).not.toContainText('Fit')
+
+    // A trackpad pinch reaches the page as a ctrl-wheel whose deltas are an
+    // order of magnitude smaller, so the same −20 that barely nudges a scroll
+    // has to move the picture.
+    await page.keyboard.press('Z')
+    await expect.poll(async () => (await box()).width).toBeCloseTo(480, 0)
     await page.mouse.move(cx, cy)
-    await page.mouse.down()
-    await page.mouse.move(cx + 60, cy + 40, { steps: 8 })
-    await page.mouse.up()
-    await expect.poll(async () => (await canvas.boundingBox())!.x).toBeCloseTo(original.x + 60, 0)
-    expect((await canvas.boundingBox())!.y).toBeCloseTo(original.y + 40, 0)
-    expect(await canvas.evaluate(el => el.width)).toBe(bufferWidth)
+    await page.mouse.wheel(0, -20)
+    const scrolled = (await box()).width
+    await page.keyboard.press('Z')
+    await expect.poll(async () => (await box()).width).toBeCloseTo(480, 0)
+    await page.keyboard.down('Control')
+    await page.mouse.wheel(0, -20)
+    await expect.poll(async () => (await box()).width).toBeGreaterThan(scrolled)
+    const pinched = (await box()).width
+    await page.mouse.wheel(0, -40)
+    await page.keyboard.up('Control')
+    await expect.poll(async () => (await box()).width).toBeGreaterThan(pinched)
+
+    // ── The middle button pans, under the Selection tool ───────────────────
+    const panned = await box()
+    await page.mouse.move(cx, cy)
+    await page.mouse.down({ button: 'middle' })
+    await page.mouse.move(cx + 40, cy + 30, { steps: 8 })
+    await page.mouse.up({ button: 'middle' })
+    await expect.poll(async () => (await box()).x).toBeCloseTo(panned.x + 40, 0)
+    expect((await box()).y).toBeCloseTo(panned.y + 30, 0)
+
+    // Zoom and pan are view state: the project is untouched by either.
     expect(await invokeCmd(page, 'project_summary', {})).toEqual(beforeProject)
 
-    // Capture continues outside the preview and clamps at its frame edges.
+    // ── The Hand tool remains the path for a pointer with no middle button ─
+    // Clicked through the element: the fixed test surface can overlap the dock
+    // strip, and the button's location is not part of this geometry.
+    const run = (id: string) =>
+      page.locator(`[data-quick-action="${id}"]`).evaluate((b: HTMLButtonElement) => b.click())
+    await run('selectHandTool')
+    await expect(page.getByTestId('preview-hand-tool')).toHaveCount(1)
+    const handStart = await box()
+    await page.mouse.move(cx, cy)
+    await page.mouse.down()
+    await page.mouse.move(cx - 30, cy - 20, { steps: 8 })
+    await page.mouse.up()
+    await expect.poll(async () => (await box()).x).toBeCloseTo(handStart.x - 30, 0)
+
+    // Capture continues outside the preview, and each axis stops with the
+    // picture's edge on the panel's.
     await page.mouse.move(cx, cy)
     await page.mouse.down()
     await page.mouse.move(1000, 750, { steps: 8 })
     await page.mouse.up()
-    const edge = (await canvas.boundingBox())!
+    const edge = await box()
     expect(edge.x).toBeCloseTo(surface.x, 0)
     expect(edge.y).toBeCloseTo(surface.y, 0)
     await page.keyboard.press('Escape')
     await expect(page.getByTestId('preview-hand-tool')).toHaveCount(0)
-    await run('previewZoomFit')
-    await expect.poll(() => canvas.evaluate(el => el.getBoundingClientRect().width)).toBeCloseTo(480, 0)
-    expect((await canvas.boundingBox())!.x).toBeCloseTo(surface.x, 0)
-    expect((await canvas.boundingBox())!.y).toBeCloseTo(surface.y, 0)
-    await run('previewZoomOut')
-    await expect.poll(() => canvas.evaluate(el => el.getBoundingClientRect().width)).toBeCloseTo(360, 0)
-    expect(await canvas.evaluate(el => el.width)).toBeLessThan(bufferWidth)
-    await run('previewZoomOut')
-    await run('previewZoomOut')
-    await expect(action('previewZoomOut')).toBeDisabled()
-    for (let step = 0; step < 7; step++) await run('previewZoomIn')
-    await expect(action('previewZoomIn')).toBeDisabled()
+
+    // ── Z refits and recentres; zoom raises raster density, the knob caps it ─
+    await page.keyboard.press('Z')
+    await expect.poll(async () => (await box()).width).toBeCloseTo(480, 0)
+    expect((await box()).x).toBeCloseTo(surface.x, 0)
+    await page.mouse.move(cx, cy)
+    for (let notch = 0; notch < 12; notch++) await page.mouse.wheel(0, -240)
     await expect.poll(() => canvas.evaluate(el => el.width)).toBe(1920)
     await run('cyclePlaybackResolution')
     await expect.poll(() => canvas.evaluate(el => el.width)).toBe(960)

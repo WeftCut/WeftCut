@@ -130,6 +130,7 @@ import {
 } from "./commands/speechCommands";
 import { VoiceoverDialog } from "./speech/VoiceoverDialog";
 import { setTool } from "./state/toolStore";
+import { resetPreviewView } from "./state/previewViewStore";
 import { logEmit } from "./ipc";
 import { logMutationFailure, tryMutate } from "./errors/tryMutate";
 import {
@@ -788,6 +789,7 @@ export function App({ onCloseProject }: AppProps) {
     toggleBladeMode: () => setTool("blade"),
     selectTextTool: () => setTool("text"),
     selectHandTool: () => setTool("hand"),
+    previewZoomFit: resetPreviewView,
     toggleLog: toggleLogConsole,
     focusLogSearch,
     // R.8: T flips the A/B Roll / All Tracks display_mode at the app level.

@@ -1,6 +1,9 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Menu } from "@base-ui/react/menu";
 import {
+  CheckIcon,
+  ChevronDownIcon,
   PauseIcon,
   PlayIcon,
   SkipBackIcon,
@@ -38,7 +41,11 @@ import {
 } from "../preview/previewTargetOptions";
 import { PlayheadTimecode } from "../preview/PlayheadTimecode";
 import { DroppedFramesIndicator } from "../preview/DroppedFramesIndicator";
-import { usePreviewViewStore } from "../state/previewViewStore";
+import {
+  PREVIEW_ZOOM_STEPS,
+  setPreviewZoom,
+  usePreviewViewStore,
+} from "../state/previewViewStore";
 
 interface PreviewSectionProps {
   previewRef: React.RefObject<PreviewSurfaceHandle | null>;
@@ -89,7 +96,7 @@ export function PreviewSection({
       {/* A toolbar row, not a header bar — the Panel's title is its dock tab. */}
       <div className="preview-target-bar">
         <RenderTargetControl />
-        <PreviewZoomLabel />
+        <PreviewZoomControl />
       </div>
       <div id="video-surface" className="video-surface">
         <PreviewSurface
@@ -185,12 +192,63 @@ export function PreviewSection({
 ///
 /// Shows the raw CHOICE rather than the resolved target, so following reads as
 /// following rather than as whichever composition happens to have focus.
-function PreviewZoomLabel() {
+/// The zoom readout IS the control, as it is in every NLE monitor: a menu of
+/// Fit plus the labelled percentages, where the percentage is composition
+/// pixels per device pixel and 100 % therefore means "actual detail".
+///
+/// A MENU rather than `AppSelect`, though it wears the same skin. The wheel
+/// zooms continuously and lands between the rungs, and a Select must render
+/// its value FROM its items: an off-rung value would have to be injected as a
+/// ninth item, and the moment the next notch snapped back onto a rung that
+/// item would vanish — Base UI then falls back to the first entry and fires
+/// the change, which put the view back to Fit mid-gesture. A radio menu owns
+/// its trigger text and is content to check nothing.
+function PreviewZoomControl() {
   const { t } = useTranslation();
   const zoom = usePreviewViewStore((s) => s.zoom);
-  return <span className="preview-zoom-label" title={t("quick_actions.zoom_level", { zoom })}>
-    {zoom}×
-  </span>;
+  const percent = (scale: number) =>
+    t("preview.zoom_percent", { percent: Math.round(scale * 100) });
+  const rungs: { value: string; label: string; pick: () => void }[] = [
+    { value: "fit", label: t("preview.zoom_fit"), pick: () => setPreviewZoom("fit") },
+    ...PREVIEW_ZOOM_STEPS.map((step) => ({
+      value: String(step),
+      label: percent(step),
+      pick: () => setPreviewZoom(step),
+    })),
+  ];
+  return (
+    <Menu.Root>
+      <Menu.Trigger className="app-select preview-zoom-select" aria-label={t("preview.zoom_label")}>
+        <span>{zoom === "fit" ? t("preview.zoom_fit") : percent(zoom)}</span>
+        <ChevronDownIcon size={11} aria-hidden="true" />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner align="start" sideOffset={4} className="app-popup-positioner">
+          <Menu.Popup className="app-menu-list">
+            <Menu.RadioGroup value={zoom === "fit" ? "fit" : String(zoom)}>
+              {rungs.map((rung) => (
+                <Menu.RadioItem
+                  key={rung.value}
+                  value={rung.value}
+                  label={rung.label}
+                  closeOnClick
+                  className="app-menu-item"
+                  onClick={rung.pick}
+                >
+                  <span className="app-menu-item-check" aria-hidden="true">
+                    <Menu.RadioItemIndicator>
+                      <CheckIcon size={12} />
+                    </Menu.RadioItemIndicator>
+                  </span>
+                  <span className="app-menu-item-label">{rung.label}</span>
+                </Menu.RadioItem>
+              ))}
+            </Menu.RadioGroup>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
 }
 
 function RenderTargetControl() {

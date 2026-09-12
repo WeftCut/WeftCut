@@ -934,8 +934,9 @@ host (`.pixi-preview-host`) reports the room the panel offers, floored to whole
 device pixels, and the resolution is
 
 ```
-min(1, Z, knob)         Z = min(room.width / width, room.height / height) × zoom
-                       knob = Full 1 · 1/2 0.5 · 1/4 0.25
+min(1, scale, knob)     scale = the zoom, or `fit` while the view is Fit
+                        fit   = min(room.width / width, room.height / height)
+                        knob  = Full 1 · 1/2 0.5 · 1/4 0.25
 ```
 
 (`render/decoder/playbackResolution.ts`). The knob caps the fit rather than
@@ -959,13 +960,18 @@ gates' case. The decode divisor stays the knob's alone (Full 1, 1/2 2, 1/4 4);
 the fit does not thread into `OutScale`.
 [ADR 0071](adr/0071-the-preview-backing-store-fits-the-display-box.md).
 
-Preview zoom multiplies the uncapped display fit before the resolution cap.
-Outside the default Fit view, `fittedCanvasBox` writes the zoomed box even when
-it exceeds the host or the composition. Its pan is clamped per axis and its
-origin remains on the device grid. Pan changes only the canvas's DOM box;
-zoom also updates renderer resolution. Both invalidate the cached canvas rect
-so the gizmo, text tools and safe-area guides follow the picture. The native
-decode divisor continues to read only the playback-resolution knob.
+Preview zoom IS that scale — device pixels per composition pixel, which is
+what makes 100 % mean the composition's own detail. `Fit` is a mode rather than
+a number: the renderer publishes the resolved fit into `previewViewStore` (the
+one place that knows the host's device box) and everything else resolves
+through it, so a resized panel re-fits. Outside the Fit view `fittedCanvasBox`
+writes the zoomed box even when it exceeds the host or the composition; its pan
+is clamped per axis and its origin stays on the device grid. Pan changes only
+the canvas's DOM box; zoom also updates renderer resolution. Both invalidate
+the cached canvas rect so the gizmo, text tools and safe-area guides follow the
+picture. The native decode divisor continues to read only the
+playback-resolution knob.
+[ADR 0072](adr/0072-the-preview-viewport-is-a-gesture-not-a-mode.md).
 
 Two numbers to keep apart:
 

@@ -49,7 +49,7 @@ import {
   primaryLayerIdOf,
 } from "../state/selectionStore";
 import { activeTool } from "../state/toolStore";
-import { canStepPreviewZoom, resetPreviewView, stepPreviewZoom } from "../state/previewViewStore";
+import { canStepPreviewZoom, stepPreviewZoom } from "../state/previewViewStore";
 import { layerOverlapClass } from "../timeline/geometry";
 import {
   evaluateTimelinePlacements,
@@ -188,9 +188,12 @@ const SELF_CONTAINED_COMMAND_IDS = [
   "setPlaybackResolutionHalf",
   "setPlaybackResolutionQuarter",
   "cyclePlaybackResolution",
+  // Preview zoom, the two steps only. The wheel is the gesture (ADR 0072) and
+  // Fit carries the one key worth spending (`Z`, an `ACTION_DEFS` entry), so
+  // these two exist for the palette and for an agent: nameable, bounded, and
+  // one call from any current scale.
   "previewZoomIn",
   "previewZoomOut",
-  "previewZoomFit",
 ] as const;
 
 type SelfContainedCommandId = (typeof SELF_CONTAINED_COMMAND_IDS)[number];
@@ -206,7 +209,6 @@ const SELF_CONTAINED_LABEL_KEYS: Record<SelfContainedCommandId, string> = {
   cyclePlaybackResolution: "actions.playback_resolution_cycle",
   previewZoomIn: "actions.preview_zoom_in",
   previewZoomOut: "actions.preview_zoom_out",
-  previewZoomFit: "actions.preview_zoom_fit",
 };
 
 /// The rungs `cyclePlaybackResolution` walks, in order, wrapping at the end.
@@ -393,6 +395,7 @@ export function buildAppCommands(
     // button's hint names the remedy; this predicate only greys it.
     selectTextTool: () => !flags.busy && projectHasLayers(),
     selectHandTool: () => projectHasLayers(),
+    previewZoomFit: () => projectHasLayers(),
     // Read from the store rather than routed through `flags`, unlike every
     // entry above. A flag is a snapshot taken at App render time, and App
     // deliberately does NOT subscribe to `rangeStore` (marking in/out would
@@ -515,7 +518,6 @@ export function buildAppCommands(
       run: () => stepPreviewZoom(-1),
       enabled: () => projectHasLayers() && canStepPreviewZoom(-1),
     },
-    previewZoomFit: { run: resetPreviewView, enabled: projectHasLayers },
     toggleSafeAreaGuides: {
       run: () => void toggleSafeAreaGuides(),
       checked: () => safeAreaGuidesVisible(),

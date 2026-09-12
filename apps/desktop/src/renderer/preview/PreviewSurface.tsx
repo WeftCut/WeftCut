@@ -4,7 +4,7 @@
 /// composition yet. Forwards play/pause/seek/refresh/export to the
 /// underlying PixiPreview.
 
-import { forwardRef, useImperativeHandle, useRef } from "react";
+import { forwardRef, useImperativeHandle, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { compositionOrRoot, useProjectStore } from "../state/projectStore";
@@ -18,6 +18,7 @@ import { SafeAreaGuidesHost } from "./SafeAreaGuides";
 import { TextToolOverlayHost } from "./TextToolOverlay";
 import { TransformGizmoHost } from "./TransformGizmo";
 import { PreviewHandTool } from "./PreviewHandTool";
+import { usePreviewViewGestures } from "./previewViewGestures";
 
 interface Props {
   /// True when the project has at least one layer. When false we
@@ -82,6 +83,13 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
     const composition = useProjectStore((s) => compositionOrRoot(s.summary, null));
 
     const pixiRef = useRef<PixiPreviewHandle | null>(null);
+    // The wheel/middle-button view gestures bind HERE rather than inside
+    // PixiPreview: this element is the one that contains the canvas AND every
+    // overlay stacked on it, and the overlays are siblings of the Pixi host.
+    // A callback ref, so the listeners attach when the surface mounts — a
+    // ref object's identity never changes and would not re-run the effect.
+    const [surface, setSurface] = useState<HTMLDivElement | null>(null);
+    usePreviewViewGestures(surface);
 
     useImperativeHandle(
       forwardedRef,
@@ -126,6 +134,7 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
 
     return (
       <div
+        ref={setSurface}
         className="preview-video"
         style={{
           position: "relative",

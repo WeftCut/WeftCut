@@ -1046,18 +1046,30 @@ focus. Preview zoom has its own commands in Quick Actions.
 
 ## Preview zoom and pan
 
-Quick Actions offers Zoom out, Fit to window and Zoom in, in fixed steps of
-0.25×, 0.5×, 0.75×, 1× (Fit), 1.5×, 2×, 3× and 4×. The preview toolbar shows
-the multiplier relative to Fit; no numeric input is needed. Fit recentres the
-picture, and changing the preview's composition resets the view.
+The wheel over the preview zooms it, anchored on the pointer — nothing to arm,
+no mode to leave. A trackpad pinch zooms the same way, and two-finger scrolling
+zooms as the wheel does. The middle mouse button drags the picture under any
+tool. `Z` returns to Fit, recentred, from anywhere; View › Fit preview to
+window is the same command.
 
-The Hand tool (`H`) sits beside Selection in the same tool group. Dragging the
-preview pans its enlarged picture, with a grabbing cursor during the gesture;
-each axis is bounded by the frame edges and centred when it fits. Pointer
-capture keeps a drag working outside the panel. `Esc` or `V` returns to
-Selection. Zoom and pan are session view state: they change no clips, history
-entries or export geometry. The canvas and its editing overlays share the
-resulting screen coordinates.
+The preview toolbar's zoom readout is also its menu: `Fit`, then 25 %, 50 %,
+75 %, 100 %, 150 %, 200 %, 300 % and 400 %. A percentage is composition pixels
+per device pixel, so 100 % shows the frame's own detail whatever the panel's
+size; `Fit` is a mode rather than a number, and re-fits when the panel is
+resized. The wheel moves continuously between those stops and past both ends,
+snapping onto a stop when it passes close by, and the readout names wherever it
+lands. *Zoom in preview* and *Zoom out preview* walk the same stops from the
+search palette.
+
+The Hand tool (`H`) sits beside Selection in the same tool group, for a pointer
+with no middle button: dragging the preview pans it, with a grabbing cursor
+during the gesture, and `Esc` or `V` returns to Selection. Both pan paths share
+one rule — each axis is bounded by the frame's edges and centred when it fits,
+and pointer capture keeps a drag working outside the panel.
+
+Zoom and pan are session view state: they change no clips, history entries or
+export geometry, and changing the preview's composition resets them. The canvas
+and its editing overlays share the resulting screen coordinates.
 
 ## Follow playhead
 

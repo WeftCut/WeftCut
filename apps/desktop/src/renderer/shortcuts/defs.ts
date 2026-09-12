@@ -28,6 +28,7 @@ export type ActionId =
   | "toggleBladeMode"
   | "selectTextTool"
   | "selectHandTool"
+  | "previewZoomFit"
   | "toggleLog"
   | "focusLogSearch"
   | "toggleDisplayMode"
@@ -227,15 +228,22 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   //
   // Bare keys, so they stay dead while a text field is focused (the default for
   // non-chord bindings) and the user can still type a minus into a numeric
-  // field. UNSCOPED like the transport keys rather than timeline-scoped: the
-  // timeline is the only zoomable surface in the app, so `=` means the same
-  // thing with the preview or the media pool focused, and the handler is
-  // registered by Timeline — with the panel closed the key is inert anyway.
+  // field. UNSCOPED like the transport keys rather than timeline-scoped: `=`
+  // means the timeline with the preview or the media pool focused too, and the
+  // handler is registered by Timeline — with the panel closed the key is inert
+  // anyway. The preview is zoomable as well (ADR 0072), and deliberately does
+  // NOT share these: its gesture is the wheel, and one key means one thing
+  // app-wide here rather than whatever panel happens to hold focus.
   //
   // Not `repeatable`: a held key would cross the whole range in a third of a
   // second. The wheel is the gesture for sweeping through scales.
   zoomTimelineIn:  { defaultKeys: ["="],                   labelKey: "actions.zoom_timeline_in" },
   zoomTimelineOut: { defaultKeys: ["-"],                   labelKey: "actions.zoom_timeline_out" },
+  // The preview's one key: back to Fit, recentred — Resolve's `Z` on its
+  // viewer, and the one preview-zoom operation worth a key, since every other
+  // scale is a wheel notch away and the readout menu names the rest. Zoom
+  // in/out stay keyless commands (`appCommands.ts`).
+  previewZoomFit:  { defaultKeys: ["Z"],                   labelKey: "actions.preview_zoom_fit" },
   focusNextPanel: {
     defaultKeys: ["Ctrl+Shift+Period"],
     labelKey: "actions.focus_next_panel",
