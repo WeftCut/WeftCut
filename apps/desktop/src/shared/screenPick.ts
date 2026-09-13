@@ -21,6 +21,7 @@ export interface ScreenPickApi {
 /** Dedicated sandbox preload: overlay pages have no editor/file IPC access. */
 export interface ScreenPickOverlayApi {
   snapshot(): Promise<ScreenPickSnapshot>;
+  /** Screenshot decoded and handlers installed; independent of window painting. */
   ready(): void;
   hover(hex: string): void;
   finish(hex: string | null): void;

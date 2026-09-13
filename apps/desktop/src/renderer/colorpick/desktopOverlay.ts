@@ -75,7 +75,9 @@ async function mount(): Promise<void> {
       update();
     }
   });
-  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+  // Ready means decoded pixels and installed input handlers. A show:false
+  // Electron window can withhold animation frames even with throttling off.
+  // Waiting for one here deadlocks with main, which waits for ready to show us.
   api.ready();
 }
 void mount().catch(error => { console.warn('Desktop color picker:', error); api.failed(); });

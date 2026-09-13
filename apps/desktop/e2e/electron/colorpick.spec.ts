@@ -245,6 +245,26 @@ test('colorpick: desktop overlay commits once, undo restores, Escape cancels @se
   test.setTimeout(120_000)
   const { app, page, layerId, button } = await setupDesktopPick()
   try {
+    const waitForDesktop = async () => {
+      try {
+        await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
+          .filter(w => !w.isDestroyed() && w.webContents?.getURL().includes('/screen-pick.html') && w.isVisible()).length), { timeout: 20_000 }).toBeGreaterThan(0)
+      } catch (error) {
+        const state = {
+          page: await page.evaluate(() => ({ visibility: document.visibilityState,
+              focused: document.hasFocus(), busy: !!document.querySelector('[aria-busy="true"]'),
+              picker: document.querySelector('[data-testid="colorpick-overlay"]')?.textContent })),
+          main: await app.evaluate(({ BrowserWindow }) => ({
+            windows: BrowserWindow.getAllWindows().filter(w => !w.isDestroyed()).map(w => ({ id: w.id,
+              url: w.webContents?.getURL(), focused: w.isFocused(), visible: w.isVisible() })) })),
+          overlays: await Promise.all(app.windows().filter(w => !w.isClosed() && w.url().includes('/screen-pick.html')).map(w => w.evaluate(() => ({ state: document.readyState,
+              visibility: document.visibilityState, width: document.querySelector<HTMLCanvasElement>('#desktop')?.width,
+              hint: document.querySelector('#hint')?.textContent })))),
+        }
+        await info.attach('desktop-handoff-state', { contentType: 'application/json', body: JSON.stringify(state) })
+        throw error
+      }
+    }
     // Generated content covers each display so no private desktop content is
     // captured by this test. The editor still receives the CDP-driven gesture.
     await app.evaluate(async ({ BrowserWindow, screen }) => {
@@ -273,16 +293,7 @@ test('colorpick: desktop overlay commits once, undo restores, Escape cancels @se
     await expect(page.getByTestId('colorpick-overlay')).toBeHidden()
     const visibleOverlays = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
       .filter(w => !w.isDestroyed() && w.webContents?.getURL().includes('/screen-pick.html') && w.isVisible()).length)
-    try {
-      await expect.poll(visibleOverlays, { timeout: 20_000 }).toBeGreaterThan(0)
-    } catch (error) {
-      await info.attach('desktop-handoff-state', { contentType: 'application/json', body: JSON.stringify({
-        picker: await page.getByTestId('colorpick-overlay').textContent().catch(() => null),
-        windows: await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter(w => !w.isDestroyed())
-          .map(w => ({ url: w.webContents?.getURL(), focused: w.isFocused(), visible: w.isVisible() }))),
-      }) })
-      throw error
-    }
+    await waitForDesktop()
     const desktop = app.windows().find(w => w.url().includes('/screen-pick.html'))!
     await desktop.mouse.move(120, 100)
     await expect(desktop.locator('#hex')).toHaveText('#1234a0')
@@ -302,7 +313,7 @@ test('colorpick: desktop overlay commits once, undo restores, Escape cancels @se
     await button.click()
     await expect(page.getByTestId('colorpick-overlay')).toBeVisible()
     await page.keyboard.press('s')
-    await expect.poll(visibleOverlays, { timeout: 20_000 }).toBeGreaterThan(0)
+    await waitForDesktop()
     const second = app.windows().find(w => !w.isClosed() && w.url().includes('/screen-pick.html'))!
     await second.mouse.move(200, 180)
     await expect(second.locator('#hex')).toHaveText('#1234a0')

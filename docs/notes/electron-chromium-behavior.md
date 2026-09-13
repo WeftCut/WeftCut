@@ -101,6 +101,36 @@ compatibility click event truncated them in this build, causing a one-pixel
 offset. Commit from the PointerEvent position with round-trip rounding.
 See `poc/colorpick/FINDINGS.md` for the initial probe and remaining platform cells.
 
+## Hidden picker windows can withhold animation frames before their first show
+
+Reproduced 2026-09-14 on Windows / Electron 44.1.1. Repeated desktop picking
+sometimes left an overlay loaded but invisible until the session timeout.
+Tracing separated the stages: capture returned in about 0.4 s; the overlay
+finished loading, decoded a 1920-pixel-wide screenshot and populated its hint;
+the owner stayed focused. The overlay reported `visibilityState: visible`, yet
+its pending `requestAnimationFrame` callbacks never ran during the observation
+window. This happened with `backgroundThrottling: false` already set.
+
+The picker had a circular startup dependency: main waited for renderer `ready`
+before `showInactive()`, while the renderer awaited an animation frame before
+sending `ready`. The fix sends `ready` once decoding, canvas drawing and input
+handler installation finish. It does not await painting or relax screenshot
+readiness. Main still captures every screen first and waits for every overlay
+to initialize before showing the group.
+
+The regression test `renderer/colorpick/desktopOverlay.test.ts` runs the real
+overlay entry with animation frames withheld and deferred bitmap decoding:
+`ready` must follow decoding without needing any frame callback. Before the
+fix it deterministically failed; after the fix it passes. The existing desktop
+E2E repeats open/pick/undo/reopen/Escape on the real Electron window path:
+10 consecutive runs passed after the fix (20 desktop-picker openings).
+Temporary event probes have been removed; both E2E handoffs retain failure
+snapshots of window visibility, page readiness and canvas dimensions.
+
+**Rule:** a hidden window's initialization handshake must not depend on
+animation frames or visibility. Keep data/handler readiness distinct from
+presentation; `document.visibilityState` alone is not evidence that frames run.
+
 ## Effect-input picking reads the GPU texture before pool reuse
 
 Implemented and verified 2026-09-13 on Windows, Electron 44.1.1 / Pixi 8.20.1.

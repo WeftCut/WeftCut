@@ -80,7 +80,7 @@ export function registerScreenPick(): void {
       if (process.platform === 'darwin') win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
       win.setAlwaysOnTop(true, 'screen-saver');
       let ready!: () => void;
-      const painted = new Promise<void>(resolve => { ready = resolve; });
+      const initialized = new Promise<void>(resolve => { ready = resolve; });
       s.overlays.push({ win, snapshot, ready });
       s.cleanups.push(ready); // release pending ready promises on cancellation
       win.once('closed', () => { if (alive(s)) s.finish({ kind: 'cancelled' }); });
@@ -100,7 +100,7 @@ export function registerScreenPick(): void {
       const dev = process.env.ELECTRON_RENDERER_URL;
       const load = dev ? win.loadURL(new URL('/screen-pick.html', dev).href)
         : win.loadFile(path.join(import.meta.dirname, '../renderer/screen-pick.html'));
-      loaded.push(Promise.all([load, painted]).then(() => {}));
+      loaded.push(Promise.all([load, initialized]).then(() => {}));
     }
     await Promise.all(loaded);
     if (!alive(s)) return;
