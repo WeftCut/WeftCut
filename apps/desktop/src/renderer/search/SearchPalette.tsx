@@ -218,7 +218,7 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
       }}
     >
       <DialogPortal>
-        <DialogOverlay className="bg-black/50 supports-backdrop-filter:backdrop-blur-none" />
+        <DialogOverlay className="search-palette-backdrop bg-black/50 supports-backdrop-filter:backdrop-blur-none" />
         <DialogPrimitive.Popup className="search-palette" aria-label={t("actions.open_search")}>
           <div className="search-palette-input">
             <AppInput
