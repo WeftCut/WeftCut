@@ -279,6 +279,18 @@
     --shadow-popover: 0 8px 28px rgba(0, 0, 0, 0.45);
     --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.55);
 
+    /* Stacking. Dockview's resize sash is z-index: 99 and is not ours to
+       move, so every app-owned overlay has to clear it: one that does not
+       lets a sash crossing it steal the hover and the clicks, which reads as
+       a dead button, or as a backdrop that will not dismiss because the drag
+       it started resized the dock instead. Ordered as they stack when open
+       together. A dialog's popup is its backdrop +1, and a dialog opened
+       from a dialog takes the next pair up. */
+    --layer-log-console: 100;
+    --layer-status-panel: 101;
+    --layer-dialog: 110;
+    --layer-menu: 1000;
+
     /* Motion — two speeds, shared easing, so hover/focus transitions stop
        ranging across 80/100/120/160/180ms with mixed easings. Continuous
        data-driven transitions (meter/progress width updates) deliberately

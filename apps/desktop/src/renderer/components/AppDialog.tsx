@@ -47,12 +47,9 @@ export function AppDialog({
 }: AppDialogProps) {
   const { t } = useTranslation();
   const depth = useContext(DialogDepth);
-  // Dockview's resize sash is z-index: 99, so a dialog below it hands the
-  // sash every hover and click aimed at whatever it crosses — a footer button
-  // included. Sit above the sash, and far enough below the 1000 of
-  // `.app-popup-positioner` that a menu opened inside a dialog still draws
-  // over it.
-  const overlayLayer = 100 + depth * 2;
+  // Backdrop, then its popup one above; a dialog opened from a dialog takes
+  // the next pair up (app.css §Stacking owns the numbers and the why).
+  const layer = (above: number) => `calc(var(--layer-dialog) + ${depth * 2 + above})`;
   return (
     <DialogDepth.Provider value={depth + 1}>
     <Dialog
@@ -69,9 +66,9 @@ export function AppDialog({
         {/* Match the legacy flat rgba(0,0,0,0.5) backdrop (no blur). */}
         {/* Base UI omits nested backdrops by default. Each stacked app dialog
             needs its own blocker above its parent's popup. */}
-        <DialogOverlay forceRender style={{ zIndex: overlayLayer }} className="bg-black/50 supports-backdrop-filter:backdrop-blur-none" />
+        <DialogOverlay forceRender style={{ zIndex: layer(0) }} className="bg-black/50 supports-backdrop-filter:backdrop-blur-none" />
         <DialogPrimitive.Popup
-          style={{ zIndex: overlayLayer + 1 }}
+          style={{ zIndex: layer(1) }}
           className={cn(
             "fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 outline-none",
             panelClassName,

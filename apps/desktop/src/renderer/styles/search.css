@@ -1,21 +1,19 @@
 /* Global search palette (Mod+K). The Base UI Popup carries positioning
    only; rows/groups own the look. Top-anchored, unlike the centered
    AppDialog skins. */
-/* Backdrop and palette sit one layer apart and BOTH above dockview's
-   z-index: 99 sash, for the reason menu.css gives on .app-popup-positioner —
-   a sash over the palette steals its clicks, and one over the backdrop
-   resizes the dock where a click should have dismissed. AppDialog pairs its
-   own two the same way. The backdrop's Tailwind `z-50` loses to this file:
-   app.css layers Tailwind and leaves these stylesheets unlayered. */
+/* The palette is a dialog, so it takes --layer-dialog's pair (app.css
+   §Stacking): backdrop, then popup one above. The backdrop's Tailwind
+   `z-50` loses to this file — app.css layers Tailwind and leaves these
+   stylesheets unlayered. */
 .search-palette-backdrop {
-  z-index: 100;
+  z-index: var(--layer-dialog);
 }
 .search-palette {
   position: fixed;
   top: 12vh;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 101;
+  z-index: calc(var(--layer-dialog) + 1);
   width: min(560px, calc(100vw - 48px));
   display: flex;
   flex-direction: column;

@@ -257,7 +257,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-popover);
-  z-index: 81;
+  z-index: var(--layer-status-panel);
 }
 
 .system-status-panel .current-system-status {

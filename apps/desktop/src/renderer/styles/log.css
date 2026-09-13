@@ -21,7 +21,7 @@
   box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.45);
   display: flex;
   flex-direction: column;
-  z-index: 80;
+  z-index: var(--layer-log-console);
   color: var(--foreground);
   font-size: var(--font-size-body);
   font-family: var(--font-ui);
