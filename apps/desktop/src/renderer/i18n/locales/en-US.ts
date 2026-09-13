@@ -1940,6 +1940,11 @@ const enUS = {
     pick: "Pick color",
     hint_cancel: "Esc — cancel",
     hint_screen: "S — pick from screen",
+    screen_hint: "Frozen screen · Click or Enter to pick · Arrow keys to adjust · Esc to cancel",
+    error_unsupported: "Screen picking is unavailable on this desktop. You can still pick inside the editor.",
+    error_permission: "Allow screen recording in system settings to pick outside the editor.",
+    error_capture: "Could not capture the screen. Try again, or pick inside the editor.",
+    error_timeout: "Screen picking timed out. Try again, or pick inside the editor.",
   },
   effects: {
     heading: "Effects",

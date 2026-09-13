@@ -132,3 +132,115 @@ test('colorpick: chromakey eyedropper picks canvas blue; one undo reverts', asyn
 
   await app.close()
 })
+
+async function setupDesktopPick() {
+  const { app, page } = await launchApp()
+  await newProject(page, {
+    parentFolder: tmpDir('weftcut-screen-pick-'), name: 'screen-pick',
+    canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 },
+  })
+  const layerId = await invokeCmd<string>(page, 'add_color_layer', {
+    tStartUs: 0, durationUs: 2_000_000, color: { r: 0, g: 0, b: 255, a: 255 },
+  })
+  await invokeCmd(page, 'add_effect', { layerId, kind: 'chromakey' })
+  await waitForBlueComposite(page)
+  await waitForHook(page, 'revealLayer')
+  await page.evaluate(id => (window as any).__weftcutTest.revealLayer({ layerId: id }), layerId)
+  await page.locator('.weft-dock-tab-label', { hasText: 'Effect' }).click()
+  return { app, page, layerId, button: page.getByTestId('effect-colorpick-0') }
+}
+
+test('colorpick: desktop overlay commits once, undo restores, Escape cancels @serial', async ({}, info) => {
+  test.skip(process.platform !== 'win32' || process.env.WEFTCUT_E2E_NO_EXPORT === '1',
+    'real interactive Windows desktop capture; other platforms need their own capture/permission gate')
+  test.setTimeout(120_000)
+  const { app, page, layerId, button } = await setupDesktopPick()
+  try {
+    // Generated content covers each display so no private desktop content is
+    // captured by this test. The editor still receives the CDP-driven gesture.
+    await app.evaluate(async ({ BrowserWindow, screen }) => {
+      const fixtures = []
+      for (const display of screen.getAllDisplays()) {
+        const fixture = new BrowserWindow({ ...display.bounds, frame: false, show: false,
+          skipTaskbar: true, backgroundColor: '#1234a0', webPreferences: { sandbox: true } })
+        await fixture.loadURL('data:text/html,<style>body{margin:0;background:%231234a0}</style>')
+        fixture.setAlwaysOnTop(true, 'pop-up-menu'); fixture.showInactive(); fixtures.push(fixture)
+      }
+      ;(globalThis as any).__screenPickFixtures = fixtures
+    })
+    // Wait for the OS compositor to finish presenting the fixture, including
+    // native window fade-in. A DOM-ready window can still capture mid-animation.
+    await expect.poll(() => app.evaluate(async ({ desktopCapturer, screen }) => {
+      const d=screen.getPrimaryDisplay()
+      const sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize:{
+        width:Math.round(d.bounds.width*d.scaleFactor),height:Math.round(d.bounds.height*d.scaleFactor)}})
+      const image=sources.find(s=>s.display_id===String(d.id))!.thumbnail
+      const i=(100*image.getSize().width+120)*4,b=image.toBitmap()
+      return [b[i+2],b[i+1],b[i]]
+    }), {timeout:10_000}).toEqual([18,52,160])
+    await button.click()
+    await expect(page.getByTestId('colorpick-overlay')).toBeVisible()
+    await page.keyboard.press('s')
+    await expect(page.getByTestId('colorpick-overlay')).toBeHidden()
+    const visibleOverlays = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
+      .filter(w => !w.isDestroyed() && w.webContents?.getURL().includes('/screen-pick.html') && w.isVisible()).length)
+    await expect.poll(visibleOverlays, { timeout: 20_000 }).toBeGreaterThan(0)
+    const desktop = app.windows().find(w => w.url().includes('/screen-pick.html'))!
+    await desktop.mouse.move(120, 100)
+    await expect(desktop.locator('#hex')).toHaveText('#1234a0')
+    expect(await desktop.evaluate(() => typeof (window as any).api)).toBe('undefined')
+    expect(chromaParams(await summary(page), layerId).keyB?.value).toBeUndefined()
+    await desktop.screenshot({ path: info.outputPath('desktop-picker.png') })
+    await desktop.mouse.click(120, 100)
+    await expect.poll(visibleOverlays).toBe(0)
+    // Authored effect parameters are quantized to three decimal places.
+    await expect.poll(async () => chromaParams(await summary(page), layerId).keyB?.value).toBeCloseTo(160 / 255, 3)
+    const picked = chromaParams(await summary(page), layerId)
+    expect(picked.keyR?.value).toBeCloseTo(18 / 255, 3)
+    expect(picked.keyG?.value).toBeCloseTo(52 / 255, 3)
+    await invokeCmd(page, 'project_undo', {})
+    expect(chromaParams(await summary(page), layerId)).toEqual({})
+
+    await button.click()
+    await expect(page.getByTestId('colorpick-overlay')).toBeVisible()
+    await page.keyboard.press('s')
+    await expect.poll(visibleOverlays, { timeout: 20_000 }).toBeGreaterThan(0)
+    const second = app.windows().find(w => !w.isClosed() && w.url().includes('/screen-pick.html'))!
+    await second.mouse.move(200, 180)
+    await expect(second.locator('#hex')).toHaveText('#1234a0')
+    // Escape destroys the overlay in main's before-input-event handler. Send
+    // through Electron: CDP keyboard.press otherwise waits for keyup on a page
+    // that has already been destroyed as the intended result of keydown.
+    await app.evaluate(({ BrowserWindow }) => {
+      const overlay=BrowserWindow.getAllWindows().find(w=>!w.isDestroyed() && w.webContents?.getURL().includes('/screen-pick.html'))
+      if (!overlay) throw new Error('No live desktop picker')
+      overlay.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'})
+    })
+    await expect.poll(visibleOverlays).toBe(0)
+    await expect(page.getByTestId('colorpick-overlay')).toBeHidden()
+    expect(chromaParams(await summary(page), layerId)).toEqual({})
+    await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getFocusedWindow()?.webContents.getURL().includes('index.html'))).toBe(true)
+  } finally { await app.close() }
+})
+
+test('colorpick: desktop capture failure returns to usable in-app picking @serial', async () => {
+  test.skip(process.env.WEFTCUT_E2E_NO_EXPORT === '1', 'real preview pixel extraction')
+  test.setTimeout(120_000)
+  const { app, page, layerId, button } = await setupDesktopPick()
+  try {
+    await app.evaluate(({ desktopCapturer }) => {
+      desktopCapturer.getSources = async () => { throw new Error('injected capture failure') }
+    })
+    await button.click()
+    await expect(page.getByTestId('colorpick-overlay')).toBeVisible()
+    await page.keyboard.press('s')
+    await expect(page.getByTestId('colorpick-overlay').getByRole('alert')).toContainText('Could not capture the screen')
+    await expect(page.getByTestId('colorpick-overlay')).toBeVisible()
+    const box = await page.locator('canvas').first().boundingBox()
+    if (!box) throw new Error('No preview canvas')
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+    await expect.poll(async () => chromaParams(await summary(page), layerId).keyB?.value).toBe(1)
+    await invokeCmd(page, 'project_undo', {})
+    expect(chromaParams(await summary(page), layerId)).toEqual({})
+  } finally { await app.close() }
+})

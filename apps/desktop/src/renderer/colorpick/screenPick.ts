@@ -1,37 +1,27 @@
-// Native Chromium eyedropper = the SCREEN half of the hybrid design. It
-// returns only { sRGBHex } — no coordinates, no hover events — which is why it
-// cannot carry the in-app session (docs/features.md § "Color picker
-// (eyedropper)"). open() requires transient activation: call it
-// from a click/keydown handler only.
+import type { ScreenPickReply } from '../../shared/screenPick';
 
-interface EyeDropperLike {
-  open(): Promise<{ sRGBHex: string }>;
-}
-type EyeDropperCtor = new () => EyeDropperLike;
-
-function ctor(): EyeDropperCtor | null {
-  const w = window as unknown as { EyeDropper?: EyeDropperCtor };
-  return typeof w.EyeDropper === "function" ? w.EyeDropper : null;
+export function screenPickAvailable(): boolean {
+  return typeof window.api?.colorPick?.start === 'function';
 }
 
-export function eyeDropperAvailable(): boolean {
-  return ctor() !== null;
-}
-
-/// "#rrggbb", or null on cancel (AbortError) / unavailable API. Never throws.
-export async function screenPick(): Promise<string | null> {
-  const ED = ctor();
-  if (!ED) return null;
+/** Own the renderer subscription/cancellation for one main-process request. */
+export async function screenPick(signal: AbortSignal, hint: string, onHover?: (hex: string) => void): Promise<ScreenPickReply> {
+  if (signal.aborted) return { kind: 'cancelled' };
+  if (!screenPickAvailable()) return { kind: 'error', reason: 'unsupported' };
+  const id = crypto.randomUUID();
+  const api = window.api.colorPick;
+  const unsubscribe = api.onHover(event => {
+    if (!signal.aborted && event.id === id) onHover?.(event.hex);
+  });
+  const cancel = (): void => { void api.cancel(id).catch(() => {}); };
+  signal.addEventListener('abort', cancel, { once: true });
   try {
-    const r = await new ED().open();
-    return r.sRGBHex.toLowerCase();
+    const reply = await api.start({ id, hint });
+    return signal.aborted ? { kind: 'cancelled' } : reply;
   } catch {
-    return null;
+    return { kind: 'error', reason: 'capture' };
   } finally {
-    // Electron hosts the dropper widget inside the app window with no system
-    // capture: the pick click lands on and ACTIVATES the foreign window, and
-    // the magnifier clips at the window edge (electron#27980 — sampling is
-    // still screen-wide). Snap focus back so the editor keeps the keyboard.
-    void window.api.window.focus().catch(() => {});
+    unsubscribe();
+    signal.removeEventListener('abort', cancel);
   }
 }

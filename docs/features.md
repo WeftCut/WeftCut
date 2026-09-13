@@ -1650,15 +1650,21 @@ One global pick session serves every color surface
 (`renderer/colorpick/pickColor.ts`). At session start it freezes two
 buffers — the composited preview via `extract.pixels` (working-space-true,
 composition resolution) and a `capturePage()` window snapshot — then every
-hover sample is a CPU read. The native `EyeDropper` API handles
-whole-screen picks (`S` during a session); it returns only a color — no
-coordinates, no hover — which is why it cannot carry the in-app session.
+hover sample is a CPU read. `S` switches the same session to desktop sampling:
+main captures each display before showing any overlay, then presents one
+independent window per display with the frozen screenshot, custom magnifier,
+center-pixel marker and color readout. Click/Enter confirms, arrow keys adjust
+one physical pixel, and Esc cancels. Desktop hover uses the same transient
+override path; only confirmation commits.
 
 **Why the sample source is frozen:** chromakey hover live-applies the key
 color while you move; sampling the live composite would read the keyed
 result (the background), not the source pixel — a feedback loop. The
-session freezes a pre-key frame (`excludeEffectId` disables that filter for
-the freeze) and sampling never touches the live pipeline.
+session freezes a composition with the selected filter disabled
+(`excludeEffectId`) and sampling never touches the live pipeline. This avoids
+self-feedback but is NOT exact effect-input sampling: downstream effects and
+other composited layers remain. Capturing the selected effect's actual input
+texture is a separate follow-up.
 
 **Seams:** `previewSamplerRegistry` — PixiPreview registers capture/mapping
 on mount; the picker never imports Pixi. `effectOverrides` — transient
@@ -1669,16 +1675,22 @@ re-composites on every change so hover edits render while paused.
 opt out). Effect descriptors declare `colorGroups` (RGB scalar triplets);
 the inspector commits all three tracks as one undo entry.
 
-**Limits:** screen picks have no hover preview or custom magnifier
-(platform API limit; `screenPick.ts` is the seam to replace with a
-full-screen custom overlay). Under Electron the native dropper's magnifier
-clips at the app window's edge and the pick click activates the clicked
-foreign window (electron#27980; sampling itself is screen-wide and
-correct) — `screenPick` snaps focus back after every pick as mitigation;
-see `docs/notes/electron-chromium-behavior.md` § EyeDropper. The
-composition buffer is an 8-bit extract — HDR/10-bit picks read the
-tone-mapped value. The window snapshot is frozen at session start; UI
-changes mid-session are not reflected.
+`main/screenPick.ts` owns desktop windows, sender-bound IPC, cancellation and
+focus restoration. Their dedicated sandbox preload exposes only sampling
+operations, and the windows are internal for quit accounting. The renderer
+keeps the original session while the desktop windows own focus; preemption,
+owner close/navigation/crash, display changes, loss of session focus and timeout
+release the whole group. Capture/permission errors restore in-app picking with
+a localized explanation. Captures live only in memory.
+
+**Limits:** desktop content is frozen at entry and covers the editor's live
+effect preview. Windows SDR capture is verified on a single 110%-scaled screen;
+real mixed-DPI multi-monitor, macOS permission/Spaces and X11 need platform
+verification. Native Wayland global overlays are unavailable; the picker reports
+that limitation and keeps in-app sampling. The composition buffer is an 8-bit
+extract — HDR/10-bit picks read the tone-mapped value. Composition resolution
+does not recover original-source detail lost through a Quick proxy. Frozen
+window/desktop captures do not reflect subsequent UI changes.
 
 ## On-canvas transform (gizmo)
 

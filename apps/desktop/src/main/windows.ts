@@ -16,8 +16,8 @@ import {
 const wins = new Map<string, BrowserWindow>()
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
-/// Windows serving the app rather than the user — today only the offscreen Motif
-/// capture host (motif/capture.ts).
+/// Windows serving another window's workflow: the offscreen Motif capture host
+/// and desktop-pick overlays. Neither should keep a closed editor running.
 const internalWindows = new WeakSet<BrowserWindow>()
 
 /// Hide `win` from the quit decision. Must run in the SAME tick as the

@@ -5,10 +5,11 @@
 
 import { useEffect, useRef, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
-import { sampleHex, samplePatch, type FrameBuffer } from "./pixel";
+import { sampleHex, type FrameBuffer } from "./pixel";
 import { getPreviewSampler } from "./previewSamplerRegistry";
-import { usePickSessionStore, type PickSession } from "./pickColor";
-import { eyeDropperAvailable, screenPick } from "./screenPick";
+import { usePickSessionStore, startScreenPick, type PickSession } from "./pickColor";
+import { screenPickAvailable } from "./screenPick";
+import { createMagnifier, magnifierPosition } from './magnifier';
 
 const MAG_RADIUS = 5; // 11×11 source patch
 const MAG_SCALE = 10; // → 110×110 magnifier canvas
@@ -54,11 +55,15 @@ interface Hit {
 
 function PickOverlay({ session }: { session: PickSession }) {
   const { t } = useTranslation();
+  const screenPicking = usePickSessionStore(s => s.screenPicking);
+  const screenError = usePickSessionStore(s => s.screenError);
   const magRef = useRef<HTMLDivElement | null>(null);
   const magCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const hexRef = useRef<HTMLSpanElement | null>(null);
   const raf = useRef<number | null>(null);
   const last = useRef<{ x: number; y: number } | null>(null);
+  const down = useRef<{ x: number; y: number } | null>(null);
+  const painter = useRef<{ canvas: HTMLCanvasElement; draw: ReturnType<typeof createMagnifier> } | null>(null);
 
   const sampleAt = (x: number, y: number): Hit | null => {
     const sampler = getPreviewSampler();
@@ -94,32 +99,22 @@ function PickOverlay({ session }: { session: PickSession }) {
 
   const update = () => {
     raf.current = null;
+    if (usePickSessionStore.getState().screenPicking) return;
     const p = last.current;
     if (!p) return;
     const hit = sampleAt(p.x, p.y);
     const mag = magRef.current;
     if (mag) {
-      mag.style.transform = `translate(${p.x + 16}px, ${p.y + 16}px)`;
+      const position = magnifierPosition(p.x, p.y, mag.offsetWidth, mag.offsetHeight, window.innerWidth, window.innerHeight);
+      mag.style.transform = `translate(${position.x}px, ${position.y}px)`;
       mag.style.visibility = hit ? "visible" : "hidden";
     }
     if (!hit) return;
     if (hexRef.current) hexRef.current.textContent = hit.hex;
     const canvas = magCanvasRef.current;
-    const ctx = canvas?.getContext("2d"); // jsdom: null — magnifier draw is best-effort
-    if (canvas && ctx) {
-      const patch = samplePatch(hit.patchBuf, hit.px, hit.py, MAG_RADIUS);
-      const img = new ImageData(new Uint8ClampedArray(patch.pixels), patch.width, patch.height);
-      // putImageData can't scale: stage 1:1, then blit with smoothing off.
-      const stage = document.createElement("canvas");
-      stage.width = patch.width;
-      stage.height = patch.height;
-      const sctx = stage.getContext("2d");
-      if (sctx) {
-        sctx.putImageData(img, 0, 0);
-        ctx.imageSmoothingEnabled = false;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(stage, 0, 0, canvas.width, canvas.height);
-      }
+    if (canvas) {
+      if (painter.current?.canvas !== canvas) painter.current = { canvas, draw: createMagnifier(canvas) };
+      painter.current.draw(hit.patchBuf, hit.px, hit.py);
     }
     session.opts.onHover?.(hit.hex);
   };
@@ -130,7 +125,9 @@ function PickOverlay({ session }: { session: PickSession }) {
   };
 
   const onClick = (e: React.MouseEvent) => {
-    const hit = sampleAt(e.clientX, e.clientY);
+    const p = down.current ?? { x: e.clientX, y: e.clientY };
+    down.current = null;
+    const hit = sampleAt(p.x, p.y);
     if (hit) session.settle({ hex: hit.hex, source: hit.source });
   };
 
@@ -144,19 +141,16 @@ function PickOverlay({ session }: { session: PickSession }) {
       } else if (
         (e.key === "s" || e.key === "S") &&
         !e.ctrlKey && !e.metaKey && !e.altKey &&
-        eyeDropperAvailable()
+        screenPickAvailable()
       ) {
         e.preventDefault();
-        // Native handoff: drop the overlay FIRST (the session object keeps the
-        // promise open), then settle from the native result. keydown carries
-        // the transient activation EyeDropper.open() requires.
-        usePickSessionStore.setState({ session: null });
-        void screenPick().then((hex) =>
-          session.settle(hex ? { hex, source: "screen" } : null),
-        );
+        e.stopPropagation();
+        void startScreenPick(session, t('colorpick.screen_hint'));
       }
     };
-    const onBlur = () => session.settle(null);
+    const onBlur = () => {
+      if (!usePickSessionStore.getState().screenPicking) session.settle(null);
+    };
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("blur", onBlur);
     return () => {
@@ -164,12 +158,17 @@ function PickOverlay({ session }: { session: PickSession }) {
       window.removeEventListener("blur", onBlur);
       if (raf.current !== null) cancelAnimationFrame(raf.current);
     };
-  }, [session]);
+  }, [session, t]);
+
+  // Block editor gestures during capture without painting UI into the desktop
+  // snapshot. Keyboard cancellation remains owned by this mounted session.
+  if (screenPicking) return <div aria-busy="true" style={{ position: 'fixed', inset: 0, zIndex: 1000, cursor: 'progress' }} />;
 
   return (
     <div
       data-testid="colorpick-overlay"
       onPointerMove={onPointerMove}
+      onPointerDown={e => { if (e.button === 0) down.current = { x: e.clientX, y: e.clientY }; }}
       onClick={onClick}
       style={{ position: "fixed", inset: 0, zIndex: 1000, cursor: "crosshair" }}
     >
@@ -203,7 +202,8 @@ function PickOverlay({ session }: { session: PickSession }) {
         style={HINT_STYLE}
       >
         {t("colorpick.hint_cancel")}
-        {eyeDropperAvailable() ? ` · ${t("colorpick.hint_screen")}` : ""}
+        {screenPickAvailable() ? ` · ${t("colorpick.hint_screen")}` : ""}
+        {screenError && <div role="alert">{t(`colorpick.error_${screenError}`)}</div>}
       </div>
     </div>
   );

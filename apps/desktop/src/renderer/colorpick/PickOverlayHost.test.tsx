@@ -8,11 +8,11 @@ vi.mock("react-i18next", () => ({
 // pickColor (imported for its store) transitively imports ../ipc — stub the
 // one symbol it uses so jsdom never loads the real bridge.
 vi.mock("../ipc", () => ({ logEmit: vi.fn(async () => {}) }));
-const { screenPick, eyeDropperAvailable } = vi.hoisted(() => ({
-  screenPick: vi.fn(async () => "#123456"),
-  eyeDropperAvailable: vi.fn(() => true),
+const { screenPick, screenPickAvailable } = vi.hoisted(() => ({
+  screenPick: vi.fn(async () => ({kind:'picked' as const,hex:'#123456'})),
+  screenPickAvailable: vi.fn(() => true),
 }));
-vi.mock("./screenPick", () => ({ screenPick, eyeDropperAvailable }));
+vi.mock("./screenPick", () => ({ screenPick, screenPickAvailable }));
 
 import { PickOverlayHost } from "./PickOverlayHost";
 import { usePickSessionStore, type PickSession } from "./pickColor";
@@ -38,7 +38,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
-  usePickSessionStore.setState({ session: null });
+  usePickSessionStore.setState({ session: null, screenPicking: false, screenError: null });
   const s = getPreviewSampler();
   if (s) clearPreviewSampler(s);
   vi.clearAllMocks();
@@ -117,13 +117,16 @@ describe("PickOverlayHost", () => {
     expect(settle).toHaveBeenCalledWith(null);
   });
 
-  it("S hands off to the native dropper and settles its result", async () => {
+  it("S keeps ownership while hiding the in-app overlay, then settles the desktop result", async () => {
     registerPreviewSampler(sampler);
     const { settle } = seedSession();
     render(<PickOverlayHost />);
     fireEvent.keyDown(window, { key: "s" });
-    // Overlay torn down first, then the native result settles the session.
-    expect(usePickSessionStore.getState().session).toBeNull();
+    expect(usePickSessionStore.getState().session).not.toBeNull();
+    expect(usePickSessionStore.getState().screenPicking).toBe(true);
+    expect(screen.queryByTestId('colorpick-overlay')).toBeNull();
+    fireEvent.blur(window); // the desktop overlay takes focus intentionally
+    expect(settle).not.toHaveBeenCalled();
     await vi.waitFor(() =>
       expect(settle).toHaveBeenCalledWith({ hex: "#123456", source: "screen" }),
     );

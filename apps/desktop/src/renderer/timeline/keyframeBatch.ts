@@ -240,7 +240,7 @@ export function expandScaleFanOut(
   return entries.flatMap<ParamTrackEntry>(([layerId, paramKey, next]) => {
     const fanOut = scaleFanOutFor(paramKey, layerOf(layerId)?.params ?? null);
     if (fanOut === null) return [[layerId, paramKey, next]];
-    return fanOutEntries(fanOut, next).map(([key, track]) => [layerId, key, track]);
+    return fanOutEntries(fanOut, next).map<ParamTrackEntry>(([key, track]) => [layerId, key, track]);
   });
 }
 

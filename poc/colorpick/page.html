@@ -1,0 +1,82 @@
+<!doctype html><meta charset="utf-8">
+<title>WeftCut color picker — capability probe</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#18202b;color:#fff;font:14px system-ui;overflow:hidden}
+#desktop{position:fixed;inset:0;width:100%;height:100%;image-rendering:pixelated}
+#mag{display:none;position:fixed;width:154px;background:#141b27;padding:10px;border:1px solid #73ddca;border-radius:9px;pointer-events:none;box-shadow:0 5px 20px #0008}
+#zoom{width:132px;height:132px;image-rendering:pixelated}#hex{display:block;text-align:center;margin-top:7px;font:16px monospace}
+#hint{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#141b27;padding:10px 16px;border-radius:8px;pointer-events:none;white-space:nowrap}
+#controller{padding:24px}button{padding:10px 20px;cursor:pointer}pre{white-space:pre-wrap} .cross{position:absolute;top:70px;left:70px;width:14px;height:14px;border:2px solid #ff3388;pointer-events:none}
+</style>
+<canvas id="desktop"></canvas>
+<div id="mag"><canvas id="zoom" width="132" height="132"></canvas><div class="cross"></div><span id="hex"></span></div>
+<div id="hint">冻结桌面取色 · 点击确认 · Esc 取消 · 方向键微调 · 30 秒自动退出</div>
+<div id="controller" hidden><h2>取色能力验证原型</h2><p>点击后冻结各屏幕，显示独立取色 UI。30 秒自动取消。</p><button id="start">开始屏幕取色</button><pre id="result"></pre></div>
+<script src="out/effects.js"></script>
+<script>
+window.readyPromise = (async () => {
+ const mode = new URLSearchParams(location.search).get('mode');
+ const desktop = document.querySelector('#desktop'), mag = document.querySelector('#mag');
+ const zoom = document.querySelector('#zoom').getContext('2d');
+ const hint = document.querySelector('#hint');
+ if(mode === 'controller') {
+   desktop.hidden = true; hint.hidden = true; document.querySelector('#controller').hidden = false;
+   document.querySelector('#start').onclick = () => window.probe.start().catch(e => document.querySelector('#result').textContent = String(e));
+   window.probe.onResult(r => { window.lastResult = r; document.querySelector('#result').textContent = JSON.stringify(r,null,2); });
+ } else if(mode === 'fixture') {
+   hint.hidden = true;
+   desktop.width = Math.round(innerWidth * devicePixelRatio); desktop.height = Math.round(innerHeight * devicePixelRatio);
+   const ctx = desktop.getContext('2d'), img = ctx.createImageData(desktop.width,desktop.height);
+   for(let y=0;y<img.height;y++) for(let x=0;x<img.width;x++) {
+     const i=(y*img.width+x)*4, c=(x+y)%2?255:0;
+     img.data.set([c,c,c,255],i);
+   }
+   ctx.putImageData(img,0,0);
+   ['#ff0000','#00ff00','#0000ff','#808080'].forEach((c,i) => {ctx.fillStyle=c;ctx.fillRect(i*160,0,160,180)});
+   window.addEventListener('click',()=>window.probe.fixtureClick());
+ } else {
+   const data = await window.probe.data();
+   const img = new Image(); img.src='data:image/png;base64,'+data.png; await img.decode();
+   desktop.width=img.naturalWidth; desktop.height=img.naturalHeight;
+   // Integer DIP screen bounds lose fractional-DPI precision. Keep a physical
+   // screenshot pixel exactly one physical display pixel; do not stretch 100%.
+   const extent={w:desktop.width/devicePixelRatio,h:desktop.height/devicePixelRatio};
+   window.sampleExtent=extent; desktop.style.width=extent.w+'px';desktop.style.height=extent.h+'px';
+   const ctx=desktop.getContext('2d',{willReadFrequently:true}); ctx.drawImage(img,0,0);
+   const frozen=ctx.getImageData(0,0,desktop.width,desktop.height);
+   const patch=document.createElement('canvas');patch.width=11;patch.height=11;
+   const patchCtx=patch.getContext('2d'), patchImg=patchCtx.createImageData(11,11);
+   let pos={x:0,y:0}, raf=0;
+   function update() {
+     raf=0;
+     // OS mouse pixels round-trip through fractional CSS coordinates. floor
+     // turns 119.99999 back into 119 when the actual cursor is at pixel 120.
+     const px=Math.min(frozen.width-1,Math.max(0,Math.round(pos.x*devicePixelRatio)));
+     const py=Math.min(frozen.height-1,Math.max(0,Math.round(pos.y*devicePixelRatio)));
+     const i=(py*frozen.width+px)*4;
+     const hex='#'+Array.from(frozen.data.slice(i,i+3)).map(v=>v.toString(16).padStart(2,'0')).join('');
+     window.lastHit={hex,px,py,displayId:data.displayId,client:pos,dpr:devicePixelRatio};
+     for(let y=0;y<11;y++)for(let x=0;x<11;x++){
+       const sx=Math.min(frozen.width-1,Math.max(0,px+x-5)),sy=Math.min(frozen.height-1,Math.max(0,py+y-5));
+       patchImg.data.set(frozen.data.subarray((sy*frozen.width+sx)*4,(sy*frozen.width+sx)*4+4),(y*11+x)*4);
+     }
+     patchCtx.putImageData(patchImg,0,0);zoom.imageSmoothingEnabled=false;zoom.drawImage(patch,0,0,132,132);
+     mag.style.display='block';document.querySelector('#hex').textContent=hex;
+     mag.style.left=Math.max(4,Math.min(pos.x+18,extent.w-mag.offsetWidth-4))+'px';
+     mag.style.top=Math.max(4,Math.min(pos.y+18,extent.h-mag.offsetHeight-4))+'px';
+   }
+   window.addEventListener('pointermove',e=>{pos={x:e.clientX,y:e.clientY};if(!raf)raf=requestAnimationFrame(update)});
+   // Compatibility click MouseEvents truncate CSS coords on this Chromium.
+   // Keep the fractional PointerEvent position for the actual pixel decision.
+   window.addEventListener('pointerdown',e=>{pos={x:e.clientX,y:e.clientY};update()});
+   window.addEventListener('click',()=>{update();window.probe.finish(window.lastHit)});
+   window.addEventListener('keydown',e=>{
+     if(e.key==='Escape')window.probe.finish(null);
+     if(e.key==='Enter'){update();window.probe.finish(window.lastHit)}
+     const d={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.key];
+     if(d){e.preventDefault();pos.x+=d[0]/devicePixelRatio;pos.y+=d[1]/devicePixelRatio;update()}
+   });
+ }
+ window.ready=true;
+})();
+</script>

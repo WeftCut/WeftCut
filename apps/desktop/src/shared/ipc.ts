@@ -403,6 +403,7 @@ import type {
 import type { MenuProjection } from './menu'
 
 export interface WeftcutApi {
+  colorPick: import('./screenPick').ScreenPickApi
   /** The napi/Rust command dispatcher — one controlled channel for the whole
    *  Rust command catalog. */
   backend: { invoke(channel: string, args?: unknown): Promise<unknown> }

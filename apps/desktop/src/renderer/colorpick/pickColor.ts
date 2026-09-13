@@ -11,12 +11,14 @@ import { transportPause } from "../state/playbackStore";
 import type { FrameBuffer } from "./pixel";
 import { getPreviewSampler } from "./previewSamplerRegistry";
 import { captureWindowSnapshot, type WindowSnapshot } from "./snapshot";
+import { screenPick } from './screenPick';
+import type { ScreenPickError } from '../../shared/screenPick';
 
 export interface PickOptions {
-  /// Chromakey: freeze the composition WITHOUT this effect's filter, so
-  /// samples are the pixels its shader actually compares against.
+  /// Freeze WITHOUT this effect to avoid self-feedback. Downstream effects
+  /// and layer blending remain; this is not exact effect-input sampling.
   excludeEffectId?: string;
-  /// rAF-throttled by the overlay; in-app sessions only (screen mode has none).
+  /// rAF-throttled by the active overlay; transient, never a project commit.
   onHover?: (hex: string) => void;
 }
 
@@ -37,9 +39,32 @@ export interface PickSession {
 
 interface PickState {
   session: PickSession | null;
+  screenPicking: boolean;
+  screenError: ScreenPickError | null;
 }
 
-export const usePickSessionStore = create<PickState>(() => ({ session: null }));
+export const usePickSessionStore = create<PickState>(() => ({ session: null, screenPicking: false, screenError: null }));
+let screenRequest: { session: PickSession; controller: AbortController } | null = null;
+
+export async function startScreenPick(session: PickSession, hint: string): Promise<void> {
+  const state = usePickSessionStore.getState();
+  if (state.session !== session || state.screenPicking) return;
+  const request = { session, controller: new AbortController() };
+  screenRequest = request;
+  usePickSessionStore.setState({ screenPicking: true, screenError: null });
+  // Remove the in-app magnifier and present a clean frame before capture.
+  // The original session stays owned throughout this asynchronous handoff.
+  await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  const reply = await screenPick(request.controller.signal, hint, session.opts.onHover);
+  if (screenRequest !== request) return;
+  screenRequest = null;
+  if (usePickSessionStore.getState().session !== session) return;
+  if (reply.kind === 'error') {
+    usePickSessionStore.setState({ screenPicking: false, screenError: reply.reason });
+  } else {
+    session.settle(reply.kind === 'picked' ? { hex: reply.hex, source: 'screen' } : null);
+  }
+}
 
 function warn(message: string): void {
   void logEmit({
@@ -106,12 +131,16 @@ export async function pickColor(opts: PickOptions = {}): Promise<PickResult | nu
       settle(result) {
         if (settled) return;
         settled = true;
+        if (screenRequest?.session === session) {
+          screenRequest.controller.abort();
+          screenRequest = null;
+        }
         if (usePickSessionStore.getState().session === session) {
-          usePickSessionStore.setState({ session: null });
+          usePickSessionStore.setState({ session: null, screenPicking: false, screenError: null });
         }
         resolve(result);
       },
     };
-    usePickSessionStore.setState({ session });
+    usePickSessionStore.setState({ session, screenPicking: false, screenError: null });
   });
 }

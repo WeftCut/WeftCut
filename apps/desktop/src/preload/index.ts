@@ -47,6 +47,15 @@ type Listener = (payload: unknown) => void
 // channel is `backend.invoke`, which fronts the napi/Rust command dispatcher —
 // a single controlled capability that validates its own commands.
 const api: WeftcutApi = {
+  colorPick: {
+    start: request => ipcRenderer.invoke('colorpick:start', request),
+    cancel: id => ipcRenderer.invoke('colorpick:cancel', id),
+    onHover: callback => {
+      const listener = (_e: Electron.IpcRendererEvent, event: import('../shared/screenPick').ScreenPickHover): void => callback(event)
+      ipcRenderer.on('colorpick:hover', listener)
+      return () => ipcRenderer.removeListener('colorpick:hover', listener)
+    },
+  },
   backend: {
     invoke(channel: string, args?: unknown): Promise<unknown> {
       return ipcRenderer.invoke('backend:invoke', { channel, args })

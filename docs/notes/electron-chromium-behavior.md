@@ -85,11 +85,21 @@ widget inside the Electron window with no system-wide mouse capture, so:
   steal) — in Chrome the same click does not transfer focus.
 
 Blockbench (Chrome's own EyeDropper showcase app) abandoned the native API in
-its Electron build over this same defect. Mitigation in WeftCut:
-`colorpick/screenPick.ts` snaps focus back via `window:focus` after every
-pick. Full fix = replace `screenPick.ts` with a desktopCapturer-based
-full-screen overlay (per-display always-on-top windows + own magnifier),
-which also gains hover events for screen picks.
+its Electron build over this same defect. WeftCut previously mitigated it by
+refocusing the editor after selection. Replaced 2026-09-13 by
+`main/screenPick.ts`: desktopCapturer freezes each display before any independent
+overlay window is shown. The dedicated renderer owns magnifier/hover/input.
+
+Verified on Electron 44.1.1, Windows, 1920×1080 at 110%: full-screen UI is visible
+outside the editor, native click/Escape work in the standalone probe, and the
+real-editor E2E checks pick/undo/cancel and capture failure recovery.
+Fractional-DPI details matter: integer DIP bounds times scale can differ from
+physical resolution by a pixel; use actual capture dimensions. Requesting a
+larger thumbnail (even a +2-pixel margin) can upscale it; request each display
+separately. Pointerdown preserves fractional CSS coordinates whereas the
+compatibility click event truncated them in this build, causing a one-pixel
+offset. Commit from the PointerEvent position with round-trip rounding.
+See `poc/colorpick/FINDINGS.md` for the initial probe and remaining platform cells.
 
 ## Buffer-defined `VideoFrame` conversion ignores the stamped `colorSpace` (always BT.601)
 

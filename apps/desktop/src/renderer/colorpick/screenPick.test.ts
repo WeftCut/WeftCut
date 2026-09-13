@@ -1,51 +1,56 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { eyeDropperAvailable, screenPick } from "./screenPick";
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { screenPick, screenPickAvailable } from './screenPick';
+import type { ScreenPickApi, ScreenPickHover, ScreenPickReply } from '../../shared/screenPick';
 
-type W = { EyeDropper?: unknown; api?: unknown };
-const focus = vi.fn(async () => {});
-beforeEach(() => {
-  (window as W).api = { window: { focus } };
-});
-afterEach(() => {
-  delete (window as W).EyeDropper;
-  delete (window as W).api;
-  focus.mockClear();
-  vi.restoreAllMocks();
-});
+afterEach(() => { vi.unstubAllGlobals(); });
+function setup(start: ScreenPickApi['start'] = async () => ({ kind: 'picked', hex: '#123456' })) {
+  let listener!: (event: ScreenPickHover) => void;
+  const unsubscribe = vi.fn();
+  const api = { start: vi.fn(start), cancel: vi.fn(async () => {}),
+    onHover: vi.fn((cb: typeof listener) => { listener = cb; return unsubscribe; }) };
+  Object.defineProperty(window, 'api', { configurable: true, value: { colorPick: api } });
+  return { api, hover: (event: ScreenPickHover) => listener(event), unsubscribe };
+}
 
-describe("screenPick", () => {
-  it("unavailable without window.EyeDropper", async () => {
-    expect(eyeDropperAvailable()).toBe(false);
-    expect(await screenPick()).toBeNull();
-    // No dropper opened ⇒ no focus was stolen ⇒ nothing to restore.
-    expect(focus).not.toHaveBeenCalled();
+describe('desktop pick bridge', () => {
+  it('reports unsupported without the bridge', async () => {
+    Object.defineProperty(window, 'api', { configurable: true, value: undefined });
+    expect(screenPickAvailable()).toBe(false);
+    expect(await screenPick(new AbortController().signal, '')).toEqual({kind:'error',reason:'unsupported'});
   });
-  it("resolves the lowercased sRGBHex", async () => {
-    (window as W).EyeDropper = class {
-      open() { return Promise.resolve({ sRGBHex: "#AABBCC" }); }
-    };
-    expect(eyeDropperAvailable()).toBe(true);
-    expect(await screenPick()).toBe("#aabbcc");
+  it('returns the result and releases the hover subscription', async () => {
+    const { api, unsubscribe } = setup();
+    expect(await screenPick(new AbortController().signal, 'localized hint')).toEqual({kind:'picked',hex:'#123456'});
+    expect(api.start).toHaveBeenCalledWith({id:expect.any(String),hint:'localized hint'});
+    expect(unsubscribe).toHaveBeenCalledOnce();
   });
-  it("maps AbortError (user Esc) to null", async () => {
-    (window as W).EyeDropper = class {
-      open() { return Promise.reject(new DOMException("aborted", "AbortError")); }
-    };
-    expect(await screenPick()).toBeNull();
+  it('only forwards hover from its own request and suppresses late results after abort', async () => {
+    let resolve!: (reply: ScreenPickReply) => void;
+    const { api, hover, unsubscribe } = setup(() => new Promise(r => { resolve = r; }));
+    const controller = new AbortController(), onHover = vi.fn();
+    const picking = screenPick(controller.signal, '', onHover);
+    const id = api.start.mock.calls[0]![0].id;
+    hover({id:'stale',hex:'#ff0000'});
+    hover({id,hex:'#123456'});
+    expect(onHover).toHaveBeenCalledExactlyOnceWith('#123456');
+    controller.abort();
+    hover({id,hex:'#ffffff'});
+    expect(api.cancel).toHaveBeenCalledExactlyOnceWith(id);
+    resolve({kind:'picked',hex:'#ffffff'});
+    expect(await picking).toEqual({kind:'cancelled'});
+    expect(onHover).toHaveBeenCalledOnce();
+    expect(unsubscribe).toHaveBeenCalledOnce();
   });
-  it("snaps focus back after a successful pick (electron#27980 steal)", async () => {
-    (window as W).EyeDropper = class {
-      open() { return Promise.resolve({ sRGBHex: "#AABBCC" }); }
-    };
-    await screenPick();
-    expect(focus).toHaveBeenCalledTimes(1);
+  it('does not start an already cancelled request', async () => {
+    const { api } = setup();
+    const controller = new AbortController(); controller.abort();
+    expect(await screenPick(controller.signal, '')).toEqual({kind:'cancelled'});
+    expect(api.start).not.toHaveBeenCalled();
   });
-  it("snaps focus back after a cancelled pick too", async () => {
-    (window as W).EyeDropper = class {
-      open() { return Promise.reject(new DOMException("aborted", "AbortError")); }
-    };
-    await screenPick();
-    expect(focus).toHaveBeenCalledTimes(1);
+  it('converts bridge errors to a recoverable capture failure', async () => {
+    const { unsubscribe } = setup(async () => { throw Error('IPC'); });
+    expect(await screenPick(new AbortController().signal, '')).toEqual({kind:'error',reason:'capture'});
+    expect(unsubscribe).toHaveBeenCalledOnce();
   });
 });

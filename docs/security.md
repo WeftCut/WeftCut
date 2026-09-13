@@ -40,6 +40,13 @@ server is left untouched, because HMR needs inline + eval + websockets.
 The renderer is allowed to reach its own privileged schemes because it **is** the
 trusted shell. This is the exact opposite of the Motif document context below.
 
+The first-party `screen-pick.html` uses the same packaged CSP but a dedicated
+sandbox preload (`preload/screenPick.ts`), not the editor's `window.api`. It can
+read only its own session's frozen screenshot and report ready/hover/finish.
+Main validates the owning WebContents and main frame for these messages; other
+windows cannot read its screenshot or settle its session. Desktop requests are
+owned by the invoking editor window and captures are never persisted.
+
 ## Motif documents
 
 A Motif is **untrusted, user- or agent-authored web content** that the app executes to

@@ -18,6 +18,7 @@ import { UserMotifStore } from './motif/store.js'
 import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry, quitIfLastUserWindowClosed } from './windows.js'
+import { registerScreenPick } from './screenPick.js'
 import type { SecondaryWinOpts } from './windowConfig.js'
 import { shouldClearApplicationMenu } from './inputPolicy.js'
 import { WINDOWS_APP_USER_MODEL_ID } from './appIdentity.js'
@@ -1605,9 +1606,8 @@ app.whenReady().then(async () => {
     const img = await e.sender.capturePage()
     return img.toPNG()
   })
-  // Color picker: the native EyeDropper's pick click activates the foreign
-  // window (electron#27980 — the dropper widget has no system capture in
-  // Electron); the renderer snaps focus back here after the pick settles.
+  registerScreenPick()
+  // Explicit focus requests act on the caller's own window.
   ipcMain.handle('window:focus', (e) => ctlWin(e)?.focus())
   ipcMain.handle('path:documentDir', () => app.getPath('documents'))
   ipcMain.handle('path:join', (_e, payload: { parts?: string[]; paths?: string[] }) => path.join(...(payload.parts ?? payload.paths ?? [])))

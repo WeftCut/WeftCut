@@ -76,7 +76,7 @@ export default defineConfig({
   preload: {
     build: {
       outDir: 'out/preload',
-      lib: { entry: 'src/preload/index.ts', formats: ['cjs'] },
+      lib: { entry: { index: 'src/preload/index.ts', screenPick: 'src/preload/screenPick.ts' }, formats: ['cjs'] },
       rollupOptions: { output: { entryFileNames: '[name].js' } },
     },
   },
@@ -96,7 +96,10 @@ export default defineConfig({
     build: {
       target: 'chrome120',
       outDir: 'out/renderer',
-      rollupOptions: { input: path.resolve(HERE, 'src/renderer/index.html') },
+      rollupOptions: { input: {
+        index: path.resolve(HERE, 'src/renderer/index.html'),
+        screenPick: path.resolve(HERE, 'src/renderer/screen-pick.html'),
+      } },
     },
     server: { port: 1420, strictPort: true },
   },

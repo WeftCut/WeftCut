@@ -1696,6 +1696,11 @@ const zhCN: Resources = {
     pick: "取色",
     hint_cancel: "Esc — 取消",
     hint_screen: "S — 从屏幕取色",
+    screen_hint: "屏幕已冻结 · 点击或 Enter 确认 · 方向键微调 · Esc 取消",
+    error_unsupported: "当前桌面环境不支持全屏取色，仍可在编辑器内取色。",
+    error_permission: "请在系统设置中允许屏幕录制，以在编辑器外取色。",
+    error_capture: "无法截取屏幕，请重试或在编辑器内取色。",
+    error_timeout: "全屏取色已超时，请重试或在编辑器内取色。",
   },
   effects: {
     heading: "效果",
