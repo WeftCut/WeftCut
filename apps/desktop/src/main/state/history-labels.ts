@@ -25,6 +25,7 @@ export interface HistorySummary {
  *  Keys mirror the `history.*` group in renderer/i18n/locales/; the two key sets
  *  are gated against each other by history-labels.test.ts. */
 export const HISTORY_SUMMARY = {
+  captionCorrect: { key: 'history.caption.correct', text: 'Corrected caption text' },
   /** The stack's seed entry — minted by `History`'s constructor and `reset()`,
    *  not by a commit site. */
   initial: { key: 'history.initial', text: 'Initial' },

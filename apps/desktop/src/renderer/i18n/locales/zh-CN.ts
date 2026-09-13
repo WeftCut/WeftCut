@@ -1915,10 +1915,18 @@ const zhCN: Resources = {
     direction: "方向",
     transition_delete: "删除转场",
   },
+  text_correction: {
+    title: "文字校正", script: "参考文稿", placeholder: "在此粘贴参考文稿…",
+    saved_with_project: "文稿随项目保存，执行校正后才会修改字幕。",
+    scope: "校正范围", selected: "选中字幕（{{count}} 条）", all: "当前合成全部字幕（{{count}} 条）",
+    apply_selected: "校正选中的 {{count}} 条字幕", apply_all: "校正全部 {{count}} 条字幕",
+    clear: "清空文稿", close: "关闭", running: "正在校正…", locked: "请先解锁需要校正的字幕。",
+    completed: "文字校正完成，修改了 {{count}} 条字幕",
+  },
   captions: {
     title: "字幕",
     empty: "导入字幕文件，或转写片段语音，即可创建字幕。",
-    style_heading: "字幕样式",
+    style_heading: "样式",
     // 数字框旁边的两个词；下面的无障碍标签要说明 0 的含义，因为字段本身没地方说。
     size_label: "字号",
     outline_label: "描边",
@@ -2164,7 +2172,7 @@ const zhCN: Resources = {
       rename: "重命名组",
     },
     composition: { delete: "删除组" },
-    caption: { restyle: "修改字幕样式" },
+    caption: { restyle: "修改字幕样式", correct: "文字校正" },
     media: { remove_cascade: "删除素材 {{media}} 及其 {{count}} 个引用片段" },
     audio: { set_role_gain: "设置{{role}}角色增益" },
     checkpoint: { restore: "恢复到检查点“{{label}}”" },

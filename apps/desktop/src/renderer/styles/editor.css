@@ -962,6 +962,8 @@
    same 12px inset / 8px rhythm as the Playhead and Role Mixer Panels. */
 .captions-panel {
   padding: 12px;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -969,6 +971,9 @@
 }
 
 .captions-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -1010,14 +1015,33 @@
 }
 
 .captions-style-section {
+  flex: 0 0 auto;
   display: flex;
-  /* Three fields and two words share the row with the heading; on a narrow
-     Panel they wrap under it rather than overflow. */
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.captions-toolbar-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.captions-style-fields {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-soft);
+  gap: 8px 12px;
+}
+
+/* Keep each label with its field when a narrow dock needs another row. */
+.captions-style-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* The word beside each number field. `flex: none` so the growing heading can
@@ -1043,7 +1067,7 @@
    here it shares the row with the heading and the color field. */
 .captions-style-section .app-number-field {
   flex: 0 0 auto;
-  width: 88px;
+  width: 64px;
 }
 
 .property-panel {

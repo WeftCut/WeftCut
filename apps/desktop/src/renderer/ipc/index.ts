@@ -1805,6 +1805,7 @@ export interface PauseReviewSettings {
 /// Per-project behavior settings (`Project.settings`). Only the fields
 /// the UI consumes are typed; the Rust struct carries more.
 export interface ProjectSettingsView {
+  correction_script?: string;
   prefer_proxies: boolean;
   proxy_overrides: Record<string, boolean>;
   /// `null` on a project nobody has tuned — read as "whatever the detector
@@ -1815,6 +1816,7 @@ export interface ProjectSettingsView {
 }
 
 export interface ProjectSettingsPatch {
+  correction_script?: string;
   prefer_proxies?: boolean;
   proxy_override?: { media_id: string; value: boolean | null };
   /// `null` clears the tuning and restores the detection defaults. Refused
@@ -2536,9 +2538,10 @@ export type WordTiming = "exact" | "interpolated_from_cue" | "none";
 
 /// What `transcribe_clip` answers with. `backend` names the engine that actually
 /// served the request, so a resolver fallback is visible rather than silent.
-/// `srt` is the rendered cue body — the argument `applySubtitles` takes, which
-/// is why a caller never has to walk `segments` to apply a transcript.
+/// `srt` remains available for subtitle consumers. The app's transcription
+/// flow uses `applyTranscripts` so words survive caption ingestion and saving.
 export interface TranscriptResult {
+  source?: import('../../shared/captionTiming').TranscriptPayload['source'];
   backend: string;
   segments: TranscriptSegment[];
   language?: string | null;
@@ -2575,6 +2578,18 @@ export async function transcribeClip(
 /// the ASS branch, which SRT never takes.
 export async function applySubtitles(srt: string): Promise<string> {
   return invoke<string>("apply_subtitles", { body: srt, format: "srt" });
+}
+
+export async function applyTranscripts(transcripts: TranscriptResult[], projectId: string, compositionId: string, sourceIds: string[]): Promise<string> {
+  return invoke<string>("apply_transcripts", { transcripts, project_id: projectId, composition_id: compositionId, source_ids: sourceIds });
+}
+
+export async function setCorrectionScript(projectId: string, text: string): Promise<void> {
+  return invoke<void>("set_correction_script", { project_id: projectId, text });
+}
+
+export async function correctCaptionText(projectId: string, compositionId: string, layerIds: string[] | null, expected?: import('../../shared/textCorrectionRequest').TextCorrectionExpectation): Promise<{ changed: number }> {
+  return invoke<{ changed: number }>("correct_caption_text", { project_id: projectId, composition_id: compositionId, layer_ids: layerIds, expected });
 }
 
 /// Voiceover request. Snake_case because these are the Rust tool's own argument

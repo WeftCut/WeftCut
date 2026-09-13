@@ -17,6 +17,9 @@ import { tryMutate } from "../errors/tryMutate";
 import { useOpenComposition } from "../state/projectStore";
 import { AppColorField, hexToRgba, rgbaToHex } from "../components/AppColorField";
 import { AppNumberField } from "../components/AppNumberField";
+import { TextCorrectionDialog } from "../speech/TextCorrectionDialog";
+import { Button } from "../components/ui/button";
+import { useProjectStore } from "../state/projectStore";
 import {
   updateLayerParams,
   restyleCaptions,
@@ -90,6 +93,8 @@ function CaptionCueRow({
 export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: CaptionPanelProps) {
   const { t } = useTranslation();
   const comp = useOpenComposition();
+  const projectId = useProjectStore(s => s.summary?.project_id);
+  const [correctionProject, setCorrectionProject] = useState<string | null>(null);
 
   const captionTracks = (comp?.tracks ?? []).filter((tr) => tr.role === "caption");
 
@@ -154,28 +159,17 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
 
   return (
     <section className="captions-panel" aria-label={t("captions.title")}>
-      {cues.length === 0 ? (
-        <p className="placeholder">{t("captions.empty")}</p>
-      ) : (
-        <>
-          <ul className="captions-list">
-            {cues.map((cue) => (
-              <CaptionCueRow
-                key={cue.layer.id}
-                cue={cue}
-                selected={cue.layer.id === selectedLayerId}
-                onActivate={activateCue}
-                onCommit={commitText}
-              />
-            ))}
-          </ul>
-          <section className="captions-style-section" aria-label={t("captions.style_heading")}>
-            <h4>{t("captions.style_heading")}</h4>
-            {/* Two number fields share the row, so each carries a visible word:
-                a bare pair of numbers would leave the user guessing which one is
-                the size. The colour swatch explains itself. */}
+      {projectId && correctionProject === projectId && <TextCorrectionDialog key={projectId} onClose={() => setCorrectionProject(null)} onMutated={onMutated} />}
+      <section className="captions-style-section" aria-label={t("captions.style_heading")}>
+        <div className="captions-toolbar-heading">
+          <h4>{t("captions.style_heading")}</h4>
+          <Button variant="outline" disabled={!projectId} onClick={() => setCorrectionProject(projectId ?? null)}>{t('text_correction.title')}</Button>
+        </div>
+        <div className="captions-style-fields">
+          <div className="captions-style-control">
             <span className="captions-style-label">{t("captions.size_label")}</span>
             <AppNumberField
+              disabled={!cues.length}
               value={fontSize}
               step={1}
               min={6}
@@ -189,8 +183,11 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
                 )
               }
             />
+          </div>
+          <div className="captions-style-control">
             <span className="captions-style-label">{t("captions.outline_label")}</span>
             <AppNumberField
+              disabled={!cues.length}
               value={outlineWidth}
               step={1}
               min={0}
@@ -204,23 +201,39 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
                 )
               }
             />
-            <AppColorField
-              value={rgbaToHex(color)}
-              ariaLabel={t("property_panel.color")}
-              onValueChange={(hex) => {
-                const next = hexToRgba(hex, color.a);
-                setColor(next);
-                if (colorDebounceRef.current) clearTimeout(colorDebounceRef.current);
-                colorDebounceRef.current = setTimeout(() => {
-                  void tryMutate(
-                    () => restyleCaptions({ color: next }).then(onMutated),
-                    "Restyle captions",
-                  );
-                }, 250);
-              }}
+          </div>
+          <AppColorField
+            disabled={!cues.length}
+            value={rgbaToHex(color)}
+            ariaLabel={t("property_panel.color")}
+            onValueChange={(hex) => {
+              const next = hexToRgba(hex, color.a);
+              setColor(next);
+              if (colorDebounceRef.current) clearTimeout(colorDebounceRef.current);
+              colorDebounceRef.current = setTimeout(() => {
+                void tryMutate(
+                  () => restyleCaptions({ color: next }).then(onMutated),
+                  "Restyle captions",
+                );
+              }, 250);
+            }}
+          />
+        </div>
+      </section>
+      {cues.length === 0 ? (
+        <p className="placeholder">{t("captions.empty")}</p>
+      ) : (
+        <ul className="captions-list">
+          {cues.map((cue) => (
+            <CaptionCueRow
+              key={cue.layer.id}
+              cue={cue}
+              selected={cue.layer.id === selectedLayerId}
+              onActivate={activateCue}
+              onCommit={commitText}
             />
-          </section>
-        </>
+          ))}
+        </ul>
       )}
     </section>
   );

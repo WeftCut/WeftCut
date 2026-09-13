@@ -1,4 +1,6 @@
 import path from 'node:path'
+import { sourceSignature } from './state/mutations/textCorrection.js'
+import { locateLayer } from './state/mutations/helpers.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import { Readable } from 'node:stream'
@@ -1319,10 +1321,14 @@ app.whenReady().then(async () => {
     // contract is the tool's answer, and unwrapping in one place beats every
     // caller learning MCP's carrier shape.
     if (tsHost && CLIP_COMPUTE_CHANNELS.has(channel)) {
+      const before = tsHost.actor.snapshot()
+      const located = channel === 'transcribe_clip' ? locateLayer(before, (args as { layer_id?: string })?.layer_id ?? '') : null
+      const source = located ? { id: located.layer.id, signature: sourceSignature(located.layer), project_id: before.project_id, composition_id: located.comp.id } : undefined
       const result = await callClipComputeTool(
         backend!, tsHost, channel, (args ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm, peaksPathFor,
       )
-      return toolResultPayload(result)
+      const payload = toolResultPayload(result)
+      return source && payload && typeof payload === 'object' ? { ...payload, source } : payload
     }
     // Audio-effect bake state (ADR 0063): three reads served by the baker, the
     // sole holder of that state — it is a derivation, never project state, so

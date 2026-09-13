@@ -21,7 +21,7 @@ export interface CueStyle {
   pos?: [number, number] | null
 }
 /** subtitles/mod.rs Cue — one subtitle cue (text keeps explicit '\n'). */
-export interface Cue { start_us: number; end_us: number; text: string; style?: CueStyle }
+export interface Cue { start_us: number; end_us: number; text: string; style?: CueStyle; metadata?: Record<string, unknown> }
 
 const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 }
 const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 }
@@ -163,7 +163,8 @@ export function applyAddCaptionTrack(p: Project, idGen: IdGen, cues: Cue[], comp
     const e = snapOnGrid(cue.end_us, grid)
     let lane = lanes.find((t) => spanFree(t, s, e))
     if (!lane) { lane = newCaptionTrack(c, idGen, label); lanes.push(lane) }
-    applyAddLayer(p, idGen, lane.id, cueToTextParams(cue, compW, compH), cue.start_us, cue.end_us)
+    const layerId = applyAddLayer(p, idGen, lane.id, cueToTextParams(cue, compW, compH), cue.start_us, cue.end_us)
+    if (cue.metadata) lane.layers.find(l => l.id === layerId)!.metadata = cue.metadata
     first ??= lane.id
   }
   return first ?? newCaptionTrack(c, idGen, label).id // empty-cues safety net (Track::new after the loop)

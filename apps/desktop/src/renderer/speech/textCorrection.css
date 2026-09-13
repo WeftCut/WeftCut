@@ -1,0 +1,24 @@
+.text-correction-panel {
+  width: min(640px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 13px;
+  box-shadow: 0 16px 64px #0008;
+}
+.text-correction-panel header, .text-correction-panel footer { display: flex; align-items: center; gap: 12px; }
+.text-correction-panel header { justify-content: space-between; margin-bottom: 16px; }
+.text-correction-panel header h2 { font-size: 16px; font-weight: 600; }
+.text-correction-field { display: grid; gap: 8px; }
+.text-correction-field textarea { width: 100%; min-height: 180px; max-height: 45vh; resize: vertical; line-height: 1.6; }
+.text-correction-hint { margin: 8px 0 16px; color: var(--muted-foreground); font-size: 12px; }
+.text-correction-scope { display: flex; gap: 12px; align-items: center; }
+.text-correction-scope > span { white-space: nowrap; flex-shrink: 0; }
+.text-correction-scope select { min-width: 0; flex: 1; }
+.text-correction-panel footer { justify-content: flex-end; margin-top: 20px; }
+.text-correction-panel footer > :first-child { margin-right: auto; }
+.text-correction-error { color: var(--destructive); margin-top: 12px; }

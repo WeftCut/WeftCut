@@ -525,6 +525,8 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   // get_project_settings → the renderer proxy store) hands `undefined` downstream
   // and a `settings.proxy_overrides[id]` read throws mid-render. Existing keys win.
   o.settings = { ...defaultSettings(), ...(o.settings as Record<string, unknown>) }
+  const correctionSettings = o.settings as Record<string, unknown>
+  if (typeof correctionSettings.correction_script !== 'string') delete correctionSettings.correction_script
   // `Composition.ordinal` / `Project.next_group_ordinal`: absent → creation-order
   // numbers and a counter above them, so a project written before the pair
   // existed opens under the numbering it always showed — see the function.

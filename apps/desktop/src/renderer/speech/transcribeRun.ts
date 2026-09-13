@@ -12,7 +12,7 @@
 // A run reads N clips and writes ONCE (ADR 0070). The reads go one at a time,
 // in timeline order — two engines on one machine would fight for the same
 // cores, and two cloud calls in flight would bill in an order nobody chose —
-// and every transcript that came back is applied in one `apply_subtitles`
+// and every transcript that came back is applied in one `apply_transcripts`
 // call, so a six-clip transcription is one history row and one undo, and the
 // caption packing sees every cue at once. The run stops at the first clip that
 // fails and still lands what it has: the engine-wide failures (no model, no
@@ -31,7 +31,7 @@ import { create } from "zustand";
 
 import { logMutationFailure, refusalText } from "../errors/tryMutate";
 import {
-  applySubtitles,
+  applyTranscripts,
   logEmit,
   transcribeClip,
   type LogEntryInput,
@@ -60,6 +60,8 @@ export interface TranscribeClip {
 
 /// What to transcribe, and what to do once the cues have landed.
 export interface TranscribeRunTarget {
+  projectId: string;
+  compositionId: string;
   /// In the order they are read — the caller hands them over in timeline
   /// order (`transcribeSubjects`), already reduced to one subject per source.
   clips: readonly TranscribeClip[];
@@ -176,14 +178,13 @@ export async function runTranscribe(target: TranscribeRunTarget): Promise<string
     }
   }
 
-  // The write half: one `apply_subtitles` over every transcript. The SRT
-  // bodies concatenate as they are — each ends in a blank line, and the parser
-  // takes its cues from the `-->` lines, never from the per-body numbering —
-  // so no body is rebuilt here from `segments`.
+  // One write for all successful reads, retaining normalized word timing and
+  // source identity with the caption layers. SRT would discard this evidence,
+  // making later text correction unable to resegment after reopening a project.
   let applyError: unknown = null;
   if (transcripts.length > 0) {
     try {
-      await applySubtitles(transcripts.map((t) => t.srt).join(""));
+      await applyTranscripts(transcripts, target.projectId, target.compositionId, clips.slice(0, transcripts.length).map(c => c.layerId));
     } catch (err) {
       applyError = err;
     }
@@ -198,7 +199,7 @@ export async function runTranscribe(target: TranscribeRunTarget): Promise<string
   const clean = failed === null && applyError === null;
   if (landed) void logEmit(doneRow(transcripts, clean ? opId : null));
   if (failed !== null) void logEmit(failedRow(failed.clip, failed.err, applyError === null ? opId : null));
-  if (applyError !== null) logMutationFailure(applyError, "apply_subtitles", opId);
+  if (applyError !== null) logMutationFailure(applyError, "apply_transcripts", opId);
 
   // Cleared before the reveal and on failure too, or the command stays greyed
   // for the rest of the session.

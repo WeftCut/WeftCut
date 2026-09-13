@@ -41,6 +41,9 @@ import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolTe
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 import { applySetPosition, applyTranslatePath } from './mutations/position'
+import { applyTextCorrection, applyTranscripts } from './mutations/textCorrection'
+import { CORRECTION_SCRIPT_MAX, type TextCorrectionExpectation } from '../../shared/textCorrectionRequest'
+import type { TranscriptPayload } from '../../shared/captionTiming'
 import type { PositionAnimation } from '../../shared/position'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
@@ -673,6 +676,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   // ── update_project_settings — UNRECORDED.
   //    Clone settings, apply the present fields, replace-everywhere + broadcast. ──
   function updateProjectSettings(patch: {
+    correction_script?: string
     prefer_proxies?: boolean | null
     proxy_override?: { media_id: string; value: boolean | null } | null
     shot_review?: { sensitivity: number; min_shot_us: number } | null
@@ -711,6 +715,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
       return { threshold_amp: o.threshold_amp, min_pause_us: o.min_pause_us, pad_us: o.pad_us }
     }
     const next = { ...current().settings, proxy_overrides: { ...current().settings.proxy_overrides } }
+    if (patch.correction_script !== undefined) {
+      if (typeof patch.correction_script !== 'string' || patch.correction_script.length > CORRECTION_SCRIPT_MAX)
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'correction_script', detail: `Reference text must be at most ${CORRECTION_SCRIPT_MAX} characters` })
+      next.correction_script = patch.correction_script
+    }
     if (typeof patch.prefer_proxies === 'boolean') next.prefer_proxies = patch.prefer_proxies
     if (patch.proxy_override) {
       const { media_id, value } = patch.proxy_override
@@ -1298,6 +1307,22 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'update_role_flags': updateRoleFlags(a.role as string, a.patch as RoleFlagsPatch); return { ok: true, value: null }
         case 'update_project_settings': updateProjectSettings(a.patch as { prefer_proxies?: boolean | null; proxy_override?: { media_id: string; value: boolean | null } | null; shot_review?: { sensitivity: number; min_shot_us: number } | null; pause_review?: { threshold_amp: number; min_pause_us: number; pad_us: number } | null }); return { ok: true, value: null }
         case 'add_caption_track': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.trackAddCaption, trackRef, { kind: 'Coarse' }, (d) => applyAddCaptionTrack(d, idGen, a.cues as Cue[], a.comp_w as number, a.comp_h as number, (a.label as string) ?? null, comp)) } }
+        case 'set_correction_script': {
+          if (a.project_id !== current().project_id) throw new CommandFailure({ error: 'InvalidArgument', field: 'project_id', detail: 'The project has changed' })
+          updateProjectSettings({ correction_script: a.text as string })
+          return { ok: true, value: null }
+        }
+        case 'correct_caption_text': {
+          if (a.project_id !== current().project_id) throw new CommandFailure({ error: 'InvalidArgument', field: 'project_id', detail: 'The project has changed' })
+          const comp = scopeComposition(current(), a.composition_id as string)
+          const refs: EntityRef[] = comp.tracks.filter(t => t.role === 'Caption').map(t => ({ kind: 'Track', id: t.id }))
+          return { ok: true, value: commit(HISTORY_SUMMARY.captionCorrect, refs, { kind: 'Coarse' }, d => applyTextCorrection(d, idGen, comp.id, a.layer_ids as string[] | null, a.expected as TextCorrectionExpectation | undefined)) }
+        }
+        case 'apply_transcripts': {
+          if (a.project_id !== current().project_id) throw new CommandFailure({ error: 'InvalidArgument', field: 'project_id', detail: 'The project has changed' })
+          const comp = scopeComposition(current(), a.composition_id as string)
+          return { ok: true, value: commit(HISTORY_SUMMARY.trackAddCaption, trackRef, { kind: 'Coarse' }, d => applyTranscripts(d, idGen, a.transcripts as TranscriptPayload[], comp.id, a.source_ids as string[])) }
+        }
         case 'restyle_captions': {
           // Project-wide: one commit over EVERY caption-role track in every
           // composition, so overlapping caption lanes restyle as a single undo

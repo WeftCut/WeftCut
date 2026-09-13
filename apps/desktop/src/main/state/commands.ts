@@ -204,6 +204,9 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   update_transition: (a) => ({ op: 'update_transition', args: { transition: a.transitionId, duration_us: a.durationUs, kind: a.kind, direction: a.direction, extended_us: a.extendedUs } }),
   remove_transition: (a) => ({ op: 'remove_transition', args: { transition: a.transitionId } }),
   restyle_captions: (a) => ({ op: 'restyle_captions', args: { patch: a.patch } }),
+  correct_caption_text: (a) => ({ op: 'correct_caption_text', args: a }),
+  set_correction_script: (a) => ({ op: 'set_correction_script', args: a }),
+  apply_transcripts: (a) => ({ op: 'apply_transcripts', args: a }),
   update_project_settings: (a) => ({ op: 'update_project_settings', args: { patch: a.patch } }),
   project_undo: () => ({ op: 'undo', args: {} }),
   project_redo: () => ({ op: 'redo', args: {} }),
@@ -252,6 +255,8 @@ export const PRODUCTION_OPS = new Set<string>([
   'add_transition', 'update_transition', 'remove_transition',
   'add_marker', 'update_marker', 'remove_marker', 'attach_marker', 'detach_marker',
   'separate_audio_to_new_track', 'restyle_captions',
+  'correct_caption_text', 'apply_transcripts',
+  'set_correction_script',
   'update_project_settings', 'project_undo', 'project_redo', 'project_restore_checkpoint',
   'project_jump_to', 'project_create_checkpoint', 'project_delete_checkpoint',
   // add_motif as a pure TS recorded mutation

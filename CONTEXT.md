@@ -793,6 +793,14 @@ region on the card and dragging on that clip. UI word: Select region / 选区.
 _Avoid_: noise selection, region of effect, in/out marks (those are export
 state), profile range, noise print
 
+## Caption correction
+
+**文字校正**:
+The reference-text-assisted correction of transcribed or existing caption text,
+including resegmentation using the timing information available. It applies to
+existing captions as well as newly generated transcripts.
+_Avoid_: 强制对齐 (the distinct acoustic timing operation), 文稿对齐 (as the product name)
+
 ## Agent activity
 
 **Agent view**:

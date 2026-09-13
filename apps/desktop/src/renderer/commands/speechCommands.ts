@@ -25,6 +25,7 @@ import {
 } from "../speech/autoCaptionEligibility";
 import { runTranscribe } from "../speech/transcribeRun";
 import { openVoiceoverPrompt } from "../speech/voiceoverPrompt";
+import { useProjectStore } from "../state/projectStore";
 
 export { canAutoCaptionSelection };
 
@@ -64,8 +65,14 @@ export async function transcribeSelected(deps: {
   // selection changed can still reach here, and doing nothing is the honest
   // answer to "no target".
   if (clips.length === 0) return;
+  const state = useProjectStore.getState();
+  const projectId = state.summary?.project_id;
+  const compositionId = state.compositionIdByLayerId.get(clips[0]!.id);
+  if (!projectId || !compositionId) return;
   const t = (key: string, values: Record<string, unknown>) => i18n.t(key, values);
   const message = await runTranscribe({
+    projectId,
+    compositionId,
     clips: clips.map((layer) => ({ layerId: layer.id, label: layerDisplayName(layer, t) })),
     revealCaptions: deps.revealCaptions,
   });

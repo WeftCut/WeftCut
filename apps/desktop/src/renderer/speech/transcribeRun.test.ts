@@ -3,7 +3,7 @@ import "../i18n";
 
 const mocks = vi.hoisted(() => ({
   transcribeClip: vi.fn(),
-  applySubtitles: vi.fn(),
+  applyTranscripts: vi.fn(),
   logEmit: vi.fn(),
 }));
 
@@ -12,15 +12,14 @@ vi.mock("../ipc", async (importActual) => {
   return {
     ...actual,
     transcribeClip: mocks.transcribeClip,
-    applySubtitles: mocks.applySubtitles,
+    applyTranscripts: mocks.applyTranscripts,
     logEmit: mocks.logEmit,
   };
 });
 
 import { runTranscribe, setTranscribing, useTranscribeRunStore } from "./transcribeRun";
 
-/// One transcript envelope — only `srt`, `segments` and `backend` are read by
-/// the run.
+/// One transcript envelope, forwarded intact so word timing is not discarded.
 function transcript(cues = 3, over: { backend?: string; srt?: string } = {}) {
   return {
     backend: over.backend ?? "openai",
@@ -52,13 +51,13 @@ const CLIPS = [
 
 describe("runTranscribe", () => {
   const reveal = vi.fn();
-  const target = () => ({ clips: CLIPS.slice(0, 1), revealCaptions: reveal });
-  const many = () => ({ clips: CLIPS, revealCaptions: reveal });
+  const target = () => ({ clips: CLIPS.slice(0, 1), projectId: "project", compositionId: "composition", revealCaptions: reveal });
+  const many = () => ({ clips: CLIPS, projectId: "project", compositionId: "composition", revealCaptions: reveal });
   const rows = () => mocks.logEmit.mock.calls.map((c) => c[0]);
 
   beforeEach(() => {
     mocks.transcribeClip.mockReset().mockResolvedValue(transcript());
-    mocks.applySubtitles.mockReset().mockResolvedValue("track-cap");
+    mocks.applyTranscripts.mockReset().mockResolvedValue("track-cap");
     mocks.logEmit.mockReset().mockResolvedValue(undefined);
     reveal.mockReset();
     setTranscribing(false);
@@ -66,12 +65,12 @@ describe("runTranscribe", () => {
   afterEach(() => setTranscribing(false));
 
   // The two steps in order, and the second fed by the first: the write half
-  // takes the `srt` the read half rendered, never a body built here. No
+  // takes the normalized transcript returned by the read half. No
   // language goes on the wire — detection is the engine's, not a field's.
-  it("transcribes with no language hint, then applies the returned SRT", async () => {
+  it("transcribes with no language hint, then applies the returned transcript", async () => {
     expect(await runTranscribe(target())).toBe("");
     expect(mocks.transcribeClip).toHaveBeenCalledWith("l-1");
-    expect(mocks.applySubtitles).toHaveBeenCalledWith(transcript().srt);
+    expect(mocks.applyTranscripts).toHaveBeenCalledWith([transcript()], "project", "composition", ["l-1"]);
   });
 
   // A landed transcript is invisible until its editor is open, so a success
@@ -102,10 +101,9 @@ describe("runTranscribe", () => {
   });
 
   // ADR 0070: N reads, one write. The reads go one at a time in the order
-  // given, and every transcript that came back lands in ONE `apply_subtitles`
+  // given, and every transcript that came back lands in ONE `apply_transcripts`
   // call — one history row, one undo, and the packing sees every cue at once.
-  // The bodies concatenate as rendered: each ends in a blank line and the
-  // parser reads the `-->` lines, not the numbering.
+  // Each envelope keeps its normalized segments and its source identity.
   it("transcribes several clips one at a time, in order, and applies every transcript in one call", async () => {
     const order: string[] = [];
     let inFlight = 0;
@@ -119,9 +117,10 @@ describe("runTranscribe", () => {
     });
     expect(await runTranscribe(many())).toBe("");
     expect(order).toEqual(["l-1", "l-2", "l-3"]);
-    expect(mocks.applySubtitles).toHaveBeenCalledTimes(1);
-    expect(mocks.applySubtitles).toHaveBeenCalledWith(
-      ["l-1", "l-2", "l-3"].map((id) => `1\n00:00:00,000 --> 00:00:01,000\n${id}\n\n`).join(""),
+    expect(mocks.applyTranscripts).toHaveBeenCalledTimes(1);
+    expect(mocks.applyTranscripts).toHaveBeenCalledWith(
+      ["l-1", "l-2", "l-3"].map((id) => transcript(2, { srt: `1\n00:00:00,000 --> 00:00:01,000\n${id}\n\n` })),
+      "project", "composition", ["l-1", "l-2", "l-3"],
     );
     expect(reveal).toHaveBeenCalledTimes(1);
   });
@@ -161,8 +160,8 @@ describe("runTranscribe", () => {
       "Error: audio payload too large for the provider (13 min limit); narrow the window",
     );
     expect(mocks.transcribeClip).toHaveBeenCalledTimes(2);
-    expect(mocks.applySubtitles).toHaveBeenCalledTimes(1);
-    expect(mocks.applySubtitles).toHaveBeenCalledWith("one\n\n");
+    expect(mocks.applyTranscripts).toHaveBeenCalledTimes(1);
+    expect(mocks.applyTranscripts).toHaveBeenCalledWith([transcript(3, { srt: "one\n\n" })], "project", "composition", ["l-1"]);
     expect(rows()).toHaveLength(3);
     expect(rows()[1]).toMatchObject({ i18n_key: "log.auto_caption_done", i18n_args: { cues: 3 } });
     expect(rows()[1].op_state).toBeUndefined();
@@ -184,7 +183,7 @@ describe("runTranscribe", () => {
     mocks.transcribeClip.mockRejectedValueOnce(ipcError("no transcription model available — select and prepare a model in Settings → Transcription"));
     expect(await runTranscribe(many())).toContain("Settings → Transcription");
     expect(mocks.transcribeClip).toHaveBeenCalledTimes(1);
-    expect(mocks.applySubtitles).not.toHaveBeenCalled();
+    expect(mocks.applyTranscripts).not.toHaveBeenCalled();
     expect(reveal).not.toHaveBeenCalled();
     expect(rows()).toHaveLength(2);
     expect(rows()[1]).toMatchObject({ i18n_args: { clip: "interview.mov" }, op_state: { state: "Err" } });
@@ -212,7 +211,7 @@ describe("runTranscribe", () => {
     mocks.transcribeClip.mockRejectedValue(ipcError(message));
     expect(await runTranscribe(target())).toBe(`Error: ${message}`);
     // Nothing was written and nothing was revealed.
-    expect(mocks.applySubtitles).not.toHaveBeenCalled();
+    expect(mocks.applyTranscripts).not.toHaveBeenCalled();
     expect(reveal).not.toHaveBeenCalled();
     expect(rows()).toHaveLength(2);
     expect(rows()[1]).toMatchObject({ op_id: rows()[0].op_id, op_state: { state: "Err" } });
@@ -233,7 +232,7 @@ describe("runTranscribe", () => {
   // the caption track is the half that touches the project — and it is the row
   // that closes the op.
   it("answers the apply step's failure when that is the one that fails", async () => {
-    mocks.applySubtitles.mockRejectedValue(ipcError("caption track refused"));
+    mocks.applyTranscripts.mockRejectedValue(ipcError("caption track refused"));
     expect(await runTranscribe(target())).toBe("Error: caption track refused");
     expect(reveal).not.toHaveBeenCalled();
     expect(rows()).toHaveLength(2);
@@ -252,7 +251,7 @@ describe("runTranscribe", () => {
   });
 
   it("does nothing for an empty clip list", async () => {
-    expect(await runTranscribe({ clips: [], revealCaptions: reveal })).toBe("");
+    expect(await runTranscribe({ clips: [], projectId: "project", compositionId: "composition", revealCaptions: reveal })).toBe("");
     expect(mocks.transcribeClip).not.toHaveBeenCalled();
     expect(mocks.logEmit).not.toHaveBeenCalled();
     expect(useTranscribeRunStore.getState().transcribing).toBe(false);

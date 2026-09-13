@@ -34,13 +34,14 @@ chokepoint so there is exactly one parsing path and one mutation:
   *Cues pack into the caption tracks already there*, below) and the tool
   returns the id of the track the first cue landed on.
 - **Transcription.** `transcribe_clip` returns a normalized transcript
-  envelope; its rendered `srt` field (timestamps already timeline-absolute)
-  pipes into `apply_subtitles` to land the cues on a caption track at the
-  right offset. A person reaches the same pair as **Transcribe selected clip**
+  envelope with timeline-absolute timestamps. The app passes this structure to
+  `apply_transcripts`, preserving word timing alongside the generated captions.
+  The rendered `srt` field remains available to subtitle consumers.
+  A person starts the flow with **Transcribe selected clip**
   on a `VideoClip` / `Audio` layer's context menu, in the Edit menu and in the
   search palette: no dialog — the language is the engine's to detect — so the
   press reads every selected clip with sound, one at a time in timeline order,
-  applies all the returned `srt` bodies in ONE `apply_subtitles` call, and
+  applies all successful normalized transcripts in ONE `apply_transcripts` call, and
   reveals the Caption panel so the cues are visible. One subject per source: a
   linked picture clip yields to its selected same-media audio, and the same
   source span selected twice is read once ([ADR 0070](adr/0070-captions-land-where-there-is-room-and-a-transcription-reads-each-selected-source-once.md)).
@@ -49,11 +50,56 @@ chokepoint so there is exactly one parsing path and one mutation:
   which is strictly more than a review list offers ([features.md](features.md)
   § Transcribe and voiceover).
 
-All three call `subtitles::parse(body, format)` → `Cue { start_us, end_us, text,
-style }`, then the atomic `add_caption_track` mutation. Format is sniffed
-(`subtitles::sniff`) when the caller does not supply one. The whole import is a
+File and inline subtitle imports call `subtitles::parse(body, format)` →
+`Cue { start_us, end_us, text, style }`; normalized transcripts supply cues
+directly. Both converge on the same caption packing mutation. Format is sniffed
+(`subtitles::sniff`) when a subtitle caller does not supply one. The whole import is a
 single history entry, *Added captions* (one undo removes the whole import,
 however many cues).
+
+## Text correction / 文字校正
+
+The Caption Panel's **Text correction** button opens a plain-text manuscript
+dialog. One manuscript belongs to the project (`settings.correction_script`,
+optional for older v1 files); edits use unrecorded project settings, survive
+closing the dialog, and save with the project. Clearing it does not clear
+captions. Applying correction is a separate recorded transaction: one undo
+restores the preceding captions while retaining the manuscript.
+
+The default scope is selected caption Text layers when any are selected,
+otherwise all captions of the open composition. The dialog shows the count.
+Locked targets refuse the whole operation. Every run uses current caption
+text, including manual changes, and the current manuscript. The dialog captures
+its input before awaiting manuscript saves; changed text, times, target sets or
+manuscripts refuse the operation instead of applying to stale inputs. There are no
+review markers, confirmation states, or protected-manual-text flags.
+
+`shared/textCorrection.ts` prepares a normalized manuscript index, finds local
+candidate windows, and aligns text sequences with gaps on either side.
+Context-supported Chinese homophones and equivalent formatting may be
+corrected; numerical/negation conflicts, ambiguous colloquial numbers and unsupported substitutions are
+preserved. Extra spoken text remains and unmatched manuscript text is not
+inserted. Repeated contexts with conflicting spellings abstain. No acoustic
+model, cloud request, or forced alignment is part of this operation.
+
+New transcriptions retain optional version-1 `weftcut.caption_timing` metadata
+on each caption: text, caption duration, timing provenance, relative word
+spans, and a source identity/signature when available. The renderer's
+transcription response captures the source before asynchronous recognition;
+ingestion refuses results whose project, composition or source window changed.
+Metadata follows the ordinary project save path. Caption moves preserve
+relative spans; text/duration edits or source changes make the mapping
+ineligible rather than guessing new timestamps.
+
+With usable engine word times, correction can split or combine adjacent
+captions using manuscript punctuation, observed gaps and caption length.
+Static appearance is inherited, different styles/positions are not combined,
+and animated captions keep their boundaries. Links, transitions and anchored
+markers also prevent resegmentation. Imported captions and interpolated
+timings support text/punctuation correction with their existing time bounds.
+The `exact` provenance is not itself proof of a usable boundary: word coverage,
+ordering and duration are checked before resegmentation. Repeating a correction
+with unchanged input produces no new history entry.
 
 **Cues pack into the caption tracks already there.** `add_caption_track` tries
 the composition's own unlocked caption tracks first, in track order, and lands

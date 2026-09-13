@@ -246,6 +246,8 @@ export interface ShotReviewSettings { sensitivity: number; min_shot_us: number }
  *  and the section's slider is the only surface that thinks in decibels. */
 export interface PauseReviewSettings { threshold_amp: number; min_pause_us: number; pad_us: number }
 export interface ProjectSettings {
+  /** One project manuscript; optional on older v1 projects. */
+  correction_script?: string
   preview_width: number; preview_height: number; autosave_interval_secs: number | null
   history_capacity: number; auto_pair_audio_on_import: boolean
   prefer_proxies: boolean

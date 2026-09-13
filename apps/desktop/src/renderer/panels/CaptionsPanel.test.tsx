@@ -177,7 +177,7 @@ describe("CaptionsPanel", () => {
     seed();
     render(<CaptionPanel onMutated={async () => {}} onActivateCue={ignoreCueActivation} />);
     // Style heading visible
-    expect(screen.getByText("Caption style")).toBeTruthy();
+    expect(screen.getByText("Style")).toBeTruthy();
     expect(screen.getByLabelText("Font size (px)")).toBeTruthy();
     expect(screen.getByLabelText("Outline width (px), 0 for none")).toBeTruthy();
     expect(screen.getByLabelText("Color")).toBeTruthy();

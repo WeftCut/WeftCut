@@ -3,6 +3,14 @@
 // UI word for a placed item is `clip` — never `layer`, which stays the model word in
 // code, commands and ADRs (CONTEXT.md **Layer**). zh-CN mirrors this as 片段.
 const enUS = {
+  text_correction: {
+    title: "Text correction", script: "Reference text", placeholder: "Paste your reference text here…",
+    saved_with_project: "This text is saved with your project. Captions change only when you apply correction.",
+    scope: "Apply to", selected: "Selected captions ({{count}})", all: "All captions in this composition ({{count}})",
+    apply_selected: "Correct {{count}} selected captions", apply_all: "Correct all {{count}} captions",
+    clear: "Clear text", close: "Close", running: "Correcting…", locked: "Unlock the target captions to correct their text.",
+    completed: "Text correction completed ({{count}} captions changed)",
+  },
   models: {
     current_label: "Current model", none_selected: "None", none_active: "No model selected",
     switch_hint: "Select a model to switch automatically. Downloads and first-time setup require an extra step.",
@@ -2164,7 +2172,7 @@ const enUS = {
   captions: {
     title: "Captions",
     empty: "Import a subtitle file or transcribe a clip to create captions.",
-    style_heading: "Caption style",
+    style_heading: "Style",
     // The two words beside the number fields; the aria-label below says what 0
     // does, because the field has no visible way to.
     size_label: "Size",
@@ -2438,7 +2446,7 @@ const enUS = {
       rename: "Renamed Group",
     },
     composition: { delete: "Deleted Group" },
-    caption: { restyle: "Restyled captions" },
+    caption: { restyle: "Restyled captions", correct: "Corrected caption text" },
     media: {
       remove_cascade:
         "Removed media {{media}} and {{count}} referencing clip(s)",
