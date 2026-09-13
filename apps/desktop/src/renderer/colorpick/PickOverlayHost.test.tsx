@@ -80,6 +80,34 @@ function seedSession(overrides: Partial<PickSession> = {}): { settle: ReturnType
 }
 
 describe("PickOverlayHost", () => {
+  it('samples the effect texture at its composition offset', () => {
+    registerPreviewSampler(sampler);
+    const { settle } = seedSession({ opts: { effectInput: { layerId: 'L1', effectId: 'E1' } },
+      comp: { pixels: new Uint8Array([12, 34, 56, 255]), width: 1, height: 1,
+        region: { x: 5, y: 5, width: 1, height: 1 } } });
+    render(<PickOverlayHost />);
+    fireEvent.click(screen.getByTestId('colorpick-overlay'), { clientX: 150, clientY: 150 });
+    expect(settle).toHaveBeenCalledWith({ hex: '#0c2238', source: 'effect-input' });
+  });
+
+  it('does not substitute the editor screenshot when effect input is unavailable', () => {
+    registerPreviewSampler(sampler);
+    const { settle } = seedSession({ opts: { effectInput: { layerId: 'L1', effectId: 'E1' } }, comp: null });
+    render(<PickOverlayHost />);
+    fireEvent.click(screen.getByTestId('colorpick-overlay'), { clientX: 150, clientY: 150 });
+    expect(settle).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toBeTruthy();
+  });
+
+  it('does not substitute a covered or transparent region with screenshot pixels', () => {
+    registerPreviewSampler(sampler);
+    const { settle } = seedSession({ opts: { effectInput: { layerId: 'L1', effectId: 'E1' } },
+      comp: { pixels: new Uint8Array(4), width: 1, height: 1, region: { x: 5, y: 5, width: 1, height: 1 } } });
+    render(<PickOverlayHost />);
+    for (const clientX of [120, 150]) fireEvent.click(screen.getByTestId('colorpick-overlay'), { clientX, clientY: 150 });
+    expect(settle).not.toHaveBeenCalled();
+  });
+
   it("renders nothing without a session", () => {
     render(<PickOverlayHost />);
     expect(screen.queryByTestId("colorpick-overlay")).toBeNull();

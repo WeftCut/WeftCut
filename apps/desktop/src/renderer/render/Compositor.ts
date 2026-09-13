@@ -695,7 +695,7 @@ export class Compositor {
   /// `autoStart: true`), and @pixi/react's Application reconciler is
   /// wired against that ticker. compositeFrame's job is to mutate
   /// the scene graph; the ticker presents it.
-  compositeFrame(tUs: number): void {
+  compositeFrame(tUs: number, effectInput?: import('./effects/EffectInputCapture').EffectInputRequest): void {
     if (this.disposed) return;
     if (this.suspended) return;
     this.lastTUs = tUs;
@@ -753,7 +753,7 @@ export class Compositor {
     // hydrates the settings store, but this guard is structural so
     // correctness doesn't depend on that implementation detail.
     const previewEffectsEnabled =
-      this.mode === "export"
+      this.mode === "export" || effectInput
         ? true
         : useAppSettingsStore.getState().settings.preview_effects_enabled;
 
@@ -765,7 +765,7 @@ export class Compositor {
     // Same reset half for the underrun sweep; `updateClip` only ADDS.
     this.sweepLateLayers = 0;
 
-    this.root.compositeVisual(tUsSnapped, { previewEffectsEnabled });
+    this.root.compositeVisual(tUsSnapped, effectInput ? { previewEffectsEnabled, effectInput } : { previewEffectsEnabled });
 
     // Fire `onUnsupported` ONLY on membership change — size first (cheap),
     // then an early-exit membership scan. An unconditional fire would drive

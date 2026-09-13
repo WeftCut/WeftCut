@@ -101,6 +101,26 @@ compatibility click event truncated them in this build, causing a one-pixel
 offset. Commit from the PointerEvent position with round-trip rounding.
 See `poc/colorpick/FINDINGS.md` for the initial probe and remaining platform cells.
 
+## Effect-input picking reads the GPU texture before pool reuse
+
+Implemented and verified 2026-09-13 on Windows, Electron 44.1.1 / Pixi 8.20.1.
+The color-picker E2E runs the real editor on WebGPU (`renderer=2`) and forced
+WebGL fallback (`renderer=1`). An asymmetric image with an upstream brightness
+effect, downstream brightness and an opaque covering layer still samples the
+upstream result exactly. Disabled target, translation, scale, rotation, half
+preview resolution, effects-preview bypass, half opacity, transparent-region
+rejection and one-step undo are covered by the same test.
+
+Pixi's WebGPU `extract.pixels(Texture)` goes through a WebGPU canvas and a 2D
+canvas. It copies the source extent, submits a separate command encoder and
+converts premultiplied alpha; it is not suitable for an in-flight filter input.
+`EffectInputCapture` instead queues `copyTextureToBuffer` on the render encoder
+while the pooled input is still owned, then maps the staging buffer after
+rendering. WebGL uses texture readback and restores the previous framebuffer.
+No pooled GPU texture survives the capture. Pixi's public
+`calculateSpriteMatrix` supplies the input rectangle relative to an identity
+reference sprite, keeping padding/clipping out of the picker coordinate code.
+
 ## Buffer-defined `VideoFrame` conversion ignores the stamped `colorSpace` (always BT.601)
 
 Observed 2026-07-16 in the real app (the export ProRes fidelity gate), Electron 42 / Chromium 148. When a `VideoFrame` is constructed **from an ArrayBuffer** (`new VideoFrame(data, { format: "NV12", colorSpace: … })`), Chromium's software RGB conversion (`drawImage`, `createImageBitmap`) applies BT.601 coefficients regardless of the stamped BT.709 `colorSpace`. **Decoder-produced** frames are unaffected — their conversion honors the tagged space.

@@ -1944,6 +1944,7 @@ const enUS = {
     error_unsupported: "Screen picking is unavailable on this desktop. You can still pick inside the editor.",
     error_permission: "Allow screen recording in system settings to pick outside the editor.",
     error_capture: "Could not capture the screen. Try again, or pick inside the editor.",
+    error_effect_input: "No color is available from this clip at the playhead. Cancel and move to a visible frame, or press S to pick from the screen.",
     error_timeout: "Screen picking timed out. Try again, or pick inside the editor.",
   },
   effects: {

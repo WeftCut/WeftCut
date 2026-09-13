@@ -416,6 +416,7 @@ interface ActiveAudio {
 
 export interface EffectOpts {
   previewEffectsEnabled: boolean;
+  effectInput?: import('./effects/EffectInputCapture').EffectInputRequest;
 }
 
 export class CompositionNode {

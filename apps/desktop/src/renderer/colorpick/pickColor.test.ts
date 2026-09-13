@@ -76,12 +76,12 @@ describe("pickColor", () => {
     await expect(p).resolves.toEqual({ hex: "#010203", source: "composition" });
     expect(usePickSessionStore.getState().session).toBeNull();
   });
-  it("forwards excludeEffectId into captureFrame", async () => {
+  it("forwards the layer and effect input target into captureFrame", async () => {
     const s = goodSampler();
     registerPreviewSampler(s);
-    const p = pickColor({ excludeEffectId: "E9" });
+    const p = pickColor({ effectInput: { layerId: 'L1', effectId: 'E9' } });
     await vi.waitFor(() => expect(usePickSessionStore.getState().session).not.toBeNull());
-    expect(s.captureFrame).toHaveBeenCalledWith({ excludeEffectId: "E9" });
+    expect(s.captureFrame).toHaveBeenCalledWith({ effectInput: { layerId: 'L1', effectId: 'E9' } });
     usePickSessionStore.getState().session!.settle(null);
     await expect(p).resolves.toBeNull();
   });

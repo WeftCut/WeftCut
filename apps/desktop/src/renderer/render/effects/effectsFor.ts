@@ -6,6 +6,7 @@
 import type { Filter } from "pixi.js";
 import type { LayerSummary } from "../../ipc";
 import type { EffectChain } from "./EffectChain";
+import type { EffectInputRequest } from './EffectInputCapture';
 
 /** Resolve a layer's effect chain to the ordered Pixi filters for this frame.
  *
@@ -17,8 +18,9 @@ export function effectsFor(
   chain: EffectChain,
   layer: LayerSummary,
   tInLayerUs: number,
-  opts?: { previewEffectsEnabled?: boolean },
+  opts?: { previewEffectsEnabled?: boolean; effectInput?: EffectInputRequest },
 ): Filter[] {
   if (opts?.previewEffectsEnabled === false) return [];
-  return chain.sync(layer.effects ?? [], tInLayerUs);
+  return chain.sync(layer.effects ?? [], tInLayerUs,
+    opts?.effectInput?.layerId === layer.id ? opts.effectInput : undefined);
 }

@@ -5,11 +5,16 @@
 
 import type { FrameBuffer } from "./pixel";
 
+export interface EffectInputTarget { layerId: string; effectId: string; }
+export interface PreviewFrame extends FrameBuffer {
+  /** Filter texture's rectangle in composition pixels; absent for a full composition. */
+  region?: { x: number; y: number; width: number; height: number };
+}
+
 export interface PreviewSampler {
-  /// One full-frame working-space freeze (composition resolution).
-  /// `excludeEffectId` disables that effect's filter for the freeze so the
-  /// sample matches the shader's INPUT (the chromakey feedback-loop fix).
-  captureFrame(opts?: { excludeEffectId?: string }): Promise<FrameBuffer>;
+  /// Freeze the composition, or the named effect's actual input texture.
+  /// Throws when that input is unavailable; never substitutes the composition.
+  captureFrame(opts?: { effectInput?: EffectInputTarget }): Promise<PreviewFrame>;
   /// CSS-px client point → composition pixel (letterbox-aware), or null when
   /// the point is outside the composition content.
   mapClientToComposition(clientX: number, clientY: number): { x: number; y: number } | null;

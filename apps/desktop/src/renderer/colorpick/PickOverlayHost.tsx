@@ -10,6 +10,7 @@ import { getPreviewSampler } from "./previewSamplerRegistry";
 import { usePickSessionStore, startScreenPick, type PickSession } from "./pickColor";
 import { screenPickAvailable } from "./screenPick";
 import { createMagnifier, magnifierPosition } from './magnifier';
+import { previewPoint } from './previewPoint';
 
 const MAG_RADIUS = 5; // 11×11 source patch
 const MAG_SCALE = 10; // → 110×110 magnifier canvas
@@ -47,7 +48,7 @@ export function PickOverlayHost() {
 
 interface Hit {
   hex: string;
-  source: "composition" | "ui";
+  source: "composition" | "effect-input" | "ui";
   patchBuf: FrameBuffer;
   px: number;
   py: number;
@@ -67,17 +68,22 @@ function PickOverlay({ session }: { session: PickSession }) {
 
   const sampleAt = (x: number, y: number): Hit | null => {
     const sampler = getPreviewSampler();
-    if (session.comp && sampler) {
+    if (sampler && (session.comp || session.opts.effectInput)) {
       const rect = sampler.canvasRect();
       if (rect && x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom) {
         const m = sampler.mapClientToComposition(x, y);
         if (m) {
+          // A missing/transparent effect input must never silently turn into
+          // a sample of the composited preview or editor screenshot.
+          if (!session.comp) return null;
+          const p = previewPoint(session.comp, m.x, m.y);
+          if (!p) return null;
           return {
-            hex: sampleHex(session.comp, m.x, m.y),
-            source: "composition",
+            hex: sampleHex(session.comp, p.x, p.y),
+            source: session.opts.effectInput ? "effect-input" : "composition",
             patchBuf: session.comp,
-            px: m.x,
-            py: m.y,
+            px: p.x,
+            py: p.y,
           };
         }
         // Letterbox bars inside the canvas element are painted chrome, not
@@ -204,6 +210,7 @@ function PickOverlay({ session }: { session: PickSession }) {
         {t("colorpick.hint_cancel")}
         {screenPickAvailable() ? ` · ${t("colorpick.hint_screen")}` : ""}
         {screenError && <div role="alert">{t(`colorpick.error_${screenError}`)}</div>}
+        {session.opts.effectInput && !session.comp && <div role="alert">{t('colorpick.error_effect_input')}</div>}
       </div>
     </div>
   );

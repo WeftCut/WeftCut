@@ -239,7 +239,7 @@ function EffectRow({
   const pickColorGroup = async (params: [string, string, string]) => {
     setErr(null);
     const result = await pickColor({
-      excludeEffectId: effect.id,
+      effectInput: { layerId: layer.id, effectId: effect.id },
       onHover: (hex) => {
         const [r, g, b] = hexToRgb01(hex);
         setTransientOverrides(effect.id, {

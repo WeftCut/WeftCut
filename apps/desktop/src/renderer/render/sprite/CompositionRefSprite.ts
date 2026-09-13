@@ -113,7 +113,8 @@ export class CompositionRefSprite implements StageableSprite {
     if (tChildUs < 0 || tChildUs >= comp.duration_us) {
       this.node.compositeNothing();
     } else {
-      this.node.compositeVisual(tChildUs, effectOpts);
+      // A pick names a layer of the open composition, not a reused child instance.
+      this.node.compositeVisual(tChildUs, { previewEffectsEnabled: effectOpts.previewEffectsEnabled });
     }
     this.renderer?.render({
       container: this.node.container,

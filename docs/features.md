@@ -1648,8 +1648,8 @@ in `renderer/state/navigation.ts`.
 
 One global pick session serves every color surface
 (`renderer/colorpick/pickColor.ts`). At session start it freezes two
-buffers — the composited preview via `extract.pixels` (working-space-true,
-composition resolution) and a `capturePage()` window snapshot — then every
+buffers — the preview (composition, or a selected effect's input texture)
+and a `capturePage()` window snapshot — then every
 hover sample is a CPU read. `S` switches the same session to desktop sampling:
 main captures each display before showing any overlay, then presents one
 independent window per display with the frozen screenshot, custom magnifier,
@@ -1660,15 +1660,29 @@ override path; only confirmation commits.
 **Why the sample source is frozen:** chromakey hover live-applies the key
 color while you move; sampling the live composite would read the keyed
 result (the background), not the source pixel — a feedback loop. The
-session freezes a composition with the selected filter disabled
-(`excludeEffectId`) and sampling never touches the live pipeline. This avoids
-self-feedback but is NOT exact effect-input sampling: downstream effects and
-other composited layers remain. Capturing the selected effect's actual input
-texture is a separate follow-up.
+effect picker names `{ layerId, effectId }` and freezes the actual filter input
+at that position in the layer's chain. Enabled upstream effects remain; the
+target, downstream effects and sibling compositing cannot contaminate the
+sample. A disabled target has an input at the same stored position. Capture
+renders offscreen at composition resolution with effects enabled, independent
+of preview LOD, and restores the normal chain before asynchronous readback.
+Subsequent hover reads only the frozen CPU buffer.
+
+`EffectInputCapture` uses a temporary pass-through filter. WebGPU copies into
+a staging buffer on the render's own command encoder before texture-pool reuse;
+WebGL reads the input texture and restores the framebuffer binding. Readback
+retains the shader's RGB representation, including premultiplication (no Canvas
+color/alpha conversion). Pixi's filter mapping supplies the actual rectangle,
+padding and resolution; the picker maps composition points to those texels.
+Outside/fully transparent input has no selectable color. If the target is
+unavailable, a localized explanation appears and preview clicks do not silently
+sample the composited screenshot; editor chrome and explicit desktop picking
+remain available. Targets belong to the open composition; picking an effect
+on a Group samples the Group's composed input, not an arbitrary child instance.
 
 **Seams:** `previewSamplerRegistry` — PixiPreview registers capture/mapping
 on mount; the picker never imports Pixi. `effectOverrides` — transient
-per-effect param overrides + disable flags consulted by
+per-effect param overrides consulted by
 `EffectChain.sync()`; never recorded, never in React state; PixiPreview
 re-composites on every change so hover edits render while paused.
 `AppColorField` — eyedropper button by default (`withEyeDropper={false}` to
@@ -1687,8 +1701,8 @@ a localized explanation. Captures live only in memory.
 effect preview. Windows SDR capture is verified on a single 110%-scaled screen;
 real mixed-DPI multi-monitor, macOS permission/Spaces and X11 need platform
 verification. Native Wayland global overlays are unavailable; the picker reports
-that limitation and keeps in-app sampling. The composition buffer is an 8-bit
-extract — HDR/10-bit picks read the tone-mapped value. Composition resolution
+that limitation and keeps in-app sampling. Preview picking is 8-bit in the
+current working space; it does not recover source HDR/10-bit values. Composition resolution
 does not recover original-source detail lost through a Quick proxy. Frozen
 window/desktop captures do not reflect subsequent UI changes.
 

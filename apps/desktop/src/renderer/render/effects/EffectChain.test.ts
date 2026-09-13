@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { BlurFilter } from "pixi.js";
+import { AlphaFilter, BlurFilter } from "pixi.js";
 import type { EffectView } from "../../ipc";
 import { EffectChain } from "./EffectChain";
 import {
@@ -29,6 +29,17 @@ const chromaView = (id: string): EffectView => ({
 });
 
 describe("EffectChain", () => {
+  it.each([true, false])('taps before the target at its stored position (enabled=%s), then restores the cached chain', enabled => {
+    const chain = new EffectChain();
+    const views = [blur('before', 2), { ...chromaView('key'), enabled }, blur('after', 3)];
+    const normal = chain.sync(views, 0);
+    const tap = new AlphaFilter();
+    const captured = chain.sync(views, 0, { effectId: 'key', tap });
+    expect(captured).toEqual([normal[0], tap, ...normal.slice(1)]);
+    expect(chain.sync(views, 0)).toEqual(normal);
+    tap.destroy(); chain.dispose();
+  });
+
   it("builds one BlurFilter and applies the resolved strength", () => {
     const chain = new EffectChain();
     const filters = chain.sync([blur("a", 5)], 0);

@@ -14,7 +14,7 @@ export class EffectChain {
   private warned = new Set<string>();
 
   /** Returns the ordered, param-updated filter list for the current frame. */
-  sync(views: EffectView[], tInLayerUs: number): Filter[] {
+  sync(views: EffectView[], tInLayerUs: number, input?: { effectId: string; tap: Filter }): Filter[] {
     const wanted = views.filter((v) => v.enabled && getDescriptor(v.kind) !== null);
 
     // Rebuild instance list only on a structural change (id+kind sequence).
@@ -47,7 +47,16 @@ export class EffectChain {
     }
     // Color-pick freeze: an override-disabled effect is excluded from THIS
     // frame's filter list but keeps its instance (no destroy/recompile churn).
-    return this.instances.flatMap((i) => isEffectDisabled(i.id) ? [] : [i.filter]);
+    if (!input) return this.instances.flatMap(i => isEffectDisabled(i.id) ? [] : [i.filter]);
+    const filters = new Map(this.instances.map(i => [i.id, i.filter]));
+    return views.flatMap(view => {
+      const filter = filters.get(view.id);
+      const out = filter && !isEffectDisabled(view.id) ? [filter] : [];
+      // A disabled target still has an input: insert at its stored position,
+      // after enabled upstream effects. The cached instances stay untouched.
+      if (input?.effectId === view.id && getDescriptor(view.kind)) out.unshift(input.tap);
+      return out;
+    });
   }
 
   dispose(): void {

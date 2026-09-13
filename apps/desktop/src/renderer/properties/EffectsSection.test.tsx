@@ -354,7 +354,7 @@ describe("effect color pick", () => {
     render(<EffectsSection catalog={chromaCatalog} layer={layerWith([chroma("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     await userEvent.click(screen.getByTestId("effect-colorpick-0"));
     expect(pickColor).toHaveBeenCalledWith(
-      expect.objectContaining({ excludeEffectId: "E1" }),
+      expect.objectContaining({ effectInput: { layerId: 'L1', effectId: 'E1' } }),
     );
     expect(clearTransientOverrides).toHaveBeenCalledWith("E1");
     expect(updateLayerParamTracks).toHaveBeenCalledTimes(1);

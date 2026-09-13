@@ -2,7 +2,9 @@
 // batched write → ONE undo reverts all three. Blue (not green) because the
 // chroma defaults ARE green — a green pick would assert nothing.
 import { test, expect } from '@playwright/test'
-import { launchApp, newProject, invokeCmd, summary, tmpDir, waitForHook } from './helpers/driver'
+import { launchApp, newProject, invokeCmd, summary, tmpDir, waitForHook, importAndPlaceMedia } from './helpers/driver'
+import { writeFileSync } from 'node:fs'
+import path from 'node:path'
 
 interface ParamTrack { mode: string; value?: number }
 interface LayerLite { id: string; effects?: Array<{ id: string; params: Record<string, ParamTrack> }> }
@@ -150,6 +152,93 @@ async function setupDesktopPick() {
   return { app, page, layerId, button: page.getByTestId('effect-colorpick-0') }
 }
 
+for (const backend of ['auto', 'webgl'] as const) test(`colorpick: samples the actual effect input under grading, occlusion and transforms (${backend})`, async ({}, info) => {
+  test.skip(process.env.WEFTCUT_E2E_NO_EXPORT === '1', 'requires real GPU input readback')
+  test.setTimeout(120_000)
+  const { app, page } = await launchApp()
+  page.on('console', message => {
+    const text = message.text()
+    if (text.includes('renderer=')) info.annotations.push({ type: 'renderer', description: text })
+  })
+  try {
+    // Exercise Pixi's real WebGL fallback without changing product renderer
+    // selection. This isolated page has no preview until newProject below.
+    if (backend === 'webgl') await page.evaluate(() => Object.defineProperty(navigator, 'gpu', { value: undefined, configurable: true }))
+    const folder = tmpDir('weftcut-effect-input-')
+    await newProject(page, { parentFolder: folder, name: 'input', canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 } })
+    // Asymmetric pixels expose vertical flips, stale frame reads and offset
+    // mistakes. The right half is transparent, not another selectable color.
+    const png = await page.evaluate(() => {
+      const c = document.createElement('canvas'); c.width = 64; c.height = 64
+      const ctx = c.getContext('2d')!
+      ctx.fillStyle = '#408020'; ctx.fillRect(0, 0, 32, 32)
+      ctx.fillStyle = '#204080'; ctx.fillRect(0, 32, 32, 32)
+      return c.toDataURL().split(',')[1]!
+    })
+    const file = path.join(folder, 'input.png'); writeFileSync(file, Buffer.from(png, 'base64'))
+    const { layerId } = await importAndPlaceMedia(page, { mediaAbsPath: file })
+    await invokeCmd(page, 'update_layer_params', { layerId, patch: { kind: 'ImageOverlay', x: 100, y: 60, scale_x: 2, scale_y: 2 } })
+    const grade = await invokeCmd<string>(page, 'add_effect', { layerId, kind: 'brightness' })
+    await invokeCmd(page, 'update_effect', { layerId, effectId: grade, patch: { params: { amount: { mode: 'Static', value: 25 } } } })
+    const key = await invokeCmd<string>(page, 'add_effect', { layerId, kind: 'chromakey' })
+    const after = await invokeCmd<string>(page, 'add_effect', { layerId, kind: 'brightness' })
+    await invokeCmd(page, 'update_effect', { layerId, effectId: after, patch: { params: { amount: { mode: 'Static', value: -50 } } } })
+    const coverTrack = await invokeCmd<string>(page, 'add_track', {})
+    await invokeCmd(page, 'add_color_layer', { trackId: coverTrack, tStartUs: 0, durationUs: 2_000_000, color: { r: 255, g: 0, b: 0, a: 255 } })
+    await expect.poll(() => page.evaluate(async () => {
+      try {
+        const w = window as any; w.__weftcutTest.weftcutSeekUs(500_000)
+        const p = await w.__weftcutTest.weftcutSampleComposite(120, 80)
+        return [p.r, p.g, p.b]
+      } catch { return null }
+    }), { timeout: 15_000 }).toEqual([255, 0, 0])
+    await waitForHook(page, 'revealLayer')
+    await page.evaluate(id => (window as any).__weftcutTest.revealLayer({ layerId: id }), layerId)
+    await page.locator('.weft-dock-tab-label', { hasText: 'Effect' }).click()
+    const button = page.getByTestId('effect-colorpick-1')
+    const targetParams = async () => (await summary(page)).tracks.flatMap(t => t.layers).find(l => l.id === layerId)!.effects.find(e => e.id === key)!.params
+    const before = await targetParams()
+    // Include LOD bypass, alpha, and rotation without changing the sampled
+    // texture contract. Each pick still freezes once and commits one undo.
+    for (const mode of ['enabled', 'disabled', 'half-preview', 'half-alpha', 'rotated']) {
+      if (mode === 'disabled') await invokeCmd(page, 'update_effect', { layerId, effectId: key, patch: { enabled: false } })
+      if (mode === 'half-preview') await invokeCmd(page, 'app_settings_set', { patch: { playback_resolution: 'half', preview_effects_enabled: false } })
+      if (mode === 'half-alpha') await invokeCmd(page, 'update_layer_params', { layerId, patch: { kind: 'ImageOverlay', opacity: .5 } })
+      if (mode === 'rotated') {
+        await invokeCmd(page, 'update_layer_params', { layerId, patch: { kind: 'ImageOverlay', opacity: 1 } })
+        await invokeCmd(page, 'update_layer_param_track', { layerId, paramKey: 'rotation_deg', track: { mode: 'Static', value: 90 } })
+      }
+      await button.click()
+      const overlay = page.getByTestId('colorpick-overlay'); await expect(overlay).toBeVisible()
+      const box = (await page.locator('canvas').first().boundingBox())!
+      const scale = Math.min(box.width / 640, box.height / 360)
+      const point = (x: number, y: number) => ({ x: box.x + (box.width - 640 * scale) / 2 + x * scale,
+        y: box.y + (box.height - 360 * scale) / 2 + y * scale })
+      const hover = async (x: number, y: number, hex: string) => {
+        const p = point(x, y); await page.mouse.move(p.x, p.y)
+        await expect(page.getByTestId('colorpick-hex'), mode).toHaveText(hex)
+      }
+      const top = mode === 'rotated' ? [208, 80] as const : [120, 80] as const
+      const bottom = mode === 'rotated' ? [128, 80] as const : [120, 160] as const
+      const hex = mode === 'half-alpha' ? '#285014' : '#50a028'
+      await hover(...top, hex)
+      await hover(...bottom, mode === 'half-alpha' ? '#142850' : '#2850a0')
+      await hover(...top, hex) // frozen, despite live chromakey hover
+      expect(await targetParams()).toEqual(before)
+      for (const [x, y] of [[20, 20], mode === 'rotated' ? [208, 160] : [200, 80]]) {
+        const p = point(x!, y!); await page.mouse.click(p.x, p.y)
+        await expect(overlay).toBeVisible() // outside target / transparent half
+      }
+      const p = point(...top); await page.mouse.click(p.x, p.y)
+      await expect(overlay).toBeHidden()
+      await expect.poll(async () => (await targetParams()).keyG).toEqual({ mode: 'Static', value: mode === 'half-alpha' ? .314 : .627 })
+      await invokeCmd(page, 'project_undo', {})
+      expect(await targetParams()).toEqual(before)
+    }
+    if (backend === 'webgl') expect(info.annotations.some(a => a.type === 'renderer' && a.description?.includes('renderer=1'))).toBe(true)
+  } finally { await app.close() }
+})
+
 test('colorpick: desktop overlay commits once, undo restores, Escape cancels @serial', async ({}, info) => {
   test.skip(process.platform !== 'win32' || process.env.WEFTCUT_E2E_NO_EXPORT === '1',
     'real interactive Windows desktop capture; other platforms need their own capture/permission gate')
@@ -184,7 +273,16 @@ test('colorpick: desktop overlay commits once, undo restores, Escape cancels @se
     await expect(page.getByTestId('colorpick-overlay')).toBeHidden()
     const visibleOverlays = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
       .filter(w => !w.isDestroyed() && w.webContents?.getURL().includes('/screen-pick.html') && w.isVisible()).length)
-    await expect.poll(visibleOverlays, { timeout: 20_000 }).toBeGreaterThan(0)
+    try {
+      await expect.poll(visibleOverlays, { timeout: 20_000 }).toBeGreaterThan(0)
+    } catch (error) {
+      await info.attach('desktop-handoff-state', { contentType: 'application/json', body: JSON.stringify({
+        picker: await page.getByTestId('colorpick-overlay').textContent().catch(() => null),
+        windows: await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter(w => !w.isDestroyed())
+          .map(w => ({ url: w.webContents?.getURL(), focused: w.isFocused(), visible: w.isVisible() }))),
+      }) })
+      throw error
+    }
     const desktop = app.windows().find(w => w.url().includes('/screen-pick.html'))!
     await desktop.mouse.move(120, 100)
     await expect(desktop.locator('#hex')).toHaveText('#1234a0')

@@ -1700,6 +1700,7 @@ const zhCN: Resources = {
     error_unsupported: "当前桌面环境不支持全屏取色，仍可在编辑器内取色。",
     error_permission: "请在系统设置中允许屏幕录制，以在编辑器外取色。",
     error_capture: "无法截取屏幕，请重试或在编辑器内取色。",
+    error_effect_input: "当前播放位置无法读取此片段的颜色。请取消后移到可见帧，或按 S 从屏幕取色。",
     error_timeout: "全屏取色已超时，请重试或在编辑器内取色。",
   },
   effects: {

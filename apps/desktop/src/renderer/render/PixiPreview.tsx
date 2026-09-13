@@ -37,6 +37,7 @@ import {
   useDecodeComponentStore,
 } from "../settings/decodeComponentStore";
 import { containMap } from "../colorpick/pixel";
+import { EffectInputCapture } from './effects/EffectInputCapture';
 import {
   clearPreviewSampler,
   registerPreviewSampler,
@@ -78,7 +79,6 @@ import {
   setUnderrunState,
 } from "../state/underrunStore";
 import {
-  setEffectDisabled,
   subscribeEffectOverrides,
 } from "./effects/effectOverrides";
 import { subscribeRoleGainOverrides } from "./audio/roleGainOverrides";
@@ -600,18 +600,16 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
       // Color picker: register the sampling surface (same replace-on-remount
       // lifecycle as the transport registration above). captureFrame reuses the
-      // compositeFrame→render→extract discipline the e2e sampleComposite path
-      // proved; excludeEffectId freezes the PRE-key frame the chromakey
-      // eyedropper samples. Spec: docs/features.md#color-picker-eyedropper
+      // composition-sized offscreen extraction used by conformance captures.
+      // An effect pick taps the real filter input during that render.
       unsubOverridesRef.current?.();
       const previewSampler: PreviewSampler = {
         captureFrame: async (opts) => {
-          const excludeId = opts?.excludeEffectId;
+          const target = opts?.effectInput;
+          const tap = target ? new EffectInputCapture() : null;
           try {
-            if (excludeId) setEffectDisabled(excludeId, true);
-            compositor.compositeFrame(engine.positionUs());
-            app.renderer.render(app.stage);
-            const out = app.renderer.extract.pixels({
+            compositor.compositeFrame(engine.positionUs(), target && tap ? { ...target, tap } : undefined);
+            const options = {
               target: app.stage,
               frame: new Rectangle(0, 0, logicalSize().width, logicalSize().height),
               // Pinned, because `extract` otherwise inherits
@@ -619,12 +617,20 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
               // through the composition size — a fitted or throttled preview
               // would hand the eyedropper a buffer the coordinates don't index.
               resolution: 1,
-            });
+            };
+            // Restore the ordinary scene before the async GPU readback yields.
+            if (tap) {
+              const texture = app.renderer.textureGenerator.generateTexture(options);
+              texture.destroy(true);
+              compositor.compositeFrame(engine.positionUs());
+              return await tap.result();
+            }
+            const out = app.renderer.extract.pixels(options);
             return { pixels: out.pixels, width: out.width, height: out.height };
           } finally {
-            if (excludeId) {
-              setEffectDisabled(excludeId, false);
-              compositor.compositeFrame(engine.positionUs());
+            if (tap) {
+              try { compositor.compositeFrame(engine.positionUs()); }
+              finally { tap.destroy(); }
             }
           }
         },

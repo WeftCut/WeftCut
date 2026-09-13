@@ -8,29 +8,28 @@
 import { create } from "zustand";
 import { logEmit } from "../ipc";
 import { transportPause } from "../state/playbackStore";
-import type { FrameBuffer } from "./pixel";
+import type { EffectInputTarget, PreviewFrame } from './previewSamplerRegistry';
 import { getPreviewSampler } from "./previewSamplerRegistry";
 import { captureWindowSnapshot, type WindowSnapshot } from "./snapshot";
 import { screenPick } from './screenPick';
 import type { ScreenPickError } from '../../shared/screenPick';
 
 export interface PickOptions {
-  /// Freeze WITHOUT this effect to avoid self-feedback. Downstream effects
-  /// and layer blending remain; this is not exact effect-input sampling.
-  excludeEffectId?: string;
+  /// Sample the named effect's input, including enabled upstream effects.
+  effectInput?: EffectInputTarget;
   /// rAF-throttled by the active overlay; transient, never a project commit.
   onHover?: (hex: string) => void;
 }
 
 export interface PickResult {
   hex: string;
-  source: "composition" | "ui" | "screen";
+  source: "composition" | "effect-input" | "ui" | "screen";
 }
 
 export interface PickSession {
   opts: PickOptions;
   /// Frozen composition buffer; null ⇒ canvas-region sampling unavailable.
-  comp: FrameBuffer | null;
+  comp: PreviewFrame | null;
   /// Frozen window snapshot; null ⇒ non-canvas sampling unavailable.
   snap: WindowSnapshot | null;
   /// Idempotent; clears the store session and resolves the pickColor promise.
@@ -95,7 +94,7 @@ export async function pickColor(opts: PickOptions = {}): Promise<PickResult | nu
   const [comp, snap] = await Promise.all([
     sampler
       ? sampler
-          .captureFrame(opts.excludeEffectId ? { excludeEffectId: opts.excludeEffectId } : {})
+          .captureFrame(opts.effectInput ? { effectInput: opts.effectInput } : {})
           .catch((e: unknown) => {
             warn(`composition freeze failed: ${String(e)}`);
             return null;
