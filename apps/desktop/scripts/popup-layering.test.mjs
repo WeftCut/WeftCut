@@ -13,6 +13,7 @@ const menuCssPath = new URL(
   "../src/renderer/styles/menu.css",
   import.meta.url,
 );
+const appCssPath = new URL("../src/renderer/app.css", import.meta.url);
 const rendererPath = fileURLToPath(
   new URL("../src/renderer/", import.meta.url),
 );
@@ -27,6 +28,30 @@ async function tsxFilesUnder(directory) {
     }),
   );
   return nested.flat();
+}
+
+/// The --layer-* tokens app.css §Stacking declares — the one place an
+/// app-owned overlay's z-index is decided, so guarding them guards the
+/// dialogs, drawers and palettes this file never names.
+function layerTokens(appCss) {
+  return new Map(
+    [...appCss.matchAll(/^\s*(--layer-[\w-]+):\s*(\d+)\s*;/gm)].map(
+      ([, name, value]) => [name, Number(value)],
+    ),
+  );
+}
+
+/// An authored z-index, which may be a bare integer, `var(--token)`, or the
+/// `calc(var(--token) + N)` that a backdrop/popup pair uses. Anything else
+/// returns NaN so the caller's assertion names it rather than passing.
+function resolveZ(body, tokens) {
+  const value = /^\s*z-index:\s*([^;]+);/m.exec(body ?? "")?.[1]?.trim();
+  if (value === undefined) return NaN;
+  if (/^\d+$/.test(value)) return Number(value);
+  const calc = /^calc\(\s*var\((--layer-[\w-]+)\)\s*\+\s*(\d+)\s*\)$/.exec(value);
+  if (calc) return (tokens.get(calc[1]) ?? NaN) + Number(calc[2]);
+  const named = /^var\((--layer-[\w-]+)\)$/.exec(value);
+  return named ? (tokens.get(named[1]) ?? NaN) : NaN;
 }
 
 async function launchBrowser() {
@@ -44,9 +69,10 @@ async function launchBrowser() {
 }
 
 test("every app popup Positioner stacks above Dockview resize sashes", async () => {
-  const [dockviewCss, menuCss, rendererFiles] = await Promise.all([
+  const [dockviewCss, menuCss, appCss, rendererFiles] = await Promise.all([
     readFile(dockviewCssPath, "utf8"),
     readFile(menuCssPath, "utf8"),
+    readFile(appCssPath, "utf8"),
     tsxFilesUnder(rendererPath),
   ]);
   const sashRule = /\.dv-split-view-container \.dv-sash-container \.dv-sash\s*\{(?<body>[^}]*)\}/s.exec(
@@ -60,14 +86,18 @@ test("every app popup Positioner stacks above Dockview resize sashes", async () 
       sashRule?.groups?.body ?? "",
     )?.[1],
   );
-  const popupZ = Number(
-    /^\s*z-index:\s*(\d+)\s*;/m.exec(
-      popupRule?.groups?.body ?? "",
-    )?.[1],
-  );
+  const tokens = layerTokens(appCss);
+  const popupZ = resolveZ(popupRule?.groups?.body, tokens);
 
   assert.ok(Number.isFinite(sashZ), "Dockview sash z-index was not found");
+  assert.ok(tokens.size > 0, "app.css declared no --layer-* tokens");
   assert.ok(Number.isFinite(popupZ), "app popup z-index was not found");
+  for (const [name, value] of tokens) {
+    assert.ok(
+      value > sashZ,
+      `${name} (${value}) must exceed Dockview sash z-index ${sashZ}`,
+    );
+  }
   assert.ok(
     popupZ > sashZ,
     `app popup z-index ${popupZ} must exceed Dockview sash z-index ${sashZ}`,
@@ -96,10 +126,12 @@ test(
   "app popup receives the pointer above a Dockview resize sash",
   { skip: process.env.POPUP_LAYERING_STATIC_ONLY === "1" },
   async (t) => {
-    const [dockviewCss, menuCss] = await Promise.all([
+    const [dockviewCss, menuCss, appCss] = await Promise.all([
       readFile(dockviewCssPath, "utf8"),
       readFile(menuCssPath, "utf8"),
+      readFile(appCssPath, "utf8"),
     ]);
+    const tokens = layerTokens(appCss);
     const browser = await launchBrowser();
     t.after(() => browser.close());
     const page = await browser.newPage({
@@ -109,6 +141,10 @@ test(
     await page.setContent(`
     <style>${dockviewCss}</style>
     <style>
+      /* menu.css names a token rather than a number, so the page needs the
+         app.css §Stacking block the app loads — without it the var() is
+         undefined, the declaration is dropped, and the utility below wins. */
+      :root { ${[...tokens].map(([name, value]) => `${name}: ${value};`).join(" ")} }
       /* Tailwind's generated utility used by every current popup Positioner. */
       .z-50 { z-index: 50; }
       ${menuCss}
