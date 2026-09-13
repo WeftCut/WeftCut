@@ -47,7 +47,12 @@ export function AppDialog({
 }: AppDialogProps) {
   const { t } = useTranslation();
   const depth = useContext(DialogDepth);
-  const overlayLayer = 50 + depth * 2;
+  // Dockview's resize sash is z-index: 99, so a dialog below it hands the
+  // sash every hover and click aimed at whatever it crosses — a footer button
+  // included. Sit above the sash, and far enough below the 1000 of
+  // `.app-popup-positioner` that a menu opened inside a dialog still draws
+  // over it.
+  const overlayLayer = 100 + depth * 2;
   return (
     <DialogDepth.Provider value={depth + 1}>
     <Dialog
