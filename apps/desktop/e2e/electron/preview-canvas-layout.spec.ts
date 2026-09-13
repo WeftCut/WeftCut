@@ -224,9 +224,16 @@ test('the preview zooms about the pointer and pans with no tool armed', async ()
     await page.mouse.down()
     await page.mouse.move(1000, 750, { steps: 8 })
     await page.mouse.up()
+    // The origin is snapped to the ABSOLUTE device-pixel grid so the buffer
+    // blits 1:1, so the picture stops on the grid point NEAREST the panel's
+    // edge — half a device pixel short of it when the panel's own origin sits
+    // on one, which is where a dock layout can legitimately put it. Device
+    // pixels are also the only space this compares exactly in: a CSS box comes
+    // back quantised, so under a fractional DPR it never divides back out.
+    const onGrid = (v: number) => Math.round(v * dpr)
     const edge = await box()
-    expect(edge.x).toBeCloseTo(surface.x, 0)
-    expect(edge.y).toBeCloseTo(surface.y, 0)
+    expect(onGrid(edge.x)).toBe(onGrid(surface.x))
+    expect(onGrid(edge.y)).toBe(onGrid(surface.y))
     await page.keyboard.press('Escape')
     await expect(page.getByTestId('preview-hand-tool')).toHaveCount(0)
 
