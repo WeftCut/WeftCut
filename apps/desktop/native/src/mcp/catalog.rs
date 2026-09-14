@@ -250,7 +250,12 @@ mod tests {
     #[test]
     fn injected_slice_fields_are_not_advertised() {
         let cat = catalog();
-        for name in ["detect_pauses", "transcribe_clip", "describe_clip", "extract_clip_audio"] {
+        for name in [
+            "detect_pauses",
+            "transcribe_clip",
+            "describe_clip",
+            "extract_clip_audio",
+        ] {
             let tool = cat
                 .tools
                 .iter()

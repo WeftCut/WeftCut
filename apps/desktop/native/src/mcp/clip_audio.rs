@@ -350,7 +350,11 @@ mod tests {
             .await
             .expect("extract");
 
-        assert_eq!(result.content.len(), 2, "one text block then one audio block");
+        assert_eq!(
+            result.content.len(),
+            2,
+            "one text block then one audio block"
+        );
         let meta: serde_json::Value = match &result.content[0] {
             ContentBlock::Text { text } => serde_json::from_str(text).expect("metadata is JSON"),
             other => panic!("expected text first, got {other:?}"),

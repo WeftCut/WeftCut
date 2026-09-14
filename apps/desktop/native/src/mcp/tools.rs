@@ -1271,9 +1271,7 @@ pub(super) fn resolve_clip_audio_source(
         }) => (*media, *src_in_us, *src_out_us),
         _ => {
             return Err(McpToolError::invalid_params(
-                format!(
-                    "layer {layer_id} has no source audio — pass a VideoClip or Audio layer",
-                ),
+                format!("layer {layer_id} has no source audio — pass a VideoClip or Audio layer",),
                 None,
             ));
         }
@@ -1318,7 +1316,12 @@ pub(super) fn resolve_clip_audio_source(
         t.checked_sub(layer.t_start_us)
             .and_then(|offset| src_in_us.checked_add(offset))
             .filter(|t| *t >= 0)
-            .ok_or_else(|| McpToolError::invalid_params("audio window maps outside supported source timestamps", None))
+            .ok_or_else(|| {
+                McpToolError::invalid_params(
+                    "audio window maps outside supported source timestamps",
+                    None,
+                )
+            })
     };
     let source_in = to_source(t_start)?;
     let source_out = to_source(t_end)?;
