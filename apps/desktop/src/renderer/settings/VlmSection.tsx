@@ -29,9 +29,14 @@ function DescribeSettings({ onError }: { onError(msg: string): void }) {
   };
   return <section className="settings-section settings-model-fields settings-analysis-options">
     <strong>{t("models.analysis_options")}</strong>
+    {/* Narrowed from the field's default full-row width so the unit lands next
+        to the digits rather than at the far edge of the panel — a rate of at
+        most 30 needs no more room than the export dialog's Mbps fields. */}
     <div className="settings-key-input-row"><span className="settings-slider-label">{t("settings.vlm_sampling")}</span>
       <AppNumberField value={fps} min={VLM_DESCRIBE_FPS_MIN} max={VLM_DESCRIBE_FPS_MAX} step={VLM_DESCRIBE_FPS_STEP}
+        className="settings-input-narrow"
         disabled={busy} ariaLabel={t("settings.vlm_sampling")} onValueChange={setFps} onCommit={value => { void save({ fps: value }); }} />
+      <span className="settings-slider-unit">{t("settings.vlm_sampling_unit")}</span>
     </div>
     <div className="settings-key-input-row"><span className="settings-slider-label">{t("settings.vlm_focus")}</span>
       <AppSelect value={focus} disabled={busy} ariaLabel={t("settings.vlm_focus")}

@@ -1798,9 +1798,11 @@ const enUS = {
     vlm_engine_none:
       "No engine configured — download or point to a local engine below, or add an OpenAI-compatible endpoint.",
     // Named for what it controls rather than for the wire field (`fps`): what a
-    // user is choosing is how closely the model looks. The unit is in the hint
-    // below — a settings row has no unit slot.
+    // user is choosing is how closely the model looks — so the unit has to ride
+    // in the row, beside the number, or nothing on screen says what the count
+    // counts. (`vlm_sampling_hint` below is not rendered anywhere today.)
     vlm_sampling: "Sample",
+    vlm_sampling_unit: "fps",
     vlm_sampling_hint:
       "Frames per second sampled across the clip — more is finer and slower.",
     vlm_focus: "Focus",
