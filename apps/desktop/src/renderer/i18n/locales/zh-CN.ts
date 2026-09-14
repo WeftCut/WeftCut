@@ -1036,6 +1036,7 @@ const zhCN: Resources = {
     "analyze_clip": "分析片段",
     "describe_clip": "描述片段内容",
     "transcribe_clip": "转写片段",
+    "extract_clip_audio": "提取片段音频",
     "analyze_shots_floor": "检测镜头",
     "compare_frames": "比较画面",
     "detect_pauses": "检测停顿",

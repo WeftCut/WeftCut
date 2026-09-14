@@ -1225,6 +1225,7 @@ const enUS = {
     "analyze_clip": "Analyze clip",
     "describe_clip": "Describe clip content",
     "transcribe_clip": "Transcribe clip",
+    "extract_clip_audio": "Extract clip audio",
     "analyze_shots_floor": "Detect shots",
     "compare_frames": "Compare frames",
     "detect_pauses": "Detect pauses",

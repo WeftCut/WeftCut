@@ -30,7 +30,9 @@ describe('resolveClipSliceArgs', () => {
     expect(out.media).toBeNull()
   })
   it('lists exactly the clip-slice compute tools', () => {
-    expect([...CLIP_SLICE_TOOLS].sort()).toEqual(['analyze_clip', 'describe_clip', 'detect_pauses', 'transcribe_clip'])
+    expect([...CLIP_SLICE_TOOLS].sort()).toEqual(
+      ['analyze_clip', 'describe_clip', 'detect_pauses', 'extract_clip_audio', 'transcribe_clip'],
+    )
   })
 })
 

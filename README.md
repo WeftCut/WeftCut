@@ -138,8 +138,9 @@ tangent control, motion paths and extrapolation.
 **Speech and captions** — transcribe a clip and get editable caption layers
 packed onto your caption tracks; import SRT/VTT/ASS the same way. Transcription
 runs against a cloud provider, or entirely on your machine once you let the app
-fetch a local engine (whisper.cpp, FunASR). Text-to-speech for scratch voiceover.
-<br/><sub>Agent: `transcribe_clip` · `apply_subtitles` · `synthesize_speech`</sub>
+fetch a local engine (whisper.cpp, FunASR) — or an agent can pull the raw audio out
+and run its own model. Text-to-speech for scratch voiceover.
+<br/><sub>Agent: `transcribe_clip` · `extract_clip_audio` · `apply_subtitles` · `synthesize_speech`</sub>
 
 **Audio** — role-based mixing (dialogue / music / SFX / voiceover) with live
 per-role metering, gain, pan, fades and denoise. **Pauses** finds the dead air

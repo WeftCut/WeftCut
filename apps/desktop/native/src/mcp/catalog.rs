@@ -115,6 +115,20 @@ tool_table! {
     "import_media" => ("Import a media file from an absolute path. Hashes the file (blake3) and probes \
                           metadata via ffprobe when installed. Returns the new media id.", tools::ImportMediaArgs, tools::import_media),
     #[cfg(feature = "speech")]
+    "extract_clip_audio" => ("Extract source audio from a VideoClip or Audio layer without any model or API key. \
+                             Returns a JSON text metadata block plus an MCP audio block (base64 audio/wav): \
+                             mono 16000 Hz 16-bit PCM, starting at zero in the returned WAV. \
+                             Optional t_start_us/t_end_us are absolute microseconds in the layer's owning composition, \
+                             defaulting to the layer endpoints. Maximum 60000000 us (60 seconds) per call; \
+                             request consecutive windows for longer clips. Metadata includes layer_id, media_id, \
+                             t_start_us, t_end_us, source_in_us, source_out_us, duration_us, sample_rate_hz, \
+                             channels, bits_per_sample, byte_length and mime_type. Add t_start_us to external \
+                             transcript offsets before apply_subtitles. Reads the original source, before gain, \
+                             mute, effects or mixing; VideoClip audio is its own source stream, not linked audio. \
+                             Rejects missing audio, out-of-range windows and VideoClip speed != 1.0. \
+                             Read-only apart from the shared extraction cache; never runs inference or uploads audio.",
+                             super::clip_audio::ExtractClipAudioArgs, super::clip_audio::extract_clip_audio),
+    #[cfg(feature = "speech")]
     "transcribe_clip" => ("Transcribe a VideoClip or Audio layer through the configured transcription \
                           provider (cloud OpenAI Whisper, or local whisper.cpp / FunASR) and return a \
                           normalized transcript as JSON: \
@@ -236,7 +250,7 @@ mod tests {
     #[test]
     fn injected_slice_fields_are_not_advertised() {
         let cat = catalog();
-        for name in ["detect_pauses", "transcribe_clip", "describe_clip"] {
+        for name in ["detect_pauses", "transcribe_clip", "describe_clip", "extract_clip_audio"] {
             let tool = cat
                 .tools
                 .iter()

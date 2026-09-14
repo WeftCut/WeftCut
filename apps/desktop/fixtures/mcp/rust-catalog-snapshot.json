@@ -205,6 +205,42 @@
       }
     },
     {
+      "name": "extract_clip_audio",
+      "description": "Extract source audio from a VideoClip or Audio layer without any model or API key. Returns a JSON text metadata block plus an MCP audio block (base64 audio/wav): mono 16000 Hz 16-bit PCM, starting at zero in the returned WAV. Optional t_start_us/t_end_us are absolute microseconds in the layer's owning composition, defaulting to the layer endpoints. Maximum 60000000 us (60 seconds) per call; request consecutive windows for longer clips. Metadata includes layer_id, media_id, t_start_us, t_end_us, source_in_us, source_out_us, duration_us, sample_rate_hz, channels, bits_per_sample, byte_length and mime_type. Add t_start_us to external transcript offsets before apply_subtitles. Reads the original source, before gain, mute, effects or mixing; VideoClip audio is its own source stream, not linked audio. Rejects missing audio, out-of-range windows and VideoClip speed != 1.0. Read-only apart from the shared extraction cache; never runs inference or uploads audio.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "layer_id": {
+            "description": "Target VideoClip or Audio layer id.",
+            "type": "string"
+          },
+          "t_end_us": {
+            "default": null,
+            "description": "Exclusive window end in the owning composition's absolute microseconds.\nDefaults to the layer end. Maximum window duration: 60000000 us (60 s).",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "t_start_us": {
+            "default": null,
+            "description": "Window start in the owning composition's absolute microseconds.\nDefaults to the layer start. Must lie inside the layer.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "layer_id"
+        ],
+        "title": "ExtractClipAudioArgs",
+        "type": "object"
+      }
+    },
+    {
       "name": "transcribe_clip",
       "description": "Transcribe a VideoClip or Audio layer through the configured transcription provider (cloud OpenAI Whisper, or local whisper.cpp / FunASR) and return a normalized transcript as JSON: `{ backend, segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing, srt }`. All timestamps are timeline-absolute microseconds. `backend` is the engine tag that actually served the request. `word_timing` is the provenance of the per-word times: `exact` (from an engine's token offsets) or `interpolated_from_cue` (approximated by splitting an SRT cue span across its words). Pipe the `srt` field straight into `apply_subtitles` (the cues self-position onto a caption track via their internal timestamps — `apply_subtitles` takes no start/end); use `segments`/`words` for word-level editing. Optional `t_start_us`/`t_end_us` narrow the transcription window inside the layer's time range; both default to the layer endpoints. Optional `backend` (`\"openai\"` | `\"whisper_cpp\"` | `\"funasr\"`) REQUIRES that engine: if it is not available the call errors naming the missing piece (key / binary / model) instead of substituting another engine, so an explicit local choice never falls back to a cloud upload; an unknown value is rejected. When omitted, selection is the user's preferred engine then availability. Optional `word_timestamps` (default true) requests exact per-word times when the chosen backend can emit them (whisper.cpp `-ojf`; FunASR always); pass false to force SRT-style interpolated output. OpenAI Whisper is SRT-only and ignores it. VideoClip layers with speed != 1.0 are rejected — split off a speed-1 segment first. Errors with structured messages if no transcription backend is configured (API key or local engine), the audio slice exceeds the provider cap (~13 min for Whisper at 25 MB), or the provider rate-limits / rejects auth.",
       "inputSchema": {

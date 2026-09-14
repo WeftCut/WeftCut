@@ -1206,26 +1206,33 @@ pub(crate) struct SynthesizeSpeechArgs {
     pub t_start_us: Option<i64>,
 }
 
-/// Resolved source-audio coordinates for a `transcribe_clip` call.
+/// Shared source-audio coordinates for transcription and model-free extraction.
 #[cfg(feature = "speech")]
 #[derive(Debug)]
-struct ResolvedClipAudio {
-    source_path: std::path::PathBuf,
-    source_hash: String,
+pub(super) struct ResolvedClipAudio {
+    /// The media the window was read from — resolved here so a caller never
+    /// re-derives it from the injected slice it already handed us.
+    pub media_id: crate::state::MediaId,
+    pub source_path: std::path::PathBuf,
+    pub source_hash: String,
     /// Source-relative microseconds: where to start the ffmpeg slice.
-    source_in_us: i64,
+    pub source_in_us: i64,
     /// Source-relative microseconds: where to end the ffmpeg slice.
-    source_out_us: i64,
+    pub source_out_us: i64,
     /// Timeline-absolute microseconds of the slice's start — what we shift
     /// the SRT cue timestamps by so they land on the timeline.
-    timeline_start_us: i64,
+    pub timeline_start_us: i64,
+    /// Timeline-absolute microseconds of the slice's exclusive end: the
+    /// defaulted `t_end_us`, so the caller reports the window it actually got
+    /// rather than the one it asked for.
+    pub timeline_end_us: i64,
 }
 
 /// Find a layer with audio attached (VideoClip or Audio), validate the
 /// requested timeline window lies inside it, and map that window onto the
 /// source media's coordinate space.
 #[cfg(feature = "speech")]
-fn resolve_clip_audio_source(
+pub(super) fn resolve_clip_audio_source(
     layer: Option<&crate::state::Layer>,
     media: Option<&crate::state::MediaItem>,
     layer_id: LayerId,
@@ -1248,7 +1255,7 @@ fn resolve_clip_audio_source(
             if (*speed - 1.0).abs() > f64::EPSILON {
                 return Err(McpToolError::invalid_params(
                     format!(
-                        "transcribe_clip does not yet support speed != 1.0 (layer speed={speed}); \
+                        "clip audio does not yet support speed != 1.0 (layer speed={speed}); \
                          split off a speed-1 segment first",
                     ),
                     None,
@@ -1265,7 +1272,7 @@ fn resolve_clip_audio_source(
         _ => {
             return Err(McpToolError::invalid_params(
                 format!(
-                    "layer {layer_id} kind is not transcribable — pass a VideoClip or Audio layer",
+                    "layer {layer_id} has no source audio — pass a VideoClip or Audio layer",
                 ),
                 None,
             ));
@@ -1282,7 +1289,7 @@ fn resolve_clip_audio_source(
     })?;
     if media.metadata.audio.is_none() {
         return Err(McpToolError::invalid_params(
-            format!("media {media_id} has no audio stream — transcription needs audio",),
+            format!("media {media_id} has no audio stream"),
             None,
         ));
     }
@@ -1292,7 +1299,7 @@ fn resolve_clip_audio_source(
     if t_end <= t_start {
         return Err(McpToolError::invalid_params(
             format!(
-                "transcription window must have positive duration (t_start_us={t_start}, t_end_us={t_end})",
+                "audio window must have positive duration (t_start_us={t_start}, t_end_us={t_end})",
             ),
             None,
         ));
@@ -1300,32 +1307,38 @@ fn resolve_clip_audio_source(
     if t_start < layer.t_start_us || t_end > layer.t_end_us {
         return Err(McpToolError::invalid_params(
             format!(
-                "transcription window [{t_start}, {t_end}] is outside layer range [{}, {}]",
+                "audio window [{t_start}, {t_end}] is outside layer range [{}, {}]",
                 layer.t_start_us, layer.t_end_us,
             ),
             None,
         ));
     }
 
-    let offset_in = t_start - layer.t_start_us;
-    let offset_out = t_end - layer.t_start_us;
-    let source_in = src_in_us + offset_in;
-    let source_out = src_in_us + offset_out;
+    let to_source = |t: i64| {
+        t.checked_sub(layer.t_start_us)
+            .and_then(|offset| src_in_us.checked_add(offset))
+            .filter(|t| *t >= 0)
+            .ok_or_else(|| McpToolError::invalid_params("audio window maps outside supported source timestamps", None))
+    };
+    let source_in = to_source(t_start)?;
+    let source_out = to_source(t_end)?;
     if source_out > src_out_us {
         return Err(McpToolError::invalid_params(
             format!(
-                "transcription window maps past the layer's source range (source_out={source_out} > src_out_us={src_out_us})",
+                "audio window maps past the layer's source range (source_out={source_out} > src_out_us={src_out_us})",
             ),
             None,
         ));
     }
 
     Ok(ResolvedClipAudio {
+        media_id,
         source_path: media.path_abs.clone(),
         source_hash: media.file_hash_blake3.clone(),
         source_in_us: source_in,
         source_out_us: source_out,
         timeline_start_us: t_start,
+        timeline_end_us: t_end,
     })
 }
 

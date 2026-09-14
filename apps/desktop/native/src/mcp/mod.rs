@@ -16,6 +16,8 @@
 //! Design: `docs/mcp.md`.
 
 mod catalog;
+#[cfg(feature = "speech")]
+mod clip_audio;
 mod prompts;
 mod resources;
 mod tools;

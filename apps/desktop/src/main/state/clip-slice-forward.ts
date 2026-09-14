@@ -5,14 +5,14 @@ import { playsNoSoundError, resolvePauseSubject } from './pauseSubject'
 /** MCP clip compute tools whose Rust handler takes one layer + its MediaItem
  *  (the `resolve_clip_audio_source` / `resolve_clip_video_source` inputs) as an
  *  injected slice; the TS actor (the sole state owner) resolves and forwards it.
- *  `detect_pauses` / `transcribe_clip` read the layer's audio; `describe_clip`
- *  and `analyze_clip` read its video frames.
+ *  `detect_pauses` / `transcribe_clip` / `extract_clip_audio` read the layer's
+ *  audio; `describe_clip` and `analyze_clip` read its video frames.
  *
  *  `detect_pauses` takes its slice from `resolvePauseComputeArgs` below rather
  *  than from `resolveClipSliceArgs`: it is the one tool whose slice is not the
  *  named layer (spec Decision 1). */
 export const CLIP_SLICE_TOOLS: ReadonlySet<string> = new Set([
-  'detect_pauses', 'transcribe_clip', 'describe_clip', 'analyze_clip',
+  'detect_pauses', 'transcribe_clip', 'describe_clip', 'analyze_clip', 'extract_clip_audio',
 ])
 
 /** MCP clip compute tools shaped `{ a:{layer_id,t_us}, b:{layer_id,t_us} }` —

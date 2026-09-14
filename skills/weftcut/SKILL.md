@@ -53,6 +53,10 @@ descriptions:
   as the `/cut-pauses` prompt).
 - Captions: `transcribe_clip` → inspect the returned SRT → `apply_subtitles`
   (also `/auto-caption`).
+- Captions with your own speech model: `extract_clip_audio` returns a 16 kHz
+  mono WAV block plus the window it covers (60 s per call — walk a long clip in
+  consecutive windows). Transcribe it yourself, add the reported `t_start_us` to
+  every offset you get back, then `apply_subtitles`.
 - Voiceover: `synthesize_speech` appends a spoken script to the timeline
   (also `/voiceover`).
 - Rough cut: `analyze_clip` or `auto_split_by_shot`, then trim and delete

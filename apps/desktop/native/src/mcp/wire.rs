@@ -78,6 +78,12 @@ pub enum ContentBlock {
     Text {
         text: String,
     },
+    #[cfg(feature = "speech")]
+    Audio {
+        data: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+    },
     #[cfg_attr(
         not(feature = "test-noop"),
         expect(
