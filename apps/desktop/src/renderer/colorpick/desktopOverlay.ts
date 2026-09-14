@@ -52,6 +52,17 @@ async function mount(): Promise<void> {
     point = desktopPoint(event.clientX, event.clientY, devicePixelRatio, buffer.width, buffer.height);
     if (raf === null) raf = requestAnimationFrame(update);
   });
+  window.addEventListener('pointerout', event => {
+    if (event.relatedTarget !== null) return;
+    // Each display has its own window: crossing screens sends an exit, not
+    // an out-of-bounds move. Hide immediately, even if painting is suspended.
+    point = null;
+    if (raf !== null) cancelAnimationFrame(raf);
+    raf = null;
+    mag.hidden = true;
+    // Another screen may have changed the preview before we enter again.
+    lastHex = '';
+  });
   window.addEventListener('pointerdown', event => {
     if (event.button !== 0) return;
     point = desktopPoint(event.clientX, event.clientY, devicePixelRatio, buffer.width, buffer.height);
