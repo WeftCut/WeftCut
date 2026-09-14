@@ -1923,7 +1923,7 @@ const zhCN: Resources = {
   },
   text_correction: {
     title: "文字校正", script: "参考文稿", placeholder: "在此粘贴参考文稿…",
-    saved_with_project: "文稿随项目保存，执行校正后才会修改字幕。",
+    saved_with_project: "文稿随项目保存。执行校正时，字幕按文稿换行及句末标点拆分或合并；缺少逐词时间时估算切点。",
     scope: "校正范围", selected: "选中字幕（{{count}} 条）", all: "当前合成全部字幕（{{count}} 条）",
     apply_selected: "校正选中的 {{count}} 条字幕", apply_all: "校正全部 {{count}} 条字幕",
     clear: "清空文稿", close: "关闭", running: "正在校正…", locked: "请先解锁需要校正的字幕。",

@@ -87,6 +87,10 @@ three runners.
 
 ## Fixtures — two trees, on purpose
 
+Regression fixtures must use synthetic or anonymized content. Do not copy actual
+project manuscripts, names, brands, identifiers, paths or timestamps into tests;
+preserve the failure pattern with invented examples instead.
+
 - **`apps/desktop/fixtures/`** — small, **committed** inputs for the Vitest unit
   tests. `media/` holds tiny clips (e.g. the `tiny.mp4`/`tiny.mkv` container
   parity pair); `mcp/` holds `rust-catalog-snapshot.json`. See

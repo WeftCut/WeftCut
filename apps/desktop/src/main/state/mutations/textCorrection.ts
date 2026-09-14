@@ -49,43 +49,66 @@ function styleKey(l: Layer): string {
   const { [CAPTION_TIMING_KEY]: __, ...metadata } = l.metadata
   return JSON.stringify([style, l.effects, metadata, l.label, l.enabled])
 }
-function timingFor(p: Project, c: Composition, l: Layer): CaptionTiming | null {
+function timingFor(p: Project, l: Layer): CaptionTiming | null {
   const m = readCaptionTiming(l.metadata[CAPTION_TIMING_KEY])
-  if (!m || l.params.kind !== 'Text' || m.text !== l.params.content || m.duration_us !== l.t_end_us - l.t_start_us || m.provenance !== 'exact' || !m.words.length) return null
+  if (!m || l.params.kind !== 'Text' || m.text !== l.params.content || m.duration_us !== l.t_end_us - l.t_start_us || m.provenance === 'none' || !m.words.length || m.words.some(w => w.end_us <= w.start_us || w.start_us >= m.duration_us)) return null
   if (m.source) {
     const source = locateLayer(p, m.source.id)?.layer
     if (!source || sourceSignature(source) !== m.source.signature) return null
   }
-  if (l.params.intro || l.params.outro || animated(l.params) || animated(l.effects) || c.links.some(x => x.members.includes(l.id)) || c.transitions.some(x => x.from_layer === l.id || x.to_layer === l.id) || c.markers.some(x => x.anchor?.layer === l.id)) return null
   return m
 }
 
-interface TextSpan { start: number; end: number; start_us: number; end_us: number }
-function wordSpans(text: string, words: CaptionWord[], offset: number, startUs: number): TextSpan[] | null {
+function canResegment(c: Composition, l: Layer): boolean {
+  return l.params.kind === 'Text' && !l.params.intro && !l.params.outro && !animated(l.params) && !animated(l.effects) &&
+    !c.links.some(x => x.members.includes(l.id)) && !c.transitions.some(x => x.from_layer === l.id || x.to_layer === l.id) && !c.markers.some(x => x.anchor?.layer === l.id)
+}
+
+interface TextSpan { start: number; end: number; start_us: number; end_us: number; cue: number; estimated: boolean }
+function wordSpans(text: string, words: CaptionWord[], offset: number, startUs: number, cue: number, estimated: boolean): TextSpan[] | null {
   let cursor = 0
   const result: TextSpan[] = []
   for (const w of words) {
     const at = text.indexOf(w.text.trim(), cursor)
     if (at < 0 || /[\p{L}\p{N}]/u.test(text.slice(cursor, at))) return null
     cursor = at + w.text.trim().length
-    result.push({ start: offset + at, end: offset + cursor, start_us: startUs + w.start_us, end_us: startUs + w.end_us })
+    result.push({ start: offset + at, end: offset + cursor, start_us: startUs + w.start_us, end_us: startUs + w.end_us, cue, estimated })
   }
   return /[\p{L}\p{N}]/u.test(text.slice(cursor)) ? null : result
 }
 
-/** Output text pieces carry their original character coverage. Replacing a
- * number/word with another spelling borrows the WHOLE supported word span,
- * never fabricates a per-character duration inside it. */
-function timedPieces(result: CorrectedText, spans: TextSpan[]): Array<CaptionWord> | null {
-  const out: CaptionWord[] = []
+interface TimedPiece extends CaptionWord {
+  referenceSentence?: number; breakAfter?: boolean; cue: number; estimated: boolean
+}
+
+/** Keep engine word times where possible. A manuscript break inside an engine
+ * word uses its character coverage to estimate a cut, recorded as interpolated. */
+function timedPieces(result: CorrectedText, spans: TextSpan[]): TimedPiece[] | null {
+  const out: TimedPiece[] = []
+  let cursor = 0
   for (const piece of result.pieces) {
-    const hits = spans.filter(w => w.start < piece.end && w.end > piece.start)
+    while (cursor < spans.length && spans[cursor]!.end <= piece.start) cursor++
+    let end = cursor
+    while (end < spans.length && spans[end]!.start < piece.end) end++
+    const hits = spans.slice(cursor, end)
     if (!hits.length) return null
     const first = hits[0]!, last = hits[hits.length - 1]!
     const previous = out[out.length - 1]
-    if (previous && first.start_us < previous.end_us) {
+    const separates = previous?.breakAfter || (previous?.referenceSentence !== undefined && piece.referenceSentence !== undefined && previous.referenceSentence !== piece.referenceSentence)
+    let startUs = first.start_us
+    if (previous && first.start_us < previous.end_us && separates) {
+      const at = Math.max(first.start, Math.min(first.end, piece.start))
+      startUs = Math.round(first.start_us + (first.end_us - first.start_us) * (at - first.start) / (first.end - first.start))
+      previous.end_us = startUs; previous.estimated = true
+    }
+    if (previous && first.start_us < previous.end_us && !separates) {
       previous.text += piece.text; previous.end_us = Math.max(previous.end_us, last.end_us)
-    } else out.push({ text: piece.text, start_us: first.start_us, end_us: last.end_us })
+      previous.breakAfter = piece.breakAfter
+      previous.referenceSentence = piece.referenceSentence ?? previous.referenceSentence
+      previous.estimated ||= hits.some(w => w.estimated)
+    } else out.push({ text: piece.text, start_us: startUs, end_us: last.end_us,
+      cue: first.cue, estimated: hits.some(w => w.estimated) || startUs !== first.start_us,
+      referenceSentence: piece.referenceSentence, breakAfter: piece.breakAfter })
   }
   if (out.length && result.pieces[0]!.start > 0) out[0]!.text = result.text.slice(0, result.pieces[0]!.start) + out[0]!.text
   return out
@@ -93,26 +116,45 @@ function timedPieces(result: CorrectedText, spans: TextSpan[]): Array<CaptionWor
 
 function resegment(p: Project, c: Composition, track: Track, group: Layer[], ids: IdGen, correct: ReturnType<typeof createTextCorrector>): number {
   const spans: TextSpan[] = [], originals: string[] = []
+  const independent = new Map<number, CorrectedText['pieces'][number]>()
   let text = ''
-  for (const l of group) {
+  for (const [cue, l] of group.entries()) {
     if (l.params.kind !== 'Text') return 0
     originals.push(l.params.content)
-    const m = timingFor(p, c, l)!
-    const ws = wordSpans(l.params.content, m.words, text.length, l.t_start_us)
-    if (!ws) return correctIndividually(group, correct)
+    // Retakes may lie outside the best alignment of a whole group. Reacquire
+    // each cue, retaining group context for words straddling old cue boundaries.
+    for (const piece of correct(l.params.content).pieces) independent.set(text.length + piece.start,
+      { ...piece, start: text.length + piece.start, end: text.length + piece.end })
+    const m = timingFor(p, l)
+    let ws = m && wordSpans(l.params.content, m.words, text.length, l.t_start_us, cue, m.provenance !== 'exact')
+    if (!ws) {
+      const chars = [...l.params.content], duration = l.t_end_us - l.t_start_us
+      let offset = text.length
+      ws = chars.map((ch, i) => {
+        const span = { start: offset, end: offset + ch.length,
+          start_us: l.t_start_us + Math.round(duration * i / chars.length),
+          end_us: l.t_start_us + Math.round(duration * (i + 1) / chars.length), cue, estimated: true }
+        offset += ch.length; return span
+      })
+    }
     spans.push(...ws); text += l.params.content + '\n'
   }
   const result = correct(text.trimEnd())
+  result.pieces = result.pieces.map(piece => {
+    const local = independent.get(piece.start)
+    return local?.referenceSentence !== undefined && (piece.referenceSentence === undefined || piece.breakAfter && local.breakAfter)
+      ? { ...local, end: piece.end } : piece
+  })
   const words = timedPieces(result, spans)
   if (!words?.length) return correctIndividually(group, correct)
-  const chunks: CaptionWord[][] = []
-  let chunk: CaptionWord[] = [], count = 0
+  const chunks: TimedPiece[][] = []
+  let chunk: TimedPiece[] = []
   for (let i = 0; i < words.length; i++) {
     const word = words[i]!, next = words[i + 1]
-    chunk.push(word); count += [...word.text].length
-    const pause = next ? next.start_us - word.end_us : 0
-    if (!next || /[。！？!?][”’"']?\s*$|[.]\s*$/u.test(word.text) || pause >= 700_000 || (count >= 36 && /[,，;；、\s]$/u.test(word.text)) || count >= 64) {
-      chunks.push(chunk); chunk = []; count = 0
+    chunk.push(word)
+    const matched = word.referenceSentence !== undefined && next?.referenceSentence !== undefined
+    if (!next || word.breakAfter || (matched ? word.referenceSentence !== next.referenceSentence : word.cue !== next.cue)) {
+      chunks.push(chunk); chunk = []
     }
   }
   const first = group[0]!, last = group[group.length - 1]!, grid = gridForLayerKind('Text', c.fps)
@@ -124,15 +166,15 @@ function resegment(p: Project, c: Composition, track: Track, group: Layer[], ids
     if (end <= start || start < first.t_start_us || end > last.t_end_us || (replacements.length && start < replacements[replacements.length - 1]!.t_end_us)) return correctIndividually(group, correct)
     const content = ws.map(w => w.text).join('').trim()
     if (!content) return correctIndividually(group, correct)
-    const template = group[Math.min(i, group.length - 1)]!
+    const template = group[a.cue]!
     const replacement = cloneLayer(template)
     replacement.id = group[i]?.id ?? ids()
     replacement.t_start_us = start; replacement.t_end_us = end
     if (replacement.params.kind === 'Text') replacement.params.content = content
-    const meta: CaptionTiming = { version: 1, text: content, duration_us: end - start, provenance: 'exact',
-      words: ws.map(w => ({ ...w, text: w.text.trim(), start_us: Math.max(0, w.start_us - start), end_us: Math.max(0, w.end_us - start) })) }
+    const meta: CaptionTiming = { version: 1, text: content, duration_us: end - start, provenance: ws.some(w => w.estimated) ? 'interpolated_from_cue' : 'exact',
+      words: ws.map(w => ({ text: w.text.trim(), start_us: Math.max(0, w.start_us - start), end_us: Math.max(0, w.end_us - start) })) }
     // Groups only combine timing from the same source; keep its invalidation guard.
-    const source = timingFor(p, c, first)?.source
+    const source = timingFor(p, first)?.source
     if (source) meta.source = source
     replacement.metadata[CAPTION_TIMING_KEY] = meta
     replacements.push(replacement)
@@ -207,16 +249,13 @@ export function applyTextCorrection(p: Project, ids: IdGen, compositionId: strin
     for (let i = 0; i < original.length;) {
       const first = original[i++]!
       if (!selected.has(first.id)) continue
-      const timing = timingFor(p, c, first)
-      if (!timing) {
-        const untimed = [first]
-        while (i < original.length && selected.has(original[i]!.id) && !timingFor(p, c, original[i]!) && original[i]!.t_start_us - untimed[untimed.length - 1]!.t_end_us < 700_000 && untimed.length < 40) untimed.push(original[i++]!)
-        changed += correctIndividually(untimed, correct); continue
+      if (!canResegment(c, first)) {
+        changed += correctIndividually([first], correct); continue
       }
-      const group = [first], style = styleKey(first)
+      const group = [first], style = styleKey(first), source = JSON.stringify(timingFor(p, first)?.source)
       while (i < original.length) {
-        const next = original[i]!, last = group[group.length - 1]!, nt = timingFor(p, c, next)
-        if (!selected.has(next.id) || !nt || styleKey(next) !== style || JSON.stringify(nt.source) !== JSON.stringify(timing.source) || next.t_start_us < last.t_end_us || next.t_start_us - last.t_end_us > 700_000 || group.length >= 40) break
+        const next = original[i]!, last = group[group.length - 1]!, nt = timingFor(p, next)
+        if (!selected.has(next.id) || !canResegment(c, next) || styleKey(next) !== style || JSON.stringify(nt?.source) !== source || next.t_start_us < last.t_end_us) break
         group.push(next); i++
       }
       changed += resegment(p, c, track, group, ids, correct)

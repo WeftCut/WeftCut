@@ -799,6 +799,9 @@ state), profile range, noise print
 The reference-text-assisted correction of transcribed or existing caption text,
 including resegmentation using the timing information available. It applies to
 existing captions as well as newly generated transcripts.
+Matched manuscript line breaks and sentence-ending punctuation determine the
+caption boundaries. Missing word times are estimated within the original cue;
+estimated timing remains distinguished from engine word timing.
 _Avoid_: 强制对齐 (the distinct acoustic timing operation), 文稿对齐 (as the product name)
 
 ## Agent activity

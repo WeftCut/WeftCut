@@ -5,7 +5,7 @@
 const enUS = {
   text_correction: {
     title: "Text correction", script: "Reference text", placeholder: "Paste your reference text here…",
-    saved_with_project: "This text is saved with your project. Captions change only when you apply correction.",
+    saved_with_project: "Saved with your project. Applying correction splits or joins captions at manuscript line breaks and sentence endings, estimating cuts when word timing is unavailable.",
     scope: "Apply to", selected: "Selected captions ({{count}})", all: "All captions in this composition ({{count}})",
     apply_selected: "Correct {{count}} selected captions", apply_all: "Correct all {{count}} captions",
     clear: "Clear text", close: "Close", running: "Correcting…", locked: "Unlock the target captions to correct their text.",

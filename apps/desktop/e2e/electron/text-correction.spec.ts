@@ -4,7 +4,7 @@ import path from 'node:path';
 import { dockPanel, invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver';
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 };
-const SCRIPT = '今天介绍自动剪辑功能。它可以节省时间。';
+const SCRIPT = '今天介绍自动剪辑功能\n它可以节省时间';
 async function openCaptions(page: import('@playwright/test').Page) {
   await page.locator('.menu-trigger').nth(2).click();
   await page.locator('.app-menu-item').filter({ hasText: /^Caption$/ }).click();
@@ -38,7 +38,7 @@ test('text correction supports imported captions, selected/all scope, undo and s
     await dialog.getByRole('button', { name: 'Correct 1 selected captions' }).click();
     await expect(dialog).toHaveCount(0);
     await expect(panel.locator('.caption-text').first()).toHaveValue('今天介绍自动剪缉功能');
-    await expect(panel.locator('.caption-text').last()).toHaveValue('今天介绍自动剪辑功能。');
+    await expect(panel.locator('.caption-text').last()).toHaveValue('今天介绍自动剪辑功能');
     await invokeCmd(page, 'project_undo');
     await expect(panel.locator('.caption-text').last()).toHaveValue('今天介绍自动剪缉功能');
     expect((await invokeCmd<{ correction_script: string }>(page, 'get_project_settings')).correction_script).toBe(SCRIPT);
@@ -46,7 +46,7 @@ test('text correction supports imported captions, selected/all scope, undo and s
     await dialog.getByRole('combobox').selectOption('all');
     await dialog.getByRole('button', { name: 'Correct all 2 captions' }).click();
     await expect(dialog).toHaveCount(0);
-    await expect(panel.locator('.caption-text').first()).toHaveValue('今天介绍自动剪辑功能。');
+    await expect(panel.locator('.caption-text').first()).toHaveValue('今天介绍自动剪辑功能');
     await invokeCmd(page, 'project_save');
     const workspace = await invokeCmd<string>(page, 'workspace_dir');
     const stored = JSON.parse(fs.readFileSync(path.join(workspace, 'project.json'), 'utf8'));
@@ -78,11 +78,50 @@ test('word timing survives project reopen and correction resegments once', async
     await dialog.getByRole('button', { name: 'Correct all 1 captions' }).click();
     await expect(dialog).toHaveCount(0);
     await expect(panel.locator('.caption-row')).toHaveCount(2);
-    await expect(panel.locator('.caption-text').first()).toHaveValue('今天介绍自动剪辑功能。');
-    await expect(panel.locator('.caption-text').last()).toHaveValue('它可以节省时间。');
+    await expect(panel.locator('.caption-text').first()).toHaveValue('今天介绍自动剪辑功能');
+    await expect(panel.locator('.caption-text').last()).toHaveValue('它可以节省时间');
     const before = await invokeCmd<{ history: unknown }>(page, 'project_summary');
     const result = await invokeCmd(page, 'correct_caption_text', { project_id: summary.project_id, composition_id: summary.root_id, layer_ids: null });
     expect(result).toEqual({ changed: 0 });
     expect((await invokeCmd<{ history: unknown }>(page, 'project_summary')).history).toEqual(before.history);
+  } finally { await app.close(); }
+});
+
+test('imported captions follow manuscript lines with estimated cuts, undo and reopen', async () => {
+  const { app, page } = await launchApp();
+  try {
+    const parent = tmpDir('weftcut-correction-estimates-');
+    await newProject(page, { parentFolder: parent, name: 'paper-demo', canvas: CANVAS });
+    const srt = path.join(parent, 'captions.srt');
+    fs.writeFileSync(srt, '1\n00:00:00,000 --> 00:00:06,000\n先准备彩纸。然后对折最后压平\n');
+    await invokeCmd(page, 'import_media', { path: srt });
+    const summary = await invokeCmd<{ project_id: string; root_id: string }>(page, 'project_summary');
+    const panel = await openCaptions(page);
+    await panel.getByRole('button', { name: 'Text correction' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Text correction' });
+    await expect(dialog.getByLabel('Reference text')).toBeEnabled();
+    await dialog.getByLabel('Reference text').fill('先准备彩纸然后对折\n最后压平');
+    await dialog.getByRole('button', { name: 'Correct all 1 captions' }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(panel.locator('.caption-row')).toHaveCount(2);
+    await expect(panel.locator('.caption-text').first()).toHaveValue('先准备彩纸然后对折');
+    await expect(panel.locator('.caption-text').last()).toHaveValue('最后压平');
+    await invokeCmd(page, 'project_undo');
+    await expect(panel.locator('.caption-row')).toHaveCount(1);
+    await expect(panel.locator('.caption-text')).toHaveValue('先准备彩纸。然后对折最后压平');
+    const args = { project_id: summary.project_id, composition_id: summary.root_id, layer_ids: null };
+    await invokeCmd(page, 'correct_caption_text', args);
+    await invokeCmd(page, 'project_save');
+    const workspace = await invokeCmd<string>(page, 'workspace_dir');
+    const stored = JSON.parse(fs.readFileSync(path.join(workspace, 'project.json'), 'utf8'));
+    const cues = stored.compositions[summary.root_id].tracks.filter((t: { role: string }) => t.role === 'Caption').flatMap((t: { layers: unknown[] }) => t.layers);
+    expect(cues).toHaveLength(2);
+    expect(cues[0].t_start_us).toBe(0);
+    expect(cues[0].t_end_us).toBe(cues[1].t_start_us);
+    expect(cues[1].t_end_us).toBe(6_000_000);
+    expect(cues.every((l: { metadata: Record<string, { provenance: string }> }) => l.metadata['weftcut.caption_timing']?.provenance === 'interpolated_from_cue')).toBe(true);
+    await invokeCmd(page, 'project_open', { path: workspace });
+    await expect(panel.locator('.caption-row')).toHaveCount(2);
+    expect(await invokeCmd(page, 'correct_caption_text', args)).toEqual({ changed: 0 });
   } finally { await app.close(); }
 });

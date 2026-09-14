@@ -3,6 +3,37 @@ import { createTextCorrector } from './textCorrection'
 
 const correct = (text: string, script: string) => createTextCorrector(script)(text).text
 describe('reference text correction', () => {
+  it('corrects a contextual near-homophone in a synthetic sentence', () => {
+    expect(correct('新的标识应该吃什么颜色？', '新的标识应该是什么颜色？')).toBe('新的标识应该是什么颜色？')
+  })
+  it('corrects a numeral-shaped homophone in a name', () => {
+    expect(correct('欢迎来到课堂，我叫五老师', '欢迎来到课堂，我叫吴老师')).toBe('欢迎来到课堂，我叫吴老师')
+  })
+  it('corrects a synthetic repeated opening against a partial manuscript', () => {
+    const script = '新的标识应该是什么颜色？\nHi欢迎来到课堂，我叫吴老师\n下面演示折纸步骤\nPaperBot展示了折纸过程'
+    const text = '新的标识应该吃什么颜色？新的标识应该吃什么颜色？好的,欢迎来到课堂，我叫五老师 下面演示折纸步骤 PaperBot展示了折纸过程'
+    const expected = '新的标识应该是什么颜色？新的标识应该是什么颜色？好的,欢迎来到课堂，我叫吴老师 下面演示折纸步骤 PaperBot展示了折纸过程'
+    expect(correct(text, script)).toBe(expected)
+    expect(correct(expected, script)).toBe(expected)
+  })
+  it('uses exact context across arbitrary cue line breaks', () => {
+    expect(correct('欢迎来到课堂，我叫\n五老师', '欢迎来到课堂，我叫吴老师')).toBe('欢迎来到课堂，我叫吴老师')
+  })
+  it.each([
+    ['吃什么？', '是什么？'],
+    ['我是一', '我是椅'],
+    ['售价是一元整。', '售价是衣元整。'],
+    ['请找第四号窗口。', '请找第是号窗口。'],
+    ['售价是四百元整。', '售价是是百元整。'],
+    ['今天有一位师傅。', '今天有衣位师傅。'],
+    ['这个产品不支持退款。', '这个产品布支持退款。'],
+    ['这个产品布支持退款。', '这个产品不支持退款。'],
+    ['欢迎来到课堂，我叫吴老师', '欢迎来到课堂，我叫五老师'],
+    ['新的标识应该吃什么颜色？', '新的标识应该是什么颜色？新的标识应该次什么颜色？'],
+    ['欢迎来到课堂，我叫五老师。', '欢迎来到课堂，我叫吴老师。欢迎来到课堂，我叫伍老师。'],
+  ])('preserves weak, protected or ambiguous input: %s', (text, script) => {
+    expect(correct(text, script)).toBe(text)
+  })
   it('corrects contextual Chinese homophones and punctuation', () => {
     expect(correct('今天我们介绍自动剪缉功能它可以节省时间', '今天我们介绍自动剪辑功能。它可以节省时间。')).toBe('今天我们介绍自动剪辑功能。它可以节省时间。')
   })

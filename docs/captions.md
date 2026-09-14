@@ -77,7 +77,11 @@ review markers, confirmation states, or protected-manual-text flags.
 `shared/textCorrection.ts` prepares a normalized manuscript index, finds local
 candidate windows, and aligns text sequences with gaps on either side.
 Context-supported Chinese homophones and equivalent formatting may be
-corrected; numerical/negation conflicts, ambiguous colloquial numbers and unsupported substitutions are
+corrected. Near sounds with confusable initials, and single Chinese numeral
+characters misrecognized in lexical text (such as 五老师 / 吴老师), also qualify
+when two consecutive tokens on each side match exactly and the reference
+context has only one spelling. Quantity/ordinal contexts and numeric reference
+targets stay protected. Numerical/negation conflicts, ambiguous colloquial numbers and unsupported substitutions are
 preserved. Extra spoken text remains and unmatched manuscript text is not
 inserted. Repeated contexts with conflicting spellings abstain. No acoustic
 model, cloud request, or forced alignment is part of this operation.
@@ -91,15 +95,27 @@ Metadata follows the ordinary project save path. Caption moves preserve
 relative spans; text/duration edits or source changes make the mapping
 ineligible rather than guessing new timestamps.
 
-With usable engine word times, correction can split or combine adjacent
-captions using manuscript punctuation, observed gaps and caption length.
-Static appearance is inherited, different styles/positions are not combined,
-and animated captions keep their boundaries. Links, transitions and anchored
-markers also prevent resegmentation. Imported captions and interpolated
-timings support text/punctuation correction with their existing time bounds.
-The `exact` provenance is not itself proof of a usable boundary: word coverage,
-ordering and duration are checked before resegmentation. Repeating a correction
-with unchanged input produces no new history entry.
+Matched manuscript line breaks (including CRLF/blank lines) and sentence-ending
+punctuation determine caption boundaries. Old ASR sentence/cue boundaries may
+be joined when the manuscript continues the same sentence; pauses and caption
+length do not add extra breaks. Unmatched speech remains, and unspoken
+manuscript sentences are not inserted.
+
+Usable word times place the cuts. Imported captions, missing/stale/zero-duration
+word times, and manually edited captions estimate cuts in each original cue's
+time range by character coverage. A manuscript break inside an engine word
+similarly estimates its position within that word. Estimated output records
+`interpolated_from_cue` provenance and retains its mapping for later corrections;
+it is not relabelled as engine timing. Cuts snap to the caption frame grid.
+If the available duration cannot hold valid non-overlapping output captions,
+correction retains the original boundaries and updates text only.
+
+Static appearance is inherited, different styles/positions or sources are not
+combined, and animated captions keep their boundaries. Links, transitions and
+anchored markers also prevent resegmentation. The `exact` provenance is not
+itself proof of a usable boundary: word coverage, ordering and duration are
+checked before resegmentation. Repeating a correction with unchanged input
+produces no new history entry.
 
 **Cues pack into the caption tracks already there.** `add_caption_track` tries
 the composition's own unlocked caption tracks first, in track order, and lands
