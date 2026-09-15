@@ -205,7 +205,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(n, 2);
-        assert_eq!(std::fs::read(dest.join("runtime/cli")).unwrap(), b"elf-bytes");
+        assert_eq!(
+            std::fs::read(dest.join("runtime/cli")).unwrap(),
+            b"elf-bytes"
+        );
     }
 
     /// A runtime whose executable bit or `$ORIGIN` symlink was flattened on the
