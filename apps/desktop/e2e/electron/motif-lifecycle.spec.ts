@@ -11,7 +11,7 @@ import type { ElectronApplication } from '@playwright/test'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { killAppTree, launchApp, newProject, waitForHook, tmpDir } from './helpers/driver'
+import { forceCloseApp, launchApp, newProject, waitForHook, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -19,10 +19,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /// quitting the app, a lingering handle), so bound it and then force-close. Two
 /// rules, both of which the 8 s + `proc.kill()` first version broke:
 ///
-///   - the force path takes the process TREE down, never the main pid alone.
-///     killAppTree's comment has what a leader-only kill costs; the short
-///     version is that it trades this spec's bounded teardown for the WORKER's
-///     unbounded one.
+///   - the force path goes through forceCloseApp, never a hand-rolled kill. Its
+///     comment has what a leader-only kill costs on Windows; the short version
+///     is that it trades this spec's bounded teardown for the WORKER's unbounded
+///     one.
 ///   - the budget is a safety net, not the expected path. A graceful quit here
 ///     has been measured past 8 s on a loaded Windows runner, and every kill
 ///     that pre-empts one skips the app's own shutdown.
@@ -46,8 +46,8 @@ async function closeAppRobustly(app: ElectronApplication): Promise<void> {
     if (timer) clearTimeout(timer)
   }
   if (proc?.exitCode === null) {
-    console.log(`[lifecycle] close() outlived ${CLOSE_BUDGET_MS}ms — killing the process tree`)
-    killAppTree(app)
+    console.log(`[lifecycle] close() outlived ${CLOSE_BUDGET_MS}ms — force-closing`)
+    forceCloseApp(app)
   }
 }
 
