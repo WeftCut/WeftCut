@@ -889,3 +889,4 @@
 
 .settings-model-inline-editor { border-top: 1px solid var(--border); padding-top: 16px; }
 .settings-model-candidate > strong { font-size: var(--font-size-label); }
+.settings-model-swap { display: flex; justify-content: center; color: var(--muted-foreground); }

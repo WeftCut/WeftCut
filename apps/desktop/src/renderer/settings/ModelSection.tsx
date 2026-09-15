@@ -1,3 +1,4 @@
+import { ArrowUpDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MODEL_EVENTS, type ModelBackend, type ModelFamily, type ModelOperation, type ModelsView, type ModelUseRequest, type ModelView } from "../../shared/inference-models";
@@ -106,9 +107,12 @@ export function ModelSection({ family, onError }: { family: ModelFamily; onError
     operation={operation?.id === editor.id ? operation : undefined} submittingRequest={submitting}
     mode={panel.mode} backendOverride={panel.backend} onUse={useModel} onError={setDialogError}
     draft={operation?.id === editor.id ? wanted.current ?? undefined : undefined} onCancel={() => void act(cancel)} />;
-  const actions = (m: ModelView) => <div className="settings-model-actions">
-    <Button size="sm" variant="outline" aria-expanded={!!inlineEditor && editor.id === m.id} disabled={preparing}
-      onClick={() => { setConfirmation(null); setPanel(inlineEditor && editor.id === m.id ? null : { kind: "editor", id: m.id, mode: m.active ? "edit" : "prepare" }); }}>{t("models.edit")}</Button>
+  // The setup card takes `edit` off: that card exists only to host the editor,
+  // so its toggle would read as "collapse" and take the whole card away. When
+  // nothing is left to show, the row goes too rather than leave a stray gap.
+  const actions = (m: ModelView, edit = true) => (edit || (m.downloadedBytes ?? 0) > 0 || m.custom) && <div className="settings-model-actions">
+    {edit && <Button size="sm" variant="outline" aria-expanded={!!inlineEditor && editor.id === m.id} disabled={preparing}
+      onClick={() => { setConfirmation(null); setPanel(inlineEditor && editor.id === m.id ? null : { kind: "editor", id: m.id, mode: m.active ? "edit" : "prepare" }); }}>{t("models.edit")}</Button>}
     {(m.downloadedBytes ?? 0) > 0 && <Button size="sm" variant="ghost" disabled={submitting} onClick={() => setConfirmation({ id: m.id, action: "clear" })}>{t("models.clear_downloads")}</Button>}
     {m.custom && <Button size="sm" variant="ghost" disabled={submitting} onClick={() => setConfirmation({ id: m.id, action: "remove" })}>{t("models.remove")}</Button>}
   </div>;
@@ -141,12 +145,18 @@ export function ModelSection({ family, onError }: { family: ModelFamily; onError
         {confirm(active.id)}
       </> : <><strong>{t("models.none_active")}</strong><p className="settings-toggle-hint">{t("models.empty_hint")}</p></>}
     </div>
-    {inlineEditor && editor.id !== active?.id && <div className="settings-model-card settings-model-candidate">
-      <strong>{t("models.setup_model", { name: name(editor) })}</strong>
-      {actions(editor)}
-      {renderEditor()}
-      {confirm(editor.id)}
-    </div>}
+    {inlineEditor && editor.id !== active?.id && <>
+      {/* Between the two cards the arrow says what the setup card is for: the
+          model below takes the place of the one above. The cards' own headings
+          already carry that in text, so it stays out of the accessible tree. */}
+      <div className="settings-model-swap" aria-hidden="true"><ArrowUpDown size={14} /></div>
+      <div className="settings-model-card settings-model-candidate">
+        <strong>{t("models.setup_model", { name: name(editor) })}</strong>
+        {actions(editor, false)}
+        {renderEditor()}
+        {confirm(editor.id)}
+      </div>
+    </>}
     {operation && !panel && <div className="settings-model-card" role="status">
       <p className="settings-model-state">{models.find(m => m.id === operation.id)?.name} · {t(`models.${operation.phase}`)}</p>
       {operation.error && <p className="settings-test-err" role="alert">{operation.error}</p>}

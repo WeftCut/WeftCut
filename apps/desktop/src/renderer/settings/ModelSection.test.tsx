@@ -80,6 +80,22 @@ describe("model settings", () => {
     await user.click(screen.getByRole("button", { name: "Download and use" }));
     expect(ipc.modelsUse).toHaveBeenCalledWith(expect.objectContaining({ id: "paraformer-zh" }));
   });
+  it("points the setup card at the summary it replaces and leaves out the Edit toggle", async () => {
+    const v = readySpeech(); v.models[1]!.installed = false; v.models[1]!.missingBytes = 123000000;
+    const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
+    await screen.findByTestId("current-model-summary");
+    expect(document.querySelector(".settings-model-swap")).toBeNull();
+    await choose(user, /Paraformer/);
+    const candidate = document.querySelector<HTMLElement>(".settings-model-candidate")!;
+    const swap = document.querySelector(".settings-model-swap")!;
+    expect(swap.nextElementSibling).toBe(candidate);
+    expect(swap.getAttribute("aria-hidden")).toBe("true");
+    // Edit there would take the card away rather than collapse it; the current
+    // model keeps its own toggle, which does collapse in place.
+    expect(within(candidate).queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(within(candidate).getByRole("button", { name: "Download and use" })).toBeTruthy();
+    expect(within(screen.getByTestId("current-model-summary")).getByRole("button", { name: "Edit" })).toBeTruthy();
+  });
   it("choosing None cancels preparation and persists unselection", async () => {
     const v = readySpeech(); v.operations = [{ id: "paraformer-zh", family: "speech", phase: "verifying" }];
     const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
