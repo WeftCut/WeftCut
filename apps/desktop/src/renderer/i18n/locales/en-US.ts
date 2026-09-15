@@ -1577,6 +1577,16 @@ const enUS = {
       body: "The native decode component (@weftcut/native-decode) failed to load, so previews use the WebCodecs engine only. Reinstall the app to restore it.",
       action: "Open decode settings",
     },
+    agent_skill_unavailable: {
+      title: "Agent Skill missing",
+      body: "The Skill that teaches a connected agent how to drive WeftCut did not install, so there is nothing to hand to your agent. Reinstall the app to restore it.",
+      action: "Open agent settings",
+    },
+    agent_skill_stale: {
+      title: "Agent Skill not up to date",
+      body: "WeftCut could not refresh its agent Skill, so the copy on offer is one an earlier version left behind. An agent using it may call tools this version no longer has.",
+      action: "Open agent settings",
+    },
   },
   // Codec-named optimization reasons, shown in Media Pool badge tooltips.
   import_proxy: {
@@ -1612,6 +1622,20 @@ const enUS = {
     copy_skill_prompt: "Copy Skill prompt",
     skill_copied: "Prompt copied!",
     skill_path_heading: "Skill folder location",
+    skill_path_unavailable:
+      "No Skill folder to open — see “Teach your agent WeftCut” above.",
+    skill_stale:
+      "Showing the copy an earlier launch left behind, which may be older than this version of WeftCut.",
+    skill_fault: {
+      not_built:
+        "This development build has no Skill staged yet. Run “npm run build:skills” and restart.",
+      bundle_missing:
+        "No Skill shipped with this installation of WeftCut. Reinstall the app to restore it.",
+      incomplete:
+        "The Skill that shipped with WeftCut is incomplete. Reinstall the app to restore it.",
+      copy_failed:
+        "WeftCut could not write the Skill into its user-data folder. Check free disk space and the folder's permissions, then restart.",
+    },
     copy_path: "Copy path",
     browse: "Browse…",
     // The Browse button's tooltip — Windows' own Explorer wording, and true on

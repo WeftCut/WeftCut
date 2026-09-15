@@ -118,6 +118,18 @@ The app's **Connect agent** panel (Settings → Agent):
   hand. Every tool / resource / prompt name the skill sources reference is
   pinned to the advertised catalog by `mcp.skill-conformance.test.ts`, so a
   rename fails CI until the prose is updated.
+- **A build without the skill cannot ship, and a launch without it says so.**
+  Two gates assert the bundle's shape (the `weftcut` folder, its `SKILL.md`,
+  the copied contract) and its version stamp: `build:skills` over `out/skills`
+  and an electron-builder `afterPack` hook over the packed copy. Past those,
+  the startup refresh reports a *state* rather than a path —
+  `installed`, `stale` (this launch could not refresh, so the folder on offer
+  is an earlier version's) or `unavailable`, each with the fault that caused
+  it. The panel always renders both skill surfaces and shows the fault in place
+  of the buttons; a packaged build that is not `installed` also raises a
+  startup notice, since it means both gates failed on the way to the user. Only
+  a dev tree before `build:skills` is a benign fault, and it names the command
+  to run.
 - Renders "starting…" while the server is still binding its port; polls
   `get_mcp_info` until the bind completes. Until the shim bundle exists (dev
   before `build:cli`), the HTTP path renders as primary.

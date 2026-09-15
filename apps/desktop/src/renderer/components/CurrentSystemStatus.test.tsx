@@ -36,4 +36,17 @@ describe("CurrentSystemStatus", () => {
     await userEvent.click(screen.getByRole("button", { name: "打开 API 密钥设置" }));
     expect(onOpenSettings).toHaveBeenCalledWith("speech");
   });
+
+  it("a missing agent skill is an error here, not just a quiet gap in the Agent tab", async () => {
+    const onOpenSettings = vi.fn();
+    render(
+      <CurrentSystemStatus
+        notices={[{ level: "error", code: "agent_skill_unavailable" }]}
+        onOpenSettings={onOpenSettings}
+      />,
+    );
+    expect(screen.getByText("缺少代理 Skill")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "打开代理设置" }));
+    expect(onOpenSettings).toHaveBeenCalledWith("agent");
+  });
 });

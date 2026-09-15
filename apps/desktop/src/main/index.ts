@@ -952,18 +952,32 @@ app.whenReady().then(async () => {
   // in the app reads it — it exists to be copied into an agent client's own
   // skills directory.
   const { installSkills } = await import('./mcp/skillsInstall.js')
-  const skillsDir = installSkills({
+  const skills = installSkills({
     resourcesSkills: path.join(process.resourcesPath, 'skills'),
     devSkills: path.join(import.meta.dirname, '../skills'),
     isPackaged: app.isPackaged,
     userDataDir: app.getPath('userData'),
   })
+  if (skills.state !== 'installed') {
+    console.warn(`[mcp] agent skill ${skills.state} (${skills.fault})`)
+    // A dev tree before `npm run build:skills` is the one expected way to get
+    // here, and the Agent panel names that command itself — a standing system
+    // notice for it would be noise in every dev session. In a packaged build
+    // both gates that make this unreachable have failed, so it is an error the
+    // user needs surfaced whether or not they ever open that panel.
+    if (app.isPackaged) {
+      startupNotices.push({
+        level: skills.state === 'stale' ? 'warn' : 'error',
+        code: skills.state === 'stale' ? 'agent_skill_stale' : 'agent_skill_unavailable',
+      })
+    }
+  }
   const stdioInfo = () => ({
     exe_path: process.execPath,
     appimage: process.env.APPIMAGE ?? null,
     user_data: app.getPath('userData'),
     shim_path: shimPath,
-    skills_dir: skillsDir,
+    skills,
   })
   if (!app.isPackaged && shimPath) {
     console.log(

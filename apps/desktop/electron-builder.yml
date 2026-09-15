@@ -14,12 +14,11 @@ publish:
   owner: WeftCut
   repo: WeftCut
   releaseType: release
-# Re-assert both ffmpeg lanes' licensing compliance from the packaged manifests
-# before the app is folded into a distributable: the native-decode runtime must
-# be LGPL-clean (§6 gate) and the ffmpeg sidecar must carry its GPLv3 text +
-# source offer — a non-compliant build can never ship even if the fetched
-# runtime were swapped out from under the packager.
-afterPack: ./scripts/after-pack-licensing.mjs
+# Pack-time gates, re-asserted from the packaged files rather than from what the
+# supply steps believed they staged: both ffmpeg lanes' licensing compliance, and
+# the presence of the agent skill bundle. Each refuses to let the build become a
+# distributable; see scripts/after-pack.mjs.
+afterPack: ./scripts/after-pack.mjs
 directories:
   output: release
   buildResources: build
@@ -63,7 +62,8 @@ extraResources:
   # The agent skill folder (assembled by scripts/build-skills.mjs from the repo's
   # skills/ tree + the docs it points at). Refreshed into <userData>/skills/ at
   # startup; the user copies THAT into their agent's own skills directory, so this
-  # one is only the ride-along.
+  # one is only the ride-along. A filter that stopped matching would pack nothing
+  # without complaining — the afterPack skill gate is what catches that.
   - from: out/skills
     to: skills
     filter: ["**/*"]

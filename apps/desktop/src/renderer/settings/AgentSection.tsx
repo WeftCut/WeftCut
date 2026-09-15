@@ -9,7 +9,12 @@ import {
   EyeOffIcon,
   RotateCcwIcon,
 } from "lucide-react";
-import { getMcpInfo, resetMcpToken, type McpInfoView } from "../ipc";
+import {
+  getMcpInfo,
+  resetMcpToken,
+  type McpInfoView,
+  type SkillsInstallView,
+} from "../ipc";
 import { reveal as revealInShell } from "@/bridge/shell";
 import { AppInput } from "../components/AppInput";
 import { Button } from "@/components/ui/button";
@@ -173,9 +178,11 @@ function buildSkillPrompt(skillsDir: string): string {
 /// the app being closed) and HTTP-direct (advanced — for clients without
 /// stdio support). Until the shim is installed (dev before build:cli,
 /// shim_path = null) the HTTP path renders as primary, which is also the
-/// pre-shim layout. Also hands out the shipped agent skill folder, when one is
-/// staged. Lives in the Settings "Agent" tab; like the other panes
-/// it stays mounted across tab switches, so the poll below runs once.
+/// pre-shim layout. Also hands out the shipped agent skill folder — always
+/// shown, reporting the fault when there is no folder to hand out, because a
+/// shipped app cannot reach that state without something being broken. Lives
+/// in the Settings "Agent" tab; like the other panes it stays mounted across
+/// tab switches, so the poll below runs once.
 export function AgentSection() {
   const { t } = useTranslation();
   const [info, setInfo] = useState<McpInfoView | null>(null);
@@ -303,13 +310,13 @@ export function AgentSection() {
   };
 
   const copySkillPrompt = async () => {
-    if (!info?.skills_dir) return;
-    await copy("skill", buildSkillPrompt(info.skills_dir));
+    if (!info?.skills.dir) return;
+    await copy("skill", buildSkillPrompt(info.skills.dir));
   };
 
   const copySkillPath = async () => {
-    if (!info?.skills_dir) return;
-    await copy("skill-path", skillFolder(info.skills_dir));
+    if (!info?.skills.dir) return;
+    await copy("skill-path", skillFolder(info.skills.dir));
   };
 
   /// Reveal the skill folder in the OS file manager — selected in Explorer /
@@ -318,8 +325,8 @@ export function AgentSection() {
   /// surfaced: the path is on screen right next to the button, which is the
   /// fallback the user needs.
   const revealSkillFolder = () => {
-    if (!info?.skills_dir) return;
-    void revealInShell(skillFolder(info.skills_dir)).catch((e: unknown) => {
+    if (!info?.skills.dir) return;
+    void revealInShell(skillFolder(info.skills.dir)).catch((e: unknown) => {
       console.warn("reveal skill folder failed:", e);
     });
   };
@@ -422,6 +429,22 @@ export function AgentSection() {
       </div>
     ) : null;
 
+  /// The line that explains a skill state other than `installed`, in the
+  /// register its severity deserves: amber for `stale` (the folder is there and
+  /// worth handing out, it is just not this version's), red for a folder that
+  /// is not there at all.
+  const skillFaultNote = (skills: SkillsInstallView) =>
+    skills.state === "installed" ? null : (
+      <p
+        className={
+          skills.state === "stale" ? "settings-warn" : "settings-error"
+        }
+      >
+        {skills.state === "stale" ? `${t("connect.skill_stale")} ` : ""}
+        {t(`connect.skill_fault.${skills.fault}`)}
+      </p>
+    );
+
   const httpActions = () => (
     <div className="connect-snippet-actions">
       {copyButton("http", () => void copyHttp())}
@@ -495,10 +518,15 @@ export function AgentSection() {
         </div>
       </section>
 
-      {info.skills_dir && (
-        <section className="settings-section">
-          <h3>{t("connect.skill_heading")}</h3>
-          <p className="settings-blurb">{t("connect.skill_blurb")}</p>
+      {/* Present whatever the skill state is. A shipped build that reached
+          anything but `installed` has had both of its build gates fail, so the
+          absence is a defect the user can act on — reporting it is the point,
+          and a section that disappeared would report nothing. */}
+      <section className="settings-section">
+        <h3>{t("connect.skill_heading")}</h3>
+        <p className="settings-blurb">{t("connect.skill_blurb")}</p>
+        {skillFaultNote(info.skills)}
+        {info.skills.dir && (
           <div className="settings-key-input-row">
             <Button size="sm" onClick={() => void copySkillPrompt()}>
               {copiedKey === "skill" ? (
@@ -511,8 +539,8 @@ export function AgentSection() {
                 : t("connect.copy_skill_prompt")}
             </Button>
           </div>
-        </section>
-      )}
+        )}
+      </section>
 
       <section className="settings-section">
         <h3>{t("connect.manual_heading")}</h3>
@@ -553,10 +581,10 @@ export function AgentSection() {
             output-location row — a read-only path field with Browse beside
             it — rather than the snippet <pre>: this is one value to take away
             or act on, not a blob to paste. */}
-        {info.skills_dir && (
-          <div className="connect-path-block">
-            <div className="connect-snippet-header">
-              <span>{t("connect.skill_path_heading")}</span>
+        <div className="connect-path-block">
+          <div className="connect-snippet-header">
+            <span>{t("connect.skill_path_heading")}</span>
+            {info.skills.dir && (
               <div className="connect-snippet-actions">
                 {copyButton(
                   "skill-path",
@@ -564,14 +592,16 @@ export function AgentSection() {
                   t("connect.copy_path"),
                 )}
               </div>
-            </div>
+            )}
+          </div>
+          {info.skills.dir ? (
             <div className="connect-path">
               <AppInput
-                value={skillFolder(info.skills_dir)}
+                value={skillFolder(info.skills.dir)}
                 onValueChange={() => {}}
                 readOnly
                 mono
-                title={skillFolder(info.skills_dir)}
+                title={skillFolder(info.skills.dir)}
                 className="connect-path-input"
                 ariaLabel={t("connect.skill_path_heading")}
               />
@@ -582,8 +612,14 @@ export function AgentSection() {
                 {t("connect.browse")}
               </Button>
             </div>
-          </div>
-        )}
+          ) : (
+            // Points at the section that already diagnosed it rather than
+            // repeating the diagnosis: one fault, one explanation.
+            <p className="settings-blurb">
+              {t("connect.skill_path_unavailable")}
+            </p>
+          )}
+        </div>
       </section>
 
       {stdio && (

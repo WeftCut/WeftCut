@@ -1858,11 +1858,25 @@ export interface McpInfoView {
   /// build:cli has produced the bundle (the panel then falls back to
   /// HTTP-direct as the primary path).
   shim_path: string | null;
-  /// <userData>/skills once installed — the folder the user copies into their
-  /// agent client's skills directory. null in dev before build:skills has
-  /// staged the bundle (the panel then hides the skill section entirely).
-  skills_dir: string | null;
+  /// State of the <userData>/skills refresh — the folder the user copies into
+  /// their agent client's skills directory. Anything but `installed` is a
+  /// condition the panel reports; main/mcp/skillsInstall.ts says what each
+  /// fault means and why none of them is a reason to hide the section.
+  skills: SkillsInstallView;
 }
+
+/// Why the advertised skill folder is not the one this app version ships.
+/// `not_built` is the only benign member — a dev tree before `build:skills`.
+export type SkillsFault =
+  | "not_built"
+  | "bundle_missing"
+  | "incomplete"
+  | "copy_failed";
+
+export type SkillsInstallView =
+  | { state: "installed"; dir: string }
+  | { state: "stale"; dir: string; fault: SkillsFault }
+  | { state: "unavailable"; dir: null; fault: SkillsFault };
 
 /// Returns the live MCP server connection details, or `null` if the server is
 /// still starting. Used by the Settings "Agent" tab.

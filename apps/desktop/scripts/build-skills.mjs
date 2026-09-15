@@ -9,29 +9,38 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { stampSkillVersion } from './build-skills-lib.mjs'
+import {
+  assertSkillLayout,
+  assertSkillVersions,
+  REQUIRED_DOCS,
+  REQUIRED_SKILL,
+  stampSkillVersion,
+} from './build-skills-lib.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.join(HERE, '..', '..', '..')
 const OUT = path.join(HERE, '..', 'out', 'skills')
 
-/// Docs copied verbatim into a skill folder, keyed by their destination. A
-/// skill references these by bare filename ("read motif-authoring.md next to
-/// this file"), so the name must survive the copy.
-const DOCS = [{ from: path.join(REPO, 'docs', 'motif-authoring.md'), to: path.join(OUT, 'weftcut', 'motif-authoring.md') }]
-
 // Clean first: a renamed or deleted skill file must not survive in the bundle.
 fs.rmSync(OUT, { recursive: true, force: true })
 fs.cpSync(path.join(REPO, 'skills'), OUT, { recursive: true })
-for (const doc of DOCS) fs.copyFileSync(doc.from, doc.to)
+// Docs land inside the required skill, so the layout has to hold before they
+// can be placed. Asserting here rather than letting `copyFileSync` raise ENOENT
+// is what turns "skills/ was emptied or renamed" into a message that says so.
+const staged = assertSkillLayout(OUT, { requiredDocs: [] })
+for (const doc of REQUIRED_DOCS) {
+  fs.copyFileSync(path.join(REPO, 'docs', doc), path.join(OUT, REQUIRED_SKILL, doc))
+}
 
 // A copy on a user's machine outlives the session that installed it and can be
 // reinstalled from any app version, so it has to say which one it came from.
 const { version } = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'package.json'), 'utf8'))
-for (const entry of fs.readdirSync(OUT, { withFileTypes: true })) {
-  if (!entry.isDirectory()) continue
-  const skill = path.join(OUT, entry.name, 'SKILL.md')
-  fs.writeFileSync(skill, stampSkillVersion(fs.readFileSync(skill, 'utf8'), version))
+for (const skill of staged) {
+  const at = path.join(OUT, skill, 'SKILL.md')
+  fs.writeFileSync(at, stampSkillVersion(fs.readFileSync(at, 'utf8'), version))
 }
 
-console.log(`[build:skills] staged ${path.relative(path.join(HERE, '..'), OUT)} at ${version}`)
+assertSkillLayout(OUT)
+assertSkillVersions(OUT, staged, version)
+
+console.log(`[build:skills] staged ${staged.join(', ')} to ${path.relative(path.join(HERE, '..'), OUT)} at ${version}`)

@@ -9,10 +9,11 @@
 // and HTTP-direct moves behind an "advanced" disclosure; without it (dev
 // before build:cli) the HTTP snippet renders as primary, token masked until
 // revealed, copy always carrying the real token. The shipped agent skill gets
-// two surfaces, both present only once a skill folder is staged (skills_dir
-// set): an install prompt for the agent, and — for a user doing the copy by
-// hand — its folder path in the manual section, copyable and revealable in the
-// OS file manager.
+// two surfaces — an install prompt for the agent, and, for a user doing the
+// copy by hand, its folder path in the manual section, copyable and revealable
+// in the OS file manager. Both stay on screen whatever `skills` reports: with
+// no folder to hand out they carry the fault instead, because a packaged build
+// only reaches that state with something broken.
 // Token rotation sits above both layouts: it never puts the secret on screen,
 // so unlike Reveal and Copy it has no reason to hide behind the disclosure.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,12 +33,15 @@ vi.mock("../ipc", async (importActual) => {
 import i18n from "../i18n";
 import { AgentSection } from "./AgentSection";
 
-/// shim_path absent → the pre-shim, HTTP-primary layout (dev fallback).
+/// shim_path absent → the pre-shim, HTTP-primary layout (dev fallback). Its
+/// skill state matches: a dev tree before `build:skills` staged one.
 const INFO = {
   url: "http://127.0.0.1:4711/mcp",
   bearer_token: "secret-token",
-  skills_dir: null,
+  skills: { state: "unavailable", dir: null, fault: "not_built" },
 };
+
+const SKILLS_DIR = "C:\\ud\\skills";
 
 const INFO_SHIM = {
   ...INFO,
@@ -45,7 +49,7 @@ const INFO_SHIM = {
   appimage: null,
   user_data: "C:\\ud",
   shim_path: "C:\\ud\\cli\\weftcut-mcp.cjs",
-  skills_dir: "C:\\ud\\skills",
+  skills: { state: "installed", dir: SKILLS_DIR },
 };
 
 const clipboard = vi.hoisted(() => ({ writeText: vi.fn() }));
@@ -183,17 +187,33 @@ describe("AgentSection", () => {
     expect(await snippetText()).toContain(INFO.bearer_token);
   });
 
-  it("hides the skill block while no skill folder is staged", async () => {
+  it("keeps the skill block and says why there is nothing to hand out", async () => {
     render(<AgentSection />);
-    await snippetText();
+    // The section stays: a shipped build cannot reach this state without both
+    // build gates having failed, so a vanished section would report nothing.
     expect(
-      screen.queryByRole("heading", { name: "Teach your agent WeftCut" }),
-    ).toBeNull();
+      await screen.findByRole("heading", { name: "Teach your agent WeftCut" }),
+    ).toBeTruthy();
+    expect(screen.getByText(/npm run build:skills/)).toBeTruthy();
+    // No folder means nothing to copy, open, or hand to an agent.
     expect(
       screen.queryByRole("button", { name: "Copy Skill prompt" }),
     ).toBeNull();
     expect(screen.queryByRole("button", { name: "Copy path" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Browse…" })).toBeNull();
+    expect(screen.getByText(/No Skill folder to open/)).toBeTruthy();
+  });
+
+  it("a packaged build with no bundle reads as broken, not as a dev tree", async () => {
+    ipc.getMcpInfo.mockResolvedValue({
+      ...INFO,
+      skills: { state: "unavailable", dir: null, fault: "bundle_missing" },
+    });
+    render(<AgentSection />);
+    expect(
+      await screen.findByText(/No Skill shipped with this installation/),
+    ).toBeTruthy();
+    expect(screen.queryByText(/npm run build:skills/)).toBeNull();
   });
 });
 
@@ -284,13 +304,13 @@ describe("AgentSection with the stdio shim installed", () => {
       screen.getByRole("button", { name: "Copy Skill prompt" }),
     );
     const prompt = clipboard.writeText.mock.calls[0]?.[0] as string;
-    expect(prompt).toContain(`"${INFO_SHIM.skills_dir}\\weftcut"`);
+    expect(prompt).toContain(`"${SKILLS_DIR}\\weftcut"`);
     expect(prompt).toContain("~/.claude/skills/weftcut");
   });
 
   it("names the staged skill folder in the manual section, copyable and openable", async () => {
     render(<AgentSection />);
-    const path = `${INFO_SHIM.skills_dir}\\weftcut`;
+    const path = `${SKILLS_DIR}\\weftcut`;
     // The prompt above hands the folder to an agent; a user installing it by
     // hand needs the same path on screen, and a way into the file manager.
     const field = (await screen.findByRole("textbox", {
@@ -305,6 +325,21 @@ describe("AgentSection with the stdio shim installed", () => {
     await userEvent.click(screen.getByRole("button", { name: "Browse…" }));
     // The folder itself, not its parent: reveal selects what it is given.
     expect(shell.reveal).toHaveBeenCalledWith(path);
+  });
+
+  it("a folder an earlier launch left behind is still offered, but flagged", async () => {
+    ipc.getMcpInfo.mockResolvedValue({
+      ...INFO_SHIM,
+      skills: { state: "stale", dir: SKILLS_DIR, fault: "copy_failed" },
+    });
+    render(<AgentSection />);
+    // Usable, so the install prompt stays — it just is not this version's copy,
+    // and the fault says what to fix.
+    expect(
+      await screen.findByRole("button", { name: "Copy Skill prompt" }),
+    ).toBeTruthy();
+    expect(screen.getByText(/may be older than this version/)).toBeTruthy();
+    expect(screen.getByText(/free disk space/)).toBeTruthy();
   });
 
   it("HTTP direct moves behind the advanced disclosure, token still masked", async () => {

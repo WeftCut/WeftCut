@@ -69,6 +69,26 @@ that copy. Skill version therefore equals app version — drift between the two
 is structurally impossible. A marketplace mirror is deferred until the content
 is validated with real users.
 
+### A missing skill is a failure, never a quiet absence
+
+Every link in that chain degrades silently on its own: copying an empty tree
+succeeds, an extraResource filter that matches nothing packs nothing, and the
+startup refresh cannot tell an empty bundle from an absent one. Composed, they
+turn "the skill did not ship" into "the panel has one fewer section" — the one
+outcome that leaves a user with no way to notice, on the feature whose entire
+purpose is to reach machines we don't control.
+
+So the chain is gated at both ends. `build:skills` and an electron-builder
+`afterPack` hook assert the same two things — the bundle's shape and its
+version stamp — first over what was staged, then over what actually landed in
+the distributable, because the link between those is itself one of the silent
+ones. Past the gates, the startup refresh reports a state (`installed`,
+`stale`, `unavailable`) with the fault behind it instead of a nullable path,
+the panel renders its skill surfaces unconditionally and shows the fault where
+the buttons would be, and a packaged build that is not `installed` raises a
+startup notice. A dev tree before `build:skills` is the one benign fault, and
+it is named separately so it can read as the instruction it is.
+
 ### Names are pinned by a gate
 
 `mcp.skill-conformance.test.ts` extracts every backticked tool / resource /
@@ -99,10 +119,12 @@ stays a docs-conformance-pass duty.
 
 - `skills/weftcut/SKILL.md` — the skill; `docs/motif-authoring.md` — the
   contract (copied verbatim into the bundle).
-- `apps/desktop/scripts/build-skills.mjs` — staging;
+- `apps/desktop/scripts/build-skills.mjs` — staging, and
+  `build-skills-lib.mjs` — the stamp plus the two assertions both gates share;
+  `apps/desktop/scripts/after-pack-skill.mjs` — the pack-time gate;
   `apps/desktop/electron-builder.yml` `extraResources` — shipping;
-  `apps/desktop/src/main/mcp/skillsInstall.ts` — the startup refresh;
-  `AgentSection.tsx` — the Connect-panel install block.
+  `apps/desktop/src/main/mcp/skillsInstall.ts` — the startup refresh and the
+  faults it reports; `AgentSection.tsx` — the Connect-panel install block.
 - `apps/desktop/src/main/state/__tests__/mcp.skill-conformance.test.ts` — the
   anti-drift gate; `native/src/mcp/resources.rs` — the history-description
   pin.

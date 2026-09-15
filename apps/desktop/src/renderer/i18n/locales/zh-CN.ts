@@ -1353,6 +1353,16 @@ const zhCN: Resources = {
       body: "原生解码组件（@weftcut/native-decode）加载失败，预览将仅使用 WebCodecs 引擎。重新安装应用可恢复。",
       action: "打开解码设置",
     },
+    agent_skill_unavailable: {
+      title: "缺少代理 Skill",
+      body: "用于教会外部代理操作 WeftCut 的 Skill 没能安装，因此没有任何内容可以交给你的代理。重新安装应用可恢复。",
+      action: "打开代理设置",
+    },
+    agent_skill_stale: {
+      title: "代理 Skill 未更新",
+      body: "WeftCut 无法刷新自带的代理 Skill，当前提供的是旧版本留下的副本。使用它的代理可能会调用本版本已经没有的工具。",
+      action: "打开代理设置",
+    },
   },
   // 素材优化原因，显示在媒体池 badge 的 tooltip 中。
   import_proxy: {
@@ -1386,6 +1396,15 @@ const zhCN: Resources = {
     copy_skill_prompt: "复制 Skill 提示词",
     skill_copied: "提示词已复制！",
     skill_path_heading: "Skill 文件夹位置",
+    skill_path_unavailable: "没有可打开的 Skill 文件夹 —— 见上方「教会你的代理使用 WeftCut」。",
+    skill_stale: "当前显示的是此前启动留下的副本，它可能比当前版本的 WeftCut 更旧。",
+    skill_fault: {
+      not_built: "此开发构建尚未生成 Skill。执行 “npm run build:skills” 后重启。",
+      bundle_missing: "本次安装的 WeftCut 没有附带 Skill。重新安装应用可恢复。",
+      incomplete: "WeftCut 附带的 Skill 不完整。重新安装应用可恢复。",
+      copy_failed:
+        "WeftCut 无法把 Skill 写入其用户数据目录。请检查磁盘剩余空间和该目录的权限，然后重启。",
+    },
     copy_path: "复制路径",
     browse: "浏览…",
     open_location: "打开文件位置",
