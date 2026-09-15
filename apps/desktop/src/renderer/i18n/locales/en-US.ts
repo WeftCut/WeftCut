@@ -1612,18 +1612,13 @@ const enUS = {
     copied: "Copied!",
     copy_prompt: "Copy setup prompt",
     prompt_copied: "Prompt copied!",
-    prompt_heading: "Let your agent set it up",
+    prompt_heading: "Let your agent set itself up",
     prompt_blurb:
-      "For agents that support MCP: copy the prompt and paste it into the chat — the agent configures itself.",
+      "One prompt covers the whole of setup: the agent writes WeftCut's MCP server into its own client config, then installs the Skill that ships with the app — session etiquette, the Motif authoring contract and the rest of the usage guidance. Copy it and paste it into the agent's chat. The Skill changes with each release, so hand the prompt over again after an upgrade.",
     manual_heading: "Prove you're human",
-    skill_heading: "Teach your agent WeftCut",
-    skill_blurb:
-      "WeftCut ships a Skill covering session etiquette, the Motif authoring contract and the rest of the usage guidance. Copy the prompt and hand it to your agent to install. The Skill updates with each release, so reinstalling after every upgrade is recommended.",
-    copy_skill_prompt: "Copy Skill prompt",
-    skill_copied: "Prompt copied!",
     skill_path_heading: "Skill folder location",
     skill_path_unavailable:
-      "No Skill folder to open — see “Teach your agent WeftCut” above.",
+      "No Skill folder to open — see “Let your agent set itself up” above.",
     skill_stale:
       "Showing the copy an earlier launch left behind, which may be older than this version of WeftCut.",
     skill_retry: "Try again",
@@ -1659,7 +1654,7 @@ const enUS = {
       '- Add or update only the MCP server named "weftcut"; do not replace the whole configuration file.',
       "- Keep the bearer token private and do not echo it in your response.",
       "- Validate the resulting configuration syntax. If the client must be restarted, tell me.",
-      "- When finished, report which file you changed and whether the configuration is valid.",
+      "- Report which file you changed and whether the configuration is valid.",
     ].join("\n"),
     agent_prompt_stdio: [
       "Configure the WeftCut MCP server for me. Make the configuration change directly; do not just describe the steps.",
@@ -1677,7 +1672,18 @@ const enUS = {
       '- Add or update only the MCP server named "weftcut"; do not replace the whole configuration file.',
       "- Keep the command, args, and env values exactly as given — they are machine-specific paths.",
       "- Validate the resulting configuration syntax. If the client must be restarted, tell me.",
-      "- When finished, report which file you changed and whether the configuration is valid.",
+      "- Report which file you changed and whether the configuration is valid.",
+    ].join("\n"),
+    // The second half of the setup prompt, appended after whichever MCP block
+    // applies. It stands on its own so the message still reads when there is no
+    // staged Skill folder to hand over and this half is left out.
+    agent_prompt_skill: [
+      "Then install the WeftCut Skill — the usage guidance that ships with the app.",
+      "",
+      '- Copy the folder "{{folder}}" into your own skills directory, keeping the folder name weftcut. For Claude Code that is ~/.claude/skills/weftcut.',
+      "- Overwrite any copy already sitting there; it belongs to an older version of WeftCut.",
+      "- Read the Skill once it is in place, and follow it whenever you work on a WeftCut project.",
+      "- Report where you installed it.",
     ].join("\n"),
     reveal: "Reveal token",
     hide: "Hide token",

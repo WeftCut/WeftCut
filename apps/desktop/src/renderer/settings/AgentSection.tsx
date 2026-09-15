@@ -164,26 +164,17 @@ function skillFolder(skillsDir: string): string {
   return `${skillsDir}${skillsDir.includes("\\") ? "\\" : "/"}weftcut`;
 }
 
-/// Instruction that installs the shipped agent skill, addressed to the agent
-/// rather than to the user — hence untranslated.
-function buildSkillPrompt(skillsDir: string): string {
-  return (
-    `Install the WeftCut skill: copy the folder "${skillFolder(skillsDir)}" ` +
-    `into your agent's skills directory (for Claude Code: ~/.claude/skills/weftcut), ` +
-    `overwriting any previous copy. Re-copy after WeftCut updates.`
-  );
-}
-
 /// MCP connection info for external agents. Two connection paths: the stdio
 /// shim (primary — survives app restarts, port changes, token rotations, and
 /// the app being closed) and HTTP-direct (advanced — for clients without
 /// stdio support). Until the shim is installed (dev before build:cli,
 /// shim_path = null) the HTTP path renders as primary, which is also the
-/// pre-shim layout. Also hands out the shipped agent skill folder — always
-/// shown, reporting the fault when there is no folder to hand out, because a
-/// shipped app cannot reach that state without something being broken. Lives
-/// in the Settings "Agent" tab; like the other panes it stays mounted across
-/// tab switches, so the poll below runs once.
+/// pre-shim layout. The shipped agent skill rides along both routes: the setup
+/// prompt asks the agent to install it, and the manual section names its
+/// folder. Its state is reported whatever it is, because a shipped app cannot
+/// reach anything but `installed` without something being broken. Lives in the
+/// Settings "Agent" tab; like the other panes it stays mounted across tab
+/// switches, so the poll below runs once.
 export function AgentSection() {
   const { t } = useTranslation();
   const [info, setInfo] = useState<McpInfoView | null>(null);
@@ -293,12 +284,14 @@ export function AgentSection() {
     if (cli) await copy("http-cli", cli);
   };
 
-  // The prompt is generic — the agent figures out its own client config
-  // format. With the shim installed it carries the stdio triple (no token to
-  // leak); without it, the URL + token as before.
-  const copyAgentPrompt = async () => {
+  /// Both halves of setup as one message. The MCP half is generic — the agent
+  /// figures out its own client config format; with the shim installed it
+  /// carries the stdio triple (no token to leak), without it the URL + token.
+  /// The skill half is appended only when there is a folder to hand over, so a
+  /// dev tree before `build:skills` still gets a prompt that works.
+  const copySetupPrompt = async () => {
     if (!info) return;
-    const prompt = stdio
+    const mcp = stdio
       ? t("connect.agent_prompt_stdio", {
           command: stdio.command,
           args: stdio.args.join(" "),
@@ -308,12 +301,12 @@ export function AgentSection() {
           url: info.url,
           token: info.bearer_token,
         });
-    await copy("prompt", prompt);
-  };
-
-  const copySkillPrompt = async () => {
-    if (!info?.skills.dir) return;
-    await copy("skill", buildSkillPrompt(info.skills.dir));
+    const skill = info.skills.dir
+      ? t("connect.agent_prompt_skill", {
+          folder: skillFolder(info.skills.dir),
+        })
+      : null;
+    await copy("prompt", skill ? `${mcp}\n\n${skill}` : mcp);
   };
 
   const copySkillPath = async () => {
@@ -539,11 +532,18 @@ export function AgentSection() {
         </Button>
       </div>
 
+      {/* Connecting the server and installing the skill are one act — one
+          message, pasted into one agent — so they are one button. The skill
+          state is presented whatever it is: a shipped build that reached
+          anything but `installed` has had both of its build gates fail, so the
+          absence is a defect the user can act on, and the fault here is what
+          explains a prompt that carries only the MCP half. */}
       <section className="settings-section">
         <h3>{t("connect.prompt_heading")}</h3>
         <p className="settings-blurb">{t("connect.prompt_blurb")}</p>
+        {skillFaultNote(info.skills)}
         <div className="settings-key-input-row">
-          <Button size="sm" onClick={() => void copyAgentPrompt()}>
+          <Button size="sm" onClick={() => void copySetupPrompt()}>
             {copiedKey === "prompt" ? (
               <CheckIcon size={13} />
             ) : (
@@ -554,30 +554,6 @@ export function AgentSection() {
               : t("connect.copy_prompt")}
           </Button>
         </div>
-      </section>
-
-      {/* Present whatever the skill state is. A shipped build that reached
-          anything but `installed` has had both of its build gates fail, so the
-          absence is a defect the user can act on — reporting it is the point,
-          and a section that disappeared would report nothing. */}
-      <section className="settings-section">
-        <h3>{t("connect.skill_heading")}</h3>
-        <p className="settings-blurb">{t("connect.skill_blurb")}</p>
-        {skillFaultNote(info.skills)}
-        {info.skills.dir && (
-          <div className="settings-key-input-row">
-            <Button size="sm" onClick={() => void copySkillPrompt()}>
-              {copiedKey === "skill" ? (
-                <CheckIcon size={13} />
-              ) : (
-                <CopyIcon size={13} />
-              )}
-              {copiedKey === "skill"
-                ? t("connect.skill_copied")
-                : t("connect.copy_skill_prompt")}
-            </Button>
-          </div>
-        )}
       </section>
 
       <section className="settings-section">
@@ -612,7 +588,7 @@ export function AgentSection() {
             {httpSnippetBlock("http")}
           </>
         )}
-        {/* The skill's manual counterpart to the install prompt above: a user
+        {/* The skill's manual counterpart to the setup prompt above: a user
             doing this by hand needs the folder itself, and only this section
             addresses that user. Client-independent — the destination differs
             per client, the source never does. Shaped like the export dialog's

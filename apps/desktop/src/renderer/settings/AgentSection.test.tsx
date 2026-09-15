@@ -1,18 +1,19 @@
 // @vitest-environment jsdom
 //
-// Covers the Settings "Agent" tab (AgentSection): a generic setup prompt for
-// agent self-configuration plus one copyable config snippet per agent client
-// (Codex TOML / Claude / Cursor JSON, and raw connection facts under Generic —
-// MCP fixes the protocol, never the config file). Codex and Claude also get a
-// `mcp add` one-liner beside the snippet. With the stdio shim installed
-// (shim_path set) the stdio config is the primary snippet — no token in it —
-// and HTTP-direct moves behind an "advanced" disclosure; without it (dev
-// before build:cli) the HTTP snippet renders as primary, token masked until
-// revealed, copy always carrying the real token. The shipped agent skill gets
-// two surfaces — an install prompt for the agent, and, for a user doing the
-// copy by hand, its folder path in the manual section, copyable and revealable
-// in the OS file manager. Both stay on screen whatever `skills` reports: with
-// no folder to hand out they carry the fault instead, because a packaged build
+// Covers the Settings "Agent" tab (AgentSection): a single generic setup
+// prompt — MCP entry plus skill install, for the agent to carry out itself —
+// plus one copyable config snippet per agent client (Codex TOML / Claude /
+// Cursor JSON, and raw connection facts under Generic — MCP fixes the
+// protocol, never the config file). Codex and Claude also get a `mcp add`
+// one-liner beside the snippet. With the stdio shim installed (shim_path set)
+// the stdio config is the primary snippet — no token in it — and HTTP-direct
+// moves behind an "advanced" disclosure; without it (dev before build:cli) the
+// HTTP snippet renders as primary, token masked until revealed, copy always
+// carrying the real token. The shipped agent skill has no section of its own:
+// the setup prompt installs it, and a user doing the copy by hand gets its
+// folder path in the manual section, copyable and revealable in the OS file
+// manager. Its state is reported whatever `skills` says — with no folder the
+// prompt drops that half and the fault explains why, because a packaged build
 // only reaches that state with something broken.
 // Token rotation sits above both layouts: it never puts the secret on screen,
 // so unlike Reveal and Copy it has no reason to hide behind the disclosure.
@@ -116,11 +117,24 @@ describe("AgentSection", () => {
     );
   });
 
+  it("drops the skill half of the prompt when there is no folder to install", async () => {
+    // This INFO is a dev tree before build:skills. Asking an agent to copy a
+    // folder that is not there would have it report a failure the user cannot
+    // act on — the fault note beside the button already says what to run.
+    render(<AgentSection />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Copy setup prompt" }),
+    );
+    const prompt = clipboard.writeText.mock.calls[0]?.[0] as string;
+    expect(prompt).toContain("Configure the WeftCut MCP server");
+    expect(prompt).not.toContain("Skill");
+  });
+
   it("copies the setup prompt in the displayed language", async () => {
     await i18n.changeLanguage("zh-CN");
     render(<AgentSection />);
     await userEvent.click(
-      await screen.findByRole("button", { name: "复制配置提示词" }),
+      await screen.findByRole("button", { name: "复制设置提示词" }),
     );
 
     expect(clipboard.writeText).toHaveBeenCalledWith(
@@ -189,18 +203,17 @@ describe("AgentSection", () => {
     expect(await snippetText()).toContain(INFO.bearer_token);
   });
 
-  it("keeps the skill block and says why there is nothing to hand out", async () => {
+  it("says why there is no skill to hand out, beside the prompt that lost it", async () => {
     render(<AgentSection />);
-    // The section stays: a shipped build cannot reach this state without both
-    // build gates having failed, so a vanished section would report nothing.
-    expect(
-      await screen.findByRole("heading", { name: "Teach your agent WeftCut" }),
-    ).toBeTruthy();
-    expect(screen.getByText(/npm run build:skills/)).toBeTruthy();
-    // No folder means nothing to copy, open, or hand to an agent.
-    expect(
-      screen.queryByRole("button", { name: "Copy Skill prompt" }),
-    ).toBeNull();
+    // A shipped build cannot reach this state without both build gates having
+    // failed, so the fault is reported rather than quietly swallowed — and it
+    // sits in the setup section, which is where the missing half went.
+    const heading = await screen.findByRole("heading", {
+      name: "Let your agent set itself up",
+    });
+    const setup = heading.closest("section") as HTMLElement;
+    expect(setup.textContent).toMatch(/npm run build:skills/);
+    // No folder means nothing to copy or open either.
     expect(screen.queryByRole("button", { name: "Copy path" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Browse…" })).toBeNull();
     expect(screen.getByText(/No Skill folder to open/)).toBeTruthy();
@@ -231,10 +244,17 @@ describe("AgentSection", () => {
     );
     expect(ipc.reinstallSkills).toHaveBeenCalledTimes(1);
     expect(
-      await screen.findByRole("button", { name: "Copy Skill prompt" }),
+      await screen.findByRole("textbox", { name: "Skill folder location" }),
     ).toBeTruthy();
     expect(screen.queryByText(/npm run build:skills/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    // The half the fault had cost is back in the prompt.
+    await userEvent.click(
+      screen.getByRole("button", { name: "Copy setup prompt" }),
+    );
+    expect(clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining(`"${SKILLS_DIR}\\weftcut"`),
+    );
   });
 
   it("a retry that changes nothing leaves the fault and the button in place", async () => {
@@ -328,7 +348,9 @@ describe("AgentSection with the stdio shim installed", () => {
     expect(clipboard.writeText).toHaveBeenCalledWith(cli);
   });
 
-  it("the setup prompt describes the stdio transport and leaks no token", async () => {
+  it("one prompt carries the stdio transport and the skill, leaking no token", async () => {
+    // The merge is the point: connecting the server and installing the skill
+    // are one paste into one agent, so one button produces both halves.
     render(<AgentSection />);
     await userEvent.click(
       await screen.findByRole("button", { name: "Copy setup prompt" }),
@@ -337,20 +359,11 @@ describe("AgentSection with the stdio shim installed", () => {
     expect(prompt).toContain("Transport: stdio");
     expect(prompt).toContain(INFO_SHIM.exe_path);
     expect(prompt).toContain(`WEFTCUT_USERDATA=${INFO_SHIM.user_data}`);
-    expect(prompt).not.toContain(INFO.bearer_token);
-  });
-
-  it("offers the staged skill folder as a paste-ready install prompt", async () => {
-    render(<AgentSection />);
-    expect(
-      await screen.findByRole("heading", { name: "Teach your agent WeftCut" }),
-    ).toBeTruthy();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Copy Skill prompt" }),
-    );
-    const prompt = clipboard.writeText.mock.calls[0]?.[0] as string;
     expect(prompt).toContain(`"${SKILLS_DIR}\\weftcut"`);
     expect(prompt).toContain("~/.claude/skills/weftcut");
+    expect(prompt).not.toContain(INFO.bearer_token);
+    // The skill has no second button of its own to press.
+    expect(screen.queryByRole("button", { name: /Skill prompt/ })).toBeNull();
   });
 
   it("names the staged skill folder in the manual section, copyable and openable", async () => {
@@ -378,11 +391,14 @@ describe("AgentSection with the stdio shim installed", () => {
       skills: { state: "stale", dir: SKILLS_DIR, fault: "copy_failed" },
     });
     render(<AgentSection />);
-    // Usable, so the install prompt stays — it just is not this version's copy,
-    // and the fault says what to fix.
-    expect(
-      await screen.findByRole("button", { name: "Copy Skill prompt" }),
-    ).toBeTruthy();
+    // Usable, so the prompt still hands it over — it just is not this version's
+    // copy, and the fault says what to fix.
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Copy setup prompt" }),
+    );
+    expect(clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining(`"${SKILLS_DIR}\\weftcut"`),
+    );
     expect(screen.getByText(/may be older than this version/)).toBeTruthy();
     expect(screen.getByText(/free disk space/)).toBeTruthy();
   });
