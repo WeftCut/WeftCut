@@ -1878,9 +1878,10 @@ app.whenReady().then(async () => {
       const entries = unzipSync(new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength))
       return Object.entries(entries).map(([p, data]) => ({ path: p, data }))
     },
-    // Rust stateless compute (ADR 0043) — native bzip2 for the 234 MB model
-    // archive; the tar crate's unpack containment is the traversal guard.
-    extractTarBz2: async (archivePath, destDir) => {
+    // Rust stateless compute (ADR 0043) — native bzip2/gzip for archives up to
+    // the 234 MB model one; the tar crate's unpack containment is the traversal
+    // guard, and its unpack is what carries modes and symlinks across.
+    extractTar: async (archivePath, destDir) => {
       await backend!.invoke('content_extract_archive', JSON.stringify({ archivePath, destDir }))
     },
     join: path.join,
@@ -1901,6 +1902,7 @@ app.whenReady().then(async () => {
   const autofillSpeechFromContent = (): void => {
     const plan = speechAutofillPlan(
       CONTENT_CATALOG,
+      contentPlatform,
       (item) => itemStatus(contentDeps, item, contentPlatform),
       speechConfig.get().local,
       path.join,
@@ -1922,6 +1924,7 @@ app.whenReady().then(async () => {
   const autofillVlmFromContent = (): void => {
     const plan = vlmAutofillPlan(
       CONTENT_CATALOG,
+      contentPlatform,
       (item) => itemStatus(contentDeps, item, contentPlatform),
       vlmConfig.get().local,
       path.join,
@@ -2046,21 +2049,23 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('content:list', (): ContentListRow[] =>
     CONTENT_CATALOG.map((item) => {
+      // What this machine's payload asks for beyond the app itself — the
+      // renderer sees one note per row and never picks an artifact.
+      const prereq = contentPlatform ? item.platforms[contentPlatform]?.prerequisiteKey : undefined
+      const row = (status: ContentListRow['status']): ContentListRow =>
+        prereq ? { item, status, prerequisiteKey: prereq } : { item, status }
       const live = queue.entryOf(item.id)
-      if (live?.state === 'queued') return { item, status: { state: 'queued' } }
+      if (live?.state === 'queued') return row({ state: 'queued' })
       if (live && live.state !== 'error') {
-        return {
-          item,
-          status: {
-            state: 'downloading',
-            receivedBytes: live.receivedBytes,
-            totalBytes: live.totalBytes,
-          },
-        }
+        return row({
+          state: 'downloading',
+          receivedBytes: live.receivedBytes,
+          totalBytes: live.totalBytes,
+        })
       }
       // An error entry reads from disk like any other row; the snapshot
       // carries the message the row shows next to its Retry button.
-      return { item, status: itemStatus(contentDeps, item, contentPlatform) }
+      return row(itemStatus(contentDeps, item, contentPlatform))
     }))
 
   ipcMain.handle('content:queue', (): ContentQueueSnapshot => queue.snapshot())

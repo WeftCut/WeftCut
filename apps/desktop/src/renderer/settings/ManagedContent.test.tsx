@@ -11,6 +11,7 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type {
+  ContentArtifact,
   ContentItem,
   ContentItemStatus,
   ContentListRow,
@@ -55,7 +56,7 @@ import { ManagedContent } from "./ManagedContent";
 function vlmItem(
   id: string,
   labelKey: string,
-  fields: NonNullable<ContentItem["vlm"]>["fields"],
+  fields: ContentArtifact["fields"],
   bytes: number,
 ): ContentItem {
   return {
@@ -64,7 +65,7 @@ function vlmItem(
     version: "v1",
     labelKey,
     license: { name: "MIT", upstreamUrl: "https://example.com" },
-    vlm: { backends: ["qwen3_vl"], fields },
+    vlm: { backends: ["qwen3_vl"] },
     platforms: {
       "win32-x64": {
         url: `https://example.com/${id}`,
@@ -72,6 +73,7 @@ function vlmItem(
         bytes,
         archive: "none",
         entryPath: id,
+        fields,
       },
     },
   };
@@ -82,9 +84,9 @@ const MODEL = vlmItem("qwen3-vl-4b-model", "content_qwen3vl_model", { model: "m.
 const MMPROJ = vlmItem("qwen3-vl-4b-mmproj", "content_qwen3vl_mmproj", { mmproj: "p.gguf" }, 1048576 * 40);
 // A speech row that must never leak into the vlm projection.
 const WHISPER: ContentItem = {
-  ...vlmItem("whisper-cpp-runtime", "content_whisper_runtime", {}, 1),
+  ...vlmItem("whisper-cpp-runtime", "content_whisper_runtime", { binary: "w.exe" }, 1),
   kind: "speech-runtime",
-  speech: { backend: "whisper_cpp", fields: { binary: "w.exe" } },
+  speech: { backend: "whisper_cpp" },
 };
 delete (WHISPER as { vlm?: unknown }).vlm;
 

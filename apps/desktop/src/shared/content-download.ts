@@ -28,27 +28,43 @@ export interface ContentArtifact {
   /// Exact size of the archive (or raw payload) in bytes. Doubles as the
   /// progress denominator and as a cheap integrity floor for status checks.
   bytes: number;
-  archive: "zip" | "tar.bz2" | "none";
+  archive: "zip" | "tar.bz2" | "tar.gz" | "none";
   /// Path of the item's entry point relative to its install dir once
   /// installed — e.g. "Release/whisper-cli.exe" inside the extracted zip, or
   /// the payload file's own name for `archive: "none"`.
   entryPath: string;
+  /// Which local-engine config field(s) this platform's payload fills, each a
+  /// path relative to the item's install dir. A map rather than a single
+  /// field because one archive can carry several config inputs (the Paraformer
+  /// bundle ships model AND tokens — ADR 0043); per-platform rather than
+  /// per-item because the layout inside an archive is the platform's own —
+  /// `Release/whisper-cli.exe` against `whisper-bin-ubuntu-x64/whisper-cli`.
+  /// The item's `entryPath` is always one of these paths (catalog invariant).
+  fields: Partial<Record<ContentField, string>>;
+  /// i18n key for a note about what this platform needs BEYOND the app's own
+  /// requirements — e.g. the Microsoft Visual C++ v14 x64 runtime the official
+  /// whisper.cpp Windows build dynamically imports. Absent where the payload
+  /// asks for nothing the app does not already guarantee.
+  prerequisiteKey?: string;
 }
 
-/// Which speech backend consumes an item, and which LocalEngineConfig
-/// field(s) its installed files fill — each value a path relative to the
-/// item's install dir. A map rather than a single field because one archive
-/// can carry several config inputs (the Paraformer bundle ships model AND
-/// tokens — ADR 0043). The main-process auto-fill consumer keys off this
-/// instead of hard-coding item ids.
+/// The local-engine config fields a catalog artifact can fill:
+/// [`LocalEngineConfig`](./speech-config.ts) for speech items,
+/// [`VlmLocalEngineConfig`](./vlm-config.ts) for vision ones. One union rather
+/// than two because an artifact declares its own layout; which family may name
+/// which field is a catalog invariant (content-catalog.test.ts), since only
+/// vision needs `mmproj` and only FunASR needs `tokens`.
+export type ContentField = "binary" | "model" | "tokens" | "mmproj";
+
+/// Which speech backend consumes an item. The main-process auto-fill consumer
+/// keys off this instead of hard-coding item ids; what the item's files fill is
+/// its per-platform [`ContentArtifact.fields`].
 export interface SpeechConsumer {
   backend: "whisper_cpp" | "funasr";
-  fields: Partial<Record<"binary" | "model" | "tokens", string>>;
 }
 
 /// The video-understanding twin of `SpeechConsumer` (ADR 0055): which local VLM
-/// backend an item serves, and which `VlmLocalEngineConfig` field(s) its
-/// installed files fill. A separate interface rather than a widened
+/// backends an item serves. A separate interface rather than a widened
 /// `SpeechConsumer` because the two write to DIFFERENT config stores
 /// (speech_config.json vs vlm_config.json) and have different required fields —
 /// vision needs `mmproj`, which speech has no concept of.
@@ -59,7 +75,6 @@ export interface SpeechConsumer {
 /// does not advertise an engine whose model the catalog is still missing.
 export interface VlmConsumer {
   backends: ReadonlyArray<"qwen3_vl" | "minicpm_v">;
-  fields: Partial<Record<"binary" | "model" | "mmproj", string>>;
 }
 
 /// One catalog entry. `version` names the install directory
@@ -73,9 +88,6 @@ export interface ContentItem {
   labelKey: string;
   /// License provenance travels with the record (docs/licensing.md).
   license: { name: string; upstreamUrl: string };
-  /// i18n key for a platform prerequisite note (e.g. the MSVC v14 x64
-  /// runtime the official whisper.cpp Windows build dynamically imports).
-  prerequisiteKey?: string;
   speech?: SpeechConsumer;
   vlm?: VlmConsumer;
   platforms: Partial<Record<ContentPlatformKey, ContentArtifact>>;
@@ -89,7 +101,7 @@ export type ContentItemStatus =
   | { state: "queued" }
   | { state: "downloading"; receivedBytes: number; totalBytes: number }
   /// `entryPath` is the ABSOLUTE path of the installed entry point;
-  /// `installDir` the ABSOLUTE install root the SpeechConsumer field paths
+  /// `installDir` the ABSOLUTE install root the artifact's field paths
   /// resolve against.
   | { state: "installed"; entryPath: string; installDir: string }
   /// A manifest exists but the payload is missing or size-mismatched —
@@ -103,12 +115,15 @@ export type ContentItemStatus =
 export interface ContentListRow {
   item: ContentItem;
   status: ContentItemStatus;
+  /// This platform's [`ContentArtifact.prerequisiteKey`], resolved by main so
+  /// the renderer never has to know which artifact it is looking at.
+  prerequisiteKey?: string;
 }
 
 /// One progress tick from the downloader while an item is in flight. `resume`
 /// is the re-hash of bytes a previous attempt already landed (a resumed
 /// transfer reads its prefix once before appending), `verify` the post-stream
-/// hash comparison, `extract` the zip / tar.bz2 stage.
+/// hash comparison, `extract` the archive-unpacking stage.
 export interface ContentDownloadProgress {
   itemId: string;
   phase: "resume" | "download" | "verify" | "extract" | "done" | "error";

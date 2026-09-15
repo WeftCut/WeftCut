@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type {
+  ContentArtifact,
   ContentDownloadProgress,
   ContentItem,
 } from "../shared/content-download";
@@ -157,7 +158,7 @@ function rangeServer(data: Uint8Array): Scripted {
 }
 
 // One deps bundle per test: scripted http (one answer per fetch, in order),
-// optional zip entries, optional scripted tar.bz2 extraction (entries the fake
+// optional zip entries, optional scripted tar extraction (entries the fake
 // extractor "unpacks"). `requests` records the range start of every fetch so a
 // test can assert WHERE a retry resumed from.
 function makeDeps(opts: {
@@ -203,7 +204,7 @@ function makeDeps(opts: {
     sleep: async () => {},
     ...(opts.stallMs !== undefined ? { stallMs: opts.stallMs } : {}),
     readZipEntries: async () => opts.zipEntries ?? [],
-    extractTarBz2: async (archivePath: string, destDir: string) => {
+    extractTar: async (archivePath: string, destDir: string) => {
       bundle.extractCalls.push([archivePath, destDir]);
       if (opts.tarEntries instanceof Error) throw opts.tarEntries;
       for (const entry of opts.tarEntries ?? []) {
@@ -234,6 +235,7 @@ function rawItem(payload = PAYLOAD): ContentItem {
         bytes: payload.byteLength,
         archive: "none",
         entryPath: "model.bin",
+        fields: { model: "model.bin" },
       },
     },
   };
@@ -253,8 +255,20 @@ function zipItem(archiveBytes: Uint8Array): ContentItem {
         bytes: archiveBytes.byteLength,
         archive: "zip",
         entryPath: "Release/tool.exe",
+        fields: { binary: "Release/tool.exe" },
       },
     },
+  };
+}
+
+/** The same item, with its win32 artifact filling the given config fields. */
+function withFields(
+  item: ContentItem,
+  fields: ContentArtifact["fields"],
+): ContentItem {
+  return {
+    ...item,
+    platforms: { "win32-x64": { ...item.platforms["win32-x64"]!, fields } },
   };
 }
 
@@ -580,10 +594,10 @@ describe("downloadItem — zip extraction", () => {
   });
 });
 
-describe("downloadItem — tar.bz2 extraction (delegated to the injected extractor)", () => {
+describe("downloadItem — tar extraction (delegated to the injected extractor)", () => {
   const archive = new TextEncoder().encode("tar-bz2-archive-stand-in");
 
-  function tarItem(): ContentItem {
+  function tarItem(compression: "tar.bz2" | "tar.gz" = "tar.bz2"): ContentItem {
     return {
       id: "test-tarball",
       kind: "speech-runtime",
@@ -595,8 +609,9 @@ describe("downloadItem — tar.bz2 extraction (delegated to the injected extract
           url: "https://example.com/bundle.tar.bz2",
           sha256: sha256(archive),
           bytes: archive.byteLength,
-          archive: "tar.bz2",
+          archive: compression,
           entryPath: "bundle/bin/tool.exe",
+          fields: { binary: "bundle/bin/tool.exe" },
         },
       },
     };
@@ -628,6 +643,27 @@ describe("downloadItem — tar.bz2 extraction (delegated to the injected extract
     expect(
       deps.fs.statBytes("root/cache/content-partial/test-tarball.part"),
     ).toBeNull();
+  });
+
+  it("a gzip tarball takes the same lane — the extractor sniffs, the catalog just says tar", async () => {
+    const deps = makeDeps({
+      responses: [archive],
+      tarEntries: [
+        { path: "bundle/bin/tool.exe", data: new TextEncoder().encode("elf") },
+      ],
+    });
+    const result = await downloadItem(
+      deps,
+      tarItem("tar.gz"),
+      "win32-x64",
+      noProgress,
+      live(),
+    );
+    expect(result).toEqual({
+      ok: true,
+      entryPath: "root/downloads/test-tarball/2.0.0/bundle/bin/tool.exe",
+    });
+    expect(deps.extractCalls).toHaveLength(1);
   });
 
   it("an extractor refusal (hostile archive) fails without retrying", async () => {
@@ -741,16 +777,16 @@ describe("sweepStalePartials", () => {
 describe("speechAutofillPlan — the only-if-blank / whole-set consumer rules", () => {
   const join = (...parts: string[]) => parts.join("/");
   const runtime: ContentItem = {
-    ...rawItem(),
+    ...withFields(rawItem(), { binary: "bin/cli.exe" }),
     id: "engine",
     kind: "speech-runtime",
-    speech: { backend: "whisper_cpp", fields: { binary: "bin/cli.exe" } },
+    speech: { backend: "whisper_cpp" },
   };
   const model: ContentItem = {
-    ...rawItem(),
+    ...withFields(rawItem(), { model: "m.bin" }),
     id: "model",
     kind: "speech-model",
-    speech: { backend: "whisper_cpp", fields: { model: "m.bin" } },
+    speech: { backend: "whisper_cpp" },
   };
   const installed = (dir: string) =>
     ({ state: "installed", entryPath: `${dir}/x`, installDir: dir }) as const;
@@ -758,6 +794,7 @@ describe("speechAutofillPlan — the only-if-blank / whole-set consumer rules", 
   it("both installed + blank config → one entry with fields resolved against install dirs", () => {
     const plan = speechAutofillPlan(
       [runtime, model],
+      "win32-x64",
       (i) => installed(i.id === "engine" ? "/dl/engine/v1" : "/dl/model/v1"),
       {},
       join,
@@ -772,20 +809,21 @@ describe("speechAutofillPlan — the only-if-blank / whole-set consumer rules", 
 
   it("one archive can fill several fields (the Paraformer model+tokens shape)", () => {
     const funasrRuntime: ContentItem = {
-      ...rawItem(),
+      ...withFields(rawItem(), { binary: "sherpa/bin/sherpa-onnx-offline.exe" }),
       id: "fa-engine",
-      speech: { backend: "funasr", fields: { binary: "sherpa/bin/sherpa-onnx-offline.exe" } },
+      speech: { backend: "funasr" },
     };
     const funasrModel: ContentItem = {
-      ...rawItem(),
+      ...withFields(rawItem(), {
+        model: "para/model.int8.onnx",
+        tokens: "para/tokens.txt",
+      }),
       id: "fa-model",
-      speech: {
-        backend: "funasr",
-        fields: { model: "para/model.int8.onnx", tokens: "para/tokens.txt" },
-      },
+      speech: { backend: "funasr" },
     };
     const plan = speechAutofillPlan(
       [funasrRuntime, funasrModel],
+      "win32-x64",
       (i) => installed(i.id === "fa-engine" ? "/dl/fa-e/1" : "/dl/fa-m/1"),
       {},
       join,
@@ -805,6 +843,7 @@ describe("speechAutofillPlan — the only-if-blank / whole-set consumer rules", 
   it("a half set configures nothing (engine installed, model missing)", () => {
     const plan = speechAutofillPlan(
       [runtime, model],
+      "win32-x64",
       (i) =>
         i.id === "engine" ? installed("/dl/engine/v1") : { state: "not_installed" },
       {},
@@ -819,6 +858,7 @@ describe("speechAutofillPlan — the only-if-blank / whole-set consumer rules", 
     expect(
       speechAutofillPlan(
         [runtime, model],
+        "win32-x64",
         statusOf,
         { whisper_cpp: { binary: "C:/my/whisper.exe", model: "" } },
         join,
@@ -827,6 +867,7 @@ describe("speechAutofillPlan — the only-if-blank / whole-set consumer rules", 
     expect(
       speechAutofillPlan(
         [runtime, model],
+        "win32-x64",
         statusOf,
         { whisper_cpp: { binary: "", model: "C:/my/model.bin" } },
         join,
@@ -837,6 +878,7 @@ describe("speechAutofillPlan — the only-if-blank / whole-set consumer rules", 
   it("an all-blank existing entry counts as blank and is filled", () => {
     const plan = speechAutofillPlan(
       [runtime, model],
+      "win32-x64",
       (i) => installed(i.id === "engine" ? "/e" : "/m"),
       { whisper_cpp: { binary: "", model: "  " } },
       join,
@@ -844,14 +886,57 @@ describe("speechAutofillPlan — the only-if-blank / whole-set consumer rules", 
     expect(plan).toHaveLength(1);
   });
 
+  it("one item, two platforms: each fills the path ITS artifact carries", () => {
+    const dual: ContentItem = {
+      ...rawItem(),
+      id: "engine",
+      kind: "speech-runtime",
+      speech: { backend: "whisper_cpp" },
+      platforms: {
+        "win32-x64": {
+          ...rawItem().platforms["win32-x64"]!,
+          fields: { binary: "Release/whisper-cli.exe" },
+        },
+        "linux-x64": {
+          ...rawItem().platforms["win32-x64"]!,
+          fields: { binary: "whisper-bin-ubuntu-x64/whisper-cli" },
+        },
+      },
+    };
+    const dualModel: ContentItem = {
+      ...model,
+      platforms: {
+        ...model.platforms,
+        "linux-x64": {
+          ...rawItem().platforms["win32-x64"]!,
+          fields: { model: "m.bin" },
+        },
+      },
+    };
+    const plan = speechAutofillPlan(
+      [dual, dualModel],
+      "linux-x64",
+      (i) => installed(i.id === "engine" ? "/e" : "/m"),
+      {},
+      join,
+    );
+    expect(plan).toEqual([
+      {
+        backend: "whisper_cpp",
+        config: { binary: "/e/whisper-bin-ubuntu-x64/whisper-cli", model: "/m/m.bin" },
+      },
+    ]);
+  });
+
   it("platform-unavailable items don't block the set (they're not part of it here)", () => {
     const other: ContentItem = {
-      ...rawItem(),
+      ...withFields(rawItem(), { tokens: "t.txt" }),
       id: "other-os-tokens",
-      speech: { backend: "whisper_cpp", fields: { tokens: "t.txt" } },
+      speech: { backend: "whisper_cpp" },
     };
     const plan = speechAutofillPlan(
       [runtime, model, other],
+      "win32-x64",
       (i) =>
         i.id === "other-os-tokens"
           ? { state: "unavailable" }
@@ -868,29 +953,29 @@ describe("speechAutofillPlan — the only-if-blank / whole-set consumer rules", 
 describe("vlmAutofillPlan — same rules, plus mmproj and multi-backend items", () => {
   const join = (...parts: string[]) => parts.join("/");
   const runtime: ContentItem = {
-    ...rawItem(),
+    ...withFields(rawItem(), { binary: "llama-mtmd-cli.exe" }),
     id: "engine",
     kind: "vlm-runtime",
-    vlm: { backends: ["qwen3_vl"], fields: { binary: "llama-mtmd-cli.exe" } },
+    vlm: { backends: ["qwen3_vl"] },
   };
   const model: ContentItem = {
-    ...rawItem(),
+    ...withFields(rawItem(), { model: "q.gguf" }),
     id: "model",
     kind: "vlm-model",
-    vlm: { backends: ["qwen3_vl"], fields: { model: "q.gguf" } },
+    vlm: { backends: ["qwen3_vl"] },
   };
   const mmproj: ContentItem = {
-    ...rawItem(),
+    ...withFields(rawItem(), { mmproj: "mm.gguf" }),
     id: "mmproj",
     kind: "vlm-model",
-    vlm: { backends: ["qwen3_vl"], fields: { mmproj: "mm.gguf" } },
+    vlm: { backends: ["qwen3_vl"] },
   };
   const installed = (dir: string) =>
     ({ state: "installed", entryPath: `${dir}/x`, installDir: dir }) as const;
   const allInstalled = (i: ContentItem) => installed(`/dl/${i.id}/v1`);
 
   it("all three installed + blank config → one entry with paths under their install dirs", () => {
-    expect(vlmAutofillPlan([runtime, model, mmproj], allInstalled, {}, join)).toEqual([
+    expect(vlmAutofillPlan([runtime, model, mmproj], "win32-x64", allInstalled, {}, join)).toEqual([
       {
         backend: "qwen3_vl",
         config: {
@@ -907,6 +992,7 @@ describe("vlmAutofillPlan — same rules, plus mmproj and multi-backend items", 
     // there, and only two thirds of one here.
     const plan = vlmAutofillPlan(
       [runtime, model, mmproj],
+      "win32-x64",
       (i) => (i.id === "mmproj" ? { state: "not_installed" } : allInstalled(i)),
       {},
       join,
@@ -917,20 +1003,21 @@ describe("vlmAutofillPlan — same rules, plus mmproj and multi-backend items", 
   it("a shared runtime contributes its binary to every backend it names", () => {
     const shared: ContentItem = {
       ...runtime,
-      vlm: { backends: ["qwen3_vl", "minicpm_v"], fields: { binary: "llama-mtmd-cli.exe" } },
+      vlm: { backends: ["qwen3_vl", "minicpm_v"] },
     };
     const miniModel: ContentItem = {
-      ...rawItem(),
+      ...withFields(rawItem(), { model: "mini.gguf" }),
       id: "mini-model",
-      vlm: { backends: ["minicpm_v"], fields: { model: "mini.gguf" } },
+      vlm: { backends: ["minicpm_v"] },
     };
     const miniMmproj: ContentItem = {
-      ...rawItem(),
+      ...withFields(rawItem(), { mmproj: "mini-mm.gguf" }),
       id: "mini-mmproj",
-      vlm: { backends: ["minicpm_v"], fields: { mmproj: "mini-mm.gguf" } },
+      vlm: { backends: ["minicpm_v"] },
     };
     const plan = vlmAutofillPlan(
       [shared, model, mmproj, miniModel, miniMmproj],
+      "win32-x64",
       allInstalled,
       {},
       join,
@@ -945,22 +1032,22 @@ describe("vlmAutofillPlan — same rules, plus mmproj and multi-backend items", 
   it("a backend the shared runtime names but has no model for yields no entry", () => {
     const shared: ContentItem = {
       ...runtime,
-      vlm: { backends: ["qwen3_vl", "minicpm_v"], fields: { binary: "llama-mtmd-cli.exe" } },
+      vlm: { backends: ["qwen3_vl", "minicpm_v"] },
     };
-    const plan = vlmAutofillPlan([shared, model, mmproj], allInstalled, {}, join);
+    const plan = vlmAutofillPlan([shared, model, mmproj], "win32-x64", allInstalled, {}, join);
     expect(plan.map((p) => p.backend)).toEqual(["qwen3_vl"]);
   });
 
   it("any manual path wins outright — mmproj alone is enough to leave the entry alone", () => {
     expect(
-      vlmAutofillPlan([runtime, model, mmproj], allInstalled, {
+      vlmAutofillPlan([runtime, model, mmproj], "win32-x64", allInstalled, {
         qwen3_vl: { binary: "", model: "", mmproj: "C:/my/mm.gguf" },
       }, join),
     ).toEqual([]);
   });
 
   it("an all-blank existing entry counts as blank and is filled", () => {
-    const plan = vlmAutofillPlan([runtime, model, mmproj], allInstalled, {
+    const plan = vlmAutofillPlan([runtime, model, mmproj], "win32-x64", allInstalled, {
       qwen3_vl: { binary: "", model: "  ", mmproj: "" },
     }, join);
     expect(plan).toHaveLength(1);
@@ -968,12 +1055,13 @@ describe("vlmAutofillPlan — same rules, plus mmproj and multi-backend items", 
 
   it("ignores items with no vlm consumer (the speech catalog rows)", () => {
     const speechOnly: ContentItem = {
-      ...rawItem(),
+      ...withFields(rawItem(), { binary: "cli.exe" }),
       id: "whisper",
-      speech: { backend: "whisper_cpp", fields: { binary: "cli.exe" } },
+      speech: { backend: "whisper_cpp" },
     };
     const plan = vlmAutofillPlan(
       [speechOnly, runtime, model, mmproj],
+      "win32-x64",
       allInstalled,
       {},
       join,

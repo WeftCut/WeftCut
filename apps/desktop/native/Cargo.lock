@@ -2686,6 +2686,7 @@ dependencies = [
  "bzip2",
  "chrono",
  "ffmpeg-sidecar",
+ "flate2",
  "image",
  "image-compare",
  "imbl",

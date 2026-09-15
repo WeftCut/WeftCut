@@ -28,6 +28,7 @@ function item(id: string, bytes = 100): ContentItem {
         bytes,
         archive: "none",
         entryPath: id,
+        fields: { model: id },
       },
     },
   };

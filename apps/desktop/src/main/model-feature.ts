@@ -23,11 +23,15 @@ export function createModelFeature(deps: {
   changed(): void;
   activated(): void;
 }): ModelManager {
+  // Where a managed profile's files land once downloaded. The paths come from
+  // THIS platform's artifacts, so an unsupported platform yields the blank
+  // config its `supported: false` row already implies rather than a set of
+  // foreign paths that will never exist.
   const managedLocal = (id: string): ModelLocalConfig => {
     const config: ModelLocalConfig = { binary: "", model: "" };
     for (const artifact of MODEL_DEFINITIONS.find(d => d.id === id)?.artifacts ?? []) {
       const item = CONTENT_CATALOG.find(c => c.id === artifact)!;
-      const fields = item.speech?.fields ?? item.vlm?.fields ?? {};
+      const fields = (deps.platform ? item.platforms[deps.platform]?.fields : undefined) ?? {};
       for (const [field, relative] of Object.entries(fields)) {
         (config as unknown as Record<string, string>)[field] = path.join(deps.content.downloadsDir, item.id, item.version, relative);
       }

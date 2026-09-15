@@ -95,13 +95,15 @@ export interface ContentDeps {
   /** Read every file entry of a zip on disk (fflate in production). */
   readZipEntries(archivePath: string): Promise<readonly ZipEntry[]>;
   /**
-   * Unpack a .tar.bz2 into a directory (the Rust `content_extract_archive`
-   * command in production — ADR 0043). Unlike the zip lane, whose entries
-   * flow through this module's guard, tar traversal containment lives in the
-   * extractor itself (the `tar` crate refuses entries escaping the dest);
-   * the adapter must throw on refusal.
+   * Unpack a bzip2- or gzip-compressed tar into a directory (the Rust
+   * `content_extract_archive` command in production — ADR 0043/0073). Unlike
+   * the zip lane, whose entries flow through this module's guard, tar
+   * traversal containment lives in the extractor itself (the `tar` crate
+   * refuses entries escaping the dest); the adapter must throw on refusal.
+   * It also preserves the entry modes and symlinks the Linux runtimes need
+   * to start at all — the zip lane, whose payloads are Windows-only, does not.
    */
-  extractTarBz2(archivePath: string, destDir: string): Promise<void>;
+  extractTar(archivePath: string, destDir: string): Promise<void>;
   join(...parts: string[]): string;
   downloadsDir: string;
   partialDir: string;
@@ -558,9 +560,9 @@ async function installVerified(
         deps.fs.writeBytes(deps.join(stagingDir, ...segments), entry.data);
       }
       deps.fs.rm(partialPath);
-    } else if (artifact.archive === "tar.bz2") {
+    } else if (artifact.archive === "tar.bz2" || artifact.archive === "tar.gz") {
       // Traversal containment lives in the extractor (see ContentDeps).
-      await deps.extractTarBz2(partialPath, stagingDir);
+      await deps.extractTar(partialPath, stagingDir);
       deps.fs.rm(partialPath);
     } else {
       deps.fs.rename(
@@ -639,12 +641,13 @@ export function sweepStalePartials(
  * form an entry (a half pair configures nothing), and an existing entry with
  * ANY non-blank path wins outright — a manual path is never overwritten, and
  * a partially-manual entry is left entirely alone (mixing provenance in one
- * entry is worse than none). Each installed item contributes every field its
- * SpeechConsumer maps (the Paraformer archive fills model AND tokens),
+ * entry is worse than none). Each installed item contributes every field THIS
+ * PLATFORM's artifact maps (the Paraformer archive fills model AND tokens),
  * resolved against the item's install dir.
  */
 export function speechAutofillPlan(
   items: readonly ContentItem[],
+  platform: ContentPlatformKey | null,
   statusOf: (item: ContentItem) => ContentItemStatus,
   existingLocal: Record<string, { binary: string; model: string }>,
   join: (...parts: string[]) => string,
@@ -658,7 +661,8 @@ export function speechAutofillPlan(
     const slot = byBackend.get(item.speech.backend) ?? { complete: true };
     const status = statusOf(item);
     if (status.state === "installed") {
-      for (const [field, rel] of Object.entries(item.speech.fields)) {
+      const fields = (platform && item.platforms[platform]?.fields) || {};
+      for (const [field, rel] of Object.entries(fields)) {
         slot[field as "binary" | "model" | "tokens"] = join(
           status.installDir,
           ...rel.split("/"),
@@ -713,6 +717,7 @@ export function speechAutofillPlan(
  */
 export function vlmAutofillPlan(
   items: readonly ContentItem[],
+  platform: ContentPlatformKey | null,
   statusOf: (item: ContentItem) => ContentItemStatus,
   existingLocal: Record<string, { binary: string; model: string; mmproj: string }>,
   join: (...parts: string[]) => string,
@@ -727,7 +732,8 @@ export function vlmAutofillPlan(
     for (const backend of item.vlm.backends) {
       const slot = byBackend.get(backend) ?? { complete: true };
       if (status.state === "installed") {
-        for (const [field, rel] of Object.entries(item.vlm.fields)) {
+        const fields = (platform && item.platforms[platform]?.fields) || {};
+        for (const [field, rel] of Object.entries(fields)) {
           slot[field as "binary" | "model" | "mmproj"] = join(
             status.installDir,
             ...rel.split("/"),

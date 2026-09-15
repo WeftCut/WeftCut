@@ -134,7 +134,7 @@ export function ManagedContent({
   const prereqKeys = [
     ...new Set(
       covered
-        .map((r) => r.item.prerequisiteKey)
+        .map((r) => r.prerequisiteKey)
         .filter((k): k is string => k !== undefined),
     ),
   ];

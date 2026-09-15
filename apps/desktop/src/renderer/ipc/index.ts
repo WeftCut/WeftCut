@@ -3325,6 +3325,7 @@ import type {
   ContentQueueSnapshot,
 } from "../../shared/content-download";
 export type {
+  ContentArtifact,
   ContentItem,
   ContentItemStatus,
   ContentListRow,

@@ -61,12 +61,33 @@ describe("content catalog pinning invariants", () => {
     }
   });
 
-  it("speech consumer field paths obey the same relative/traversal-free rule", () => {
+  it("config field paths obey the same relative/traversal-free rule", () => {
+    for (const { id, artifact } of allArtifacts) {
+      for (const rel of Object.values(artifact.fields)) {
+        expect(rel, id).not.toMatch(/^([a-zA-Z]:)?[\\/]/);
+        expect(rel, id).not.toContain("..");
+        expect(rel.length, id).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("every artifact names at least one field, and its entry point is one of them", () => {
+    for (const { id, platform, artifact } of allArtifacts) {
+      const paths = Object.values(artifact.fields);
+      expect(paths.length, `${id}: ${platform}`).toBeGreaterThan(0);
+      // The entry point is what `itemStatus` probes on disk; a path it does not
+      // also hand to an engine config would leave the item "installed" and the
+      // engine pointed at nothing.
+      expect(paths, `${id}: ${platform}`).toContain(artifact.entryPath);
+    }
+  });
+
+  it("a family only names fields its own engine config has", () => {
     for (const item of CONTENT_CATALOG) {
-      for (const rel of Object.values(item.speech?.fields ?? {})) {
-        expect(rel, item.id).not.toMatch(/^([a-zA-Z]:)?[\\/]/);
-        expect(rel, item.id).not.toContain("..");
-        expect(rel.length, item.id).toBeGreaterThan(0);
+      for (const artifact of Object.values(item.platforms)) {
+        const named = Object.keys(artifact.fields);
+        if (item.speech) expect(named, item.id).not.toContain("mmproj");
+        if (item.vlm) expect(named, item.id).not.toContain("tokens");
       }
     }
   });
@@ -90,10 +111,8 @@ describe("the ADR 0039 slice is present verbatim", () => {
       "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539",
     );
     expect(win?.entryPath).toBe("Release/whisper-cli.exe");
-    expect(runtime?.speech).toEqual({
-      backend: "whisper_cpp",
-      fields: { binary: "Release/whisper-cli.exe" },
-    });
+    expect(win?.fields).toEqual({ binary: "Release/whisper-cli.exe" });
+    expect(runtime?.speech).toEqual({ backend: "whisper_cpp" });
   });
 
   it("multilingual Base model at the pinned HF revision", () => {
@@ -105,11 +124,9 @@ describe("the ADR 0039 slice is present verbatim", () => {
     );
     // The multilingual Base, not base.en and not a quantized variant.
     expect(win?.entryPath).toBe("ggml-base.bin");
+    expect(win?.fields).toEqual({ model: "ggml-base.bin" });
     expect(model?.version).toBe("5359861c739e955e79d9a303bcbc70fb988958b1");
-    expect(model?.speech).toEqual({
-      backend: "whisper_cpp",
-      fields: { model: "ggml-base.bin" },
-    });
+    expect(model?.speech).toEqual({ backend: "whisper_cpp" });
   });
 });
 
@@ -124,13 +141,11 @@ describe("the ADR 0043 slice is present verbatim", () => {
     expect(win?.archive).toBe("tar.bz2");
     // The versioned tag URL, not the rolling one.
     expect(win?.url).toContain("/releases/download/v1.13.4/");
-    expect(runtime?.speech).toEqual({
-      backend: "funasr",
-      fields: {
-        binary:
-          "sherpa-onnx-v1.13.4-win-x64-shared-MD-Release/bin/sherpa-onnx-offline.exe",
-      },
+    expect(win?.fields).toEqual({
+      binary:
+        "sherpa-onnx-v1.13.4-win-x64-shared-MD-Release/bin/sherpa-onnx-offline.exe",
     });
+    expect(runtime?.speech).toEqual({ backend: "funasr" });
   });
 
   it("Paraformer-zh 2023-09-14: one archive fills model AND tokens", () => {
@@ -143,12 +158,71 @@ describe("the ADR 0043 slice is present verbatim", () => {
       "9c49fd9c6fb63de8e18c1054cf3d100f804741b7e608e187923cd8ff09fa9f03",
     );
     expect(win?.archive).toBe("tar.bz2");
-    expect(model?.speech).toEqual({
-      backend: "funasr",
-      fields: {
-        model: "sherpa-onnx-paraformer-zh-2023-09-14/model.int8.onnx",
-        tokens: "sherpa-onnx-paraformer-zh-2023-09-14/tokens.txt",
-      },
+    expect(win?.fields).toEqual({
+      model: "sherpa-onnx-paraformer-zh-2023-09-14/model.int8.onnx",
+      tokens: "sherpa-onnx-paraformer-zh-2023-09-14/tokens.txt",
     });
+    expect(model?.speech).toEqual({ backend: "funasr" });
+  });
+});
+
+describe("the ADR 0073 Linux slice is present verbatim", () => {
+  const linuxOf = (id: string) =>
+    CONTENT_CATALOG.find((i) => i.id === id)?.platforms["linux-x64"];
+
+  it("whisper.cpp v1.9.1 ubuntu-x64 runtime — the same upstream version as Windows", () => {
+    const linux = linuxOf("whisper-cpp-runtime");
+    expect(linux?.bytes).toBe(9379235);
+    expect(linux?.sha256).toBe(
+      "f3bf3b4369a99b54665b0f19b88483b30de27f25963b0414235dea03198515c5",
+    );
+    expect(linux?.archive).toBe("tar.gz");
+    expect(linux?.entryPath).toBe("whisper-bin-ubuntu-x64/whisper-cli");
+    expect(linux?.url).toContain("/releases/download/v1.9.1/");
+    // No MSVC note travels to a platform that has no MSVC.
+    expect(linux?.prerequisiteKey).toBeUndefined();
+  });
+
+  it("sherpa-onnx v1.13.4 linux-x64-shared runtime", () => {
+    const linux = linuxOf("funasr-runtime");
+    expect(linux?.bytes).toBe(27801563);
+    expect(linux?.sha256).toBe(
+      "18887dc13c7d313d0e0f6c164ed31715c27c1c2c4f71acd7c0147dc84cf02514",
+    );
+    expect(linux?.archive).toBe("tar.bz2");
+    expect(linux?.entryPath).toBe(
+      "sherpa-onnx-v1.13.4-linux-x64-shared/bin/sherpa-onnx-offline",
+    );
+  });
+
+  it("llama.cpp b10103 ubuntu vulkan runtime — the Vulkan build here too", () => {
+    const linux = linuxOf("llama-mtmd-runtime");
+    expect(linux?.bytes).toBe(32238620);
+    expect(linux?.sha256).toBe(
+      "ca2c3db8aa2787b2e49655460787190d0619caeeff259ffa1bf909fe5133264d",
+    );
+    expect(linux?.archive).toBe("tar.gz");
+    expect(linux?.entryPath).toBe("llama-b10103/llama-mtmd-cli");
+    expect(linux?.url).toContain("vulkan");
+  });
+
+  it("the models are the same bytes on both platforms — only the runtimes differ", () => {
+    for (const id of [
+      "whisper-model-base",
+      "funasr-model-paraformer-zh",
+      "qwen3-vl-4b-model",
+      "qwen3-vl-4b-mmproj",
+    ]) {
+      const item = CONTENT_CATALOG.find((i) => i.id === id);
+      expect(item?.platforms["linux-x64"], id).toEqual(
+        item?.platforms["win32-x64"],
+      );
+    }
+  });
+
+  it("every catalog item covers Linux — a half-covered engine has no usable row", () => {
+    for (const item of CONTENT_CATALOG) {
+      expect(Object.keys(item.platforms), item.id).toContain("linux-x64");
+    }
   });
 });
