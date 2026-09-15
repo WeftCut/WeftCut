@@ -1626,6 +1626,8 @@ const enUS = {
       "No Skill folder to open — see “Teach your agent WeftCut” above.",
     skill_stale:
       "Showing the copy an earlier launch left behind, which may be older than this version of WeftCut.",
+    skill_retry: "Try again",
+    skill_retrying: "Installing…",
     skill_fault: {
       not_built:
         "This development build has no Skill staged yet. Run “npm run build:skills” and restart.",

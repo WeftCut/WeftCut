@@ -130,6 +130,14 @@ The app's **Connect agent** panel (Settings → Agent):
   startup notice, since it means both gates failed on the way to the user. Only
   a dev tree before `build:skills` is a benign fault, and it names the command
   to run.
+- **The fault carries its own recovery.** Every fault that can reach a user is
+  cleared by something outside WeftCut — a full disk emptied, an antivirus
+  quarantine undone, a locked file released, a repaired install, or a
+  `build:skills` that has now run — so the fault block offers a "try again"
+  that re-runs the install and takes up whatever it finds. It is the only way
+  to learn that the cause is gone, and it costs no app restart. On success the
+  main process also re-broadcasts the notice list (`app:notices`), which is how
+  the System-status card stops reporting a fault the user has just fixed.
 - Renders "starting…" while the server is still binding its port; polls
   `get_mcp_info` until the bind completes. Until the shim bundle exists (dev
   before `build:cli`), the HTTP path renders as primary.

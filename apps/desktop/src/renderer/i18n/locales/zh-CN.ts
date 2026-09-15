@@ -1398,6 +1398,8 @@ const zhCN: Resources = {
     skill_path_heading: "Skill 文件夹位置",
     skill_path_unavailable: "没有可打开的 Skill 文件夹 —— 见上方「教会你的代理使用 WeftCut」。",
     skill_stale: "当前显示的是此前启动留下的副本，它可能比当前版本的 WeftCut 更旧。",
+    skill_retry: "重试",
+    skill_retrying: "正在安装…",
     skill_fault: {
       not_built: "此开发构建尚未生成 Skill。执行 “npm run build:skills” 后重启。",
       bundle_missing: "本次安装的 WeftCut 没有附带 Skill。重新安装应用可恢复。",

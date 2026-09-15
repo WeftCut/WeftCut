@@ -428,7 +428,15 @@ export interface WeftcutApi {
     join(parts: string[]): Promise<string>
     tempDir(): Promise<string>
   }
-  mcp: { getInfo(): Promise<unknown>; resetToken(): Promise<unknown> }
+  /// `reinstallSkills` re-runs the startup skill refresh and returns what it
+  /// found, so the Agent panel can recover a failed install without an app
+  /// restart. It also re-broadcasts `app:notices`, since the notice it clears
+  /// (or raises) was pulled once on mount.
+  mcp: {
+    getInfo(): Promise<unknown>
+    resetToken(): Promise<unknown>
+    reinstallSkills(): Promise<unknown>
+  }
   win: {
     create(label: string, options?: WinCreateOpts): Promise<void>
     act(label: string, action: WinAction): Promise<void>

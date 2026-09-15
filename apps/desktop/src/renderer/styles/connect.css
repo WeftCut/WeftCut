@@ -139,3 +139,18 @@
 .connect-path button {
   flex: none;
 }
+
+/* The skill fault callout: the diagnosis, then the one action that can clear
+ * it. Severity comes from the shared `.settings-warn` / `.settings-error`
+ * skins — only the stacking is local, and the reset is because those skins are
+ * written for a bare <p>. */
+.connect-skill-fault {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.connect-skill-fault p {
+  margin: 0;
+}

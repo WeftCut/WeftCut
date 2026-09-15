@@ -111,6 +111,7 @@ const api: WeftcutApi = {
   mcp: {
     getInfo: (): Promise<unknown> => ipcRenderer.invoke('get_mcp_info'),
     resetToken: (): Promise<unknown> => ipcRenderer.invoke('reset_mcp_token'),
+    reinstallSkills: (): Promise<unknown> => ipcRenderer.invoke('reinstall_skills'),
   },
 
   win: {

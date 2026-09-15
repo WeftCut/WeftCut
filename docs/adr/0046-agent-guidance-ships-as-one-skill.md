@@ -89,6 +89,14 @@ the buttons would be, and a packaged build that is not `installed` raises a
 startup notice. A dev tree before `build:skills` is the one benign fault, and
 it is named separately so it can read as the instruction it is.
 
+The fault block carries a "try again" rather than only an instruction, because
+none of the causes that reach a user live inside WeftCut — a full disk, a
+quarantined file, a lock, a damaged install — and re-running the install is the
+only way to find out whether the cause is gone. Recovery therefore costs no app
+restart, which also means the startup notice has to be retractable: main
+re-broadcasts the notice list on `app:notices`, the one push in a surface that
+is otherwise pull-only.
+
 ### Names are pinned by a gate
 
 `mcp.skill-conformance.test.ts` extracts every backticked tool / resource /

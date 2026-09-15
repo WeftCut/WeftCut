@@ -952,26 +952,34 @@ app.whenReady().then(async () => {
   // in the app reads it — it exists to be copied into an agent client's own
   // skills directory.
   const { installSkills } = await import('./mcp/skillsInstall.js')
-  const skills = installSkills({
+  const skillsSource = {
     resourcesSkills: path.join(process.resourcesPath, 'skills'),
     devSkills: path.join(import.meta.dirname, '../skills'),
     isPackaged: app.isPackaged,
     userDataDir: app.getPath('userData'),
-  })
-  if (skills.state !== 'installed') {
-    console.warn(`[mcp] agent skill ${skills.state} (${skills.fault})`)
-    // A dev tree before `npm run build:skills` is the one expected way to get
-    // here, and the Agent panel names that command itself — a standing system
-    // notice for it would be noise in every dev session. In a packaged build
-    // both gates that make this unreachable have failed, so it is an error the
-    // user needs surfaced whether or not they ever open that panel.
-    if (app.isPackaged) {
-      startupNotices.push({
-        level: skills.state === 'stale' ? 'warn' : 'error',
-        code: skills.state === 'stale' ? 'agent_skill_stale' : 'agent_skill_unavailable',
-      })
-    }
   }
+  let skills = installSkills(skillsSource)
+  /// Bring `startupNotices` in line with the latest install attempt: at most one
+  /// agent-skill row, and none once it is installed.
+  ///
+  /// A dev tree before `npm run build:skills` never raises one — the Agent panel
+  /// names that command itself, and a standing notice would be noise in every
+  /// dev session. In a packaged build both gates that make this unreachable have
+  /// failed, so it is an error the user needs surfaced whether or not they ever
+  /// open that panel.
+  const syncSkillNotice = () => {
+    const at = startupNotices.findIndex((n) => n.code.startsWith('agent_skill_'))
+    if (at >= 0) startupNotices.splice(at, 1)
+    if (skills.state === 'installed') return
+    console.warn(`[mcp] agent skill ${skills.state} (${skills.fault})`)
+    if (!app.isPackaged) return
+    startupNotices.push(
+      skills.state === 'stale'
+        ? { level: 'warn', code: 'agent_skill_stale' }
+        : { level: 'error', code: 'agent_skill_unavailable' },
+    )
+  }
+  syncSkillNotice()
   const stdioInfo = () => ({
     exe_path: process.execPath,
     appimage: process.env.APPIMAGE ?? null,
@@ -996,6 +1004,19 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('get_mcp_info', () => ({ ...mcpHost.getInfo(), ...stdioInfo() }))
   ipcMain.handle('reset_mcp_token', () => mcpHost.resetToken())
+  // Re-run the startup refresh on demand, from the Agent panel. Every fault
+  // that can reach a packaged user is one an outside actor can clear without
+  // touching WeftCut — a full disk emptied, an antivirus quarantine undone, a
+  // file handle released, a repaired install — and a recovery that cost an app
+  // restart would be one the user has no reason to trust worked.
+  ipcMain.handle('reinstall_skills', () => {
+    skills = installSkills(skillsSource)
+    syncSkillNotice()
+    // The renderer pulled its notice list once, on mount. Without this it would
+    // keep showing the System-status card for a fault that no longer exists.
+    emitToRenderer('app:notices', startupNotices)
+    return skills
+  })
   ipcMain.handle('app:notices', () => startupNotices)
   // macOS application menu: the renderer resolves labels (i18next) and
   // effective accelerators (catalogue defaults ⊕ keybindings.json) and pushes

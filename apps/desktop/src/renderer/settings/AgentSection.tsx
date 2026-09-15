@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import {
   getMcpInfo,
+  reinstallSkills,
   resetMcpToken,
   type McpInfoView,
   type SkillsInstallView,
@@ -193,6 +194,7 @@ export function AgentSection() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [httpOpen, setHttpOpen] = useState(false);
+  const [retryingSkill, setRetryingSkill] = useState(false);
 
   // Poll until the MCP server is up. Once we have info, stop polling.
   useEffect(() => {
@@ -331,6 +333,25 @@ export function AgentSection() {
     });
   };
 
+  /// Re-run the install and take whatever it found. The poll above stopped at
+  /// the first `info`, so the new state has to be spliced in here; the main
+  /// process separately re-broadcasts the notice list, which is what clears the
+  /// System-status card.
+  const retrySkill = async () => {
+    if (retryingSkill) return;
+    setRetryingSkill(true);
+    try {
+      const skills = await reinstallSkills();
+      setInfo((prev) => (prev ? { ...prev, skills } : prev));
+    } catch (e) {
+      // Leave the fault on screen: it is still the truth, and the button the
+      // user just pressed is still there to press again.
+      console.warn("reinstall skills failed:", e);
+    } finally {
+      setRetryingSkill(false);
+    }
+  };
+
   const refreshToken = async () => {
     if (refreshing) return;
     if (!window.confirm(t("connect.refresh_confirm"))) return;
@@ -435,14 +456,31 @@ export function AgentSection() {
   /// is not there at all.
   const skillFaultNote = (skills: SkillsInstallView) =>
     skills.state === "installed" ? null : (
-      <p
-        className={
+      <div
+        className={`connect-skill-fault ${
           skills.state === "stale" ? "settings-warn" : "settings-error"
-        }
+        }`}
       >
-        {skills.state === "stale" ? `${t("connect.skill_stale")} ` : ""}
-        {t(`connect.skill_fault.${skills.fault}`)}
-      </p>
+        <p>
+          {skills.state === "stale" ? `${t("connect.skill_stale")} ` : ""}
+          {t(`connect.skill_fault.${skills.fault}`)}
+        </p>
+        {/* Offered for every fault, not just the transient-looking ones: each
+            is cleared by something outside WeftCut (a freed disk, a restored
+            quarantine, a repaired install), and only re-running the install
+            can tell whether that has happened yet. */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void retrySkill()}
+          disabled={retryingSkill}
+        >
+          <RotateCcwIcon size={13} />
+          {retryingSkill
+            ? t("connect.skill_retrying")
+            : t("connect.skill_retry")}
+        </Button>
+      </div>
     );
 
   const httpActions = () => (

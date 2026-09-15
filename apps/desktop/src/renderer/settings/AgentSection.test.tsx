@@ -23,6 +23,7 @@ import userEvent from "@testing-library/user-event";
 const ipc = vi.hoisted(() => ({
   getMcpInfo: vi.fn(),
   resetMcpToken: vi.fn(),
+  reinstallSkills: vi.fn(),
 }));
 
 vi.mock("../ipc", async (importActual) => {
@@ -62,6 +63,7 @@ beforeEach(async () => {
   await i18n.changeLanguage("en-US");
   ipc.getMcpInfo.mockReset().mockResolvedValue(INFO);
   ipc.resetMcpToken.mockReset();
+  ipc.reinstallSkills.mockReset();
   clipboard.writeText.mockReset().mockResolvedValue(undefined);
   shell.reveal.mockReset().mockResolvedValue(undefined);
   Object.defineProperty(navigator, "clipboard", {
@@ -214,6 +216,49 @@ describe("AgentSection", () => {
       await screen.findByText(/No Skill shipped with this installation/),
     ).toBeTruthy();
     expect(screen.queryByText(/npm run build:skills/)).toBeNull();
+  });
+
+  it("retrying re-runs the install and takes up the folder it finds", async () => {
+    // The recovery that costs no app restart: whatever cleared the fault (a
+    // freed disk, a finished build:skills) only shows up by installing again.
+    ipc.reinstallSkills.mockResolvedValue({
+      state: "installed",
+      dir: SKILLS_DIR,
+    });
+    render(<AgentSection />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Try again" }),
+    );
+    expect(ipc.reinstallSkills).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByRole("button", { name: "Copy Skill prompt" }),
+    ).toBeTruthy();
+    expect(screen.queryByText(/npm run build:skills/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
+  it("a retry that changes nothing leaves the fault and the button in place", async () => {
+    ipc.reinstallSkills.mockResolvedValue({
+      state: "unavailable",
+      dir: null,
+      fault: "not_built",
+    });
+    render(<AgentSection />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Try again" }),
+    );
+    expect(screen.getByText(/npm run build:skills/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+  });
+
+  it("a retry that throws is not mistaken for a recovery", async () => {
+    ipc.reinstallSkills.mockRejectedValue(new Error("EACCES"));
+    render(<AgentSection />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Try again" }),
+    );
+    expect(screen.getByText(/npm run build:skills/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
   });
 });
 

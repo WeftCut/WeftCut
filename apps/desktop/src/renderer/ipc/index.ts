@@ -1895,6 +1895,14 @@ export async function resetMcpToken(): Promise<string> {
   return (await window.api.mcp.resetToken()) as string;
 }
 
+/// Re-run the startup refresh of `<userData>/skills` and return what it found.
+/// The recovery behind the Agent tab's "try again": every fault a packaged user
+/// can hit is one something outside WeftCut can clear, so re-checking must not
+/// cost an app restart.
+export async function reinstallSkills(): Promise<SkillsInstallView> {
+  return (await window.api.mcp.reinstallSkills()) as SkillsInstallView;
+}
+
 export interface ApiKeyStatus {
   provider: string;
   label: string;
