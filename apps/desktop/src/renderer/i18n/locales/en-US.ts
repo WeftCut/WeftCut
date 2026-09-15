@@ -1614,7 +1614,7 @@ const enUS = {
     prompt_copied: "Prompt copied!",
     prompt_heading: "Let your agent set itself up",
     prompt_blurb:
-      "One prompt covers the whole of setup: the agent writes WeftCut's MCP server into its own client config, then installs the Skill that ships with the app — session etiquette, the Motif authoring contract and the rest of the usage guidance. Copy it and paste it into the agent's chat. The Skill changes with each release, so hand the prompt over again after an upgrade.",
+      "For agents that support MCP: paste the prompt into the chat and it configures the MCP connection and installs the Skill. The Skill updates with each release, so reinstalling after every upgrade is recommended.",
     manual_heading: "Prove you're human",
     skill_path_heading: "Skill folder location",
     skill_path_unavailable:

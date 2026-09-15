@@ -1389,7 +1389,7 @@ const zhCN: Resources = {
     prompt_copied: "提示词已复制！",
     prompt_heading: "交给 Agent 自行设置",
     prompt_blurb:
-      "一段提示词覆盖全部设置：让 Agent 把 WeftCut 的 MCP 服务写进它自己的客户端配置，再安装随应用附带的 Skill —— 会话规范、Motif 编写契约等使用指导。复制后粘贴到 Agent 的对话中即可。Skill 会随版本一同更新，升级后再给它一次。",
+      "适用于支持 MCP 的 Agent 客户端，复制到对话中即可自动配置 MCP 连接并安装 Skill。Skill 会随版本更新升级，推荐每次升级后再次安装。",
     manual_heading: "证明你是人类",
     skill_path_heading: "Skill 文件夹位置",
     skill_path_unavailable: "没有可打开的 Skill 文件夹 —— 见上方「交给 Agent 自行设置」。",
