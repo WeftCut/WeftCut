@@ -111,3 +111,31 @@
 .connect-snippet code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+
+/* The staged skill folder, in the manual section: caption + copy on top (the
+ * shared `.connect-snippet-header`, whose own margin sets the gap), then the
+ * read-only path field with Browse beside it — the export dialog's
+ * output-location row. */
+.connect-path-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.connect-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The field takes the width; Browse keeps its label's. Unlike the export
+ * dialog's fixed 220px, this one spans the pane — the path is the content
+ * here, not one row of a form. */
+.connect-path-input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-caption);
+}
+
+.connect-path button {
+  flex: none;
+}

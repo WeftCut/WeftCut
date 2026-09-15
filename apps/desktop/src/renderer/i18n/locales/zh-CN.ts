@@ -1385,6 +1385,10 @@ const zhCN: Resources = {
       "WeftCut 自带 Skill，包含会话规范与 Motif 编写契约等使用指导，复制提示词给 Agent 进行安装。版本更新时 Skill 内容会一并更新，推荐每次升级后再次安装。",
     copy_skill_prompt: "复制 Skill 提示词",
     skill_copied: "提示词已复制！",
+    skill_path_heading: "Skill 文件夹位置",
+    copy_path: "复制路径",
+    browse: "浏览…",
+    open_location: "打开文件位置",
     agent_prompt: [
       "请为我配置 WeftCut MCP 服务，直接完成配置修改，不要只告诉我操作步骤。",
       "",

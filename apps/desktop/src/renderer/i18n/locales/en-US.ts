@@ -1611,6 +1611,13 @@ const enUS = {
       "WeftCut ships a Skill covering session etiquette, the Motif authoring contract and the rest of the usage guidance. Copy the prompt and hand it to your agent to install. The Skill updates with each release, so reinstalling after every upgrade is recommended.",
     copy_skill_prompt: "Copy Skill prompt",
     skill_copied: "Prompt copied!",
+    skill_path_heading: "Skill folder location",
+    copy_path: "Copy path",
+    browse: "Browse…",
+    // The Browse button's tooltip — Windows' own Explorer wording, and true on
+    // all three: the file manager comes up on the folder (selected where the
+    // platform can — see main/openPath.ts).
+    open_location: "Open file location",
     agent_prompt: [
       "Configure the WeftCut MCP server for me. Make the configuration change directly; do not just describe the steps.",
       "",

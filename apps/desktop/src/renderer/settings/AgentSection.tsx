@@ -10,6 +10,8 @@ import {
   RotateCcwIcon,
 } from "lucide-react";
 import { getMcpInfo, resetMcpToken, type McpInfoView } from "../ipc";
+import { reveal as revealInShell } from "@/bridge/shell";
+import { AppInput } from "../components/AppInput";
 import { Button } from "@/components/ui/button";
 
 const REFRESH_INTERVAL_MS = 1000;
@@ -148,14 +150,19 @@ function buildHttpCli(
   return `claude mcp add -s user -t http weftcut ${shq(url)} -H ${header}`;
 }
 
-/// Instruction that installs the shipped agent skill, addressed to the agent
-/// rather than to the user — hence untranslated. The separator is inferred from
-/// the parent path instead of normalised: the renderer has no `path`, and the
+/// The staged skill folder — the thing that gets copied, named by both the
+/// install prompt and the manual block. The separator is inferred from the
+/// parent path instead of normalised: the renderer has no `path`, and the
 /// folder is shown to the user verbatim as the main process reported it.
+function skillFolder(skillsDir: string): string {
+  return `${skillsDir}${skillsDir.includes("\\") ? "\\" : "/"}weftcut`;
+}
+
+/// Instruction that installs the shipped agent skill, addressed to the agent
+/// rather than to the user — hence untranslated.
 function buildSkillPrompt(skillsDir: string): string {
-  const sep = skillsDir.includes("\\") ? "\\" : "/";
   return (
-    `Install the WeftCut skill: copy the folder "${skillsDir}${sep}weftcut" ` +
+    `Install the WeftCut skill: copy the folder "${skillFolder(skillsDir)}" ` +
     `into your agent's skills directory (for Claude Code: ~/.claude/skills/weftcut), ` +
     `overwriting any previous copy. Re-copy after WeftCut updates.`
   );
@@ -298,6 +305,23 @@ export function AgentSection() {
   const copySkillPrompt = async () => {
     if (!info?.skills_dir) return;
     await copy("skill", buildSkillPrompt(info.skills_dir));
+  };
+
+  const copySkillPath = async () => {
+    if (!info?.skills_dir) return;
+    await copy("skill-path", skillFolder(info.skills_dir));
+  };
+
+  /// Reveal the skill folder in the OS file manager — selected in Explorer /
+  /// Finder, the containing folder on Linux (see main/openPath.ts). A failure
+  /// (folder deleted, no file manager on the box) is logged rather than
+  /// surfaced: the path is on screen right next to the button, which is the
+  /// fallback the user needs.
+  const revealSkillFolder = () => {
+    if (!info?.skills_dir) return;
+    void revealInShell(skillFolder(info.skills_dir)).catch((e: unknown) => {
+      console.warn("reveal skill folder failed:", e);
+    });
   };
 
   const refreshToken = async () => {
@@ -521,6 +545,44 @@ export function AgentSection() {
             {clientTabs("http")}
             {httpSnippetBlock("http")}
           </>
+        )}
+        {/* The skill's manual counterpart to the install prompt above: a user
+            doing this by hand needs the folder itself, and only this section
+            addresses that user. Client-independent — the destination differs
+            per client, the source never does. Shaped like the export dialog's
+            output-location row — a read-only path field with Browse beside
+            it — rather than the snippet <pre>: this is one value to take away
+            or act on, not a blob to paste. */}
+        {info.skills_dir && (
+          <div className="connect-path-block">
+            <div className="connect-snippet-header">
+              <span>{t("connect.skill_path_heading")}</span>
+              <div className="connect-snippet-actions">
+                {copyButton(
+                  "skill-path",
+                  () => void copySkillPath(),
+                  t("connect.copy_path"),
+                )}
+              </div>
+            </div>
+            <div className="connect-path">
+              <AppInput
+                value={skillFolder(info.skills_dir)}
+                onValueChange={() => {}}
+                readOnly
+                mono
+                title={skillFolder(info.skills_dir)}
+                className="connect-path-input"
+                ariaLabel={t("connect.skill_path_heading")}
+              />
+              <Button
+                onClick={revealSkillFolder}
+                title={t("connect.open_location")}
+              >
+                {t("connect.browse")}
+              </Button>
+            </div>
+          </div>
         )}
       </section>
 

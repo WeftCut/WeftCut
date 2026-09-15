@@ -9,7 +9,10 @@
 // and HTTP-direct moves behind an "advanced" disclosure; without it (dev
 // before build:cli) the HTTP snippet renders as primary, token masked until
 // revealed, copy always carrying the real token. The shipped agent skill gets
-// its own block, present only once a skill folder is staged (skills_dir set).
+// two surfaces, both present only once a skill folder is staged (skills_dir
+// set): an install prompt for the agent, and — for a user doing the copy by
+// hand — its folder path in the manual section, copyable and revealable in the
+// OS file manager.
 // Token rotation sits above both layouts: it never puts the secret on screen,
 // so unlike Reveal and Copy it has no reason to hide behind the disclosure.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -46,6 +49,9 @@ const INFO_SHIM = {
 };
 
 const clipboard = vi.hoisted(() => ({ writeText: vi.fn() }));
+const shell = vi.hoisted(() => ({ reveal: vi.fn(async () => {}) }));
+
+vi.mock("@/bridge/shell", () => shell);
 
 afterEach(cleanup);
 beforeEach(async () => {
@@ -53,6 +59,7 @@ beforeEach(async () => {
   ipc.getMcpInfo.mockReset().mockResolvedValue(INFO);
   ipc.resetMcpToken.mockReset();
   clipboard.writeText.mockReset().mockResolvedValue(undefined);
+  shell.reveal.mockReset().mockResolvedValue(undefined);
   Object.defineProperty(navigator, "clipboard", {
     value: clipboard,
     configurable: true,
@@ -185,6 +192,8 @@ describe("AgentSection", () => {
     expect(
       screen.queryByRole("button", { name: "Copy Skill prompt" }),
     ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy path" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Browse…" })).toBeNull();
   });
 });
 
@@ -277,6 +286,25 @@ describe("AgentSection with the stdio shim installed", () => {
     const prompt = clipboard.writeText.mock.calls[0]?.[0] as string;
     expect(prompt).toContain(`"${INFO_SHIM.skills_dir}\\weftcut"`);
     expect(prompt).toContain("~/.claude/skills/weftcut");
+  });
+
+  it("names the staged skill folder in the manual section, copyable and openable", async () => {
+    render(<AgentSection />);
+    const path = `${INFO_SHIM.skills_dir}\\weftcut`;
+    // The prompt above hands the folder to an agent; a user installing it by
+    // hand needs the same path on screen, and a way into the file manager.
+    const field = (await screen.findByRole("textbox", {
+      name: "Skill folder location",
+    })) as HTMLInputElement;
+    expect(field.value).toBe(path);
+    expect(field.readOnly).toBe(true);
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy path" }));
+    expect(clipboard.writeText).toHaveBeenCalledWith(path);
+
+    await userEvent.click(screen.getByRole("button", { name: "Browse…" }));
+    // The folder itself, not its parent: reveal selects what it is given.
+    expect(shell.reveal).toHaveBeenCalledWith(path);
   });
 
   it("HTTP direct moves behind the advanced disclosure, token still masked", async () => {

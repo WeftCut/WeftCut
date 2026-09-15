@@ -113,10 +113,11 @@ The app's **Connect agent** panel (Settings → Agent):
   extraResource, and refreshed to `<userData>/skills/` at every startup — the
   shim's stable-path pattern. The panel shows a copyable install prompt that
   points the user's agent at that copy (for Claude Code:
-  `~/.claude/skills/weftcut`). Every tool / resource / prompt name the skill
-  sources reference is pinned to the advertised catalog by
-  `mcp.skill-conformance.test.ts`, so a rename fails CI until the prose is
-  updated.
+  `~/.claude/skills/weftcut`); the manual section prints that folder's path
+  verbatim and opens it in the OS file manager, for a user doing the copy by
+  hand. Every tool / resource / prompt name the skill sources reference is
+  pinned to the advertised catalog by `mcp.skill-conformance.test.ts`, so a
+  rename fails CI until the prose is updated.
 - Renders "starting…" while the server is still binding its port; polls
   `get_mcp_info` until the bind completes. Until the shim bundle exists (dev
   before `build:cli`), the HTTP path renders as primary.
