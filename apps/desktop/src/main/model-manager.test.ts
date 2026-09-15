@@ -225,9 +225,4 @@ describe("model library lifecycle", () => {
     expect(() => manager.clearDownloads("whisper-base")).toThrow("locked file");
     expect(state().active.speech).toBeNull(); expect(deps.ensureContent).not.toHaveBeenCalled();
   });
-  it("legacy content removal cannot bypass model references", () => {
-    const { manager, deps } = setup();
-    expect(() => manager.removeUnusedContent("whisper-model-base")).toThrow("model library");
-    expect(deps.removeContent).not.toHaveBeenCalled();
-  });
 });

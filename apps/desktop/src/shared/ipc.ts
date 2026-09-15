@@ -394,12 +394,6 @@ import type {
   DataRootMigrateResult,
   DataRootPendingCleanup,
 } from './data-root'
-// App-managed content download IPC surface. Types single-sourced in
-// src/shared/content-download.ts (imported by main's handlers + renderer too).
-import type {
-  ContentListRow,
-  ContentQueueSnapshot,
-} from './content-download'
 import type { MenuProjection } from './menu'
 
 export interface WeftcutApi {
@@ -587,19 +581,6 @@ export interface WeftcutApi {
     pendingCleanup(): Promise<DataRootPendingCleanup | null>
     deleteOld(): Promise<void>
     dismissCleanup(): Promise<void>
-  }
-  /// App-managed content downloads (ADR 0039): catalog + install status, the
-  /// main-owned download queue (enqueue items / read the snapshot; every change
-  /// arrives on `evt:content:queue`), cancel one item (in flight → abort, its
-  /// partial kept for resume; queued → drop), remove an installed item, open
-  /// the downloads folder.
-  content: {
-    list(): Promise<ContentListRow[]>
-    queue(): Promise<ContentQueueSnapshot>
-    enqueue(ids: string[]): Promise<ContentQueueSnapshot>
-    cancel(id: string): Promise<void>
-    remove(id: string): Promise<void>
-    openFolder(): Promise<void>
   }
   on(event: string, cb: (payload: unknown) => void): () => void
   off(event: string): void

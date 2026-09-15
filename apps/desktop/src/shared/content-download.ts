@@ -111,15 +111,6 @@ export type ContentItemStatus =
   /// No artifact for this platform in the catalog.
   | { state: "unavailable" };
 
-/// One row of `content:list`: the catalog entry merged with local state.
-export interface ContentListRow {
-  item: ContentItem;
-  status: ContentItemStatus;
-  /// This platform's [`ContentArtifact.prerequisiteKey`], resolved by main so
-  /// the renderer never has to know which artifact it is looking at.
-  prerequisiteKey?: string;
-}
-
 /// One progress tick from the downloader while an item is in flight. `resume`
 /// is the re-hash of bytes a previous attempt already landed (a resumed
 /// transfer reads its prefix once before appending), `verify` the post-stream
@@ -167,11 +158,6 @@ export interface ContentQueueEntry {
 export interface ContentQueueSnapshot {
   entries: ContentQueueEntry[];
 }
-
-/// Event names pushed to the renderer (subscribe via api.on).
-export const CONTENT_EVENTS = {
-  queue: "content:queue",
-} as const;
 
 /// Derive this process's platform key. Returns null on platforms the catalog
 /// scheme doesn't name (the UI then treats every item as `unavailable`).

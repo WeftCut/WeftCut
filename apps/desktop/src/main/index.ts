@@ -51,10 +51,7 @@ import {
 import type { DataRootMigrateResult, DataRootProgress } from '../shared/data-root.js'
 import { randomUUID } from 'node:crypto'
 import { CONTENT_CATALOG } from '../shared/content-catalog.js'
-import {
-  CONTENT_EVENTS, contentPlatformKey,
-  type ContentListRow, type ContentQueueSnapshot,
-} from '../shared/content-download.js'
+import { contentPlatformKey } from '../shared/content-download.js'
 import { downloadItem, itemStatus, speechAutofillPlan, vlmAutofillPlan, sweepStalePartials, type ContentDeps } from './contentDownload.js'
 import { ContentQueue } from './contentQueue.js'
 import { createModelFeature } from './model-feature.js'
@@ -1809,12 +1806,12 @@ app.whenReady().then(async () => {
     clearMarker(migrationMarkerPath, migrationFs)
   })
 
-  // content:* — app-managed content downloads (ADR 0039, 0043, 0055). A
-  // dedicated main-owned family like dataRoot:* above. The lifecycle itself is
-  // pure + DI (contentDownload.ts); these handlers bind it to node:fs, fflate,
-  // and Electron net.fetch — Chromium's network stack, which honors the system
-  // proxy configuration (incl. SOCKS) that the ureq-based sidecar downloader
-  // documented in docs/setup.md cannot.
+  // App-managed content downloads (ADR 0039, 0043, 0055) — driven by the model
+  // feature (models:* below), never by the renderer directly. The lifecycle
+  // itself is pure + DI (contentDownload.ts); these deps bind it to node:fs,
+  // fflate, and Electron net.fetch — Chromium's network stack, which honors the
+  // system proxy configuration (incl. SOCKS) that the ureq-based sidecar
+  // downloader documented in docs/setup.md cannot.
   const contentDeps: ContentDeps = {
     fs: {
       mkdirp: (d) => { fs.mkdirSync(d, { recursive: true }) },
@@ -1939,11 +1936,11 @@ app.whenReady().then(async () => {
   autofillVlmFromContent()
 
   // The download queue (contentQueue.ts) is the one owner of "what is on its
-  // way", so the Settings row is a projection that can unmount mid-stream and a
-  // renderer reload changes nothing. Items run one at a time; each run is a
-  // resumable downloadItem. Four sinks are bound here:
-  //  - the whole snapshot to the renderer on `evt:content:queue` (download
-  //    ticks are throttled to ~4 Hz inside the queue),
+  // way", so the Settings model card is a projection that can unmount
+  // mid-stream and a renderer reload changes nothing. Items run one at a time;
+  // each run is a resumable downloadItem. Three sinks are bound here:
+  //  - a `models:changed` ping to the renderer on every queue change, which is
+  //    what re-reads the model view mid-download,
   //  - autofill after every install — each plan is a no-op for items it does
   //    not claim, so neither consumer needs to know which family just landed,
   //  - one LogBus op per item (Started → Progress at ≤1 Hz → Ok/Err under one
@@ -1989,7 +1986,7 @@ app.whenReady().then(async () => {
     totalBytesOf: (item) => (contentPlatform ? item.platforms[contentPlatform]?.bytes : undefined) ?? 0,
     download: (item, onProgress, signal) =>
       downloadItem(contentDeps, item, contentPlatform, onProgress, signal),
-    onChange: (snapshot) => { emitToRenderer(CONTENT_EVENTS.queue, snapshot); emitToRenderer(MODEL_EVENTS.changed, {}) },
+    onChange: () => emitToRenderer(MODEL_EVENTS.changed, {}),
     onInstalled: () => {
       // Preparation does not mutate execution config. Activation owns that boundary.
     },
@@ -2047,40 +2044,6 @@ app.whenReady().then(async () => {
     activated: () => emitToRenderer(MODEL_EVENTS.activated, {}),
   })
 
-  ipcMain.handle('content:list', (): ContentListRow[] =>
-    CONTENT_CATALOG.map((item) => {
-      // What this machine's payload asks for beyond the app itself — the
-      // renderer sees one note per row and never picks an artifact.
-      const prereq = contentPlatform ? item.platforms[contentPlatform]?.prerequisiteKey : undefined
-      const row = (status: ContentListRow['status']): ContentListRow =>
-        prereq ? { item, status, prerequisiteKey: prereq } : { item, status }
-      const live = queue.entryOf(item.id)
-      if (live?.state === 'queued') return row({ state: 'queued' })
-      if (live && live.state !== 'error') {
-        return row({
-          state: 'downloading',
-          receivedBytes: live.receivedBytes,
-          totalBytes: live.totalBytes,
-        })
-      }
-      // An error entry reads from disk like any other row; the snapshot
-      // carries the message the row shows next to its Retry button.
-      return row(itemStatus(contentDeps, item, contentPlatform))
-    }))
-
-  ipcMain.handle('content:queue', (): ContentQueueSnapshot => queue.snapshot())
-
-  ipcMain.handle('content:enqueue', (_e, { ids }: { ids: string[] }): ContentQueueSnapshot =>
-    queue.enqueue(ids))
-
-  ipcMain.handle('content:cancel', (_e, { id }: { id: string }) => {
-    queue.cancel(id)
-  })
-
-  ipcMain.handle('content:remove', (_e, { id }: { id: string }) => {
-    models!.removeUnusedContent(id)
-  })
-
   // Resume what the previous run left pending. Installed entries are skipped by
   // enqueue itself; ids the catalog no longer knows are dropped here rather
   // than thrown at — a catalog that retired an item must never wedge boot.
@@ -2092,11 +2055,6 @@ app.whenReady().then(async () => {
       try { fs.writeFileSync(contentQueueFile, '[]', 'utf8') } catch { /* cache only */ }
     }
   }
-
-  ipcMain.handle('content:openFolder', async () => {
-    const err = await openPathRobust(dataRoot.downloadsDir)
-    if (err) throw new Error(err)
-  })
 
   // fs:* — direct main-process filesystem access for the renderer (write/append/
   // read/remove/readDir). Confined to APP-MANAGED roots: the OS temp dir (export

@@ -199,18 +199,6 @@ export class ModelManager {
     finally { this.deps.changed(); }
   }
 
-  /** Legacy content removal must obey the same references and in-use guard. */
-  removeUnusedContent(id: string): void {
-    const profiles = [...this.deps.store.get().profiles.map(p => this.resolved(p)),
-      ...[...this.pending.values()].map(p => p.profile)];
-    if (profiles.some(p => p.artifacts.includes(id) || this.deps.referencesContent(p, id))) {
-      throw new Error("Remove model downloads from the model library");
-    }
-    this.deps.assertContentIdle([id]);
-    this.deps.removeContent(id);
-    this.deps.changed();
-  }
-
   private current(p: Pending): boolean { return !p.controller.signal.aborted && this.pending.get(p.profile.family) === p; }
   private fail(p: Pending, e: unknown): void {
     if (!this.current(p)) return;

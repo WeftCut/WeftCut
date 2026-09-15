@@ -30,10 +30,6 @@ import type {
   DataRootMigrateResult,
   DataRootPendingCleanup,
 } from '../shared/data-root'
-import type {
-  ContentListRow,
-  ContentQueueSnapshot,
-} from '../shared/content-download'
 import type { MenuProjection } from '../shared/menu'
 import type { UpdateStatus } from '../shared/updates'
 
@@ -308,20 +304,6 @@ const api: WeftcutApi = {
       ipcRenderer.invoke('dataRoot:pendingCleanup') as Promise<DataRootPendingCleanup | null>,
     deleteOld: (): Promise<void> => ipcRenderer.invoke('dataRoot:deleteOld') as Promise<void>,
     dismissCleanup: (): Promise<void> => ipcRenderer.invoke('dataRoot:dismissCleanup') as Promise<void>,
-  },
-
-  // App-managed content downloads (ADR 0039). Plain main-process actions over
-  // the main-owned download queue; `enqueue` returns at once with the queue
-  // snapshot, and every later change arrives out-of-band on `evt:content:queue`
-  // (subscribe via the generic `on()` above).
-  content: {
-    list: (): Promise<ContentListRow[]> => ipcRenderer.invoke('content:list') as Promise<ContentListRow[]>,
-    queue: (): Promise<ContentQueueSnapshot> => ipcRenderer.invoke('content:queue') as Promise<ContentQueueSnapshot>,
-    enqueue: (ids: string[]): Promise<ContentQueueSnapshot> =>
-      ipcRenderer.invoke('content:enqueue', { ids }) as Promise<ContentQueueSnapshot>,
-    cancel: (id: string): Promise<void> => ipcRenderer.invoke('content:cancel', { id }) as Promise<void>,
-    remove: (id: string): Promise<void> => ipcRenderer.invoke('content:remove', { id }) as Promise<void>,
-    openFolder: (): Promise<void> => ipcRenderer.invoke('content:openFolder') as Promise<void>,
   },
 }
 
