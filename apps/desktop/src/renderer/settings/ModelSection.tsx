@@ -89,6 +89,13 @@ export function ModelSection({ family, onError }: { family: ModelFamily; onError
     if (operation) await modelsCancel(operation.id);
     setFailure(null);
   };
+  /** Abandoning a setup takes its card with it: what the user is cancelling is
+   * the switch, and a card left behind with nothing running is the half-state
+   * they were trying to leave. */
+  const dismiss = async () => {
+    setPanel(null); setConfirmation(null);
+    await cancel();
+  };
   const choose = (id: string) => void act(async () => {
     setPanel(null); setConfirmation(null);
     if (!id) { await cancel(); await modelsUnselect(family); return; }
@@ -106,7 +113,7 @@ export function ModelSection({ family, onError }: { family: ModelFamily; onError
   const renderEditor = () => editor && panel?.kind === "editor" && <ModelEditor key={[editor.id, panel.mode, panel.backend ?? editor.backend].join("-")} model={editor} name={name(editor)}
     operation={operation?.id === editor.id ? operation : undefined} submittingRequest={submitting}
     mode={panel.mode} backendOverride={panel.backend} onUse={useModel} onError={setDialogError}
-    draft={operation?.id === editor.id ? wanted.current ?? undefined : undefined} onCancel={() => void act(cancel)} />;
+    draft={operation?.id === editor.id ? wanted.current ?? undefined : undefined} onCancel={() => void act(dismiss)} />;
   // The setup card takes `edit` off: that card exists only to host the editor,
   // so its toggle would read as "collapse" and take the whole card away. When
   // nothing is left to show, the row goes too rather than leave a stray gap.

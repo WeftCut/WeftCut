@@ -106,7 +106,11 @@ export function ModelEditor({ model, name: displayName, mode, backendOverride, o
           {isNew && <Button size="sm" variant="outline" disabled={!canSubmit} onClick={() => submit(true)}>{t("models.add_only")}</Button>}
           {mode === "edit" && !model.custom && model.customized && <Button size="sm" variant="ghost" onClick={() => submit(true, true)}>{t("models.restore")}</Button>}
         </>}
-      {operation && <Button size="sm" variant="ghost" disabled={submittingRequest || busyAction} onClick={onCancel}>{t("models.cancel")}</Button>}
+      {/* Setting a model up is a switch the user has not committed to yet, so
+          it can always be abandoned — before it starts as well as during it.
+          The `edit` mode leaves it out: that editor belongs to the model
+          already in use, and its own Edit button closes it. */}
+      {(mode === "prepare" || operation) && <Button size="sm" variant="ghost" disabled={submittingRequest || busyAction} onClick={onCancel}>{t("models.cancel")}</Button>}
     </div>
   </div>;
 }

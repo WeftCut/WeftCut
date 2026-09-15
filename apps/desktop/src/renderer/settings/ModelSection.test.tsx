@@ -108,6 +108,30 @@ describe("model settings", () => {
     expect(within(candidate).getByRole("button", { name: "Download and use" })).toBeTruthy();
     expect(within(screen.getByTestId("current-model-summary")).getByRole("button", { name: "Edit" })).toBeTruthy();
   });
+  it("abandons a setup from its own card, before the download starts", async () => {
+    const v = readySpeech(); v.models[1]!.installed = false; v.models[1]!.missingBytes = 123000000;
+    const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
+    await choose(user, /Paraformer/);
+    const candidate = document.querySelector<HTMLElement>(".settings-model-candidate")!;
+    await user.click(within(candidate).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(document.querySelector(".settings-model-candidate")).toBeNull());
+    expect(document.querySelector(".settings-model-swap")).toBeNull();
+    expect(ipc.modelsUse).not.toHaveBeenCalled();
+    expect(screen.getByTestId("current-model-summary").textContent).toContain("Whisper Base");
+    expect(ipc.modelsUnselect).not.toHaveBeenCalled();
+  });
+  it("abandoning a running download cancels it and closes the card", async () => {
+    const v = readySpeech(); v.models[1]!.installed = false; v.models[1]!.missingBytes = 123000000;
+    ipc.modelsUse.mockImplementation(async () => { v.operations = [{ id: "paraformer-zh", family: "speech", phase: "downloading" }]; });
+    ipc.modelsCancel.mockImplementation(async () => { v.operations = []; });
+    const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
+    await choose(user, /Paraformer/);
+    await user.click(await screen.findByRole("button", { name: "Download and use" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(ipc.modelsCancel).toHaveBeenCalledWith("paraformer-zh");
+    await waitFor(() => expect(document.querySelector(".settings-model-candidate")).toBeNull());
+    expect(screen.getByTestId("current-model-summary").textContent).toContain("Whisper Base");
+  });
   it("choosing None cancels preparation and persists unselection", async () => {
     const v = readySpeech(); v.operations = [{ id: "paraformer-zh", family: "speech", phase: "verifying" }];
     const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
