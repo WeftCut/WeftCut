@@ -80,6 +80,18 @@ describe("model settings", () => {
     await user.click(screen.getByRole("button", { name: "Download and use" }));
     expect(ipc.modelsUse).toHaveBeenCalledWith(expect.objectContaining({ id: "paraformer-zh" }));
   });
+  it("starts a first download from empty path fields rather than predicted ones", async () => {
+    const v = readySpeech();
+    // What the main process reports before anything is downloaded: no paths yet.
+    Object.assign(v.models[1]!, { installed: false, missingBytes: 123000000, local: { binary: "", model: "" } });
+    const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
+    await choose(user, /Paraformer/);
+    expect(screen.queryByRole("textbox", { name: "Custom model name" })).toBeNull();
+    const download = await screen.findByRole("button", { name: "Download and use" });
+    expect((download as HTMLButtonElement).disabled).toBe(false);
+    await user.click(download);
+    expect(ipc.modelsUse).toHaveBeenCalledExactlyOnceWith({ id: "paraformer-zh", local: { binary: "", model: "" } });
+  });
   it("points the setup card at the summary it replaces and leaves out the Edit toggle", async () => {
     const v = readySpeech(); v.models[1]!.installed = false; v.models[1]!.missingBytes = 123000000;
     const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);

@@ -32,8 +32,13 @@ export function ModelEditor({ model, name: displayName, mode, backendOverride, o
   const newIdentity = isNew || !model.custom && (model.locality === "local" ? filesChanged : endpointChanged);
   const requiresName = newIdentity || model.custom || backend === "byo_endpoint";
   const localComplete = !!local.binary.trim() && !!local.model.trim() && (backend !== "funasr" || !!local.tokens?.trim()) && (model.family !== "vlm" || !!local.mmproj?.trim());
-  const canSubmit = (!requiresName || !!name.trim()) && (model.locality === "local" ? localComplete : backend === "openai" ? !!apiKey.trim() || !isNew && model.hasKey : !!endpoint.url.trim() && !!endpoint.model.trim());
   const needsDownload = !newIdentity && model.locality === "local" && !model.installed && model.missingBytes > 0;
+  // A managed model has no paths to show until its files are on disk, so blank
+  // fields are where preparation starts rather than an incomplete configuration
+  // — it fills them from the catalog. Naming your own files instead makes them
+  // required, since nothing else will supply them.
+  const awaitingFiles = !newIdentity && !model.custom && model.locality === "local" && !model.installed;
+  const canSubmit = (!requiresName || !!name.trim()) && (model.locality === "local" ? localComplete || awaitingFiles : backend === "openai" ? !!apiKey.trim() || !isNew && model.hasKey : !!endpoint.url.trim() && !!endpoint.model.trim());
   const run = async (fn: () => Promise<void>) => {
     setBusyAction(true); onError("");
     try { await fn(); } catch (e) { onError(String(e)); }

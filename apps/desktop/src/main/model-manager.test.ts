@@ -68,6 +68,26 @@ describe("model preparation and activation", () => {
     expect(state().profiles.find(p => p.id === "whisper-base")?.local?.threads).toBe(4);
     expect(manager.active("speech")?.local?.model).toBe("/own/model");
   });
+  it("shows a managed path only once its file exists, and keeps a chosen one visible when it does not", async () => {
+    const present = new Set<string>();
+    const { manager, state } = setup({ exists: (path: string) => present.has(path) });
+    const view = (id: string) => manager.view().models.find(m => m.id === id)!;
+    expect(view("whisper-base").local).toEqual({ binary: "", model: "" });
+    // Execution keeps the real destinations; only the settings view is blank.
+    expect(manager.resolved(state().profiles.find(p => p.id === "whisper-base")!).local).toEqual(local("whisper-base"));
+    present.add(local("whisper-base").binary);
+    expect(view("whisper-base").local).toEqual({ binary: local("whisper-base").binary, model: "" });
+    manager.use({ id: "whisper-base", name: "My model", local: { ...local("whisper-base"), model: "/own/model" } }); await settle();
+    const custom = manager.view().models.find(m => m.custom)!;
+    expect(custom.local?.model).toBe("/own/model");
+  });
+  it("a blank path keeps the managed file rather than clearing it or forking a custom model", async () => {
+    const { manager, state } = setup({ exists: () => false });
+    manager.use({ id: "paraformer-zh", local: { binary: "", model: "", device: "cpu" } }); await settle();
+    expect(manager.active("speech")?.id).toBe("paraformer-zh");
+    expect(manager.active("speech")?.local).toEqual({ ...local("paraformer-zh"), device: "cpu" });
+    expect(state().profiles.some(p => p.custom)).toBe(false);
+  });
   it("restoring automatic configuration keeps downloads and verifies the defaults", async () => {
     const { manager, deps } = setup();
     manager.use({ id: "whisper-base", local: { ...local("whisper-base"), threads: 4, device: "cpu" } }); await settle();

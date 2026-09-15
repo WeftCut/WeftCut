@@ -15,6 +15,20 @@ export function cleanModelLocal(raw: unknown): ModelLocalConfig {
   if (typeof o.threads === "number" && Number.isInteger(o.threads) && o.threads >= 1 && o.threads <= 256) out.threads = o.threads;
   return out;
 }
+/** A blank path field means "keep the configured file", not "clear it". The
+ * settings fields show nothing for a managed file that is not downloaded yet
+ * and send back what they showed; clearing a path is not an operation, since a
+ * local model cannot run without its files. `device` and `threads` are not
+ * paths — blank there still clears them. */
+export function withKnownPaths(next: ModelLocalConfig, current?: ModelLocalConfig): ModelLocalConfig {
+  if (!current) return next;
+  const out = { ...next };
+  for (const key of ["binary", "model", "tokens", "mmproj"] as const) {
+    const kept = current[key];
+    if (!out[key] && kept) out[key] = kept;
+  }
+  return out;
+}
 export function freshModelSettings(): ModelSettings {
   return { version: 1, profiles: MODEL_DEFINITIONS.map(d => ({ ...d, artifacts: [...d.artifacts], ...(d.backend === "openai" ? { keyTag: "openai" } : {}) })), active: { speech: null, vlm: null } };
 }

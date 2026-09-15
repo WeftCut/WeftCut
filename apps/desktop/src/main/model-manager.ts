@@ -1,5 +1,5 @@
 import { MODEL_DEFINITIONS, type ModelFamily, type ModelLocalConfig, type ModelOperation, type ModelProfile, type ModelsView, type ModelUseRequest } from "../shared/inference-models";
-import { cleanModelLocal, sameModelFiles, type ModelSettingsStore } from "./model-settings";
+import { cleanModelLocal, sameModelFiles, withKnownPaths, type ModelSettingsStore } from "./model-settings";
 
 export interface ModelManagerDeps {
   store: ModelSettingsStore;
@@ -32,6 +32,20 @@ export class ModelManager {
   resolved(p: ModelProfile): ModelProfile {
     return p.locality === "local" ? { ...p, local: { ...this.deps.managedLocal(p.id), ...p.local } } : { ...p };
   }
+  /** What the settings fields may show. A managed path is a prediction of where
+   * a download will land, so until that file is there the field is blank rather
+   * than naming a file the user does not have. A path the user chose is
+   * reported verbatim, present or not: that field is where they can correct it.
+   * Execution reads `resolved` instead, which always carries the real paths. */
+  private reported(id: string, local: ModelLocalConfig): ModelLocalConfig {
+    const managed = this.deps.managedLocal(id);
+    const out = { ...local };
+    for (const key of ["binary", "model", "tokens", "mmproj"] as const) {
+      const value = out[key];
+      if (value && value === managed[key] && !this.deps.exists(value)) out[key] = "";
+    }
+    return out;
+  }
   active(family: ModelFamily): ModelProfile | null {
     const cfg = this.deps.store.get();
     const p = cfg.profiles.find(p => p.id === cfg.active[family]);
@@ -48,7 +62,8 @@ export class ModelManager {
         const installed = p.locality === "online" ? true : !!lc?.binary && !!lc.model && this.deps.exists(lc.binary) && this.deps.exists(lc.model) &&
           (p.backend !== "funasr" || !!lc.tokens && this.deps.exists(lc.tokens)) &&
           (p.family !== "vlm" || !!lc.mmproj && this.deps.exists(lc.mmproj)) && content.every(c => c.installed);
-        return { ...p, verified: !!p.verified && p.verificationFingerprint === this.deps.fingerprint(p),
+        return { ...p, ...(lc ? { local: this.reported(p.id, lc) } : {}),
+          verified: !!p.verified && p.verificationFingerprint === this.deps.fingerprint(p),
           active: cfg.active[p.family] === p.id, installed, supported: content.every(c => c.supported),
           missingBytes: content.filter(c => !c.installed).reduce((s, c) => s + c.bytes, 0),
           hasKey: !!p.keyTag && !!this.deps.getKey(p.keyTag),
@@ -75,7 +90,7 @@ export class ModelManager {
       candidate = { ...MODEL_DEFINITIONS.find(d => d.id === original.id)!, keyTag: original.keyTag };
       candidate = this.resolved(candidate);
     } else {
-      if (request.local && original.locality === "local") candidate.local = cleanModelLocal(request.local);
+      if (request.local && original.locality === "local") candidate.local = withKnownPaths(cleanModelLocal(request.local), candidate.local);
       if (request.endpoint && original.backend === "byo_endpoint") {
         const url = new URL(request.endpoint.url.trim());
         if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("Use an HTTP(S) endpoint without embedded credentials");
