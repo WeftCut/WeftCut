@@ -10,6 +10,7 @@ vi.mock("../ipc", () => ipc);
 vi.mock("@/bridge/events", () => ({ listen: vi.fn(async (_event: string, callback: () => void) => { events.refresh = callback; return () => {}; }) }));
 vi.mock("@/bridge/dialog", () => ({ open: vi.fn(async () => "/custom/file") }));
 vi.mock("../search/searchIndexStore", () => ({ onDescribeViewChanged: vi.fn() }));
+import { open as openFileDialog } from "@/bridge/dialog";
 import { ModelSection } from "./ModelSection";
 import { VlmSection } from "./VlmSection";
 import { onDescribeViewChanged } from "../search/searchIndexStore";
@@ -150,6 +151,22 @@ describe("model settings", () => {
     expect(ipc.modelsUse).toHaveBeenCalledWith(expect.objectContaining({ id: "whisper-base", saveOnly: true }));
     await openPicker(user);
     expect(screen.queryByRole("menuitem", { name: "Model library…" })).toBeNull();
+  });
+  it("opens the file picker where the path it is editing already points", async () => {
+    readySpeech(); const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);
+    const summary = await screen.findByTestId("current-model-summary");
+    await user.click(within(summary).getByRole("button", { name: "Edit" }));
+    const browse = async (label: string) => {
+      const row = within(summary).getByRole("textbox", { name: label }).closest(".settings-key-input-row");
+      await user.click(within(row as HTMLElement).getByRole("button", { name: "Browse…" }));
+    };
+    await browse("Model");
+    expect(openFileDialog).toHaveBeenLastCalledWith({ title: "Model", defaultPath: "/managed/whisper-base/weights" });
+    // Nothing configured yet (a managed model before its download lands): the
+    // starting directory is the OS's to choose.
+    await user.clear(within(summary).getByRole("textbox", { name: "Binary" }));
+    await browse("Binary");
+    expect(openFileDialog).toHaveBeenLastCalledWith({ title: "Binary" });
   });
   it("offers actual speech adapters and describes the fixed OpenAI service", async () => {
     readySpeech(); const user = userEvent.setup(); render(<ModelSection family="speech" onError={vi.fn()} />);

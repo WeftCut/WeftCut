@@ -54,8 +54,13 @@ export function ModelEditor({ model, name: displayName, mode, backendOverride, o
   const pathField = (key: "binary" | "model" | "tokens" | "mmproj", label: string) => <div className="settings-key-input-row" key={key}>
     <span className="settings-slider-label">{label}</span>
     <AppInput value={local[key] ?? ""} ariaLabel={label} mono spellCheck={false} disabled={busy} onValueChange={value => setLocal(prev => ({ ...prev, [key]: value }))} />
+    {/* The path already in the field seeds the picker, so Browse lands on the
+        file it names instead of wherever the OS last left a dialog. A managed
+        model has no path until its download completes, and an empty field
+        leaves that starting point to the OS. */}
     <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(async () => {
-      const picked = await openFileDialog({ title: label });
+      const current = (local[key] ?? "").trim();
+      const picked = await openFileDialog({ title: label, ...(current ? { defaultPath: current } : {}) });
       if (typeof picked === "string") setLocal(prev => ({ ...prev, [key]: picked }));
     })}>{t("settings.speech_browse")}</Button>
   </div>;
