@@ -9,6 +9,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { stampSkillVersion } from './build-skills-lib.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.join(HERE, '..', '..', '..')
@@ -24,4 +25,13 @@ fs.rmSync(OUT, { recursive: true, force: true })
 fs.cpSync(path.join(REPO, 'skills'), OUT, { recursive: true })
 for (const doc of DOCS) fs.copyFileSync(doc.from, doc.to)
 
-console.log(`[build:skills] staged ${path.relative(path.join(HERE, '..'), OUT)}`)
+// A copy on a user's machine outlives the session that installed it and can be
+// reinstalled from any app version, so it has to say which one it came from.
+const { version } = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'package.json'), 'utf8'))
+for (const entry of fs.readdirSync(OUT, { withFileTypes: true })) {
+  if (!entry.isDirectory()) continue
+  const skill = path.join(OUT, entry.name, 'SKILL.md')
+  fs.writeFileSync(skill, stampSkillVersion(fs.readFileSync(skill, 'utf8'), version))
+}
+
+console.log(`[build:skills] staged ${path.relative(path.join(HERE, '..'), OUT)} at ${version}`)
