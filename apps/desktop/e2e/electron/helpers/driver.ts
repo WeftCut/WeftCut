@@ -1,4 +1,5 @@
 import { _electron as electron, type ElectronApplication, type Locator, type Page } from '@playwright/test'
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -235,16 +236,52 @@ function wrapClose(app: ElectronApplication): () => Promise<void> {
   }
 }
 
+/// Force an app's whole process TREE down, synchronously so an 'exit' handler
+/// can call it.
+///
+/// LANDMINE — the main pid alone is NOT enough. Electron's renderer/GPU/crashpad
+/// children inherit the stdio pipes Playwright spawned the app with, so killing
+/// only the leader leaves those pipes open, the ChildProcess 'close' event never
+/// fires, and Playwright keeps the app in its `gracefullyCloseSet`. The
+/// end-of-worker `gracefullyCloseAll()` then blocks on an app it still believes
+/// is closing: a nightly Windows leg died of a 60 s worker-teardown timeout with
+/// all 187 of its tests green, leaving three orphan electron processes for the
+/// runner to reap.
+///
+/// Mirrors Playwright's own force-kill rather than inventing one: `taskkill /T
+/// /F` on Windows, the process GROUP elsewhere — it spawns detached off-Windows
+/// precisely so `-pid` reaches the whole group.
+///
+/// Call this while the leader is still ALIVE. `/T` walks the tree by parent pid,
+/// so a leader that has already exited leaves its children re-parented and out
+/// of reach — measured: taskkill after a bare kill() reaps nothing, and 'close'
+/// stays unfired. There is no second chance at the tree, only the first one.
+export function killAppTree(app: ElectronApplication): void {
+  const pid = app.process()?.pid
+  if (!pid) return
+  try {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' })
+    } else {
+      try {
+        process.kill(-pid, 'SIGKILL')
+      } catch {
+        // No group left to signal — the leader alone is the best available.
+        process.kill(pid, 'SIGKILL')
+      }
+    }
+  } catch {
+    // Already gone.
+  }
+}
+
 /// Best-effort sweep when the Playwright worker exits: kill any app a spec
 /// forgot to close, then remove every dir the driver minted. 'exit' handlers
-/// must be synchronous, so this is kill() + rmSync, not an awaited close().
+/// must be synchronous, so this is killAppTree() + rmSync, not an awaited
+/// close().
 process.on('exit', () => {
   for (const [app, dir] of liveApps) {
-    try {
-      app.process()?.kill()
-    } catch {
-      // Already gone.
-    }
+    killAppTree(app)
     if (dir && !keepTmp()) removeDir(dir)
   }
   if (!keepTmp()) for (const dir of mintedTmpDirs) removeDir(dir)

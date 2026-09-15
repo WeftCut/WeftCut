@@ -11,19 +11,44 @@ import type { ElectronApplication } from '@playwright/test'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, waitForHook, tmpDir } from './helpers/driver'
+import { killAppTree, launchApp, newProject, waitForHook, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-/// Playwright's electronApp.close() can hang on macOS (darwin window-all-closed
-/// doesn't quit the app + lingering handles). Race it with a timeout, then
-/// force-kill the process so teardown is bounded.
+/// Playwright's electronApp.close() can hang (darwin window-all-closed not
+/// quitting the app, a lingering handle), so bound it and then force-close. Two
+/// rules, both of which the 8 s + `proc.kill()` first version broke:
+///
+///   - the force path takes the process TREE down, never the main pid alone.
+///     killAppTree's comment has what a leader-only kill costs; the short
+///     version is that it trades this spec's bounded teardown for the WORKER's
+///     unbounded one.
+///   - the budget is a safety net, not the expected path. A graceful quit here
+///     has been measured past 8 s on a loaded Windows runner, and every kill
+///     that pre-empts one skips the app's own shutdown.
+const CLOSE_BUDGET_MS = 30_000
+
 async function closeAppRobustly(app: ElectronApplication): Promise<void> {
   const proc = app.process()
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    await Promise.race([app.close(), new Promise((r) => setTimeout(r, 8000))])
-  } catch { /* close may reject if the process is already gone */ }
-  try { if (proc && proc.pid && proc.exitCode === null) proc.kill('SIGKILL') } catch { /* already dead */ }
+    await Promise.race([
+      app.close(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, CLOSE_BUDGET_MS)
+      }),
+    ])
+  } catch {
+    // close() rejects when the process is already gone; the guard below no-ops.
+  } finally {
+    // Losing the race leaves the timer pending, and a pending timer holds the
+    // worker's event loop open for the rest of the budget.
+    if (timer) clearTimeout(timer)
+  }
+  if (proc?.exitCode === null) {
+    console.log(`[lifecycle] close() outlived ${CLOSE_BUDGET_MS}ms — killing the process tree`)
+    killAppTree(app)
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
