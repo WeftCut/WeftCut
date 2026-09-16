@@ -57,6 +57,10 @@ function text(s: string, isError = false): { content: { type: 'text'; text: stri
 export interface ShimOptions {
   se: ShimEnv
   userDataDir: string
+  /** What `initialize` reports as the shim's own version — distinct from the
+   *  app's, which rides the bridge and is reported by `weftcut_status`.
+   *  `main.ts` passes the build stamp; absent reports `0.0.0-dev`. */
+  version?: string
   /// Test seams. Defaults: read mcp_auth.json / streamable HTTP / detached spawn.
   readAuth?: () => McpAuth | null
   makeTransport?: (auth: McpAuth) => Transport
@@ -90,7 +94,7 @@ export function createShim(opts: ShimOptions): Shim {
   const launchPollMs = opts.launchPollMs ?? 1_000
 
   const server = new Server(
-    { name: 'weftcut-mcp', version: '1.0' },
+    { name: 'weftcut-mcp', version: opts.version ?? '0.0.0-dev' },
     {
       capabilities: {
         tools: { listChanged: true },

@@ -386,6 +386,11 @@ export function mcpCommitObserver(getTsHost: () => TsActorHost | null): (tool: s
  *  omitted seam must keep the behaviour it had before it existed. */
 export interface McpServerOptions {
   connectionId?: string
+  /** What `initialize` reports as the server version. `startMcpHost` injects
+   *  `app.getVersion()`, which is package.json's — this file stays
+   *  Electron-free so Vitest can load it, so the real value can only arrive as
+   *  a seam. Absent (tests, a direct `buildMcpServer`) reports `0.0.0-dev`. */
+  version?: string
   getTsHost?: () => TsActorHost | null
   getPreferredEngine?: () => string | null
   getVlm?: VlmProvider
@@ -412,7 +417,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   // per call would be pure churn.
   const log: McpLogDeps = opts.log ? { ...opts.log, observe: mcpCommitObserver(getTsHost) } : NO_MCP_LOG
   const server = new Server(
-    { name: 'weftcut', version: '0.1.0' },
+    { name: 'weftcut', version: opts.version ?? '0.0.0-dev' },
     { capabilities: { tools: {}, resources: {}, prompts: {} } },
   )
   // One Server per session (`mcp/index.ts`), so this closure resolves to the

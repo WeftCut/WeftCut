@@ -32,6 +32,8 @@ export type McpHostOptions = McpServerOptions
 
 export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}): Promise<McpHost> {
   let auth: McpAuth = loadOrInitAuth()
+  // package.json's version, which is what every session reports in `initialize`.
+  const version = opts.version ?? app.getVersion()
   const transports = new Map<string, StreamableHTTPServerTransport>()
   const servers = new Set<Server>()
   const connections = new Map<string, AgentConnection>()
@@ -146,7 +148,7 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
         // of those. `Warn`, not `Error`: the request failed, the app did not.
         emitLifecycle('warn', { kind: 'System' }, 'MCP transport error', { error: detail })
       }
-      newServer = buildMcpServer(backend, { ...opts, connectionId })
+      newServer = buildMcpServer(backend, { ...opts, connectionId, version })
       servers.add(newServer)
       // `getClientVersion()` is populated while the `initialize` REQUEST is
       // handled, which precedes the `notifications/initialized` that fires this

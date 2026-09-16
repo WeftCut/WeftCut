@@ -12,6 +12,14 @@ import {
   type ShimEnv,
 } from './paths.js'
 
+/// Stamped into the bundle by `scripts/build-cli.mjs` (esbuild `define`) from
+/// package.json. The shim executes far from any package.json — `<userData>/cli/`
+/// on user machines — so build time is the only moment the version is knowable.
+/// A source run (Vitest, `node src/cli/main.ts`) has no define at all, which is
+/// why the identifier is read through `typeof` rather than used directly.
+declare const __WEFTCUT_VERSION__: string | undefined
+const SHIM_VERSION = typeof __WEFTCUT_VERSION__ === 'string' ? __WEFTCUT_VERSION__ : '0.0.0-dev'
+
 /// weftcut-mcp — the WeftCut MCP connection shim.
 ///
 /// Default mode (no args) is an MCP server on stdio that bridges to the
@@ -33,7 +41,7 @@ every connect, so configs stay valid across app restarts, port changes, and
 token rotations. Override the userData directory with WEFTCUT_USERDATA.`
 
 async function runStdio(se: ShimEnv, userDataDir: string): Promise<void> {
-  const shim = createShim({ se, userDataDir })
+  const shim = createShim({ se, userDataDir, version: SHIM_VERSION })
   const stop = shim.startPolling()
   shim.server.onclose = () => {
     stop()

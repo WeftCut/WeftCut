@@ -3,7 +3,7 @@ import http from 'node:http'
 
 // `mcp/index.ts` reads `app.isPackaged` to decide whether to print the connect
 // snippet; packaged keeps the bearer token out of the test output.
-vi.mock('electron', () => ({ app: { isPackaged: true } }))
+vi.mock('electron', () => ({ app: { isPackaged: true, getVersion: () => '0.0.0-test' } }))
 // A fixed token, and no <userData> read/write: the real auth store needs a
 // userData path and this spec only needs "the right bearer" to be knowable.
 vi.mock('./auth.js', () => ({

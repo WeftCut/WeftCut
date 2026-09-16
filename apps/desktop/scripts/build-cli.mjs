@@ -7,10 +7,12 @@
 /// machines, and inside this repo (`"type": "module"`) a bare .js would parse
 /// as ESM. The .cjs extension is unambiguous in both worlds.
 import { build } from 'esbuild'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
+const { version } = JSON.parse(await readFile(path.join(HERE, '..', 'package.json'), 'utf8'))
 
 await build({
   entryPoints: [path.join(HERE, '..', 'src', 'cli', 'main.ts')],
@@ -19,6 +21,9 @@ await build({
   platform: 'node',
   target: 'node22',
   format: 'cjs',
+  // The only moment the shim can learn its version: it runs from <userData>/cli/
+  // with no package.json in reach.
+  define: { __WEFTCUT_VERSION__: JSON.stringify(version) },
   sourcemap: false,
   minify: false,
   logLevel: 'info',
