@@ -22,11 +22,11 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
   {
     name: 'list_motifs',
     description:
-      'List every motif available to add via `add_motif` — built-ins PLUS installed and ' +
+      'List every motif available to add via `add_motif_layer` — built-ins PLUS installed and ' +
       'draft user motifs. Returns an array of `{ id, name, version, size: [w,h], ' +
       'default_duration_s, props_schema, status, content_hash, target_id? }` where ' +
       '`status` is `builtin` | `installed` | `draft`. Inspect `props_schema` before ' +
-      '`add_motif` to know what keys + types each motif accepts; unknown keys reject. ' +
+      '`add_motif_layer` to know what keys + types each motif accepts; unknown keys reject. ' +
       'Drafts (status `draft`) are placeable immediately for preview.',
     inputSchema: {
       $schema: 'http://json-schema.org/draft-07/schema#',
@@ -60,7 +60,7 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
     name: 'write_motif_draft',
     description:
       'Write a Motif draft from { manifest, html }. Returns the draft id. The draft is ' +
-      'placeable immediately (via `add_motif`) for preview, and re-writable. `from` ' +
+      'placeable immediately (via `add_motif_layer`) for preview, and re-writable. `from` ' +
       '(optional) records an existing Motif id as the draft\'s UPDATE target so a later ' +
       '`install_motif {mode:\'update\'}` republishes over it; omit `from` for a brand-new ' +
       'Motif (installs as new). The manifest\'s `id`/`version` are ignored — app-assigned. ' +

@@ -15,7 +15,7 @@ should go.
 
 1. Read `project://current` before your first mutation — never write against a
    guessed state.
-2. Call `checkpoint` before your first edit, so the user has a one-step
+2. Call `create_checkpoint` before your first edit, so the user has a one-step
    restore point.
 3. A small change (a handful of tool calls) needs no more ceremony than that:
    edit, verify, report.
@@ -88,7 +88,7 @@ To author or update a Motif, first read `motif-authoring.md` next to this file
 1. `list_motifs`, and read the closest existing Motif with `get_motif_source`
    — base your draft on what already renders correctly.
 2. `write_motif_draft` (pass `from` when your draft updates an existing Motif).
-3. **The user approves, not you.** Place the draft with `add_motif`, ask the
+3. **The user approves, not you.** Place the draft with `add_motif_layer`, ask the
    user to play it in the app, and call `install_motif` only after they
    confirm. If you can read images, pre-check with `preview_motif_draft` at
    three timestamps (start, middle, near the end) and once with non-default

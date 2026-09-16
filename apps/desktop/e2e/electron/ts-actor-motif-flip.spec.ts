@@ -59,7 +59,7 @@ test('TS actor: renderer add_motif (no track) lands a Motif layer + undo/redo', 
   }
 })
 
-test('TS actor: MCP add_motif returns the layer id + the summary reflects a Motif layer', async () => {
+test('TS actor: MCP add_motif_layer returns the layer id + the summary reflects a Motif layer', async () => {
   const ws = tmpDir('wc-motif-mcp-')
   // Raw electron.launch (not launchApp): the stdout listener for the
   // `[mcp] connect:` log line must attach synchronously right after launch,
@@ -83,8 +83,8 @@ test('TS actor: MCP add_motif returns the layer id + the summary reflects a Moti
     const client = new Client({ name: 'e2e', version: '0.0.0' })
     await client.connect(transport)
     try {
-      // add_motif via the TS actor.mcpCall path (no track_id → Overlay + Motif layer).
-      const res = await client.callTool({ name: 'add_motif', arguments: { motif_id: 'countdown', t_start_us: 0 } })
+      // add_motif_layer via the TS actor.mcpCall path (no track_id → Overlay + Motif layer).
+      const res = await client.callTool({ name: 'add_motif_layer', arguments: { motif_id: 'countdown', t_start_us: 0 } })
       const content = res.content as Array<{ type: string; text?: string }>
       expect(content[0]!.type).toBe('text')
       expect(content[0]!.text && content[0]!.text.length).toBeTruthy() // the layer id

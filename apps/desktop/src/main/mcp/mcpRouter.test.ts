@@ -14,8 +14,8 @@ describe('routeMcpTool', () => {
     expect(routeMcpTool('apply_subtitles')).toBe('hybrid')
     expect(routeMcpTool('synthesize_speech')).toBe('hybrid')
   })
-  it('add_motif routes to ts (pure TS mutation)', () => {
-    expect(routeMcpTool('add_motif')).toBe('ts')
+  it('add_motif_layer routes to ts (pure TS mutation)', () => {
+    expect(routeMcpTool('add_motif_layer')).toBe('ts')
   })
   it('routes the 5 MCP motif tools to the motif route', () => {
     for (const t of ['list_motifs', 'get_motif_source', 'write_motif_draft', 'delete_motif', 'install_motif'])

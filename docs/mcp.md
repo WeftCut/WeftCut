@@ -204,6 +204,17 @@ send nested payloads as JSON-encoded strings (a catalog-wide test gates
 this). Don't expose 100 tools; agents get confused. The current set is
 around 40, organised below.
 
+Names follow `<verb>_<resource>`, and a tool that is renamed keeps its old
+name **dispatchable but unadvertised** — `RETIRED_MCP_TOOL_NAMES` in
+`main/mcp/toolAliases.ts`, resolved at the request boundary ahead of the log
+row, so an agent holding a cached catalog or a prompt written against an
+earlier release keeps working while the catalog still teaches one name per
+tool. Entries are permanent: dropping one turns a working call into `unknown
+tool` for every client that never re-read the catalog. Retired so far:
+`add_motif` → `add_motif_layer`, `checkpoint` → `create_checkpoint`,
+`set_composition` → `update_composition`, `compositions_delete` →
+`delete_composition`.
+
 ### Read (resources, not tools)
 
 | URI | Returns |
@@ -278,14 +289,14 @@ Layers:
 - `add_video_layer { track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us, composition_id? }` → `LayerId`, or `{ video_layer_id, audio_layer_id, link_id }` when the source carries audio and `auto_pair_audio_on_import` is on: the paired dialogue Audio layer lands on the SAME track's audio lane (a track holds one visual + one audio lane) and the two are linked. The triple commits atomically — if the audio lane is occupied, the call rejects naming the blocking layer and nothing lands on the timeline. The media must be a `Video` or an `Image`: an audio-only item is refused and pointed at `add_audio_layer` (a VideoClip over an audio file draws nothing, and the mixer folds Audio layers only, so it would be silent too), a subtitle document at `apply_subtitles`.
 - `add_audio_layer { track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us, role?, composition_id? }` → `LayerId` — the only way audio-only media reaches the timeline, and the audio-lane twin of `add_video_layer`. The layer lands on the track's audio lane (a track holds one visual + one audio lane, so a track already carrying a video clip still takes it) and stands **alone**: no auto-pair, no link. Both endpoints snap to the 48 kHz sample lattice rather than the composition frame grid. `media_id` may be an `Audio` item or a `Video` item carrying an audio stream — a video's audio on its own is a legitimate thing to place; anything with no audio to read is refused naming its kind. `role` (default `music`) picks the mixing bus, which is a property of the clip and not of its track ([ADR 0023](adr/0023-audio-mixes-by-role-not-track.md)).
 - `add_text_layer { track_id, t_start_us, t_end_us, content, x?, y?, composition_id? }` → `LayerId` — a title, a lower third, a credit: typography authored here rather than imported. Born at the caption font, 72 px, opaque white, centre-aligned and centred in frame. `x`/`y` override the placement and are the layer's **anchor** point ([ADR 0049](adr/0049-text-box-lays-out-glyphs-it-does-not-scale-them.md)), travel together (half a point is refused, never paired with a guessed axis) and are not clamped to frame. Everything else — font, size, colour, outline, the layout box and its alignment — is `update_layer_params { kind: 'Text' }`. Subtitles from a document are `apply_subtitles`, which times cues onto the caption tracks; this is the one-off.
-- `add_motif { motif_id, t_start_us, t_end_us?, track_id?, props?, composition_id? }` → `LayerId` — `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates a fresh track when absent, which derives its own name; `props` validates against the motif's `props_schema`. Frame capture is lazy at next render; the tool returns synchronously.
+- `add_motif_layer { motif_id, t_start_us, t_end_us?, track_id?, props?, composition_id? }` → `LayerId` — `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates a fresh track when absent, which derives its own name; `props` validates against the motif's `props_schema`. Frame capture is lazy at next render; the tool returns synchronously.
 
 **Where a layer is created, and how it is addressed afterwards.** A track
 belongs to exactly one composition, so a tool that names a `track_id` has
 already named the composition; `composition_id` on those tools is a cross-check
 (a track in another composition is refused with the mismatch spelled out). Tools
-that *pick or spawn* a lane — `add_track`, `add_motif` without `track_id`,
-`add_marker`, `set_composition`, `fit_composition_to_layers` — take
+that *pick or spawn* a lane — `add_track`, `add_motif_layer` without `track_id`,
+`add_marker`, `update_composition`, `fit_composition_to_layers` — take
 `composition_id` to say which composition, the root when omitted; an unknown id
 is `CompositionNotFound`. Every layer-addressed tool (`move_layer`,
 `trim_layer`, `split_layer`, `update_layer_params`, keyframes, effects, links,
@@ -457,7 +468,7 @@ Groups (see [features.md §Groups](features.md#groups)):
 - `groups_add_members { layer_ids, group_layer_id }` — move layers already on a timeline INTO the composition a Group layer shows, keeping the screen position they had: one of the four ops that cross compositions. Reach for `move_layers_to_composition` instead when you know the destination composition and the time you want. The members (at least one, all in one composition) and the Group clip must be siblings; the clip's `params.composition` is the destination. Each member lands at `t_start_us − group.t_start_us + group.src_in_us`, re-snapped on its own lattice, so it keeps the screen position it had — a member outside the Group clip's window arrives outside it and shows as overhang. Source tracks map bottom-up onto the destination's existing lanes and spawn one past the end; a whole source track's members travel together onto one lane (so a transition between two of them survives) and bounce as a block off a locked or occupied lane. Links and transitions follow `groups_create`'s rules; markers stay behind. Both compositions autofit and NO Group layer is retrimmed. Refuses whole, before any write: `CrossCompositionSet`, `WrongLayerKind`, `GroupLockedMember` / `TrackLocked`, `ValidationFailed` / `CompositionCycle` (a member whose composition already reaches the destination, itself included), and `InvalidArgument` on `layer_ids` for a member that would land before composition time 0.
 - `groups_ungroup { layer_id }` — expand a Group layer in place. Refuses unless the layer is plain — identity transform, static opacity 1, no effects, Normal blend — with `GroupNotPlain { reason: "transform" | "opacity" | "effects" | "blend_mode" }`, because expanding would discard those silently. Members outside the layer's `[src_in_us, src_out_us)` window are dropped, straddling ones trimmed with their source window following. The composition is removed when nothing else references it.
 - `groups_rename { composition_id, label? }` — `null` / blank clears the name; the root refuses (`RootComposition`).
-- `compositions_delete { composition_id }` — an orphan only: `CompositionInUse { ref_count }` while any Group layer references it, `RootComposition` for the root.
+- `delete_composition { composition_id }` — an orphan only: `CompositionInUse { ref_count }` while any Group layer references it, `RootComposition` for the root.
 - Reads: `project://compositions` lists every composition with its `ref_count`; a Group layer's `params.composition` names its composition.
 
 Markers + composition:
@@ -501,7 +512,7 @@ the way back out, and the one exit from `hibernating`. The app sets anchors too
 — marking with a clip selected, *Attach to clip*, and shot detection — so read
 `anchor_layer` to see whether a marker follows one rather than assuming an
 agent-created marker is free.
-- `set_composition { patch }` — nothing in this tool records onto the undo stack;
+- `update_composition { patch }` — nothing in this tool records onto the undo stack;
   the patch is applied to every history snapshot, so undo walks past it. `fps` is
   locked once the timeline holds a layer **or any history snapshot / checkpoint
   does** (`FpsLockedByContent`, carrying the current rate, the requested rate, the
@@ -513,7 +524,7 @@ agent-created marker is free.
   unplaced media never lock it. `sample_rate` is an export target, not a grid, and
   is never locked.
 - `set_project_settings { patch }` — the editor's preferences, beside the canvas
-  `set_composition` owns, and unrecorded for the same reason: preferences are
+  `update_composition` owns, and unrecorded for the same reason: preferences are
   setup, so the patch reaches every history snapshot and undo walks past it. Only
   the fields you send are applied, an unknown key is **refused** rather than
   dropped (the stored settings hold fields this tool does not write, and a silent
@@ -544,7 +555,7 @@ Motif authoring (see [motifs.md](motifs.md) "Agent surface"):
 ### Workflow / safety
 
 - `ping()` → `"pong"` — liveness. The one tool that reads no project state and needs no open workspace, so it separates "the host is not running" from "the host refused my call" before anything else is diagnosed.
-- `checkpoint { label }` → `CheckpointId`
+- `create_checkpoint { label }` → `CheckpointId`
 - `list_checkpoints()` / `restore_checkpoint { checkpoint_id }` — restore clears redo and replaces the current snapshot.
 - `delete_checkpoint { checkpoint_id }` — drop a restore point. Only the marker goes; the edits it marked stay, nothing about the timeline or the undo stack changes, and there is nothing to undo afterwards. `CheckpointNotFound` for an id `list_checkpoints` does not report. Deliberately **not** blocked by `lock_history` — the lock rejects revert paths, and forgetting a restore point reverts nothing.
 - `undo()` / `redo()`

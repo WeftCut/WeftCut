@@ -13,10 +13,10 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   'move_layer', 'restack_layer', 'trim_layer', 'delete_layer', 'delete_layers', 'ripple_delete_layers', 'ripple_delete_gap',
   'separate_audio_to_new_track', 'restyle_captions',
   'links_create', 'links_dissolve', 'links_add_members', 'links_remove_members', 'links_rename',
-  'groups_create', 'groups_add_members', 'move_layers_to_composition', 'add_group_layer', 'groups_ungroup', 'groups_rename', 'compositions_delete',
+  'groups_create', 'groups_add_members', 'move_layers_to_composition', 'add_group_layer', 'groups_ungroup', 'groups_rename', 'delete_composition',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'add_transition', 'update_transition', 'remove_transition',
-  'set_composition', 'fit_composition_to_layers', 'set_project_settings',
+  'update_composition', 'fit_composition_to_layers', 'set_project_settings',
   'update_marker', 'remove_marker', 'attach_marker', 'detach_marker',
   'remove_media', 'undo', 'redo', 'jump_to', 'delete_checkpoint',
   'set_role_gain', 'set_role_flags',
@@ -25,12 +25,12 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   // parseDedicated for the bijection required-scalar gate.
   'add_color_layer', 'add_video_layer', 'add_audio_layer', 'add_text_layer', 'split_layer', 'add_marker',
   'apply_transcripts', 'correct_caption_text',
-  'add_motif',
+  'add_motif_layer',
   'lock_history', 'unlock_history',
   'set_keyframe', 'get_param_track', 'remove_keyframe', 'retime_keyframe',
   'set_keyframe_easing', 'smooth_keyframes', 'clear_keyframes', 'set_param_track',
   'set_keyframe_tangents', 'set_extrapolation',
-  'dry_run', 'checkpoint', 'list_checkpoints', 'restore_checkpoint', 'begin_agent_session', 'end_agent_session',
+  'dry_run', 'create_checkpoint', 'list_checkpoints', 'restore_checkpoint', 'begin_agent_session', 'end_agent_session',
   'auto_split_by_shot', 'remove_pauses',
 ])
 

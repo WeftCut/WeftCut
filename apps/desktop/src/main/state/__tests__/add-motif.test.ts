@@ -23,8 +23,8 @@ describe('add_motif routing', () => {
     expect(routeChannel('add_motif').kind).toBe('command')
   })
 
-  it('routeMcpTool("add_motif") → "ts"', () => {
-    expect(routeMcpTool('add_motif')).toBe('ts')
+  it('routeMcpTool("add_motif_layer") → "ts"', () => {
+    expect(routeMcpTool('add_motif_layer')).toBe('ts')
   })
 })
 
@@ -167,10 +167,10 @@ describe('actor.command("add_motif") — reject-before-commit', () => {
 })
 
 // ── d. MCP path ───────────────────────────────────────────────────────────────
-describe('actor.mcpCall("add_motif") — MCP dedicated arm', () => {
+describe('actor.mcpCall("add_motif_layer") — MCP dedicated arm', () => {
   it('creates a Motif layer via MCP and returns toolText(layerId)', () => {
     const actor = makeActor()
-    const result = actor.mcpCall('add_motif', JSON.stringify({
+    const result = actor.mcpCall('add_motif_layer', JSON.stringify({
       motif_id: 'countdown',
       t_start_us: 0,
     }))
@@ -195,7 +195,7 @@ describe('actor.mcpCall("add_motif") — MCP dedicated arm', () => {
 
   it('MCP bad motif_id → ok:false invalid_params', () => {
     const actor = makeActor()
-    const result = actor.mcpCall('add_motif', JSON.stringify({
+    const result = actor.mcpCall('add_motif_layer', JSON.stringify({
       motif_id: 'no-such-motif',
       t_start_us: 0,
     }))
@@ -207,7 +207,7 @@ describe('actor.mcpCall("add_motif") — MCP dedicated arm', () => {
   it('MCP bad props → ok:false invalid_params, no commit', () => {
     const actor = makeActor()
     const snapBefore = actor.snapshot()
-    const result = actor.mcpCall('add_motif', JSON.stringify({
+    const result = actor.mcpCall('add_motif_layer', JSON.stringify({
       motif_id: 'countdown',
       t_start_us: 0,
       props: { badKey: 'oops' },
@@ -221,7 +221,7 @@ describe('actor.mcpCall("add_motif") — MCP dedicated arm', () => {
 
   it('MCP missing motif_id → rejects (required field)', () => {
     const actor = makeActor()
-    const result = actor.mcpCall('add_motif', JSON.stringify({ t_start_us: 0 }))
+    const result = actor.mcpCall('add_motif_layer', JSON.stringify({ t_start_us: 0 }))
     expect(result.ok).toBe(false)
   })
 
@@ -231,7 +231,7 @@ describe('actor.mcpCall("add_motif") — MCP dedicated arm', () => {
     const trackId = trackResult.ok ? trackResult.value as string : ''
     const trackCountBefore = root(actor.snapshot()).tracks.length
 
-    const result = actor.mcpCall('add_motif', JSON.stringify({
+    const result = actor.mcpCall('add_motif_layer', JSON.stringify({
       motif_id: 'countdown',
       t_start_us: 0,
       track_id: trackId,

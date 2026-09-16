@@ -16,7 +16,7 @@ describe('project_restore_checkpoint wiring', () => {
     const idGen = uuidV7Gen()
     const actor = createActor({ initial: blankProject(idGen, 't'), idGen, clock: () => '2026-01-01T00:00:00.000Z' })
     // create a checkpoint via the gated MCP path, capture its id
-    const made = actor.mcpCall('checkpoint', JSON.stringify({ label: 'cp1' }))
+    const made = actor.mcpCall('create_checkpoint', JSON.stringify({ label: 'cp1' }))
     expect(made.ok).toBe(true)
     const cpId = (made as { ok: true; result: { content: Array<{ text: string }> } }).result.content[0].text
     // mutate so state diverges from the checkpoint

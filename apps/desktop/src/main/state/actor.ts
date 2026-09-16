@@ -973,10 +973,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'redo': redo(); return { ok: true, value: null }
         case 'jump_to': jumpTo(parseNum(a.index, 'index')); return { ok: true, value: null }
         case 'restore_checkpoint': restoreCheckpoint(parseUuid(a.checkpoint_id, 'checkpoint_id')); return { ok: true, value: null }
-        // create/delete_checkpoint have no MCP twin: the agent's checkpoint tools
-        // are served in mcpCall's own switch (MCP_ACTOR-stamped). These are the
-        // renderer's User-actor path — `checkpoint()` defaults cpActor to this
-        // actor, which is `{kind:'User'}` for the production instance.
+        // The renderer's User-actor path: `checkpoint()` defaults cpActor to this
+        // actor, `{kind:'User'}` on the production instance. The agent's
+        // `create_checkpoint` is a same-named DEDICATED tool with its own arm in
+        // mcpCall's switch, which is how it stamps MCP_ACTOR instead;
+        // `delete_checkpoint` is table-exec and lands here, the actor being
+        // immaterial to a removal.
         case 'create_checkpoint': {
           const label = parseStr(a.label, 'label')
           if (label.trim() === '') throw new CommandFailure({ error: 'InvalidArgument', field: 'label', detail: 'label must be non-empty' }) // 0 ids
@@ -1824,8 +1826,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           history.lock(reason); return { ok: true, result: toolEmpty() }
         }
         case 'unlock_history': { mcpDef('unlock_history').parseDedicated!(a); history.unlock(); return { ok: true, result: toolEmpty() } }
-        case 'checkpoint': {
-          const p = mcpDef('checkpoint').parseDedicated!(a)
+        case 'create_checkpoint': {
+          const p = mcpDef('create_checkpoint').parseDedicated!(a)
           const label = p.label as string
           if (label.trim() === '') return { ok: false, error: { code: 'invalid_params', message: 'label must be non-empty' } }
           return { ok: true, result: toolText(checkpoint(label, MCP_ACTOR)) }
@@ -1993,9 +1995,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
           }
           return { ok: true, result: shapeDryRunResponse(dryRun(ops)) }
         }
-        case 'add_motif': {
-          // add_motif MCP arm: pure TS, dedicated mcpCall.
-          const p = mcpDef('add_motif').parseDedicated!(a)
+        case 'add_motif_layer': {
+          // add_motif_layer MCP arm: pure TS, dedicated mcpCall.
+          const p = mcpDef('add_motif_layer').parseDedicated!(a)
           const motifId = p.motif_id as string
           const manifest = motifCatalog.get(motifId)
           if (!manifest) return { ok: false, error: { code: 'invalid_params', message: `unknown motif_id '${motifId}' — call list_motifs for the catalog` } }

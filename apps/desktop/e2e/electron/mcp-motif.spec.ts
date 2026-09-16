@@ -20,11 +20,11 @@ test('MCP motif tools are advertised and callable', async () => {
   const info = (await page.evaluate(() => (window as any).api.mcp.getInfo())) as Info
   const client = await connect(info.url, info.bearer_token)
 
-  // list_motifs, add_motif, preview_motif_draft must appear in listTools
+  // list_motifs, add_motif_layer, preview_motif_draft must appear in listTools
   const toolsResult = await client.listTools()
   const names = toolsResult.tools.map((t) => t.name)
   expect(names).toContain('list_motifs')
-  expect(names).toContain('add_motif')
+  expect(names).toContain('add_motif_layer')
   expect(names).toContain('preview_motif_draft')
 
   // list_motifs returns the catalog
@@ -36,9 +36,9 @@ test('MCP motif tools are advertised and callable', async () => {
   const countdown = catalog.find((m: { id: string }) => m.id === 'countdown')
   expect(countdown).toBeDefined()
 
-  // add_motif places a layer and returns a layer id
+  // add_motif_layer places a layer and returns a layer id
   const addResult = await client.callTool({
-    name: 'add_motif',
+    name: 'add_motif_layer',
     arguments: { motif_id: 'countdown', t_start_us: 0 },
   })
   const layerId = (addResult.content[0] as { type: string; text: string }).text.trim()

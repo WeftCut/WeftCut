@@ -353,13 +353,13 @@ describe('a mutation row reads the way the history panel does', () => {
   it('a call that commits twice names the last change and counts them', async () => {
     const { entries, deps } = collector()
     const ts = tsHostStub()
-    // add_motif with no track_id spawns the track, then the layer: two commits
+    // add_motif_layer with no track_id spawns the track, then the layer: two commits
     // under one call, and the layer is what the agent asked for.
-    await sessionCallTool(deps, ts)('add_motif', { motif_id: [...BUILTIN_MANIFESTS.keys()][0], t_start_us: 0 })
+    await sessionCallTool(deps, ts)('add_motif_layer', { motif_id: [...BUILTIN_MANIFESTS.keys()][0], t_start_us: 0 })
     expect(entries[0].message).toBe(HISTORY_SUMMARY.layerAdd.text)
     expect(entries[0].i18n_key).toBe(HISTORY_SUMMARY.layerAdd.key)
     expect(detailsOf(entries[0]).commits).toBe(2)
-    expect(detailsOf(entries[0]).tool).toBe('add_motif')
+    expect(detailsOf(entries[0]).tool).toBe('add_motif_layer')
   })
 
   it('a commit that never reached history keeps its summary and no key', async () => {

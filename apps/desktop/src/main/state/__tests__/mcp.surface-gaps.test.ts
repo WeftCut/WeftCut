@@ -303,7 +303,7 @@ describe('delete_checkpoint', () => {
   it('drops the restore point and leaves the edits it marked in place', () => {
     const a = actorWithPool()
     threeClips(a)
-    const id = text(call(a, 'checkpoint', { label: 'after three' }))
+    const id = text(call(a, 'create_checkpoint', { label: 'after three' }))
     expect(json<unknown[]>(call(a, 'list_checkpoints')).length).toBe(1)
     expect(call(a, 'delete_checkpoint', { checkpoint_id: id }).ok).toBe(true)
     expect(json<unknown[]>(call(a, 'list_checkpoints'))).toEqual([])
@@ -318,7 +318,7 @@ describe('delete_checkpoint', () => {
   it('is NOT blocked by lock_history — forgetting a restore point reverts nothing', () => {
     const a = actorWithPool()
     threeClips(a)
-    const id = text(call(a, 'checkpoint', { label: 'pinned' }))
+    const id = text(call(a, 'create_checkpoint', { label: 'pinned' }))
     expect(call(a, 'lock_history', { reason: 'mid-batch' }).ok).toBe(true)
     expect(call(a, 'restore_checkpoint', { checkpoint_id: id }).ok).toBe(false)
     expect(call(a, 'delete_checkpoint', { checkpoint_id: id }).ok).toBe(true)

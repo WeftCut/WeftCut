@@ -25,6 +25,7 @@ import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
 import { MCP_TOOL_DEFS } from '../state/mcp-commands.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
+import { withCanonicalToolName } from './toolAliases.js'
 
 type Backend = import('@weftcut/core').Backend
 
@@ -441,9 +442,14 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
     const rust = (JSON.parse(await backend.mcpCatalog()) as { tools: Array<{ name: string }> }).tools
     return { tools: mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS]) } as unknown as ServerResult
   }, log, clientInfo))
-  server.setRequestHandler(CallToolRequestSchema, track('tools/call', async (req: CallToolRequest) =>
+  // A retired tool name is rewritten to the advertised one BEFORE `track`, so
+  // the log row, the activity service's read/write split and the dispatcher all
+  // read the same single name (`toolAliases.ts`).
+  const callTool = track('tools/call', async (req: CallToolRequest) =>
     handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm, peaksPathFor),
-  log, clientInfo))
+  log, clientInfo)
+  server.setRequestHandler(CallToolRequestSchema, (req: CallToolRequest, extra: unknown) =>
+    callTool(withCanonicalToolName(req), extra))
   server.setRequestHandler(ListResourcesRequestSchema, track('resources/list', async () => {
     const cat = JSON.parse(await backend.mcpCatalog()) as { resources: Array<{ uri: string }> }
     return { resources: mergeMcpResources(cat.resources, MOTIF_RESOURCE_DEFS) } as unknown as ServerResult

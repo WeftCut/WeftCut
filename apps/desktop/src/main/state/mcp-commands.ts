@@ -1141,7 +1141,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Name a Group's composition (`label: null` or blank clears it back to the derived name). Recorded, so undo reverts it. The root composition refuses (`RootComposition`): it has no name — it is the timeline. Composition ids: `project://compositions`.",
     inputSchema: { type: 'object', properties: { composition_id: { type: 'string' }, label: { type: ['string', 'null'] } }, required: ['composition_id'] },
     parseArgs: (a) => ({ op: 'groups_rename', args: { composition: parseUuid(a.composition_id, 'composition_id'), label: parseStrOpt(a.label, 'label') } }) },
-  { name: 'compositions_delete', exec: 'table',
+  { name: 'delete_composition', exec: 'table',
     description: "Delete a composition nothing references — an orphan left behind when its Group layers were deleted (ungroup removes its composition itself). Refuses while any Group layer still points at it (`CompositionInUse { ref_count }`; `project://compositions` shows the count — ungroup or delete those layers first) and refuses the root (`RootComposition`). Recorded: undo brings the composition back.",
     inputSchema: { type: 'object', properties: { composition_id: { type: 'string' } }, required: ['composition_id'] },
     parseArgs: (a) => ({ op: 'compositions_delete', args: { composition: parseUuid(a.composition_id, 'composition_id') } }) },
@@ -1215,7 +1215,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' } }, required: ['layer_id'] },
     parseArgs: (a) => ({ op: 'separate_audio', args: { layer: parseUuid(a.layer_id, 'layer_id') } }),
     shapeResult: (v) => toolText(v as string) },
-  { name: 'set_composition', exec: 'table',
+  { name: 'update_composition', exec: 'table',
     description: 'Update composition envelope (canvas size, fps, sample rate, channels, color space, background, duration). Only fields you set are applied. Width/height must be positive; fps denominator must be non-zero. NOTHING here records onto the undo stack — the whole envelope is setup, so the change is patched into every history snapshot and survives undo/redo. `fps` is LOCKED once the timeline holds a layer OR any history snapshot or checkpoint does: the patch is rejected with FpsLockedByContent (carrying the current rate, the requested rate, the live layer count, and `locked_by`: "current" or "history") because changing the rate moves every edit point by up to half a frame and can collapse a short layer. With locked_by "history" the live layer count is 0 and the timeline looks empty — undo could still bring old-grid layers back, which is why it is still refused. Set the rate on a project that has never held a layer; to clear a history-scoped lock, empty the timeline and reopen the project (opening resets history). Markers, a pinned duration, and imported-but-unplaced media never lock the rate. `sample_rate` is an export target, not an editing grid, and is never locked. Setting `duration_us` pins the composition duration — subsequent layer edits will no longer auto-fit it (except an overflow guard if a layer extends past the pinned value). Use `fit_composition_to_layers` to clear the pin and snap duration back to the layer high-water mark.',
     inputSchema: { type: 'object', properties: { patch: {
       type: 'object',
@@ -1240,7 +1240,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // composition renders at, this one owns the preferences the EDITOR works by,
   // and both are setup rather than editing, so neither records.
   { name: 'set_project_settings', exec: 'table',
-    description: "Update the project's editing preferences. Only the fields you send are applied; a field you omit keeps its value. NOTHING here records onto the undo stack — these are preferences, not edits, so the change is patched into every history snapshot and survives undo/redo (the same contract `set_composition` carries). Read the current values from `project://current`. `shot_review` and `pause_review` are validated as a WHOLE and refused as a whole, against the same bounds the detectors enforce, so a stored tuning is always one a later `analyze_clip` / `remove_pauses` will accept; send `null` for either to clear the tuning back to the detector's own defaults.",
+    description: "Update the project's editing preferences. Only the fields you send are applied; a field you omit keeps its value. NOTHING here records onto the undo stack — these are preferences, not edits, so the change is patched into every history snapshot and survives undo/redo (the same contract `update_composition` carries). Read the current values from `project://current`. `shot_review` and `pause_review` are validated as a WHOLE and refused as a whole, against the same bounds the detectors enforce, so a stored tuning is always one a later `analyze_clip` / `remove_pauses` will accept; send `null` for either to clear the tuning back to the detector's own defaults.",
     inputSchema: { type: 'object', properties: { patch: {
       type: 'object',
       description: "Settings patch. Only the fields you include are applied; `null` has a per-field meaning given below and is never 'unset'.",
@@ -1288,7 +1288,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'remove_media', args: { media: parseUuid(a.media_id, 'media_id'), force: parseBoolOpt(a.force, 'force', false) } }) },
   // ── table-exec: history ──────────────────────────────────────────────────
   { name: 'undo', exec: 'table',
-    description: 'Undo the most recent edit (linear history). Errors with NothingToUndo at the origin. Only timeline edits (layers, tracks, markers, transitions, and cascade-deleting media removals) record onto the undo stack. The following sit OUTSIDE it and are unaffected by undo: media imports and removals of unreferenced media, the entire composition envelope (`set_composition` and `fit_composition_to_layers` — canvas size, fps, sample rate, channels, color space, background AND duration/duration_pinned), and loading or creating a project (which resets history).',
+    description: 'Undo the most recent edit (linear history). Errors with NothingToUndo at the origin. Only timeline edits (layers, tracks, markers, transitions, and cascade-deleting media removals) record onto the undo stack. The following sit OUTSIDE it and are unaffected by undo: media imports and removals of unreferenced media, the entire composition envelope (`update_composition` and `fit_composition_to_layers` — canvas size, fps, sample rate, channels, color space, background AND duration/duration_pinned), and loading or creating a project (which resets history).',
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseArgs: () => ({ op: 'undo', args: {} }) },
   { name: 'jump_to', exec: 'table',
@@ -1522,7 +1522,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       items: { type: 'object', description: "OperationSpec: {\"kind\": \"add_color_layer\" | \"add_video_layer\" | \"add_audio_layer\" | \"add_text_layer\" | \"update_layer\" | \"update_layer_params\" | \"move_layer\" | \"split_layer\" | \"delete_layer\" | \"add_transition\", ...that tool's snake_case args (add_transition: the transition kind rides as \"transition_kind\" since \"kind\" names the operation, and it also takes \"placement\": \"overlap\" | \"extend\")}." },
     } }, required: ['operations'] },
     parseDedicated: (a) => ({ operations: asArray(a.operations, 'operations') }) },
-  { name: 'add_motif', exec: 'dedicated',
+  { name: 'add_motif_layer', exec: 'dedicated',
     description: "Add a motif layer to a track. The motif is rasterized to a PNG sequence on first render and cached content-addressably; subsequent renders are folder lookups. Args: `motif_id` (from `list_motifs`), `t_start_us` (timeline microseconds), optional `t_end_us` (defaults to `t_start_us + default_duration_s * 1e6`), optional `track_id` (when omitted, always spawns a fresh unnamed track that derives its own name from its position — never reuses an existing track, so consecutive auto-inserts can't collide), optional `props` (JSON object matched against the motif's `props_schema`; unknown keys reject, missing keys fall back to defaults). Returns the new layer id.",
     inputSchema: { '$schema': 'http://json-schema.org/draft-07/schema#', type: 'object',
       properties: {
@@ -1542,7 +1542,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       props: a.props != null ? parseObj(a.props, 'props') : null,
       composition_id: parseCompositionIdOpt(a.composition_id),
     }) },
-  { name: 'checkpoint', exec: 'dedicated',
+  { name: 'create_checkpoint', exec: 'dedicated',
     description: 'Create an explicit named checkpoint of the current state. Checkpoints survive new commits (they don\'t get truncated like the redo tail) and persist in the .vproj save file. Returns the new checkpoint id. The human\'s agent-mode record panel renders each created checkpoint as a pin-style row with a Restore button — use this at logical batch boundaries.',
     inputSchema: { type: 'object', properties: { label: { type: 'string' } }, required: ['label'] },
     parseDedicated: (a) => ({ label: parseStr(a.label, 'label') }) },

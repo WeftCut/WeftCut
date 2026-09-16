@@ -244,7 +244,7 @@ export function MotifPicker({
                   <button
                     key={tpl.id}
                     type="button"
-                    // The id matters to agents (MCP `add_motif`) and bug
+                    // The id matters to agents (MCP `add_motif_layer`) and bug
                     // reports, not to picking — tooltip, not card real estate.
                     title={tpl.id}
                     className={

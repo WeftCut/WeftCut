@@ -105,7 +105,7 @@ export interface TsActorHost {
   agent: AgentActivityService
   handleInvoke: (channel: string, args: Record<string, unknown>) => Promise<unknown>
   /** Host-level MCP call: delegates to actor.mcpCall, then emits the appropriate
-   *  LogBus pin-row for restore_checkpoint / checkpoint / begin_agent_session on success.
+   *  LogBus pin-row for restore_checkpoint / create_checkpoint / begin_agent_session on success.
    *  The emit is best-effort (try/catch) and never blocks or fails the call.
    *  server.ts calls this instead of actor.mcpCall directly for the 'ts' route. */
   mcpCall: (name: string, argsJson: string) => import('./mcp-commands.js').McpCallResult
@@ -361,7 +361,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         const cpId = (a.checkpoint_id as string | undefined) ?? ''
         const label = actor.listCheckpoints().find((c) => c.id === cpId)?.label ?? null
         emitRestoreLog(cpId, label, { kind: 'Agent', client: 'mcp' })
-      } else if (name === 'checkpoint') {
+      } else if (name === 'create_checkpoint') {
         const label = ((a.label as string | undefined) ?? '').trim()
         const cpId = result.result.content[0]?.text ?? ''
         emitCheckpointLog(cpId, label, { kind: 'Agent', client: 'mcp' })

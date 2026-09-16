@@ -50,7 +50,7 @@ describe('restore_checkpoint LogBus parity — MCP path', () => {
     host.start()
 
     // Create a checkpoint via the host MCP boundary.
-    const made = host.mcpCall('checkpoint', JSON.stringify({ label: 'cp1' }))
+    const made = host.mcpCall('create_checkpoint', JSON.stringify({ label: 'cp1' }))
     expect(made.ok).toBe(true)
     const cpId = (made as { ok: true; result: { content: Array<{ text: string }> } }).result.content[0].text
 
@@ -74,7 +74,7 @@ describe('restore_checkpoint LogBus parity — MCP path', () => {
     host.start()
     emitLog.mockClear()
 
-    const result = host.mcpCall('checkpoint', JSON.stringify({ label: 'cp1' }))
+    const result = host.mcpCall('create_checkpoint', JSON.stringify({ label: 'cp1' }))
     expect(result.ok).toBe(true)
     const cpId = (result as { ok: true; result: { content: Array<{ text: string }> } }).result.content[0].text
 

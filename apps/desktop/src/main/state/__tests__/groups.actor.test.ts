@@ -215,7 +215,7 @@ describe('groups — MCP tools', () => {
     const made = actor.mcpCall('groups_create', JSON.stringify({ layer_ids: [v, w] }))
     if (!made.ok) throw new Error('fixture')
     const { composition_id, layer_id } = JSON.parse(made.result.content[0].text) as { composition_id: Uuid; layer_id: Uuid }
-    const inUse = actor.mcpCall('compositions_delete', JSON.stringify({ composition_id }))
+    const inUse = actor.mcpCall('delete_composition', JSON.stringify({ composition_id }))
     expect(inUse.ok).toBe(false)
     if (!inUse.ok) expect(inUse.error.message).toMatch(/referenced by 1 Group layer/)
 

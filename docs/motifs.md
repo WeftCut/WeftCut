@@ -417,7 +417,7 @@ of the untrusted-document case is covered in [Security](#security).
 An MCP agent can both *place* and *author* Motifs, mirroring the human lifecycle through the
 same backend cores (so the two surfaces can't drift):
 
-- **Place / inspect.** `add_motif` is props-only — agents reason about *what* a Motif says,
+- **Place / inspect.** `add_motif_layer` is props-only — agents reason about *what* a Motif says,
   never about capture or timing — and resolves built-ins **and** user Motifs (drafts +
   installed). `list_motifs` enumerates the full catalog (each entry carries `status` =
   `builtin | installed | draft`, plus `content_hash`/`target_id`), and `motifs://current`
