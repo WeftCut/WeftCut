@@ -18,6 +18,7 @@
   <a href="https://github.com/WeftCut/WeftCut/releases/latest"><img alt="Download the latest release" src="https://img.shields.io/github/v/release/WeftCut/WeftCut?style=flat-square&label=Download&labelColor=475569&color=6696E6&logo=github&logoColor=white" /></a>
   <img alt="Runs on Windows, macOS and Linux" src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-5B7196?style=flat-square&labelColor=475569" />
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/WeftCut/WeftCut?style=flat-square&label=License&labelColor=475569&color=5B7196" /></a>
+  <a href="https://glama.ai/mcp/servers/WeftCut/WeftCut"><img alt="Glama MCP server score" src="https://glama.ai/mcp/servers/WeftCut/WeftCut/badges/score.svg" /></a>
 </p>
 
 ![An agent editing the timeline live over MCP](docs/assets/agent-edit.gif)
