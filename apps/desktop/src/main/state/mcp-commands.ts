@@ -315,6 +315,49 @@ export function parseMarkerPatch(v: unknown): MarkerPatch {
 }
 
 const AUDIO_ROLES = new Set(['dialogue', 'music', 'sfx', 'voiceover'])
+/** The settings patch, gated at the boundary. The two review tuples and the
+ *  script are validated in depth by the actor (bounds, and the `2*pad < min`
+ *  rule) — repeating that here would be a second answer — so this gate owns the
+ *  two things the actor cannot see: that the booleans are booleans, and that
+ *  every key is one the actor reads. An unknown key is REFUSED rather than
+ *  dropped: `preview_width` and `history_capacity` are real fields of the
+ *  stored settings that `update_project_settings` does not write, so a silent
+ *  pass-through would report success for a preference that never changed.
+ *
+ *  An empty patch is refused for the same reason `set_track_flags` refuses one:
+ *  the write is unconditional downstream, so it would burn an id and broadcast
+ *  a settings change that changed nothing. */
+const PROJECT_SETTINGS_KEYS = new Set([
+  'auto_pair_audio_on_import', 'prefer_proxies', 'proxy_override',
+  'shot_review', 'pause_review', 'correction_script',
+])
+export function parseProjectSettingsPatch(v: unknown): Record<string, unknown> {
+  const patch = parseObj(v, 'patch')
+  const keys = Object.keys(patch)
+  if (keys.length === 0) throw new McpArgError('patch names no setting; a call that changes nothing would still report success', 'patch')
+  for (const k of keys) {
+    if (!PROJECT_SETTINGS_KEYS.has(k)) throw new McpArgError(`unknown setting '${k}'; set_project_settings writes ${[...PROJECT_SETTINGS_KEYS].join(', ')}`, 'patch')
+  }
+  const out: Record<string, unknown> = {}
+  if ('auto_pair_audio_on_import' in patch) out.auto_pair_audio_on_import = parseBoolTriState(patch.auto_pair_audio_on_import, 'auto_pair_audio_on_import')
+  if ('prefer_proxies' in patch) out.prefer_proxies = parseBoolTriState(patch.prefer_proxies, 'prefer_proxies')
+  if ('correction_script' in patch) out.correction_script = parseStr(patch.correction_script, 'correction_script')
+  if ('proxy_override' in patch) {
+    const o = patch.proxy_override
+    out.proxy_override = o === null ? null : (() => {
+      const ov = parseObj(o, 'proxy_override')
+      return { media_id: parseUuid(ov.media_id, 'proxy_override.media_id'), value: parseBoolTriState(ov.value, 'proxy_override.value') }
+    })()
+  }
+  // Passed through as sent: the actor refuses a malformed tuple whole, naming
+  // the field and the bound it missed, which is a better error than a shape
+  // check here could give.
+  for (const k of ['shot_review', 'pause_review'] as const) {
+    if (k in patch) out[k] = patch[k] === null ? null : parseObj(patch[k], k)
+  }
+  return out
+}
+
 /** Validate an AudioRole (audio_role.rs kebab-case). Rust rejects an unknown
  *  role at the serde boundary → invalid_params; mirror that here. */
 export function parseRole(v: unknown): string {
@@ -1006,6 +1049,10 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: 'Delete a layer. The span it held is left EMPTY and nothing downstream moves; `ripple_delete_layers` is the one that closes it. If this empties a non-reserved, unlocked track, the track is deleted in the same history entry (one undo restores both). A/B-roll and other role-stamped tracks stay.',
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' } }, required: ['layer_id'] },
     parseArgs: (a) => ({ op: 'delete_layer', args: { layer: parseUuid(a.layer_id, 'layer_id') } }) },
+  { name: 'delete_layers', exec: 'table',
+    description: "Delete a SET of layers as ONE recorded edit — one undo brings every one of them back. The spans they held are left EMPTY and nothing downstream moves; `ripple_delete_layers` is the variant that closes them. Duplicate ids collapse. The set is ONE composition's (`CrossCompositionSet` otherwise), and a member on a LOCKED TRACK refuses the whole batch (`TrackLocked`) rather than deleting the unlocked half — unlock it with `set_track_flags`. A layer's OWN `locked` does not block a delete, here or in `delete_layer`: it stops the pointer reaching the clip, and the UI's selection tools skip such a layer rather than refusing, so a locked member is a set the UI cannot produce and this tool takes at its word. Each track the batch emptied is pruned with it, unless it is reserved or locked. An empty `layer_ids` is accepted and records nothing — the no-op of a selection that turned out to be empty.",
+    inputSchema: { type: 'object', properties: { layer_ids: { type: 'array', items: { type: 'string' } } }, required: ['layer_ids'] },
+    parseArgs: (a) => ({ op: 'delete_layers', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) } }) },
   { name: 'ripple_delete_layers', exec: 'table',
     description: "Delete a SET of layers AND close the span each one vacated, so the film gets shorter (ADR 0062). The span closed for a layer is its own footprint CLIPPED to its remaining same-class neighbours on its own track — a transition participant's authorized overlap is therefore never part of the hole — and touching or overlapping holes merge into one. Every remaining layer that starts at or after a hole then shifts LEFT by that hole's length, on EVERY track of the composition and each on its own lattice, so a linked A/V pair stays in sync; pass both members of a pair and their two holes merge into one shift. What stays: a gap that already sat beside the deleted layer (it just travels left with everything else), a layer that STARTS before the hole (reaching into it is fine — it is anchored ahead of the cut), free markers, and the playhead. Markers anchored to a mover follow it; markers anchored to a deleted layer go with it. Refuses whole, before any write, always naming the entity: `RippleInsideHole` — a remaining layer starts inside the span, so add it to `layer_ids` (its own hole merges in) or use `delete_layer` to leave the span open; `RippleCollision` — a mover would land on a layer that is not moving, so move or delete the blocking layer (the system never makes room); `RippleLinkStraddles` — a link has members on both sides of the span and a link means they move together, so unlink them or add the straddling members to `layer_ids`; `RippleLockedLayer` / `TrackLocked` — a layer or track that would have to move is locked, so unlock it. Locks read leniently: only a layer that actually shifts blocks, so a locked logo at the head does not disable ripple for the rest of the film. The set is ONE composition's (`CrossCompositionSet` otherwise) and must hold at least one id. Recorded — one undo restores every moved layer too.",
     inputSchema: { type: 'object', properties: { layer_ids: { type: 'array', items: { type: 'string' } } }, required: ['layer_ids'] },
@@ -1160,6 +1207,14 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { transition_id: { type: 'string' } }, required: ['transition_id'] },
     parseArgs: (a) => ({ op: 'remove_transition', args: { transition: parseUuid(a.transition_id, 'transition_id') } }) },
   // ── table-exec: composition ──────────────────────────────────────────────
+  // The lane this opens is the ONE track in the model that stores a label
+  // (mutations/media.ts names the source it lifted from), which is why the
+  // result is a TRACK id and not the layer's: the layer is unchanged, it moved.
+  { name: 'separate_audio_to_new_track', exec: 'table',
+    description: "Lift an Audio layer off the track it shares and onto a new track of its own, in the source lane's own slot. Returns the NEW TRACK's id — the layer itself is untouched, only its lane changes, so its id, span, gain, role and links all survive. This is how an auto-paired dialogue clip gets a lane of its own: the pair's link is NOT dissolved, so the two still move, trim and split together; `links_dissolve` first if you want them independent. The layer must be an `Audio` one (`WrongLayerKind` otherwise) — a VideoClip's sound is the Audio layer linked to it, which `project://timeline` names. The new lane records the source track's name as '<name> (audio)' when the source had a stored one, and a source lane the lift emptied is pruned in the same edit. One undo puts the layer back and takes the lane away.",
+    inputSchema: { type: 'object', properties: { layer_id: { type: 'string' } }, required: ['layer_id'] },
+    parseArgs: (a) => ({ op: 'separate_audio', args: { layer: parseUuid(a.layer_id, 'layer_id') } }),
+    shapeResult: (v) => toolText(v as string) },
   { name: 'set_composition', exec: 'table',
     description: 'Update composition envelope (canvas size, fps, sample rate, channels, color space, background, duration). Only fields you set are applied. Width/height must be positive; fps denominator must be non-zero. NOTHING here records onto the undo stack — the whole envelope is setup, so the change is patched into every history snapshot and survives undo/redo. `fps` is LOCKED once the timeline holds a layer OR any history snapshot or checkpoint does: the patch is rejected with FpsLockedByContent (carrying the current rate, the requested rate, the live layer count, and `locked_by`: "current" or "history") because changing the rate moves every edit point by up to half a frame and can collapse a short layer. With locked_by "history" the live layer count is 0 and the timeline looks empty — undo could still bring old-grid layers back, which is why it is still refused. Set the rate on a project that has never held a layer; to clear a history-scoped lock, empty the timeline and reopen the project (opening resets history). Markers, a pinned duration, and imported-but-unplaced media never lock the rate. `sample_rate` is an export target, not an editing grid, and is never locked. Setting `duration_us` pins the composition duration — subsequent layer edits will no longer auto-fit it (except an overflow guard if a layer extends past the pinned value). Use `fit_composition_to_layers` to clear the pin and snap duration back to the layer high-water mark.',
     inputSchema: { type: 'object', properties: { patch: {
@@ -1181,6 +1236,24 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Clear the composition's duration pin and set `duration_us` to `max(layer.t_end_us)`. The inverse of `set_composition { duration_us }`: that pins, this unpins. After this call, subsequent layer edits track duration in both directions (grow on adds, shrink on deletes/inward trims). `composition_id` names a Group's composition; omit for the root.",
     inputSchema: { type: 'object', properties: { composition_id: COMPOSITION_ID_SCHEMA }, required: [] },
     parseArgs: (a) => ({ op: 'fit_composition_to_layers', args: { composition_id: parseCompositionIdOpt(a.composition_id) } }) },
+  // The project-preferences twin of set_composition: that one owns the canvas a
+  // composition renders at, this one owns the preferences the EDITOR works by,
+  // and both are setup rather than editing, so neither records.
+  { name: 'set_project_settings', exec: 'table',
+    description: "Update the project's editing preferences. Only the fields you send are applied; a field you omit keeps its value. NOTHING here records onto the undo stack — these are preferences, not edits, so the change is patched into every history snapshot and survives undo/redo (the same contract `set_composition` carries). Read the current values from `project://current`. `shot_review` and `pause_review` are validated as a WHOLE and refused as a whole, against the same bounds the detectors enforce, so a stored tuning is always one a later `analyze_clip` / `remove_pauses` will accept; send `null` for either to clear the tuning back to the detector's own defaults.",
+    inputSchema: { type: 'object', properties: { patch: {
+      type: 'object',
+      description: "Settings patch. Only the fields you include are applied; `null` has a per-field meaning given below and is never 'unset'.",
+      properties: {
+        auto_pair_audio_on_import: { type: ['boolean', 'null'], description: 'Whether `add_video_layer` also places (and links) the source\'s audio on the track\'s audio lane. On by default. Turn it OFF to place a video with no sound, or to resolve a paired-audio overlap by hand.' },
+        prefer_proxies: { type: ['boolean', 'null'], description: 'Whether preview reads generated proxies rather than the original media. A playback preference; export always reads the original.' },
+        proxy_override: { type: ['object', 'null'], description: "Per-media exception to `prefer_proxies`: `{ media_id, value }` where `value` true/false pins that item, and `value: null` REMOVES the exception so the item follows the project preference again.", properties: { media_id: { type: 'string' }, value: { type: ['boolean', 'null'] } }, required: ['media_id', 'value'] },
+        shot_review: { type: ['object', 'null'], description: "The reviewed shot-detection parameters `analyze_clip` and `auto_split_by_shot` run at, or `null` for the detector's own defaults. `sensitivity` is in [0, 1]; `min_shot_us` is a positive whole number of microseconds.", properties: { sensitivity: { type: 'number' }, min_shot_us: { type: 'integer' } }, required: ['sensitivity', 'min_shot_us'] },
+        pause_review: { type: ['object', 'null'], description: "The tuned pause parameters `detect_pauses` and `remove_pauses` run at, or `null` for their defaults. `threshold_amp` is in [0, 1], `min_pause_us` positive, `pad_us` >= 0, and `2 * pad_us` must be LESS than `min_pause_us` or nothing would be cut.", properties: { threshold_amp: { type: 'number' }, min_pause_us: { type: 'integer' }, pad_us: { type: 'integer' } }, required: ['threshold_amp', 'min_pause_us', 'pad_us'] },
+        correction_script: { type: 'string', description: "The reference text `correct_caption_text` corrects captions against — the script, the notes, the spelling of every name the transcriber will get wrong. Stored on the project. Send it before calling `correct_caption_text`, which refuses while it is blank." },
+      },
+    } }, required: ['patch'] },
+    parseArgs: (a) => ({ op: 'update_project_settings', args: { patch: parseProjectSettingsPatch(a.patch) } }) },
   // ── table-exec: markers ──────────────────────────────────────────────────
   { name: 'update_marker', exec: 'table',
     description: 'Update a marker. Setting `t_us` re-sorts the marker list. On a marker ANCHORED to a clip, `t_us` names the time the mark should read and moves the ANCHOR to make it read that, so the mark keeps following its clip from the new offset — a time outside that clip\'s span is refused, and `t_us` together with `end_t_us` is refused (an anchored region\'s end follows its anchor by itself; patch one or the other).',
@@ -1218,10 +1291,37 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: 'Undo the most recent edit (linear history). Errors with NothingToUndo at the origin. Only timeline edits (layers, tracks, markers, transitions, and cascade-deleting media removals) record onto the undo stack. The following sit OUTSIDE it and are unaffected by undo: media imports and removals of unreferenced media, the entire composition envelope (`set_composition` and `fit_composition_to_layers` — canvas size, fps, sample rate, channels, color space, background AND duration/duration_pinned), and loading or creating a project (which resets history).',
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseArgs: () => ({ op: 'undo', args: {} }) },
+  { name: 'jump_to', exec: 'table',
+    description: "Move the history cursor to an absolute stack index — the click-a-row of the history panel, and the way back to a state that is neither one undo away nor a checkpoint. `index` is stated in the same numbering `project://history` reports: `ops[i]` sits at `window_start + i`, and `cursor` is where you are now, so jumping is reading that resource and naming a row. Out of range is refused naming the live bounds. A REVERT path like undo/redo/`restore_checkpoint`, so `lock_history` blocks it with the lock's reason. It moves the cursor and records nothing; a later edit truncates whatever sat ahead of it, exactly as it would after an undo. `evicted > 0` in that resource means the stack no longer reaches the start of the project — index 0 is then the oldest SURVIVING state, not the beginning.",
+    inputSchema: { type: 'object', properties: { index: { type: 'integer', description: 'Absolute history index, in `project://history`\'s numbering (`window_start + i`).' } }, required: ['index'] },
+    parseArgs: (a) => ({ op: 'jump_to', args: { index: parseNum(a.index, 'index') } }) },
   { name: 'redo', exec: 'table',
     description: 'Redo the next edit. Errors with NothingToRedo if no redo is available. A new commit truncates the redo tail.',
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseArgs: () => ({ op: 'redo', args: {} }) },
+  { name: 'delete_checkpoint', exec: 'table',
+    description: "Drop a named checkpoint. Only the restore point goes — the edits it marked stay exactly where they are, and nothing about the timeline or the undo stack changes, so there is nothing to undo afterwards. `CheckpointNotFound` for an id `list_checkpoints` does not report. Deliberately NOT blocked by `lock_history`: the lock rejects revert paths, and forgetting a restore point reverts nothing.",
+    inputSchema: { type: 'object', properties: { checkpoint_id: { type: 'string' } }, required: ['checkpoint_id'] },
+    parseArgs: (a) => ({ op: 'delete_checkpoint', args: { checkpoint_id: parseUuid(a.checkpoint_id, 'checkpoint_id') } }) },
+  // ── table-exec: captions ─────────────────────────────────────────────────
+  // Project-wide by design (one commit over every Caption-role track in every
+  // composition): caption lanes multiply as cues collide, and restyling them
+  // one at a time would leave a film styled in two ways for as long as the
+  // batch took.
+  { name: 'restyle_captions', exec: 'table',
+    description: "Restyle EVERY caption in the project in one recorded edit — every Text layer on every Caption-role track, in every composition, so overlapping caption lanes stay one look and one undo puts the old style back. Only the fields you send are applied; omit or `null` leaves that aspect alone. `outline_width: 0` REMOVES the outline; a positive width adds or resizes one, keeping its colour if it had one and black otherwise. This does not touch a Text layer you authored with `add_text_layer` — that one is not on a caption track; style it with `update_layer_params`. Sizes are composition pixels.",
+    inputSchema: { type: 'object', properties: {
+      font_family: { type: ['string', 'null'] },
+      font_size_px: { type: ['number', 'null'] },
+      color: { type: ['object', 'null'], properties: RGBA_SCHEMA.properties, required: RGBA_SCHEMA.required },
+      outline_width: { type: ['number', 'null'], description: '0 removes the outline; a positive width adds or resizes it.' },
+    }, required: [] },
+    parseArgs: (a) => ({ op: 'restyle_captions', args: { patch: {
+      font_family: parseStrOpt(a.font_family, 'font_family'),
+      font_size_px: parseNumOpt(a.font_size_px, 'font_size_px') ?? null,
+      color: a.color === undefined || a.color === null ? null : parseRgba(a.color, 'color'),
+      outline_width: parseNumOpt(a.outline_width, 'outline_width') ?? null,
+    } } }) },
   // ── table-exec: audio roles ──────────────────────────────────────────────
   { name: 'set_role_gain', exec: 'table',
     description: 'Set an audio role\'s mix gain (dB). role ∈ {dialogue,music,sfx,voiceover}. Recorded (undoable). Folds into every layer of that role at mix time.',
@@ -1262,6 +1362,52 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       x: parseNumOpt(a.x, 'x'), y: parseNumOpt(a.y, 'y'),
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
+  // The two caption tools that carry WORD timing. Both are dedicated because
+  // both take the project id the production channels pass for staleness — an
+  // agent has no reason to hold one, so the arm supplies it from the state it
+  // is already reading.
+  { name: 'apply_transcripts', exec: 'dedicated',
+    description: "Lay transcripts onto the caption tracks, KEEPING their per-word timing. Takes `transcribe_clip`'s output envelope as it comes — pass its `segments` and its `word_timing` straight through — and returns the id of the caption track the first cue landed on. Prefer this over `apply_subtitles` when the transcript came from `transcribe_clip`: an SRT document has no room for word offsets, so routing through one throws away the timing that `correct_caption_text` needs to re-segment a corrected cue, and that karaoke-style word highlighting would read. Cues pack into the caption tracks the composition already has, opening a new lane only for a cue that collides with all of them (ADR 0070); each cue's span snaps to the composition frame grid and a cue that snaps to nothing is dropped. `source_layer_ids` is parallel to `transcripts` — element i names the layer transcript i was read from — and tags each cue with its source so `correct_caption_text` groups by take; omit it and the cues carry timing but no provenance. At most 1000 transcripts per call. One recorded edit.",
+    inputSchema: { type: 'object', properties: {
+      transcripts: { type: 'array', description: "One entry per transcribed clip, in the shape `transcribe_clip` returns.", items: {
+        type: 'object',
+        properties: {
+          word_timing: { type: 'string', enum: ['exact', 'interpolated_from_cue', 'none'], description: "`transcribe_clip`'s field of the same name: where the word offsets came from. `none` stores cues with no word timing." },
+          segments: { type: 'array', description: 'Cues, with timeline-absolute microsecond bounds.', items: {
+            type: 'object',
+            properties: {
+              text: { type: 'string' }, t_start_us: { type: 'integer' }, t_end_us: { type: 'integer' },
+              words: { type: 'array', description: 'Word offsets, timeline-absolute like the cue. Empty is allowed.', items: {
+                type: 'object',
+                properties: { text: { type: 'string' }, t_start_us: { type: 'integer' }, t_end_us: { type: 'integer' } },
+                required: ['text', 't_start_us', 't_end_us'],
+              } },
+            },
+            required: ['text', 't_start_us', 't_end_us', 'words'],
+          } },
+        },
+        required: ['word_timing', 'segments'],
+      } },
+      source_layer_ids: { type: ['array', 'null'], items: { type: 'string' }, description: 'Parallel to `transcripts`: the layer each was transcribed from.' },
+      composition_id: COMPOSITION_ID_SCHEMA,
+    }, required: ['transcripts'] },
+    parseDedicated: (a) => ({
+      transcripts: asArray(a.transcripts, 'transcripts').map((t) => parseObj(t, 'transcripts')),
+      source_ids: a.source_layer_ids === undefined || a.source_layer_ids === null
+        ? [] : asArray(a.source_layer_ids, 'source_layer_ids').map((x) => parseUuid(x, 'source_layer_ids')),
+      composition_id: parseCompositionIdOpt(a.composition_id),
+    }) },
+  { name: 'correct_caption_text', exec: 'dedicated',
+    description: "Correct the captions against the project's reference text, and re-segment the cues the correction changed. Returns `{ changed }` — how many caption layers were rewritten. The reference text is `set_project_settings { correction_script }`: the script, the running order, the spelling of every name a transcriber mangles. It must be set and non-blank or the call is refused (`InvalidArgument`, field `correction_script`) — there is nothing to correct against. Corrects EVERY caption in the composition by default; `layer_ids` narrows it to the ones you name, and an id that is not a Text layer on a caption track of that composition refuses the call. Word timing is what makes this more than a find-and-replace: a cue that carries it (see `apply_transcripts`) can be SPLIT or MERGED to match the corrected wording, with each new cue timed from the words it holds; a cue without it is corrected in place and keeps its bounds. Refuses whole — before any write — if any target caption or its track is locked, so the count it reports is always the count it made. One recorded edit.",
+    inputSchema: { type: 'object', properties: {
+      layer_ids: { type: ['array', 'null'], items: { type: 'string' }, description: 'The captions to correct. Omit for every caption in the composition.' },
+      composition_id: COMPOSITION_ID_SCHEMA,
+    }, required: [] },
+    parseDedicated: (a) => ({
+      layer_ids: a.layer_ids === undefined || a.layer_ids === null
+        ? null : asArray(a.layer_ids, 'layer_ids').map((x) => parseUuid(x, 'layer_ids')),
+      composition_id: parseCompositionIdOpt(a.composition_id),
+    }) },
   { name: 'split_layer', exec: 'dedicated',
     description: 'Split a layer into two halves at the given timeline microsecond. Returns {left, right} layer ids. `at_t_us` must be strictly between the layer\'s t_start_us and t_end_us. For media-bearing layers (VideoClip, Audio) the source offsets are adjusted at speed=1 — variable speed support is deferred.',
     inputSchema: { type: 'object', properties: { at_t_us: { type: 'integer' }, escape_link: { type: ['boolean', 'null'] }, layer_id: { type: 'string' } }, required: ['at_t_us', 'layer_id'] },
@@ -1370,10 +1516,10 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return p
     } },
   { name: 'dry_run', exec: 'dedicated',
-    description: 'Try-run a sequence of edit operations against a clone of the current project WITHOUT committing. Useful for previewing complex multi-step edits — agents can detect overlap / invariant violations before mutating real state. Validates after each op (matching real `commit()` behaviour) and HALTS at the first error so subsequent ops don\'t dry-run against a state real execution wouldn\'t reach. Returns `{ results: [{ index, status, output? | error? }, ...] }`. Supports add_color_layer, add_video_layer, update_layer, update_layer_params, move_layer, split_layer, delete_layer, add_transition (same args as the add_transition tool, except the transition kind rides as `transition_kind` — the spec\'s `kind` names the operation — plus optional `placement`: \'overlap\' default | \'extend\'; its output predicts the moved incoming layer\'s sibling lane bounces and lane spawns, and its refusals, identically to the real command). Other tools (motifs, caption import, media import, undo/redo) are not dry-runnable in v1.',
+    description: 'Try-run a sequence of edit operations against a clone of the current project WITHOUT committing. Useful for previewing complex multi-step edits — agents can detect overlap / invariant violations before mutating real state. Validates after each op (matching real `commit()` behaviour) and HALTS at the first error so subsequent ops don\'t dry-run against a state real execution wouldn\'t reach. Returns `{ results: [{ index, status, output? | error? }, ...] }`. Supports add_color_layer, add_video_layer, add_audio_layer, add_text_layer, update_layer, update_layer_params, move_layer, split_layer, delete_layer, add_transition (same args as the add_transition tool, except the transition kind rides as `transition_kind` — the spec\'s `kind` names the operation — plus optional `placement`: \'overlap\' default | \'extend\'; its output predicts the moved incoming layer\'s sibling lane bounces and lane spawns, and its refusals, identically to the real command). Other tools (motifs, caption import, media import, undo/redo) are not dry-runnable in v1.',
     inputSchema: { type: 'object', properties: { operations: {
       type: 'array',
-      items: { type: 'object', description: "OperationSpec: {\"kind\": \"add_color_layer\" | \"add_video_layer\" | \"update_layer\" | \"update_layer_params\" | \"move_layer\" | \"split_layer\" | \"delete_layer\" | \"add_transition\", ...that tool's snake_case args (add_transition: the transition kind rides as \"transition_kind\" since \"kind\" names the operation, and it also takes \"placement\": \"overlap\" | \"extend\")}." },
+      items: { type: 'object', description: "OperationSpec: {\"kind\": \"add_color_layer\" | \"add_video_layer\" | \"add_audio_layer\" | \"add_text_layer\" | \"update_layer\" | \"update_layer_params\" | \"move_layer\" | \"split_layer\" | \"delete_layer\" | \"add_transition\", ...that tool's snake_case args (add_transition: the transition kind rides as \"transition_kind\" since \"kind\" names the operation, and it also takes \"placement\": \"overlap\" | \"extend\")}." },
     } }, required: ['operations'] },
     parseDedicated: (a) => ({ operations: asArray(a.operations, 'operations') }) },
   { name: 'add_motif', exec: 'dedicated',

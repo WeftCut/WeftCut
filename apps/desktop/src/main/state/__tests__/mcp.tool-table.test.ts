@@ -10,19 +10,21 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   'set_position', 'translate_path',
   'add_track', 'remove_track', 'rename_track', 'duplicate_layer', 'paste_layers', 'move_track', 'set_track_flags',
   'update_layer', 'set_layers_enabled', 'update_layer_params', 'set_scale_linked',
-  'move_layer', 'restack_layer', 'trim_layer', 'delete_layer', 'ripple_delete_layers', 'ripple_delete_gap',
+  'move_layer', 'restack_layer', 'trim_layer', 'delete_layer', 'delete_layers', 'ripple_delete_layers', 'ripple_delete_gap',
+  'separate_audio_to_new_track', 'restyle_captions',
   'links_create', 'links_dissolve', 'links_add_members', 'links_remove_members', 'links_rename',
   'groups_create', 'groups_add_members', 'move_layers_to_composition', 'add_group_layer', 'groups_ungroup', 'groups_rename', 'compositions_delete',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'add_transition', 'update_transition', 'remove_transition',
-  'set_composition', 'fit_composition_to_layers',
+  'set_composition', 'fit_composition_to_layers', 'set_project_settings',
   'update_marker', 'remove_marker', 'attach_marker', 'detach_marker',
-  'remove_media', 'undo', 'redo',
+  'remove_media', 'undo', 'redo', 'jump_to', 'delete_checkpoint',
   'set_role_gain', 'set_role_flags',
   // dedicated-exec tools — auto_split_by_shot and remove_pauses are TS-owned
   // HYBRID defs (they route 'hybrid', not to an actor arm) that carry a
   // parseDedicated for the bijection required-scalar gate.
   'add_color_layer', 'add_video_layer', 'add_audio_layer', 'add_text_layer', 'split_layer', 'add_marker',
+  'apply_transcripts', 'correct_caption_text',
   'add_motif',
   'lock_history', 'unlock_history',
   'set_keyframe', 'get_param_track', 'remove_keyframe', 'retime_keyframe',
@@ -66,7 +68,7 @@ describe('MCP tool table projections', () => {
 
   it('dedicated-exec defs have no parseArgs', () => {
     const dedicated = MCP_TOOL_DEFS.filter((d) => d.exec === 'dedicated')
-    expect(dedicated.length).toBe(27)
+    expect(dedicated.length).toBe(29)
     for (const d of dedicated) {
       expect(d.parseArgs, `${d.name} should not have parseArgs`).toBeUndefined()
     }
@@ -74,7 +76,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(49)
+    expect(table.length).toBe(55)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }
@@ -100,9 +102,9 @@ describe('MCP tool table projections', () => {
     expect(def.description).toContain(REVERT_PATHS)
   })
 
-  it('shapeResult tools are the expected 8', () => {
+  it('shapeResult tools are the expected 9', () => {
     const shapers = MCP_TOOL_DEFS.filter((d) => d.shapeResult).map((d) => d.name).sort()
-    expect(shapers).toEqual(['add_effect', 'add_group_layer', 'add_track', 'add_transition', 'duplicate_layer', 'groups_create', 'links_create', 'paste_layers'])
+    expect(shapers).toEqual(['add_effect', 'add_group_layer', 'add_track', 'add_transition', 'duplicate_layer', 'groups_create', 'links_create', 'paste_layers', 'separate_audio_to_new_track'])
   })
 
   it('paste_layers / set_layers_enabled round-trip valid args and reject malformed ones', () => {

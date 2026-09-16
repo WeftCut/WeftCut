@@ -48,7 +48,7 @@ const promptNames = new Set(rust.prompts.map((p) => p.name))
 // with a live tool name (checked below).
 const KNOWN_NON_TOOLS = new Set([
   // SKILL.md — tool params
-  'from', 'pad_us', 't_start_us',
+  'from', 'pad_us', 't_start_us', 'segments', 'word_timing',
   // motif-authoring.md — manifest fields
   'id', 'version', 'name', 'size', 'default_duration_s', 'max_duration_s',
   'max_duration_prop', 'content_duration_s', 'settle_rafs', 'fonts',

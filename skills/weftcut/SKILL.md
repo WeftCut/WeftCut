@@ -51,8 +51,13 @@ descriptions:
   the speech either side keeps its breath (or mark them to review first:
   `detect_pauses` → an anchored region `add_marker` per pause; both packaged
   as the `/cut-pauses` prompt).
-- Captions: `transcribe_clip` → inspect the returned SRT → `apply_subtitles`
-  (also `/auto-caption`).
+- Captions: `transcribe_clip` → inspect the returned SRT → `apply_transcripts`,
+  passing the envelope's `segments` and `word_timing` through (also
+  `/auto-caption`). `apply_subtitles` is for a subtitle FILE the user already
+  has — routing a transcript through one discards the word timing that
+  `correct_caption_text` needs. Correcting names and jargon: put the script or
+  notes in `set_project_settings { correction_script }`, then
+  `correct_caption_text`. Restyle every caption at once with `restyle_captions`.
 - Captions with your own speech model: `extract_clip_audio` returns a 16 kHz
   mono WAV block plus the window it covers (60 s per call — walk a long clip in
   consecutive windows). Transcribe it yourself, add the reported `t_start_us` to
@@ -70,6 +75,9 @@ descriptions:
 - A track that refuses every edit is locked: `set_track_flags` clears the lock
   (and hides or shows a track's output). A layer carries its own lock, which
   `update_layer` clears.
+- Going back further than one undo: read `project://history` and `jump_to` a row
+  by its absolute index — the way back to a state that is neither one undo away
+  nor a checkpoint.
 
 ## Motifs (animated overlays)
 

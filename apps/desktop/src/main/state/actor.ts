@@ -37,7 +37,7 @@ import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, ty
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 import { applySetPosition, applyTranslatePath } from './mutations/position'
@@ -677,6 +677,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   //    Clone settings, apply the present fields, replace-everywhere + broadcast. ──
   function updateProjectSettings(patch: {
     correction_script?: string
+    auto_pair_audio_on_import?: boolean | null
     prefer_proxies?: boolean | null
     proxy_override?: { media_id: string; value: boolean | null } | null
     shot_review?: { sensitivity: number; min_shot_us: number } | null
@@ -721,6 +722,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
       next.correction_script = patch.correction_script
     }
     if (typeof patch.prefer_proxies === 'boolean') next.prefer_proxies = patch.prefer_proxies
+    if (typeof patch.auto_pair_audio_on_import === 'boolean') next.auto_pair_audio_on_import = patch.auto_pair_audio_on_import
     if (patch.proxy_override) {
       const { media_id, value } = patch.proxy_override
       if (value === null) delete next.proxy_overrides[media_id]
@@ -1305,7 +1307,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'remove_media': removeMedia(a.media as Uuid, (a.force as boolean) ?? false); return { ok: true, value: null }
         case 'set_role_gain': setRoleGain(a.role as string, parseNum(a.gain_db, 'gain_db')); return { ok: true, value: null }
         case 'update_role_flags': updateRoleFlags(a.role as string, a.patch as RoleFlagsPatch); return { ok: true, value: null }
-        case 'update_project_settings': updateProjectSettings(a.patch as { prefer_proxies?: boolean | null; proxy_override?: { media_id: string; value: boolean | null } | null; shot_review?: { sensitivity: number; min_shot_us: number } | null; pause_review?: { threshold_amp: number; min_pause_us: number; pad_us: number } | null }); return { ok: true, value: null }
+        case 'update_project_settings': updateProjectSettings(a.patch as { correction_script?: string; auto_pair_audio_on_import?: boolean | null; prefer_proxies?: boolean | null; proxy_override?: { media_id: string; value: boolean | null } | null; shot_review?: { sensitivity: number; min_shot_us: number } | null; pause_review?: { threshold_amp: number; min_pause_us: number; pad_us: number } | null }); return { ok: true, value: null }
         case 'add_caption_track': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.trackAddCaption, trackRef, { kind: 'Coarse' }, (d) => applyAddCaptionTrack(d, idGen, a.cues as Cue[], a.comp_w as number, a.comp_h as number, (a.label as string) ?? null, comp)) } }
         case 'set_correction_script': {
           if (a.project_id !== current().project_id) throw new CommandFailure({ error: 'InvalidArgument', field: 'project_id', detail: 'The project has changed' })
@@ -1569,11 +1571,36 @@ export function createActor(opts: ActorOptions): ActorHandle {
         const media = parseUuid(spec.media_id, 'media_id')
         const srcIn = parseNum(spec.src_in_us, 'src_in_us')
         const srcOut = parseNum(spec.src_out_us, 'src_out_us')
-        const params = current().media_pool[media]?.kind === 'Image'
-          ? imageOverlayParams(media)
-          : videoClipParams(media, srcIn, srcOut)
+        const kind = current().media_pool[media]?.kind
+        // The wet arm's media-kind refusal, so a rehearsal predicts it instead
+        // of reporting a clip that the real call would reject. It throws rather
+        // than failing one op: the batch is being planned, and every later op
+        // was written expecting this layer to exist.
+        if (kind === 'Audio') throw new McpArgError(`media ${media} is audio-only — a visual layer over it draws nothing and the mixer does not read it; use add_audio_layer`, 'media_id')
+        if (kind === 'Subtitle') throw new McpArgError(`media ${media} is a subtitle document, not a picture; use apply_subtitles (not dry-runnable) or add_text_layer`, 'media_id')
+        const params = kind === 'Image' ? imageOverlayParams(media) : videoClipParams(media, srcIn, srcOut)
         return { kind: 'AddLayer', track_id: parseUuid(spec.track_id, 'track_id'),
           params,
+          t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
+      }
+      case 'add_audio_layer': {
+        const media = parseUuid(spec.media_id, 'media_id')
+        const item = current().media_pool[media]
+        if (item !== undefined && item.kind !== 'Audio' && !(item.kind === 'Video' && item.metadata.audio != null))
+          throw new McpArgError(`media ${media} carries no audio (kind ${item.kind}${item.kind === 'Video' ? ', no audio stream' : ''}), so there is nothing for an Audio layer to play`, 'media_id')
+        const base = audioParams(media, parseNum(spec.src_in_us, 'src_in_us'), parseNum(spec.src_out_us, 'src_out_us'))
+        const params = spec.role === undefined || spec.role === null ? base : { ...base, role: parseRole(spec.role) as AudioRole }
+        return { kind: 'AddLayer', track_id: parseUuid(spec.track_id, 'track_id'), params,
+          t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
+      }
+      // The canvas the title is centred on is the TRACK's composition; a bogus
+      // track id falls back to the root and is then refused by applyAddLayer
+      // with the TrackNotFound the wet call gives, so nothing is centred wrong.
+      case 'add_text_layer': {
+        const track = parseUuid(spec.track_id, 'track_id')
+        const comp = locateTrack(current(), track)?.comp ?? scopeComposition(current(), null)
+        return { kind: 'AddLayer', track_id: track,
+          params: prodTextParams({ content: parseStr(spec.content, 'content'), x: spec.x, y: spec.y }, comp),
           t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
       }
       case 'update_layer':
@@ -1729,6 +1756,29 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, track, params, p.t_start_us as number, p.t_end_us as number))
           return { ok: true, result: toolText(id) }
+        }
+        // Both caption arms hand the dispatch its `project_id` from the state
+        // they just read. The production channels carry one because the UI
+        // captures it before awaiting a queued manuscript save and the project
+        // can change underneath; an MCP call has no such gap, and a caller free
+        // to send the id could only ever send the right one or a wrong one.
+        case 'apply_transcripts': {
+          const p = mcpDef('apply_transcripts').parseDedicated!(a)
+          const r = dispatch('apply_transcripts', {
+            project_id: current().project_id, transcripts: p.transcripts,
+            source_ids: p.source_ids, composition_id: p.composition_id,
+          })
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          return { ok: true, result: toolText(r.value as string) }
+        }
+        case 'correct_caption_text': {
+          const p = mcpDef('correct_caption_text').parseDedicated!(a)
+          const r = dispatch('correct_caption_text', {
+            project_id: current().project_id, layer_ids: p.layer_ids,
+            composition_id: p.composition_id,
+          })
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          return { ok: true, result: toolJson(r.value) }
         }
         // An anchor reaches this arm as the LAYER alone, unlike the prod arm's
         // `{layer, src_us}` taken on trust: `src_us` is derivable from `t_us`
