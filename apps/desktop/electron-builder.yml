@@ -127,6 +127,25 @@ linux:
     # beside the .node via files/asarUnpack; this carries its license text.
     - from: resources/ffmpeg-lgpl/linux/LIBVA-LICENSE.txt
       to: native-decode/LIBVA-LICENSE.txt
+# LANDMINE: `depends` REPLACES electron-builder's default list rather than
+# extending it, so the nine defaults are repeated here and a deletion silently
+# un-declares them. libasound2 is the addition: Chromium links libasound.so.2
+# and the default list omits it, so a desktop install only works because the
+# environment already carries it — a minimal or container install dies at load
+# with "libasound.so.2: cannot open shared object file". The unversioned name
+# resolves both where the real package ships and where libasound2t64 provides it.
+deb:
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+    - libasound2
 mac:
   # DMG only, arm64 only: the CI runner, the bundled ffmpeg sidecar
   # (fetch-ffmpeg.mjs §mac) and the from-source LGPL libraries are all Apple
