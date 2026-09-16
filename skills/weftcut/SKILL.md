@@ -62,6 +62,14 @@ descriptions:
 - Rough cut: `analyze_clip` or `auto_split_by_shot`, then trim and delete
   segments — `ripple_delete_layers` instead of `delete_layer` when the gap a
   cut leaves should close behind it.
+- Music, sound effects, a separate voice track: `add_audio_layer`. It is the
+  only tool that places audio-only media — `add_video_layer` builds a visual
+  layer and refuses an audio file.
+- A title, a lower third, a credit: `add_text_layer`, then style it with
+  `update_layer_params`. Subtitles from a document stay `apply_subtitles`.
+- A track that refuses every edit is locked: `set_track_flags` clears the lock
+  (and hides or shows a track's output). A layer carries its own lock, which
+  `update_layer` clears.
 
 ## Motifs (animated overlays)
 

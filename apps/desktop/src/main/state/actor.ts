@@ -1626,6 +1626,16 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const t1 = p.t_end_us as number
           const snap = current()
           const item = snap.media_pool[media]
+          // Audio-only media used to fall through to videoClipParams and commit
+          // a VideoClip over an mp3: it draws nothing, and the mixer folds only
+          // Audio layers (native/src/audio/mix.rs), so it is silent too — a
+          // success report for a clip that neither shows nor plays. Name the
+          // tool that does place it instead.
+          if (item?.kind === 'Audio' || item?.kind === 'Subtitle') {
+            return { ok: false, error: { code: 'invalid_params', message: item.kind === 'Audio'
+              ? `media ${media} is audio-only: a visual layer over it would draw nothing, and the mixer reads Audio layers only, so it would be silent as well. Use add_audio_layer with the same track, span and source window.`
+              : `media ${media} is a subtitle document, not a picture. Use apply_subtitles to lay its cues onto the caption tracks, or add_text_layer for a single title.` } }
+          }
           if (item?.kind === 'Image') {
             const imageId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, imageOverlayParams(media), t0, t1))
             return { ok: true, result: toolText(imageId) }
@@ -1681,6 +1691,44 @@ export function createActor(opts: ActorOptions): ActorHandle {
             }
             throw err // visual-lane overlap etc. → outer catch → mapCommandError
           }
+        }
+        // The audio-lane twin of add_video_layer, and the only way audio-only
+        // media reaches the timeline. Deliberately unpaired and unlinked: what
+        // this places is a standalone cue, so there is no partner for the
+        // atomic-triple dance above — one commit, one layer, one id back.
+        case 'add_audio_layer': {
+          const p = mcpDef('add_audio_layer').parseDedicated!(a)
+          const track = p.track as string
+          checkTrackInComposition(track, p.composition_id as string | null)
+          const media = p.media as string
+          const item = current().media_pool[media]
+          // A pool item with no audio stream cannot be read as sound. Refuse it
+          // HERE with the media kind named: the validator downstream only knows
+          // that a source range does not fit, which reads as an arithmetic
+          // mistake rather than as the wrong file.
+          if (item !== undefined && item.kind !== 'Audio' && !(item.kind === 'Video' && item.metadata.audio != null)) {
+            return { ok: false, error: { code: 'invalid_params', message: `media ${media} carries no audio (kind ${item.kind}${item.kind === 'Video' ? ', no audio stream' : ''}), so there is nothing for an Audio layer to play. A picture goes on the timeline with add_video_layer; a subtitle document with apply_subtitles.` } }
+          }
+          const role = (p.role as AudioRole | null) ?? undefined
+          const base = audioParams(media, p.src_in_us as number, p.src_out_us as number)
+          const params = role === undefined ? base : { ...base, role }
+          const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
+            applyAddLayer(d, idGen, track, params, p.t_start_us as number, p.t_end_us as number))
+          return { ok: true, result: toolText(id) }
+        }
+        // Shares prodTextParams with the production channel rather than minting
+        // a second default family — a title authored by an agent and one
+        // authored in the UI must be the same layer. The composition comes from
+        // the TRACK (the factory centres the text in frame, so it needs the real
+        // canvas, not add_color_layer's 1920x1080 fallback).
+        case 'add_text_layer': {
+          const p = mcpDef('add_text_layer').parseDedicated!(a)
+          const track = p.track as string
+          checkTrackInComposition(track, p.composition_id as string | null)
+          const params = prodTextParams({ content: p.content, x: p.x, y: p.y }, requireTrack(current(), track).comp)
+          const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
+            applyAddLayer(d, idGen, track, params, p.t_start_us as number, p.t_end_us as number))
+          return { ok: true, result: toolText(id) }
         }
         // An anchor reaches this arm as the LAYER alone, unlike the prod arm's
         // `{layer, src_us}` taken on trust: `src_us` is derivable from `t_us`

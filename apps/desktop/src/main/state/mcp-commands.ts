@@ -408,6 +408,14 @@ export function parseBoolOpt(v: unknown, field: string, dflt: boolean): boolean 
   return v === undefined || v === null ? dflt : parseBool(v, field)
 }
 
+/** Tri-state boolean wire arg: absent/null → null ("leave this flag alone"),
+ *  else a gated boolean. The null is a real third value here, so it cannot go
+ *  through parseBoolOpt's default — a patch field nobody sent must stay
+ *  distinguishable from one sent as `false`. */
+export function parseBoolTriState(v: unknown, field: string): boolean | null {
+  return v === undefined || v === null ? null : parseBool(v, field)
+}
+
 /** Optional string variant: undefined/null → null, else validates string. */
 export function parseStrOpt(v: unknown, field: string): string | null {
   return v === undefined || v === null ? null : (typeof v === 'string' ? v : (() => { throw new McpArgError(`${field} must be a string`, field) })())
@@ -873,6 +881,18 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: 'Move a track to a different z-order position. 0 = bottom of stack. Position must be < current track count.',
     inputSchema: { type: 'object', properties: { track_id: { type: 'string' }, new_position: { type: 'integer' } }, required: ['new_position', 'track_id'] },
     parseArgs: (a) => ({ op: 'move_track', args: { track: parseUuid(a.track_id, 'track_id'), new_position: parseNum(a.new_position, 'new_position') } }) },
+  // Two flags of four: `Track` also stores muted/solo, and they are omitted on
+  // purpose — the mix folds by ROLE (ADR 0023), so nothing reads a track's, and
+  // advertising them would be advertising a write that changes nothing.
+  { name: 'set_track_flags', exec: 'table',
+    description: "Set a track's `enabled` and/or `locked` flag. `locked` is what every `TrackLocked` refusal points at — a locked track rejects edits to the layers on it, and unlocking it here is the fix. `enabled` is the track's output: a disabled track renders nothing, in preview AND in export, while its layers stay on the timeline. Omit a flag (or send null) to leave it alone; sending neither is refused rather than committed as a no-op. Unrecorded (not undoable), like `set_role_flags` — undo will not put a flag back. A layer carries its OWN `locked` separately (`update_layer { patch: { locked } }`); an edit needs both its layer and its track unlocked. Mute/solo are not here: the mix folds by role, so use `set_role_flags`.",
+    inputSchema: { type: 'object', properties: { track_id: { type: 'string' }, enabled: { type: ['boolean', 'null'], description: "The track's output, preview and export alike. null or omitted leaves it alone." }, locked: { type: ['boolean', 'null'], description: 'Whether the track refuses edits to its layers. null or omitted leaves it alone.' } }, required: ['track_id'] },
+    parseArgs: (a) => {
+      const enabled = parseBoolTriState(a.enabled, 'enabled')
+      const locked = parseBoolTriState(a.locked, 'locked')
+      if (enabled === null && locked === null) throw new McpArgError('set_track_flags needs at least one of `enabled` / `locked`; a call that names no flag would report success having changed nothing')
+      return { op: 'update_track_flags', args: { track: parseUuid(a.track_id, 'track_id'), patch: { enabled, locked } } }
+    } },
   // ── table-exec: layers ───────────────────────────────────────────────────
   { name: 'duplicate_layer', exec: 'table',
     description: 'Duplicate a layer with a time offset. The copy is inserted on the same track. Returns the new layer id. The composition duration extends if needed.',
@@ -1221,10 +1241,25 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'add_video_layer', exec: 'dedicated',
-    description: "Add a visual media layer from an imported media item onto a track. For Video media, `src_in_us`/`src_out_us` are the in/out points within the source media; `t_start_us`/`t_end_us` are where the clip lives on the timeline. For Image media, this creates an ImageOverlay over the timeline range, and `src_in_us`/`src_out_us` are accepted for schema compatibility but ignored. Video source and timeline ranges should be the same length unless `speed` is later changed. When a Video source has an audio stream and the project's `auto_pair_audio_on_import` setting is on (default), this also creates a paired dialogue Audio layer on the SAME track's audio lane (every track holds one visual lane plus one audio lane) at the same time bounds and links the two so they move/trim/split together. The whole call is atomic: video, paired audio, and link commit together or not at all — if the audio lane is occupied the call rejects naming the blocking layer, and nothing lands on the timeline. Returns either the visual layer id (no pairing) or `{ video_layer_id, audio_layer_id, link_id }` when a pair was created.",
+    description: "Add a visual media layer from an imported media item onto a track. The media must be a `Video` or an `Image`: an audio-only item is refused and pointed at `add_audio_layer`, because a VideoClip layer over an audio file draws no picture and the mixer does not read it either. For Video media, `src_in_us`/`src_out_us` are the in/out points within the source media; `t_start_us`/`t_end_us` are where the clip lives on the timeline. For Image media, this creates an ImageOverlay over the timeline range, and `src_in_us`/`src_out_us` are accepted for schema compatibility but ignored. Video source and timeline ranges should be the same length unless `speed` is later changed. When a Video source has an audio stream and the project's `auto_pair_audio_on_import` setting is on (default), this also creates a paired dialogue Audio layer on the SAME track's audio lane (every track holds one visual lane plus one audio lane) at the same time bounds and links the two so they move/trim/split together. The whole call is atomic: video, paired audio, and link commit together or not at all — if the audio lane is occupied the call rejects naming the blocking layer, and nothing lands on the timeline. Returns either the visual layer id (no pairing) or `{ video_layer_id, audio_layer_id, link_id }` when a pair was created.",
     inputSchema: { type: 'object', properties: { media_id: { type: 'string' }, src_in_us: { type: 'integer' }, src_out_us: { type: 'integer' }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['media_id', 'src_in_us', 'src_out_us', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), media: parseUuid(a.media_id, 'media_id'),
       src_in_us: parseNum(a.src_in_us, 'src_in_us'), src_out_us: parseNum(a.src_out_us, 'src_out_us'),
+      t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
+      composition_id: parseCompositionIdOpt(a.composition_id) }) },
+  { name: 'add_audio_layer', exec: 'dedicated',
+    description: "Add an Audio layer from an imported media item onto a track — music, a sound effect, a voice track, or the audio of a video file taken on its own. This is the ONLY way to place audio-only media: `add_video_layer` builds a VISUAL layer and would put a silent, pictureless clip on the timeline. It lands on the track's AUDIO lane (every track holds one visual lane plus one audio lane, so a track already carrying a video clip can still take this), and it is placed ALONE — no link to anything, unlike the pair `add_video_layer` auto-creates. `src_in_us`/`src_out_us` are the in/out points within the source; `t_start_us`/`t_end_us` are where it lives on the timeline; both endpoints snap to the 48 kHz sample lattice, not the composition frame grid. `media_id` may name an `Audio` item or a `Video` item that carries an audio stream — a Video item's own audio, with no picture, is a legitimate thing to want; an `Image` or `Subtitle` item is refused. `role` (default `music`) picks the mixing bus: the role mixer folds gain, mute and solo by role and not by track (ADR 0023), so a clip mixed with the dialogue is `dialogue` whatever track it sits on. Returns the new layer id.",
+    inputSchema: { type: 'object', properties: { media_id: { type: 'string' }, src_in_us: { type: 'integer' }, src_out_us: { type: 'integer' }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' }, role: { type: ['string', 'null'], enum: ['dialogue', 'music', 'sfx', 'voiceover', null], description: 'Mixing bus for the clip. Defaults to `music`.' }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['media_id', 'src_in_us', 'src_out_us', 't_end_us', 't_start_us', 'track_id'] },
+    parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), media: parseUuid(a.media_id, 'media_id'),
+      src_in_us: parseNum(a.src_in_us, 'src_in_us'), src_out_us: parseNum(a.src_out_us, 'src_out_us'),
+      t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
+      role: a.role === undefined || a.role === null ? null : parseRole(a.role),
+      composition_id: parseCompositionIdOpt(a.composition_id) }) },
+  { name: 'add_text_layer', exec: 'dedicated',
+    description: "Add a Text layer to a track — a title, a lower third, a credit, any typography authored here rather than imported. Returns the new layer id. `t_start_us`/`t_end_us` are timeline microseconds (start inclusive, end exclusive) and the layer cannot overlap another visual layer on the same track. The layer is born at the caption font, 72 px, opaque white, centre-aligned and centred in frame; `x`/`y` override the placement and are the layer's ANCHOR point (ADR 0049), so with the default centred anchor the text is centred on the point you name. They travel together — half a point is refused rather than paired with a guessed axis — and are NOT clamped to frame, because a title that starts partly offscreen is a legitimate thing to author. Everything else is `update_layer_params { kind: 'Text' }`: font, size, colour, outline, the layout box and its alignment. For subtitles from a document use `apply_subtitles`, which times cues onto the caption tracks; this is the one-off.",
+    inputSchema: { type: 'object', properties: { content: { type: 'string', description: 'The text to display. Newlines are honoured.' }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' }, x: { type: ['number', 'null'], description: "Anchor x in composition pixels. Give it with `y` or not at all; omitted, the layer is centred in frame." }, y: { type: ['number', 'null'], description: 'Anchor y in composition pixels. Give it with `x` or not at all.' }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['content', 't_end_us', 't_start_us', 'track_id'] },
+    parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), content: parseStr(a.content, 'content'),
+      x: parseNumOpt(a.x, 'x'), y: parseNumOpt(a.y, 'y'),
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'split_layer', exec: 'dedicated',

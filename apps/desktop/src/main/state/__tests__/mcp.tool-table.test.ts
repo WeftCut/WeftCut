@@ -8,7 +8,7 @@ import { root } from './fixtures/project'
 const EXPECTED_TOOL_NAMES = new Set<string>([
   // table-exec tools — counts are asserted below, not duplicated in labels.
   'set_position', 'translate_path',
-  'add_track', 'remove_track', 'rename_track', 'duplicate_layer', 'paste_layers', 'move_track',
+  'add_track', 'remove_track', 'rename_track', 'duplicate_layer', 'paste_layers', 'move_track', 'set_track_flags',
   'update_layer', 'set_layers_enabled', 'update_layer_params', 'set_scale_linked',
   'move_layer', 'restack_layer', 'trim_layer', 'delete_layer', 'ripple_delete_layers', 'ripple_delete_gap',
   'links_create', 'links_dissolve', 'links_add_members', 'links_remove_members', 'links_rename',
@@ -22,7 +22,7 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   // dedicated-exec tools — auto_split_by_shot and remove_pauses are TS-owned
   // HYBRID defs (they route 'hybrid', not to an actor arm) that carry a
   // parseDedicated for the bijection required-scalar gate.
-  'add_color_layer', 'add_video_layer', 'split_layer', 'add_marker',
+  'add_color_layer', 'add_video_layer', 'add_audio_layer', 'add_text_layer', 'split_layer', 'add_marker',
   'add_motif',
   'lock_history', 'unlock_history',
   'set_keyframe', 'get_param_track', 'remove_keyframe', 'retime_keyframe',
@@ -66,7 +66,7 @@ describe('MCP tool table projections', () => {
 
   it('dedicated-exec defs have no parseArgs', () => {
     const dedicated = MCP_TOOL_DEFS.filter((d) => d.exec === 'dedicated')
-    expect(dedicated.length).toBe(25)
+    expect(dedicated.length).toBe(27)
     for (const d of dedicated) {
       expect(d.parseArgs, `${d.name} should not have parseArgs`).toBeUndefined()
     }
@@ -74,7 +74,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(48)
+    expect(table.length).toBe(49)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }
