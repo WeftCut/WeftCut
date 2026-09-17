@@ -156,6 +156,46 @@ describe('add_video_layer media-kind guard', () => {
   })
 })
 
+// Audit D17: an unknown media id fell through to the source-window rule and
+// reported "src_in_us and src_out_us are required for Video media <id>" about
+// a media that does not exist. Not found is the first thing said about an id
+// that names nothing, on both add tools, wet and rehearsed alike.
+describe('an unknown media id is MediaNotFound before any other rule', () => {
+  const NOWHERE = '00000000-0000-7000-8000-00000000dead'
+  function refusal(r: ReturnType<Actor['mcpCall']>): string {
+    expect(r.ok).toBe(false)
+    if (r.ok) throw new Error('expected refusal')
+    expect(r.error.code).toBe('invalid_params')
+    return r.error.message
+  }
+
+  it('add_video_layer names the pool and the importer, not the source window', () => {
+    const a = actorWithPool()
+    const msg = refusal(call(a, 'add_video_layer', { media_id: NOWHERE, t_start_us: 0, t_end_us: 4_000_000, track_id: aRoll(a) }))
+    expect(msg).toContain(`media ${NOWHERE} not found`)
+    expect(msg).toContain('project://media')
+    expect(msg).not.toContain('src_in_us')
+    expect(layerCount(a)).toBe(0)
+  })
+
+  it('add_audio_layer says the same', () => {
+    const a = actorWithPool()
+    const msg = refusal(call(a, 'add_audio_layer', { media_id: NOWHERE, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000, track_id: aRoll(a) }))
+    expect(msg).toContain(`media ${NOWHERE} not found`)
+    expect(layerCount(a)).toBe(0)
+  })
+
+  it('dry_run predicts both refusals, before a batch is written expecting the layer', () => {
+    const a = actorWithPool()
+    for (const kind of ['add_video_layer', 'add_audio_layer']) {
+      const msg = refusal(call(a, 'dry_run', { operations: [
+        { kind, media_id: NOWHERE, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000, track_id: aRoll(a) },
+      ] }))
+      expect(msg, kind).toContain(`media ${NOWHERE} not found`)
+    }
+  })
+})
+
 describe('add_text_layer', () => {
   it('creates a Text layer centred in the composition it landed in', () => {
     const a = actorWithPool()

@@ -8,7 +8,7 @@ import { markerHibernating } from '../summary'
 import {
   runHybrid, markShotCuts, cutsToTimeline, pauseCores,
   DEFAULT_PAUSE_PAD_US, PAUSE_MARKER_COLOR,
-  type HybridDeps,
+  type HybridDeps, type PathFacts,
 } from '../hybrids'
 import { resolvePauseSubject } from '../pauseSubject'
 import { applyWorkspacePathsEvent } from '../jobs-writeback'
@@ -41,7 +41,7 @@ function twoCuePayload() {
 }
 
 /** Build HybridDeps with a fake compute + spies; `workspaceDir` is overridable. */
-function makeDeps(actor: ActorHandle, opts: { workspaceDir?: string | null; fileContent?: string } = {}): HybridDeps & {
+function makeDeps(actor: ActorHandle, opts: { workspaceDir?: string | null; fileContent?: string; statPath?: PathFacts | null } = {}): HybridDeps & {
   _probeMedia: ReturnType<typeof vi.fn>
   _hashMediaSource: ReturnType<typeof vi.fn>
   _parseSubtitles: ReturnType<typeof vi.fn>
@@ -71,6 +71,8 @@ function makeDeps(actor: ActorHandle, opts: { workspaceDir?: string | null; file
     enqueueWorkspaceCopy,
     workspaceDir: () => opts.workspaceDir ?? null,
     readFile,
+    // A regular, readable file unless a test says what else the path is.
+    statPath: () => (opts.statPath === undefined ? { kind: 'file', readable: true } : opts.statPath),
     snapshotComposition: () => root(actor.snapshot()),
   }
   return Object.assign(deps, {
@@ -138,6 +140,75 @@ describe('runHybrid: import_media', () => {
     const deps = makeDeps(actor, { workspaceDir: null })
     await runHybrid('import_media', { path: 'C:/x.mp4' }, deps)
     expect(deps._enqueueWorkspaceCopy).not.toHaveBeenCalled()
+  })
+
+  // Audit D21: a folder passed the stat-only probe, landed a pool row with a
+  // `pending-` hash and null metadata, and only then died in the hash pass with
+  // the OS's locale text. The path is judged first, by name, before any write.
+  describe('what the path IS is decided before anything is written', () => {
+    async function refused(deps: ReturnType<typeof makeDeps>, path = 'C:/clips'): Promise<string> {
+      let message = ''
+      try { await runHybrid('import_media', { path }, deps) } catch (e) { message = (e as Error).message }
+      expect(message, 'import_media was expected to refuse').not.toBe('')
+      expect(deps._probeMedia, 'nothing is probed').not.toHaveBeenCalled()
+      expect(deps._hashMediaSource, 'nothing is hashed').not.toHaveBeenCalled()
+      return message
+    }
+
+    it('a directory is refused naming the path and asking for one file', async () => {
+      const actor = freshActor()
+      const deps = makeDeps(actor, { statPath: { kind: 'directory', readable: true } })
+      const message = await refused(deps)
+      expect(message).toContain('C:/clips')
+      expect(message).toContain('is a directory')
+      expect(message).toContain('ONE media file')
+      expect(Object.keys(actor.snapshot().media_pool)).toEqual([])
+    })
+
+    it('a missing path is refused as missing, not as access denied', async () => {
+      const deps = makeDeps(freshActor(), { statPath: null })
+      const message = await refused(deps, 'C:/gone.mp4')
+      expect(message).toContain('C:/gone.mp4')
+      expect(message).toContain('does not exist')
+    })
+
+    it('an unreadable file is refused naming permissions', async () => {
+      const deps = makeDeps(freshActor(), { statPath: { kind: 'file', readable: false } })
+      expect(await refused(deps, 'C:/locked.mp4')).toContain('not readable')
+    })
+
+    it('a subtitle path is judged the same way — readFile never sees a missing .srt', async () => {
+      const deps = makeDeps(freshActor(), { statPath: null, fileContent: TWO_CUE_SRT })
+      let message = ''
+      try { await runHybrid('import_media', { path: 'C:/gone.srt' }, deps) } catch (e) { message = (e as Error).message }
+      expect(message).toContain('does not exist')
+      expect(deps._readFile).not.toHaveBeenCalled()
+    })
+
+    it('a hash pass that fails rolls the provisional row back and names the path', async () => {
+      const actor = freshActor()
+      const deps = makeDeps(actor)
+      deps._hashMediaSource.mockImplementation(async () => { throw new Error('open C:/x.mp4: os error 5') })
+      let message = ''
+      try { await runHybrid('import_media', { path: 'C:/x.mp4' }, deps) } catch (e) { message = (e as Error).message }
+      expect(message).toContain('C:/x.mp4')
+      expect(message).toContain('os error 5')
+      expect(message).toContain('rolled back')
+      // The failure mode this exists for: no `pending-…` row survives the failure.
+      expect(actor.snapshot().media_pool[MID]).toBeUndefined()
+      expect(deps._enqueueDerivatives).not.toHaveBeenCalled()
+    })
+
+    it('a probe that fails has written nothing, and the message says which step failed', async () => {
+      const actor = freshActor()
+      const deps = makeDeps(actor)
+      deps._probeMedia.mockImplementation(async () => { throw new Error('not a media container') })
+      let message = ''
+      try { await runHybrid('import_media', { path: 'C:/x.bin' }, deps) } catch (e) { message = (e as Error).message }
+      expect(message).toContain('probing C:/x.bin failed')
+      expect(message).toContain('not a media container')
+      expect(Object.keys(actor.snapshot().media_pool)).toEqual([])
+    })
   })
 
   it('branches on a subtitle extension WITHOUT probing media (routes to the subtitle path)', async () => {

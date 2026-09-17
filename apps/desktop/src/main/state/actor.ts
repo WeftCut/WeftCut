@@ -629,9 +629,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
   }
   // ── remove_media — HYBRID. MediaNotFound → MediaInUse
   //    (when referenced && !force) → unused path (validate probe BEFORE broadcast,
-  //    durable, 1 broadcast id) | force-cascade (RAW inline layer removal +
-  //    commit, 1 op_id, undoable). The force path must NOT reuse applyDeleteLayer
-  //    (no empty-track prune / no link cleanup). ──
+  //    durable, 1 broadcast id) | force-cascade (applyDeleteLayer per referencing
+  //    layer + commit, 1 op_id, undoable). The cascade IS delete_layers' delete:
+  //    drop from links (dissolve below two), prune the lane it empties, autofit.
+  //    A bare splice used to leave a link with dangling members behind, so a
+  //    forced removal of an auto-paired video+audio pair died in validate — the
+  //    one thing the MediaInUse refusal had just told the agent to do (audit
+  //    D22). A locked lane refuses as TrackLocked, as delete_layers would. ──
   function removeMedia(id: Uuid, force: boolean): void {
     const cur = current()
     if (!(id in cur.media_pool)) throw new CommandFailure({ error: 'MediaNotFound', media: id })
@@ -647,12 +651,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     }
     const affected: EntityRef[] = referencing.map((l) => ({ kind: 'Layer', id: l }))
     commit(removedMediaSummary(id, referencing.length), affected, { kind: 'Coarse' }, (d) => {
-      for (const layerId of referencing) {
-        for (const { track: t } of eachLayer(d)) {
-          const idx = t.layers.findIndex((l) => l.id === layerId)
-          if (idx >= 0) { t.layers.splice(idx, 1); break }
-        }
-      }
+      for (const layerId of referencing) applyDeleteLayer(d, layerId)
       delete d.media_pool[id]
     })
   }
@@ -1583,6 +1582,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
         const srcIn = parseNumOpt(spec.src_in_us, 'src_in_us') ?? null
         const srcOut = parseNumOpt(spec.src_out_us, 'src_out_us') ?? null
         const kind = current().media_pool[media]?.kind
+        // The wet arm's order: an id that names nothing is MediaNotFound before
+        // any rule about what the media is.
+        if (kind === undefined) throw new McpArgError(mapCommandError({ error: 'MediaNotFound', media }).message, 'media_id')
         // The wet arm's media-kind refusal, so a rehearsal predicts it instead
         // of reporting a clip that the real call would reject. It throws rather
         // than failing one op: the batch is being planned, and every later op
@@ -1600,7 +1602,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
       case 'add_audio_layer': {
         const media = parseUuid(spec.media_id, 'media_id')
         const item = current().media_pool[media]
-        if (item !== undefined && item.kind !== 'Audio' && !(item.kind === 'Video' && item.metadata.audio != null))
+        if (item === undefined) throw new McpArgError(mapCommandError({ error: 'MediaNotFound', media }).message, 'media_id')
+        if (item.kind !== 'Audio' && !(item.kind === 'Video' && item.metadata.audio != null))
           throw new McpArgError(`media ${media} carries no audio (kind ${item.kind}${item.kind === 'Video' ? ', no audio stream' : ''}), so there is nothing for an Audio layer to play`, 'media_id')
         const base = audioParams(media, parseNum(spec.src_in_us, 'src_in_us'), parseNum(spec.src_out_us, 'src_out_us'))
         const params = spec.role === undefined || spec.role === null ? base : { ...base, role: parseRole(spec.role) as AudioRole }
@@ -1687,17 +1690,22 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const t1 = p.t_end_us as number
           const snap = current()
           const item = snap.media_pool[media]
+          // An id that names nothing is MediaNotFound FIRST. It used to fall
+          // through to the source-window rule and report "src_in_us and
+          // src_out_us are required for Video media <id>" about a media that
+          // does not exist (audit D17).
+          if (item === undefined) return { ok: false, error: mapCommandError({ error: 'MediaNotFound', media }, name) }
           // Audio-only media used to fall through to videoClipParams and commit
           // a VideoClip over an mp3: it draws nothing, and the mixer folds only
           // Audio layers (native/src/audio/mix.rs), so it is silent too — a
           // success report for a clip that neither shows nor plays. Name the
           // tool that does place it instead.
-          if (item?.kind === 'Audio' || item?.kind === 'Subtitle') {
+          if (item.kind === 'Audio' || item.kind === 'Subtitle') {
             return { ok: false, error: { code: 'invalid_params', message: item.kind === 'Audio'
               ? `media ${media} is audio-only: a visual layer over it would draw nothing, and the mixer reads Audio layers only, so it would be silent as well. Use add_audio_layer with the same track, span and source window.`
               : `media ${media} is a subtitle document, not a picture. Use apply_subtitles to lay its cues onto the caption tracks, or add_text_layer for a single title.` } }
           }
-          if (item?.kind === 'Image') {
+          if (item.kind === 'Image') {
             const imageId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, imageOverlayParams(media), t0, t1))
             return { ok: true, result: toolRecord(addedVideo(imageId, null, null, p)) }
           }
@@ -1708,7 +1716,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             return { ok: false, error: { code: 'invalid_params', message: `src_in_us and src_out_us are required for Video media ${media}: they are the in/out points in the source; only an Image may omit them` } }
           }
           const vParams = videoClipParams(media, srcIn, srcOut)
-          const shouldPair = (snap.settings.auto_pair_audio_on_import === true) && (item?.kind === 'Video') && (item.metadata.audio != null)
+          const shouldPair = (snap.settings.auto_pair_audio_on_import === true) && (item.kind === 'Video') && (item.metadata.audio != null)
           if (!shouldPair) {
             const videoId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, vParams, t0, t1))
             return { ok: true, result: toolRecord(addedVideo(videoId, null, null, p)) }
@@ -1769,11 +1777,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
           checkTrackInComposition(track, p.composition_id as string | null)
           const media = p.media as string
           const item = current().media_pool[media]
+          if (item === undefined) return { ok: false, error: mapCommandError({ error: 'MediaNotFound', media }, name) }
           // A pool item with no audio stream cannot be read as sound. Refuse it
           // HERE with the media kind named: the validator downstream only knows
           // that a source range does not fit, which reads as an arithmetic
           // mistake rather than as the wrong file.
-          if (item !== undefined && item.kind !== 'Audio' && !(item.kind === 'Video' && item.metadata.audio != null)) {
+          if (item.kind !== 'Audio' && !(item.kind === 'Video' && item.metadata.audio != null)) {
             return { ok: false, error: { code: 'invalid_params', message: `media ${media} carries no audio (kind ${item.kind}${item.kind === 'Video' ? ', no audio stream' : ''}), so there is nothing for an Audio layer to play. A picture goes on the timeline with add_video_layer; a subtitle document with apply_subtitles.` } }
           }
           const role = (p.role as AudioRole | null) ?? undefined

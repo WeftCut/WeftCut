@@ -10,6 +10,7 @@
 import type { ActorHandle } from './actor'
 import type { AudioParams, Composition, Layer, MediaItem, Rgba, VideoClipParams } from './model'
 import { eachLayer, rootComposition } from './model'
+import { McpArgError } from './mcp-commands'
 import { parseDiscardSegments } from './mutations/split'
 import { playsNoSoundError, resolvePauseSubject } from './pauseSubject'
 import { snapFrameRound } from './snap'
@@ -114,9 +115,19 @@ export type HybridDeps = {
   workspaceDir: () => string | null
   /** node:fs readFile (utf8) — for the subtitle hybrid. */
   readFile: (p: string) => string
+  /** node:fs stat, folded to what `import_media` refuses on: what the path IS,
+   *  and whether this process may read it. `null` when nothing is there. */
+  statPath: (p: string) => PathFacts | null
   /** Current composition geometry — for caption layout / speech placement. */
   snapshotComposition: () => { width: number; height: number; duration_us: number }
 }
+
+/** What a stat says about a path, in the three words `import_media` cares
+ *  about. `other` is a device, socket or the like — a stat succeeded, and it is
+ *  still nothing a media file can be. */
+export type PathFacts = { kind: 'file' | 'directory' | 'other'; readable: boolean }
+
+const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 /** Return the id of the topmost (last) track, or create a new "Voiceover"
  *  track and return its id. "Topmost" = last in the `tracks` array. */
@@ -766,6 +777,17 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
   switch (tool) {
     case 'import_media': {
       const path = args.path as string
+      // Stat FIRST. The probe is stat-only when ffprobe is absent, so a folder
+      // used to pass it, land a pool row with null metadata and a pending
+      // hash, and only then die in the hash pass with the OS's own locale text
+      // (audit D21). What the path IS is decided here, by name, before any
+      // read or write — and for the subtitle branch too, whose readFile would
+      // otherwise be the one to report a missing file.
+      const facts = deps.statPath(path)
+      if (facts === null) throw new McpArgError(`path ${path} does not exist, or is not reachable from this machine — import_media takes the absolute path of ONE media file (project://media lists what is already imported)`, 'path')
+      if (facts.kind === 'directory') throw new McpArgError(`path ${path} is a directory — import_media takes ONE media file; call it once per file inside`, 'path')
+      if (facts.kind !== 'file') throw new McpArgError(`path ${path} is not a regular file — import_media takes a media file`, 'path')
+      if (!facts.readable) throw new McpArgError(`path ${path} is not readable by this process — check its permissions, then retry`, 'path')
       // Subtitles are CONSUMED into a caption track (not pooled into the media
       // pool). Read the file, derive a label from the filename, hand off to
       // applySubtitleBody (format null → sniff from body), and return the BARE
@@ -777,8 +799,10 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
         return (await applySubtitleBody(body, null, label, deps)).track_id
       }
       // Insert the probed item FIRST so the clip appears in the timeline
-      // immediately.
-      const item = JSON.parse(await deps.compute.probeMedia(path)) as MediaItem
+      // immediately. A probe that fails has written nothing; it says so.
+      let item: MediaItem
+      try { item = JSON.parse(await deps.compute.probeMedia(path)) as MediaItem }
+      catch (e) { throw new Error(`import_media: probing ${path} failed: ${errText(e)}. Nothing was imported`) }
       const r = deps.actor.dispatch('add_media_item', { media: item })
       if (!r.ok) throw new Error(JSON.stringify(r.error))
       // Compute the REAL content hash (a lightweight standalone read pass), set it
@@ -786,7 +810,15 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       // cache key and no derivative ever touches a pending alias (ADR 0007
       // superseded). One extra full read of the source, accepted to start
       // derivatives promptly instead of waiting for the workspace copy.
-      const hash = await deps.compute.hashMediaSource(path)
+      let hash: string
+      try { hash = await deps.compute.hashMediaSource(path) }
+      catch (e) {
+        // The row is provisional until its hash lands, so a read that fails
+        // here leaves nothing behind. `force: false`: were a layer already
+        // placed on it, the row stays and the error still names the failure.
+        deps.actor.dispatch('remove_media', { media: item.id, force: false })
+        throw new Error(`import_media: reading ${path} for its content hash failed: ${errText(e)}. The provisional pool row was rolled back; nothing was imported`)
+      }
       const hr = deps.actor.dispatch('set_media_hash', { media: item.id, file_hash_blake3: hash })
       // Benign if the media was removed during hashing — nothing left to enqueue.
       if (!hr.ok) return item.id

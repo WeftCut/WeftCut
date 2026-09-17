@@ -1666,6 +1666,72 @@ describe('media-pool mutations dispatch', () => {
     expect(root(a.snapshot()).tracks[0].layers.length, 'force cascade is undoable').toBe(1)
     expect(a.snapshot().media_pool[MID], 'undo restores media').toBeDefined()
   })
+
+  // Audit D22: the forced cascade spliced the layers out bare, so a linked
+  // video+audio pair over one media left a link with two dangling members and
+  // the commit died in validate — the very edit the MediaInUse refusal names.
+  // The cascade is now delete_layers' delete, link maintenance included.
+  describe('remove_media force is delete_layers\' delete, links and lanes included', () => {
+    const AV = '00000000-0000-0000-0000-0000000000ab'
+    function actorWithAvMedia() {
+      const gen = seededGen()
+      const a = createActor({ initial: blankProject(gen, 'm'), idGen: gen, clock: () => '<TS>' })
+      a.dispatch('add_media', { id: AV, kind: 'Video', duration_us: 4_000_000, with_audio: true })
+      return a
+    }
+    const idOf = (r: ReturnType<ActorHandle['dispatch']>): string => {
+      if (!r.ok) throw new Error(JSON.stringify(r.error))
+      return r.value as string
+    }
+    const allLayers = (a: ActorHandle) => root(a.snapshot()).tracks.flatMap((t) => t.layers.map((l) => l.id))
+
+    it('a linked video+audio pair over the SAME media: both layers go, the link goes, one clean commit', () => {
+      const a = actorWithAvMedia()
+      const tA = root(a.snapshot()).tracks[0].id
+      const v = idOf(a.dispatch('add_layer', { track: tA, kind: 'video', media: AV, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }))
+      const au = idOf(a.dispatch('add_layer', { track: tA, kind: 'audio', media: AV, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }))
+      idOf(a.dispatch('links_create', { layers: [v, au] }))
+      expect(root(a.snapshot()).links).toHaveLength(1)
+      const r = a.dispatch('remove_media', { media: AV, force: true })
+      expect(r.ok, r.ok ? '' : JSON.stringify(r.error)).toBe(true)
+      expect(allLayers(a)).toEqual([])
+      expect(root(a.snapshot()).links).toEqual([])
+      expect(a.snapshot().media_pool[AV]).toBeUndefined()
+      a.dispatch('undo', {})
+      expect(allLayers(a).sort()).toEqual([v, au].sort())
+      expect(root(a.snapshot()).links, 'undo restores the link too').toHaveLength(1)
+    })
+
+    it('a link shared with an unrelated layer dissolves below two; the partner stays', () => {
+      const a = actorWithAvMedia()
+      const [tA, tB] = root(a.snapshot()).tracks.map((t) => t.id)
+      const v = idOf(a.dispatch('add_layer', { track: tA, kind: 'video', media: AV, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }))
+      const title = idOf(a.dispatch('add_layer', { track: tB, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }))
+      idOf(a.dispatch('links_create', { layers: [v, title] }))
+      expect(a.dispatch('remove_media', { media: AV, force: true }).ok).toBe(true)
+      expect(allLayers(a)).toEqual([title])
+      expect(root(a.snapshot()).links).toEqual([])
+    })
+
+    it('the transient lane the cascade empties is pruned, as after delete_layers', () => {
+      const a = actorWithAvMedia()
+      const lane = idOf(a.dispatch('add_track', {}))
+      idOf(a.dispatch('add_layer', { track: lane, kind: 'video', media: AV, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }))
+      expect(a.dispatch('remove_media', { media: AV, force: true }).ok).toBe(true)
+      expect(root(a.snapshot()).tracks.map((t) => t.id)).not.toContain(lane)
+    })
+
+    it('a referencing layer on a locked lane refuses as TrackLocked, and the media stays', () => {
+      const a = actorWithAvMedia()
+      const tA = root(a.snapshot()).tracks[0].id
+      idOf(a.dispatch('add_layer', { track: tA, kind: 'video', media: AV, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }))
+      expect(a.dispatch('update_track_flags', { track: tA, patch: { locked: true } }).ok).toBe(true)
+      const r = a.dispatch('remove_media', { media: AV, force: true })
+      expect(!r.ok && r.error.error).toBe('TrackLocked')
+      expect(a.snapshot().media_pool[AV]).toBeDefined()
+      expect(allLayers(a)).toHaveLength(1)
+    })
+  })
 })
 
 describe('dispatch: attribute-panel timing/envelope ops', () => {

@@ -27,7 +27,7 @@ const MID = '00000000-0000-0000-0000-0000000000aa'
 const NOWHERE = '00000000-0000-7000-8000-00000000dead'
 const RUST_CATALOG = readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 'utf8')
 
-function tsHostStub(overrides: { compute?: Record<string, unknown>; motifTool?: (name: string, args: Record<string, unknown>) => unknown } = {}) {
+function tsHostStub(overrides: { compute?: Record<string, unknown>; motifTool?: (name: string, args: Record<string, unknown>) => unknown; statPath?: () => { kind: 'file' | 'directory' | 'other'; readable: boolean } | null } = {}) {
   const idGen = uuidV7Gen()
   const actor = createActor({ initial: blankProject(idGen, 'errors'), idGen, clock: () => '<TS>' })
   const hybridDeps = {
@@ -42,6 +42,7 @@ function tsHostStub(overrides: { compute?: Record<string, unknown>; motifTool?: 
     enqueueWorkspaceCopy: vi.fn(async () => {}),
     workspaceDir: () => null,
     readFile: () => '',
+    statPath: overrides.statPath ?? (() => ({ kind: 'file' as const, readable: true })),
     snapshotComposition: () => root(actor.snapshot()),
   }
   return {
@@ -64,6 +65,16 @@ type ErrResult = { isError: true; content: Array<{ type: 'text'; text: string }>
 const asErr = (r: unknown): ErrResult => { expect(isToolError(r), JSON.stringify(r)).toBe(true); return r as ErrResult }
 
 describe('handleCallTool — every route answers a refusal as an isError result', () => {
+  it("a hybrid arm's own argument refusal (import_media of a directory) is invalid_params naming the path, and nothing was probed or written", async () => {
+    const host = tsHostStub({ statPath: () => ({ kind: 'directory', readable: true }) })
+    const out = asErr(await handleCallTool(fakeBackend(), () => host, 'import_media', { path: 'C:/clips' }))
+    expect(out.structuredContent.code).toBe('invalid_params')
+    expect(out.content[0].text).toContain('C:/clips')
+    expect(out.content[0].text).toContain('is a directory')
+    expect(host.hybridDeps.compute.probeMedia).not.toHaveBeenCalled()
+    expect(Object.keys(host.actor.snapshot().media_pool)).toEqual([])
+  })
+
   it('a TS parser refusal (bad argument) is a result, with the code and the message mirrored in structuredContent', async () => {
     const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub(), 'move_layer', {}))
     expect(out.content[0].text).toContain('layer_id not a UUID')

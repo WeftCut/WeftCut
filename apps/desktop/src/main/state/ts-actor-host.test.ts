@@ -68,6 +68,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       compute: { probeMedia: async () => '{}', hashMediaSource: async () => 'h', parseSubtitles: async () => '{}', synthesizeSpeechCompute: async () => '{}' },
       enqueueWorkspaceCopy: async () => {},
       readFile: (p: string) => memFs.readFile(p),
+      statPath: () => ({ kind: 'file' as const, readable: true }),
       workspaceDir: () => wsDir,
       appSettings: createAppSettingsStore({ fs: memFs, path: '/cfg/app_settings.json', dir: '/cfg' }),
       viewState: createViewStateStore({ fs: memFs, join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/') }),

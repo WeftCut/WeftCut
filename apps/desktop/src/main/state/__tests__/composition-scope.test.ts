@@ -170,7 +170,7 @@ describe('composition scope — hybrids', () => {
         reduceShotReport: (reportJson: string) => reportJson,
         shotDefaultOpts: () => ({ sensitivity: 0.4, min_shot_us: 500_000 }),
       },
-      enqueueDerivatives: unused, enqueueWorkspaceCopy: unused, workspaceDir: unused, readFile: unused,
+      enqueueDerivatives: unused, enqueueWorkspaceCopy: unused, workspaceDir: unused, readFile: unused, statPath: unused,
       snapshotComposition: unused,
     }
   }

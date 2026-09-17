@@ -71,6 +71,7 @@ function tsHostStub(compute: Record<string, unknown> = {}) {
     enqueueWorkspaceCopy: vi.fn(async () => {}),
     workspaceDir: () => null,
     readFile: () => '',
+    statPath: () => ({ kind: 'file' as const, readable: true }),
     snapshotComposition: () => root(actor.snapshot()),
   }
   return {

@@ -38,6 +38,7 @@ function makeInMemoryDeps() {
     compute: { probeMedia: async () => '{}', hashMediaSource: async () => 'h', parseSubtitles: async () => '{}', synthesizeSpeechCompute: async () => '{}' },
     enqueueWorkspaceCopy: async () => {},
     readFile: (p: string) => memFs.readFile(p),
+    statPath: () => ({ kind: 'file' as const, readable: true }),
     workspaceDir: () => wsDir,
   }
   return deps

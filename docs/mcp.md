@@ -313,8 +313,8 @@ differ only in who is watching. `update_layer`'s `t_start_us`/`t_end_us` snap
 like every other placing tool's rather than being refused with `snap_to`.
 
 Media + tracks:
-- `import_media { path }` → `{ media_id, kind, label, path, duration_us, width, height, has_audio }`; a subtitle document (`.srt`/`.vtt`/`.ass`) is consumed into a caption track instead and answers `{ caption_track_id, cues }`
-- `delete_media { media_id, force? }`
+- `import_media { path }` → `{ media_id, kind, label, path, duration_us, width, height, has_audio }`; a subtitle document (`.srt`/`.vtt`/`.ass`) is consumed into a caption track instead and answers `{ caption_track_id, cues }`. The path is stat'd first: a directory, a missing path or an unreadable file is refused by name before anything is written, and a read that fails after the pool row landed rolls that row back — a failed import leaves no `pending-` row behind
+- `delete_media { media_id, force? }` — with `force`, the referencing layers go through the same cascade `delete_layers` runs (links dissolve below two, an emptied transient lane is pruned, a locked lane refuses), so a forced removal of an auto-paired video+audio pair is one clean commit
 - `add_track { label? }` → `{ track_id, composition_id, label, role, index, enabled, locked, layers }` (tracks are kind-agnostic — any layer kind can be placed on any track)
 - `delete_track { track_id, force? }`
 - `rename_track { track_id, label? }` — any track, reserved ones included; `label: null` (or blank) clears it back to the derived name

@@ -812,6 +812,14 @@ app.whenReady().then(async () => {
     compute: computeFacade,
     enqueueWorkspaceCopy: (id, p) => backend!.enqueueWorkspaceCopy(id, p),
     readFile: (p) => fs.readFileSync(p, 'utf8'),
+    statPath: (p) => {
+      try {
+        const st = fs.statSync(p)
+        let readable = true
+        try { fs.accessSync(p, fs.constants.R_OK) } catch { readable = false }
+        return { kind: st.isFile() ? 'file' : st.isDirectory() ? 'directory' : 'other', readable }
+      } catch { return null }
+    },
     workspaceDir: () => wsCache,
     emitLog: (entry) => { void backend!.invoke('log_emit', JSON.stringify({ input: entry })) },
     listMotifs: () => backend!.invoke('list_motifs', '{}'),

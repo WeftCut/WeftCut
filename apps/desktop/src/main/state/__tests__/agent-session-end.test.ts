@@ -10,6 +10,7 @@ function makeDeps(overrides: { send?: (event: string, payload: unknown) => void 
     compute: { probeMedia: async () => '{}', hashMediaSource: async () => 'h', parseSubtitles: async () => '{}', synthesizeSpeechCompute: async () => '{}' },
     enqueueWorkspaceCopy: async () => {},
     readFile: () => '',
+    statPath: () => ({ kind: 'file' as const, readable: true }),
     workspaceDir: () => null as string | null,
     ...overrides,
   }

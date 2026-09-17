@@ -25,6 +25,7 @@ function tsHostStub() {
     enqueueWorkspaceCopy: vi.fn(async () => {}),
     workspaceDir: () => null,
     readFile: () => '',
+    statPath: () => ({ kind: 'file' as const, readable: true }),
     snapshotComposition: () => root(actor.snapshot()),
   }
   return { actor, mcpCall: (name: string, argsJson: string) => actor.mcpCall(name, argsJson), hybridDeps, handleInvoke: async () => null, start: () => {}, stop: () => {}, beginAgentSessionSlot: () => {} } as any

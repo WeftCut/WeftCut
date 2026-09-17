@@ -1635,7 +1635,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     } },
   // ── table-exec: media ────────────────────────────────────────────────────
   { name: 'delete_media', exec: 'table',
-    description: "Remove a media item. Rejects if any layer references it unless force=true. With force=true, also deletes the referencing layers in one atomic commit.",
+    description: "Remove a media item. Rejects if any layer references it unless force=true. With force=true, also deletes the referencing layers in one atomic commit, exactly as delete_layers would: their links dissolve below two members, a transient lane they empty is pruned, a locked lane refuses as TrackLocked.",
     inputSchema: { type: 'object', properties: { media_id: { type: 'string' }, force: { type: ['boolean', 'null'] } }, required: ['media_id'] },
     parseArgs: (a) => ({ op: 'remove_media', args: { media: parseUuid(a.media_id, 'media_id'), force: parseBoolOpt(a.force, 'force', false) } }) },
   // ── table-exec: history ──────────────────────────────────────────────────

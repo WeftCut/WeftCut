@@ -48,6 +48,8 @@ export interface TsActorHostDeps {
   enqueueWorkspaceCopy: (mediaId: string, sourcePath: string) => Promise<void>
   /** node:fs readFile (utf8) — for the subtitle hybrid. */
   readFile: (p: string) => string
+  /** node:fs stat folded to `PathFacts` — `import_media` refuses on it before any write. */
+  statPath: HybridDeps['statPath']
   /** Current workspace directory (cached from backend). Null before first open/newWorkspace. */
   workspaceDir: () => string | null
   /** Emit a diagnostic LogBus pin-row via the Rust log surface.
@@ -246,6 +248,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     enqueueWorkspaceCopy: deps.enqueueWorkspaceCopy,
     workspaceDir: deps.workspaceDir,
     readFile: deps.readFile,
+    statPath: deps.statPath,
     snapshotComposition: () => rootComposition(actor.snapshot()),
   }
 

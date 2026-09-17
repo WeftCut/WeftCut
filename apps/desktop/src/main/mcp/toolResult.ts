@@ -13,7 +13,7 @@
 // (`error`, ids, `options[]`). The text stays complete on its own — the rule
 // in docs/mcp.md § Error model still holds, only the carrier changed.
 import type { ServerResult } from '@modelcontextprotocol/sdk/types.js'
-import { mapCommandError, type McpErrorCode, type McpToolErrorJson } from '../state/mcp-commands.js'
+import { mapCommandError, McpArgError, type McpErrorCode, type McpToolErrorJson } from '../state/mcp-commands.js'
 import type { CommandError } from '../state/errors.js'
 
 export interface ToolErrorResult {
@@ -69,14 +69,17 @@ const ARG_FAULT = /\b(missing field|invalid type|unknown field|unknown variant|i
 
 /** The refusal a THROWN error stands for.
  *
- *  Three sources reach here. A hybrid arm throws `Error(JSON.stringify(commandError))`
- *  — that is a `CommandError` and gets the same mapper every table tool gets, so
+ *  Four sources reach here. A hybrid arm's own argument refusal is an
+ *  `McpArgError`, the class every TS parser throws, and carries its code. A
+ *  hybrid arm throws `Error(JSON.stringify(commandError))` — that is a
+ *  `CommandError` and gets the same mapper every table tool gets, so
  *  `RippleInsideHole` reads the same from `remove_pauses` as from `delete_layers`.
  *  A napi compute throws serde text or an OS message. A thrown envelope error
  *  (`unwrapEnvelope`'s `{ code: number, message, data }`) maps its number back.
  *  `fallback` is the code for a plain message: `internal` unless the route knows
  *  its failures are the caller's (the motif store's are). */
 export function thrownToToolError(err: unknown, fallback: McpErrorCode = 'internal', tool?: string): McpToolErrorJson {
+  if (err instanceof McpArgError) return err.toJson()
   const e = err as { code?: unknown; message?: unknown; data?: unknown } | null
   const raw = typeof e?.message === 'string' ? e.message : String(err)
   if (typeof e?.code === 'number') {
