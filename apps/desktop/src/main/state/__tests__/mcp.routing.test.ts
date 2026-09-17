@@ -3,7 +3,7 @@
 // routes tool names → mutations (valid calls succeed + state changes as expected)
 // and rejects malformed args with a structured error envelope (no throw).
 // Coverage:
-// table-exec tools (add_track, delete_layer, trim_layer, move_layer,
+// table-exec tools (add_track, delete_layers, trim_layer, move_layer,
 // links_create, set_role_gain, undo/redo) and dedicated-exec tools
 // (add_color_layer, add_marker, split_layer, set_keyframe, add_track).
 import { describe, it, expect } from 'vitest'
@@ -253,16 +253,16 @@ describe('MCP adapter routing — add_track (table)', () => {
   })
 })
 
-// ── Table-exec: delete_layer ──────────────────────────────────────────────────
+// ── Table-exec: delete_layers ─────────────────────────────────────────────────
 
-describe('MCP adapter routing — delete_layer (table)', () => {
+describe('MCP adapter routing — delete_layers (table)', () => {
   it('valid call routes and the layer is removed from state', () => {
     const a = freshActor()
     const trackId = aRollId(a)
     const layerId = addColorLayerMcp(a, trackId)
 
     expect(totalLayerCount(a)).toBe(1)
-    const r = a.mcpCall('delete_layer', JSON.stringify({ layer_id: layerId }))
+    const r = a.mcpCall('delete_layers', JSON.stringify({ layer_ids: [layerId] }))
     expect(r.ok).toBe(true)
     expect(totalLayerCount(a)).toBe(0)
   })
@@ -272,7 +272,7 @@ describe('MCP adapter routing — delete_layer (table)', () => {
     const trackId = aRollId(a)
     addColorLayerMcp(a, trackId)
 
-    const r = a.mcpCall('delete_layer', JSON.stringify({ layer_id: 'bad-id' }))
+    const r = a.mcpCall('delete_layers', JSON.stringify({ layer_ids: ['bad-id'] }))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')

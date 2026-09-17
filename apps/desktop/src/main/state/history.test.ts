@@ -289,8 +289,8 @@ describe('History', () => {
     // predecessor's — the double-flatten the memo removes.
     const ghost = [{ kind: 'Layer' as const, id: 'ghost' }]
     for (let i = 0; i < 3; i++) {
-      h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted clip',
-        label_key: HISTORY_SUMMARY.layerDelete.key, affected: ghost, snapshot: counted(base) })
+      h.record({ op_id: gen(), actor: U, timestamp: '<TS>', summary: 'Deleted clips',
+        label_key: HISTORY_SUMMARY.layerDeleteMulti.key, affected: ghost, snapshot: counted(base) })
     }
 
     reads = 0

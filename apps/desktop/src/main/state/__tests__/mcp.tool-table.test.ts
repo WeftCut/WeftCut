@@ -8,16 +8,16 @@ import { root } from './fixtures/project'
 const EXPECTED_TOOL_NAMES = new Set<string>([
   // table-exec tools — counts are asserted below, not duplicated in labels.
   'set_position', 'translate_path',
-  'add_track', 'remove_track', 'rename_track', 'duplicate_layer', 'paste_layers', 'move_track', 'set_track_flags',
+  'add_track', 'remove_track', 'rename_track', 'paste_layers', 'move_track', 'set_track_flags',
   'update_layer', 'set_layers_enabled', 'update_layer_params', 'set_scale_linked',
-  'move_layer', 'restack_layer', 'trim_layer', 'delete_layer', 'delete_layers', 'ripple_delete_layers', 'ripple_delete_gap',
+  'move_layer', 'restack_layer', 'trim_layer', 'delete_layers', 'ripple_delete_gap',
   'separate_audio_to_new_track', 'restyle_captions',
   'links_create', 'links_dissolve', 'links_add_members', 'links_remove_members', 'links_rename',
   'groups_create', 'groups_add_members', 'move_layers_to_composition', 'add_group_layer', 'groups_ungroup', 'groups_rename', 'delete_composition',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'add_transition', 'update_transition', 'remove_transition',
   'update_composition', 'fit_composition_to_layers', 'set_project_settings',
-  'update_marker', 'remove_marker', 'attach_marker', 'detach_marker',
+  'update_marker', 'remove_marker', 'set_marker_anchor',
   'remove_media', 'undo', 'redo', 'jump_to', 'delete_checkpoint',
   'set_role_gain', 'set_role_flags',
   // dedicated-exec tools — auto_split_by_shot and remove_pauses are TS-owned
@@ -26,7 +26,7 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   'add_color_layer', 'add_video_layer', 'add_audio_layer', 'add_text_layer', 'split_layer', 'add_marker',
   'apply_transcripts', 'correct_caption_text',
   'add_motif_layer',
-  'lock_history', 'unlock_history',
+  'set_history_lock',
   'set_keyframe', 'get_param_track', 'remove_keyframe', 'retime_keyframe',
   'set_keyframe_easing', 'smooth_keyframes', 'clear_keyframes', 'set_param_track',
   'set_keyframe_tangents', 'set_extrapolation',
@@ -68,7 +68,7 @@ describe('MCP tool table projections', () => {
 
   it('dedicated-exec defs have no parseArgs', () => {
     const dedicated = MCP_TOOL_DEFS.filter((d) => d.exec === 'dedicated')
-    expect(dedicated.length).toBe(29)
+    expect(dedicated.length).toBe(28)
     for (const d of dedicated) {
       expect(d.parseArgs, `${d.name} should not have parseArgs`).toBeUndefined()
     }
@@ -76,7 +76,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(55)
+    expect(table.length).toBe(51)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }
@@ -87,8 +87,8 @@ describe('MCP tool table projections', () => {
   // updated and this drifted, leaving the agent told it could still be reverted
   // by the one path the panel makes easiest.
   const REVERT_PATHS = 'undo / redo / jump_to / restore_checkpoint'
-  it('lock_history ENUMERATES every revert path the lock actually rejects', () => {
-    const def = MCP_TOOL_DEFS.find((d) => d.name === 'lock_history')!
+  it('set_history_lock ENUMERATES every revert path the lock actually rejects', () => {
+    const def = MCP_TOOL_DEFS.find((d) => d.name === 'set_history_lock')!
     // The enumeration itself, not just a mention somewhere in the prose: an
     // agent reads the list in the parentheses to decide what is still available.
     expect(def.description).toContain(REVERT_PATHS)
@@ -97,14 +97,21 @@ describe('MCP tool table projections', () => {
     expect(def.description).toMatch(/never affects what records|does not fold/i)
   })
 
-  it('unlock_history enumerates the same paths it re-enables', () => {
-    const def = MCP_TOOL_DEFS.find((d) => d.name === 'unlock_history')!
-    expect(def.description).toContain(REVERT_PATHS)
+  // `reason` is what the user is shown in place of undo, so locking without one
+  // is refused rather than badged blank; unlocking WITH one is refused too, so a
+  // caller cannot believe it left an explanation behind.
+  it('set_history_lock gates `reason` on the direction of the write', () => {
+    const parse = MCP_TOOL_DEFS.find((d) => d.name === 'set_history_lock')!.parseDedicated!
+    expect(parse({ locked: true, reason: 'batch' })).toEqual({ locked: true, reason: 'batch' })
+    expect(parse({ locked: false })).toEqual({ locked: false, reason: null })
+    expect(() => parse({ locked: true })).toThrow(/reason/)
+    expect(() => parse({ locked: true, reason: '   ' })).toThrow(/reason/)
+    expect(() => parse({ locked: false, reason: 'done' })).toThrow(/reason/)
   })
 
-  it('shapeResult tools are the expected 9', () => {
+  it('shapeResult tools are the expected 8', () => {
     const shapers = MCP_TOOL_DEFS.filter((d) => d.shapeResult).map((d) => d.name).sort()
-    expect(shapers).toEqual(['add_effect', 'add_group_layer', 'add_track', 'add_transition', 'duplicate_layer', 'groups_create', 'links_create', 'paste_layers', 'separate_audio_to_new_track'])
+    expect(shapers).toEqual(['add_effect', 'add_group_layer', 'add_track', 'add_transition', 'groups_create', 'links_create', 'paste_layers', 'separate_audio_to_new_track'])
   })
 
   it('paste_layers / set_layers_enabled round-trip valid args and reject malformed ones', () => {
@@ -120,6 +127,40 @@ describe('MCP tool table projections', () => {
     expect(MCP_ARG_PARSERS['set_layers_enabled']({ layer_ids: [u1, u2], enabled: false }))
       .toEqual({ op: 'set_layers_enabled', args: { layers: [u1, u2], enabled: false } })
     expect(() => MCP_ARG_PARSERS['set_layers_enabled']({ layer_ids: [u1], enabled: 'no' })).toThrow()      // non-boolean
+  })
+
+  // The landing is named ONCE: `t_start_us` (absolute) or `t_offset_us` (the
+  // shift itself). Neither is a landing at all, and both name two — a caller
+  // sending both believes one of them, and the parser cannot know which.
+  it('paste_layers takes exactly one of t_start_us / t_offset_us', () => {
+    const u1 = '00000000-0000-7000-8000-000000000001'
+    expect(MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_offset_us: 2_000_000 }))
+      .toEqual({ op: 'paste_layers', args: { layers: [u1], t_offset_us: 2_000_000, target_track_id: null } })
+    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1] })).toThrow(/t_start_us/)
+    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, t_offset_us: 5 })).toThrow(/two landings/)
+    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_offset_us: 'later' })).toThrow()
+  })
+
+  // `ripple` is the whole difference between the two deletes, so it has to pick
+  // the op — a flag the parser dropped would silently lift where a ripple was asked for.
+  it('delete_layers routes on `ripple`, and rejects a non-boolean one', () => {
+    const u1 = '00000000-0000-7000-8000-000000000001'
+    expect(MCP_ARG_PARSERS['delete_layers']({ layer_ids: [u1] }).op).toBe('delete_layers')
+    expect(MCP_ARG_PARSERS['delete_layers']({ layer_ids: [u1], ripple: false }).op).toBe('delete_layers')
+    expect(MCP_ARG_PARSERS['delete_layers']({ layer_ids: [u1], ripple: true }).op).toBe('ripple_delete_layers')
+    expect(() => MCP_ARG_PARSERS['delete_layers']({ layer_ids: [u1], ripple: 'yes' })).toThrow()
+  })
+
+  // Null is the untie, and it is the ONLY way to reach `detach_marker` — an
+  // omitted `layer_id` must refuse rather than read as "no clip".
+  it('set_marker_anchor routes null to the untie and refuses an omitted layer_id', () => {
+    const m = '00000000-0000-7000-8000-00000000000a'
+    const l = '00000000-0000-7000-8000-00000000000b'
+    expect(MCP_ARG_PARSERS['set_marker_anchor']({ marker_id: m, layer_id: l }))
+      .toEqual({ op: 'attach_marker', args: { marker: m, layer: l } })
+    expect(MCP_ARG_PARSERS['set_marker_anchor']({ marker_id: m, layer_id: null }))
+      .toEqual({ op: 'detach_marker', args: { marker: m } })
+    expect(() => MCP_ARG_PARSERS['set_marker_anchor']({ marker_id: m })).toThrow(/layer_id/)
   })
 
   it('parseBoolOpt hardening: escape_link rejects non-boolean', () => {
@@ -233,7 +274,7 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     // outgoing participant: extending is impossible, but overlap needs no tail.
     const MID = '00000000-0000-7000-8000-0000000000aa'
     actor.dispatch('add_media', { id: MID, kind: 'Video', duration_us: 2_000_000 })
-    actor.dispatch('delete_layer', { layer: a1 }) // free [0,2M)
+    actor.dispatch('delete_layers', { layers: [a1] }) // free [0,2M)
     const v1 = (actor.dispatch('add_layer', { track, kind: 'video', media: MID, src_in_us: 0, src_out_us: 2_000_000, t_start_us: 0, t_end_us: 2_000_000 }) as { ok: true; value: string }).value
     const r = actor.mcpCall('add_transition', JSON.stringify({ from_layer_id: v1, to_layer_id: a2, duration_us: 1_000_000 }))
     expect(r.ok).toBe(true)
@@ -249,7 +290,7 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     const { actor, track, a1, a2 } = withCut()
     const MID = '00000000-0000-7000-8000-0000000000aa'
     actor.dispatch('add_media', { id: MID, kind: 'Video', duration_us: 2_000_000 })
-    actor.dispatch('delete_layer', { layer: a1 }) // free [0,2M)
+    actor.dispatch('delete_layers', { layers: [a1] }) // free [0,2M)
     const v1 = (actor.dispatch('add_layer', { track, kind: 'video', media: MID, src_in_us: 0, src_out_us: 2_000_000, t_start_us: 0, t_end_us: 2_000_000 }) as { ok: true; value: string }).value
     const r = actor.mcpCall('add_transition', JSON.stringify({ from_layer_id: v1, to_layer_id: a2, duration_us: 1_000_000, placement: 'extend' }))
     expect(r.ok).toBe(false)
@@ -293,7 +334,7 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     const { actor, track, a1, a2 } = withCut()
     const MID = '00000000-0000-7000-8000-0000000000ab'
     actor.dispatch('add_media', { id: MID, kind: 'Audio', duration_us: 10_000_000 })
-    actor.dispatch('delete_layer', { layer: a1 })
+    actor.dispatch('delete_layers', { layers: [a1] })
     const au = (actor.dispatch('add_layer', { track, kind: 'audio', media: MID, src_in_us: 0, src_out_us: 2_000_000, t_start_us: 0, t_end_us: 2_000_000 }) as { ok: true; value: string }).value
     const r = actor.mcpCall('add_transition', JSON.stringify({ from_layer_id: au, to_layer_id: a2, duration_us: 1_000_000 }))
     expect(r.ok).toBe(false)
@@ -378,27 +419,27 @@ describe('marker anchoring through mcpCall (the agent surface, end to end)', () 
     expect(root(actor.snapshot()).markers[0].t_us).toBe(2_000_000)
   })
 
-  it('attach_marker then detach_marker route through the table: the mark starts following, then stops on the frame it reads', () => {
+  it('set_marker_anchor ties then unties through the table: the mark starts following, then stops on the frame it reads', () => {
     const { actor, track, clip } = withClip()
     const add = addMarker(actor, {})
     expect(add.ok).toBe(true)
     if (!add.ok) return
     const markerId = add.result.content[0].text
 
-    expect(actor.mcpCall('attach_marker', JSON.stringify({ marker_id: markerId, layer_id: clip })).ok).toBe(true)
+    expect(actor.mcpCall('set_marker_anchor', JSON.stringify({ marker_id: markerId, layer_id: clip })).ok).toBe(true)
     // The tie names where the mark already sat, so attaching by itself moves nothing.
     expect(root(actor.snapshot()).markers[0]).toMatchObject({ t_us: 2_000_000, anchor: { layer: clip, src_us: 3_000_000 } })
     expect(actor.dispatch('move_layer', { layer: clip, to_track: track, t_start_us: 4_000_000 }).ok).toBe(true)
     expect(root(actor.snapshot()).markers[0].t_us).toBe(5_000_000)
 
-    expect(actor.mcpCall('detach_marker', JSON.stringify({ marker_id: markerId })).ok).toBe(true)
+    expect(actor.mcpCall('set_marker_anchor', JSON.stringify({ marker_id: markerId, layer_id: null })).ok).toBe(true)
     expect(root(actor.snapshot()).markers[0]).toMatchObject({ t_us: 5_000_000, anchor: null })
     expect(actor.dispatch('move_layer', { layer: clip, to_track: track, t_start_us: 1_000_000 }).ok).toBe(true)
     expect(root(actor.snapshot()).markers[0].t_us).toBe(5_000_000)
   })
 
   // Both are claims the tool descriptions make to the agent in so many words.
-  it('attaching an already-anchored marker replaces the tie, and detaching one that follows nothing is accepted', () => {
+  it('tying an already-anchored marker replaces the tie, and untying one that follows nothing is accepted', () => {
     const { actor, spare, clip } = withClip()
     const add = addMarker(actor, { anchor_layer_id: clip })
     expect(add.ok).toBe(true)
@@ -408,23 +449,23 @@ describe('marker anchoring through mcpCall (the agent surface, end to end)', () 
     // A second clip covering the same instant, on its own lane: the marker
     // moves its tie there rather than being refused for already having one.
     const other = (actor.dispatch('add_layer', { track: spare, kind: 'video', media: MID, src_in_us: 6_000_000, src_out_us: 8_000_000, t_start_us: 1_000_000, t_end_us: 3_000_000 }) as { ok: true; value: string }).value
-    expect(actor.mcpCall('attach_marker', JSON.stringify({ marker_id: markerId, layer_id: other })).ok).toBe(true)
+    expect(actor.mcpCall('set_marker_anchor', JSON.stringify({ marker_id: markerId, layer_id: other })).ok).toBe(true)
     expect(root(actor.snapshot()).markers[0].anchor).toEqual({ layer: other, src_us: 7_000_000 })
 
-    expect(actor.mcpCall('detach_marker', JSON.stringify({ marker_id: markerId })).ok).toBe(true)
-    // Detaching what already follows nothing is accepted rather than refused,
+    expect(actor.mcpCall('set_marker_anchor', JSON.stringify({ marker_id: markerId, layer_id: null })).ok).toBe(true)
+    // Untying what already follows nothing is accepted rather than refused,
     // and costs no history entry: the recipe leaves the draft untouched, so the
     // commit records nothing. An agent can therefore detach defensively without
     // first reading the marker to find out whether it needed to.
     const spent = actor.historyStatus().len
-    expect(actor.mcpCall('detach_marker', JSON.stringify({ marker_id: markerId })).ok).toBe(true)
+    expect(actor.mcpCall('set_marker_anchor', JSON.stringify({ marker_id: markerId, layer_id: null })).ok).toBe(true)
     expect(actor.historyStatus().len).toBe(spent)
     expect(root(actor.snapshot()).markers[0].anchor).toBeNull()
   })
 
   it('a non-uuid layer id is refused at the parser, before anything is dispatched', () => {
     const { actor } = withClip()
-    expect(() => MCP_ARG_PARSERS['attach_marker']({ marker_id: '00000000-0000-7000-8000-000000000001', layer_id: 'the beach shot' })).toThrow()
+    expect(() => MCP_ARG_PARSERS['set_marker_anchor']({ marker_id: '00000000-0000-7000-8000-000000000001', layer_id: 'the beach shot' })).toThrow()
     const r = addMarker(actor, { anchor_layer_id: 'the beach shot' })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.code).toBe('invalid_params')

@@ -7,7 +7,7 @@ status: accepted
 A ripple delete removes a set of layers and shifts everything after them
 left, on every track of the composition they live in, by exactly the span
 those layers vacated on their own tracks. It is a command the user or an
-agent names — `Shift+Delete`, *Ripple delete*, `ripple_delete_layers` — and
+agent names — `Shift+Delete`, *Ripple delete*, `delete_layers { ripple: true }` — and
 never a side effect of another edit. Bare `Delete` keeps lifting a layer and
 leaving its span empty.
 
@@ -78,8 +78,9 @@ the `/cut-pauses` recipe could only mark.
 - **Surface.** `Shift+Delete` / `Shift+Backspace`; the clip context menu, the
   Edit menu, the palette and the Quick Actions strip; with a keyframe or
   transition-chip selection the key degrades to the plain delete. For agents
-  `ripple_delete_layers { layer_ids }`, a `ripple` flag on the internal
-  multi-split, and `remove_pauses`, which the `/cut-pauses` prompt and
+  `delete_layers { layer_ids, ripple: true }` (the flag is the whole
+  difference from the lift), a `ripple` flag on the internal multi-split, and
+  `remove_pauses`, which the `/cut-pauses` prompt and
   the Pauses section's *Remove pauses* both call.
 
 ## Considered options

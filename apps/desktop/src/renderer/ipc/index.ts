@@ -1594,13 +1594,6 @@ export async function separateAudioToNewTrack(
   return invoke<string>("separate_audio_to_new_track", { layerId });
 }
 
-export async function duplicateLayer(
-  layerId: string,
-  tOffsetUs: number,
-): Promise<string> {
-  return invoke<string>("duplicate_layer", { layerId, tOffsetUs });
-}
-
 export async function pasteLayer(
   layerId: string,
   tStartUs: number,
@@ -1645,14 +1638,10 @@ export async function setLayersEnabled(
   return invoke<void>("set_layers_enabled", { layerIds, enabled });
 }
 
-export async function deleteLayer(layerId: string): Promise<void> {
-  return invoke<void>("delete_layer", { layerId });
-}
-
 /// The SELECTION's delete: every layer in `layerIds` goes, and the whole set
 /// lands as ONE undo step however many tracks it spans — a marquee sweep, a
-/// Shift+click set and Select All all arrive here. Deleting exactly one layer
-/// belongs in `deleteLayer` above. An empty set is a no-op that records nothing.
+/// Shift+click set and Select All all arrive here, as does a set of one. An
+/// empty set is a no-op that records nothing.
 ///
 /// Takes the selection VERBATIM: delete is local at the op level (a link is
 /// never fanned out — docs/features.md § Links), because the selection already

@@ -371,7 +371,7 @@ test.describe("timeline marquee — the rectangles are the ones we think they ar
       const after = await snapshot(page);
       expect([first, second].filter((id) => survivors(after).includes(id))).toEqual([]);
       // The whole point of `delete_layers`: one gesture is one undo entry, and
-      // the cheap guard against it decomposing into a `delete_layer` per clip.
+      // the cheap guard against it decomposing into one delete per clip.
       expect(after.history.len).toBe(before.history.len + 1);
     } finally {
       await app.close();

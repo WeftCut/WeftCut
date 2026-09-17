@@ -3,7 +3,7 @@ import { seededGen } from '../ids'
 import { blankProject, type Layer, type Project } from '../model'
 import { applyAddLayer, applyAddTrack, colorParams } from './add'
 import { applyDeleteLayer } from './delete'
-import { applyDuplicateLayer, applyPasteLayer, applyPasteLayers } from './duplicate'
+import { applyPasteLayer, applyPasteLayers } from './duplicate'
 import { CommandFailure, isCommandFailure } from '../errors'
 import { validate } from '../validate'
 import { AUDIO_GRID, frameGrid, gridIndex, isCanonicalOnGrid, snapOnGrid, timeUsAtGridIndex } from '../snap'
@@ -31,7 +31,7 @@ describe('delete + duplicate', () => {
   it('duplicates with a fresh id, offset, sorted insert, and no link join', () => {
     const g = seededGen(); const p = blankProject(g, 't')
     const a = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 1_000_000)
-    const dup = applyDuplicateLayer(p, g, a, 2_000_000)
+    const dup = applyPasteLayers(p, g, [a], 2_000_000, null).get(a)!
     expect(dup).not.toBe(a)
     const copy = root(p).tracks[0].layers.find((l) => l.id === dup)!
     expect(copy.t_start_us).toBe(2_000_000); expect(copy.t_end_us).toBe(3_000_000)
@@ -42,7 +42,7 @@ describe('delete + duplicate', () => {
     const g = seededGen(); const p = blankProject(g, 't')
     root(p).fps = { num: 30000, den: 1001 }
     const a = applyAddLayer(p, g, root(p).tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 100_100)
-    const dup = applyDuplicateLayer(p, g, a, 500_000) // 500_000 µs is NOT a boundary at 29.97
+    const dup = applyPasteLayers(p, g, [a], 500_000, null).get(a)! // 500_000 µs is NOT a boundary at 29.97
     const copy = root(p).tracks[0].layers.find((l) => l.id === dup)!
     expect(copy.t_start_us).toBe(500_500) // frame 15
     expect(copy.t_end_us).toBe(600_600)   // frame 18 — the source's 3-frame span, preserved
@@ -199,7 +199,7 @@ describe('delete / duplicate / paste inside a Group', () => {
   })
   it('duplicates inside the Group', () => {
     const { p, idGen, groupId, innerId } = groupedProject()
-    const dup = applyDuplicateLayer(p, idGen, innerId, 1_000_000)
+    const dup = applyPasteLayers(p, idGen, [innerId], 1_000_000, null).get(innerId)!
     expect(group(p, groupId).tracks[0].layers.map((l) => l.id)).toEqual([innerId, dup])
     expect(group(p, groupId).duration_us).toBe(2_000_000)
     expect(root(p).duration_us).toBe(1_000_000)

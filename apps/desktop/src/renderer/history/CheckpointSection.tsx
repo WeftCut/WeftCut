@@ -46,8 +46,8 @@ export function CheckpointSection({
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const onRestore = async (id: string) => {
-    // `!== null`, not truthiness: `lock_history('')` passes the MCP parser and
-    // locks just as hard. Tested identically in the `disabled` prop below.
+    // `!== null`, not truthiness: only `null` means unlocked, and the reason's
+    // CONTENT is never what decides. Tested identically in `disabled` below.
     if (lockReason !== null) return; // belt-and-suspenders; the backend also rejects
     setBusyId(id);
     // No explicit refresh: restore RECORDS an entry, so it broadcasts

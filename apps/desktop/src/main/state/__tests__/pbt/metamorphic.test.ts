@@ -38,7 +38,7 @@ export function applyOps(actor: ReturnType<typeof freshActor>, ops: Op[]) {
         if (layers.length) actor.dispatch('trim_layer', { layer: layers[op.layerN % layers.length], edge: op.edge, new_t_us: op.to, escape_link: false })
         break
       case 'delete':
-        if (layers.length) actor.dispatch('delete_layer', { layer: layers[op.layerN % layers.length] })
+        if (layers.length) actor.dispatch('delete_layers', { layers: [layers[op.layerN % layers.length]] })
         break
     }
   }

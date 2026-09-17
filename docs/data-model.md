@@ -521,7 +521,7 @@ The live track-header controls are the **eye** and the **lock**. The
 eye sets `enabled` — the whole-track gate that hides the track's video
 and silences its audio together. The lock sets `locked` (the actor
 rejects `move_layer`, `move_layers_to_new_track`, `trim_layer`,
-`split_layer`, `delete_layer`, `update_layer`, and
+`split_layer`, `delete_layers`, `update_layer`, and
 `update_layer_params` on layers that belong to a
 locked track, including via link fan-out). Both are toggled through
 `update_track_flags`, an **unrecorded** mutation (same
@@ -575,7 +575,7 @@ layer has no equivalent. The inconsistency is deliberate.
 
 Cleanup has one rule: **a track disappears when its last layer leaves
 it.** `transient && !locked` is the predicate, and every path that can
-empty a track — `delete_layer`, `move_layer`, `move_layers_to_new_track`
+empty a track — `delete_layers`, `move_layer`, `move_layers_to_new_track`
 and `separate_audio` — calls the same prune with the track it just
 emptied, once per distinct track a multi-layer edit emptied. No
 preference gates it.
@@ -1195,7 +1195,12 @@ A failed invariant returns a structured error to the caller (UI shows toast; MCP
 
 ## Mutation surface
 
-Every command maps directly to one MCP tool with the same name. Patches are **strongly typed**, not JSON Patch.
+Every command reaches agents as an MCP tool, almost always under the same
+name. The exceptions are the commands a single tool covers by argument:
+`delete_layers` / `ripple_delete_layers` are one `delete_layers { ripple }`,
+`attach_marker` / `detach_marker` one `set_marker_anchor { layer_id }`, and
+`lock_history` / `unlock_history` one `set_history_lock { locked }`. Patches are
+**strongly typed**, not JSON Patch.
 
 **Scope is derived, never passed** (ADR 0052 §3; the invariants table above).
 Layer ids are unique across every composition, so a layer-addressed command
@@ -1239,8 +1244,7 @@ the UI uses the same actor via backend commands.
 | `add_video_layer(track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us, composition_id?)` → `LayerId` | rejects on overlap; same cross-check |
 | `add_motif(motif_id, t_start_us, t_end_us?, track_id?, props?, composition_id?)` → `LayerId` | `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates a fresh track when absent, in `composition_id` (root by default) |
 | `apply_subtitles(body, format?, track_id?, t_start_us?, t_end_us?)` | Parses `body` (SRT/VTT/ASS) and lands the cues as editable `Text` layers on the composition's caption-role tracks — packing into the unlocked caption tracks already there where they have room, opening a new caption track only for a cue that collides with all of them (ADR 0070). `format` is sniffed when omitted. `track_id`, `t_start_us`, and `t_end_us` are accepted on the wire for backward compatibility but are ignored — cue timings come from the body, and the lane is the packing's to pick. Advanced ASS tags (karaoke, drawings) are stripped; the tool notes when `simplified=true`. Returns the id of the caption track the first cue landed on. |
-| `duplicate_layer(layer_id, t_offset_us)` → `LayerId` | |
-| `paste_layers(layer_ids, t_start_us, target_track_id?)` → `{ clones: [{ source, clone }] }` | the whole-link duplicate: every clone shifts by the delta the seed (`layer_ids[0]`) travels to `t_start_us`, then snaps on its own lattice; only the seed changes track; any lock or overlap refuses the whole set; two or more clones are linked to each other |
+| `paste_layers(layer_ids, t_start_us? \| t_offset_us?, target_track_id?)` → `{ clones: [{ source, clone }] }` | the whole-link duplicate, and the only copy command: every clone shifts by the delta the seed (`layer_ids[0]`) travels to `t_start_us`, or by `t_offset_us` directly (exactly one of the two), then snaps on its own lattice; only the seed changes track; any lock or overlap refuses the whole set; two or more clones are linked to each other |
 | `set_layers_enabled(layer_ids, enabled)` | sets `enabled` on exactly the layers named — the UI hands it a link's members when the toggle fans out; a locked track refuses the whole set, a layer's own lock does not |
 | `update_layer(layer_id, patch)` | envelope-only patch (label, time range, enabled, locked) |
 | `update_layer_params(layer_id, patch)` | kind-specific params |
@@ -1252,10 +1256,9 @@ the UI uses the same actor via backend commands.
 | `restack_layer(layer_id, anchor_layer_id, position)` | anchored z-reorder: `position` ∈ `"above" \| "below"` the anchor layer's track, resolved at apply time. Sole-occupant mover moves its whole track (identity survives); a shared-track mover splits onto a new track at the target position (emptied source pruned by the usual rule); a role-stamped source never moves. Already-in-place calls are no-ops that record nothing; Audio movers/anchors and self-anchors reject |
 | `split_layer(layer_id, at_t_us, escape_link?)` → `(LayerId, LayerId)` | |
 | `trim_layer(layer_id, edge, new_t_us, escape_link?)` | `edge` ∈ `"in" | "out"` |
-| `delete_layer(layer_id)` | |
 | `delete_layers(layer_ids)` | the cross-**layer** form: one recorded entry however many layers it spans, so one undo restores the lot. Ids are de-duplicated; a locked member rejects the WHOLE batch rather than half-deleting. Takes the id set verbatim — no link fan-out, since selection is what carries a link |
-| `ripple_delete_layers(layer_ids)` | `delete_layers` that also **closes** what the set vacated (ADR 0062; [features.md §Ripple delete](features.md#ripple-delete)): each deleted layer's hole is its own footprint clipped to its remaining same-class neighbours on its track, touching holes merge, and every remaining layer starting at or after a hole shifts left by its length on every track of the composition, each on its own lattice. Anchored markers follow through reconcile; free markers, the playhead and layers starting before a hole stay. A transition whose two participants both move keeps its frame count and has its `duration_us` / `extended_us` re-derived from the landing. Refuses whole before any write: `RippleInsideHole`, `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked` (only a layer that would move blocks), `CrossCompositionSet`, and `InvalidArgument` for an empty set |
-| `ripple_delete_gap(track_id, s, e)` | closes a selected **gap** (ADR 0069; [features.md §Ripple delete](features.md#ripple-delete)): `[s, e)` must be exactly a gap on `track_id` — free of every layer, `e` where a layer starts, `s` where one ends or `0` — else `GapNotFound { track, s, e }`; nothing is deleted and the closing is `ripple_delete_layers`' with the gap as the one hole, refusing with the same names. `TrackNotFound` for an unknown lane; `InvalidArgument` for a degenerate span. Recorded as *Closed gap*; one undo |
+| `ripple_delete_layers(layer_ids)` | agents reach this as `delete_layers { ripple: true }`. `delete_layers` that also **closes** what the set vacated (ADR 0062; [features.md §Ripple delete](features.md#ripple-delete)): each deleted layer's hole is its own footprint clipped to its remaining same-class neighbours on its track, touching holes merge, and every remaining layer starting at or after a hole shifts left by its length on every track of the composition, each on its own lattice. Anchored markers follow through reconcile; free markers, the playhead and layers starting before a hole stay. A transition whose two participants both move keeps its frame count and has its `duration_us` / `extended_us` re-derived from the landing. Refuses whole before any write: `RippleInsideHole`, `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked` (only a layer that would move blocks), `CrossCompositionSet`, and `InvalidArgument` for an empty set |
+| `ripple_delete_gap(track_id, s, e)` | closes a selected **gap** (ADR 0069; [features.md §Ripple delete](features.md#ripple-delete)): `[s, e)` must be exactly a gap on `track_id` — free of every layer, `e` where a layer starts, `s` where one ends or `0` — else `GapNotFound { track, s, e }`; nothing is deleted and the closing is `ripple_delete_layers`' with the gap as the one hole (`delete_layers { ripple: true }` to an agent), refusing with the same names. `TrackNotFound` for an unknown lane; `InvalidArgument` for a degenerate span. Recorded as *Closed gap*; one undo |
 | `links_create(layer_ids, label?, reassign?)` → `LinkId` | fewer than two distinct ids → `LinkCreateNeedsTwoLayers`; a layer already in another link → `LayerAlreadyLinked` unless `reassign: true`, which moves it over |
 | `links_dissolve(link_id)` / `links_add_members(link_id, layer_ids, reassign?)` / `links_remove_members(link_id, layer_ids)` / `links_rename(link_id, label?)` | an unknown `link_id` → `LinkNotFound`; removing a non-member → `LayerNotInLink`; `add_members` shares `links_create`'s `LayerAlreadyLinked` / `reassign` rule |
 | `groups_create(layer_ids, label?)` → `{ composition_id, layer_id }` | pre-compose (ADR 0052; [features.md §Groups](features.md#groups)): the set — one or more layers of one composition — moves into a new composition carrying the parent's settings and the reserved A/B skeleton, its former tracks mapped bottom-up onto A roll, B roll, then fresh lanes; a Group layer takes its place at the earliest start on the top-most former lane (the drop strip's fallback on collision). Never partial: a locked member → `GroupLockedMember`, a locked track → `TrackLocked`, before anything moves. Links fully inside move with their ids, a straddling link loses its inside members; transitions between two members move, a straddling one is reconciled away and logged; the markers ANCHORED to a member move with it (their `t_us` re-derived in the child by the same commit), free markers stay |
@@ -1271,7 +1274,7 @@ the UI uses the same actor via backend commands.
 | `checkpoint(label)` → `CheckpointId` | |
 | `list_checkpoints()` / `restore_checkpoint(checkpoint_id)` | restore clears redo |
 | `undo()` / `redo()` | |
-| `lock_history(reason)` / `unlock_history()` | freeze undo while a tool batch runs |
+| `lock_history(reason)` / `unlock_history()` | freeze undo while a tool batch runs; one MCP tool, `set_history_lock { locked, reason? }` |
 | `dry_run(operations)` | applies the batch against a clone; halts at the first validation error; does not commit |
 | `replace_state(snapshot)` | for paste/template-instantiation; full validation; resets history |
 

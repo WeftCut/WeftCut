@@ -196,11 +196,11 @@ describe('set_track_flags', () => {
 
     expect(call(a, 'set_track_flags', { track_id: track, locked: true }).ok).toBe(true)
     expect(root(a.snapshot()).tracks[0].locked).toBe(true)
-    expect(call(a, 'delete_layer', { layer_id: id }).ok).toBe(false)
+    expect(call(a, 'delete_layers', { layer_ids: [id] }).ok).toBe(false)
     expect(layerCount(a)).toBe(1)
 
     expect(call(a, 'set_track_flags', { track_id: track, locked: false }).ok).toBe(true)
-    expect(call(a, 'delete_layer', { layer_id: id }).ok).toBe(true)
+    expect(call(a, 'delete_layers', { layer_ids: [id] }).ok).toBe(true)
     expect(layerCount(a)).toBe(0)
   })
 

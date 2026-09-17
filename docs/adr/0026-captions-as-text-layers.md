@@ -132,7 +132,7 @@ ffmpeg subtitle-mux stage when that work is prioritised.
   layer kinds. The JASSUB second path and its "no export" gap are gone.
 - **+** Every caption cue is a `Text` layer. All existing layer tools —
   `update_layer`, `update_layer_params`, `move_layer`, `trim_layer`,
-  `split_layer`, `delete_layer`, keyframe tools — work on captions without any
+  `split_layer`, `delete_layers`, keyframe tools — work on captions without any
   new code.
 - **+** CJK and broad-Latin burn-in is deterministic on any platform because the
   bundled fonts load before compositing begins. User-font resolution is

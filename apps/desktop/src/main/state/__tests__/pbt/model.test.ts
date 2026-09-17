@@ -52,7 +52,7 @@ class Delete implements fc.Command<Model, Real> {
   check(m: Model) { return m.layers.size > 0 }
   run(m: Model, r: Real) {
     const id = idsSorted(m)[this.layerN % m.layers.size]
-    const res = r.dispatch('delete_layer', { layer: id })
+    const res = r.dispatch('delete_layers', { layers: [id] })
     if (res.ok) {
       m.layers.delete(id)
       const live = wireRoot(wireSnapshot(r)).tracks.flatMap((t) => t.layers).some((l) => l.id === id)

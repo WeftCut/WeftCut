@@ -5,7 +5,7 @@ import { blankProject, type Composition, type CompositionRefParams, type Layer, 
 import { applyAddLayer, applyAddMarker, applyAddTrack, colorParams, defaultTransform } from './add'
 import { applyLinksCreate } from './links'
 import { applyDeleteLayer } from './delete'
-import { applyDuplicateLayer } from './duplicate'
+import { applyPasteLayers } from './duplicate'
 import { applyCompositionsDelete, applyGroupsAddMembers, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, compositionRefCount } from './groups'
 import { reconcileMarkers, reconcileTransitions, validate } from '../validate'
 import { isCommandFailure } from '../errors'
@@ -397,7 +397,7 @@ describe('applyGroupsAddMembers', () => {
 
   it('a second placement of the destination keeps its window when the move lengthens the composition — overhang, never a ripple into the parent', () => {
     const { p, gen, comp, g, x, y } = withDest()
-    const twin = applyDuplicateLayer(p, gen, g, 5 * S)
+    const twin = applyPasteLayers(p, gen, [g], 5 * S, null).get(g)!
     const twinBefore = structuredClone(layerOf(root(p), twin))
     const pinnedBefore = group(p, comp).duration_pinned
     applyGroupsAddMembers(p, gen, [x, y], g)
@@ -411,7 +411,7 @@ describe('applyGroupsAddMembers', () => {
 
   it('refuses a member that is a Group clip on the destination itself, writing nothing', () => {
     const { p, gen, comp, g } = withDest()
-    const twin = applyDuplicateLayer(p, gen, g, 5 * S)
+    const twin = applyPasteLayers(p, gen, [g], 5 * S, null).get(g)!
     const before = structuredClone(p)
     expect(expectCmd(() => applyGroupsAddMembers(p, gen, [twin], g)))
       .toEqual({ error: 'ValidationFailed', detail: { rule: 'CompositionCycle', path: [comp, comp] } })
@@ -533,7 +533,7 @@ describe('applyGroupsUngroup', () => {
   it('keeps the composition while another Group layer still references it', () => {
     const { p, gen, v, w } = pair()
     const r = applyGroupsCreate(p, gen, [v, w], null)
-    const twin = applyDuplicateLayer(p, gen, r.layerId, 3 * S)
+    const twin = applyPasteLayers(p, gen, [r.layerId], 3 * S, null).get(r.layerId)!
     expect(compositionRefCount(p, r.compositionId)).toBe(2)
     applyGroupsUngroup(p, gen, r.layerId)
     expect(groupIds(p)).toEqual([r.compositionId])

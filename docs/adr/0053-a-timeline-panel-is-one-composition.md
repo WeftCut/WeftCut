@@ -106,8 +106,8 @@ adapter boundary."*
    > of this decision are reversed: a layer DOES change composition by being
    > carried from one timeline Panel into another, and that drop lands rather
    > than being refused. What the decision was protecting is intact —
-   > `CrossCompositionMove` still refuses `move_layer`, `duplicate_layer`,
-   > `paste_layers` and `restack_layer`, so a *move* never crosses and crossing
+   > `CrossCompositionMove` still refuses `move_layer`, `paste_layers` and
+   > `restack_layer`, so a *move* never crosses and crossing
    > has a name of its own. What changed is that the cross-Panel drag no longer
    > lowers to a move: it lowers to `move_layers_to_composition`, the mutation
    > this decision reserved, whose first entry point still needs no second

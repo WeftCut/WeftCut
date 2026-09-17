@@ -332,23 +332,23 @@ describe('production adapter routing — trim_layer (mechanical)', () => {
   })
 })
 
-// ── Mechanical channel: delete_layer ─────────────────────────────────────────
+// ── Mechanical channel: delete_layers ────────────────────────────────────────
 
-describe('production adapter routing — delete_layer (mechanical)', () => {
+describe('production adapter routing — delete_layers (mechanical)', () => {
   it('valid call routes and layer is removed from state', () => {
     const a = freshActor()
     const trackId = aRollId(a)
     const layerId = addColorLayerCmd(a, trackId)
 
     expect(totalLayerCount(a)).toBe(1)
-    const r = a.command('delete_layer', { layerId })
+    const r = a.command('delete_layers', { layerIds: [layerId] })
     expect(r.ok).toBe(true)
     expect(totalLayerCount(a)).toBe(0)
   })
 
   it('non-existent layerId → structured LayerNotFound error, no throw', () => {
     const a = freshActor()
-    const r = a.command('delete_layer', { layerId: '00000000-0000-0000-0000-000000000000' })
+    const r = a.command('delete_layers', { layerIds: ['00000000-0000-0000-0000-000000000000'] })
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.error).toBe('LayerNotFound')
@@ -356,29 +356,28 @@ describe('production adapter routing — delete_layer (mechanical)', () => {
   })
 })
 
-// ── Mechanical channel: duplicate_layer ───────────────────────────────────────
+// ── Mechanical channel: paste_layers ─────────────────────────────────────────
 
-describe('production adapter routing — duplicate_layer (mechanical)', () => {
-  it('valid call routes, returns a new layer id, and track has two layers', () => {
+describe('production adapter routing — paste_layers (mechanical)', () => {
+  it('valid call routes, returns the clone pairs, and the track holds two layers', () => {
     const a = freshActor()
     const trackId = aRollId(a)
     const layerId = addColorLayerCmd(a, trackId, 0, 2_000_000)
 
-    const r = a.command('duplicate_layer', { layerId, tOffsetUs: 2_000_000 })
+    const r = a.command('paste_layers', { layerIds: [layerId], tStartUs: 2_000_000 })
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    const newId = r.value as string
+    const newId = (r.value as { clones: Array<{ source: string; clone: string }> }).clones[0].clone
     expect(newId).not.toBe(layerId)
     const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(track.layers).toHaveLength(2)
-    // Duplicate starts at offset
     const dup = track.layers.find((l) => l.id === newId)!
     expect(dup.t_start_us).toBe(2_000_000)
   })
 
   it('non-existent layerId → structured LayerNotFound error, no throw, no layer added', () => {
     const a = freshActor()
-    const r = a.command('duplicate_layer', { layerId: '00000000-0000-0000-0000-000000000000', tOffsetUs: 0 })
+    const r = a.command('paste_layers', { layerIds: ['00000000-0000-0000-0000-000000000000'], tStartUs: 0 })
     expect(r.ok).toBe(false)
     if (r.ok) return
     // prod command() error envelope is a CommandError: the structured field is `error.error`

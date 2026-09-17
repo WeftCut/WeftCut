@@ -205,7 +205,7 @@ describe('dispatch: split + links', () => {
   })
 
   // Fan-out of the two deletes: a rejected take takes the link pieces its own
-  // split produced with it. `delete_layer` stays local; this is the shot-apply's
+  // split produced with it. `delete_layers` stays local; this is the shot-apply's
   // reach, and its shape is OVERLAP with the rejected span.
   it('split_layer_multi discard deletes the paired audio piece of each discarded segment and keeps the kept ones', () => {
     const { actor, track, layer } = linkedPair()
@@ -933,7 +933,7 @@ describe('dispatch: set_composition full', () => {
   it('fps stays locked after the layers are deleted — undo could still resurrect them', () => {
     const actor = withTwoLayers()
     for (const t of root(actor.snapshot()).tracks) {
-      for (const l of t.layers) expect(actor.dispatch('delete_layer', { layer: l.id }).ok).toBe(true)
+      for (const l of t.layers) expect(actor.dispatch('delete_layers', { layers: [l.id] }).ok).toBe(true)
     }
     expect(root(actor.snapshot()).tracks.every((t) => t.layers.length === 0)).toBe(true)
 
@@ -961,7 +961,7 @@ describe('dispatch: set_composition full', () => {
     const layer = actor.dispatch('add_layer', { track: root(initial).tracks[0].id, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
     expect(layer.ok).toBe(true)
     actor.checkpoint('before the purge')
-    expect(actor.dispatch('delete_layer', { layer: layer.ok ? layer.value : '' }).ok).toBe(true)
+    expect(actor.dispatch('delete_layers', { layers: [layer.ok ? layer.value : ''] }).ok).toBe(true)
 
     const r = actor.dispatch('set_composition', { fps: { num: 24, den: 1 } })
     expect(r.ok).toBe(false)
@@ -1753,7 +1753,7 @@ describe('dispatch: emptied-track cleanup', () => {
     const lane = addLane(actor)
     const clip = addClip(actor, lane)
     const before = actor.historyStatus().len
-    expect(actor.dispatch('delete_layer', { layer: clip }).ok).toBe(true)
+    expect(actor.dispatch('delete_layers', { layers: [clip] }).ok).toBe(true)
     expect(lanes(actor)).not.toContain(lane)
     expect(actor.historyStatus().len).toBe(before + 1)
   })
@@ -1794,7 +1794,7 @@ describe('dispatch: emptied-track cleanup', () => {
     const untouched = addLane(actor) // created, never filled
     const doomed = addClip(actor, aRoll)
     const travelling = addClip(actor, bRoll)
-    expect(actor.dispatch('delete_layer', { layer: doomed }).ok).toBe(true)
+    expect(actor.dispatch('delete_layers', { layers: [doomed] }).ok).toBe(true)
     expect(actor.dispatch('move_layer', { layer: travelling, to_track: aRoll, t_start_us: 0 }).ok).toBe(true)
     expect(lanes(actor)).toContain(untouched)
   })
@@ -1804,7 +1804,7 @@ describe('dispatch: emptied-track cleanup', () => {
     const lane = addLane(actor)
     const clip = addClip(actor, lane)
     expect(actor.dispatch('update_track_flags', { track: lane, patch: { locked: true } }).ok).toBe(true)
-    for (const r of [actor.dispatch('delete_layer', { layer: clip }),
+    for (const r of [actor.dispatch('delete_layers', { layers: [clip] }),
       actor.dispatch('move_layer', { layer: clip, to_track: aRoll, t_start_us: 0 })]) {
       expect(r.ok).toBe(false)
       if (!r.ok) expect(r.error.error).toBe('TrackLocked')
@@ -1817,7 +1817,7 @@ describe('dispatch: emptied-track cleanup', () => {
     const { actor, aRoll, bRoll } = setup()
     const onA = addClip(actor, aRoll)
     const onB = addClip(actor, bRoll)
-    expect(actor.dispatch('delete_layer', { layer: onA }).ok).toBe(true)
+    expect(actor.dispatch('delete_layers', { layers: [onA] }).ok).toBe(true)
     expect(actor.dispatch('move_layer', { layer: onB, to_track: aRoll, t_start_us: 0 }).ok).toBe(true)
     expect(lanes(actor)).toEqual([aRoll, bRoll])
   })
@@ -1843,7 +1843,7 @@ describe('dispatch: emptied-track cleanup', () => {
     const audio = value(actor.dispatch('add_layer', { track: aRoll, kind: 'audio', media, src_in_us: 0, src_out_us: 1_000_000, t_start_us: 0, t_end_us: 1_000_000 }))
     const lifted = value(actor.dispatch('separate_audio', { layer: audio }))
     expect(lanes(actor)).toContain(lifted)
-    expect(actor.dispatch('delete_layer', { layer: audio }).ok).toBe(true)
+    expect(actor.dispatch('delete_layers', { layers: [audio] }).ok).toBe(true)
     expect(lanes(actor)).not.toContain(lifted)
   })
 })
@@ -2421,7 +2421,7 @@ describe('actor commit pipeline: the marker reconcile', () => {
     const { clip, marker } = anchoredClip(p, gen, aRoll, 'cut')
     const logged: ActorLogEntry[] = []
     const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>', emitLog: (e) => logged.push(e) })
-    expect(actor.dispatch('delete_layer', { layer: clip }).ok).toBe(true)
+    expect(actor.dispatch('delete_layers', { layers: [clip] }).ok).toBe(true)
     expect(logged.map((e) => e.details)).toEqual([
       { kind: 'MarkerReconcileDrop', marker, composition: root(p).id, layer: clip, label: 'cut' },
     ])
@@ -2497,7 +2497,7 @@ describe('actor commit pipeline: the marker reconcile', () => {
     const logged: ActorLogEntry[] = []
     const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>', emitLog: (e) => logged.push(e) })
     const before = actor.snapshot()
-    const r = actor.dispatch('delete_layer', { layer: doomed.clip })
+    const r = actor.dispatch('delete_layers', { layers: [doomed.clip] })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatchObject({ error: 'ValidationFailed', detail: { rule: 'MarkerAnchorNotInComposition' } })
     expect(actor.snapshot()).toBe(before)

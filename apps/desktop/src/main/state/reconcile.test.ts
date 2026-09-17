@@ -61,7 +61,7 @@ describe('reconcile-on-commit: exemption for the transition commands themselves'
 describe('reconcile-on-commit: drops', () => {
   it('participant delete drops the transition in the same commit; NO shrink-back of the outgoing layer', () => {
     const { actor, logged, a1, a2 } = withTransition()
-    expect(actor.dispatch('delete_layer', { layer: a2 }).ok).toBe(true)
+    expect(actor.dispatch('delete_layers', { layers: [a2] }).ok).toBe(true)
     expect(root(actor.snapshot()).transitions).toEqual([])
     // The outgoing layer keeps its extended tail — reconcile removal never
     // shrinks back (only explicit remove_transition does).
@@ -118,7 +118,7 @@ describe('reconcile-on-commit: drops', () => {
     const t1 = val(actor.dispatch('add_transition', { from: l1, to: l2, duration_us: 1_000_000, placement: 'extend' })) // l1 → 3M
     const t2 = val(actor.dispatch('add_transition', { from: l2, to: l3, duration_us: 1_000_000, placement: 'extend' })) // l2 → 5M
     expect(root(actor.snapshot()).transitions).toHaveLength(2)
-    expect(actor.dispatch('delete_layer', { layer: l2 }).ok).toBe(true) // shared participant
+    expect(actor.dispatch('delete_layers', { layers: [l2] }).ok).toBe(true) // shared participant
     expect(root(actor.snapshot()).transitions).toEqual([])
     expect(logged).toHaveLength(2)
     expect(logged.map((e) => (e.details as { transition: string }).transition).sort()).toEqual([t1, t2].sort())
@@ -202,7 +202,7 @@ describe('reconcile-on-commit: survival + atomic undo', () => {
     const a1 = val(actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 }))
     const a2 = val(actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 2_000_000, t_end_us: 4_000_000 }))
     val(actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000 }))
-    expect(actor.dispatch('delete_layer', { layer: a2 }).ok).toBe(true)
+    expect(actor.dispatch('delete_layers', { layers: [a2] }).ok).toBe(true)
     expect(root(actor.snapshot()).transitions).toEqual([])
   })
 })
@@ -413,7 +413,7 @@ describe('reconcile-on-commit: anchored markers follow their clip', () => {
 
   it('deleting a clip takes its anchored markers in the SAME commit, names them in the status log, and ONE undo restores both', () => {
     const { actor, logged, clip, ids } = anchoredFixture([{ srcUs: 3_000_000, label: 'cut 1' }, { tUs: 500_000 }])
-    expect(actor.dispatch('delete_layer', { layer: clip }).ok).toBe(true)
+    expect(actor.dispatch('delete_layers', { layers: [clip] }).ok).toBe(true)
     expect(markersOf(actor.snapshot()).map((m) => m.id)).toEqual([ids[1]]) // the free marker stays
     expect(logged).toHaveLength(1)
     expect(logged[0].level).toBe('info')

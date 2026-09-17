@@ -488,11 +488,11 @@ describe("HistoryPanel lock", () => {
     expect(mocks.projectJumpTo).not.toHaveBeenCalled();
   });
 
-  // `lock_history('')` passes the MCP parser — it imposes no non-empty check —
-  // and an empty reason locks the stack exactly as hard as a wordy one. Testing
-  // truthiness anywhere then splits the UI against itself: rows that are
-  // disabled with no badge and a "Jump to this state" tooltip explaining why
-  // they aren't.
+  // An empty reason is still a lock: `null` is the only unlocked value on the
+  // wire, so the renderer never reads the reason's content to decide. Testing
+  // truthiness anywhere splits the UI against itself: rows that are disabled
+  // with no badge and a "Jump to this state" tooltip explaining why they
+  // aren't.
   it("treats an EMPTY lock reason as a lock, badge and tooltips included", async () => {
     await mountPanel(
       stackView(

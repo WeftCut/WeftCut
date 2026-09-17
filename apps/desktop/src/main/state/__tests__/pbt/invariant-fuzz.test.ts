@@ -140,11 +140,11 @@ function applyOp(actor: ActorT, op: Op): { ok: boolean } | null {
     }
     case 'addTrack': return actor.dispatch('add_track', { label: null })
     case 'deleteTrack': return actor.dispatch('delete_track', { track: pickTrack(op.n), force: op.force })
-    case 'duplicate': return layers.length ? actor.dispatch('duplicate_layer', { layer: pickLayer(op.n), t_offset_us: op.off }) : null
+    case 'duplicate': return layers.length ? actor.dispatch('paste_layers', { layers: [pickLayer(op.n)], t_offset_us: op.off }) : null
     case 'split': return layers.length ? actor.dispatch('split_layer', { layer: pickLayer(op.n), at_t_us: op.at, escape_link: false }) : null
     case 'move': return layers.length ? actor.dispatch('move_layer', { layer: pickLayer(op.n), to_track: pickTrack(op.track), t_start_us: op.start, escape_link: false }) : null
     case 'trim': return layers.length ? actor.dispatch('trim_layer', { layer: pickLayer(op.n), edge: op.edge, new_t_us: op.to, escape_link: false }) : null
-    case 'delete': return layers.length ? actor.dispatch('delete_layer', { layer: pickLayer(op.n) }) : null
+    case 'delete': return layers.length ? actor.dispatch('delete_layers', { layers: [pickLayer(op.n)] }) : null
     case 'link': return layers.length >= 2 ? actor.dispatch('links_create', { layers: [pickLayer(op.n), pickLayer(op.m)], label: null, reassign: false }) : null
     case 'addTransition': {
       if (layers.length < 2) return null

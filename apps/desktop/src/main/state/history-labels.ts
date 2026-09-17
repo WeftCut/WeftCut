@@ -39,7 +39,6 @@ export const HISTORY_SUMMARY = {
   layerTrim: { key: 'history.layer.trim', text: 'Trimmed clip' },
   layerSplit: { key: 'history.layer.split', text: 'Split clip' },
   layerSplitByShots: { key: 'history.layer.split_by_shots', text: 'Split clip by shots' },
-  layerDelete: { key: 'history.layer.delete', text: 'Deleted clip' },
   layerDeleteMulti: { key: 'history.layer.delete_multi', text: 'Deleted clips' },
   layerRippleDelete: { key: 'history.layer.ripple_delete', text: 'Ripple deleted clips' },
   // A multi-split whose discarded segments also closed their holes — the

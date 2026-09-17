@@ -170,7 +170,7 @@ Panel claims instead.
 - **Four ops cross compositions, not three**: pre-compose, ungroup, add-to-Group
   and `move_layers_to_composition`. That count is asserted in prose in several
   places and has to be maintained there.
-- **`move_layer`, `duplicate_layer`, `paste_layers` and `restack_layer` keep
+- **`move_layer`, `paste_layers` and `restack_layer` keep
   refusing.** The discipline is intact and unchanged: a *move* never crosses.
   Crossing has a name, and it is not "move".
 - **A landing is now computed in the renderer**, which is a new place for one to

@@ -84,7 +84,7 @@ describe('mapCommandError — ripple delete names the span and the way out', () 
       error: 'RippleInsideHole', layer: 'L1', hole_us: [2_000_000, 5_000_000],
       options: [
         { action: 'add_to_set_then_retry', layer_ids: ['L1'] },
-        { action: 'delete_without_ripple', tool: 'delete_layer' },
+        { action: 'delete_without_ripple', tool: 'delete_layers', ripple: false },
       ],
     })
   })

@@ -23,7 +23,7 @@ should go.
    track) uses a work session: ASK whether to begin the batch and enter the
    lightweight agent view unless already authorized, then call
    `begin_agent_session`. It creates a checkpoint once per session. Wrap the
-   batch in `lock_history` … `unlock_history`, rehearse with `dry_run` where
+   batch in `set_history_lock`, both ways, rehearse with `dry_run` where
    supported, and call `end_agent_session` when finished (also on failure).
    Use a finally-style cleanup so a failed tool does not leave undo locked.
    Manual view switching neither starts nor ends work. The user can end work
@@ -65,8 +65,8 @@ descriptions:
 - Voiceover: `synthesize_speech` appends a spoken script to the timeline
   (also `/voiceover`).
 - Rough cut: `analyze_clip` or `auto_split_by_shot`, then trim and delete
-  segments — `ripple_delete_layers` instead of `delete_layer` when the gap a
-  cut leaves should close behind it.
+  segments — `delete_layers` with `ripple: true` when the gap a cut leaves
+  should close behind it.
 - Music, sound effects, a separate voice track: `add_audio_layer`. It is the
   only tool that places audio-only media — `add_video_layer` builds a visual
   layer and refuses an audio file.

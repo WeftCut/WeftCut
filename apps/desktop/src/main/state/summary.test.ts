@@ -227,7 +227,7 @@ describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)
     expect(locked.compositions[locked.root_id]!.fps_locked).toBe(true)
 
     // Delete it: the timeline is empty again, but undo still reaches the layer.
-    expect(actor.dispatch('delete_layer', { layer: added.ok ? added.value : '' }).ok).toBe(true)
+    expect(actor.dispatch('delete_layers', { layers: [added.ok ? added.value : ''] }).ok).toBe(true)
     const s = buildProjectSummary(actor.snapshot(), actor.historyStatus(), NEVER)
     expect(s.layer_count).toBe(0)
     expect(s.compositions[s.root_id]!.fps_locked).toBe(true)

@@ -464,7 +464,7 @@ export function parseStrOpt(v: unknown, field: string): string | null {
   return v === undefined || v === null ? null : (typeof v === 'string' ? v : (() => { throw new McpArgError(`${field} must be a string`, field) })())
 }
 
-function asArray(v: unknown, field: string): string[] {
+export function asArray(v: unknown, field: string): string[] {
   if (!Array.isArray(v)) throw new McpArgError(`${field} must be an array`)
   return v as string[]
 }
@@ -685,11 +685,11 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
   // length, so an agent that assumed the length would otherwise read the refusal
   // against the wrong numbers. Every one is pre-write: the retry costs nothing. ──
   if (e.error === 'RippleInsideHole') {
-    return { code: 'invalid_params', message: `layer ${e.layer} starts inside the span [${e.hole.s}, ${e.hole.e}) µs that ripple delete would close, and the span has to come out clean. Options: add ${e.layer} to layer_ids, so its own hole merges into this one and both close in a single ripple; or call delete_layer instead, which removes the layers and leaves the span open. A layer that merely reaches into the span from before ${e.hole.s} is anchored ahead of the cut and does not block.`, data: {
+    return { code: 'invalid_params', message: `layer ${e.layer} starts inside the span [${e.hole.s}, ${e.hole.e}) µs that ripple delete would close, and the span has to come out clean. Options: add ${e.layer} to layer_ids, so its own hole merges into this one and both close in a single ripple; or call delete_layers without ripple (its default), which removes the layers and leaves the span open. A layer that merely reaches into the span from before ${e.hole.s} is anchored ahead of the cut and does not block.`, data: {
       error: 'RippleInsideHole', layer: e.layer, hole_us: [e.hole.s, e.hole.e],
       options: [
         { action: 'add_to_set_then_retry', layer_ids: [e.layer] },
-        { action: 'delete_without_ripple', tool: 'delete_layer' },
+        { action: 'delete_without_ripple', tool: 'delete_layers', ripple: false },
       ],
     } }
   }
@@ -937,37 +937,46 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { op: 'update_track_flags', args: { track: parseUuid(a.track_id, 'track_id'), patch: { enabled, locked } } }
     } },
   // ── table-exec: layers ───────────────────────────────────────────────────
-  { name: 'duplicate_layer', exec: 'table',
-    description: 'Duplicate a layer with a time offset. The copy is inserted on the same track. Returns the new layer id. The composition duration extends if needed.',
-    inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, t_offset_us: { type: 'integer' } }, required: ['layer_id', 't_offset_us'] },
-    parseArgs: (a) => ({ op: 'duplicate_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), t_offset_us: parseNum(a.t_offset_us, 't_offset_us') } }),
-    shapeResult: (v) => toolText(v as string) },
+  // The one copy tool. `t_start_us` and `t_offset_us` are the two ways to say
+  // where the seed's clone goes — absolute, or relative to the seed itself, so
+  // a same-place copy needs no read of the timeline first. Exactly one, because
+  // a call carrying both names two landings and the actor would have to pick.
   { name: 'paste_layers', exec: 'table',
-    description: "Duplicate a SET of layers as one recorded edit (one undo removes every clone). `layer_ids[0]` is the seed: `t_start_us` is where the seed's clone starts, and every other clone shifts by that same delta, each snapped on its own lattice (an audio member keeps a slipped A/V offset). `target_track_id` moves only the seed's clone onto that track; every other clone lands on its source's track. All-or-nothing: a locked or occupied destination for ANY member rejects the whole batch (`TrackLocked` / `ValidationFailed` with `LayerOverlap`, whose `b` names the source whose clone would collide) and nothing is created. Two or more clones are linked to each other, never to their sources; a single clone joins no link. Returns `{ clones: [{ source, clone }] }` in input order. To copy one linked layer without its partners, pass just that id. Same-track copy of one layer: `duplicate_layer`.",
+    description: "Duplicate a SET of layers as one recorded edit (one undo removes every clone). `layer_ids[0]` is the seed, and where its clone starts is either `t_start_us` (absolute) or `t_offset_us` (relative to the seed's own start — the same-track copy that needs no prior read); send exactly one. Every other clone shifts by that same delta, each snapped on its own lattice (an audio member keeps a slipped A/V offset). `target_track_id` moves only the seed's clone onto that track; every other clone lands on its source's track. All-or-nothing: a locked or occupied destination for ANY member rejects the whole batch (`TrackLocked` / `ValidationFailed` with `LayerOverlap`, whose `b` names the source whose clone would collide) and nothing is created. Two or more clones are linked to each other, never to their sources; a single clone joins no link. Returns `{ clones: [{ source, clone }] }` in input order. To copy one linked layer without its partners, pass just that id.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to clone; the first is the seed the start time refers to.' },
-      t_start_us: { type: 'integer', description: "Start time of the seed's clone; the other clones keep their offsets from it." },
+      t_start_us: { type: 'integer', description: "Absolute start time of the seed's clone; the other clones keep their offsets from it. Mutually exclusive with `t_offset_us`." },
+      t_offset_us: { type: 'integer', description: "Start of the seed's clone relative to the seed's own start, so `t_offset_us` shifts every clone by that much. Mutually exclusive with `t_start_us`." },
       target_track_id: { type: ['string', 'null'], description: "Track for the seed's clone. Omit to keep it on the seed's track." },
-    }, required: ['layer_ids', 't_start_us'] },
-    parseArgs: (a) => ({ op: 'paste_layers', args: {
-      layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')),
-      t_start_us: parseNum(a.t_start_us, 't_start_us'),
-      target_track_id: a.target_track_id === undefined || a.target_track_id === null ? null : parseUuid(a.target_track_id, 'target_track_id'),
-    } }),
+    }, required: ['layer_ids'] },
+    parseArgs: (a) => {
+      const absolute = a.t_start_us !== undefined && a.t_start_us !== null
+      const relative = a.t_offset_us !== undefined && a.t_offset_us !== null
+      if (absolute === relative) throw new McpArgError(
+        `paste_layers needs exactly one of \`t_start_us\` / \`t_offset_us\`${absolute ? ' — two of them name two landings' : ''}`,
+        absolute ? 't_offset_us' : 't_start_us')
+      return { op: 'paste_layers', args: {
+        layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')),
+        ...(absolute ? { t_start_us: parseNum(a.t_start_us, 't_start_us') } : { t_offset_us: parseNum(a.t_offset_us, 't_offset_us') }),
+        target_track_id: a.target_track_id === undefined || a.target_track_id === null ? null : parseUuid(a.target_track_id, 'target_track_id'),
+      } }
+    },
     shapeResult: (v) => toolJson(v) },
+  // `enabled` is deliberately absent from `update_layer`'s patch below and lives
+  // ONLY here: the two writes are identical for one layer, and the set form is
+  // the one that survives a fan-out (a linked A/V pair is one undo, not two).
   { name: 'set_layers_enabled', exec: 'table',
-    description: "Set `enabled` on a set of layers in ONE recorded edit (one undo). Toggles exactly the ids it is given — to disable a linked A/V pair together, pass both members. A layer's own `locked` does not block the toggle (visibility is not content); any layer on a locked track rejects the whole batch (`TrackLocked`) and nothing changes. For one layer, `update_layer { patch: { enabled } }` is the same write.",
+    description: "Set `enabled` on a set of layers in ONE recorded edit (one undo) — the only tool that writes it, for one layer or for many. Toggles exactly the ids it is given: to disable a linked A/V pair together, pass both members. A layer's own `locked` does not block the toggle (visibility is not content); any layer on a locked track rejects the whole batch (`TrackLocked`) and nothing changes.",
     inputSchema: { type: 'object', properties: { layer_ids: { type: 'array', items: { type: 'string' } }, enabled: { type: 'boolean' } }, required: ['layer_ids', 'enabled'] },
     parseArgs: (a) => ({ op: 'set_layers_enabled', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), enabled: parseBool(a.enabled, 'enabled') } }) },
   { name: 'update_layer', exec: 'table',
-    description: "Update a layer's envelope (label, time range, enabled, locked). Only fields you set are applied. Time range changes go through validation.",
+    description: "Update a layer's envelope (label, time range, locked). Only fields you set are applied. Time range changes go through validation. Visibility is not here — `set_layers_enabled` owns `enabled`, for one layer as for many.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, patch: {
       type: 'object',
       properties: {
         label: { type: ['string', 'null'] },
         t_start_us: { type: 'integer' },
         t_end_us: { type: 'integer' },
-        enabled: { type: 'boolean' },
         locked: { type: 'boolean' },
       },
     } }, required: ['layer_id', 'patch'] },
@@ -1045,20 +1054,24 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Trim one edge of a layer's timeline range. `edge` is 'in' (t_start) or 'out' (t_end). For media-bearing layers the corresponding src bound (src_in_us or src_out_us) moves by the same delta; over-trimming past the source bound is clamped. When the layer is in a link and `escape_link` is false (default), every link member whose corresponding edge sits at the same t as the trimmed edge is moved by the same delta, clamped to the tightest aligned member's bounds. Pass `escape_link=true` to trim only this layer. See `docs/features.md#links`.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, edge: { type: 'string' }, new_t_us: { type: 'integer' }, escape_link: { type: ['boolean', 'null'] } }, required: ['edge', 'layer_id', 'new_t_us'] },
     parseArgs: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: parseStr(a.edge, 'edge'), new_t_us: parseNum(a.new_t_us, 'new_t_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false) } }) },
-  { name: 'delete_layer', exec: 'table',
-    description: 'Delete a layer. The span it held is left EMPTY and nothing downstream moves; `ripple_delete_layers` is the one that closes it. If this empties a non-reserved, unlocked track, the track is deleted in the same history entry (one undo restores both). A/B-roll and other role-stamped tracks stay.',
-    inputSchema: { type: 'object', properties: { layer_id: { type: 'string' } }, required: ['layer_id'] },
-    parseArgs: (a) => ({ op: 'delete_layer', args: { layer: parseUuid(a.layer_id, 'layer_id') } }) },
+  // One delete tool over two actor ops: `ripple` is the whole difference between
+  // them, and the surface says so rather than making an agent pick a verb it can
+  // only tell apart by reading two descriptions. Empty `layer_ids` splits — the
+  // lift takes it as the no-op of an empty selection, the ripple has no hole to
+  // close and refuses — so the arity check stays in the actor, where each op
+  // already owns its own answer.
   { name: 'delete_layers', exec: 'table',
-    description: "Delete a SET of layers as ONE recorded edit — one undo brings every one of them back. The spans they held are left EMPTY and nothing downstream moves; `ripple_delete_layers` is the variant that closes them. Duplicate ids collapse. The set is ONE composition's (`CrossCompositionSet` otherwise), and a member on a LOCKED TRACK refuses the whole batch (`TrackLocked`) rather than deleting the unlocked half — unlock it with `set_track_flags`. A layer's OWN `locked` does not block a delete, here or in `delete_layer`: it stops the pointer reaching the clip, and the UI's selection tools skip such a layer rather than refusing, so a locked member is a set the UI cannot produce and this tool takes at its word. Each track the batch emptied is pruned with it, unless it is reserved or locked. An empty `layer_ids` is accepted and records nothing — the no-op of a selection that turned out to be empty.",
-    inputSchema: { type: 'object', properties: { layer_ids: { type: 'array', items: { type: 'string' } } }, required: ['layer_ids'] },
-    parseArgs: (a) => ({ op: 'delete_layers', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) } }) },
-  { name: 'ripple_delete_layers', exec: 'table',
-    description: "Delete a SET of layers AND close the span each one vacated, so the film gets shorter (ADR 0062). The span closed for a layer is its own footprint CLIPPED to its remaining same-class neighbours on its own track — a transition participant's authorized overlap is therefore never part of the hole — and touching or overlapping holes merge into one. Every remaining layer that starts at or after a hole then shifts LEFT by that hole's length, on EVERY track of the composition and each on its own lattice, so a linked A/V pair stays in sync; pass both members of a pair and their two holes merge into one shift. What stays: a gap that already sat beside the deleted layer (it just travels left with everything else), a layer that STARTS before the hole (reaching into it is fine — it is anchored ahead of the cut), free markers, and the playhead. Markers anchored to a mover follow it; markers anchored to a deleted layer go with it. Refuses whole, before any write, always naming the entity: `RippleInsideHole` — a remaining layer starts inside the span, so add it to `layer_ids` (its own hole merges in) or use `delete_layer` to leave the span open; `RippleCollision` — a mover would land on a layer that is not moving, so move or delete the blocking layer (the system never makes room); `RippleLinkStraddles` — a link has members on both sides of the span and a link means they move together, so unlink them or add the straddling members to `layer_ids`; `RippleLockedLayer` / `TrackLocked` — a layer or track that would have to move is locked, so unlock it. Locks read leniently: only a layer that actually shifts blocks, so a locked logo at the head does not disable ripple for the rest of the film. The set is ONE composition's (`CrossCompositionSet` otherwise) and must hold at least one id. Recorded — one undo restores every moved layer too.",
-    inputSchema: { type: 'object', properties: { layer_ids: { type: 'array', items: { type: 'string' } } }, required: ['layer_ids'] },
-    parseArgs: (a) => ({ op: 'ripple_delete_layers', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) } }) },
+    description: "Delete a SET of layers as ONE recorded edit — one undo brings every one of them back. `ripple` decides what happens to the span they vacated. Default (`false`): the spans are left EMPTY and nothing downstream moves — the lift. `true`: each vacated span CLOSES and the film gets shorter (ADR 0062) — the span closed for a layer is its own footprint clipped to its remaining same-class neighbours on its own track (a transition participant's authorized overlap is therefore never part of the hole), touching holes merge, and every remaining layer starting at or after a hole shifts LEFT by that hole's length on EVERY track of the composition, each on its own lattice, so a linked A/V pair stays in sync; pass both members of a pair and their two holes merge into one shift. What a ripple leaves alone: a gap that already sat beside a deleted layer (it travels left with everything else), a layer that STARTS before a hole (reaching into it is fine — it is anchored ahead of the cut), free markers, and the playhead. Markers anchored to a mover follow it; markers anchored to a deleted layer go with it either way. Duplicate ids collapse. The set is ONE composition's (`CrossCompositionSet` otherwise), and a member on a LOCKED TRACK refuses the whole batch (`TrackLocked`) rather than deleting the unlocked half — unlock it with `set_track_flags`. A layer's OWN `locked` does not block a delete: it stops the pointer reaching the clip, and the UI's selection tools skip such a layer rather than refusing, so a locked member is a set the UI cannot produce and this tool takes at its word. Each track the batch emptied is pruned with it, unless it is reserved or locked. A ripple refuses whole, before any write, always naming the entity: `RippleInsideHole` — a remaining layer starts inside a span, so add it to `layer_ids` (its own hole merges in) or delete without `ripple` to leave the span open; `RippleCollision` — a mover would land on a layer that is not moving, so move or delete the blocking layer (the system never makes room); `RippleLinkStraddles` — a link has members on both sides of a span and a link means they move together, so unlink them or add the straddling members to `layer_ids`; `RippleLockedLayer` / `TrackLocked` — a layer or track that would have to move is locked. Ripple locks read leniently: only a layer that actually shifts blocks, so a locked logo at the head does not disable ripple for the rest of the film. An empty `layer_ids` is the no-op of a selection that turned out to be empty and records nothing; with `ripple: true` it is refused instead, since there is no hole to close. To close a gap no layer occupies, use `ripple_delete_gap`.",
+    inputSchema: { type: 'object', properties: {
+      layer_ids: { type: 'array', items: { type: 'string' } },
+      ripple: { type: 'boolean', description: 'Close each vacated span and shift everything downstream left (default false — leave the spans empty).' },
+    }, required: ['layer_ids'] },
+    parseArgs: (a) => ({
+      op: parseBoolOpt(a.ripple, 'ripple', false) ? 'ripple_delete_layers' : 'delete_layers',
+      args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) },
+    }) },
   { name: 'ripple_delete_gap', exec: 'table',
-    description: "Close a GAP — the empty span on one track between two layer boundaries — so everything after it moves left and the film gets shorter (ADR 0069). Nothing is deleted. `track_id` names the lane and `start_us` / `end_us` the gap's half-open span `[start_us, end_us)`, read off `project://compositions`: `end_us` must be exactly where a layer on that track STARTS and `start_us` exactly where one ENDS (or 0 — the space before the first clip is a gap too); the space after the last clip is not a gap and cannot be closed. Send the whole gap, not a piece of it, or the call is refused with `GapNotFound` carrying the span you sent — the same refusal you get when a layer reaches into the span, so re-read the composition and retry with the gap as it is now. The closing is `ripple_delete_layers`' closing: every remaining layer that starts at or after `end_us`, on EVERY track of the composition, shifts LEFT by the gap's length, each on its own lattice; a layer that starts before the gap stays, free markers and the playhead stay, anchored markers follow their layers. Refuses whole, before any write, with the same names: `RippleInsideHole` — a layer on another track starts inside the gap, so delete it or `ripple_delete_layers` it first (a gap has no set to add it to); `RippleCollision` — a mover would land on a layer that is not moving; `RippleLinkStraddles` — a link has a member reaching across the gap and another downstream; `RippleLockedLayer` / `TrackLocked` — a layer or lane that would have to move is locked (the gap's own lane always has a mover, so a gap on a locked lane always refuses). Recorded — one undo puts every moved layer back.",
+    description: "Close a GAP — the empty span on one track between two layer boundaries — so everything after it moves left and the film gets shorter (ADR 0069). Nothing is deleted. `track_id` names the lane and `start_us` / `end_us` the gap's half-open span `[start_us, end_us)`, read off `project://compositions`: `end_us` must be exactly where a layer on that track STARTS and `start_us` exactly where one ENDS (or 0 — the space before the first clip is a gap too); the space after the last clip is not a gap and cannot be closed. Send the whole gap, not a piece of it, or the call is refused with `GapNotFound` carrying the span you sent — the same refusal you get when a layer reaches into the span, so re-read the composition and retry with the gap as it is now. The closing is `delete_layers { ripple: true }`'s closing: every remaining layer that starts at or after `end_us`, on EVERY track of the composition, shifts LEFT by the gap's length, each on its own lattice; a layer that starts before the gap stays, free markers and the playhead stay, anchored markers follow their layers. Refuses whole, before any write, with the same names: `RippleInsideHole` — a layer on another track starts inside the gap, so delete it (with or without `ripple`) first — a gap has no set to add it to; `RippleCollision` — a mover would land on a layer that is not moving; `RippleLinkStraddles` — a link has a member reaching across the gap and another downstream; `RippleLockedLayer` / `TrackLocked` — a layer or lane that would have to move is locked (the gap's own lane always has a mover, so a gap on a locked lane always refuses). Recorded — one undo puts every moved layer back.",
     inputSchema: { type: 'object', properties: { track_id: { type: 'string' }, start_us: { type: 'integer' }, end_us: { type: 'integer' } }, required: ['track_id', 'start_us', 'end_us'] },
     parseArgs: (a) => ({ op: 'ripple_delete_gap', args: { track: parseUuid(a.track_id, 'track_id'), s: parseNum(a.start_us, 'start_us'), e: parseNum(a.end_us, 'end_us') } }) },
   // ── table-exec: links ───────────────────────────────────────────────────
@@ -1233,7 +1246,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     }, composition_id: { type: ['string', 'null'], description: 'The composition whose canvas (width, height, color_space, background) and duration_us the patch sets; omit for the root. fps / sample_rate / channels are ONE lattice for the whole project and cascade to every composition whichever is named.' } }, required: ['patch'] },
     parseArgs: (a) => ({ op: 'set_composition', args: { ...parseObj(a.patch, 'patch'), composition_id: parseCompositionIdOpt(a.composition_id) } }) },
   { name: 'fit_composition_to_layers', exec: 'table',
-    description: "Clear the composition's duration pin and set `duration_us` to `max(layer.t_end_us)`. The inverse of `set_composition { duration_us }`: that pins, this unpins. After this call, subsequent layer edits track duration in both directions (grow on adds, shrink on deletes/inward trims). `composition_id` names a Group's composition; omit for the root.",
+    description: "Clear the composition's duration pin and set `duration_us` to `max(layer.t_end_us)`. The inverse of `update_composition { patch: { duration_us } }`: that pins, this unpins. After this call, subsequent layer edits track duration in both directions (grow on adds, shrink on deletes/inward trims). `composition_id` names a Group's composition; omit for the root.",
     inputSchema: { type: 'object', properties: { composition_id: COMPOSITION_ID_SCHEMA }, required: [] },
     parseArgs: (a) => ({ op: 'fit_composition_to_layers', args: { composition_id: parseCompositionIdOpt(a.composition_id) } }) },
   // The project-preferences twin of set_composition: that one owns the canvas a
@@ -1259,7 +1272,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: 'Update a marker. Setting `t_us` re-sorts the marker list. On a marker ANCHORED to a clip, `t_us` names the time the mark should read and moves the ANCHOR to make it read that, so the mark keeps following its clip from the new offset — a time outside that clip\'s span is refused, and `t_us` together with `end_t_us` is refused (an anchored region\'s end follows its anchor by itself; patch one or the other).',
     inputSchema: { type: 'object', properties: { marker_id: { type: 'string' }, patch: {
       type: 'object',
-      description: 'Marker patch; only fields you set are applied. `end_t_us` can be set, never cleared (clear = remove + re-add). A marker\'s anchor is not patchable here — attach_marker and detach_marker set and clear it, and add_marker can create a marker already carrying one. Read `anchor_layer` on a marker to see whether it follows one.',
+      description: 'Marker patch; only fields you set are applied. `end_t_us` can be set, never cleared (clear = remove + re-add). A marker\'s anchor is not patchable here — `set_marker_anchor` ties and unties it, and add_marker can create a marker already carrying one. Read `anchor_layer` on a marker to see whether it follows one.',
       properties: {
         t_us: { type: ['integer', 'null'] },
         end_t_us: { type: ['integer', 'null'] },
@@ -1273,14 +1286,21 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: 'Remove a marker.',
     inputSchema: { type: 'object', properties: { marker_id: { type: 'string' } }, required: ['marker_id'] },
     parseArgs: (a) => ({ op: 'remove_marker', args: { marker: parseUuid(a.marker_id, 'marker_id') } }) },
-  { name: 'attach_marker', exec: 'table',
-    description: 'Anchor an existing marker to a clip of its own composition, so the mark FOLLOWS that clip — through moves, trims, splits and a crossing into another composition, and the clip\'s deletion takes the mark with it. The anchor names the source instant the mark already sits on, so attaching by itself moves nothing. `t_us` stays the field to read afterwards: it becomes derived, but it is still stored. Refuses without writing: a layer in another composition (`CrossCompositionSet` — the two timelines share no origin, so no `t_us` could be derived across them), a kind carrying no source window such as Color or Text (`WrongLayerKind`), and a marker outside the clip\'s half-open span (`InvalidArgument`) — a mark the clip does not cover names no instant in it. Attaching an already-anchored marker replaces the tie.',
-    inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, marker_id: { type: 'string' } }, required: ['layer_id', 'marker_id'] },
-    parseArgs: (a) => ({ op: 'attach_marker', args: { marker: parseUuid(a.marker_id, 'marker_id'), layer: parseUuid(a.layer_id, 'layer_id') } }) },
-  { name: 'detach_marker', exec: 'table',
-    description: 'Cut a marker loose from the clip it follows. It keeps the frame it currently reads and simply stops following, so what comes out is an ordinary marker fixed to the timeline. This is the one exit from `hibernating`: a marker whose clip was trimmed past it is otherwise retained but painted nowhere, and detaching brings it back as a free mark on its frozen `t_us`. Safe to call on a marker that follows nothing: accepted, and it records no undo entry, so you need not read the marker first to find out whether it needed detaching.',
-    inputSchema: { type: 'object', properties: { marker_id: { type: 'string' } }, required: ['marker_id'] },
-    parseArgs: (a) => ({ op: 'detach_marker', args: { marker: parseUuid(a.marker_id, 'marker_id') } }) },
+  // The anchor is written HERE and nowhere else: `update_marker`'s patch refuses
+  // the field (`parseMarkerPatch`), so a tie can never be established as a side
+  // effect of editing something else — the refusal the tie owes is about WHERE
+  // the mark sits, and a patch that also moved it would have two answers.
+  { name: 'set_marker_anchor', exec: 'table',
+    description: "Tie a marker to a clip so the mark FOLLOWS it, or cut it loose. `layer_id` names a clip of the marker's own composition; `layer_id: null` unties. Tied, the mark travels with its clip through moves, trims, splits and a crossing into another composition, and the clip's deletion takes the mark with it. The tie names the source instant the mark already sits on, so tying by itself moves nothing; `t_us` stays the field to read afterwards — it becomes derived, but it is still stored. Tying refuses without writing: a layer in another composition (`CrossCompositionSet` — the two timelines share no origin, so no `t_us` could be derived across them), a kind carrying no source window such as Color or Text (`WrongLayerKind`), and a marker sitting outside the clip's half-open span (`InvalidArgument`) — a mark the clip does not cover names no instant in it, so move the marker onto the clip with `update_marker { patch: { t_us } }` first. Tying an already-tied marker replaces the tie. Untying keeps the frame the mark currently reads and is the one exit from `hibernating`: a marker whose clip was trimmed past it is otherwise retained but painted nowhere, and untying brings it back as a free mark on its frozen `t_us`. Untying a marker that follows nothing is accepted and records no undo entry, so you need not read the marker first.",
+    inputSchema: { type: 'object', properties: {
+      marker_id: { type: 'string' },
+      layer_id: { type: ['string', 'null'], description: 'The clip to follow, or null to cut the marker loose.' },
+    }, required: ['marker_id', 'layer_id'] },
+    parseArgs: (a) => {
+      const marker = parseUuid(a.marker_id, 'marker_id')
+      if (a.layer_id === null) return { op: 'detach_marker', args: { marker } }
+      return { op: 'attach_marker', args: { marker, layer: parseUuid(a.layer_id, 'layer_id') } }
+    } },
   // ── table-exec: media ────────────────────────────────────────────────────
   { name: 'remove_media', exec: 'table',
     description: 'Remove a media item. Rejects if any layer references it unless force=true. With force=true, also deletes the referencing layers in one atomic commit.',
@@ -1292,7 +1312,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseArgs: () => ({ op: 'undo', args: {} }) },
   { name: 'jump_to', exec: 'table',
-    description: "Move the history cursor to an absolute stack index — the click-a-row of the history panel, and the way back to a state that is neither one undo away nor a checkpoint. `index` is stated in the same numbering `project://history` reports: `ops[i]` sits at `window_start + i`, and `cursor` is where you are now, so jumping is reading that resource and naming a row. Out of range is refused naming the live bounds. A REVERT path like undo/redo/`restore_checkpoint`, so `lock_history` blocks it with the lock's reason. It moves the cursor and records nothing; a later edit truncates whatever sat ahead of it, exactly as it would after an undo. `evicted > 0` in that resource means the stack no longer reaches the start of the project — index 0 is then the oldest SURVIVING state, not the beginning.",
+    description: "Move the history cursor to an absolute stack index — the click-a-row of the history panel, and the way back to a state that is neither one undo away nor a checkpoint. `index` is stated in the same numbering `project://history` reports: `ops[i]` sits at `window_start + i`, and `cursor` is where you are now, so jumping is reading that resource and naming a row. Out of range is refused naming the live bounds. A REVERT path like undo/redo/`restore_checkpoint`, so `set_history_lock` blocks it with the lock's reason. It moves the cursor and records nothing; a later edit truncates whatever sat ahead of it, exactly as it would after an undo. `evicted > 0` in that resource means the stack no longer reaches the start of the project — index 0 is then the oldest SURVIVING state, not the beginning.",
     inputSchema: { type: 'object', properties: { index: { type: 'integer', description: 'Absolute history index, in `project://history`\'s numbering (`window_start + i`).' } }, required: ['index'] },
     parseArgs: (a) => ({ op: 'jump_to', args: { index: parseNum(a.index, 'index') } }) },
   { name: 'redo', exec: 'table',
@@ -1300,7 +1320,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseArgs: () => ({ op: 'redo', args: {} }) },
   { name: 'delete_checkpoint', exec: 'table',
-    description: "Drop a named checkpoint. Only the restore point goes — the edits it marked stay exactly where they are, and nothing about the timeline or the undo stack changes, so there is nothing to undo afterwards. `CheckpointNotFound` for an id `list_checkpoints` does not report. Deliberately NOT blocked by `lock_history`: the lock rejects revert paths, and forgetting a restore point reverts nothing.",
+    description: "Drop a named checkpoint. Only the restore point goes — the edits it marked stay exactly where they are, and nothing about the timeline or the undo stack changes, so there is nothing to undo afterwards. `CheckpointNotFound` for an id `list_checkpoints` does not report. Deliberately NOT blocked by `set_history_lock`: the lock rejects revert paths, and forgetting a restore point reverts nothing.",
     inputSchema: { type: 'object', properties: { checkpoint_id: { type: 'string' } }, required: ['checkpoint_id'] },
     parseArgs: (a) => ({ op: 'delete_checkpoint', args: { checkpoint_id: parseUuid(a.checkpoint_id, 'checkpoint_id') } }) },
   // ── table-exec: captions ─────────────────────────────────────────────────
@@ -1416,20 +1436,27 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   { name: 'add_marker', exec: 'dedicated',
     description: 'Add a marker (point or region) to a composition\'s timeline — the root, or the Group named by `composition_id`. Returns the new marker id. Set `end_t_us` to make it a region marker. Set `anchor_layer_id` to have the mark FOLLOW a clip instead of standing at a fixed time; omit it for an ordinary marker.',
     inputSchema: { type: 'object', properties: { anchor_layer_id: { type: ['string', 'null'],
-      description: 'Clip the new marker should follow — a layer of the SAME composition carrying a source window (VideoClip, Audio, Group). The mark is born tied to the source instant `t_us` lands on, exactly as attach_marker would tie it afterwards, and is refused for the same three reasons; a refusal creates no marker at all. Omit for a marker fixed to the timeline.' },
+      description: 'Clip the new marker should follow — a layer of the SAME composition carrying a source window (VideoClip, Audio, Group). The mark is born tied to the source instant `t_us` lands on, exactly as `set_marker_anchor` would tie it afterwards, and is refused for the same three reasons; a refusal creates no marker at all. Omit for a marker fixed to the timeline.' },
       color: RGBA_SCHEMA, end_t_us: { type: ['integer', 'null'] }, label: { type: 'string' }, t_us: { type: 'integer' }, composition_id: COMPOSITION_ID_SCHEMA }, required: ['color', 'label', 't_us'] },
     parseDedicated: (a) => ({ color: parseRgba(a.color, 'color'), t_us: parseNum(a.t_us, 't_us'),
       end_t_us: parseNumOpt(a.end_t_us, 'end_t_us'), label: parseStr(a.label, 'label'),
       anchor_layer_id: a.anchor_layer_id != null ? parseUuid(a.anchor_layer_id, 'anchor_layer_id') : null,
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
-  { name: 'lock_history', exec: 'dedicated',
-    description: 'Block the user from reverting (undo / redo / jump_to / restore_checkpoint) while the agent is mid-batch. `jump_to` is the history panel\'s click-a-row cursor move — it is a revert path like the rest and rejects the same way. Never affects what RECORDS: the lock rejects reverts, it does not fold a batch into one history entry. `reason` is shown next to the lock badge in the agent panel and the history panel, and is returned as the error to revert attempts. Last-writer-wins. Always pair with unlock_history. Ending the owning work session or explicitly disconnecting its connection releases its lock. The user can unlock locally. Switching views does not release locks.',
-    inputSchema: { type: 'object', properties: { reason: { type: 'string' } }, required: ['reason'] },
-    parseDedicated: (a) => ({ reason: parseStr(a.reason, 'reason') }) },
-  { name: 'unlock_history', exec: 'dedicated',
-    description: 'Release the revert-lock taken by lock_history, re-enabling undo / redo / jump_to / restore_checkpoint. Idempotent — calling while already unlocked is a no-op.',
-    inputSchema: { type: 'object', properties: {}, required: [] },
-    parseDedicated: (_a) => ({}) },
+  { name: 'set_history_lock', exec: 'dedicated',
+    description: "Block the user from reverting (undo / redo / jump_to / restore_checkpoint) while the agent is mid-batch, or release that block. `locked: true` needs a `reason`, shown next to the lock badge in the agent panel and the history panel and returned as the error to revert attempts; `locked: false` takes none and is idempotent. `jump_to` is the history panel's click-a-row cursor move — it is a revert path like the rest and rejects the same way. Never affects what RECORDS: the lock rejects reverts, it does not fold a batch into one history entry. Last-writer-wins. Always pair the lock with its release. Ending the owning work session or explicitly disconnecting its connection releases its lock. The user can unlock locally. Switching views does not release locks.",
+    inputSchema: { type: 'object', properties: {
+      locked: { type: 'boolean' },
+      reason: { type: 'string', description: 'Why the history is locked — required when locking, refused when unlocking.' },
+    }, required: ['locked'] },
+    parseDedicated: (a) => {
+      const locked = parseBool(a.locked, 'locked')
+      const reason = a.reason === undefined || a.reason === null ? null : parseStr(a.reason, 'reason')
+      if (locked && (reason === null || reason.trim() === ''))
+        throw new McpArgError('set_history_lock needs a non-empty `reason` when locking — it is what the user is shown in place of undo', 'reason')
+      if (!locked && reason !== null)
+        throw new McpArgError('set_history_lock takes no `reason` when unlocking — there is nothing left to explain', 'reason')
+      return { locked, reason }
+    } },
   { name: 'set_keyframe', exec: 'dedicated',
     description: 'Insert or update a keyframe on a layer param. `t_us` is timeline-absolute. A Static track is lifted to Keyframed. An existing key at the same frame is updated in place. `value` is typed by `param_key`: a number for every scalar param, an {r,g,b,a} colour (integers 0..255) for "color" — the Text and Color layers\' colour. `interp` (optional) is the easing of the segment LEAVING this key as a raw kind — {"kind":"Linear"} | {"kind":"Hold"} | {"kind":"Bezier","p1":[x,y],"p2":[x,y]} | {"kind":"Elastic","dir":"Out"} | {"kind":"Bounce","dir":"In"} (named presets go through set_keyframe_easing); it writes this key\'s segment class and out tangent and the next key\'s in tangent, both Free. Omit it to inherit the preceding segment\'s easing (Linear on a fresh track). To write one side of a key, or its continuity, use set_keyframe_tangents; for Auto tangents, smooth_keyframes. Keying only scale_x or scale_y on a scale-linked layer diverges the pair and auto-clears the link in the same commit (see set_scale_linked).',
     inputSchema: { type: 'object', properties: { interp: INTERP_SCHEMA, layer_id: { type: 'string' }, param_key: { type: 'string' }, t_us: { type: 'integer' }, value: TRACK_VALUE_SCHEMA }, required: ['layer_id', 'param_key', 't_us', 'value'] },
@@ -1516,10 +1543,10 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return p
     } },
   { name: 'dry_run', exec: 'dedicated',
-    description: 'Try-run a sequence of edit operations against a clone of the current project WITHOUT committing. Useful for previewing complex multi-step edits — agents can detect overlap / invariant violations before mutating real state. Validates after each op (matching real `commit()` behaviour) and HALTS at the first error so subsequent ops don\'t dry-run against a state real execution wouldn\'t reach. Returns `{ results: [{ index, status, output? | error? }, ...] }`. Supports add_color_layer, add_video_layer, add_audio_layer, add_text_layer, update_layer, update_layer_params, move_layer, split_layer, delete_layer, add_transition (same args as the add_transition tool, except the transition kind rides as `transition_kind` — the spec\'s `kind` names the operation — plus optional `placement`: \'overlap\' default | \'extend\'; its output predicts the moved incoming layer\'s sibling lane bounces and lane spawns, and its refusals, identically to the real command). Other tools (motifs, caption import, media import, undo/redo) are not dry-runnable in v1.',
+    description: 'Try-run a sequence of edit operations against a clone of the current project WITHOUT committing. Useful for previewing complex multi-step edits — agents can detect overlap / invariant violations before mutating real state. Validates after each op (matching real `commit()` behaviour) and HALTS at the first error so subsequent ops don\'t dry-run against a state real execution wouldn\'t reach. Returns `{ results: [{ index, status, output? | error? }, ...] }`. Supports add_color_layer, add_video_layer, add_audio_layer, add_text_layer, update_layer, update_layer_params, move_layer, split_layer, delete_layers (the lift only — `ripple: true` is refused, it is not dry-runnable in v1), add_transition (same args as the add_transition tool, except the transition kind rides as `transition_kind` — the spec\'s `kind` names the operation — plus optional `placement`: \'overlap\' default | \'extend\'; its output predicts the moved incoming layer\'s sibling lane bounces and lane spawns, and its refusals, identically to the real command). Other tools (motifs, caption import, media import, undo/redo) are not dry-runnable in v1.',
     inputSchema: { type: 'object', properties: { operations: {
       type: 'array',
-      items: { type: 'object', description: "OperationSpec: {\"kind\": \"add_color_layer\" | \"add_video_layer\" | \"add_audio_layer\" | \"add_text_layer\" | \"update_layer\" | \"update_layer_params\" | \"move_layer\" | \"split_layer\" | \"delete_layer\" | \"add_transition\", ...that tool's snake_case args (add_transition: the transition kind rides as \"transition_kind\" since \"kind\" names the operation, and it also takes \"placement\": \"overlap\" | \"extend\")}." },
+      items: { type: 'object', description: "OperationSpec: {\"kind\": \"add_color_layer\" | \"add_video_layer\" | \"add_audio_layer\" | \"add_text_layer\" | \"update_layer\" | \"update_layer_params\" | \"move_layer\" | \"split_layer\" | \"delete_layers\" | \"add_transition\", ...that tool's snake_case args (add_transition: the transition kind rides as \"transition_kind\" since \"kind\" names the operation, and it also takes \"placement\": \"overlap\" | \"extend\")}." },
     } }, required: ['operations'] },
     parseDedicated: (a) => ({ operations: asArray(a.operations, 'operations') }) },
   { name: 'add_motif_layer', exec: 'dedicated',
@@ -1569,11 +1596,11 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   //    parseDedicated is the bijection gate's required-scalar check only;
   //    runHybrid re-validates layer_id itself. ──
   { name: 'auto_split_by_shot', exec: 'dedicated',
-    description: "Detect shot cuts in a VideoClip layer and split it at every in-window cut, as ONE undoable step. `min_shot_us` (optional) is the minimum shot length for cut detection (closer cuts merge; default 500000 = 0.5s). `drop_short=true` additionally deletes any resulting segment shorter than `min_shot_us`, together with every other member of the layer's link that overlaps the dropped span — the split fans out across a link, so a dropped segment's paired audio goes with it instead of being left as an orphaned sliver (a member wholly inside a surviving segment stays; `delete_layer` itself is still local). Returns `{ layer_ids }` — the new segment layer ids in timeline order (or the single unchanged layer id when no interior cut is found). Pure convenience: reproducible with `analyze_clip` + `split_layer`, and it reads the SAME cached shot report as `analyze_clip`.",
+    description: "Detect shot cuts in a VideoClip layer and split it at every in-window cut, as ONE undoable step. `min_shot_us` (optional) is the minimum shot length for cut detection (closer cuts merge; default 500000 = 0.5s). `drop_short=true` additionally deletes any resulting segment shorter than `min_shot_us`, together with every other member of the layer's link that overlaps the dropped span — the split fans out across a link, so a dropped segment's paired audio goes with it instead of being left as an orphaned sliver (a member wholly inside a surviving segment stays; `delete_layers` itself is still local). Returns `{ layer_ids }` — the new segment layer ids in timeline order (or the single unchanged layer id when no interior cut is found). Pure convenience: reproducible with `analyze_clip` + `split_layer`, and it reads the SAME cached shot report as `analyze_clip`.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, min_shot_us: { type: ['integer', 'null'] }, drop_short: { type: ['boolean', 'null'] } }, required: ['layer_id'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), min_shot_us: parseNumOpt(a.min_shot_us, 'min_shot_us'), drop_short: parseBoolOpt(a.drop_short, 'drop_short', false) }) },
   { name: 'remove_pauses', exec: 'dedicated',
-    description: "Cut the pauses out of a clip's audio and CLOSE the gaps, as ONE recorded edit — a single undo restores the whole clip. A pause is a stretch of the audio that PLAYS whose peak stays under `threshold_amp` for at least `min_pause_us`; `pad_us` of it is kept on EACH side so speech keeps its breath, so the span actually cut is `[start + pad_us, end − pad_us)`. Pass an Audio layer, or a VideoClip: a VideoClip is never the subject, it DELEGATES to the Audio member of its link that shares its media, else to the link's sole Audio member — a VideoClip with neither is refused, because it plays no sound. Returns `{ surviving_layer_ids, removed, removed_us }`: the subject's remaining pieces in timeline order, how many pauses were cut, and the total length of the cut CORES (the pad is not counted). A pause touching the clip's head or tail keeps its pad on the inner side only and is trimmed off whole at the edge. Link-aware: every other member of the subject's link overlapping a removed core goes with it in the same commit, so the paired picture is cut in lockstep instead of being left as an orphaned sliver. Everything downstream shifts left across every track of the composition, so the film gets shorter — two touching cores close as one hole. Refuses whole, before any write, with `ripple_delete_layers`' refusals by name: `RippleInsideHole` (a layer on another track STARTS inside a removed core), `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked` — each naming the layer that blocked — plus `InvalidArgument` when the cores cover the clip end to end, since removing every segment is a delete rather than an edit (`delete_layer` or `ripple_delete_layers` is the tool for that). To review the pauses before removing any, use `detect_pauses` and one anchored region `add_marker` per pause instead; both recipes are packaged as the `/cut-pauses` prompt.",
+    description: "Cut the pauses out of a clip's audio and CLOSE the gaps, as ONE recorded edit — a single undo restores the whole clip. A pause is a stretch of the audio that PLAYS whose peak stays under `threshold_amp` for at least `min_pause_us`; `pad_us` of it is kept on EACH side so speech keeps its breath, so the span actually cut is `[start + pad_us, end − pad_us)`. Pass an Audio layer, or a VideoClip: a VideoClip is never the subject, it DELEGATES to the Audio member of its link that shares its media, else to the link's sole Audio member — a VideoClip with neither is refused, because it plays no sound. Returns `{ surviving_layer_ids, removed, removed_us }`: the subject's remaining pieces in timeline order, how many pauses were cut, and the total length of the cut CORES (the pad is not counted). A pause touching the clip's head or tail keeps its pad on the inner side only and is trimmed off whole at the edge. Link-aware: every other member of the subject's link overlapping a removed core goes with it in the same commit, so the paired picture is cut in lockstep instead of being left as an orphaned sliver. Everything downstream shifts left across every track of the composition, so the film gets shorter — two touching cores close as one hole. Refuses whole, before any write, with `delete_layers { ripple: true }`'s refusals by name: `RippleInsideHole` (a layer on another track STARTS inside a removed core), `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked` — each naming the layer that blocked — plus `InvalidArgument` when the cores cover the clip end to end, since removing every segment is a delete rather than an edit (`delete_layers` is the tool for that). To review the pauses before removing any, use `detect_pauses` and one anchored region `add_marker` per pause instead; both recipes are packaged as the `/cut-pauses` prompt.",
     inputSchema: { type: 'object', properties: {
       layer_id: { type: 'string', description: 'Target Audio layer id, or a VideoClip id that delegates to its linked Audio layer.' },
       threshold_amp: { type: ['number', 'null'], description: "Peak amplitude threshold in [0.0, 1.0], the same parameter `detect_pauses` takes. Omit to use that tool's own default." },

@@ -73,7 +73,7 @@ describe('composition scope — dispatch ops', () => {
     const l = actor.dispatch('add_layer', { kind: 'color', track: tid, t_start_us: 0, t_end_us: 1_000_000 })
     expect(l.ok).toBe(true)
     const rootTracks = root(actor.snapshot()).tracks.map((x) => x.id)
-    expect(actor.dispatch('delete_layer', { layer: l.ok ? l.value : '' }).ok).toBe(true)
+    expect(actor.dispatch('delete_layers', { layers: [l.ok ? l.value : ''] }).ok).toBe(true)
     expect(groupOf(actor, groupId).tracks.some((x) => x.id === tid)).toBe(false)
     expect(root(actor.snapshot()).tracks.map((x) => x.id)).toEqual(rootTracks)
   })

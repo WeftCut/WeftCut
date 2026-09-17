@@ -115,7 +115,7 @@ describe('groups — actor dispatch', () => {
     const r2 = actor.dispatch('groups_create', { layers: [a, b], label: null })
     if (!r2.ok) throw new Error('fixture')
     const orphan = (r2.value as { composition_id: Uuid; layer_id: Uuid })
-    expect(actor.dispatch('delete_layer', { layer: orphan.layer_id }).ok).toBe(true)
+    expect(actor.dispatch('delete_layers', { layers: [orphan.layer_id] }).ok).toBe(true)
     expect(groupsIn(actor)).toEqual([orphan.composition_id])
     len = actor.historyStatus().len
     expect(actor.dispatch('compositions_delete', { composition: orphan.composition_id })).toEqual({ ok: true, value: null })
@@ -135,7 +135,7 @@ describe('groups — actor dispatch', () => {
     if (!first.ok) throw new Error('fixture')
     const g1 = (first.value as { composition_id: Uuid; layer_id: Uuid })
     expect(actor.snapshot().compositions[g1.composition_id].ordinal).toBe(1)
-    expect(actor.dispatch('delete_layer', { layer: g1.layer_id }).ok).toBe(true)
+    expect(actor.dispatch('delete_layers', { layers: [g1.layer_id] }).ok).toBe(true)
     expect(actor.dispatch('compositions_delete', { composition: g1.composition_id }).ok).toBe(true)
 
     // A second Group made while the first is gone takes 2, not 1.

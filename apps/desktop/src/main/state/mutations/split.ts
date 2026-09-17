@@ -107,7 +107,7 @@ export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: nu
  *  can name them off the cut list alone instead of predicting which segments the
  *  length filter is about to take.
  *
- *  Naming EVERY segment is refused: erasing the whole clip is `delete_layer`,
+ *  Naming EVERY segment is refused: erasing the whole clip is `delete_layers`,
  *  and an apply that answered "keep nothing" by deleting what it was applied to
  *  would be a destructive reading of a request that never said delete.
  *

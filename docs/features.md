@@ -27,7 +27,7 @@ add an entry, and Ctrl-Z walks straight past them.
 | `add_track`, `delete_track`, `move_track` | yes |
 | `rename_track` | yes — a name is content, and the layer label already records; the two rename surfaces cannot disagree about undo |
 | `update_track_flags` (eye/M/S/lock toggles) | no — patched into every history snapshot; undo never flips a track control |
-| `add_layer`, `update_layer`, `update_layer_params`, `set_layers_enabled`, `move_layer`, `duplicate_layer`, `paste_layers`, `split_layer`, `delete_layer` | yes |
+| `add_layer`, `update_layer`, `update_layer_params`, `set_layers_enabled`, `move_layer`, `paste_layers`, `split_layer`, `delete_layers` | yes |
 | `move_layers_to_new_track` | yes — **one** entry for the whole raise: the new track, every layer moved onto it, and every source track the raise emptied. Two entries would let one undo return the clips while leaving them on a track that no longer belongs to them |
 | `add_marker`, `update_marker`, `remove_marker` | yes |
 | `add_transition`, `update_transition`, `remove_transition` | yes |
@@ -40,9 +40,9 @@ add an entry, and Ctrl-Z walks straight past them.
 | Passive duration shrink on layer delete / inward trim (unpinned) | **no separate entry** — rides the layer-edit commit that triggered it |
 | `replace_state` (open / new project) | **no** — resets `History` to a fresh one-entry stack and clears checkpoints |
 | `undo`, `redo` | cursor-only, no new entry |
-| `jump_to { index }` (history panel: click a row) | cursor-only, no new entry — `undo`/`redo` generalized to an arbitrary stack index, so it records nothing for the same reason and rejects under `lock_history` for the same reason |
+| `jump_to { index }` (history panel: click a row) | cursor-only, no new entry — `undo`/`redo` generalized to an arbitrary stack index, so it records nothing for the same reason and rejects under `set_history_lock` for the same reason |
 | `restore_checkpoint` | yes (deliberate user/agent action) |
-| `create_checkpoint { label }`, `delete_checkpoint { checkpoint_id }` | **no entry and no `project:changed` broadcast** — neither changes project state, so waking autosave would rewrite `project.json` for nothing. Neither is gated on `lock_history` either: the lock rejects revert paths, and creating or dropping a checkpoint reverts nothing. A surface showing the checkpoint list must refetch it itself after either — the History panel does |
+| `create_checkpoint { label }`, `delete_checkpoint { checkpoint_id }` | **no entry and no `project:changed` broadcast** — neither changes project state, so waking autosave would rewrite `project.json` for nothing. Neither is gated on `set_history_lock` either: the lock rejects revert paths, and creating or dropping a checkpoint reverts nothing. A surface showing the checkpoint list must refetch it itself after either — the History panel does |
 
 **Why the snags.** Imports are additive — no reference in any older snapshot
 can break, so `add_media_item` patches every snapshot in place. `remove_media`
@@ -93,9 +93,10 @@ always errors.
 `Actor::User` / `Actor::Agent { client }` tag so the history panel can
 distinguish them, but Ctrl-Z walks back across both — selective undo on a
 shared mutable state graph is the "history as DAG" problem and out of scope.
-While an agent holds `lock_history(reason)`, every revert path (`undo`,
-`redo`, `jump_to`, `restore_checkpoint`) rejects with `HistoryLocked`; the lock is
-ephemeral (released via `unlock_history` or workspace swap) and never
+While an agent holds `set_history_lock { locked: true, reason }`, every revert
+path (`undo`, `redo`, `jump_to`, `restore_checkpoint`) rejects with
+`HistoryLocked`; the lock is ephemeral (released via `set_history_lock
+{ locked: false }` or workspace swap) and never
 affects what records. Deferred: `begin_transaction`/`commit_transaction`
 bracketing to collapse an agent batch into one undoable entry — revisit
 when stack-flooding actually hurts.
@@ -351,7 +352,7 @@ ADR 0052), never a link.
   proportionally for media-bearing kinds; all pieces stay in the link. The
   shot-apply's rejecting verbs (§ Shot review) are the one place a *delete*
   travels a link too: they remove every member piece lying under a rejected
-  span and nothing under a kept one. `delete_layer` stays local.
+  span and nothing under a kept one. `delete_layers` stays local.
 - **Duplicate** (`paste_layers`) clones every member and links the clones to
   each other — never to their sources — as **one** undo step. The first id is
   the seed the drop position refers to; every other clone shifts by the same
@@ -381,7 +382,7 @@ ADR 0052), never a link.
 
 **Invariants** (validated on every commit): every member resolves to a real
 layer; no layer appears in two links; a link auto-dissolves below 2
-members *in the same commit* (delete is always local — `delete_layer` never
+members *in the same commit* (delete is always local — `delete_layers` never
 fans out); `links_create`/`links_add_members` reject already-linked
 layers unless `reassign: true`, which moves the layer over.
 
@@ -893,7 +894,7 @@ highlighted, and a span that is no longer a gap when it arrives — a clip moved
 into it under a lagging mirror — is refused (`GapNotFound`) rather than
 re-measured. The history row reads *Closed gap*.
 
-**For agents** the same edit is `ripple_delete_layers { layer_ids }`
+**For agents** the same edit is `delete_layers { layer_ids, ripple: true }`
 ([mcp.md](mcp.md)) and, for a gap, `ripple_delete_gap { track_id, start_us,
 end_us }`; `split_layer_multi` carries a `ripple` flag so a split and
 the closing of what it discarded are one undo, which is what

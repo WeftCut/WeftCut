@@ -22,7 +22,7 @@ import { serveProjectResource, buildResourceInjection } from '../state/resource-
 import type { TsActorHost } from '../state/ts-actor-host.js'
 import type { ActorHandle, ChangeEvent } from '../state/actor.js'
 import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
-import { MCP_TOOL_DEFS } from '../state/mcp-commands.js'
+import { MCP_TOOL_DEFS, mcpDef } from '../state/mcp-commands.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
 import { withCanonicalToolName } from './toolAliases.js'
@@ -161,17 +161,22 @@ export async function handleCallTool(
   peaksPathFor: PeaksPathProvider = NO_PEAKS_PATH,
 ): Promise<ServerResult> {
   const tsHost = getTsHost()
-  if (tsHost?.agent && ['begin_agent_session', 'end_agent_session', 'lock_history', 'unlock_history'].includes(name)) {
+  if (tsHost?.agent && ['begin_agent_session', 'end_agent_session', 'set_history_lock'].includes(name)) {
     try {
       let result: unknown = {}
       if (name === 'begin_agent_session') {
         if (typeof args.reason !== 'string') throw new Error('reason must be a string')
         result = tsHost.agent.begin(args.reason)
       } else if (name === 'end_agent_session') tsHost.agent.end('agent')
-      else if (name === 'lock_history') {
-        if (typeof args.reason !== 'string') throw new Error('reason must be a string')
-        tsHost.agent.lock(args.reason)
-      } else tsHost.agent.unlock()
+      else {
+        // The lock is taken here rather than through mcpCall because the OWNER
+        // is the connection, which only this seam knows. The args still go
+        // through the tool's own parser, so the reason gate reads the same
+        // whichever path reaches the lock.
+        const p = mcpDef('set_history_lock').parseDedicated!(args)
+        if (p.locked as boolean) tsHost.agent.lock(p.reason as string)
+        else tsHost.agent.unlock()
+      }
       return { content: [{ type: 'text', text: JSON.stringify(result) }] } as ServerResult
     } catch (e) {
       return { isError: true, content: [{ type: 'text', text: e instanceof Error ? e.message : String(e) }] } as ServerResult

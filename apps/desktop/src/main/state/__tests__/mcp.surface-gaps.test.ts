@@ -82,7 +82,7 @@ describe('delete_layers', () => {
     const a = actorWithPool()
     const [first, second] = threeClips(a)
     expect(call(a, 'update_layer', { layer_id: second, patch: { locked: true } }).ok).toBe(true)
-    // Same contract the single `delete_layer` has carried all along; pinned here
+    // The lift's long-standing contract, pinned here
     // so the plural tool's description stays honest about which lock stops it.
     expect(call(a, 'delete_layers', { layer_ids: [first, second] }).ok).toBe(true)
     expect(layerCount(a)).toBe(1)
@@ -288,13 +288,13 @@ describe('jump_to', () => {
     expect(layerCount(a)).toBe(3)
   })
 
-  it('is a revert path, so lock_history blocks it with the lock reason', () => {
+  it('is a revert path, so set_history_lock blocks it with the lock reason', () => {
     const a = actorWithPool()
     threeClips(a)
-    expect(call(a, 'lock_history', { reason: 'mid-batch' }).ok).toBe(true)
+    expect(call(a, 'set_history_lock', { locked: true, reason: 'mid-batch' }).ok).toBe(true)
     expect(call(a, 'jump_to', { index: 0 }).ok).toBe(false)
     expect(layerCount(a)).toBe(3)
-    expect(call(a, 'unlock_history').ok).toBe(true)
+    expect(call(a, 'set_history_lock', { locked: false }).ok).toBe(true)
     expect(call(a, 'jump_to', { index: 0 }).ok).toBe(true)
   })
 })
@@ -315,11 +315,11 @@ describe('delete_checkpoint', () => {
     expect(call(a, 'delete_checkpoint', { checkpoint_id: '00000000-0000-7000-8000-00000000dead' }).ok).toBe(false)
   })
 
-  it('is NOT blocked by lock_history — forgetting a restore point reverts nothing', () => {
+  it('is NOT blocked by set_history_lock — forgetting a restore point reverts nothing', () => {
     const a = actorWithPool()
     threeClips(a)
     const id = text(call(a, 'create_checkpoint', { label: 'pinned' }))
-    expect(call(a, 'lock_history', { reason: 'mid-batch' }).ok).toBe(true)
+    expect(call(a, 'set_history_lock', { locked: true, reason: 'mid-batch' }).ok).toBe(true)
     expect(call(a, 'restore_checkpoint', { checkpoint_id: id }).ok).toBe(false)
     expect(call(a, 'delete_checkpoint', { checkpoint_id: id }).ok).toBe(true)
   })

@@ -22,7 +22,7 @@ describe('dry_run halt/error (TS-only; the differential gate uses succeeding ops
     const { a, aRoll } = actor()
     const r = a.mcpCall('dry_run', JSON.stringify({ operations: [
       { kind: 'add_color_layer', track_id: aRoll, t_start_us: 0, t_end_us: 1000000, color: { r: 0, g: 0, b: 0, a: 255 } },
-      { kind: 'delete_layer', layer_id: '00000000-0000-0000-0000-0000000000ff' }, // LayerNotFound → halt
+      { kind: 'delete_layers', layer_ids: ['00000000-0000-0000-0000-0000000000ff'] }, // LayerNotFound → halt
       { kind: 'add_color_layer', track_id: aRoll, t_start_us: 2000000, t_end_us: 3000000, color: { r: 0, g: 0, b: 0, a: 255 } },
     ] }))
     expect(r.ok).toBe(true)
@@ -34,7 +34,7 @@ describe('dry_run halt/error (TS-only; the differential gate uses succeeding ops
   })
   it('bad operation spec → invalid_params (no dry run executed)', () => {
     const { a } = actor()
-    const r = a.mcpCall('dry_run', JSON.stringify({ operations: [{ kind: 'delete_layer', layer_id: 'not-a-uuid' }] }))
+    const r = a.mcpCall('dry_run', JSON.stringify({ operations: [{ kind: 'delete_layers', layer_ids: ['not-a-uuid'] }] }))
     expect(r.ok).toBe(false)
     expect((r as { error: { code: string } }).error.code).toBe('invalid_params')
   })

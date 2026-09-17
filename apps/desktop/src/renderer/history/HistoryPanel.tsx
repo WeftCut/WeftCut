@@ -119,9 +119,11 @@ export function HistoryPanel() {
 
   const jumpTo = useCallback(
     async (index: number) => {
-      // `!== null`, not truthiness: `lock_history('')` is accepted by the MCP
-      // parser, and an empty reason locks the stack exactly as hard as a wordy
-      // one. Same test everywhere it is asked (see `disabled` / the titles).
+      // `!== null`, not truthiness: `lock_reason` is the whole lock signal
+      // over the wire and only `null` means unlocked. The renderer never
+      // re-derives the lock from the reason's CONTENT — that would put the
+      // answer in two places. Same test everywhere it is asked (see
+      // `disabled` / the titles).
       if (lockReason !== null) return;
       // Bounds are the whole STACK, not the window: a group header at the top of
       // a narrow window targets `window_start - 1`, an index the backend holds

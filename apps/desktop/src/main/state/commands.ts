@@ -131,7 +131,6 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // position/anchor validation lives with the mutation.
   restack_layer: (a) => ({ op: 'restack_layer', args: { layer: a.layerId, anchor: a.anchorLayerId, position: a.position } }),
   trim_layer: (a) => ({ op: 'trim_layer', args: { layer: a.layerId, edge: a.edge, new_t_us: a.newTUs, escape_link: a.escapeLink ?? false } }),
-  delete_layer: (a) => ({ op: 'delete_layer', args: { layer: a.layerId } }),
   // The selection's delete — a set in, one undo entry out. Same rename as
   // move_layers_to_new_track's, which takes the selection the same way.
   delete_layers: (a) => ({ op: 'delete_layers', args: { layers: a.layerIds } }),
@@ -142,7 +141,6 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // renderer highlighted, so the actor closes that and refuses anything else.
   ripple_delete_gap: (a) => ({ op: 'ripple_delete_gap', args: { track: a.trackId, s: a.startUs, e: a.endUs } }),
   remove_media: (a) => ({ op: 'remove_media', args: { media: a.mediaId, force: a.force ?? false } }),
-  duplicate_layer: (a) => ({ op: 'duplicate_layer', args: { layer: a.layerId, t_offset_us: a.tOffsetUs } }),
   // The whole-link duplicate: a set in (the first id is the seed the drop
   // position refers to), one undo entry out. `targetTrackId` re-lanes the seed's
   // clone only; absent means "stay on the seed's track".
@@ -243,7 +241,7 @@ export const PRODUCTION_OPS = new Set<string>([
   'add_color_layer', 'add_text_layer', 'add_media_layer', 'paste_layer',
   'add_demo_color_layer', 'add_demo_text_layer',
   // Remaining mechanical + meta channels
-  'move_layer', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layer', 'delete_layers', 'ripple_delete_layers', 'ripple_delete_gap', 'remove_media', 'duplicate_layer', 'paste_layers', 'set_layers_enabled', 'split_layer_linked',
+  'move_layer', 'move_layers_to_new_track', 'restack_layer', 'trim_layer', 'delete_layers', 'ripple_delete_layers', 'ripple_delete_gap', 'remove_media', 'paste_layers', 'set_layers_enabled', 'split_layer_linked',
   'links_create', 'links_dissolve', 'links_rename',
   'groups_create', 'groups_add_members', 'move_layers_to_composition', 'groups_ungroup', 'groups_rename', 'compositions_delete', 'add_group_layer',
   'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks', 'update_param_tracks_multi', 'set_scale_linked',

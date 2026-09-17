@@ -444,7 +444,7 @@ test.describe('pauses', () => {
       const linkId = (await wire(page)).links.find((l) => l.layer_ids.includes(videoLayerId))?.id
       expect(linkId, 'the pair should still be linked before the dissolve').toBeTruthy()
       await invokeCmd(page, 'links_dissolve', { linkId })
-      await invokeCmd(page, 'delete_layer', { layerId: audioLayerId })
+      await invokeCmd(page, 'delete_layers', { layerIds: [audioLayerId] })
       await expect
         .poll(async () => clipsOfKind(await wire(page), 'Audio').length, {
           timeout: 30_000,

@@ -48,7 +48,7 @@ Copy the prompt in settings into your client, and your agent is holding the edit
 - **It edits the project you are watching.** No import/export round trip, no separate headless copy.
 - **You can always see what it did.** Every tool call becomes a row in the Agent panel — *Trimmed clip · Ember.mp4*, *Added marker · Needs a look* — and the status bar echoes it. Nothing happens off the record.
 - **Every batch is reversible.** Agents checkpoint at logical boundaries, and each checkpoint is one click from being restored. The agent can also rehearse a whole multi-step edit against a throwaway clone first (`dry_run`) and find the collision before it touches your project.
-- **Multi-agent, with rules.** Sessions are per-connection. An agent that is mid-batch can `lock_history` so a stray Ctrl-Z doesn't land in the middle of its work — and the lock, plus the reason it gave, is shown to you.
+- **Multi-agent, with rules.** Sessions are per-connection. An agent that is mid-batch can `set_history_lock` so a stray Ctrl-Z doesn't land in the middle of its work — and the lock, plus the reason it gave, is shown to you.
 
 For a longer run, an agent can call `begin_agent_session` and fold the UI down to preview, scrub, and a record of what it is doing:
 

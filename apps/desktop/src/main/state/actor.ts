@@ -14,7 +14,7 @@ import { applyRestackLayer, type RestackPosition } from './mutations/restack'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
 import { applyRippleDeleteGap, applyRippleDeleteLayers, type RippleDeleteResult, type RippleGapResult } from './mutations/ripple'
-import { applyDuplicateLayer, applyPasteLayer, applyPasteLayers, pasteLayerInterval } from './mutations/duplicate'
+import { applyPasteLayer, applyPasteLayers, pasteLayerInterval } from './mutations/duplicate'
 import { applySplitLayer, parseDiscardSegments } from './mutations/split'
 import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, applyLinksRename, linkSiblingsExcluding } from './mutations/links'
 import { applyCompositionsDelete, applyGroupsAddMembers, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, type GroupCreateResult } from './mutations/groups'
@@ -37,7 +37,7 @@ import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, ty
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, asArray, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 import { applySetPosition, applyTranslatePath } from './mutations/position'
@@ -58,7 +58,7 @@ export interface ChangeEvent { op_id: Uuid; history_op_id?: Uuid; actor: Actor; 
 
 export type DryRunOp =
   | { kind: 'AddLayer'; track_id: Uuid; params: LayerParams; t_start_us: number; t_end_us: number }
-  | { kind: 'DeleteLayer'; id: Uuid }
+  | { kind: 'DeleteLayers'; ids: Uuid[] }
   | { kind: 'UpdateLayer'; id: Uuid; patch: LayerPatch }
   | { kind: 'UpdateLayerParams'; id: Uuid; patch: LayerParamsPatch }
   | { kind: 'MoveLayer'; id: Uuid; new_track_id: Uuid; new_t_start_us: number; escape_link: boolean }
@@ -759,7 +759,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
         const next = produce(scratch, (d) => {
           switch (op.kind) {
             case 'AddLayer': value = { kind: 'AddLayer', layer_id: applyAddLayer(d, idGen, op.track_id, op.params, op.t_start_us, op.t_end_us) }; break
-            case 'DeleteLayer': applyDeleteLayer(d, op.id); break
+            case 'DeleteLayers':
+              // Validated once at the end, exactly as the real arm's single
+              // commit is — a rehearsal that checked between members would
+              // reject a set the wet call accepts.
+              requireSameComposition(d, op.ids)
+              for (const id of op.ids) applyDeleteLayer(d, id)
+              break
             case 'UpdateLayer': applyUpdateLayer(d, op.id, op.patch); break
             case 'UpdateLayerParams': applyUpdateLayerParams(d, op.id, op.patch, motifCatalog); break
             case 'MoveLayer': applyMoveLayer(d, op.id, op.new_track_id, op.new_t_start_us, op.escape_link); break
@@ -868,12 +874,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: null }
         }
         case 'trim_layer': commit(HISTORY_SUMMARY.layerTrim, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyTrimLayer(d, a.layer as Uuid, ((a.edge as string) === 'out' ? 'Out' : 'In'), parseNum(a.new_t_us, 'new_t_us'), (a.escape_link as boolean) ?? false)); return { ok: true, value: null }
-        case 'delete_layer': commit(HISTORY_SUMMARY.layerDelete, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyDeleteLayer(d, a.layer as Uuid)); return { ok: true, value: null }
         // The SELECTION's delete, and the marquee's headline gesture: N swept
-        // clips must cost ONE undo entry, which the singular form above cannot
-        // give because it has no batch to record. `Coarse` for the same reason
-        // update_param_tracks_multi is — the `Layer` hint carries a single id and
-        // cannot name a change spanning several.
+        // clips must cost ONE undo entry, which is why there is no singular
+        // form beside it. `Coarse` for the same reason update_param_tracks_multi
+        // is — the `Layer` hint carries a single id and cannot name a change
+        // spanning several.
         //
         // The recipe is the loop and nothing else. applyDeleteLayer already drops
         // the layer from its link (auto-dissolving below 2 members), prunes the
@@ -941,19 +946,21 @@ export function createActor(opts: ActorOptions): ActorHandle {
             (d) => applyRippleDeleteGap(d, track, s, e))
           return { ok: true, value: null }
         }
-        case 'duplicate_layer': return { ok: true, value: commit(HISTORY_SUMMARY.layerDuplicate, layerRef, { kind: 'Coarse' }, (d) => applyDuplicateLayer(d, idGen, a.layer as Uuid, parseNum(a.t_offset_us, 't_offset_us'))) }
-        // paste_layers — the whole-link duplicate. `t_start_us` is where the SEED's
-        // clone starts; the shared delta is measured from the seed on the
-        // pre-mutation snapshot so a drop position and an agent's request mean the
-        // same thing. One commit: one undo removes every clone and their link.
-        // Empty `layers` is a caller bug, not a no-op — there is no seed to
-        // measure from.
+        // paste_layers — the whole-link duplicate. The landing is named either
+        // absolutely (`t_start_us`, where the SEED's clone starts, measured
+        // against the seed on the pre-mutation snapshot so a drop position and an
+        // agent's request mean the same thing) or as the shared shift itself
+        // (`t_offset_us`, which needs no read of the seed — the same-place copy).
+        // One commit: one undo removes every clone and their link. Empty `layers`
+        // is a caller bug, not a no-op — there is no seed to measure from.
         case 'paste_layers': {
           const layers = [...new Set((a.layers as Uuid[]) ?? [])]
           if (layers.length === 0) return { ok: false, error: { error: 'InvalidArgument', field: 'layers', detail: 'at least one layer is required' } }
           const seedLoc = locateLayer(current(), layers[0])
           if (!seedLoc) return { ok: false, error: { error: 'LayerNotFound', layer: layers[0] } }
-          const deltaUs = parseNum(a.t_start_us, 't_start_us') - seedLoc.layer.t_start_us
+          const deltaUs = a.t_offset_us !== undefined && a.t_offset_us !== null
+            ? parseNum(a.t_offset_us, 't_offset_us')
+            : parseNum(a.t_start_us, 't_start_us') - seedLoc.layer.t_start_us
           const targetTrackId = (a.target_track_id as Uuid | null | undefined) ?? null
           const clones = commit(pastedLayersSummary(layers.length), (m: Map<Uuid, Uuid>) => layerRefs([...m.values()]), { kind: 'Coarse' },
             (d) => applyPasteLayers(d, idGen, layers, deltaUs, targetTrackId))
@@ -1014,8 +1021,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // different grids are cut up to half a frame apart, and a kept
         // neighbour's piece lapping into a hole by that drift is not part of it
         // (`remove_pauses` cuts an Audio target whose picture rides the frame
-        // grid). `delete_layer` itself is
-        // still local — this is the shot-apply's own reach, not a link rule
+        // grid). `delete_layers` itself is still local — this is the
+        // shot-apply's own reach, not a link rule
         // (docs/features.md § Links). A partner on a locked track fails the
         // whole op through applyDeleteLayer's own checkTrackLock and the commit
         // rolls back atomically, which IS § Links' "locks reject the whole op":
@@ -1613,8 +1620,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
         return { kind: 'MoveLayer', id: parseUuid(spec.layer_id, 'layer_id'), new_track_id: parseUuid(spec.new_track_id, 'new_track_id'), new_t_start_us: parseNum(spec.new_t_start_us, 'new_t_start_us'), escape_link: (spec.escape_link as boolean) ?? false }
       case 'split_layer':
         return { kind: 'SplitLayer', id: parseUuid(spec.layer_id, 'layer_id'), at_t_us: parseNum(spec.at_t_us, 'at_t_us'), escape_link: (spec.escape_link as boolean) ?? false }
-      case 'delete_layer':
-        return { kind: 'DeleteLayer', id: parseUuid(spec.layer_id, 'layer_id') }
+      case 'delete_layers': {
+        if (spec.ripple === true) throw new McpArgError('delete_layers with `ripple: true` is not dry-runnable in v1 — rehearse the lift, or run the ripple for real', 'ripple')
+        return { kind: 'DeleteLayers', ids: asArray(spec.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) }
+      }
       case 'add_transition':
         // Same gates as the wet tool's boundary: strict (kind, direction)
         // pairing and the closed placement enum, so a dry-run's arg rejection
@@ -1819,13 +1828,14 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // `{left, right}` (left = original layer, right = new) — return it verbatim.
           return { ok: true, result: toolJson(r.value) }
         }
-        case 'lock_history': {
-          const p = mcpDef('lock_history').parseDedicated!(a)
-          const reason = p.reason as string
-          if (reason.trim() === '') return { ok: false, error: { code: 'invalid_params', message: 'reason must be non-empty' } }
-          history.lock(reason); return { ok: true, result: toolEmpty() }
+        // The reason's presence is gated in the parser (locking needs one,
+        // unlocking refuses one), so this arm reads `locked` and nothing else.
+        case 'set_history_lock': {
+          const p = mcpDef('set_history_lock').parseDedicated!(a)
+          if (p.locked as boolean) history.lock(p.reason as string)
+          else history.unlock()
+          return { ok: true, result: toolEmpty() }
         }
-        case 'unlock_history': { mcpDef('unlock_history').parseDedicated!(a); history.unlock(); return { ok: true, result: toolEmpty() } }
         case 'create_checkpoint': {
           const p = mcpDef('create_checkpoint').parseDedicated!(a)
           const label = p.label as string

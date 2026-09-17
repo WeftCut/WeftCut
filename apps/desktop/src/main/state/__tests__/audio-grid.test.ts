@@ -260,7 +260,7 @@ describe('audio grid — the 48 kHz mix lattice', () => {
   it('composition.duration_us stays on the FRAME grid even when audio reaches furthest', () => {
     const { actor, audioLayer, videoLayer } = pairedFixture()
     // Delete the video so the audio tail alone defines the duration.
-    expect(actor.dispatch('delete_layer', { layer: videoLayer }).ok).toBe(true)
+    expect(actor.dispatch('delete_layers', { layers: [videoLayer] }).ok).toBe(true)
     const end = sample(gridIndex(frame(120), AUDIO_GRID) + 3)
     expect(actor.dispatch('trim_layer', { layer: audioLayer, edge: 'out', new_t_us: end, escape_link: true }).ok).toBe(true)
     const comp = root(actor.snapshot())

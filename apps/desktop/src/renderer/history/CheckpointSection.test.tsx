@@ -409,10 +409,10 @@ describe("checkpoint section under lock_reason", () => {
     expect(mocks.projectDeleteCheckpoint).toHaveBeenCalledWith("cp-1");
   });
 
-  // An empty reason is a lock: `lock_history('')` passes the MCP parser. Testing
-  // truthiness would disable Restore (its `disabled` already reads `!== null`)
-  // while the tooltip claimed it was available, and let the click handler
-  // through.
+  // An empty reason is still a lock: `null` is the only unlocked value on the
+  // wire. Testing truthiness would disable Restore (its `disabled` already reads
+  // `!== null`) while the tooltip claimed it was available, and let the click
+  // handler through.
   it("treats an EMPTY lock reason as a lock on Restore", async () => {
     await mountPanel(stackView([checkpoint()], { lock_reason: "" }));
     expect(button("Restore").disabled).toBe(true);

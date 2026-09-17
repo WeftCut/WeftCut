@@ -38,11 +38,11 @@ test('agent panel separates views, work sessions and connection lifetime', async
     await expect(page.locator('.agent-mode-shell')).toBeVisible()
     await expect(page.locator('.agent-session-header')).toContainText('Interview rough cut')
     const first = (await snapshot()).session!
-    await call('lock_history', { reason: '' })
-    await expect(page.getByRole('button', { name: 'Unlock undo' })).toBeVisible()
+    await call('set_history_lock', { locked: true, reason: 'Rough cut batch' })
+    await expect(page.getByRole('button', { name: 'Unlock undo', exact: true })).toBeVisible()
     await page.locator('.agent-exit-button').click()
     expect((await snapshot()).session?.id).toBe(first.id)
-    expect((await snapshot()).lock_reason).toBe('')
+    expect((await snapshot()).lock_reason).toBe('Rough cut batch')
     await menu(/^Agent$/)
     await expect(dockPanel(page, 'agent')).toHaveCount(1)
     await call('begin_agent_session', { reason: 'Retry begin' })
@@ -55,7 +55,7 @@ test('agent panel separates views, work sessions and connection lifetime', async
     await call('add_color_layer', { track_id: trackId, color: { r: 28, g: 76, b: 128, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 })
     await client.readResource({ uri: 'project://current' })
     await client.readResource({ uri: 'project://tracks' })
-    await call('unlock_history')
+    await call('set_history_lock', { locked: false })
     await call('restore_checkpoint', { checkpoint_id: first.checkpoint_id })
     await expect.poll(async () => (await snapshot()).activities.some(a => a.effect === 'reverted')).toBe(true)
     const count = (await snapshot()).activities.length
@@ -69,7 +69,7 @@ test('agent panel separates views, work sessions and connection lifetime', async
     expect((await snapshot()).activities.at(-1)?.session_id).toBeNull()
 
     await call('begin_agent_session', { reason: 'Check the result' })
-    await call('lock_history', { reason: 'Check batch' })
+    await call('set_history_lock', { locked: true, reason: 'Check batch' })
     expect((await call('end_agent_session')).isError).not.toBe(true)
     expect((await snapshot()).session).toBeNull()
     expect((await snapshot()).lock_reason).toBeNull()
@@ -77,7 +77,7 @@ test('agent panel separates views, work sessions and connection lifetime', async
     await expect(page.locator('.agent-mode-shell')).toBeVisible()
 
     await call('begin_agent_session', { reason: 'Final review' })
-    await call('lock_history', { reason: 'Review batch' })
+    await call('set_history_lock', { locked: true, reason: 'Review batch' })
     await expect(page.locator('.agent-mode-shell')).toBeVisible()
     await page.getByRole('button', { name: 'MCP service ready' }).click()
     await expect(page.locator('.agent-connection-details')).toContainText('Panel test agent')

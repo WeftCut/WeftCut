@@ -6,29 +6,6 @@ import { CommandFailure } from '../errors'
 import { gridForLayerKind, shiftOnGrids, snapOnGrid } from '../snap'
 import { layerOverlapClass } from '../validate'
 
-/** Shallow-clone the layer with one fresh id (nested keyframe/effect ids are
- *  NOT regenerated), offset by tOffsetUs, insert t-start-sorted on the same
- *  track, autofit. Duplicate does NOT join a link.
- *
- *  `tOffsetUs` arrives raw from `duplicate_layer` (MCP-only — no UI caller), so
- *  offsetting both edges by it directly takes them off the frame grid at every
- *  rational rate. It goes through `pasteLayerInterval` instead: ONE shift model
- *  for duplicate and paste, snapped start with the end carried by the resulting
- *  delta, so the copy keeps the source's frame span. */
-export function applyDuplicateLayer(p: Project, idGen: IdGen, id: Uuid, tOffsetUs: number): Uuid {
-  const { comp: c, track, layer: source } = requireLayer(p, id)
-  const interval = pasteLayerInterval(p, id, source.t_start_us + tOffsetUs)
-  const copy = cloneLayer(source)
-  const dupId = idGen()
-  copy.id = dupId
-  copy.t_start_us = interval.tStartUs
-  copy.t_end_us = interval.tEndUs
-  const at = track.layers.findIndex((l) => l.t_start_us > copy.t_start_us)
-  track.layers.splice(at < 0 ? track.layers.length : at, 0, copy)
-  applyDurationAutofit(c)
-  return dupId
-}
-
 export interface PasteLayerInterval {
   tStartUs: number
   tEndUs: number

@@ -183,7 +183,7 @@ function applyOp(a: ActorT, op: Op): Res {
     case 'trim': return layers.length ? a.dispatch('trim_layer', { layer: pickLayer(op.n), edge: op.edge, new_t_us: op.to, escape_link: false }) : null
     case 'split': return layers.length ? a.dispatch('split_layer', { layer: pickLayer(op.n), at_t_us: op.at, escape_link: false }) : null
     case 'splitMulti': return layers.length ? a.dispatch('split_layer_multi', { layer: pickLayer(op.n), at_t_us_list: op.ats }) : null
-    case 'duplicate': return layers.length ? a.dispatch('duplicate_layer', { layer: pickLayer(op.n), t_offset_us: op.off }) : null
+    case 'duplicate': return layers.length ? a.dispatch('paste_layers', { layers: [pickLayer(op.n)], t_offset_us: op.off }) : null
     // paste is a production `command` channel (camelCase wire args), not dispatch.
     case 'paste': return layers.length ? a.command('paste_layer', { layerId: pickLayer(op.n), tStartUs: op.start }) : null
     case 'link': return layers.length >= 2 ? a.dispatch('links_create', { layers: [pickLayer(op.n), pickLayer(op.m)], label: null, reassign: false }) : null

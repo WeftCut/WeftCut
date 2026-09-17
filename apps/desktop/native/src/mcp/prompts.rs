@@ -183,7 +183,7 @@ Steps:
 1. Call `remove_pauses` with `layer_id: \"{layer_id}\"`{remove_extra}. It walks the pre-computed waveform peaks, splits the clip at the edges of every pause, deletes them and closes the gaps behind them, all as ONE recorded edit — a single undo puts the clip back whole. Each pause keeps `pad_us` on EACH side (default 100000 — 100 ms; pass 0 to erase pauses whole), so speech keeps its breath and a soft word onset is not clipped off. It returns `{{ surviving_layer_ids, removed, removed_us }}`: what is left of the clip in timeline order, how many pauses went, and how much time went with them. Linked audio/video partners travel with each removed slice, so no orphaned sliver is left behind. If the tool errors with a `waveform not generated yet` message, wait for the corresponding `media:job_complete` event (kind=waveform) and retry — imports run in the background.
 2. Report how many pauses were removed and how much shorter the clip is.
 
-A refusal is whole and lands before any write, so the clip comes back UNSPLIT with nothing recorded — fix what it names and call again. `RippleInsideHole` means a layer on another track STARTS inside one of the pauses, so the gap cannot close over it: either ripple that layer away too, or take the review-first route below and let the human decide. `RippleCollision`, `RippleLinkStraddles` and `RippleLockedLayer` / `TrackLocked` each name the layer that blocked. `InvalidArgument` means the clip is one pause end to end — removing every part of it is a `delete_layer` (or `ripple_delete_layers`), not an edit to it — or that `pad_us` is too large for `min_pause_us`, which needs `2 × pad_us` to stay below it.
+A refusal is whole and lands before any write, so the clip comes back UNSPLIT with nothing recorded — fix what it names and call again. `RippleInsideHole` means a layer on another track STARTS inside one of the pauses, so the gap cannot close over it: either ripple that layer away too, or take the review-first route below and let the human decide. `RippleCollision`, `RippleLinkStraddles` and `RippleLockedLayer` / `TrackLocked` each name the layer that blocked. `InvalidArgument` means the clip is one pause end to end — removing every part of it is a `delete_layers`, not an edit to it — or that `pad_us` is too large for `min_pause_us`, which needs `2 × pad_us` to stay below it.
 
 REVIEW FIRST — the alternative when the pauses should be seen before any of them goes:
 1. Call `detect_pauses` with `layer_id: \"{layer_id}\"`{extra}. Same walk over the same peaks, but it commits nothing: it returns `{{ pauses: [{{ t_start_us, t_end_us }}, ...], noise_floor_amp, peaks_source }}` — timeline-absolute ranges where the audio stays below threshold for the requested duration, the measured noise floor, and which peaks file the numbers came from. If it finds nothing, `noise_floor_amp` says why: a threshold near the floor plus 6 dB is the one that reads pauses as a listener would.
@@ -359,7 +359,7 @@ mod tests {
     }
 
     /// This prompt could not keep its own name while the editor had no ripple
-    /// delete: split then split then `delete_layer` left a gap exactly as long
+    /// delete: split then split then `delete_layers` left a gap exactly as long
     /// as what it removed — audibly identical to doing nothing — so the recipe
     /// marked, the blurb said so, and a "DO NOT split and delete" instruction
     /// stood in for the missing primitive. `remove_pauses` is that primitive
