@@ -4,7 +4,7 @@ import { evaluatePosition } from './position';
 import { staticPosition, type MotionPath, type PathPosition } from '../../shared/position';
 import { HOLD_EXTRAPOLATION, IN_IDENTITY, OUT_IDENTITY } from '../../shared/keyframe';
 beforeAll(initEval);
-const path: MotionPath = { nodes: [{ tangentMode: 'Corner' as const, id: 'a', point: { x: 0, y: 0 }, inHandle: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 }, segment: 'Line' }, { tangentMode: 'Corner' as const, id: 'b', point: { x: 10, y: 0 }, inHandle: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 }, segment: 'Line' }, { tangentMode: 'Corner' as const, id: 'c', point: { x: 10, y: 90 }, inHandle: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 }, segment: 'Line' }] };
+const path: MotionPath = { nodes: [{ tangent_mode: 'Corner' as const, id: 'a', point: { x: 0, y: 0 }, in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: 'Line' }, { tangent_mode: 'Corner' as const, id: 'b', point: { x: 10, y: 0 }, in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: 'Line' }, { tangent_mode: 'Corner' as const, id: 'c', point: { x: 10, y: 90 }, in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: 'Line' }] };
 const position: PathPosition = { mode: 'Path', path, progress: { mode: 'Keyframed', extrapolate: HOLD_EXTRAPOLATION, value: [0, 1].map((value) => ({ id: String(value), t_us: value * 1e6, value, in: { ...IN_IDENTITY, mode: 'Free' }, out: { ...OUT_IDENTITY, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } })) } };
 describe('position evaluation across the real Wasm seam', () => {
     it('retains XY coordinates and walks by distance', () => {

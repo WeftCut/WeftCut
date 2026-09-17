@@ -166,7 +166,6 @@ function sampleFor(tool: string, field: string): unknown {
   // a uuid string regardless of which field is omitted, so the probe would pass
   // for the wrong reason and stop isolating the omitted field.
   if (tool === 'set_keyframe' && field === 'interp') return { kind: 'Linear' }
-  if (tool === 'set_keyframe_easing' && field === 'interp') return { kind: 'Linear' }
   if (tool === 'set_param_track' && field === 'track') return { mode: 'Static', value: 0 }
   // patch parsers are strict since the mcp-agent-hardening pass: the string
   // fallback below would make them throw regardless of which field is omitted,

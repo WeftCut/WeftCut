@@ -52,7 +52,7 @@ export function parseInterp(v: unknown): Interpolation {
   const kind = o.kind
   if (typeof kind !== 'string') {
     if (typeof o.preset === 'string')
-      throw new McpArgError(`invalid interp: preset ids are a set_keyframe_easing payload — this argument takes a raw kind ${INTERP_KINDS}`)
+      throw new McpArgError(`invalid interp: preset ids are a update_keyframe payload — this argument takes a raw kind ${INTERP_KINDS}`)
     throw new McpArgError(`invalid interp: missing 'kind' (${INTERP_KINDS})`)
   }
   if (kind === 'Hold' || kind === 'Linear') return { kind }
@@ -74,7 +74,7 @@ export function parseInterp(v: unknown): Interpolation {
   }
   if (kind === 'Bounce') return { kind: 'Bounce', dir: parseEaseDir(o.dir, 'Bounce') }
   if (kind === 'EaseIn' || kind === 'EaseOut')
-    throw new McpArgError(`invalid interp: '${kind}' is not a kind — named eases are presets (set_keyframe_easing takes {"preset":"${kind === 'EaseIn' ? 'ease_in' : 'ease_out'}"}); kinds: ${INTERP_KINDS}`)
+    throw new McpArgError(`invalid interp: '${kind}' is not a kind — named eases are presets (update_keyframe takes {"preset":"${kind === 'EaseIn' ? 'ease_in' : 'ease_out'}"}); kinds: ${INTERP_KINDS}`)
   throw new McpArgError(`invalid interp: unknown kind '${kind}' — expected ${INTERP_KINDS}`)
 }
 
@@ -83,7 +83,7 @@ export function parseInterpOpt(v: unknown): Interpolation | undefined {
   return v === undefined ? undefined : parseInterp(v)
 }
 
-/** set_keyframe_easing's payload union: {"preset":"<id>"} bakes to a fresh
+/** update_keyframe's payload union: {"preset":"<id>"} bakes to a fresh
  *  copy of the canonical table entry's params (cloneInterp — the table IS the
  *  params, nothing is re-derived here); anything else parses as a raw
  *  Interpolation. Exactly one of preset/kind: both together is ambiguous and
@@ -123,7 +123,7 @@ function parseTangent(v: unknown, side: 'in' | 'out'): Tangent {
   return { x: o.x, y: o.y, mode: o.mode as TangentMode }
 }
 
-/** The `{x, y}` a tangent WRITE sends (set_keyframe_tangents): x within [0, 1]
+/** The `{x, y}` a tangent WRITE sends (update_keyframe): x within [0, 1]
  *  — refused outside, never clamped, because a clamp would store a number the
  *  agent did not send — and a finite y. The side comes out Free. */
 export function parseTangentXy(v: unknown, field: string): { x: number; y: number } {
@@ -633,8 +633,8 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
   // Scope refusals (ADR 0052): name BOTH compositions, because the fix is a
   // different destination or a narrower set, and the ids are what the agent
   // reads back from `project://compositions`.
-  if (e.error === 'CrossCompositionMove') return { code: 'invalid_params', message: `layer ${e.layer} lives in composition ${e.from}; the destination is in composition ${e.to}. A *move* never crosses a composition: pick a track / anchor inside ${e.from}, or cross deliberately with move_layers_to_composition (name ${e.to} and a landing time), groups_add_members (move into a Group clip you can see), groups_create (pre-compose) or groups_ungroup` }
-  if (e.error === 'CrossCompositionSet') return { code: 'invalid_params', message: `layer ${e.layer} is in composition ${e.composition}, but this operation is confined to composition ${e.expected} — for a set of layers that is where its first member lives; for a marker's anchor, where the marker lives. One composition per call: split the work, or cross deliberately with move_layers_to_composition / groups_add_members` }
+  if (e.error === 'CrossCompositionMove') return { code: 'invalid_params', message: `layer ${e.layer} lives in composition ${e.from}; the destination is in composition ${e.to}. A *move* never crosses a composition: pick a track / anchor inside ${e.from}, or cross deliberately with move_layers_to_composition (name ${e.to} and a landing time), add_group_members (move into a Group clip you can see), create_group (pre-compose) or ungroup_layer` }
+  if (e.error === 'CrossCompositionSet') return { code: 'invalid_params', message: `layer ${e.layer} is in composition ${e.composition}, but this operation is confined to composition ${e.expected} — for a set of layers that is where its first member lives; for a marker's anchor, where the marker lives. One composition per call: split the work, or cross deliberately with move_layers_to_composition / add_group_members` }
   // `expected` is already a human-readable kind ('visual', 'CompositionRef',
   // 'VideoClip | Audio | CompositionRef'), so it carries the whole fix. Without
   // this arm the fallthrough sends the bare word `WrongLayerKind` — no layer, no
@@ -651,7 +651,7 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
     return { code: 'invalid_params', message: 'media in use', data: {
       error: 'MediaInUse', media: e.media, referenced_by: e.referenced_by,
       options: [
-        { action: 'force_remove', note: 'calls remove_media with force=true; cascades layer deletions' },
+        { action: 'force_remove', note: 'calls delete_media with force=true; cascades layer deletions' },
         { action: 'delete_layers_first', layer_ids: e.referenced_by },
       ],
     } }
@@ -667,7 +667,7 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
     } }
   }
   if (e.error === 'TransitionParticipantsShareLink') {
-    return { code: 'invalid_params', message: `layers ${e.from} and ${e.to} share a link: overlap placement moves the incoming layer left, which would drag the outgoing layer along and the overlap would never open. Options: unlink them (links_remove_members) and retry; or pass placement 'extend' to borrow outgoing tail media instead (positions untouched).`, data: {
+    return { code: 'invalid_params', message: `layers ${e.from} and ${e.to} share a link: overlap placement moves the incoming layer left, which would drag the outgoing layer along and the overlap would never open. Options: unlink them (update_link) and retry; or pass placement 'extend' to borrow outgoing tail media instead (positions untouched).`, data: {
       error: 'TransitionParticipantsShareLink', from: e.from, to: e.to,
       options: [
         { action: 'unlink_then_retry', layer_ids: [e.from, e.to] },
@@ -699,7 +699,7 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
     } }
   }
   if (e.error === 'RippleLinkStraddles') {
-    return { code: 'invalid_params', message: `link ${e.link} has members on both sides of the span [${e.hole.s}, ${e.hole.e}) µs — one reaches across the span's start, another starts at or after its end — and a link means those layers move together, so shifting only the downstream half is not on offer (a member that ends at or before the span is wholly upstream and does not count). Options: dissolve the link (links_dissolve) or drop the downstream member from it (links_remove_members) and retry; or add the straddling members to layer_ids so the whole link goes with the cut.`, data: {
+    return { code: 'invalid_params', message: `link ${e.link} has members on both sides of the span [${e.hole.s}, ${e.hole.e}) µs — one reaches across the span's start, another starts at or after its end — and a link means those layers move together, so shifting only the downstream half is not on offer (a member that ends at or before the span is wholly upstream and does not count). Options: dissolve the link (delete_link) or drop the downstream member from it (update_link) and retry; or add the straddling members to layer_ids so the whole link goes with the cut.`, data: {
       error: 'RippleLinkStraddles', link: e.link, hole_us: [e.hole.s, e.hole.e],
       options: [{ action: 'unlink_then_retry', link_id: e.link }],
     } }
@@ -721,7 +721,7 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
   // ── Groups (ADR 0052). Each message says what was refused AND why, because the
   // client drops `data` and the fix differs per cause. ──
   if (e.error === 'GroupLockedMember') return { code: 'invalid_params', message: `layer ${e.layer} is locked: pre-compose and add-to-Group move every selected layer or none. Unlock it (update_layer { patch: { locked: false } }) or leave it out of layer_ids` }
-  if (e.error === 'GroupNotPlain') return { code: 'invalid_params', message: `Group layer ${e.layer} is not plain: its ${e.reason} is not the identity and ungroup would discard it silently. Reset the ${e.reason} on the Group layer first (update_layer_params / remove_effect), or keep the Group` }
+  if (e.error === 'GroupNotPlain') return { code: 'invalid_params', message: `Group layer ${e.layer} is not plain: its ${e.reason} is not the identity and ungroup would discard it silently. Reset the ${e.reason} on the Group layer first (update_layer_params / delete_effect), or keep the Group` }
   if (e.error === 'CompositionInUse') return { code: 'invalid_params', message: `composition ${e.composition} is still referenced by ${e.ref_count} Group layer(s); delete or ungroup them first (project://compositions lists ref_count)` }
   if (e.error === 'RootComposition') return { code: 'invalid_params', message: `composition ${e.composition} is the root: it has no name and export renders it, so it is never renamed or deleted` }
   // ── Audio effects (ADR 0063). Both name the RULE, not just the violation:
@@ -798,7 +798,7 @@ const INTERP_SCHEMA = {
   },
   required: ['kind'],
 }
-// set_keyframe_easing's interp: the raw INTERP_SCHEMA kinds PLUS the preset
+// update_keyframe's interp: the raw INTERP_SCHEMA kinds PLUS the preset
 // form. `required` is empty — the two forms share no mandatory field; the
 // exactly-one-of rule is parseEasing's. The preset enum derives from the
 // canonical table, so the advertised ids can never drift from what bakes.
@@ -832,7 +832,7 @@ const SEGMENT_SCHEMA = {
   },
   required: ['kind'],
 }
-// A tangent WRITE (set_keyframe_tangents): no mode — a written side is Free.
+// A tangent WRITE (update_keyframe): no mode — a written side is Free.
 const TANGENT_XY_SCHEMA = {
   type: 'object',
   description: 'A tangent to write: {x, y} in the owning segment\'s unit square — x within [0, 1] (refused outside), y may overshoot. Stored Free.',
@@ -895,6 +895,12 @@ function animTrackSchema(value: Record<string, unknown>, staticTypes: string[], 
 }
 const ANIM_TRACK_SCHEMA = animTrackSchema(TRACK_VALUE_SCHEMA, ['number', 'object'], 'typed by `param_key` — a number, or {r,g,b,a} (integers 0..255) for "color"')
 
+/** The `project://*` views `read_project` serves — one per state-view resource
+ *  the TS host answers (`resource-views.ts`), so the two never disagree on what
+ *  an agent can read. The Rust-compute resources are not here. */
+export const READ_PROJECT_VIEWS = ['current', 'composition', 'compositions', 'media', 'tracks', 'layer', 'markers', 'history'] as const
+export type ReadProjectView = (typeof READ_PROJECT_VIEWS)[number]
+
 // ── Single-source MCP tool table ─────────────────────────────────────────────
 // Every scalar and patch arg of a table-exec entry is parser-gated in parseArgs:
 // uuid/number/enum/boolean scalars through parseX, patch objects through parseObj
@@ -902,7 +908,7 @@ const ANIM_TRACK_SCHEMA = animTrackSchema(TRACK_VALUE_SCHEMA, ['number', 'object
 // The dedicated stubs exist only so the MCP_TOOLS projection stays complete;
 // their behavior lives in actor.ts arms.
 export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
-  {name:'set_position',exec:'table',description:"Replace a layer's position outright: XY tracks, or a motion path with a scalar `progress` track. Times are layer-local µs. Existing XY animation is replaced only by this explicit call. One undo step.",inputSchema:{type:'object',properties:{layer_id:{type:'string'},position:{type:'object',description:'{mode:XY,x,y} or {mode:Path,path:{nodes:[{id,point:{x,y},inHandle:{x,y},outHandle:{x,y},segment:Line|Cubic,tangentMode:Corner|Smooth|Auto}]},progress:Animated<number>}. progress 0..1 is distance along the path (Hold/Loop/PingPong extrapolation only).'}},required:['layer_id','position']},parseArgs:a=>({op:'set_position',args:{layer:parseUuid(a.layer_id,'layer_id'),position:parseObj(a.position,'position')}})},
+  {name:'set_position',exec:'table',description:"Replace a layer's position outright: XY tracks, or a motion path with a scalar `progress` track. Times are layer-local µs. Existing XY animation is replaced only by this explicit call. One undo step.",inputSchema:{type:'object',properties:{layer_id:{type:'string'},position:{type:'object',description:'{mode:XY,x,y} or {mode:Path,path:{nodes:[{id,point:{x,y},in_handle:{x,y},out_handle:{x,y},segment:Line|Cubic,tangent_mode:Corner|Smooth|Auto}]},progress:Animated<number>}. progress 0..1 is distance along the path (Hold/Loop/PingPong extrapolation only).'}},required:['layer_id','position']},parseArgs:a=>({op:'set_position',args:{layer:parseUuid(a.layer_id,'layer_id'),position:parseObj(a.position,'position')}})},
   {name:'translate_path',exec:'table',description:"Translate the entire spatial path in composition pixels, preserving its geometry and progress animation. Requires Path mode. One undo step.",inputSchema:{type:'object',properties:{layer_id:{type:'string'},dx:{type:'number'},dy:{type:'number'}},required:['layer_id','dx','dy']},parseArgs:a=>({op:'translate_path',args:{layer:parseUuid(a.layer_id,'layer_id'),dx:parseNum(a.dx,'dx'),dy:parseNum(a.dy,'dy')}})},
   // ── table-exec: tracks ───────────────────────────────────────────────────
   { name: 'add_track', exec: 'table',
@@ -910,7 +916,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { label: { type: ['string', 'null'], description: 'Optional name. Omit it and the track is displayed by its position in the stack, which renumbers as tracks come and go.' }, composition_id: COMPOSITION_ID_SCHEMA }, required: [] },
     parseArgs: (a) => ({ op: 'add_track', args: { label: parseStrOpt(a.label, 'label'), composition_id: parseCompositionIdOpt(a.composition_id) } }),
     shapeResult: (v) => toolText(v as string) },
-  { name: 'remove_track', exec: 'table',
+  { name: 'delete_track', exec: 'table',
     description: "Remove a track. Rejects if the track has layers unless force=true. Default A roll / B roll tracks cannot be removed.",
     inputSchema: { type: 'object', properties: { track_id: { type: 'string' }, force: { type: ['boolean', 'null'] } }, required: ['track_id'] },
     parseArgs: (a) => ({ op: 'delete_track', args: { track: parseUuid(a.track_id, 'track_id'), force: parseBoolOpt(a.force, 'force', false) } }) },
@@ -1033,7 +1039,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     } }, required: ['layer_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_layer_params', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseObj(a.patch, 'patch') } }) },
   { name: 'set_scale_linked', exec: 'table',
-    description: "Toggle a layer's uniform-scale link (visual kinds only). `linked=true` snaps `scale_y` to a whole-track copy of `scale_x` — keyframes included — in the same commit; `linked=false` clears only the flag. While linked, any write that leaves the two tracks unequal (a single-axis `update_layer_params`, `set_keyframe`, `remove_keyframe`, `set_param_track`) clears the flag in that commit — write both axes identically to keep it.",
+    description: "Toggle a layer's uniform-scale link (visual kinds only). `linked=true` snaps `scale_y` to a whole-track copy of `scale_x` — keyframes included — in the same commit; `linked=false` clears only the flag. While linked, any write that leaves the two tracks unequal (a single-axis `update_layer_params`, `set_keyframe`, `delete_keyframe`, `set_param_track`) clears the flag in that commit — write both axes identically to keep it.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, linked: { type: 'boolean' } }, required: ['layer_id', 'linked'] },
     parseArgs: (a) => ({ op: 'set_scale_linked', args: { layer: parseUuid(a.layer_id, 'layer_id'), linked: parseBool(a.linked, 'linked') } }) },
   { name: 'move_layer', exec: 'table',
@@ -1073,29 +1079,39 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { track_id: { type: 'string' }, start_us: { type: 'integer' }, end_us: { type: 'integer' } }, required: ['track_id', 'start_us', 'end_us'] },
     parseArgs: (a) => ({ op: 'ripple_delete_gap', args: { track: parseUuid(a.track_id, 'track_id'), s: parseNum(a.start_us, 'start_us'), e: parseNum(a.end_us, 'end_us') } }) },
   // ── table-exec: links ───────────────────────────────────────────────────
-  { name: 'links_create', exec: 'table',
+  { name: 'create_link', exec: 'table',
     description: "Create a new link from >=2 distinct layer ids. Optional `label`. If any layer is already in another link, the op fails unless `reassign=true`, which removes them from their prior link(s) first (auto-dissolving any link that falls below 2 members). Returns the new link id.",
     inputSchema: { type: 'object', properties: { layer_ids: { type: 'array', items: { type: 'string' } }, label: { type: ['string', 'null'] }, reassign: { type: ['boolean', 'null'] } }, required: ['layer_ids'] },
     parseArgs: (a) => ({ op: 'links_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label'), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }),
     shapeResult: (v) => toolText(v as string) },
-  { name: 'links_dissolve', exec: 'table',
+  { name: 'delete_link', exec: 'table',
     description: "Dissolve (delete) a link. The member layers themselves are not deleted.",
     inputSchema: { type: 'object', properties: { link_id: { type: 'string' } }, required: ['link_id'] },
     parseArgs: (a) => ({ op: 'links_dissolve', args: { link: parseUuid(a.link_id, 'link_id') } }) },
-  { name: 'links_add_members', exec: 'table',
-    description: "Add member layers to an existing link. Same reassign semantics as links_create.",
-    inputSchema: { type: 'object', properties: { link_id: { type: 'string' }, layer_ids: { type: 'array', items: { type: 'string' } }, reassign: { type: ['boolean', 'null'] } }, required: ['link_id', 'layer_ids'] },
-    parseArgs: (a) => ({ op: 'links_add_members', args: { link: parseUuid(a.link_id, 'link_id'), layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }) },
-  { name: 'links_remove_members', exec: 'table',
-    description: "Remove member layers from a link. If the remaining membership falls below 2, the link auto-dissolves.",
-    inputSchema: { type: 'object', properties: { link_id: { type: 'string' }, layer_ids: { type: 'array', items: { type: 'string' } } }, required: ['link_id', 'layer_ids'] },
-    parseArgs: (a) => ({ op: 'links_remove_members', args: { link: parseUuid(a.link_id, 'link_id'), layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) } }) },
-  { name: 'links_rename', exec: 'table',
-    description: "Update a link's label. Pass `label: null` to clear it.",
-    inputSchema: { type: 'object', properties: { link_id: { type: 'string' }, label: { type: ['string', 'null'] } }, required: ['link_id'] },
-    parseArgs: (a) => ({ op: 'links_rename', args: { link: parseUuid(a.link_id, 'link_id'), label: parseStrOpt(a.label, 'label') } }) },
+  { name: 'update_link', exec: 'dedicated',
+    description: "Change a link in one recorded edit — any of: `add_layer_ids` (join layers; one already in another link is refused unless `reassign` is true, which pulls it out of its old link first, dissolving that link if it falls below two members), `remove_layer_ids` (drop members; below two, the link dissolves), `label` (rename; `null` clears). At least one. Applied add → remove → label. Every layer must be in the link's composition (`CrossCompositionSet`). Create with `create_link`, delete with `delete_link`.",
+    inputSchema: { type: 'object', properties: {
+      link_id: { type: 'string' },
+      add_layer_ids: { type: ['array', 'null'], items: { type: 'string' } },
+      remove_layer_ids: { type: ['array', 'null'], items: { type: 'string' } },
+      label: { type: ['string', 'null'], description: 'New label; null clears it.' },
+      reassign: { type: ['boolean', 'null'], description: 'Let `add_layer_ids` take a layer out of another link. Default false.' },
+    }, required: ['link_id'] },
+    parseDedicated: (a) => {
+      const ids = (v: unknown, field: string): string[] => v === undefined || v === null ? [] : asArray(v, field).map((s) => parseUuid(s, field))
+      const p = {
+        link: parseUuid(a.link_id, 'link_id'),
+        add: ids(a.add_layer_ids, 'add_layer_ids'),
+        remove: ids(a.remove_layer_ids, 'remove_layer_ids'),
+        label: a.label === undefined ? undefined : parseStrOpt(a.label, 'label'),
+        reassign: parseBoolOpt(a.reassign, 'reassign', false),
+      }
+      if (p.add.length === 0 && p.remove.length === 0 && p.label === undefined)
+        throw new McpArgError(`update_link needs at least one of add_layer_ids, remove_layer_ids, label — nothing to change`)
+      return p
+    } },
   // ── table-exec: groups (ADR 0052; docs/features.md#groups) ──────────────
-  { name: 'groups_create', exec: 'table',
+  { name: 'create_group', exec: 'table',
     description: "Pre-compose: move one or more layers (all in one composition) into a NEW composition and place it back as a single Group layer at the set's earliest start, on the top-most lane the set occupied (or the nearest free lane above). The new composition copies the parent's settings; members' tracks map onto A roll, B roll, then fresh tracks so z-order survives, and time is rebased so the earliest member starts at 0. Never partial: a member on a locked track (`TrackLocked`) or itself locked (`GroupLockedMember`), or a set spanning two compositions (`CrossCompositionSet`), refuses everything. Links fully inside move; a straddling link loses its inside members. Transitions between two members move; a straddling one is dropped. Markers stay. Returns `{ composition_id, layer_id }`; one undo restores all.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to pre-compose; at least one, all in one composition.' },
@@ -1103,7 +1119,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     }, required: ['layer_ids'] },
     parseArgs: (a) => ({ op: 'groups_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label') } }),
     shapeResult: (v) => toolJson(v) },
-  { name: 'groups_add_members', exec: 'table',
+  { name: 'add_group_members', exec: 'table',
     description: "Move layers INTO the composition a Group layer already shows, keeping the screen position they had. `layer_ids` (one or more, all in one composition) and `group_layer_id` must be siblings; the Group's `params.composition` is the destination, and each member lands at `t_start_us − group.t_start_us + group.src_in_us`. Lane mapping, links, transitions, markers and the shared refusals are `move_layers_to_composition`'s, which this delegates to — call that directly when you know the destination composition and the time. Own refusals: the Group in another composition (`CrossCompositionSet`), not a Group (`WrongLayerKind`), a Group pointing at the root (`RootComposition`).",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to move in; at least one, all in one composition.' },
@@ -1114,7 +1130,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       group_layer: parseUuid(a.group_layer_id, 'group_layer_id'),
     } }) },
   { name: 'move_layers_to_composition', exec: 'table',
-    description: "Move layers out of their composition into another, landing at a time you name — the general cross-composition move (`groups_add_members` is the keep-screen-position shortcut). `layer_ids`: one or more, all in one composition. `to_composition_id`: the destination (ids: `project://compositions`); the root is an ordinary destination. `anchor_layer_id` is the member that lands at `anchor_t_start_us`, absolute on the destination's clock; the others keep their offset from it. Lanes are assigned per SOURCE TRACK: `to_track_id` omitted bounces each block to the nearest free lane, `\"spawn\"` takes one fresh lane, a lane id lands every block there and REFUSES a locked or occupied one. Links and transitions fully inside move, straddling ones are cut; emptied source lanes are pruned, markers stay behind, both compositions autofit, no Group layer is retrimmed. Refuses whole, before any write: an empty set, an anchor outside the set, the current composition as destination, `CrossCompositionSet`, `TrackLocked` / `GroupLockedMember`, `CompositionCycle`, a member landing before time 0.",
+    description: "Move layers out of their composition into another, landing at a time you name — the general cross-composition move (`add_group_members` is the keep-screen-position shortcut). `layer_ids`: one or more, all in one composition. `to_composition_id`: the destination (ids: `project://compositions`); the root is an ordinary destination. `anchor_layer_id` is the member that lands at `anchor_t_start_us`, absolute on the destination's clock; the others keep their offset from it. Lanes are assigned per SOURCE TRACK: `to_track_id` omitted bounces each block to the nearest free lane, `\"spawn\"` takes one fresh lane, a lane id lands every block there and REFUSES a locked or occupied one. Links and transitions fully inside move, straddling ones are cut; emptied source lanes are pruned, markers stay behind, both compositions autofit, no Group layer is retrimmed. Refuses whole, before any write: an empty set, an anchor outside the set, the current composition as destination, `CrossCompositionSet`, `TrackLocked` / `GroupLockedMember`, `CompositionCycle`, a member landing before time 0.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to move; at least one, all in one composition.' },
       to_composition_id: { type: 'string', description: 'The destination composition (`project://compositions`). The root is allowed — that is the move back out of a Group.' },
@@ -1130,7 +1146,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       to_track: parseDestTrackOpt(a.to_track_id),
     } }) },
   { name: 'add_group_layer', exec: 'table',
-    description: "Place an EXISTING composition on a track as one more Group layer (`groups_create` makes a NEW one). `source_composition_id` is what gets placed (ids and reference counts: `project://compositions`); `track_id` and `t_start_us` are where. The layer is windowed over the whole composition (`src_in_us: 0`, `src_out_us: duration_us`) with an identity transform; trim it afterwards for a slice. Instances are independent and all show the same content. Refuses before creating anything: the root (`RootComposition`), a composition that already reaches this track's composition, itself included (`CompositionCycle`), and an empty composition (`InvalidArgument`).",
+    description: "Place an EXISTING composition on a track as one more Group layer (`create_group` makes a NEW one). `source_composition_id` is what gets placed (ids and reference counts: `project://compositions`); `track_id` and `t_start_us` are where. The layer is windowed over the whole composition (`src_in_us: 0`, `src_out_us: duration_us`) with an identity transform; trim it afterwards for a slice. Instances are independent and all show the same content. Refuses before creating anything: the root (`RootComposition`), a composition that already reaches this track's composition, itself included (`CompositionCycle`), and an empty composition (`InvalidArgument`).",
     inputSchema: { type: 'object', properties: {
       source_composition_id: { type: 'string', description: "The composition to place — a Group's id from `project://compositions`, never the root." },
       track_id: { type: 'string' },
@@ -1144,11 +1160,11 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       composition_id: parseCompositionIdOpt(a.composition_id),
     } }),
     shapeResult: (v) => toolText(v as string) },
-  { name: 'groups_ungroup', exec: 'table',
+  { name: 'ungroup_layer', exec: 'table',
     description: "Expand a Group layer back into its members, in place. Refuses unless the Group is PLAIN — identity transform, static opacity 1, no effects, Normal blend (`GroupNotPlain { reason }`), because those apply to the composite and would be discarded; reset them first or keep the Group. Members intersecting the Group's `[src_in_us, src_out_us)` window are copied into the parent at the same on-screen time, trimmed to the window; members wholly outside are dropped. The composition's tracks become fresh tracks at the Group's z position; inner links and transitions carry over. The composition is removed when nothing else references it. One undo restores the Group.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string', description: 'The Group layer (its params.kind is CompositionRef).' } }, required: ['layer_id'] },
     parseArgs: (a) => ({ op: 'groups_ungroup', args: { layer: parseUuid(a.layer_id, 'layer_id') } }) },
-  { name: 'groups_rename', exec: 'table',
+  { name: 'rename_composition', exec: 'table',
     description: "Name a Group's composition (`label: null` or blank clears it back to the derived name). Recorded, so undo reverts it. The root composition refuses (`RootComposition`): it has no name — it is the timeline. Composition ids: `project://compositions`.",
     inputSchema: { type: 'object', properties: { composition_id: { type: 'string' }, label: { type: ['string', 'null'] } }, required: ['composition_id'] },
     parseArgs: (a) => ({ op: 'groups_rename', args: { composition: parseUuid(a.composition_id, 'composition_id'), label: parseStrOpt(a.label, 'label') } }) },
@@ -1177,7 +1193,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Reorder an effect within its layer's chain. new_index is 0-based; 0 = first applied. Must be < effect count.",
     inputSchema: { type: 'object', properties: { effect_id: { type: 'string' }, layer_id: { type: 'string' }, new_index: { type: 'integer' } }, required: ['effect_id', 'layer_id', 'new_index'] },
     parseArgs: (a) => ({ op: 'move_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id'), new_index: parseNum(a.new_index, 'new_index') } }) },
-  { name: 'remove_effect', exec: 'table',
+  { name: 'delete_effect', exec: 'table',
     description: "Remove an effect from a layer by id.",
     inputSchema: { type: 'object', properties: { effect_id: { type: 'string' }, layer_id: { type: 'string' } }, required: ['effect_id', 'layer_id'] },
     parseArgs: (a) => ({ op: 'remove_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id') } }) },
@@ -1213,7 +1229,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       parseNumOpt(a.extended_us, 'extended_us')
       return { op: 'update_transition', args: { transition: parseUuid(a.transition_id, 'transition_id'), duration_us: a.duration_us, kind: a.kind, direction: a.direction, extended_us: a.extended_us } }
     } },
-  { name: 'remove_transition', exec: 'table',
+  { name: 'delete_transition', exec: 'table',
     description: "Remove a transition and restore the hard cut, routed by provenance: the outgoing layer's end shrinks back by `extended_us` (only borrowed tail is returned, never real content) and the incoming layer moves RIGHT by `duration_us − extended_us`, link siblings following. `TransitionRestoreCollision` when that destination has since been filled — move or delete the blocker first; the system never makes room. Recorded. `TransitionNotFound` for an unknown id.",
     inputSchema: { type: 'object', properties: { transition_id: { type: 'string' } }, required: ['transition_id'] },
     parseArgs: (a) => ({ op: 'remove_transition', args: { transition: parseUuid(a.transition_id, 'transition_id') } }) },
@@ -1222,12 +1238,12 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // (mutations/media.ts names the source it lifted from), which is why the
   // result is a TRACK id and not the layer's: the layer is unchanged, it moved.
   { name: 'separate_audio_to_new_track', exec: 'table',
-    description: "Lift an Audio layer onto a new track of its own, in the source lane's slot, and return the NEW track's id. The layer is untouched — id, span, gain, role and links survive — so an auto-paired dialogue clip gets its own lane while the pair still moves together; `links_dissolve` afterwards to make them independent. `WrongLayerKind` on anything but an Audio layer (a VideoClip's sound is the Audio layer linked to it — see `project://tracks`). A source lane the lift emptied is pruned. One undo reverts it.",
+    description: "Lift an Audio layer onto a new track of its own, in the source lane's slot, and return the NEW track's id. The layer is untouched — id, span, gain, role and links survive — so an auto-paired dialogue clip gets its own lane while the pair still moves together; `delete_link` afterwards to make them independent. `WrongLayerKind` on anything but an Audio layer (a VideoClip's sound is the Audio layer linked to it — see `project://tracks`). A source lane the lift emptied is pruned. One undo reverts it.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' } }, required: ['layer_id'] },
     parseArgs: (a) => ({ op: 'separate_audio', args: { layer: parseUuid(a.layer_id, 'layer_id') } }),
     shapeResult: (v) => toolText(v as string) },
   { name: 'update_composition', exec: 'table',
-    description: "Update a composition's envelope — canvas `width`/`height`, `fps`, `sample_rate`, `channels`, `color_space`, `background`, `duration_us`; only fields you set apply; `composition_id` names a Group's composition, the root when omitted. Unrecorded: the envelope is setup, so the patch reaches every history snapshot and undo walks past it. `fps` is LOCKED once the timeline, any history snapshot or any checkpoint holds a layer — refused with `FpsLockedByContent { current, requested, layer_count, locked_by: \"current\" | \"history\" }`; set the rate on a project that has never held a layer, or empty the timeline and reopen the project to clear a history lock. `sample_rate` is never locked. Setting `duration_us` PINS the duration so layer edits stop auto-fitting it; `fit_composition_to_layers` unpins.",
+    description: "Update a composition's envelope — canvas `width`/`height`, `fps`, `sample_rate`, `channels`, `color_space`, `background`, `duration_us`; only fields you set apply; `composition_id` names a Group's composition, the root when omitted. Unrecorded: the envelope is setup, so the patch reaches every history snapshot and undo walks past it. `fps` is LOCKED once the timeline, any history snapshot or any checkpoint holds a layer — refused with `FpsLockedByContent { current, requested, layer_count, locked_by: \"current\" | \"history\" }`; set the rate on a project that has never held a layer, or empty the timeline and reopen the project to clear a history lock. `sample_rate` is never locked. Setting `duration_us` PINS the duration so layer edits stop auto-fitting it; `duration_us: null` (alone in the patch) unpins it and refits to the layers.",
     inputSchema: { type: 'object', properties: { patch: {
       type: 'object',
       description: 'Composition envelope patch. Only fields you set are applied.',
@@ -1235,18 +1251,27 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         width: { type: 'integer' },
         height: { type: 'integer' },
         fps: { type: 'object', properties: { num: { type: 'integer' }, den: { type: 'integer' } }, required: ['num', 'den'] },
-        duration_us: { type: 'integer', description: 'Setting this pins the composition duration (see description).' },
+        duration_us: { type: ['integer', 'null'], description: 'A value pins the duration; `null` unpins it so it follows the layers again, and must be the only field in the patch.' },
         sample_rate: { type: 'integer' },
         channels: { type: 'integer' },
         color_space: { type: 'string', enum: ['Bt709', 'Bt601', 'Bt2020', 'SRgb'] },
         background: RGBA_SCHEMA,
       },
     }, composition_id: { type: ['string', 'null'], description: 'The composition to patch; omit for the root. fps / sample_rate / channels are one lattice for the whole project and cascade to every composition.' } }, required: ['patch'] },
-    parseArgs: (a) => ({ op: 'set_composition', args: { ...parseObj(a.patch, 'patch'), composition_id: parseCompositionIdOpt(a.composition_id) } }) },
-  { name: 'fit_composition_to_layers', exec: 'table',
-    description: "Clear the composition's duration pin and set `duration_us` to `max(layer.t_end_us)`. The inverse of `update_composition { patch: { duration_us } }`: that pins, this unpins. After this call, subsequent layer edits track duration in both directions (grow on adds, shrink on deletes/inward trims). `composition_id` names a Group's composition; omit for the root.",
-    inputSchema: { type: 'object', properties: { composition_id: COMPOSITION_ID_SCHEMA }, required: [] },
-    parseArgs: (a) => ({ op: 'fit_composition_to_layers', args: { composition_id: parseCompositionIdOpt(a.composition_id) } }) },
+    parseArgs: (a) => {
+      const patch = parseObj(a.patch, 'patch')
+      const composition_id = parseCompositionIdOpt(a.composition_id)
+      // `duration_us: null` is the unpin — the inverse of setting it — and routes
+      // to the fit op. Alone, because the fit refits every history snapshot to
+      // its own high-water mark while a canvas patch lands as one value; the two
+      // do not compose into a single op, and a caller who wants both sends two.
+      if (patch.duration_us === null) {
+        const rest = Object.keys(patch).filter((k) => k !== 'duration_us')
+        if (rest.length > 0) throw new McpArgError(`duration_us: null unpins the duration and must be the only field in the patch — send ${rest.join(', ')} in a separate call`, 'patch')
+        return { op: 'fit_composition_to_layers', args: { composition_id } }
+      }
+      return { op: 'set_composition', args: { ...patch, composition_id } }
+    } },
   // The project-preferences twin of set_composition: that one owns the canvas a
   // composition renders at, this one owns the preferences the EDITOR works by,
   // and both are setup rather than editing, so neither records.
@@ -1280,7 +1305,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       },
     } }, required: ['marker_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_marker', args: { marker: parseUuid(a.marker_id, 'marker_id'), patch: parseMarkerPatch(a.patch) } }) },
-  { name: 'remove_marker', exec: 'table',
+  { name: 'delete_marker', exec: 'table',
     description: "Remove a marker.",
     inputSchema: { type: 'object', properties: { marker_id: { type: 'string' } }, required: ['marker_id'] },
     parseArgs: (a) => ({ op: 'remove_marker', args: { marker: parseUuid(a.marker_id, 'marker_id') } }) },
@@ -1300,13 +1325,13 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { op: 'attach_marker', args: { marker, layer: parseUuid(a.layer_id, 'layer_id') } }
     } },
   // ── table-exec: media ────────────────────────────────────────────────────
-  { name: 'remove_media', exec: 'table',
+  { name: 'delete_media', exec: 'table',
     description: "Remove a media item. Rejects if any layer references it unless force=true. With force=true, also deletes the referencing layers in one atomic commit.",
     inputSchema: { type: 'object', properties: { media_id: { type: 'string' }, force: { type: ['boolean', 'null'] } }, required: ['media_id'] },
     parseArgs: (a) => ({ op: 'remove_media', args: { media: parseUuid(a.media_id, 'media_id'), force: parseBoolOpt(a.force, 'force', false) } }) },
   // ── table-exec: history ──────────────────────────────────────────────────
   { name: 'undo', exec: 'table',
-    description: "Undo the most recent edit (linear history); `NothingToUndo` at the origin. Only timeline edits record — layers, tracks, markers, transitions, links, and media removals that cascade. Outside the stack and untouched by undo: media imports, the composition envelope (`update_composition`, `fit_composition_to_layers`), project settings, track and role flags, and loading a project (which resets history).",
+    description: "Undo the most recent edit (linear history); `NothingToUndo` at the origin. Only timeline edits record — layers, tracks, markers, transitions, links, and media removals that cascade. Outside the stack and untouched by undo: media imports, the composition envelope (`update_composition`, `update_composition`), project settings, track and role flags, and loading a project (which resets history).",
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseArgs: () => ({ op: 'undo', args: {} }) },
   { name: 'jump_to', exec: 'table',
@@ -1359,10 +1384,10 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'add_video_layer', exec: 'dedicated',
-    description: "Add a visual layer from an imported `Video` or `Image` item onto a track and return its id; an audio-only item is refused and pointed at `add_audio_layer`. Video: `src_in_us`/`src_out_us` are the source in/out points, `t_start_us`/`t_end_us` the timeline span. Image: an ImageOverlay over the timeline range; `src_in_us`/`src_out_us` are ignored (send 0). When a Video has an audio stream and `auto_pair_audio_on_import` is on (default; `set_project_settings` turns it off), a linked dialogue Audio layer lands on the SAME track's audio lane and the result is `{ video_layer_id, audio_layer_id, link_id }`, committed atomically — an occupied audio lane rejects the whole call naming the blocker.",
-    inputSchema: { type: 'object', properties: { media_id: { type: 'string' }, src_in_us: { type: 'integer' }, src_out_us: { type: 'integer' }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['media_id', 'src_in_us', 'src_out_us', 't_end_us', 't_start_us', 'track_id'] },
+    description: "Add a visual layer from an imported `Video` or `Image` item onto a track and return its id; an audio-only item is refused and pointed at `add_audio_layer`. Video: `src_in_us`/`src_out_us` are the source in/out points, `t_start_us`/`t_end_us` the timeline span. Image: an ImageOverlay over the timeline range; omit `src_in_us`/`src_out_us`. When a Video has an audio stream and `auto_pair_audio_on_import` is on (default; `set_project_settings` turns it off), a linked dialogue Audio layer lands on the SAME track's audio lane and the result is `{ video_layer_id, audio_layer_id, link_id }`, committed atomically — an occupied audio lane rejects the whole call naming the blocker.",
+    inputSchema: { type: 'object', properties: { media_id: { type: 'string' }, src_in_us: { type: ['integer', 'null'], description: 'Source in point (µs). Required for Video; ignored for an Image.' }, src_out_us: { type: ['integer', 'null'], description: 'Source out point (µs). Required for Video; ignored for an Image.' }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['media_id', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), media: parseUuid(a.media_id, 'media_id'),
-      src_in_us: parseNum(a.src_in_us, 'src_in_us'), src_out_us: parseNum(a.src_out_us, 'src_out_us'),
+      src_in_us: parseNumOpt(a.src_in_us, 'src_in_us') ?? null, src_out_us: parseNumOpt(a.src_out_us, 'src_out_us') ?? null,
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'add_audio_layer', exec: 'dedicated',
@@ -1456,7 +1481,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { locked, reason }
     } },
   { name: 'set_keyframe', exec: 'dedicated',
-    description: "Insert or update a keyframe on a layer param; `t_us` is timeline-absolute. A Static track is lifted to Keyframed; a key at the same frame is updated in place. `value` is typed by `param_key`: a number for scalar params, `{r,g,b,a}` (0..255) for \"color\". `interp` (optional) is the easing of the segment LEAVING this key as a raw kind — {\"kind\":\"Linear\"} | {\"kind\":\"Hold\"} | {\"kind\":\"Bezier\",\"p1\":[x,y],\"p2\":[x,y]} | Elastic | Bounce; named presets go through `set_keyframe_easing`; omitted, the key inherits the preceding segment's easing. One side or the continuity: `set_keyframe_tangents`; Auto tangents: `smooth_keyframes`. Keying one scale axis of a scale-linked layer clears the link.",
+    description: "Insert or update a keyframe on a layer param; `t_us` is timeline-absolute. A Static track is lifted to Keyframed; a key at the same frame is updated in place. `value` is typed by `param_key`: a number for scalar params, `{r,g,b,a}` (0..255) for \"color\". `interp` (optional) is the easing of the segment LEAVING this key as a raw kind — {\"kind\":\"Linear\"} | {\"kind\":\"Hold\"} | {\"kind\":\"Bezier\",\"p1\":[x,y],\"p2\":[x,y]} | Elastic | Bounce; named presets go through `update_keyframe`; omitted, the key inherits the preceding segment's easing. One side or the continuity: `update_keyframe`; Auto tangents: `smooth_keyframes`. Keying one scale axis of a scale-linked layer clears the link.",
     inputSchema: { type: 'object', properties: { interp: INTERP_SCHEMA, layer_id: { type: 'string' }, param_key: { type: 'string' }, t_us: { type: 'integer' }, value: TRACK_VALUE_SCHEMA }, required: ['layer_id', 'param_key', 't_us', 'value'] },
     parseDedicated: (a) => {
       const paramKey = parseStr(a.param_key, 'param_key')
@@ -1467,21 +1492,36 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Read a layer param's animation track — the record to inspect before editing keys. Returns {\"mode\":\"Static\",\"value\":v} or {\"mode\":\"Keyframed\",\"extrapolate\":{before, after},\"keyframes\":[{id, t_us, t_local_us, value, in, out, continuity, segment, preset_id?}]}. `t_us` is timeline-absolute, `t_local_us` layer-local; `value` is typed by `param_key`. Per key, `in`/`out` are the arriving/leaving tangents {x, y, mode} in the segment's unit square (\"Auto\" = solved on write, \"Free\" = authored), `continuity` is \"Smooth\" | \"Broken\", `segment` is the class of the segment leaving the key (\"Spline\" | \"Hold\" | \"Linear\" | \"Elastic\" | \"Bounce\"; only Spline reads tangents), and `preset_id` names the easing preset the leaving segment exactly matches (absent on a hand-tuned curve and the last key). Position params are mode-specific: x/y in XY mode, path_progress in Path mode (a fraction, not a percentage).",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, param_key: { type: 'string' } }, required: ['layer_id', 'param_key'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key') }) },
-  { name: 'remove_keyframe', exec: 'dedicated',
+  { name: 'delete_keyframe', exec: 'dedicated',
     description: "Remove a keyframe by id from a layer param. Get the id from get_param_track. When it was the last key, the track collapses to Static holding that key's value.",
     inputSchema: { type: 'object', properties: { keyframe_id: { type: 'string' }, layer_id: { type: 'string' }, param_key: { type: 'string' } }, required: ['keyframe_id', 'layer_id', 'param_key'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'),
       param_key: parseStr(a.param_key, 'param_key') }) },
-  { name: 'retime_keyframe', exec: 'dedicated',
-    description: "Move a keyframe to a new timeline-absolute time. The track re-sorts.",
-    inputSchema: { type: 'object', properties: { keyframe_id: { type: 'string' }, layer_id: { type: 'string' }, param_key: { type: 'string' }, t_us: { type: 'integer' } }, required: ['keyframe_id', 'layer_id', 'param_key', 't_us'] },
-    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'),
-      param_key: parseStr(a.param_key, 'param_key'), t_us: parseNum(a.t_us, 't_us') }) },
-  { name: 'set_keyframe_easing', exec: 'dedicated',
-    description: "Set the easing of the segment leaving a keyframe. `interp` is {\"preset\":\"<id>\"} — a named preset from the canonical table (the schema lists the ids), baked to its params at write time and read back as `preset_id` — or a raw kind: {\"kind\":\"Hold\"} | {\"kind\":\"Linear\"} | {\"kind\":\"Bezier\",\"p1\":[x,y],\"p2\":[x,y]} (x within [0,1]) | {\"kind\":\"Elastic\",\"dir\",amplitude?,period?} | {\"kind\":\"Bounce\",\"dir\"}. Writes this key's out tangent, the next key's in tangent (both Free) and this key's segment class; the next key's own out tangent is untouched, so smoothness downstream survives.",
-    inputSchema: { type: 'object', properties: { interp: EASING_SCHEMA, keyframe_id: { type: 'string' }, layer_id: { type: 'string' }, param_key: { type: 'string' } }, required: ['interp', 'keyframe_id', 'layer_id', 'param_key'] },
-    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'),
-      param_key: parseStr(a.param_key, 'param_key'), interp: parseEasing(a.interp) }) },
+  { name: 'update_keyframe', exec: 'dedicated',
+    description: "Change one keyframe in one commit — any of: `t_us` (move it, timeline-absolute; the track re-sorts), `easing` (the segment LEAVING the key: {\"preset\":\"<id>\"} from the canonical table, read back as `preset_id`, or a raw kind {\"kind\":\"Hold\"} | {\"kind\":\"Linear\"} | {\"kind\":\"Bezier\",\"p1\":[x,y],\"p2\":[x,y]} | {\"kind\":\"Elastic\",\"dir\",amplitude?,period?} | {\"kind\":\"Bounce\",\"dir\"}; writes this key's out tangent and the next key's in tangent, both Free), `in` / `out` (one side's tangent {x, y}, stored Free — x within [0, 1], y may overshoot — its segment becoming Spline; a side written on an Auto key frees the whole key), `continuity` (\"Smooth\" re-derives in from out, \"Broken\" changes no number). At least one; applied in that order. Auto tangents on one or every key: `smooth_keyframes`.",
+    inputSchema: { type: 'object', properties: {
+      keyframe_id: { type: 'string' },
+      layer_id: { type: 'string' },
+      param_key: { type: 'string' },
+      t_us: { type: ['integer', 'null'], description: 'New timeline-absolute time.' },
+      easing: EASING_SCHEMA,
+      in: TANGENT_XY_SCHEMA,
+      out: TANGENT_XY_SCHEMA,
+      continuity: { type: 'string', enum: ['Smooth', 'Broken'], description: 'Smooth keeps the two sides at one slope (re-derived from `out`); Broken lets them differ.' },
+    }, required: ['keyframe_id', 'layer_id', 'param_key'] },
+    parseDedicated: (a) => {
+      const p = {
+        layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'), param_key: parseStr(a.param_key, 'param_key'),
+        t_us: parseNumOpt(a.t_us, 't_us') ?? null,
+        easing: a.easing === undefined || a.easing === null ? null : parseEasing(a.easing),
+        in: a.in === undefined || a.in === null ? null : parseTangentXy(a.in, 'in'),
+        out: a.out === undefined || a.out === null ? null : parseTangentXy(a.out, 'out'),
+        continuity: a.continuity === undefined || a.continuity === null ? null : parseContinuity(a.continuity),
+      }
+      if (p.t_us === null && p.easing === null && p.in === null && p.out === null && p.continuity === null)
+        throw new McpArgError(`update_keyframe needs at least one of t_us, easing, in, out, continuity — nothing to change`)
+      return p
+    } },
   { name: 'smooth_keyframes', exec: 'dedicated',
     description: "Set Auto tangents (clamped monotone, solved on write and kept smooth as neighbours move) on one key, or every key when `keyframe_id` is omitted. Both sides of each key go Auto with Smooth continuity, and the adjacent segments become Spline. get_param_track reads the solved coordinates back with mode \"Auto\".",
     inputSchema: { type: 'object', properties: { keyframe_id: { type: ['string', 'null'] }, layer_id: { type: 'string' }, param_key: { type: 'string' } }, required: ['layer_id', 'param_key'] },
@@ -1500,27 +1540,6 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseDedicated: (a) => {
       const paramKey = parseStr(a.param_key, 'param_key')
       return { layer: parseUuid(a.layer_id, 'layer_id'), param_key: paramKey, track: parseAnimatedTrack(a.track, paramKey) }
-    } },
-  { name: 'set_keyframe_tangents', exec: 'dedicated',
-    description: "Write one key's shape directly: `in` (arriving side), `out` (leaving side) and/or `continuity` — at least one. A side is stored Free with exactly the numbers sent (x within [0, 1], refused outside; y may overshoot), and the segment it shapes becomes Spline. Writing a side of an Auto key frees the whole key (the other side keeps its solved numbers). On a Smooth key the opposite side rotates to the same slope; `continuity: \"Smooth\"` re-derives in from out (\"out wins\"), \"Broken\" changes no number. For a whole segment's easing use `set_keyframe_easing`; for Auto tangents, `smooth_keyframes`.",
-    inputSchema: { type: 'object', properties: {
-      continuity: { type: 'string', enum: ['Smooth', 'Broken'], description: 'Smooth keeps the two sides at one slope (re-derived from `out` when both are Free and both adjacent segments are Spline); Broken lets them differ.' },
-      in: TANGENT_XY_SCHEMA,
-      keyframe_id: { type: 'string' },
-      layer_id: { type: 'string' },
-      out: TANGENT_XY_SCHEMA,
-      param_key: { type: 'string' },
-    }, required: ['keyframe_id', 'layer_id', 'param_key'] },
-    parseDedicated: (a) => {
-      const p = {
-        layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'), param_key: parseStr(a.param_key, 'param_key'),
-        in: a.in === undefined || a.in === null ? null : parseTangentXy(a.in, 'in'),
-        out: a.out === undefined || a.out === null ? null : parseTangentXy(a.out, 'out'),
-        continuity: a.continuity === undefined || a.continuity === null ? null : parseContinuity(a.continuity),
-      }
-      if (p.in === null && p.out === null && p.continuity === null)
-        throw new McpArgError(`set_keyframe_tangents needs at least one of in, out, continuity — nothing to write`)
-      return p
     } },
   { name: 'set_extrapolation', exec: 'dedicated',
     description: "Set what a keyframed track does outside its keys: `before` the first and/or `after` the last (at least one; the other keeps its value). \"Hold\" (the end value, default), \"Loop\" (repeat from the first key — a visible jump when first ≠ last), \"PingPong\" (alternate cycles run backwards), \"Offset\" (each cycle adds the last-minus-first delta), \"Continue\" (carry the last segment's end velocity on as a line). The period is last.t − first.t; a single-key track never extrapolates. Refused on a Static track. For path_progress, only Hold / Loop / PingPong are supported. Reads back as `extrapolate` on `get_param_track`.",
@@ -1606,6 +1625,19 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       pad_us: { type: ['integer', 'null'], description: 'Microseconds of each pause KEPT on each side. Default 100000; 0 erases each pause whole. Must satisfy 2 * pad_us < min_pause_us.' },
     }, required: ['layer_id'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), threshold_amp: parseNumOpt(a.threshold_amp, 'threshold_amp'), min_pause_us: parseNumOpt(a.min_pause_us, 'min_pause_us'), pad_us: parseNumOpt(a.pad_us, 'pad_us') }) },
+  // ── dedicated-exec: reads, for a client without MCP resources ─────────────
+  { name: 'read_project', exec: 'dedicated',
+    description: "Read project state as a tool result — the same views the `project://*` resources serve, for a client that cannot read MCP resources (prefer the resources when yours can). `view`: `current` (the whole project), `composition` (root settings), `compositions` (every composition with its `ref_count`), `media`, `tracks` (tracks with layer envelopes), `layer` (one layer in full; needs `id`), `markers`, `history` (recent operations and checkpoints). `tracks` and `markers` take `composition_id` for a Group's composition, the root when omitted. Returns the JSON body as text.",
+    inputSchema: { type: 'object', properties: {
+      view: { type: 'string', enum: [...READ_PROJECT_VIEWS] },
+      id: { type: ['string', 'null'], description: 'The layer id, for view `layer`.' },
+      composition_id: { type: ['string', 'null'], description: 'For `tracks` / `markers`: a Group\'s composition; omit for the root.' },
+    }, required: ['view'] },
+    parseDedicated: (a) => {
+      const view = parseStr(a.view, 'view')
+      if (!READ_PROJECT_VIEWS.includes(view as ReadProjectView)) throw new McpArgError(`view must be one of ${READ_PROJECT_VIEWS.join(', ')}, got '${view}'`, 'view')
+      return { view, id: view === 'layer' ? parseUuid(a.id, 'id') : null, composition_id: parseCompositionIdOpt(a.composition_id) }
+    } },
 ]
 
 const DEF_BY_NAME: Map<string, McpToolDef> = new Map(MCP_TOOL_DEFS.map((d) => [d.name, d]))

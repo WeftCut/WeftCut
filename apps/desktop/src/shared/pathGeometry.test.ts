@@ -2,38 +2,38 @@ import { describe, expect, it } from 'vitest';
 import type { MotionPath, PathNode } from './position';
 import { editPathNode, insertPathNode, nearestPathLocation, pathPointAt, setPathNodeMode, solvePathGeometry } from './pathGeometry';
 
-const node = (id: string, x: number, y: number): PathNode => ({ id, point: { x, y }, inHandle: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 }, segment: 'Cubic', tangentMode: 'Corner' });
+const node = (id: string, x: number, y: number): PathNode => ({ id, point: { x, y }, in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: 'Cubic', tangent_mode: 'Corner' });
 const path = (): MotionPath => ({ nodes: [node('a', 0, 0), node('b', 100, 80), node('c', 200, 0)] });
 
 describe('spatial authoring', () => {
   it('Auto creates aligned handles and follows moved neighbours without touching the input', () => {
     const original = path(), copy = structuredClone(original);
     const auto = setPathNodeMode(original, 1, 'Auto');
-    expect(auto.nodes[1]!.inHandle.x).toBeLessThan(0);
-    expect(auto.nodes[1]!.outHandle.x).toBeGreaterThan(0);
-    expect(auto.nodes[1]!.outHandle.y).toBe(0);
+    expect(auto.nodes[1]!.in_handle.x).toBeLessThan(0);
+    expect(auto.nodes[1]!.out_handle.x).toBeGreaterThan(0);
+    expect(auto.nodes[1]!.out_handle.y).toBe(0);
     const moved = editPathNode(auto, 2, 'point', { x: 200, y: 100 });
-    expect(moved.nodes[1]!.outHandle.y).toBeGreaterThan(0);
+    expect(moved.nodes[1]!.out_handle.y).toBeGreaterThan(0);
     expect(original).toEqual(copy);
     expect(solvePathGeometry(moved)).toEqual(moved);
   });
   it('dragging an Auto handle becomes Smooth and keeps the opposite length', () => {
     const auto = setPathNodeMode(path(), 1, 'Auto');
     const n = auto.nodes[1]!;
-    const edited = editPathNode(auto, 1, 'inHandle', { x: -30, y: -40 }).nodes[1]!;
-    expect(edited.tangentMode).toBe('Smooth');
-    expect(edited.inHandle.x).toBeCloseTo(-30, 10);
-    expect(edited.inHandle.y).toBeCloseTo(-40, 10);
-    expect(Math.hypot(edited.outHandle.x, edited.outHandle.y)).toBeCloseTo(Math.hypot(n.outHandle.x, n.outHandle.y), 10);
-    expect(edited.inHandle.x * edited.outHandle.y - edited.inHandle.y * edited.outHandle.x).toBeCloseTo(0, 10);
+    const edited = editPathNode(auto, 1, 'in_handle', { x: -30, y: -40 }).nodes[1]!;
+    expect(edited.tangent_mode).toBe('Smooth');
+    expect(edited.in_handle.x).toBeCloseTo(-30, 10);
+    expect(edited.in_handle.y).toBeCloseTo(-40, 10);
+    expect(Math.hypot(edited.out_handle.x, edited.out_handle.y)).toBeCloseTo(Math.hypot(n.out_handle.x, n.out_handle.y), 10);
+    expect(edited.in_handle.x * edited.out_handle.y - edited.in_handle.y * edited.out_handle.x).toBeCloseTo(0, 10);
     const corner = setPathNodeMode(auto, 1, 'Corner');
-    expect(editPathNode(corner, 1, 'inHandle', { x: 1, y: 9 }).nodes[1]!.outHandle).toEqual(n.outHandle);
+    expect(editPathNode(corner, 1, 'in_handle', { x: 1, y: 9 }).nodes[1]!.out_handle).toEqual(n.out_handle);
   });
   it('handles a single point, coincident points and a reversal without NaN or loops', () => {
     for (const points of [[node('a', 0, 0)], [node('a', 0, 0), node('b', 0, 0)], [node('a', 0, 0), node('b', 100, 0), node('c', 0, 0)]]) {
-      const solved = solvePathGeometry({ nodes: points.map(n => ({ ...n, tangentMode: 'Auto' })) });
-      expect(solved.nodes.flatMap(n => [n.inHandle.x, n.inHandle.y, n.outHandle.x, n.outHandle.y]).every(Number.isFinite)).toBe(true);
-      if (points.length === 3) expect(solved.nodes[1]!.outHandle).toEqual({ x: 0, y: 0 });
+      const solved = solvePathGeometry({ nodes: points.map(n => ({ ...n, tangent_mode: 'Auto' })) });
+      expect(solved.nodes.flatMap(n => [n.in_handle.x, n.in_handle.y, n.out_handle.x, n.out_handle.y]).every(Number.isFinite)).toBe(true);
+      if (points.length === 3) expect(solved.nodes[1]!.out_handle).toEqual({ x: 0, y: 0 });
     }
   });
 });
@@ -43,7 +43,7 @@ describe('shape-preserving insertion', () => {
     const original = setPathNodeMode(setPathNodeMode(path(), 0, 'Auto'), 1, 'Auto');
     const inserted = solvePathGeometry(insertPathNode(original, 0, split, 'new'));
     expect(inserted.nodes.map(n => n.id)).toEqual(['a', 'new', 'b', 'c']);
-    expect(inserted.nodes.slice(0, 3).map(n => n.tangentMode)).toEqual(['Smooth', 'Smooth', 'Smooth']);
+    expect(inserted.nodes.slice(0, 3).map(n => n.tangent_mode)).toEqual(['Smooth', 'Smooth', 'Smooth']);
     for (let i = 0; i <= 100; i++) {
       const t = i / 100;
       const old = pathPointAt(original, 0, t);

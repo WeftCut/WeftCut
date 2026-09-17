@@ -92,7 +92,7 @@ export function PositionFields(props: {
     /// is, with progress running end to end over the layer's own duration.
     const create = async () => {
         const p = evaluatePosition(position, tInLayerUs);
-        const nodes: PathNode[] = [0, 1].map(i => ({ tangentMode: 'Corner' as const, id: crypto.randomUUID(), point: { x: p.x + i * 200, y: p.y }, inHandle: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 }, segment: 'Line' }));
+        const nodes: PathNode[] = [0, 1].map(i => ({ tangent_mode: 'Corner' as const, id: crypto.randomUUID(), point: { x: p.x + i * 200, y: p.y }, in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: 'Line' }));
         const duration = layer.t_end_us - layer.t_start_us;
         const next: PathPosition = { mode: 'Path', path: { nodes }, progress: { mode: 'Keyframed', extrapolate: HOLD_EXTRAPOLATION, value: [0, 1].map(value => ({ id: crypto.randomUUID(), t_us: value * duration, value, in: { ...IN_IDENTITY, mode: 'Free' }, out: { ...OUT_IDENTITY, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } })) } };
         if (await change(next))
@@ -113,7 +113,7 @@ export function PositionFields(props: {
         if (!path || !inSpan)
             return;
         const cubic = path.path.nodes[selected]!.segment === 'Line';
-        updateNodes(path.path.nodes.map((n, i) => i === selected ? { ...n, tangentMode: 'Corner', segment: cubic ? 'Cubic' : 'Line', outHandle: cubic ? { x: 60, y: -60 } : n.outHandle } : i === selected + 1 && cubic ? { ...n, inHandle: { x: -60, y: -60 } } : n));
+        updateNodes(path.path.nodes.map((n, i) => i === selected ? { ...n, tangent_mode: 'Corner', segment: cubic ? 'Cubic' : 'Line', out_handle: cubic ? { x: 60, y: -60 } : n.out_handle } : i === selected + 1 && cubic ? { ...n, in_handle: { x: -60, y: -60 } } : n));
     };
     const insert = async () => {
         if (!path || !inSpan) return;
@@ -123,7 +123,7 @@ export function PositionFields(props: {
     const append = () => {
         const last = nodes.at(-1);
         if (!last) return;
-        updateNodes([...nodes, { ...last, tangentMode: 'Corner', id: crypto.randomUUID(), point: { x: last.point.x + 100, y: last.point.y }, inHandle: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 }, segment: 'Line' }]);
+        updateNodes([...nodes, { ...last, tangent_mode: 'Corner', id: crypto.randomUUID(), point: { x: last.point.x + 100, y: last.point.y }, in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: 'Line' }]);
     };
     return <div data-testid="position-fields">
     <InspectorRow label={t('property_panel.position')} reserveStopwatch>
@@ -159,7 +159,7 @@ export function PositionFields(props: {
           ? <InspectorRow label={t('motion_path.node_of', { index: selected + 1, count: nodes.length })} reserveStopwatch>
               <PropSegmented
                 label={t('motion_path.node_mode')}
-                value={nodes[selected]!.tangentMode}
+                value={nodes[selected]!.tangent_mode}
                 options={[{ value: 'Corner' as const, label: t('motion_path.mode_corner') }, { value: 'Smooth' as const, label: t('motion_path.mode_smooth') }, { value: 'Auto' as const, label: t('motion_path.mode_auto') }]}
                 onSelect={mode => void change({ ...path, path: setPathNodeMode(path.path, selected, mode) }, true)}/>
             </InspectorRow>

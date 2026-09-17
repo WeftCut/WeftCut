@@ -14,7 +14,8 @@ what no single tool can: how a session should go.
 ## Session etiquette
 
 1. Read `project://current` before your first mutation — never write against a
-   guessed state.
+   guessed state. If your client cannot read MCP resources, `read_project`
+   returns the same views as a tool result.
 2. Call `create_checkpoint` before your first edit, so the user has a one-step
    restore point.
 3. A small change (a handful of tool calls) needs no more ceremony than that:

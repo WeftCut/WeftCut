@@ -78,7 +78,7 @@ export function compileMotionPath(path: MotionPath): CompiledPath {
   const cached=pathCache.get(path); if(cached) return cached
   if(path.nodes.length<1 || path.nodes.length>128) throw new Error('A path requires 1–128 nodes')
   const e=E()
-  path.nodes.forEach((n,i)=>e.path_node(i,n.point.x,n.point.y,n.inHandle.x,n.inHandle.y,n.outHandle.x,n.outHandle.y,n.segment==='Cubic'?1:0))
+  path.nodes.forEach((n,i)=>e.path_node(i,n.point.x,n.point.y,n.in_handle.x,n.in_handle.y,n.out_handle.x,n.out_handle.y,n.segment==='Cubic'?1:0))
   const count=e.path_compile(path.nodes.length)
   const samples=new Float64Array(e.memory.buffer,e.path_samples_ptr(),count*4).slice()
   const directions:[number,number,number,number]=[e.path_direction(0),e.path_direction(1),e.path_direction(2),e.path_direction(3)]

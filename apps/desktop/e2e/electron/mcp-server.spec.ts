@@ -55,7 +55,7 @@ test('external MCP client connects, calls tools, and bearer is enforced', async 
   // included): a 2-key opacity track on a Text layer, then the per-side and
   // per-track writers, each read back through get_param_track.
   const names = toolsResult.tools.map((t) => t.name)
-  expect(names).toContain('set_keyframe_tangents')
+  expect(names).toContain('update_keyframe')
   expect(names).toContain('set_extrapolation')
   const trackId = await invokeCmd<string>(page, 'add_track', {})
   const layerId = await invokeCmd<string>(page, 'add_text_layer', {
@@ -83,8 +83,8 @@ test('external MCP client connects, calls tools, and bearer is enforced', async 
   const [k0, k1] = keyed.keyframes
 
   // One side per call; the two together are exactly the ease_in_out table entry.
-  await call('set_keyframe_tangents', { layer_id: layerId, param_key: 'opacity', keyframe_id: k0.id, out: { x: 0.42, y: 0 } })
-  await call('set_keyframe_tangents', { layer_id: layerId, param_key: 'opacity', keyframe_id: k1.id, in: { x: 0.58, y: 1 } })
+  await call('update_keyframe', { layer_id: layerId, param_key: 'opacity', keyframe_id: k0.id, out: { x: 0.42, y: 0 } })
+  await call('update_keyframe', { layer_id: layerId, param_key: 'opacity', keyframe_id: k1.id, in: { x: 0.58, y: 1 } })
   const shaped = await readTrack()
   expect(shaped.keyframes[0].out).toEqual({ x: 0.42, y: 0, mode: 'Free' })
   expect(shaped.keyframes[1].in).toEqual({ x: 0.58, y: 1, mode: 'Free' })

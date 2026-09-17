@@ -4,7 +4,7 @@
 // and rejects malformed args with a structured error envelope (no throw).
 // Coverage:
 // table-exec tools (add_track, delete_layers, trim_layer, move_layer,
-// links_create, set_role_gain, undo/redo) and dedicated-exec tools
+// create_link, set_role_gain, undo/redo) and dedicated-exec tools
 // (add_color_layer, add_marker, split_layer, set_keyframe, add_track).
 import { describe, it, expect } from 'vitest'
 import { freshActor, aRollId, bRollId } from './pbt/harness'
@@ -354,16 +354,16 @@ describe('MCP adapter routing — move_layer (table)', () => {
   })
 })
 
-// ── Table-exec: links_create ──────────────────────────────────────────────────
+// ── Table-exec: create_link ──────────────────────────────────────────────────
 
-describe('MCP adapter routing — links_create (table)', () => {
+describe('MCP adapter routing — create_link (table)', () => {
   it('valid call routes, returns a link id, and link appears in state', () => {
     const a = freshActor()
     const trackId = aRollId(a)
     const id1 = addColorLayerMcp(a, trackId, 0, 2_000_000)
     const id2 = addColorLayerMcp(a, trackId, 2_000_000, 4_000_000)
 
-    const r = a.mcpCall('links_create', JSON.stringify({ layer_ids: [id1, id2] }))
+    const r = a.mcpCall('create_link', JSON.stringify({ layer_ids: [id1, id2] }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
     const linkId = r.result.content[0].text
@@ -374,7 +374,7 @@ describe('MCP adapter routing — links_create (table)', () => {
 
   it('malformed layer_ids (not an array) → structured invalid_params error, no throw', () => {
     const a = freshActor()
-    const r = a.mcpCall('links_create', JSON.stringify({ layer_ids: 'not-an-array' }))
+    const r = a.mcpCall('create_link', JSON.stringify({ layer_ids: 'not-an-array' }))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')
@@ -383,7 +383,7 @@ describe('MCP adapter routing — links_create (table)', () => {
 
   it('malformed layer_ids entries (non-UUID strings) → structured invalid_params error, no throw', () => {
     const a = freshActor()
-    const r = a.mcpCall('links_create', JSON.stringify({ layer_ids: ['not-a-uuid', 'also-bad'] }))
+    const r = a.mcpCall('create_link', JSON.stringify({ layer_ids: ['not-a-uuid', 'also-bad'] }))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')
@@ -524,9 +524,9 @@ describe('MCP adapter routing — set_keyframe (dedicated)', () => {
   })
 })
 
-// ── Dedicated-exec: set_keyframe_tangents / set_extrapolation ─────────────────
+// ── Dedicated-exec: update_keyframe / set_extrapolation ─────────────────
 
-describe('MCP adapter routing — set_keyframe_tangents / set_extrapolation (dedicated)', () => {
+describe('MCP adapter routing — update_keyframe / set_extrapolation (dedicated)', () => {
   /** Text layer with a 2-key opacity track; returns the first key's id. */
   function keyedText(a: ReturnType<typeof freshActor>): { layerId: string; keyframeId: string } {
     const addR = a.dispatch('add_layer', { kind: 'text', track: aRollId(a), t_start_us: 0, t_end_us: 4_000_000 })
@@ -541,10 +541,10 @@ describe('MCP adapter routing — set_keyframe_tangents / set_extrapolation (ded
     return { layerId, keyframeId: parsed.keyframes[0].id }
   }
 
-  it('set_keyframe_tangents routes: the side lands on the key and the track stays Keyframed', () => {
+  it('update_keyframe routes: the side lands on the key and the track stays Keyframed', () => {
     const a = freshActor()
     const { layerId, keyframeId } = keyedText(a)
-    const r = a.mcpCall('set_keyframe_tangents', JSON.stringify({ layer_id: layerId, param_key: 'opacity', keyframe_id: keyframeId, out: { x: 0.25, y: 0.1 } }))
+    const r = a.mcpCall('update_keyframe', JSON.stringify({ layer_id: layerId, param_key: 'opacity', keyframe_id: keyframeId, out: { x: 0.25, y: 0.1 } }))
     expect(r.ok).toBe(true)
     const gr = a.mcpCall('get_param_track', JSON.stringify({ layer_id: layerId, param_key: 'opacity' }))
     expect(gr.ok).toBe(true)
@@ -554,10 +554,10 @@ describe('MCP adapter routing — set_keyframe_tangents / set_extrapolation (ded
     expect(parsed.keyframes[0].out).toEqual({ x: 0.25, y: 0.1, mode: 'Free' })
   })
 
-  it('set_keyframe_tangents with a malformed keyframe_id → structured invalid_params error, no throw', () => {
+  it('update_keyframe with a malformed keyframe_id → structured invalid_params error, no throw', () => {
     const a = freshActor()
     const { layerId } = keyedText(a)
-    const r = a.mcpCall('set_keyframe_tangents', JSON.stringify({ layer_id: layerId, param_key: 'opacity', keyframe_id: 'first', out: { x: 0.25, y: 0.1 } }))
+    const r = a.mcpCall('update_keyframe', JSON.stringify({ layer_id: layerId, param_key: 'opacity', keyframe_id: 'first', out: { x: 0.25, y: 0.1 } }))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')

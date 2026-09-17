@@ -30,12 +30,9 @@ pub struct Point {
 pub struct PathNode {
     pub id: String,
     pub point: Point,
-    #[serde(rename = "inHandle")]
     pub in_handle: Point,
-    #[serde(rename = "outHandle")]
     pub out_handle: Point,
     pub segment: PathSegment,
-    #[serde(rename = "tangentMode")]
     pub tangent_mode: SpatialTangentMode,
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

@@ -9,22 +9,22 @@ const unit = (p: Point): Point => length(p) > 1e-12 ? scale(p, 1 / length(p)) : 
 const mix = (a: Point, b: Point, t: number) => add(scale(a, 1 - t), scale(b, t));
 
 function smoothNode(n: PathNode): PathNode {
-  if (length(n.outHandle) > 1e-12)
-    return { ...n, inHandle: scale(unit(n.outHandle), -length(n.inHandle)) };
+  if (length(n.out_handle) > 1e-12)
+    return { ...n, in_handle: scale(unit(n.out_handle), -length(n.in_handle)) };
   return n;
 }
 
 /** Author-time only. Stored explicit handles remain the playback truth. */
 export function solvePathGeometry(path: MotionPath): MotionPath {
   return { nodes: path.nodes.map((n, i, nodes) => {
-    if (n.tangentMode === 'Smooth') return smoothNode(n);
-    if (n.tangentMode !== 'Auto') return n;
+    if (n.tangent_mode === 'Smooth') return smoothNode(n);
+    if (n.tangent_mode !== 'Auto') return n;
     const before = i > 0 ? sub(n.point, nodes[i - 1]!.point) : zero();
     const after = i + 1 < nodes.length ? sub(nodes[i + 1]!.point, n.point) : zero();
     // Unit-chord bisector: no distant neighbour can dominate the direction.
     // At a reversal the bisector is zero, making a stationary turnaround.
     const direction = unit(add(unit(before), unit(after)));
-    return { ...n, inHandle: scale(direction, -length(before) / 3), outHandle: scale(direction, length(after) / 3) };
+    return { ...n, in_handle: scale(direction, -length(before) / 3), out_handle: scale(direction, length(after) / 3) };
   }) };
 }
 
@@ -32,18 +32,18 @@ function checkNode(path: MotionPath, index: number) {
   if (!Number.isInteger(index) || index < 0 || index >= path.nodes.length) throw new Error('Path node does not exist');
 }
 
-export function setPathNodeMode(path: MotionPath, index: number, mode: PathNode['tangentMode']): MotionPath {
+export function setPathNodeMode(path: MotionPath, index: number, mode: PathNode['tangent_mode']): MotionPath {
   checkNode(path, index);
   if (!['Corner', 'Smooth', 'Auto'].includes(mode)) throw new Error('Invalid spatial node mode');
   const nodes = path.nodes.map(n => ({ ...n }));
   const node = nodes[index]!;
-  node.tangentMode = mode;
+  node.tangent_mode = mode;
   if (mode !== 'Corner') {
     if (index > 0) nodes[index - 1]!.segment = 'Cubic';
     if (index < nodes.length - 1) node.segment = 'Cubic';
-    if (mode === 'Smooth' && length(node.inHandle) + length(node.outHandle) < 1e-12) {
-      const auto = solvePathGeometry({ nodes: nodes.map((n, i) => i === index ? { ...n, tangentMode: 'Auto' } : n) }).nodes[index]!;
-      node.inHandle = auto.inHandle; node.outHandle = auto.outHandle;
+    if (mode === 'Smooth' && length(node.in_handle) + length(node.out_handle) < 1e-12) {
+      const auto = solvePathGeometry({ nodes: nodes.map((n, i) => i === index ? { ...n, tangent_mode: 'Auto' } : n) }).nodes[index]!;
+      node.in_handle = auto.in_handle; node.out_handle = auto.out_handle;
     }
   }
   return solvePathGeometry({ nodes });
@@ -51,15 +51,15 @@ export function setPathNodeMode(path: MotionPath, index: number, mode: PathNode[
 
 /** Point is absolute; handles are relative. Dragging an Auto handle takes
  * explicit control and becomes Smooth, retaining the opposite handle length. */
-export function editPathNode(path: MotionPath, index: number, part: 'point' | 'inHandle' | 'outHandle', value: Point): MotionPath {
+export function editPathNode(path: MotionPath, index: number, part: 'point' | 'in_handle' | 'out_handle', value: Point): MotionPath {
   checkNode(path, index);
   if (![value.x, value.y].every(Number.isFinite)) throw new Error('Path coordinates must be finite');
   const nodes = path.nodes.map(n => ({ ...n }));
   const node = nodes[index]!;
   node[part] = value;
-  if (part !== 'point' && node.tangentMode !== 'Corner') {
-    node.tangentMode = 'Smooth';
-    const opposite = part === 'inHandle' ? 'outHandle' : 'inHandle';
+  if (part !== 'point' && node.tangent_mode !== 'Corner') {
+    node.tangent_mode = 'Smooth';
+    const opposite = part === 'in_handle' ? 'out_handle' : 'in_handle';
     node[opposite] = scale(unit(value), -length(node[opposite]));
   }
   return solvePathGeometry({ nodes });
@@ -68,9 +68,9 @@ export function editPathNode(path: MotionPath, index: number, part: 'point' | 'i
 export function pathPointAt(path: MotionPath, segment: number, t: number): Point {
   const a = path.nodes[segment]!, b = path.nodes[segment + 1]!;
   if (a.segment === 'Line') return mix(a.point, b.point, t);
-  const q0 = mix(a.point, add(a.point, a.outHandle), t);
-  const q1 = mix(add(a.point, a.outHandle), add(b.point, b.inHandle), t);
-  const q2 = mix(add(b.point, b.inHandle), b.point, t);
+  const q0 = mix(a.point, add(a.point, a.out_handle), t);
+  const q1 = mix(add(a.point, a.out_handle), add(b.point, b.in_handle), t);
+  const q2 = mix(add(b.point, b.in_handle), b.point, t);
   return mix(mix(q0, q1, t), mix(q1, q2, t), t);
 }
 
@@ -83,19 +83,19 @@ export function insertPathNode(path: MotionPath, segment: number, t: number, id:
   if (!id || path.nodes.some(n => n.id === id)) throw new Error('The inserted node needs a unique id');
   const nodes = path.nodes.map(n => ({ ...n }));
   const a = nodes[segment]!, b = nodes[segment + 1]!;
-  const inserted: PathNode = { id, point: mix(a.point, b.point, t), inHandle: zero(), outHandle: zero(), segment: a.segment, tangentMode: 'Corner' };
+  const inserted: PathNode = { id, point: mix(a.point, b.point, t), in_handle: zero(), out_handle: zero(), segment: a.segment, tangent_mode: 'Corner' };
   if (a.segment === 'Cubic') {
-    const q0 = mix(a.point, add(a.point, a.outHandle), t);
-    const q1 = mix(add(a.point, a.outHandle), add(b.point, b.inHandle), t);
-    const q2 = mix(add(b.point, b.inHandle), b.point, t);
+    const q0 = mix(a.point, add(a.point, a.out_handle), t);
+    const q1 = mix(add(a.point, a.out_handle), add(b.point, b.in_handle), t);
+    const q2 = mix(add(b.point, b.in_handle), b.point, t);
     const r0 = mix(q0, q1, t), r1 = mix(q1, q2, t);
     inserted.point = mix(r0, r1, t);
-    inserted.inHandle = sub(r0, inserted.point); inserted.outHandle = sub(r1, inserted.point);
-    inserted.tangentMode = 'Smooth';
-    a.outHandle = sub(q0, a.point); b.inHandle = sub(q2, b.point);
+    inserted.in_handle = sub(r0, inserted.point); inserted.out_handle = sub(r1, inserted.point);
+    inserted.tangent_mode = 'Smooth';
+    a.out_handle = sub(q0, a.point); b.in_handle = sub(q2, b.point);
   }
-  if (a.tangentMode === 'Auto') a.tangentMode = 'Smooth';
-  if (b.tangentMode === 'Auto') b.tangentMode = 'Smooth';
+  if (a.tangent_mode === 'Auto') a.tangent_mode = 'Smooth';
+  if (b.tangent_mode === 'Auto') b.tangent_mode = 'Smooth';
   nodes.splice(segment + 1, 0, inserted);
   return { nodes };
 }

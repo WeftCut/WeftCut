@@ -41,8 +41,8 @@ const keyedTrack = (a: number, b: number): AnimTrack<number> => ({
 });
 
 const node = (id: string, x: number): PathNode => ({
-  id, tangentMode: "Corner", point: { x, y: 100 },
-  inHandle: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 }, segment: "Line",
+  id, tangent_mode: "Corner", point: { x, y: 100 },
+  in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: "Line",
 });
 
 const pathOf = (...nodes: PathNode[]): PositionAnimation => ({
@@ -196,7 +196,7 @@ describe("the path node well", () => {
     expect(setPosition).toHaveBeenCalledTimes(1);
     const [, next] = setPosition.mock.calls[0]! as unknown as [string, PositionAnimation];
     if (next.mode !== "Path") throw new Error("not a path");
-    expect(next.path.nodes[1]!.tangentMode).toBe("Smooth");
+    expect(next.path.nodes[1]!.tangent_mode).toBe("Smooth");
   });
 
   it("refuses a span action on the last node, which has no span after it", () => {

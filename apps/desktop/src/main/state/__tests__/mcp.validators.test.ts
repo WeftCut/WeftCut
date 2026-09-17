@@ -52,8 +52,8 @@ describe('parseInterp', () => {
     expect(() => parseInterp({ kind: 'Elastic' })).toThrow(/'In' \| 'Out' \| 'InOut'/)
     expect(() => parseInterp({ kind: 'Bounce', dir: 'Sideways' })).toThrow(/'In' \| 'Out' \| 'InOut'/)
   })
-  it('rejects a preset payload here, pointing at set_keyframe_easing', () => {
-    expect(() => parseInterp({ preset: 'ease_in_out' })).toThrow(/set_keyframe_easing/)
+  it('rejects a preset payload here, pointing at update_keyframe', () => {
+    expect(() => parseInterp({ preset: 'ease_in_out' })).toThrow(/update_keyframe/)
   })
   it('rejects non-objects', () => {
     expect(() => parseInterp(42)).toThrow(McpArgError)

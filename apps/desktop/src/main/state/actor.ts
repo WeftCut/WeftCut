@@ -17,6 +17,7 @@ import { applyRippleDeleteGap, applyRippleDeleteLayers, type RippleDeleteResult,
 import { applyPasteLayer, applyPasteLayers, pasteLayerInterval } from './mutations/duplicate'
 import { applySplitLayer, parseDiscardSegments } from './mutations/split'
 import { applyLinksCreate, applyLinksDissolve, applyLinksAddMembers, applyLinksRemoveMembers, applyLinksRename, linkSiblingsExcluding } from './mutations/links'
+import { serveProjectResource } from './resource-views'
 import { applyCompositionsDelete, applyGroupsAddMembers, applyGroupsCreate, applyGroupsRename, applyGroupsUngroup, type GroupCreateResult } from './mutations/groups'
 import { applyMoveLayersToComposition } from './mutations/moveToComposition'
 import { applySetLayersEnabled, applyUpdateLayer, type LayerPatch } from './mutations/update'
@@ -1578,8 +1579,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
       case 'add_video_layer': {
         const media = parseUuid(spec.media_id, 'media_id')
-        const srcIn = parseNum(spec.src_in_us, 'src_in_us')
-        const srcOut = parseNum(spec.src_out_us, 'src_out_us')
+        const srcIn = parseNumOpt(spec.src_in_us, 'src_in_us') ?? null
+        const srcOut = parseNumOpt(spec.src_out_us, 'src_out_us') ?? null
         const kind = current().media_pool[media]?.kind
         // The wet arm's media-kind refusal, so a rehearsal predicts it instead
         // of reporting a clip that the real call would reject. It throws rather
@@ -1587,7 +1588,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // was written expecting this layer to exist.
         if (kind === 'Audio') throw new McpArgError(`media ${media} is audio-only — a visual layer over it draws nothing and the mixer does not read it; use add_audio_layer`, 'media_id')
         if (kind === 'Subtitle') throw new McpArgError(`media ${media} is a subtitle document, not a picture; use apply_subtitles (not dry-runnable) or add_text_layer`, 'media_id')
-        const params = kind === 'Image' ? imageOverlayParams(media) : videoClipParams(media, srcIn, srcOut)
+        // The wet arm's rule too: an Image ignores the source window, a Video
+        // needs one.
+        if (kind !== 'Image' && (srcIn === null || srcOut === null)) throw new McpArgError(`src_in_us and src_out_us are required for Video media ${media}; only an Image may omit them`, 'src_in_us')
+        const params = kind === 'Image' ? imageOverlayParams(media) : videoClipParams(media, srcIn as number, srcOut as number)
         return { kind: 'AddLayer', track_id: parseUuid(spec.track_id, 'track_id'),
           params,
           t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
@@ -1658,8 +1662,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const track = p.track as string
           checkTrackInComposition(track, p.composition_id as string | null)
           const media = p.media as string
-          const srcIn = p.src_in_us as number
-          const srcOut = p.src_out_us as number
+          const srcIn = p.src_in_us as number | null
+          const srcOut = p.src_out_us as number | null
           const t0 = p.t_start_us as number
           const t1 = p.t_end_us as number
           const snap = current()
@@ -1677,6 +1681,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
           if (item?.kind === 'Image') {
             const imageId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, imageOverlayParams(media), t0, t1))
             return { ok: true, result: toolText(imageId) }
+          }
+          // An Image never needed them, so the schema stopped requiring them;
+          // a Video still does, and says so rather than defaulting to a window
+          // nobody chose.
+          if (srcIn === null || srcOut === null) {
+            return { ok: false, error: { code: 'invalid_params', message: `src_in_us and src_out_us are required for Video media ${media}: they are the in/out points in the source; only an Image may omit them` } }
           }
           const vParams = videoClipParams(media, srcIn, srcOut)
           const shouldPair = (snap.settings.auto_pair_audio_on_import === true) && (item?.kind === 'Video') && (item.metadata.audio != null)
@@ -1880,8 +1890,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
           return { ok: true, result: toolJson(shapeGetParamTrack(track, tStartUs)) }
         }
-        case 'remove_keyframe': {
-          const p = mcpDef('remove_keyframe').parseDedicated!(a)
+        case 'delete_keyframe': {
+          const p = mcpDef('delete_keyframe').parseDedicated!(a)
           const layer = p.layer as string
           const keyframeId = p.keyframe_id as string
           const paramKey = p.param_key as string
@@ -1893,26 +1903,30 @@ export function createActor(opts: ActorOptions): ActorHandle {
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
         }
-        case 'retime_keyframe': {
-          const p = mcpDef('retime_keyframe').parseDedicated!(a)
+        case 'update_keyframe': {
+          const p = mcpDef('update_keyframe').parseDedicated!(a)
           const layer = p.layer as string
           const keyframeId = p.keyframe_id as string
           const paramKey = p.param_key as string
           const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
           if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
-          const next = retimeKeyframe(track, keyframeId, (p.t_us as number) - tStartUs)
-          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
-          return { ok: true, result: toolEmpty() }
-        }
-        case 'set_keyframe_easing': {
-          const p = mcpDef('set_keyframe_easing').parseDedicated!(a)
-          const layer = p.layer as string
-          const keyframeId = p.keyframe_id as string
-          const paramKey = p.param_key as string
-          const { track } = readLayerTrack(current(), layer, paramKey)
-          if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
-          const next = setSegmentEasing(track, keyframeId, p.interp as Interpolation)
+          // One key, several aspects, one commit — applied in the order the
+          // description promises: retime first (so an easing lands on the
+          // segment the key now leaves), then the segment easing, then the
+          // sides — `out` last, so a Smooth request re-derives `in` from the
+          // `out` just written, the "out wins" order the write-time solve
+          // settles the pair in — then continuity.
+          let next = track
+          const tUs = p.t_us as number | null
+          if (tUs !== null) next = retimeKeyframe(next, keyframeId, tUs - tStartUs)
+          const easing = p.easing as Interpolation | null
+          if (easing) next = setSegmentEasing(next, keyframeId, easing)
+          const inXy = p.in as { x: number; y: number } | null
+          const outXy = p.out as { x: number; y: number } | null
+          const continuity = p.continuity as Continuity | null
+          if (inXy) next = setTangent(next, keyframeId, 'in', inXy)
+          if (outXy) next = setTangent(next, keyframeId, 'out', outXy)
+          if (continuity) next = setContinuity(next, keyframeId, continuity)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
@@ -1956,27 +1970,6 @@ export function createActor(opts: ActorOptions): ActorHandle {
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
         }
-        case 'set_keyframe_tangents': {
-          const p = mcpDef('set_keyframe_tangents').parseDedicated!(a)
-          const layer = p.layer as string
-          const keyframeId = p.keyframe_id as string
-          const paramKey = p.param_key as string
-          const { track } = readLayerTrack(current(), layer, paramKey)
-          if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
-          const inXy = p.in as { x: number; y: number } | null
-          const outXy = p.out as { x: number; y: number } | null
-          const continuity = p.continuity as Continuity | null
-          // Sides before continuity, `out` last among the sides: a Smooth
-          // request then re-derives `in` from the `out` just written, which is
-          // the "out wins" order the write-time solve settles the pair in.
-          let next = track
-          if (inXy) next = setTangent(next, keyframeId, 'in', inXy)
-          if (outXy) next = setTangent(next, keyframeId, 'out', outXy)
-          if (continuity) next = setContinuity(next, keyframeId, continuity)
-          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
-          return { ok: true, result: toolEmpty() }
-        }
         case 'set_extrapolation': {
           const p = mcpDef('set_extrapolation').parseDedicated!(a)
           const layer = p.layer as string
@@ -1991,6 +1984,44 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
+        }
+        case 'update_link': {
+          const p = mcpDef('update_link').parseDedicated!(a)
+          const link = p.link as Uuid
+          const add = p.add as Uuid[]
+          const remove = p.remove as Uuid[]
+          const label = p.label as string | null | undefined
+          const reassign = p.reassign as boolean
+          // One commit, add → remove → label: adding before removing means a
+          // link never dissolves under a member that is about to join it. The
+          // row is labelled by the heaviest change present, and names the
+          // layers that moved when any did, else the link's members.
+          const summary = add.length > 0 ? HISTORY_SUMMARY.linkAddMembers : remove.length > 0 ? HISTORY_SUMMARY.linkRemoveMembers : HISTORY_SUMMARY.linkRename
+          const refs = add.length > 0 || remove.length > 0 ? layerRefs([...add, ...remove]) : linkMemberRefs(link)
+          commit(summary, refs, { kind: 'Coarse' }, (d) => {
+            if (add.length > 0) applyLinksAddMembers(d, link, add, reassign)
+            if (remove.length > 0) applyLinksRemoveMembers(d, link, remove)
+            if (label !== undefined) applyLinksRename(d, link, label)
+          })
+          return { ok: true, result: toolEmpty() }
+        }
+        case 'read_project': {
+          // The `project://*` state views as a tool result, served by the same
+          // function the resource read uses, so a client without resources
+          // support reads exactly what one with it reads.
+          const p = mcpDef('read_project').parseDedicated!(a)
+          const view = p.view as string
+          const compositionId = p.composition_id as string | null
+          const scoped = compositionId !== null && (view === 'tracks' || view === 'markers') ? `?composition=${compositionId}` : ''
+          const uri = view === 'layer' ? `project://layers/${p.id as string}` : `project://${view}${scoped}`
+          try {
+            const res = serveProjectResource(uri, { snapshot: current, historyView: (n) => history.view(n) })
+            const text = (res as { contents?: Array<{ text?: string }> } | null)?.contents?.[0]?.text
+            if (typeof text !== 'string') return { ok: false, error: { code: 'internal', message: `${uri} returned no body` } }
+            return { ok: true, result: toolText(text) }
+          } catch (err) {
+            return { ok: false, error: { code: 'not_found', message: err instanceof Error ? err.message : String(err) } }
+          }
         }
         case 'dry_run': {
           const p = mcpDef('dry_run').parseDedicated!(a)

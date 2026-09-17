@@ -91,10 +91,10 @@ Lower thirds, countdowns, karaoke text and animated title cards are the obvious 
 ![WeftCut editor](docs/assets/editor.png)
 
 **Timeline** — A/B-roll rows with filmstrips and waveforms, frame-accurate SMPTE editing, ripple delete that closes the gap behind it, linked A/V that trims as one clip, cross-track groups, and nested compositions.
-<br/><sub>Agent: `move_layer` · `trim_layer` · `split_layer` · `ripple_delete_gap` · `links_create` · `groups_create` · `move_layers_to_composition`</sub>
+<br/><sub>Agent: `move_layer` · `trim_layer` · `split_layer` · `ripple_delete_gap` · `create_link` · `create_group` · `move_layers_to_composition`</sub>
 
 **Keyframes** — animate any parameter, with bézier easing, a curve editor, tangent control, motion paths and extrapolation.
-<br/><sub>Agent: `set_keyframe` · `set_keyframe_easing` · `set_keyframe_tangents` · `smooth_keyframes` · `set_extrapolation`</sub>
+<br/><sub>Agent: `set_keyframe` · `update_keyframe` · `smooth_keyframes` · `set_extrapolation`</sub>
 
 **Speech and captions** — transcribe a clip and get editable caption layers packed onto your caption tracks; import SRT/VTT/ASS the same way. Transcription runs against a cloud provider, or entirely on your machine once you let the app fetch a local engine (whisper.cpp, FunASR) — or an agent can pull the raw audio out and run its own model. Text-to-speech for scratch voiceover.
 <br/><sub>Agent: `transcribe_clip` · `extract_clip_audio` · `apply_subtitles` · `synthesize_speech`</sub>

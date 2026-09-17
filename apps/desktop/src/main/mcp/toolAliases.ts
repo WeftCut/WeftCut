@@ -11,7 +11,12 @@
  *
  *  An entry is permanent. Removing one turns a working call into `unknown tool`
  *  for every agent that never re-read the catalog, which is the failure this
- *  table exists to prevent — the cost of keeping one is a single map lookup. */
+ *  table exists to prevent — the cost of keeping one is a single map lookup.
+ *
+ *  The table is CLOSED to new entries (ADR 0074): since the one-verb-per-resource
+ *  pass, a rename is a break like a merge — the old name is dropped and the
+ *  catalog the client re-reads is the whole contract. The four below predate
+ *  that decision and stay for the clients that learned them. */
 export const RETIRED_MCP_TOOL_NAMES: Readonly<Record<string, string>> = {
   // `add_motif` read as a sibling of `install_motif` (which adds a motif to the
   // app) when it is in fact a sibling of `add_video_layer` (which adds a clip to

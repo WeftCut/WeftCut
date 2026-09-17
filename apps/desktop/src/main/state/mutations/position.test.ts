@@ -18,7 +18,7 @@ function setup() {
     c.duration_us = 2000000;
     const params = textParamsDefault('Path', c);
     c.tracks[0]!.layers.push({ id, label: null, t_start_us: 0, t_end_us: 2000000, enabled: true, locked: false, metadata: {}, effects: [], params });
-    const path: PathPosition = { mode: 'Path', path: { nodes: [0, 1].map(i => ({ tangentMode: 'Corner' as const, id: gen(), point: { x: 100 * i, y: 200 * i }, inHandle: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 }, segment: 'Line' })) }, progress: { mode: 'Keyframed', extrapolate: { before: 'Loop', after: 'Loop' }, value: [0, 1].map(value => ({ id: gen(), t_us: value * 1000000, value, in: { ...IN_IDENTITY, mode: 'Free' }, out: { ...OUT_IDENTITY, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } })) } };
+    const path: PathPosition = { mode: 'Path', path: { nodes: [0, 1].map(i => ({ tangent_mode: 'Corner' as const, id: gen(), point: { x: 100 * i, y: 200 * i }, in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: 'Line' })) }, progress: { mode: 'Keyframed', extrapolate: { before: 'Loop', after: 'Loop' }, value: [0, 1].map(value => ({ id: gen(), t_us: value * 1000000, value, in: { ...IN_IDENTITY, mode: 'Free' }, out: { ...OUT_IDENTITY, mode: 'Free' }, continuity: 'Broken', segment: { kind: 'Linear' } })) } };
     return { p, c, id, params, path, gen };
 }
 describe('path authoring through state operations', () => {

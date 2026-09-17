@@ -799,8 +799,8 @@ struct Transform {
 
 `PositionAnimation` is exactly one of `XY { x: Animated<f64>, y: Animated<f64> }`
 or `Path { path: { nodes }, progress: Animated<f64> }` (ADR 0060). A path node
-has a stable `id`, `point: {x,y}`, relative `inHandle`/`outHandle` vectors, an
-outgoing `segment: Line | Cubic`, and `tangentMode: Corner | Smooth | Auto`;
+has a stable `id`, `point: {x,y}`, relative `in_handle`/`out_handle` vectors, an
+outgoing `segment: Line | Cubic`, and `tangent_mode: Corner | Smooth | Auto`;
 geometry contains no timestamps. Corner handles are independent; Smooth keeps
 them opposite with independent lengths; Auto derives them from adjacent chords.
 The authoring solver stores explicit resolved handles for every reader. Progress

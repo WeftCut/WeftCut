@@ -8,17 +8,17 @@ import { root } from './fixtures/project'
 const EXPECTED_TOOL_NAMES = new Set<string>([
   // table-exec tools — counts are asserted below, not duplicated in labels.
   'set_position', 'translate_path',
-  'add_track', 'remove_track', 'rename_track', 'paste_layers', 'move_track', 'set_track_flags',
+  'add_track', 'delete_track', 'rename_track', 'paste_layers', 'move_track', 'set_track_flags',
   'update_layer', 'set_layers_enabled', 'update_layer_params', 'set_scale_linked',
   'move_layer', 'restack_layer', 'trim_layer', 'delete_layers', 'ripple_delete_gap',
   'separate_audio_to_new_track', 'restyle_captions',
-  'links_create', 'links_dissolve', 'links_add_members', 'links_remove_members', 'links_rename',
-  'groups_create', 'groups_add_members', 'move_layers_to_composition', 'add_group_layer', 'groups_ungroup', 'groups_rename', 'delete_composition',
-  'add_effect', 'update_effect', 'move_effect', 'remove_effect',
-  'add_transition', 'update_transition', 'remove_transition',
-  'update_composition', 'fit_composition_to_layers', 'set_project_settings',
-  'update_marker', 'remove_marker', 'set_marker_anchor',
-  'remove_media', 'undo', 'redo', 'jump_to', 'delete_checkpoint',
+  'create_link', 'delete_link',
+  'create_group', 'add_group_members', 'move_layers_to_composition', 'add_group_layer', 'ungroup_layer', 'rename_composition', 'delete_composition',
+  'add_effect', 'update_effect', 'move_effect', 'delete_effect',
+  'add_transition', 'update_transition', 'delete_transition',
+  'update_composition', 'set_project_settings',
+  'update_marker', 'delete_marker', 'set_marker_anchor',
+  'delete_media', 'undo', 'redo', 'jump_to', 'delete_checkpoint',
   'set_role_gain', 'set_role_flags',
   // dedicated-exec tools — auto_split_by_shot and remove_pauses are TS-owned
   // HYBRID defs (they route 'hybrid', not to an actor arm) that carry a
@@ -27,9 +27,9 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   'apply_transcripts', 'correct_caption_text',
   'add_motif_layer',
   'set_history_lock',
-  'set_keyframe', 'get_param_track', 'remove_keyframe', 'retime_keyframe',
-  'set_keyframe_easing', 'smooth_keyframes', 'clear_keyframes', 'set_param_track',
-  'set_keyframe_tangents', 'set_extrapolation',
+  'set_keyframe', 'get_param_track', 'delete_keyframe', 'update_keyframe',
+  'smooth_keyframes', 'clear_keyframes', 'set_param_track', 'set_extrapolation',
+  'update_link', 'read_project',
   'dry_run', 'create_checkpoint', 'list_checkpoints', 'restore_checkpoint', 'begin_agent_session', 'end_agent_session',
   'auto_split_by_shot', 'remove_pauses',
 ])
@@ -55,13 +55,13 @@ describe('MCP tool table projections', () => {
 
   it('every table-exec def round-trips a representative valid arg set identically to its prior parser', () => {
     const u = '00000000-0000-7000-8000-000000000001'
-    expect(MCP_ARG_PARSERS['remove_track']({ track_id: u })).toEqual({ op: 'delete_track', args: { track: u, force: false } })
+    expect(MCP_ARG_PARSERS['delete_track']({ track_id: u })).toEqual({ op: 'delete_track', args: { track: u, force: false } })
     expect(MCP_ARG_PARSERS['set_role_gain']({ role: 'music', gain_db: -3 })).toEqual({ op: 'set_role_gain', args: { role: 'music', gain_db: -3 } })
   })
 
   it('hardened parseArgs rejects malformed input (was a silent as-cast)', () => {
     // force must be a boolean
-    expect(() => MCP_ARG_PARSERS['remove_track']({ track_id: '00000000-0000-7000-8000-000000000001', force: 'yes' })).toThrow()
+    expect(() => MCP_ARG_PARSERS['delete_track']({ track_id: '00000000-0000-7000-8000-000000000001', force: 'yes' })).toThrow()
     // gain_db must be a finite number
     expect(() => MCP_ARG_PARSERS['set_role_gain']({ role: 'music', gain_db: 'loud' })).toThrow()
   })
@@ -76,7 +76,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(51)
+    expect(table.length).toBe(47)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }
@@ -111,7 +111,7 @@ describe('MCP tool table projections', () => {
 
   it('shapeResult tools are the expected 8', () => {
     const shapers = MCP_TOOL_DEFS.filter((d) => d.shapeResult).map((d) => d.name).sort()
-    expect(shapers).toEqual(['add_effect', 'add_group_layer', 'add_track', 'add_transition', 'groups_create', 'links_create', 'paste_layers', 'separate_audio_to_new_track'])
+    expect(shapers).toEqual(['add_effect', 'add_group_layer', 'add_track', 'add_transition', 'create_group', 'create_link', 'paste_layers', 'separate_audio_to_new_track'])
   })
 
   it('paste_layers / set_layers_enabled round-trip valid args and reject malformed ones', () => {
@@ -171,7 +171,7 @@ describe('MCP tool table projections', () => {
 
   it('asArray hardening: layer_ids rejects non-array', () => {
     const u = '00000000-0000-7000-8000-000000000001'
-    expect(() => MCP_ARG_PARSERS['links_create']({ layer_ids: u, label: null })).toThrow()
+    expect(() => MCP_ARG_PARSERS['create_link']({ layer_ids: u, label: null })).toThrow()
   })
 
   it('transition tools round-trip valid args to dispatch vocabulary', () => {
@@ -184,7 +184,7 @@ describe('MCP tool table projections', () => {
       .toEqual({ op: 'add_transition', args: { from: u1, to: u2, duration_us: 500_000, kind: undefined, direction: undefined } })
     expect(MCP_ARG_PARSERS['update_transition']({ transition_id: u1, duration_us: 250_000, kind: 'Slide', direction: 'down' }))
       .toEqual({ op: 'update_transition', args: { transition: u1, duration_us: 250_000, kind: 'Slide', direction: 'down' } })
-    expect(MCP_ARG_PARSERS['remove_transition']({ transition_id: u1 }))
+    expect(MCP_ARG_PARSERS['delete_transition']({ transition_id: u1 }))
       .toEqual({ op: 'remove_transition', args: { transition: u1 } })
   })
 
@@ -221,7 +221,7 @@ describe('MCP tool table projections', () => {
 
   it('parseStrOpt hardening: label rejects non-string non-null', () => {
     const u = '00000000-0000-7000-8000-000000000001'
-    expect(() => MCP_ARG_PARSERS['links_create']({ layer_ids: [u], label: 42 })).toThrow()
+    expect(() => MCP_ARG_PARSERS['create_link']({ layer_ids: [u], label: 42 })).toThrow()
   })
 })
 
@@ -247,7 +247,7 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     const upd = actor.mcpCall('update_transition', JSON.stringify({ transition_id: tid, duration_us: 500_000, kind: 'Crossfade' }))
     expect(upd.ok).toBe(true)
     expect(root(actor.snapshot()).transitions[0]).toMatchObject({ duration_us: 500_000, kind: { kind: 'Crossfade' } })
-    const rem = actor.mcpCall('remove_transition', JSON.stringify({ transition_id: tid }))
+    const rem = actor.mcpCall('delete_transition', JSON.stringify({ transition_id: tid }))
     expect(rem.ok).toBe(true)
     expect(root(actor.snapshot()).transitions).toEqual([])
   })

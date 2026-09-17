@@ -51,12 +51,12 @@ test('motion path creation, point dragging, conversion preview/cancel/apply and 
     expect(moved.path.nodes[0]!.point.x - before.path.nodes[0]!.point.x).toBeCloseTo(30 / (canvas.width / 1280), 0)
     expect(moved.progress).toEqual(before.progress)
     await fields.getByRole('button', { name: /Line \/ curve|直线.*曲线/ }).click()
-    await expect(page.getByTestId('path-0-outHandle')).toBeVisible()
+    await expect(page.getByTestId('path-0-out_handle')).toBeVisible()
     const curved = await position(page, id)
     if (curved.mode !== 'Path') throw new Error('Path lost during curve edit')
     expect(curved.path.nodes[0]!.segment).toBe('Cubic')
-    expect(curved.path.nodes[1]!.inHandle).not.toEqual({ x: 0, y: 0 })
-    const control = page.getByTestId('path-0-outHandle')
+    expect(curved.path.nodes[1]!.in_handle).not.toEqual({ x: 0, y: 0 })
+    const control = page.getByTestId('path-0-out_handle')
     const controlBox = (await control.boundingBox())!
     await page.mouse.move(controlBox.x + controlBox.width / 2, controlBox.y + controlBox.height / 2)
     await page.mouse.down()
@@ -68,7 +68,7 @@ test('motion path creation, point dragging, conversion preview/cancel/apply and 
       .getByRole('button', { name: /Auto smooth|自动平滑/ }).click()
     await expect.poll(async () => {
       const p = await position(page, id)
-      return p.mode === 'Path' ? p.path.nodes[0]!.tangentMode : ''
+      return p.mode === 'Path' ? p.path.nodes[0]!.tangent_mode : ''
     }).toBe('Auto')
     const auto = await position(page, id)
     const location = await page.getByTestId('path-insert-hit').evaluate(el => {
@@ -85,7 +85,7 @@ test('motion path creation, point dragging, conversion preview/cancel/apply and 
     const inserted = await position(page, id)
     if (inserted.mode !== 'Path' || auto.mode !== 'Path') throw new Error('Path lost during insertion')
     expect(inserted.progress).toEqual(auto.progress)
-    expect(inserted.path.nodes[0]!.tangentMode).toBe('Smooth')
+    expect(inserted.path.nodes[0]!.tangent_mode).toBe('Smooth')
     await invokeCmd(page, 'project_undo', {})
     await expect.poll(() => position(page, id)).toEqual(auto)
     await invokeCmd(page, 'project_undo', {})

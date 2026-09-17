@@ -23,7 +23,7 @@ export function MotionPathOverlay({ layer, composition }: {
     const drag = useRef<{
         source: PathPosition;
         node: number;
-        part: 'point' | 'inHandle' | 'outHandle';
+        part: 'point' | 'in_handle' | 'out_handle';
     } | null>(null);
     const source: PositionAnimation | null = 'x' in layer.params ? (layer.params.position ?? { mode: 'XY', x: layer.params.x, y: layer.params.y }) : null;
     const current = draft ?? (source ? previewPosition(source) : null);
@@ -125,7 +125,7 @@ export function MotionPathOverlay({ layer, composition }: {
             if (!i)
                 return `M${n.point.x} ${n.point.y}`;
             const a = current.path.nodes[i - 1]!;
-            return a.segment === 'Line' ? `L${n.point.x} ${n.point.y}` : `C${a.point.x + a.outHandle.x} ${a.point.y + a.outHandle.y} ${n.point.x + n.inHandle.x} ${n.point.y + n.inHandle.y} ${n.point.x} ${n.point.y}`;
+            return a.segment === 'Line' ? `L${n.point.x} ${n.point.y}` : `C${a.point.x + a.out_handle.x} ${a.point.y + a.out_handle.y} ${n.point.x + n.in_handle.x} ${n.point.y + n.in_handle.y} ${n.point.x} ${n.point.y}`;
         }).join(' ');
     }, [current, layer.t_start_us, layer.t_end_us]);
     if (!source || (!editing && source.mode === 'XY'))
@@ -135,7 +135,7 @@ export function MotionPathOverlay({ layer, composition }: {
         const fit = rect ? containFit(rect, composition.width, composition.height) : null;
         return fit ? { x: (e.clientX - fit.offX) / fit.scale, y: (e.clientY - fit.offY) / fit.scale } : null;
     };
-    const begin = (e: React.PointerEvent<SVGCircleElement>, node: number, part: 'point' | 'inHandle' | 'outHandle') => {
+    const begin = (e: React.PointerEvent<SVGCircleElement>, node: number, part: 'point' | 'in_handle' | 'out_handle') => {
         if (e.button !== 0 || source.mode !== 'Path' || busy || previewPosition(source) !== source)
             return;
         e.stopPropagation();
@@ -176,7 +176,7 @@ export function MotionPathOverlay({ layer, composition }: {
             setBusy(false);
         }
     };
-    const handle = (node: number, part: 'point' | 'inHandle' | 'outHandle', p: Point) => <circle key={`${node}-${part}`} data-testid={`path-${node}-${part}`} data-handle-radius={part === 'point' ? 6 : 4} cx={p.x} cy={p.y} r={part === 'point' ? 6 : 4} fill={part === 'point' ? '#fff' : '#65d8ff'} stroke="#17394b" strokeWidth={1} vectorEffect="non-scaling-stroke" style={{ pointerEvents: editing && !busy ? 'all' : 'none', cursor: 'move' }} onPointerDown={e => begin(e, node, part)} onPointerMove={move} onPointerUp={e => void end(e)} onPointerCancel={e => void end(e)}/>;
+    const handle = (node: number, part: 'point' | 'in_handle' | 'out_handle', p: Point) => <circle key={`${node}-${part}`} data-testid={`path-${node}-${part}`} data-handle-radius={part === 'point' ? 6 : 4} cx={p.x} cy={p.y} r={part === 'point' ? 6 : 4} fill={part === 'point' ? '#fff' : '#65d8ff'} stroke="#17394b" strokeWidth={1} vectorEffect="non-scaling-stroke" style={{ pointerEvents: editing && !busy ? 'all' : 'none', cursor: 'move' }} onPointerDown={e => begin(e, node, part)} onPointerMove={move} onPointerUp={e => void end(e)} onPointerCancel={e => void end(e)}/>;
     const insertAt = async (e: React.MouseEvent) => {
         if (!editing || busy || source.mode !== 'Path' || previewPosition(source) !== source) return;
         const point = pointer(e); if (!point) return;
@@ -198,7 +198,7 @@ export function MotionPathOverlay({ layer, composition }: {
       {editing && source.mode === 'Path' && current === source && <path data-testid="path-insert-hit" d={route} fill="none" stroke="transparent" strokeWidth={12} vectorEffect="non-scaling-stroke" style={{pointerEvents: busy ? 'none' : 'stroke', cursor: 'copy'}} onDoubleClick={e => void insertAt(e)}/>}
       {editing && current?.mode === 'Path' && (draft || current === source) && current.path.nodes.map((n, i) => <g key={n.id}>
         {handle(i, 'point', n.point)}
-        {n.id === selected && (['inHandle', 'outHandle'] as const).filter(part => (part === 'outHandle' ? n.segment === 'Cubic' && i < current.path.nodes.length - 1 : i > 0 && current.path.nodes[i - 1]!.segment === 'Cubic') && (n[part].x !== 0 || n[part].y !== 0)).map(part => { const p = { x: n.point.x + n[part].x, y: n.point.y + n[part].y }; return <g key={part}><line x1={n.point.x} y1={n.point.y} x2={p.x} y2={p.y} stroke="#65d8ff" strokeWidth={1} vectorEffect="non-scaling-stroke"/>{handle(i, part, p)}</g>; })}
+        {n.id === selected && (['in_handle', 'out_handle'] as const).filter(part => (part === 'out_handle' ? n.segment === 'Cubic' && i < current.path.nodes.length - 1 : i > 0 && current.path.nodes[i - 1]!.segment === 'Cubic') && (n[part].x !== 0 || n[part].y !== 0)).map(part => { const p = { x: n.point.x + n[part].x, y: n.point.y + n[part].y }; return <g key={part}><line x1={n.point.x} y1={n.point.y} x2={p.x} y2={p.y} stroke="#65d8ff" strokeWidth={1} vectorEffect="non-scaling-stroke"/>{handle(i, part, p)}</g>; })}
       </g>)}
       <circle ref={marker} fill="#ffca66" stroke="#111" strokeWidth={1} vectorEffect="non-scaling-stroke"/>
     </g>

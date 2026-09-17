@@ -1,8 +1,8 @@
 // apps/desktop/src/main/state/__tests__/mcp.easing.test.ts
 // The keyframe-shape writers end to end through actor.mcpCall, read back with
-// get_param_track: set_keyframe_easing (presets bake to the canonical table
+// get_param_track: update_keyframe { easing } (presets bake to the canonical table
 // params in state and the exact-match reverse lookup surfaces the id),
-// set_keyframe_tangents (a side lands Free with the numbers sent, the segment
+// update_keyframe { in / out } (a side lands Free with the numbers sent, the segment
 // it shapes goes Spline, Smooth re-derives `in` from `out`) and
 // set_extrapolation (the stored track evaluates past its last key through the
 // shared engine). The parser-level rejection matrix lives in
@@ -53,7 +53,7 @@ function storedOpacity(a: ReturnType<typeof freshActor>, layerId: string): Anima
 }
 
 function setTangents(a: ReturnType<typeof freshActor>, layerId: string, keyframeId: string, args: Record<string, unknown>) {
-  return a.mcpCall('set_keyframe_tangents', JSON.stringify({ layer_id: layerId, param_key: 'opacity', keyframe_id: keyframeId, ...args }))
+  return a.mcpCall('update_keyframe', JSON.stringify({ layer_id: layerId, param_key: 'opacity', keyframe_id: keyframeId, ...args }))
 }
 
 function setExtrapolationCall(a: ReturnType<typeof freshActor>, layerId: string, args: Record<string, unknown>) {
@@ -68,10 +68,10 @@ function readKeys(a: ReturnType<typeof freshActor>, layerId: string): KfEntry[] 
 }
 
 function setEasing(a: ReturnType<typeof freshActor>, layerId: string, keyframeId: string, interp: unknown) {
-  return a.mcpCall('set_keyframe_easing', JSON.stringify({ layer_id: layerId, param_key: 'opacity', keyframe_id: keyframeId, interp }))
+  return a.mcpCall('update_keyframe', JSON.stringify({ layer_id: layerId, param_key: 'opacity', keyframe_id: keyframeId, easing: interp }))
 }
 
-describe('set_keyframe_easing → get_param_track (preset baking + readback)', () => {
+describe('update_keyframe { easing } → get_param_track (preset baking + readback)', () => {
   it('a bezier-family preset bakes the table params and round-trips its id', () => {
     const { a, layerId } = withKeyedOpacity()
     const kfId = readKeys(a, layerId)[0].id
@@ -156,7 +156,7 @@ describe('set_keyframe_easing → get_param_track (preset baking + readback)', (
   })
 })
 
-describe('set_keyframe_tangents → get_param_track (per-side writes)', () => {
+describe('update_keyframe { in / out / continuity } → get_param_track (per-side writes)', () => {
   it('a provided side reads back Free with the numbers sent, and the segment it shapes becomes Spline', () => {
     const { a, layerId } = withKeyedOpacity()
     const [k0, k1] = readKeys(a, layerId)
@@ -224,7 +224,7 @@ describe('set_keyframe_tangents → get_param_track (per-side writes)', () => {
     const cases: Array<[string, Record<string, unknown>, RegExp]> = [
       [k0.id, { out: { x: 1.2, y: 0 } }, /out\.x is 1\.2 — .*within \[0, 1\]/],
       [k0.id, { in: { x: 0.5 } }, /in\.y must be a finite number/],
-      [k0.id, {}, /at least one of in, out, continuity/],
+      [k0.id, {}, /at least one of t_us, easing, in, out, continuity/],
       [k0.id, { continuity: 'Kinked' }, /continuity must be 'Smooth' \| 'Broken', got Kinked/],
       ['00000000-0000-7000-8000-0000000000ff', { out: { x: 0.5, y: 0.5 } }, /keyframe 00000000-0000-7000-8000-0000000000ff not found/],
     ]

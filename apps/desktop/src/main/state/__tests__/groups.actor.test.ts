@@ -165,36 +165,36 @@ describe('groups — actor dispatch', () => {
 })
 
 describe('groups — MCP tools', () => {
-  it('groups_create returns one JSON object { composition_id, layer_id }; the other three return empty results', () => {
+  it('create_group returns one JSON object { composition_id, layer_id }; the other three return empty results', () => {
     const { actor, v, w } = pairActor()
-    const r = actor.mcpCall('groups_create', JSON.stringify({ layer_ids: [v, w], label: 'Intro' }))
+    const r = actor.mcpCall('create_group', JSON.stringify({ layer_ids: [v, w], label: 'Intro' }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
     const value = JSON.parse(r.result.content[0].text) as { composition_id: Uuid; layer_id: Uuid }
     expect(Object.keys(value)).toEqual(['composition_id', 'layer_id']) // sorted keys, exactly these
     expect(actor.snapshot().compositions[value.composition_id]).toBeDefined()
 
-    expect(actor.mcpCall('groups_rename', JSON.stringify({ composition_id: value.composition_id, label: null }))).toEqual({ ok: true, result: { content: [] } })
+    expect(actor.mcpCall('rename_composition', JSON.stringify({ composition_id: value.composition_id, label: null }))).toEqual({ ok: true, result: { content: [] } })
     expect(actor.snapshot().compositions[value.composition_id].label).toBeNull()
-    expect(actor.mcpCall('groups_ungroup', JSON.stringify({ layer_id: value.layer_id }))).toEqual({ ok: true, result: { content: [] } })
+    expect(actor.mcpCall('ungroup_layer', JSON.stringify({ layer_id: value.layer_id }))).toEqual({ ok: true, result: { content: [] } })
     expect(groupsIn(actor)).toEqual([])
   })
 
-  it('groups_add_members moves the set and returns an empty result; a member that cannot land says where it would have to start', () => {
+  it('add_group_members moves the set and returns an empty result; a member that cannot land says where it would have to start', () => {
     const { actor, v, w } = pairActor()
-    const made = actor.mcpCall('groups_create', JSON.stringify({ layer_ids: [v, w] }))
+    const made = actor.mcpCall('create_group', JSON.stringify({ layer_ids: [v, w] }))
     if (!made.ok) throw new Error('fixture')
     const { composition_id, layer_id } = JSON.parse(made.result.content[0].text) as { composition_id: Uuid; layer_id: Uuid }
     const aRoll = root(actor.snapshot()).tracks[0].id // emptied by the pre-compose
     const z = actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 6 * S, t_end_us: 7 * S })
     if (!z.ok) throw new Error('fixture')
-    expect(actor.mcpCall('groups_add_members', JSON.stringify({ layer_ids: [z.value], group_layer_id: layer_id })))
+    expect(actor.mcpCall('add_group_members', JSON.stringify({ layer_ids: [z.value], group_layer_id: layer_id })))
       .toEqual({ ok: true, result: { content: [] } })
     expect(actor.snapshot().compositions[composition_id].tracks.flatMap((t) => t.layers).map((l) => l.id)).toContain(z.value)
 
     const early = actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 0, t_end_us: S })
     if (!early.ok) throw new Error('fixture')
-    const refused = actor.mcpCall('groups_add_members', JSON.stringify({ layer_ids: [early.value], group_layer_id: layer_id }))
+    const refused = actor.mcpCall('add_group_members', JSON.stringify({ layer_ids: [early.value], group_layer_id: layer_id }))
     expect(refused.ok).toBe(false)
     if (!refused.ok) expect(refused.error.message).toMatch(/would land at .*before its start/)
   })
@@ -202,17 +202,17 @@ describe('groups — MCP tools', () => {
   it('refusals arrive as invalid_params with a message that says what and why', () => {
     const { actor, v, w } = pairActor()
     expect(actor.dispatch('update_layer', { layer: w, patch: { locked: true } }).ok).toBe(true)
-    const locked = actor.mcpCall('groups_create', JSON.stringify({ layer_ids: [v, w] }))
+    const locked = actor.mcpCall('create_group', JSON.stringify({ layer_ids: [v, w] }))
     expect(locked.ok).toBe(false)
     if (!locked.ok) { expect(locked.error.code).toBe('invalid_params'); expect(locked.error.message).toMatch(/is locked.*every selected layer or none/) }
 
     const rootId = actor.snapshot().root_id
-    const rootRename = actor.mcpCall('groups_rename', JSON.stringify({ composition_id: rootId, label: 'x' }))
+    const rootRename = actor.mcpCall('rename_composition', JSON.stringify({ composition_id: rootId, label: 'x' }))
     expect(rootRename.ok).toBe(false)
     if (!rootRename.ok) expect(rootRename.error.message).toMatch(/is the root/)
 
     expect(actor.dispatch('update_layer', { layer: w, patch: { locked: false } }).ok).toBe(true)
-    const made = actor.mcpCall('groups_create', JSON.stringify({ layer_ids: [v, w] }))
+    const made = actor.mcpCall('create_group', JSON.stringify({ layer_ids: [v, w] }))
     if (!made.ok) throw new Error('fixture')
     const { composition_id, layer_id } = JSON.parse(made.result.content[0].text) as { composition_id: Uuid; layer_id: Uuid }
     const inUse = actor.mcpCall('delete_composition', JSON.stringify({ composition_id }))
@@ -220,12 +220,12 @@ describe('groups — MCP tools', () => {
     if (!inUse.ok) expect(inUse.error.message).toMatch(/referenced by 1 Group layer/)
 
     expect(actor.dispatch('update_layer_param_track', { layer: layer_id, param_key: 'opacity', track: { mode: 'Static', value: 0.5 } }).ok).toBe(true)
-    const notPlain = actor.mcpCall('groups_ungroup', JSON.stringify({ layer_id }))
+    const notPlain = actor.mcpCall('ungroup_layer', JSON.stringify({ layer_id }))
     expect(notPlain.ok).toBe(false)
     if (!notPlain.ok) expect(notPlain.error.message).toMatch(/not plain: its opacity/)
 
     // Malformed input never reaches the actor.
-    const bad = actor.mcpCall('groups_create', JSON.stringify({ layer_ids: 'not-an-array' }))
+    const bad = actor.mcpCall('create_group', JSON.stringify({ layer_ids: 'not-an-array' }))
     expect(bad.ok).toBe(false)
     if (!bad.ok) expect(bad.error.code).toBe('invalid_params')
   })

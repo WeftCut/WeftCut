@@ -173,10 +173,10 @@ describe('the rest of the keyframe family on a colour track', () => {
     expect(keys[1].in).toEqual({ x: 2 / 3, y: 2 / 3, mode: 'Auto' })
   })
 
-  it('set_keyframe_tangents writes a Free side on a colour key and splines its segment', () => {
+  it('update_keyframe writes a Free side on a colour key and splines its segment', () => {
     const { a, layerId } = keyed()
     const kfId = readTrack(a, layerId).keyframes![0].id
-    expect(call(a, 'set_keyframe_tangents', { layer_id: layerId, param_key: 'color', keyframe_id: kfId, out: { x: 0.42, y: 0 } }).ok).toBe(true)
+    expect(call(a, 'update_keyframe', { layer_id: layerId, param_key: 'color', keyframe_id: kfId, out: { x: 0.42, y: 0 } }).ok).toBe(true)
     const keys = readTrack(a, layerId).keyframes!
     expect(keys[0].out).toEqual({ x: 0.42, y: 0, mode: 'Free' })
     expect(keys[0].segment).toEqual({ kind: 'Spline' })
@@ -189,12 +189,12 @@ describe('the rest of the keyframe family on a colour track', () => {
     expect(stored.mode === 'Keyframed' && stored.extrapolate).toEqual({ before: 'Offset', after: 'PingPong' })
   })
 
-  it('remove_keyframe drops one key; the last one collapses to Static holding its colour', () => {
+  it('delete_keyframe drops one key; the last one collapses to Static holding its colour', () => {
     const { a, layerId } = keyed()
     const ids = readTrack(a, layerId).keyframes!.map((k) => k.id)
-    expect(call(a, 'remove_keyframe', { layer_id: layerId, param_key: 'color', keyframe_id: ids[0] }).ok).toBe(true)
+    expect(call(a, 'delete_keyframe', { layer_id: layerId, param_key: 'color', keyframe_id: ids[0] }).ok).toBe(true)
     expect(readTrack(a, layerId).keyframes?.map((k) => k.value)).toEqual([GREEN])
-    expect(call(a, 'remove_keyframe', { layer_id: layerId, param_key: 'color', keyframe_id: ids[1] }).ok).toBe(true)
+    expect(call(a, 'delete_keyframe', { layer_id: layerId, param_key: 'color', keyframe_id: ids[1] }).ok).toBe(true)
     expect(readTrack(a, layerId)).toEqual({ mode: 'Static', value: GREEN })
   })
 
@@ -214,10 +214,10 @@ describe('the rest of the keyframe family on a colour track', () => {
       .toContain("param 'color' takes an {r,g,b,a} colour")
   })
 
-  it('retime_keyframe moves a colour key and re-sorts', () => {
+  it('update_keyframe { t_us } moves a colour key and re-sorts', () => {
     const { a, layerId } = keyed()
     const ids = readTrack(a, layerId).keyframes!.map((k) => k.id)
-    expect(call(a, 'retime_keyframe', { layer_id: layerId, param_key: 'color', keyframe_id: ids[0], t_us: 3_000_000 }).ok).toBe(true)
+    expect(call(a, 'update_keyframe', { layer_id: layerId, param_key: 'color', keyframe_id: ids[0], t_us: 3_000_000 }).ok).toBe(true)
     expect(readTrack(a, layerId).keyframes?.map((k) => k.value)).toEqual([GREEN, RED])
   })
 })

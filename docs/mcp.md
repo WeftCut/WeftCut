@@ -201,27 +201,21 @@ the `tool_table!` macro in the Rust core for the native compute tools.
 Every advertised schema property carries an explicit `type` — MCP
 clients coerce untyped fields to `type: string`, which forces agents to
 send nested payloads as JSON-encoded strings (a catalog-wide test gates
-this). Don't expose 100 tools; agents get confused. The current set is 95,
+this). Don't expose 100 tools; agents get confused. The current set is 91,
 organised below — near enough that ceiling that a new tool is first checked
 against an existing one's arguments: two verbs that differ by one boolean are
 one tool with a flag, and a field's set and clear are one tool taking `null`.
 
-Names follow `<verb>_<resource>`. A tool that is RENAMED — same arguments,
-different spelling — keeps its old name **dispatchable but unadvertised**:
-`RETIRED_MCP_TOOL_NAMES` in `main/mcp/toolAliases.ts`, resolved at the request
-boundary ahead of the log row, so an agent holding a cached catalog or a prompt
-written against an earlier release keeps working while the catalog still teaches
-one name per tool. Entries are permanent: dropping one turns a working call into
-`unknown tool` for every client that never re-read the catalog. Retired so far:
-`add_motif` → `add_motif_layer`, `checkpoint` → `create_checkpoint`,
-`set_composition` → `update_composition`, `compositions_delete` →
-`delete_composition`.
-
-A tool that MERGES into another is a different case, and that table cannot carry
-it: the rewrite is name-only, so an old name whose arguments have changed shape
-would arrive at the new tool malformed. Those names are dropped outright, and a
-client calling one gets `unknown tool` — which is the honest answer, since the
-call it wanted no longer exists in that shape.
+Names follow `<verb>_<resource>`: `create_link`, `delete_track`, `update_keyframe`,
+`rename_composition` — the verb first, `delete` for every removal, and one
+tool per resource that can be changed in more than one way (`update_*` with
+optional fields, where the set and the clear of a field are one tool taking
+`null`). A tool that changes name or shape is a **break**: the old name is
+dropped, a client calling it gets `unknown tool`, and the catalog it re-reads
+is the whole contract ([ADR 0074](adr/0074-the-mcp-tool-surface-is-one-verb-per-resource-and-a-rename-is-a-break.md)).
+`RETIRED_MCP_TOOL_NAMES` in `main/mcp/toolAliases.ts` still resolves the four
+names retired before that decision (`add_motif`, `checkpoint`,
+`set_composition`, `compositions_delete`) and takes no new entries.
 
 ### Read (resources, not tools)
 
@@ -243,6 +237,12 @@ call it wanted no longer exists in that shape.
 | `media://{id}/analysis` | deterministic shot report (`{ shots, cut_scores }`, source-absolute) for the default detection params, content-addressed per source; computed on demand on a miss (no `404`) and shared with `analyze_clip` |
 | `media://{id}/description` | cached scene descriptions under the view the app's settings name — the preferred engine, sampling, focus and UI language, all injected by the host (`{ covered_ranges, segments }`); `404` until `describe_clip` has populated it at that key (unlike the always-computable resources above) — the refusal names the whole view, since changing any axis reads as "not described" until the shots are described again under the new one |
 | `motifs://current` | full motif catalog (built-ins, installed, drafts) — same payload as `list_motifs`; `html` stripped |
+
+A client that cannot read MCP resources has the same views as a tool:
+`read_project { view, id?, composition_id? }` with `view` one of `current`,
+`composition`, `compositions`, `media`, `tracks`, `layer` (needs `id`),
+`markers`, `history` — served by the same function as the resource, so the two
+never disagree. Prefer the resources when the client supports them.
 
 `media://*` reads return `404` with a hint pointing at the
 `media:job_complete` event when derivatives haven't been generated
@@ -285,9 +285,9 @@ Each maps 1:1 to a project actor command (see
 
 Media + tracks:
 - `import_media { path }` → `{ media_id, … }`
-- `remove_media { media_id, force? }`
+- `delete_media { media_id, force? }`
 - `add_track { label? }` → `TrackId` (tracks are kind-agnostic — any layer kind can be placed on any track)
-- `remove_track { track_id, force? }`
+- `delete_track { track_id, force? }`
 - `rename_track { track_id, label? }` — any track, reserved ones included; `label: null` (or blank) clears it back to the derived name
 - `move_track { track_id, new_position }`
 - `set_track_flags { track_id, enabled?, locked? }` — the writer behind every `TrackLocked` refusal. `locked` makes the track reject edits to the layers on it; `enabled` is its output, in preview and in export alike, with the layers left in place. Omit a flag (or send null) to leave it alone; a call naming neither is refused rather than reported as a successful no-op. **Unrecorded** (not undoable), like `set_role_flags`. A layer's own `locked` is separate (`update_layer { patch: { locked } }`) and an edit needs both cleared. No mute/solo arm: the mix folds by role, not by track ([ADR 0023](adr/0023-audio-mixes-by-role-not-track.md)) — `set_role_flags` is what silences audio.
@@ -304,7 +304,7 @@ belongs to exactly one composition, so a tool that names a `track_id` has
 already named the composition; `composition_id` on those tools is a cross-check
 (a track in another composition is refused with the mismatch spelled out). Tools
 that *pick or spawn* a lane — `add_track`, `add_motif_layer` without `track_id`,
-`add_marker`, `update_composition`, `fit_composition_to_layers` — take
+`add_marker`, `update_composition` — take
 `composition_id` to say which composition, the root when omitted; an unknown id
 is `CompositionNotFound`. Every layer-addressed tool (`move_layer`,
 `trim_layer`, `split_layer`, `update_layer_params`, keyframes, effects, links,
@@ -314,7 +314,7 @@ Group is edited exactly like one in the root. A destination that names another
 composition — `move_layer`'s `new_track_id`, `restack_layer`'s anchor,
 `paste_layers`' `target_track_id` — is refused with `CrossCompositionMove
 { layer, from, to }`; a set (`delete_layers`, `set_layers_enabled`,
-`paste_layers`, `links_create`, `links_add_members`) whose
+`paste_layers`, `create_link`, `update_link`) whose
 members straddle two compositions is refused with `CrossCompositionSet
 { layer, composition, expected }`. A layer changes composition only through the
 four ops that name a destination composition rather than inherit one — pre-compose, adding it to an
@@ -334,7 +334,7 @@ crosses; crossing has its own op.
 - `split_layer { layer_id, at_t_us, escape_link? }` → `{ left, right }`
 - `auto_split_by_shot { layer_id, min_shot_us?, drop_short? }` → `{ layer_ids }` — detect the VideoClip's shot cuts and split it at every in-window cut in ONE undoable step; returns the new segment layer ids in timeline order (or the single unchanged id when there is no interior cut). `min_shot_us` (default `500000`) is the detection minimum-shot length (closer cuts merge); `drop_short=true` also deletes any resulting segment shorter than `min_shot_us`. Pure convenience — reproducible with `analyze_clip` + `split_layer`. It reads the source's one cached floor scan (the report the Shots review Panel and "Mark shot cuts" read too) and reduces it at `analyze_clip`'s defaults, so its boundaries agree with `analyze_clip`'s; the two hold separate cache entries, because `analyze_clip` also samples per-shot stats (ADR 0057). Link-aware: an auto-paired audio partner splits in lockstep, and with `drop_short=true` a dropped segment takes its partners with it — every other member of the layer's link overlapping the dropped span is deleted in the same commit, so no orphaned audio sliver is left at that cut. A member sitting wholly inside a surviving segment stays; `delete_layers` remains local.
 - `trim_layer { layer_id, edge, new_t_us, escape_link? }` — `edge` ∈ `"in" | "out"`.
-- `separate_audio_to_new_track { layer_id }` → `TrackId` — lift an Audio layer onto a lane of its own, in the source lane's slot. The layer is untouched (same id, span, gain, role, links); only its lane changes, so this is how an auto-paired dialogue clip gets room without breaking the pair — the link survives, and `links_dissolve` is what makes the two independent. `WrongLayerKind` on anything but an Audio layer. The new lane is the one track in the model that stores a name (`'<source> (audio)'`, when the source had one); a source lane the lift emptied is pruned in the same edit.
+- `separate_audio_to_new_track { layer_id }` → `TrackId` — lift an Audio layer onto a lane of its own, in the source lane's slot. The layer is untouched (same id, span, gain, role, links); only its lane changes, so this is how an auto-paired dialogue clip gets room without breaking the pair — the link survives, and `delete_link` is what makes the two independent. `WrongLayerKind` on anything but an Audio layer. The new lane is the one track in the model that stores a name (`'<source> (audio)'`, when the source had one); a source lane the lift emptied is pruned in the same edit.
 - `delete_layers { layer_ids, ripple? }` — delete a SET as one recorded edit, one undo for all of them. **`ripple` decides what happens to the span they vacated**, and is the whole difference between the two deletes an editor has. Default (`false`) is the **lift**: the spans stay empty and nothing downstream moves. `true` **closes** each span, so the film gets shorter: the span closed for a layer is its own footprint clipped to its remaining same-class neighbours on its track (a transition's authorized overlap is therefore not part of it), touching holes merge, and every remaining layer starting at or after a hole shifts left by its length on **every** track of the composition, each on its own lattice, with anchored markers riding along. A gap that already sat beside the layer, a layer that starts before the hole, free markers and the playhead all stay put. Either way: duplicate ids collapse; the set is one composition's (`CrossCompositionSet` otherwise); a member on a **locked track** refuses the whole batch (`TrackLocked`) rather than deleting the unlocked half; a layer's own `locked` does not block a delete, because it gates the pointer, and the selection tools skip such a layer rather than refusing; tracks the batch emptied are pruned with it. A ripple refuses whole, before any write: `RippleInsideHole` (a remaining layer starts inside the span — add it to `layer_ids`, or delete without `ripple`), `RippleCollision` (a mover would land on a layer that is not moving), `RippleLinkStraddles` (a link with members on both sides), `RippleLockedLayer` / `TrackLocked` (only a layer that actually shifts blocks). An empty `layer_ids` records nothing as a lift, and is refused as a ripple — there is no hole to close.
 - `ripple_delete_gap { track_id, start_us, end_us }` — close a **gap**: the empty span `[start_us, end_us)` on one track between two layer boundaries, so everything after it moves left and nothing is deleted ([ADR 0069](adr/0069-a-gap-is-a-selectable-span-whose-delete-closes-it.md)). `end_us` must be exactly where a layer on that track starts and `start_us` exactly where one ends (or `0` — the space before the first clip is a gap); the space after the last layer is not a gap, and a piece of a gap is not the gap. The closing is `delete_layers { ripple: true }`'s closing with the gap as the one hole, so the same refusals apply by name (`RippleInsideHole` for a layer on another track starting inside the gap, `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked` — a gap on a locked lane always refuses, since its own downstream clip would have to move), plus `GapNotFound { track, s, e }` when the span is not a gap as the actor sees it: re-read `project://compositions` and send the gap as it is now. One recorded edit, one undo.
 - `paste_layers { layer_ids, t_start_us? | t_offset_us?, target_track_id? }` → `{ clones: [{ source, clone }] }` — the whole-link duplicate, one recorded edit, and the only copy tool. `layer_ids[0]` is the **seed**, and where its clone starts is named either absolutely (`t_start_us`) or relative to the seed's own start (`t_offset_us`, the same-place copy that needs no prior read) — send exactly one. Every other clone shifts by that same delta, each snapped on its own lattice (an audio member keeps a slipped A/V offset). `target_track_id` moves only the seed's clone; every other clone lands on its source's track. **All-or-nothing:** a locked or occupied destination for any member rejects the batch (`TrackLocked`, or `ValidationFailed`/`LayerOverlap` whose `b` names the source whose clone would collide) and nothing is created. Two or more clones are linked to each other, never to their sources. Pass a single id to copy one linked layer without its partners.
@@ -360,9 +360,9 @@ See [ADR 0060](adr/0060-position-has-xy-and-path-modes.md).
   resolved on write. This tool replaces existing motion; it does **not** fit
   or bake it automatically. For geometry edits, read and retain the current
   progress record; there is no MCP `geometry_only` argument.
-- Each spatial node requires `{ id, point: {x,y}, inHandle: {x,y},
-  outHandle: {x,y}, segment: "Line" | "Cubic",
-  tangentMode: "Corner" | "Smooth" | "Auto" }`. Points are in composition
+- Each spatial node requires `{ id, point: {x,y}, in_handle: {x,y},
+  out_handle: {x,y}, segment: "Line" | "Cubic",
+  tangent_mode: "Corner" | "Smooth" | "Auto" }`. Points are in composition
   pixels; handles are relative pixel vectors, not temporal easing controls.
   `segment` describes the span leaving the node. Corner handles are
   independent; Smooth aligns their directions while retaining separate
@@ -394,8 +394,8 @@ two-node line (replace `layer_id` with the target layer's id):
     "mode": "Path",
     "path": {
       "nodes": [
-        { "id": "start", "point": { "x": 100, "y": 200 }, "inHandle": { "x": 0, "y": 0 }, "outHandle": { "x": 0, "y": 0 }, "segment": "Line", "tangentMode": "Corner" },
-        { "id": "end", "point": { "x": 500, "y": 200 }, "inHandle": { "x": 0, "y": 0 }, "outHandle": { "x": 0, "y": 0 }, "segment": "Line", "tangentMode": "Corner" }
+        { "id": "start", "point": { "x": 100, "y": 200 }, "in_handle": { "x": 0, "y": 0 }, "out_handle": { "x": 0, "y": 0 }, "segment": "Line", "tangent_mode": "Corner" },
+        { "id": "end", "point": { "x": 500, "y": 200 }, "in_handle": { "x": 0, "y": 0 }, "out_handle": { "x": 0, "y": 0 }, "segment": "Line", "tangent_mode": "Corner" }
       ]
     },
     "progress": { "mode": "Static", "value": 0 }
@@ -417,22 +417,21 @@ Effects (per-layer chains; two families that share one `Effect` record and nothi
 - `update_effect { layer_id, effect_id, patch }` — patch is `{ enabled?, params? }`; v1 params are scalar `{ "mode": "Static", "value": <number> }`. `params` merges key-by-key, and a **`null` value removes its key**, returning that param to unset/default — the only way to unset an effect param (removing an absent key is a no-op, not a failure). An unparseable patch rejects with `invalid_params` and never partially applies.
 - **`audio.*` params are static only** (`AudioEffectParamStatic`): an audio effect is a whole-clip offline bake, so there is no per-frame value to animate. Send them here as `{ "mode": "Static", "value": <number> }`; both a `set_keyframe` on `effects[<id>].params[<key>]` and a `Keyframed` `set_param_track` for one are refused, and the inspector shows no stopwatch on those rows.
 - `move_effect { layer_id, effect_id, new_index }` — reorder (0 = first applied).
-- `remove_effect { layer_id, effect_id }` — delete.
+- `delete_effect { layer_id, effect_id }` — delete.
 - Keyframe a **visual** effect param via `set_keyframe { layer_id, param_key: "effects[<effect_id>].params[<key>]", t_us, value, interp? }`. **Ordering:** `add_effect` creates an effect with no params; set a static value first with `update_effect` (so the param key exists), then use `set_keyframe` to lift it to keyframed. Calling `set_keyframe` on a param key that has never been set returns `UnknownKeyframeParam`; calling it on an `audio.*` effect's param returns `AudioEffectParamStatic` (see above).
 
 Keyframes (animate a layer param's `Animated<T>` track; times are timeline-absolute µs; the record is [`data-model.md` § Animated values](data-model.md#animated-values), the decision [ADR 0058](adr/0058-tangents-live-on-the-key-the-segment-class-on-the-left-key.md)):
 - `get_param_track { layer_id, param_key }` → `{ mode, value }` (Static) or `{ mode, extrapolate: { before, after }, keyframes: [{ id, t_us, t_local_us, value, in, out, continuity, segment, preset_id? }] }` (Keyframed) — the keyframe record itself. Read this to discover keyframe ids before editing. Per key, `in` / `out` are the arriving / leaving **tangents** `{ x, y, mode }`: a control point in the owning segment's unit square (`x` the fraction of its time span, `y` of its value span), with `mode` `Auto` (solved on every write — clamped monotone, never overshooting) or `Free` (authored); `in` is stored un-mirrored, as the arriving cubic's own second control point. `continuity` is `Smooth | Broken` — whether the two sides are kept at one slope. `segment` is the class of the segment leaving the key, `Spline | Hold | Linear | Elastic | Bounce`; only Spline reads the tangents, and a Spline segment `a → b` is the cubic `(a.out, b.in)`. `preset_id` names the canonical easing preset that leaving segment (this key's `segment` + `out`, the next key's `in`) exactly matches (presets bake to tangents; the name is recovered by exact-float reverse lookup); a hand-tuned curve and the last key omit the field. `extrapolate` is what the track does outside its keys (`set_extrapolation`, below).
 - **Values are typed by `param_key`.** `value` on `set_keyframe` / `clear_keyframes`, and every value in a `set_param_track` record, is a number for the scalar params and an `{ r, g, b, a }` colour (integers 0–255) for `color` — the Text and Color layers' colour, the one colour that animates (shadow and outline colours are static). `get_param_track` returns the same types. A mismatch is refused with the param's value type in the message.
-- `set_keyframe { layer_id, param_key, t_us, value, interp? }` — insert-or-update. Lifts a Static track; updates in place at the same frame. `interp` (a raw kind from the list below — not the preset form, which is a `set_keyframe_easing` payload) is the easing of the segment leaving the key and writes this key's `segment` + `out` and the next key's `in`, both Free; omitted, the new key inherits the preceding segment's easing (Linear on a fresh track).
-- `remove_keyframe { layer_id, param_key, keyframe_id }` — last key collapses to Static holding its value.
-- `retime_keyframe { layer_id, param_key, keyframe_id, t_us }` — move a key; re-sorts.
-- `set_keyframe_easing { layer_id, param_key, keyframe_id, interp }` — the segment leaving the key as one easing: writes the leaving key's `out` tangent and the next key's `in` tangent, both Free, plus the leaving key's `segment` (Spline for a Bezier and the bezier-family presets; Hold / Linear / Elastic / Bounce as themselves, with identity sides). The next key's own `out` is left alone, so smoothness downstream survives. `interp` is one of:
+- `set_keyframe { layer_id, param_key, t_us, value, interp? }` — insert-or-update. Lifts a Static track; updates in place at the same frame. `interp` (a raw kind from the list below — not the preset form, which is an `update_keyframe { easing }` payload) is the easing of the segment leaving the key and writes this key's `segment` + `out` and the next key's `in`, both Free; omitted, the new key inherits the preceding segment's easing (Linear on a fresh track).
+- `delete_keyframe { layer_id, param_key, keyframe_id }` — last key collapses to Static holding its value.
+- `update_keyframe { layer_id, param_key, keyframe_id, t_us?, easing?, in?, out?, continuity? }` — one key, several aspects, one commit, applied in this order. `t_us` moves the key (the track re-sorts). `easing` is the segment leaving the key as one easing: writes the leaving key's `out` tangent and the next key's `in` tangent, both Free, plus the leaving key's `segment` (Spline for a Bezier and the bezier-family presets; Hold / Linear / Elastic / Bounce as themselves, with identity sides). The next key's own `out` is left alone, so smoothness downstream survives. `easing` is one of:
   - `{ "preset": "<id>" }` — a named preset from the canonical easing table (`src/shared/easing.ts::EASING_PRESETS`, the single source of the id list: `linear`, `hold`, the CSS curves `ease`/`ease_in`/`ease_out`/`ease_in_out`, and the `ease_{in,out,in_out}_{sine,quad,cubic,quart,quint,expo,circ,back,elastic,bounce}` families). Bezier-family presets bake to their canonical params at write time; the name comes back as `preset_id` on `get_param_track`. An unknown id rejects with the full live list in the error message.
   - `{ "kind": "Hold" }` | `{ "kind": "Linear" }`
   - `{ "kind": "Bezier", "p1": [x, y], "p2": [x, y] }` — control-point x within `[0, 1]` (x is segment time and the solver is single-valued only there; y may overshoot).
   - `{ "kind": "Elastic", "dir": "In" | "Out" | "InOut", "amplitude"?, "period"? }` — `amplitude` ≥ 1 (default 1), `period` > 0 (default 0.3); omitted params take the defaults.
   - `{ "kind": "Bounce", "dir": "In" | "Out" | "InOut" }`
-- `set_keyframe_tangents { layer_id, param_key, keyframe_id, in?, out?, continuity? }` — write one key's shape directly (at least one field). A provided side `{ x, y }` is stored Free with exactly those numbers — `x` within `[0, 1]`, refused outside and never clamped; `y` may overshoot — and the segment it shapes becomes Spline if it was not, so the tangent is read. Writing either side of an Auto key frees the whole key (the other side keeps its solved numbers); on a key already Smooth the opposite side rotates to the same slope. `continuity: "Smooth"` re-derives `in` from `out` in the same write ("out wins", the rule every write applies); `"Broken"` changes no number.
+  `in` / `out` / `continuity` write one key's shape directly. A provided side `{ x, y }` is stored Free with exactly those numbers — `x` within `[0, 1]`, refused outside and never clamped; `y` may overshoot — and the segment it shapes becomes Spline if it was not, so the tangent is read. Writing either side of an Auto key frees the whole key (the other side keeps its solved numbers); on a key already Smooth the opposite side rotates to the same slope. `continuity: "Smooth"` re-derives `in` from `out` in the same write ("out wins", the rule every write applies); `"Broken"` changes no number.
 - `smooth_keyframes { layer_id, param_key, keyframe_id? }` — set Auto tangents (clamped monotone, solved on write and kept smooth as neighbours move) with Smooth continuity on one key, or on every key when `keyframe_id` is omitted; the adjacent segments become Spline.
 - `set_extrapolation { layer_id, param_key, before?, after? }` — what the track does outside its keys, per side (at least one; the other keeps its value): `Hold` (the end value — the default), `Loop` (repeat the cycle from the first key; a visible jump when first ≠ last, nothing bridges it), `PingPong` (alternate cycles run backwards), `Offset` (each cycle adds the last-minus-first delta), `Continue` (carry the last segment's end velocity on as a line; zero after a Hold or procedural segment). The period is `last.t − first.t`; a single-key track never extrapolates. Refused on a Static track — add keys first.
 - `clear_keyframes { layer_id, param_key, value? }` — collapse to Static (defaults to the first keyframe's value).
@@ -454,31 +453,30 @@ animate a linked layer's scale.
 Transitions (one per cut, between two adjacent layers on the same track; see [ADR 0048](adr/0048-transition-overlap-by-placement-not-extension.md)):
 - `add_transition { from_layer_id, to_layer_id, duration_us, kind?, direction?, placement? }` → the new transition id. The pair must be genuinely adjacent — the outgoing layer's `t_end_us` equal to the incoming layer's `t_start_us`. `placement` decides where the overlap COMES FROM, which is the whole design: the default `"overlap"` moves the INCOMING layer left by the frame-rounded duration, so both layers still play exactly their trimmed ranges (`extended_us = 0`) and the span it vacated stays a gap — nothing ripples; `"extend"` instead borrows outgoing tail media past its source out-point, leaving positions untouched (`extended_us = duration`) and pre-checked against the tail that remains (`TransitionInsufficientHandle` carries `available_us`). A pair already overlapped by EXACTLY the duration attaches as-is under either. `kind` ∈ `Crossfade` (default) | `Wipe` | `Slide`; `direction` is the MOTION direction (`"left"` = the boundary moves leftward), required for Wipe/Slide and rejected for Crossfade. The incoming layer's link siblings follow its move, bouncing to a free lane when theirs is occupied. Visual layers only — an Audio participant is `TransitionUnsupportedLayerKind`. Refuses when the two share a link (moving one would drag the other, so the overlap never opens), when a moved member would cross `t = 0`, or when the duration exceeds either participant. One recorded edit.
 - `update_transition { transition_id, duration_us?, kind?, direction?, extended_us? }` — patch geometry in ONE commit; only the fields you set apply. `(duration_us, extended_us)` is a two-target model that fully determines both window edges: `extended_us` is the borrowed share (0 = pure placement, `duration_us` = pure borrow), the outgoing layer ends at its sacred exit frame + `extended_us`, and the incoming layer starts `duration_us` before that end. OMIT `extended_us` and the routing preserves trimmed ranges — growing moves the incoming layer further left and never borrows tail, shrinking returns borrowed tail first and then moves right by the remainder. Only an explicit `extended_us` can GROW the borrow, and a NEGATIVE one is a deliberate tail trim: all borrowed tail returns and real content is trimmed by the remainder, moving the exit frame itself. `direction` rides inside `kind` — changing to Wipe/Slide needs both in the same call, and `direction` alone or beside Crossfade is rejected. `TransitionNotFound` for an unknown id.
-- `remove_transition { transition_id }` — restore the hard cut, routed by provenance: the outgoing layer's end shrinks back by `extended_us` (only borrowed tail is returned — real content of a pre-positioned overlap is never trimmed) and the incoming layer moves RIGHT by `duration_us − extended_us`, siblings following. `TransitionRestoreCollision` when the vacated gap has since been filled — the system never makes room; move the blocker first.
+- `delete_transition { transition_id }` — restore the hard cut, routed by provenance: the outgoing layer's end shrinks back by `extended_us` (only borrowed tail is returned — real content of a pre-positioned overlap is never trimmed) and the incoming layer moves RIGHT by `duration_us − extended_us`, siblings following. `TransitionRestoreCollision` when the vacated gap has since been filled — the system never makes room; move the blocker first.
 
 Audio roles (a project-level mix fold, not a track property; see [ADR 0023](adr/0023-audio-mixes-by-role-not-track.md)):
 - `set_role_gain { role, gain_db }` — `role` ∈ `dialogue` | `music` | `sfx` | `voiceover`. Folds onto every layer of that role at mix time rather than summing through a per-role bus, so it reaches the export the same way it reaches the preview. Recorded (undoable).
 - `set_role_flags { role, muted?, solo? }` — mute/solo a role. **Unrecorded**, unlike every other mutation here: a monitoring state is not an edit, so it burns no undo step. Mute wins over solo, and any solo silences the non-soloed roles.
 
 Links (see [features.md §Links](features.md#links)):
-- `links_create { layer_ids, label?, reassign? }` → `LinkId`
-- `links_dissolve { link_id }`
-- `links_add_members { link_id, layer_ids, reassign? }` / `links_remove_members { link_id, layer_ids }`
-- `links_rename { link_id, label? }`
+- `create_link { layer_ids, label?, reassign? }` → `LinkId`
+- `delete_link { link_id }`
+- `update_link { link_id, add_layer_ids?, remove_layer_ids?, label?, reassign? }` — one recorded edit, applied add → remove → label; `reassign` lets an added layer leave another link first, and a link left below two members dissolves
 - Reads: there is no `links_list`/`links_get` tool — link membership is carried on the `project://current` resource as `links: [{ id, label, layer_ids }]`.
 
 Groups (see [features.md §Groups](features.md#groups)):
-- `groups_create { layer_ids, label? }` → `{ composition_id, layer_id }` — pre-compose: the layers (one or more, all in one composition) move into a new composition, placed back as one Group layer at their earliest start on the top-most lane they occupied. Never partial: a locked member refuses the whole set (`GroupLockedMember`), so does a locked track (`TrackLocked`); a set spanning two compositions is `CrossCompositionSet`. Links fully inside move with the set, a straddling link loses its inside members; transitions between two members move, a straddling one is dropped and logged; markers stay.
-- `add_group_layer { source_composition_id, track_id, t_start_us, composition_id? }` → `LayerId` — place an existing composition as one more Group layer: a second instance of a Group already in the project. Created windowed over the whole composition (`src_in_us: 0`, `src_out_us: duration_us`) with an identity transform, so it renders what the composition renders; trim it afterwards for a slice. Instances are independent of each other and all show the same content, so an edit inside the composition appears in every one. Refuses before anything is created: the root (`RootComposition`), a composition that already reaches this track's composition — itself included (`ValidationFailed` / `CompositionCycle`, whose `path` is the loop), and a composition with nothing inside it (`InvalidArgument`). `groups_create` is the one that makes a NEW Group.
-- `groups_add_members { layer_ids, group_layer_id }` — move layers already on a timeline INTO the composition a Group layer shows, keeping the screen position they had: one of the four ops that cross compositions. Reach for `move_layers_to_composition` instead when you know the destination composition and the time you want. The members (at least one, all in one composition) and the Group clip must be siblings; the clip's `params.composition` is the destination. Each member lands at `t_start_us − group.t_start_us + group.src_in_us`, re-snapped on its own lattice, so it keeps the screen position it had — a member outside the Group clip's window arrives outside it and shows as overhang. Source tracks map bottom-up onto the destination's existing lanes and spawn one past the end; a whole source track's members travel together onto one lane (so a transition between two of them survives) and bounce as a block off a locked or occupied lane. Links and transitions follow `groups_create`'s rules; markers stay behind. Both compositions autofit and NO Group layer is retrimmed. Refuses whole, before any write: `CrossCompositionSet`, `WrongLayerKind`, `GroupLockedMember` / `TrackLocked`, `ValidationFailed` / `CompositionCycle` (a member whose composition already reaches the destination, itself included), and `InvalidArgument` on `layer_ids` for a member that would land before composition time 0.
-- `groups_ungroup { layer_id }` — expand a Group layer in place. Refuses unless the layer is plain — identity transform, static opacity 1, no effects, Normal blend — with `GroupNotPlain { reason: "transform" | "opacity" | "effects" | "blend_mode" }`, because expanding would discard those silently. Members outside the layer's `[src_in_us, src_out_us)` window are dropped, straddling ones trimmed with their source window following. The composition is removed when nothing else references it.
-- `groups_rename { composition_id, label? }` — `null` / blank clears the name; the root refuses (`RootComposition`).
+- `create_group { layer_ids, label? }` → `{ composition_id, layer_id }` — pre-compose: the layers (one or more, all in one composition) move into a new composition, placed back as one Group layer at their earliest start on the top-most lane they occupied. Never partial: a locked member refuses the whole set (`GroupLockedMember`), so does a locked track (`TrackLocked`); a set spanning two compositions is `CrossCompositionSet`. Links fully inside move with the set, a straddling link loses its inside members; transitions between two members move, a straddling one is dropped and logged; markers stay.
+- `add_group_layer { source_composition_id, track_id, t_start_us, composition_id? }` → `LayerId` — place an existing composition as one more Group layer: a second instance of a Group already in the project. Created windowed over the whole composition (`src_in_us: 0`, `src_out_us: duration_us`) with an identity transform, so it renders what the composition renders; trim it afterwards for a slice. Instances are independent of each other and all show the same content, so an edit inside the composition appears in every one. Refuses before anything is created: the root (`RootComposition`), a composition that already reaches this track's composition — itself included (`ValidationFailed` / `CompositionCycle`, whose `path` is the loop), and a composition with nothing inside it (`InvalidArgument`). `create_group` is the one that makes a NEW Group.
+- `add_group_members { layer_ids, group_layer_id }` — move layers already on a timeline INTO the composition a Group layer shows, keeping the screen position they had: one of the four ops that cross compositions. Reach for `move_layers_to_composition` instead when you know the destination composition and the time you want. The members (at least one, all in one composition) and the Group clip must be siblings; the clip's `params.composition` is the destination. Each member lands at `t_start_us − group.t_start_us + group.src_in_us`, re-snapped on its own lattice, so it keeps the screen position it had — a member outside the Group clip's window arrives outside it and shows as overhang. Source tracks map bottom-up onto the destination's existing lanes and spawn one past the end; a whole source track's members travel together onto one lane (so a transition between two of them survives) and bounce as a block off a locked or occupied lane. Links and transitions follow `create_group`'s rules; markers stay behind. Both compositions autofit and NO Group layer is retrimmed. Refuses whole, before any write: `CrossCompositionSet`, `WrongLayerKind`, `GroupLockedMember` / `TrackLocked`, `ValidationFailed` / `CompositionCycle` (a member whose composition already reaches the destination, itself included), and `InvalidArgument` on `layer_ids` for a member that would land before composition time 0.
+- `ungroup_layer { layer_id }` — expand a Group layer in place. Refuses unless the layer is plain — identity transform, static opacity 1, no effects, Normal blend — with `GroupNotPlain { reason: "transform" | "opacity" | "effects" | "blend_mode" }`, because expanding would discard those silently. Members outside the layer's `[src_in_us, src_out_us)` window are dropped, straddling ones trimmed with their source window following. The composition is removed when nothing else references it.
+- `rename_composition { composition_id, label? }` — `null` / blank clears the name; the root refuses (`RootComposition`).
 - `delete_composition { composition_id }` — an orphan only: `CompositionInUse { ref_count }` while any Group layer references it, `RootComposition` for the root.
 - Reads: `project://compositions` lists every composition with its `ref_count`; a Group layer's `params.composition` names its composition.
 
 Markers + composition:
-- `add_marker { t_us, label, color, end_t_us?, anchor_layer_id?, composition_id? }` → `MarkerId` — markers are per composition; `update_marker` / `remove_marker` find theirs by id. Free unless `anchor_layer_id` names a clip for the mark to follow
-- `update_marker { marker_id, patch }` / `remove_marker { marker_id }`
+- `add_marker { t_us, label, color, end_t_us?, anchor_layer_id?, composition_id? }` → `MarkerId` — markers are per composition; `update_marker` / `delete_marker` find theirs by id. Free unless `anchor_layer_id` names a clip for the mark to follow
+- `update_marker { marker_id, patch }` / `delete_marker { marker_id }`
 - `set_marker_anchor { marker_id, layer_id }` — tie an existing marker to a clip of its own composition, or cut it loose with `layer_id: null`
 
 **Markers follow clips.** A marker may be *anchored* to a clip of its own
@@ -518,7 +516,7 @@ the way back out, and the one exit from `hibernating`. The app sets anchors too
 — marking with a clip selected, *Attach to clip*, and shot detection — so read
 `anchor_layer` to see whether a marker follows one rather than assuming an
 agent-created marker is free.
-- `update_composition { patch }` — nothing in this tool records onto the undo stack;
+- `update_composition { patch, composition_id? }` — `patch.duration_us` pins the duration; `duration_us: null`, alone in the patch, unpins it and refits to `max(layer.t_end_us)` (the same fan-out as the pin: every history snapshot refits to its own high-water mark). Nothing in this tool records onto the undo stack;
   the patch is applied to every history snapshot, so undo walks past it. `fps` is
   locked once the timeline holds a layer **or any history snapshot / checkpoint
   does** (`FpsLockedByContent`, carrying the current rate, the requested rate, the

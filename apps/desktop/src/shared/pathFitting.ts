@@ -58,11 +58,11 @@ export function fitMotionPath(points: readonly Point[], tolerance: number, newId
     if (s.split <= s.first || s.split >= s.last) break;
     spans.splice(worst, 1, fit(s.first, s.split), fit(s.split, s.last));
   }
-  const node = (point: Point): PathNode => ({ id: newId(), point, inHandle: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 }, segment: 'Line', tangentMode: 'Corner' });
+  const node = (point: Point): PathNode => ({ id: newId(), point, in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: 'Line', tangent_mode: 'Corner' });
   const nodes = [node(points[0]!)], parameters = new Float64Array(points.length);
   spans.forEach((s, segment) => {
     const a = nodes.at(-1)!, b = node(points[s.last]!);
-    if (!s.line) { a.segment = 'Cubic'; a.outHandle = s.out; b.inHandle = s.incoming; }
+    if (!s.line) { a.segment = 'Cubic'; a.out_handle = s.out; b.in_handle = s.incoming; }
     nodes.push(b);
     for (let i = s.first; i <= s.last; i++) parameters[i] = segment + parameter(i, s.first, s.last);
   });

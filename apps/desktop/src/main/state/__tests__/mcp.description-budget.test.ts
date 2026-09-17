@@ -38,9 +38,11 @@ const DESCRIPTION_CAP = 700
 const COMPLEX_CAP = 1100
 const COMPLEX: ReadonlySet<string> = new Set([
   'add_effect', 'add_transition', 'update_transition', 'update_composition', 'update_layer_params',
-  'delete_layers', 'ripple_delete_gap', 'move_layers_to_composition', 'groups_create',
+  'delete_layers', 'ripple_delete_gap', 'move_layers_to_composition', 'create_group',
   'remove_pauses', 'detect_pauses', 'analyze_clip', 'extract_clip_audio', 'transcribe_clip', 'describe_clip',
   'get_param_track',
+  // Three tools' contracts in one (ADR 0074).
+  'update_keyframe',
 ])
 /** A nested schema `description` is a hint on one field, not a second essay. */
 const PROPERTY_DESCRIPTION_CAP = 260
@@ -60,7 +62,7 @@ describe('MCP catalog context budget', () => {
   })
 
   it('keeps the complex allowlist small and honest', () => {
-    expect(COMPLEX.size).toBeLessThanOrEqual(16)
+    expect(COMPLEX.size).toBeLessThanOrEqual(17)
     const names = new Set(merged.map((t) => t.name))
     for (const n of COMPLEX) expect(names.has(n), `${n} is allowlisted but not advertised`).toBe(true)
   })
