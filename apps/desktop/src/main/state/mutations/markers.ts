@@ -12,6 +12,15 @@ import { hasSourceWindow, requireLayer } from './helpers'
  *  `end_t_us <= t_us` would leave a region no UI can hit and no later snap-target
  *  logic can use. */
 export function snapMarkerTimes(c: Composition, tUs: number, endTUs: number | null): { tUs: number; endTUs: number | null } {
+  // Timeline time starts at 0 for a mark as it does for a layer
+  // (`NegativeLayerStart`). Refused rather than lifted: a negative time is a
+  // caller's arithmetic slip, and a mark that silently moved to 0 would be
+  // reported as placed where it was asked. Load-time repair is not needed —
+  // a stored negative marker is legal state and simply never receives one.
+  for (const [field, t] of [['t_us', tUs], ['end_t_us', endTUs]] as const) {
+    if (t !== null && t < 0)
+      throw new CommandFailure({ error: 'InvalidArgument', field, detail: `${field} ${t} is before the start of the timeline; timeline time starts at 0` })
+  }
   const { num, den } = c.fps
   const t = snapFrameRound(tUs, num, den)
   const end = endTUs === null ? null : snapFrameRound(endTUs, num, den)

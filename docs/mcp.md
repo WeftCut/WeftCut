@@ -292,9 +292,24 @@ the span, `src_in_us`/`src_out_us` where the kind has a source window,
 `siblings` (link members a move or trim carried along), `moved` (everything a
 ripple or a transition placement shifted), `adjusted` (each numeric field whose
 applied value differs from the requested one — today the frame/sample-grid
-snap — as `{ field, requested, applied }`). An agent reads the answer instead
-of re-reading `project://tracks`; the shapes below name the fields beyond the
-envelope. `main/state/mcp-results.ts` is the one home of every reader.
+snap — as `{ field, requested, applied, reason: 'grid' }`). An agent reads the
+answer instead of re-reading `project://tracks`; the shapes below name the
+fields beyond the envelope. `main/state/mcp-results.ts` is the one home of every
+reader.
+
+**Snap and echo, clamp and refuse.** A time an agent sends is changed by a tool
+in exactly one way: it lands on the layer's own lattice (the composition frame
+grid, or the 48 kHz sample lattice for Audio), at most half a quantum away, and
+the answer's `adjusted` says so. Every other adjustment the renderer's drag
+would make for a user who can see the ghost — a start floored at 0, a trim
+clamped at the other edge or at the source's end, a link set stopped as a body
+at 0 — is a REFUSAL over MCP, before any write: `NegativeLayerStart` names the
+member that would have crossed 0 (`move_layer`), `TrimEdgeOutOfRange` names the
+window the edge may land in (`trim_layer`), a negative marker time is
+`InvalidArgument`. The mutations take a `strict` flag the MCP parsers set and
+the renderer commands do not, so the two surfaces share one implementation and
+differ only in who is watching. `update_layer`'s `t_start_us`/`t_end_us` snap
+like every other placing tool's rather than being refused with `snap_to`.
 
 Media + tracks:
 - `import_media { path }` → `{ media_id, kind, label, path, duration_us, width, height, has_audio }`; a subtitle document (`.srt`/`.vtt`/`.ass`) is consumed into a caption track instead and answers `{ caption_track_id, cues }`

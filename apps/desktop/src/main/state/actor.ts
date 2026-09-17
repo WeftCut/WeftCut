@@ -834,7 +834,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // the caller derives `t_us` from the anchor it supplies, and this commit's
         // reconcile re-derives it right back.
         case 'add_marker': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 }, comp, undefined, (a.anchor as MarkerAnchor | null | undefined) ?? null)) } }
-        case 'move_layer': commit(HISTORY_SUMMARY.layerMove, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_link as boolean) ?? false)); return { ok: true, value: null }
+        case 'move_layer': commit(HISTORY_SUMMARY.layerMove, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_link as boolean) ?? false, a.strict === true)); return { ok: true, value: null }
         // move_layers_to_new_track — the whole of z-order rearrangement (ADR 0042
         // decision 2). ONE commit: the lane is minted, the layers move onto it,
         // and every lane the raise emptied goes with them, so one undo restores
@@ -875,7 +875,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             (d) => applyRestackLayer(d, idGen, layer, a.anchor as Uuid, a.position as RestackPosition))
           return { ok: true, value: null }
         }
-        case 'trim_layer': commit(HISTORY_SUMMARY.layerTrim, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyTrimLayer(d, a.layer as Uuid, ((a.edge as string) === 'out' ? 'Out' : 'In'), parseNum(a.new_t_us, 'new_t_us'), (a.escape_link as boolean) ?? false)); return { ok: true, value: null }
+        case 'trim_layer': commit(HISTORY_SUMMARY.layerTrim, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyTrimLayer(d, a.layer as Uuid, ((a.edge as string) === 'out' ? 'Out' : 'In'), parseNum(a.new_t_us, 'new_t_us'), (a.escape_link as boolean) ?? false, a.strict === true)); return { ok: true, value: null }
         // The SELECTION's delete, and the marquee's headline gesture: N swept
         // clips must cost ONE undo entry, which is why there is no singular
         // form beside it. `Coarse` for the same reason update_param_tracks_multi
@@ -2099,6 +2099,19 @@ export function createActor(opts: ActorOptions): ActorHandle {
       if (name === 'update_effect') {
         const eff = locateLayer(current(), args.layer as Uuid)?.layer.effects.find((e) => e.id === args.effect)
         if (eff) checkEffectPatchAgainst(eff.kind, args.patch as EffectPatch)
+      }
+      // `update_layer`'s times land on the layer's own grid like every other
+      // placing tool's (snap, and the answer's `adjusted` says so) rather than
+      // being refused by the grid backstop with a `snap_to` the caller then
+      // has to send again: one rule for a time an agent sends — snap and echo.
+      if (name === 'update_layer') {
+        const loc = locateLayer(current(), args.layer as Uuid)
+        const patch = args.patch as LayerPatch
+        if (loc) {
+          const grid = gridForLayerKind(loc.layer.params.kind, loc.comp.fps)
+          if (typeof patch.t_start_us === 'number') patch.t_start_us = snapOnGrid(patch.t_start_us, grid)
+          if (typeof patch.t_end_us === 'number') patch.t_end_us = snapOnGrid(patch.t_end_us, grid)
+        }
       }
       const r = dispatch(op, args)
       if (!r.ok) return { ok: false, error: mapCommandError(r.error) }

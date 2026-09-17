@@ -175,7 +175,10 @@ export type CommandError =
   | { error: 'GapNotFound'; track: Uuid; s: TimeUs; e: TimeUs }
   | { error: 'SplitOutsideLayer'; layer: Uuid; at_t: TimeUs }
   | { error: 'LinkLockedMember'; link: Uuid; locked_layer: Uuid; touched: Uuid }
-  | { error: 'TrimEdgeOutOfRange'; layer: Uuid; new_t: TimeUs; cur_start: TimeUs; cur_end: TimeUs }
+  // `window` is the absolute range the edge MAY land in, on the layer's own grid,
+  // so the retry is mechanical; `edge` says which one. Both present whenever the
+  // refusal comes from a strict (agent) trim, absent on the legacy clamp-to-zero path.
+  | { error: 'TrimEdgeOutOfRange'; layer: Uuid; new_t: TimeUs; cur_start: TimeUs; cur_end: TimeUs; edge?: 'In' | 'Out'; window?: { lo: TimeUs; hi: TimeUs } }
   | { error: 'LayerParamsKindMismatch'; layer: Uuid; actual: string; patch: string }
   | { error: 'LinkNotFound'; link: Uuid }
   | { error: 'LayerAlreadyLinked'; layer: Uuid; existing: Uuid }

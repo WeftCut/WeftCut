@@ -379,7 +379,7 @@ export function parseLayerParamsPatch(v: unknown): LayerParamsPatch {
  *  The mutation stays permissive for a project written by a newer build (ADR
  *  0027); an agent inventing `audio.compressor` is not that case. */
 export function parseEffectKind(v: unknown): string {
-  if (typeof v !== 'string' || !EFFECT_KINDS.includes(v)) throw new McpArgError(`unknown effect kind ${describeValue(v)} — kinds: ${EFFECT_KINDS.join(', ')}`, 'kind')
+  if (typeof v !== 'string' || !EFFECT_KINDS.includes(v)) throw new McpArgError(`unknown effect kind ${typeof v === 'string' ? `'${v}'` : describeValue(v)} — kinds: ${EFFECT_KINDS.join(', ')}`, 'kind')
   return v
 }
 
@@ -797,6 +797,17 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
     return { code: 'invalid_params', message: `layer ${d.layer} would start at ${d.t_start} µs; timeline time starts at 0`, data: {
       error: 'NegativeLayerStart', layer: d.layer, requested_us: d.t_start,
       options: [{ action: 'retry_clamped', t_start_us: 0 }],
+    } }
+  }
+  // The strict (agent) trim: the window is the fix, so it rides the message.
+  if (e.error === 'TrimEdgeOutOfRange') {
+    const which = e.edge === 'Out' ? 't_end_us' : e.edge === 'In' ? 't_start_us' : 'the edge'
+    const bound = e.window
+      ? ` — ${which} may land within [${e.window.lo}, ${e.window.hi >= Number.MAX_SAFE_INTEGER ? '∞' : e.window.hi}] µs (the other edge, the source's length and every aligned link member bound it)`
+      : ''
+    return { code: 'invalid_params', message: `layer ${e.layer} cannot be trimmed to ${e.new_t} µs: it spans [${e.cur_start}, ${e.cur_end}) µs${bound}. Nothing was changed; a trim is never clamped — send a time inside the window, or split_layer / delete_layers for a cut.`, data: {
+      error: 'TrimEdgeOutOfRange', layer: e.layer, requested_us: e.new_t, span_us: [e.cur_start, e.cur_end],
+      ...(e.window ? { window_us: [e.window.lo, e.window.hi] } : {}),
     } }
   }
   if (e.error === 'MediaInUse') {
@@ -1231,9 +1242,9 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, linked: { type: 'boolean' } }, required: ['layer_id', 'linked'] },
     parseArgs: (a) => ({ op: 'set_scale_linked', args: { layer: parseUuid(a.layer_id, 'layer_id'), linked: parseBool(a.linked, 'linked') } }) },
   { name: 'move_layer', exec: 'table',
-    description: "Move a layer to a different track and/or start time. The end time shifts by the same delta. Cross-track moves are validated against the destination's existing layers — overlap rejects with structured options. Returns the layer's committed envelope, the link `siblings` that moved with it, and `adjusted` for any grid snap.",
+    description: "Move a layer to a different track and/or start time. The end time shifts by the same delta. Cross-track moves are validated against the destination's existing layers — overlap rejects with structured options. A start before 0 (for the layer or a link sibling moving with it) is refused, never clamped. Returns the layer's committed envelope, the link `siblings` that moved with it, and `adjusted` for any grid snap.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, new_t_start_us: { type: 'integer' }, new_track_id: { type: 'string' }, escape_link: { type: ['boolean', 'null'] } }, required: ['layer_id', 'new_t_start_us', 'new_track_id'] },
-    parseArgs: (a) => ({ op: 'move_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), to_track: parseUuid(a.new_track_id, 'new_track_id'), t_start_us: parseNum(a.new_t_start_us, 'new_t_start_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false) } }) },
+    parseArgs: (a) => ({ op: 'move_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), to_track: parseUuid(a.new_track_id, 'new_track_id'), t_start_us: parseNum(a.new_t_start_us, 'new_t_start_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true } }) },
   { name: 'restack_layer', exec: 'table',
     description: "Restack a visual layer in z-order relative to an ANCHOR layer: `position` 'above' | 'below' puts it directly above/below the anchor's track, resolved at apply time (anchors are layers, not indices, which drift between read and write). A mover that is its track's sole occupant moves the whole track; a mover sharing its track splits onto a new track at the target, and the source is pruned only if that emptied it; a role-stamped A/B-roll track never moves. Front/back are not variants — anchor on the top or bottom of the visual stack. Audio never stacks (`WrongLayerKind`), nor may the anchor be the mover. Already in place = no-op, nothing recorded. One recorded commit.",
     inputSchema: { type: 'object', properties: {
@@ -1243,9 +1254,9 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     }, required: ['anchor_layer_id', 'layer_id', 'position'] },
     parseArgs: (a) => ({ op: 'restack_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), anchor: parseUuid(a.anchor_layer_id, 'anchor_layer_id'), position: parseRestackPosition(a.position) } }) },
   { name: 'trim_layer', exec: 'table',
-    description: "Trim one edge of a layer: `edge` 'in' (t_start) or 'out' (t_end) to `new_t_us`. Media-bearing layers move the matching `src_in_us`/`src_out_us` by the same delta, clamped at the source bound. In a link, every member whose same edge sits at the same time moves with it (clamped to the tightest member) unless `escape_link=true`. Returns the layer's committed envelope, the `siblings` trimmed with it, and `adjusted` for any grid snap.",
+    description: "Trim one edge of a layer: `edge` 'in' (t_start) or 'out' (t_end) to `new_t_us`. Media-bearing layers move the matching `src_in_us`/`src_out_us` by the same delta, clamped at the source bound. In a link, every member whose same edge sits at the same time moves with it unless `escape_link=true`. A target past the other edge or past the source (of any member) is refused naming the legal window, never clamped. Returns the layer's committed envelope, the `siblings` trimmed with it, and `adjusted` for any grid snap.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, edge: { type: 'string' }, new_t_us: { type: 'integer' }, escape_link: { type: ['boolean', 'null'] } }, required: ['edge', 'layer_id', 'new_t_us'] },
-    parseArgs: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: parseStr(a.edge, 'edge'), new_t_us: parseNum(a.new_t_us, 'new_t_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false) } }) },
+    parseArgs: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: parseStr(a.edge, 'edge'), new_t_us: parseNum(a.new_t_us, 'new_t_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true } }) },
   // One delete tool over two actor ops: `ripple` is the whole difference between
   // them, and the surface says so rather than making an agent pick a verb it can
   // only tell apart by reading two descriptions. Empty `layer_ids` splits — the

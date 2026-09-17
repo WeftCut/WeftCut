@@ -84,8 +84,14 @@ export function trimEdgeWindowUs(
 }
 
 /** Trim one edge. Unless `escapeLink`, every link sibling whose matching edge
- *  sits at the same t moves with it, clamped to the tightest member's window. */
-export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: number, escapeLink: boolean): void {
+ *  sits at the same t moves with it, clamped to the tightest member's window.
+ *
+ *  `strict` is the AGENT's mode (the MCP arm sets it): a target outside the
+ *  legal window is refused with that window, rather than clamped to its
+ *  nearest end — the renderer's drag clamps because the user sees where the
+ *  edge stopped; a tool call sees nothing and would report the clamp as the
+ *  edit it asked for (the audit's one-frame clip). */
+export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: number, escapeLink: boolean, strict = false): void {
   const located = requireLayer(p, id)
   const c = located.comp
   const fps = c.fps
@@ -125,7 +131,9 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
     hi = Math.min(hi, w.hi)
   }
   const clamped = clampSigned(requestedDelta, lo - curEdgeT, hi - curEdgeT)
-  if (clamped === 0) throw new CommandFailure({ error: 'TrimEdgeOutOfRange', layer: id, new_t: snapped, cur_start: curStart, cur_end: curEnd })
+  const window = { lo, hi: hi >= INF ? Number.MAX_SAFE_INTEGER : hi }
+  if (clamped === 0 || (strict && clamped !== requestedDelta))
+    throw new CommandFailure({ error: 'TrimEdgeOutOfRange', layer: id, new_t: snapped, cur_start: curStart, cur_end: curEnd, edge, window })
 
   for (const mid of aligned) {
     const m = locateLayerIn(c, mid)!.layer

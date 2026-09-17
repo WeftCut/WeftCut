@@ -205,7 +205,12 @@ export function captionCueCount(p: Project): number {
 
 // ── The adjusted[] slot ─────────────────────────────────────────────────────
 
-export interface Adjustment { field: string; requested: number; applied: number }
+/** `reason` is `'grid'` and only `'grid'`: since the strict placing rule, the
+ *  one thing a tool may change about a time it was sent is to land it on the
+ *  layer's lattice (at most half a quantum). Anything else — a start before 0,
+ *  a trim past the other edge — is refused before the write, so it never
+ *  appears here. */
+export interface Adjustment { field: string; requested: number; applied: number; reason: 'grid' }
 /** Every (field, requested, applied) whose two numbers differ. A requested
  *  value that is not a finite number was not a request for that field. */
 export function adjusted(pairs: ReadonlyArray<readonly [string, unknown, number | null | undefined]>): Adjustment[] {
@@ -213,7 +218,7 @@ export function adjusted(pairs: ReadonlyArray<readonly [string, unknown, number 
   for (const [field, requested, applied] of pairs) {
     if (typeof requested !== 'number' || !Number.isFinite(requested)) continue
     if (typeof applied !== 'number') continue
-    if (requested !== applied) out.push({ field, requested, applied })
+    if (requested !== applied) out.push({ field, requested, applied, reason: 'grid' })
   }
   return out
 }

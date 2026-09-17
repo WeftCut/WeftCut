@@ -11,8 +11,14 @@ import { CommandFailure } from '../errors'
  *  track names a composition too, and it must be the layer's own: a track in
  *  another composition is refused (CrossCompositionMove) — a move never
  *  crosses, and crossing has its own op (`moveToComposition.ts`, which
- *  pre-compose, add-to-Group and ungroup stand beside). */
-export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStartUs: number, escapeLink: boolean): void {
+ *  pre-compose, add-to-Group and ungroup stand beside).
+ *
+ *  `strict` is the AGENT's mode (the MCP arm sets it): a landing the set
+ *  cannot honour as stated — the earliest mover would start before 0 — is
+ *  refused rather than floored. The renderer's drag keeps the floor, because a
+ *  drag shows its ghost and a clamped drop is what the user saw; a tool call
+ *  shows nothing, so a clamped write is a lie it would report as success. */
+export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStartUs: number, escapeLink: boolean, strict = false): void {
   const src = requireLayer(p, id)
   const c = src.comp
   const fps = c.fps
@@ -49,7 +55,14 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
   // for a stale member id.
   const movers: ShiftMember[] = [target, ...siblings.map((sid) => locateLayerIn(c, sid)?.layer).filter((l) => l !== undefined)]
     .map((l) => ({ id: l.id, kind: l.params.kind, tStartUs: l.t_start_us, tEndUs: l.t_end_us }))
-  const delta = floorShiftAtZero(movers, snapped - curStart)
+  const requestedDelta = snapped - curStart
+  const delta = floorShiftAtZero(movers, requestedDelta)
+  if (strict && delta !== requestedDelta) {
+    // The member that would have crossed 0 — the earliest starter — named with
+    // the start it was asked for, so the refusal reads as the validator's own.
+    const earliest = movers.reduce((a, b) => (b.tStartUs < a.tStartUs ? b : a))
+    throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'NegativeLayerStart', layer: earliest.id, t_start: earliest.tStartUs + requestedDelta } })
+  }
   // One arithmetic for every site that has to agree about where this set lands —
   // the two mutations that decide it and the two timeline surfaces that draw it
   // in advance (`renderer/grid.ts`). Both endpoints, each member's own lattice.

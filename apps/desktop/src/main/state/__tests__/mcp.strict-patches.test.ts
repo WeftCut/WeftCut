@@ -148,6 +148,7 @@ describe('add_effect — the kind is one of the catalog\'s', () => {
     const id = colorLayer(a)
     for (const kind of ['', 'wobble', 'audio.compressor']) {
       const msg = refusal(call(a, 'add_effect', { layer_id: id, kind }))
+      expect(msg).toContain(`'${kind}'`) // the value sent, not its type
       for (const k of EFFECT_KINDS) expect(msg).toContain(k)
     }
     expect(layerOf(a, id).effects).toEqual([])
