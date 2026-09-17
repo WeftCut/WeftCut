@@ -1,4 +1,4 @@
-import type { Animated, AudioParams, AudioRole, BlendMode, ColorParams, CompositionRefParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextParams, Uuid, VAlign, VideoClipParams } from '../model'
+import type { Animated, AudioParams, AudioRole, BlendMode, ColorParams, CompositionRefParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextParams, Uuid, VAlign, VideoClipParams , Shadow} from '../model'
 import { CommandFailure } from '../errors'
 import { snapFrameFloor, snapFrameCeil, gridForLayerKind, snapOnGrid } from '../snap'
 import { authoredExtentPx, authoredValue, quantizeTrack } from '../quantize'
@@ -22,7 +22,7 @@ import { resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
  *  the rendered result (ADR 0049). `box_w`/`box_h` are the one pair where
  *  `null` is a value distinct from absent — see the `case 'Text'` merge. */
 export type LayerParamsPatch =
-  | { kind: 'Text'; content?: string; font_family?: string; font_size_px?: number; color?: Rgba; x?: number; y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; align?: TextAlign; valign?: VAlign; box_w?: number | null; box_h?: number | null; line_height?: number; letter_spacing?: number; outline_width?: number; outline_color?: Rgba }
+  | { kind: 'Text'; content?: string; font_family?: string; font_size_px?: number; font_weight?: number; italic?: boolean; shadow?: Shadow | null; color?: Rgba; x?: number; y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; align?: TextAlign; valign?: VAlign; box_w?: number | null; box_h?: number | null; line_height?: number; letter_spacing?: number; outline_width?: number; outline_color?: Rgba }
   | { kind: 'VideoClip'; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; speed?: number; flip_h?: boolean; flip_v?: boolean; fade_in_us?: number; fade_out_us?: number }
   | { kind: 'ImageOverlay'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; fade_in_us?: number; fade_out_us?: number }
   | { kind: 'Motif'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; src_in_us?: number; motif_id?: string; motif_version?: number; props?: Record<string, unknown> }
@@ -189,6 +189,21 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
         throw new CommandFailure({ error: 'InvalidArgument', field: 'font_size_px',
           detail: `font_size_px must be a positive number of composition pixels — got ${patch.font_size_px}` })
       }
+      // CSS weights: 100..900. A face is picked by nearest available weight, so
+      // any whole hundred is meaningful and nothing outside the scale is.
+      if (patch.font_weight !== undefined && !(Number.isInteger(patch.font_weight) && patch.font_weight >= 100 && patch.font_weight <= 900)) {
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'font_weight',
+          detail: `font_weight must be a whole number from 100 to 900 (400 regular, 700 bold) — got ${patch.font_weight}` })
+      }
+      // A shadow is a whole record or null (none): offsets any finite px, blur
+      // a non-negative px radius. Checked before the first write, like the rest.
+      if (patch.shadow !== undefined && patch.shadow !== null) {
+        const sh = patch.shadow
+        for (const f of ['offset_x', 'offset_y', 'blur'] as const) {
+          if (!Number.isFinite(sh[f])) throw new CommandFailure({ error: 'InvalidArgument', field: `shadow.${f}`, detail: `shadow.${f} must be a finite number of composition pixels` })
+        }
+        if (sh.blur < 0) throw new CommandFailure({ error: 'InvalidArgument', field: 'shadow.blur', detail: `shadow.blur must be zero or a positive radius in composition pixels — got ${sh.blur}` })
+      }
       // The resize mode IS the box nullability — (null, null) auto width,
       // (set, null) auto height, (set, set) fixed — so (null, set) is no mode at
       // all. A gesture reaching that pair backfills the width it measured in the
@@ -209,6 +224,10 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (patch.content !== undefined) t.content = patch.content
       if (patch.font_family !== undefined) t.font.family = patch.font_family
       if (patch.font_size_px !== undefined) t.font.size_px = patch.font_size_px
+      if (patch.font_weight !== undefined) t.font.weight = patch.font_weight
+      if (patch.italic !== undefined) t.font.italic = patch.italic
+      // Null is a value here, as on the box pair: "no shadow".
+      if (patch.shadow !== undefined) t.shadow = patch.shadow === null ? null : { color: patch.shadow.color, offset_x: patch.shadow.offset_x, offset_y: patch.shadow.offset_y, blur: patch.shadow.blur }
       if (patch.color !== undefined) t.color = stat(patch.color)
       if (xP !== undefined) setPositionTrack(t.transform.position, 'x', stat(xP))
       if (yP !== undefined) setPositionTrack(t.transform.position, 'y', stat(yP))

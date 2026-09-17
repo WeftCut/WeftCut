@@ -307,7 +307,7 @@ export function parseLayerPatch(v: unknown): LayerPatch {
  *  (mutations/params.ts), restated as data so the parser can name them. A kind
  *  added there gains its keys here, or `mcp.strict-patches` fails. */
 export const LAYER_PARAMS_KEYS: Readonly<Record<string, readonly string[]>> = {
-  Text: ['content', 'font_family', 'font_size_px', 'color', 'x', 'y', 'opacity', 'rotation_deg', 'anchor_x', 'anchor_y', 'align', 'valign', 'box_w', 'box_h', 'line_height', 'letter_spacing', 'outline_width', 'outline_color'],
+  Text: ['content', 'font_family', 'font_size_px', 'font_weight', 'italic', 'color', 'x', 'y', 'opacity', 'rotation_deg', 'anchor_x', 'anchor_y', 'align', 'valign', 'box_w', 'box_h', 'line_height', 'letter_spacing', 'outline_width', 'outline_color', 'shadow'],
   VideoClip: ['src_in_us', 'src_out_us', 'x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y', 'opacity', 'speed', 'flip_h', 'flip_v', 'fade_in_us', 'fade_out_us'],
   ImageOverlay: ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y', 'opacity', 'fade_in_us', 'fade_out_us'],
   Motif: ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y', 'opacity', 'src_in_us', 'motif_id', 'motif_version', 'props'],
@@ -333,11 +333,18 @@ function parseOneOf(v: unknown, options: readonly string[], field: string): stri
 function parseLayerParamValue(k: string, v: unknown): unknown {
   const field = `patch.${k}`
   if (v === null) {
-    if (k === 'box_w' || k === 'box_h') return null
+    if (k === 'box_w' || k === 'box_h' || k === 'shadow') return null
     throw new McpArgError(`${field} is null, which is not a value for ${k} — omit the field to leave it alone`, field)
   }
   switch (k) {
     case 'content': case 'font_family': case 'motif_id': return parseStr(v, field)
+    case 'font_weight': return parseIntNum(v, field)
+    case 'italic': return parseBool(v, field)
+    case 'shadow': {
+      const o = parseObj(v, field)
+      for (const key of Object.keys(o)) if (!['color', 'offset_x', 'offset_y', 'blur'].includes(key)) throw new McpArgError(`${field}.${key} is not a shadow field — a shadow is { color, offset_x, offset_y, blur }`, field)
+      return { color: parseRgba(o.color, `${field}.color`), offset_x: parseNum(o.offset_x, `${field}.offset_x`), offset_y: parseNum(o.offset_y, `${field}.offset_y`), blur: parseNum(o.blur, `${field}.blur`) }
+    }
     case 'color': case 'outline_color': return parseRgba(v, field)
     case 'flip_h': case 'flip_v': case 'mute': return parseBool(v, field)
     case 'align': return parseOneOf(v, TEXT_ALIGN_OPTIONS, field)
@@ -1276,6 +1283,14 @@ const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>
   font_family: { type: 'string', description: 'Font family name.' },
   font_size_px: { type: 'number', description: 'Font size, composition px.' },
   color: { ...RGBA_SCHEMA, description: 'Fill colour.' },
+  font_weight: { type: 'integer', description: 'CSS weight 100..900; 400 regular, 700 bold.' },
+  italic: { type: 'boolean', description: 'Italic face.' },
+  shadow: { type: ['object', 'null'], description: 'Drop shadow, or null for none.', properties: {
+    color: { ...RGBA_SCHEMA, description: 'Shadow colour.' },
+    offset_x: { type: 'number', description: 'Horizontal offset, composition px.' },
+    offset_y: { type: 'number', description: 'Vertical offset, composition px.' },
+    blur: { type: 'number', minimum: 0, description: 'Blur radius, composition px; 0 is hard-edged.' },
+  }, required: ['color', 'offset_x', 'offset_y', 'blur'] },
   x: { type: 'number', description: 'Anchor x, composition px (refused in Path mode: set_position / translate_path).' },
   y: { type: 'number', description: 'Anchor y, composition px (refused in Path mode).' },
   opacity: { type: 'number', description: 'Opacity 0..1.' },
@@ -1420,7 +1435,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     } }, required: ['layer_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseLayerPatch(a.patch) } }) },
   { name: 'update_layer_params', exec: 'table', annotations: ANN_SET,
-    description: "Update a layer's kind-specific params. `patch.kind` must match the layer, and only that kind's fields apply — the schema lists each kind's set, and a key outside it is refused naming the set. Audio `gain_db`/`pan` are written as STATIC values, replacing any keyframes. Text is laid out by its BOX, not by scale: `box_w`/`box_h` (composition px, before `scale`) set the resize mode — (null, null) auto width, (set, null) auto height (wraps), (set, set) fixed (wraps, shrinks to fit); `null` returns an axis to auto; `box_h` without a `box_w` is refused. Text has no scale fields here — a bigger title is a bigger box or `font_size_px`. Path mode rejects independent x/y writes: use `translate_path` or `set_position`. `rotation_deg` and the `anchor_x`/`anchor_y` pivot write STATIC values on every visual kind, like `x`/`y`. On a scale-linked layer a patch leaving scale_x ≠ scale_y clears the link in the same commit.",
+    description: "Update a layer's kind-specific params. `patch.kind` must match the layer, and only that kind's fields apply — the schema lists each kind's set, and a key outside it is refused naming the set. Audio `gain_db`/`pan` are written as STATIC values, replacing any keyframes. Text is laid out by its BOX, not by scale: `box_w`/`box_h` (composition px, before `scale`) set the resize mode — (null, null) auto width, (set, null) auto height (wraps), (set, set) fixed (wraps, shrinks to fit); `null` returns an axis to auto; `box_h` without a `box_w` is refused. Text has no scale fields here — a bigger title is a bigger box or `font_size_px`; its face is `font_family`, `font_weight` (100..900), `italic`, and `shadow` is a whole record or null. Path mode rejects independent x/y writes: use `translate_path` or `set_position`. `rotation_deg` and the `anchor_x`/`anchor_y` pivot write STATIC values on every visual kind, like `x`/`y`. On a scale-linked layer a patch leaving scale_x ≠ scale_y clears the link in the same commit.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, patch: LAYER_PARAMS_PATCH_SCHEMA }, required: ['layer_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_layer_params', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseLayerParamsPatch(a.patch) } }) },
   { name: 'set_scale_linked', exec: 'table', annotations: ANN_SET,

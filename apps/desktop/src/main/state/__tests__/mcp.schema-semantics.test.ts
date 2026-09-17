@@ -80,7 +80,8 @@ describe('update_layer_params advertises one variant per kind, from the table th
       for (const k of Object.keys(v.properties)) {
         if (k === 'kind') continue
         // The value type is the field's own business; the KEY must pass the gate.
-        const probe: Record<string, unknown> = { kind, [k]: v.properties[k].type === 'boolean' ? true : v.properties[k].type === 'string' ? 'x' : v.properties[k].type === 'integer' ? 1 : k === 'props' ? {} : k === 'color' || k === 'outline_color' ? { r: 0, g: 0, b: 0, a: 255 } : 1 }
+        const probe: Record<string, unknown> = { kind, [k]: v.properties[k].type === 'boolean' ? true : v.properties[k].type === 'string' ? 'x' : v.properties[k].type === 'integer' ? 1 : k === 'props' ? {} : k === 'color' || k === 'outline_color' ? { r: 0, g: 0, b: 0, a: 255 } : k === 'shadow' ? null : 1 }
+        if (k === 'font_weight') probe[k] = 700
         if (k === 'align') probe[k] = 'Left'
         if (k === 'valign') probe[k] = 'Top'
         if (k === 'blend_mode') probe[k] = 'Normal'
@@ -142,7 +143,7 @@ describe('null arms are advertised only where null means something omission does
     'update_composition.patch.duration_us',
     'set_marker_anchor.layer_id',
     'set_project_settings.patch.proxy_override.value', 'set_project_settings.patch.shot_review', 'set_project_settings.patch.pause_review',
-    'update_layer_params.patch.box_w', 'update_layer_params.patch.box_h',
+    'update_layer_params.patch.box_w', 'update_layer_params.patch.box_h', 'update_layer_params.patch.shadow',
     'update_effect.patch.params.*',
   ])
   it('across the whole advertised catalog, Rust tools included', () => {
