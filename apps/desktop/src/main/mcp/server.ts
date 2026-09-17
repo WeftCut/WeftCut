@@ -15,6 +15,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import { captureMotifFrameB64 } from '../motif/capture.js'
 import { HYBRID_TOOLS, routeMcpTool } from './mutationTools.js'
+import { canonicalizeProps, MotifPropError, type Manifest } from '../../shared/motifs/catalog.js'
 import { shapeMotifMcpResult } from './motifResult.js'
 import { runHybrid } from '../state/hybrids.js'
 import { CLIP_SLICE_TOOLS, resolveClipSliceArgs, resolvePauseComputeArgs, TWO_SLICE_TOOLS, resolveTwoSliceArgs } from '../state/clip-slice-forward.js'
@@ -339,15 +340,25 @@ async function dispatchTool(
   if (name === 'preview_motif_draft') {
     const a = args as { id?: string; motif_id?: string; t_sec?: number; props?: unknown; width?: number | null; height?: number | null }
     const motifId = a.id ?? a.motif_id ?? ''
-    // The advertised default is the motif's OWN size, read off the catalog the
-    // way `list_motifs` reports it; 480 is only the floor for a bare-core call
-    // with no host to ask.
-    const size = tsHost
-      ? (tsHost.motifTool('list_motifs', {}) as Array<{ id: string; size?: [number, number] }>).find((m) => m.id === motifId)?.size
+    // The catalog entry, as `list_motifs` reports it — it IS the manifest plus a
+    // few catalog fields, so it serves both the advertised default size and the
+    // props defaults below. A bare-core call (no host) has no catalog to ask:
+    // 480 is its floor and the props go through as sent.
+    const entry = tsHost
+      ? (tsHost.motifTool('list_motifs', {}) as Array<Record<string, unknown> & { id: string; size?: [number, number] }>).find((m) => m.id === motifId)
       : undefined
+    if (tsHost && !entry) return toolErrorResult({ code: 'invalid_params', message: `unknown Motif id '${motifId}' — list_motifs reports the built-in, installed and draft ids` })
+    // Props canonicalised against the manifest exactly as `add_motif_layer` does
+    // (audit D2: omitted props rendered a lower third with no text): missing keys
+    // take the schema defaults, an unknown key is refused naming it.
+    let props: Record<string, unknown> = (a.props ?? {}) as Record<string, unknown>
+    if (entry) {
+      try { props = canonicalizeProps(entry as unknown as Manifest, a.props ?? null) }
+      catch (e) { if (e instanceof MotifPropError) return toolErrorResult({ code: 'invalid_params', message: `invalid props for '${motifId}': ${e.detail} — list_motifs reports its props_schema` }); throw e }
+    }
     const b64 = await captureMotifFrameB64({
-      motifId, tSec: a.t_sec ?? 0, propsJson: JSON.stringify(a.props ?? {}),
-      width: a.width ?? size?.[0] ?? 480, height: a.height ?? size?.[1] ?? 480, settleRafs: null, contentHash: '',
+      motifId, tSec: a.t_sec ?? 0, propsJson: JSON.stringify(props),
+      width: a.width ?? entry?.size?.[0] ?? 480, height: a.height ?? entry?.size?.[1] ?? 480, settleRafs: null, contentHash: '',
     })
     return { content: [{ type: 'image', data: b64, mimeType: 'image/png' }] } as unknown as ServerResult
   }

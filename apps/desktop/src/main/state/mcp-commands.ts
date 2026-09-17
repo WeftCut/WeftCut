@@ -1879,7 +1879,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Add a motif layer and return its record. `motif_id` from `list_motifs`; `t_start_us` timeline µs; `t_end_us` defaults to `t_start_us + default_duration_s`; `track_id` omitted always spawns a fresh track (never reuses one, so consecutive auto-inserts cannot collide); `props` is matched against the motif's `props_schema` — unknown keys reject, missing keys take defaults. Rendering is lazy: the motif rasterizes on first render and is cached by content.",
     inputSchema: { type: 'object',
       properties: {
-        motif_id: { type: 'string', description: 'Motif id from `list_motifs` (e.g. "lower-third-simple", "title-card").' },
+        motif_id: { type: 'string', description: 'Motif id from `list_motifs` (built-ins: "countdown", "lower-third", "text-fx").' },
         t_start_us: { type: 'integer', description: 'Layer start in timeline microseconds.' },
         t_end_us: { type: ['integer', 'null'], description: 'Layer end in timeline microseconds. Defaults to `t_start_us + default_duration_s * 1_000_000` when omitted.' },
         track_id: { type: ['string', 'null'], description: 'Target track id. If omitted, a fresh track is spawned; it carries no stored name and is displayed by its position.' },

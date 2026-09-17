@@ -100,6 +100,31 @@ describe('runMotifTool', () => {
     expect((rebinds[0] as any[])[0]).toMatchObject({ layer_id: 'la', motif_id: 'foo', motif_version: 2 })
   })
 
+  it('install_motif bare "update" resolves the target the draft recorded (audit D1)', () => {
+    const published = runMotifTool('write_motif_draft', { manifest: m('Base'), html: '<head></head><body>B</body>' }, deps) as string
+    runMotifTool('install_motif', { draft_id: published, mode: 'new' }, deps)
+    const draft = runMotifTool('write_motif_draft', { manifest: m('Base'), html: '<head></head><body>B2</body>', from: published }, deps) as string
+    const out = runMotifTool('install_motif', { draft_id: draft, mode: 'update' }, deps) as string
+    expect(out).toBe(published)
+    expect(store.getMotif(published)!.manifest.version).toBe(2)
+  })
+
+  it('install_motif "update" takes an explicit target_id, and refuses when the draft records none and none is passed', () => {
+    const published = runMotifTool('write_motif_draft', { manifest: m('Base'), html: '<head></head><body>B</body>' }, deps) as string
+    runMotifTool('install_motif', { draft_id: published, mode: 'new' }, deps)
+    const orphan = runMotifTool('write_motif_draft', { manifest: m('Loose'), html: '<head></head><body>L</body>' }, deps) as string
+    expect(() => runMotifTool('install_motif', { draft_id: orphan, mode: 'update' }, deps)).toThrow(/records none.*target_id.*write_motif_draft \{ from \}.*mode "new"/)
+    expect(store.getMotif(published)!.manifest.version).toBe(1)
+    expect(runMotifTool('install_motif', { draft_id: orphan, mode: 'update', target_id: published }, deps)).toBe(published)
+    expect(store.getMotif(published)!.manifest.version).toBe(2)
+  })
+
+  it('delete_motif refuses an unknown id and a built-in, naming list_motifs (audit D13)', () => {
+    expect(() => runMotifTool('delete_motif', { id: 'never-written' }, deps)).toThrow(/unknown Motif 'never-written'.*list_motifs/)
+    expect(() => runMotifTool('delete_motif', { id: 'countdown' }, deps)).toThrow(/built-in/)
+    expect(emitted).toBe(0)
+  })
+
   it('install_motif accepts the MCP flat string mode "new"', () => {
     store.writeDraft('foo', doc(m('Foo', 'foo')))
     const id = runMotifTool('install_motif', { draft_id: 'foo', mode: 'new' }, deps) as string

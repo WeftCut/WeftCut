@@ -581,9 +581,9 @@ Catalog:
 Motif authoring (see [motifs.md](motifs.md) "Agent surface"):
 - `get_motif_source { id }` → `{ manifest, html }` — any built-in, installed, or draft.
 - `write_motif_draft { manifest, html, from? }` → draft id. `from` records an existing Motif as the update target.
-- `preview_motif_draft { id, t_sec, width?, height?, props? }` → base64 PNG of one frame; `props` defaults to the Motif's schema defaults.
-- `install_motif { draft_id, mode: new | update }` — publish; update bumps version and rebinds placed layers.
-- `delete_motif { id }` — remove a user Motif (built-ins rejected).
+- `preview_motif_draft { id, t_sec, width?, height?, props? }` → base64 PNG of one frame. `props` are canonicalised against the manifest exactly as `add_motif_layer`'s are: omitted keys take the schema defaults, an unknown key is refused naming it, an unknown `id` is refused naming `list_motifs`.
+- `install_motif { draft_id, mode: new | update, target_id? }` — publish; `update` republishes over `target_id`, or over the target the draft recorded at `write_motif_draft { from }` when `target_id` is omitted, and is refused when it has neither (naming both ways to supply one); it bumps the version and rebinds placed layers.
+- `delete_motif { id }` — remove a user Motif. Built-ins are refused, and so is an id that names neither an installed Motif nor a draft — a typo must not read as a removal.
 
 ### Workflow / safety
 

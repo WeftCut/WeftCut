@@ -1,5 +1,7 @@
 // apps/desktop/src/main/state/__tests__/add-motif.test.ts
 // add_motif as a pure TS recorded mutation.
+import { MCP_TOOL_DEFS } from '../mcp-commands'
+import { BUILTIN_IDS } from '../../../shared/motifs/catalog'
 import { describe, it, expect } from 'vitest'
 import { routeChannel } from '../router'
 import { routeMcpTool } from '../../mcp/mutationTools'
@@ -167,6 +169,16 @@ describe('actor.command("add_motif") — reject-before-commit', () => {
 })
 
 // ── d. MCP path ───────────────────────────────────────────────────────────────
+describe('add_motif_layer description', () => {
+  it('names example ids that exist (audit D18: the old examples did not)', () => {
+    const def = MCP_TOOL_DEFS.find((d) => d.name === 'add_motif_layer')!
+    const desc = ((def.inputSchema as { properties: { motif_id: { description: string } } }).properties.motif_id.description)
+    const quoted = [...desc.matchAll(/"([a-z0-9-]+)"/g)].map((m) => m[1])
+    expect(quoted.length).toBeGreaterThan(0)
+    for (const id of quoted) expect(BUILTIN_IDS, id).toContain(id)
+  })
+})
+
 describe('actor.mcpCall("add_motif_layer") — MCP dedicated arm', () => {
   it('creates a Motif layer via MCP and returns its record', () => {
     const actor = makeActor()

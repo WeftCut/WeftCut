@@ -32,13 +32,23 @@ export interface MotifToolDeps {
   emitLog: (entry: { level: 'warn'; category: { kind: 'Project' }; source: { kind: 'System' }; message: string }) => void
 }
 
-/** Coerce the install `mode` arg. Renderer sends the object form
- *  `{ kind, target_id? }`; the MCP schema advertises a bare string "new"/"update".
- *  "new" coerces; a bare "update" carries no target_id and installMotifCompute
- *  rejects it downstream. */
-function parseMode(mode: unknown): InstallArgs['mode'] {
+/** Coerce the install `mode` arg. The renderer sends the object form
+ *  `{ kind, target_id? }`; the MCP schema advertises a bare string "new"/"update"
+ *  plus an optional `target_id`. A bare "update" resolves its target from the
+ *  explicit `target_id`, else from the target the draft RECORDED at
+ *  `write_motif_draft { from }` — the audit found it coerced to `''` and so could
+ *  never succeed over MCP. Neither present is refused naming both ways to supply
+ *  one, before anything is written. */
+function parseMode(mode: unknown, targetId: unknown, draftId: string, store: UserMotifStore): InstallArgs['mode'] {
   if (mode === 'new') return { kind: 'new' }
-  if (mode === 'update') return { kind: 'update', target_id: '' } // no target → compute rejects
+  if (mode === 'update') {
+    const explicit = typeof targetId === 'string' && targetId.trim() !== '' ? targetId.trim() : null
+    const target = explicit ?? store.readDraftTarget(draftId)
+    if (target === null) {
+      throw new Error(`install_motif { mode: "update" } needs a target, and draft '${draftId}' records none: pass target_id (an installed Motif's id — list_motifs reports them), write the draft with write_motif_draft { from } so it records one, or install it as mode "new"`)
+    }
+    return { kind: 'update', target_id: target }
+  }
   return mode as InstallArgs['mode']
 }
 
@@ -77,7 +87,8 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
       return null
     }
     case 'install_motif': {
-      const args: InstallArgs = { draft_id: a.draft_id as string, mode: parseMode(a.mode) }
+      const draftId = a.draft_id as string
+      const args: InstallArgs = { draft_id: draftId, mode: parseMode(a.mode, a.target_id, draftId, deps.store) }
       const { publishedId, updates } = installMotifCompute(deps.store, deps.motifLayers(), args)
       if (updates.length) deps.dispatchRebind(updates)
       deps.emitChanged(); deps.refreshCatalog()

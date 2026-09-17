@@ -103,9 +103,9 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
     name: 'install_motif',
     description:
       'Install a draft. mode \'new\' publishes under the draft\'s own id; \'update\' ' +
-      'republishes over the draft\'s recorded UPDATE target (set via `write_motif_draft`\'s ' +
-      '`from`) — bumping its version so every placement re-renders, and rebinding + ' +
-      'migrating current-project layers. Returns `{ motif_id }`.',
+      'republishes over `target_id`, or over the target the draft recorded at `write_motif_draft { from }` ' +
+      'when `target_id` is omitted (refused when it has neither) — bumping the version so every placement ' +
+      're-renders, and rebinding + migrating current-project layers. Returns `{ motif_id }`.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -115,9 +115,13 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
         },
         mode: {
           description:
-            '"new" (publish under the draft\'s own id) or "update" (republish over the draft\'s recorded target; fails if the draft has no target).',
+            '"new" (publish under the draft\'s own id) or "update" (republish over `target_id`, else the draft\'s recorded target).',
           type: 'string',
           enum: ['new', 'update'],
+        },
+        target_id: {
+          description: 'For mode "update": the installed Motif to republish over. Omit to use the target the draft recorded (`write_motif_draft { from }`).',
+          type: ['string', 'null'],
         },
       },
       required: ['draft_id', 'mode'],
@@ -126,8 +130,8 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
   {
     name: 'delete_motif',
     description:
-      'Delete an installed or draft user Motif by id. Built-ins are rejected. Placed ' +
-      'layers referencing it degrade to an error placeholder.',
+      'Delete an installed or draft user Motif by id. Built-ins and unknown ids are refused ' +
+      '(`list_motifs` reports what exists). Placed layers referencing it degrade to an error placeholder.',
     inputSchema: {
       type: 'object',
       properties: {
