@@ -726,6 +726,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
     if (typeof patch.auto_pair_audio_on_import === 'boolean') next.auto_pair_audio_on_import = patch.auto_pair_audio_on_import
     if (patch.proxy_override) {
       const { media_id, value } = patch.proxy_override
+      // Read back as `settings.proxy_overrides[media_id]`, so an id that names
+      // no pool item would be a key nothing ever resolves — refused as the
+      // media tools refuse it (audit D26).
+      if (!(media_id in current().media_pool)) throw new CommandFailure({ error: 'MediaNotFound', media: media_id })
       if (value === null) delete next.proxy_overrides[media_id]
       else next.proxy_overrides[media_id] = value
     }

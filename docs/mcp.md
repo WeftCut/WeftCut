@@ -354,7 +354,7 @@ crosses; crossing has its own op.
 - `restyle_captions { font_family?, font_size_px?, color?, outline_width? }` — restyle **every** caption in the project in one recorded edit: every Text layer on every Caption-role track, in every composition, because caption lanes multiply as cues collide and a per-lane restyle would leave the film styled two ways mid-batch. Omitted or `null` leaves that aspect alone; `outline_width: 0` removes the outline, a positive width adds or resizes one (keeping its colour, black if it had none). A Text layer from `add_text_layer` is not on a caption track and is untouched — style that with `update_layer_params`.
 - `apply_subtitles { body, format? }` — SRT/VTT/ASS body inline; format sniffed when omitted. Lands the cues as editable `Text` layers (one per cue) on the composition's caption-role tracks: each cue goes to the first unlocked caption track with room for its span, and a new caption track opens only for a cue that collides with all of them (ADR 0070). An older client may still send `track_id`, `t_start_us` or `t_end_us`; they are accepted and ignored (cue timings come from the body, and the lane is the packing's to pick) but no longer advertised — `t_end_us` used to be REQUIRED, so every caller had to invent one. Returns `{ caption_track_id, cues, simplified }`.
 - `update_layer { layer_id, patch }` — envelope-only: `label`, `t_start_us`, `t_end_us`, `locked`. Any other key is refused naming that set — `enabled` is pointed at `set_layers_enabled`, a param key at `update_layer_params` — so a typo can never commit nothing and report success.
-- `update_layer_params { layer_id, patch }` — kind-specific params. `patch.kind` is one of `Text | VideoClip | ImageOverlay | Motif | Color | Audio | CompositionRef` and must match the layer; every other key must be in that kind's set (the parser names it on refusal, and says which kind a stray key belongs to), and every value is type-gated at the boundary — enums for `align`/`valign`/`role`/`blend_mode`, `{r,g,b,a}` for colours, integers for the µs fields. `null` is a value only for `box_w`/`box_h` (back to auto); elsewhere it is refused, since an omitted field is how a field is left alone. Text also takes `outline_width` (0 removes) and `outline_color`. On a scale-linked layer, a patch that leaves `scale_x ≠ scale_y` auto-clears the link in the same commit; patch both axes to the same value to keep it.
+- `update_layer_params { layer_id, patch }` — kind-specific params; the schema advertises one `oneOf` variant per kind, each closed to that kind's fields. `patch.kind` is one of `Text | VideoClip | ImageOverlay | Motif | Color | Audio | CompositionRef` and must match the layer; every other key must be in that kind's set (the parser names it on refusal, and says which kind a stray key belongs to), and every value is type-gated at the boundary — enums for `align`/`valign`/`role`/`blend_mode`, `{r,g,b,a}` for colours, integers for the µs fields. `null` is a value only for `box_w`/`box_h` (back to auto); elsewhere it is refused, since an omitted field is how a field is left alone. Text also takes `outline_width` (0 removes) and `outline_color`. On a scale-linked layer, a patch that leaves `scale_x ≠ scale_y` auto-clears the link in the same commit; patch both axes to the same value to keep it.
   - Text: `{ content?, font_family?, font_size_px?, color?, x?, y?, opacity?, align?, valign?, box_w?, box_h?, line_height?, letter_spacing?, outline_width?, outline_color? }`. `outline_width` 0 removes the outline (stored as `null`, the absent style a Text layer is born with); a positive width adds or resizes it, black until coloured. `outline_color` needs an outline to colour — with none stored, send `outline_width > 0` in the same patch, or it is refused (`InvalidArgument`, field `outline_color`) rather than answered with a guessed width. `box_w`/`box_h` are the layout box in composition pixels, local (before `scale`), and which of the two are set **is** the resize mode: `(null, null)` auto width (never wraps), `(set, null)` auto height (wraps), `(set, set)` fixed (wraps and shrinks to fit). Send an explicit `null` to put an axis back to auto; omit the field to leave it alone. A `box_h` with no `box_w` — neither stored nor in the same patch — is refused (`InvalidArgument`, field `box_h`) rather than measured by guess: this surface has no canvas, and no default may silently invent a width. A box axis is either `null` or a positive extent — `0` and negative are refused, because the renderer reads a non-positive width as "no box" and would draw auto width while state claimed fixed. `align` places the text block horizontally inside the box, `valign` (`Top | Middle | Bottom`) vertically; both are checked against their enums here rather than trusted, since an unrecognized `valign` would reach the sprite as a `NaN` anchor. There are deliberately **no scale fields** on a Text patch — a bigger title is a bigger box, and `font_size_px` is what reaches the frame at any box size; animate a text layer's size with `scale_x`/`scale_y` through the keyframe tools instead. See [ADR 0049](adr/0049-text-box-lays-out-glyphs-it-does-not-scale-them.md).
 - `set_scale_linked { layer_id, linked }` — toggle a layer's uniform-scale link (visual kinds only). `linked=true` snaps `scale_y` to a whole-track copy of `scale_x` (keyframes included, fresh key ids) in the same commit — one undo restores both. `linked=false` clears only the flag. While linked, the two scale tracks are structural twins and the human UI edits them as one collapsed "Scale"; any write that diverges them (single-axis `update_layer_params` / `set_keyframe` / `set_param_track`) auto-clears the flag in that write's commit.
 - `move_layer { layer_id, new_track_id, new_t_start_us, escape_link? }`
@@ -653,6 +653,19 @@ and one another. The two pressures meet at a budget:
   `add_video_layer`, `apply_transcripts` vs `apply_subtitles`). Then the
   non-obvious argument semantics with their defaults, the return shape, and
   the refusals an agent has to *plan around* — by error name, one clause each.
+- **What the schema carries.** Every property has a one-line meaning with its
+  unit (`µs`, composition px, 0..1); a field with a closed vocabulary is an
+  enum (`trim_layer.edge`, `add_effect.kind`, every role and mode); `param_key`
+  is the enum of animatable params plus the `effects[<id>].params[<key>]`
+  pattern; `update_layer_params.patch` is one `oneOf` variant per layer kind,
+  generated from the same key table the parser refuses against, so a client
+  that reads `oneOf` sees each kind's exact field set. A `null` arm is
+  advertised only where null means something omission does not — clear a
+  label, unpin `duration_us`, cut a marker loose, return a text-box axis to
+  auto, drop a proxy override, fall back to a detector's defaults; an optional
+  field is simply not required, and an explicit `null` sent to one is read as
+  omitted. `mcp.description-budget` pins the count of undescribed properties
+  to zero and `mcp.schema-semantics` pins the enums and variants to the parsers.
 - **What it does not.** Types belong to the schema, not the prose. Mechanics,
   rationale, history and every refusal's full story belong here in this
   document; the moment-of-failure explanation belongs in the error message
@@ -662,11 +675,13 @@ and one another. The two pressures meet at a budget:
 - **The budget is a gate.** `mcp.description-budget.test.ts` caps each
   description at 700 characters (an explicit, size-limited allowlist of
   complex tools at 1100), each nested schema `description` at 260, and the
-  whole compact catalog at 100 KB (the first pass landed at ~92 KB from ~127 KB
-  with the tool set unchanged; the cap then rose from 94 KB when the audit's
-  fixes moved semantics into the schema — a typed `set_position`, the
-  effect-kind enum, every mutator's return shape named; the next step down is
-  merging over-granular families, not more trimming). It also refuses schema envelope no agent
+  whole compact catalog at 118 KB (the first pass landed at ~92 KB from ~127 KB
+  with the tool set unchanged; the cap then rose from 94 KB, and again from
+  100 KB, as the audit's fixes moved semantics into the schema — a typed
+  `set_position`, the effect-kind enum, every mutator's return shape named,
+  then a meaning on every property and a variant per kind, landing at ~114 KB;
+  the next step down is merging over-granular families and cutting prose that
+  now restates the schema, not more trimming). It also refuses schema envelope no agent
   reads: `$schema`, `title`, `format`, `default: null`. Rust schemas come out
   of `tool_schema()` in `native/src/mcp/catalog.rs`, which strips those at
   generation; TS schemas simply do not write them.

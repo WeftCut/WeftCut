@@ -1373,12 +1373,18 @@ describe('dispatch: role gain + flags + project settings', () => {
   })
   it('update_project_settings sets prefer_proxies + proxy_overrides (unrecorded, survives undo)', () => {
     const { actor, a } = setup()
+    // The override names a POOL item: an id the pool does not hold is refused
+    // (MediaNotFound), since the key would resolve to nothing on read-back.
+    const m1 = '00000000-0000-0000-0000-0000000000a1'
+    actor.dispatch('add_media', { id: m1, kind: 'Video', duration_us: 4_000_000 })
     actor.dispatch('update_project_settings', { patch: { prefer_proxies: true } })
-    actor.dispatch('update_project_settings', { patch: { proxy_override: { media_id: 'm1', value: false } } })
+    actor.dispatch('update_project_settings', { patch: { proxy_override: { media_id: m1, value: false } } })
     expect(actor.snapshot().settings.prefer_proxies).toBe(true)
-    expect(actor.snapshot().settings.proxy_overrides).toEqual({ m1: false })
+    expect(actor.snapshot().settings.proxy_overrides).toEqual({ [m1]: false })
+    const unknown = actor.dispatch('update_project_settings', { patch: { proxy_override: { media_id: '00000000-0000-7000-8000-00000000dead', value: true } } })
+    expect(!unknown.ok && unknown.error.error).toBe('MediaNotFound')
     // clearing an override removes the key (Auto = follow global)
-    actor.dispatch('update_project_settings', { patch: { proxy_override: { media_id: 'm1', value: null } } })
+    actor.dispatch('update_project_settings', { patch: { proxy_override: { media_id: m1, value: null } } })
     expect(actor.snapshot().settings.proxy_overrides).toEqual({})
     // preference survives undo
     actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })

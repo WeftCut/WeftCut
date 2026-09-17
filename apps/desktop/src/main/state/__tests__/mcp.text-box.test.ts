@@ -97,10 +97,12 @@ describe('update_layer_params — the Text box over the wire', () => {
 })
 
 describe('the advertised schema can express what the model needs', () => {
+  // The patch is one `oneOf` variant per kind; the Text variant is the one
+  // that carries the box pair and the alignment enums.
   const props = (() => {
     const def = MCP_TOOL_DEFS.find((d) => d.name === 'update_layer_params')!
-    const schema = def.inputSchema as { properties: { patch: { properties: Record<string, { type: unknown; enum?: unknown }> } } }
-    return schema.properties.patch.properties
+    const schema = def.inputSchema as { properties: { patch: { oneOf: Array<{ properties: Record<string, { type: unknown; enum?: unknown; const?: unknown }> }> } } }
+    return schema.properties.patch.oneOf.find((v) => v.properties.kind.const === 'Text')!.properties
   })()
 
   it("the box pair advertises number-OR-null, or 'back to auto' is unsendable", () => {
@@ -114,9 +116,11 @@ describe('the advertised schema can express what the model needs', () => {
   })
 
   it('Text still advertises no scale fields of its own — a bigger title is a bigger box', () => {
-    // scale_x/scale_y ARE in this shared property bag for the other kinds, so the
-    // guard that keeps ADR 0049 true is the description telling an agent Text has
-    // none, plus the patch type in mutations/params.ts having no such field.
+    // The Text variant is generated from the Text key set (mutations/params.ts
+    // via LAYER_PARAMS_KEYS), so the schema itself now says it — the
+    // description keeps saying it for a client that does not read `oneOf`.
+    expect(props.scale_x).toBeUndefined()
+    expect(props.scale_y).toBeUndefined()
     const def = MCP_TOOL_DEFS.find((d) => d.name === 'update_layer_params')!
     expect(def.description).toContain('no scale fields')
   })

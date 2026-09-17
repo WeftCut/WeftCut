@@ -21,6 +21,12 @@ describe('schemaProblems', () => {
     expect(out).toEqual(['missing required `text`', 'missing required `voice`'])
   })
 
+  it('an explicit null on a field that is not required reads as omitted; on a required one it is a type fault', () => {
+    const schema = { required: ['s'], properties: { n: { type: 'integer' }, s: { type: 'string' }, e: { type: 'string', enum: ['a', 'b'] } } }
+    expect(schemaProblems(schema, { n: null, e: null, s: 'x' })).toEqual([])
+    expect(schemaProblems(schema, { s: null })).toEqual(['`s` must be a string, got null'])
+  })
+
   it('checks the type of every present field, honouring the nullable union', () => {
     const schema = { properties: { n: { type: ['integer', 'null'] }, s: { type: 'string' }, b: { type: 'boolean' }, o: { type: 'object' }, a: { type: 'array' } } }
     expect(schemaProblems(schema, { n: null, s: 'x', b: true, o: {}, a: [] })).toEqual([])

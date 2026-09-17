@@ -8,9 +8,13 @@
 // mistyped top-level field in one sentence, in the tool's own vocabulary,
 // BEFORE anything is dispatched.
 //
-// Deliberately narrow: `required`, `type` (with the `['T', 'null']` unions the
-// catalog uses), `enum`, and one level of nested `properties`. Not a validator
-// — a field this does not understand passes through to the real parser.
+// Deliberately narrow: `required`, `type`, `enum`, and one level of nested
+// `properties`. Not a validator — a field this does not understand passes
+// through to the real parser. An explicit `null` on a field that is not
+// required reads as omitted: the catalog stopped advertising `['T', 'null']`
+// on optional fields (a `null` arm is kept only where null means something of
+// its own), and a client that still sends `format: null` deserves the same
+// answer as one that leaves it out.
 
 interface SchemaLike {
   required?: string[]
@@ -46,12 +50,13 @@ export function schemaProblems(schema: unknown, args: Record<string, unknown>, p
   const s = (schema ?? {}) as SchemaLike
   const out: string[] = []
   const at = (k: string): string => (path ? `${path}.${k}` : k)
-  for (const r of s.required ?? []) {
+  const required = s.required ?? []
+  for (const r of required) {
     if (args[r] === undefined) out.push(`missing required \`${at(r)}\``)
   }
   for (const [k, prop] of Object.entries(s.properties ?? {})) {
     const v = args[k]
-    if (v === undefined) continue
+    if (v === undefined || (v === null && !required.includes(k))) continue
     const types = prop.type === undefined ? [] : Array.isArray(prop.type) ? prop.type : [prop.type]
     if (types.length > 0 && !types.some((t) => matchesType(t, v))) {
       const want = types.filter((t) => t !== 'null').map((t) => (t === 'integer' ? 'an integer' : t === 'array' ? 'an array' : t === 'object' ? 'an object' : `a ${t}`)).join(' or ')

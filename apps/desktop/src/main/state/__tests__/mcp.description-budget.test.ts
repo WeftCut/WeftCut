@@ -50,12 +50,16 @@ const PROPERTY_DESCRIPTION_CAP = 260
  *  under this gate landed at ~92 KB (from ~127 KB) without touching the tool set;
  *  lowering it further is the merge / on-demand-toolset work, not more trimming.
  *
- *  Raised from 94 KB when the audit's fixes moved semantics INTO the schema —
- *  a typed `set_position`, the effect-kind enum, every mutator's return shape
- *  named — which is the trade the audit asked for (S2): bytes an agent can act
- *  on, in place of prose it had to learn by trial. The property-description
- *  pass (ticket 10) spends more of this and pays some back from descriptions. */
-const CATALOG_BYTE_BUDGET = 100_000
+ *  Raised from 94 KB, then from 100 KB, as the audit's fixes moved semantics
+ *  INTO the schema — a typed `set_position`, the effect-kind enum, every
+ *  mutator's return shape named, then (S2) a one-line meaning and unit on
+ *  every property, `update_layer_params` as one variant per kind, `param_key`
+ *  as an enum plus pattern. That pass landed at ~114 KB: ~14 KB of bytes an
+ *  agent acts on at the moment it types an argument, in place of prose it had
+ *  to learn by trial and the ten to twenty probing calls the audit's testers
+ *  paid per session. What is left to pay back is prose that restates the
+ *  schema, and the merge of over-granular families. */
+const CATALOG_BYTE_BUDGET = 118_000
 
 function compact(v: unknown): string { return JSON.stringify(v) }
 
@@ -103,6 +107,29 @@ describe('MCP catalog context budget', () => {
     }
     for (const t of merged) walk(t.inputSchema, t.name)
     expect(noisy).toEqual([])
+  })
+
+  it('every advertised property carries a description — the schema, not the prose, teaches a field', () => {
+    // 232 of 397 had none before the audit's S2 pass; an agent learned `edge`,
+    // `param_key` and the position record by failing calls. Pinned to zero,
+    // Rust-sourced schemas included (schemars carries the doc comments).
+    const bare: string[] = []
+    const walk = (s: unknown, path: string): void => {
+      if (s === null || typeof s !== 'object') return
+      const o = s as Record<string, unknown>
+      const props = o.properties as Record<string, Record<string, unknown>> | undefined
+      if (props) {
+        for (const [k, v] of Object.entries(props)) {
+          if (typeof v.description !== 'string' || v.description.trim() === '') bare.push(`${path}.${k}`)
+          walk(v, `${path}.${k}`)
+        }
+      }
+      if (o.items) walk(o.items, `${path}[]`)
+      if (o.additionalProperties && typeof o.additionalProperties === 'object') walk(o.additionalProperties, `${path}.*`)
+      for (const alt of ['oneOf', 'anyOf', 'allOf'] as const) for (const v of (o[alt] as unknown[] | undefined) ?? []) walk(v, path)
+    }
+    for (const t of merged) walk(t.inputSchema, t.name)
+    expect(bare).toEqual([])
   })
 
   it('fits the whole catalog in the byte budget', () => {

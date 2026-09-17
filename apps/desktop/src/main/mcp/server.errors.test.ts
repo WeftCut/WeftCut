@@ -75,6 +75,18 @@ describe('handleCallTool — every route answers a refusal as an isError result'
     expect(Object.keys(host.actor.snapshot().media_pool)).toEqual([])
   })
 
+  it("a hybrid arm's subject refusal (remove_pauses on a layer that plays no sound) is invalid_params, not internal", async () => {
+    // A detector must exist for the arm to get as far as the subject check.
+    const host = tsHostStub({ compute: { detectPauses: vi.fn(async () => { throw new Error('the subject check comes first') }) } })
+    const track = root(host.actor.snapshot()).tracks[0].id
+    const added = host.actor.mcpCall('add_color_layer', JSON.stringify({ track_id: track, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 }))
+    if (!added.ok) throw new Error(added.error.message)
+    const layerId = (JSON.parse(added.result.content[0].text) as { layer_id: string }).layer_id
+    const out = asErr(await handleCallTool(fakeBackend(), () => host, 'remove_pauses', { layer_id: layerId }))
+    expect(out.structuredContent.code).toBe('invalid_params')
+    expect(out.content[0].text).toContain('plays no sound')
+  })
+
   it('a TS parser refusal (bad argument) is a result, with the code and the message mirrored in structuredContent', async () => {
     const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub(), 'move_layer', {}))
     expect(out.content[0].text).toContain('layer_id not a UUID')

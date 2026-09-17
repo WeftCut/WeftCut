@@ -61,7 +61,7 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
         from: {
           description:
             'Optional id of an existing Motif this draft will UPDATE on install (records it as the draft\'s target). Omit for a brand-new Motif (installs as new).',
-          type: ['string', 'null'],
+          type: 'string',
         },
         html: {
           description:
@@ -93,8 +93,8 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
         id: { description: 'Motif id (draft / installed / built-in).', type: 'string' },
         t_sec: { description: 'Content time in seconds to render (0 = first frame).', type: 'number' },
         props: { type: 'object', description: 'Props; omitted or `{}` uses the manifest defaults.' },
-        width: { description: 'Render width; default the motif\'s manifest width.', minimum: 1, type: ['integer', 'null'] },
-        height: { description: 'Render height; default the motif\'s manifest height.', minimum: 1, type: ['integer', 'null'] },
+        width: { description: 'Render width; default the motif\'s manifest width.', minimum: 1, type: 'integer' },
+        height: { description: 'Render height; default the motif\'s manifest height.', minimum: 1, type: 'integer' },
       },
       required: ['id', 't_sec'],
     },
@@ -121,7 +121,7 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
         },
         target_id: {
           description: 'For mode "update": the installed Motif to republish over. Omit to use the target the draft recorded (`write_motif_draft { from }`).',
-          type: ['string', 'null'],
+          type: 'string',
         },
       },
       required: ['draft_id', 'mode'],

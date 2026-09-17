@@ -18,10 +18,7 @@
           },
           "format": {
             "description": "'srt', 'ass', or 'vtt'. Sniffed from body when omitted.",
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           }
         },
         "required": [
@@ -37,10 +34,7 @@
         "properties": {
           "bridge_us": {
             "description": "A loud run shorter than this (µs) inside a quiet run does not end the\npause. Default 80000 (80ms). Must be ≥ 0 and below `min_pause_us`.",
-            "type": [
-              "integer",
-              "null"
-            ]
+            "type": "integer"
           },
           "layer_id": {
             "description": "Target Audio layer id. A VideoClip id is accepted by the host, which\nresolves it to the Audio layer of its link before the call.",
@@ -48,17 +42,11 @@
           },
           "min_pause_us": {
             "description": "Shortest pause to surface, in microseconds. Default 500000 (0.5s).",
-            "type": [
-              "integer",
-              "null"
-            ]
+            "type": "integer"
           },
           "threshold_amp": {
             "description": "Peak amplitude threshold in [0.0, 1.0]. Anything strictly below this\ncounts as quiet. Default 0.02 (≈ -34 dBFS).",
-            "type": [
-              "number",
-              "null"
-            ]
+            "type": "number"
           }
         },
         "required": [
@@ -78,27 +66,18 @@
           },
           "min_shot_us": {
             "description": "Minimum shot duration (microseconds); cuts closer than this are merged.\nDefault 500000 (0.5 seconds).",
-            "type": [
-              "integer",
-              "null"
-            ]
+            "type": "integer"
           },
           "passes": {
             "description": "Which passes to run — a subset of `[\"shots\", \"stats\", \"events\"]`.\nDefault all. Drop `\"stats\"` / `\"events\"` to skip per-shot frame sampling\nand return timing only.",
             "items": {
               "type": "string"
             },
-            "type": [
-              "array",
-              "null"
-            ]
+            "type": "array"
           },
           "sensitivity": {
             "description": "Cut sensitivity in [0.0, 1.0]: a frame whose shot-change score exceeds\nthis starts a new shot. Lower = more (finer) cuts. Default 0.4.",
-            "type": [
-              "number",
-              "null"
-            ]
+            "type": "number"
           }
         },
         "required": [
@@ -183,17 +162,11 @@
           },
           "t_end_us": {
             "description": "Exclusive window end in the owning composition's absolute microseconds.\nDefaults to the layer end. Maximum window duration: 60000000 us (60 s).",
-            "type": [
-              "integer",
-              "null"
-            ]
+            "type": "integer"
           },
           "t_start_us": {
             "description": "Window start in the owning composition's absolute microseconds.\nDefaults to the layer start. Must lie inside the layer.",
-            "type": [
-              "integer",
-              "null"
-            ]
+            "type": "integer"
           }
         },
         "required": [
@@ -209,17 +182,11 @@
         "properties": {
           "backend": {
             "description": "Strict engine override: `\"openai\"` | `\"whisper_cpp\"` | `\"funasr\"`.\nThat engine serves or the call errors; nothing is substituted. Omitted:\nthe user's preferred engine, then availability.",
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
           "language": {
             "description": "Optional ISO-639-1 language hint (`\"en\"`, `\"zh\"`). Auto-detect when omitted.",
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
           "layer_id": {
             "description": "Target VideoClip or Audio layer id.",
@@ -227,24 +194,15 @@
           },
           "t_end_us": {
             "description": "Optional transcription window end in timeline microseconds.\nDefaults to the layer's `t_end_us`. Must lie within the layer.",
-            "type": [
-              "integer",
-              "null"
-            ]
+            "type": "integer"
           },
           "t_start_us": {
             "description": "Optional transcription window start in timeline microseconds.\nDefaults to the layer's `t_start_us`. Must lie within the layer.",
-            "type": [
-              "integer",
-              "null"
-            ]
+            "type": "integer"
           },
           "word_timestamps": {
             "description": "Ask for exact per-word times where the engine can emit them. Default\ntrue; `false` forces SRT-style interpolated words. The result's\n`word_timing` reports what you got.",
-            "type": [
-              "boolean",
-              "null"
-            ]
+            "type": "boolean"
           }
         },
         "required": [
@@ -260,24 +218,15 @@
         "properties": {
           "speed": {
             "description": "0.25..4.0 for tts-1. Omit to use the provider default (~1.0).",
-            "type": [
-              "number",
-              "null"
-            ]
+            "type": "number"
           },
           "t_start_us": {
             "description": "Optional timeline start in microseconds. Defaults to the composition's\ncurrent `duration_us` so the voiceover appends at the end.",
-            "type": [
-              "integer",
-              "null"
-            ]
+            "type": "integer"
           },
           "target_track_id": {
             "description": "Optional Audio track id. If omitted, lands on the first existing Audio\ntrack or auto-creates one labeled \"Voiceover\".",
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
           "text": {
             "description": "Text to synthesize. tts-1 caps at 4096 characters.",
@@ -302,31 +251,19 @@
         "properties": {
           "backend": {
             "description": "Strict engine override: `\"qwen3_vl\"` | `\"minicpm_v\"` | `\"byo_endpoint\"`.\nThat engine serves or the call errors; nothing is substituted. Omitted:\nthe user's preferred engine, then availability.",
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
           "focus": {
             "description": "`\"general\"` or `\"shot-type\"` (biases `tags` toward shot type / camera).\nDefault: the app's setting, else `\"general\"`. Cache key.",
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
           "fps": {
             "description": "Frames sampled per second (higher = finer, costlier; capped to the\nmodel's context). Default: the app's setting, else 1.0. Cache key.",
-            "type": [
-              "number",
-              "null"
-            ]
+            "type": "number"
           },
           "language": {
             "description": "BCP-47 tag the `text` and `tags` come back in (`\"en-US\"`, `\"zh-CN\"`,\n`\"ja\"`). Default: the app's UI language. Cache key.",
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
           "layer_id": {
             "description": "Target VideoClip layer id.",
@@ -334,17 +271,11 @@
           },
           "t_end_us": {
             "description": "Optional window end in timeline microseconds. Defaults to the layer's\n`t_end_us`. Must lie within the layer.",
-            "type": [
-              "integer",
-              "null"
-            ]
+            "type": "integer"
           },
           "t_start_us": {
             "description": "Optional window start in timeline microseconds. Defaults to the layer's\n`t_start_us`. Must lie within the layer.",
-            "type": [
-              "integer",
-              "null"
-            ]
+            "type": "integer"
           }
         },
         "required": [

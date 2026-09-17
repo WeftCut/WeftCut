@@ -10,6 +10,7 @@
 // See `.scratch/pauses/spec.md` Decision 1.
 import type { Composition, Layer, Project } from './model'
 import { eachLayer } from './model'
+import { McpArgError } from './mcp-commands'
 
 /** The subject and where its times live, or why there is none.
  *
@@ -75,8 +76,12 @@ export function playsNoSoundError(
   snapshot: Pick<Project, 'compositions'>,
 ): Error {
   const kind = findLayerEntry(layerId, snapshot)?.layer.params.kind ?? 'layer'
-  return new Error(
+  // An McpArgError, not a bare Error: the caller named the wrong layer, and
+  // over MCP that is `invalid_params` (`thrownToToolError`), not a fault of
+  // the host. The renderer's IPC path reads the message alone either way.
+  return new McpArgError(
     `${verb}: layer ${layerId} plays no sound — it is a ${kind} with no linked Audio layer; select the audio clip`,
+    'layer_id',
   )
 }
 

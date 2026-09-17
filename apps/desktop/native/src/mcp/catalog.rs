@@ -24,7 +24,55 @@ fn tool_schema<T: schemars::JsonSchema>() -> serde_json::Value {
         .with_transform(TrimAdvertised)
         .into_generator()
         .into_root_schema_for::<T>();
-    serde_json::to_value(schema).expect("schema serializes")
+    let mut value = serde_json::to_value(schema).expect("schema serializes");
+    drop_optional_null_arms(&mut value);
+    value
+}
+
+/// `Option<T>` comes out of schemars as `["T", "null"]`. On a property that is
+/// not `required`, omitting it already means "none", so the `null` arm is a
+/// second spelling of the same thing — a hundred of them across the catalog
+/// read as "this field takes null" (audit S2). Drop it; a field where `null`
+/// means something of its own is required, and keeps it. The TS-side argument
+/// check treats an explicit `null` on an optional field as omitted, so a
+/// client that still sends one is answered as before.
+fn drop_optional_null_arms(v: &mut serde_json::Value) {
+    let Some(obj) = v.as_object_mut() else { return };
+    let required: Vec<String> = obj
+        .get("required")
+        .and_then(serde_json::Value::as_array)
+        .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    if let Some(props) = obj.get_mut("properties").and_then(serde_json::Value::as_object_mut) {
+        for (name, prop) in props.iter_mut() {
+            if !required.iter().any(|r| r == name) {
+                if let Some(p) = prop.as_object_mut() {
+                    for key in ["type", "enum"] {
+                        let Some(arr) = p.get(key).and_then(serde_json::Value::as_array).cloned() else { continue };
+                        let kept: Vec<serde_json::Value> = arr
+                            .into_iter()
+                            .filter(|t| !(t.is_null() || t.as_str() == Some("null")))
+                            .collect();
+                        let collapsed = if key == "type" && kept.len() == 1 { kept[0].clone() } else { serde_json::Value::Array(kept) };
+                        p.insert(key.to_string(), collapsed);
+                    }
+                }
+            }
+            drop_optional_null_arms(prop);
+        }
+    }
+    for key in ["items", "additionalProperties"] {
+        if let Some(sub) = obj.get_mut(key) {
+            drop_optional_null_arms(sub);
+        }
+    }
+    for key in ["oneOf", "anyOf", "allOf"] {
+        if let Some(arr) = obj.get_mut(key).and_then(serde_json::Value::as_array_mut) {
+            for sub in arr {
+                drop_optional_null_arms(sub);
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
