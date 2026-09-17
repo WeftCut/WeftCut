@@ -52,7 +52,7 @@ describe('restore_checkpoint LogBus parity — MCP path', () => {
     // Create a checkpoint via the host MCP boundary.
     const made = host.mcpCall('create_checkpoint', JSON.stringify({ label: 'cp1' }))
     expect(made.ok).toBe(true)
-    const cpId = (made as { ok: true; result: { content: Array<{ text: string }> } }).result.content[0].text
+    const cpId = (made as { ok: true; result: { structuredContent?: { checkpoint_id?: unknown } } }).result.structuredContent!.checkpoint_id as string
 
     // Clear setup emits so the assertion only covers the restore call.
     emitLog.mockClear()
@@ -76,7 +76,7 @@ describe('restore_checkpoint LogBus parity — MCP path', () => {
 
     const result = host.mcpCall('create_checkpoint', JSON.stringify({ label: 'cp1' }))
     expect(result.ok).toBe(true)
-    const cpId = (result as { ok: true; result: { content: Array<{ text: string }> } }).result.content[0].text
+    const cpId = (result as { ok: true; result: { structuredContent?: { checkpoint_id?: unknown } } }).result.structuredContent!.checkpoint_id as string
 
     expect(emitLog).toHaveBeenCalledWith(expect.objectContaining({
       level: 'info',
@@ -95,9 +95,7 @@ describe('restore_checkpoint LogBus parity — MCP path', () => {
 
     const result = host.mcpCall('begin_agent_session', JSON.stringify({ reason: 'batch edit' }))
     expect(result.ok).toBe(true)
-    const payload = JSON.parse(
-      (result as { ok: true; result: { content: Array<{ text: string }> } }).result.content[0].text,
-    ) as { checkpoint_id: string }
+    const payload = (result as { ok: true; result: { structuredContent?: unknown } }).result.structuredContent as { checkpoint_id: string }
     const cpId = payload.checkpoint_id
     const expectedLabel = 'Pre-agent: batch edit'
 

@@ -26,7 +26,15 @@ function addColorLayerMcp(actor: ReturnType<typeof freshActor>, trackId: string,
   }))
   expect(r.ok, 'setup add_color_layer must succeed').toBe(true)
   if (!r.ok) throw new Error('setup failed')
-  return r.result.content[0].text
+  return idOf(r.result.content[0].text, 'layer_id')
+}
+
+/** Every mutator answers with the committed record (mcp-results.ts); the id a
+ *  later call needs is one field of it. */
+function idOf(text: string, key: string): string {
+  const v = (JSON.parse(text) as Record<string, unknown>)[key]
+  expect(typeof v, `${key} in ${text}`).toBe('string')
+  return v as string
 }
 
 const SHORT_STILL_ID = '00000000-0000-7000-8000-000000000101'
@@ -52,7 +60,7 @@ describe('MCP adapter routing — add_color_layer (dedicated)', () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     // result is a text block containing the new layer UUID
-    const layerId = r.result.content[0].text
+    const layerId = idOf(r.result.content[0].text, 'layer_id')
     expect(typeof layerId).toBe('string')
     expect(layerId.length).toBeGreaterThan(0)
     // state mutation: one layer exists on the A-roll track
@@ -108,7 +116,7 @@ describe('MCP adapter routing — add_video_layer Image media (dedicated)', () =
     }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    const layerId = r.result.content[0].text
+    const layerId = idOf(r.result.content[0].text, 'layer_id')
     const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(track.layers).toHaveLength(1)
     expect(track.layers[0].id).toBe(layerId)
@@ -150,7 +158,7 @@ describe('MCP adapter routing — add_marker (dedicated)', () => {
     }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    const markerId = r.result.content[0].text
+    const markerId = idOf(r.result.content[0].text, 'marker_id')
     expect(typeof markerId).toBe('string')
     const markers = root(a.snapshot()).markers
     expect(markers).toHaveLength(1)
@@ -230,7 +238,7 @@ describe('MCP adapter routing — add_track (table)', () => {
     const r = a.mcpCall('add_track', JSON.stringify({ label: 'VFX' }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    const trackId = r.result.content[0].text
+    const trackId = idOf(r.result.content[0].text, 'track_id')
     expect(typeof trackId).toBe('string')
     const after = root(a.snapshot()).tracks
     expect(after.length).toBe(before + 1)
@@ -366,7 +374,7 @@ describe('MCP adapter routing — create_link (table)', () => {
     const r = a.mcpCall('create_link', JSON.stringify({ layer_ids: [id1, id2] }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    const linkId = r.result.content[0].text
+    const linkId = idOf(r.result.content[0].text, 'link_id')
     expect(typeof linkId).toBe('string')
     const links = root(a.snapshot()).links
     expect(links.some((g) => g.id === linkId && g.members.includes(id1) && g.members.includes(id2))).toBe(true)

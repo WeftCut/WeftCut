@@ -38,6 +38,13 @@ function text(r: ReturnType<Actor['mcpCall']>): string {
   return r.result.content[0].text
 }
 function json<T>(r: ReturnType<Actor['mcpCall']>): T { return JSON.parse(text(r)) as T }
+/** One id out of a mutator's record — every write answers with the committed
+ *  record, so the id is a field of it, not the whole text. */
+function id(r: ReturnType<Actor['mcpCall']>, key: string): string {
+  const v = json<Record<string, unknown>>(r)[key]
+  expect(typeof v, `${key} in ${text(r)}`).toBe('string')
+  return v as string
+}
 function refusal(r: ReturnType<Actor['mcpCall']>): { code: string; message: string } {
   expect(r.ok).toBe(false)
   if (r.ok) throw new Error('expected a refusal')
@@ -47,14 +54,14 @@ function aRoll(a: Actor): string { return root(a.snapshot()).tracks[0].id }
 function bRoll(a: Actor): string { return root(a.snapshot()).tracks[1].id }
 function threeClips(a: Actor): string[] {
   const track = aRoll(a)
-  return [0, 1, 2].map((i) => text(call(a, 'add_color_layer', {
+  return [0, 1, 2].map((i) => id(call(a, 'add_color_layer', {
     track_id: track, t_start_us: i * 1_000_000, t_end_us: (i + 1) * 1_000_000, color: { r: 1, g: 2, b: 3, a: 255 },
-  })))
+  }), 'layer_id'))
 }
 
 interface Key { id: string; t_us: number; in: { x: number; y: number; mode: string }; out: { x: number; y: number; mode: string }; continuity: string; segment: { kind: string }; preset_id?: string }
 function keyedText(a: Actor): { layerId: string; keys: Key[] } {
-  const layerId = text(call(a, 'add_text_layer', { track_id: bRoll(a), t_start_us: 0, t_end_us: 4_000_000, content: 'k' }))
+  const layerId = id(call(a, 'add_text_layer', { track_id: bRoll(a), t_start_us: 0, t_end_us: 4_000_000, content: 'k' }), 'layer_id')
   for (const [t, v] of [[0, 0], [2_000_000, 1]] as const)
     expect(call(a, 'set_keyframe', { layer_id: layerId, param_key: 'opacity', t_us: t, value: v }).ok).toBe(true)
   return { layerId, keys: readKeys(a, layerId) }
@@ -112,7 +119,7 @@ describe('update_keyframe', () => {
 describe('update_link', () => {
   function linked(a: Actor) {
     const [c1, c2, c3] = threeClips(a)
-    const linkId = text(call(a, 'create_link', { layer_ids: [c1, c2] }))
+    const linkId = id(call(a, 'create_link', { layer_ids: [c1, c2] }), 'link_id')
     return { c1, c2, c3, linkId }
   }
   function link(a: Actor, id: string) { return root(a.snapshot()).links.find((g) => g.id === id) }
@@ -210,7 +217,7 @@ describe('set_position path nodes', () => {
   const node = (id: string, x: number) => ({ id, point: { x, y: 0 }, in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: 'Line', tangent_mode: 'Corner' })
   it('takes snake_case nodes and reads them back the same way', () => {
     const a = actorWithPool()
-    const layerId = text(call(a, 'add_text_layer', { track_id: bRoll(a), t_start_us: 0, t_end_us: 4_000_000, content: 'p' }))
+    const layerId = id(call(a, 'add_text_layer', { track_id: bRoll(a), t_start_us: 0, t_end_us: 4_000_000, content: 'p' }), 'layer_id')
     const position = { mode: 'Path', path: { nodes: [node('a', 0), node('b', 100)] }, progress: { mode: 'Static', value: 0 } }
     expect(call(a, 'set_position', { layer_id: layerId, position }).ok).toBe(true)
     const back = text(call(a, 'read_project', { view: 'layer', id: layerId }))
@@ -219,7 +226,7 @@ describe('set_position path nodes', () => {
   })
   it('refuses the old camelCase spelling', () => {
     const a = actorWithPool()
-    const layerId = text(call(a, 'add_text_layer', { track_id: bRoll(a), t_start_us: 0, t_end_us: 4_000_000, content: 'p' }))
+    const layerId = id(call(a, 'add_text_layer', { track_id: bRoll(a), t_start_us: 0, t_end_us: 4_000_000, content: 'p' }), 'layer_id')
     const old = { id: 'a', point: { x: 0, y: 0 }, inHandle: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 }, segment: 'Line', tangentMode: 'Corner' }
     const e = refusal(call(a, 'set_position', { layer_id: layerId, position: { mode: 'Path', path: { nodes: [old, node('b', 100)] }, progress: { mode: 'Static', value: 0 } } }))
     expect(e.message).toMatch(/tangent_mode/)

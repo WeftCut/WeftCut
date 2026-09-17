@@ -25,6 +25,7 @@ import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
 import { MCP_TOOL_DEFS, MCP_TOOLS, McpArgError, mcpDef, type McpErrorCode } from '../state/mcp-commands.js'
 import { toolErrorResult, thrownToToolError, UnknownToolError } from './toolResult.js'
 import { argProblemMessage } from './argCheck.js'
+import { shapeHybridResult } from './hybridResult.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
 import { withCanonicalToolName } from './toolAliases.js'
@@ -290,16 +291,18 @@ async function dispatchTool(
     if (route === 'hybrid') {
       const refused = await refuseBadArgs(backend, name, args)
       if (refused) return refused
-      // Native-compute → TS-write. import_media returns the new media
-      // id; shape it as the Rust tool does (ToolResult::text(id) → text content).
+      // Native-compute → TS-write. `runHybrid` answers a string (the renderer's
+      // IPC contract); the agent gets the committed record read back from the
+      // snapshots around the call (`hybridResult.ts`).
+      const before = tsHost.actor.snapshot()
       const result = await runHybrid(name, args, tsHost.hybridDeps)
-      return { content: [{ type: 'text', text: String(result) }] } as unknown as ServerResult
+      return shapeHybridResult(name, args, result, before, tsHost.actor.snapshot()) as unknown as ServerResult
     }
     if (route === 'motif') {
       // Catalog-read + authoring + install, served in TS. The raw value
       // is shaped to the Rust-faithful ToolResult (list_motifs strips html, etc.).
       const raw = tsHost.motifTool(name, args)
-      return shapeMotifMcpResult(name, raw) as unknown as ServerResult
+      return shapeMotifMcpResult(name, raw, args) as unknown as ServerResult
     }
     // Clip compute routes to 'rust', but the Rust core holds no state — the
     // slice is resolved here from the actor and forwarded.

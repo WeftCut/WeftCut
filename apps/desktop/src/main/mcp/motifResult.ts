@@ -3,14 +3,15 @@
 // TS owns this contract; the result shape per tool is:
 //   list_motifs            → json(payload with `html` removed)
 //   get_motif_source       → json({manifest, html})
-//   write_motif_draft      → text(id)
-//   install_motif          → text(published_id)
-//   delete_motif           → empty
+//   write_motif_draft      → record({ draft_id })
+//   install_motif          → record({ motif_id })
+//   delete_motif           → record({ motif_id })
 //   motif_staleness_report → json(array)
 //   acknowledge_motif_staleness → text(count)
-import { toolJson, toolText, toolEmpty, type ToolResultJson } from '../state/mcp-commands.js'
+import { toolJson, toolText, type ToolResultJson } from '../state/mcp-commands.js'
+import { toolRecord } from '../state/mcp-results.js'
 
-export function shapeMotifMcpResult(name: string, raw: unknown): ToolResultJson {
+export function shapeMotifMcpResult(name: string, raw: unknown, args: Record<string, unknown> = {}): ToolResultJson {
   switch (name) {
     case 'list_motifs': {
       const stripped = (raw as Array<Record<string, unknown>>).map((e) => {
@@ -22,10 +23,11 @@ export function shapeMotifMcpResult(name: string, raw: unknown): ToolResultJson 
     case 'get_motif_source':
       return toolJson(raw)
     case 'write_motif_draft':
+      return toolRecord({ draft_id: raw as string })
     case 'install_motif':
-      return toolText(raw as string)
+      return toolRecord({ motif_id: raw as string })
     case 'delete_motif':
-      return toolEmpty()
+      return toolRecord({ motif_id: String(args.id ?? '') })
     case 'motif_staleness_report':
       return toolJson(raw)
     case 'acknowledge_motif_staleness':

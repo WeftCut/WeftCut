@@ -37,7 +37,7 @@ describe('a retired tool name, over the wire', () => {
     const out = await client.callTool({ name: 'checkpoint', arguments: { label: 'cp1' } })
     const content = out.content as Array<{ type: string; text: string }>
     expect(content[0].type).toBe('text')
-    expect(content[0].text).toMatch(/^[0-9a-f-]{36}$/) // the new checkpoint's id
+    expect((JSON.parse(content[0].text) as { checkpoint_id: string }).checkpoint_id).toMatch(/^[0-9a-f-]{36}$/) // the new checkpoint's id
   })
 
   it('is absent from the catalog the same client reads', async () => {

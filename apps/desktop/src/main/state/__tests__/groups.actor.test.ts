@@ -165,22 +165,25 @@ describe('groups — actor dispatch', () => {
 })
 
 describe('groups — MCP tools', () => {
-  it('create_group returns one JSON object { composition_id, layer_id }; the other three return empty results', () => {
+  it('create_group returns { composition_id, layer_id, layer }; the other three return their committed records', () => {
     const { actor, v, w } = pairActor()
     const r = actor.mcpCall('create_group', JSON.stringify({ layer_ids: [v, w], label: 'Intro' }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    const value = JSON.parse(r.result.content[0].text) as { composition_id: Uuid; layer_id: Uuid }
-    expect(Object.keys(value)).toEqual(['composition_id', 'layer_id']) // sorted keys, exactly these
+    const value = JSON.parse(r.result.content[0].text) as { composition_id: Uuid; layer_id: Uuid; layer: { kind: string } }
+    expect(Object.keys(value)).toEqual(['composition_id', 'layer', 'layer_id']) // sorted keys, exactly these
+    expect(value.layer.kind).toBe('CompositionRef')
     expect(actor.snapshot().compositions[value.composition_id]).toBeDefined()
 
-    expect(actor.mcpCall('rename_composition', JSON.stringify({ composition_id: value.composition_id, label: null }))).toEqual({ ok: true, result: { content: [] } })
+    const renamed = actor.mcpCall('rename_composition', JSON.stringify({ composition_id: value.composition_id, label: null }))
+    expect(renamed.ok && renamed.result.structuredContent).toEqual({ composition_id: value.composition_id, label: null })
     expect(actor.snapshot().compositions[value.composition_id].label).toBeNull()
-    expect(actor.mcpCall('ungroup_layer', JSON.stringify({ layer_id: value.layer_id }))).toEqual({ ok: true, result: { content: [] } })
+    const ungrouped = actor.mcpCall('ungroup_layer', JSON.stringify({ layer_id: value.layer_id }))
+    expect(ungrouped.ok && (ungrouped.result.structuredContent as { layers: unknown[] }).layers).toHaveLength(2)
     expect(groupsIn(actor)).toEqual([])
   })
 
-  it('add_group_members moves the set and returns an empty result; a member that cannot land says where it would have to start', () => {
+  it('add_group_members moves the set and returns the moved records; a member that cannot land says where it would have to start', () => {
     const { actor, v, w } = pairActor()
     const made = actor.mcpCall('create_group', JSON.stringify({ layer_ids: [v, w] }))
     if (!made.ok) throw new Error('fixture')
@@ -188,8 +191,9 @@ describe('groups — MCP tools', () => {
     const aRoll = root(actor.snapshot()).tracks[0].id // emptied by the pre-compose
     const z = actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 6 * S, t_end_us: 7 * S })
     if (!z.ok) throw new Error('fixture')
-    expect(actor.mcpCall('add_group_members', JSON.stringify({ layer_ids: [z.value], group_layer_id: layer_id })))
-      .toEqual({ ok: true, result: { content: [] } })
+    const moved = actor.mcpCall('add_group_members', JSON.stringify({ layer_ids: [z.value], group_layer_id: layer_id }))
+    expect(moved.ok && (moved.result.structuredContent as { layers: Array<{ layer_id: string; composition_id: string }> }).layers)
+      .toEqual([expect.objectContaining({ layer_id: z.value, composition_id })])
     expect(actor.snapshot().compositions[composition_id].tracks.flatMap((t) => t.layers).map((l) => l.id)).toContain(z.value)
 
     const early = actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 0, t_end_us: S })

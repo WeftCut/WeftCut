@@ -38,8 +38,13 @@ function text(r: ReturnType<Actor['mcpCall']>): string {
   if (!r.ok) throw new Error('call failed')
   return r.result.content[0].text
 }
-function json<T>(r: ReturnType<Actor['mcpCall']>): T {
-  return JSON.parse(text(r)) as T
+function json<T>(r: ReturnType<Actor['mcpCall']>): T { return JSON.parse(text(r)) as T }
+/** One id out of a mutator's record — every write answers with the committed
+ *  record, so the id is a field of it, not the whole text. */
+function id(r: ReturnType<Actor['mcpCall']>, key: string): string {
+  const v = json<Record<string, unknown>>(r)[key]
+  expect(typeof v, `${key} in ${text(r)}`).toBe('string')
+  return v as string
 }
 function errorOf(r: ReturnType<Actor['mcpCall']>): string {
   expect(r.ok).toBe(false)
@@ -53,10 +58,10 @@ function layerCount(a: Actor): number {
 /** Three colour clips end to end on the A roll, ids in timeline order. */
 function threeClips(a: Actor): string[] {
   const track = aRoll(a)
-  return [0, 1, 2].map((i) => text(call(a, 'add_color_layer', {
+  return [0, 1, 2].map((i) => id(call(a, 'add_color_layer', {
     track_id: track, t_start_us: i * 1_000_000, t_end_us: (i + 1) * 1_000_000,
     color: { r: 1, g: 2, b: 3, a: 255 },
-  })))
+  }), 'layer_id'))
 }
 
 describe('delete_layers', () => {
@@ -72,7 +77,7 @@ describe('delete_layers', () => {
   it('refuses the whole batch when a member sits on a locked track, deleting no part of it', () => {
     const a = actorWithPool()
     const [first, second] = threeClips(a)
-    const onB = text(call(a, 'add_color_layer', { track_id: bRoll(a), t_start_us: 0, t_end_us: 1_000_000, color: { r: 9, g: 9, b: 9, a: 255 } }))
+    const onB = id(call(a, 'add_color_layer', { track_id: bRoll(a), t_start_us: 0, t_end_us: 1_000_000, color: { r: 9, g: 9, b: 9, a: 255 } }), 'layer_id')
     expect(call(a, 'set_track_flags', { track_id: bRoll(a), locked: true }).ok).toBe(true)
     expect(call(a, 'delete_layers', { layer_ids: [first, second, onB] }).ok).toBe(false)
     expect(layerCount(a)).toBe(4)
@@ -111,7 +116,7 @@ describe('separate_audio_to_new_track', () => {
     const a = actorWithPool()
     const { audio } = pairedClip(a)
     const before = tracks(a).length
-    const newTrack = text(call(a, 'separate_audio_to_new_track', { layer_id: audio }))
+    const newTrack = id(call(a, 'separate_audio_to_new_track', { layer_id: audio }), 'track_id')
     expect(tracks(a).length).toBe(before + 1)
     const lane = tracks(a).find((t) => t.id === newTrack)
     expect(lane?.layers.map((l) => l.id)).toEqual([audio])
@@ -122,7 +127,7 @@ describe('separate_audio_to_new_track', () => {
   it('keeps the A/V link alive — the lift is a lane change, not an unlink', () => {
     const a = actorWithPool()
     const { video, audio } = pairedClip(a)
-    text(call(a, 'separate_audio_to_new_track', { layer_id: audio }))
+    id(call(a, 'separate_audio_to_new_track', { layer_id: audio }), 'track_id')
     const links = root(a.snapshot()).links
     expect(links.length).toBe(1)
     expect([...links[0].members].sort()).toEqual([video, audio].sort())
@@ -152,8 +157,9 @@ describe('set_project_settings', () => {
       media_id: VIDEO_WITH_SOUND, src_in_us: 0, src_out_us: 4_000_000,
       t_start_us: 0, t_end_us: 4_000_000, track_id: bRoll(a),
     })
-    // Now a bare layer id, and exactly one more layer on the timeline.
-    expect(text(solo)).not.toContain('audio_layer_id')
+    // One shape whether paired or not: the triple is present with nulls, and
+    // exactly one more layer is on the timeline.
+    expect(json<{ audio_layer_id: string | null; link_id: string | null; audio: unknown }>(solo)).toMatchObject({ audio_layer_id: null, link_id: null, audio: null })
     expect(layerCount(a)).toBe(3)
   })
 
@@ -225,7 +231,7 @@ describe('captions with word timing', () => {
 
   it('apply_transcripts lands one caption per segment and keeps the word offsets', () => {
     const a = actorWithPool()
-    const trackId = text(call(a, 'apply_transcripts', { transcripts: [TRANSCRIPT] }))
+    const trackId = id(call(a, 'apply_transcripts', { transcripts: [TRANSCRIPT] }), 'caption_track_id')
     expect(tracks(a).find((t) => t.id === trackId)?.role).toBe('Caption')
     const cues = captionLayers(a)
     expect(cues.map((l) => (l.params as { content: string }).content)).toEqual(['hello there', 'second cue'])
@@ -236,7 +242,7 @@ describe('captions with word timing', () => {
 
   it('correct_caption_text refuses while the reference text is blank, and corrects once it is set', () => {
     const a = actorWithPool()
-    text(call(a, 'apply_transcripts', { transcripts: [TRANSCRIPT] }))
+    id(call(a, 'apply_transcripts', { transcripts: [TRANSCRIPT] }), 'caption_track_id')
     expect(errorOf(call(a, 'correct_caption_text', {}))).toContain('correction_script')
 
     expect(call(a, 'set_project_settings', { patch: { correction_script: 'Hello there. Second cue.' } }).ok).toBe(true)
@@ -247,8 +253,8 @@ describe('captions with word timing', () => {
 
   it('restyle_captions patches every caption and leaves a non-caption Text layer alone', () => {
     const a = actorWithPool()
-    text(call(a, 'apply_transcripts', { transcripts: [TRANSCRIPT] }))
-    const title = text(call(a, 'add_text_layer', { track_id: aRoll(a), t_start_us: 0, t_end_us: 1_000_000, content: 'Title' }))
+    id(call(a, 'apply_transcripts', { transcripts: [TRANSCRIPT] }), 'caption_track_id')
+    const title = id(call(a, 'add_text_layer', { track_id: aRoll(a), t_start_us: 0, t_end_us: 1_000_000, content: 'Title' }), 'layer_id')
 
     expect(call(a, 'restyle_captions', { font_size_px: 40, outline_width: 3 }).ok).toBe(true)
     for (const cue of captionLayers(a)) {
@@ -262,7 +268,7 @@ describe('captions with word timing', () => {
 
   it('restyle_captions with outline_width 0 removes the outline', () => {
     const a = actorWithPool()
-    text(call(a, 'apply_transcripts', { transcripts: [TRANSCRIPT] }))
+    id(call(a, 'apply_transcripts', { transcripts: [TRANSCRIPT] }), 'caption_track_id')
     expect(call(a, 'restyle_captions', { outline_width: 2 }).ok).toBe(true)
     expect(call(a, 'restyle_captions', { outline_width: 0 }).ok).toBe(true)
     for (const cue of captionLayers(a)) expect((cue.params as { outline: unknown }).outline).toBe(null)
@@ -303,9 +309,9 @@ describe('delete_checkpoint', () => {
   it('drops the restore point and leaves the edits it marked in place', () => {
     const a = actorWithPool()
     threeClips(a)
-    const id = text(call(a, 'create_checkpoint', { label: 'after three' }))
+    const cpId = id(call(a, 'create_checkpoint', { label: 'after three' }), 'checkpoint_id')
     expect(json<unknown[]>(call(a, 'list_checkpoints')).length).toBe(1)
-    expect(call(a, 'delete_checkpoint', { checkpoint_id: id }).ok).toBe(true)
+    expect(call(a, 'delete_checkpoint', { checkpoint_id: cpId }).ok).toBe(true)
     expect(json<unknown[]>(call(a, 'list_checkpoints'))).toEqual([])
     expect(layerCount(a)).toBe(3)
   })
@@ -318,10 +324,10 @@ describe('delete_checkpoint', () => {
   it('is NOT blocked by set_history_lock — forgetting a restore point reverts nothing', () => {
     const a = actorWithPool()
     threeClips(a)
-    const id = text(call(a, 'create_checkpoint', { label: 'pinned' }))
+    const cpId = id(call(a, 'create_checkpoint', { label: 'pinned' }), 'checkpoint_id')
     expect(call(a, 'set_history_lock', { locked: true, reason: 'mid-batch' }).ok).toBe(true)
-    expect(call(a, 'restore_checkpoint', { checkpoint_id: id }).ok).toBe(false)
-    expect(call(a, 'delete_checkpoint', { checkpoint_id: id }).ok).toBe(true)
+    expect(call(a, 'restore_checkpoint', { checkpoint_id: cpId }).ok).toBe(false)
+    expect(call(a, 'delete_checkpoint', { checkpoint_id: cpId }).ok).toBe(true)
   })
 })
 

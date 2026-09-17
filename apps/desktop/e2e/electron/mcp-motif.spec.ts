@@ -36,12 +36,12 @@ test('MCP motif tools are advertised and callable', async () => {
   const countdown = catalog.find((m: { id: string }) => m.id === 'countdown')
   expect(countdown).toBeDefined()
 
-  // add_motif_layer places a layer and returns a layer id
+  // add_motif_layer places a layer and returns its record
   const addResult = await client.callTool({
     name: 'add_motif_layer',
     arguments: { motif_id: 'countdown', t_start_us: 0 },
   })
-  const layerId = (addResult.content[0] as { type: string; text: string }).text.trim()
+  const layerId = (JSON.parse((addResult.content[0] as { type: string; text: string }).text) as { layer_id: string }).layer_id
   expect(layerId).toMatch(/^[0-9a-f-]{36}$/)
 
   // preview_motif_draft returns image content (JS-side capture)

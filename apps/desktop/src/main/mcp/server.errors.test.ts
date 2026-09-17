@@ -153,7 +153,7 @@ describe('handleCallTool — every route answers a refusal as an isError result'
     const ts = tsHostStub()
     const out = await handleCallTool(fakeBackend(), () => ts, 'add_track', { label: 'x' })
     expect(isToolError(out)).toBe(false)
-    expect((out as { content: Array<{ text: string }> }).content[0].text).toMatch(/^[0-9a-f-]{36}$/)
+    expect((out as { structuredContent: { track_id: string } }).structuredContent.track_id).toMatch(/^[0-9a-f-]{36}$/)
   })
 })
 

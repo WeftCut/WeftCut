@@ -18,7 +18,7 @@ describe('project_restore_checkpoint wiring', () => {
     // create a checkpoint via the gated MCP path, capture its id
     const made = actor.mcpCall('create_checkpoint', JSON.stringify({ label: 'cp1' }))
     expect(made.ok).toBe(true)
-    const cpId = (made as { ok: true; result: { content: Array<{ text: string }> } }).result.content[0].text
+    const cpId = (made as { ok: true; result: { structuredContent?: { checkpoint_id?: unknown } } }).result.structuredContent!.checkpoint_id as string
     // mutate so state diverges from the checkpoint
     actor.command('add_track', { })
     const before = root(actor.snapshot()).tracks.length

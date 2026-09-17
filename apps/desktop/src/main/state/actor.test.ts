@@ -2377,7 +2377,7 @@ describe('dispatch: add_group_layer', () => {
     }))
     expect(viaMcp.ok).toBe(true)
     if (!viaMcp.ok) return
-    const layerId = viaMcp.result.content[0]!.text
+    const layerId = (JSON.parse(viaMcp.result.content[0]!.text) as { layer_id: string }).layer_id
     expect(placedIn(actor, rootTrackId).map((l) => l.id)).toEqual([viaChannel.ok ? viaChannel.value : null, layerId])
     // Both instances point at the one composition.
     for (const l of placedIn(actor, rootTrackId)) {

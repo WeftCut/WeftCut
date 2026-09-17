@@ -13,7 +13,7 @@ import { EASING_PRESETS, ELASTIC_DEFAULT_AMPLITUDE, ELASTIC_DEFAULT_PERIOD, clon
 
 export type McpErrorCode = 'invalid_params' | 'invalid_request' | 'not_found' | 'internal'
 export type McpToolErrorJson = { code: McpErrorCode; message: string; data?: unknown }
-export type ToolResultJson = { content: Array<{ type: 'text'; text: string }> } // isError omitted when false
+export type ToolResultJson = { content: Array<{ type: 'text'; text: string }>; structuredContent?: Record<string, unknown> } // isError omitted when false
 export type McpCallResult = { ok: true; result: ToolResultJson } | { ok: false; error: McpToolErrorJson }
 
 /** Thrown by arg parsers on bad input (e.g. malformed UUID) → invalid_params. */
@@ -746,16 +746,16 @@ export function keyframePresent(track: { mode: string; value: unknown }, id: str
     && (track as { value: Array<{ id: string }> }).value.some((k) => k.id === id)
 }
 
-/** Single-source record per MCP tool. Table-exec tools carry parseArgs (+ optional
- *  shapeResult). Dedicated-exec tools carry stub records only — their
- *  parseDedicated arms are attached at registration. */
+/** Single-source record per MCP tool. Table-exec tools carry parseArgs; what
+ *  they ANSWER with is `MCP_RESULT_READERS[name]` (mcp-results.ts), read back
+ *  from the committed snapshot. Dedicated-exec tools carry stub records only —
+ *  their parseDedicated arms are attached at registration. */
 export interface McpToolDef {
   name: string
   description: string
   inputSchema: Record<string, unknown>
   exec: 'table' | 'dedicated'
   parseArgs?: (a: Record<string, unknown>) => { op: string; args: Record<string, unknown> }  // table-exec only
-  shapeResult?: (value: unknown) => ToolResultJson                                             // table-exec only (default toolEmpty)
   parseDedicated?: (a: Record<string, unknown>) => Record<string, unknown>                    // dedicated-exec only
 }
 
@@ -912,10 +912,9 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   {name:'translate_path',exec:'table',description:"Translate the entire spatial path in composition pixels, preserving its geometry and progress animation. Requires Path mode. One undo step.",inputSchema:{type:'object',properties:{layer_id:{type:'string'},dx:{type:'number'},dy:{type:'number'}},required:['layer_id','dx','dy']},parseArgs:a=>({op:'translate_path',args:{layer:parseUuid(a.layer_id,'layer_id'),dx:parseNum(a.dx,'dx'),dy:parseNum(a.dy,'dy')}})},
   // ── table-exec: tracks ───────────────────────────────────────────────────
   { name: 'add_track', exec: 'table',
-    description: "Add a track and return its id. Tracks are kind-agnostic — any layer kind goes on any track. A track disappears when its last layer leaves it (deleted or moved away), so place a layer rather than reserving a track; a track created empty survives until it has been filled and emptied.",
+    description: "Add a track and return its record (`track_id`, `index`, `composition_id`). Tracks are kind-agnostic — any layer kind goes on any track. A track disappears when its last layer leaves it (deleted or moved away), so place a layer rather than reserving a track; a track created empty survives until it has been filled and emptied.",
     inputSchema: { type: 'object', properties: { label: { type: ['string', 'null'], description: 'Optional name. Omit it and the track is displayed by its position in the stack, which renumbers as tracks come and go.' }, composition_id: COMPOSITION_ID_SCHEMA }, required: [] },
-    parseArgs: (a) => ({ op: 'add_track', args: { label: parseStrOpt(a.label, 'label'), composition_id: parseCompositionIdOpt(a.composition_id) } }),
-    shapeResult: (v) => toolText(v as string) },
+    parseArgs: (a) => ({ op: 'add_track', args: { label: parseStrOpt(a.label, 'label'), composition_id: parseCompositionIdOpt(a.composition_id) } }) },
   { name: 'delete_track', exec: 'table',
     description: "Remove a track. Rejects if the track has layers unless force=true. Default A roll / B roll tracks cannot be removed.",
     inputSchema: { type: 'object', properties: { track_id: { type: 'string' }, force: { type: ['boolean', 'null'] } }, required: ['track_id'] },
@@ -946,7 +945,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // a same-place copy needs no read of the timeline first. Exactly one, because
   // a call carrying both names two landings and the actor would have to pick.
   { name: 'paste_layers', exec: 'table',
-    description: "Duplicate a set of layers as one recorded edit — the only copy tool. `layer_ids[0]` is the seed; place its clone with exactly one of `t_start_us` (absolute) or `t_offset_us` (relative to the seed's start). Every other clone shifts by the same delta on its source's track; `target_track_id` moves only the seed's clone. All-or-nothing: a locked or occupied destination for any member rejects the batch (`TrackLocked`, or `LayerOverlap` naming the source whose clone would collide). Two or more clones link to each other, never to their sources; pass a single id to copy one linked layer alone. Returns `{ clones: [{ source, clone }] }` in input order.",
+    description: "Duplicate a set of layers as one recorded edit — the only copy tool. `layer_ids[0]` is the seed; place its clone with exactly one of `t_start_us` (absolute) or `t_offset_us` (relative to the seed's start). Every other clone shifts by the same delta on its source's track; `target_track_id` moves only the seed's clone. All-or-nothing: a locked or occupied destination for any member rejects the batch (`TrackLocked`, or `LayerOverlap` naming the source whose clone would collide). Two or more clones link to each other, never to their sources; pass a single id to copy one linked layer alone. Returns `{ clones: [{ source, clone }], layers }` in input order.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to clone; the first is the seed the start time refers to.' },
       t_start_us: { type: 'integer', description: "Absolute start time of the seed's clone; the other clones keep their offsets from it. Mutually exclusive with `t_offset_us`." },
@@ -964,8 +963,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         ...(absolute ? { t_start_us: parseNum(a.t_start_us, 't_start_us') } : { t_offset_us: parseNum(a.t_offset_us, 't_offset_us') }),
         target_track_id: a.target_track_id === undefined || a.target_track_id === null ? null : parseUuid(a.target_track_id, 'target_track_id'),
       } }
-    },
-    shapeResult: (v) => toolJson(v) },
+    } },
   // `enabled` is deliberately absent from `update_layer`'s patch below and lives
   // ONLY here: the two writes are identical for one layer, and the set form is
   // the one that survives a fan-out (a linked A/V pair is one undo, not two).
@@ -1043,7 +1041,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, linked: { type: 'boolean' } }, required: ['layer_id', 'linked'] },
     parseArgs: (a) => ({ op: 'set_scale_linked', args: { layer: parseUuid(a.layer_id, 'layer_id'), linked: parseBool(a.linked, 'linked') } }) },
   { name: 'move_layer', exec: 'table',
-    description: "Move a layer to a different track and/or start time. The end time shifts by the same delta. Cross-track moves are validated against the destination's existing layers — overlap rejects with structured options.",
+    description: "Move a layer to a different track and/or start time. The end time shifts by the same delta. Cross-track moves are validated against the destination's existing layers — overlap rejects with structured options. Returns the layer's committed envelope, the link `siblings` that moved with it, and `adjusted` for any grid snap.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, new_t_start_us: { type: 'integer' }, new_track_id: { type: 'string' }, escape_link: { type: ['boolean', 'null'] } }, required: ['layer_id', 'new_t_start_us', 'new_track_id'] },
     parseArgs: (a) => ({ op: 'move_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), to_track: parseUuid(a.new_track_id, 'new_track_id'), t_start_us: parseNum(a.new_t_start_us, 'new_t_start_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false) } }) },
   { name: 'restack_layer', exec: 'table',
@@ -1055,7 +1053,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     }, required: ['anchor_layer_id', 'layer_id', 'position'] },
     parseArgs: (a) => ({ op: 'restack_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), anchor: parseUuid(a.anchor_layer_id, 'anchor_layer_id'), position: parseRestackPosition(a.position) } }) },
   { name: 'trim_layer', exec: 'table',
-    description: "Trim one edge of a layer: `edge` 'in' (t_start) or 'out' (t_end) to `new_t_us`. Media-bearing layers move the matching `src_in_us`/`src_out_us` by the same delta, clamped at the source bound. In a link, every member whose same edge sits at the same time moves with it (clamped to the tightest member) unless `escape_link=true`.",
+    description: "Trim one edge of a layer: `edge` 'in' (t_start) or 'out' (t_end) to `new_t_us`. Media-bearing layers move the matching `src_in_us`/`src_out_us` by the same delta, clamped at the source bound. In a link, every member whose same edge sits at the same time moves with it (clamped to the tightest member) unless `escape_link=true`. Returns the layer's committed envelope, the `siblings` trimmed with it, and `adjusted` for any grid snap.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, edge: { type: 'string' }, new_t_us: { type: 'integer' }, escape_link: { type: ['boolean', 'null'] } }, required: ['edge', 'layer_id', 'new_t_us'] },
     parseArgs: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: parseStr(a.edge, 'edge'), new_t_us: parseNum(a.new_t_us, 'new_t_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false) } }) },
   // One delete tool over two actor ops: `ripple` is the whole difference between
@@ -1080,10 +1078,9 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'ripple_delete_gap', args: { track: parseUuid(a.track_id, 'track_id'), s: parseNum(a.start_us, 'start_us'), e: parseNum(a.end_us, 'end_us') } }) },
   // ── table-exec: links ───────────────────────────────────────────────────
   { name: 'create_link', exec: 'table',
-    description: "Create a new link from >=2 distinct layer ids. Optional `label`. If any layer is already in another link, the op fails unless `reassign=true`, which removes them from their prior link(s) first (auto-dissolving any link that falls below 2 members). Returns the new link id.",
+    description: "Create a new link from >=2 distinct layer ids. Optional `label`. If any layer is already in another link, the op fails unless `reassign=true`, which removes them from their prior link(s) first (auto-dissolving any link that falls below 2 members). Returns the link record (`link_id`, `members`).",
     inputSchema: { type: 'object', properties: { layer_ids: { type: 'array', items: { type: 'string' } }, label: { type: ['string', 'null'] }, reassign: { type: ['boolean', 'null'] } }, required: ['layer_ids'] },
-    parseArgs: (a) => ({ op: 'links_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label'), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }),
-    shapeResult: (v) => toolText(v as string) },
+    parseArgs: (a) => ({ op: 'links_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label'), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }) },
   { name: 'delete_link', exec: 'table',
     description: "Dissolve (delete) a link. The member layers themselves are not deleted.",
     inputSchema: { type: 'object', properties: { link_id: { type: 'string' } }, required: ['link_id'] },
@@ -1112,13 +1109,12 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     } },
   // ── table-exec: groups (ADR 0052; docs/features.md#groups) ──────────────
   { name: 'create_group', exec: 'table',
-    description: "Pre-compose: move one or more layers (all in one composition) into a NEW composition and place it back as a single Group layer at the set's earliest start, on the top-most lane the set occupied (or the nearest free lane above). The new composition copies the parent's settings; members' tracks map onto A roll, B roll, then fresh tracks so z-order survives, and time is rebased so the earliest member starts at 0. Never partial: a member on a locked track (`TrackLocked`) or itself locked (`GroupLockedMember`), or a set spanning two compositions (`CrossCompositionSet`), refuses everything. Links fully inside move; a straddling link loses its inside members. Transitions between two members move; a straddling one is dropped. Markers stay. Returns `{ composition_id, layer_id }`; one undo restores all.",
+    description: "Pre-compose: move one or more layers (all in one composition) into a NEW composition and place it back as a single Group layer at the set's earliest start, on the top-most lane the set occupied (or the nearest free lane above). The new composition copies the parent's settings; members' tracks map onto A roll, B roll, then fresh tracks so z-order survives, and time is rebased so the earliest member starts at 0. Never partial: a member on a locked track (`TrackLocked`) or itself locked (`GroupLockedMember`), or a set spanning two compositions (`CrossCompositionSet`), refuses everything. Links fully inside move; a straddling link loses its inside members. Transitions between two members move; a straddling one is dropped. Markers stay. Returns `{ composition_id, layer_id, layer }`; one undo restores all.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to pre-compose; at least one, all in one composition.' },
       label: { type: ['string', 'null'], description: 'Optional name for the new composition. Omit and the UI derives one.' },
     }, required: ['layer_ids'] },
-    parseArgs: (a) => ({ op: 'groups_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label') } }),
-    shapeResult: (v) => toolJson(v) },
+    parseArgs: (a) => ({ op: 'groups_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label') } }) },
   { name: 'add_group_members', exec: 'table',
     description: "Move layers INTO the composition a Group layer already shows, keeping the screen position they had. `layer_ids` (one or more, all in one composition) and `group_layer_id` must be siblings; the Group's `params.composition` is the destination, and each member lands at `t_start_us − group.t_start_us + group.src_in_us`. Lane mapping, links, transitions, markers and the shared refusals are `move_layers_to_composition`'s, which this delegates to — call that directly when you know the destination composition and the time. Own refusals: the Group in another composition (`CrossCompositionSet`), not a Group (`WrongLayerKind`), a Group pointing at the root (`RootComposition`).",
     inputSchema: { type: 'object', properties: {
@@ -1158,8 +1154,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       track: parseUuid(a.track_id, 'track_id'),
       t_start_us: parseNum(a.t_start_us, 't_start_us'),
       composition_id: parseCompositionIdOpt(a.composition_id),
-    } }),
-    shapeResult: (v) => toolText(v as string) },
+    } }) },
   { name: 'ungroup_layer', exec: 'table',
     description: "Expand a Group layer back into its members, in place. Refuses unless the Group is PLAIN — identity transform, static opacity 1, no effects, Normal blend (`GroupNotPlain { reason }`), because those apply to the composite and would be discarded; reset them first or keep the Group. Members intersecting the Group's `[src_in_us, src_out_us)` window are copied into the parent at the same on-screen time, trimmed to the window; members wholly outside are dropped. The composition's tracks become fresh tracks at the Group's z position; inner links and transitions carry over. The composition is removed when nothing else references it. One undo restores the Group.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string', description: 'The Group layer (its params.kind is CompositionRef).' } }, required: ['layer_id'] },
@@ -1174,10 +1169,9 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'compositions_delete', args: { composition: parseUuid(a.composition_id, 'composition_id') } }) },
   // ── table-exec: effects ──────────────────────────────────────────────────
   { name: 'add_effect', exec: 'table',
-    description: "Append an effect to a layer's chain (applied last) and return its id. `kind` is the catalog key. Visual kinds (\"blur\", \"chromakey\", \"brightness\", \"contrast\", \"saturation\", \"sharpen\") go on visual layers: the colour trio take `amount` in [-100, 100] (percent offset, 0 = no change), \"sharpen\" takes `amount` in [0, 100]. Audio kinds are the `audio.*` namespace, for Audio layers ONLY, and their params are STATIC ONLY (`set_keyframe` on one is `AudioEffectParamStatic`); a kind on the wrong layer kind is `EffectKindNotApplicable`. The one audio kind is \"audio.denoise\": `strength` dB [1, 40] (default 12), `margin` dB [0, 20] (default 8), and `profile_in_us`/`profile_out_us`, SOURCE-time bounds of a noise-only span ≥ 250000 µs — it does nothing until both are set. The effect is created with no params: set a static value with `update_effect` first, then (visual only) `set_keyframe` on `effects[<id>].params[<key>]`.",
+    description: "Append an effect to a layer's chain (applied last) and return its record (`effect_id`, `kind`, `index`). `kind` is the catalog key. Visual kinds (\"blur\", \"chromakey\", \"brightness\", \"contrast\", \"saturation\", \"sharpen\") go on visual layers: the colour trio take `amount` in [-100, 100] (percent offset, 0 = no change), \"sharpen\" takes `amount` in [0, 100]. Audio kinds are the `audio.*` namespace, for Audio layers ONLY, and their params are STATIC ONLY (`set_keyframe` on one is `AudioEffectParamStatic`); a kind on the wrong layer kind is `EffectKindNotApplicable`. The one audio kind is \"audio.denoise\": `strength` dB [1, 40] (default 12), `margin` dB [0, 20] (default 8), and `profile_in_us`/`profile_out_us`, SOURCE-time bounds of a noise-only span ≥ 250000 µs — it does nothing until both are set. The effect is created with no params: set a static value with `update_effect` first, then (visual only) `set_keyframe` on `effects[<id>].params[<key>]`.",
     inputSchema: { type: 'object', properties: { kind: { type: 'string' }, layer_id: { type: 'string' } }, required: ['kind', 'layer_id'] },
-    parseArgs: (a) => ({ op: 'add_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), kind: parseStr(a.kind, 'kind') } }),
-    shapeResult: (v) => toolText(v as string) },
+    parseArgs: (a) => ({ op: 'add_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), kind: parseStr(a.kind, 'kind') } }) },
   { name: 'update_effect', exec: 'table',
     description: "Update an effect: patch is `{ enabled?, params? }` where params is `{ paramKey: { \"mode\": \"Static\", \"value\": <number> } }` (v1 params are scalar). A `null` param value removes the key (back to unset/default). For keyframed params use set_keyframe with param_key \"effects[<effect_id>].params[<key>]\". An unparseable patch (non-object, unknown key, malformed param value) rejects with invalid_params — it never partially applies.",
     inputSchema: { type: 'object', properties: { effect_id: { type: 'string' }, layer_id: { type: 'string' }, patch: {
@@ -1199,7 +1193,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'remove_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id') } }) },
   // ── table-exec: transitions ──────────────────────────────────────────────
   { name: 'add_transition', exec: 'table',
-    description: "Add a transition at the cut between two adjacent layers on the same track — `from_layer_id` (outgoing) ends exactly where `to_layer_id` (incoming) starts — and return its id. `kind` 'Crossfade' (default) | 'Wipe' | 'Slide'; `direction` is the MOTION direction ('left' = the boundary or the sliding content moves left), required for Wipe/Slide and rejected for Crossfade. `placement` 'overlap' (default) moves the INCOMING layer left by the frame-rounded duration so both still play exactly their trimmed ranges and the vacated span stays a gap — nothing ripples; link siblings follow, bouncing to a free lane. 'extend' instead borrows outgoing tail media past its out-point, positions untouched (`extended_us = duration`), refused with `TransitionInsufficientHandle { available_us }` when the tail is short. A pair already overlapped by exactly the duration attaches as-is. Refuses: participants sharing a link, a move crossing t = 0, a duration longer than either participant, an Audio participant (`TransitionUnsupportedLayerKind`). Recorded — one undo restores every moved layer.",
+    description: "Add a transition at the cut between two adjacent layers on the same track — `from_layer_id` (outgoing) ends exactly where `to_layer_id` (incoming) starts — and return its record. `kind` 'Crossfade' (default) | 'Wipe' | 'Slide'; `direction` is the MOTION direction ('left' = the boundary or the sliding content moves left), required for Wipe/Slide and rejected for Crossfade. `placement` 'overlap' (default) moves the INCOMING layer left by the frame-rounded duration so both still play exactly their trimmed ranges and the vacated span stays a gap — nothing ripples; link siblings follow, bouncing to a free lane. 'extend' instead borrows outgoing tail media past its out-point, positions untouched (`extended_us = duration`), refused with `TransitionInsufficientHandle { available_us }` when the tail is short. A pair already overlapped by exactly the duration attaches as-is. Refuses: participants sharing a link, a move crossing t = 0, a duration longer than either participant, an Audio participant (`TransitionUnsupportedLayerKind`). Recorded — one undo restores every moved layer.",
     inputSchema: { type: 'object', properties: {
       direction: { type: 'string', enum: ['left', 'right', 'up', 'down'] },
       duration_us: { type: 'integer' },
@@ -1212,8 +1206,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       parseTransitionKind(a.kind ?? 'Crossfade', a.direction) // strict enum gate at the MCP boundary; dispatch re-derives from the raw args below
       parseTransitionPlacement(a.placement) // strict enum gate; dispatch re-derives (absent → 'overlap')
       return { op: 'add_transition', args: { from: parseUuid(a.from_layer_id, 'from_layer_id'), to: parseUuid(a.to_layer_id, 'to_layer_id'), duration_us: parseNum(a.duration_us, 'duration_us'), kind: a.kind, direction: a.direction, placement: a.placement } }
-    },
-    shapeResult: (v) => toolText(v as string) },
+    } },
   { name: 'update_transition', exec: 'table',
     description: "Patch a transition's `duration_us`, `kind`/`direction` and/or `extended_us` in one recorded commit; only fields you set apply. `direction` rides with `kind`: switching to Wipe/Slide needs both, and `direction` alone or beside Crossfade is rejected. Geometry is two targets: `extended_us` is the borrowed share of the overlap (0 = pure placement, `duration_us` = pure borrow); the outgoing layer ends at its exit frame + `extended_us`, the incoming starts `duration_us` before that. With `extended_us` OMITTED the trimmed ranges are preserved — growing moves the incoming layer further left and never borrows, shrinking returns borrowed tail first then moves it right. Only an explicit `extended_us` grows the borrow (checked against the remaining tail: `TransitionInsufficientHandle { available_us }`); a NEGATIVE one is a deliberate tail trim of real content. Link siblings follow the incoming layer; a move onto occupied space or across t = 0 refuses the commit. `TransitionNotFound` for an unknown id.",
     inputSchema: { type: 'object', properties: {
@@ -1238,10 +1231,9 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // (mutations/media.ts names the source it lifted from), which is why the
   // result is a TRACK id and not the layer's: the layer is unchanged, it moved.
   { name: 'separate_audio_to_new_track', exec: 'table',
-    description: "Lift an Audio layer onto a new track of its own, in the source lane's slot, and return the NEW track's id. The layer is untouched — id, span, gain, role and links survive — so an auto-paired dialogue clip gets its own lane while the pair still moves together; `delete_link` afterwards to make them independent. `WrongLayerKind` on anything but an Audio layer (a VideoClip's sound is the Audio layer linked to it — see `project://tracks`). A source lane the lift emptied is pruned. One undo reverts it.",
+    description: "Lift an Audio layer onto a new track of its own, in the source lane's slot, and return the new track's record with the layer's. The layer is untouched — id, span, gain, role and links survive — so an auto-paired dialogue clip gets its own lane while the pair still moves together; `delete_link` afterwards to make them independent. `WrongLayerKind` on anything but an Audio layer (a VideoClip's sound is the Audio layer linked to it — see `project://tracks`). A source lane the lift emptied is pruned. One undo reverts it.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' } }, required: ['layer_id'] },
-    parseArgs: (a) => ({ op: 'separate_audio', args: { layer: parseUuid(a.layer_id, 'layer_id') } }),
-    shapeResult: (v) => toolText(v as string) },
+    parseArgs: (a) => ({ op: 'separate_audio', args: { layer: parseUuid(a.layer_id, 'layer_id') } }) },
   { name: 'update_composition', exec: 'table',
     description: "Update a composition's envelope — canvas `width`/`height`, `fps`, `sample_rate`, `channels`, `color_space`, `background`, `duration_us`; only fields you set apply; `composition_id` names a Group's composition, the root when omitted. Unrecorded: the envelope is setup, so the patch reaches every history snapshot and undo walks past it. `fps` is LOCKED once the timeline, any history snapshot or any checkpoint holds a layer — refused with `FpsLockedByContent { current, requested, layer_count, locked_by: \"current\" | \"history\" }`; set the rate on a project that has never held a layer, or empty the timeline and reopen the project to clear a history lock. `sample_rate` is never locked. Setting `duration_us` PINS the duration so layer edits stop auto-fitting it; `duration_us: null` (alone in the patch) unpins it and refits to the layers.",
     inputSchema: { type: 'object', properties: { patch: {
@@ -1377,21 +1369,21 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'update_role_flags', args: { role: parseRole(a.role), patch: { muted: a.muted ?? null, solo: a.solo ?? null } } }) },
   // ── dedicated-exec — parseDedicated validates and maps MCP args; behavior lives in actor.ts arms ──
   { name: 'add_color_layer', exec: 'dedicated',
-    description: "Add a solid-color layer to a track. Returns the new layer id. `t_start_us` and `t_end_us` are timeline microseconds (start inclusive, end exclusive). Layer cannot overlap existing layers on the same track.",
+    description: "Add a solid-color layer to a track and return its record — `layer_id`, `track_id`, the span as committed, `adjusted` for any grid snap. `t_start_us` and `t_end_us` are timeline microseconds (start inclusive, end exclusive). Layer cannot overlap existing layers on the same track.",
     inputSchema: { type: 'object', properties: { color: RGBA_SCHEMA, height: { type: ['integer', 'null'] }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' }, width: { type: ['integer', 'null'] }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['color', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), color: parseRgba(a.color, 'color'),
       width: parseNumOpt(a.width, 'width'), height: parseNumOpt(a.height, 'height'),
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'add_video_layer', exec: 'dedicated',
-    description: "Add a visual layer from an imported `Video` or `Image` item onto a track and return its id; an audio-only item is refused and pointed at `add_audio_layer`. Video: `src_in_us`/`src_out_us` are the source in/out points, `t_start_us`/`t_end_us` the timeline span. Image: an ImageOverlay over the timeline range; omit `src_in_us`/`src_out_us`. When a Video has an audio stream and `auto_pair_audio_on_import` is on (default; `set_project_settings` turns it off), a linked dialogue Audio layer lands on the SAME track's audio lane and the result is `{ video_layer_id, audio_layer_id, link_id }`, committed atomically — an occupied audio lane rejects the whole call naming the blocker.",
+    description: "Add a visual layer from an imported `Video` or `Image` item onto a track and return its record; an audio-only item is refused and pointed at `add_audio_layer`. Video: `src_in_us`/`src_out_us` are the source in/out points, `t_start_us`/`t_end_us` the timeline span. Image: an ImageOverlay over the timeline range; omit `src_in_us`/`src_out_us`. When a Video has an audio stream and `auto_pair_audio_on_import` is on (the default), a linked dialogue Audio layer lands on the SAME track's audio lane, committed atomically — an occupied lane rejects the whole call naming the blocker. The record always carries `audio_layer_id`/`link_id`/`audio` (null when unpaired).",
     inputSchema: { type: 'object', properties: { media_id: { type: 'string' }, src_in_us: { type: ['integer', 'null'], description: 'Source in point (µs). Required for Video; ignored for an Image.' }, src_out_us: { type: ['integer', 'null'], description: 'Source out point (µs). Required for Video; ignored for an Image.' }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['media_id', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), media: parseUuid(a.media_id, 'media_id'),
       src_in_us: parseNumOpt(a.src_in_us, 'src_in_us') ?? null, src_out_us: parseNumOpt(a.src_out_us, 'src_out_us') ?? null,
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'add_audio_layer', exec: 'dedicated',
-    description: "Add an Audio layer from an imported item onto a track's audio lane and return its id — music, a sound effect, a voice track, or a video file's audio on its own. The only way audio-only media reaches the timeline (`add_video_layer` refuses it). `media_id` is an `Audio` item or a `Video` item with an audio stream; `Image` and `Subtitle` are refused. The layer stands ALONE — no auto-pair, no link — on the track's audio lane (every track has one, beside its visual lane). `src_in_us`/`src_out_us` are source in/out, `t_start_us`/`t_end_us` the timeline span; both snap to the 48 kHz sample lattice. `role` (default `music`) picks the mixing bus — a property of the clip, not its track.",
+    description: "Add an Audio layer from an imported item onto a track's audio lane and return its record — music, a sound effect, a voice track, or a video file's audio on its own. The only way audio-only media reaches the timeline (`add_video_layer` refuses it). `media_id` is an `Audio` item or a `Video` item with an audio stream; `Image` and `Subtitle` are refused. The layer stands ALONE — no auto-pair, no link — on the track's audio lane (every track has one, beside its visual lane). `src_in_us`/`src_out_us` are source in/out, `t_start_us`/`t_end_us` the timeline span; both snap to the 48 kHz sample lattice. `role` (default `music`) picks the mixing bus — a property of the clip, not its track.",
     inputSchema: { type: 'object', properties: { media_id: { type: 'string' }, src_in_us: { type: 'integer' }, src_out_us: { type: 'integer' }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' }, role: { type: ['string', 'null'], enum: ['dialogue', 'music', 'sfx', 'voiceover', null], description: 'Mixing bus for the clip. Defaults to `music`.' }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['media_id', 'src_in_us', 'src_out_us', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), media: parseUuid(a.media_id, 'media_id'),
       src_in_us: parseNum(a.src_in_us, 'src_in_us'), src_out_us: parseNum(a.src_out_us, 'src_out_us'),
@@ -1399,7 +1391,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       role: a.role === undefined || a.role === null ? null : parseRole(a.role),
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'add_text_layer', exec: 'dedicated',
-    description: "Add a Text layer — a title, a lower third, a credit — and return its id. Born at the caption font, 72 px, opaque white, centre-aligned and centred in frame. `x`/`y` (both or neither) override placement and are the layer's ANCHOR point, not clamped to frame. Everything else — font, size, colour, outline, layout box, alignment — is `update_layer_params { kind: 'Text' }`. It cannot overlap another visual layer on the track. Subtitles from a document are `apply_subtitles`; this is the one-off.",
+    description: "Add a Text layer — a title, a lower third, a credit — and return its record. Born at the caption font, 72 px, opaque white, centre-aligned and centred in frame. `x`/`y` (both or neither) override placement and are the layer's ANCHOR point, not clamped to frame. Everything else — font, size, colour, outline, layout box, alignment — is `update_layer_params { kind: 'Text' }`. It cannot overlap another visual layer on the track. Subtitles from a document are `apply_subtitles`; this is the one-off.",
     inputSchema: { type: 'object', properties: { content: { type: 'string', description: 'The text to display. Newlines are honoured.' }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' }, x: { type: ['number', 'null'], description: "Anchor x in composition pixels. Give it with `y` or not at all; omitted, the layer is centred in frame." }, y: { type: ['number', 'null'], description: 'Anchor y in composition pixels. Give it with `x` or not at all.' }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['content', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), content: parseStr(a.content, 'content'),
       x: parseNumOpt(a.x, 'x'), y: parseNumOpt(a.y, 'y'),
@@ -1410,7 +1402,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // agent has no reason to hold one, so the arm supplies it from the state it
   // is already reading.
   { name: 'apply_transcripts', exec: 'dedicated',
-    description: "Lay transcripts on the caption tracks, KEEPING per-word timing; returns the id of the caption track the first cue landed on. Pass `transcribe_clip`'s envelope as it comes (`segments` and `word_timing`) — prefer this over `apply_subtitles` for a transcript: an SRT has no room for word offsets, and `correct_caption_text` needs them to re-segment a corrected cue. Cues pack into the composition's existing caption tracks, opening a lane only for a cue that collides with all of them, and snap to the frame grid. `source_layer_ids` is parallel to `transcripts` and tags each cue with the clip it came from, so corrections group by take. At most 1000 transcripts. One recorded edit.",
+    description: "Lay transcripts on the caption tracks, KEEPING per-word timing; returns `{ caption_track_id, cues }`. Pass `transcribe_clip`'s envelope as it comes (`segments` and `word_timing`) — prefer this over `apply_subtitles` for a transcript: an SRT has no room for word offsets, and `correct_caption_text` needs them to re-segment a corrected cue. Cues pack into the composition's existing caption tracks, opening a lane only for a cue that collides with all of them, and snap to the frame grid. `source_layer_ids` is parallel to `transcripts` and tags each cue with the clip it came from, so corrections group by take. At most 1000 transcripts. One recorded edit.",
     inputSchema: { type: 'object', properties: {
       transcripts: { type: 'array', description: "One entry per transcribed clip, in the shape `transcribe_clip` returns.", items: {
         type: 'object',
@@ -1452,12 +1444,12 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       composition_id: parseCompositionIdOpt(a.composition_id),
     }) },
   { name: 'split_layer', exec: 'dedicated',
-    description: "Split a layer into two halves at the given timeline microsecond. Returns {left, right} layer ids. `at_t_us` must be strictly between the layer's t_start_us and t_end_us. For media-bearing layers (VideoClip, Audio) the source offsets are adjusted at speed=1 — variable speed support is deferred.",
+    description: "Split a layer into two halves at the given timeline microsecond. Returns `{ left, right, layers, siblings: [{ source, left, right }] }` — every link sibling's halves too. `at_t_us` must be strictly between the layer's t_start_us and t_end_us. For media-bearing layers (VideoClip, Audio) the source offsets are adjusted at speed=1 — variable speed support is deferred.",
     inputSchema: { type: 'object', properties: { at_t_us: { type: 'integer' }, escape_link: { type: ['boolean', 'null'] }, layer_id: { type: 'string' } }, required: ['at_t_us', 'layer_id'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'),
       at_t_us: parseNum(a.at_t_us, 'at_t_us'), escape_link: a.escape_link }) },
   { name: 'add_marker', exec: 'dedicated',
-    description: "Add a marker (point or region) to a composition's timeline — the root, or the Group named by `composition_id`. Returns the new marker id. Set `end_t_us` to make it a region marker. Set `anchor_layer_id` to have the mark FOLLOW a clip instead of standing at a fixed time; omit it for an ordinary marker.",
+    description: "Add a marker (point or region) to a composition's timeline — the root, or the Group named by `composition_id`. Returns the marker record (`marker_id`, `t_us` as snapped). Set `end_t_us` to make it a region marker. Set `anchor_layer_id` to have the mark FOLLOW a clip instead of standing at a fixed time; omit it for an ordinary marker.",
     inputSchema: { type: 'object', properties: { anchor_layer_id: { type: ['string', 'null'],
       description: 'Clip the marker should follow — a layer of the same composition with a source window (VideoClip, Audio, Group). Tied as `set_marker_anchor` would tie it, refused for the same reasons (no marker is created). Omit for a fixed marker.' },
       color: RGBA_SCHEMA, end_t_us: { type: ['integer', 'null'] }, label: { type: 'string' }, t_us: { type: 'integer' }, composition_id: COMPOSITION_ID_SCHEMA }, required: ['color', 'label', 't_us'] },
@@ -1481,7 +1473,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { locked, reason }
     } },
   { name: 'set_keyframe', exec: 'dedicated',
-    description: "Insert or update a keyframe on a layer param; `t_us` is timeline-absolute. A Static track is lifted to Keyframed; a key at the same frame is updated in place. `value` is typed by `param_key`: a number for scalar params, `{r,g,b,a}` (0..255) for \"color\". `interp` (optional) is the easing of the segment LEAVING this key as a raw kind — {\"kind\":\"Linear\"} | {\"kind\":\"Hold\"} | {\"kind\":\"Bezier\",\"p1\":[x,y],\"p2\":[x,y]} | Elastic | Bounce; named presets go through `update_keyframe`; omitted, the key inherits the preceding segment's easing. One side or the continuity: `update_keyframe`; Auto tangents: `smooth_keyframes`. Keying one scale axis of a scale-linked layer clears the link.",
+    description: "Insert or update a keyframe on a layer param; `t_us` is timeline-absolute. A Static track is lifted to Keyframed; a key at the same frame is updated in place. Returns the key (`keyframe_id`, `t_us`). `value` is typed by `param_key`: a number for scalar params, `{r,g,b,a}` (0..255) for \"color\". `interp` (optional) is the easing of the segment LEAVING this key as a raw kind (Hold | Linear | Bezier {p1,p2} | Elastic | Bounce — the schema has the shapes; named presets go through `update_keyframe`); omitted, it inherits the preceding segment's easing. One side or the continuity: `update_keyframe`; Auto tangents: `smooth_keyframes`. Keying one scale axis of a scale-linked layer clears the link.",
     inputSchema: { type: 'object', properties: { interp: INTERP_SCHEMA, layer_id: { type: 'string' }, param_key: { type: 'string' }, t_us: { type: 'integer' }, value: TRACK_VALUE_SCHEMA }, required: ['layer_id', 'param_key', 't_us', 'value'] },
     parseDedicated: (a) => {
       const paramKey = parseStr(a.param_key, 'param_key')
@@ -1567,7 +1559,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     } }, required: ['operations'] },
     parseDedicated: (a) => ({ operations: asArray(a.operations, 'operations') }) },
   { name: 'add_motif_layer', exec: 'dedicated',
-    description: "Add a motif layer and return its id. `motif_id` from `list_motifs`; `t_start_us` timeline µs; `t_end_us` defaults to `t_start_us + default_duration_s`; `track_id` omitted always spawns a fresh track (never reuses one, so consecutive auto-inserts cannot collide); `props` is matched against the motif's `props_schema` — unknown keys reject, missing keys take defaults. Rendering is lazy: the motif rasterizes on first render and is cached by content.",
+    description: "Add a motif layer and return its record. `motif_id` from `list_motifs`; `t_start_us` timeline µs; `t_end_us` defaults to `t_start_us + default_duration_s`; `track_id` omitted always spawns a fresh track (never reuses one, so consecutive auto-inserts cannot collide); `props` is matched against the motif's `props_schema` — unknown keys reject, missing keys take defaults. Rendering is lazy: the motif rasterizes on first render and is cached by content.",
     inputSchema: { type: 'object',
       properties: {
         motif_id: { type: 'string', description: 'Motif id from `list_motifs` (e.g. "lower-third-simple", "title-card").' },
@@ -1587,7 +1579,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       composition_id: parseCompositionIdOpt(a.composition_id),
     }) },
   { name: 'create_checkpoint', exec: 'dedicated',
-    description: "Create a named checkpoint of the current state and return its id. Checkpoints survive later commits (unlike the redo tail) and persist in the project file; the agent panel shows each as a row with a Restore button. Use it at logical batch boundaries.",
+    description: "Create a named checkpoint of the current state and return `{ checkpoint_id, label }`. Checkpoints survive later commits (unlike the redo tail) and persist in the project file; the agent panel shows each as a row with a Restore button. Use it at logical batch boundaries.",
     inputSchema: { type: 'object', properties: { label: { type: 'string' } }, required: ['label'] },
     parseDedicated: (a) => ({ label: parseStr(a.label, 'label') }) },
   { name: 'list_checkpoints', exec: 'dedicated',
@@ -1648,11 +1640,6 @@ export function mcpDef(name: string): McpToolDef { const d = DEF_BY_NAME.get(nam
  *  etc.) are NOT here — they have dedicated arms in actor.mcpCall. */
 export const MCP_ARG_PARSERS: Record<string, (a: Record<string, unknown>) => { op: string; args: Record<string, unknown> }> =
   Object.fromEntries(MCP_TOOL_DEFS.flatMap((d) => d.parseArgs ? [[d.name, d.parseArgs] as const] : []))
-
-/** MCP tool → ToolResult from the dispatch value. Projection of MCP_TOOL_DEFS.
- *  Tools absent here → toolEmpty. */
-export const MCP_RESULT_SHAPERS: Record<string, (value: unknown) => ToolResultJson> =
-  Object.fromEntries(MCP_TOOL_DEFS.flatMap((d) => d.shapeResult ? [[d.name, d.shapeResult] as const] : []))
 
 /** All MCP tools this adapter handles (parsers + the dedicated arms). Projection of MCP_TOOL_DEFS. */
 export const MCP_TOOLS: ReadonlySet<string> = new Set(MCP_TOOL_DEFS.map((d) => d.name))

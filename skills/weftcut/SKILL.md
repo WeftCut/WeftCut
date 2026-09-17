@@ -40,9 +40,11 @@ what no single tool can: how a session should go.
 
 ## Working rhythm
 
-Read → analyze → mutate → **verify**: after mutating, re-read what you changed
-(`project://tracks`, `project://current`) and confirm the edit landed as
-intended before reporting it done.
+Read → analyze → mutate → **verify**: every mutator answers with the committed
+record — the ids it minted, the span as it landed, `adjusted` for any grid snap,
+the link `siblings` it carried along — so check that answer first, and re-read
+`project://tracks` or `project://current` only for what the record does not
+carry, before reporting the edit done.
 
 Common flows, one line each — parameters and caveats live in the tool
 descriptions:

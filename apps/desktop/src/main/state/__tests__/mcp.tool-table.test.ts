@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { MCP_TOOL_DEFS, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, MCP_TOOLS } from '../mcp-commands'
+import { MCP_TOOL_DEFS, MCP_ARG_PARSERS, MCP_TOOLS } from '../mcp-commands'
 import { createActor } from '../actor'
 import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
@@ -46,11 +46,6 @@ describe('MCP tool table projections', () => {
   it('MCP_ARG_PARSERS keys match the table-exec defs', () => {
     const tableExecNames = new Set(MCP_TOOL_DEFS.filter((d) => d.parseArgs).map((d) => d.name))
     expect(new Set(Object.keys(MCP_ARG_PARSERS))).toEqual(tableExecNames)
-  })
-
-  it('MCP_RESULT_SHAPERS keys match the shapeResult defs', () => {
-    const shaperNames = new Set(MCP_TOOL_DEFS.filter((d) => d.shapeResult).map((d) => d.name))
-    expect(new Set(Object.keys(MCP_RESULT_SHAPERS))).toEqual(shaperNames)
   })
 
   it('every table-exec def round-trips a representative valid arg set identically to its prior parser', () => {
@@ -107,11 +102,6 @@ describe('MCP tool table projections', () => {
     expect(() => parse({ locked: true })).toThrow(/reason/)
     expect(() => parse({ locked: true, reason: '   ' })).toThrow(/reason/)
     expect(() => parse({ locked: false, reason: 'done' })).toThrow(/reason/)
-  })
-
-  it('shapeResult tools are the expected 8', () => {
-    const shapers = MCP_TOOL_DEFS.filter((d) => d.shapeResult).map((d) => d.name).sort()
-    expect(shapers).toEqual(['add_effect', 'add_group_layer', 'add_track', 'add_transition', 'create_group', 'create_link', 'paste_layers', 'separate_audio_to_new_track'])
   })
 
   it('paste_layers / set_layers_enabled round-trip valid args and reject malformed ones', () => {
@@ -242,7 +232,7 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     const add = actor.mcpCall('add_transition', JSON.stringify({ from_layer_id: a1, to_layer_id: a2, duration_us: 1_000_000, kind: 'Wipe', direction: 'left' }))
     expect(add.ok).toBe(true)
     if (!add.ok) return
-    const tid = add.result.content[0].text
+    const tid = (JSON.parse(add.result.content[0].text) as { transition_id: string }).transition_id
     expect(root(actor.snapshot()).transitions[0]).toMatchObject({ id: tid, kind: { kind: 'Wipe', direction: 'left' } })
     const upd = actor.mcpCall('update_transition', JSON.stringify({ transition_id: tid, duration_us: 500_000, kind: 'Crossfade' }))
     expect(upd.ok).toBe(true)
@@ -306,7 +296,7 @@ describe('transition tools through mcpCall (table-exec, end to end)', () => {
     const add = actor.mcpCall('add_transition', JSON.stringify({ from_layer_id: a1, to_layer_id: a2, duration_us: 1_000_000 }))
     expect(add.ok).toBe(true)
     if (!add.ok) return
-    const tid = add.result.content[0].text
+    const tid = (JSON.parse(add.result.content[0].text) as { transition_id: string }).transition_id
     // Overlap add: A untouched at [0,2M], B moved to [1M,3M], e = 0.
     const upd = actor.mcpCall('update_transition', JSON.stringify({ transition_id: tid, extended_us: 500_000 }))
     expect(upd.ok).toBe(true)
@@ -424,7 +414,7 @@ describe('marker anchoring through mcpCall (the agent surface, end to end)', () 
     const add = addMarker(actor, {})
     expect(add.ok).toBe(true)
     if (!add.ok) return
-    const markerId = add.result.content[0].text
+    const markerId = (JSON.parse(add.result.content[0].text) as { marker_id: string }).marker_id
 
     expect(actor.mcpCall('set_marker_anchor', JSON.stringify({ marker_id: markerId, layer_id: clip })).ok).toBe(true)
     // The tie names where the mark already sat, so attaching by itself moves nothing.
@@ -444,7 +434,7 @@ describe('marker anchoring through mcpCall (the agent surface, end to end)', () 
     const add = addMarker(actor, { anchor_layer_id: clip })
     expect(add.ok).toBe(true)
     if (!add.ok) return
-    const markerId = add.result.content[0].text
+    const markerId = (JSON.parse(add.result.content[0].text) as { marker_id: string }).marker_id
 
     // A second clip covering the same instant, on its own lane: the marker
     // moves its tie there rather than being refused for already having one.

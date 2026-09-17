@@ -75,10 +75,11 @@ describe('handleCallTool flip routing', () => {
     // which causes a downstream throw; what matters is -32600 is not raised).
     expect(ts.hybridDeps.compute.synthesizeSpeechCompute).toHaveBeenCalled()
   })
-  it('routes import_media through the hybrid (TS-write), returning the media id as text', async () => {
+  it('routes import_media through the hybrid (TS-write), returning the media record', async () => {
     const ts = tsHostStub()
     const out: any = await handleCallTool(fakeBackend(async () => { throw new Error('rust must not be called') }), () => ts, 'import_media', { path: 'C:/x.mp4' })
-    expect(out.content[0]).toEqual({ type: 'text', text: MID })
+    expect(out.structuredContent).toMatchObject({ media_id: MID, kind: 'Video', duration_us: 4_000_000 })
+    expect(JSON.parse(out.content[0].text)).toEqual(out.structuredContent)
     expect(ts.actor.snapshot().media_pool[MID]).toBeTruthy()
     expect(ts.hybridDeps.enqueueDerivatives).toHaveBeenCalledTimes(1)
   })

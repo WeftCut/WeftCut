@@ -139,12 +139,14 @@ describe('move_layers_to_composition — actor dispatch', () => {
 })
 
 describe('move_layers_to_composition — MCP tool', () => {
-  it('moves the set and returns an empty result', () => {
+  it('moves the set and returns the moved records in the destination', () => {
     const { actor, aRoll, inside } = grouped()
     const p = color(actor, aRoll, 6 * S, 7 * S)
-    expect(actor.mcpCall('move_layers_to_composition', JSON.stringify({
+    const r = actor.mcpCall('move_layers_to_composition', JSON.stringify({
       layer_ids: [p], to_composition_id: inside, anchor_layer_id: p, anchor_t_start_us: 4 * S,
-    }))).toEqual({ ok: true, result: { content: [] } })
+    }))
+    expect(r.ok && (r.result.structuredContent as { layers: Array<{ layer_id: string; composition_id: string; t_start_us: number }> }).layers)
+      .toEqual([expect.objectContaining({ layer_id: p, composition_id: inside, t_start_us: 4 * S })])
     expect(findLayer(actor, inside, p)).toMatchObject({ t_start_us: 4 * S })
   })
 

@@ -305,7 +305,7 @@ for (const variant of VARIANTS) {
           ...(variant.direction ? { direction: variant.direction } : {}),
         },
       })
-      const transitionId = toolText(addRes)
+      const transitionId = (JSON.parse(toolText(addRes)) as { transition_id: string }).transition_id
       expect(transitionId.length).toBeGreaterThan(0)
 
       // State sanity: overlap placement moved BLUE left by the duration, RED's

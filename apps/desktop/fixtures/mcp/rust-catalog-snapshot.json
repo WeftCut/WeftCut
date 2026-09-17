@@ -9,7 +9,7 @@
     },
     {
       "name": "apply_subtitles",
-      "description": "Import a subtitle document (SRT/VTT/ASS) as editable Text layers on the caption tracks. Cue timings come from the body; each cue packs onto the first unlocked caption track with room, and a new caption track opens only for a cue that collides with all of them. `format` is sniffed when omitted; advanced ASS styling (karaoke, drawings) is simplified. For a `transcribe_clip` result use `apply_transcripts` instead — an SRT discards its word timing. Returns the id of the caption track the first cue landed on.",
+      "description": "Import a subtitle document (SRT/VTT/ASS) as editable Text layers on the caption tracks. Cue timings come from the body; each cue packs onto the first unlocked caption track with room, and a new caption track opens only for a cue that collides with all of them. `format` is sniffed when omitted; advanced ASS styling (karaoke, drawings) is simplified. For a `transcribe_clip` result use `apply_transcripts` instead — an SRT discards its word timing. Returns `{ caption_track_id, cues, simplified }`.",
       "inputSchema": {
         "properties": {
           "body": {
@@ -158,7 +158,7 @@
     },
     {
       "name": "import_media",
-      "description": "Import a media file from an absolute path. Hashes the file (blake3) and probes metadata via ffprobe when installed. Returns the new media id.",
+      "description": "Import a media file from an absolute path. Hashes the file (blake3) and probes metadata via ffprobe when installed. Returns `{ media_id, kind, duration_us, width, height, has_audio }`; a subtitle document (.srt/.vtt/.ass) is laid onto a caption track instead and returns `{ caption_track_id, cues }`.",
       "inputSchema": {
         "properties": {
           "path": {

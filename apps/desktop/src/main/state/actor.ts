@@ -38,8 +38,9 @@ import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, ty
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, asArray, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, toolJson, asArray, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
+import { MCP_RESULT_READERS, adjusted, keyframeByIdResult, layerRecord, linkRecord, markerRecord, newLayerIds, paramTrackResult, setKeyframeResult, splitResult, toolRecord, type ResultCtx } from './mcp-results'
 import { readLayerTrack } from './mutations/params'
 import { applySetPosition, applyTranslatePath } from './mutations/position'
 import { applyTextCorrection, applyTranscripts } from './mutations/textCorrection'
@@ -1646,6 +1647,24 @@ export function createActor(opts: ActorOptions): ActorHandle {
     let a: Record<string, unknown>
     try { a = JSON.parse(argsJson) as Record<string, unknown> }
     catch (e) { return { ok: false, error: { code: 'invalid_params', message: `invalid args for ${name}: ${String(e)}` } } }
+    // The snapshot the call started from: every answer below is the committed
+    // record read back from the snapshot the commit produced, and the diff
+    // against this one is what names the siblings a move dragged, the layers a
+    // ripple shifted, the cues an import added (mcp-results.ts).
+    const before = current()
+    const ctx = (value: unknown): ResultCtx => ({ args: a, value, before, after: current(), history: history.status() })
+    /** A freshly placed layer: its envelope plus the grid's adjustments to the
+     *  span the caller asked for. */
+    const addedLayer = (id: Uuid, req: { t_start_us?: unknown; t_end_us?: unknown }): Record<string, unknown> => {
+      const rec = layerRecord(current(), id) ?? { layer_id: id }
+      return { ...rec, adjusted: adjusted([['t_start_us', req.t_start_us, (rec as { t_start_us?: number }).t_start_us], ['t_end_us', req.t_end_us, (rec as { t_end_us?: number }).t_end_us]]) }
+    }
+    /** `add_video_layer`'s ONE shape, paired or not: the triple is always
+     *  present (nulls for an unpaired add) so a caller never branches on it. */
+    const addedVideo = (videoId: Uuid, audioId: Uuid | null, linkId: Uuid | null, req: { t_start_us?: unknown; t_end_us?: unknown }): Record<string, unknown> => ({
+      ...addedLayer(videoId, req), video_layer_id: videoId, audio_layer_id: audioId, link_id: linkId,
+      audio: audioId === null ? null : layerRecord(current(), audioId),
+    })
     try {
       // Dedicated arms for explicit-param tools. Fall through to the
       // table path for mechanical tools.
@@ -1655,7 +1674,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           checkTrackInComposition(p.track as string, p.composition_id as string | null)
           const params = colorParams(p.color as Rgba, (p.width as number | undefined) ?? 1920, (p.height as number | undefined) ?? 1080)
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, p.track as string, params, p.t_start_us as number, p.t_end_us as number))
-          return { ok: true, result: toolText(id) }
+          return { ok: true, result: toolRecord(addedLayer(id, p)) }
         }
         case 'add_video_layer': {
           const p = mcpDef('add_video_layer').parseDedicated!(a)
@@ -1680,7 +1699,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           }
           if (item?.kind === 'Image') {
             const imageId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, imageOverlayParams(media), t0, t1))
-            return { ok: true, result: toolText(imageId) }
+            return { ok: true, result: toolRecord(addedVideo(imageId, null, null, p)) }
           }
           // An Image never needed them, so the schema stopped requiring them;
           // a Video still does, and says so rather than defaulting to a window
@@ -1692,7 +1711,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const shouldPair = (snap.settings.auto_pair_audio_on_import === true) && (item?.kind === 'Video') && (item.metadata.audio != null)
           if (!shouldPair) {
             const videoId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, vParams, t0, t1))
-            return { ok: true, result: toolText(videoId) }
+            return { ok: true, result: toolRecord(addedVideo(videoId, null, null, p)) }
           }
           // Paired A/V: ONE commit — video + dialogue audio on the SAME track
           // (a track holds one visual and one audio lane, so the pair shares a
@@ -1708,7 +1727,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
               const linkId = applyLinksCreate(d, idGen, [videoId, audioId], null, false)
               return { video_layer_id: videoId, audio_layer_id: audioId, link_id: linkId }
             })
-            return { ok: true, result: toolJson(ids) }
+            return { ok: true, result: toolRecord(addedVideo(ids.video_layer_id, ids.audio_layer_id, ids.link_id, p)) }
           } catch (err) {
             if (err instanceof CommandFailure && err.err.error === 'ValidationFailed' && err.err.detail.rule === 'LayerOverlap') {
               const d = err.err.detail
@@ -1762,7 +1781,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const params = role === undefined ? base : { ...base, role }
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, track, params, p.t_start_us as number, p.t_end_us as number))
-          return { ok: true, result: toolText(id) }
+          return { ok: true, result: toolRecord(addedLayer(id, p)) }
         }
         // Shares prodTextParams with the production channel rather than minting
         // a second default family — a title authored by an agent and one
@@ -1776,7 +1795,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const params = prodTextParams({ content: p.content, x: p.x, y: p.y }, requireTrack(current(), track).comp)
           const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, track, params, p.t_start_us as number, p.t_end_us as number))
-          return { ok: true, result: toolText(id) }
+          return { ok: true, result: toolRecord(addedLayer(id, p)) }
         }
         // Both caption arms hand the dispatch its `project_id` from the state
         // they just read. The production channels carry one because the UI
@@ -1790,7 +1809,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             source_ids: p.source_ids, composition_id: p.composition_id,
           })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
-          return { ok: true, result: toolText(r.value as string) }
+          return { ok: true, result: toolRecord({ caption_track_id: r.value as string, cues: newLayerIds(before, current()).length }) }
         }
         case 'correct_caption_text': {
           const p = mcpDef('correct_caption_text').parseDedicated!(a)
@@ -1799,7 +1818,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             composition_id: p.composition_id,
           })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
-          return { ok: true, result: toolJson(r.value) }
+          return { ok: true, result: toolRecord(r.value as Record<string, unknown>) }
         }
         // An anchor reaches this arm as the LAYER alone, unlike the prod arm's
         // `{layer, src_us}` taken on trust: `src_us` is derivable from `t_us`
@@ -1827,16 +1846,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
             if (anchorLayer !== null) applyAttachMarker(d, marker, anchorLayer)
             return marker
           })
-          return { ok: true, result: toolText(id) }
+          const rec = markerRecord(current(), id) ?? { marker_id: id }
+          return { ok: true, result: toolRecord({ ...rec, adjusted: adjusted([['t_us', tUs, (rec as { t_us?: number }).t_us], ['end_t_us', endT, (rec as { end_t_us?: number | null }).end_t_us]]) }) }
         }
         case 'split_layer': {
           const p = mcpDef('split_layer').parseDedicated!(a)
           const layer = p.layer as string
           const r = dispatch('split_layer', { layer, at_t_us: p.at_t_us, escape_link: (p.escape_link as boolean) ?? false })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
-          // dispatch('split_layer') (applySplitLayer) already returns
-          // `{left, right}` (left = original layer, right = new) — return it verbatim.
-          return { ok: true, result: toolJson(r.value) }
+          // dispatch('split_layer') (applySplitLayer) names the two halves of the
+          // layer the caller named; the answer adds every link sibling's halves.
+          return { ok: true, result: toolRecord(splitResult(before, current(), r.value as { left: Uuid; right: Uuid }, p.at_t_us)) }
         }
         // The reason's presence is gated in the parser (locking needs one,
         // unlocking refuses one), so this arm reads `locked` and nothing else.
@@ -1844,20 +1864,22 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const p = mcpDef('set_history_lock').parseDedicated!(a)
           if (p.locked as boolean) history.lock(p.reason as string)
           else history.unlock()
-          return { ok: true, result: toolEmpty() }
+          return { ok: true, result: toolRecord({ locked: p.locked as boolean, reason: (p.reason as string | null) ?? null }) }
         }
         case 'create_checkpoint': {
           const p = mcpDef('create_checkpoint').parseDedicated!(a)
           const label = p.label as string
           if (label.trim() === '') return { ok: false, error: { code: 'invalid_params', message: 'label must be non-empty' } }
-          return { ok: true, result: toolText(checkpoint(label, MCP_ACTOR)) }
+          return { ok: true, result: toolRecord({ checkpoint_id: checkpoint(label, MCP_ACTOR), label }) }
         }
         case 'list_checkpoints': { mcpDef('list_checkpoints').parseDedicated!(a); return { ok: true, result: toolJson(listCheckpoints()) } }
         case 'restore_checkpoint': {
           const p = mcpDef('restore_checkpoint').parseDedicated!(a)
           const id = p.checkpoint_id as string
+          const label = listCheckpoints().find((c) => c.id === id)?.label ?? null
           restoreCheckpoint(id) // throws CommandFailure(HistoryLocked|CheckpointNotFound) → outer catch → mapCommandError → invalid_params (no data)
-          return { ok: true, result: toolEmpty() }
+          const h = history.status()
+          return { ok: true, result: toolRecord({ checkpoint_id: id, label, cursor: h.cursor, len: h.len, can_undo: h.can_undo, can_redo: h.can_redo }) }
         }
         // Work-session lifecycle is owned by the host; a bare actor has no session.
         case 'end_agent_session': return { ok: true, result: toolEmpty() }
@@ -1866,7 +1888,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const reason = p.reason as string
           if (reason.trim() === '') return { ok: false, error: { code: 'invalid_params', message: 'reason must be non-empty' } }
           const checkpointId = checkpoint(`Pre-agent: ${reason}`, MCP_ACTOR) // 1 det id; slot-flip + log are non-state side effects
-          return { ok: true, result: toolJson({ checkpoint_id: checkpointId, started_at: clock() }) }
+          return { ok: true, result: toolRecord({ checkpoint_id: checkpointId, started_at: clock() }) }
         }
         case 'set_keyframe': {
           const p = mcpDef('set_keyframe').parseDedicated!(a)
@@ -1881,14 +1903,14 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const next = upsertKeyframe(track, (p.t_us as number) - tStartUs, p.value as TrackValue, easing, idGen)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
-          return { ok: true, result: toolEmpty() }
+          return { ok: true, result: toolRecord(setKeyframeResult(layer, paramKey, track, readLayerTrack(current(), layer, paramKey), p.t_us)) }
         }
         case 'get_param_track': {
           const p = mcpDef('get_param_track').parseDedicated!(a)
           const layer = p.layer as string
           const paramKey = p.param_key as string
           const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
-          return { ok: true, result: toolJson(shapeGetParamTrack(track, tStartUs)) }
+          return { ok: true, result: toolRecord(shapeGetParamTrack(track, tStartUs) as Record<string, unknown>) }
         }
         case 'delete_keyframe': {
           const p = mcpDef('delete_keyframe').parseDedicated!(a)
@@ -1901,7 +1923,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const next = removeKeyframe(track, keyframeId, fallback)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
-          return { ok: true, result: toolEmpty() }
+          return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
         }
         case 'update_keyframe': {
           const p = mcpDef('update_keyframe').parseDedicated!(a)
@@ -1929,7 +1951,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           if (continuity) next = setContinuity(next, keyframeId, continuity)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
-          return { ok: true, result: toolEmpty() }
+          return { ok: true, result: toolRecord(keyframeByIdResult(layer, paramKey, keyframeId, readLayerTrack(current(), layer, paramKey))) }
         }
         case 'smooth_keyframes': {
           const p = mcpDef('smooth_keyframes').parseDedicated!(a)
@@ -1944,18 +1966,18 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const next = setAuto(track, ids)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
-          return { ok: true, result: toolEmpty() }
+          return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
         }
         case 'clear_keyframes': {
           const p = mcpDef('clear_keyframes').parseDedicated!(a)
           const layer = p.layer as string
           const paramKey = p.param_key as string
           const { track } = readLayerTrack(current(), layer, paramKey)
-          if (track.mode === 'Static') return { ok: true, result: toolEmpty() } // no-op, no commit
+          if (track.mode === 'Static') return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, { tStartUs: 0, track })) } // no-op, no commit
           const value = (p.value as TrackValue | undefined) ?? track.value[0]?.value ?? 0
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: { mode: 'Static', value } })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
-          return { ok: true, result: toolEmpty() }
+          return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
         }
         case 'set_param_track': {
           const p = mcpDef('set_param_track').parseDedicated!(a)
@@ -1968,7 +1990,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             : input
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: shifted })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
-          return { ok: true, result: toolEmpty() }
+          return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
         }
         case 'set_extrapolation': {
           const p = mcpDef('set_extrapolation').parseDedicated!(a)
@@ -1983,7 +2005,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           })
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
-          return { ok: true, result: toolEmpty() }
+          return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
         }
         case 'update_link': {
           const p = mcpDef('update_link').parseDedicated!(a)
@@ -2003,7 +2025,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             if (remove.length > 0) applyLinksRemoveMembers(d, link, remove)
             if (label !== undefined) applyLinksRename(d, link, label)
           })
-          return { ok: true, result: toolEmpty() }
+          return { ok: true, result: toolRecord(linkRecord(current(), link) ?? { link_id: link, dissolved: true }) }
         }
         case 'read_project': {
           // The `project://*` state views as a tool result, served by the same
@@ -2065,7 +2087,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const scope = scopeComposition(current(), compositionId)
           const track = trackId ?? commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, null, undefined, scope.id))
           const layerId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, tStartUs, resolvedEnd))
-          return { ok: true, result: toolText(layerId) }
+          return { ok: true, result: toolRecord(addedLayer(layerId, { t_start_us: tStartUs, t_end_us: tEndUsRaw })) }
         }
       }
       const parse = MCP_ARG_PARSERS[name]
@@ -2073,8 +2095,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
       const { op, args } = parse(a)
       const r = dispatch(op, args)
       if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
-      const shape = MCP_RESULT_SHAPERS[name] ?? (() => toolEmpty())
-      return { ok: true, result: shape(r.value) }
+      const reader = MCP_RESULT_READERS[name]
+      return { ok: true, result: reader ? toolRecord(reader(ctx(r.value))) : toolEmpty() }
     } catch (e) {
       if (e instanceof McpArgError) return { ok: false, error: e.toJson() }
       if (e instanceof CommandFailure) return { ok: false, error: mapCommandError(e.err) }

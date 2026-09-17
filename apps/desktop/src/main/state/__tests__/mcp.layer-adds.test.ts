@@ -42,12 +42,15 @@ function call(a: Actor, tool: string, args: Record<string, unknown>) {
 function aRoll(a: Actor): string { return root(a.snapshot()).tracks[0].id }
 function bRoll(a: Actor): string { return root(a.snapshot()).tracks[1].id }
 
-/** The tool's text result is the new layer's id; fail loudly rather than
- *  returning a placeholder a later assertion would silently pass against. */
+/** The tool answers with the new layer's record; its `layer_id` is what the
+ *  next call needs. Fail loudly rather than returning a placeholder a later
+ *  assertion would silently pass against. */
 function addedId(r: ReturnType<Actor['mcpCall']>): string {
   expect(r.ok, r.ok ? '' : `${r.error.code}: ${r.error.message}`).toBe(true)
   if (!r.ok) throw new Error('call failed')
-  return r.result.content[0].text
+  const rec = JSON.parse(r.result.content[0].text) as { layer_id?: unknown }
+  expect(typeof rec.layer_id, r.result.content[0].text).toBe('string')
+  return rec.layer_id as string
 }
 function layerOf(a: Actor, id: string): Layer {
   for (const t of root(a.snapshot()).tracks) {

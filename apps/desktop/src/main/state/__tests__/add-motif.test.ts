@@ -168,7 +168,7 @@ describe('actor.command("add_motif") — reject-before-commit', () => {
 
 // ── d. MCP path ───────────────────────────────────────────────────────────────
 describe('actor.mcpCall("add_motif_layer") — MCP dedicated arm', () => {
-  it('creates a Motif layer via MCP and returns toolText(layerId)', () => {
+  it('creates a Motif layer via MCP and returns its record', () => {
     const actor = makeActor()
     const result = actor.mcpCall('add_motif_layer', JSON.stringify({
       motif_id: 'countdown',
@@ -176,9 +176,11 @@ describe('actor.mcpCall("add_motif_layer") — MCP dedicated arm', () => {
     }))
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    const text = result.result.content[0]?.text
+    const record = JSON.parse(result.result.content[0]!.text) as { layer_id: string; kind: string }
+    expect(record.kind).toBe('Motif')
+    const text = record.layer_id
     expect(typeof text).toBe('string')
-    expect(text!.length).toBeGreaterThan(0)
+    expect(text.length).toBeGreaterThan(0)
     // Verify the layer was actually created
     const snap = actor.snapshot()
     const layers = root(snap).tracks.flatMap((t) => t.layers)

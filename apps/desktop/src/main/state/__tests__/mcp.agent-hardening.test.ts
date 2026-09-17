@@ -115,11 +115,11 @@ describe('update_effect — strict patch (issue 02)', () => {
     }))
     expect(add.ok).toBe(true)
     if (!add.ok) throw new Error('setup failed')
-    const layerId = add.result.content[0].text
+    const layerId = (JSON.parse(add.result.content[0].text) as { layer_id: string }).layer_id
     const eff = a.mcpCall('add_effect', JSON.stringify({ layer_id: layerId, kind: 'blur' }))
     expect(eff.ok).toBe(true)
     if (!eff.ok) throw new Error('setup failed')
-    return { a, layerId, effectId: eff.result.content[0].text }
+    return { a, layerId, effectId: (JSON.parse(eff.result.content[0].text) as { effect_id: string }).effect_id }
   }
 
   function effectParams(a: Actor, layerId: string): Record<string, unknown> {

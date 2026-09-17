@@ -87,7 +87,10 @@ test('TS actor: MCP add_motif_layer returns the layer id + the summary reflects 
       const res = await client.callTool({ name: 'add_motif_layer', arguments: { motif_id: 'countdown', t_start_us: 0 } })
       const content = res.content as Array<{ type: string; text?: string }>
       expect(content[0]!.type).toBe('text')
-      expect(content[0]!.text && content[0]!.text.length).toBeTruthy() // the layer id
+      // The answer is the layer's committed record; its `layer_id` is the new layer.
+      const record = JSON.parse(content[0]!.text ?? '{}') as { layer_id?: string; kind?: string }
+      expect(record.kind).toBe('Motif')
+      expect(record.layer_id && record.layer_id.length).toBeTruthy()
 
       // The `project://current` state view (served by the TS MCP host) reflects a Motif layer.
       const after = await client.readResource({ uri: 'project://current' })
@@ -99,8 +102,8 @@ test('TS actor: MCP add_motif_layer returns the layer id + the summary reflects 
       const motifs = proj.compositions[proj.root_id]!.tracks.flatMap((t) => t.layers).filter((l) => l.params.kind === 'Motif')
       expect(motifs.length).toBe(1)
       expect(motifs[0]!.params.motif_id ?? 'countdown').toBe('countdown')
-      // The returned text is the LAYER id, present in the project.
-      expect(motifs.some((l) => l.id === content[0]!.text)).toBe(true)
+      // The returned record names the LAYER id, present in the project.
+      expect(motifs.some((l) => l.id === record.layer_id)).toBe(true)
     } finally {
       await client.close()
     }

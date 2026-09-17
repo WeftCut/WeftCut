@@ -49,7 +49,7 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
   {
     name: 'write_motif_draft',
     description:
-      'Write a Motif draft from { manifest, html }. Returns the draft id. The draft is ' +
+      'Write a Motif draft from { manifest, html }. Returns `{ draft_id }`. The draft is ' +
       'placeable immediately (via `add_motif_layer`) for preview, and re-writable. `from` ' +
       '(optional) records an existing Motif id as the draft\'s UPDATE target so a later ' +
       '`install_motif {mode:\'update\'}` republishes over it; omit `from` for a brand-new ' +
@@ -105,7 +105,7 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
       'Install a draft. mode \'new\' publishes under the draft\'s own id; \'update\' ' +
       'republishes over the draft\'s recorded UPDATE target (set via `write_motif_draft`\'s ' +
       '`from`) — bumping its version so every placement re-renders, and rebinding + ' +
-      'migrating current-project layers. Returns the published id.',
+      'migrating current-project layers. Returns `{ motif_id }`.',
     inputSchema: {
       type: 'object',
       properties: {

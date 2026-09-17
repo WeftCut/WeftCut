@@ -363,7 +363,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         emitRestoreLog(cpId, label, { kind: 'Agent', client: 'mcp' })
       } else if (name === 'create_checkpoint') {
         const label = ((a.label as string | undefined) ?? '').trim()
-        const cpId = result.result.content[0]?.text ?? ''
+        const cpId = String((result.result.structuredContent as { checkpoint_id?: unknown } | undefined)?.checkpoint_id ?? '')
         emitCheckpointLog(cpId, label, { kind: 'Agent', client: 'mcp' })
       } else if (name === 'begin_agent_session') {
         const reason = ((a.reason as string | undefined) ?? '').trim()
