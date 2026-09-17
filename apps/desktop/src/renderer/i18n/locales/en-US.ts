@@ -1268,6 +1268,7 @@ const enUS = {
     "trim_layer": "Trim clip",
     "split_layer": "Split clip",
     "ripple_delete_gap": "Close gap",
+    "shift_layers": "Shift clips",
     "restack_layer": "Restack clip",
     "set_layers_enabled": "Enable or disable clips",
     "set_scale_linked": "Link or unlink X/Y scale",
@@ -2413,6 +2414,7 @@ const enUS = {
       enabled_multi: "Enabled {{count}} clips",
       disabled_multi: "Disabled {{count}} clips",
       move: "Moved clip",
+      shift: "Shifted clips",
       move_to_new_track: "Moved to a new track",
       // The named form wins whenever the destination carries a stored label;
       // the unnamed one covers a derived `Group N` and the root, neither of

@@ -302,6 +302,11 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
       moved: ripple ? movedLayers(c.before, c.after, new Set(ids)) : [],
     }
   },
+  shift_layers: (c) => ({
+    moved: movedLayers(c.before, c.after),
+    delta_us: (c.value as { delta_us: number }).delta_us,
+    requested_delta_us: c.args.delta_us,
+  }),
   ripple_delete_gap: (c) => ({
     track_id: str(c.args.track_id), start_us: c.args.start_us, end_us: c.args.end_us,
     moved: movedLayers(c.before, c.after),

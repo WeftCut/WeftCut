@@ -72,6 +72,9 @@ descriptions:
   the speech either side keeps its breath (or mark them to review first:
   `detect_pauses` → an anchored region `add_marker` per pause; both packaged
   as the `/cut-pauses` prompt).
+- Make room, or move the tail: `shift_layers` shifts every layer from a time
+  (or a named set, link partners included) by one delta as one undoable edit —
+  a positive delta from a time is the ripple insert; then place into the gap.
 - Captions: `transcribe_clip` → inspect the returned SRT → `apply_transcripts`,
   passing the envelope's `segments` and `word_timing` through (also
   `/auto-caption`). `apply_subtitles` is for a subtitle FILE the user already

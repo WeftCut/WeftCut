@@ -10,6 +10,7 @@ import { validate, reconcileMarkers, reconcileTransitions, type DroppedMarker, t
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
 import { applyAddGroupLayer, applyAddLayer, applyAddMarker, applyAddTrack, colorParams, defaultTransform, textParamsDefault } from './mutations/add'
 import { applyMoveLayer, applyMoveLayersToNewTrack } from './mutations/move'
+import { applyShiftLayers, applyShiftLayersFrom, type ShiftLayersResult } from './mutations/shift'
 import { applyRestackLayer, type RestackPosition } from './mutations/restack'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
@@ -844,6 +845,18 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // the caller derives `t_us` from the anchor it supplies, and this commit's
         // reconcile re-derives it right back.
         case 'add_marker': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 }, comp, undefined, (a.anchor as MarkerAnchor | null | undefined) ?? null)) } }
+        // shift_layers — one delta over a set: the named layers (+ link partners
+        // unless escaped) or everything starting at/after a time. One commit,
+        // one undo; the value names what moved so the refs can too.
+        case 'shift_layers': {
+          const strict = a.strict === true
+          const delta = parseNum(a.delta_us, 'delta_us')
+          const value = commit(HISTORY_SUMMARY.layersShift, (res: ShiftLayersResult) => layerRefs(res.moved), { kind: 'Coarse' }, (d) =>
+            Array.isArray(a.layers)
+              ? applyShiftLayers(d, a.layers as Uuid[], delta, (a.escape_link as boolean) ?? false, strict)
+              : applyShiftLayersFrom(d, (a.composition_id as Uuid | null) ?? null, (a.tracks as Uuid[] | null) ?? null, parseNum(a.from_t_us, 'from_t_us'), delta, strict))
+          return { ok: true, value }
+        }
         case 'move_layer': commit(HISTORY_SUMMARY.layerMove, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_link as boolean) ?? false, a.strict === true)); return { ok: true, value: null }
         // move_layers_to_new_track — the whole of z-order rearrangement (ADR 0042
         // decision 2). ONE commit: the lane is minted, the layers move onto it,

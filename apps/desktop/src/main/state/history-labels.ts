@@ -34,6 +34,7 @@ export const HISTORY_SUMMARY = {
   layerPaste: { key: 'history.layer.paste', text: 'Pasted clip' },
   layerDuplicate: { key: 'history.layer.duplicate', text: 'Duplicated clip' },
   layerMove: { key: 'history.layer.move', text: 'Moved clip' },
+  layersShift: { key: 'history.layer.shift', text: 'Shifted clips' },
   layerMoveToNewTrack: { key: 'history.layer.move_to_new_track', text: 'Moved to a new track' },
   layerRestack: { key: 'history.layer.restack', text: 'Restacked clip' },
   layerTrim: { key: 'history.layer.trim', text: 'Trimmed clip' },

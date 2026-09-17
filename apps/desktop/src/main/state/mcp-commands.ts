@@ -1428,6 +1428,26 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Move a layer to a different track and/or start time. The end time shifts by the same delta. Cross-track moves are validated against the destination's existing layers — overlap rejects with structured options. A start before 0 (for the layer or a link sibling moving with it) is refused, never clamped. Returns the layer's committed envelope, the link `siblings` that moved with it, and `adjusted` for any grid snap.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, new_t_start_us: US_SCHEMA('New timeline start'), new_track_id: { type: 'string', description: 'Destination track; the current one to move in time only.' }, escape_link: ESCAPE_LINK_SCHEMA }, required: ['layer_id', 'new_t_start_us', 'new_track_id'] },
     parseArgs: (a) => ({ op: 'move_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), to_track: parseUuid(a.new_track_id, 'new_track_id'), t_start_us: parseNum(a.new_t_start_us, 'new_t_start_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true } }) },
+  { name: 'shift_layers', exec: 'table', annotations: ANN_WRITE,
+    description: "Shift a set of layers in time by one `delta_us`, as one recorded edit — the multi-layer move, and with a positive delta at `from_t_us` the ripple INSERT (open a gap, then place into it; a negative delta closes one). Name the set with `layer_ids` (link partners ride along unless `escape_link`) or with `from_t_us` (every layer starting at or after it, on `track_ids` or on every track of the composition). Each layer snaps on its own grid; the record echoes where each landed. Refuses, moving nothing: a start that would cross 0 (`NegativeLayerStart`), a landing on an occupied span (`LayerOverlap`, naming the pair), a locked lane (`TrackLocked`). Returns `{ moved: [layer records], delta_us }`.",
+    inputSchema: { type: 'object', properties: {
+      layer_ids: LAYER_IDS_SCHEMA('The layers to shift, all in one composition. Exactly one of this and `from_t_us`.'),
+      from_t_us: US_SCHEMA('Shift every layer starting at or after this time, timeline'),
+      track_ids: { type: 'array', items: { type: 'string' }, description: 'With `from_t_us`: only these tracks. Omit for every track.' },
+      delta_us: { type: 'integer', description: 'Signed shift, µs; positive moves later. Not 0.' },
+      escape_link: { ...ESCAPE_LINK_SCHEMA, description: 'With `layer_ids`: leave link partners in place. Default false.' },
+      composition_id: { ...COMPOSITION_ID_SCHEMA, description: 'With `from_t_us`: the composition to sweep; omit for the root.' },
+    }, required: ['delta_us'] },
+    parseArgs: (a) => {
+      const byIds = a.layer_ids !== undefined && a.layer_ids !== null
+      const byTime = a.from_t_us !== undefined && a.from_t_us !== null
+      if (byIds === byTime) throw new McpArgError(`shift_layers takes exactly one of \`layer_ids\` / \`from_t_us\`${byIds ? ' — two of them name two sets' : ' — neither names a set'}`, byIds ? 'from_t_us' : 'layer_ids')
+      const delta = parseIntNum(a.delta_us, 'delta_us')
+      if (delta === 0) throw new McpArgError('delta_us is 0 — nothing would move', 'delta_us')
+      return { op: 'shift_layers', args: byIds
+        ? { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), delta_us: delta, escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true }
+        : { from_t_us: parseIntNum(a.from_t_us, 'from_t_us'), tracks: a.track_ids === undefined || a.track_ids === null ? null : asArray(a.track_ids, 'track_ids').map((s) => parseUuid(s, 'track_ids')), composition_id: parseCompositionIdOpt(a.composition_id), delta_us: delta, strict: true } }
+    } },
   { name: 'restack_layer', exec: 'table', annotations: ANN_SET,
     description: "Restack a visual layer in z-order relative to an ANCHOR layer: `position` 'above' | 'below' puts it directly above/below the anchor's track, resolved at apply time (anchors are layers, not indices, which drift between read and write). A mover that is its track's sole occupant moves the whole track; a mover sharing its track splits onto a new track at the target, and the source is pruned only if that emptied it; a role-stamped A/B-roll track never moves. Front/back are not variants — anchor on the top or bottom of the visual stack. Audio never stacks (`WrongLayerKind`), nor may the anchor be the mover. Already in place = no-op, nothing recorded. One recorded commit.",
     inputSchema: { type: 'object', properties: {
