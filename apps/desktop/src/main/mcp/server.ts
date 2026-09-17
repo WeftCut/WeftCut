@@ -32,6 +32,7 @@ import { shapeHybridResult } from './hybridResult.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES } from './hostResources.js'
 import { MCP_INSTRUCTIONS } from './instructions.js'
+import { effectsCatalogView } from './effectsCatalog.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
 import { withCanonicalToolName } from './toolAliases.js'
 
@@ -313,6 +314,11 @@ async function dispatchTool(
     if (name === 'read_project' && args.view === 'session' && tsHost.agent) {
       return toolRecord(sessionView(tsHost.agent)) as unknown as ServerResult
     }
+    // The effects vocabulary is a catalog, not project state, so it is answered
+    // here — the same record `effects://catalog` serves.
+    if (name === 'read_project' && args.view === 'effects') {
+      return toolRecord(effectsCatalogView()) as unknown as ServerResult
+    }
     // The two picture views for a client without resources: served by the same
     // Rust reader `media://{id}/thumbnail` and `media://{id}/frame/{t_us}` use,
     // and answered as an IMAGE content block, which is what a model can look at.
@@ -429,6 +435,9 @@ export async function handleReadResource(
   if (tsHost) {
     if (uri === 'project://session' && tsHost.agent) {
       return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(sessionView(tsHost.agent), null, 2) }] } as unknown as ServerResult
+    }
+    if (uri === 'effects://catalog') {
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(effectsCatalogView(), null, 2) }] } as unknown as ServerResult
     }
     if (uri === 'motifs://current') {
       const raw = tsHost.motifTool('list_motifs', {}) as Array<Record<string, unknown>>

@@ -255,6 +255,7 @@ names retired before that decision (`add_motif`, `checkpoint`,
 | `media://{id}/waveform` | audio peaks file (binary, base64) |
 | `media://{id}/analysis` | deterministic shot report (`{ shots, cut_scores }`, source-absolute) for the default detection params, content-addressed per source; computed on demand on a miss (no `404`) and shared with `analyze_clip` |
 | `media://{id}/description` | cached scene descriptions under the view the app's settings name — the preferred engine, sampling, focus and UI language, all injected by the host (`{ covered_ranges, segments }`); `404` until `describe_clip` has populated it at that key (unlike the always-computable resources above) — the refusal names the whole view, since changing any axis reads as "not described" until the shots are described again under the new one |
+| `effects://catalog` | every effect kind `add_effect` takes — visual and `audio.*` — with each param's `default` and `range` (plus `unit` / a sample `region` where an audio kind has one), and the `effects[<id>].params[<key>]` keyframe path. A catalog, not project state; the same record as `read_project { view: "effects" }` |
 | `motifs://current` | full motif catalog (built-ins, installed, drafts) — same payload as `list_motifs`; `html` stripped |
 
 The parameterised families are advertised by `resources/templates/list`
@@ -269,7 +270,7 @@ A client that cannot read MCP resources has the same views as a tool:
 `read_project { view, id?, t_us?, composition_id? }` with `view` one of
 `current`, `composition`, `compositions`, `media`, `tracks`, `layer` (needs
 `id`), `markers`, `links`, `transitions`, `settings`, `history`, `session`,
-and the two picture views `media_thumbnail` / `media_frame` (`id` is the media
+`effects` (the effects catalog), and the two picture views `media_thumbnail` / `media_frame` (`id` is the media
 id, `media_frame` also takes `t_us`; both answer an image content block from
 the same reader the `media://` resources use). The JSON views are served by the
 same function as the resource, so the two never disagree; `composition`,

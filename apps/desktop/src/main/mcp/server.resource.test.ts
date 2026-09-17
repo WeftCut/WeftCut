@@ -141,3 +141,21 @@ describe('read_project picture views answer an image block from the media reader
     expect(noId.content[0].text).toContain('media id')
   })
 })
+
+describe('effects://catalog (audit §3: the effect vocabulary had to be learned from refusals)', () => {
+  it('lists every kind add_effect takes with each param\'s default and range, as a resource and as a read_project view', async () => {
+    const ts = tsHostStub()
+    ts.mcpCall = (n: string, a: string) => ts.actor.mcpCall(n, a)
+    const out = await handleReadResource(fakeBackend(async () => { throw new Error('no backend') }), () => ts, 'effects://catalog')
+    const body = JSON.parse(contents(out)[0].text) as { kinds: Array<{ kind: string; target: string; params: Record<string, { default: number; range: [number, number] }> }>; param_key: string }
+    const blur = body.kinds.find((k) => k.kind === 'blur')!
+    expect(blur.target).toBe('visual')
+    expect(blur.params.strength).toEqual({ default: 8, range: [0, 100] })
+    const denoise = body.kinds.find((k) => k.kind.startsWith('audio.'))!
+    expect(denoise.target).toBe('audio')
+    expect(Object.keys(denoise.params).length).toBeGreaterThan(0)
+    expect(body.param_key).toContain('effects[<effect_id>].params[<key>]')
+    const view = await handleCallTool(fakeBackend(async () => { throw new Error('no backend') }), () => ts, 'read_project', { view: 'effects' }) as { content: Array<{ text: string }> }
+    expect(JSON.parse(view.content[0].text).kinds.map((k: { kind: string }) => k.kind)).toEqual(body.kinds.map((k) => k.kind))
+  })
+})
