@@ -658,27 +658,53 @@ what a rejected factor's error says. That is this document's job.
 
 ## Error model
 
-Tool errors carry structured detail:
+A refusal is the tool's ANSWER, not a protocol fault. Every failure inside a
+tool — a malformed argument, a stale id, a blocked edit, a compute or OS
+failure — comes back as a `CallToolResult` with `isError: true`, which is the
+channel a model reads:
 
 ```json
 {
-  "error": "LayerOverlap",
-  "message": "Cannot place clip from 5.0s to 10.0s on track 'V1' — clip 'intro' (id 7f3a...) occupies 4.2s to 8.0s.",
-  "options": [
-    { "action": "create_new_track", "kind": "Video" },
-    { "action": "trim_existing", "layer_id": "7f3a...", "new_t_end_us": 5000000 },
-    { "action": "split_at_t", "layer_id": "7f3a...", "at_t_us": 5000000 }
-  ]
+  "isError": true,
+  "content": [{ "type": "text", "text": "layer overlap on track 7f3a…: the requested range [5000000, 10000000) µs collides with layer 9c1d… at [4200000, 8000000) µs. … Options: create_new_track and retry there; trim_existing (trim 9c1d… to t_end_us 5000000); split_at_t (split 9c1d… at 5000000)." }],
+  "structuredContent": {
+    "code": "invalid_params",
+    "message": "…the same text…",
+    "error": "LayerOverlap",
+    "track": "7f3a…",
+    "blocking_layer": "9c1d…",
+    "blocking_range_us": [4200000, 8000000],
+    "requested_range_us": [5000000, 10000000],
+    "options": [
+      { "action": "create_new_track", "kind": "Video" },
+      { "action": "trim_existing", "layer_id": "9c1d…", "new_t_end_us": 5000000 },
+      { "action": "split_at_t", "layer_id": "9c1d…", "at_t_us": 5000000 }
+    ]
+  }
 }
 ```
 
 Give the agent something to act on, not a brick wall.
 
-The prose `message` must itself name the cause and the options — several
-MCP clients (Claude Code among them) surface only `code: message` to the
-model and drop the structured `data`, so detail that lives only in
-`data` is detail the agent never sees. `data` mirrors the same facts
-machine-readably for clients that do forward it.
+The text must itself name the cause and the options: it is the one part every
+client shows the model. `structuredContent` mirrors the same facts
+machine-readably for clients that forward it — `code` is the envelope code
+(`invalid_params` for anything the caller can fix, `internal` for a failure
+that is not the caller's), then `message`, then whatever the mapper attached:
+the `error` variant, the ids, `options[]`. Nothing may live only there.
+
+Two things stay JSON-RPC errors, because they are faults of the REQUEST rather
+than answers of a tool: an unknown tool name (`-32602`, `Unknown tool: <name>`),
+and a `resources/read` or `prompts/get` that fails (those result types have no
+`isError` slot). A client's health or retry logic may treat a JSON-RPC error as
+a server fault; it must never see one for a refusal.
+
+Arguments are checked before dispatch on every route. A TS tool's own parser
+refuses first; a Rust-parsed tool (`import_media`, `synthesize_speech`, the
+clip-compute reads) is checked against its advertised schema, so a call missing
+two fields is refused once, naming both in the tool's own vocabulary — never
+serde's one-field-at-a-time text with the column of a buffer the caller never
+sent.
 
 ## Change feed
 

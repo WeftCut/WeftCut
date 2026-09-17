@@ -236,11 +236,22 @@ describe('level follows the tool route', () => {
     expect(entries.map((e) => e.level)).toEqual(['info', 'info'])
   })
 
-  it('a throw is Error whatever the route, and carries the refusal code', async () => {
+  it('a refusal is Error whatever the route, and carries the refusal code', async () => {
+    // A refusal is an `isError` RESULT since the error-channel change, not a
+    // throw — the row must not read it as a success.
     const { entries, deps } = collector()
     await decoratedCallTool(deps)('add_color_layer', {})
     expect(entries[0].level).toBe('error')
-    expect(detailsOf(entries[0]).error).toMatchObject({ code: -32602 })
+    expect(detailsOf(entries[0]).error).toMatchObject({ code: 'invalid_params' })
+    expect((detailsOf(entries[0]).error as { message: string }).message).toContain('track_id')
+  })
+
+  it('a throw is Error too, and carries the JSON-RPC number when the throw has one', async () => {
+    const { entries, deps } = collector()
+    const boom = Object.assign(new Error('boom'), { code: -32603 })
+    await withLog('tools/call', async () => { throw boom }, deps)({ params: { name: 'ping', arguments: {} } }, undefined).catch(() => {})
+    expect(entries[0].level).toBe('error')
+    expect(detailsOf(entries[0]).error).toMatchObject({ code: -32603, message: 'boom' })
   })
 
   it('reads, prompts and lists name their target in the message', async () => {

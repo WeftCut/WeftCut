@@ -2020,7 +2020,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
             if (typeof text !== 'string') return { ok: false, error: { code: 'internal', message: `${uri} returned no body` } }
             return { ok: true, result: toolText(text) }
           } catch (err) {
-            return { ok: false, error: { code: 'not_found', message: err instanceof Error ? err.message : String(err) } }
+            // `invalid_params`, not `not_found`: the envelope's `not_found` means
+            // "no such TOOL" and the host turns it into a JSON-RPC error. A layer
+            // or composition id that names nothing is a bad argument to a tool
+            // that exists, and travels as an `isError` result like every other.
+            return { ok: false, error: { code: 'invalid_params', message: err instanceof Error ? err.message : String(err) } }
           }
         }
         case 'dry_run': {

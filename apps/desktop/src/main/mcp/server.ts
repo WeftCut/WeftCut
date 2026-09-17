@@ -14,7 +14,7 @@ import {
   type ServerResult,
 } from '@modelcontextprotocol/sdk/types.js'
 import { captureMotifFrameB64 } from '../motif/capture.js'
-import { routeMcpTool } from './mutationTools.js'
+import { HYBRID_TOOLS, routeMcpTool } from './mutationTools.js'
 import { shapeMotifMcpResult } from './motifResult.js'
 import { runHybrid } from '../state/hybrids.js'
 import { CLIP_SLICE_TOOLS, resolveClipSliceArgs, resolvePauseComputeArgs, TWO_SLICE_TOOLS, resolveTwoSliceArgs } from '../state/clip-slice-forward.js'
@@ -22,7 +22,9 @@ import { serveProjectResource, buildResourceInjection } from '../state/resource-
 import type { TsActorHost } from '../state/ts-actor-host.js'
 import type { ActorHandle, ChangeEvent } from '../state/actor.js'
 import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
-import { MCP_TOOL_DEFS, mcpDef } from '../state/mcp-commands.js'
+import { MCP_TOOL_DEFS, MCP_TOOLS, McpArgError, mcpDef, type McpErrorCode } from '../state/mcp-commands.js'
+import { toolErrorResult, thrownToToolError, UnknownToolError } from './toolResult.js'
+import { argProblemMessage } from './argCheck.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
 import { withCanonicalToolName } from './toolAliases.js'
@@ -32,14 +34,20 @@ type Backend = import('@weftcut/core').Backend
 interface Envelope {
   ok: boolean
   result?: unknown
-  error?: { code: string; message: string; data?: unknown }
+  error?: { code: McpErrorCode; message: string; data?: unknown }
 }
 const CODE_MAP: Record<string, number> = {
   invalid_params: -32602, invalid_request: -32600, not_found: -32601, internal: -32603,
 }
 
-/** Map a parsed {ok,result|error} envelope to the SDK result (or throw the
- *  SDK-shaped error). The TS actor.mcpCall returns this same shape as Rust's reply(). */
+/** Map a parsed {ok,result|error} envelope to the SDK result, or THROW the
+ *  SDK-shaped error. The throwing form is right for `resources/read` and
+ *  `prompts/get`, whose results have no `isError` slot, and for the renderer's
+ *  own clip-compute path (`callClipComputeTool`), where a throw is what the IPC
+ *  bridge turns into a rejected promise. A TOOL call never surfaces one of these
+ *  to an agent: `handleCallTool` catches it and answers with an `isError`
+ *  result (`toolResult.ts`). The TS actor.mcpCall returns this same envelope
+ *  shape as Rust's reply(). */
 function unwrapEnvelope(env: Envelope): unknown {
   if (env.ok) return env.result
   const err = env.error!
@@ -149,8 +157,70 @@ export async function callClipComputeTool(
   finally { release() }
 }
 
+/** The Rust catalog is static for the life of the process — `tool_table!` is a
+ *  compile-time table — so it is parsed once per backend and shared by
+ *  `tools/list`, `resources/list` and the argument gate below. Keyed weakly on
+ *  the backend object so a test's fake backend is its own catalog. */
+interface RustCatalog {
+  tools: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown>; input_schema?: Record<string, unknown> }>
+  resources: Array<{ uri: string; name?: string; description?: string; mimeType?: string }>
+}
+const rustCatalogs = new WeakMap<object, Promise<RustCatalog>>()
+export function rustCatalog(backend: Backend): Promise<RustCatalog> {
+  let p = rustCatalogs.get(backend)
+  if (!p) {
+    p = backend.mcpCatalog().then((json) => {
+      const c = JSON.parse(json) as Partial<RustCatalog>
+      return { tools: c.tools ?? [], resources: c.resources ?? [] }
+    })
+    // A failed read must not poison every later call with the same rejection.
+    p.catch(() => { rustCatalogs.delete(backend) })
+    rustCatalogs.set(backend, p)
+  }
+  return p
+}
+
+/** A tool's parsed envelope → the SDK result. A refusal becomes an `isError`
+ *  result (`toolResult.ts`); only an unknown tool name still throws, because
+ *  that is a malformed request and not a tool's answer. */
+function unwrapToolEnvelope(json: string, name: string): ServerResult {
+  const env = JSON.parse(json) as Envelope
+  if (env.ok) return env.result as ServerResult
+  const err = env.error!
+  if (err.code === 'not_found') throw new UnknownToolError(name)
+  return toolErrorResult(err)
+}
+
+/** The argument gate for the routes that have no TS parser of their own.
+ *
+ *  A TS-owned hybrid def (`auto_split_by_shot`, `remove_pauses`) carries a
+ *  `parseDedicated` that until now only the bijection gate ever ran — run it,
+ *  so a malformed id is refused in the same words every table tool uses. A
+ *  Rust-sourced tool is checked against its advertised schema (`argCheck.ts`)
+ *  so every missing or mistyped field is named at once, in the tool's own
+ *  vocabulary, instead of serde's one-field-at-a-time text. Returns the
+ *  refusal, or null when the args pass. */
+async function refuseBadArgs(backend: Backend, name: string, args: Record<string, unknown>): Promise<ServerResult | null> {
+  if (HYBRID_TOOLS.has(name) && MCP_TOOLS.has(name)) {
+    try { mcpDef(name).parseDedicated?.(args) }
+    catch (e) { if (e instanceof McpArgError) return toolErrorResult(e.toJson()); throw e }
+    return null
+  }
+  const tool = (await rustCatalog(backend)).tools.find((t) => t.name === name)
+  const schema = tool?.inputSchema ?? tool?.input_schema
+  const message = schema ? argProblemMessage(name, schema, args) : null
+  return message === null ? null : toolErrorResult({ code: 'invalid_params', message })
+}
+
 /** CallTool routing (tsHost present): mutations → TS actor.mcpCall, hybrid →
- *  runHybrid, rust → backend (native reads/compute that take an injected state slice). */
+ *  runHybrid, rust → backend (native reads/compute that take an injected state slice).
+ *
+ *  Every failure inside a tool comes back as an `isError` RESULT, whatever route
+ *  raised it and however it was raised — an envelope, a thrown `CommandError`
+ *  JSON, serde text, an OS message. The one throw that escapes is an unknown
+ *  tool name, which the SDK turns into the JSON-RPC error the spec reserves for
+ *  it. `withLog` and the activity service both read `isError`, so a refusal is
+ *  still logged as a failed call. */
 export async function handleCallTool(
   backend: Backend,
   getTsHost: () => TsActorHost | null,
@@ -159,6 +229,32 @@ export async function handleCallTool(
   getPreferredEngine: () => string | null = () => null,
   getVlm: VlmProvider = NO_VLM,
   peaksPathFor: PeaksPathProvider = NO_PEAKS_PATH,
+): Promise<ServerResult> {
+  const route = routeMcpTool(name)
+  try {
+    // LANDMINE: no `await` may precede this call — the 'ts' route commits inside
+    // `dispatchTool`'s synchronous prefix, and `withLog`'s commit window closes
+    // at the first await (see its window-integrity cases).
+    return await dispatchTool(backend, getTsHost, route, name, args, getPreferredEngine, getVlm, peaksPathFor)
+  } catch (e) {
+    if (e instanceof UnknownToolError) throw e
+    // The motif store's failures are the caller's — an unknown draft, an id
+    // already installed — so a plain message there is `invalid_params`. A
+    // compute or hybrid failure is not, unless it reads like an argument fault,
+    // which `thrownToToolError` tells apart.
+    return toolErrorResult(thrownToToolError(e, route === 'motif' ? 'invalid_params' : 'internal'))
+  }
+}
+
+async function dispatchTool(
+  backend: Backend,
+  getTsHost: () => TsActorHost | null,
+  route: ReturnType<typeof routeMcpTool>,
+  name: string,
+  args: Record<string, unknown>,
+  getPreferredEngine: () => string | null,
+  getVlm: VlmProvider,
+  peaksPathFor: PeaksPathProvider,
 ): Promise<ServerResult> {
   const tsHost = getTsHost()
   if (tsHost?.agent && ['begin_agent_session', 'end_agent_session', 'set_history_lock'].includes(name)) {
@@ -179,16 +275,21 @@ export async function handleCallTool(
       }
       return { content: [{ type: 'text', text: JSON.stringify(result) }] } as ServerResult
     } catch (e) {
-      return { isError: true, content: [{ type: 'text', text: e instanceof Error ? e.message : String(e) }] } as ServerResult
+      return toolErrorResult({ code: 'invalid_params', message: e instanceof Error ? e.message : String(e) })
     }
   }
   if (tsHost) {
-    const route = routeMcpTool(name)
     if (route === 'ts') {
-      const out = unwrapEnvelope(tsHost.mcpCall(name, JSON.stringify(args)))
-      return out as ServerResult
+      const r = tsHost.mcpCall(name, JSON.stringify(args))
+      if (!r.ok) {
+        if (r.error.code === 'not_found') throw new UnknownToolError(name)
+        return toolErrorResult(r.error)
+      }
+      return r.result as unknown as ServerResult
     }
     if (route === 'hybrid') {
+      const refused = await refuseBadArgs(backend, name, args)
+      if (refused) return refused
       // Native-compute → TS-write. import_media returns the new media
       // id; shape it as the Rust tool does (ToolResult::text(id) → text content).
       const result = await runHybrid(name, args, tsHost.hybridDeps)
@@ -207,10 +308,16 @@ export async function handleCallTool(
     // slices. Kept separate from the single-slice call below, which reads a
     // top-level `layer_id`.
     if (TWO_SLICE_TOOLS.has(name)) {
+      const refused = await refuseBadArgs(backend, name, args)
+      if (refused) return refused
       const merged = resolveTwoSliceArgs(args, tsHost.actor.snapshot())
-      return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult
+      return unwrapToolEnvelope(await backend.mcpCallTool(name, JSON.stringify(merged)), name)
     }
     if (CLIP_SLICE_TOOLS.has(name)) {
+      const refused = await refuseBadArgs(backend, name, args)
+      if (refused) return refused
+      // Throws the SDK-shaped envelope error for the renderer's sake; the outer
+      // catch maps its code back onto an `isError` result for the agent.
       return callClipComputeTool(backend, tsHost, name, args, getPreferredEngine, getVlm, peaksPathFor)
     }
     // route === 'rust' → fall through (other reads are served by the backend).
@@ -230,7 +337,14 @@ export async function handleCallTool(
     })
     return { content: [{ type: 'image', data: b64, mimeType: 'image/png' }] } as unknown as ServerResult
   }
-  return unwrap(await backend.mcpCallTool(name, JSON.stringify(args))) as ServerResult
+  // Decided HERE, from the catalog this process advertises, rather than left to
+  // the backend's `not_found` envelope: the name is known or it is not, and a
+  // malformed request should not cost a native round trip to say so. A TS tool
+  // is known even with no host (the bare-core forward the tests exercise).
+  if (!MCP_TOOLS.has(name) && !(await rustCatalog(backend)).tools.some((t) => t.name === name)) throw new UnknownToolError(name)
+  const refused = await refuseBadArgs(backend, name, args)
+  if (refused) return refused
+  return unwrapToolEnvelope(await backend.mcpCallTool(name, JSON.stringify(args)), name)
 }
 
 /** ReadResource routing (tsHost present): project:// state views served in TS from
@@ -453,7 +567,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   // Every handler goes through withLog: the funnel is what keeps a newly added
   // tool logged with nothing to remember. See `docs/status-log.md`.
   server.setRequestHandler(ListToolsRequestSchema, track('tools/list', async () => {
-    const rust = (JSON.parse(await backend.mcpCatalog()) as { tools: Array<{ name: string }> }).tools
+    const rust = (await rustCatalog(backend)).tools
     return { tools: mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS]) } as unknown as ServerResult
   }, log, clientInfo))
   // A retired tool name is rewritten to the advertised one BEFORE `track`, so
@@ -465,7 +579,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   server.setRequestHandler(CallToolRequestSchema, (req: CallToolRequest, extra: unknown) =>
     callTool(withCanonicalToolName(req), extra))
   server.setRequestHandler(ListResourcesRequestSchema, track('resources/list', async () => {
-    const cat = JSON.parse(await backend.mcpCatalog()) as { resources: Array<{ uri: string }> }
+    const cat = await rustCatalog(backend)
     return { resources: mergeMcpResources(cat.resources, MOTIF_RESOURCE_DEFS) } as unknown as ServerResult
   }, log, clientInfo))
   server.setRequestHandler(ReadResourceRequestSchema, track('resources/read', async (req: ReadResourceRequest) =>

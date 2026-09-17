@@ -190,7 +190,9 @@ describe('read_project', () => {
     const a = actorWithPool()
     expect(refusal(call(a, 'read_project', { view: 'nope' })).message).toMatch(/view must be one of/)
     expect(refusal(call(a, 'read_project', { view: 'layer' })).code).toBe('invalid_params')
-    expect(refusal(call(a, 'read_project', { view: 'tracks', composition_id: NOWHERE })).code).toBe('not_found')
+    // `invalid_params`: `not_found` is the unknown-TOOL code, which the host
+    // escalates to a JSON-RPC error; an unknown composition is a bad argument.
+    expect(refusal(call(a, 'read_project', { view: 'tracks', composition_id: NOWHERE })).code).toBe('invalid_params')
   })
 })
 

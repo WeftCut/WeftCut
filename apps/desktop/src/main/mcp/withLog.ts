@@ -9,6 +9,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { routeMcpTool } from './mutationTools.js'
+import { isToolError, toolErrorCode, toolErrorText } from './toolResult.js'
 
 /** The six request methods `buildMcpServer` registers handlers for. */
 export type McpLoggedMethod =
@@ -153,11 +154,13 @@ function messageFor(method: McpLoggedMethod, tool: string, params: Record<string
   }
 }
 
-/** The error half of `details`. `code` is the JSON-RPC number `unwrapEnvelope`
- *  stamps on a refusal (`server.ts`); a plain throw has none. */
-function errorDetail(err: unknown): { code?: number; message: string } {
+/** The error half of `details`. `code` is the refusal's envelope code
+ *  (`invalid_params`, …) when the call answered with an `isError` result
+ *  (`toolResult.ts`), the JSON-RPC number when a throw carried one
+ *  (`unwrapEnvelope`), and absent for a plain throw. */
+function errorDetail(err: unknown): { code?: number | string; message: string } {
   const e = err as { code?: unknown; message?: unknown } | null
-  const code = typeof e?.code === 'number' ? e.code : undefined
+  const code = typeof e?.code === 'number' || typeof e?.code === 'string' ? e.code : undefined
   const message = typeof e?.message === 'string' ? e.message : String(err)
   return { ...(code !== undefined ? { code } : {}), message }
 }
@@ -209,7 +212,7 @@ export function withLog<Req extends RequestLike, Res>(
     /** The change this call committed, once the window has closed over it. */
     let summary: McpRowSummary | null = null
 
-    const details = (error?: { code?: number; message: string }): Record<string, unknown> => {
+    const details = (error?: { code?: number | string; message: string }): Record<string, unknown> => {
       const client = clientInfo()
       return {
         tool,
@@ -310,7 +313,11 @@ export function withLog<Req extends RequestLike, Res>(
     try {
       const out = await runInWindow()
       settled = true
-      finish(false, null)
+      // A refusal travels as an `isError` RESULT, not a throw (`toolResult.ts`),
+      // and it is still a failed call: the row is `Error` and carries the
+      // refusal's text and code, exactly as a thrown one did.
+      if (method === 'tools/call' && isToolError(out)) finish(true, { code: toolErrorCode(out), message: toolErrorText(out) })
+      else finish(false, null)
       return out
     } catch (err) {
       settled = true

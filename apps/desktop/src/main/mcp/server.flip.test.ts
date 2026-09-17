@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { callClipComputeTool, handleCallTool } from './server'
 import { createActor } from '../state/actor'
 import { uuidV7Gen } from '../state/ids'
@@ -28,8 +29,11 @@ function tsHostStub() {
   }
   return { actor, mcpCall: (name: string, argsJson: string) => actor.mcpCall(name, argsJson), hybridDeps, handleInvoke: async () => null, start: () => {}, stop: () => {}, beginAgentSessionSlot: () => {} } as any
 }
+// The catalog a fake advertises is what the host judges "known tool" by, so it
+// is the committed Rust snapshot and not an empty list.
+const RUST_CATALOG = readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 'utf8')
 function fakeBackend(mcpCallTool: (n: string, a: string) => Promise<string>) {
-  return { mcpCallTool, mcpReadResource: async () => '{"ok":true,"result":{}}', mcpCatalog: async () => '{"tools":[]}' } as any
+  return { mcpCallTool, mcpReadResource: async () => '{"ok":true,"result":{}}', mcpCatalog: async () => RUST_CATALOG } as any
 }
 
 describe('handleCallTool flip routing', () => {
@@ -55,7 +59,13 @@ describe('handleCallTool flip routing', () => {
     // The fake synthesizeSpeechCompute returns '{}'  (no media_item)
     // so the arm throws an actor-write error — but NOT a -32600 blocked rejection.
     const ts = tsHostStub()
-    const result = await handleCallTool(fakeBackend(async () => '{}'), () => ts, 'synthesize_speech', { text: 'hi' })
+    // An incomplete call is refused BEFORE compute, as an isError result naming
+    // the field — the argument gate the error-channel change added.
+    const refused = await handleCallTool(fakeBackend(async () => '{}'), () => ts, 'synthesize_speech', { text: 'hi' }) as { isError?: boolean; content: Array<{ text: string }> }
+    expect(refused.isError).toBe(true)
+    expect(refused.content[0].text).toContain('`voice`')
+    expect(ts.hybridDeps.compute.synthesizeSpeechCompute).not.toHaveBeenCalled()
+    const result = await handleCallTool(fakeBackend(async () => '{}'), () => ts, 'synthesize_speech', { text: 'hi', voice: 'alloy' })
       .then((v) => ({ ok: true as const, v }), (e: Error) => ({ ok: false as const, e }))
     // Must NOT have been rejected with code -32600 (that is the blocked path).
     if (!result.ok) {
