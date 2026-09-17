@@ -12,7 +12,7 @@ import { positionTrack, setPositionTrack } from '../../../shared/position'
 // parser read the same predicate and neither depends on the other.
 import { isColorParam, MAX_RESIDENT_KEYFRAMES, type TrackValue } from '../../../shared/keyframe'
 import type { MotifCatalog } from '../../../shared/motifs/catalog'
-import { resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
+import { canonicalizeProps, MotifPropError, resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
 
 /** Internally-tagged ("kind") param patch. Every field optional bar kind;
  *  absent = "don't touch".
@@ -383,6 +383,21 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
  *  arithmetic only for absurd timestamps far beyond realistic use. */
 export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsPatch, catalog: MotifCatalog): void {
   const { comp: c, layer } = checkTrackLock(p, id) // LayerNotFound / TrackLocked
+  // A Motif's props are checked against its manifest BEFORE the merge, the
+  // way `add_motif_layer` and `preview_motif_draft` check theirs: an unknown
+  // key or a wrong type is refused naming the schema, rather than stored for a
+  // render that ignores it (audit §3, motifs). A motif the catalog does not
+  // know stays permissive — the project may come from a build that knows it.
+  if (patch.kind === 'Motif' && patch.props !== undefined && layer.params.kind === 'Motif') {
+    const manifest = catalog.get(layer.params.motif_id)
+    if (manifest !== undefined) {
+      try { canonicalizeProps(manifest, { ...layer.params.props, ...patch.props }) }
+      catch (e) {
+        if (e instanceof MotifPropError) throw new CommandFailure({ error: 'InvalidArgument', field: 'props', detail: `${e.detail} — list_motifs reports this motif's props_schema` })
+        throw e
+      }
+    }
+  }
   applyParamsPatch(layer, patch)
 
   // Content-window model: after a Motif params update, if the cap-driving prop

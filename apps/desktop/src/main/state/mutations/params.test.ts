@@ -423,14 +423,14 @@ function textParamsDefaultTransform() {
 
 describe('applyUpdateLayerParams — Motif content-window clamp', () => {
   // countdown manifest: max_duration_prop = "seconds" → contentDur = seconds * 1e6
-  function makeCountdownProject() {
+  function makeCountdownProject(motifId = 'countdown') {
     const g = seededGen()
     const p = blankProject(g, 'clamp-test')
     // fps 30/1 for clean integer frame boundaries
     root(p).fps = { num: 30, den: 1 }
     const motif: MotifParams = {
       kind: 'Motif',
-      motif_id: 'countdown',
+      motif_id: motifId,
       motif_version: 1,
       // props.seconds=10 → contentDur=10s; t_end=10s, src_in=0 → window fits exactly
       props: { seconds: 10, label: 'GO', accent: '#ff4d4d' },
@@ -479,9 +479,16 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
     { fps: { num: 30, den: 1 }, expected: 33_333 },
     { fps: { num: 30_000, den: 1001 }, expected: 33_367 },
   ])('content under one frame clamps to exactly one frame at $fps.num/$fps.den', ({ fps, expected }) => {
-    const { p } = makeCountdownProject()
+    // Through a manifest that ADMITS sub-second content: the built-in
+    // countdown's `seconds` has min 1, and props are checked against the
+    // manifest before the merge, so the floor is reached with a legal value
+    // rather than by writing past the schema.
+    const { p } = makeCountdownProject('tiny')
     root(p).fps = fps
-    applyUpdateLayerParams(p, 'mo1', { kind: 'Motif', props: { seconds: 0.01 } }, new MotifCatalog())
+    const catalog = new MotifCatalog()
+    catalog.setUserManifests([{ id: 'tiny', name: 'Tiny', version: 1, size: [480, 480], default_duration_s: 5, max_duration_s: 60, max_duration_prop: 'seconds',
+      props_schema: { seconds: { type: 'number', default: 5, min: 0.001, max: 60 }, label: { type: 'string', default: 'GO' }, accent: { type: 'color', default: '#ff4d4d' } } }])
+    applyUpdateLayerParams(p, 'mo1', { kind: 'Motif', props: { seconds: 0.01 } }, catalog)
     const layer = root(p).tracks[0].layers.find((l) => l.id === 'mo1')!
     expect(layer.t_start_us).toBe(0)
     expect(layer.t_end_us).toBe(expected)
