@@ -48,8 +48,14 @@ const COMPLEX: ReadonlySet<string> = new Set([
 const PROPERTY_DESCRIPTION_CAP = 260
 /** The whole catalog, compact JSON, as the wire carries it. The first pass
  *  under this gate landed at ~92 KB (from ~127 KB) without touching the tool set;
- *  lowering it further is the merge / on-demand-toolset work, not more trimming. */
-const CATALOG_BYTE_BUDGET = 94_000
+ *  lowering it further is the merge / on-demand-toolset work, not more trimming.
+ *
+ *  Raised from 94 KB when the audit's fixes moved semantics INTO the schema —
+ *  a typed `set_position`, the effect-kind enum, every mutator's return shape
+ *  named — which is the trade the audit asked for (S2): bytes an agent can act
+ *  on, in place of prose it had to learn by trial. The property-description
+ *  pass (ticket 10) spends more of this and pays some back from descriptions. */
+const CATALOG_BYTE_BUDGET = 100_000
 
 function compact(v: unknown): string { return JSON.stringify(v) }
 

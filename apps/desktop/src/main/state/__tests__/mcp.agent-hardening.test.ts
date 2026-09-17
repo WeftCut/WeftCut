@@ -162,20 +162,31 @@ describe('update_effect — strict patch (issue 02)', () => {
     expect(effectParams(a, layerId)).toEqual({})
   })
 
-  // The reset-parameters shape: some params set, some unset, in ONE patch.
+  // The reset-parameters shape: some params set, some unset, in ONE patch. On
+  // a chromakey, whose catalog has several params — since the strict-patch
+  // change, a key the kind does not have is refused (mcp.strict-patches), so
+  // the "absent" key here is a real param that was never written.
   it('a null param value removes the key; removing an absent key succeeds', () => {
-    const { a, layerId, effectId } = actorWithEffect()
+    const a = freshActor()
+    const add = a.mcpCall('add_color_layer', JSON.stringify({
+      track_id: aRollId(a), color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 2_000_000,
+    }))
+    if (!add.ok) throw new Error('setup failed')
+    const layerId = (add.result.structuredContent as { layer_id: string }).layer_id
+    const eff = a.mcpCall('add_effect', JSON.stringify({ layer_id: layerId, kind: 'chromakey' }))
+    if (!eff.ok) throw new Error('setup failed')
+    const effectId = (eff.result.structuredContent as { effect_id: string }).effect_id
     expect(a.mcpCall('update_effect', JSON.stringify({
       layer_id: layerId, effect_id: effectId,
-      patch: { params: { strength: { mode: 'Static', value: 8 }, radius: { mode: 'Static', value: 4 } } },
+      patch: { params: { feather: { mode: 'Static', value: 2 }, shrink: { mode: 'Static', value: 1 } } },
     })).ok).toBe(true)
 
     const r = a.mcpCall('update_effect', JSON.stringify({
       layer_id: layerId, effect_id: effectId,
-      patch: { params: { strength: { mode: 'Static', value: 12 }, radius: null, never_set: null } },
+      patch: { params: { feather: { mode: 'Static', value: 4 }, shrink: null, despill: null } },
     }))
     expect(r.ok).toBe(true)
-    expect(effectParams(a, layerId)).toEqual({ strength: { mode: 'Static', value: 12 } })
+    expect(effectParams(a, layerId)).toEqual({ feather: { mode: 'Static', value: 4 } })
   })
 
   it('a valid patch applies enabled + params', () => {

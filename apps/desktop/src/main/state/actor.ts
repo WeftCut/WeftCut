@@ -38,7 +38,7 @@ import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, ty
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, toolJson, asArray, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, toolJson, checkEffectPatchAgainst, parseLayerPatch, parseLayerParamsPatch, asArray, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
 import { MCP_RESULT_READERS, adjusted, keyframeByIdResult, layerRecord, linkRecord, markerRecord, newLayerIds, paramTrackResult, setKeyframeResult, splitResult, toolRecord, type ResultCtx } from './mcp-results'
 import { readLayerTrack } from './mutations/params'
@@ -1618,9 +1618,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
           t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
       }
       case 'update_layer':
-        return { kind: 'UpdateLayer', id: parseUuid(spec.layer_id, 'layer_id'), patch: spec.patch as LayerPatch }
+        return { kind: 'UpdateLayer', id: parseUuid(spec.layer_id, 'layer_id'), patch: parseLayerPatch(spec.patch) }
       case 'update_layer_params':
-        return { kind: 'UpdateLayerParams', id: parseUuid(spec.layer_id, 'layer_id'), patch: spec.patch as LayerParamsPatch }
+        return { kind: 'UpdateLayerParams', id: parseUuid(spec.layer_id, 'layer_id'), patch: parseLayerParamsPatch(spec.patch) }
       case 'move_layer':
         return { kind: 'MoveLayer', id: parseUuid(spec.layer_id, 'layer_id'), new_track_id: parseUuid(spec.new_track_id, 'new_track_id'), new_t_start_us: parseNum(spec.new_t_start_us, 'new_t_start_us'), escape_link: (spec.escape_link as boolean) ?? false }
       case 'split_layer':
@@ -2093,6 +2093,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
       const parse = MCP_ARG_PARSERS[name]
       if (!parse) return { ok: false, error: { code: 'not_found', message: `unknown tool '${name}'` } }
       const { op, args } = parse(a)
+      // `update_effect`'s param check needs the effect's KIND, which only the
+      // snapshot knows: an unknown key or an out-of-range value on a catalogued
+      // kind is refused here, before dispatch (mcp-commands.ts owns the rule).
+      if (name === 'update_effect') {
+        const eff = locateLayer(current(), args.layer as Uuid)?.layer.effects.find((e) => e.id === args.effect)
+        if (eff) checkEffectPatchAgainst(eff.kind, args.patch as EffectPatch)
+      }
       const r = dispatch(op, args)
       if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
       const reader = MCP_RESULT_READERS[name]

@@ -7,6 +7,7 @@ import { SharpenFilter } from "./filters/SharpenFilter";
 import { writeBrightness, writeContrast, writeSaturation } from "./filters/colorMatrices";
 
 import { listEffects } from "./effectRegistry";
+import { VISUAL_EFFECT_PARAMS } from "../../../shared/effects/params";
 
 describe("effectRegistry", () => {
   it("blur descriptor builds a BlurFilter and applies strength", () => {
@@ -175,5 +176,18 @@ describe("sharpen", () => {
   it("is the catalog's Stylise entry", () => {
     const byKind = new Map(listEffects().map((d) => [d.kind, d]));
     expect(byKind.get("sharpen")?.category).toBe("stylize");
+  });
+});
+
+describe("the shared param table (src/shared/effects/params.ts)", () => {
+  it("mirrors the registry exactly — every kind, param, default and range, and nothing more", () => {
+    // The MCP boundary refuses unknown kinds, unknown params and out-of-range
+    // values from that table, because main cannot import this registry (pixi).
+    // A kind or param added to one side without the other fails here.
+    const fromRegistry = Object.fromEntries(listEffects().map((d) => [
+      d.kind,
+      Object.fromEntries(Object.entries(d.params).map(([k, spec]) => [k, { default: spec.default, range: spec.range }])),
+    ]));
+    expect(VISUAL_EFFECT_PARAMS).toEqual(fromRegistry);
   });
 });

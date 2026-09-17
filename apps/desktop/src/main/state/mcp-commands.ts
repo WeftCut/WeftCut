@@ -8,6 +8,10 @@ import type { Animated, Continuity, EaseDir, Extrapolate, Extrapolation, Interpo
 import { HOLD_EXTRAPOLATION } from '../../shared/keyframe'
 import type { EffectPatch } from './mutations/effects'
 import type { MarkerPatch } from './mutations/markers'
+import type { LayerPatch } from './mutations/update'
+import type { LayerParamsPatch } from './mutations/params'
+import { EFFECT_KINDS, effectParamSpecs } from '../../shared/effects/params'
+import { positionProblem } from '../../shared/position'
 import { sortKeys } from './canonical'
 import { EASING_PRESETS, ELASTIC_DEFAULT_AMPLITUDE, ELASTIC_DEFAULT_PERIOD, cloneInterp, presetIdForSegment } from '../../shared/easing'
 
@@ -258,6 +262,154 @@ export function parseObj(v: unknown, field: string): Record<string, unknown> {
   if (v === null || typeof v !== 'object' || Array.isArray(v))
     throw new McpArgError(`${field} must be a JSON object, got ${Array.isArray(v) ? 'an array' : typeof v}`, field)
   return v as Record<string, unknown>
+}
+
+// ── Strict patch parsers (audit S6) ─────────────────────────────────────────
+// `parseObj` proves "is an object" and nothing else, and every apply* mutation
+// reads its patch behind `typeof` guards — so an unknown key, a typo, a field
+// that belongs to another tool all committed NOTHING and reported success. The
+// parsers below refuse at the boundary, naming the accepted set, so the agent
+// learns the vocabulary from the refusal rather than from a re-read that shows
+// nothing changed.
+
+/** A finite integer wire arg → invalid_params. The µs fields and the extents
+ *  are integers on the wire (the schema says so); a fraction is a bug in the
+ *  caller's arithmetic, not a request. */
+export function parseIntNum(v: unknown, field: string): number {
+  if (typeof v !== 'number' || !Number.isInteger(v)) throw new McpArgError(`${field} must be an integer, got ${describeValue(v)}`, field)
+  return v
+}
+
+const LAYER_PATCH_KEYS: readonly string[] = ['label', 't_start_us', 't_end_us', 'locked']
+/** `update_layer`'s envelope patch. `enabled` is refused by name — the audit
+ *  found the mutation APPLIED it while the description said visibility is
+ *  `set_layers_enabled` — and a param key is pointed at `update_layer_params`. */
+export function parseLayerPatch(v: unknown): LayerPatch {
+  const o = parseObj(v, 'patch')
+  const keys = Object.keys(o)
+  if (keys.length === 0) throw new McpArgError(`patch names no field; update_layer writes ${LAYER_PATCH_KEYS.join(', ')}`, 'patch')
+  for (const k of keys) {
+    if (k === 'enabled') throw new McpArgError(`patch.enabled is not update_layer's: visibility is set_layers_enabled { layer_ids, enabled }`, 'patch')
+    if (!LAYER_PATCH_KEYS.includes(k)) {
+      const owner = Object.values(LAYER_PARAMS_KEYS).some((ks) => ks.includes(k)) ? ` — '${k}' is a kind-specific param, which is update_layer_params { patch: { kind, ${k} } }` : ''
+      throw new McpArgError(`invalid patch: unknown key '${k}'; update_layer writes ${LAYER_PATCH_KEYS.join(', ')}${owner}`, 'patch')
+    }
+  }
+  const out: LayerPatch = {}
+  if ('label' in o) out.label = parseStrOpt(o.label, 'patch.label')
+  if ('t_start_us' in o) out.t_start_us = parseIntNum(o.t_start_us, 'patch.t_start_us')
+  if ('t_end_us' in o) out.t_end_us = parseIntNum(o.t_end_us, 'patch.t_end_us')
+  if ('locked' in o) out.locked = parseBool(o.locked, 'patch.locked')
+  return out
+}
+
+/** The fields each kind's patch may carry — the key sets of `LayerParamsPatch`
+ *  (mutations/params.ts), restated as data so the parser can name them. A kind
+ *  added there gains its keys here, or `mcp.strict-patches` fails. */
+export const LAYER_PARAMS_KEYS: Readonly<Record<string, readonly string[]>> = {
+  Text: ['content', 'font_family', 'font_size_px', 'color', 'x', 'y', 'opacity', 'align', 'valign', 'box_w', 'box_h', 'line_height', 'letter_spacing', 'outline_width', 'outline_color'],
+  VideoClip: ['src_in_us', 'src_out_us', 'x', 'y', 'scale_x', 'scale_y', 'opacity', 'speed', 'flip_h', 'flip_v', 'fade_in_us', 'fade_out_us'],
+  ImageOverlay: ['x', 'y', 'scale_x', 'scale_y', 'opacity', 'fade_in_us', 'fade_out_us'],
+  Motif: ['x', 'y', 'scale_x', 'scale_y', 'opacity', 'src_in_us', 'motif_id', 'motif_version', 'props'],
+  Color: ['color', 'width', 'height'],
+  Audio: ['src_in_us', 'src_out_us', 'gain_db', 'pan', 'fade_in_us', 'fade_out_us', 'mute', 'role'],
+  CompositionRef: ['src_in_us', 'src_out_us', 'x', 'y', 'scale_x', 'scale_y', 'opacity', 'blend_mode'],
+}
+export const LAYER_PARAM_KINDS: readonly string[] = Object.keys(LAYER_PARAMS_KEYS)
+const TEXT_ALIGN_OPTIONS = ['Left', 'Center', 'Right'] as const
+const VALIGN_OPTIONS = ['Top', 'Middle', 'Bottom'] as const
+const BLEND_MODE_OPTIONS = ['Normal', 'Multiply', 'Screen', 'Overlay', 'Darken', 'Lighten', 'Add', 'Difference'] as const
+const ENVELOPE_KEYS = new Set(['label', 't_start_us', 't_end_us', 'locked'])
+
+function parseOneOf(v: unknown, options: readonly string[], field: string): string {
+  if (typeof v !== 'string' || !options.includes(v)) throw new McpArgError(`${field} must be one of ${options.join(' | ')}, got ${describeValue(v)}`, field)
+  return v
+}
+
+/** One value of a kind-specific patch, gated by field name. `null` is a value
+ *  only where it MEANS something — the text box pair, where it is "back to
+ *  auto" — and is refused everywhere else: the wire convention is that an
+ *  omitted field is left alone, so a null one is a request nothing reads. */
+function parseLayerParamValue(k: string, v: unknown): unknown {
+  const field = `patch.${k}`
+  if (v === null) {
+    if (k === 'box_w' || k === 'box_h') return null
+    throw new McpArgError(`${field} is null, which is not a value for ${k} — omit the field to leave it alone`, field)
+  }
+  switch (k) {
+    case 'content': case 'font_family': case 'motif_id': return parseStr(v, field)
+    case 'color': case 'outline_color': return parseRgba(v, field)
+    case 'flip_h': case 'flip_v': case 'mute': return parseBool(v, field)
+    case 'align': return parseOneOf(v, TEXT_ALIGN_OPTIONS, field)
+    case 'valign': return parseOneOf(v, VALIGN_OPTIONS, field)
+    case 'blend_mode': return parseOneOf(v, BLEND_MODE_OPTIONS, field)
+    case 'role': return parseRole(v)
+    case 'props': return parseObj(v, field)
+    case 'src_in_us': case 'src_out_us': case 'fade_in_us': case 'fade_out_us': case 'motif_version': return parseIntNum(v, field)
+    default: return parseNum(v, field) // x, y, scale_x, scale_y, opacity, speed, font_size_px, line_height, letter_spacing, outline_width, gain_db, pan, width, height, box_w, box_h
+  }
+}
+
+/** `update_layer_params`'s patch: `kind` names one of the seven kinds, every
+ *  other key is in that kind's set, and every value is the type the kind
+ *  stores. Ranges and shape rules (a positive font size, the text-box modes,
+ *  `2·pad < min`) stay the mutation's — it names them better than a table could. */
+export function parseLayerParamsPatch(v: unknown): LayerParamsPatch {
+  const o = parseObj(v, 'patch')
+  const kind = o.kind
+  if (typeof kind !== 'string' || !(kind in LAYER_PARAMS_KEYS))
+    throw new McpArgError(`patch.kind must be one of ${LAYER_PARAM_KINDS.join(' | ')}, got ${typeof kind === 'string' ? `'${kind}'` : describeValue(kind)} — it has to match the layer's kind, which project://tracks reports`, 'patch')
+  const allowed = LAYER_PARAMS_KEYS[kind]
+  const fields = Object.keys(o).filter((k) => k !== 'kind')
+  if (fields.length === 0) throw new McpArgError(`patch names no field; a ${kind} patch writes ${allowed.join(', ')}`, 'patch')
+  for (const k of fields) {
+    if (allowed.includes(k)) continue
+    const elsewhere = Object.entries(LAYER_PARAMS_KEYS).filter(([, ks]) => ks.includes(k)).map(([kk]) => kk)
+    const hint = k === 'enabled' ? ` ('enabled' is set_layers_enabled's)`
+      : ENVELOPE_KEYS.has(k) ? ` ('${k}' is update_layer's)`
+      : elsewhere.length > 0 ? ` ('${k}' belongs to ${elsewhere.join(', ')})` : ''
+    throw new McpArgError(`invalid patch: '${k}' is not a ${kind} param — a ${kind} patch writes ${allowed.join(', ')}${hint}`, 'patch')
+  }
+  const out: Record<string, unknown> = { kind }
+  for (const k of fields) out[k] = parseLayerParamValue(k, o[k])
+  return out as LayerParamsPatch
+}
+
+/** `add_effect`'s kind: one of the two catalogs' (`shared/effects/params.ts`).
+ *  The mutation stays permissive for a project written by a newer build (ADR
+ *  0027); an agent inventing `audio.compressor` is not that case. */
+export function parseEffectKind(v: unknown): string {
+  if (typeof v !== 'string' || !EFFECT_KINDS.includes(v)) throw new McpArgError(`unknown effect kind ${describeValue(v)} — kinds: ${EFFECT_KINDS.join(', ')}`, 'kind')
+  return v
+}
+
+/** `update_effect`'s params against the effect's KIND: an unknown key or a
+ *  value outside the catalogued range is refused, naming the set or the
+ *  bound. A kind no catalog knows passes untouched. Called by the actor arm,
+ *  which is the only place the kind is known. */
+export function checkEffectPatchAgainst(kind: string, patch: EffectPatch): void {
+  if (!patch.params) return
+  const specs = effectParamSpecs(kind)
+  if (specs === null) return
+  for (const [k, track] of Object.entries(patch.params)) {
+    if (!(k in specs)) throw new McpArgError(`invalid patch: '${k}' is not a param of effect kind '${kind}' — its params are ${Object.keys(specs).join(', ')}`, 'patch')
+    if (track === null) continue
+    const [lo, hi] = specs[k].range
+    const values = track.mode === 'Static' ? [track.value] : track.value.map((kf) => kf.value)
+    for (const value of values) {
+      if (value < lo || value > hi) throw new McpArgError(`invalid patch: params['${k}'] ${value} is outside '${kind}'.${k}'s range [${lo}, ${hi}]`, 'patch')
+    }
+  }
+}
+
+/** `set_position`'s record, judged by the shared validator the mutation uses
+ *  (`positionProblem`), so the refusal reads the same from either surface and
+ *  arrives before any write. */
+export function parsePosition(v: unknown): Record<string, unknown> {
+  const o = parseObj(v, 'position')
+  const problem = positionProblem(o)
+  if (problem !== null) throw new McpArgError(`position: ${problem}`, 'position')
+  return o
 }
 
 /** Strict update_effect patch — mirrors EffectPatch (mutations/effects.ts).
@@ -895,6 +1047,40 @@ function animTrackSchema(value: Record<string, unknown>, staticTypes: string[], 
 }
 const ANIM_TRACK_SCHEMA = animTrackSchema(TRACK_VALUE_SCHEMA, ['number', 'object'], 'typed by `param_key` — a number, or {r,g,b,a} (integers 0..255) for "color"')
 
+const POINT_SCHEMA = { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] }
+// The compact form, not `animTrackSchema`: three copies of the full keyframe
+// record would cost ~4 KB of catalog for a shape `set_param_track` already
+// spells out in full; the description points there.
+const SCALAR_TRACK_SCHEMA = {
+  type: 'object',
+  description: "A scalar animation track, in `set_param_track`'s record shape.",
+  properties: { mode: { type: 'string', enum: ['Static', 'Keyframed'] }, value: { type: ['number', 'array'] }, extrapolate: EXTRAPOLATION_SCHEMA },
+  required: ['mode', 'value'],
+}
+/** `set_position`'s record: XY (two scalar tracks) or Path (nodes + a scalar
+ *  `progress` track). Typed so a client sends objects, not JSON strings; judged
+ *  by `positionProblem` on the way in. */
+const POSITION_SCHEMA = {
+  type: 'object',
+  description: 'XY: `x`/`y` tracks in composition px. Path: `path.nodes` plus a `progress` track, 0..1 = distance along the path (Hold/Loop/PingPong extrapolation only).',
+  properties: {
+    mode: { type: 'string', enum: ['XY', 'Path'] },
+    x: SCALAR_TRACK_SCHEMA,
+    y: SCALAR_TRACK_SCHEMA,
+    path: { type: 'object', properties: { nodes: { type: 'array', items: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' }, point: POINT_SCHEMA, in_handle: POINT_SCHEMA, out_handle: POINT_SCHEMA,
+        segment: { type: 'string', enum: ['Line', 'Cubic'] },
+        tangent_mode: { type: 'string', enum: ['Corner', 'Smooth', 'Auto'] },
+      },
+      required: ['id', 'point', 'in_handle', 'out_handle', 'segment', 'tangent_mode'],
+    } } }, required: ['nodes'] },
+    progress: SCALAR_TRACK_SCHEMA,
+  },
+  required: ['mode'],
+}
+
 /** The `project://*` views `read_project` serves — one per state-view resource
  *  the TS host answers (`resource-views.ts`), so the two never disagree on what
  *  an agent can read. The Rust-compute resources are not here. */
@@ -908,7 +1094,7 @@ export type ReadProjectView = (typeof READ_PROJECT_VIEWS)[number]
 // The dedicated stubs exist only so the MCP_TOOLS projection stays complete;
 // their behavior lives in actor.ts arms.
 export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
-  {name:'set_position',exec:'table',description:"Replace a layer's position outright: XY tracks, or a motion path with a scalar `progress` track. Times are layer-local µs. Existing XY animation is replaced only by this explicit call. One undo step.",inputSchema:{type:'object',properties:{layer_id:{type:'string'},position:{type:'object',description:'{mode:XY,x,y} or {mode:Path,path:{nodes:[{id,point:{x,y},in_handle:{x,y},out_handle:{x,y},segment:Line|Cubic,tangent_mode:Corner|Smooth|Auto}]},progress:Animated<number>}. progress 0..1 is distance along the path (Hold/Loop/PingPong extrapolation only).'}},required:['layer_id','position']},parseArgs:a=>({op:'set_position',args:{layer:parseUuid(a.layer_id,'layer_id'),position:parseObj(a.position,'position')}})},
+  {name:'set_position',exec:'table',description:"Replace a layer's position outright: XY tracks, or a motion path with a scalar `progress` track. Times are layer-local µs. Existing XY animation is replaced only by this explicit call. One undo step.",inputSchema:{type:'object',properties:{layer_id:{type:'string'},position:POSITION_SCHEMA},required:['layer_id','position']},parseArgs:a=>({op:'set_position',args:{layer:parseUuid(a.layer_id,'layer_id'),position:parsePosition(a.position)}})},
   {name:'translate_path',exec:'table',description:"Translate the entire spatial path in composition pixels, preserving its geometry and progress animation. Requires Path mode. One undo step.",inputSchema:{type:'object',properties:{layer_id:{type:'string'},dx:{type:'number'},dy:{type:'number'}},required:['layer_id','dx','dy']},parseArgs:a=>({op:'translate_path',args:{layer:parseUuid(a.layer_id,'layer_id'),dx:parseNum(a.dx,'dx'),dy:parseNum(a.dy,'dy')}})},
   // ── table-exec: tracks ───────────────────────────────────────────────────
   { name: 'add_track', exec: 'table',
@@ -972,7 +1158,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { layer_ids: { type: 'array', items: { type: 'string' } }, enabled: { type: 'boolean' } }, required: ['layer_ids', 'enabled'] },
     parseArgs: (a) => ({ op: 'set_layers_enabled', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), enabled: parseBool(a.enabled, 'enabled') } }) },
   { name: 'update_layer', exec: 'table',
-    description: "Update a layer's envelope: `label`, `t_start_us`/`t_end_us`, `locked`. Only fields you set apply; time changes are validated. Visibility is `set_layers_enabled`; kind-specific params are `update_layer_params`.",
+    description: "Update a layer's envelope: `label`, `t_start_us`/`t_end_us`, `locked`. Only fields you set apply; time changes are validated; any other key is refused naming the set. Visibility is `set_layers_enabled`; kind-specific params are `update_layer_params`.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, patch: {
       type: 'object',
       properties: {
@@ -982,15 +1168,15 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         locked: { type: 'boolean' },
       },
     } }, required: ['layer_id', 'patch'] },
-    parseArgs: (a) => ({ op: 'update_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseObj(a.patch, 'patch') } }) },
+    parseArgs: (a) => ({ op: 'update_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseLayerPatch(a.patch) } }) },
   { name: 'update_layer_params', exec: 'table',
-    description: "Update a layer's kind-specific params. `patch.kind` ('Text' | 'VideoClip' | 'ImageOverlay' | 'Color' | 'Audio') must match the layer; only fields you include apply. Audio: `gain_db` and `pan` (-1..1) are written as STATIC values, replacing any keyframes; `fade_in_us`/`fade_out_us`, `mute`, `role`. Text is laid out by its BOX, not by scale: `box_w`/`box_h` (composition px, before `scale`) set the resize mode — (null, null) auto width, (set, null) auto height (wraps), (set, set) fixed (wraps, shrinks to fit); send `null` to return an axis to auto; `box_h` without a `box_w` is refused. `align`, `valign` (Top | Middle | Bottom), `line_height` (0 = font metrics) and `letter_spacing` (px). Text has no scale fields here — a bigger title is a bigger box or `font_size_px`. Path mode rejects independent x/y writes: use `translate_path` or `set_position`. On a scale-linked layer a patch leaving scale_x ≠ scale_y clears the link in the same commit.",
+    description: "Update a layer's kind-specific params. `patch.kind` ('Text' | 'VideoClip' | 'ImageOverlay' | 'Motif' | 'Color' | 'Audio' | 'CompositionRef') must match the layer; only fields you include apply, and a key the kind does not take is refused naming its set. Audio: `gain_db` and `pan` (-1..1) are written as STATIC values, replacing any keyframes; `fade_in_us`/`fade_out_us`, `mute`, `role`. Text is laid out by its BOX, not by scale: `box_w`/`box_h` (composition px, before `scale`) set the resize mode — (null, null) auto width, (set, null) auto height (wraps), (set, set) fixed (wraps, shrinks to fit); send `null` to return an axis to auto; `box_h` without a `box_w` is refused. `align`, `valign` (Top | Middle | Bottom), `line_height` (0 = font metrics), `letter_spacing` (px), `outline_width` (0 removes) and `outline_color`. Text has no scale fields here — a bigger title is a bigger box or `font_size_px`. Path mode rejects independent x/y writes: use `translate_path` or `set_position`. On a scale-linked layer a patch leaving scale_x ≠ scale_y clears the link in the same commit.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, patch: {
       type: 'object',
-      description: "Kind-tagged params patch. Must include `kind` matching the layer's kind ('Text' | 'VideoClip' | 'ImageOverlay' | 'Color' | 'Audio'). Only fields you include are applied.",
+      description: "Kind-tagged params patch. Must include `kind` matching the layer's kind. Only fields you include are applied; a key outside the kind's set is refused.",
       required: ['kind'],
       properties: {
-        kind: { type: 'string', enum: ['Text', 'VideoClip', 'ImageOverlay', 'Color', 'Audio'] },
+        kind: { type: 'string', enum: ['Text', 'VideoClip', 'ImageOverlay', 'Motif', 'Color', 'Audio', 'CompositionRef'] },
         // Audio
         gain_db: { type: 'number' },
         pan: { type: 'number' },
@@ -1029,13 +1215,17 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         box_h: { type: ['number', 'null'], exclusiveMinimum: 0, description: 'Layout box height in composition px, local (before `scale`). null = auto height. Refused when the layer has no box_w and the patch does not supply one.' },
         line_height: { type: 'number' },
         letter_spacing: { type: 'number' },
+        outline_width: { type: 'number', description: 'Stroke width in composition px; 0 removes the outline.' },
+        outline_color: RGBA_SCHEMA,
+        // CompositionRef (Group layer) patch
+        blend_mode: { type: 'string', enum: ['Normal', 'Multiply', 'Screen', 'Overlay', 'Darken', 'Lighten', 'Add', 'Difference'] },
         // Motif patch
         motif_id: { type: 'string' },
         motif_version: { type: 'integer' },
         props: { type: 'object' },
       },
     } }, required: ['layer_id', 'patch'] },
-    parseArgs: (a) => ({ op: 'update_layer_params', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseObj(a.patch, 'patch') } }) },
+    parseArgs: (a) => ({ op: 'update_layer_params', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseLayerParamsPatch(a.patch) } }) },
   { name: 'set_scale_linked', exec: 'table',
     description: "Toggle a layer's uniform-scale link (visual kinds only). `linked=true` snaps `scale_y` to a whole-track copy of `scale_x` — keyframes included — in the same commit; `linked=false` clears only the flag. While linked, any write that leaves the two tracks unequal (a single-axis `update_layer_params`, `set_keyframe`, `delete_keyframe`, `set_param_track`) clears the flag in that commit — write both axes identically to keep it.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, linked: { type: 'boolean' } }, required: ['layer_id', 'linked'] },
@@ -1170,8 +1360,8 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // ── table-exec: effects ──────────────────────────────────────────────────
   { name: 'add_effect', exec: 'table',
     description: "Append an effect to a layer's chain (applied last) and return its record (`effect_id`, `kind`, `index`). `kind` is the catalog key. Visual kinds (\"blur\", \"chromakey\", \"brightness\", \"contrast\", \"saturation\", \"sharpen\") go on visual layers: the colour trio take `amount` in [-100, 100] (percent offset, 0 = no change), \"sharpen\" takes `amount` in [0, 100]. Audio kinds are the `audio.*` namespace, for Audio layers ONLY, and their params are STATIC ONLY (`set_keyframe` on one is `AudioEffectParamStatic`); a kind on the wrong layer kind is `EffectKindNotApplicable`. The one audio kind is \"audio.denoise\": `strength` dB [1, 40] (default 12), `margin` dB [0, 20] (default 8), and `profile_in_us`/`profile_out_us`, SOURCE-time bounds of a noise-only span ≥ 250000 µs — it does nothing until both are set. The effect is created with no params: set a static value with `update_effect` first, then (visual only) `set_keyframe` on `effects[<id>].params[<key>]`.",
-    inputSchema: { type: 'object', properties: { kind: { type: 'string' }, layer_id: { type: 'string' } }, required: ['kind', 'layer_id'] },
-    parseArgs: (a) => ({ op: 'add_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), kind: parseStr(a.kind, 'kind') } }) },
+    inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: [...EFFECT_KINDS] }, layer_id: { type: 'string' } }, required: ['kind', 'layer_id'] },
+    parseArgs: (a) => ({ op: 'add_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), kind: parseEffectKind(a.kind) } }) },
   { name: 'update_effect', exec: 'table',
     description: "Update an effect: patch is `{ enabled?, params? }` where params is `{ paramKey: { \"mode\": \"Static\", \"value\": <number> } }` (v1 params are scalar). A `null` param value removes the key (back to unset/default). For keyframed params use set_keyframe with param_key \"effects[<effect_id>].params[<key>]\". An unparseable patch (non-object, unknown key, malformed param value) rejects with invalid_params — it never partially applies.",
     inputSchema: { type: 'object', properties: { effect_id: { type: 'string' }, layer_id: { type: 'string' }, patch: {
