@@ -23,6 +23,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { MCP_TOOL_DEFS } from '../mcp-commands'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from '../../mcp/motifToolDefs'
+import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES } from '../../mcp/hostResources'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../../..')
 const doc = readFileSync(path.join(repoRoot, 'docs/mcp.md'), 'utf8')
@@ -38,7 +39,11 @@ const toolNames = [
   ...MCP_TOOL_DEFS.map((d) => d.name),
   ...MOTIF_TOOL_DEFS.map((d) => d.name),
 ]
-const resourceUris = [...rust.resources.map((r) => r.uri), ...MOTIF_RESOURCE_DEFS.map((r) => r.uri)]
+const resourceUris = [
+  ...rust.resources.map((r) => r.uri), ...MOTIF_RESOURCE_DEFS.map((r) => r.uri), ...HOST_RESOURCE_DEFS.map((r) => r.uri),
+  // A template is documented by its exact RFC 6570 spelling.
+  ...HOST_RESOURCE_TEMPLATES.map((t) => t.uriTemplate),
+]
 const promptNames = rust.prompts.map((p) => p.name)
 
 // Advertised surfaces deliberately left out of `docs/mcp.md`. Empty, and the bar

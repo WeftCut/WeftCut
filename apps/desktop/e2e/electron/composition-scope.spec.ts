@@ -179,10 +179,11 @@ test('the timeline, the ruler and the Insert menu follow the open composition', 
     try {
       const res = await client.readResource({ uri: `project://tracks?composition=${groupId}` })
       const tracks = JSON.parse((res.contents[0] as { text: string }).text) as Array<{
-        layers: Array<{ id: string; params: { kind: string } }>
+        layers: Array<{ id: string; kind: string }>
       }>
+      // `project://tracks` lists ENVELOPES: the kind rides at the top, the params do not.
       const inGroup = tracks.flatMap((t) => t.layers).find((l) => l.id === added[0])
-      expect(inGroup?.params.kind).toBe('Color')
+      expect(inGroup?.kind).toBe('Color')
       const rootRes = await client.readResource({ uri: 'project://tracks' })
       const rootTracks = JSON.parse((rootRes.contents[0] as { text: string }).text) as Array<{
         layers: Array<{ id: string }>

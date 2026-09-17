@@ -1,6 +1,6 @@
 import type { ServerResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ActorHandle } from './actor'
-import type { Composition, Layer, Project } from './model'
+import type { Animated, Composition, Layer, Project } from './model'
 import { eachLayer, rootComposition } from './model'
 import { serializeProject } from './serialize'
 
@@ -42,6 +42,60 @@ export function compositionListing(p: Project): Array<{ id: string; label: strin
   return Object.values(p.compositions).map((c) => ({ id: c.id, label: c.label, duration_us: c.duration_us, ref_count: refs.get(c.id) ?? 0 }))
 }
 
+/** The animatable params of a layer whose track is Keyframed, by the
+ *  `param_key` the keyframe tools take — so an envelope says what moves without
+ *  shipping the keys. The walk mirrors `mutations/animated.ts` but keeps the
+ *  NAMES, which that walk (built for rebasing times) has no use for. */
+export function keyframedParams(layer: Layer): string[] {
+  const out: string[] = []
+  const note = (key: string, track: Animated<unknown> | undefined): void => { if (track?.mode === 'Keyframed') out.push(key) }
+  const p = layer.params as unknown as {
+    transform?: { position: { mode: 'XY'; x: Animated<number>; y: Animated<number> } | { mode: 'Path'; progress: Animated<number> }
+      scale_x: Animated<number>; scale_y: Animated<number>; rotation_deg: Animated<number>; anchor_x: Animated<number>; anchor_y: Animated<number> }
+    opacity?: Animated<number>; color?: Animated<unknown>; gain_db?: Animated<number>; pan?: Animated<number>
+  }
+  if (p.transform) {
+    const t = p.transform
+    if (t.position.mode === 'Path') note('path_progress', t.position.progress)
+    else { note('x', t.position.x); note('y', t.position.y) }
+    note('scale_x', t.scale_x); note('scale_y', t.scale_y); note('rotation_deg', t.rotation_deg); note('anchor_x', t.anchor_x); note('anchor_y', t.anchor_y)
+  }
+  note('opacity', p.opacity); note('color', p.color); note('gain_db', p.gain_db); note('pan', p.pan)
+  for (const e of layer.effects) for (const [k, track] of Object.entries(e.params)) note(`effects[${e.id}].params[${k}]`, track)
+  return out
+}
+
+/** A layer as `project://tracks` lists it: the envelope an agent plans against
+ *  — where it sits, what it is, what it plays, what is on it — without the
+ *  params, keyframes and effect values `project://layers/{id}` carries. The
+ *  audit found the "envelopes" the docs promised were whole layers (D19), so a
+ *  timeline read cost as much as the project. */
+export function layerEnvelope(layer: Layer, c: Composition): Record<string, unknown> {
+  const p = layer.params as unknown as { kind: string; src_in_us?: number; src_out_us?: number }
+  return {
+    id: layer.id, label: layer.label, kind: p.kind,
+    t_start_us: layer.t_start_us, t_end_us: layer.t_end_us,
+    ...(typeof p.src_in_us === 'number' ? { src_in_us: p.src_in_us } : {}),
+    ...(typeof p.src_out_us === 'number' ? { src_out_us: p.src_out_us } : {}),
+    enabled: layer.enabled, locked: layer.locked,
+    link_id: c.links.find((g) => g.members.includes(layer.id))?.id ?? null,
+    effects: layer.effects.map((e) => ({ id: e.id, kind: e.kind })),
+    keyframed: keyframedParams(layer),
+  }
+}
+
+/** `project://tracks`: every track with its flags and its layers as envelopes. */
+export function trackEnvelopes(c: Composition): Array<Record<string, unknown>> {
+  return c.tracks.map(({ layers, ...track }) => ({ ...track, layers: layers.map((l) => layerEnvelope(l, c)) }))
+}
+
+/** `project://settings`: the editing preferences plus the project metadata —
+ *  six booleans and a dirty signal that used to cost the whole
+ *  `project://current` (audit S14). `modified_at` moves on every recorded commit. */
+export function settingsView(p: Project): Record<string, unknown> {
+  return { ...p.settings, metadata: p.metadata }
+}
+
 /** The composition a `?composition=<id>` query selects, the root when absent.
  *  Not-found for an unknown id, so an agent that guessed wrong learns it from
  *  the read rather than from an empty track list. */
@@ -71,18 +125,23 @@ export function serveProjectResource(
     if (!layer) resourceNotFound(`layer ${tail} not found`)
     return textResource(uri, layer)
   }
-  // `project://tracks` and `project://markers` are per composition:
-  // `?composition=<id>` selects one, absent means the root.
+  // The per-composition views take `?composition=<id>`; absent means the root.
+  // `project://composition` too: a Group's envelope used to be write-only, the
+  // scoped read answering with the ROOT under the requested URI (audit S14).
   const q = uri.indexOf('?')
   const base = q === -1 ? uri : uri.slice(0, q)
   const composition = q === -1 ? null : new URLSearchParams(uri.slice(q + 1)).get('composition')
+  const snap = actor.snapshot()
   switch (base) {
-    case 'project://current': return textResource(uri, serializeProject(actor.snapshot()))
-    case 'project://composition': return textResource(uri, compositionSettings(rootComposition(actor.snapshot())))
-    case 'project://compositions': return textResource(uri, compositionListing(actor.snapshot()))
-    case 'project://media': return textResource(uri, actor.snapshot().media_pool)
-    case 'project://tracks': return textResource(uri, scopedComposition(actor.snapshot(), composition).tracks)
-    case 'project://markers': return textResource(uri, scopedComposition(actor.snapshot(), composition).markers)
+    case 'project://current': return textResource(uri, serializeProject(snap))
+    case 'project://composition': return textResource(uri, compositionSettings(scopedComposition(snap, composition)))
+    case 'project://compositions': return textResource(uri, compositionListing(snap))
+    case 'project://media': return textResource(uri, snap.media_pool)
+    case 'project://tracks': return textResource(uri, trackEnvelopes(scopedComposition(snap, composition)))
+    case 'project://markers': return textResource(uri, scopedComposition(snap, composition).markers)
+    case 'project://links': return textResource(uri, scopedComposition(snap, composition).links)
+    case 'project://transitions': return textResource(uri, scopedComposition(snap, composition).transitions)
+    case 'project://settings': return textResource(uri, settingsView(snap))
     case 'project://history': return textResource(uri, actor.historyView(100))
     default: return null
   }

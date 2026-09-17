@@ -38,7 +38,7 @@ import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, ty
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, toolJson, checkEffectPatchAgainst, parseLayerPatch, parseLayerParamsPatch, asArray, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, toolJson, checkEffectPatchAgainst, parseLayerPatch, parseLayerParamsPatch, asArray, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseRgba, parseRole, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
 import { MCP_RESULT_READERS, adjusted, keyframeByIdResult, layerRecord, linkRecord, markerRecord, newLayerIds, paramTrackResult, setKeyframeResult, splitResult, toolRecord, type ResultCtx } from './mcp-results'
 import { readLayerTrack } from './mutations/params'
@@ -198,12 +198,19 @@ export function createActor(opts: ActorOptions): ActorHandle {
     // (A no-op recipe can't dirty a transition or an anchored marker, so
     // neither reconcile blocks this.)
     if (next === current()) return value
-    runValidate(next)
+    // Every recorded edit is a modification, so `metadata.modified_at` takes
+    // the commit's timestamp — the one cheap dirty signal a client has (audit
+    // S14 found it equal to created_at after an hour of edits). After the
+    // no-op guard, so an unchanged draft stays the very same object; before
+    // validate, so what is validated is what is recorded. Unrecorded writes
+    // (settings, the envelope, flags) are setup and leave it alone.
+    const ts = clock()
+    const stamped = produce(next, (d) => { d.metadata.modified_at = ts })
+    runValidate(stamped)
     const refs = typeof affected === 'function' ? affected(value) : affected
     const opId = idGen() // AFTER validate — failed validate consumes no op_id
-    const ts = clock()
-    history.record({ op_id: opId, actor, timestamp: ts, summary: summary.text, label_key: summary.key, label_args: summary.label_args, affected: refs, snapshot: next })
-    emit({ op_id: opId, actor, timestamp: ts, summary: summary.text, affected: refs, new_snapshot: next, diff_hint: diff })
+    history.record({ op_id: opId, actor, timestamp: ts, summary: summary.text, label_key: summary.key, label_args: summary.label_args, affected: refs, snapshot: stamped })
+    emit({ op_id: opId, actor, timestamp: ts, summary: summary.text, affected: refs, new_snapshot: stamped, diff_hint: diff })
     logDroppedTransitions(droppedTransitions) // after record — a failed validate logs nothing
     logDroppedMarkers(droppedMarkers)
     return value
@@ -2047,7 +2054,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const p = mcpDef('read_project').parseDedicated!(a)
           const view = p.view as string
           const compositionId = p.composition_id as string | null
-          const scoped = compositionId !== null && (view === 'tracks' || view === 'markers') ? `?composition=${compositionId}` : ''
+          const scoped = compositionId !== null && SCOPED_PROJECT_VIEWS.has(view) ? `?composition=${compositionId}` : ''
           const uri = view === 'layer' ? `project://layers/${p.id as string}` : `project://${view}${scoped}`
           try {
             const res = serveProjectResource(uri, { snapshot: current, historyView: (n) => history.view(n) })

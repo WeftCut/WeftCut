@@ -189,4 +189,89 @@ describe('project://compositions and the ?composition= scope', () => {
     expect(JSON.parse(text(serveProjectResource(`project://markers?composition=${groupId}`, actor)))).toEqual([])
     expect(() => serveProjectResource('project://tracks?composition=ghost', actor)).toThrow(/not found/)
   })
+
+  it('project://composition scopes too — a Group\'s settings by id, not the root under the wrong name (audit S14)', () => {
+    const gen = uuidV7Gen()
+    const { p, groupId } = groupedProject(gen, 'r')
+    const actor = createActor({ initial: p, idGen: gen })
+    const scoped = JSON.parse(text(serveProjectResource(`project://composition?composition=${groupId}`, actor)))
+    expect(scoped.id).toBe(groupId)
+    expect(JSON.parse(text(serveProjectResource('project://composition', actor))).id).toBe(p.root_id)
+    expect(() => serveProjectResource('project://composition?composition=ghost', actor)).toThrow(/not found/)
+  })
+
+  it('project://links and project://transitions scope the same way', () => {
+    const gen = uuidV7Gen()
+    const { p, groupId } = groupedProject(gen, 'r')
+    const actor = createActor({ initial: p, idGen: gen })
+    expect(JSON.parse(text(serveProjectResource(`project://links?composition=${groupId}`, actor)))).toEqual(p.compositions[groupId].links)
+    expect(JSON.parse(text(serveProjectResource('project://transitions', actor)))).toEqual(root(p).transitions)
+    expect(() => serveProjectResource('project://links?composition=ghost', actor)).toThrow(/not found/)
+  })
+})
+
+describe('project://tracks lists envelopes (audit D19)', () => {
+  it('a layer row is the envelope — kind at the top, no params, its link, its effects by kind, its keyframed params', () => {
+    const gen = uuidV7Gen()
+    const actor = createActor({ initial: blankProject(gen, 'env'), idGen: gen, clock: () => '<TS>' })
+    const aRoll = root(actor.snapshot()).tracks[0].id
+    const added = actor.mcpCall('add_color_layer', JSON.stringify({ track_id: aRoll, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 2_000_000 }))
+    if (!added.ok) throw new Error(added.error.message)
+    const layerId = (JSON.parse(added.result.content[0].text) as { layer_id: string }).layer_id
+    const title = actor.mcpCall('add_text_layer', JSON.stringify({ track_id: root(actor.snapshot()).tracks[1].id, content: 'Hi', t_start_us: 0, t_end_us: 2_000_000 }))
+    if (!title.ok) throw new Error(title.error.message)
+    const titleId = (JSON.parse(title.result.content[0].text) as { layer_id: string }).layer_id
+    const link = actor.mcpCall('create_link', JSON.stringify({ layer_ids: [layerId, titleId] }))
+    if (!link.ok) throw new Error(link.error.message)
+    const effect = actor.mcpCall('add_effect', JSON.stringify({ layer_id: titleId, kind: 'blur' }))
+    if (!effect.ok) throw new Error(effect.error.message)
+    const key = actor.mcpCall('set_keyframe', JSON.stringify({ layer_id: titleId, param_key: 'opacity', t_us: 0, value: 1 }))
+    if (!key.ok) throw new Error(key.error.message)
+
+    const tracks = JSON.parse(text(serveProjectResource('project://tracks', actor))) as Array<{ id: string; layers: Array<Record<string, unknown>> }>
+    const rows = tracks.flatMap((tr) => tr.layers)
+    const color = rows.find((r) => r.id === layerId)!
+    const textRow = rows.find((r) => r.id === titleId)!
+    expect(color).toEqual({
+      id: layerId, label: null, kind: 'Color', t_start_us: 0, t_end_us: 2_000_000,
+      enabled: true, locked: false, link_id: JSON.parse(link.result.content[0].text).link_id,
+      effects: [], keyframed: [],
+    })
+    expect('params' in color).toBe(false)
+    expect(textRow.kind).toBe('Text')
+    expect(textRow.link_id).toBe(color.link_id)
+    expect(textRow.effects).toEqual([{ id: JSON.parse(effect.result.content[0].text).effect_id, kind: 'blur' }])
+    expect(textRow.keyframed).toEqual(['opacity'])
+    // The full record is still one read away.
+    const full = JSON.parse(text(serveProjectResource(`project://layers/${titleId}`, actor)))
+    expect(full.params.kind).toBe('Text')
+    expect(full.params.opacity.mode).toBe('Keyframed')
+  })
+
+  it('a media-bearing layer carries its source window; the track keeps its own flags', () => {
+    const gen = uuidV7Gen()
+    const p = blankProject(gen, 'env')
+    const MID = '00000000-0000-0000-0000-0000000000aa'
+    p.media_pool[MID] = mediaItemTemplate(MID, 'Video', 4_000_000)
+    const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
+    const aRoll = root(actor.snapshot()).tracks[0].id
+    const added = actor.mcpCall('add_video_layer', JSON.stringify({ track_id: aRoll, media_id: MID, src_in_us: 500_000, src_out_us: 2_500_000, t_start_us: 0, t_end_us: 2_000_000 }))
+    if (!added.ok) throw new Error(added.error.message)
+    const tracks = JSON.parse(text(serveProjectResource('project://tracks', actor))) as Array<Record<string, unknown> & { layers: Array<Record<string, unknown>> }>
+    const row = tracks[0].layers[0]
+    expect(row).toMatchObject({ kind: 'VideoClip', src_in_us: 500_000, src_out_us: 2_500_000 })
+    expect(tracks[0]).toMatchObject({ id: aRoll, enabled: true, locked: false })
+    expect(Object.keys(tracks[0])).toContain('role')
+  })
+})
+
+describe('project://settings', () => {
+  it('is the preferences plus the metadata — six booleans no longer cost the whole project', () => {
+    const gen = uuidV7Gen()
+    const actor = createActor({ initial: blankProject(gen, 'set'), idGen: gen, clock: () => '<TS>' })
+    const body = JSON.parse(text(serveProjectResource('project://settings', actor)))
+    expect(body).toEqual({ ...actor.snapshot().settings, metadata: actor.snapshot().metadata })
+    expect(body.metadata.name).toBe('set')
+    expect('compositions' in body).toBe(false)
+  })
 })

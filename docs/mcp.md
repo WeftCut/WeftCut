@@ -229,12 +229,16 @@ names retired before that decision (`add_motif`, `checkpoint`,
 | URI | Returns |
 |---|---|
 | `project://current` | full Project JSON (with `schema_version`) |
-| `project://composition` | root composition settings — id, label, canvas, fps, duration, sample rate, channels, colour space, background; no tracks |
+| `project://composition` | a composition's settings — id, label, canvas, fps, duration (+ `duration_pinned`), sample rate, channels, colour space, background; no tracks. The root's, or `project://composition?composition=<id>` for a Group's (`not_found` for an unknown id — never the root under the wrong name) |
 | `project://compositions` | every composition — `{ id, label, duration_us, ref_count }`. `ref_count` is how many `CompositionRef` (Group) layers point at it: 0 for the root and for an orphan. The ids are what a creation tool's `composition_id` takes |
 | `project://media` | media pool listing |
-| `project://tracks` | a composition's tracks + layer envelopes — the root's, or `project://tracks?composition=<id>` for a Group's |
+| `project://tracks` | a composition's tracks, each with its flags and its layers as **envelopes** — `{ id, label, kind, t_start_us, t_end_us, src_in_us?, src_out_us?, enabled, locked, link_id, effects: [{ id, kind }], keyframed: [param_key] }` — the root's, or `project://tracks?composition=<id>` for a Group's. What an agent plans a timeline edit against; the params, keys and effect values are `project://layers/{id}` |
 | `project://layers/{id}` | one layer in detail, from whichever composition holds it |
 | `project://markers` | a composition's markers — the root's, or `project://markers?composition=<id>`. Each carries `anchor_layer` and `anchor_src_us` (both null on a free marker) and `hibernating` — see *Markers follow clips* below |
+| `project://links` | a composition's links — `{ id, label?, members }` — the root's, or `project://links?composition=<id>` |
+| `project://transitions` | a composition's transitions — the root's, or `project://transitions?composition=<id>` |
+| `project://settings` | the editing preferences `set_project_settings` writes (`auto_pair_audio_on_import`, `prefer_proxies`, `proxy_overrides`, `shot_review`, `pause_review`, `correction_script`) plus `metadata` (`name`, `created_at`, `modified_at`, `description`). `modified_at` moves on every recorded edit — the dirty signal; an unrecorded write leaves it |
+| `project://session` | the active agent work session (or `null`), recent sessions and the history lock — read after `AgentSessionBusy` |
 | `project://history` | recent ops + checkpoints (snapshot-free). Each op carries `summary` (English prose), `label_key` + optional `label_args` (its i18n key and interpolation values — `history.*`, see `main/state/history-labels.ts`), `affected` (Track/Layer/Marker refs) and `entity_labels` (names for `affected`, same length and order, resolved against whichever stored snapshot still **holds** each ref — the op's own for an add/update/move, its predecessor's for a delete — so a deleted entity still has a name). An `entity_labels` element is `{"text": "…"}` for a stored name, or `{"label_key": "…", "label_args": {…}}` for a derived one — a clip's kind (`kinds.color`), a track's role (`tracks.roles.a-roll`) or a track's position (`tracks.positional` with `{"n": 3}`) — which the UI translates. The envelope carries `window_start` and `evicted` — see below |
 | `project://compiled` | compiled audio IRGraph (JSON) |
 | `composition://meter` | latest PREVIEW master-bus level — `{ live: true, rms_db, peak_db }` while something is playing, `{ live: false }` once nothing has for 2 seconds. The preview UI pushes this reading at about 2 Hz, so the liveness window is a few pushes wide and polling faster than that returns the same numbers. A tap on the preview mixer, so it answers "how loud is what the user is hearing right now" and nothing about a render; a stopped transport reports `live: false` rather than a stale reading. Master bus only — the per-role levels the Role Mixer draws are a renderer-side tap and reach no MCP surface ([ADR 0066](adr/0066-a-role-meter-is-a-tap-not-a-bus.md)) |
@@ -245,11 +249,24 @@ names retired before that decision (`add_motif`, `checkpoint`,
 | `media://{id}/description` | cached scene descriptions under the view the app's settings name — the preferred engine, sampling, focus and UI language, all injected by the host (`{ covered_ranges, segments }`); `404` until `describe_clip` has populated it at that key (unlike the always-computable resources above) — the refusal names the whole view, since changing any axis reads as "not described" until the shots are described again under the new one |
 | `motifs://current` | full motif catalog (built-ins, installed, drafts) — same payload as `list_motifs`; `html` stripped |
 
+The parameterised families are advertised by `resources/templates/list`
+(RFC 6570; `{?composition}` is the optional query): `project://layers/{id}`,
+`project://composition{?composition}`, `project://tracks{?composition}`,
+`project://markers{?composition}`, `project://links{?composition}`,
+`project://transitions{?composition}`, `media://{id}/thumbnail`,
+`media://{id}/frame/{t_us}`, `media://{id}/waveform`, `media://{id}/analysis`,
+`media://{id}/description`.
+
 A client that cannot read MCP resources has the same views as a tool:
-`read_project { view, id?, composition_id? }` with `view` one of `current`,
-`composition`, `compositions`, `media`, `tracks`, `layer` (needs `id`),
-`markers`, `history` — served by the same function as the resource, so the two
-never disagree. Prefer the resources when the client supports them.
+`read_project { view, id?, t_us?, composition_id? }` with `view` one of
+`current`, `composition`, `compositions`, `media`, `tracks`, `layer` (needs
+`id`), `markers`, `links`, `transitions`, `settings`, `history`, `session`,
+and the two picture views `media_thumbnail` / `media_frame` (`id` is the media
+id, `media_frame` also takes `t_us`; both answer an image content block from
+the same reader the `media://` resources use). The JSON views are served by the
+same function as the resource, so the two never disagree; `composition`,
+`tracks`, `markers`, `links` and `transitions` take `composition_id` for a
+Group's. Prefer the resources when the client supports them.
 
 `media://*` reads return `404` with a hint pointing at the
 `media:job_complete` event when derivatives haven't been generated

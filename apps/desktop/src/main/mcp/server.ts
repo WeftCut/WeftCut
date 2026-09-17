@@ -5,6 +5,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ReadResourceRequestSchema,
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
@@ -29,6 +30,7 @@ import { toolRecord } from '../state/mcp-results.js'
 import { argProblemMessage } from './argCheck.js'
 import { shapeHybridResult } from './hybridResult.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
+import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES } from './hostResources.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
 import { withCanonicalToolName } from './toolAliases.js'
 
@@ -310,6 +312,18 @@ async function dispatchTool(
     if (name === 'read_project' && args.view === 'session' && tsHost.agent) {
       return toolRecord(sessionView(tsHost.agent)) as unknown as ServerResult
     }
+    // The two picture views for a client without resources: served by the same
+    // Rust reader `media://{id}/thumbnail` and `media://{id}/frame/{t_us}` use,
+    // and answered as an IMAGE content block, which is what a model can look at.
+    // A derivative not yet generated refuses with the reader's own hint.
+    if (name === 'read_project' && (args.view === 'media_thumbnail' || args.view === 'media_frame')) {
+      const p = mcpDef('read_project').parseDedicated!(args)
+      const uri = p.view === 'media_frame' ? `media://${p.id as string}/frame/${p.t_us as number}` : `media://${p.id as string}/thumbnail`
+      const res = await handleReadResource(backend, () => tsHost, uri, getVlm)
+      const first = (res as { contents?: Array<{ blob?: string; text?: string; mimeType?: string }> }).contents?.[0]
+      if (first?.blob) return { content: [{ type: 'image', data: first.blob, mimeType: first.mimeType ?? 'image/jpeg' }] } as unknown as ServerResult
+      return { content: [{ type: 'text', text: first?.text ?? '' }] } as unknown as ServerResult
+    }
     if (route === 'ts') {
       const r = tsHost.mcpCall(name, JSON.stringify(args))
       if (!r.ok) {
@@ -393,11 +407,8 @@ async function dispatchTool(
 /** `project://session` / `read_project { view: "session" }`: who holds the work
  *  session, so an agent refused with `AgentSessionBusy` can see the holder, its
  *  reason and its age before deciding to wait or to take over. `sessions` is the
- *  recent history the panel keeps; `lock_reason` is the history lock. */
-export const HOST_RESOURCE_DEFS = [
-  { uri: 'project://session', name: 'Work session', mimeType: 'application/json',
-    description: 'The active agent work session (or null): owner client, connection, reason, started_at, checkpoint — plus recent sessions and the history lock. Read it after AgentSessionBusy.' },
-]
+ *  recent history the panel keeps; `lock_reason` is the history lock. The
+ *  resource defs themselves live in `hostResources.ts`. */
 export function sessionView(agent: TsActorHost['agent']): Record<string, unknown> {
   const snap = agent.snapshot()
   return { active: snap.session, sessions: snap.sessions.slice(-10), lock_reason: snap.lock_reason }
@@ -643,6 +654,9 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   server.setRequestHandler(ListResourcesRequestSchema, track('resources/list', async () => {
     const cat = await rustCatalog(backend)
     return { resources: mergeMcpResources(cat.resources, [...MOTIF_RESOURCE_DEFS, ...HOST_RESOURCE_DEFS]) } as unknown as ServerResult
+  }, log, clientInfo))
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, track('resources/templates/list', async () => {
+    return { resourceTemplates: HOST_RESOURCE_TEMPLATES } as unknown as ServerResult
   }, log, clientInfo))
   server.setRequestHandler(ReadResourceRequestSchema, track('resources/read', async (req: ReadResourceRequest) =>
     handleReadResource(backend, getTsHost, req.params.uri, getVlm),

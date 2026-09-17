@@ -16,6 +16,7 @@ export type McpLoggedMethod =
   | 'tools/call'
   | 'tools/list'
   | 'resources/list'
+  | 'resources/templates/list'
   | 'resources/read'
   | 'prompts/list'
   | 'prompts/get'

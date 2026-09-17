@@ -1646,6 +1646,20 @@ describe('media-pool mutations dispatch', () => {
     expect(a.snapshot().media_pool[MID].file_hash_blake3).toBe('realhash-abc')
     expect(a.dispatch('set_media_hash', { media: '00000000-0000-0000-0000-0000000000ff', file_hash_blake3: 'x' }).ok).toBe(false)
   })
+  it('metadata.modified_at takes the commit timestamp on a recorded edit, and an unrecorded write leaves it (audit S14)', () => {
+    const a = actorWithMedia()
+    const born = a.snapshot().metadata.modified_at
+    expect(born).not.toBe('<TS>')
+    expect(a.dispatch('update_project_settings', { patch: { prefer_proxies: true } }).ok).toBe(true)
+    expect(a.snapshot().metadata.modified_at, 'setup is not a modification').toBe(born)
+    const tA = root(a.snapshot()).tracks[0].id
+    expect(a.dispatch('add_layer', { track: tA, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }).ok).toBe(true)
+    expect(a.snapshot().metadata.modified_at).toBe('<TS>')
+    expect(a.snapshot().metadata.created_at).toBe(born)
+    // Undo returns to the earlier snapshot, stamp included: the state IS what it was.
+    a.dispatch('undo', {})
+    expect(a.snapshot().metadata.modified_at).toBe(born)
+  })
   it('remove_media: MediaInUse when referenced and !force; lists the layer', () => {
     const a = actorWithMedia()
     const lid = (a.dispatch('add_layer', { track: root(a.snapshot()).tracks[0].id, kind: 'video', media: MID, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }) as { ok: true; value: unknown }).value as string
