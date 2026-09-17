@@ -145,12 +145,36 @@ pub struct ResourceResult {
     pub contents: Vec<ResourceContent>,
 }
 
+/// MCP tool annotations — the advertised read/write and destructive split. The
+/// spec's defaults are `readOnlyHint: false`, `destructiveHint: true`,
+/// `idempotentHint: false`, so each constant states only what differs; the TS
+/// host reads `readOnlyHint` off the merged catalog for the agent panel's read
+/// rows, and every tool carries one (the `tool_table!` arity enforces it).
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolAnnotations {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_only_hint: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destructive_hint: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idempotent_hint: Option<bool>,
+}
+
+impl ToolAnnotations {
+    /// A read: commits nothing.
+    pub const READ: Self = Self { read_only_hint: Some(true), destructive_hint: None, idempotent_hint: None };
+    /// A write that creates — twice is twice, nothing removed.
+    pub const WRITE: Self = Self { read_only_hint: None, destructive_hint: Some(false), idempotent_hint: None };
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolDef {
     pub name: String,
     pub description: String,
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
+    pub annotations: ToolAnnotations,
 }
 
 #[derive(Debug, Clone, Serialize)]

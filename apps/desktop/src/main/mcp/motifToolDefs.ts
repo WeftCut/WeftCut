@@ -8,10 +8,13 @@
 // Schemas carry no meta-schema / title envelope and no format hints: an agent
 // reads none of them, and every ListTools pays for them (mcp.description-budget).
 
+import { ANN_DESTRUCTIVE, ANN_READ, ANN_SET, type ToolAnnotations } from '../state/mcp-commands.js'
+
 export interface MotifToolDef {
   name: string
   description: string
   inputSchema: Record<string, unknown>
+  annotations: ToolAnnotations
 }
 
 export interface MotifResourceDef {
@@ -24,6 +27,7 @@ export interface MotifResourceDef {
 export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
   {
     name: 'list_motifs',
+    annotations: ANN_READ,
     description:
       'List every motif `add_motif_layer` can place — built-ins plus installed and draft user motifs. ' +
       'Returns `[{ id, name, version, size: [w, h], default_duration_s, props_schema, status, ' +
@@ -34,6 +38,7 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
   },
   {
     name: 'get_motif_source',
+    annotations: ANN_READ,
     description:
       'Read a Motif\'s source { manifest, html } — any built-in, installed, or draft. ' +
       'Read this before editing so you can base your changes on the current source. ' +
@@ -48,6 +53,7 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
   },
   {
     name: 'write_motif_draft',
+    annotations: ANN_SET,
     description:
       'Write a Motif draft from { manifest, html }. Returns `{ draft_id }`. The draft is ' +
       'placeable immediately (via `add_motif_layer`) for preview, and re-writable. `from` ' +
@@ -82,6 +88,7 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
   },
   {
     name: 'preview_motif_draft',
+    annotations: ANN_READ,
     description:
       'Render one frame of a Motif (draft / installed / built-in) as a base64 PNG, so you can SEE ' +
       'your output and self-correct. `id`, `t_sec` (content time); optional `props` (default: the ' +
@@ -101,6 +108,7 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
   },
   {
     name: 'install_motif',
+    annotations: ANN_DESTRUCTIVE,
     description:
       'Install a draft. mode \'new\' publishes under the draft\'s own id; \'update\' ' +
       'republishes over `target_id`, or over the target the draft recorded at `write_motif_draft { from }` ' +
@@ -129,6 +137,7 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
   },
   {
     name: 'delete_motif',
+    annotations: ANN_DESTRUCTIVE,
     description:
       'Delete an installed or draft user Motif by id. Built-ins and unknown ids are refused ' +
       '(`list_motifs` reports what exists). Placed layers referencing it degrade to an error placeholder.',

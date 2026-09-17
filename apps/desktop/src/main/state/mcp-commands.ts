@@ -1029,11 +1029,30 @@ export function keyframePresent(track: { mode: string; value: unknown }, id: str
  *  they ANSWER with is `MCP_RESULT_READERS[name]` (mcp-results.ts), read back
  *  from the committed snapshot. Dedicated-exec tools carry stub records only —
  *  their parseDedicated arms are attached at registration. */
+/** MCP tool annotations, advertised in `tools/list` and the ONE statement of
+ *  the read/write and destructive split: the activity service's read rows take
+ *  `readOnlyHint` from the merged catalog, so the agent panel and the client
+ *  can never disagree about which calls commit (audit S3 — the regex over tool
+ *  names this replaces knew nothing the table did not, and was a second list).
+ *  The spec's defaults are `readOnlyHint: false`, `destructiveHint: true`,
+ *  `idempotentHint: false`; each constant states only what differs from them,
+ *  and every def carries one, which the type enforces. */
+export interface ToolAnnotations { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean }
+/** A read: commits nothing; the agent panel folds it as a quick read. */
+export const ANN_READ: ToolAnnotations = { readOnlyHint: true }
+/** A write that creates or shifts — calling it twice does it twice. */
+export const ANN_WRITE: ToolAnnotations = { destructiveHint: false }
+/** A write that sets state — the same call twice leaves the same state. */
+export const ANN_SET: ToolAnnotations = { destructiveHint: false, idempotentHint: true }
+/** A write that removes or reverts: what it takes away, undo (or a checkpoint) is the way back to. */
+export const ANN_DESTRUCTIVE: ToolAnnotations = { destructiveHint: true }
+
 export interface McpToolDef {
   name: string
   description: string
   inputSchema: Record<string, unknown>
   exec: 'table' | 'dedicated'
+  annotations: ToolAnnotations
   parseArgs?: (a: Record<string, unknown>) => { op: string; args: Record<string, unknown> }  // table-exec only
   parseDedicated?: (a: Record<string, unknown>) => Record<string, unknown>                    // dedicated-exec only
 }
@@ -1319,30 +1338,30 @@ export type ReadProjectView = (typeof READ_PROJECT_VIEWS)[number]
 // The dedicated stubs exist only so the MCP_TOOLS projection stays complete;
 // their behavior lives in actor.ts arms.
 export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
-  {name:'set_position',exec:'table',description:"Replace a layer's position outright: XY tracks, or a motion path with a scalar `progress` track. Times are layer-local µs. Existing XY animation is replaced only by this explicit call. One undo step.",inputSchema:{type:'object',properties:{layer_id:LAYER_ID_SCHEMA,position:POSITION_SCHEMA},required:['layer_id','position']},parseArgs:a=>({op:'set_position',args:{layer:parseUuid(a.layer_id,'layer_id'),position:parsePosition(a.position)}})},
-  {name:'translate_path',exec:'table',description:"Translate the entire spatial path in composition pixels, preserving its geometry and progress animation. Requires Path mode. One undo step.",inputSchema:{type:'object',properties:{layer_id:LAYER_ID_SCHEMA,dx:{type:'number',description:'Shift in x, composition px.'},dy:{type:'number',description:'Shift in y, composition px.'}},required:['layer_id','dx','dy']},parseArgs:a=>({op:'translate_path',args:{layer:parseUuid(a.layer_id,'layer_id'),dx:parseNum(a.dx,'dx'),dy:parseNum(a.dy,'dy')}})},
+  {name:'set_position',exec:'table',annotations:ANN_SET,description:"Replace a layer's position outright: XY tracks, or a motion path with a scalar `progress` track. Times are layer-local µs. Existing XY animation is replaced only by this explicit call. One undo step.",inputSchema:{type:'object',properties:{layer_id:LAYER_ID_SCHEMA,position:POSITION_SCHEMA},required:['layer_id','position']},parseArgs:a=>({op:'set_position',args:{layer:parseUuid(a.layer_id,'layer_id'),position:parsePosition(a.position)}})},
+  {name:'translate_path',exec:'table',annotations:ANN_WRITE,description:"Translate the entire spatial path in composition pixels, preserving its geometry and progress animation. Requires Path mode. One undo step.",inputSchema:{type:'object',properties:{layer_id:LAYER_ID_SCHEMA,dx:{type:'number',description:'Shift in x, composition px.'},dy:{type:'number',description:'Shift in y, composition px.'}},required:['layer_id','dx','dy']},parseArgs:a=>({op:'translate_path',args:{layer:parseUuid(a.layer_id,'layer_id'),dx:parseNum(a.dx,'dx'),dy:parseNum(a.dy,'dy')}})},
   // ── table-exec: tracks ───────────────────────────────────────────────────
-  { name: 'add_track', exec: 'table',
+  { name: 'add_track', exec: 'table', annotations: ANN_WRITE,
     description: "Add a track and return its record (`track_id`, `index`, `composition_id`). Tracks are kind-agnostic — any layer kind goes on any track. A track disappears when its last layer leaves it (deleted or moved away), so place a layer rather than reserving a track; a track created empty survives until it has been filled and emptied.",
     inputSchema: { type: 'object', properties: { label: { type: 'string', description: 'Optional name. Omit it and the track is displayed by its position in the stack, which renumbers as tracks come and go.' }, composition_id: COMPOSITION_ID_SCHEMA }, required: [] },
     parseArgs: (a) => ({ op: 'add_track', args: { label: parseStrOpt(a.label, 'label'), composition_id: parseCompositionIdOpt(a.composition_id) } }) },
-  { name: 'delete_track', exec: 'table',
+  { name: 'delete_track', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Remove a track. Rejects if the track has layers unless force=true. Default A roll / B roll tracks cannot be removed.",
     inputSchema: { type: 'object', properties: { track_id: TRACK_ID_SCHEMA, force: { type: 'boolean', description: 'Also delete the layers still on it. Default false, which refuses a non-empty track (TrackNotEmpty).' } }, required: ['track_id'] },
     parseArgs: (a) => ({ op: 'delete_track', args: { track: parseUuid(a.track_id, 'track_id'), force: parseBoolOpt(a.force, 'force', false) } }) },
-  { name: 'rename_track', exec: 'table',
+  { name: 'rename_track', exec: 'table', annotations: ANN_SET,
     description: "Name a track, reserved A roll / B roll / audio / caption tracks included. Recorded. `label: null` (or blank) clears it back to the derived name — its role, or its position in the stack.",
     inputSchema: { type: 'object', properties: { track_id: TRACK_ID_SCHEMA, label: { type: ['string', 'null'], description: 'The new name. null or blank clears it back to the displayed-by-default name.' } }, required: ['track_id'] },
     parseArgs: (a) => ({ op: 'rename_track', args: { track: parseUuid(a.track_id, 'track_id'), label: parseStrOpt(a.label, 'label') } }) },
-  { name: 'move_track', exec: 'table',
+  { name: 'move_track', exec: 'table', annotations: ANN_SET,
     description: "Move a track to a different z-order position. 0 = bottom of stack. Position must be < current track count.",
     inputSchema: { type: 'object', properties: { track_id: TRACK_ID_SCHEMA, new_position: { type: 'integer', description: 'Target index in the stack; 0 is the bottom.' } }, required: ['new_position', 'track_id'] },
     parseArgs: (a) => ({ op: 'move_track', args: { track: parseUuid(a.track_id, 'track_id'), new_position: parseNum(a.new_position, 'new_position') } }) },
   // Two flags of four: `Track` also stores muted/solo, and they are omitted on
   // purpose — the mix folds by ROLE (ADR 0023), so nothing reads a track's, and
   // advertising them would be advertising a write that changes nothing.
-  { name: 'set_track_flags', exec: 'table',
-    description: "Set a track's `enabled` and/or `locked` flag; omit (or null) one to leave it alone, and name at least one. `locked` is what every `TrackLocked` refusal points at — a locked track rejects edits to its layers, and clearing it here is the fix. `enabled` is the track's output in preview and export; its layers stay put. Unrecorded (not undoable), like `set_role_flags`. A layer's own `locked` is separate (`update_layer`), and an edit needs both clear. Mute/solo live on roles: `set_role_flags`.",
+  { name: 'set_track_flags', exec: 'table', annotations: ANN_SET,
+    description: "Set a track's `enabled` and/or `locked` flag; omit (or null) one to leave it alone, and name at least one. `locked` is what every `TrackLocked` refusal points at — a locked track rejects edits to its layers, and clearing it here is the fix. `enabled` is the track's output in preview and export; its layers stay put. Unrecorded (not undoable), like `set_role_flags`. A layer's own `locked` is separate (`update_layer`), and an edit needs both clear. Mute/solo live on roles: `set_role_flags`. Unrecorded.",
     inputSchema: { type: 'object', properties: { track_id: TRACK_ID_SCHEMA, enabled: { type: 'boolean', description: "The track's output, preview and export alike. Omitted leaves it alone." }, locked: { type: 'boolean', description: 'Whether the track refuses edits to its layers. Omitted leaves it alone.' } }, required: ['track_id'] },
     parseArgs: (a) => {
       const enabled = parseBoolTriState(a.enabled, 'enabled')
@@ -1355,7 +1374,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // where the seed's clone goes — absolute, or relative to the seed itself, so
   // a same-place copy needs no read of the timeline first. Exactly one, because
   // a call carrying both names two landings and the actor would have to pick.
-  { name: 'paste_layers', exec: 'table',
+  { name: 'paste_layers', exec: 'table', annotations: ANN_WRITE,
     description: "Duplicate a set of layers as one recorded edit — the only copy tool. `layer_ids[0]` is the seed; place its clone with exactly one of `t_start_us` (absolute) or `t_offset_us` (relative to the seed's start). Every other clone shifts by the same delta on its source's track; `target_track_id` moves only the seed's clone. All-or-nothing: a locked or occupied destination for any member rejects the batch (`TrackLocked`, or `LayerOverlap` naming the source whose clone would collide). Two or more clones link to each other, never to their sources; pass a single id to copy one linked layer alone. Returns `{ clones: [{ source, clone }], layers }` in input order.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to clone; the first is the seed the start time refers to.' },
@@ -1378,11 +1397,11 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // `enabled` is deliberately absent from `update_layer`'s patch below and lives
   // ONLY here: the two writes are identical for one layer, and the set form is
   // the one that survives a fan-out (a linked A/V pair is one undo, not two).
-  { name: 'set_layers_enabled', exec: 'table',
+  { name: 'set_layers_enabled', exec: 'table', annotations: ANN_SET,
     description: "Set `enabled` on exactly these layers in one recorded edit — the only tool that writes it, for one layer or many. Nothing is expanded: to hide a linked A/V pair, pass both members. A layer's own `locked` does not block it; a member on a locked track rejects the whole batch (`TrackLocked`).",
     inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('The layers to show or hide.'), enabled: { type: 'boolean', description: 'true shows, false hides — preview and export alike.' } }, required: ['layer_ids', 'enabled'] },
     parseArgs: (a) => ({ op: 'set_layers_enabled', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), enabled: parseBool(a.enabled, 'enabled') } }) },
-  { name: 'update_layer', exec: 'table',
+  { name: 'update_layer', exec: 'table', annotations: ANN_SET,
     description: "Update a layer's envelope: `label`, `t_start_us`/`t_end_us`, `locked`. Only fields you set apply; time changes are validated; any other key is refused naming the set. Visibility is `set_layers_enabled`; kind-specific params are `update_layer_params`.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, patch: {
       type: 'object',
@@ -1395,19 +1414,19 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       },
     } }, required: ['layer_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseLayerPatch(a.patch) } }) },
-  { name: 'update_layer_params', exec: 'table',
+  { name: 'update_layer_params', exec: 'table', annotations: ANN_SET,
     description: "Update a layer's kind-specific params. `patch.kind` must match the layer, and only that kind's fields apply — the schema lists each kind's set, and a key outside it is refused naming the set. Audio `gain_db`/`pan` are written as STATIC values, replacing any keyframes. Text is laid out by its BOX, not by scale: `box_w`/`box_h` (composition px, before `scale`) set the resize mode — (null, null) auto width, (set, null) auto height (wraps), (set, set) fixed (wraps, shrinks to fit); `null` returns an axis to auto; `box_h` without a `box_w` is refused. Text has no scale fields here — a bigger title is a bigger box or `font_size_px`. Path mode rejects independent x/y writes: use `translate_path` or `set_position`. On a scale-linked layer a patch leaving scale_x ≠ scale_y clears the link in the same commit.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, patch: LAYER_PARAMS_PATCH_SCHEMA }, required: ['layer_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_layer_params', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseLayerParamsPatch(a.patch) } }) },
-  { name: 'set_scale_linked', exec: 'table',
+  { name: 'set_scale_linked', exec: 'table', annotations: ANN_SET,
     description: "Toggle a layer's uniform-scale link (visual kinds only). `linked=true` snaps `scale_y` to a whole-track copy of `scale_x` — keyframes included — in the same commit; `linked=false` clears only the flag. While linked, any write that leaves the two tracks unequal (a single-axis `update_layer_params`, `set_keyframe`, `delete_keyframe`, `set_param_track`) clears the flag in that commit — write both axes identically to keep it.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, linked: { type: 'boolean', description: 'true links scale_y to scale_x; false clears the flag only.' } }, required: ['layer_id', 'linked'] },
     parseArgs: (a) => ({ op: 'set_scale_linked', args: { layer: parseUuid(a.layer_id, 'layer_id'), linked: parseBool(a.linked, 'linked') } }) },
-  { name: 'move_layer', exec: 'table',
+  { name: 'move_layer', exec: 'table', annotations: ANN_SET,
     description: "Move a layer to a different track and/or start time. The end time shifts by the same delta. Cross-track moves are validated against the destination's existing layers — overlap rejects with structured options. A start before 0 (for the layer or a link sibling moving with it) is refused, never clamped. Returns the layer's committed envelope, the link `siblings` that moved with it, and `adjusted` for any grid snap.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, new_t_start_us: US_SCHEMA('New timeline start'), new_track_id: { type: 'string', description: 'Destination track; the current one to move in time only.' }, escape_link: ESCAPE_LINK_SCHEMA }, required: ['layer_id', 'new_t_start_us', 'new_track_id'] },
     parseArgs: (a) => ({ op: 'move_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), to_track: parseUuid(a.new_track_id, 'new_track_id'), t_start_us: parseNum(a.new_t_start_us, 'new_t_start_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true } }) },
-  { name: 'restack_layer', exec: 'table',
+  { name: 'restack_layer', exec: 'table', annotations: ANN_SET,
     description: "Restack a visual layer in z-order relative to an ANCHOR layer: `position` 'above' | 'below' puts it directly above/below the anchor's track, resolved at apply time (anchors are layers, not indices, which drift between read and write). A mover that is its track's sole occupant moves the whole track; a mover sharing its track splits onto a new track at the target, and the source is pruned only if that emptied it; a role-stamped A/B-roll track never moves. Front/back are not variants — anchor on the top or bottom of the visual stack. Audio never stacks (`WrongLayerKind`), nor may the anchor be the mover. Already in place = no-op, nothing recorded. One recorded commit.",
     inputSchema: { type: 'object', properties: {
       layer_id: { type: 'string', description: 'The visual layer to restack.' },
@@ -1415,7 +1434,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       position: { type: 'string', enum: ['above', 'below'], description: "Place the layer directly above or directly below the anchor layer's track." },
     }, required: ['anchor_layer_id', 'layer_id', 'position'] },
     parseArgs: (a) => ({ op: 'restack_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), anchor: parseUuid(a.anchor_layer_id, 'anchor_layer_id'), position: parseRestackPosition(a.position) } }) },
-  { name: 'trim_layer', exec: 'table',
+  { name: 'trim_layer', exec: 'table', annotations: ANN_SET,
     description: "Trim one edge of a layer: `edge` 'in' (t_start) or 'out' (t_end) to `new_t_us`. Media-bearing layers move the matching `src_in_us`/`src_out_us` by the same delta, clamped at the source bound. In a link, every member whose same edge sits at the same time moves with it unless `escape_link=true`. A target past the other edge or past the source (of any member) is refused naming the legal window, never clamped. Returns the layer's committed envelope, the `siblings` trimmed with it, and `adjusted` for any grid snap.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, edge: { type: 'string', enum: ['in', 'out'], description: 'Which edge moves: in = t_start_us, out = t_end_us.' }, new_t_us: US_SCHEMA('Where the edge lands, timeline'), escape_link: ESCAPE_LINK_SCHEMA }, required: ['edge', 'layer_id', 'new_t_us'] },
     parseArgs: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: parseStr(a.edge, 'edge'), new_t_us: parseNum(a.new_t_us, 'new_t_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true } }) },
@@ -1425,7 +1444,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // lift takes it as the no-op of an empty selection, the ripple has no hole to
   // close and refuses — so the arity check stays in the actor, where each op
   // already owns its own answer.
-  { name: 'delete_layers', exec: 'table',
+  { name: 'delete_layers', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Delete a set of layers as one recorded edit. `ripple` decides what happens to the vacated span: `false` (default) is the lift — it stays empty and nothing moves; `true` closes each hole so the film gets shorter — every remaining layer starting at or after a hole shifts left by its length on EVERY track of the composition (anchored markers riding along), touching holes merge, and layers starting before a hole, free markers and the playhead stay put. The set is one composition's (`CrossCompositionSet`); a member on a locked track refuses the whole batch (`TrackLocked`, cleared with `set_track_flags`) while a layer's own `locked` does not block a delete; tracks the batch emptied are pruned. A ripple refuses whole, before any write, naming the blocker: `RippleInsideHole` (a remaining layer starts inside a hole — add it to `layer_ids`, or lift), `RippleCollision` (a mover would land on a layer that is not moving), `RippleLinkStraddles` (a link spans the hole), `RippleLockedLayer` (only a layer that actually shifts blocks). An empty set records nothing as a lift and is refused as a ripple.",
     inputSchema: { type: 'object', properties: {
       layer_ids: LAYER_IDS_SCHEMA('The layers to delete, all in one composition.'),
@@ -1435,20 +1454,20 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       op: parseBoolOpt(a.ripple, 'ripple', false) ? 'ripple_delete_layers' : 'delete_layers',
       args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) },
     }) },
-  { name: 'ripple_delete_gap', exec: 'table',
+  { name: 'ripple_delete_gap', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Close a GAP — an empty span on one track between two layer boundaries — so everything after it moves left and the film gets shorter; nothing is deleted. `[start_us, end_us)` must be the whole gap as it is now: `end_us` exactly where a layer on `track_id` starts, `start_us` exactly where one ends (or 0 before the first clip); the space after the last clip is not a gap. Otherwise `GapNotFound` carries the span you sent — re-read `project://tracks` and retry. The closing is `delete_layers { ripple: true }`'s: every layer starting at or after `end_us` on every track shifts left, anchored markers follow, free markers and the playhead stay. Refuses whole with the same names — `RippleInsideHole` (a layer on another track starts inside the gap: delete it first), `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked` (a gap on a locked lane always refuses). One recorded edit.",
     inputSchema: { type: 'object', properties: { track_id: { type: 'string', description: 'The track the gap is on.' }, start_us: US_SCHEMA('Gap start, timeline'), end_us: US_SCHEMA('Gap end (exclusive), timeline') }, required: ['track_id', 'start_us', 'end_us'] },
     parseArgs: (a) => ({ op: 'ripple_delete_gap', args: { track: parseUuid(a.track_id, 'track_id'), s: parseNum(a.start_us, 'start_us'), e: parseNum(a.end_us, 'end_us') } }) },
   // ── table-exec: links ───────────────────────────────────────────────────
-  { name: 'create_link', exec: 'table',
+  { name: 'create_link', exec: 'table', annotations: ANN_WRITE,
     description: "Create a new link from >=2 distinct layer ids. Optional `label`. If any layer is already in another link, the op fails unless `reassign=true`, which removes them from their prior link(s) first (auto-dissolving any link that falls below 2 members). Returns the link record (`link_id`, `members`).",
     inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('Two or more layers of one composition.'), label: { type: 'string', description: 'Optional name.' }, reassign: { type: 'boolean', description: 'Pull a member out of the link it is already in. Default false: such a member refuses.' } }, required: ['layer_ids'] },
     parseArgs: (a) => ({ op: 'links_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label'), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }) },
-  { name: 'delete_link', exec: 'table',
+  { name: 'delete_link', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Dissolve (delete) a link. The member layers themselves are not deleted.",
     inputSchema: { type: 'object', properties: { link_id: ID_SCHEMA('Link') }, required: ['link_id'] },
     parseArgs: (a) => ({ op: 'links_dissolve', args: { link: parseUuid(a.link_id, 'link_id') } }) },
-  { name: 'update_link', exec: 'dedicated',
+  { name: 'update_link', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Change a link in one recorded edit — any of: `add_layer_ids` (join layers; one already in another link is refused unless `reassign` is true, which pulls it out of its old link first, dissolving that link if it falls below two members), `remove_layer_ids` (drop members; below two, the link dissolves), `label` (rename; `null` clears). At least one. Applied add → remove → label. Every layer must be in the link's composition (`CrossCompositionSet`). Create with `create_link`, delete with `delete_link`.",
     inputSchema: { type: 'object', properties: {
       link_id: ID_SCHEMA('Link'),
@@ -1471,14 +1490,14 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return p
     } },
   // ── table-exec: groups (ADR 0052; docs/features.md#groups) ──────────────
-  { name: 'create_group', exec: 'table',
+  { name: 'create_group', exec: 'table', annotations: ANN_WRITE,
     description: "Pre-compose: move one or more layers (all in one composition) into a NEW composition and place it back as a single Group layer at the set's earliest start, on the top-most lane the set occupied (or the nearest free lane above). The new composition copies the parent's settings; members' tracks map onto A roll, B roll, then fresh tracks so z-order survives, and time is rebased so the earliest member starts at 0. Never partial: a member on a locked track (`TrackLocked`) or itself locked (`GroupLockedMember`), or a set spanning two compositions (`CrossCompositionSet`), refuses everything. Links fully inside move; a straddling link loses its inside members. Transitions between two members move; a straddling one is dropped. Markers stay. Returns `{ composition_id, layer_id, layer }`; one undo restores all.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to pre-compose; at least one, all in one composition.' },
       label: { type: 'string', description: 'Optional name for the new composition. Omit and the UI derives one.' },
     }, required: ['layer_ids'] },
     parseArgs: (a) => ({ op: 'groups_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label') } }) },
-  { name: 'add_group_members', exec: 'table',
+  { name: 'add_group_members', exec: 'table', annotations: ANN_WRITE,
     description: "Move layers INTO the composition a Group layer already shows, keeping the screen position they had. `layer_ids` (one or more, all in one composition) and `group_layer_id` must be siblings; the Group's `params.composition` is the destination, and each member lands at `t_start_us − group.t_start_us + group.src_in_us`. Lane mapping, links, transitions, markers and the shared refusals are `move_layers_to_composition`'s, which this delegates to — call that directly when you know the destination composition and the time. Own refusals: the Group in another composition (`CrossCompositionSet`), not a Group (`WrongLayerKind`), a Group pointing at the root (`RootComposition`).",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to move in; at least one, all in one composition.' },
@@ -1488,7 +1507,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')),
       group_layer: parseUuid(a.group_layer_id, 'group_layer_id'),
     } }) },
-  { name: 'move_layers_to_composition', exec: 'table',
+  { name: 'move_layers_to_composition', exec: 'table', annotations: ANN_WRITE,
     description: "Move layers out of their composition into another, landing at a time you name — the general cross-composition move (`add_group_members` is the keep-screen-position shortcut). `layer_ids`: one or more, all in one composition. `to_composition_id`: the destination (ids: `project://compositions`); the root is an ordinary destination. `anchor_layer_id` is the member that lands at `anchor_t_start_us`, absolute on the destination's clock; the others keep their offset from it. Lanes are assigned per SOURCE TRACK: `to_track_id` omitted bounces each block to the nearest free lane, `\"spawn\"` takes one fresh lane, a lane id lands every block there and REFUSES a locked or occupied one. Links and transitions fully inside move, straddling ones are cut; emptied source lanes are pruned, markers stay behind, both compositions autofit, no Group layer is retrimmed. Refuses whole, before any write: an empty set, an anchor outside the set, the current composition as destination, `CrossCompositionSet`, `TrackLocked` / `GroupLockedMember`, `CompositionCycle`, a member landing before time 0.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to move; at least one, all in one composition.' },
@@ -1504,7 +1523,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       anchor_t_start_us: parseNum(a.anchor_t_start_us, 'anchor_t_start_us'),
       to_track: parseDestTrackOpt(a.to_track_id),
     } }) },
-  { name: 'add_group_layer', exec: 'table',
+  { name: 'add_group_layer', exec: 'table', annotations: ANN_WRITE,
     description: "Place an EXISTING composition on a track as one more Group layer (`create_group` makes a NEW one). `source_composition_id` is what gets placed (ids and reference counts: `project://compositions`); `track_id` and `t_start_us` are where. The layer is windowed over the whole composition (`src_in_us: 0`, `src_out_us: duration_us`) with an identity transform; trim it afterwards for a slice. Instances are independent and all show the same content. Refuses before creating anything: the root (`RootComposition`), a composition that already reaches this track's composition, itself included (`CompositionCycle`), and an empty composition (`InvalidArgument`).",
     inputSchema: { type: 'object', properties: {
       source_composition_id: { type: 'string', description: "The composition to place — a Group's id from `project://compositions`, never the root." },
@@ -1518,24 +1537,24 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       t_start_us: parseNum(a.t_start_us, 't_start_us'),
       composition_id: parseCompositionIdOpt(a.composition_id),
     } }) },
-  { name: 'ungroup_layer', exec: 'table',
+  { name: 'ungroup_layer', exec: 'table', annotations: ANN_WRITE,
     description: "Expand a Group layer back into its members, in place. Refuses unless the Group is PLAIN — identity transform, static opacity 1, no effects, Normal blend (`GroupNotPlain { reason }`), because those apply to the composite and would be discarded; reset them first or keep the Group. Members intersecting the Group's `[src_in_us, src_out_us)` window are copied into the parent at the same on-screen time, trimmed to the window; members wholly outside are dropped. The composition's tracks become fresh tracks at the Group's z position; inner links and transitions carry over. The composition is removed when nothing else references it. One undo restores the Group.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string', description: 'The Group layer (its params.kind is CompositionRef).' } }, required: ['layer_id'] },
     parseArgs: (a) => ({ op: 'groups_ungroup', args: { layer: parseUuid(a.layer_id, 'layer_id') } }) },
-  { name: 'rename_composition', exec: 'table',
+  { name: 'rename_composition', exec: 'table', annotations: ANN_SET,
     description: "Name a Group's composition (`label: null` or blank clears it back to the derived name). Recorded, so undo reverts it. The root composition refuses (`RootComposition`): it has no name — it is the timeline. Composition ids: `project://compositions`.",
     inputSchema: { type: 'object', properties: { composition_id: ID_SCHEMA('Composition'), label: { type: ['string', 'null'], description: 'The new name; null or blank clears it.' } }, required: ['composition_id'] },
     parseArgs: (a) => ({ op: 'groups_rename', args: { composition: parseUuid(a.composition_id, 'composition_id'), label: parseStrOpt(a.label, 'label') } }) },
-  { name: 'delete_composition', exec: 'table',
+  { name: 'delete_composition', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Delete a composition nothing references — an orphan left when its Group layers were deleted. Refuses while any Group layer points at it (`CompositionInUse { ref_count }`; `project://compositions` shows the count) and refuses the root (`RootComposition`). Recorded.",
     inputSchema: { type: 'object', properties: { composition_id: ID_SCHEMA('Composition') }, required: ['composition_id'] },
     parseArgs: (a) => ({ op: 'compositions_delete', args: { composition: parseUuid(a.composition_id, 'composition_id') } }) },
   // ── table-exec: effects ──────────────────────────────────────────────────
-  { name: 'add_effect', exec: 'table',
+  { name: 'add_effect', exec: 'table', annotations: ANN_WRITE,
     description: "Append an effect to a layer's chain (applied last) and return its record (`effect_id`, `kind`, `index`). `kind` is the catalog key. Visual kinds (\"blur\", \"chromakey\", \"brightness\", \"contrast\", \"saturation\", \"sharpen\") go on visual layers: the colour trio take `amount` in [-100, 100] (percent offset, 0 = no change), \"sharpen\" takes `amount` in [0, 100]. Audio kinds are the `audio.*` namespace, for Audio layers ONLY, and their params are STATIC ONLY (`set_keyframe` on one is `AudioEffectParamStatic`); a kind on the wrong layer kind is `EffectKindNotApplicable`. The one audio kind is \"audio.denoise\": `strength` dB [1, 40] (default 12), `margin` dB [0, 20] (default 8), and `profile_in_us`/`profile_out_us`, SOURCE-time bounds of a noise-only span ≥ 250000 µs — it does nothing until both are set. The effect is created with no params: set a static value with `update_effect` first, then (visual only) `set_keyframe` on `effects[<id>].params[<key>]`.",
     inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: [...EFFECT_KINDS], description: 'Catalog key: visual kinds on visual layers, audio.* on Audio layers.' }, layer_id: LAYER_ID_SCHEMA }, required: ['kind', 'layer_id'] },
     parseArgs: (a) => ({ op: 'add_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), kind: parseEffectKind(a.kind) } }) },
-  { name: 'update_effect', exec: 'table',
+  { name: 'update_effect', exec: 'table', annotations: ANN_SET,
     description: "Update an effect: patch is `{ enabled?, params? }` where params is `{ paramKey: { \"mode\": \"Static\", \"value\": <number> } }` (v1 params are scalar). A `null` param value removes the key (back to unset/default). For keyframed params use set_keyframe with param_key \"effects[<effect_id>].params[<key>]\". An unparseable patch (non-object, unknown key, malformed param value) rejects with invalid_params — it never partially applies.",
     inputSchema: { type: 'object', properties: { effect_id: ID_SCHEMA('Effect'), layer_id: LAYER_ID_SCHEMA, patch: {
       type: 'object',
@@ -1546,16 +1565,16 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       },
     } }, required: ['effect_id', 'layer_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id'), patch: parseEffectPatch(a.patch) } }) },
-  { name: 'move_effect', exec: 'table',
+  { name: 'move_effect', exec: 'table', annotations: ANN_SET,
     description: "Reorder an effect within its layer's chain. new_index is 0-based; 0 = first applied. Must be < effect count.",
     inputSchema: { type: 'object', properties: { effect_id: ID_SCHEMA('Effect'), layer_id: LAYER_ID_SCHEMA, new_index: { type: 'integer', description: 'Target position in the chain; 0 is applied first.' } }, required: ['effect_id', 'layer_id', 'new_index'] },
     parseArgs: (a) => ({ op: 'move_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id'), new_index: parseNum(a.new_index, 'new_index') } }) },
-  { name: 'delete_effect', exec: 'table',
+  { name: 'delete_effect', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Remove an effect from a layer by id.",
     inputSchema: { type: 'object', properties: { effect_id: ID_SCHEMA('Effect'), layer_id: LAYER_ID_SCHEMA }, required: ['effect_id', 'layer_id'] },
     parseArgs: (a) => ({ op: 'remove_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id') } }) },
   // ── table-exec: transitions ──────────────────────────────────────────────
-  { name: 'add_transition', exec: 'table',
+  { name: 'add_transition', exec: 'table', annotations: ANN_WRITE,
     description: "Add a transition at the cut between two adjacent layers on the same track — `from_layer_id` (outgoing) ends exactly where `to_layer_id` (incoming) starts — and return its record. `kind` 'Crossfade' (default) | 'Wipe' | 'Slide'; `direction` is the MOTION direction ('left' = the boundary or the sliding content moves left), required for Wipe/Slide and rejected for Crossfade. `placement` 'overlap' (default) moves the INCOMING layer left by the frame-rounded duration so both still play exactly their trimmed ranges and the vacated span stays a gap — nothing ripples; link siblings follow, bouncing to a free lane. 'extend' instead borrows outgoing tail media past its out-point, positions untouched (`extended_us = duration`), refused with `TransitionInsufficientHandle { available_us }` when the tail is short. A pair already overlapped by exactly the duration attaches as-is. Refuses: participants sharing a link, a move crossing t = 0, a duration longer than either participant, an Audio participant (`TransitionUnsupportedLayerKind`). Recorded — one undo restores every moved layer.",
     inputSchema: { type: 'object', properties: {
       direction: { type: 'string', enum: ['left', 'right', 'up', 'down'], description: 'Motion direction. Required for Wipe / Slide, refused for Crossfade.' },
@@ -1570,7 +1589,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       parseTransitionPlacement(a.placement) // strict enum gate; dispatch re-derives (absent → 'overlap')
       return { op: 'add_transition', args: { from: parseUuid(a.from_layer_id, 'from_layer_id'), to: parseUuid(a.to_layer_id, 'to_layer_id'), duration_us: parseNum(a.duration_us, 'duration_us'), kind: a.kind, direction: a.direction, placement: a.placement } }
     } },
-  { name: 'update_transition', exec: 'table',
+  { name: 'update_transition', exec: 'table', annotations: ANN_SET,
     description: "Patch a transition's `duration_us`, `kind`/`direction` and/or `extended_us` in one recorded commit; only fields you set apply. `direction` rides with `kind`: switching to Wipe/Slide needs both, and `direction` alone or beside Crossfade is rejected. Geometry is two targets: `extended_us` is the borrowed share of the overlap (0 = pure placement, `duration_us` = pure borrow); the outgoing layer ends at its exit frame + `extended_us`, the incoming starts `duration_us` before that. With `extended_us` OMITTED the trimmed ranges are preserved — growing moves the incoming layer further left and never borrows, shrinking returns borrowed tail first then moves it right. Only an explicit `extended_us` grows the borrow (checked against the remaining tail: `TransitionInsufficientHandle { available_us }`); a NEGATIVE one is a deliberate tail trim of real content. Link siblings follow the incoming layer; a move onto occupied space or across t = 0 refuses the commit. `TransitionNotFound` for an unknown id.",
     inputSchema: { type: 'object', properties: {
       direction: { type: 'string', enum: ['left', 'right', 'up', 'down'], description: 'Motion direction; rides with `kind` (Wipe / Slide need it, Crossfade refuses it).' },
@@ -1585,7 +1604,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       parseNumOpt(a.extended_us, 'extended_us')
       return { op: 'update_transition', args: { transition: parseUuid(a.transition_id, 'transition_id'), duration_us: a.duration_us, kind: a.kind, direction: a.direction, extended_us: a.extended_us } }
     } },
-  { name: 'delete_transition', exec: 'table',
+  { name: 'delete_transition', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Remove a transition and restore the hard cut, routed by provenance: the outgoing layer's end shrinks back by `extended_us` (only borrowed tail is returned, never real content) and the incoming layer moves RIGHT by `duration_us − extended_us`, link siblings following. `TransitionRestoreCollision` when that destination has since been filled — move or delete the blocker first; the system never makes room. Recorded. `TransitionNotFound` for an unknown id.",
     inputSchema: { type: 'object', properties: { transition_id: ID_SCHEMA('Transition') }, required: ['transition_id'] },
     parseArgs: (a) => ({ op: 'remove_transition', args: { transition: parseUuid(a.transition_id, 'transition_id') } }) },
@@ -1593,11 +1612,11 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // The lane this opens is the ONE track in the model that stores a label
   // (mutations/media.ts names the source it lifted from), which is why the
   // result is a TRACK id and not the layer's: the layer is unchanged, it moved.
-  { name: 'separate_audio_to_new_track', exec: 'table',
+  { name: 'separate_audio_to_new_track', exec: 'table', annotations: ANN_WRITE,
     description: "Lift an Audio layer onto a new track of its own, in the source lane's slot, and return the new track's record with the layer's. The layer is untouched — id, span, gain, role and links survive — so an auto-paired dialogue clip gets its own lane while the pair still moves together; `delete_link` afterwards to make them independent. `WrongLayerKind` on anything but an Audio layer (a VideoClip's sound is the Audio layer linked to it — see `project://tracks`). A source lane the lift emptied is pruned. One undo reverts it.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string', description: 'The VideoClip whose audio splits off onto its own layer.' } }, required: ['layer_id'] },
     parseArgs: (a) => ({ op: 'separate_audio', args: { layer: parseUuid(a.layer_id, 'layer_id') } }) },
-  { name: 'update_composition', exec: 'table',
+  { name: 'update_composition', exec: 'table', annotations: ANN_SET,
     description: "Update a composition's envelope — canvas `width`/`height`, `fps`, `sample_rate`, `channels`, `color_space`, `background`, `duration_us`; only fields you set apply; `composition_id` names a Group's composition, the root when omitted. Unrecorded: the envelope is setup, so the patch reaches every history snapshot and undo walks past it. `fps` is LOCKED once the timeline, any history snapshot or any checkpoint holds a layer — refused with `FpsLockedByContent { current, requested, layer_count, locked_by: \"current\" | \"history\" }`; set the rate on a project that has never held a layer, or empty the timeline and reopen the project to clear a history lock. `sample_rate` is never locked. Setting `duration_us` PINS the duration so layer edits stop auto-fitting it; `duration_us: null` (alone in the patch) unpins it and refits to the layers.",
     inputSchema: { type: 'object', properties: { patch: {
       type: 'object',
@@ -1630,7 +1649,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // The project-preferences twin of set_composition: that one owns the canvas a
   // composition renders at, this one owns the preferences the EDITOR works by,
   // and both are setup rather than editing, so neither records.
-  { name: 'set_project_settings', exec: 'table',
+  { name: 'set_project_settings', exec: 'table', annotations: ANN_SET,
     description: "Update the project's editing preferences; only the fields you send apply, and an unknown key or an empty patch is refused. Unrecorded — preferences are setup, patched into every history snapshot, so undo walks past them (the `update_composition` contract). Fields: `auto_pair_audio_on_import`, `prefer_proxies`, `proxy_override`, `shot_review`, `pause_review` (the last two validated and refused as a whole, against the detectors' own bounds; `null` clears one back to defaults), `correction_script` (what `correct_caption_text` corrects against). Read current values from `project://current`.",
     inputSchema: { type: 'object', properties: { patch: {
       type: 'object',
@@ -1646,7 +1665,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     } }, required: ['patch'] },
     parseArgs: (a) => ({ op: 'update_project_settings', args: { patch: parseProjectSettingsPatch(a.patch) } }) },
   // ── table-exec: markers ──────────────────────────────────────────────────
-  { name: 'update_marker', exec: 'table',
+  { name: 'update_marker', exec: 'table', annotations: ANN_SET,
     description: "Update a marker. Setting `t_us` re-sorts the marker list. On a marker ANCHORED to a clip, `t_us` names the time the mark should read and moves the ANCHOR to make it read that, so the mark keeps following its clip from the new offset — a time outside that clip's span is refused, and `t_us` together with `end_t_us` is refused (an anchored region's end follows its anchor by itself; patch one or the other).",
     inputSchema: { type: 'object', properties: { marker_id: ID_SCHEMA('Marker'), patch: {
       type: 'object',
@@ -1660,7 +1679,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       },
     } }, required: ['marker_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_marker', args: { marker: parseUuid(a.marker_id, 'marker_id'), patch: parseMarkerPatch(a.patch) } }) },
-  { name: 'delete_marker', exec: 'table',
+  { name: 'delete_marker', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Remove a marker.",
     inputSchema: { type: 'object', properties: { marker_id: ID_SCHEMA('Marker') }, required: ['marker_id'] },
     parseArgs: (a) => ({ op: 'remove_marker', args: { marker: parseUuid(a.marker_id, 'marker_id') } }) },
@@ -1668,7 +1687,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // the field (`parseMarkerPatch`), so a tie can never be established as a side
   // effect of editing something else — the refusal the tie owes is about WHERE
   // the mark sits, and a patch that also moved it would have two answers.
-  { name: 'set_marker_anchor', exec: 'table',
+  { name: 'set_marker_anchor', exec: 'table', annotations: ANN_SET,
     description: "Tie a marker to a clip so the mark FOLLOWS it through moves, trims, splits and composition crossings, or cut it loose with `layer_id: null`. `layer_id` must be a clip of the marker's own composition. Tying names the source instant the mark already sits on, so nothing moves; `t_us` stays the field to read. Refuses without writing: a layer in another composition (`CrossCompositionSet`), a kind with no source window such as Color or Text (`WrongLayerKind`), a marker outside the clip's span (`InvalidArgument` — `update_marker` it onto the clip first). Re-tying replaces the tie. Untying keeps the frame currently shown and is the one exit from `hibernating`; untying a free marker records nothing.",
     inputSchema: { type: 'object', properties: {
       marker_id: ID_SCHEMA('Marker'),
@@ -1680,25 +1699,25 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { op: 'attach_marker', args: { marker, layer: parseUuid(a.layer_id, 'layer_id') } }
     } },
   // ── table-exec: media ────────────────────────────────────────────────────
-  { name: 'delete_media', exec: 'table',
-    description: "Remove a media item. Rejects if any layer references it unless force=true. With force=true, also deletes the referencing layers in one atomic commit, exactly as delete_layers would: their links dissolve below two members, a transient lane they empty is pruned, a locked lane refuses as TrackLocked.",
+  { name: 'delete_media', exec: 'table', annotations: ANN_DESTRUCTIVE,
+    description: "Remove a media item. Rejects if any layer references it unless force=true. With force=true, also deletes the referencing layers in one atomic commit, exactly as delete_layers would: their links dissolve below two members, a transient lane they empty is pruned, a locked lane refuses as TrackLocked. Unrecorded when nothing used it; the forced cascade records.",
     inputSchema: { type: 'object', properties: { media_id: ID_SCHEMA('Media'), force: { type: 'boolean', description: 'Also delete the layers that use it (their links and emptied lanes go too). Default false: media in use refuses.' } }, required: ['media_id'] },
     parseArgs: (a) => ({ op: 'remove_media', args: { media: parseUuid(a.media_id, 'media_id'), force: parseBoolOpt(a.force, 'force', false) } }) },
   // ── table-exec: history ──────────────────────────────────────────────────
-  { name: 'undo', exec: 'table',
+  { name: 'undo', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Undo the most recent edit (linear history); `NothingToUndo` at the origin. Only timeline edits record — layers, tracks, markers, transitions, links, and media removals that cascade. Outside the stack and untouched by undo: media imports, the composition envelope (`update_composition`), project settings (`set_project_settings`), track and role flags, and loading a project (which resets history).",
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseArgs: () => ({ op: 'undo', args: {} }) },
-  { name: 'jump_to', exec: 'table',
+  { name: 'jump_to', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Move the history cursor to an absolute stack index — the history panel's click-a-row, and the way to a state that is neither one undo away nor a checkpoint. `index` uses `project://history`'s numbering (`ops[i]` sits at `window_start + i`; `cursor` is where you are), so jumping is reading that resource and naming a row; out of range is refused naming the live bounds, and `evicted > 0` means index 0 is the oldest SURVIVING state. A revert path like undo/redo/`restore_checkpoint`, so `set_history_lock` blocks it. Records nothing; a later edit truncates whatever sat ahead, as after an undo.",
     inputSchema: { type: 'object', properties: { index: { type: 'integer', description: 'Absolute history index, in `project://history`\'s numbering (`window_start + i`).' } }, required: ['index'] },
     parseArgs: (a) => ({ op: 'jump_to', args: { index: parseNum(a.index, 'index') } }) },
-  { name: 'redo', exec: 'table',
+  { name: 'redo', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Redo the next edit. Errors with NothingToRedo if no redo is available. A new commit truncates the redo tail.",
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseArgs: () => ({ op: 'redo', args: {} }) },
-  { name: 'delete_checkpoint', exec: 'table',
-    description: "Drop a named checkpoint. Only the restore point goes — the edits it marked stay, nothing about the timeline or the undo stack changes, so there is nothing to undo afterwards. `CheckpointNotFound` for an id `list_checkpoints` does not report. Deliberately NOT blocked by `set_history_lock`: the lock rejects revert paths, and forgetting a restore point reverts nothing.",
+  { name: 'delete_checkpoint', exec: 'table', annotations: ANN_DESTRUCTIVE,
+    description: "Drop a named checkpoint. Only the restore point goes — the edits it marked stay, nothing about the timeline or the undo stack changes, so there is nothing to undo afterwards. `CheckpointNotFound` for an id `list_checkpoints` does not report. Deliberately NOT blocked by `set_history_lock`: the lock rejects revert paths, and forgetting a restore point reverts nothing. Unrecorded.",
     inputSchema: { type: 'object', properties: { checkpoint_id: ID_SCHEMA('Checkpoint') }, required: ['checkpoint_id'] },
     parseArgs: (a) => ({ op: 'delete_checkpoint', args: { checkpoint_id: parseUuid(a.checkpoint_id, 'checkpoint_id') } }) },
   // ── table-exec: captions ─────────────────────────────────────────────────
@@ -1706,7 +1725,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // composition): caption lanes multiply as cues collide, and restyling them
   // one at a time would leave a film styled in two ways for as long as the
   // batch took.
-  { name: 'restyle_captions', exec: 'table',
+  { name: 'restyle_captions', exec: 'table', annotations: ANN_SET,
     description: "Restyle EVERY caption in the project in one recorded edit — every Text layer on every caption-role track, in every composition, so multiplied caption lanes stay one look. Omitted or `null` fields are left alone. `outline_width: 0` removes the outline; a positive width adds or resizes one (keeping its colour, black if it had none). Sizes are composition px. A Text layer from `add_text_layer` is not a caption — style it with `update_layer_params`.",
     inputSchema: { type: 'object', properties: {
       font_family: { type: 'string', description: 'Font family for every caption.' },
@@ -1721,31 +1740,31 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       outline_width: parseNumOpt(a.outline_width, 'outline_width') ?? null,
     } } }) },
   // ── table-exec: audio roles ──────────────────────────────────────────────
-  { name: 'set_role_gain', exec: 'table',
+  { name: 'set_role_gain', exec: 'table', annotations: ANN_SET,
     description: "Set an audio role's mix gain (dB). role ∈ {dialogue,music,sfx,voiceover}. Recorded (undoable). Folds into every layer of that role at mix time.",
     inputSchema: { type: 'object', properties: { gain_db: { type: 'number', description: 'Bus gain, dB; 0 = unity.' }, role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'The mixing bus.' } }, required: ['gain_db', 'role'] },
     parseArgs: (a) => ({ op: 'set_role_gain', args: { role: parseRole(a.role), gain_db: parseNum(a.gain_db, 'gain_db') } }) },
   // set_role_flags: patch stays structural (muted/solo are nullable booleans validated by the mutation)
-  { name: 'set_role_flags', exec: 'table',
+  { name: 'set_role_flags', exec: 'table', annotations: ANN_SET,
     description: "Mute/solo an audio role. role ∈ {dialogue,music,sfx,voiceover}. Unrecorded (not undoable). Mute wins over solo; any solo silences non-soloed roles.",
     inputSchema: { type: 'object', properties: { role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'The mixing bus.' }, muted: { type: 'boolean', description: 'Silence the bus. Omitted leaves it alone.' }, solo: { type: 'boolean', description: 'Play this bus alone. Omitted leaves it alone.' } }, required: ['role'] },
     parseArgs: (a) => ({ op: 'update_role_flags', args: { role: parseRole(a.role), patch: { muted: a.muted ?? null, solo: a.solo ?? null } } }) },
   // ── dedicated-exec — parseDedicated validates and maps MCP args; behavior lives in actor.ts arms ──
-  { name: 'add_color_layer', exec: 'dedicated',
+  { name: 'add_color_layer', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Add a solid-color layer to a track and return its record — `layer_id`, `track_id`, the span as committed, `adjusted` for any grid snap. `t_start_us` and `t_end_us` are timeline microseconds (start inclusive, end exclusive). Layer cannot overlap existing layers on the same track.",
     inputSchema: { type: 'object', properties: { color: { ...RGBA_SCHEMA, description: 'Fill colour.' }, height: { type: 'integer', description: 'Block height, px; default 1080.' }, t_end_us: T_END_SCHEMA, t_start_us: T_START_SCHEMA, track_id: TRACK_ID_SCHEMA, width: { type: 'integer', description: 'Block width, px; default 1920.' }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['color', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), color: parseRgba(a.color, 'color'),
       width: parseNumOpt(a.width, 'width'), height: parseNumOpt(a.height, 'height'),
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
-  { name: 'add_video_layer', exec: 'dedicated',
+  { name: 'add_video_layer', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Add a visual layer from an imported `Video` or `Image` item onto a track and return its record; an audio-only item is refused and pointed at `add_audio_layer`. Video: `src_in_us`/`src_out_us` are the source in/out points, `t_start_us`/`t_end_us` the timeline span. Image: an ImageOverlay over the timeline range; omit `src_in_us`/`src_out_us`. When a Video has an audio stream and `auto_pair_audio_on_import` is on (the default), a linked dialogue Audio layer lands on the SAME track's audio lane, committed atomically — an occupied lane rejects the whole call naming the blocker. The record always carries `audio_layer_id`/`link_id`/`audio` (null when unpaired).",
     inputSchema: { type: 'object', properties: { media_id: ID_SCHEMA('Media'), src_in_us: { type: 'integer', description: 'Source in point, µs. Required for Video; ignored for an Image.' }, src_out_us: { type: 'integer', description: 'Source out point (exclusive), µs. Required for Video; ignored for an Image.' }, t_end_us: T_END_SCHEMA, t_start_us: T_START_SCHEMA, track_id: TRACK_ID_SCHEMA, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['media_id', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), media: parseUuid(a.media_id, 'media_id'),
       src_in_us: parseNumOpt(a.src_in_us, 'src_in_us') ?? null, src_out_us: parseNumOpt(a.src_out_us, 'src_out_us') ?? null,
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
-  { name: 'add_audio_layer', exec: 'dedicated',
+  { name: 'add_audio_layer', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Add an Audio layer from an imported item onto a track's audio lane and return its record — music, a sound effect, a voice track, or a video file's audio on its own. The only way audio-only media reaches the timeline (`add_video_layer` refuses it). `media_id` is an `Audio` item or a `Video` item with an audio stream; `Image` and `Subtitle` are refused. The layer stands ALONE — no auto-pair, no link — on the track's audio lane (every track has one, beside its visual lane). `src_in_us`/`src_out_us` are source in/out, `t_start_us`/`t_end_us` the timeline span; both snap to the 48 kHz sample lattice. `role` (default `music`) picks the mixing bus — a property of the clip, not its track.",
     inputSchema: { type: 'object', properties: { media_id: ID_SCHEMA('Media'), src_in_us: SRC_IN_SCHEMA, src_out_us: SRC_OUT_SCHEMA, t_end_us: T_END_SCHEMA, t_start_us: T_START_SCHEMA, track_id: TRACK_ID_SCHEMA, role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'Mixing bus for the clip. Defaults to `music`.' }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['media_id', 'src_in_us', 'src_out_us', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), media: parseUuid(a.media_id, 'media_id'),
@@ -1753,7 +1772,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
       role: a.role === undefined || a.role === null ? null : parseRole(a.role),
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
-  { name: 'add_text_layer', exec: 'dedicated',
+  { name: 'add_text_layer', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Add a Text layer — a title, a lower third, a credit — and return its record. Born at the caption font, 72 px, opaque white, centre-aligned and centred in frame. `x`/`y` (both or neither) override placement and are the layer's ANCHOR point, not clamped to frame. Everything else — font, size, colour, outline, layout box, alignment — is `update_layer_params { kind: 'Text' }`. It cannot overlap another visual layer on the track. Subtitles from a document are `apply_subtitles`; this is the one-off.",
     inputSchema: { type: 'object', properties: { content: { type: 'string', description: 'The text to display. Newlines are honoured.' }, t_end_us: T_END_SCHEMA, t_start_us: T_START_SCHEMA, track_id: TRACK_ID_SCHEMA, x: { type: 'number', description: "Anchor x in composition pixels. Give it with `y` or not at all; omitted, the layer is centred in frame." }, y: { type: 'number', description: 'Anchor y in composition pixels. Give it with `x` or not at all.' }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['content', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), content: parseStr(a.content, 'content'),
@@ -1764,7 +1783,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // both take the project id the production channels pass for staleness — an
   // agent has no reason to hold one, so the arm supplies it from the state it
   // is already reading.
-  { name: 'apply_transcripts', exec: 'dedicated',
+  { name: 'apply_transcripts', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Lay transcripts on the caption tracks, KEEPING per-word timing; returns `{ caption_track_id, cues }`. Pass `transcribe_clip`'s envelope as it comes (`segments` and `word_timing`) — prefer this over `apply_subtitles` for a transcript: an SRT has no room for word offsets, and `correct_caption_text` needs them to re-segment a corrected cue. Cues pack into the composition's existing caption tracks, opening a lane only for a cue that collides with all of them, and snap to the frame grid. `source_layer_ids` is parallel to `transcripts` and tags each cue with the clip it came from, so corrections group by take. At most 1000 transcripts. One recorded edit.",
     inputSchema: { type: 'object', properties: {
       transcripts: { type: 'array', description: "One entry per transcribed clip, in the shape `transcribe_clip` returns.", items: {
@@ -1795,7 +1814,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         ? [] : asArray(a.source_layer_ids, 'source_layer_ids').map((x) => parseUuid(x, 'source_layer_ids')),
       composition_id: parseCompositionIdOpt(a.composition_id),
     }) },
-  { name: 'correct_caption_text', exec: 'dedicated',
+  { name: 'correct_caption_text', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Correct the captions against the project's reference text — `set_project_settings { correction_script }`: the script, the running order, the spelling of every name — and re-segment the cues the correction changed. Returns `{ changed }`. Refused while the script is blank (`InvalidArgument`, field `correction_script`). Every caption in the composition by default; `layer_ids` narrows it (an id that is not a caption Text layer refuses the call). A cue with word timing (see `apply_transcripts`) may be SPLIT or MERGED to match the new wording, each cue timed from its words; one without it is corrected in place. Refuses whole, before any write, if a target or its track is locked. One recorded edit.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The captions to correct. Omit for every caption in the composition.' },
@@ -1806,12 +1825,12 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         ? null : asArray(a.layer_ids, 'layer_ids').map((x) => parseUuid(x, 'layer_ids')),
       composition_id: parseCompositionIdOpt(a.composition_id),
     }) },
-  { name: 'split_layer', exec: 'dedicated',
+  { name: 'split_layer', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Split a layer into two halves at the given timeline microsecond. Returns `{ left, right, layers, siblings: [{ source, left, right }] }` — every link sibling's halves too. `at_t_us` must be strictly between the layer's t_start_us and t_end_us. For media-bearing layers (VideoClip, Audio) the source offsets are adjusted at speed=1 — variable speed support is deferred.",
     inputSchema: { type: 'object', properties: { at_t_us: US_SCHEMA('Cut point, timeline; strictly inside the layer'), escape_link: ESCAPE_LINK_SCHEMA, layer_id: LAYER_ID_SCHEMA }, required: ['at_t_us', 'layer_id'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'),
       at_t_us: parseNum(a.at_t_us, 'at_t_us'), escape_link: a.escape_link }) },
-  { name: 'add_marker', exec: 'dedicated',
+  { name: 'add_marker', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Add a marker (point or region) to a composition's timeline — the root, or the Group named by `composition_id`. Returns the marker record (`marker_id`, `t_us` as snapped). Set `end_t_us` to make it a region marker. Set `anchor_layer_id` to have the mark FOLLOW a clip instead of standing at a fixed time; omit it for an ordinary marker.",
     inputSchema: { type: 'object', properties: { anchor_layer_id: { type: 'string',
       description: 'Clip the marker should follow — a layer of the same composition with a source window (VideoClip, Audio, Group). Tied as `set_marker_anchor` would tie it, refused for the same reasons (no marker is created). Omit for a fixed marker.' },
@@ -1820,7 +1839,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       end_t_us: parseNumOpt(a.end_t_us, 'end_t_us'), label: parseStr(a.label, 'label'),
       anchor_layer_id: a.anchor_layer_id != null ? parseUuid(a.anchor_layer_id, 'anchor_layer_id') : null,
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
-  { name: 'set_history_lock', exec: 'dedicated',
+  { name: 'set_history_lock', exec: 'dedicated', annotations: ANN_SET,
     description: "Block reverts (undo / redo / jump_to / restore_checkpoint) while a batch runs, or release the block. `locked: true` needs a `reason`, shown beside the lock badge in the agent and history panels and returned to any revert attempt; `locked: false` takes none and is idempotent. Never affects what records: the lock rejects reverts, it does not fold a batch into one history entry. Last writer wins. Always pair the lock with its release — ending the owning work session or disconnecting also releases it, and the user can unlock locally; switching views does not.",
     inputSchema: { type: 'object', properties: {
       locked: { type: 'boolean', description: 'true blocks reverts; false releases the block.' },
@@ -1835,7 +1854,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         throw new McpArgError('set_history_lock takes no `reason` when unlocking — there is nothing left to explain', 'reason')
       return { locked, reason }
     } },
-  { name: 'set_keyframe', exec: 'dedicated',
+  { name: 'set_keyframe', exec: 'dedicated', annotations: ANN_SET,
     description: "Insert or update a keyframe on a layer param; `t_us` is timeline-absolute. A Static track is lifted to Keyframed; a key at the same frame is updated in place. Returns the key (`keyframe_id`, `t_us`). `value` is typed by `param_key`: a number for scalar params, `{r,g,b,a}` (0..255) for \"color\". `interp` (optional) is the easing of the segment LEAVING this key as a raw kind (Hold | Linear | Bezier {p1,p2} | Elastic | Bounce — the schema has the shapes; named presets go through `update_keyframe`); omitted, it inherits the preceding segment's easing. One side or the continuity: `update_keyframe`; Auto tangents: `smooth_keyframes`. Keying one scale axis of a scale-linked layer clears the link.",
     inputSchema: { type: 'object', properties: { interp: INTERP_SCHEMA, layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA, t_us: US_SCHEMA('Key time, timeline-absolute'), value: TRACK_VALUE_SCHEMA }, required: ['layer_id', 'param_key', 't_us', 'value'] },
     parseDedicated: (a) => {
@@ -1843,16 +1862,16 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { layer: parseUuid(a.layer_id, 'layer_id'), param_key: paramKey,
         t_us: parseNum(a.t_us, 't_us'), value: parseTrackValue(a.value, paramKey, 'value'), interp: parseInterpOpt(a.interp) }
     } },
-  { name: 'get_param_track', exec: 'dedicated',
+  { name: 'get_param_track', exec: 'dedicated', annotations: ANN_READ,
     description: "Read a layer param's animation track — the record to inspect before editing keys. Returns {\"mode\":\"Static\",\"value\":v} or {\"mode\":\"Keyframed\",\"extrapolate\":{before, after},\"keyframes\":[{id, t_us, t_local_us, value, in, out, continuity, segment, preset_id?}]}. `t_us` is timeline-absolute, `t_local_us` layer-local; `value` is typed by `param_key`. Per key, `in`/`out` are the arriving/leaving tangents {x, y, mode} in the segment's unit square (\"Auto\" = solved on write, \"Free\" = authored), `continuity` is \"Smooth\" | \"Broken\", `segment` is the class of the segment leaving the key (\"Spline\" | \"Hold\" | \"Linear\" | \"Elastic\" | \"Bounce\"; only Spline reads tangents), and `preset_id` names the easing preset the leaving segment exactly matches (absent on a hand-tuned curve and the last key). Position params are mode-specific: x/y in XY mode, path_progress in Path mode (a fraction, not a percentage).",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA }, required: ['layer_id', 'param_key'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key') }) },
-  { name: 'delete_keyframe', exec: 'dedicated',
+  { name: 'delete_keyframe', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
     description: "Remove a keyframe by id from a layer param. Get the id from get_param_track. When it was the last key, the track collapses to Static holding that key's value.",
     inputSchema: { type: 'object', properties: { keyframe_id: ID_SCHEMA('Keyframe'), layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA }, required: ['keyframe_id', 'layer_id', 'param_key'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'),
       param_key: parseStr(a.param_key, 'param_key') }) },
-  { name: 'update_keyframe', exec: 'dedicated',
+  { name: 'update_keyframe', exec: 'dedicated', annotations: ANN_SET,
     description: "Change one keyframe in one commit — any of: `t_us` (move it, timeline-absolute; the track re-sorts), `easing` (the segment LEAVING the key: {\"preset\":\"<id>\"} from the canonical table, read back as `preset_id`, or a raw kind {\"kind\":\"Hold\"} | {\"kind\":\"Linear\"} | {\"kind\":\"Bezier\",\"p1\":[x,y],\"p2\":[x,y]} | {\"kind\":\"Elastic\",\"dir\",amplitude?,period?} | {\"kind\":\"Bounce\",\"dir\"}; writes this key's out tangent and the next key's in tangent, both Free), `in` / `out` (one side's tangent {x, y}, stored Free — x within [0, 1], y may overshoot — its segment becoming Spline; a side written on an Auto key frees the whole key), `continuity` (\"Smooth\" re-derives in from out, \"Broken\" changes no number). At least one; applied in that order. Auto tangents on one or every key: `smooth_keyframes`.",
     inputSchema: { type: 'object', properties: {
       keyframe_id: ID_SCHEMA('Keyframe'),
@@ -1877,26 +1896,26 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         throw new McpArgError(`update_keyframe needs at least one of t_us, easing, in, out, continuity — nothing to change`)
       return p
     } },
-  { name: 'smooth_keyframes', exec: 'dedicated',
+  { name: 'smooth_keyframes', exec: 'dedicated', annotations: ANN_SET,
     description: "Set Auto tangents (clamped monotone, solved on write and kept smooth as neighbours move) on one key, or every key when `keyframe_id` is omitted. Both sides of each key go Auto with Smooth continuity, and the adjacent segments become Spline. get_param_track reads the solved coordinates back with mode \"Auto\".",
     inputSchema: { type: 'object', properties: { keyframe_id: { type: 'string', description: 'One key to smooth; omit for every key of the track.' }, layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA }, required: ['layer_id', 'param_key'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key'),
       keyframe_id: a.keyframe_id != null ? parseUuid(a.keyframe_id, 'keyframe_id') : null }) },
-  { name: 'clear_keyframes', exec: 'dedicated',
+  { name: 'clear_keyframes', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
     description: "Collapse a param's animation back to a single Static value. `value` (optional) is the value to hold, typed by `param_key` — a number, or {r,g,b,a} (integers 0..255) for \"color\"; when omitted, defaults to the first keyframe's value. No-op on an already-Static track.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA, value: TRACK_VALUE_OPT_SCHEMA }, required: ['layer_id', 'param_key'] },
     parseDedicated: (a) => {
       const paramKey = parseStr(a.param_key, 'param_key')
       return { layer: parseUuid(a.layer_id, 'layer_id'), param_key: paramKey, value: parseTrackValueOpt(a.value, paramKey, 'value') }
     } },
-  { name: 'set_param_track', exec: 'dedicated',
+  { name: 'set_param_track', exec: 'dedicated', annotations: ANN_SET,
     description: "Low-level: replace a param's whole animation track — {\"mode\":\"Static\",\"value\":v} or {\"mode\":\"Keyframed\",\"value\":[{id, t_us, value, in, out, continuity, segment}],\"extrapolate\":{before, after}}; the keys ride in `value` here, where `get_param_track` reads them back as `keyframes` (plus t_local_us / preset_id) — with `t_us` timeline-absolute, values typed by `param_key`, each tangent's x within [0, 1], `extrapolate` defaulting to Hold/Hold. Auto sides and the in side of a Smooth key are re-solved on write. For bulk authoring only — retiming many keys or pasting a track is one commit here; otherwise use the granular tools. Replacing one scale axis of a scale-linked layer clears the link.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA, track: ANIM_TRACK_SCHEMA }, required: ['layer_id', 'param_key', 'track'] },
     parseDedicated: (a) => {
       const paramKey = parseStr(a.param_key, 'param_key')
       return { layer: parseUuid(a.layer_id, 'layer_id'), param_key: paramKey, track: parseAnimatedTrack(a.track, paramKey) }
     } },
-  { name: 'set_extrapolation', exec: 'dedicated',
+  { name: 'set_extrapolation', exec: 'dedicated', annotations: ANN_SET,
     description: "Set what a keyframed track does outside its keys: `before` the first and/or `after` the last (at least one; the other keeps its value). \"Hold\" (the end value, default), \"Loop\" (repeat from the first key — a visible jump when first ≠ last), \"PingPong\" (alternate cycles run backwards), \"Offset\" (each cycle adds the last-minus-first delta), \"Continue\" (carry the last segment's end velocity on as a line). The period is last.t − first.t; a single-key track never extrapolates. Refused on a Static track. For path_progress, only Hold / Loop / PingPong are supported. Reads back as `extrapolate` on `get_param_track`.",
     inputSchema: { type: 'object', properties: {
       after: { ...EXTRAPOLATE_SCHEMA, description: 'After the last key. ' + EXTRAPOLATE_SCHEMA.description },
@@ -1914,7 +1933,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         throw new McpArgError(`set_extrapolation needs at least one of before, after (each ${EXTRAPOLATE_OPTIONS}) — nothing to write`)
       return p
     } },
-  { name: 'dry_run', exec: 'dedicated',
+  { name: 'dry_run', exec: 'dedicated', annotations: ANN_READ,
     description: "Run a sequence of edit operations against a clone of the project WITHOUT committing — check overlaps and invariants before touching real state. Validates after each op exactly as `commit()` does and HALTS at the first error. Returns `{ results: [{ index, status, output? | error? }], halted_at: number | null }`. Supported ops: `add_color_layer`, `add_video_layer`, `add_audio_layer`, `add_text_layer`, `update_layer`, `update_layer_params`, `move_layer`, `split_layer`, `delete_layers` (lift only — `ripple: true` is refused), `add_transition` (the transition kind rides as `transition_kind`, since `kind` names the op). Motifs, caption import, media import and undo/redo are not dry-runnable.",
     inputSchema: { type: 'object', properties: { operations: {
       type: 'array',
@@ -1922,7 +1941,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       items: { type: 'object', description: "{ kind: <one of the supported tool names>, ...that tool's args }. For add_transition the transition kind rides as `transition_kind` (plus optional `placement`)." },
     } }, required: ['operations'] },
     parseDedicated: (a) => ({ operations: asArray(a.operations, 'operations') }) },
-  { name: 'add_motif_layer', exec: 'dedicated',
+  { name: 'add_motif_layer', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Add a motif layer and return its record. `motif_id` from `list_motifs`; `t_start_us` timeline µs; `t_end_us` defaults to `t_start_us + default_duration_s`; `track_id` omitted always spawns a fresh track (never reuses one, so consecutive auto-inserts cannot collide); `props` is matched against the motif's `props_schema` — unknown keys reject, missing keys take defaults. Rendering is lazy: the motif rasterizes on first render and is cached by content.",
     inputSchema: { type: 'object',
       properties: {
@@ -1942,23 +1961,23 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       props: a.props != null ? parseObj(a.props, 'props') : null,
       composition_id: parseCompositionIdOpt(a.composition_id),
     }) },
-  { name: 'create_checkpoint', exec: 'dedicated',
-    description: "Create a named checkpoint of the current state and return `{ checkpoint_id, label }`. Checkpoints survive later commits (unlike the redo tail) and persist in the project file; the agent panel shows each as a row with a Restore button. Use it at logical batch boundaries.",
+  { name: 'create_checkpoint', exec: 'dedicated', annotations: ANN_WRITE,
+    description: "Create a named checkpoint of the current state and return `{ checkpoint_id, label }`. Checkpoints survive later commits (unlike the redo tail) and persist in the project file; the agent panel shows each as a row with a Restore button. Use it at logical batch boundaries. Unrecorded.",
     inputSchema: { type: 'object', properties: { label: { type: 'string', description: 'Checkpoint name.' } }, required: ['label'] },
     parseDedicated: (a) => ({ label: parseStr(a.label, 'label') }) },
-  { name: 'list_checkpoints', exec: 'dedicated',
+  { name: 'list_checkpoints', exec: 'dedicated', annotations: ANN_READ,
     description: "List all named checkpoints, oldest first. Returns id, label, actor, created_at per checkpoint (no project snapshot).",
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseDedicated: (_a) => ({}) },
-  { name: 'restore_checkpoint', exec: 'dedicated',
+  { name: 'restore_checkpoint', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
     description: "Restore a named checkpoint. Records a new history entry — undo will return to the pre-restore state. Errors with CheckpointNotFound if the id doesn't exist. The agent panel preserves activity and inserts a restore boundary; only edits with known history provenance are marked reverted.",
     inputSchema: { type: 'object', properties: { checkpoint_id: ID_SCHEMA('Checkpoint') }, required: ['checkpoint_id'] },
     parseDedicated: (a) => ({ checkpoint_id: parseUuid(a.checkpoint_id, 'checkpoint_id') }) },
-  { name: 'end_agent_session', exec: 'dedicated',
+  { name: 'end_agent_session', exec: 'dedicated', annotations: ANN_WRITE,
     description: "End your work session and release its history lock. Keeps the current view and activity records. Does not cancel running tasks, disconnect MCP, or prohibit later calls. Only the owning connection may end a session — unless `force: true`, which takes over another connection's session (and its lock) when its owner is gone; `read_project { view: \"session\" }` shows who holds it.",
     inputSchema: { type: 'object', properties: { force: { type: 'boolean', description: "End another connection's session too. Default false." } } },
     parseDedicated: (a) => ({ force: parseBoolOpt(a.force, 'force', false) }) },
-  { name: 'begin_agent_session', exec: 'dedicated',
+  { name: 'begin_agent_session', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Begin a work session and show the lightweight agent view. Creates one Pre-agent checkpoint. Repeating on the same connection returns the existing session without changing the view; another connection is refused (`AgentSessionBusy` names the holder) unless it takes over with `end_agent_session { force: true }`. Finish with end_agent_session; a session whose connection is gone is closed by the app once its stream has dropped. The user may switch views without ending the session.",
     inputSchema: { type: 'object', properties: { reason: { type: 'string', description: 'What this work session is for; shown to the user beside the busy badge.' } }, required: ['reason'] },
     parseDedicated: (a) => ({ reason: parseStr(a.reason, 'reason') }) },
@@ -1969,11 +1988,11 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   //    def has to merge into the advertised catalog from the TS side.
   //    parseDedicated is the bijection gate's required-scalar check only;
   //    runHybrid re-validates layer_id itself. ──
-  { name: 'auto_split_by_shot', exec: 'dedicated',
+  { name: 'auto_split_by_shot', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
     description: "Detect a VideoClip's shot cuts and split it at every in-window cut as ONE undoable step; returns `{ layer_ids }` in timeline order (the single unchanged id when there is no interior cut). `min_shot_us` (default 500000) is the minimum shot length; `drop_short=true` also deletes segments shorter than that, taking every overlapping member of the layer's link with them so no orphaned audio sliver is left. Reads the same cached shot report as `analyze_clip`, so boundaries agree; a convenience over `analyze_clip` + `split_layer`.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string', description: 'The VideoClip to split.' }, min_shot_us: US_SCHEMA('Shortest shot to keep; default 500000'), drop_short: { type: 'boolean', description: 'Also delete segments shorter than min_shot_us, with the overlapping members of their link. Default false.' } }, required: ['layer_id'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), min_shot_us: parseNumOpt(a.min_shot_us, 'min_shot_us'), drop_short: parseBoolOpt(a.drop_short, 'drop_short', false) }) },
-  { name: 'remove_pauses', exec: 'dedicated',
+  { name: 'remove_pauses', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
     description: "Cut the pauses out of a clip's audio and CLOSE the gaps, as ONE recorded edit. A pause is a run whose peak stays under `threshold_amp` for at least `min_pause_us` (defaults as `detect_pauses`); `pad_us` (default 100000) of it stays on EACH side so speech keeps its breath, so the cut core is `[start + pad_us, end − pad_us)`; a pause touching the clip's edge is trimmed off whole. Pass an Audio layer, or a VideoClip, which delegates to the Audio layer of its link (refused when it plays no sound). Every other link member overlapping a removed core is cut in lockstep, and everything downstream shifts left on every track. Returns `{ surviving_layer_ids, removed, removed_us }`. Refuses whole, before any write, with `delete_layers { ripple: true }`'s refusals (`RippleInsideHole`, `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked`), and with `InvalidArgument` when the cores cover the clip end to end (that is a delete). To review first, `detect_pauses` + one anchored region `add_marker` per pause (the `/cut-pauses` prompt).",
     inputSchema: { type: 'object', properties: {
       layer_id: { type: 'string', description: 'Target Audio layer id, or a VideoClip id that delegates to its linked Audio layer.' },
@@ -1983,7 +2002,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     }, required: ['layer_id'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), threshold_amp: parseNumOpt(a.threshold_amp, 'threshold_amp'), min_pause_us: parseNumOpt(a.min_pause_us, 'min_pause_us'), pad_us: parseNumOpt(a.pad_us, 'pad_us') }) },
   // ── dedicated-exec: reads, for a client without MCP resources ─────────────
-  { name: 'read_project', exec: 'dedicated',
+  { name: 'read_project', exec: 'dedicated', annotations: ANN_READ,
     description: "Read project state as a tool result — the same views the `project://*` resources serve, for a client that cannot read MCP resources (prefer the resources when yours can). `view`: `current` (the whole project), `composition` (root settings), `compositions` (every composition with its `ref_count`), `media`, `tracks` (tracks with layer envelopes), `layer` (one layer in full; needs `id`), `markers`, `history` (recent operations and checkpoints), `session` (who holds the agent work session — read after `AgentSessionBusy`). `tracks` and `markers` take `composition_id` for a Group's composition, the root when omitted. Returns the JSON body as text.",
     inputSchema: { type: 'object', properties: {
       view: { type: 'string', enum: [...READ_PROJECT_VIEWS], description: 'Which view to read.' },

@@ -18,15 +18,15 @@
 // snapshot plus the TS-owned tables, exactly what ListTools returns.
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { MCP_TOOL_DEFS } from '../mcp-commands'
+import { MCP_TOOL_DEFS, type ToolAnnotations } from '../mcp-commands'
 import { MOTIF_TOOL_DEFS } from '../../mcp/motifToolDefs'
 import { mergeMcpCatalog } from '../../mcp/mcpCatalog'
 
 const rust = JSON.parse(readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 'utf8')) as {
-  tools: Array<{ name: string; description: string; input_schema?: unknown; inputSchema?: unknown }>
+  tools: Array<{ name: string; description: string; input_schema?: unknown; inputSchema?: unknown; annotations?: Record<string, unknown> }>
 }
 const merged = mergeMcpCatalog(
-  rust.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: (t.inputSchema ?? t.input_schema) as Record<string, unknown> })),
+  rust.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: (t.inputSchema ?? t.input_schema) as Record<string, unknown>, annotations: t.annotations as ToolAnnotations | undefined })),
   [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS],
 )
 
@@ -57,9 +57,11 @@ const PROPERTY_DESCRIPTION_CAP = 260
  *  as an enum plus pattern. That pass landed at ~114 KB: ~14 KB of bytes an
  *  agent acts on at the moment it types an argument, in place of prose it had
  *  to learn by trial and the ten to twenty probing calls the audit's testers
- *  paid per session. What is left to pay back is prose that restates the
- *  schema, and the merge of over-granular families. */
-const CATALOG_BYTE_BUDGET = 118_000
+ *  paid per session. Annotations on every tool (S3) added ~4 KB more, to
+ *  ~118 KB, and are counted here because the wire carries them. What is left
+ *  to pay back is prose that restates the schema, and the merge of
+ *  over-granular families. */
+const CATALOG_BYTE_BUDGET = 122_000
 
 function compact(v: unknown): string { return JSON.stringify(v) }
 
@@ -133,7 +135,8 @@ describe('MCP catalog context budget', () => {
   })
 
   it('fits the whole catalog in the byte budget', () => {
-    const bytes = merged.reduce((n, t) => n + compact({ name: t.name, description: t.description, inputSchema: t.inputSchema }).length, 0)
+    // Annotations ride on the wire too, so they count.
+    const bytes = merged.reduce((n, t) => n + compact({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: t.annotations }).length, 0)
     expect(bytes, `catalog is ${bytes} bytes (~${Math.round(bytes / 4)} tokens)`).toBeLessThanOrEqual(CATALOG_BYTE_BUDGET)
   })
 })

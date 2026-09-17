@@ -215,13 +215,16 @@ describe('a session whose client is gone is closed by the host', () => {
 
   it('a client that keeps making requests is never judged gone', async () => {
     const { rows, deps } = collector()
-    const host = await startMcpHost({} as Backend, { log: deps, sessionReaper: { idleMs: 80, graceMs: 80, sweepMs: 10 } })
+    // Real timers: the idle window is several times a request's round trip so a
+    // loaded CI box cannot make a ping look like silence, and the loop outlasts
+    // the window so staying alive is what the pings prove.
+    const host = await startMcpHost({} as Backend, { log: deps, sessionReaper: { idleMs: 400, graceMs: 400, sweepMs: 10 } })
     hosts.push(host)
     const bind = host.getInfo().bind
     const port = Number(bind.slice(bind.lastIndexOf(':') + 1))
     const init = await post(port, INITIALIZE, { authorization: 'Bearer test-token' })
-    for (let i = 0; i < 6; i++) {
-      await new Promise((r) => setTimeout(r, 30))
+    for (let i = 0; i < 8; i++) {
+      await new Promise((r) => setTimeout(r, 60))
       await post(port, { jsonrpc: '2.0', id: 10 + i, method: 'ping' }, { authorization: 'Bearer test-token', 'mcp-session-id': init.sessionId! })
     }
     expect(rows.some((r) => r.message === 'MCP client gone: session closed')).toBe(false)

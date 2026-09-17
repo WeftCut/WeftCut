@@ -23,7 +23,7 @@ import { serveProjectResource, buildResourceInjection } from '../state/resource-
 import type { TsActorHost } from '../state/ts-actor-host.js'
 import type { ActorHandle, ChangeEvent } from '../state/actor.js'
 import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
-import { MCP_TOOL_DEFS, MCP_TOOLS, McpArgError, mcpDef, type McpErrorCode } from '../state/mcp-commands.js'
+import { MCP_TOOL_DEFS, MCP_TOOLS, McpArgError, mcpDef, type McpErrorCode, type ToolAnnotations } from '../state/mcp-commands.js'
 import { toolErrorResult, thrownToToolError, UnknownToolError } from './toolResult.js'
 import { toolRecord } from '../state/mcp-results.js'
 import { argProblemMessage } from './argCheck.js'
@@ -165,7 +165,7 @@ export async function callClipComputeTool(
  *  `tools/list`, `resources/list` and the argument gate below. Keyed weakly on
  *  the backend object so a test's fake backend is its own catalog. */
 interface RustCatalog {
-  tools: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown>; input_schema?: Record<string, unknown> }>
+  tools: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown>; input_schema?: Record<string, unknown>; annotations?: ToolAnnotations }>
   resources: Array<{ uri: string; name?: string; description?: string; mimeType?: string }>
 }
 const rustCatalogs = new WeakMap<object, Promise<RustCatalog>>()
@@ -213,6 +213,24 @@ async function refuseBadArgs(backend: Backend, name: string, args: Record<string
   const schema = tool?.inputSchema ?? tool?.input_schema
   const message = schema ? argProblemMessage(name, schema, args) : null
   return message === null ? null : toolErrorResult({ code: 'invalid_params', message })
+}
+
+/** The names whose advertised `annotations.readOnlyHint` is true, from the
+ *  same merged catalog `tools/list` serves, once per backend. A Rust catalog
+ *  that cannot be read leaves the TS-owned reads, so the split degrades to
+ *  "Rust tools are operations" rather than to a throw on every call. */
+const readOnlySets = new WeakMap<Backend, Promise<Set<string>>>()
+function readOnlyTools(backend: Backend): Promise<Set<string>> {
+  let p = readOnlySets.get(backend)
+  if (!p) {
+    const names = (rust: ReadonlyArray<{ name: string; annotations?: ToolAnnotations }>): Set<string> =>
+      new Set(mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS]).filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name))
+    // A backend that throws synchronously (no catalog method at all, as some
+    // test doubles have) is the same case as one whose catalog rejects.
+    p = Promise.resolve().then(() => rustCatalog(backend)).then((c) => names(c.tools), () => names([]))
+    readOnlySets.set(backend, p)
+  }
+  return p
 }
 
 /** CallTool routing (tsHost present): mutations → TS actor.mcpCall, hybrid →
@@ -592,15 +610,18 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   const clientInfo = (): { name: string; version?: string } | undefined => server.getClientVersion()
 
   const connectionId = opts.connectionId ?? randomUUID()
-  const track: typeof withLog = (method, handler, deps, client) => withLog(method, (req, extra) => {
+  // Read or write is the catalog's own `readOnlyHint` — the one statement of
+  // the split (audit S3), so the agent panel's read rows and the annotations a
+  // client sees cannot disagree. A non-tool method (a list, a resource read)
+  // is a read by nature; a tool name the catalog does not know is logged as an
+  // operation and refused as unknown by the dispatcher. Resolved on the first
+  // tracked call, not at build: a host without an agent service never asks.
+  const track: typeof withLog = (method, handler, deps, client) => withLog(method, async (req, extra) => {
     const service = getTsHost()?.agent
     if (!service) return handler(req, extra)
     const params = (req.params ?? {}) as Record<string, unknown>
     const tool = method === 'tools/call' ? String(params.name ?? '') : method
-    // Every tool that commits nothing: the prefixes, plus the three read-only
-    // tools whose names start with a verb (`extract_clip_audio`, `dry_run`,
-    // `preview_motif_draft`).
-    const read = method !== 'tools/call' || /^(get_|list_|read_|ping$|view_|analyze_|describe_|transcribe_|compare_|detect_|extract_|dry_run$|preview_)/.test(tool)
+    const read = method !== 'tools/call' || (await readOnlyTools(backend)).has(tool)
     return service.run(connectionId, clientInfo()?.name ?? 'MCP', tool,
       method === 'tools/call' ? params.arguments ?? {} : params, read, () => handler(req, extra))
   }, deps, client)

@@ -6,16 +6,18 @@
 // robust to route — a tool's def side and execution side may disagree (see
 // motifToolDefs.ts). The result is an exact, duplicate-free union by construction.
 
-export interface CatalogTool { name: string; description?: string; inputSchema?: Record<string, unknown> }
+import type { ToolAnnotations } from '../state/mcp-commands.js'
+
+export interface CatalogTool { name: string; description?: string; inputSchema?: Record<string, unknown>; annotations?: ToolAnnotations }
 export interface ResourceDef { uri: string; name?: string; description?: string; mimeType?: string }
 
 export function mergeMcpCatalog(
   rustTools: ReadonlyArray<{ name: string } & Partial<CatalogTool>>,
-  tsDefs: ReadonlyArray<{ name: string; description: string; inputSchema: Record<string, unknown> }>,
+  tsDefs: ReadonlyArray<{ name: string; description: string; inputSchema: Record<string, unknown>; annotations?: ToolAnnotations }>,
 ): CatalogTool[] {
   const tsNames = new Set(tsDefs.map((d) => d.name))
   const rustKept = rustTools.filter((t) => !tsNames.has(t.name))
-  return [...rustKept, ...tsDefs.map((d) => ({ name: d.name, description: d.description, inputSchema: d.inputSchema }))]
+  return [...rustKept, ...tsDefs.map((d) => ({ name: d.name, description: d.description, inputSchema: d.inputSchema, ...(d.annotations ? { annotations: d.annotations } : {}) }))]
 }
 
 export function mergeMcpResources(

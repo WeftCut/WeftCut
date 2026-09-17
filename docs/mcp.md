@@ -202,7 +202,13 @@ the `tool_table!` macro in the Rust core for the native compute tools.
 Every advertised schema property carries an explicit `type` — MCP
 clients coerce untyped fields to `type: string`, which forces agents to
 send nested payloads as JSON-encoded strings (a catalog-wide test gates
-this). Don't expose 100 tools; agents get confused. The current set is 91,
+this). Every tool carries `annotations` — `readOnlyHint` on the reads,
+`destructiveHint` on every write (true for the removals and reverts:
+`delete_*`, `ripple_delete_gap`, `remove_pauses`, `clear_keyframes`,
+`auto_split_by_shot`, `undo` / `redo` / `jump_to` / `restore_checkpoint`,
+`install_motif`), `idempotentHint` on a set — and they are the one statement
+of that split: the agent panel's read rows come from the same `readOnlyHint`
+(`mcp.annotations` pins every tool to one). Don't expose 100 tools; agents get confused. The current set is 91,
 organised below — near enough that ceiling that a new tool is first checked
 against an existing one's arguments: two verbs that differ by one boolean are
 one tool with a flag, and a field's set and clear are one tool taking `null`.
@@ -609,8 +615,9 @@ client that never opened one). Already-running operations retain their
 attribution and actual outcome.
 
 Both layouts show the same current-project activity: running tasks, readable
-operations and objects, errors, folded quick reads, work-session groups and
-checkpoint recovery. Only the editor offers object navigation. Restore remains
+operations and objects, errors, folded quick reads (a call is a read when the
+catalog's `annotations.readOnlyHint` says so — the same fact the client sees in
+`tools/list`), work-session groups and checkpoint recovery. Only the editor offers object navigation. Restore remains
 undoable and retains reads and errors; reverted markers use actual history
 provenance, never a timestamp range. The panel retains 1000 completed activities
 and all running calls, independently of diagnostic log clearing. Reopening a
@@ -653,6 +660,8 @@ and one another. The two pressures meet at a budget:
   `add_video_layer`, `apply_transcripts` vs `apply_subtitles`). Then the
   non-obvious argument semantics with their defaults, the return shape, and
   the refusals an agent has to *plan around* — by error name, one clause each.
+  A write undo walks past ends with the one word "Unrecorded."; a recorded
+  edit says nothing, since recording is the default.
 - **What the schema carries.** Every property has a one-line meaning with its
   unit (`µs`, composition px, 0..1); a field with a closed vocabulary is an
   enum (`trim_layer.edge`, `add_effect.kind`, every role and mode); `param_key`
@@ -675,13 +684,14 @@ and one another. The two pressures meet at a budget:
 - **The budget is a gate.** `mcp.description-budget.test.ts` caps each
   description at 700 characters (an explicit, size-limited allowlist of
   complex tools at 1100), each nested schema `description` at 260, and the
-  whole compact catalog at 118 KB (the first pass landed at ~92 KB from ~127 KB
-  with the tool set unchanged; the cap then rose from 94 KB, and again from
-  100 KB, as the audit's fixes moved semantics into the schema — a typed
-  `set_position`, the effect-kind enum, every mutator's return shape named,
-  then a meaning on every property and a variant per kind, landing at ~114 KB;
-  the next step down is merging over-granular families and cutting prose that
-  now restates the schema, not more trimming). It also refuses schema envelope no agent
+  whole compact catalog at 122 KB, annotations included (the first pass landed
+  at ~92 KB from ~127 KB with the tool set unchanged; the cap then rose from
+  94 KB, and again from 100 KB, as the audit's fixes moved semantics into the
+  schema — a typed `set_position`, the effect-kind enum, every mutator's return
+  shape named, then a meaning on every property and a variant per kind, landing
+  at ~114 KB, then `annotations` on every tool, ~118 KB; the next step down is
+  merging over-granular families and cutting prose that now restates the
+  schema, not more trimming). It also refuses schema envelope no agent
   reads: `$schema`, `title`, `format`, `default: null`. Rust schemas come out
   of `tool_schema()` in `native/src/mcp/catalog.rs`, which strips those at
   generation; TS schemas simply do not write them.
