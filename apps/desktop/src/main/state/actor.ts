@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
-import type { Animated, AudioRole, Composition, Continuity, Extrapolate, Interpolation, LayerParams, MarkerAnchor, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid } from './model'
+import type { Animated, AudioRole, Composition, Continuity, Extrapolate, Interpolation, LayerParams, MarkerAnchor, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid , TextParams} from './model'
 import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
@@ -11,6 +11,7 @@ import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './s
 import { applyAddGroupLayer, applyAddLayer, applyAddMarker, applyAddTrack, colorParams, defaultTransform, textParamsDefault } from './mutations/add'
 import { applyMoveLayer, applyMoveLayersToNewTrack } from './mutations/move'
 import { applyShiftLayers, applyShiftLayersFrom, type ShiftLayersResult } from './mutations/shift'
+import { formatSrt, formatVtt } from '../../shared/subtitleFormat'
 import { applyRestackLayer, type RestackPosition } from './mutations/restack'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
@@ -35,7 +36,7 @@ import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applySetScaleLinked, enforceScaleLinkInvariant } from './mutations/scaleLink'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
-import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, type CaptionStylePatch } from './mutations/captions'
+import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, type CaptionStylePatch, applyMergeCaptions, type MergeCaptionsResult } from './mutations/captions'
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
@@ -1364,9 +1365,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // composition, so overlapping caption lanes restyle as a single undo
           // entry. Affected refs are read from the pre-mutation snapshot (same
           // tracks the recipe patches).
-          const captionRefs: EntityRef[] = captionTracks(current()).map((t) => ({ kind: 'Track', id: t.id }))
-          commit(HISTORY_SUMMARY.captionRestyle, captionRefs, { kind: 'Coarse' }, (d) => applyRestyleCaptions(d, a.patch as CaptionStylePatch))
+          // Narrowed to `layer_ids`, the refs are those captions instead.
+          const only = (a.layer_ids as Uuid[] | null | undefined) ?? null
+          const captionRefs: EntityRef[] = only ? layerRefs(only) : captionTracks(current()).map((t) => ({ kind: 'Track', id: t.id }))
+          commit(HISTORY_SUMMARY.captionRestyle, captionRefs, { kind: 'Coarse' }, (d) => applyRestyleCaptions(d, a.patch as CaptionStylePatch, only))
           return { ok: true, value: null }
+        }
+        // merge_captions — two or more cues of one lane fold into the earliest;
+        // the refs name the survivor and the absorbed.
+        case 'merge_captions': {
+          const value = commit(HISTORY_SUMMARY.captionMerge, (res: MergeCaptionsResult) => layerRefs([res.layer, ...res.removed]), { kind: 'Coarse' }, (d) => applyMergeCaptions(d, a.layers as Uuid[]))
+          return { ok: true, value }
         }
         case 'rebind_motif': {
           const updates = a.updates as MotifRebindEntry[]
@@ -1906,6 +1915,20 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, result: toolRecord({ checkpoint_id: checkpoint(label, MCP_ACTOR), label }) }
         }
         case 'list_checkpoints': { mcpDef('list_checkpoints').parseDedicated!(a); return { ok: true, result: toolJson(listCheckpoints()) } }
+        // export_captions — the caption corpus of one composition (or one of its
+        // caption lanes) as an SRT or WebVTT body: a read, nothing recorded.
+        case 'export_captions': {
+          const p = mcpDef('export_captions').parseDedicated!(a)
+          const comp = scopeComposition(current(), p.composition_id as string | null) // CompositionNotFound
+          const trackId = p.track_id as string | null
+          const lanes = comp.tracks.filter((t) => t.role === 'Caption' && (trackId === null || t.id === trackId))
+          if (trackId !== null && lanes.length === 0) return { ok: false, error: { code: 'invalid_params', message: `track ${trackId} is not a caption track of this composition — project://tracks lists them (role "Caption")` } }
+          const cues = lanes.flatMap((t) => t.layers).filter((l) => l.params.kind === 'Text')
+            .map((l) => ({ start_us: l.t_start_us, end_us: l.t_end_us, text: (l.params as TextParams).content }))
+            .sort((x, y) => x.start_us - y.start_us)
+          const format = p.format as 'srt' | 'vtt'
+          return { ok: true, result: toolRecord({ format, cues: cues.length, body: format === 'vtt' ? formatVtt(cues) : formatSrt(cues) }) }
+        }
         case 'restore_checkpoint': {
           const p = mcpDef('restore_checkpoint').parseDedicated!(a)
           const id = p.checkpoint_id as string

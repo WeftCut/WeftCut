@@ -11,7 +11,7 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   'add_track', 'delete_track', 'rename_track', 'paste_layers', 'move_track', 'set_track_flags',
   'update_layer', 'set_layers_enabled', 'update_layer_params', 'set_scale_linked',
   'move_layer', 'shift_layers', 'restack_layer', 'trim_layer', 'delete_layers', 'ripple_delete_gap',
-  'separate_audio_to_new_track', 'restyle_captions',
+  'separate_audio_to_new_track', 'restyle_captions', 'merge_captions',
   'create_link', 'delete_link',
   'create_group', 'add_group_members', 'move_layers_to_composition', 'add_group_layer', 'ungroup_layer', 'rename_composition', 'delete_composition',
   'add_effect', 'update_effect', 'move_effect', 'delete_effect',
@@ -30,7 +30,7 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   'set_keyframe', 'get_param_track', 'delete_keyframe', 'update_keyframe',
   'smooth_keyframes', 'clear_keyframes', 'set_param_track', 'set_extrapolation',
   'update_link', 'read_project',
-  'dry_run', 'create_checkpoint', 'list_checkpoints', 'restore_checkpoint', 'begin_agent_session', 'end_agent_session',
+  'dry_run', 'create_checkpoint', 'list_checkpoints', 'restore_checkpoint', 'begin_agent_session', 'end_agent_session', 'export_captions',
   'auto_split_by_shot', 'remove_pauses',
 ])
 
@@ -63,7 +63,7 @@ describe('MCP tool table projections', () => {
 
   it('dedicated-exec defs have no parseArgs', () => {
     const dedicated = MCP_TOOL_DEFS.filter((d) => d.exec === 'dedicated')
-    expect(dedicated.length).toBe(28)
+    expect(dedicated.length).toBe(29)
     for (const d of dedicated) {
       expect(d.parseArgs, `${d.name} should not have parseArgs`).toBeUndefined()
     }
@@ -71,7 +71,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(48)
+    expect(table.length).toBe(49)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }

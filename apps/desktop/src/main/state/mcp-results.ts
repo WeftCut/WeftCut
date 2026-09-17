@@ -406,7 +406,17 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
   jump_to: (c) => ({ index: c.args.index, ...historyOf(c) }),
   delete_checkpoint: (c) => ({ checkpoint_id: str(c.args.checkpoint_id) }),
   // ── captions / roles ──
-  restyle_captions: (c) => ({ captions: captionCueCount(c.after) }),
+  restyle_captions: (c) => ({ captions: captionCueCount(c.after), ...(Array.isArray(c.args.layer_ids) ? { restyled: (c.args.layer_ids as unknown[]).length } : {}) }),
+  merge_captions: (c) => {
+    const v = c.value as { layer: Uuid; removed: Uuid[] }
+    const kept = located(c.after, v.layer)
+    return {
+      layer_id: v.layer, track_id: kept?.trackId ?? null,
+      t_start_us: kept?.layer.t_start_us ?? null, t_end_us: kept?.layer.t_end_us ?? null,
+      content: kept && kept.layer.params.kind === 'Text' ? kept.layer.params.content : null,
+      merged: v.removed.length + 1, removed: v.removed,
+    }
+  },
   set_role_gain: (c) => ({ role: str(c.args.role), ...(c.after.audio_roles[str(c.args.role)] ?? {}) }),
   set_role_flags: (c) => ({ role: str(c.args.role), ...(c.after.audio_roles[str(c.args.role)] ?? {}) }),
 }

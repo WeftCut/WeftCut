@@ -1,5 +1,7 @@
 import type { Composition, Project, Rgba, TextAlign, TextParams, Track, Uuid } from '../model'
-import { scopeComposition } from './helpers'
+import { locateLayerIn, requireLayer, requireSameComposition, scopeComposition } from './helpers'
+import { applyDeleteLayer } from './delete'
+import { CommandFailure } from '../errors'
 import type { IdGen } from '../ids'
 import { gridForLayerKind, snapOnGrid } from '../snap'
 import { quantizeExtentPx, quantizeParam } from '../quantize'
@@ -188,12 +190,15 @@ function newCaptionTrack(c: Composition, idGen: IdGen, label: string | null): Tr
 }
 
 /** Patch every Text layer of ONE track with a caption style patch; non-Text
- *  layers skipped. A positive outline_width keeps the existing outline color (or
- *  BLACK if none); zero removes the outline (see `CaptionStylePatch`). */
+ *  layers skipped. */
 function restyleTrackTextLayers(track: Track, patch: CaptionStylePatch): void {
-  for (const layer of track.layers) {
-    if (layer.params.kind !== 'Text') continue
-    const tp = layer.params
+  for (const layer of track.layers) if (layer.params.kind === 'Text') restyleTextLayer(layer.params, patch)
+}
+
+/** One caption's restyle. A positive outline_width keeps the existing outline
+ *  color (or BLACK if none); zero removes the outline (see `CaptionStylePatch`). */
+function restyleTextLayer(tp: TextParams, patch: CaptionStylePatch): void {
+  {
     if (patch.font_family !== undefined && patch.font_family !== null) tp.font.family = patch.font_family
     if (patch.font_size_px !== undefined && patch.font_size_px !== null) tp.font.size_px = patch.font_size_px
     if (patch.color !== undefined && patch.color !== null) tp.color = { mode: 'Static', value: patch.color }
@@ -214,8 +219,45 @@ function restyleTrackTextLayers(track: Track, patch: CaptionStylePatch): void {
  *  tracks are untouched. There is no TrackNotFound — a project may legitimately
  *  hold zero caption tracks, in which case this is a no-op (commit's no-op guard
  *  then records nothing). */
-export function applyRestyleCaptions(p: Project, patch: CaptionStylePatch): void {
-  for (const track of captionTracks(p)) restyleTrackTextLayers(track, patch)
+export function applyRestyleCaptions(p: Project, patch: CaptionStylePatch, layerIds: readonly Uuid[] | null = null): void {
+  if (layerIds === null) { for (const track of captionTracks(p)) restyleTrackTextLayers(track, patch); return }
+  // Narrowed: only the named captions — each must BE one, so a title from
+  // add_text_layer cannot be restyled through the caption door by mistake.
+  for (const id of new Set(layerIds)) {
+    const { track, layer } = requireLayer(p, id)
+    if (track.role !== 'Caption' || layer.params.kind !== 'Text') throw new CommandFailure({ error: 'InvalidArgument', field: 'layer_ids', detail: `layer ${id} is not a caption (a Text layer on a Caption track); a title is styled with update_layer_params` })
+    restyleTextLayer(layer.params, patch)
+  }
+}
+
+/** What a merge did: the cue that absorbed the others, and the ones removed. */
+export interface MergeCaptionsResult { layer: Uuid; removed: Uuid[] }
+
+/** merge_captions — fold two or more cues of ONE caption track into the
+ *  earliest: its span becomes the union, its text the texts joined by a line
+ *  break in time order, its style stays; the rest are deleted. A gap between
+ *  them is spanned; a cue of another lane in between makes the union overlap
+ *  it, which validate refuses (`LayerOverlap`) — the merge is per lane. */
+export function applyMergeCaptions(p: Project, ids: readonly Uuid[]): MergeCaptionsResult {
+  const unique = [...new Set(ids)]
+  if (unique.length < 2) throw new CommandFailure({ error: 'InvalidArgument', field: 'layer_ids', detail: 'merge_captions needs two or more captions' })
+  const c = requireSameComposition(p, unique) // LayerNotFound / CrossCompositionSet
+  const located = unique.map((id) => {
+    const loc = locateLayerIn(c, id)!
+    if (loc.track.role !== 'Caption' || loc.layer.params.kind !== 'Text') throw new CommandFailure({ error: 'InvalidArgument', field: 'layer_ids', detail: `layer ${id} is not a caption (a Text layer on a Caption track)` })
+    return loc
+  })
+  const trackId = located[0].track.id
+  if (located.some((l) => l.track.id !== trackId)) throw new CommandFailure({ error: 'InvalidArgument', field: 'layer_ids', detail: 'captions to merge must sit on ONE caption track — merge per lane, or move them together first' })
+  if (located[0].track.locked) throw new CommandFailure({ error: 'TrackLocked', track: trackId })
+  located.sort((x, y) => x.layer.t_start_us - y.layer.t_start_us)
+  const keep = located[0].layer
+  const tp = keep.params as TextParams
+  tp.content = located.map((l) => (l.layer.params as TextParams).content).join('\n')
+  keep.t_end_us = Math.max(...located.map((l) => l.layer.t_end_us))
+  const removed = located.slice(1).map((l) => l.layer.id)
+  for (const id of removed) applyDeleteLayer(p, id)
+  return { layer: keep.id, removed }
 }
 
 /** Every caption-role track across the project — the corpus `restyle_captions`

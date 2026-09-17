@@ -97,6 +97,7 @@ export const HISTORY_SUMMARY = {
   compositionDelete: { key: 'history.composition.delete', text: 'Deleted Group' },
 
   captionRestyle: { key: 'history.caption.restyle', text: 'Restyled captions' },
+  captionMerge: { key: 'history.caption.merge', text: 'Merged captions' },
 } satisfies Record<string, HistorySummary>
 
 // ── templated summaries — the phrase embeds runtime data, so the text is built

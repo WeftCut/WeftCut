@@ -1257,6 +1257,8 @@ const enUS = {
     "apply_transcripts": "Add captions from transcript",
     "correct_caption_text": "Correct caption text",
     "restyle_captions": "Restyle captions",
+    "export_captions": "Export captions",
+    "merge_captions": "Merge captions",
     "jump_to": "Jump to history entry",
     "delete_checkpoint": "Delete checkpoint",
     "add_motif_layer": "Add motif clip",
@@ -2483,7 +2485,7 @@ const enUS = {
       rename: "Renamed Group",
     },
     composition: { delete: "Deleted Group" },
-    caption: { restyle: "Restyled captions", correct: "Corrected caption text" },
+    caption: { restyle: "Restyled captions", correct: "Corrected caption text", merge: "Merged captions" },
     media: {
       remove_cascade:
         "Removed media {{media}} and {{count}} referencing clip(s)",

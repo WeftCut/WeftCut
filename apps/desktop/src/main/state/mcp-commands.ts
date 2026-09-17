@@ -1766,19 +1766,26 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // one at a time would leave a film styled in two ways for as long as the
   // batch took.
   { name: 'restyle_captions', exec: 'table', annotations: ANN_SET,
-    description: "Restyle EVERY caption in the project in one recorded edit — every Text layer on every caption-role track, in every composition, so multiplied caption lanes stay one look. Omitted or `null` fields are left alone. `outline_width: 0` removes the outline; a positive width adds or resizes one (keeping its colour, black if it had none). Sizes are composition px. A Text layer from `add_text_layer` is not a caption — style it with `update_layer_params`.",
+    description: "Restyle the captions in one recorded edit — EVERY Text layer on every caption-role track in every composition, so multiplied caption lanes stay one look, or only `layer_ids` (each must be a caption). Omitted or `null` fields are left alone. `outline_width: 0` removes the outline; a positive width adds or resizes one (keeping its colour, black if it had none). Sizes are composition px. A Text layer from `add_text_layer` is not a caption — style it with `update_layer_params`.",
     inputSchema: { type: 'object', properties: {
       font_family: { type: 'string', description: 'Font family for every caption.' },
       font_size_px: { type: 'number', description: 'Font size, composition px.' },
       color: { ...RGBA_SCHEMA, description: 'Text colour.' },
       outline_width: { type: 'number', description: '0 removes the outline; a positive width (composition px) adds or resizes it.' },
+      layer_ids: LAYER_IDS_SCHEMA('Only these captions. Omit for every caption in the project.'),
     }, required: [] },
-    parseArgs: (a) => ({ op: 'restyle_captions', args: { patch: {
-      font_family: parseStrOpt(a.font_family, 'font_family'),
-      font_size_px: parseNumOpt(a.font_size_px, 'font_size_px') ?? null,
-      color: a.color === undefined || a.color === null ? null : parseRgba(a.color, 'color'),
-      outline_width: parseNumOpt(a.outline_width, 'outline_width') ?? null,
-    } } }) },
+    parseArgs: (a) => ({ op: 'restyle_captions', args: {
+      layer_ids: a.layer_ids === undefined || a.layer_ids === null ? null : asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')),
+      patch: {
+        font_family: parseStrOpt(a.font_family, 'font_family'),
+        font_size_px: parseNumOpt(a.font_size_px, 'font_size_px') ?? null,
+        color: a.color === undefined || a.color === null ? null : parseRgba(a.color, 'color'),
+        outline_width: parseNumOpt(a.outline_width, 'outline_width') ?? null,
+      } } }) },
+  { name: 'merge_captions', exec: 'table', annotations: ANN_DESTRUCTIVE,
+    description: "Merge two or more captions of ONE caption lane into the earliest, as one recorded edit: its span becomes the union, its text the texts joined by a line break in time order, its style stays; the others are deleted. A gap between them is spanned. Refuses a layer that is not a caption, captions on different lanes, and a union that would overlap another cue of the lane (`LayerOverlap`). Returns the merged caption's record with `removed`.",
+    inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('Two or more captions on one caption track.') }, required: ['layer_ids'] },
+    parseArgs: (a) => ({ op: 'merge_captions', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) } }) },
   // ── table-exec: audio roles ──────────────────────────────────────────────
   { name: 'set_role_gain', exec: 'table', annotations: ANN_SET,
     description: "Set an audio role's mix gain (dB). role ∈ {dialogue,music,sfx,voiceover}. Recorded (undoable). Folds into every layer of that role at mix time.",
@@ -2005,6 +2012,18 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Create a named checkpoint of the current state and return `{ checkpoint_id, label }`. Checkpoints survive later commits (unlike the redo tail) and persist in the project file; the agent panel shows each as a row with a Restore button. Use it at logical batch boundaries. Unrecorded.",
     inputSchema: { type: 'object', properties: { label: { type: 'string', description: 'Checkpoint name.' } }, required: ['label'] },
     parseDedicated: (a) => ({ label: parseStr(a.label, 'label') }) },
+  { name: 'export_captions', exec: 'dedicated', annotations: ANN_READ,
+    description: "The captions of a composition as a subtitle document — `format` `srt` or `vtt` — read from every caption lane (or one `track_id`) in time order, with the cue text as it stands. Returns `{ format, cues, body }`; write `body` to a file yourself. Records nothing.",
+    inputSchema: { type: 'object', properties: {
+      format: { type: 'string', enum: ['srt', 'vtt'], description: 'SubRip or WebVTT.' },
+      track_id: { type: 'string', description: 'One caption lane only; omit for every caption lane of the composition.' },
+      composition_id: COMPOSITION_ID_SCHEMA,
+    }, required: ['format'] },
+    parseDedicated: (a) => ({
+      format: parseOneOf(a.format, ['srt', 'vtt'], 'format'),
+      track_id: a.track_id === undefined || a.track_id === null ? null : parseUuid(a.track_id, 'track_id'),
+      composition_id: parseCompositionIdOpt(a.composition_id),
+    }) },
   { name: 'list_checkpoints', exec: 'dedicated', annotations: ANN_READ,
     description: "List all named checkpoints, oldest first. Returns id, label, actor, created_at per checkpoint (no project snapshot).",
     inputSchema: { type: 'object', properties: {}, required: [] },
