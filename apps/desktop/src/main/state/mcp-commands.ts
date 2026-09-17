@@ -1366,7 +1366,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { label: { type: 'string', description: 'Optional name. Omit it and the track is displayed by its position in the stack, which renumbers as tracks come and go.' }, composition_id: COMPOSITION_ID_SCHEMA }, required: [] },
     parseArgs: (a) => ({ op: 'add_track', args: { label: parseStrOpt(a.label, 'label'), composition_id: parseCompositionIdOpt(a.composition_id) } }) },
   { name: 'delete_track', exec: 'table', annotations: ANN_DESTRUCTIVE,
-    description: "Remove a track. Rejects if the track has layers unless force=true. Default A roll / B roll tracks cannot be removed.",
+    description: "Remove a track. Refuses a track with layers unless force=true (`TrackNotEmpty`); with force the layers go with it, and a Group layer among them leaves its composition in place with `ref_count 0` (`project://compositions`) — `delete_composition` removes that. The reserved A roll / B roll / audio / caption tracks are never removed (`TrackNotRemovable`).",
     inputSchema: { type: 'object', properties: { track_id: TRACK_ID_SCHEMA, force: { type: 'boolean', description: 'Also delete the layers still on it. Default false, which refuses a non-empty track (TrackNotEmpty).' } }, required: ['track_id'] },
     parseArgs: (a) => ({ op: 'delete_track', args: { track: parseUuid(a.track_id, 'track_id'), force: parseBoolOpt(a.force, 'force', false) } }) },
   { name: 'rename_track', exec: 'table', annotations: ANN_SET,

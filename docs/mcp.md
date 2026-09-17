@@ -348,7 +348,7 @@ Media + tracks:
 - `import_media { path }` → `{ media_id, kind, label, path, duration_us, width, height, has_audio }`; a subtitle document (`.srt`/`.vtt`/`.ass`) is consumed into a caption track instead and answers `{ caption_track_id, cues }`. The path is stat'd first: a directory, a missing path or an unreadable file is refused by name before anything is written, and a read that fails after the pool row landed rolls that row back — a failed import leaves no `pending-` row behind
 - `delete_media { media_id, force? }` — with `force`, the referencing layers go through the same cascade `delete_layers` runs (links dissolve below two, an emptied transient lane is pruned, a locked lane refuses), so a forced removal of an auto-paired video+audio pair is one clean commit
 - `add_track { label? }` → `{ track_id, composition_id, label, role, index, enabled, locked, layers }` (tracks are kind-agnostic — any layer kind can be placed on any track)
-- `delete_track { track_id, force? }`
+- `delete_track { track_id, force? }` — with `force`, the layers go too; a Group layer among them leaves its composition orphaned (`ref_count 0` in `project://compositions`) for `delete_composition`
 - `rename_track { track_id, label? }` — any track, reserved ones included; `label: null` (or blank) clears it back to the derived name
 - `move_track { track_id, new_position }`
 - `set_track_flags { track_id, enabled?, locked? }` — the writer behind every `TrackLocked` refusal. `locked` makes the track reject edits to the layers on it; `enabled` is its output, in preview and in export alike, with the layers left in place. Omit a flag (or send null) to leave it alone; a call naming neither is refused rather than reported as a successful no-op. **Unrecorded** (not undoable), like `set_role_flags`. A layer's own `locked` is separate (`update_layer { patch: { locked } }`) and an edit needs both cleared. No mute/solo arm: the mix folds by role, not by track ([ADR 0023](adr/0023-audio-mixes-by-role-not-track.md)) — `set_role_flags` is what silences audio.
@@ -724,7 +724,10 @@ and one another. The two pressures meet at a budget:
   families and cutting prose that now restates the schema, not more trimming). It also refuses schema envelope no agent
   reads: `$schema`, `title`, `format`, `default: null`. Rust schemas come out
   of `tool_schema()` in `native/src/mcp/catalog.rs`, which strips those at
-  generation; TS schemas simply do not write them.
+  generation; TS schemas simply do not write them. The snapshot the gates read
+  is pinned to the binary you run: `npm run mcp:catalog:check` regenerates it
+  from the built addon and fails on any diff — CI runs it, and `npm run
+  package` runs it right after the addon build.
 
 Bad:
 ```

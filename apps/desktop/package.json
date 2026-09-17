@@ -38,7 +38,7 @@
     "e2e": "node scripts/run-e2e.mjs",
     "ffmpeg:fetch": "node scripts/fetch-ffmpeg.mjs",
     "ffmpeg:fetch-lgpl": "node scripts/fetch-ffmpeg-lgpl.mjs",
-    "package": "npm run napi:build && npm run napi:build:decode && npm run build && electron-builder --publish never",
+    "package": "npm run napi:build && npm run napi:build:decode && npm run mcp:catalog:check && npm run build && electron-builder --publish never",
     "pbt:stryker": "stryker run"
   },
   "dependencies": {

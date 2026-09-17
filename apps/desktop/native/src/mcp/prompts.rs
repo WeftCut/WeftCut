@@ -103,9 +103,10 @@ pub(crate) fn catalog() -> Vec<PromptDef> {
                 PromptArgDef {
                     name: "voice".into(),
                     description: Some(
-                        "OpenAI voice: alloy, echo, fable, onyx, nova, or shimmer.".into(),
+                        "OpenAI voice: alloy, echo, fable, onyx, nova, or shimmer. Required — `synthesize_speech` takes no default."
+                            .into(),
                     ),
-                    required: false,
+                    required: true,
                 },
                 PromptArgDef {
                     name: "speed".into(),
@@ -187,10 +188,10 @@ A refusal is whole and lands before any write, so the clip comes back UNSPLIT wi
 
 REVIEW FIRST — the alternative when the pauses should be seen before any of them goes:
 1. Call `detect_pauses` with `layer_id: \"{layer_id}\"`{extra}. Same walk over the same peaks, but it commits nothing: it returns `{{ pauses: [{{ t_start_us, t_end_us }}, ...], noise_floor_amp, peaks_source }}` — timeline-absolute ranges where the audio stays below threshold for the requested duration, the measured noise floor, and which peaks file the numbers came from. If it finds nothing, `noise_floor_amp` says why: a threshold near the floor plus 6 dB is the one that reads pauses as a listener would.
-2. For each pause, call `add_marker` with `t_us: <pause.t_start_us>` and `end_t_us: <pause.t_end_us>` — setting `end_t_us` is what makes it a REGION marker spanning the pause rather than a point at its start. Pass `anchor_layer_id: \"{layer_id}\"` so the mark follows the clip's material instead of standing at a fixed timeline instant: a ripple upstream then moves it with the audio it describes, and trimming the clip past a marked pause hibernates that mark rather than stranding it somewhere it means nothing. One call per pause, each its own history entry.
+2. For each pause, call `add_marker` with `t_us: <pause.t_start_us>`, `end_t_us: <pause.t_end_us>`, a short `label` (e.g. \"pause\") and a `color` (`{{ r, g, b, a }}`, 0..255) — both required; setting `end_t_us` is what makes it a REGION marker spanning the pause rather than a point at its start. Pass `anchor_layer_id: \"{layer_id}\"` so the mark follows the clip's material instead of standing at a fixed timeline instant: a ripple upstream then moves it with the audio it describes, and trimming the clip past a marked pause hibernates that mark rather than stranding it somewhere it means nothing. One call per pause, each its own history entry.
 3. Report how many pauses were marked and their total duration, and leave what becomes of them to the human.
 
-Defaults if the agent leaves args off: threshold_amp = 0.02 (-34 dBFS), min_pause_us 500 ms, pad_us 100 ms per side, bridge_us 80 ms — tuned for podcast-style speech with quick breath-pause cuts. Loosen for music (lower threshold, longer min) or tighten for talking-head (higher threshold)."
+Defaults if the agent leaves args off: threshold_amp = 0.02 (-34 dBFS), min_pause_us 500 ms, pad_us 100 ms per side (`remove_pauses` only); `detect_pauses` alone also takes bridge_us 80 ms (two pauses closer than that read as one) — tuned for podcast-style speech with quick breath-pause cuts. Loosen for music (lower threshold, longer min) or tighten for talking-head (higher threshold)."
     );
     Ok(PromptResult {
         description: Some(
@@ -233,19 +234,13 @@ If `transcribe_clip` errors because no backend is configured (or with `MissingKe
 #[cfg(feature = "speech")]
 fn expand_voiceover(args: Option<&Map<String, Value>>) -> Result<PromptResult, McpToolError> {
     let script = require_str(args, "script")?;
-    let voice = optional_str(args, "voice");
+    // Required here because `synthesize_speech` requires it: the prompt used to
+    // promise "the default voice" and write a call the tool refused (audit S9).
+    let voice = require_str(args, "voice")?;
     let speed = optional_str(args, "speed");
     let target_track = optional_str(args, "target_track_id");
 
-    let voice_clause = match &voice {
-        Some(v) => format!("`{v}`"),
-        None => "the default voice".to_string(),
-    };
-
-    let mut extra = String::new();
-    if let Some(v) = &voice {
-        extra.push_str(&format!(", `voice: \"{v}\"`"));
-    }
+    let mut extra = format!(", `voice: \"{voice}\"`");
     if let Some(s) = &speed {
         extra.push_str(&format!(", `speed: {s}`"));
     }
@@ -254,7 +249,7 @@ fn expand_voiceover(args: Option<&Map<String, Value>>) -> Result<PromptResult, M
     }
 
     let text = format!(
-"Generate voiceover audio for the script below using the {voice_clause} voice.
+"Generate voiceover audio for the script below in the `{voice}` voice.
 
 Script:
 \"\"\"
@@ -267,7 +262,7 @@ Steps:
 
 If the script exceeds 4096 characters, split it at paragraph boundaries and synthesize each chunk separately. Each call's `t_start_us` defaults to the current `composition.duration_us`, so successive chunks chain at the end of the timeline.
 
-If `synthesize_speech` errors with `MissingKey` or `InvalidKey`, tell the user to configure their OpenAI API key under Settings → Transcription."
+If `synthesize_speech` refuses because no OpenAI API key is configured, tell the user to add one under Settings → API keys; the refusal names what is missing."
     );
     Ok(PromptResult {
         description: Some("Generate cloud TTS and attach it as an Audio layer.".into()),
@@ -341,6 +336,9 @@ mod tests {
         assert!(body.contains("add_marker"));
         assert!(body.contains("end_t_us"));
         assert!(body.contains("anchor_layer_id"));
+        // The marker's two required fields are named where the step is (audit S9).
+        assert!(body.contains("`label`"));
+        assert!(body.contains("`color`"));
     }
 
     /// Pad is what makes *Remove* keep part of each pause instead of erasing
@@ -355,6 +353,7 @@ mod tests {
         assert!(body.contains("100000"), "the pad default, in µs");
         assert!(body.contains("pass 0 to erase pauses whole"));
         assert!(body.contains("bridge_us 80 ms"));
+        assert!(body.contains("`detect_pauses` alone also takes bridge_us"), "bridge_us belongs to detect_pauses only");
         assert!(body.contains("min_pause_us 500 ms"));
     }
 
@@ -385,6 +384,9 @@ mod tests {
         assert!(body.contains("add_marker"));
         assert!(body.contains("end_t_us"));
         assert!(body.contains("anchor_layer_id"));
+        // The marker's two required fields are named where the step is (audit S9).
+        assert!(body.contains("`label`"));
+        assert!(body.contains("`color`"));
 
         let listed = catalog();
         let cs = listed
@@ -453,11 +455,28 @@ mod tests {
 
     #[cfg(feature = "speech")]
     #[test]
-    fn voiceover_expands_with_script() {
-        let a = args(&[("script", json!("hello there"))]);
+    fn voiceover_expands_with_script_and_voice() {
+        let a = args(&[("script", json!("hello there")), ("voice", json!("nova"))]);
         let r = expand("voiceover", Some(&a)).expect("expand voiceover");
         let body = message_text(&r.messages[0]);
         assert!(body.contains("hello there"));
+        assert!(body.contains("in the `nova` voice"));
+        assert!(body.contains("`voice: \"nova\"`"));
+        assert!(!body.contains("voice voice"), "the sentence names one voice once (audit S9)");
+        assert!(body.contains("Settings → API keys"));
+        assert!(!body.contains("MissingKey"), "no token names the model cannot act on");
+    }
+
+    /// `voice` is required because the tool requires it — the prompt and the
+    /// tool agree, and the catalog says so.
+    #[cfg(feature = "speech")]
+    #[test]
+    fn voiceover_requires_voice_as_the_tool_does() {
+        let a = args(&[("script", json!("hello there"))]);
+        assert!(expand("voiceover", Some(&a)).is_err());
+        let def = catalog().into_iter().find(|p| p.name == "voiceover").expect("voiceover in catalog");
+        let voice = def.arguments.iter().find(|a| a.name == "voice").expect("voice arg");
+        assert!(voice.required);
     }
 
     fn message_text(msg: &PromptMessage) -> &str {

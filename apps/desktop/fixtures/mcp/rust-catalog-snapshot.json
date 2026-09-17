@@ -425,8 +425,8 @@
         },
         {
           "name": "voice",
-          "description": "OpenAI voice: alloy, echo, fable, onyx, nova, or shimmer.",
-          "required": false
+          "description": "OpenAI voice: alloy, echo, fable, onyx, nova, or shimmer. Required — `synthesize_speech` takes no default.",
+          "required": true
         },
         {
           "name": "speed",
